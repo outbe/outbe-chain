@@ -174,26 +174,36 @@ pub enum TributeError {
 }
 
 impl TributeError {
-    /// Converts a certified protocol failure into a fatal precompile error.
+    /// Converts a certified protocol failure into a precompile error.
     pub(crate) fn invalid_certified_protocol_value(
         error: impl std::fmt::Display,
     ) -> PrecompileError {
         Self::InvalidCertifiedProtocolValue(error.to_string()).into()
     }
 
-    /// Converts an entity-ID derivation failure into a fatal precompile error.
+    /// Converts an entity-ID derivation failure into a precompile error.
     pub(crate) fn entity_id_derivation(error: impl std::fmt::Display) -> PrecompileError {
         Self::EntityIdDerivation(error.to_string()).into()
     }
 
-    /// Converts a calculation-view failure into a fatal precompile error.
-    pub(crate) fn calculation_view_fatal(error: impl std::fmt::Display) -> PrecompileError {
-        Self::CalculationView(error.to_string()).into()
+    /// Converts a calculation-view failure into a precompile error.
+    pub(crate) fn calculation_view_fatal(error: outbe_tee::TransportError) -> PrecompileError {
+        let message = Self::CalculationView(error.to_string()).to_string();
+        if error.is_node_local() {
+            PrecompileError::EnclaveUnavailable(message)
+        } else {
+            PrecompileError::Revert(message)
+        }
     }
 
-    /// Converts a private amount read failure into a fatal precompile error.
-    pub(crate) fn private_amount_read_failed(error: impl std::fmt::Display) -> PrecompileError {
-        Self::PrivateAmountReadFailed(error.to_string()).into()
+    /// Converts a private amount read failure into a precompile error.
+    pub(crate) fn private_amount_read_failed(error: outbe_tee::TransportError) -> PrecompileError {
+        let message = Self::PrivateAmountReadFailed(error.to_string()).to_string();
+        if error.is_node_local() {
+            PrecompileError::EnclaveUnavailable(message)
+        } else {
+            PrecompileError::Revert(message)
+        }
     }
 }
 
@@ -201,17 +211,6 @@ impl From<TributeError> for PrecompileError {
     fn from(value: TributeError) -> Self {
         let message = value.to_string();
         match value {
-            TributeError::SealedProjectionContradictsAuthenticatedCeGeneration
-            | TributeError::InvalidCertifiedProtocolValue(_)
-            | TributeError::DayResponseScopeMismatch
-            | TributeError::EntityIdDerivation(_)
-            | TributeError::CalculationView(_)
-            | TributeError::OcompProfileRequiresEmptyLiveState
-            | TributeError::PrivateAmountReadFailed(_)
-            | TributeError::CanonicalIdentityMismatch { .. }
-            | TributeError::RetirementOutcomeContradictsAuthenticatedRoot => {
-                PrecompileError::Fatal(message)
-            }
             TributeError::InvalidEncryptedDayIdentity
             | TributeError::InvalidEncryptedEncoding
             | TributeError::ChainIdentityMismatch
@@ -232,6 +231,7 @@ impl From<TributeError> for PrecompileError {
             | TributeError::DayCountOverflowOrUnderflow
             | TributeError::NonTributePayload
             | TributeError::TotalSupplyUnderflowDuringCapacityForfeiture
+            | TributeError::RetirementOutcomeContradictsAuthenticatedRoot
             | TributeError::SourceGenerationOverflowDuringCapacityForfeiture
             | TributeError::CapacityForfeitureRequiresFreshSealedPartition
             | TributeError::PopulatedAggregateMissingAuthenticatedParent
@@ -249,9 +249,9 @@ pub(crate) fn body_read_corruption(error: impl std::fmt::Display) -> PrecompileE
     PrecompileError::BodyReadCorruption(error.to_string())
 }
 
-/// Converts a Tribute day enclave failure into a fatal precompile error.
+/// Converts a Tribute day enclave failure into a precompile error.
 pub(crate) fn day_enclave_error(error: impl std::fmt::Display) -> PrecompileError {
-    PrecompileError::Fatal(format!("Tribute day enclave: {error}"))
+    PrecompileError::EnclaveUnavailable(format!("Tribute day enclave: {error}"))
 }
 
 /// Wraps a test-enclave decryption error in an enclave transport error.

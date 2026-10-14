@@ -43,7 +43,7 @@ impl ParentParticipationProof {
         match tag {
             0 => Ok(Self::Finalization),
             1 => Ok(Self::CertifiedNotarization),
-            other => Err(PrecompileError::fatal(format!(
+            other => Err(PrecompileError::revert(format!(
                 "invalid ParentParticipationProof tag: {other}"
             ))),
         }
@@ -186,17 +186,17 @@ impl CertifiedParentAccountingMetadata {
         // Minimum size: 4 + 1 + 8 + 32 + 8 + 8 + 8 + 2 + 2 + 4 + 32 + 8 + 32 + 1 + 2.
         let min_len = 4 + 1 + 8 + 32 + 8 + 8 + 8 + 2 + 2 + 4 + 32 + 8 + 32 + 1 + 2;
         if data.len() < min_len {
-            return Err(PrecompileError::fatal(
+            return Err(PrecompileError::revert(
                 "certified-parent accounting metadata too short",
             ));
         }
         if &data[..4] != CERTIFIED_PARENT_ACCOUNTING_MAGIC {
-            return Err(PrecompileError::fatal(
+            return Err(PrecompileError::revert(
                 "invalid certified-parent accounting magic",
             ));
         }
         if data[4] != CERTIFIED_PARENT_ACCOUNTING_VERSION {
-            return Err(PrecompileError::fatal(format!(
+            return Err(PrecompileError::revert(format!(
                 "unsupported certified-parent accounting version: {}",
                 data[4]
             )));
@@ -218,7 +218,7 @@ impl CertifiedParentAccountingMetadata {
         let missed_proposers = read_missed_proposers(data, &mut offset)?;
 
         if offset != data.len() {
-            return Err(PrecompileError::fatal(
+            return Err(PrecompileError::revert(
                 "trailing bytes in certified-parent accounting metadata",
             ));
         }
@@ -252,12 +252,12 @@ impl CertifiedParentAccountingMetadata {
     pub fn decode_rlp(data: &[u8]) -> Result<Self> {
         let mut buf = data;
         let encoded = <Bytes as RlpDecodable>::decode(&mut buf).map_err(|error| {
-            PrecompileError::fatal(format!(
+            PrecompileError::revert(format!(
                 "invalid certified-parent accounting metadata RLP: {error}"
             ))
         })?;
         if !buf.is_empty() {
-            return Err(PrecompileError::fatal(
+            return Err(PrecompileError::revert(
                 "trailing bytes in certified-parent accounting metadata RLP",
             ));
         }
@@ -267,7 +267,7 @@ impl CertifiedParentAccountingMetadata {
 
 fn read_u8(data: &[u8], offset: &mut usize) -> Result<u8> {
     let Some(&b) = data.get(*offset) else {
-        return Err(PrecompileError::fatal("unexpected EOF reading u8"));
+        return Err(PrecompileError::revert("unexpected EOF reading u8"));
     };
     *offset += 1;
     Ok(b)
@@ -276,7 +276,7 @@ fn read_u8(data: &[u8], offset: &mut usize) -> Result<u8> {
 fn read_missed_proposers(data: &[u8], offset: &mut usize) -> Result<Vec<MissedProposerEvent>> {
     let count_end = offset.saturating_add(2);
     let Some(count_bytes) = data.get(*offset..count_end) else {
-        return Err(PrecompileError::fatal(
+        return Err(PrecompileError::revert(
             "unexpected EOF reading missed-proposer count",
         ));
     };
@@ -284,7 +284,7 @@ fn read_missed_proposers(data: &[u8], offset: &mut usize) -> Result<Vec<MissedPr
     let count = u16::from_be_bytes(
         count_bytes
             .try_into()
-            .map_err(|_| PrecompileError::fatal("invalid missed-proposer count slice"))?,
+            .map_err(|_| PrecompileError::revert("invalid missed-proposer count slice"))?,
     ) as usize;
 
     let mut events = Vec::with_capacity(count);
@@ -292,7 +292,7 @@ fn read_missed_proposers(data: &[u8], offset: &mut usize) -> Result<Vec<MissedPr
         let view = read_u64(data, offset)?;
         let end = offset.saturating_add(20);
         let Some(bytes) = data.get(*offset..end) else {
-            return Err(PrecompileError::fatal(
+            return Err(PrecompileError::revert(
                 "unexpected EOF reading missed-proposer validator",
             ));
         };
@@ -305,7 +305,7 @@ fn read_missed_proposers(data: &[u8], offset: &mut usize) -> Result<Vec<MissedPr
 
 fn ensure_count_fits_u16(name: &str, count: usize) -> Result<()> {
     if count > u16::MAX as usize {
-        return Err(PrecompileError::fatal(format!(
+        return Err(PrecompileError::revert(format!(
             "{name} list exceeds u16 count limit: {count}"
         )));
     }
@@ -314,7 +314,7 @@ fn ensure_count_fits_u16(name: &str, count: usize) -> Result<()> {
 
 fn ensure_len_fits_u32(name: &str, len: usize) -> Result<()> {
     if len > u32::MAX as usize {
-        return Err(PrecompileError::fatal(format!(
+        return Err(PrecompileError::revert(format!(
             "{name} exceeds u32 length limit: {len}"
         )));
     }
@@ -347,18 +347,18 @@ fn encode_bytes_u32(buf: &mut Vec<u8>, data: &[u8]) {
 fn read_u64(data: &[u8], offset: &mut usize) -> Result<u64> {
     let end = offset.saturating_add(8);
     let Some(bytes) = data.get(*offset..end) else {
-        return Err(PrecompileError::fatal("unexpected EOF reading u64"));
+        return Err(PrecompileError::revert("unexpected EOF reading u64"));
     };
     *offset = end;
     Ok(u64::from_be_bytes(bytes.try_into().map_err(|_| {
-        PrecompileError::fatal("invalid u64 slice length")
+        PrecompileError::revert("invalid u64 slice length")
     })?))
 }
 
 fn read_b256(data: &[u8], offset: &mut usize) -> Result<B256> {
     let end = offset.saturating_add(32);
     let Some(bytes) = data.get(*offset..end) else {
-        return Err(PrecompileError::fatal("unexpected EOF reading B256"));
+        return Err(PrecompileError::revert("unexpected EOF reading B256"));
     };
     *offset = end;
     Ok(B256::from_slice(bytes))
@@ -367,7 +367,7 @@ fn read_b256(data: &[u8], offset: &mut usize) -> Result<B256> {
 fn read_addresses(data: &[u8], offset: &mut usize) -> Result<Vec<Address>> {
     let count_end = offset.saturating_add(2);
     let Some(count_bytes) = data.get(*offset..count_end) else {
-        return Err(PrecompileError::fatal(
+        return Err(PrecompileError::revert(
             "unexpected EOF reading address count",
         ));
     };
@@ -375,15 +375,15 @@ fn read_addresses(data: &[u8], offset: &mut usize) -> Result<Vec<Address>> {
     let count = u16::from_be_bytes(
         count_bytes
             .try_into()
-            .map_err(|_| PrecompileError::fatal("invalid address count slice length"))?,
+            .map_err(|_| PrecompileError::revert("invalid address count slice length"))?,
     ) as usize;
 
     let bytes_len = count
         .checked_mul(20)
-        .ok_or_else(|| PrecompileError::fatal("address list length overflow"))?;
+        .ok_or_else(|| PrecompileError::revert("address list length overflow"))?;
     let end = offset.saturating_add(bytes_len);
     let Some(bytes) = data.get(*offset..end) else {
-        return Err(PrecompileError::fatal(
+        return Err(PrecompileError::revert(
             "unexpected EOF reading address list",
         ));
     };
@@ -409,18 +409,20 @@ fn read_bytes_u32(data: &[u8], offset: &mut usize) -> Result<Vec<u8>> {
 fn read_byte_length<const WIDTH: usize>(data: &[u8], offset: &mut usize) -> Result<[u8; WIDTH]> {
     let count_end = offset.saturating_add(WIDTH);
     let Some(count_bytes) = data.get(*offset..count_end) else {
-        return Err(PrecompileError::fatal("unexpected EOF reading byte length"));
+        return Err(PrecompileError::revert(
+            "unexpected EOF reading byte length",
+        ));
     };
     *offset = count_end;
     count_bytes
         .try_into()
-        .map_err(|_| PrecompileError::fatal("invalid byte length slice"))
+        .map_err(|_| PrecompileError::revert("invalid byte length slice"))
 }
 
 fn read_byte_payload(data: &[u8], offset: &mut usize, len: usize) -> Result<Vec<u8>> {
     let end = offset.saturating_add(len);
     let Some(bytes) = data.get(*offset..end) else {
-        return Err(PrecompileError::fatal("unexpected EOF reading bytes"));
+        return Err(PrecompileError::revert("unexpected EOF reading bytes"));
     };
     *offset = end;
     Ok(bytes.to_vec())
@@ -443,14 +445,14 @@ mod reader_tests {
             let mut offset = 1;
             let short_prefix = vec![0; width];
             assert!(
-                matches!(read(&short_prefix, &mut offset), Err(PrecompileError::Fatal { 0: message }) if message == "unexpected EOF reading byte length")
+                matches!(read(&short_prefix, &mut offset), Err(PrecompileError::Revert { 0: message }) if message == "unexpected EOF reading byte length")
             );
             assert_eq!(offset, 1);
 
             let mut short_payload = vec![0; width + 1];
             short_payload[width] = 2;
             assert!(
-                matches!(read(&short_payload, &mut offset), Err(PrecompileError::Fatal { 0: message }) if message == "unexpected EOF reading bytes")
+                matches!(read(&short_payload, &mut offset), Err(PrecompileError::Revert { 0: message }) if message == "unexpected EOF reading bytes")
             );
             assert_eq!(offset, width + 1);
 

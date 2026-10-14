@@ -45,7 +45,7 @@ fn canonical_repo_id_word_has_zero_twelve_byte_tail() {
     malformed[31] = 1;
     assert!(matches!(
         repo_id_from_storage_key(B256::from(malformed)),
-        Err(PrecompileError::Fatal(_))
+        Err(PrecompileError::Revert(_))
     ));
 }
 

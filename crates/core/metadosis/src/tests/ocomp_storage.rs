@@ -691,7 +691,7 @@ fn canonical_storage_reads_fail_closed_when_the_declared_byte_cap_overflows() {
         ] {
             assert!(matches!(
                 result,
-                Err(outbe_primitives::error::PrecompileError::Fatal(_))
+                Err(outbe_primitives::error::PrecompileError::Revert(_))
             ));
         }
     });
@@ -705,7 +705,7 @@ fn terminal_index_push_rejects_zero_and_a_second_terminal_job() {
 
         assert!(matches!(
             metadosis.push_terminal_intent(wwd, B256::ZERO),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
 
         metadosis
@@ -715,7 +715,7 @@ fn terminal_index_push_rejects_zero_and_a_second_terminal_job() {
 
         assert!(matches!(
             metadosis.push_terminal_intent(wwd, B256::repeat_byte(0x77)),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
 
         // An occupied position must never be overwritten even if the count is
@@ -723,7 +723,7 @@ fn terminal_index_push_rejects_zero_and_a_second_terminal_job() {
         metadosis.ocomp_terminal_counts.write(&wwd, 0).unwrap();
         assert!(matches!(
             metadosis.push_terminal_intent(wwd, B256::repeat_byte(0x78)),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
     });
 }
@@ -746,14 +746,14 @@ fn terminal_index_round_trips_and_fails_closed_on_invalid_cardinality() {
         metadosis.ocomp_terminal_counts.write(&wwd, 2).unwrap();
         assert!(matches!(
             metadosis.terminal_intents_for(wwd),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
 
         let sparse = WorldwideDay::new(20270403);
         metadosis.ocomp_terminal_counts.write(&sparse, 1).unwrap();
         assert!(matches!(
             metadosis.terminal_intents_for(sparse),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
     });
 }

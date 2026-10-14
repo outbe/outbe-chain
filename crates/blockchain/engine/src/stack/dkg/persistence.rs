@@ -435,6 +435,21 @@ fn validate_pending_boundary_snapshot(
     Ok(())
 }
 
+fn quarantine_pending_dkg_boundary_snapshot(
+    storage_dir: &std::path::Path,
+    key_backend: &bls::KeyBackend,
+    reason: &str,
+) {
+    warn!(
+        storage_dir = %storage_dir.display(),
+        reason,
+        "quarantining unfinalized or stale local pending DKG boundary snapshot"
+    );
+    clear_pending_dkg_boundary(storage_dir);
+    remove_pending_dkg_state(storage_dir);
+    let _ = dkg_actor::DkgRetryStore::in_keys_dir(storage_dir, key_backend.clone()).clear();
+}
+
 pub(in crate::stack) fn recover_pending_dkg_boundary_snapshot(
     storage_dir: &std::path::Path,
     key_backend: &bls::KeyBackend,
@@ -442,11 +457,41 @@ pub(in crate::stack) fn recover_pending_dkg_boundary_snapshot(
     node: &OutbeFullNode,
     recovered_boundary: Option<&(u64, DkgBoundaryArtifact)>,
 ) -> Result<Option<PendingDkgBoundarySnapshot>> {
-    let Some(snapshot) = load_pending_dkg_boundary(storage_dir)? else {
-        return Ok(None);
+    let snapshot = match load_pending_dkg_boundary(storage_dir) {
+        Ok(Some(snapshot)) => snapshot,
+        Ok(None) => return Ok(None),
+        Err(error) => {
+            quarantine_pending_dkg_boundary_snapshot(
+                storage_dir,
+                key_backend,
+                &format!("failed to decode pending DKG boundary snapshot: {error:#}"),
+            );
+            return Ok(None);
+        }
     };
     if let Some((_height, finalized)) = recovered_boundary {
         if finalized.dkg_cycle == snapshot.artifact.dkg_cycle && finalized != &snapshot.artifact {
+            let finalized_output = decode_boundary_output(finalized)
+                .wrap_err("failed to decode finalized DKG boundary output")?;
+            let local_in_finalized = finalized_output
+                .players()
+                .position(local_consensus_key)
+                .is_some();
+            let saved_matches_finalized = load_saved_dkg_state(storage_dir, key_backend)
+                .ok()
+                .flatten()
+                .is_some_and(|(_, _, saved_output)| saved_output == finalized_output);
+            if !local_in_finalized || saved_matches_finalized {
+                quarantine_pending_dkg_boundary_snapshot(
+                    storage_dir,
+                    key_backend,
+                    &format!(
+                        "superseded local pending DKG boundary for cycle {} after finalized boundary commit",
+                        snapshot.artifact.dkg_cycle
+                    ),
+                );
+                return Ok(None);
+            }
             return Err(
                 crate::errors::StackDkgError::FinalizedBoundaryConflictsWithPendingSnapshot {
                     cycle: snapshot.artifact.dkg_cycle,
@@ -504,32 +549,74 @@ pub(in crate::stack) fn recover_pending_dkg_boundary_snapshot(
         return Ok(None);
     }
 
-    let boundary_output = decode_boundary_output(&snapshot.artifact)
-        .wrap_err("failed to decode recovered pending DKG boundary output")?;
-    validate_pending_boundary_snapshot(&snapshot, &boundary_output, node)?;
+    let boundary_output = match decode_boundary_output(&snapshot.artifact) {
+        Ok(output) => output,
+        Err(error) => {
+            quarantine_pending_dkg_boundary_snapshot(
+                storage_dir,
+                key_backend,
+                &format!("failed to decode unfinalized pending DKG boundary output: {error:#}"),
+            );
+            return Ok(None);
+        }
+    };
+    if let Err(error) = validate_pending_boundary_snapshot(&snapshot, &boundary_output, node) {
+        if matches!(
+            error.downcast_ref::<crate::errors::StackDkgError>(),
+            Some(crate::errors::StackDkgError::PendingBoundarySnapshotFreezeMismatch)
+        ) {
+            quarantine_pending_dkg_boundary_snapshot(
+                storage_dir,
+                key_backend,
+                &format!("unfinalized pending DKG boundary does not match freeze state: {error:#}"),
+            );
+            return Ok(None);
+        }
+        return Err(error);
+    }
     let local_is_incoming_participant = boundary_output
         .players()
         .position(local_consensus_key)
         .is_some();
-    match load_pending_dkg_state(storage_dir, key_backend)? {
-        Some((_, _, pending_output)) => {
-            dkg_manager::assert_canonical_output(
+    match load_pending_dkg_state(storage_dir, key_backend) {
+        Ok(Some((_, _, pending_output))) => {
+            if let Err(error) = dkg_manager::assert_canonical_output(
                 &pending_output,
                 &boundary_output,
                 "recovered pending DKG material",
-            )?;
+            ) {
+                quarantine_pending_dkg_boundary_snapshot(
+                    storage_dir,
+                    key_backend,
+                    &format!("unfinalized pending DKG material does not match pending boundary: {error:#}"),
+                );
+                return Ok(None);
+            }
         }
-        None if local_is_incoming_participant => {
-            return Err(
-                crate::errors::StackDkgError::PendingBoundaryMissingMatchingPrivateMaterial.into(),
+        Ok(None) if local_is_incoming_participant => {
+            quarantine_pending_dkg_boundary_snapshot(
+                storage_dir,
+                key_backend,
+                "unfinalized pending DKG boundary missing local private material",
             );
+            return Ok(None);
         }
-        None => {
+        Ok(None) => {
             info!(
                 epoch = snapshot.artifact.epoch,
                 dkg_cycle = snapshot.artifact.dkg_cycle,
                 "recovered dealer-only pending DKG boundary without incoming private share"
             );
+        }
+        Err(error) => {
+            quarantine_pending_dkg_boundary_snapshot(
+                storage_dir,
+                key_backend,
+                &format!(
+                    "unfinalized pending DKG private state is incomplete or corrupt: {error:#}"
+                ),
+            );
+            return Ok(None);
         }
     }
     Ok(Some(snapshot))

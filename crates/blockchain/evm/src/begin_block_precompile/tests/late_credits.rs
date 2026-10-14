@@ -384,8 +384,8 @@ fn dummy_credit(fb_number: u64) -> outbe_primitives::reshare_artifact::PerBlockC
 }
 
 /// #2 defense-in-depth: a body credit whose target is outside the K-block
-/// inclusion window is FATAL (rejected before the snapshot read / BLS verify,
-/// so no snapshot seeding is needed). distance = 13 - 5 = 8 > K = 3.
+/// inclusion window is rejected via Revert (which fails the candidate block
+/// via revert_fails_block() without killing the verifier node). distance = 13 - 5 = 8 > K = 3.
 #[test]
 fn late_finalize_out_of_window_credit_is_fatal() {
     let mut provider = configured_storage(13, 1_700_000_000);
@@ -396,8 +396,8 @@ fn late_finalize_out_of_window_credit_is_fatal() {
         };
         let err = run_late_finalize_credits(&ctx, &artifact).unwrap_err();
         assert!(
-            matches!(err, PrecompileError::Fatal(_)),
-            "out-of-window credit must be Fatal, got {err:?}"
+            matches!(err, PrecompileError::Revert(_)),
+            "out-of-window credit must be Revert, got {err:?}"
         );
         assert!(
             err.to_string().contains("outside inclusion window"),
@@ -407,8 +407,9 @@ fn late_finalize_out_of_window_credit_is_fatal() {
 }
 
 /// bad/unverifiable proof: an in-window, escrow-authenticated credit whose
-/// committee snapshot does not exist is FATAL (the block aborts - never a soft
-/// receipt). distance = 13 - 11 = 2 (in window). The escrow binding matches, so
+/// committee snapshot does not exist is rejected via Revert (which aborts the
+/// candidate block via revert_fails_block() without killing the node).
+/// distance = 13 - 11 = 2 (in window). The escrow binding matches, so
 /// authentication passes and the snapshot lookup is reached and fails.
 #[test]
 fn late_finalize_unverifiable_credit_is_fatal() {
@@ -438,8 +439,8 @@ fn late_finalize_unverifiable_credit_is_fatal() {
         };
         let err = run_late_finalize_credits(&ctx, &artifact).unwrap_err();
         assert!(
-            matches!(err, PrecompileError::Fatal(_)),
-            "unverifiable credit must be Fatal, got {err:?}"
+            matches!(err, PrecompileError::Revert(_)),
+            "unverifiable credit must be Revert, got {err:?}"
         );
         assert!(
             err.to_string().contains("missing committee snapshot"),

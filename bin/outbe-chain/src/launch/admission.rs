@@ -240,11 +240,32 @@ where
         finalized.number,
     )?;
     if header_hash != finalized.hash {
-        return Err(LaunchError::FinalizedTeeLeaseHeaderHashMismatch {
-            marker: finalized.hash,
-            header: header_hash,
+        // Reread once to rule out a transient multi-call provider race before
+        // declaring a canonical finalized-header conflict.
+        let Some(refreshed) = provider
+            .finalized_block_num_hash()
+            .wrap_err("reread finalized head for TEE lease admission")?
+        else {
+            return Ok(None);
+        };
+        if refreshed.number == 0 {
+            return Ok(None);
         }
-        .into());
+        let (retry_hash, retry_admission) = read_local_tee_admission_at_height(
+            provider,
+            chain_id,
+            genesis_hash,
+            identity,
+            refreshed.number,
+        )?;
+        if retry_hash != refreshed.hash {
+            return Err(LaunchError::FinalizedTeeLeaseHeaderHashMismatch {
+                marker: refreshed.hash,
+                header: retry_hash,
+            }
+            .into());
+        }
+        return Ok(Some(retry_admission));
     }
     Ok(Some(admission))
 }
@@ -276,13 +297,22 @@ where
         };
     };
 
-    let (anchor_hash, anchor_admission) = read_local_tee_admission_at_height(
+    let (mut anchor_hash, mut anchor_admission) = read_local_tee_admission_at_height(
         provider,
         chain_id,
         genesis_hash,
         identity,
         anchor.finalized_height,
     )?;
+    if anchor_hash != anchor.finalized_hash {
+        (anchor_hash, anchor_admission) = read_local_tee_admission_at_height(
+            provider,
+            chain_id,
+            genesis_hash,
+            identity,
+            anchor.finalized_height,
+        )?;
+    }
     gate.validate_and_arm(anchor_hash, anchor_admission)?;
     info!(
         anchor_height = anchor.finalized_height,

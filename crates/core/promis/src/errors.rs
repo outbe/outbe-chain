@@ -52,6 +52,19 @@ impl PromisFatalError {
 
 impl From<PromisFatalError> for PrecompileError {
     fn from(err: PromisFatalError) -> Self {
-        PrecompileError::Fatal(err.to_string())
+        let message = err.to_string();
+        match err {
+            PromisFatalError::SidecarUnavailable
+            | PromisFatalError::SidecarRequestFailed(_)
+            | PromisFatalError::EnclaveOpError(_)
+            | PromisFatalError::UnexpectedEnclaveResponse(_)
+            | PromisFatalError::EnclaveNondeterminism
+            | PromisFatalError::AttestationInvalid(_) => {
+                PrecompileError::EnclaveUnavailable(message)
+            }
+            PromisFatalError::TotalSupplyOverflow | PromisFatalError::TotalSupplyUnderflow => {
+                PrecompileError::Revert(message)
+            }
+        }
     }
 }

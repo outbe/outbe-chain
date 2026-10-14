@@ -345,17 +345,17 @@ pub enum PrecompileRouteError {
 impl From<PrecompileRouteError> for PrecompileError {
     fn from(error: PrecompileRouteError) -> Self {
         match error {
+            PrecompileRouteError::MissingBodyReadAuthority => {
+                Self::BodyReadUnavailable(error.to_string())
+            }
             PrecompileRouteError::UnregisteredStablecoinAddress
             | PrecompileRouteError::StablecoinCannotReceiveNativeValue
-            | PrecompileRouteError::StablecoinRegistryUnavailable => {
-                Self::Revert(error.to_string())
-            }
-            PrecompileRouteError::MissingBodyReadAuthority
+            | PrecompileRouteError::StablecoinRegistryUnavailable
             | PrecompileRouteError::StablecoinReverseIdMismatch { .. }
             | PrecompileRouteError::StablecoinMarkerCodeMismatch { .. }
             | PrecompileRouteError::StablecoinSchemaNotInitialized { .. }
             | PrecompileRouteError::StablecoinIdentityMismatch { .. } => {
-                Self::Fatal(error.to_string())
+                Self::Revert(error.to_string())
             }
         }
     }
@@ -584,21 +584,54 @@ impl BeginBlockPrecompileError {
 impl From<BeginBlockPrecompileError> for PrecompileError {
     fn from(error: BeginBlockPrecompileError) -> Self {
         match error {
-            BeginBlockPrecompileError::InvalidSystemCaller
+            BeginBlockPrecompileError::MissingPreloadedExecutionSummary { .. }
+            | BeginBlockPrecompileError::OcompLifecycleBeginMissingScope
+            | BeginBlockPrecompileError::OcompTerminalRequestMissingSealAuthority
+            | BeginBlockPrecompileError::MissingCycleBodyReadAuthority
+            | BeginBlockPrecompileError::MissingRewardsGemDeliveryBodyReadAuthority
+            | BeginBlockPrecompileError::MissingVerifiedParentStateRoot => {
+                Self::BodyReadUnavailable(error.to_string())
+            }
+            BeginBlockPrecompileError::InvalidTeeChainSpecAuthority(_)
+            | BeginBlockPrecompileError::InvalidActiveTeePolicy(_)
+            | BeginBlockPrecompileError::InvalidSystemCaller
             | BeginBlockPrecompileError::NativeValueRejected
+            | BeginBlockPrecompileError::InvalidSystemTxInput(_)
+            | BeginBlockPrecompileError::ValueExceedsU64 { .. }
+            | BeginBlockPrecompileError::ProposerNotConsensusParticipant { .. }
+            | BeginBlockPrecompileError::IdenticalReplayUnexpectedProgress { .. }
+            | BeginBlockPrecompileError::ProgressGap { .. }
+            | BeginBlockPrecompileError::RequiresBlockNumberAtLeastTwo
+            | BeginBlockPrecompileError::BlockNumberUnderflow
+            | BeginBlockPrecompileError::TargetImmediateParentMismatch { .. }
+            | BeginBlockPrecompileError::ZeroFinalizedBlockHash
+            | BeginBlockPrecompileError::LateCreditEpochMismatch { .. }
+            | BeginBlockPrecompileError::LateCreditCommitteeSetHashMismatch { .. }
+            | BeginBlockPrecompileError::LateCreditViewMismatch { .. }
+            | BeginBlockPrecompileError::LateCreditParentViewMismatch { .. }
+            | BeginBlockPrecompileError::LateCreditMissingEscrow { .. }
+            | BeginBlockPrecompileError::LateCreditFbHashMismatch { .. }
+            | BeginBlockPrecompileError::LateCreditFbNumberAtOrAboveBlock { .. }
+            | BeginBlockPrecompileError::LateCreditOutsideInclusionWindow { .. }
+            | BeginBlockPrecompileError::LateCreditInclusionDistanceExceedsU8 { .. }
+            | BeginBlockPrecompileError::LateCreditMissingCommitteeSnapshot { .. }
+            | BeginBlockPrecompileError::LateCreditProofVerifyFailed { .. }
+            | BeginBlockPrecompileError::LateCreditSignerIndexOutOfRange { .. }
             | BeginBlockPrecompileError::Ost3NotActive
             | BeginBlockPrecompileError::Ost3PolicyScheduleMismatch
             | BeginBlockPrecompileError::TeeRegistryAlreadyBootstrapped
             | BeginBlockPrecompileError::TeeCommitteeSnapshotBlockMismatch { .. }
             | BeginBlockPrecompileError::TeePayloadPolicyNotAuthoritative
+            | BeginBlockPrecompileError::TeeCannotProduceSigningHash(_)
             | BeginBlockPrecompileError::TeeInvalidCommitteeSignature { .. }
             | BeginBlockPrecompileError::TeeMissingEpoch0CommitteeSnapshot
             | BeginBlockPrecompileError::TeeCommitteeSnapshotHashMismatch
+            | BeginBlockPrecompileError::TeeCannotReconstructEvidence { .. }
+            | BeginBlockPrecompileError::TeeCannotHashAuthoritativePolicy(_)
             | BeginBlockPrecompileError::TeeEmptyActiveConsensusCommittee
             | BeginBlockPrecompileError::TeeParticipantsMismatchActiveCommittee => {
                 Self::Revert(error.to_string())
             }
-            _ => Self::Fatal(error.to_string()),
         }
     }
 }
@@ -676,7 +709,38 @@ pub enum ExecutorHookError {
 
 impl From<ExecutorHookError> for PrecompileError {
     fn from(error: ExecutorHookError) -> Self {
-        Self::Fatal(error.to_string())
+        match error {
+            ExecutorHookError::SignerBitmapLengthMismatch
+            | ExecutorHookError::DuplicateCommitteeAddresses
+            | ExecutorHookError::UnregisteredCommitteeMember { .. }
+            | ExecutorHookError::MissedProposerNotInCommittee { .. }
+            | ExecutorHookError::NonBinarySignerBitmapEntry
+            | ExecutorHookError::TeeExpiryExclusionsHashMismatch { .. }
+            | ExecutorHookError::ActiveSetHashMismatch { .. }
+            | ExecutorHookError::VrfGroupPublicKeyHashMismatch { .. }
+            | ExecutorHookError::CommitteeSetHashMismatch { .. }
+            | ExecutorHookError::ActiveSetHashChangedWithoutValidatorSetChange { .. }
+            | ExecutorHookError::InvalidBoundaryEpochTransition { .. }
+            | ExecutorHookError::UnregisteredBoundaryValidator { .. } => {
+                Self::Revert(error.to_string())
+            }
+            ExecutorHookError::ValidatorSetEpochExceedsU64
+            | ExecutorHookError::ValidatorSetEpochOverflow
+            | ExecutorHookError::SealOutputEvmRootMismatch { .. }
+            | ExecutorHookError::StakingMinStakeUninitialized
+            | ExecutorHookError::GenesisValidatorStakeMismatch { .. }
+            | ExecutorHookError::GenesisTotalStakeOverflow
+            | ExecutorHookError::GenesisTotalStakedMismatch { .. }
+            | ExecutorHookError::ValidatorSetUninitializedInGenesis
+            | ExecutorHookError::GenesisEpochLengthMismatch { .. }
+            | ExecutorHookError::GenesisActiveConsensusCountMismatch { .. }
+            | ExecutorHookError::MissingGenesisValidator { .. }
+            | ExecutorHookError::GenesisConsensusPubkeyMismatch { .. }
+            | ExecutorHookError::GenesisValidatorNotActive { .. }
+            | ExecutorHookError::GenesisValidatorStakeBelowMinimum { .. } => {
+                Self::Fatal(error.to_string())
+            }
+        }
     }
 }
 
@@ -792,14 +856,16 @@ impl CtxStorageError {
 impl From<CtxStorageError> for PrecompileError {
     fn from(error: CtxStorageError) -> Self {
         match error {
-            CtxStorageError::MetadosisMutationPurposeNotEntitled { .. }
+            CtxStorageError::InsufficientBalanceForTransfer { .. }
+            | CtxStorageError::InsufficientBalanceForBurn { .. }
+            | CtxStorageError::MetadosisMutationPurposeNotEntitled { .. }
             | CtxStorageError::MetadosisMutationFrameNotActive
             | CtxStorageError::MetadosisMutationFrameIdentityMismatch
             | CtxStorageError::MetadosisMutationFrameScopeMismatch
             | CtxStorageError::LysisActivationFrameNotEntitled
-            | CtxStorageError::LysisActivationFrameIdentityMismatch
-            | CtxStorageError::InsufficientBalanceForTransfer { .. }
-            | CtxStorageError::InsufficientBalanceForBurn { .. } => Self::Fatal(error.to_string()),
+            | CtxStorageError::LysisActivationFrameIdentityMismatch => {
+                Self::Revert(error.to_string())
+            }
             CtxStorageError::StorageOperation(_)
             | CtxStorageError::BlockHashFailed { .. }
             | CtxStorageError::TransferFailed(_)

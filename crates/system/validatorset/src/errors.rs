@@ -772,77 +772,7 @@ pub enum ValidatorSetError {
 impl ValidatorSetError {
     /// Returns true when the error represents fatal state corruption or invariant failure.
     pub const fn is_fatal(&self) -> bool {
-        matches!(
-            self,
-            Self::FinalizedParticipationRingSeqOverflow
-                | Self::NonZeroOcompSnapshotPubkeyPadding
-                | Self::OcompSnapshotMemberCountExceedsU16
-                | Self::ActiveValidatorMissingOcompRegistration { .. }
-                | Self::CannotDeriveOcompIdentityForActiveValidator { .. }
-                | Self::ActiveValidatorStaleOrInvalidOcompRegistration { .. }
-                | Self::SnapshotExistsFlagWithoutRecord
-                | Self::CommitteeSnapshotReplayMismatch { .. }
-                | Self::StoredOcompSnapshotMemberCountExceedsU16
-                | Self::UnknownValidatorStatus { .. }
-                | Self::CorruptValidatorState { .. }
-                | Self::UnregisteredLifecycleNoStatus
-                | Self::TeeExpiryExclusionsExceedCap { .. }
-                | Self::TeeExpiryExclusionsNotUniqueNonZero
-                | Self::TeeExpiredValidatorInNewActiveSet { .. }
-                | Self::TeeExpiryExclusionUnregistered { .. }
-                | Self::CertifiedActiveValidatorWithoutOcomp { .. }
-                | Self::BoundaryRetainedValidatorExitedBeforeFreeze { .. }
-                | Self::BoundaryRetainedValidatorJailedBeforeFreeze { .. }
-                | Self::BoundaryIncludedIneligibleValidator { .. }
-                | Self::BoundaryParticipantMembershipMismatch { .. }
-                | Self::TeeExpiryExclusionIneligibleStatus { .. }
-                | Self::BoundaryOmittedActiveValidator { .. }
-                | Self::BoundaryOmittedValidatorExitedAfterFreeze { .. }
-                | Self::BoundaryOmittedValidatorJailedAfterFreeze { .. }
-                | Self::ExitingValidatorMissingDeactivationHeight { .. }
-                | Self::ValidatorDeactivationHeightZero
-                | Self::InactiveValidatorMissingDeactivationHeight { .. }
-                | Self::InactiveCleanupHeightOverflow
-                | Self::ActiveValidatorMissingStakeProjection
-                | Self::TeeExpirySweepIneligibleStatus { .. }
-                | Self::RegisteredValidatorMissingHistory
-                | Self::SlashCountOverflow
-                | Self::OcompMissCountOverflow
-                | Self::OcompRecoveryDeadlineOverflow
-                | Self::OcompRecoveryResolutionDeadlineMismatch
-                | Self::EpochNumberOverflow
-                | Self::ParticipationCounterOverflow { .. }
-                | Self::CannotProjectAbsentValidator
-                | Self::RegisteredValidatorMissingConsensusPublicKey
-                | Self::ValidatorRegistryIndexEmpty { .. }
-                | Self::ValidatorRegistryReverseIndexMismatch { .. }
-                | Self::EpochNumberExceedsU64
-                | Self::RegisteredValidatorMissingConsensusPubkey
-                | Self::ValidatorIdentityHashError { .. }
-                | Self::InconsistentOcompKeyReservation { .. }
-                | Self::FounderOcompRegistrationsCountMismatch { .. }
-                | Self::AllocateOcompFounderImport
-                | Self::PartialOcompFounderRegistrationImport
-                | Self::PartialOrConflictingOcompFounderState { .. }
-                | Self::InvalidOcompFounderPop { .. }
-                | Self::OcompFounderChainBindingMismatch
-                | Self::DeriveOcompFounderIdentity { .. }
-                | Self::OcompFounderIdentityMismatch { .. }
-                | Self::DuplicateOcompFounderIdentityOrKey
-                | Self::EncodeCanonicalOcompFounderRegistration { .. }
-                | Self::StoredOcompRegistrationInvalid { .. }
-                | Self::ValidatorRegistryIndexExceedsCount { .. }
-                | Self::ValidatorRegistryForwardIndexMismatch { .. }
-                | Self::ValidatorConsensusPubkeyReverseMismatch { .. }
-                | Self::LifecycleTransitionChangedRegistryIdentity
-                | Self::CannotPersistAbsentLifecycle
-                | Self::RegisteredValidatorMissingRegistryIndex
-                | Self::InconsistentRadicleNodeIdReverseBinding
-                | Self::ReregistrationCooldownHeightOverflow
-                | Self::UnregisteredValidatorRetainsRadicleReservation
-                | Self::ValidatorCountOverflow
-                | Self::ValidatorRegistryIndexZero
-        )
+        matches!(self, Self::CommitteeSnapshotReplayMismatch { .. })
     }
 
     /// Builds a fatal error when OCOMP identity derivation fails for an active validator.

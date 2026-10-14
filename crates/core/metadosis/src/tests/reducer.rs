@@ -227,7 +227,7 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
                 limit_final: true,
             },
         ),
-        Err(outbe_primitives::error::PrecompileError::Fatal(_))
+        Err(outbe_primitives::error::PrecompileError::Revert(_))
     ));
 
     let waiting_without_admission = reduce_outer_wwd(

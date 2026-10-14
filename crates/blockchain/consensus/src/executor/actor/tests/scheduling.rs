@@ -78,6 +78,7 @@ fn run_live_loop_propagates_fatal_executor_error() {
         let mut actor = super::ExecutorActor {
             context: context.child("test"),
             engine,
+            genesis_hash: genesis,
             state: LastCanonicalized::new(genesis),
             mailbox_rx,
             execution_finalized_height_tx: None,
@@ -142,6 +143,7 @@ fn mailbox_updates_are_processed_before_ready_heartbeat() {
         let mut actor = super::ExecutorActor {
             context: context.child("test"),
             engine,
+            genesis_hash: genesis,
             state: LastCanonicalized::new(genesis),
             mailbox_rx,
             execution_finalized_height_tx: None,

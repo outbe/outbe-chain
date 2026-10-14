@@ -42,6 +42,7 @@ pub struct RecoveredFinalizedState {
 pub struct ExecutorActor<E> {
     context: E,
     engine: EngineHandle,
+    genesis_hash: B256,
     state: LastCanonicalized,
     mailbox_rx: futures::channel::mpsc::UnboundedReceiver<Message>,
     // Intentionally `tokio::sync::mpsc`: this height-signal channel is created and
@@ -91,6 +92,7 @@ where
         let actor = Self {
             context,
             engine,
+            genesis_hash,
             state,
             mailbox_rx: rx,
             execution_finalized_height_tx,
@@ -134,6 +136,7 @@ where
         finalized_height: u64,
         finalized_hash: B256,
     ) -> Self {
+        self.genesis_hash = genesis_hash;
         self.state =
             LastCanonicalized::from_recovered(genesis_hash, finalized_height, finalized_hash);
         self

@@ -153,7 +153,7 @@ mod tests {
         let expected = format!("unexpected enclave response: {wrong_for_gratis:?}");
         assert!(matches!(
             validate_response(BalanceOperation::Gratis, hash, &key, &wrong_for_gratis),
-            Err(PrecompileError::Fatal(message)) if message == expected
+            Err(PrecompileError::EnclaveUnavailable(message)) if message == expected
         ));
         let wrong_for_promis = EnclaveResponse::GratisOpApplied {
             result: Box::new(gratis_result(B256::ZERO)),
@@ -161,12 +161,12 @@ mod tests {
         let expected = format!("unexpected enclave response: {wrong_for_promis:?}");
         assert!(matches!(
             validate_response(BalanceOperation::Promis, hash, &key, &wrong_for_promis),
-            Err(PrecompileError::Fatal(message)) if message == expected
+            Err(PrecompileError::EnclaveUnavailable(message)) if message == expected
         ));
     }
 
     #[test]
-    fn an_enclave_refusal_or_outage_is_unavailable_and_a_bad_answer_is_fatal() {
+    fn an_enclave_refusal_or_outage_is_unavailable_and_a_bad_answer_is_unavailable() {
         for error in [
             TransportError::Unavailable("enclave is not initialized".into()),
             TransportError::EnclaveError("no resident group key".into()),
@@ -185,7 +185,10 @@ mod tests {
             TransportError::UnexpectedResponse,
             TransportError::GratisOpAttestation("x".into()),
         ] {
-            assert!(matches!(request_failure(error), PrecompileError::Fatal(_)));
+            assert!(matches!(
+                request_failure(error),
+                PrecompileError::EnclaveUnavailable(_)
+            ));
         }
     }
 
@@ -210,7 +213,7 @@ mod tests {
         for (operation, response) in responses {
             assert!(matches!(
                 validate_response(operation, expected_hash, &key, &response),
-                Err(PrecompileError::Fatal(message)) if message == "tee_enclave_nondeterminism"
+                Err(PrecompileError::EnclaveUnavailable(message)) if message == "tee_enclave_nondeterminism"
             ));
         }
     }
@@ -224,7 +227,7 @@ mod tests {
         };
         assert!(matches!(
             validate_response(BalanceOperation::Gratis, hash, &key, &gratis),
-            Err(PrecompileError::Fatal(message))
+            Err(PrecompileError::EnclaveUnavailable(message))
                 if message.starts_with("tee_gratis_attestation_invalid:")
         ));
         let promis = EnclaveResponse::PromisOpApplied {
@@ -232,7 +235,7 @@ mod tests {
         };
         assert!(matches!(
             validate_response(BalanceOperation::Promis, hash, &key, &promis),
-            Err(PrecompileError::Fatal(message))
+            Err(PrecompileError::EnclaveUnavailable(message))
                 if message.starts_with("tee_promis_attestation_invalid:")
         ));
 

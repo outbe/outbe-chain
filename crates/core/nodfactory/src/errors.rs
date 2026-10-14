@@ -187,22 +187,8 @@ impl NodFactoryError {
 impl From<NodFactoryError> for PrecompileError {
     fn from(value: NodFactoryError) -> Self {
         match value {
-            fatal @ (NodFactoryError::MaterializationFifoBoundsMalformed
-            | NodFactoryError::MaterializationFifoTailOccupied
-            | NodFactoryError::MaterializationFifoTailOverflow
-            | NodFactoryError::InvalidCertifiedProtocolValue(_)
-            | NodFactoryError::MaterializationAttemptCounterOverflow
-            | NodFactoryError::MaterializationHeadProjectionMissing
-            | NodFactoryError::MaterializationTestLoadMismatch
-            | NodFactoryError::MaterializationEnclave(_)
-            | NodFactoryError::MaterializationActionCountOverflow
-            | NodFactoryError::MaterializationCursorOverflow
-            | NodFactoryError::MaterializationCursorExceedsCount
-            | NodFactoryError::MaterializationFifoChanged
-            | NodFactoryError::MaterializationFifoHeadOverflow
-            | NodFactoryError::EncodeMaterializationHead(_)
-            | NodFactoryError::MaterializationBypassedDispatcher) => {
-                PrecompileError::Fatal(fatal.to_string())
+            enclave @ NodFactoryError::MaterializationEnclave(_) => {
+                PrecompileError::EnclaveUnavailable(enclave.to_string())
             }
             other => PrecompileError::Revert(other.to_string()),
         }

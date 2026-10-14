@@ -147,7 +147,22 @@ where
         }
 
         if fcu_response.is_invalid() {
-            warn!(?fcu_response, "forkchoice update returned invalid status");
+            match head_or_finalized {
+                HeadOrFinalized::Head => {
+                    warn!(
+                        ?fcu_response,
+                        "head forkchoice update returned invalid status"
+                    );
+                }
+                HeadOrFinalized::Finalized => {
+                    error!(
+                        ?fcu_response,
+                        finalized_block_hash = %new_state.forkchoice.finalized_block_hash,
+                        finalized_height = %new_state.finalized_height,
+                        "finalized forkchoice update returned invalid status"
+                    );
+                }
+            }
             maybe_build.send_error(
                 crate::errors::ExecutorError::FcuInvalid(format!(
                     "{:?}",
@@ -215,11 +230,21 @@ where
                     return Ok(());
                 }
                 if height == Height::zero() {
-                    let expected = self.state.forkchoice.finalized_block_hash;
+                    if digest.0 == self.genesis_hash {
+                        info!(
+                            %height,
+                            %digest,
+                            "marshal-delivered genesis block matches canonical genesis hash; acknowledging without reexecution"
+                        );
+                        ack.acknowledge();
+                        self.notify_finalized_subscribers(height);
+                        self.notify_execution_finalized(height);
+                        return Ok(());
+                    }
                     return Err(crate::errors::ExecutorError::UnexpectedGenesisAnchor {
                         digest,
                         finalized_height: self.state.finalized_height,
-                        expected,
+                        expected: self.genesis_hash,
                     }
                     .into());
                 }
@@ -341,15 +366,19 @@ where
                             ?status,
                             "finalized block accepted by execution layer"
                         );
-                    } else if status.is_syncing() {
+                    } else if status.is_syncing()
+                        || matches!(
+                            status.status,
+                            alloy_rpc_types_engine::PayloadStatusEnum::Accepted
+                        )
+                    {
                         warn!(
                             height = %height,
                             digest = %digest,
                             ?status,
-                            "execution layer syncing on finalized block"
+                            "execution layer syncing/accepted on finalized block"
                         );
-                    }
-                    if !status.is_valid() && !status.is_syncing() {
+                    } else {
                         return Err(crate::errors::ExecutorError::FinalizedBlockRejected {
                             height,
                             digest,

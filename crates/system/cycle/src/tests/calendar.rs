@@ -130,7 +130,7 @@ fn contiguous_day_settlement_failure_preserves_the_calendar_cursor() {
         account_parent(&fire, 3);
         assert!(matches!(
             dispatch_triggers(&fire),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
 
         let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();

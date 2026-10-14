@@ -62,6 +62,20 @@ pub enum FinalizedFrameError {
     },
 }
 
+impl FinalizedFrameError {
+    /// Returns true when the error reflects transient provider lag rather than
+    /// a canonical history or receipt conflict.
+    #[must_use]
+    pub const fn is_transient_unavailability(&self) -> bool {
+        matches!(
+            self,
+            Self::CanonicalBlockUnavailable { .. }
+                | Self::BlockUnavailableByHash { .. }
+                | Self::ReceiptsUnavailable { .. }
+        )
+    }
+}
+
 /// This enum defines errors that [`crate::shutdown::NodeShutdown`] returns.
 #[derive(Debug, thiserror::Error)]
 pub enum NodeShutdownError {

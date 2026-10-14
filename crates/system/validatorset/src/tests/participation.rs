@@ -362,7 +362,7 @@ fn finalized_participation_ring_cursor_overflow_is_fatal_after_the_ring_write() 
     let mut provider = seeded_participation_ring(u64::MAX, evicted, &[evicted]);
     let result = record_ring_absence(&mut provider, fb_hash);
     assert!(
-        matches!(&result, Err(PrecompileError::Fatal(message)) if message == "finalized participation ring sequence overflow"),
+        matches!(&result, Err(PrecompileError::Revert(message)) if message == "finalized participation ring sequence overflow"),
         "{result:?}"
     );
     assert_eq!(

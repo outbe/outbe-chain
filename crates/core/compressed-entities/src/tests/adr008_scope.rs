@@ -198,6 +198,6 @@ fn factory_tree_identity_mismatch_is_corruption_not_readiness() {
         .unwrap();
     assert!(matches!(
         scope.open_exact_parent(requested_root),
-        Err(PrecompileError::Fatal(_))
+        Err(PrecompileError::TreeUnavailable(_))
     ));
 }

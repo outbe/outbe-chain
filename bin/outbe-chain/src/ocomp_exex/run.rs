@@ -423,11 +423,30 @@ where
                         .checked_add(1)
                         .ok_or(OcompExExError::UnifiedFinalizedHeightOverflow)?;
                     let source = frame_source.clone();
-                    let batch = tokio::task::spawn_blocking(move || {
+                    let batch = match tokio::task::spawn_blocking(move || {
                         read_bounded_finalized_frames(&source, next_height, target)
                     })
                     .await
-                    .wrap_err("unified finalized reader worker failed")??;
+                    .wrap_err("unified finalized reader worker failed")?
+                    {
+                        Ok(batch) => batch,
+                        Err(error)
+                            if error
+                                .downcast_ref::<outbe_node::errors::FinalizedFrameError>()
+                                .is_some_and(
+                                    outbe_node::errors::FinalizedFrameError::is_transient_unavailability,
+                                ) =>
+                        {
+                            warn!(
+                                %error,
+                                next_height,
+                                target_height = target.number,
+                                "unified finalized frame temporarily unavailable from provider; retrying on next poll"
+                            );
+                            return Ok(());
+                        }
+                        Err(error) => return Err(error),
+                    };
                     if let Some(batch) = batch {
                         histogram!("outbe_ocomp_finalized_reader_batch_blocks")
                             .record(batch.frames().len() as f64);

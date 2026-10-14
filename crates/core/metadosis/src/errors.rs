@@ -104,9 +104,9 @@ impl From<MetadosisError> for PrecompileError {
 
 pub type MetadosisResult<T> = std::result::Result<T, MetadosisError>;
 
-/// Reports fatal storage corruption when persisted state violates an invariant.
+/// Reports storage corruption when persisted state violates an invariant.
 pub(crate) fn storage_corruption(message: impl std::fmt::Display) -> PrecompileError {
-    PrecompileError::Fatal(message.to_string())
+    PrecompileError::Revert(message.to_string())
 }
 
 pub(crate) fn storage_corruption_message(message: impl std::fmt::Display) -> PrecompileError {
@@ -266,7 +266,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn durable_invariant_errors_are_fatal() {
+    fn durable_invariant_errors_are_revert() {
         let wwd = WorldwideDay::new(2026_0731);
         let errors = [
             MetadosisError::OcompLimitReceiptMismatch,
@@ -281,7 +281,7 @@ mod tests {
 
         for error in errors {
             let error: PrecompileError = error.into();
-            assert!(matches!(error, PrecompileError::Fatal(_)));
+            assert!(matches!(error, PrecompileError::Revert(_)));
         }
     }
 

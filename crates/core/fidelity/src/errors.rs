@@ -21,6 +21,7 @@ impl From<FidelityError> for PrecompileError {
 pub(crate) fn surface_query_error(err: PrecompileError) -> PrecompileError {
     match err {
         PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => err,
+        err if err.is_node_local() => err,
         other => FidelityError::QueryFailed(other.to_string()).into(),
     }
 }
@@ -72,6 +73,46 @@ impl FidelityFatalError {
 
 impl From<FidelityFatalError> for PrecompileError {
     fn from(err: FidelityFatalError) -> Self {
-        PrecompileError::Fatal(err.to_string())
+        let message = err.to_string();
+        match err {
+            FidelityFatalError::SidecarUnavailable { .. }
+            | FidelityFatalError::SidecarRequestFailed { .. }
+            | FidelityFatalError::EnclaveOpError { .. }
+            | FidelityFatalError::UnexpectedEnclaveResponse(_)
+            | FidelityFatalError::EnclaveNondeterminism
+            | FidelityFatalError::AttestationInvalid(_) => {
+                PrecompileError::EnclaveUnavailable(message)
+            }
+            FidelityFatalError::SnapshotReturnedNoLeague => PrecompileError::Revert(message),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn surface_query_error_preserves_node_local_errors() {
+        let enclave_err: PrecompileError = FidelityFatalError::SidecarUnavailable {
+            context: "QueryFidelityIndex",
+        }
+        .into();
+        assert!(matches!(
+            surface_query_error(enclave_err),
+            PrecompileError::EnclaveUnavailable(_)
+        ));
+
+        let storage_err = PrecompileError::Storage("db read failed".into());
+        assert!(matches!(
+            surface_query_error(storage_err),
+            PrecompileError::Storage(_)
+        ));
+
+        let fatal_err = PrecompileError::Fatal("auth rejected".into());
+        assert!(matches!(
+            surface_query_error(fatal_err),
+            PrecompileError::Revert(_)
+        ));
     }
 }

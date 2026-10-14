@@ -15,7 +15,7 @@ use outbe_tee::protocol::{
     FidelitySnapshotRequest,
 };
 
-use crate::errors::FidelityFatalError;
+use crate::errors::{FidelityError, FidelityFatalError};
 
 /// Apply a standalone Fidelity cohort op inside the enclave and validate the
 /// response (determinism recheck + attestation verify-then-discard).
@@ -136,10 +136,9 @@ pub(crate) fn query_index(req: FidelityQueryRequest) -> Result<FidelityQueryResu
     let result = match response {
         EnclaveResponse::FidelityIndexQueried { result } => *result,
         EnclaveResponse::Error { message } => {
-            return Err(FidelityFatalError::EnclaveOpError {
-                context: "QueryFidelityIndex",
-                message,
-            }
+            return Err(FidelityError::QueryFailed(format!(
+                "enclave QueryFidelityIndex error: {message}"
+            ))
             .into())
         }
         other => return Err(FidelityFatalError::UnexpectedEnclaveResponse(Box::new(other)).into()),
@@ -241,7 +240,8 @@ pub mod test_enclave {
         STATE_KEY.with(|k| {
             k.borrow().map(|key| {
                 outbe_tee_enclave::fidelity::query_index(&key, dev_chain(), req).map_err(|e| {
-                    FidelityFatalError::enclave_op_error("QueryFidelityIndex", e).into()
+                    FidelityError::QueryFailed(format!("enclave QueryFidelityIndex error: {e}"))
+                        .into()
                 })
             })
         })

@@ -118,15 +118,15 @@ fn malformed_p2p_fails_all_complete_record_projections_closed() {
         // Malformed coupled P2P fields therefore fail closed consistently.
         assert!(matches!(
             vs.get_validator(val_addr),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
         assert!(matches!(
             vs.get_all_validators(),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
         assert!(matches!(
             vs.validator_state(val_addr),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     });
 }
@@ -141,7 +141,7 @@ fn typed_storage_adapter_rejects_pre_registration_stake_and_fails_closed() {
 
         assert!(matches!(
             vs.validator_state(addr),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
 
         vs.val_stake.write(&addr, U256::ZERO).unwrap();
@@ -154,14 +154,14 @@ fn typed_storage_adapter_rejects_pre_registration_stake_and_fails_closed() {
         vs.val_join_confirmed.write(&addr, true).unwrap();
         assert!(matches!(
             vs.validator_state(addr),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
 
         vs.val_join_confirmed.write(&addr, false).unwrap();
         vs.val_status.write(&addr, 7).unwrap();
         assert!(matches!(
             vs.validator_state(addr),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     });
 }
@@ -179,11 +179,11 @@ fn full_and_hot_lifecycle_reads_both_reject_combined_residue() {
 
         assert!(matches!(
             vs.validator_state(addr),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
         assert!(matches!(
             vs.validator_lifecycle(addr),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     });
 }

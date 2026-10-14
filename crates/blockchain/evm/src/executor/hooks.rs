@@ -182,16 +182,36 @@ where
 
     let result = storage.with_checkpoint(|| hooks(&runtime_ctx));
 
-    // Preserve the concrete hook error across the executor boundary. Payload
-    // construction must distinguish node-local readiness (for example a stale
-    // compressed-tree parent) from deterministic corruption. Stringifying here
-    // destroys that distinction and turns a cancellable job into an alarm.
-    let output = result.map_err(BlockExecutionError::other)?;
+    // Preserve node-local and fatal hook errors across the executor boundary,
+    // while mapping candidate/deterministic hook errors to BlockValidationError
+    // so an invalid candidate payload cannot abort the executor actor.
+    let output = result.map_err(|error| match error {
+        PrecompileError::Revert(_)
+        | PrecompileError::RevertBytes(_)
+        | PrecompileError::Halt(_)
+        | PrecompileError::OutOfGas
+        | PrecompileError::WriteProtection
+        | PrecompileError::BodyReadCorruption(_) => {
+            BlockExecutionError::from(BlockValidationError::msg(error.to_string()))
+        }
+        error
+            if error.is_node_local()
+                || matches!(
+                    error,
+                    PrecompileError::Fatal(_)
+                        | PrecompileError::TransactionCeWorkLimitExceeded
+                        | PrecompileError::BlockCeWorkCapacityExhausted
+                        | PrecompileError::SubCall(_)
+                        | PrecompileError::Unsupported
+                ) =>
+        {
+            BlockExecutionError::other(error)
+        }
+        error => BlockExecutionError::from(BlockValidationError::msg(error.to_string())),
+    })?;
 
     provider.flush().map_err(|e| {
-        BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-            format!("outbe hook flush: {e}").into(),
-        ))
+        BlockExecutionError::other(PrecompileError::storage(format!("outbe hook flush: {e}")))
     })?;
 
     let changes = provider.take_committed_changes();

@@ -255,7 +255,7 @@ fn corrupted_directional_links_and_descriptors_fail_closed_without_recursion() {
         assert!(!registry.is_member(directional, account).unwrap());
         assert!(matches!(
             registry.policy_type(directional),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     });
 }

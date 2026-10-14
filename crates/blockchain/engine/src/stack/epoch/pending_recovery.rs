@@ -53,7 +53,7 @@ where
                 recovery_anchor_height,
                 self.dkg_rotation_params.activation_grace_blocks,
             )?;
-            let startup_plan = startup_pending_dkg_epoch_plan(
+            let startup_plan = match startup_pending_dkg_epoch_plan(
                 self.state.current_epoch,
                 pending_epoch,
                 crate::stack::dkg::handoff::StartupPendingDkgHandoff {
@@ -62,7 +62,29 @@ where
                     activation_grace_blocks: self.dkg_rotation_params.activation_grace_blocks,
                     exact_carrier_height,
                 },
-            )?;
+            ) {
+                Ok(plan) => plan,
+                Err(error)
+                    if matches!(
+                        error.downcast_ref::<crate::errors::StackDkgError>(),
+                        Some(
+                            crate::errors::StackDkgError::PendingEpochDoesNotFollowActive { .. }
+                                | crate::errors::StackDkgError::PendingEpochMissedActivationDeadline { .. }
+                        )
+                    ) =>
+                {
+                    warn!(
+                        %error,
+                        active_epoch = %self.state.current_epoch,
+                        %pending_epoch,
+                        finalized_height = recovery_anchor_height,
+                        "retiring stale or expired local pending DKG handoff during startup recovery"
+                    );
+                    let _ = retire_activated_dkg_retry_state(keys_dir, &self.key_backend);
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
 
             match startup_plan {
                 StartupPendingDkgEpochPlan::Defer {
