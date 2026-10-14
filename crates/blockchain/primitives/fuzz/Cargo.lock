@@ -5899,19 +5899,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-ocomp-protocol"
-version = "0.1.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "k256",
- "rustix",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "outbe-primitives"
 version = "0.1.0"
 dependencies = [
@@ -5928,7 +5915,6 @@ dependencies = [
  "commonware-p2p",
  "hex",
  "k256",
- "outbe-ocomp-protocol",
  "reth-codecs",
  "reth-ethereum",
  "reth-ethereum-engine-primitives",
