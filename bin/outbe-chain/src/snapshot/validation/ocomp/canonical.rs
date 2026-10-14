@@ -59,43 +59,36 @@ pub(crate) struct CanonicalOcompAudit {
     pub nod: NodInputsAudit,
 }
 
-pub(crate) fn verify_canonical_obligations(
-    state: &CanonicalState<'_>,
+fn pin_stage(pin: Option<&CanonicalPinAudit>) -> CanonicalLocalPinStage {
+    use outbe_node::ocomp::retention::PinStateV1;
+    match pin.map(|pin| pin.record.state) {
+        None => CanonicalLocalPinStage::Absent,
+        Some(PinStateV1::AwaitingJobFinalization { .. }) => {
+            CanonicalLocalPinStage::AwaitingJobFinalization
+        }
+        Some(PinStateV1::Finalized { .. }) => CanonicalLocalPinStage::Finalized,
+        Some(PinStateV1::Exported { .. }) => CanonicalLocalPinStage::Exported,
+        Some(PinStateV1::Terminal { .. }) => CanonicalLocalPinStage::Terminal,
+        Some(PinStateV1::GcPending { .. }) => CanonicalLocalPinStage::GcPending,
+        Some(PinStateV1::Released { .. }) => CanonicalLocalPinStage::Released,
+    }
+}
+
+fn open_verified_projection_checkpoint(
     view: &crate::snapshot::native::RethReadOnlyView,
     layout: &crate::snapshot::config::RequestedLayout,
     scratch_parent: &Path,
-    maximum_records: Option<u64>,
-    mut report: Option<&mut super::super::report::ValidationReport>,
-) -> eyre::Result<CanonicalOcompAudit> {
+    report: Option<&mut super::super::report::ValidationReport>,
+) -> eyre::Result<(
+    tempfile::TempDir,
+    outbe_offchain_storage::StorageReaderHandle,
+    outbe_primitives::projection::ProjectionCheckpoint,
+)> {
     use alloy_consensus::Sealable;
-    use outbe_node::ocomp::retention::{inspect_retention_journal, PinStateV1, RetentionError};
     use outbe_offchain_data::{read_projection_state, ProjectionConfig};
     use outbe_offchain_storage::partitioned::adapters::RocksPartitionReadView;
     use outbe_offchain_storage::{PartitionedStorage, StorageReaderHandle};
-    use std::{
-        collections::{BTreeMap, BTreeSet},
-        sync::Arc,
-    };
-
-    let mut protected = layout.protected.clone();
-    protected.0.extend([
-        layout.chain_root.clone(),
-        layout.consensus_root.clone(),
-        layout.ocomp_root.clone(),
-        layout.static_files_root.clone(),
-        layout.execution_rocksdb_root.clone(),
-    ]);
-    if let Some(projection) = &layout.projection {
-        protected.0.push(projection.root.clone());
-    }
-    // Independent canonical discovery precedes every local pin/job population.
-    let mut inventory = CanonicalInventory::scan_with_report(
-        state,
-        scratch_parent,
-        &protected,
-        maximum_records,
-        report.as_deref_mut(),
-    )?;
+    use std::sync::Arc;
 
     let location = layout
         .projection
@@ -111,8 +104,6 @@ pub(crate) fn verify_canonical_obligations(
         }
         Err(error) => return Err(error.into()),
     }
-    // Distinct from Task05's secondary. The immutable reader drops before this
-    // local TempDir. No shared source handle or mutable catch-up API is exposed.
     let secondary = tempfile::Builder::new()
         .prefix("ocomp-projection-audit-")
         .tempdir_in(scratch_parent)?;
@@ -153,7 +144,7 @@ pub(crate) fn verify_canonical_obligations(
             && p_hash == projection.block_hash,
         "OCOMP projection checkpoint differs from retained canonical header"
     );
-    if let Some(report) = report.as_deref_mut() {
+    if let Some(report) = report {
         report.observed.p = Some(outbe_snapshot::manifest::BlockIdentity {
             number: projection.block_number,
             hash: hex::encode(projection.block_hash),
@@ -163,6 +154,16 @@ pub(crate) fn verify_canonical_obligations(
                 Some(projection.block_number < observation.request_height);
         }
     }
+    Ok((secondary, reader, projection))
+}
+
+fn verify_and_record_closure(
+    view: &crate::snapshot::native::RethReadOnlyView,
+    layout: &crate::snapshot::config::RequestedLayout,
+    projection: outbe_primitives::projection::ProjectionCheckpoint,
+    maximum_records: Option<u64>,
+    report: Option<&mut super::super::report::ValidationReport>,
+) -> eyre::Result<ClosureAudit> {
     let closure = verify_closure(
         view,
         &layout
@@ -171,8 +172,7 @@ pub(crate) fn verify_canonical_obligations(
         Some(projection),
         maximum_records,
     )?;
-
-    if let Some(report) = report.as_deref_mut() {
+    if let Some(report) = report {
         let identity = |point: outbe_primitives::projection::ProjectionCheckpoint| {
             outbe_snapshot::manifest::BlockIdentity {
                 number: point.block_number,
@@ -192,22 +192,17 @@ pub(crate) fn verify_canonical_obligations(
                 });
         }
     }
+    Ok(closure)
+}
 
-    let native_parameters = layout
-        .chain
-        .genesis
-        .config
-        .extra_fields
-        .get_deserialized::<serde_json::Value>(outbe_chain_constants::GENESIS_CONFIG_KEY)
-        .transpose()?;
-    let parameters = outbe_chain_constants::GenesisProtocolParametersV1::select_for_build(
-        native_parameters.as_ref(),
-    )?;
-    // This matches embedded_runtime's private native CAS policy.
-    let cas_limits = outbe_ocomp::cas::CasLimits {
-        max_object_bytes: 1_048_576,
-        max_total_bytes: u64::MAX,
-    };
+fn load_and_verify_pins(
+    state: &CanonicalState<'_>,
+    view: &crate::snapshot::native::RethReadOnlyView,
+    layout: &crate::snapshot::config::RequestedLayout,
+    maximum_records: Option<u64>,
+) -> eyre::Result<(Vec<CanonicalPinAudit>, std::collections::BTreeMap<B256, usize>)> {
+    use outbe_node::ocomp::retention::{inspect_retention_journal, RetentionError};
+    use std::collections::BTreeMap;
 
     let records = match inspect_retention_journal(layout.consensus_root.join("ocomp_retention")) {
         Ok(journal) => journal.records,
@@ -235,18 +230,228 @@ pub(crate) fn verify_canonical_obligations(
         );
         pins.push(CanonicalPinAudit { record, authority });
     }
+    Ok((pins, pin_by_intent))
+}
 
-    let pin_stage = |pin: Option<&CanonicalPinAudit>| match pin.map(|pin| pin.record.state) {
-        None => CanonicalLocalPinStage::Absent,
-        Some(PinStateV1::AwaitingJobFinalization { .. }) => {
-            CanonicalLocalPinStage::AwaitingJobFinalization
+struct CanonicalObligationVerifier<'a> {
+    view: &'a crate::snapshot::native::RethReadOnlyView,
+    layout: &'a crate::snapshot::config::RequestedLayout,
+    reader: outbe_offchain_storage::StorageReaderHandle,
+    scratch_parent: &'a Path,
+    protected: &'a ProtectedPaths,
+    cas_limits: CasLimits,
+    maximum_records: Option<u64>,
+    checked_requests: std::collections::BTreeSet<u64>,
+    checked_leases: std::collections::BTreeSet<B256>,
+    checked_exports: std::collections::BTreeSet<B256>,
+    input_chunks: u64,
+}
+
+impl CanonicalObligationVerifier<'_> {
+    fn require_source(
+        &mut self,
+        job: &OcompJobRecordV1,
+        request_frame_required: bool,
+    ) -> eyre::Result<()> {
+        use alloy_consensus::Sealable;
+        let b = job.intent_height;
+        let header = self
+            .view
+            .header(b)?
+            .ok_or_else(|| Incomplete(format!("missing active request header B={b}")))?;
+        let hash = self
+            .view
+            .canonical_hash(b)?
+            .ok_or_else(|| Incomplete(format!("missing active request canonical hash B={b}")))?;
+        ensure!(
+            header.inner.number == b
+                && header.hash_slow() == hash
+                && job.intent.logical_evaluation_height == b
+                && job.intent.logical_evaluation_time == header.inner.timestamp,
+            "required OCOMP source has a conflicting frozen request identity"
+        );
+        if request_frame_required && !self.checked_requests.contains(&b) {
+            verify_retained_frames(
+                self.view,
+                b,
+                outbe_snapshot::manifest::BlockIdentity {
+                    number: b,
+                    hash: hex::encode(hash),
+                },
+                self.maximum_records,
+            )?;
+            self.checked_requests.insert(b);
         }
-        Some(PinStateV1::Finalized { .. }) => CanonicalLocalPinStage::Finalized,
-        Some(PinStateV1::Exported { .. }) => CanonicalLocalPinStage::Exported,
-        Some(PinStateV1::Terminal { .. }) => CanonicalLocalPinStage::Terminal,
-        Some(PinStateV1::GcPending { .. }) => CanonicalLocalPinStage::GcPending,
-        Some(PinStateV1::Released { .. }) => CanonicalLocalPinStage::Released,
+        let lease = job.intent.input_lease_id()?;
+        if !self.checked_leases.contains(&lease) {
+            verify_lease_inputs(
+                self.reader.clone(),
+                &job.intent,
+                self.scratch_parent,
+                self.protected,
+                self.maximum_records,
+            )?;
+            self.checked_leases.insert(lease);
+        }
+        Ok(())
+    }
+
+    fn require_export(
+        &mut self,
+        job: &OcompJobRecordV1,
+        authority: Option<outbe_node::ocomp::retention::ExportAuthorityV1>,
+    ) -> eyre::Result<()> {
+        let intent = job.intent.intent_id(&poc_schema_limits())?;
+        if !self.checked_exports.contains(&intent) {
+            let export = verify_export_inputs(
+                &self.layout.ocomp_root,
+                job,
+                authority,
+                self.cas_limits,
+            )?;
+            self.input_chunks = self
+                .input_chunks
+                .checked_add(export.input_chunks)
+                .ok_or_else(|| eyre::eyre!("OCOMP input chunk count overflow"))?;
+            self.checked_exports.insert(intent);
+        }
+        Ok(())
+    }
+    fn verify_pin_obligations(&mut self, pins: &[CanonicalPinAudit]) -> eyre::Result<()> {
+        use outbe_node::ocomp::retention::PinStateV1;
+        for pin in pins {
+            if pin.authority.requires_source {
+                self.require_source(&pin.authority.job, false)?;
+            }
+            if matches!(
+                pin.record.state,
+                PinStateV1::Exported { .. }
+                    | PinStateV1::Terminal {
+                        export: Some(_),
+                        ..
+                    }
+            ) {
+                self.require_export(&pin.authority.job, pin.authority.export)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_active_obligations(
+        &mut self,
+        state: &CanonicalState<'_>,
+        active_jobs: &[(B256, OcompJobRecordV1)],
+        (pins, pin_by_intent, projection_height): (
+            &[CanonicalPinAudit],
+            &std::collections::BTreeMap<B256, usize>,
+            u64,
+        ),
+        mut report: Option<&mut super::super::report::ValidationReport>,
+    ) -> eyre::Result<Vec<CanonicalActiveAudit>> {
+        let mut active = Vec::new();
+        for (active_index, (intent_id, listed)) in active_jobs.iter().enumerate() {
+            let job = state.metadosis_job(
+                *intent_id,
+                WorldwideDay::new(listed.intent.wwd),
+                listed.finalized.as_ref().map(|f| f.job_id),
+            )?;
+            let pin = pin_by_intent.get(intent_id).map(|index| &pins[*index]);
+            let saved_export = pin.and_then(|pin| pin.authority.export);
+            let receipt_present = match &job.finalized {
+                Some(finalized) => existing_file(
+                    &self
+                        .layout
+                        .ocomp_root
+                        .join("exporter-v1/receipts")
+                        .join(hex::encode(finalized.job_id))
+                        .join("receipt.ref"),
+                )?,
+                None => false,
+            };
+            let export_recorded = saved_export.is_some() || receipt_present;
+            self.require_source(&job, !export_recorded)?;
+            if let Some(report) = report.as_deref_mut() {
+                report.active_ocomp[active_index].source_verified = true;
+            }
+            let mut export_verified = false;
+            if export_recorded {
+                self.require_export(&job, saved_export)?;
+                export_verified = true;
+                if let Some(report) = report.as_deref_mut() {
+                    report.active_ocomp[active_index].export_verified = true;
+                }
+            }
+            active.push(CanonicalActiveAudit {
+                intent_id: *intent_id,
+                projection_before_request: projection_height < job.intent_height,
+                job,
+                pin_stage: pin_stage(pin),
+                source_verified: true,
+                export_verified,
+            });
+        }
+        Ok(active)
+    }
+}
+
+pub(crate) fn verify_canonical_obligations(
+    state: &CanonicalState<'_>,
+    view: &crate::snapshot::native::RethReadOnlyView,
+    (layout, scratch_parent): (&crate::snapshot::config::RequestedLayout, &Path),
+    maximum_records: Option<u64>,
+    mut report: Option<&mut super::super::report::ValidationReport>,
+) -> eyre::Result<CanonicalOcompAudit> {
+    use std::collections::BTreeSet;
+
+    let mut protected = layout.protected.clone();
+    protected.0.extend([
+        layout.chain_root.clone(),
+        layout.consensus_root.clone(),
+        layout.ocomp_root.clone(),
+        layout.static_files_root.clone(),
+        layout.execution_rocksdb_root.clone(),
+    ]);
+    if let Some(projection) = &layout.projection {
+        protected.0.push(projection.root.clone());
+    }
+    let mut inventory = CanonicalInventory::scan_with_report(
+        state,
+        scratch_parent,
+        &protected,
+        maximum_records,
+        report.as_deref_mut(),
+    )?;
+
+    let (_secondary, reader, projection) = open_verified_projection_checkpoint(
+        view,
+        layout,
+        scratch_parent,
+        report.as_deref_mut(),
+    )?;
+    let closure = verify_and_record_closure(
+        view,
+        layout,
+        projection,
+        maximum_records,
+        report.as_deref_mut(),
+    )?;
+
+    let native_parameters = layout
+        .chain
+        .genesis
+        .config
+        .extra_fields
+        .get_deserialized::<serde_json::Value>(outbe_chain_constants::GENESIS_CONFIG_KEY)
+        .transpose()?;
+    let parameters = outbe_chain_constants::GenesisProtocolParametersV1::select_for_build(
+        native_parameters.as_ref(),
+    )?;
+    let cas_limits = outbe_ocomp::cas::CasLimits {
+        max_object_bytes: 1_048_576,
+        max_total_bytes: u64::MAX,
     };
+
+    let (pins, pin_by_intent) = load_and_verify_pins(state, view, layout, maximum_records)?;
     if let Some(report) = report.as_deref_mut() {
         for ((intent_id, _), observation) in
             inventory.active_jobs().iter().zip(&mut report.active_ocomp)
@@ -256,126 +461,29 @@ pub(crate) fn verify_canonical_obligations(
         }
     }
 
-    let mut checked_requests = BTreeSet::new();
-    let mut checked_leases = BTreeSet::new();
-    let mut require_source =
-        |job: &OcompJobRecordV1, request_frame_required: bool| -> eyre::Result<()> {
-            let b = job.intent_height;
-            let header = view
-                .header(b)?
-                .ok_or_else(|| Incomplete(format!("missing active request header B={b}")))?;
-            let hash = view.canonical_hash(b)?.ok_or_else(|| {
-                Incomplete(format!("missing active request canonical hash B={b}"))
-            })?;
-            ensure!(
-                header.inner.number == b
-                    && header.hash_slow() == hash
-                    && job.intent.logical_evaluation_height == b
-                    && job.intent.logical_evaluation_time == header.inner.timestamp,
-                "required OCOMP source has a conflicting frozen request identity"
-            );
-            if request_frame_required && !checked_requests.contains(&b) {
-                verify_retained_frames(
-                    view,
-                    b,
-                    outbe_snapshot::manifest::BlockIdentity {
-                        number: b,
-                        hash: hex::encode(hash),
-                    },
-                    maximum_records,
-                )?;
-                checked_requests.insert(b);
-            }
-            let lease = job.intent.input_lease_id()?;
-            if !checked_leases.contains(&lease) {
-                verify_lease_inputs(
-                    reader.clone(),
-                    &job.intent,
-                    scratch_parent,
-                    &protected,
-                    maximum_records,
-                )?;
-                checked_leases.insert(lease);
-            }
-            Ok(())
-        };
-    let mut checked_exports = BTreeSet::new();
-    let mut input_chunks = 0_u64;
-    let mut require_export = |job: &OcompJobRecordV1, authority| -> eyre::Result<()> {
-        let intent = job.intent.intent_id(&poc_schema_limits())?;
-        if !checked_exports.contains(&intent) {
-            let export = verify_export_inputs(&layout.ocomp_root, job, authority, cas_limits)?;
-            input_chunks = input_chunks
-                .checked_add(export.input_chunks)
-                .ok_or_else(|| eyre::eyre!("OCOMP input chunk count overflow"))?;
-            checked_exports.insert(intent);
-        }
-        Ok(())
+    let mut verifier = CanonicalObligationVerifier {
+        view,
+        layout,
+        reader,
+        scratch_parent,
+        protected: &protected,
+        cas_limits,
+        maximum_records,
+        checked_requests: BTreeSet::new(),
+        checked_leases: BTreeSet::new(),
+        checked_exports: BTreeSet::new(),
+        input_chunks: 0,
     };
-    for pin in &pins {
-        if pin.authority.requires_source {
-            require_source(&pin.authority.job, false)?;
-        }
-        if matches!(
-            pin.record.state,
-            PinStateV1::Exported { .. }
-                | PinStateV1::Terminal {
-                    export: Some(_),
-                    ..
-                }
-        ) {
-            require_export(&pin.authority.job, pin.authority.export)?;
-        }
-    }
-
-    let mut active = Vec::new();
-    for (active_index, (intent_id, listed)) in inventory.active_jobs().iter().enumerate() {
-        let job = state.metadosis_job(
-            *intent_id,
-            WorldwideDay::new(listed.intent.wwd),
-            listed.finalized.as_ref().map(|f| f.job_id),
-        )?;
-        let pin = pin_by_intent.get(intent_id).map(|index| &pins[*index]);
-        // Missing pin is observed. P>=B alone cannot imply corruption across all
-        // native runtime policies. Current source capability is still mandatory.
-        let saved_export = pin.and_then(|pin| pin.authority.export);
-        // A surviving complete receipt records local export progress independently
-        // of the retention pin. Only current active jobs acquire this obligation.
-        let receipt_present = match &job.finalized {
-            Some(finalized) => existing_file(
-                &layout
-                    .ocomp_root
-                    .join("exporter-v1/receipts")
-                    .join(hex::encode(finalized.job_id))
-                    .join("receipt.ref"),
-            )?,
-            None => false,
-        };
-        let export_recorded = saved_export.is_some() || receipt_present;
-        require_source(&job, !export_recorded)?;
-        if let Some(report) = report.as_deref_mut() {
-            report.active_ocomp[active_index].source_verified = true;
-        }
-        let mut export_verified = false;
-        if export_recorded {
-            // A historical GC exemption cannot waive a current active obligation.
-            require_export(&job, saved_export)?;
-            export_verified = true;
-            if let Some(report) = report.as_deref_mut() {
-                report.active_ocomp[active_index].export_verified = true;
-            }
-        }
-        active.push(CanonicalActiveAudit {
-            intent_id: *intent_id,
-            projection_before_request: projection.block_number < job.intent_height,
-            job,
-            pin_stage: pin_stage(pin),
-            source_verified: true,
-            export_verified,
-        });
-    }
-    let source_leases = u64::try_from(checked_leases.len())?;
-    let complete_exports = u64::try_from(checked_exports.len())?;
+    verifier.verify_pin_obligations(&pins)?;
+    let active = verifier.verify_active_obligations(
+        state,
+        inventory.active_jobs(),
+        (&pins, &pin_by_intent, projection.block_number),
+        report.as_deref_mut(),
+    )?;
+    let source_leases = u64::try_from(verifier.checked_leases.len())?;
+    let complete_exports = u64::try_from(verifier.checked_exports.len())?;
+    let input_chunks = verifier.input_chunks;
     let nod = inventory.verify_nod_inputs(
         &layout.ocomp_root,
         cas_limits,

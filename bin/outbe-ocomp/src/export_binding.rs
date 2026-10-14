@@ -12,10 +12,8 @@
 //! A cold restart must reload and revalidate the same bytes before planning or
 //! finalization.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
-use std::os::fd::AsRawFd;
-use std::os::unix::fs::OpenOptionsExt;
+pub(crate) mod storage;
+
 use std::path::{Path, PathBuf};
 
 use alloy_primitives::{keccak256, B256};
@@ -36,16 +34,24 @@ use crate::{
     supervisor::DiscoveryRecord,
 };
 
+use self::storage::{
+    create_private_directory, decode_checkpoint_at, decode_locator_with_magic,
+    decode_manifest_ref_at, encode_checkpoint, encode_locator_with_magic, encode_manifest_ref,
+    inspect_known_entries, inspect_private_directory, latch_conflict_file, path_exists,
+    persist_atomic, read_b256, read_bounded, read_u32, read_u64, verify_envelope_checksum,
+    ExclusiveFileLock, FORMAT_VERSION, LOCATOR_FIXED_BYTES,
+};
+
 const BINDING_MAGIC: [u8; 8] = *b"OUTBEMB1";
 const LOCATOR_MAGIC: [u8; 8] = *b"OUTBEML1";
 const CONFLICT_MAGIC: [u8; 8] = *b"OUTBEMC1";
-const FORMAT_VERSION: u16 = 1;
 const DIRECTORY_MODE: u32 = 0o700;
 const FILE_MODE: u32 = 0o600;
 const LOCATOR_FILE: &str = "binding.ref";
 const LOCATOR_TEMP_FILE: &str = "binding.ref.tmp";
 const CONFLICT_FILE: &str = "binding.abstained";
 const LOCK_FILE: &str = "binding.lock";
+const KNOWN_ENTRIES: &[&str] = &[LOCATOR_FILE, LOCATOR_TEMP_FILE, CONFLICT_FILE, LOCK_FILE];
 const BINDING_CHECKPOINT_OFFSET: usize = 142;
 const BINDING_MANIFEST_REF_OFFSET: usize = 248;
 const BINDING_MANIFEST_HASH_OFFSET: usize = 290;
@@ -53,8 +59,6 @@ const BINDING_EXPORTED_GENERATION_OFFSET: usize = 322;
 const BINDING_EXPORT_RECORD_HASH_OFFSET: usize = 330;
 const BINDING_CHECKSUM_OFFSET: usize = 362;
 const BINDING_FIXED_BYTES: usize = BINDING_CHECKSUM_OFFSET + 32;
-const LOCATOR_FIXED_BYTES: usize = 8 + 2 + 32 + 8 + 32;
-const CONFLICT_FIXED_BYTES: usize = 8 + 32 + 32 + 32;
 
 pub struct ExportBindingCandidate<'a> {
     pub discovery: &'a DiscoveryRecord,
@@ -161,20 +165,20 @@ pub struct ExportedManifestBindingStore {
     root: PathBuf,
     limits: SchemaLimits,
     abstained: bool,
-    _lock: BindingLock,
+    _lock: ExclusiveFileLock,
 }
 
 impl ExportedManifestBindingStore {
     pub fn open(root: impl AsRef<Path>, limits: SchemaLimits) -> Result<Self, ExportBindingError> {
         let root = root.as_ref().to_path_buf();
-        create_private_directory(&root)?;
-        let lock = BindingLock::acquire(&root)?;
+        create_private_directory(&root, DIRECTORY_MODE)?;
+        let lock = ExclusiveFileLock::acquire(&root, LOCK_FILE, FILE_MODE, "open binding lock")?;
         if path_exists(&root.join(LOCATOR_TEMP_FILE))? {
             return Err(ExportBindingError::AmbiguousTemporary(
                 root.join(LOCATOR_TEMP_FILE),
             ));
         }
-        inspect_known_entries(&root)?;
+        inspect_known_entries(&root, KNOWN_ENTRIES)?;
         let abstained = path_exists(&root.join(CONFLICT_FILE))?;
         Ok(Self {
             root,
@@ -226,6 +230,7 @@ impl ExportedManifestBindingStore {
             &self.root,
             &self.root.join(LOCATOR_TEMP_FILE),
             &locator_path,
+            FILE_MODE,
             &encode_locator(&binding_ref)?,
         )?;
         let verified = self.load_exact(
@@ -271,7 +276,7 @@ impl ExportedManifestBindingStore {
         input_refs: &VerifiedInputChunkRefCatalog,
     ) -> Result<VerifiedExportedManifestBinding, ExportBindingError> {
         self.require_active()?;
-        inspect_known_entries(&self.root)?;
+        inspect_known_entries(&self.root, KNOWN_ENTRIES)?;
         load_binding(
             &self.root,
             &self.limits,
@@ -299,15 +304,13 @@ impl ExportedManifestBindingStore {
         existing: B256,
         candidate: B256,
     ) -> Result<(), ExportBindingError> {
-        let path = self.root.join(CONFLICT_FILE);
-        if !path_exists(&path)? {
-            let mut encoded = Vec::with_capacity(CONFLICT_FIXED_BYTES);
-            encoded.extend_from_slice(&CONFLICT_MAGIC);
-            encoded.extend_from_slice(existing.as_slice());
-            encoded.extend_from_slice(candidate.as_slice());
-            encoded.extend_from_slice(keccak256(&encoded).as_slice());
-            persist_new(&self.root, &path, &encoded)?;
-        }
+        latch_conflict_file(
+            &self.root,
+            CONFLICT_FILE,
+            FILE_MODE,
+            CONFLICT_MAGIC,
+            (existing, candidate),
+        )?;
         self.abstained = true;
         Ok(())
     }
@@ -403,17 +406,13 @@ enum CatalogRead {
 }
 
 fn inspect_existing_binding(root: &Path) -> Result<(), ExportBindingError> {
-    let metadata =
-        fs::symlink_metadata(root).map_err(|source| io_error("inspect directory", root, source))?;
-    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
-        return Err(ExportBindingError::UnsafePath(root.to_path_buf()));
-    }
+    inspect_private_directory(root)?;
     if path_exists(&root.join(LOCATOR_TEMP_FILE))? {
         return Err(ExportBindingError::AmbiguousTemporary(
             root.join(LOCATOR_TEMP_FILE),
         ));
     }
-    inspect_known_entries(root)?;
+    inspect_known_entries(root, KNOWN_ENTRIES)?;
     if path_exists(&root.join(CONFLICT_FILE))? {
         return Err(ExportBindingError::Abstained);
     }
@@ -497,15 +496,7 @@ fn derive_binding(
     let spec_bytes = candidate.discovery.spec.encode_body(limits)?;
     let intent =
         JobIntentV1::decode_canonical(&candidate.discovery.spec.canonical_job_intent.0, limits)?;
-    validate_manifest_job_authority(
-        candidate.discovery,
-        &intent,
-        candidate.job_id,
-        candidate.source_pin_generation,
-        candidate.lease_generation,
-        candidate.checkpoint,
-        &manifest,
-    )?;
+    validate_manifest_job_authority(candidate, &intent, &manifest)?;
     let manifest_hash = manifest.manifest_hash(limits)?;
     require(
         candidate.committed.job_id == manifest.job_id,
@@ -577,14 +568,13 @@ fn validate_binding_authority(
         binding.manifest_ref.expected_ocb1_kind == Some(ObjectKind::InputManifestV1.tag()),
         "binding manifest kind",
     )?;
+    let expected_exported_pin = binding
+        .source_pin_generation
+        .checked_add(1)
+        .ok_or(ExportBindingError::IntegerOverflow)?;
     require(
-        binding.source_pin_generation != 0
-            && binding.lease_generation != 0
-            && binding.exported_pin_generation
-                == binding
-                    .source_pin_generation
-                    .checked_add(1)
-                    .ok_or(ExportBindingError::IntegerOverflow)?
+        ![binding.source_pin_generation, binding.lease_generation].contains(&0)
+            && (binding.exported_pin_generation == expected_exported_pin)
             && !binding.export_record_hash.is_zero(),
         "binding export generations and record",
     )?;
@@ -592,27 +582,28 @@ fn validate_binding_authority(
 }
 
 fn validate_manifest_job_authority(
-    discovery: &DiscoveryRecord,
+    candidate: &ExportBindingCandidate<'_>,
     intent: &JobIntentV1,
-    job_id: B256,
-    source_pin_generation: u64,
-    lease_generation: u64,
-    checkpoint: &CheckpointIdentityV1,
     manifest: &InputManifestV1,
 ) -> Result<(), ExportBindingError> {
     require(
-        job_id == discovery.spec.summary.job_id,
+        candidate.job_id == candidate.discovery.spec.summary.job_id,
         "snapshot handoff job id",
     )?;
     require(
-        source_pin_generation != 0 && lease_generation != 0,
+        candidate.source_pin_generation != 0 && candidate.lease_generation != 0,
         "snapshot handoff generations",
     )?;
     require(
-        checkpoint == &manifest.checkpoint,
+        candidate.checkpoint == &manifest.checkpoint,
         "snapshot handoff checkpoint",
     )?;
-    validate_manifest_job_fields(&discovery.spec, discovery.cursor, intent, manifest)
+    validate_manifest_job_fields(
+        &candidate.discovery.spec,
+        candidate.discovery.cursor,
+        intent,
+        manifest,
+    )
 }
 
 fn validate_manifest_job_fields(
@@ -697,15 +688,7 @@ fn encode_binding(binding: &ExportedManifestBindingV1) -> Vec<u8> {
     encoded.extend_from_slice(&binding.source_pin_generation.to_be_bytes());
     encoded.extend_from_slice(&binding.lease_generation.to_be_bytes());
     encode_checkpoint(&mut encoded, &binding.checkpoint);
-    encoded.extend_from_slice(binding.manifest_ref.transport_digest.as_slice());
-    encoded.extend_from_slice(&binding.manifest_ref.encoded_bytes.to_be_bytes());
-    encoded.extend_from_slice(
-        &binding
-            .manifest_ref
-            .expected_ocb1_kind
-            .unwrap_or_default()
-            .to_be_bytes(),
-    );
+    encode_manifest_ref(&mut encoded, &binding.manifest_ref);
     encoded.extend_from_slice(binding.manifest_hash.as_slice());
     encoded.extend_from_slice(&binding.exported_pin_generation.to_be_bytes());
     encoded.extend_from_slice(binding.export_record_hash.as_slice());
@@ -714,25 +697,15 @@ fn encode_binding(binding: &ExportedManifestBindingV1) -> Vec<u8> {
 }
 
 fn decode_binding(encoded: &[u8]) -> Result<ExportedManifestBindingV1, ExportBindingError> {
-    if encoded.len() != BINDING_FIXED_BYTES
-        || encoded[..8] != BINDING_MAGIC
-        || read_u16(encoded, 8)? != FORMAT_VERSION
-    {
-        return Err(ExportBindingError::InvalidEnvelope);
-    }
-    if keccak256(&encoded[..BINDING_CHECKSUM_OFFSET])
-        != B256::from_slice(&encoded[BINDING_CHECKSUM_OFFSET..])
-    {
-        return Err(ExportBindingError::InvalidEnvelope);
-    }
-    let checkpoint = CheckpointIdentityV1 {
-        finalized_block_number: read_u64(encoded, BINDING_CHECKPOINT_OFFSET)?,
-        finalized_block_hash: read_b256(encoded, BINDING_CHECKPOINT_OFFSET + 8)?,
-        finalized_state_root: read_b256(encoded, BINDING_CHECKPOINT_OFFSET + 40)?,
-        finalized_ce_root: read_b256(encoded, BINDING_CHECKPOINT_OFFSET + 72)?,
-        ce_schema_version: read_u16(encoded, BINDING_CHECKPOINT_OFFSET + 104)?,
-    };
-    let expected_kind = read_u16(encoded, BINDING_MANIFEST_REF_OFFSET + 40)?;
+    verify_envelope_checksum(
+        encoded,
+        BINDING_FIXED_BYTES,
+        BINDING_MAGIC,
+        BINDING_CHECKSUM_OFFSET,
+    )?;
+    let checkpoint = decode_checkpoint_at(encoded, BINDING_CHECKPOINT_OFFSET)?;
+    let (manifest_ref, expected_kind) =
+        decode_manifest_ref_at(encoded, BINDING_MANIFEST_REF_OFFSET)?;
     if expected_kind == 0 {
         return Err(ExportBindingError::InvalidEnvelope);
     }
@@ -746,248 +719,48 @@ fn decode_binding(encoded: &[u8]) -> Result<ExportedManifestBindingV1, ExportBin
         source_pin_generation: read_u64(encoded, 126)?,
         lease_generation: read_u64(encoded, 134)?,
         checkpoint,
-        manifest_ref: CasObjectRefV1 {
-            transport_digest: read_b256(encoded, BINDING_MANIFEST_REF_OFFSET)?,
-            encoded_bytes: read_u64(encoded, BINDING_MANIFEST_REF_OFFSET + 32)?,
-            expected_ocb1_kind: Some(expected_kind),
-        },
+        manifest_ref,
         manifest_hash: read_b256(encoded, BINDING_MANIFEST_HASH_OFFSET)?,
         exported_pin_generation: read_u64(encoded, BINDING_EXPORTED_GENERATION_OFFSET)?,
         export_record_hash: read_b256(encoded, BINDING_EXPORT_RECORD_HASH_OFFSET)?,
     };
+    let non_zero_u64s = [
+        binding.discovery_generation,
+        binding.finalized_cursor,
+        binding.source_pin_generation,
+        binding.lease_generation,
+        binding.manifest_ref.encoded_bytes,
+        binding.exported_pin_generation,
+    ];
+    let non_zero_hashes = [
+        binding.finalized_job_spec_hash,
+        binding.job_id,
+        binding.protocol_bundle_hash,
+        binding.manifest_ref.transport_digest,
+        binding.manifest_hash,
+        binding.export_record_hash,
+    ];
     require(
-        binding.discovery_generation != 0
-            && binding.finalized_cursor != 0
-            && !binding.finalized_job_spec_hash.is_zero()
-            && !binding.job_id.is_zero()
-            && !binding.protocol_bundle_hash.is_zero()
-            && binding.source_pin_generation != 0
-            && binding.lease_generation != 0
-            && !binding.manifest_ref.transport_digest.is_zero()
-            && binding.manifest_ref.encoded_bytes != 0
-            && !binding.manifest_hash.is_zero()
-            && binding.exported_pin_generation != 0
-            && !binding.export_record_hash.is_zero(),
+        !non_zero_u64s.contains(&0) && !non_zero_hashes.contains(&B256::ZERO),
         "export binding non-zero fields",
     )?;
     Ok(binding)
 }
 
-fn encode_checkpoint(output: &mut Vec<u8>, checkpoint: &CheckpointIdentityV1) {
-    output.extend_from_slice(&checkpoint.finalized_block_number.to_be_bytes());
-    output.extend_from_slice(checkpoint.finalized_block_hash.as_slice());
-    output.extend_from_slice(checkpoint.finalized_state_root.as_slice());
-    output.extend_from_slice(checkpoint.finalized_ce_root.as_slice());
-    output.extend_from_slice(&checkpoint.ce_schema_version.to_be_bytes());
-}
-
 fn encode_locator(reference: &CasObjectRefV1) -> Result<Vec<u8>, ExportBindingError> {
-    require(
-        reference.expected_ocb1_kind.is_none()
-            && !reference.transport_digest.is_zero()
-            && reference.encoded_bytes != 0,
+    Ok(encode_locator_with_magic(
+        reference,
+        LOCATOR_MAGIC,
         "export binding locator reference",
-    )?;
-    let mut encoded = Vec::with_capacity(LOCATOR_FIXED_BYTES);
-    encoded.extend_from_slice(&LOCATOR_MAGIC);
-    encoded.extend_from_slice(&FORMAT_VERSION.to_be_bytes());
-    encoded.extend_from_slice(reference.transport_digest.as_slice());
-    encoded.extend_from_slice(&reference.encoded_bytes.to_be_bytes());
-    encoded.extend_from_slice(keccak256(&encoded).as_slice());
-    Ok(encoded)
+    )?)
 }
 
 fn decode_locator(encoded: &[u8]) -> Result<CasObjectRefV1, ExportBindingError> {
-    if encoded.len() != LOCATOR_FIXED_BYTES
-        || encoded[..8] != LOCATOR_MAGIC
-        || read_u16(encoded, 8)? != FORMAT_VERSION
-        || keccak256(&encoded[..50]) != B256::from_slice(&encoded[50..])
-    {
-        return Err(ExportBindingError::InvalidEnvelope);
-    }
-    let reference = CasObjectRefV1 {
-        transport_digest: read_b256(encoded, 10)?,
-        encoded_bytes: read_u64(encoded, 42)?,
-        expected_ocb1_kind: None,
-    };
-    require(
-        !reference.transport_digest.is_zero() && reference.encoded_bytes != 0,
+    Ok(decode_locator_with_magic(
+        encoded,
+        LOCATOR_MAGIC,
         "export binding locator",
-    )?;
-    Ok(reference)
-}
-
-fn read_bounded(path: &Path, cap: usize) -> Result<Vec<u8>, ExportBindingError> {
-    let mut file = open_regular_nofollow(path)?;
-    let len = usize::try_from(
-        file.metadata()
-            .map_err(|source| io_error("stat file", path, source))?
-            .len(),
-    )
-    .map_err(|_| ExportBindingError::InvalidEnvelope)?;
-    if len > cap {
-        return Err(ExportBindingError::InvalidEnvelope);
-    }
-    let mut encoded = Vec::with_capacity(len);
-    let read_limit = u64::try_from(len)
-        .ok()
-        .and_then(|len| len.checked_add(1))
-        .ok_or(ExportBindingError::InvalidEnvelope)?;
-    (&mut file)
-        .take(read_limit)
-        .read_to_end(&mut encoded)
-        .map_err(|source| io_error("read file", path, source))?;
-    if encoded.len() != len {
-        return Err(ExportBindingError::InvalidEnvelope);
-    }
-    Ok(encoded)
-}
-
-fn create_private_directory(path: &Path) -> Result<(), ExportBindingError> {
-    fs::create_dir_all(path).map_err(|source| io_error("create directory", path, source))?;
-    let metadata =
-        fs::symlink_metadata(path).map_err(|source| io_error("inspect directory", path, source))?;
-    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
-        return Err(ExportBindingError::UnsafePath(path.to_path_buf()));
-    }
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(DIRECTORY_MODE))
-        .map_err(|source| io_error("set directory permissions", path, source))
-}
-
-fn inspect_known_entries(root: &Path) -> Result<(), ExportBindingError> {
-    for entry in fs::read_dir(root).map_err(|source| io_error("list directory", root, source))? {
-        let entry = entry.map_err(|source| io_error("read directory", root, source))?;
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| ExportBindingError::UnsafePath(entry.path()))?;
-        if !matches!(
-            name.as_str(),
-            LOCATOR_FILE | LOCATOR_TEMP_FILE | CONFLICT_FILE | LOCK_FILE
-        ) {
-            return Err(ExportBindingError::UnexpectedEntry(entry.path()));
-        }
-        let metadata = entry
-            .metadata()
-            .map_err(|source| io_error("inspect entry", &entry.path(), source))?;
-        if !metadata.file_type().is_file() {
-            return Err(ExportBindingError::UnsafePath(entry.path()));
-        }
-    }
-    Ok(())
-}
-
-fn path_exists(path: &Path) -> Result<bool, ExportBindingError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_file() && !metadata.file_type().is_symlink() => {
-            Ok(true)
-        }
-        Ok(_) => Err(ExportBindingError::UnsafePath(path.to_path_buf())),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(source) => Err(io_error("stat path", path, source)),
-    }
-}
-
-fn open_regular_nofollow(path: &Path) -> Result<File, ExportBindingError> {
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|source| io_error("open file", path, source))?;
-    let metadata = file
-        .metadata()
-        .map_err(|source| io_error("inspect file", path, source))?;
-    if !metadata.file_type().is_file() {
-        return Err(ExportBindingError::UnsafePath(path.to_path_buf()));
-    }
-    Ok(file)
-}
-
-fn persist_atomic(
-    root: &Path,
-    temp: &Path,
-    final_path: &Path,
-    encoded: &[u8],
-) -> Result<(), ExportBindingError> {
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(FILE_MODE)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-            .open(temp)
-            .map_err(|source| io_error("create temporary file", temp, source))?;
-        file.write_all(encoded)
-            .map_err(|source| io_error("write temporary file", temp, source))?;
-        file.sync_all()
-            .map_err(|source| io_error("fsync temporary file", temp, source))?;
-        fs::rename(temp, final_path)
-            .map_err(|source| io_error("publish file", final_path, source))?;
-        sync_directory(root)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temp);
-    }
-    result
-}
-
-fn persist_new(root: &Path, path: &Path, encoded: &[u8]) -> Result<(), ExportBindingError> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(FILE_MODE)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|source| io_error("create file", path, source))?;
-    file.write_all(encoded)
-        .map_err(|source| io_error("write file", path, source))?;
-    file.sync_all()
-        .map_err(|source| io_error("fsync file", path, source))?;
-    sync_directory(root)
-}
-
-fn sync_directory(path: &Path) -> Result<(), ExportBindingError> {
-    File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|source| io_error("fsync directory", path, source))
-}
-
-fn read_u16(encoded: &[u8], start: usize) -> Result<u16, ExportBindingError> {
-    Ok(u16::from_be_bytes(
-        encoded
-            .get(start..start + 2)
-            .ok_or(ExportBindingError::InvalidEnvelope)?
-            .try_into()
-            .map_err(|_| ExportBindingError::InvalidEnvelope)?,
-    ))
-}
-
-fn read_u32(encoded: &[u8], start: usize) -> Result<u32, ExportBindingError> {
-    Ok(u32::from_be_bytes(
-        encoded
-            .get(start..start + 4)
-            .ok_or(ExportBindingError::InvalidEnvelope)?
-            .try_into()
-            .map_err(|_| ExportBindingError::InvalidEnvelope)?,
-    ))
-}
-
-fn read_u64(encoded: &[u8], start: usize) -> Result<u64, ExportBindingError> {
-    Ok(u64::from_be_bytes(
-        encoded
-            .get(start..start + 8)
-            .ok_or(ExportBindingError::InvalidEnvelope)?
-            .try_into()
-            .map_err(|_| ExportBindingError::InvalidEnvelope)?,
-    ))
-}
-
-fn read_b256(encoded: &[u8], start: usize) -> Result<B256, ExportBindingError> {
-    let bytes = encoded
-        .get(start..start + 32)
-        .ok_or(ExportBindingError::InvalidEnvelope)?;
-    Ok(B256::from_slice(bytes))
+    )?)
 }
 
 fn require(condition: bool, what: &'static str) -> Result<(), ExportBindingError> {
@@ -995,46 +768,6 @@ fn require(condition: bool, what: &'static str) -> Result<(), ExportBindingError
         Ok(())
     } else {
         Err(ExportBindingError::AuthorityMismatch(what))
-    }
-}
-
-fn io_error(operation: &'static str, path: &Path, source: std::io::Error) -> ExportBindingError {
-    ExportBindingError::Io {
-        operation,
-        path: path.to_path_buf(),
-        source,
-    }
-}
-
-struct BindingLock {
-    file: File,
-}
-
-impl BindingLock {
-    #[allow(unsafe_code)]
-    fn acquire(root: &Path) -> Result<Self, ExportBindingError> {
-        let path = root.join(LOCK_FILE);
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .mode(FILE_MODE)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-            .open(&path)
-            .map_err(|source| io_error("open binding lock", &path, source))?;
-        // SAFETY: `file` owns a live descriptor for the complete flock call.
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-            return Err(ExportBindingError::LockHeld(path));
-        }
-        Ok(Self { file })
-    }
-}
-
-impl Drop for BindingLock {
-    #[allow(unsafe_code)]
-    fn drop(&mut self) {
-        // SAFETY: `self.file` remains open for the complete flock call.
-        let _ = unsafe { libc::flock(self.file.as_raw_fd(), libc::LOCK_UN) };
     }
 }
 
@@ -1108,7 +841,7 @@ mod tests {
     }
 
     #[test]
-    fn export_binding_fixed_encoding_round_trips_every_authority_field() {
+    fn fixed_encoding_round_trips_authority() {
         let expected = binding();
         let encoded = encode_binding(&expected);
         assert_eq!(encoded.len(), BINDING_FIXED_BYTES);

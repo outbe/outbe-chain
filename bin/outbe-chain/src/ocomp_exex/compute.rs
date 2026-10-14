@@ -58,6 +58,50 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
+fn receipt_activates_lysis(
+    receipt: &OutbeReceipt,
+    intent_id: B256,
+    job_id: B256,
+    expected_digest: B256,
+) -> bool {
+    receipt.status()
+        && receipt.logs().iter().any(|log| {
+            log.address == METADOSIS_ADDRESS
+                && log.data.topics().first() == Some(&IMetadosis::LysisActivated::SIGNATURE_HASH)
+                && IMetadosis::LysisActivated::decode_log(log).is_ok_and(|event| {
+                    (event.data.intentId, event.data.jobId, event.data.resultDigest)
+                        == (intent_id, job_id, expected_digest)
+                })
+        })
+}
+
+fn vote_matches_authority(
+    vote: &ResultVoteV1,
+    record: &OcompJobRecordV1,
+    job_id: B256,
+    digest: B256,
+    expected_digest: B256,
+) -> bool {
+    let intent = &record.intent;
+    (
+        vote.job_id,
+        vote.protocol_bundle_hash,
+        vote.attempt,
+        vote.result_validator_set_epoch,
+        vote.result_committee_set_hash,
+        vote.result_ocomp_binding_hash,
+        digest,
+    ) == (
+        job_id,
+        intent.protocol_bundle_hash,
+        intent.attempt,
+        intent.result_validator_set_epoch,
+        intent.result_committee_set_hash,
+        intent.result_ocomp_binding_hash,
+        expected_digest,
+    )
+}
+
 fn canonical_vote_from_frame(
     frame: &FinalizedFrame,
     quorum_height: u64,
@@ -75,36 +119,16 @@ fn canonical_vote_from_frame(
         .ok_or_else(|| eyre::eyre!("completed OCOMP job is not finalized"))?;
     let mut matched = None;
     for (transaction, receipt) in frame.block().body().transactions().zip(frame.receipts()) {
-        if !receipt.status() {
-            continue;
-        }
-        let activates = receipt.logs().iter().any(|log| {
-            if log.address != METADOSIS_ADDRESS
-                || log.data.topics().first() != Some(&IMetadosis::LysisActivated::SIGNATURE_HASH)
-            {
-                return false;
-            }
-            IMetadosis::LysisActivated::decode_log(log).is_ok_and(|event| {
-                event.data.intentId == intent_id
-                    && event.data.jobId == finalized.job_id
-                    && event.data.resultDigest == expected_digest
-            })
-        });
-        if !activates || transaction.to() != Some(METADOSIS_ADDRESS) {
+        if transaction.to() != Some(METADOSIS_ADDRESS)
+            || !receipt_activates_lysis(receipt, intent_id, finalized.job_id, expected_digest)
+        {
             continue;
         }
         let vote = decode_submit_lysis_result(transaction.input().as_ref(), &limits)
             .wrap_err("decode q-forming ResultVoteV1")?;
         let digest = vote.result_digest(&limits)?;
         vote.result.validate_finalized_intent(&record.intent)?;
-        if vote.job_id != finalized.job_id
-            || vote.protocol_bundle_hash != record.intent.protocol_bundle_hash
-            || vote.attempt != record.intent.attempt
-            || vote.result_validator_set_epoch != record.intent.result_validator_set_epoch
-            || vote.result_committee_set_hash != record.intent.result_committee_set_hash
-            || vote.result_ocomp_binding_hash != record.intent.result_ocomp_binding_hash
-            || digest != expected_digest
-        {
+        if !vote_matches_authority(&vote, record, finalized.job_id, digest, expected_digest) {
             bail!("q-forming ResultVoteV1 disagrees with finalized OCOMP authority");
         }
         if matched.replace(vote).is_some() {

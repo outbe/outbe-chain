@@ -8,8 +8,6 @@ use super::super::WorkerError;
 use super::decode_shuffle_producer_root;
 use super::tribute_nominal::{shard_eligible_nominal_total, shard_tribute_nominals};
 
-use crate::cas::FilesystemCasReader;
-
 use crate::inbox::WorkerInbox;
 
 use alloy_primitives::B256;
@@ -66,19 +64,42 @@ pub(in super::super) fn execute_root_reduce_unit(
 ) -> Result<UnitArtifactV1, WorkerError> {
     let UnitExecutionAuthority {
         plan,
-        unit_index,
         manifest,
         input_chunks,
-        producer_artifacts,
-        bundle,
         limits,
-        reader,
         inbox,
         cancelled,
+        ..
     } = authority;
     require_lease_active(cancelled)?;
-    let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)?;
-    let phase_ordinal = unit_index
+    let (phase_ordinal, level, expected, resolved) =
+        resolve_root_reduce_producers(spec, &authority)?;
+    let plan_hash = plan.plan_hash(limits)?;
+    if level == 0 {
+        return execute_root_reduce_leaf(
+            spec,
+            (plan, manifest, phase_ordinal, plan_hash),
+            (&expected, &resolved),
+            input_chunks,
+            (inbox, limits, cancelled),
+        );
+    }
+    execute_root_reduce_branch(
+        spec,
+        (plan, manifest, plan_hash),
+        input_chunks,
+        (expected, resolved),
+        (limits, cancelled),
+    )
+}
+
+fn resolve_root_reduce_producers<'a>(
+    spec: &UnitSpecV1,
+    authority: &'a UnitExecutionAuthority<'a>,
+) -> Result<(u32, u16, Vec<PlannedProducerV1>, Vec<Option<&'a UnitArtifactV1>>), WorkerError> {
+    let topology = LysisPlanTopologyV1::new(authority.plan.primary_work_unit_count)?;
+    let phase_ordinal = authority
+        .unit_index
         .checked_sub(topology.phase_offset(UnitPhase::RootReduce)?)
         .ok_or(WorkerError::UnitBindingMismatch)?;
     let position = topology.phase_position_at(UnitPhase::RootReduce, phase_ordinal)?;
@@ -107,8 +128,13 @@ pub(in super::super) fn execute_root_reduce_unit(
         .iter()
         .map(|input| unit_or_empty_id(input))
         .collect::<Result<Vec<_>, _>>()?;
-    let planner = planner_from_authority(plan, manifest, bundle, limits)?;
-    if planner.root_reduce_unit_at(phase_ordinal, &producer_ids, limits)? != spec.clone() {
+    let planner = planner_from_authority(
+        authority.plan,
+        authority.manifest,
+        authority.bundle,
+        authority.limits,
+    )?;
+    if planner.root_reduce_unit_at(phase_ordinal, &producer_ids, authority.limits)? != *spec {
         return Err(WorkerError::UnitBindingMismatch);
     }
     let expected = topology.required_producers(position)?;
@@ -116,33 +142,25 @@ pub(in super::super) fn execute_root_reduce_unit(
         spec,
         &expected,
         &producer_inputs,
-        producer_artifacts,
-        limits,
+        authority.producer_artifacts,
+        authority.limits,
     )?;
-    let plan_hash = plan.plan_hash(limits)?;
-    if level == 0 {
-        return execute_root_reduce_leaf(
-            spec,
-            plan,
-            manifest,
-            phase_ordinal,
-            plan_hash,
-            &expected,
-            &resolved,
-            input_chunks,
-            reader,
-            inbox,
-            limits,
-            cancelled,
-        );
-    }
-    if !input_chunks.is_empty() {
-        return Err(WorkerError::UnitBindingMismatch);
-    }
-    if resolved.len() != 2 {
-        return Err(WorkerError::UnitBindingMismatch);
-    }
+    Ok((phase_ordinal, level, expected, resolved))
+}
 
+fn execute_root_reduce_branch(
+    spec: &UnitSpecV1,
+    (plan, manifest, plan_hash): (&PlanCommitmentV1, &InputManifestV1, B256),
+    input_chunks: &[(
+        outbe_ocomp_protocol::input::InputChunkRefV1,
+        outbe_ocomp_protocol::input::AuthenticatedInputChunkV1,
+    )],
+    (expected, resolved): (Vec<PlannedProducerV1>, Vec<Option<&UnitArtifactV1>>),
+    (limits, cancelled): (&SchemaLimits, Option<&AtomicBool>),
+) -> Result<UnitArtifactV1, WorkerError> {
+    if !input_chunks.is_empty() || resolved.len() != 2 {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
     let mut summaries = Vec::with_capacity(2);
     for (producer, artifact) in expected.into_iter().zip(resolved) {
         require_lease_active(cancelled)?;
@@ -188,32 +206,58 @@ pub(in super::super) fn execute_root_reduce_unit(
     .map_err(WorkerError::from)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn execute_root_reduce_leaf(
     spec: &UnitSpecV1,
-    plan: &PlanCommitmentV1,
-    manifest: &InputManifestV1,
-    shard_ordinal: u32,
-    plan_hash: B256,
-    expected: &[PlannedProducerV1],
-    resolved: &[Option<&UnitArtifactV1>],
+    (plan, manifest, shard_ordinal, plan_hash): (&PlanCommitmentV1, &InputManifestV1, u32, B256),
+    (expected, resolved): (&[PlannedProducerV1], &[Option<&UnitArtifactV1>]),
     input_chunks: &[(
         outbe_ocomp_protocol::input::InputChunkRefV1,
         outbe_ocomp_protocol::input::AuthenticatedInputChunkV1,
     )],
-    _reader: &FilesystemCasReader,
-    inbox: &WorkerInbox,
-    limits: &SchemaLimits,
-    cancelled: Option<&AtomicBool>,
+    (inbox, limits, cancelled): (&WorkerInbox, &SchemaLimits, Option<&AtomicBool>),
 ) -> Result<UnitArtifactV1, WorkerError> {
     require_lease_active(cancelled)?;
-    if input_chunks.iter().any(|(reference, chunk)| {
-        reference.kind != InputChunkKind::Tribute || chunk.kind != InputChunkKind::Tribute
-    }) {
-        return Err(WorkerError::UnitBindingMismatch);
-    }
-    let nominals = shard_tribute_nominals(input_chunks, shard_ordinal)?;
-    let eligible_from_bodies = shard_eligible_nominal_total(input_chunks, shard_ordinal)?;
+    let (finalized, expected_start, tribute_count) = validate_root_reduce_leaf_producers(
+        spec,
+        (shard_ordinal, plan.tribute_count),
+        (expected, resolved),
+        limits,
+    )?;
+    validate_leaf_tribute_nominals(input_chunks, shard_ordinal, tribute_count, &finalized)?;
+    let (summary, output_manifest_entry) = build_root_reduce_leaf_summary(
+        spec,
+        (shard_ordinal, expected_start, tribute_count, plan_hash),
+        &finalized,
+        (inbox, limits),
+    )?;
+    require_complete_root_summary(&summary, plan, manifest)?;
+    let coverage_root = summary.result_chunk_hashes.tree_root;
+    UnitArtifactV1::from_canonical_output(
+        spec,
+        WorkOutputHeaderV1 {
+            source_coverage_root: coverage_root,
+            output_coverage_root: coverage_root,
+            source_coverage_count: 1,
+            output_coverage_count: 1,
+        },
+        BoundedBytes(encode_root_reduce_output(
+            &RootReduceOutputV1::Leaf {
+                summary,
+                output_manifest_entry,
+            },
+            limits,
+        )?),
+        limits,
+    )
+    .map_err(WorkerError::from)
+}
+
+fn validate_root_reduce_leaf_producers(
+    spec: &UnitSpecV1,
+    (shard_ordinal, plan_tribute_count): (u32, u32),
+    (expected, resolved): (&[PlannedProducerV1], &[Option<&UnitArtifactV1>]),
+    limits: &SchemaLimits,
+) -> Result<(FinalizedOutputRunV1, u32, u32), WorkerError> {
     let [finalized_position @ PlannedProducerV1::Unit(PlannedUnitPositionV1::Primary {
         phase: UnitPhase::OutputFinalize,
         ordinal,
@@ -230,7 +274,6 @@ fn execute_root_reduce_leaf(
     if *ordinal != shard_ordinal {
         return Err(WorkerError::UnitBindingMismatch);
     }
-
     let finalized = decode_finalized_output_run(finalized_artifact.phase_payload(limits)?, limits)?;
     let finalized_header = finalized_artifact.output_header(limits)?;
     let expected_start = shard_ordinal
@@ -239,7 +282,7 @@ fn execute_root_reduce_leaf(
     let expected_end = expected_start
         .checked_add(PRIMARY_WORK_SHARD_SIZE)
         .ok_or(WorkerError::UnitBindingMismatch)?
-        .min(plan.tribute_count);
+        .min(plan_tribute_count);
     let tribute_count = expected_end
         .checked_sub(expected_start)
         .ok_or(WorkerError::UnitBindingMismatch)?;
@@ -250,19 +293,16 @@ fn execute_root_reduce_leaf(
         expected_end,
         tribute_count,
     )?;
+    let PlannedProducerV1::Unit(position) = finalized_position else {
+        return Err(WorkerError::UnitBindingMismatch);
+    };
     validate_scan_artifact(
         spec,
-        match finalized_position {
-            PlannedProducerV1::Unit(position) => *position,
-            PlannedProducerV1::CanonicalEmpty { .. } => {
-                return Err(WorkerError::UnitBindingMismatch);
-            }
-        },
+        *position,
         finalized_artifact.unit_id,
         finalized_artifact,
         limits,
     )?;
-
     let bucket_root = decode_shuffle_producer_root(
         spec,
         bucket_artifact,
@@ -273,9 +313,48 @@ fn execute_root_reduce_leaf(
     require_root_reduce_shuffle_population(
         bucket_root.source_coverage_count,
         bucket_root.record_count,
-        plan.tribute_count,
+        plan_tribute_count,
     )?;
+    Ok((finalized, expected_start, tribute_count))
+}
 
+fn validate_leaf_tribute_nominals(
+    input_chunks: &[(
+        outbe_ocomp_protocol::input::InputChunkRefV1,
+        outbe_ocomp_protocol::input::AuthenticatedInputChunkV1,
+    )],
+    shard_ordinal: u32,
+    tribute_count: u32,
+    finalized: &FinalizedOutputRunV1,
+) -> Result<(), WorkerError> {
+    if input_chunks.iter().any(|(reference, chunk)| {
+        reference.kind != InputChunkKind::Tribute || chunk.kind != InputChunkKind::Tribute
+    }) {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let nominals = shard_tribute_nominals(input_chunks, shard_ordinal)?;
+    let eligible_from_bodies = shard_eligible_nominal_total(input_chunks, shard_ordinal)?;
+    let nominal_total = checked_sum(
+        nominals.values().copied(),
+        "root reducer tribute nominal total",
+    )?;
+    let expected_len =
+        usize::try_from(tribute_count).map_err(|_| WorkerError::UnitBindingMismatch)?;
+    if nominals.len() != expected_len
+        || nominal_total != finalized.checked_tribute_nominal_total
+        || eligible_from_bodies != finalized.checked_eligible_nominal_total
+    {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    Ok(())
+}
+
+fn build_root_reduce_leaf_summary(
+    spec: &UnitSpecV1,
+    (shard_ordinal, expected_start, tribute_count, plan_hash): (u32, u32, u32, B256),
+    finalized: &FinalizedOutputRunV1,
+    (inbox, limits): (&WorkerInbox, &SchemaLimits),
+) -> Result<(RootReduceSummaryV1, OutputManifestEntryV1), WorkerError> {
     let nod_actions = finalized
         .ordered_records
         .iter()
@@ -317,7 +396,6 @@ fn execute_root_reduce_leaf(
         result_chunk_hash: chunk_hash,
         result_chunk_ref: chunk_ref,
     };
-
     let nod_records = nod_actions
         .iter()
         .map(|action| action.encode_canonical_record(limits))
@@ -326,18 +404,6 @@ fn execute_root_reduce_leaf(
         .iter()
         .map(|record| record.encode_canonical_record(limits))
         .collect::<Result<Vec<_>, _>>()?;
-    let nominal_total = checked_sum(
-        nominals.values().copied(),
-        "root reducer tribute nominal total",
-    )?;
-    if nominals.len() != usize::try_from(tribute_count).map_err(|_| WorkerError::UnitBindingMismatch)?
-        || nominal_total != finalized.checked_tribute_nominal_total
-    {
-        return Err(WorkerError::UnitBindingMismatch);
-    }
-    if eligible_from_bodies != finalized.checked_eligible_nominal_total {
-        return Err(WorkerError::UnitBindingMismatch);
-    }
     let manifest_records = vec![output_manifest_entry.encode_canonical_record(limits)?];
     let chunk_hash_records = vec![chunk_hash.as_slice().to_vec()];
     let summary = RootReduceSummaryV1 {
@@ -380,26 +446,7 @@ fn execute_root_reduce_leaf(
         nod_cost_total: finalized.checked_settlement_cost_total,
         first_error_ordinal: None,
     };
-    require_complete_root_summary(&summary, plan, manifest)?;
-    let coverage_root = summary.result_chunk_hashes.tree_root;
-    UnitArtifactV1::from_canonical_output(
-        spec,
-        WorkOutputHeaderV1 {
-            source_coverage_root: coverage_root,
-            output_coverage_root: coverage_root,
-            source_coverage_count: 1,
-            output_coverage_count: 1,
-        },
-        BoundedBytes(encode_root_reduce_output(
-            &RootReduceOutputV1::Leaf {
-                summary,
-                output_manifest_entry,
-            },
-            limits,
-        )?),
-        limits,
-    )
-    .map_err(WorkerError::from)
+    Ok((summary, output_manifest_entry))
 }
 
 fn checked_sum(
@@ -420,20 +467,31 @@ pub(in super::super) fn require_root_reduce_finalized_binding(
     expected_end: u32,
     expected_count: u32,
 ) -> Result<(), WorkerError> {
-    if finalized.start_ordinal != expected_start
-        || finalized.end_ordinal != expected_end
-        || u32::try_from(finalized.ordered_records.len()).ok() != Some(expected_count)
-        || finalized.coverage_root()? != header.output_coverage_root
-        || header.source_coverage_root != header.output_coverage_root
-        || header.source_coverage_count != expected_count
-        || header.output_coverage_count != expected_count
-    {
+    let coverage_root = finalized.coverage_root()?;
+    let actual = (
+        finalized.start_ordinal,
+        finalized.end_ordinal,
+        u32::try_from(finalized.ordered_records.len()).ok(),
+        header.source_coverage_root,
+        header.output_coverage_root,
+        header.source_coverage_count,
+        header.output_coverage_count,
+    );
+    let expected = (
+        expected_start,
+        expected_end,
+        Some(expected_count),
+        coverage_root,
+        coverage_root,
+        expected_count,
+        expected_count,
+    );
+    if actual != expected {
         return Err(WorkerError::UnitBindingMismatch);
     }
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in super::super) fn require_root_reduce_shuffle_population(
     bucket_source_count: u32,
     bucket_record_count: u32,
@@ -451,37 +509,45 @@ fn require_complete_root_summary(
     manifest: &InputManifestV1,
 ) -> Result<(), WorkerError> {
     require_complete_root_values(
-        summary.covered_primary_start,
-        summary.covered_primary_count,
-        plan.primary_work_unit_count,
-        summary.tribute_count,
-        plan.tribute_count,
-        manifest.tribute_count,
-        summary.tribute_nominal_total,
-        summary.eligible_nominal_total,
-        manifest.tribute_nominal_total,
+        (
+            summary.covered_primary_start,
+            summary.covered_primary_count,
+            plan.primary_work_unit_count,
+        ),
+        (
+            summary.tribute_count,
+            plan.tribute_count,
+            manifest.tribute_count,
+        ),
+        (
+            summary.tribute_nominal_total,
+            summary.eligible_nominal_total,
+            manifest.tribute_nominal_total,
+        ),
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in super::super) fn require_complete_root_values(
-    covered_primary_start: u32,
-    covered_primary_count: u32,
-    primary_work_unit_count: u32,
-    summary_tribute_count: u32,
-    plan_tribute_count: u32,
-    manifest_tribute_count: u32,
-    summary_tribute_nominal_total: U256,
-    summary_eligible_nominal_total: U256,
-    manifest_tribute_nominal_total: U256,
+    (covered_primary_start, covered_primary_count, primary_work_unit_count): (u32, u32, u32),
+    (summary_tribute_count, plan_tribute_count, manifest_tribute_count): (u32, u32, u32),
+    (
+        summary_tribute_nominal_total,
+        summary_eligible_nominal_total,
+        manifest_tribute_nominal_total,
+    ): (U256, U256, U256),
 ) -> Result<(), WorkerError> {
-    if covered_primary_start == 0
-        && covered_primary_count == primary_work_unit_count
-        && (summary_tribute_count != plan_tribute_count
-            || summary_tribute_count != manifest_tribute_count
-            || summary_tribute_nominal_total != manifest_tribute_nominal_total
-            || summary_eligible_nominal_total > summary_tribute_nominal_total)
-    {
+    let is_complete_root =
+        covered_primary_start == 0 && covered_primary_count == primary_work_unit_count;
+    let totals_match = (
+        summary_tribute_count,
+        summary_tribute_count,
+        summary_tribute_nominal_total,
+    ) == (
+        plan_tribute_count,
+        manifest_tribute_count,
+        manifest_tribute_nominal_total,
+    ) && summary_eligible_nominal_total <= summary_tribute_nominal_total;
+    if is_complete_root && !totals_match {
         return Err(WorkerError::UnitBindingMismatch);
     }
     Ok(())
@@ -512,18 +578,33 @@ fn decode_root_reduce_producer(
         .checked_shl(u32::from(level))
         .ok_or(WorkerError::UnitBindingMismatch)?;
     let header = artifact.output_header(limits)?;
-    if summary.protocol_bundle_hash != consumer.protocol_bundle_hash
-        || summary.job_id != consumer.job_id
-        || summary.attempt != consumer.attempt
-        || summary.plan_hash != plan_hash
-        || summary.covered_primary_start != expected_start
-        || summary.result_chunk_hashes.subtree_height != level
-        || summary.result_chunk_hashes.subtree_index != index
-        || header.source_coverage_root != summary.result_chunk_hashes.tree_root
-        || header.output_coverage_root != summary.result_chunk_hashes.tree_root
-        || header.source_coverage_count != summary.covered_primary_count
-        || header.output_coverage_count != summary.covered_primary_count
-    {
+    let expected_binding = (
+        consumer.protocol_bundle_hash,
+        consumer.job_id,
+        consumer.attempt,
+        plan_hash,
+        expected_start,
+        level,
+        index,
+        summary.result_chunk_hashes.tree_root,
+        summary.result_chunk_hashes.tree_root,
+        summary.covered_primary_count,
+        summary.covered_primary_count,
+    );
+    let actual_binding = (
+        summary.protocol_bundle_hash,
+        summary.job_id,
+        summary.attempt,
+        summary.plan_hash,
+        summary.covered_primary_start,
+        summary.result_chunk_hashes.subtree_height,
+        summary.result_chunk_hashes.subtree_index,
+        header.source_coverage_root,
+        header.output_coverage_root,
+        header.source_coverage_count,
+        header.output_coverage_count,
+    );
+    if actual_binding != expected_binding {
         return Err(WorkerError::UnitBindingMismatch);
     }
     Ok(summary)

@@ -72,29 +72,17 @@ pub enum LysisPhaseReplayError {
 /// Shuffle and ROOT_REDUCE have dedicated descendant/result adoption
 /// boundaries. OUTPUT_FINALIZE keeps its stricter typed helper below because
 /// its subtotal is an explicit final conservation authority.
-#[allow(clippy::too_many_arguments)]
 pub fn verify_core_phase_replay(
-    plan_ordinal: u32,
-    spec: &UnitSpecV1,
-    reported: &UnitArtifactV1,
-    plan: &PlanCommitmentV1,
-    manifest: &InputManifestV1,
-    input_chunks: &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
-    producer_artifacts: &[UnitArtifactV1],
-    bundle: &ProtocolBundleV1,
-    reader: &FilesystemCasReader,
-    inbox: &WorkerInbox,
+    (plan_ordinal, spec, reported): (u32, &UnitSpecV1, &UnitArtifactV1),
+    (plan, manifest): (&PlanCommitmentV1, &InputManifestV1),
+    (input_chunks, producer_artifacts): (
+        &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
+        &[UnitArtifactV1],
+    ),
+    (bundle, reader, inbox): (&ProtocolBundleV1, &FilesystemCasReader, &WorkerInbox),
     limits: &SchemaLimits,
 ) -> Result<(), LysisPhaseReplayError> {
-    if !matches!(
-        spec.phase,
-        UnitPhase::Enumerate
-            | UnitPhase::FidelityMap
-            | UnitPhase::FixedReduce
-            | UnitPhase::AmountMap
-            | UnitPhase::GratisPrefix
-            | UnitPhase::GratisPrefixDown
-    ) {
+    if !is_replayed_core_phase(spec.phase) {
         return Err(LysisPhaseReplayError::DedicatedReplayRequired(spec.phase));
     }
     reported.validate_against(spec, limits)?;
@@ -120,23 +108,50 @@ pub fn verify_core_phase_replay(
     Ok(())
 }
 
+pub(crate) fn verify_producer_only_phase_replay(
+    (expected_phase, invariant): (UnitPhase, &'static str),
+    (plan_ordinal, spec, reported): (u32, &UnitSpecV1, &UnitArtifactV1),
+    (plan, manifest): (&PlanCommitmentV1, &InputManifestV1),
+    (producer_artifacts, bundle): (&[UnitArtifactV1], &ProtocolBundleV1),
+    (reader, replay_inbox, limits): (&FilesystemCasReader, &WorkerInbox, &SchemaLimits),
+) -> Result<(), LysisPhaseReplayError> {
+    if spec.phase != expected_phase {
+        return Err(ProtocolError::InvalidInvariant(invariant).into());
+    }
+    reported.validate_against(spec, limits)?;
+    let expected = execute_unit(
+        spec,
+        UnitExecutionAuthority {
+            plan,
+            unit_index: plan_ordinal,
+            manifest,
+            input_chunks: &[],
+            producer_artifacts,
+            bundle,
+            limits,
+            reader,
+            inbox: replay_inbox,
+            cancelled: None,
+        },
+    )
+    .map_err(|_| LysisPhaseReplayError::ReplayExecutionFailed)?;
+    if expected.encode_canonical(limits)? != reported.encode_canonical(limits)? {
+        return Err(LysisPhaseReplayError::ReplayMismatch);
+    }
+    Ok(())
+}
+
 /// Publishes and admits a worker report only after supervisor-side semantic
 /// re-execution of the exact plan-bound phase.
-#[allow(clippy::too_many_arguments)]
 pub fn admit_reported_core_phase_unit(
-    position: AdmissionPositionV1,
-    spec: &UnitSpecV1,
-    finished: &UnitFinishedV1,
-    plan: &PlanCommitmentV1,
-    manifest: &InputManifestV1,
-    input_chunks: &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
-    producer_artifacts: &[UnitArtifactV1],
-    bundle: &ProtocolBundleV1,
-    reader: &FilesystemCasReader,
-    inbox: &WorkerInbox,
-    cas: &FilesystemCas,
-    catalog: &mut VerifiedAdmissionCatalog,
-    limits: &SchemaLimits,
+    (position, spec, finished): (AdmissionPositionV1, &UnitSpecV1, &UnitFinishedV1),
+    (plan, manifest): (&PlanCommitmentV1, &InputManifestV1),
+    (input_chunks, producer_artifacts): (
+        &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
+        &[UnitArtifactV1],
+    ),
+    (bundle, reader, inbox): (&ProtocolBundleV1, &FilesystemCasReader, &WorkerInbox),
+    (cas, catalog, limits): (&FilesystemCas, &mut VerifiedAdmissionCatalog, &SchemaLimits),
 ) -> Result<AdmittedReplayedCoreUnitV1, LysisPhaseReplayError> {
     let unit_id = spec.unit_id(limits)?;
     if finished.status != UnitFinishedStatus::Success || finished.unit_id != unit_id {
@@ -149,27 +164,14 @@ pub fn admit_reported_core_phase_unit(
     )?;
     let artifact = UnitArtifactV1::decode_canonical(reported.bytes(), limits)?;
     verify_core_phase_replay(
-        position.plan_ordinal,
-        spec,
-        &artifact,
-        plan,
-        manifest,
-        input_chunks,
-        producer_artifacts,
-        bundle,
-        reader,
-        inbox,
+        (position.plan_ordinal, spec, &artifact),
+        (plan, manifest),
+        (input_chunks, producer_artifacts),
+        (bundle, reader, inbox),
         limits,
     )?;
-    let mut artifact_ref = cas.publish_bytes(reported.bytes())?;
-    if artifact_ref.transport_digest != finished.transport_digest
-        || artifact_ref.encoded_bytes != finished.exact_staged_bytes
-    {
-        return Err(LysisPhaseReplayError::BindingMismatch);
-    }
-    artifact_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
-    cas.read_verified(&artifact_ref)?;
-    let admission = catalog.admit_verified_unit(position, spec, artifact_ref.clone(), None)?;
+    let (artifact_ref, admission) =
+        publish_and_admit_unit_artifact(position, spec, finished, reported.bytes(), (cas, catalog))?;
     Ok(AdmittedReplayedCoreUnitV1 {
         artifact_ref,
         admission,
@@ -178,21 +180,17 @@ pub fn admit_reported_core_phase_unit(
 
 /// Makes one reported OUTPUT_FINALIZE unit authoritative only after exact
 /// semantic replay from its already-admitted producer artifacts.
-#[allow(clippy::too_many_arguments)]
 pub fn admit_reported_output_finalize_unit(
-    position: AdmissionPositionV1,
-    shard_ordinal: u32,
-    spec: &UnitSpecV1,
-    finished: &UnitFinishedV1,
-    amount_artifact: &UnitArtifactV1,
-    prefix_artifact: &UnitArtifactV1,
-    plan: &PlanCommitmentV1,
-    manifest: &InputManifestV1,
-    bundle: &ProtocolBundleV1,
-    inbox: &WorkerInbox,
-    cas: &FilesystemCas,
-    catalog: &mut VerifiedAdmissionCatalog,
-    limits: &SchemaLimits,
+    (position, shard_ordinal): (AdmissionPositionV1, u32),
+    (spec, finished): (&UnitSpecV1, &UnitFinishedV1),
+    (amount_artifact, prefix_artifact): (&UnitArtifactV1, &UnitArtifactV1),
+    (plan, manifest, bundle): (&PlanCommitmentV1, &InputManifestV1, &ProtocolBundleV1),
+    (inbox, cas, catalog, limits): (
+        &WorkerInbox,
+        &FilesystemCas,
+        &mut VerifiedAdmissionCatalog,
+        &SchemaLimits,
+    ),
 ) -> Result<AdmittedOutputFinalizeUnitV1, LysisPhaseReplayError> {
     spec.validate_semantics(limits)?;
     let unit_id = spec.unit_id(limits)?;
@@ -206,26 +204,13 @@ pub fn admit_reported_output_finalize_unit(
     )?;
     let artifact = UnitArtifactV1::decode_canonical(reported.bytes(), limits)?;
     verify_output_finalize_replay(
-        shard_ordinal,
-        spec,
-        &artifact,
-        amount_artifact,
-        prefix_artifact,
-        plan,
-        manifest,
-        bundle,
+        (shard_ordinal, spec, &artifact),
+        (amount_artifact, prefix_artifact),
+        (plan, manifest, bundle),
         limits,
     )?;
-
-    let mut artifact_ref = cas.publish_bytes(reported.bytes())?;
-    if artifact_ref.transport_digest != finished.transport_digest
-        || artifact_ref.encoded_bytes != finished.exact_staged_bytes
-    {
-        return Err(LysisPhaseReplayError::BindingMismatch);
-    }
-    artifact_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
-    cas.read_verified(&artifact_ref)?;
-    let admission = catalog.admit_verified_unit(position, spec, artifact_ref.clone(), None)?;
+    let (artifact_ref, admission) =
+        publish_and_admit_unit_artifact(position, spec, finished, reported.bytes(), (cas, catalog))?;
     Ok(AdmittedOutputFinalizeUnitV1 {
         artifact_ref,
         admission,
@@ -237,27 +222,18 @@ pub fn admit_reported_output_finalize_unit(
 ///
 /// Producer artifacts are an admission precondition: their own phase replay
 /// must complete before the caller invokes this verifier.
-#[allow(clippy::too_many_arguments)]
 pub fn verify_output_finalize_replay(
-    shard_ordinal: u32,
-    spec: &UnitSpecV1,
-    reported: &UnitArtifactV1,
-    amount_artifact: &UnitArtifactV1,
-    prefix_artifact: &UnitArtifactV1,
-    plan: &PlanCommitmentV1,
-    manifest: &InputManifestV1,
-    bundle: &ProtocolBundleV1,
+    (shard_ordinal, spec, reported): (u32, &UnitSpecV1, &UnitArtifactV1),
+    (amount_artifact, prefix_artifact): (&UnitArtifactV1, &UnitArtifactV1),
+    (plan, manifest, bundle): (&PlanCommitmentV1, &InputManifestV1, &ProtocolBundleV1),
     limits: &SchemaLimits,
 ) -> Result<(), LysisPhaseReplayError> {
     reported.validate_against(spec, limits)?;
     let expected = replay_output_finalize_artifact(
         shard_ordinal,
         spec,
-        amount_artifact,
-        prefix_artifact,
-        plan,
-        manifest,
-        bundle,
+        (amount_artifact, prefix_artifact),
+        (plan, manifest, bundle),
         limits,
     )?;
     if expected != *reported {
@@ -268,30 +244,14 @@ pub fn verify_output_finalize_replay(
 
 /// Produces the one canonical OUTPUT_FINALIZE artifact used identically by
 /// workers and by supervisor replay.
-#[allow(clippy::too_many_arguments)]
 pub fn replay_output_finalize_artifact(
     shard_ordinal: u32,
     spec: &UnitSpecV1,
-    amount_artifact: &UnitArtifactV1,
-    prefix_artifact: &UnitArtifactV1,
-    plan: &PlanCommitmentV1,
-    manifest: &InputManifestV1,
-    bundle: &ProtocolBundleV1,
+    (amount_artifact, prefix_artifact): (&UnitArtifactV1, &UnitArtifactV1),
+    (plan, manifest, bundle): (&PlanCommitmentV1, &InputManifestV1, &ProtocolBundleV1),
     limits: &SchemaLimits,
 ) -> Result<UnitArtifactV1, LysisPhaseReplayError> {
-    plan.validate_semantics()?;
-    manifest.validate_semantics(limits)?;
-    spec.validate_semantics(limits)?;
-    let bundle_hash = bundle.protocol_bundle_hash(limits)?;
-    if plan.protocol_bundle_hash != bundle_hash
-        || plan.input_manifest_hash != manifest.manifest_hash(limits)?
-        || plan.tribute_count != manifest.tribute_count
-        || shard_ordinal >= plan.primary_work_unit_count
-        || spec.phase != UnitPhase::OutputFinalize
-    {
-        return Err(LysisPhaseReplayError::BindingMismatch);
-    }
-
+    validate_output_finalize_authority(shard_ordinal, spec, (plan, manifest, bundle), limits)?;
     let amount_unit_id = exact_unit_output_source(spec, InputPurpose::AmountRecords)?;
     let prefix_unit_id = exact_unit_output_source(spec, InputPurpose::GratisPrefixTable)?;
     let manifest_encoded_bytes =
@@ -324,37 +284,27 @@ pub fn replay_output_finalize_artifact(
         limits,
     )?;
 
-    amount_artifact.validate_semantics(limits)?;
     let mut amount_interval_binding = spec.clone();
     amount_interval_binding.phase = UnitPhase::AmountMap;
-    if amount_artifact.unit_id != amount_unit_id
-        || amount_artifact.protocol_bundle_hash != spec.protocol_bundle_hash
-        || amount_artifact.job_id != spec.job_id
-        || amount_artifact.attempt != spec.attempt
-        || amount_artifact.phase != UnitPhase::AmountMap
-        || amount_artifact.interval_commitment
-            != amount_interval_binding.interval_commitment(limits)?
-    {
-        return Err(LysisPhaseReplayError::BindingMismatch);
-    }
+    validate_producer_artifact_binding(
+        amount_artifact,
+        (amount_unit_id, UnitPhase::AmountMap),
+        (spec, &amount_interval_binding),
+        limits,
+    )?;
 
-    prefix_artifact.validate_semantics(limits)?;
     let mut prefix_interval_binding = spec.clone();
     prefix_interval_binding.phase = UnitPhase::GratisPrefixDown;
     prefix_interval_binding.interval = UnitInterval::BinaryReducerNode(BinaryReducerNode {
         level: 0,
         index: shard_ordinal,
     });
-    if prefix_artifact.unit_id != prefix_unit_id
-        || prefix_artifact.protocol_bundle_hash != spec.protocol_bundle_hash
-        || prefix_artifact.job_id != spec.job_id
-        || prefix_artifact.attempt != spec.attempt
-        || prefix_artifact.phase != UnitPhase::GratisPrefixDown
-        || prefix_artifact.interval_commitment
-            != prefix_interval_binding.interval_commitment(limits)?
-    {
-        return Err(LysisPhaseReplayError::BindingMismatch);
-    }
+    validate_producer_artifact_binding(
+        prefix_artifact,
+        (prefix_unit_id, UnitPhase::GratisPrefixDown),
+        (spec, &prefix_interval_binding),
+        limits,
+    )?;
 
     let amount = decode_amount_run(amount_artifact.phase_payload(limits)?, limits)?;
     let amount_header = amount_artifact.output_header(limits)?;
@@ -364,11 +314,7 @@ pub fn replay_output_finalize_artifact(
         return Err(LysisPhaseReplayError::BindingMismatch);
     };
     let prefix_header = prefix_artifact.output_header(limits)?;
-    if amount.start_ordinal / PRIMARY_WORK_SHARD_SIZE != shard_ordinal
-        || amount.coverage_root()? != amount_header.output_coverage_root
-        || amount_header.output_coverage_root != prefix_header.output_coverage_root
-        || amount_header.output_coverage_count != prefix_header.output_coverage_count
-    {
+    if !matches_output_finalize_coverage(shard_ordinal, &amount, &amount_header, &prefix_header)? {
         return Err(LysisPhaseReplayError::BindingMismatch);
     }
 
@@ -385,6 +331,89 @@ pub fn replay_output_finalize_artifact(
         limits,
     )
     .map_err(LysisPhaseReplayError::from)
+}
+
+const fn is_replayed_core_phase(phase: UnitPhase) -> bool {
+    matches!(
+        phase,
+        UnitPhase::Enumerate
+            | UnitPhase::FidelityMap
+            | UnitPhase::FixedReduce
+            | UnitPhase::AmountMap
+            | UnitPhase::GratisPrefix
+            | UnitPhase::GratisPrefixDown
+    )
+}
+
+fn publish_and_admit_unit_artifact(
+    position: AdmissionPositionV1,
+    spec: &UnitSpecV1,
+    finished: &UnitFinishedV1,
+    reported_bytes: &[u8],
+    (cas, catalog): (&FilesystemCas, &mut VerifiedAdmissionCatalog),
+) -> Result<(CasObjectRefV1, AdmissionOutcome), LysisPhaseReplayError> {
+    let mut artifact_ref = cas.publish_bytes(reported_bytes)?;
+    if artifact_ref.transport_digest != finished.transport_digest
+        || artifact_ref.encoded_bytes != finished.exact_staged_bytes
+    {
+        return Err(LysisPhaseReplayError::BindingMismatch);
+    }
+    artifact_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    cas.read_verified(&artifact_ref)?;
+    let admission = catalog.admit_verified_unit(position, spec, artifact_ref.clone(), None)?;
+    Ok((artifact_ref, admission))
+}
+
+fn validate_output_finalize_authority(
+    shard_ordinal: u32,
+    spec: &UnitSpecV1,
+    (plan, manifest, bundle): (&PlanCommitmentV1, &InputManifestV1, &ProtocolBundleV1),
+    limits: &SchemaLimits,
+) -> Result<(), LysisPhaseReplayError> {
+    plan.validate_semantics()?;
+    manifest.validate_semantics(limits)?;
+    spec.validate_semantics(limits)?;
+    let bundle_hash = bundle.protocol_bundle_hash(limits)?;
+    let matches_manifest = plan.protocol_bundle_hash == bundle_hash
+        && plan.input_manifest_hash == manifest.manifest_hash(limits)?
+        && plan.tribute_count == manifest.tribute_count;
+    let matches_spec =
+        shard_ordinal < plan.primary_work_unit_count && spec.phase == UnitPhase::OutputFinalize;
+    if !matches_manifest || !matches_spec {
+        return Err(LysisPhaseReplayError::BindingMismatch);
+    }
+    Ok(())
+}
+
+fn validate_producer_artifact_binding(
+    artifact: &UnitArtifactV1,
+    (expected_unit_id, expected_phase): (B256, UnitPhase),
+    (consumer_spec, interval_binding): (&UnitSpecV1, &UnitSpecV1),
+    limits: &SchemaLimits,
+) -> Result<(), LysisPhaseReplayError> {
+    artifact.validate_semantics(limits)?;
+    let matches_identity = artifact.unit_id == expected_unit_id
+        && artifact.protocol_bundle_hash == consumer_spec.protocol_bundle_hash
+        && artifact.job_id == consumer_spec.job_id
+        && artifact.attempt == consumer_spec.attempt;
+    let matches_shape = artifact.phase == expected_phase
+        && artifact.interval_commitment == interval_binding.interval_commitment(limits)?;
+    if !matches_identity || !matches_shape {
+        return Err(LysisPhaseReplayError::BindingMismatch);
+    }
+    Ok(())
+}
+
+fn matches_output_finalize_coverage(
+    shard_ordinal: u32,
+    amount: &outbe_lysis::program_v1::phases::AmountRunV1,
+    amount_header: &WorkOutputHeaderV1,
+    prefix_header: &WorkOutputHeaderV1,
+) -> Result<bool, LysisPhaseReplayError> {
+    Ok(amount.start_ordinal / PRIMARY_WORK_SHARD_SIZE == shard_ordinal
+        && amount.coverage_root()? == amount_header.output_coverage_root
+        && amount_header.output_coverage_root == prefix_header.output_coverage_root
+        && amount_header.output_coverage_count == prefix_header.output_coverage_count)
 }
 
 fn exact_unit_output_source(

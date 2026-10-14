@@ -90,7 +90,7 @@ use dispatch::dkg::dispatch_dkg_open;
 
 use dispatch::onboarding::{
     complete_gramine_direct_dev_onboarding_ingest_response,
-    complete_onboarding_artifact_ingest_response,
+    complete_onboarding_artifact_ingest_response, OnboardingArtifactExpectations,
 };
 
 use dispatch::requests::{

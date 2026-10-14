@@ -350,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_vote_propose_payload_file() {
+    fn test_cli_parse_vote_propose_with_payload_file() {
         let cli = Cli::try_parse_from([
             "outbe-cli",
             "vote",

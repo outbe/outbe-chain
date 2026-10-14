@@ -5,10 +5,7 @@
 //! same plan ordinal permanently latches the catalog into abstention instead
 //! of selecting one of the competing artifacts.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
-use std::os::fd::AsRawFd;
-use std::os::unix::fs::OpenOptionsExt;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use alloy_primitives::{keccak256, B256};
@@ -23,8 +20,17 @@ use thiserror::Error;
 
 use crate::cas::{CasError, FilesystemCas, FilesystemCasReader};
 
+pub(crate) mod storage;
+pub(crate) use storage::{
+    decode_envelope, decode_object_ref, encode_envelope, encode_object_ref, parse_entry_ordinal,
+    path_exists, reject_orphaned_temps, require_fresh_catalog_without_header, CatalogLock,
+    ADMISSION_STORAGE_PROFILE, INPUT_REF_STORAGE_PROFILE,
+};
+
+#[cfg(test)]
+mod tests;
+
 const CATALOG_DIRECTORY_MODE: u32 = 0o700;
-const CATALOG_FILE_MODE: u32 = 0o600;
 const HEADER_MAGIC: [u8; 8] = *b"OUTBADH1";
 const ENTRY_MAGIC: [u8; 8] = *b"OUTBADM1";
 const CONFLICT_MAGIC: [u8; 8] = *b"OUTBCNF1";
@@ -32,7 +38,6 @@ const HEADER_FILE: &str = "catalog.header";
 const LOCK_FILE: &str = "catalog.lock";
 const CONFLICT_FILE: &str = "catalog.abstained";
 const ENTRY_SUFFIX: &str = ".admission";
-const TEMP_SUFFIX: &str = ".tmp";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdmittedResultChunkV1 {
@@ -154,23 +159,24 @@ impl VerifiedAdmissionCatalog {
         input_manifest_ref: &CasObjectRefV1,
         limits: SchemaLimits,
     ) -> Result<Self, AdmissionCatalogError> {
-        let expected = expected_header_from_cas(cas, plan_ref, input_manifest_ref, &limits)?;
+        let expected = expected_header_with(plan_ref, input_manifest_ref, &limits, |reference| {
+            Ok(cas.read_verified(reference)?.bytes().to_vec())
+        })?;
         let root = root.as_ref().to_path_buf();
         create_private_directory(&root)?;
-        let lock = CatalogLock::acquire(&root)?;
+        let lock = ADMISSION_STORAGE_PROFILE.acquire_lock(&root)?;
         reject_orphaned_temps(&root)?;
         let header_path = root.join(HEADER_FILE);
-        if path_exists(&header_path)? {
-            let actual = decode_header(
-                &read_bounded(&header_path, catalog_byte_cap(&limits))?,
-                &limits,
-            )?;
-            if actual != expected {
+        let encoded_expected = encode_header(&expected, &limits)?;
+        if let Some(existing) = ADMISSION_STORAGE_PROFILE.load_or_init_header(
+            &root,
+            &header_path,
+            catalog_byte_cap(&limits),
+            &encoded_expected,
+        )? {
+            if decode_header(&existing, &limits)? != expected {
                 return Err(AdmissionCatalogError::AuthorityMismatch);
             }
-        } else {
-            require_fresh_catalog_without_header(&root)?;
-            persist_atomic(&root, &header_path, &encode_header(&expected, &limits)?)?;
         }
         let abstained = path_exists(&root.join(CONFLICT_FILE))?;
         Ok(Self {
@@ -189,7 +195,7 @@ impl VerifiedAdmissionCatalog {
     ) -> Result<Self, AdmissionCatalogError> {
         let root = root.as_ref().to_path_buf();
         inspect_private_directory(&root)?;
-        let lock = CatalogLock::acquire(&root)?;
+        let lock = ADMISSION_STORAGE_PROFILE.acquire_lock(&root)?;
         Self::reopen_with_lock(root, reader, limits, lock)
     }
 
@@ -205,14 +211,14 @@ impl VerifiedAdmissionCatalog {
             return Err(AdmissionCatalogError::MissingHeader);
         }
         let header = decode_header(
-            &read_bounded(&header_path, catalog_byte_cap(&limits))?,
+            &ADMISSION_STORAGE_PROFILE.read_bounded(&header_path, catalog_byte_cap(&limits))?,
             &limits,
         )?;
-        let expected = expected_header_from_reader(
-            reader,
+        let expected = expected_header_with(
             &header.plan_ref,
             &header.input_manifest_ref,
             &limits,
+            |reference| Ok(reader.read_verified(reference)?.bytes().to_vec()),
         )?;
         if header != expected {
             return Err(AdmissionCatalogError::AuthorityMismatch);
@@ -281,7 +287,8 @@ impl VerifiedAdmissionCatalog {
         let path = self.entry_path(record.plan_ordinal);
         let canonical = encode_record(record, &self.limits)?;
         if path_exists(&path)? {
-            let existing_bytes = read_bounded(&path, catalog_byte_cap(&self.limits))?;
+            let existing_bytes =
+                ADMISSION_STORAGE_PROFILE.read_bounded(&path, catalog_byte_cap(&self.limits))?;
             let existing = decode_record(&existing_bytes, &self.limits)?;
             if existing == *record {
                 return Ok(AdmissionOutcome::ExactReplay);
@@ -292,7 +299,7 @@ impl VerifiedAdmissionCatalog {
             });
         }
 
-        persist_atomic(&self.root, &path, &canonical)?;
+        ADMISSION_STORAGE_PROFILE.persist_atomic(&self.root, &path, &canonical)?;
         Ok(AdmissionOutcome::NewlyAdmitted)
     }
 
@@ -305,7 +312,8 @@ impl VerifiedAdmissionCatalog {
         if !path_exists(&path)? {
             return Err(AdmissionCatalogError::MissingAdmission { plan_ordinal });
         }
-        let encoded = read_bounded(&path, catalog_byte_cap(&self.limits))?;
+        let encoded =
+            ADMISSION_STORAGE_PROFILE.read_bounded(&path, catalog_byte_cap(&self.limits))?;
         let record = decode_record(&encoded, &self.limits)?;
         if record.plan_ordinal != plan_ordinal {
             return Err(AdmissionCatalogError::OrdinalBinding {
@@ -418,7 +426,7 @@ impl VerifiedAdmissionCatalog {
         marker.extend_from_slice(keccak256(existing).as_slice());
         marker.extend_from_slice(keccak256(candidate).as_slice());
         let path = self.root.join(CONFLICT_FILE);
-        persist_atomic(&self.root, &path, &marker)?;
+        ADMISSION_STORAGE_PROFILE.persist_atomic(&self.root, &path, &marker)?;
         self.abstained = true;
         Ok(())
     }
@@ -444,58 +452,62 @@ impl Iterator for AdmissionDirectoryCursorV1<'_> {
         if self.complete {
             return None;
         }
-        let entry = match self.entries.next() {
-            Some(Ok(entry)) => entry,
+        match self.entries.next() {
+            Some(Ok(entry)) => Some(self.inspect_entry(entry)),
             Some(Err(source)) => {
                 self.complete = true;
-                return Some(Err(io_error(
+                Some(Err(io_error(
                     "read catalog directory",
                     &self.catalog.root,
                     source,
-                )));
+                )))
             }
-            None => {
-                self.complete = true;
-                if self.actual_count != self.catalog.header.exact_plan_unit_count {
-                    return Some(Err(ProtocolError::InvalidInvariant(
-                        "closed admission count",
-                    )
-                    .into()));
-                }
-                return Some(Ok(AdmissionDirectoryStepV1::Complete));
-            }
-        };
-        Some((|| {
-            let name = entry
-                .file_name()
-                .into_string()
-                .map_err(|_| AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()))?;
-            if name == HEADER_FILE || name == LOCK_FILE {
-                return Ok(AdmissionDirectoryStepV1::EntryChecked);
-            }
-            let prefix = name
-                .strip_suffix(ENTRY_SUFFIX)
-                .ok_or_else(|| AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()))?;
-            let plan_ordinal = parse_entry_ordinal(prefix)
-                .ok_or_else(|| AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()))?;
-            if !entry
-                .file_type()
-                .map_err(|source| io_error("inspect catalog entry", &entry.path(), source))?
-                .is_file()
-            {
-                return Err(AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()));
-            }
-            if plan_ordinal >= self.catalog.header.exact_plan_unit_count {
-                return Err(AdmissionCatalogError::UnexpectedAdmission { plan_ordinal });
-            }
-            self.actual_count =
-                self.actual_count
-                    .checked_add(1)
-                    .ok_or(ProtocolError::IntegerOverflow {
-                        what: "closed admission count",
-                    })?;
-            Ok(AdmissionDirectoryStepV1::EntryChecked)
-        })())
+            None => Some(self.finish_directory()),
+        }
+    }
+}
+
+impl AdmissionDirectoryCursorV1<'_> {
+    fn finish_directory(&mut self) -> Result<AdmissionDirectoryStepV1, AdmissionCatalogError> {
+        self.complete = true;
+        if self.actual_count != self.catalog.header.exact_plan_unit_count {
+            return Err(ProtocolError::InvalidInvariant("closed admission count").into());
+        }
+        Ok(AdmissionDirectoryStepV1::Complete)
+    }
+
+    fn inspect_entry(
+        &mut self,
+        entry: fs::DirEntry,
+    ) -> Result<AdmissionDirectoryStepV1, AdmissionCatalogError> {
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()))?;
+        if name == HEADER_FILE || name == LOCK_FILE {
+            return Ok(AdmissionDirectoryStepV1::EntryChecked);
+        }
+        let plan_ordinal = name
+            .strip_suffix(ENTRY_SUFFIX)
+            .and_then(parse_entry_ordinal)
+            .ok_or_else(|| AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()))?;
+        let is_file = entry
+            .file_type()
+            .map_err(|source| io_error("inspect catalog entry", &entry.path(), source))?
+            .is_file();
+        if !is_file {
+            return Err(AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()));
+        }
+        if plan_ordinal >= self.catalog.header.exact_plan_unit_count {
+            return Err(AdmissionCatalogError::UnexpectedAdmission { plan_ordinal });
+        }
+        self.actual_count =
+            self.actual_count
+                .checked_add(1)
+                .ok_or(ProtocolError::IntegerOverflow {
+                    what: "closed admission count",
+                })?;
+        Ok(AdmissionDirectoryStepV1::EntryChecked)
     }
 }
 
@@ -583,36 +595,19 @@ pub enum AdmissionCatalogError {
     },
 }
 
-fn expected_header_from_cas(
-    cas: &FilesystemCas,
+fn expected_header_with(
     plan_ref: &CasObjectRefV1,
     input_manifest_ref: &CasObjectRefV1,
     limits: &SchemaLimits,
+    read_object: impl Fn(&CasObjectRefV1) -> Result<Vec<u8>, AdmissionCatalogError>,
 ) -> Result<AdmissionCatalogHeaderV1, AdmissionCatalogError> {
-    let plan_object = cas.read_verified(plan_ref)?;
-    let manifest_object = cas.read_verified(input_manifest_ref)?;
+    let plan_bytes = read_object(plan_ref)?;
+    let manifest_bytes = read_object(input_manifest_ref)?;
     expected_header(
         plan_ref,
-        plan_object.bytes(),
+        &plan_bytes,
         input_manifest_ref,
-        manifest_object.bytes(),
-        limits,
-    )
-}
-
-fn expected_header_from_reader(
-    reader: &FilesystemCasReader,
-    plan_ref: &CasObjectRefV1,
-    input_manifest_ref: &CasObjectRefV1,
-    limits: &SchemaLimits,
-) -> Result<AdmissionCatalogHeaderV1, AdmissionCatalogError> {
-    let plan_object = reader.read_verified(plan_ref)?;
-    let manifest_object = reader.read_verified(input_manifest_ref)?;
-    expected_header(
-        plan_ref,
-        plan_object.bytes(),
-        input_manifest_ref,
-        manifest_object.bytes(),
+        &manifest_bytes,
         limits,
     )
 }
@@ -624,13 +619,23 @@ fn expected_header(
     manifest_bytes: &[u8],
     limits: &SchemaLimits,
 ) -> Result<AdmissionCatalogHeaderV1, AdmissionCatalogError> {
-    if plan_ref.transport_digest.is_zero()
-        || plan_ref.encoded_bytes == 0
-        || plan_ref.expected_ocb1_kind.is_some()
-        || input_manifest_ref.transport_digest.is_zero()
-        || input_manifest_ref.encoded_bytes == 0
-        || input_manifest_ref.expected_ocb1_kind != Some(ObjectKind::InputManifestV1.tag())
-    {
+    let descriptor_checks = (
+        plan_ref.transport_digest.is_zero(),
+        plan_ref.encoded_bytes == 0,
+        plan_ref.expected_ocb1_kind,
+        input_manifest_ref.transport_digest.is_zero(),
+        input_manifest_ref.encoded_bytes == 0,
+        input_manifest_ref.expected_ocb1_kind,
+    );
+    let expected_descriptors = (
+        false,
+        false,
+        None,
+        false,
+        false,
+        Some(ObjectKind::InputManifestV1.tag()),
+    );
+    if descriptor_checks != expected_descriptors {
         return Err(
             ProtocolError::InvalidInvariant("admission catalog authority descriptor").into(),
         );
@@ -640,13 +645,23 @@ fn expected_header(
     plan.validate_semantics()?;
     manifest.validate_semantics(limits)?;
     let input_manifest_hash = manifest.manifest_hash(limits)?;
-    if plan.protocol_bundle_hash != manifest.protocol_bundle_hash
-        || plan.job_id != manifest.job_id
-        || plan.attempt != manifest.attempt
-        || plan.input_manifest_hash != input_manifest_hash
-        || plan.wwd != manifest.wwd
-        || plan.tribute_count != manifest.tribute_count
-    {
+    let plan_subject = (
+        plan.protocol_bundle_hash,
+        plan.job_id,
+        plan.attempt,
+        plan.input_manifest_hash,
+        plan.wwd,
+        plan.tribute_count,
+    );
+    let manifest_subject = (
+        manifest.protocol_bundle_hash,
+        manifest.job_id,
+        manifest.attempt,
+        input_manifest_hash,
+        manifest.wwd,
+        manifest.tribute_count,
+    );
+    if plan_subject != manifest_subject {
         return Err(AdmissionCatalogError::AuthorityMismatch);
     }
     let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)
@@ -715,39 +730,29 @@ fn decode_header(
     Ok(header)
 }
 
-fn encode_envelope(magic: [u8; 8], body: &[u8]) -> Vec<u8> {
-    let mut output = Vec::with_capacity(magic.len() + B256::len_bytes() + body.len());
-    output.extend_from_slice(&magic);
-    output.extend_from_slice(keccak256(body).as_slice());
-    output.extend_from_slice(body);
-    output
-}
-
-fn decode_envelope(encoded: &[u8], magic: [u8; 8]) -> Result<&[u8], AdmissionCatalogError> {
-    let body_offset = magic.len() + B256::len_bytes();
-    if encoded.len() < body_offset || encoded[..magic.len()] != magic {
-        return Err(AdmissionCatalogError::InvalidEnvelope);
-    }
-    let expected = B256::from_slice(&encoded[magic.len()..body_offset]);
-    let body = &encoded[body_offset..];
-    if keccak256(body) != expected {
-        return Err(AdmissionCatalogError::InvalidEnvelope);
-    }
-    Ok(body)
-}
-
 fn validate_record(
     record: &VerifiedAdmissionRecordV1,
     limits: &SchemaLimits,
 ) -> Result<(), AdmissionCatalogError> {
-    if record.protocol_bundle_hash.is_zero()
-        || record.job_id.is_zero()
-        || record.plan_hash.is_zero()
-        || record.unit_id.is_zero()
-        || record.artifact_ref.transport_digest.is_zero()
-        || record.artifact_ref.encoded_bytes == 0
-        || record.artifact_ref.expected_ocb1_kind != Some(ObjectKind::UnitArtifactV1.tag())
-    {
+    let required_checks = (
+        record.protocol_bundle_hash.is_zero(),
+        record.job_id.is_zero(),
+        record.plan_hash.is_zero(),
+        record.unit_id.is_zero(),
+        record.artifact_ref.transport_digest.is_zero(),
+        record.artifact_ref.encoded_bytes == 0,
+        record.artifact_ref.expected_ocb1_kind,
+    );
+    let expected_checks = (
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        Some(ObjectKind::UnitArtifactV1.tag()),
+    );
+    if required_checks != expected_checks {
         return Err(ProtocolError::InvalidInvariant("verified admission binding").into());
     }
     if let Some(chunk) = &record.result_chunk {
@@ -766,14 +771,6 @@ fn validate_record(
         }
     }
     Ok(())
-}
-
-fn parse_entry_ordinal(prefix: &str) -> Option<u32> {
-    if prefix.len() != 10 || !prefix.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    let ordinal = prefix.parse::<u32>().ok()?;
-    (format!("{ordinal:010}") == prefix).then_some(ordinal)
 }
 
 fn catalog_byte_cap(limits: &SchemaLimits) -> usize {
@@ -802,29 +799,14 @@ fn encode_record(
             .encode_canonical_record(limits)?;
         writer.write_bounded_bytes(&encoded, limits.max_bounded_bytes)
     })?;
-    let body = body.into_bytes();
-
-    let mut output = Vec::with_capacity(ENTRY_MAGIC.len() + 32 + body.len());
-    output.extend_from_slice(&ENTRY_MAGIC);
-    output.extend_from_slice(keccak256(&body).as_slice());
-    output.extend_from_slice(&body);
-    Ok(output)
+    Ok(encode_envelope(ENTRY_MAGIC, &body.into_bytes()))
 }
 
 fn decode_record(
     encoded: &[u8],
     limits: &SchemaLimits,
 ) -> Result<VerifiedAdmissionRecordV1, AdmissionCatalogError> {
-    let envelope_bytes = ENTRY_MAGIC.len() + B256::len_bytes();
-    if encoded.len() < envelope_bytes || encoded[..ENTRY_MAGIC.len()] != ENTRY_MAGIC {
-        return Err(AdmissionCatalogError::InvalidEnvelope);
-    }
-    let expected_digest = B256::from_slice(&encoded[ENTRY_MAGIC.len()..envelope_bytes]);
-    let body = &encoded[envelope_bytes..];
-    if keccak256(body) != expected_digest {
-        return Err(AdmissionCatalogError::InvalidEnvelope);
-    }
-
+    let body = decode_envelope(encoded, ENTRY_MAGIC)?;
     let mut input = CanonicalReader::new(body, limits.codec)?;
     let record = VerifiedAdmissionRecordV1 {
         protocol_bundle_hash: input.read_b256()?,
@@ -851,25 +833,6 @@ fn decode_record(
     Ok(record)
 }
 
-fn encode_object_ref(
-    output: &mut CanonicalWriter,
-    reference: &CasObjectRefV1,
-) -> Result<(), ProtocolError> {
-    output.write_b256(reference.transport_digest)?;
-    output.write_u64(reference.encoded_bytes)?;
-    output.write_option(reference.expected_ocb1_kind.as_ref(), |writer, kind| {
-        writer.write_u16(*kind)
-    })
-}
-
-fn decode_object_ref(input: &mut CanonicalReader<'_>) -> Result<CasObjectRefV1, ProtocolError> {
-    Ok(CasObjectRefV1 {
-        transport_digest: input.read_b256()?,
-        encoded_bytes: input.read_u64()?,
-        expected_ocb1_kind: input.read_option(|reader| reader.read_u16())?,
-    })
-}
-
 fn create_private_directory(path: &Path) -> Result<(), AdmissionCatalogError> {
     fs::create_dir_all(path).map_err(|source| io_error("create directory", path, source))?;
     let metadata =
@@ -891,404 +854,10 @@ fn inspect_private_directory(path: &Path) -> Result<(), AdmissionCatalogError> {
     Ok(())
 }
 
-fn reject_orphaned_temps(root: &Path) -> Result<(), AdmissionCatalogError> {
-    let entries =
-        fs::read_dir(root).map_err(|source| io_error("list catalog directory", root, source))?;
-    for entry in entries {
-        let entry = entry.map_err(|source| io_error("read catalog directory", root, source))?;
-        let path = entry.path();
-        if path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(TEMP_SUFFIX))
-        {
-            return Err(AdmissionCatalogError::AmbiguousTemporary(path));
-        }
-    }
-    Ok(())
-}
-
-fn require_fresh_catalog_without_header(root: &Path) -> Result<(), AdmissionCatalogError> {
-    let entries =
-        fs::read_dir(root).map_err(|source| io_error("list catalog directory", root, source))?;
-    for entry in entries {
-        let entry = entry.map_err(|source| io_error("read catalog directory", root, source))?;
-        if entry.file_name() != LOCK_FILE {
-            return Err(AdmissionCatalogError::MissingHeader);
-        }
-    }
-    Ok(())
-}
-
-fn persist_atomic(root: &Path, target: &Path, bytes: &[u8]) -> Result<(), AdmissionCatalogError> {
-    let file_name = target
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or(AdmissionCatalogError::InvalidEnvelope)?;
-    let temp = root.join(format!("{file_name}{TEMP_SUFFIX}"));
-    if path_exists(&temp)? {
-        return Err(AdmissionCatalogError::AmbiguousTemporary(temp));
-    }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(CATALOG_FILE_MODE)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(&temp)
-        .map_err(|source| io_error("create temporary admission", &temp, source))?;
-    file.write_all(bytes)
-        .map_err(|source| io_error("write temporary admission", &temp, source))?;
-    file.sync_all()
-        .map_err(|source| io_error("fsync temporary admission", &temp, source))?;
-    fs::rename(&temp, target).map_err(|source| io_error("install admission", target, source))?;
-    sync_directory(root)
-}
-
-fn read_bounded(path: &Path, max_bytes: usize) -> Result<Vec<u8>, AdmissionCatalogError> {
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|source| io_error("open admission", path, source))?;
-    let metadata = file
-        .metadata()
-        .map_err(|source| io_error("inspect admission", path, source))?;
-    if !metadata.file_type().is_file()
-        || metadata.len() > u64::try_from(max_bytes).unwrap_or(u64::MAX)
-    {
-        return Err(AdmissionCatalogError::ObjectTooLarge);
-    }
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
-    file.take(
-        u64::try_from(max_bytes)
-            .unwrap_or(u64::MAX)
-            .saturating_add(1),
-    )
-    .read_to_end(&mut bytes)
-    .map_err(|source| io_error("read admission", path, source))?;
-    if bytes.len() > max_bytes {
-        return Err(AdmissionCatalogError::ObjectTooLarge);
-    }
-    Ok(bytes)
-}
-
-fn path_exists(path: &Path) -> Result<bool, AdmissionCatalogError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-                return Err(AdmissionCatalogError::InvalidEnvelope);
-            }
-            Ok(true)
-        }
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(source) => Err(io_error("inspect path", path, source)),
-    }
-}
-
-fn sync_directory(path: &Path) -> Result<(), AdmissionCatalogError> {
-    let directory =
-        File::open(path).map_err(|source| io_error("open catalog directory", path, source))?;
-    directory
-        .sync_all()
-        .map_err(|source| io_error("fsync catalog directory", path, source))
-}
-
 fn io_error(operation: &'static str, path: &Path, source: std::io::Error) -> AdmissionCatalogError {
     AdmissionCatalogError::Io {
         operation,
         path: path.to_path_buf(),
         source,
-    }
-}
-
-struct CatalogLock {
-    file: File,
-}
-
-impl CatalogLock {
-    #[allow(unsafe_code)]
-    fn acquire_shared(root: &Path) -> Result<Self, AdmissionCatalogError> {
-        let path = root.join(LOCK_FILE);
-        let file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
-            .open(&path)
-            .map_err(|source| io_error("open read-only catalog lock", &path, source))?;
-        let metadata = file
-            .metadata()
-            .map_err(|source| io_error("inspect read-only catalog lock", &path, source))?;
-        if !metadata.file_type().is_file() {
-            return Err(AdmissionCatalogError::InvalidEnvelope);
-        }
-        // SAFETY: `file` owns a live descriptor for the complete flock call.
-        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
-        if result != 0 {
-            let source = std::io::Error::last_os_error();
-            if source.raw_os_error() == Some(libc::EWOULDBLOCK) {
-                return Err(AdmissionCatalogError::LockHeld(path));
-            }
-            return Err(io_error("lock read-only catalog", &path, source));
-        }
-        Ok(Self { file })
-    }
-
-    #[allow(unsafe_code)]
-    fn acquire(root: &Path) -> Result<Self, AdmissionCatalogError> {
-        let path = root.join(LOCK_FILE);
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .mode(CATALOG_FILE_MODE)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-            .open(&path)
-            .map_err(|source| io_error("open catalog lock", &path, source))?;
-        // SAFETY: `file` owns a live descriptor for the complete flock call.
-        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if result != 0 {
-            let source = std::io::Error::last_os_error();
-            if source.raw_os_error() == Some(libc::EWOULDBLOCK) {
-                return Err(AdmissionCatalogError::LockHeld(path));
-            }
-            return Err(io_error("lock catalog", &path, source));
-        }
-        Ok(Self { file })
-    }
-}
-
-impl Drop for CatalogLock {
-    #[allow(unsafe_code)]
-    fn drop(&mut self) {
-        // SAFETY: `self.file` remains open for the complete flock call.
-        let _ = unsafe { libc::flock(self.file.as_raw_fd(), libc::LOCK_UN) };
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use outbe_ocomp_protocol::local_control::poc_schema_limits;
-
-    fn hash(byte: u8) -> B256 {
-        B256::repeat_byte(byte)
-    }
-
-    fn record(plan_ordinal: u32) -> VerifiedAdmissionRecordV1 {
-        VerifiedAdmissionRecordV1 {
-            protocol_bundle_hash: hash(1),
-            job_id: hash(2),
-            attempt: 0,
-            plan_hash: hash(4),
-            plan_ordinal,
-            unit_id: hash(u8::try_from(plan_ordinal + 5).unwrap()),
-            artifact_ref: CasObjectRefV1 {
-                transport_digest: hash(6),
-                encoded_bytes: 100,
-                expected_ocb1_kind: Some(ObjectKind::UnitArtifactV1.tag()),
-            },
-            result_chunk: None,
-        }
-    }
-
-    fn open_catalog(
-        root: &Path,
-        limits: SchemaLimits,
-        exact_plan_unit_count: u32,
-    ) -> VerifiedAdmissionCatalog {
-        create_private_directory(root).unwrap();
-        let lock = CatalogLock::acquire(root).unwrap();
-        reject_orphaned_temps(root).unwrap();
-        let header = AdmissionCatalogHeaderV1 {
-            protocol_bundle_hash: hash(1),
-            job_id: hash(2),
-            attempt: 0,
-            input_manifest_ref: CasObjectRefV1 {
-                transport_digest: hash(20),
-                encoded_bytes: 200,
-                expected_ocb1_kind: Some(ObjectKind::InputManifestV1.tag()),
-            },
-            input_manifest_hash: hash(21),
-            plan_ref: CasObjectRefV1 {
-                transport_digest: hash(22),
-                encoded_bytes: 100,
-                expected_ocb1_kind: None,
-            },
-            plan_hash: hash(4),
-            tribute_count: 1,
-            primary_work_unit_count: 1,
-            primary_work_unit_root: hash(23),
-            exact_plan_unit_count,
-        };
-        let header_path = root.join(HEADER_FILE);
-        if path_exists(&header_path).unwrap() {
-            assert_eq!(
-                decode_header(
-                    &read_bounded(&header_path, catalog_byte_cap(&limits)).unwrap(),
-                    &limits
-                )
-                .unwrap(),
-                header
-            );
-        } else {
-            persist_atomic(
-                root,
-                &header_path,
-                &encode_header(&header, &limits).unwrap(),
-            )
-            .unwrap();
-        }
-        let abstained = path_exists(&root.join(CONFLICT_FILE)).unwrap();
-        VerifiedAdmissionCatalog {
-            root: root.to_path_buf(),
-            limits,
-            header,
-            abstained,
-            _lock: lock,
-        }
-    }
-
-    #[test]
-    fn exact_replay_and_restart_preserve_one_admission() {
-        let root = tempfile::tempdir().unwrap();
-        let limits = poc_schema_limits();
-        let admitted = record(0);
-        {
-            let mut catalog = open_catalog(root.path(), limits, 1);
-            assert_eq!(
-                catalog.admit(&admitted).unwrap(),
-                AdmissionOutcome::NewlyAdmitted
-            );
-            assert_eq!(
-                catalog.admit(&admitted).unwrap(),
-                AdmissionOutcome::ExactReplay
-            );
-        }
-
-        let catalog = open_catalog(root.path(), limits, 1);
-        assert_eq!(catalog.read(0).unwrap(), admitted);
-        assert_eq!(
-            catalog
-                .exact_plan_cursor()
-                .unwrap()
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap(),
-            vec![admitted]
-        );
-    }
-
-    #[test]
-    fn conflicting_valid_admission_permanently_abstains_without_overwrite() {
-        let root = tempfile::tempdir().unwrap();
-        let limits = poc_schema_limits();
-        let first = record(0);
-        let mut second = first.clone();
-        second.artifact_ref.transport_digest = hash(99);
-        {
-            let mut catalog = open_catalog(root.path(), limits, 1);
-            catalog.admit(&first).unwrap();
-            assert!(matches!(
-                catalog.admit(&second),
-                Err(AdmissionCatalogError::ConflictingAdmission { plan_ordinal: 0 })
-            ));
-            assert!(catalog.is_abstained());
-            assert!(matches!(
-                catalog.read(0),
-                Err(AdmissionCatalogError::Abstained)
-            ));
-        }
-
-        let catalog = open_catalog(root.path(), limits, 1);
-        assert!(catalog.is_abstained());
-        assert!(matches!(
-            catalog.exact_plan_cursor(),
-            Err(AdmissionCatalogError::Abstained)
-        ));
-    }
-
-    #[test]
-    fn exact_plan_cursor_rejects_a_missing_plan_ordinal_before_iteration() {
-        let root = tempfile::tempdir().unwrap();
-        let limits = poc_schema_limits();
-        let mut catalog = open_catalog(root.path(), limits, 3);
-        catalog.admit(&record(0)).unwrap();
-        catalog.admit(&record(2)).unwrap();
-
-        assert!(matches!(
-            catalog.exact_plan_cursor(),
-            Err(AdmissionCatalogError::MissingAdmission { plan_ordinal: 1 })
-        ));
-    }
-
-    #[test]
-    fn exact_plan_cursor_rejects_an_admission_outside_the_closed_plan() {
-        let root = tempfile::tempdir().unwrap();
-        let limits = poc_schema_limits();
-        let mut catalog = open_catalog(root.path(), limits, 2);
-        catalog.admit(&record(0)).unwrap();
-        catalog.admit(&record(1)).unwrap();
-        catalog.admit(&record(7)).unwrap();
-
-        assert!(matches!(
-            catalog.exact_plan_cursor(),
-            Err(AdmissionCatalogError::UnexpectedAdmission { plan_ordinal: 7 })
-        ));
-    }
-
-    #[test]
-    fn exact_plan_cursor_rejects_a_record_from_another_plan() {
-        let root = tempfile::tempdir().unwrap();
-        let limits = poc_schema_limits();
-        let mut catalog = open_catalog(root.path(), limits, 1);
-        let mut wrong_plan = record(0);
-        wrong_plan.plan_hash = hash(99);
-        catalog.admit(&wrong_plan).unwrap();
-
-        let mut cursor = catalog.exact_plan_cursor().unwrap();
-        assert!(matches!(
-            cursor.next().unwrap(),
-            Err(AdmissionCatalogError::PlanBinding {
-                plan_ordinal: 0,
-                expected,
-                actual,
-            }) if expected == hash(4) && actual == hash(99)
-        ));
-    }
-
-    #[test]
-    fn exact_plan_cursor_rejects_an_uncommitted_side_index() {
-        let root = tempfile::tempdir().unwrap();
-        let limits = poc_schema_limits();
-        let mut catalog = open_catalog(root.path(), limits, 1);
-        catalog.admit(&record(0)).unwrap();
-        let side_index = root.path().join("completion-order.index");
-        fs::write(&side_index, b"0").unwrap();
-
-        assert!(matches!(
-            catalog.exact_plan_cursor(),
-            Err(AdmissionCatalogError::UnexpectedCatalogEntry(path)) if path == side_index
-        ));
-    }
-
-    #[test]
-    fn admission_read_rejects_a_symlink_substitution() {
-        use std::os::unix::fs::symlink;
-
-        let root = tempfile::tempdir().unwrap();
-        let limits = poc_schema_limits();
-        {
-            let mut catalog = open_catalog(root.path(), limits, 1);
-            catalog.admit(&record(0)).unwrap();
-        }
-        let entry = root.path().join(format!("{:010}{ENTRY_SUFFIX}", 0));
-        let substitute = root.path().join("substitute");
-        fs::write(&substitute, b"not an admission").unwrap();
-        fs::remove_file(&entry).unwrap();
-        symlink(&substitute, &entry).unwrap();
-
-        let catalog = open_catalog(root.path(), limits, 1);
-        assert!(matches!(
-            catalog.read(0),
-            Err(AdmissionCatalogError::InvalidEnvelope)
-        ));
     }
 }

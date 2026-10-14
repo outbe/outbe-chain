@@ -323,8 +323,13 @@ fn recorded_exported_requires_complete_native_export_even_when_entire_job_direct
                 },
                 |request| fixture(request, Phase::VotingOpen, bind_source).owner,
                 |state, source, layout, scratch| {
-                    let result =
-                        verify_canonical_obligations(state, source, layout, scratch, None, None);
+                    let result = verify_canonical_obligations(
+                        state,
+                        source,
+                        (layout, scratch),
+                        None,
+                        None,
+                    );
                     if let Some(deleted) = deleted {
                         let error = result.err().expect("recorded exported obligation cannot disappear with its entire public directory");
                         assert!(

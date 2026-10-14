@@ -114,8 +114,6 @@ impl SupervisorJobRunnerV1 {
             "decode finalized JobIntent",
             JobIntentV1::decode_canonical(&record.spec.canonical_job_intent.0, limits),
         )?;
-        let manifest = binding.manifest();
-        let manifest_ref = binding.manifest_ref();
         let job_component = hex::encode(job_id.as_slice());
         let input_refs = stage(
             "reopen exact exported input catalog",
@@ -126,61 +124,11 @@ impl SupervisorJobRunnerV1 {
                 poc_input_list_limits(),
             ),
         )?;
-        let tribute_refs = stage(
-            "read exact Tribute input references",
-            input_refs.exact_cursor(),
-        )?
-        .filter_map(|reference| match reference {
-            Ok(reference) if reference.kind == InputChunkKind::Tribute => Some(Ok(reference)),
-            Ok(_) => None,
-            Err(error) => Some(Err(error)),
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| stage_error("read exact Tribute input references", error))?;
+        let tribute_refs = read_tribute_refs(&input_refs)?;
         require_not_cancelled(cancelled)?;
 
-        let planner = stage(
-            "bind Lysis V1 planner",
-            LysisPlannerV1::new(LysisPlannerBindingsV1 {
-                protocol_bundle_hash: self.config.protocol_bundle.hash(),
-                job_id,
-                attempt: intent.attempt,
-                input_manifest_hash: stage(
-                    "hash adopted input manifest",
-                    manifest.manifest_hash(limits),
-                )?,
-                input_manifest_encoded_bytes: manifest_ref.encoded_bytes,
-                fidelity_opening_root: manifest.fidelity_opening_root,
-                oracle_opening_root: manifest.oracle_opening_root,
-                wwd: manifest.wwd,
-                lysis_limit_minor: intent.frozen_metadosis_values.lysis_limit_minor,
-                logical_evaluation_time: intent.logical_evaluation_time,
-                tribute_count: manifest.tribute_count,
-                lysis_program_semantics_hash: self
-                    .config
-                    .protocol_bundle
-                    .bundle()
-                    .lysis_program_semantics_hash,
-                planner_spec_version: self.config.protocol_bundle.bundle().planner_spec_version,
-                reducer_spec_version: self.config.protocol_bundle.bundle().reducer_spec_version,
-            }),
-        )?;
-        let plan = stage(
-            "commit exact Lysis primary catalog",
-            planner.commit_primary_catalog(tribute_refs, limits),
-        )?;
-        let plan_bytes = stage(
-            "encode exact Lysis plan",
-            plan.encode_canonical_record(limits),
-        )?;
-        let plan_ref = stage(
-            "publish exact Lysis plan",
-            self.cas.publish_bytes(&plan_bytes),
-        )?;
-        let topology = stage(
-            "derive exact Lysis plan topology",
-            LysisPlanTopologyV1::new(plan.primary_work_unit_count),
-        )?;
+        let (plan_ref, topology) =
+            self.commit_and_publish_plan(job_id, &intent, binding, tribute_refs)?;
         let exact_unit_count = topology.total_unit_count();
         require_not_cancelled(cancelled)?;
 
@@ -191,118 +139,17 @@ impl SupervisorJobRunnerV1 {
                 local_job_root.join("admissions"),
                 &self.cas,
                 &plan_ref,
-                &manifest_ref,
+                &binding.manifest_ref(),
                 *limits,
             ),
         )?;
-        let worker_inbox = stage(
-            "open worker report inbox",
-            WorkerInbox::open(
-                &self.config.worker_inbox_root,
-                self.config.worker_inbox_limits,
-            ),
+        self.execute_all_waves(
+            &local_job_root,
+            &topology,
+            &mut admissions,
+            &input_refs,
+            cancelled,
         )?;
-        let replay_inbox = stage(
-            "open supervisor replay inbox",
-            WorkerInbox::open(
-                local_job_root.join("replay-inbox"),
-                self.config.worker_inbox_limits,
-            ),
-        )?;
-
-        let mut next_plan_ordinal = 0;
-        while next_plan_ordinal < exact_unit_count {
-            require_not_cancelled(cancelled)?;
-            while next_plan_ordinal < exact_unit_count {
-                match admissions.read(next_plan_ordinal) {
-                    Ok(_) => next_plan_ordinal += 1,
-                    Err(AdmissionCatalogError::MissingAdmission { .. }) => break,
-                    Err(error) => {
-                        return Err(stage_error("inspect exact Lysis admission", error));
-                    }
-                }
-            }
-            if next_plan_ordinal == exact_unit_count {
-                break;
-            }
-
-            let first_wave = dispatch_wave(stage(
-                "locate exact Lysis dispatch wave",
-                topology.plan_position_at(next_plan_ordinal),
-            )?);
-            let mut batch_ordinals = Vec::with_capacity(MAX_REGISTERED_WORKERS);
-            while next_plan_ordinal < exact_unit_count
-                && batch_ordinals.len() < MAX_REGISTERED_WORKERS
-            {
-                let wave = dispatch_wave(stage(
-                    "locate exact Lysis dispatch wave",
-                    topology.plan_position_at(next_plan_ordinal),
-                )?);
-                if wave != first_wave {
-                    break;
-                }
-                match admissions.read(next_plan_ordinal) {
-                    Ok(_) => {}
-                    Err(AdmissionCatalogError::MissingAdmission { .. }) => {
-                        batch_ordinals.push(next_plan_ordinal);
-                    }
-                    Err(error) => {
-                        return Err(stage_error("inspect exact Lysis admission", error));
-                    }
-                }
-                next_plan_ordinal += 1;
-            }
-
-            let requests = {
-                let audit = stage(
-                    "open exact Lysis scheduling audit",
-                    crate::lysis_plan_audit::open_local_plan_audit(
-                        &admissions,
-                        &input_refs,
-                        &self.reader,
-                        &self.config.protocol_bundle,
-                        limits,
-                    ),
-                )?;
-                batch_ordinals
-                    .iter()
-                    .copied()
-                    .map(|plan_ordinal| {
-                        stage(
-                            "derive next exact Lysis worker request",
-                            audit.worker_request_at(plan_ordinal),
-                        )
-                        .map(|request| (plan_ordinal, request))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-            };
-            require_not_cancelled(cancelled)?;
-            let finished_batch = self.execute_worker_batch(requests, cancelled)?;
-            for (plan_ordinal, finished) in finished_batch {
-                require_not_cancelled(cancelled)?;
-                if finished.status != UnitFinishedStatus::Success {
-                    return Err(SupervisorJobRunnerErrorV1::WorkerFailed {
-                        plan_ordinal,
-                        unit_id: finished.unit_id,
-                    });
-                }
-                stage(
-                    "admit exact Lysis worker result",
-                    admit_reported_lysis_unit_v1(
-                        plan_ordinal,
-                        &finished,
-                        &mut admissions,
-                        &input_refs,
-                        &self.config.protocol_bundle,
-                        &self.reader,
-                        &worker_inbox,
-                        &replay_inbox,
-                        &self.cas,
-                        limits,
-                    ),
-                )?;
-            }
-        }
 
         require_not_cancelled(cancelled)?;
         let audit = stage(
@@ -325,6 +172,157 @@ impl SupervisorJobRunnerV1 {
             result_digest: finalized.result_digest(),
             canonical_result: finalized.canonical_result_bytes().to_vec(),
         })
+    }
+
+    fn commit_and_publish_plan(
+        &self,
+        job_id: B256,
+        intent: &JobIntentV1,
+        binding: &VerifiedExportedManifestBinding,
+        tribute_refs: Vec<outbe_ocomp_protocol::input::InputChunkRefV1>,
+    ) -> Result<(outbe_ocomp_protocol::CasObjectRefV1, LysisPlanTopologyV1), SupervisorJobRunnerErrorV1>
+    {
+        let limits = &self.config.limits;
+        let manifest = binding.manifest();
+        let manifest_ref = binding.manifest_ref();
+        let bundle = self.config.protocol_bundle.bundle();
+        let planner = stage(
+            "bind Lysis V1 planner",
+            LysisPlannerV1::new(LysisPlannerBindingsV1 {
+                protocol_bundle_hash: self.config.protocol_bundle.hash(),
+                job_id,
+                attempt: intent.attempt,
+                input_manifest_hash: stage(
+                    "hash adopted input manifest",
+                    manifest.manifest_hash(limits),
+                )?,
+                input_manifest_encoded_bytes: manifest_ref.encoded_bytes,
+                fidelity_opening_root: manifest.fidelity_opening_root,
+                oracle_opening_root: manifest.oracle_opening_root,
+                wwd: manifest.wwd,
+                lysis_limit_minor: intent.frozen_metadosis_values.lysis_limit_minor,
+                logical_evaluation_time: intent.logical_evaluation_time,
+                tribute_count: manifest.tribute_count,
+                lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
+                planner_spec_version: bundle.planner_spec_version,
+                reducer_spec_version: bundle.reducer_spec_version,
+            }),
+        )?;
+        let plan = stage(
+            "commit exact Lysis primary catalog",
+            planner.commit_primary_catalog(tribute_refs, limits),
+        )?;
+        let plan_bytes = stage(
+            "encode exact Lysis plan",
+            plan.encode_canonical_record(limits),
+        )?;
+        let plan_ref = stage(
+            "publish exact Lysis plan",
+            self.cas.publish_bytes(&plan_bytes),
+        )?;
+        let topology = stage(
+            "derive exact Lysis plan topology",
+            LysisPlanTopologyV1::new(plan.primary_work_unit_count),
+        )?;
+        Ok((plan_ref, topology))
+    }
+
+    fn execute_all_waves(
+        &self,
+        local_job_root: &std::path::Path,
+        topology: &LysisPlanTopologyV1,
+        admissions: &mut VerifiedAdmissionCatalog,
+        input_refs: &VerifiedInputChunkRefCatalog,
+        cancelled: &AtomicBool,
+    ) -> Result<(), SupervisorJobRunnerErrorV1> {
+        let worker_inbox = stage(
+            "open worker report inbox",
+            WorkerInbox::open(
+                &self.config.worker_inbox_root,
+                self.config.worker_inbox_limits,
+            ),
+        )?;
+        let replay_inbox = stage(
+            "open supervisor replay inbox",
+            WorkerInbox::open(
+                local_job_root.join("replay-inbox"),
+                self.config.worker_inbox_limits,
+            ),
+        )?;
+        let exact_unit_count = topology.total_unit_count();
+        let mut next_plan_ordinal = 0;
+        while next_plan_ordinal < exact_unit_count {
+            require_not_cancelled(cancelled)?;
+            let batch_ordinals =
+                collect_next_wave_ordinals(topology, admissions, &mut next_plan_ordinal)?;
+            if batch_ordinals.is_empty() {
+                break;
+            }
+            self.dispatch_and_admit_wave(
+                &batch_ordinals,
+                admissions,
+                input_refs,
+                (&worker_inbox, &replay_inbox),
+                cancelled,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn dispatch_and_admit_wave(
+        &self,
+        batch_ordinals: &[u32],
+        admissions: &mut VerifiedAdmissionCatalog,
+        input_refs: &VerifiedInputChunkRefCatalog,
+        (worker_inbox, replay_inbox): (&WorkerInbox, &WorkerInbox),
+        cancelled: &AtomicBool,
+    ) -> Result<(), SupervisorJobRunnerErrorV1> {
+        let limits = &self.config.limits;
+        let requests = {
+            let audit = stage(
+                "open exact Lysis scheduling audit",
+                crate::lysis_plan_audit::open_local_plan_audit(
+                    admissions,
+                    input_refs,
+                    &self.reader,
+                    &self.config.protocol_bundle,
+                    limits,
+                ),
+            )?;
+            batch_ordinals
+                .iter()
+                .copied()
+                .map(|plan_ordinal| {
+                    stage(
+                        "derive next exact Lysis worker request",
+                        audit.worker_request_at(plan_ordinal),
+                    )
+                    .map(|request| (plan_ordinal, request))
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        require_not_cancelled(cancelled)?;
+        let finished_batch = self.execute_worker_batch(requests, cancelled)?;
+        for (plan_ordinal, finished) in finished_batch {
+            require_not_cancelled(cancelled)?;
+            if finished.status != UnitFinishedStatus::Success {
+                return Err(SupervisorJobRunnerErrorV1::WorkerFailed {
+                    plan_ordinal,
+                    unit_id: finished.unit_id,
+                });
+            }
+            stage(
+                "admit exact Lysis worker result",
+                admit_reported_lysis_unit_v1(
+                    (plan_ordinal, &finished),
+                    (admissions, input_refs),
+                    (&self.config.protocol_bundle, &self.reader),
+                    (worker_inbox, replay_inbox),
+                    (&self.cas, limits),
+                ),
+            )?;
+        }
+        Ok(())
     }
 
     fn execute_worker_batch(
@@ -359,6 +357,67 @@ impl SupervisorJobRunnerV1 {
                 .collect()
         })
     }
+}
+
+fn read_tribute_refs(
+    input_refs: &VerifiedInputChunkRefCatalog,
+) -> Result<Vec<outbe_ocomp_protocol::input::InputChunkRefV1>, SupervisorJobRunnerErrorV1> {
+    stage(
+        "read exact Tribute input references",
+        input_refs.exact_cursor(),
+    )?
+    .filter_map(|reference| match reference {
+        Ok(reference) if reference.kind == InputChunkKind::Tribute => Some(Ok(reference)),
+        Ok(_) => None,
+        Err(error) => Some(Err(error)),
+    })
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|error| stage_error("read exact Tribute input references", error))
+}
+
+fn collect_next_wave_ordinals(
+    topology: &LysisPlanTopologyV1,
+    admissions: &VerifiedAdmissionCatalog,
+    next_plan_ordinal: &mut u32,
+) -> Result<Vec<u32>, SupervisorJobRunnerErrorV1> {
+    let exact_unit_count = topology.total_unit_count();
+    while *next_plan_ordinal < exact_unit_count {
+        match admissions.read(*next_plan_ordinal) {
+            Ok(_) => *next_plan_ordinal += 1,
+            Err(AdmissionCatalogError::MissingAdmission { .. }) => break,
+            Err(error) => {
+                return Err(stage_error("inspect exact Lysis admission", error));
+            }
+        }
+    }
+    if *next_plan_ordinal == exact_unit_count {
+        return Ok(Vec::new());
+    }
+    let first_wave = dispatch_wave(stage(
+        "locate exact Lysis dispatch wave",
+        topology.plan_position_at(*next_plan_ordinal),
+    )?);
+    let mut batch_ordinals = Vec::with_capacity(MAX_REGISTERED_WORKERS);
+    while *next_plan_ordinal < exact_unit_count && batch_ordinals.len() < MAX_REGISTERED_WORKERS {
+        let wave = dispatch_wave(stage(
+            "locate exact Lysis dispatch wave",
+            topology.plan_position_at(*next_plan_ordinal),
+        )?);
+        if wave != first_wave {
+            break;
+        }
+        match admissions.read(*next_plan_ordinal) {
+            Ok(_) => {}
+            Err(AdmissionCatalogError::MissingAdmission { .. }) => {
+                batch_ordinals.push(*next_plan_ordinal);
+            }
+            Err(error) => {
+                return Err(stage_error("inspect exact Lysis admission", error));
+            }
+        }
+        *next_plan_ordinal += 1;
+    }
+    Ok(batch_ordinals)
 }
 
 const fn dispatch_wave(position: PlannedUnitPositionV1) -> DispatchWaveV1 {

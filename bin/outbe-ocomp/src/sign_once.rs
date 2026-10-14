@@ -312,23 +312,13 @@ impl SignOnceStore {
     }
 
     fn reconcile_startup(&self) -> Result<(), SignOnceError> {
-        for entry in fs::read_dir(&self.root)
-            .map_err(|source| self.io("scan sign-once directory", &self.root, source))?
-        {
-            let entry = entry
-                .map_err(|source| self.io("read sign-once directory entry", &self.root, source))?;
-            let name = entry.file_name();
-            let path = entry.path();
-            let Some(name) = name.to_str() else {
-                return Err(SignOnceError::UnsafeStore {
-                    path,
-                    reason: "entry name is not UTF-8",
-                });
-            };
-
-            if let Some(slot_hex) = pending_slot_hex(name) {
+        for (path, name) in self.read_utf8_entries(
+            "scan sign-once directory",
+            "read sign-once directory entry",
+        )? {
+            if let Some(slot_hex) = pending_slot_hex(&name) {
                 self.reconcile_pending(&path, slot_hex)?;
-            } else if reservation_slot_hex(name).is_none() && !name.ends_with(RECORD_SUFFIX) {
+            } else if reservation_slot_hex(&name).is_none() && !name.ends_with(RECORD_SUFFIX) {
                 return Err(SignOnceError::UnsafeStore {
                     path,
                     reason: "unexpected sign-once directory entry",
@@ -338,21 +328,11 @@ impl SignOnceStore {
 
         // Published hard links must be reconciled before reservations inspect
         // their final record. Directory iteration order is not authoritative.
-        for entry in fs::read_dir(&self.root)
-            .map_err(|source| self.io("rescan sign-once reservations", &self.root, source))?
-        {
-            let entry = entry.map_err(|source| {
-                self.io("read sign-once reservation entry", &self.root, source)
-            })?;
-            let path = entry.path();
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                return Err(SignOnceError::UnsafeStore {
-                    path,
-                    reason: "entry name is not UTF-8",
-                });
-            };
-            if let Some(slot_hex) = reservation_slot_hex(name) {
+        for (path, name) in self.read_utf8_entries(
+            "rescan sign-once reservations",
+            "read sign-once reservation entry",
+        )? {
+            if let Some(slot_hex) = reservation_slot_hex(&name) {
                 self.reconcile_reservation(&path, slot_hex)?;
             }
         }
@@ -360,37 +340,55 @@ impl SignOnceStore {
         // A crash after the no-clobber link leaves the pending and published
         // names on the same inode. Reconcile all such pairs before validating
         // published link counts, independent of filesystem iteration order.
-        for entry in fs::read_dir(&self.root)
-            .map_err(|source| self.io("rescan sign-once directory", &self.root, source))?
+        for (path, name) in self.read_utf8_entries(
+            "rescan sign-once directory",
+            "read sign-once directory entry",
+        )? {
+            self.validate_reconciled_entry(&path, &name)?;
+        }
+        Ok(())
+    }
+
+    fn read_utf8_entries(
+        &self,
+        scan_operation: &'static str,
+        entry_operation: &'static str,
+    ) -> Result<Vec<(PathBuf, String)>, SignOnceError> {
+        let mut entries = Vec::new();
+        for entry in
+            fs::read_dir(&self.root).map_err(|source| self.io(scan_operation, &self.root, source))?
         {
-            let entry = entry
-                .map_err(|source| self.io("read sign-once directory entry", &self.root, source))?;
+            let entry = entry.map_err(|source| self.io(entry_operation, &self.root, source))?;
             let path = entry.path();
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                return Err(SignOnceError::UnsafeStore {
-                    path,
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| SignOnceError::UnsafeStore {
+                    path: path.clone(),
                     reason: "entry name is not UTF-8",
-                });
-            };
-            if pending_slot_hex(name).is_some() {
-                return Err(SignOnceError::UncertainState {
-                    path,
-                    reason: "pending record remained after startup reconciliation",
-                });
-            }
-            if let Some(slot_hex) = reservation_slot_hex(name) {
-                self.validate_reservation_path(&path, slot_hex)?;
-                continue;
-            }
-            let record = self.read_record(&path)?;
-            let expected = self.record_path(record.slot_id()?);
-            if expected != path {
-                return Err(SignOnceError::CorruptRecord {
-                    path,
-                    reason: "record filename does not match its typed slot",
-                });
-            }
+                })?;
+            entries.push((path, name));
+        }
+        Ok(entries)
+    }
+
+    fn validate_reconciled_entry(&self, path: &Path, name: &str) -> Result<(), SignOnceError> {
+        if pending_slot_hex(name).is_some() {
+            return Err(SignOnceError::UncertainState {
+                path: path.to_path_buf(),
+                reason: "pending record remained after startup reconciliation",
+            });
+        }
+        if let Some(slot_hex) = reservation_slot_hex(name) {
+            return self.validate_reservation_path(path, slot_hex);
+        }
+        let record = self.read_record(path)?;
+        let expected = self.record_path(record.slot_id()?);
+        if expected != path {
+            return Err(SignOnceError::CorruptRecord {
+                path: path.to_path_buf(),
+                reason: "record filename does not match its typed slot",
+            });
         }
         Ok(())
     }
@@ -407,8 +405,10 @@ impl SignOnceStore {
         }
         let reservation = self.read_record(reservation_path)?;
         let final_record = self.read_record(&final_path)?;
-        if reservation.signature_rs != [0; 64]
-            || !records_share_subject(&reservation, &final_record)
+        if (
+            reservation.signature_rs,
+            records_share_subject(&reservation, &final_record),
+        ) != ([0; 64], true)
         {
             return Err(SignOnceError::CorruptRecord {
                 path: reservation_path.to_path_buf(),
@@ -431,9 +431,8 @@ impl SignOnceStore {
             reason,
         })?;
         let reservation = self.read_record(path)?;
-        if reservation.signature_rs != [0; 64]
-            || self.reservation_path(reservation.slot_id()?) != path
-        {
+        let expected_path = self.reservation_path(reservation.slot_id()?);
+        if (reservation.signature_rs, expected_path.as_path()) != ([0; 64], path) {
             return Err(SignOnceError::CorruptRecord {
                 path: path.to_path_buf(),
                 reason: "invalid sign-once reservation",
@@ -458,8 +457,8 @@ impl SignOnceStore {
             validated_linked_record_metadata(pending_path, self.expected_owner_uid)?;
         let final_metadata =
             validated_linked_record_metadata(&final_path, self.expected_owner_uid)?;
-        if pending_metadata.dev() != final_metadata.dev()
-            || pending_metadata.ino() != final_metadata.ino()
+        if (pending_metadata.dev(), pending_metadata.ino())
+            != (final_metadata.dev(), final_metadata.ino())
         {
             return Err(SignOnceError::UncertainState {
                 path: pending_path.to_path_buf(),
@@ -495,7 +494,7 @@ impl SignOnceStore {
             .metadata()
             .map_err(|source| self.io("inspect opened sign-once record", path, source))?;
         validate_opened_record_metadata(path, &opened_metadata, self.expected_owner_uid)?;
-        if metadata.dev() != opened_metadata.dev() || metadata.ino() != opened_metadata.ino() {
+        if (metadata.dev(), metadata.ino()) != (opened_metadata.dev(), opened_metadata.ino()) {
             return Err(SignOnceError::UnsafeStore {
                 path: path.to_path_buf(),
                 reason: "sign-once record path changed while opening",
@@ -600,22 +599,15 @@ fn validate_directory(path: &Path, expected_owner_uid: u32) -> Result<(), SignOn
         path: path.to_path_buf(),
         source,
     })?;
-    if !metadata.file_type().is_dir() {
+    if (
+        metadata.file_type().is_dir(),
+        metadata.uid(),
+        metadata.permissions().mode() & 0o777,
+    ) != (true, expected_owner_uid, DIRECTORY_MODE)
+    {
         return Err(SignOnceError::UnsafeStore {
             path: path.to_path_buf(),
-            reason: "sign-once root is not a directory",
-        });
-    }
-    if metadata.uid() != expected_owner_uid {
-        return Err(SignOnceError::UnsafeStore {
-            path: path.to_path_buf(),
-            reason: "sign-once directory has the wrong owner",
-        });
-    }
-    if metadata.permissions().mode() & 0o777 != DIRECTORY_MODE {
-        return Err(SignOnceError::UnsafeStore {
-            path: path.to_path_buf(),
-            reason: "sign-once directory mode is not 0700",
+            reason: "sign-once directory metadata is unsafe",
         });
     }
     Ok(())
@@ -630,30 +622,7 @@ fn validated_record_metadata(
         path: path.to_path_buf(),
         source,
     })?;
-    if !metadata.file_type().is_file() {
-        return Err(SignOnceError::UnsafeStore {
-            path: path.to_path_buf(),
-            reason: "sign-once record is not a regular file",
-        });
-    }
-    if metadata.uid() != expected_owner_uid {
-        return Err(SignOnceError::UnsafeStore {
-            path: path.to_path_buf(),
-            reason: "sign-once record has the wrong owner",
-        });
-    }
-    if metadata.permissions().mode() & 0o777 != RECORD_MODE {
-        return Err(SignOnceError::UnsafeStore {
-            path: path.to_path_buf(),
-            reason: "sign-once record mode is not 0600",
-        });
-    }
-    if metadata.nlink() != 1 {
-        return Err(SignOnceError::UnsafeStore {
-            path: path.to_path_buf(),
-            reason: "sign-once record has an unexpected hard-link count",
-        });
-    }
+    validate_opened_record_metadata(path, &metadata, expected_owner_uid)?;
     Ok(metadata)
 }
 
@@ -683,10 +652,12 @@ fn validated_linked_record_metadata(
         path: path.to_path_buf(),
         source,
     })?;
-    if !metadata.file_type().is_file()
-        || metadata.uid() != expected_owner_uid
-        || metadata.permissions().mode() & 0o777 != RECORD_MODE
-        || metadata.nlink() != 2
+    if (
+        metadata.file_type().is_file(),
+        metadata.uid(),
+        metadata.permissions().mode() & 0o777,
+        metadata.nlink(),
+    ) != (true, expected_owner_uid, RECORD_MODE, 2)
     {
         return Err(SignOnceError::UnsafeStore {
             path: path.to_path_buf(),
@@ -706,19 +677,9 @@ fn reservation_slot_hex(name: &str) -> Option<&str> {
 }
 
 fn records_share_subject(left: &SignOnceRecordV1, right: &SignOnceRecordV1) -> bool {
-    left.chain_id == right.chain_id
-        && left.genesis_hash == right.genesis_hash
-        && left.fork_id == right.fork_id
-        && left.purpose == right.purpose
-        && left.job_id == right.job_id
-        && left.attempt == right.attempt
-        && left.protocol_bundle_hash == right.protocol_bundle_hash
-        && left.result_validator_set_epoch == right.result_validator_set_epoch
-        && left.result_committee_set_hash == right.result_committee_set_hash
-        && left.result_ocomp_binding_hash == right.result_ocomp_binding_hash
-        && left.ocomp_key_hash == right.ocomp_key_hash
-        && left.key_epoch == right.key_epoch
-        && left.result_digest == right.result_digest
+    let mut expected = left.clone();
+    expected.signature_rs = right.signature_rs;
+    expected == *right
 }
 
 fn require_lower_hex_32(value: &str) -> Result<(), &'static str> {

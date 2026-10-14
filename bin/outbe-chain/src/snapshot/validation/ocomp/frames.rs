@@ -223,9 +223,7 @@ pub(super) fn visit_retained_frames(
 pub(crate) fn locate_request_job(
     state: &CanonicalState<'_>,
     view: &crate::snapshot::native::RethReadOnlyView,
-    request_height: u64,
-    expected_job: B256,
-    expected_day: WorldwideDay,
+    (request_height, expected_job, expected_day): (u64, B256, WorldwideDay),
     maximum_transactions: Option<u64>,
 ) -> eyre::Result<OcompJobRecordV1> {
     use alloy_consensus::{Sealable, TxReceipt};

@@ -1,13 +1,22 @@
 use crate::transport::*;
 
+pub(in crate::transport) struct DkgOpenRequest {
+    pub ceremony_id: alloy_primitives::B256,
+    pub round: u64,
+    pub participants: Vec<outbe_tee::protocol::ParticipantAnnounce>,
+}
+
 pub(in crate::transport) fn dispatch_dkg_open(
     keys: &EnclaveKeys,
     dkg: &mut DkgSessionStore,
     network_binding: &outbe_primitives::tee_attestation_v1::NetworkBindingV1,
-    ceremony_id: alloy_primitives::B256,
-    round: u64,
-    participants: Vec<outbe_tee::protocol::ParticipantAnnounce>,
+    request: DkgOpenRequest,
 ) -> EnclaveResponse {
+    let DkgOpenRequest {
+        ceremony_id,
+        round,
+        participants,
+    } = request;
     let result = (|| {
         // The host relays each `(bls, enc, sig)` it gathered from peers'
         // `DkgParticipantAnnounceV1` responses. The signature is scoped to this
@@ -44,15 +53,7 @@ pub(in crate::transport) fn dispatch_dkg_open(
             if p.ceremony_id != ceremony_id
                 || p.round != round
                 || p.participant_set_hash != participant_set_hash
-                || !crate::keys::verify_dkg_enc_binding(
-                    &p.bls_pub,
-                    network_binding,
-                    ceremony_id,
-                    round,
-                    participant_set_hash,
-                    &p.enc_pub,
-                    &p.enc_sig,
-                )
+                || !crate::keys::verify_dkg_enc_binding(network_binding, p)
             {
                 return Err(crate::errors::TeeError::Dkg(
                     "DkgOpen: enc-key identity binding failed verification".to_string(),

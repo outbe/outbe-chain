@@ -160,16 +160,29 @@ where
             .intent
             .input_lease_id()
             .wrap_err("derive released OCOMP input lease")?;
-        if released.job_id != job_id
-            || released.candidate.block_number != locator.block_number
-            || released.candidate.block_hash != locator.block_hash
-            || released.candidate.state_root != locator.state_root
-            || released.candidate.intent_id != locator.intent_id
-            || released.candidate.wwd != locator.wwd
-            || released.candidate.ce_sealed_root != record.intent.ce_sealed_root
-            || released.candidate.protocol_bundle_hash != record.intent.protocol_bundle_hash
-            || released.candidate.input_lease_id != input_lease_id
-        {
+        let expected_authority = (
+            job_id,
+            locator.block_number,
+            locator.block_hash,
+            locator.state_root,
+            locator.intent_id,
+            locator.wwd,
+            record.intent.ce_sealed_root,
+            record.intent.protocol_bundle_hash,
+            input_lease_id,
+        );
+        let actual_authority = (
+            released.job_id,
+            released.candidate.block_number,
+            released.candidate.block_hash,
+            released.candidate.state_root,
+            released.candidate.intent_id,
+            released.candidate.wwd,
+            released.candidate.ce_sealed_root,
+            released.candidate.protocol_bundle_hash,
+            released.candidate.input_lease_id,
+        );
+        if actual_authority != expected_authority {
             bail!("released OCOMP retention authority conflicts with canonical typed state");
         }
         let candidate =

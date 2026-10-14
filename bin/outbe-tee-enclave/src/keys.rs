@@ -62,31 +62,26 @@ type TeeBlsSignature = <PrivKey as commonware_cryptography::Signer>::Signature;
 /// Verify a complete ceremony-scoped participant announcement. Malformed
 /// public keys, signatures or non-canonical ceremony context fail closed.
 pub fn verify_dkg_enc_binding(
-    bls_pub: &[u8],
     network_binding: &NetworkBindingV1,
-    ceremony_id: B256,
-    round: u64,
-    participant_set_hash: B256,
-    dkg_enc_pub: &[u8; 32],
-    sig: &[u8],
+    announce: &outbe_tee::protocol::ParticipantAnnounce,
 ) -> bool {
     use commonware_codec::ReadExt as _;
     use commonware_cryptography::Verifier as _;
-    let mut pk_reader: &[u8] = bls_pub;
+    let mut pk_reader: &[u8] = &announce.bls_pub;
     let Ok(pk) = <PrivKey as commonware_cryptography::Signer>::PublicKey::read(&mut pk_reader)
     else {
         return false;
     };
-    let mut sig_reader: &[u8] = sig;
+    let mut sig_reader: &[u8] = &announce.enc_sig;
     let Ok(signature) = TeeBlsSignature::read(&mut sig_reader) else {
         return false;
     };
     let Ok(digest) = outbe_primitives::tee_attestation_v1::dkg_participant_announce_hash_v1(
         network_binding,
-        ceremony_id,
-        round,
-        participant_set_hash,
-        dkg_enc_pub,
+        announce.ceremony_id,
+        announce.round,
+        announce.participant_set_hash,
+        &announce.enc_pub,
     ) else {
         return false;
     };

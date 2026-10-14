@@ -1,6 +1,6 @@
 //! Oracle commands.
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use clap::Subcommand;
 use eyre::Result;
@@ -262,7 +262,7 @@ impl OracleCmd {
                 base,
                 quote,
                 seconds,
-            } => vwap(client, base, quote, seconds).await,
+            } => lookback_average(client, false, base, quote, seconds).await,
             Self::VwapRange {
                 base,
                 quote,
@@ -273,7 +273,7 @@ impl OracleCmd {
                 base,
                 quote,
                 seconds,
-            } => twap(client, base, quote, seconds).await,
+            } => lookback_average(client, true, base, quote, seconds).await,
             Self::Twaps { seconds } => twaps(client, seconds).await,
             Self::DayVwap { base, quote } => day_vwap(client, base, quote).await,
             Self::WorldwideDayVwap {
@@ -294,7 +294,7 @@ impl OracleCmd {
                 base,
                 quote,
                 timestamp,
-            } => scurve(client, base, quote, timestamp).await,
+            } => timestamped_oracle_metric(client, false, base, quote, timestamp).await,
             Self::ScurveEntries { base, quote } => scurve_entries(client, base, quote).await,
             Self::ScurveValues {
                 base,
@@ -309,7 +309,7 @@ impl OracleCmd {
                 base,
                 quote,
                 timestamp,
-            } => nominal_price(client, base, quote, timestamp).await,
+            } => timestamped_oracle_metric(client, true, base, quote, timestamp).await,
             Self::NominalComponents {
                 base,
                 quote,
@@ -338,8 +338,6 @@ async fn rate(client: &(impl Rpc + Sync), base: Address, quote: Address) -> Resu
     Ok(())
 }
 
-/// The whole rate table, assembled from the registry rather than fetched in one
-/// call: the oracle enumerates pairs by index and prices them one at a time.
 /// The whole rate table, assembled from the registry rather than fetched in one
 /// call: the oracle enumerates pairs by index and prices them one at a time.
 async fn rates(client: &(impl Rpc + Sync)) -> Result<()> {
@@ -373,24 +371,81 @@ async fn rates(client: &(impl Rpc + Sync)) -> Result<()> {
     Ok(())
 }
 
-async fn vwap(
+async fn call_oracle<C: SolCall>(client: &(impl Rpc + Sync), call: C) -> Result<C::Return> {
+    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
+    Ok(C::abi_decode_returns(&result)?)
+}
+
+fn print_pair_metric(label: &str, base: Address, quote: Address, scope: &str, value: U256) {
+    println!(
+        "{label} {base}/{quote} ({scope}): {}",
+        format_oracle_market_quantity(base, quote, value)
+    );
+}
+
+fn print_lookback_table(
+    metric_header: &str,
+    bases: &[Address],
+    quotes: &[Address],
+    values: &[U256],
+    lookbacks: &[u64],
+) {
+    println!(
+        "{:<10} {:<10} {:<20} {:<12}",
+        "Base", "Quote", metric_header, "Lookback"
+    );
+    println!("{}", "-".repeat(56));
+    for (((base, quote), value), lookback) in bases
+        .iter()
+        .zip(quotes.iter())
+        .zip(values.iter())
+        .zip(lookbacks.iter())
+    {
+        println!(
+            "{:<10} {:<10} {:<20} {:<12}",
+            show_asset(*base),
+            show_asset(*quote),
+            format_oracle_market_quantity(*base, *quote, *value),
+            lookback
+        );
+    }
+}
+
+async fn lookback_average(
     client: &(impl Rpc + Sync),
+    is_twap: bool,
     base: Address,
     quote: Address,
     seconds: u64,
 ) -> Result<()> {
-    let call = IOracle::getVwapCall {
-        base,
-        quote,
-        lookbackSeconds: seconds,
+    let (label, ret) = if is_twap {
+        (
+            "TWAP",
+            call_oracle(
+                client,
+                IOracle::getTwapCall {
+                    base,
+                    quote,
+                    lookbackSeconds: seconds,
+                },
+            )
+            .await?,
+        )
+    } else {
+        (
+            "VWAP",
+            call_oracle(
+                client,
+                IOracle::getVwapCall {
+                    base,
+                    quote,
+                    lookbackSeconds: seconds,
+                },
+            )
+            .await?,
+        )
     };
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getVwapCall::abi_decode_returns(&result)?;
-    println!(
-        "VWAP {base}/{quote} ({}s lookback): {}",
-        seconds,
-        format_oracle_market_quantity(base, quote, ret)
-    );
+    print_pair_metric(label, base, quote, &format!("{seconds}s lookback"), ret);
     Ok(())
 }
 
@@ -401,74 +456,28 @@ async fn vwap_range(
     start_time: u64,
     end_time: u64,
 ) -> Result<()> {
-    let call = IOracle::getVwapForTimeRangeCall {
-        base,
-        quote,
-        startTime: start_time,
-        endTime: end_time,
-    };
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getVwapForTimeRangeCall::abi_decode_returns(&result)?;
-    println!(
-        "VWAP {base}/{quote} ({start_time}..{end_time}): {}",
-        format_oracle_market_quantity(base, quote, ret)
-    );
-    Ok(())
-}
-
-async fn twap(
-    client: &(impl Rpc + Sync),
-    base: Address,
-    quote: Address,
-    seconds: u64,
-) -> Result<()> {
-    let call = IOracle::getTwapCall {
-        base,
-        quote,
-        lookbackSeconds: seconds,
-    };
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getTwapCall::abi_decode_returns(&result)?;
-    println!(
-        "TWAP {base}/{quote} ({}s lookback): {}",
-        seconds,
-        format_oracle_market_quantity(base, quote, ret)
-    );
+    let ret = call_oracle(
+        client,
+        IOracle::getVwapForTimeRangeCall {
+            base,
+            quote,
+            startTime: start_time,
+            endTime: end_time,
+        },
+    )
+    .await?;
+    print_pair_metric("VWAP", base, quote, &format!("{start_time}..{end_time}"), ret);
     Ok(())
 }
 
 async fn twaps(client: &(impl Rpc + Sync), seconds: u64) -> Result<()> {
-    let call = IOracle::getTwapsCall { lookback: seconds };
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getTwapsCall::abi_decode_returns(&result)?;
-
-    println!(
-        "{:<10} {:<10} {:<20} {:<12}",
-        "Base", "Quote", "TWAP", "Lookback"
-    );
-    println!("{}", "-".repeat(56));
-    for (((base, quote), twap), lookback) in ret
-        .bases
-        .iter()
-        .zip(ret.quotes.iter())
-        .zip(ret.twaps.iter())
-        .zip(ret.lookbackSeconds.iter())
-    {
-        println!(
-            "{:<10} {:<10} {:<20} {:<12}",
-            show_asset(*base),
-            show_asset(*quote),
-            format_oracle_market_quantity(*base, *quote, *twap),
-            lookback
-        );
-    }
+    let ret = call_oracle(client, IOracle::getTwapsCall { lookback: seconds }).await?;
+    print_lookback_table(&"TWAP", &ret.bases, &ret.quotes, &ret.twaps, &ret.lookbackSeconds);
     Ok(())
 }
 
 async fn day_vwap(client: &(impl Rpc + Sync), base: Address, quote: Address) -> Result<()> {
-    let call = IOracle::getDayVwapCall { base, quote };
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getDayVwapCall::abi_decode_returns(&result)?;
+    let ret = call_oracle(client, IOracle::getDayVwapCall { base, quote }).await?;
     println!(
         "Day VWAP {base}/{quote}: {}",
         format_oracle_market_quantity(base, quote, ret)
@@ -481,34 +490,17 @@ async fn worldwide_day_vwap(
     start_time: u64,
     end_time: u64,
 ) -> Result<()> {
-    let call = IOracle::getWorldwideDayVwapCall {
-        startTime: start_time,
-        endTime: end_time,
-    };
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getWorldwideDayVwapCall::abi_decode_returns(&result)?;
+    let ret = call_oracle(
+        client,
+        IOracle::getWorldwideDayVwapCall {
+            startTime: start_time,
+            endTime: end_time,
+        },
+    )
+    .await?;
 
     println!("WorldwideDay VWAP window: {start_time}..{end_time}");
-    println!(
-        "{:<10} {:<10} {:<20} {:<12}",
-        "Base", "Quote", "VWAP", "Lookback"
-    );
-    println!("{}", "-".repeat(56));
-    for (((base, quote), vwap), lookback) in ret
-        .bases
-        .iter()
-        .zip(ret.quotes.iter())
-        .zip(ret.vwaps.iter())
-        .zip(ret.lookbackSeconds.iter())
-    {
-        println!(
-            "{:<10} {:<10} {:<20} {:<12}",
-            show_asset(*base),
-            show_asset(*quote),
-            format_oracle_market_quantity(*base, *quote, *vwap),
-            lookback
-        );
-    }
+    print_lookback_table(&"VWAP", &ret.bases, &ret.quotes, &ret.vwaps, &ret.lookbackSeconds);
     Ok(())
 }
 
@@ -728,31 +720,50 @@ async fn vote(client: &(impl Rpc + Sync), validator: Address) -> Result<()> {
     Ok(())
 }
 
-async fn scurve(
+async fn timestamped_oracle_metric(
     client: &(impl Rpc + Sync),
+    is_nominal_price: bool,
     base: Address,
     quote: Address,
     timestamp: Option<u64>,
 ) -> Result<()> {
     let timestamp = resolve_timestamp(client, timestamp).await?;
-    let call = IOracle::getScurveValueCall {
-        base,
-        quote,
-        timestamp,
+    let (label, ret) = if is_nominal_price {
+        (
+            "Nominal price",
+            call_oracle(
+                client,
+                IOracle::getNominalPriceCall {
+                    base,
+                    quote,
+                    timestamp,
+                },
+            )
+            .await?,
+        )
+    } else {
+        (
+            "S-curve value",
+            call_oracle(
+                client,
+                IOracle::getScurveValueCall {
+                    base,
+                    quote,
+                    timestamp,
+                },
+            )
+            .await?,
+        )
     };
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getScurveValueCall::abi_decode_returns(&result)?;
     println!(
-        "S-curve value {base}/{quote} at {timestamp}: {}",
+        "{label} {base}/{quote} at {timestamp}: {}",
         format_oracle_market_quantity(base, quote, ret)
     );
     Ok(())
 }
 
 async fn scurve_entries(client: &(impl Rpc + Sync), base: Address, quote: Address) -> Result<()> {
-    let call = IOracle::getScurveEntriesCall { base, quote };
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getScurveEntriesCall::abi_decode_returns(&result)?;
+    let ret = call_oracle(client, IOracle::getScurveEntriesCall { base, quote }).await?;
 
     println!("=== Active S-curve Entries: {base}/{quote} ===");
     println!(
@@ -782,13 +793,15 @@ async fn scurve_values(
     quote: Address,
     timestamp: u64,
 ) -> Result<()> {
-    let call = IOracle::getScurveValuesCall {
-        base,
-        quote,
-        timestamp,
-    };
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getScurveValuesCall::abi_decode_returns(&result)?;
+    let ret = call_oracle(
+        client,
+        IOracle::getScurveValuesCall {
+            base,
+            quote,
+            timestamp,
+        },
+    )
+    .await?;
 
     println!("Target day: {}", ret.targetDay);
     println!("{:<12} {:<20} {:<20}", "PeakDay", "PeakPrice", "Value");
@@ -810,9 +823,7 @@ async fn scurve_values(
 }
 
 async fn all_scurve(client: &(impl Rpc + Sync)) -> Result<()> {
-    let call = IOracle::getAllScurveDataCall {};
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getAllScurveDataCall::abi_decode_returns(&result)?;
+    let ret = call_oracle(client, IOracle::getAllScurveDataCall {}).await?;
 
     println!(
         "{:<10} {:<10} {:<12} {:<20}",
@@ -842,9 +853,7 @@ async fn all_scurve_for_pair(
     base: Address,
     quote: Address,
 ) -> Result<()> {
-    let call = IOracle::getAllScurveDataForPairCall { base, quote };
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getAllScurveDataForPairCall::abi_decode_returns(&result)?;
+    let ret = call_oracle(client, IOracle::getAllScurveDataForPairCall { base, quote }).await?;
 
     println!("=== All S-curve Data: {base}/{quote} ===");
     println!("{:<12} {:<20}", "PeakDay", "PeakPrice");
@@ -856,27 +865,6 @@ async fn all_scurve_for_pair(
             format_oracle_market_quantity(base, quote, *peak_price)
         );
     }
-    Ok(())
-}
-
-async fn nominal_price(
-    client: &(impl Rpc + Sync),
-    base: Address,
-    quote: Address,
-    timestamp: Option<u64>,
-) -> Result<()> {
-    let timestamp = resolve_timestamp(client, timestamp).await?;
-    let call = IOracle::getNominalPriceCall {
-        base,
-        quote,
-        timestamp,
-    };
-    let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
-    let ret = IOracle::getNominalPriceCall::abi_decode_returns(&result)?;
-    println!(
-        "Nominal price {base}/{quote} at {timestamp}: {}",
-        format_oracle_market_quantity(base, quote, ret)
-    );
     Ok(())
 }
 
