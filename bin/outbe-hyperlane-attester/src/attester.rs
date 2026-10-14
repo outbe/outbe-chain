@@ -22,6 +22,7 @@ use tracing::{debug, info, warn};
 use crate::abi::{IHyperlaneController, IValidatorAnnounce};
 use crate::client::{self, TxSender};
 use crate::config::{ChainConfig, HyperlaneConfig};
+use crate::errors::AttesterError;
 use crate::health::AttesterHealth;
 
 /// HyperlaneController precompile address (0xEE14).
@@ -280,13 +281,13 @@ impl Attester {
 fn bucket_base(location: &str) -> Result<String> {
     let rest = location
         .strip_prefix("s3+")
-        .ok_or_else(|| eyre::eyre!("unsupported storage location '{location}'"))?;
+        .ok_or_else(|| AttesterError::UnsupportedStorageLocation(location.to_string()))?;
     let (scheme, path) = rest
         .split_once("://")
-        .ok_or_else(|| eyre::eyre!("malformed storage location '{location}'"))?;
+        .ok_or_else(|| AttesterError::MalformedStorageLocation(location.to_string()))?;
     let mut segments = path.split('/').filter(|s| !s.is_empty());
     let (Some(host), Some(bucket)) = (segments.next(), segments.next()) else {
-        return Err(eyre::eyre!("storage location '{location}' has no bucket"));
+        return Err(AttesterError::StorageLocationMissingBucket(location.to_string()).into());
     };
     Ok(format!("{scheme}://{host}/{bucket}"))
 }

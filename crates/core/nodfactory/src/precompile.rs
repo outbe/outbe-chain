@@ -67,7 +67,7 @@ fn issue_for_test(
         call.creatorPublicKey.0,
         call.gratisLoadMinor,
     )
-    .map_err(|e| PrecompileError::Revert(e.to_string()))?;
+    .map_err(crate::errors::NodFactoryError::revert_message)?;
     runtime::issue_nod(storage, scope, parent, &encrypted)?;
     if call.issuedAt != 0 {
         let bucket_key =
@@ -160,9 +160,9 @@ pub fn dispatch(
                     canonicalHead: canonical_head,
                 })
             }),
-            materializeCertifiedNods(_) => Err(PrecompileError::Fatal(
-                "Nod materialization bypassed its bounded dispatcher".into(),
-            )),
+            materializeCertifiedNods(_) => {
+                Err(crate::errors::NodFactoryError::MaterializationBypassedDispatcher.into())
+            }
         }
     })
 }

@@ -45,14 +45,15 @@ impl NodeHostIdentityV1 {
 /// function owns only its fixed `tee-node-host-v1` child. The function never
 /// replaces a committed manifest. Losing or replacing the enclave identity is
 /// an explicit operator decision, not an implicit startup recovery path.
-pub fn connect_or_initialize_node_host_enclave<F>(
+pub fn connect_or_initialize_node_host_enclave<F, E>(
     endpoint: &str,
     node_data_dir: &Path,
     identity: NodeHostIdentityV1,
     sign_authorization: F,
 ) -> Result<AuthorizedEnclaveClient, TransportError>
 where
-    F: Fn(B256) -> Result<[u8; 65], String>,
+    F: Fn(B256) -> Result<[u8; 65], E>,
+    E: std::fmt::Display,
 {
     connect_or_initialize_enclave(endpoint, node_data_dir, identity, sign_authorization)
 }
@@ -177,14 +178,15 @@ fn read_startup_manifest_state(
     })
 }
 
-fn connect_or_initialize_enclave<F>(
+fn connect_or_initialize_enclave<F, E>(
     endpoint: &str,
     node_data_dir: &Path,
     identity: NodeHostIdentityV1,
     sign_authorization: F,
 ) -> Result<AuthorizedEnclaveClient, TransportError>
 where
-    F: Fn(B256) -> Result<[u8; 65], String>,
+    F: Fn(B256) -> Result<[u8; 65], E>,
+    E: std::fmt::Display,
 {
     validate_identity(&identity)?;
     let (paths, _state_lock) = lock_node_host_state(node_data_dir)?;
@@ -222,9 +224,10 @@ struct InitializingEnclave<'a, F> {
     sign_authorization: &'a F,
 }
 
-impl<F> InitializingEnclave<'_, F>
+impl<F, E> InitializingEnclave<'_, F>
 where
-    F: Fn(B256) -> Result<[u8; 65], String>,
+    F: Fn(B256) -> Result<[u8; 65], E>,
+    E: std::fmt::Display,
 {
     fn connect_committed(&self) -> Result<AuthorizedEnclaveClient, TransportError> {
         let manifest = read_manifest(&self.paths.manifest)?;
@@ -299,14 +302,15 @@ pub(super) fn discover_initialization_manifest(
 }
 
 /// Signs the manifest before it starts the authorized enclave session.
-pub(super) fn initialize_authorized_endpoint<F>(
+pub(super) fn initialize_authorized_endpoint<F, E>(
     endpoint: &str,
     manifest: &EnclaveInitializationManifestV1,
     node_host: &NodeHostNoiseKey,
     sign_authorization: &F,
 ) -> Result<AuthorizedEnclaveClient, TransportError>
 where
-    F: Fn(B256) -> Result<[u8; 65], String>,
+    F: Fn(B256) -> Result<[u8; 65], E>,
+    E: std::fmt::Display,
 {
     let signature = sign_manifest(manifest, sign_authorization)?;
     AuthorizedEnclaveClient::initialize_endpoint(endpoint, manifest, &signature, node_host)
@@ -316,11 +320,11 @@ pub(super) fn validate_identity(identity: &NodeHostIdentityV1) -> Result<(), Tra
     identity
         .network_binding
         .encode_canonical()
-        .map_err(|error| TransportError::Codec(error.to_string()))?;
+        .map_err(TransportError::codec)?;
     identity
         .node_id()
         .node_id_hash()
-        .map_err(|error| TransportError::Codec(error.to_string()))?;
+        .map_err(TransportError::codec)?;
     Ok(())
 }
 
@@ -329,9 +333,7 @@ pub(super) fn validate_manifest_identity(
     identity: &NodeHostIdentityV1,
     node_host: &NodeHostNoiseKey,
 ) -> Result<(), TransportError> {
-    manifest
-        .encode_canonical()
-        .map_err(|error| TransportError::Codec(error.to_string()))?;
+    manifest.encode_canonical().map_err(TransportError::codec)?;
     if manifest.network_binding() != identity.network_binding
         || manifest.node_id != identity.node_id()
         || manifest.node_host_noise_x25519 != node_host.public()
@@ -343,17 +345,18 @@ pub(super) fn validate_manifest_identity(
     Ok(())
 }
 
-pub(super) fn sign_manifest<F>(
+pub(super) fn sign_manifest<F, E>(
     manifest: &EnclaveInitializationManifestV1,
     sign_authorization: &F,
 ) -> Result<[u8; 65], TransportError>
 where
-    F: Fn(B256) -> Result<[u8; 65], String>,
+    F: Fn(B256) -> Result<[u8; 65], E>,
+    E: std::fmt::Display,
 {
     let hash = manifest
         .authorization_hash()
-        .map_err(|error| TransportError::Codec(error.to_string()))?;
-    let signature = sign_authorization(hash).map_err(TransportError::Codec)?;
+        .map_err(TransportError::codec)?;
+    let signature = sign_authorization(hash).map_err(TransportError::codec)?;
     if !manifest.verify_node_signature(&signature) {
         return Err(TransportError::Codec(
             "node signer produced an invalid NodeHost manifest signature".into(),
@@ -366,8 +369,7 @@ pub(super) fn read_manifest(
     path: &Path,
 ) -> Result<EnclaveInitializationManifestV1, TransportError> {
     let bytes = read_owned_bounded_file(path, MAX_INITIALIZATION_MANIFEST_BYTES, "manifest")?;
-    EnclaveInitializationManifestV1::decode_canonical(&bytes)
-        .map_err(|error| TransportError::Codec(error.to_string()))
+    EnclaveInitializationManifestV1::decode_canonical(&bytes).map_err(TransportError::codec)
 }
 
 fn promote_pending_manifest(paths: &NodeHostPaths) -> Result<(), TransportError> {

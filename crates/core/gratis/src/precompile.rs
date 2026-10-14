@@ -2,8 +2,9 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
+use crate::errors::GratisError;
 use crate::schema::Gratis;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -12,8 +13,6 @@ use crate::schema::Gratis;
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
 sol!("../../../contracts/precompiles/src/IGratis.sol");
-
-const TRANSFER_NOT_ALLOWED: &str = "gratis token transfers are not allowed";
 
 /// Dispatches an ABI-encoded call to the Gratis precompile.
 ///
@@ -58,7 +57,7 @@ pub fn dispatch(
             // Non-transferable surface.
             allowance(c) => view(c, |_c| Ok(U256::ZERO)),
             approve(_) | transfer(_) | transferFrom(_) => {
-                Err(PrecompileError::Revert(TRANSFER_NOT_ALLOWED.into()))
+                Err(GratisError::TransferNotAllowed.into())
             }
 
             supportsInterface(c) => view(c, |c| {

@@ -274,6 +274,18 @@ impl SystemTxError {
     fn from_precompile(error: PrecompileError) -> Self {
         Self::Codec(error.to_string())
     }
+
+    pub(crate) fn codec(error: impl std::fmt::Display) -> Self {
+        Self::Codec(error.to_string())
+    }
+
+    pub(crate) fn phase1_tx_decode(error: impl std::fmt::Display) -> Self {
+        Self::Phase1TxDecode(error.to_string())
+    }
+
+    pub(crate) fn phase1_signature_recovery(error: impl std::fmt::Display) -> Self {
+        Self::Phase1SignatureRecovery(error.to_string())
+    }
 }
 
 #[cfg(test)]

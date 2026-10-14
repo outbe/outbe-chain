@@ -7,6 +7,8 @@ use eyre::{Result, WrapErr as _};
 use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
 use serde_json::Value;
 
+use crate::errors::RpcError;
+
 /// Chain identity used when validating policy anchors and signing relay bytes.
 pub trait ChainRpc {
     fn chain_id(&self) -> impl Future<Output = Result<u64>> + Send;
@@ -104,15 +106,19 @@ impl HttpRenewalRpc {
             .await
             .wrap_err_with(|| format!("decode {method} RPC response"))?;
         if response.get("id") != Some(&Value::from(id)) {
-            eyre::bail!("{method} RPC response id mismatch");
+            return Err(RpcError::ResponseIdMismatch(method.to_owned()).into());
         }
         if let Some(error) = response.get("error") {
-            eyre::bail!("{method} RPC error: {error}");
+            return Err(RpcError::RpcResponse {
+                method: method.to_owned(),
+                error: error.clone(),
+            }
+            .into());
         }
         response
             .get("result")
             .cloned()
-            .ok_or_else(|| eyre::eyre!("{method} RPC response has no result"))
+            .ok_or_else(|| RpcError::MissingResult(method.to_owned()).into())
     }
 
     async fn optional(&self, method: &str, params: Value) -> Result<Option<Value>> {
@@ -237,7 +243,7 @@ impl RelayRpc for HttpRenewalRpc {
         .await?
         .as_str()
         .map(ToOwned::to_owned)
-        .ok_or_else(|| eyre::eyre!("eth_sendRawTransaction returned a non-string"))
+        .ok_or_else(|| RpcError::NonStringResult("eth_sendRawTransaction").into())
     }
 }
 
@@ -252,26 +258,20 @@ impl RegistryRpc for HttpRenewalRpc {
     }
 }
 
-fn parse_hex_u64(value: &Value, method: &str) -> Result<u64> {
-    let encoded = value
-        .as_str()
-        .ok_or_else(|| eyre::eyre!("{method} returned a non-string"))?;
+fn parse_hex_u64(value: &Value, method: &'static str) -> Result<u64> {
+    let encoded = value.as_str().ok_or(RpcError::NonStringResult(method))?;
     u64::from_str_radix(encoded.strip_prefix("0x").unwrap_or(encoded), 16)
         .wrap_err_with(|| format!("parse {method} result"))
 }
 
-fn parse_hex_u256(value: &Value, method: &str) -> Result<U256> {
-    let encoded = value
-        .as_str()
-        .ok_or_else(|| eyre::eyre!("{method} returned a non-string"))?;
+fn parse_hex_u256(value: &Value, method: &'static str) -> Result<U256> {
+    let encoded = value.as_str().ok_or(RpcError::NonStringResult(method))?;
     U256::from_str_radix(encoded.strip_prefix("0x").unwrap_or(encoded), 16)
-        .map_err(|error| eyre::eyre!("parse {method} result: {error}"))
+        .map_err(|error| RpcError::ParseU256Result { method, error }.into())
 }
 
-fn decode_hex_bytes(value: &Value, method: &str) -> Result<Vec<u8>> {
-    let encoded = value
-        .as_str()
-        .ok_or_else(|| eyre::eyre!("{method} returned a non-string"))?;
+fn decode_hex_bytes(value: &Value, method: &'static str) -> Result<Vec<u8>> {
+    let encoded = value.as_str().ok_or(RpcError::NonStringResult(method))?;
     hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded))
         .wrap_err_with(|| format!("decode {method} bytes"))
 }

@@ -9,6 +9,7 @@ use crate::{
         validation::validate_context_parent_binding,
     },
     config::VERIFY_RESOLUTION_TIMEOUT,
+    errors::ApplicationError,
 };
 use tracing::{debug, warn};
 
@@ -60,7 +61,7 @@ impl ApplicationShared {
                 crate::metrics::record_dkg_boundary_unavailable(
                     crate::metrics::DkgBoundaryUnavailableReason::AncestryUnavailable,
                 );
-                return Err(eyre::eyre!("DKG boundary requirement unavailable: {error}"));
+                return Err(ApplicationError::BoundaryRequirementUnavailable(error).into());
             }
             warn!(
                 digest = %payload_digest.0,

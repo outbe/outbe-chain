@@ -12,6 +12,7 @@ use outbe_tee::{
     protocol::EnclaveRequest,
 };
 
+use crate::errors::{EnclaveResult, OnboardingUploadError};
 use crate::finalized_admission::{FinalizedAdmissionVerifierV1, VerifiedAdmissionAnchorV1};
 
 struct UploadV1 {
@@ -84,7 +85,7 @@ impl OnboardingArtifactUploadSessionV1 {
         &mut self,
         request: EnclaveRequest,
         descriptor: Option<&TrustedNetworkDescriptorV1>,
-    ) -> Result<OnboardingArtifactUploadProgressV1, String> {
+    ) -> EnclaveResult<OnboardingArtifactUploadProgressV1> {
         let result = (|| match request {
             EnclaveRequest::BeginUpgradeKeyTransferV1 {
                 request_hash,
@@ -92,19 +93,19 @@ impl OnboardingArtifactUploadSessionV1 {
                 anchor_outcome,
                 export,
             } => {
-                let descriptor = descriptor
-                    .ok_or_else(|| "upgrade requires a measured network descriptor".to_string())?;
+                let descriptor =
+                    descriptor.ok_or(OnboardingUploadError::UpgradeRequiresNetworkDescriptor)?;
                 let decoded = DcapOnboardingArtifactV1::decode_canonical(&artifact)
-                    .map_err(|_| "invalid upgrade artifact")?;
+                    .map_err(|_| OnboardingUploadError::InvalidUpgradeArtifact)?;
                 let expected =
                     outbe_tee::finalized_admission::upgrade_key_transfer_request_hash_v1(
                         &artifact,
                         &anchor_outcome,
                         export,
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(OnboardingUploadError::other)?;
                 if expected != request_hash {
-                    return Err("upgrade transfer commitment mismatch".into());
+                    return Err(OnboardingUploadError::UpgradeCommitmentMismatch.into());
                 }
                 let context = decoded.context;
                 let old_hash =
@@ -116,7 +117,7 @@ impl OnboardingArtifactUploadSessionV1 {
                         expected_key_epoch: context.key_epoch,
                         expected_tribute_offer_epoch: context.tribute_offer_epoch,
                     })
-                    .map_err(|e| e.to_string())?;
+                    .map_err(OnboardingUploadError::other)?;
                 self.begin(
                     descriptor,
                     BeginUploadInput {
@@ -129,7 +130,10 @@ impl OnboardingArtifactUploadSessionV1 {
                         expected_tribute_offer_epoch: context.tribute_offer_epoch,
                     },
                 )?;
-                let mut upload = self.upload.take().ok_or("upgrade upload missing")?;
+                let mut upload = self
+                    .upload
+                    .take()
+                    .ok_or(OnboardingUploadError::UpgradeUploadMissing)?;
                 upload.request_hash = request_hash;
                 upload.upgrade_export = Some(export);
                 upload.verifier = upload.verifier.for_upgrade();
@@ -146,9 +150,7 @@ impl OnboardingArtifactUploadSessionV1 {
                 expected_key_epoch,
                 expected_tribute_offer_epoch,
             } => self.begin(
-                descriptor.ok_or_else(|| {
-                    "onboarding ingest requires a release-measured network descriptor".to_owned()
-                })?,
+                descriptor.ok_or(OnboardingUploadError::IngestRequiresNetworkDescriptor)?,
                 BeginUploadInput {
                     request_hash,
                     artifact,
@@ -171,7 +173,7 @@ impl OnboardingArtifactUploadSessionV1 {
             EnclaveRequest::FinishDcapOnboardingArtifactIngestV1 { request_hash } => {
                 self.finish(request_hash)
             }
-            _ => Err("request is not part of onboarding artifact ingest".to_owned()),
+            _ => Err(OnboardingUploadError::NotOnboardingIngestRequest.into()),
         })();
         if result.is_err() {
             self.upload = None;
@@ -183,7 +185,7 @@ impl OnboardingArtifactUploadSessionV1 {
         &mut self,
         descriptor: &TrustedNetworkDescriptorV1,
         input: BeginUploadInput,
-    ) -> Result<OnboardingArtifactUploadProgressV1, String> {
+    ) -> EnclaveResult<OnboardingArtifactUploadProgressV1> {
         let BeginUploadInput {
             request_hash,
             artifact,
@@ -194,19 +196,19 @@ impl OnboardingArtifactUploadSessionV1 {
             expected_tribute_offer_epoch,
         } = input;
         if self.upload.is_some() {
-            return Err("an onboarding artifact upload is already active".into());
+            return Err(OnboardingUploadError::UploadAlreadyActive.into());
         }
         if artifact.is_empty() || artifact.len() > MAX_DCAP_ONBOARDING_ARTIFACT_BYTES {
-            return Err("onboarding artifact length is invalid".into());
+            return Err(OnboardingUploadError::ArtifactLenInvalid.into());
         }
         let decoded = DcapOnboardingArtifactV1::decode_canonical(&artifact)
-            .map_err(|_| "onboarding artifact is not canonical")?;
+            .map_err(|_| OnboardingUploadError::ArtifactNotCanonical)?;
         if decoded.context.intent_hash != expected_intent_hash
             || decoded.context.tribute_offer_public != expected_tribute_offer_public
             || decoded.context.key_epoch != expected_key_epoch
             || decoded.context.tribute_offer_epoch != expected_tribute_offer_epoch
         {
-            return Err("onboarding artifact does not match the expected Registry values".into());
+            return Err(OnboardingUploadError::ArtifactRegistryValuesMismatch.into());
         }
         let computed = onboarding_artifact_ingest_request_hash_v1(FinalizedAdmissionBeginInputV1 {
             artifact: &artifact,
@@ -216,9 +218,9 @@ impl OnboardingArtifactUploadSessionV1 {
             expected_key_epoch,
             expected_tribute_offer_epoch,
         })
-        .map_err(|error| error.to_string())?;
+        .map_err(OnboardingUploadError::other)?;
         if computed != request_hash {
-            return Err("onboarding artifact request commitment mismatch".into());
+            return Err(OnboardingUploadError::CommitmentMismatch.into());
         }
         let verifier =
             FinalizedAdmissionVerifierV1::new(descriptor, &decoded.context, &anchor_outcome)?;
@@ -244,32 +246,32 @@ impl OnboardingArtifactUploadSessionV1 {
         kind: FinalizedAdmissionRecordKindV1,
         offset: u32,
         bytes: Vec<u8>,
-    ) -> Result<OnboardingArtifactUploadProgressV1, String> {
+    ) -> EnclaveResult<OnboardingArtifactUploadProgressV1> {
         let upload = self
             .upload
             .as_mut()
-            .ok_or_else(|| "no onboarding artifact upload is active".to_owned())?;
+            .ok_or(OnboardingUploadError::NoUploadActive)?;
         if upload.request_hash != request_hash || upload.verified_admission.is_some() {
-            return Err("onboarding artifact chunk is out of sequence".into());
+            return Err(OnboardingUploadError::ChunkOutOfSequence.into());
         }
         if bytes.is_empty() || bytes.len() > MAX_ONBOARDING_INGEST_CHUNK_BYTES {
-            return Err("onboarding artifact chunk length is invalid".into());
+            return Err(OnboardingUploadError::ChunkLenInvalid.into());
         }
         match upload.record_kind {
             Some(active) if active != kind => {
-                return Err("onboarding artifact record kinds cannot be interleaved".into())
+                return Err(OnboardingUploadError::RecordKindsInterleaved.into())
             }
             None => upload.record_kind = Some(kind),
             _ => {}
         }
-        let offset = usize::try_from(offset)
-            .map_err(|_| "onboarding artifact chunk offset exceeds this target")?;
+        let offset =
+            usize::try_from(offset).map_err(|_| OnboardingUploadError::ChunkOffsetTarget)?;
         if offset != upload.record.len() {
-            return Err("onboarding artifact chunks are not strictly sequential".into());
+            return Err(OnboardingUploadError::ChunksNotSequential.into());
         }
         let next = offset
             .checked_add(bytes.len())
-            .ok_or_else(|| "onboarding artifact chunk offset overflow".to_owned())?;
+            .ok_or(OnboardingUploadError::ChunkOffsetOverflow)?;
         let max = match kind {
             FinalizedAdmissionRecordKindV1::CommitteeTransition => {
                 MAX_COMMITTEE_TRANSITION_RECORD_BYTES
@@ -277,13 +279,12 @@ impl OnboardingArtifactUploadSessionV1 {
             FinalizedAdmissionRecordKindV1::Admission => MAX_FINALIZED_ADMISSION_RECORD_BYTES,
         };
         if next > max {
-            return Err("onboarding artifact record exceeds its byte cap".into());
+            return Err(OnboardingUploadError::RecordExceedsByteCap.into());
         }
         upload.record.extend_from_slice(&bytes);
         Ok(OnboardingArtifactUploadProgressV1::ChunkAccepted {
             request_hash,
-            next_offset: u32::try_from(next)
-                .map_err(|_| "onboarding artifact chunk offset exceeds u32")?,
+            next_offset: u32::try_from(next).map_err(|_| OnboardingUploadError::ChunkOffsetU32)?,
         })
     }
 
@@ -291,17 +292,17 @@ impl OnboardingArtifactUploadSessionV1 {
         &mut self,
         request_hash: B256,
         kind: FinalizedAdmissionRecordKindV1,
-    ) -> Result<OnboardingArtifactUploadProgressV1, String> {
+    ) -> EnclaveResult<OnboardingArtifactUploadProgressV1> {
         let upload = self
             .upload
             .as_mut()
-            .ok_or_else(|| "no onboarding artifact upload is active".to_owned())?;
+            .ok_or(OnboardingUploadError::NoUploadActive)?;
         if upload.request_hash != request_hash
             || upload.record_kind != Some(kind)
             || upload.record.is_empty()
             || upload.verified_admission.is_some()
         {
-            return Err("onboarding artifact record commit is out of sequence".into());
+            return Err(OnboardingUploadError::RecordCommitOutOfSequence.into());
         }
         let record = std::mem::take(&mut upload.record);
         upload.record_kind = None;
@@ -316,20 +317,20 @@ impl OnboardingArtifactUploadSessionV1 {
         Ok(OnboardingArtifactUploadProgressV1::RecordAccepted { request_hash, kind })
     }
 
-    fn finish(&mut self, request_hash: B256) -> Result<OnboardingArtifactUploadProgressV1, String> {
+    fn finish(&mut self, request_hash: B256) -> EnclaveResult<OnboardingArtifactUploadProgressV1> {
         let upload = self
             .upload
             .take()
-            .ok_or_else(|| "no onboarding artifact upload is active".to_owned())?;
+            .ok_or(OnboardingUploadError::NoUploadActive)?;
         if upload.request_hash != request_hash
             || upload.record_kind.is_some()
             || !upload.record.is_empty()
         {
-            return Err("onboarding artifact finish is out of sequence".into());
+            return Err(OnboardingUploadError::FinishOutOfSequence.into());
         }
         let verified_admission = upload
             .verified_admission
-            .ok_or_else(|| "onboarding artifact has no verified admission record".to_owned())?;
+            .ok_or(OnboardingUploadError::NoVerifiedAdmissionRecord)?;
         Ok(OnboardingArtifactUploadProgressV1::Complete(Box::new(
             CompleteOnboardingArtifactIngestV1 {
                 upgrade_export: upload.upgrade_export,
@@ -354,9 +355,9 @@ mod tests {
     use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
     use outbe_tee::dcap_protocol::DcapOnboardingContextV1;
 
-    fn expect_error(result: Result<OnboardingArtifactUploadProgressV1, String>) -> String {
+    fn expect_error(result: EnclaveResult<OnboardingArtifactUploadProgressV1>) -> String {
         match result {
-            Err(error) => error,
+            Err(error) => error.into(),
             Ok(_) => panic!("onboarding stream operation unexpectedly succeeded"),
         }
     }

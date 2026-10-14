@@ -5,21 +5,21 @@ use super::*;
 pub fn production(
     boot: Arc<EnclaveBootConfig>,
     keys: &EnclaveKeys,
-) -> Result<InitializationState, String> {
+) -> EnclaveResult<InitializationState> {
     let mut challenge = [0u8; 32];
     rand_core::OsRng.fill_bytes(&mut challenge);
     if crate::transport::sealing_key().is_none() {
-        return Err("production initialization requires an SGX sealing key".to_string());
+        return Err(InitError::MissingSgxSealingKey.into());
     }
     let attestation = crate::gramine::attestation_type();
     #[cfg(all(not(feature = "mock"), feature = "production-dcap-release"))]
     let trusted_network_descriptor = match &attestation {
         crate::gramine::AttestationType::Dcap => Some(load_trusted_network_descriptor_v1()?),
         other => {
-            return Err(format!(
-                "production DCAP release refuses runtime attestation {}",
-                other.label()
-            ));
+            return Err(InitError::ProdDcapReleaseRefusesAttestation {
+                label: other.label(),
+            }
+            .into());
         }
     };
     #[cfg(all(not(feature = "mock"), not(feature = "production-dcap-release")))]
@@ -36,9 +36,9 @@ pub fn production(
         let chain_id = u64::try_from(alloy_primitives::U256::from_be_bytes(
             descriptor.network_binding.chain_id,
         ))
-        .map_err(|_| "measured consensus chain id does not fit u64".to_owned())?;
+        .map_err(|_| InitError::MeasuredChainIdOverflow)?;
         outbe_consensus::config::init_consensus_chain_id(chain_id)
-            .map_err(|error| format!("bind measured consensus chain id: {error}"))?;
+            .map_err(InitError::bind_measured_chain_id)?;
     }
     production_with_challenge_and_attestation_inner(
         boot,
@@ -55,9 +55,9 @@ pub fn local_e2e(
     boot: Arc<EnclaveBootConfig>,
     keys: &EnclaveKeys,
     descriptor: TrustedNetworkDescriptorV1,
-) -> Result<InitializationState, String> {
+) -> EnclaveResult<InitializationState> {
     if !crate::local_e2e::configured() {
-        return Err("E2E sealing is not configured".into());
+        return Err(InitError::E2eSealingNotConfigured.into());
     }
     let mut challenge = [0; 32];
     rand_core::OsRng.fill_bytes(&mut challenge);
@@ -75,7 +75,7 @@ pub(super) fn production_with_challenge(
     boot: Arc<EnclaveBootConfig>,
     keys: &EnclaveKeys,
     challenge: [u8; 32],
-) -> Result<InitializationState, String> {
+) -> EnclaveResult<InitializationState> {
     production_with_challenge_and_attestation_inner(
         boot,
         keys,
@@ -91,9 +91,9 @@ fn production_with_challenge_and_attestation_inner(
     challenge: [u8; 32],
     attestation: crate::gramine::AttestationType,
     trusted_network_descriptor: Option<TrustedNetworkDescriptorV1>,
-) -> Result<InitializationState, String> {
+) -> EnclaveResult<InitializationState> {
     if challenge == [0; 32] {
-        return Err("initialization challenge must be nonzero".to_string());
+        return Err(InitError::ZeroChallenge.into());
     }
     let restored = restore_manifest(&boot, keys)?;
     let state = InitializationState {
@@ -126,7 +126,7 @@ pub(crate) fn production_with_challenge_and_attestation(
     keys: &EnclaveKeys,
     challenge: [u8; 32],
     attestation: crate::gramine::AttestationType,
-) -> Result<InitializationState, String> {
+) -> EnclaveResult<InitializationState> {
     production_with_challenge_and_attestation_inner(boot, keys, challenge, attestation, None)
 }
 
@@ -136,7 +136,7 @@ pub(crate) fn production_with_trusted_network_descriptor(
     keys: &EnclaveKeys,
     challenge: [u8; 32],
     trusted_network_descriptor: TrustedNetworkDescriptorV1,
-) -> Result<InitializationState, String> {
+) -> EnclaveResult<InitializationState> {
     production_with_challenge_and_attestation_inner(
         boot,
         keys,
@@ -152,7 +152,7 @@ pub(crate) fn production_with_trusted_network_descriptor(
 pub fn production_with_synthetic_dcap_for_test(
     boot: Arc<EnclaveBootConfig>,
     keys: &EnclaveKeys,
-) -> Result<InitializationState, String> {
+) -> EnclaveResult<InitializationState> {
     let mut challenge = [0_u8; 32];
     rand_core::OsRng.fill_bytes(&mut challenge);
     production_with_challenge_and_attestation_inner(

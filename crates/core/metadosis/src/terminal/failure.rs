@@ -51,7 +51,7 @@ pub(crate) fn fail_worldwide_day(
 ) -> Result<()> {
     let aggregate = ValidatedWwdAggregate::load_and_validate(storage.clone())?;
     let current = aggregate.record(worldwide_day).ok_or_else(|| {
-        crate::errors::storage_corruption("Metadosis failure has no persisted WorldwideDay".into())
+        crate::errors::storage_corruption("Metadosis failure has no persisted WorldwideDay")
     })?;
     let mut metadosis = MetadosisContract::new(storage.clone());
     let limits = poc_schema_limits();
@@ -62,22 +62,20 @@ pub(crate) fn fail_worldwide_day(
         metadosis
             .read_metadosis_failure_receipt(worldwide_day, unused_limit)?
             .ok_or_else(|| {
-                crate::errors::storage_corruption(
-                    "failed Metadosis WWD has no failure receipt".into(),
-                )
+                crate::errors::storage_corruption("failed Metadosis WWD has no failure receipt")
             })?;
         return Ok(());
     }
     if current.status.is_terminal() {
         return Err(crate::errors::storage_corruption(
-            "Metadosis failure cannot replace a completed WWD".into(),
+            "Metadosis failure cannot replace a completed WWD",
         ));
     }
 
     let _profile = metadosis
         .read_ocomp_request_profile(&limits)?
         .ok_or_else(|| {
-            crate::errors::storage_corruption("Metadosis failure has no OCOMP profile".into())
+            crate::errors::storage_corruption("Metadosis failure has no OCOMP profile")
         })?;
     metadosis.clear_ready_ocomp_for_failed_day(worldwide_day, &limits)?;
     let settlement = FailureSettlement {
@@ -119,7 +117,7 @@ pub(crate) fn fail_expired_ocomp_day(
         OuterWwdTransitionKind::OcompExpired
     ) {
         return Err(crate::errors::storage_corruption(
-            "expired OCOMP failure requires the typed expiry transition".into(),
+            "expired OCOMP failure requires the typed expiry transition",
         ));
     }
 
@@ -141,7 +139,7 @@ pub(crate) fn fail_expired_ocomp_day(
 }
 
 fn expired_prestate_error() -> outbe_primitives::error::PrecompileError {
-    crate::errors::storage_corruption("expired OCOMP failure pre-state is inconsistent".into())
+    crate::errors::storage_corruption("expired OCOMP failure pre-state is inconsistent")
 }
 fn expired_job_binding(
     record: &outbe_ocomp_protocol::state::OcompJobRecordV1,
@@ -224,7 +222,7 @@ fn validate_expired_failure(
     let limits = poc_schema_limits();
     let record = metadosis
         .ocomp_job_record(intent_id, &limits)?
-        .ok_or_else(|| crate::errors::storage_corruption("expired OCOMP job is missing".into()))?;
+        .ok_or_else(|| crate::errors::storage_corruption("expired OCOMP job is missing"))?;
     if !expired_job_binding(&record, worldwide_day, unused_limit) {
         return Err(expired_prestate_error());
     }

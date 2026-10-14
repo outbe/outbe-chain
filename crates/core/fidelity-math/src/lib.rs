@@ -13,6 +13,8 @@
 use alloy_primitives::U256;
 use outbe_primitives::units::SCALE_1E18;
 
+pub mod errors;
+
 /// Fixed-point denominator (10^18).
 pub(crate) const SCALE: U256 = SCALE_1E18;
 

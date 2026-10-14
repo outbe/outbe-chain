@@ -10,7 +10,7 @@ impl UpgradeJournalGuardV1 {
         {
             let error = std::io::Error::from(error);
             if error.kind() == std::io::ErrorKind::WouldBlock {
-                eyre::bail!("another upgrade operator owns the journal lock");
+                return Err(UpgradeError::JournalLocked.into());
             }
             return Err(error).wrap_err("lock upgrade journal");
         }
@@ -28,14 +28,14 @@ impl UpgradeJournalGuardV1 {
                 // A completed rollout may be followed by the next exact successor.
             } else {
                 if snapshot.lifecycle.context() != current.lifecycle.context() {
-                    eyre::bail!("upgrade journal context cannot change after preparation");
+                    return Err(UpgradeError::ContextChangedAfterPreparation.into());
                 }
                 validate_checkpoint_transition(&current.lifecycle, &snapshot.lifecycle)?;
             }
             snapshot.generation = current
                 .generation
                 .checked_add(1)
-                .ok_or_else(|| eyre::eyre!("upgrade journal generation exhausted"))?;
+                .ok_or(UpgradeError::GenerationExhausted)?;
         }
         snapshot.validate()?;
         let mut options = OpenOptions::new();
@@ -54,10 +54,7 @@ pub(super) fn create_or_validate_directory(path: &Path) -> Result<()> {
     let mut builder = DirBuilder::new();
     builder.mode(DIRECTORY_MODE);
     match builder.create(path) {
-        Ok(()) => sync_directory(
-            path.parent()
-                .ok_or_else(|| eyre::eyre!("upgrade directory has no parent"))?,
-        ),
+        Ok(()) => sync_directory(path.parent().ok_or(UpgradeError::DirectoryHasNoParent)?),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => validate_directory(path),
         Err(error) => Err(error).wrap_err("create upgrade journal directory"),
     }
@@ -70,10 +67,7 @@ pub(super) fn validate_directory(path: &Path) -> Result<()> {
         || metadata.uid() != rustix::process::geteuid().as_raw()
         || metadata.permissions().mode() & 0o777 != DIRECTORY_MODE
     {
-        eyre::bail!(
-            "private directory {} is not owner-only 0700",
-            path.display()
-        );
+        return Err(UpgradeError::InvalidPrivateDirectoryPermissions(path.to_path_buf()).into());
     }
     Ok(())
 }
@@ -90,10 +84,7 @@ pub(super) fn validate_private_file(path: &Path, max_bytes: u64) -> Result<()> {
     let metadata = fs::symlink_metadata(path)
         .wrap_err_with(|| format!("stat private file {}", path.display()))?;
     if !private_file_within_bounds(&metadata, max_bytes) {
-        eyre::bail!(
-            "private file {} violates owner or size bounds",
-            path.display()
-        );
+        return Err(UpgradeError::InvalidPrivateFileBounds(path.to_path_buf()).into());
     }
     Ok(())
 }
@@ -105,7 +96,7 @@ pub(super) fn read_private_bounded_file(path: &Path, max_bytes: u64) -> Result<V
         .read_to_end(&mut bytes)
         .wrap_err_with(|| format!("read private file {}", path.display()))?;
     if bytes.len() as u64 > max_bytes {
-        eyre::bail!("private file {} exceeds its size cap", path.display());
+        return Err(UpgradeError::PrivateFileSizeCapExceeded(path.to_path_buf()).into());
     }
     Ok(bytes)
 }

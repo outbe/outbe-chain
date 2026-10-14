@@ -7,7 +7,7 @@ use outbe_lysis::program_v1::{
     result::{decode_root_reduce_output, RootReduceOutputV1},
 };
 use outbe_ocomp_protocol::{
-    input::{AuthenticatedInputChunkV1, InputChunkRefV1},
+    input::{AuthenticatedInputChunkV1, InputChunkKind, InputChunkRefV1},
     unit::{UnitArtifactV1, UnitPhase},
     CasObjectRefV1, ObjectKind, ProtocolError, SchemaLimits, UnitFinishedV1,
 };
@@ -152,6 +152,7 @@ pub fn admit_reported_lysis_unit_v1(
         UnitPhase::BucketShuffle | UnitPhase::RootReduce => {
             admit_producer_tree_phase(ProducerPhaseAdmissionContext {
                 admission_position,
+                position,
                 spec: &spec,
                 reported_artifact: &reported_artifact,
                 finished,
@@ -173,6 +174,7 @@ pub fn admit_reported_lysis_unit_v1(
 
 struct ProducerPhaseAdmissionContext<'a> {
     admission_position: AdmissionPositionV1,
+    position: PlannedUnitPositionV1,
     spec: &'a outbe_ocomp_protocol::unit::UnitSpecV1,
     reported_artifact: &'a UnitArtifactV1,
     finished: &'a UnitFinishedV1,
@@ -232,10 +234,10 @@ fn admit_output_finalize_phase(
 fn admit_producer_tree_phase(
     ctx: ProducerPhaseAdmissionContext<'_>,
 ) -> Result<AdmittedLysisUnitV1, LysisSchedulerError> {
-    if !ctx.loaded.input_chunks.is_empty() {
-        return Err(LysisSchedulerError::InputShape);
-    }
     if ctx.spec.phase == UnitPhase::BucketShuffle {
+        if !ctx.loaded.input_chunks.is_empty() {
+            return Err(LysisSchedulerError::InputShape);
+        }
         verify_lysis_shuffle_phase_replay(
             (
                 ctx.admission_position.plan_ordinal,
@@ -261,6 +263,23 @@ fn admit_producer_tree_phase(
             admission: admitted.admission,
         });
     }
+    match ctx.position {
+        PlannedUnitPositionV1::TreeNode {
+            level: 0, index, ..
+        } => {
+            let [(reference, chunk)] = ctx.loaded.input_chunks.as_slice() else {
+                return Err(LysisSchedulerError::InputShape);
+            };
+            if reference.kind != InputChunkKind::Tribute
+                || chunk.kind != InputChunkKind::Tribute
+                || reference.ordinal != index
+            {
+                return Err(LysisSchedulerError::InputShape);
+            }
+        }
+        PlannedUnitPositionV1::TreeNode { .. } if ctx.loaded.input_chunks.is_empty() => {}
+        _ => return Err(LysisSchedulerError::InputShape),
+    }
     verify_lysis_root_reduce_phase_replay(
         (
             ctx.admission_position.plan_ordinal,
@@ -268,6 +287,7 @@ fn admit_producer_tree_phase(
             ctx.reported_artifact,
         ),
         (ctx.plan, ctx.manifest),
+        &ctx.loaded.input_chunks,
         (&ctx.loaded.producer_artifacts, ctx.bundle),
         (ctx.reader, ctx.replay_inbox, ctx.limits),
     )?;

@@ -57,10 +57,11 @@ where
                         );
                     }
                     ExecutionWatchdogDecision::Fatal { unhealthy_for } => {
-                        return Err(eyre::eyre!(
-                            "execution watchdog provider read failed for {:?}: {error}",
-                            unhealthy_for
-                        ));
+                        return Err(crate::errors::StackEpochError::WatchdogProviderReadFailed {
+                            unhealthy_for,
+                            reason: format!("{error}"),
+                        }
+                        .into());
                     }
                     ExecutionWatchdogDecision::Healthy => {}
                 }
@@ -102,11 +103,14 @@ where
                         );
                     }
                     ExecutionWatchdogDecision::Fatal { unhealthy_for } => {
-                        return Err(eyre::eyre!(
-                                        "execution watchdog provider hash read failed at consensus tip height {} for {:?}: {error}",
-                                        consensus_tip_height,
-                                        unhealthy_for
-                                    ));
+                        return Err(
+                            crate::errors::StackEpochError::WatchdogProviderHashReadFailed {
+                                height: consensus_tip_height,
+                                unhealthy_for,
+                                reason: format!("{error}"),
+                            }
+                            .into(),
+                        );
                     }
                     ExecutionWatchdogDecision::Healthy => {}
                 }
@@ -177,16 +181,16 @@ where
                 );
                 Ok(())
             }
-            ExecutionWatchdogDecision::Fatal { unhealthy_for } => {
-                Err(eyre::eyre!(
-                                "execution watchdog fatal: Reth provider head/hash not ready for consensus tip height {} digest {} (reth_head={}, provider_tip_hash={:?}, unhealthy_for={:?})",
-                                consensus_tip_height,
-                                tip.digest,
-                                reth_head_height,
-                                provider_tip_hash,
-                                unhealthy_for,
-                            ))
-            }
+            ExecutionWatchdogDecision::Fatal { unhealthy_for } => Err(
+                crate::errors::StackEpochError::WatchdogFatalProviderNotReady {
+                    consensus_tip_height,
+                    digest: tip.digest,
+                    reth_head_height,
+                    provider_tip_hash,
+                    unhealthy_for,
+                }
+                .into(),
+            ),
         }
     }
 }

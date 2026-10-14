@@ -10,7 +10,7 @@
 //! parameters) belongs to the caller (IntexFactory).
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{first_full_day, WorldwideDay};
 
@@ -383,9 +383,7 @@ pub fn arm_proceeds(
     deadline: u64,
 ) -> Result<()> {
     if deadline == u64::MAX {
-        return Err(PrecompileError::Revert(
-            "proceeds deadline cannot be the finalized marker".into(),
-        ));
+        return Err(IntexError::ProceedsDeadlineFinalizedMarker.into());
     }
     let mut registry = IntexContract::new(storage.clone());
     if registry.proceeds_deadline.read(&worldwide_day)? == u64::MAX {

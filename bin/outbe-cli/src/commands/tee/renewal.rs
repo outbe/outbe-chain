@@ -4,6 +4,7 @@ use super::load_secp256k1_key_file;
 use super::sign_node_hash;
 use super::CliFinalityRpc;
 
+use crate::errors::TeeRenewalError;
 use crate::rpc::Rpc;
 
 use alloy_primitives::U256;
@@ -43,17 +44,15 @@ pub(super) async fn renew(
         reth_p2p_secret_key,
     } = args;
     let reth_p2p_secret_key = reth_p2p_secret_key.as_deref();
-    let private_key = private_key
-        .ok_or_else(|| eyre::eyre!("tee renew requires the global --private-key EVM signer"))?;
+    let private_key = private_key.ok_or(TeeRenewalError::PrivateKeyRequired)?;
     let evm_signer = RelaySignerV1::new(private_key)?;
     let manifest = load_committed_enclave_manifest_v1(node_data_dir)
-        .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
+        .map_err(TeeRenewalError::LoadCommittedManifest)?;
     let rpc_chain_id = client.eth_chain_id().await?;
     if manifest.chain_id != U256::from(rpc_chain_id).to_be_bytes() {
-        eyre::bail!("committed NodeHost manifest chain id does not match eth_chainId");
+        return Err(TeeRenewalError::ManifestChainIdMismatch.into());
     }
-    let path = reth_p2p_secret_key
-        .ok_or_else(|| eyre::eyre!("NodeHost renewal requires --reth-p2p-secret-key"))?;
+    let path = reth_p2p_secret_key.ok_or(TeeRenewalError::MissingRethP2pSecretKey)?;
     let node_signing_key = load_secp256k1_key_file(path)?;
     ensure_signer_matches_node_id(&node_signing_key, &manifest.node_id)?;
     let mut enclave = outbe_tee::connect_or_initialize_node_host_enclave(
@@ -65,7 +64,7 @@ pub(super) async fn renew(
         },
         |hash| sign_node_hash(&node_signing_key, hash),
     )
-    .map_err(|error| eyre::eyre!("connect NodeHost enclave: {error}"))?;
+    .map_err(TeeRenewalError::ConnectNodeHostEnclave)?;
     let selector = NodeBindingSelectorV1::NodeHost(manifest.node_id.reth_p2p_public);
     let config = RenewalServiceConfigV1 {
         node_data_dir: node_data_dir.to_path_buf(),
@@ -74,7 +73,7 @@ pub(super) async fn renew(
     };
     let signer = |hash| {
         sign_node_hash(&node_signing_key, hash)
-            .map_err(|error| eyre::eyre!("node authority signing failed: {error}"))
+            .map_err(|error| TeeRenewalError::NodeAuthoritySigningFailed(error).into())
     };
     let started = Instant::now();
     loop {
@@ -95,9 +94,7 @@ pub(super) async fn renew(
             }
             RenewalOutcomeV1::Submitted { .. } | RenewalOutcomeV1::Abandoned { .. } => {
                 if started.elapsed() >= MANUAL_RENEWAL_FINALITY_TIMEOUT {
-                    return Err(eyre::eyre!(
-                        "tee renew timed out waiting for canonical finality; last outcome: {outcome:#?}"
-                    ));
+                    return Err(TeeRenewalError::RenewalTimeout(format!("{outcome:#?}")).into());
                 }
                 tokio::time::sleep(MANUAL_RENEWAL_RECONCILE_INTERVAL).await;
             }
@@ -112,7 +109,7 @@ pub(super) async fn renewal_status(client: &(impl Rpc + Sync), args: &StatusArgs
         critical_blocks,
     } = args;
     let manifest = load_committed_enclave_manifest_v1(node_data_dir)
-        .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
+        .map_err(TeeRenewalError::LoadCommittedManifest)?;
     let selector = NodeBindingSelectorV1::NodeHost(manifest.node_id.reth_p2p_public);
     let status = read_renewal_status_v1(
         &CliFinalityRpc(client),

@@ -141,8 +141,15 @@ pub enum PersistenceError {
     Staging(String),
 }
 
+impl PersistenceError {
+    /// Converts a displayable staging error into a persistence error.
+    pub(crate) fn staging(error: impl core::fmt::Display) -> Self {
+        Self::Staging(error.to_string())
+    }
+}
+
 impl From<StagingError> for PersistenceError {
     fn from(error: StagingError) -> Self {
-        Self::Staging(error.to_string())
+        Self::staging(error)
     }
 }

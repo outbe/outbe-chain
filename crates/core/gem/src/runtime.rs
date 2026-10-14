@@ -2,11 +2,12 @@ use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::call_breach::BreachTerms;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::first_full_day;
 
 use crate::api;
+use crate::errors::GemError;
 use crate::precompile::IGem::GemExpired;
 use crate::schema::GemContract;
 
@@ -67,19 +68,12 @@ pub(crate) fn forfeit_member(
         parent,
     } = *bodies;
     if gem_id.is_zero() {
-        return Err(PrecompileError::Revert(format!(
-            "gem bucket {bucket_key} has an empty member slot during forfeit"
-        )));
+        return Err(GemError::EmptyMemberSlotDuringForfeit { bucket_key }.into());
     }
-    let (item, bucket) = api::load_pair(storage, scope, parent, gem_id)?.ok_or_else(|| {
-        PrecompileError::Revert(format!(
-            "gem bucket {bucket_key} member {gem_id} has no body during forfeit"
-        ))
-    })?;
+    let (item, bucket) = api::load_pair(storage, scope, parent, gem_id)?
+        .ok_or(GemError::MissingMemberBodyDuringForfeit { bucket_key, gem_id })?;
     if item.body().is_settled() || item.body().bucket_key != bucket_key {
-        return Err(PrecompileError::Revert(format!(
-            "gem bucket {bucket_key} indexes an ineligible member {gem_id}"
-        )));
+        return Err(GemError::IneligibleBucketMember { bucket_key, gem_id }.into());
     }
     let owner = item.body().owner;
     let promis_load_minor = item.body().promis_load_minor;

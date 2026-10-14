@@ -1,6 +1,6 @@
+use crate::errors::BeginBlockPrecompileError;
 use alloy_primitives::Address;
 use outbe_primitives::block::BlockRuntimeContext;
-use outbe_primitives::error::PrecompileError;
 use outbe_primitives::error::Result;
 use outbe_teeregistry::v1::{EnclaveEvidenceV1, NodeHostAssociationV1};
 
@@ -9,21 +9,17 @@ pub(super) fn prepare_tee_bootstrap(
     payload: &outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2,
     state: &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
 ) -> Result<()> {
-    let activation = state.activation().map_err(|error| {
-        PrecompileError::Fatal(format!("invalid TEE ChainSpec authority: {error}"))
-    })?;
+    let activation = state
+        .activation()
+        .map_err(BeginBlockPrecompileError::invalid_tee_chain_spec_authority)?;
     if ctx.block.block_number < activation.manifest.activation_height {
-        return Err(PrecompileError::Revert(
-            "OST3 is not active at the current block".into(),
-        ));
+        return Err(BeginBlockPrecompileError::Ost3NotActive.into());
     }
     let expected_policy = activation
         .policy_at(ctx.block.block_number)
-        .map_err(|error| PrecompileError::Fatal(format!("invalid active TEE policy: {error}")))?;
+        .map_err(BeginBlockPrecompileError::invalid_active_tee_policy)?;
     if &payload.authority.policy != expected_policy {
-        return Err(PrecompileError::Revert(
-            "OST3 policy does not match the active ChainSpec schedule".into(),
-        ));
+        return Err(BeginBlockPrecompileError::Ost3PolicyScheduleMismatch.into());
     }
     outbe_teeregistry::TeeRegistry::new(ctx.storage.clone())
         .install_initial_policy_v1(expected_policy)?;
@@ -44,53 +40,44 @@ pub(crate) fn run_tee_bootstrap_v1(
 
     let mut registry = TeeRegistry::new(ctx.storage.clone());
     if registry.is_bootstrapped()? {
-        return Err(PrecompileError::Revert(
-            "TeeBootstrapV2: registry already bootstrapped".into(),
-        ));
+        return Err(BeginBlockPrecompileError::TeeRegistryAlreadyBootstrapped.into());
     }
     if payload.authority.committee_snapshot_block != ctx.block.block_number {
-        return Err(PrecompileError::Revert(format!(
-            "TeeBootstrapV2: committee snapshot block {} does not equal current block {}",
-            payload.authority.committee_snapshot_block, ctx.block.block_number
-        )));
+        return Err(
+            BeginBlockPrecompileError::TeeCommitteeSnapshotBlockMismatch {
+                snapshot_block: payload.authority.committee_snapshot_block,
+                current_block: ctx.block.block_number,
+            }
+            .into(),
+        );
     }
 
     let active_policy = registry.active_policy_v1()?;
     if active_policy != payload.authority.policy {
-        return Err(PrecompileError::Revert(
-            "TeeBootstrapV2: payload policy is not the authoritative active V1 policy".into(),
-        ));
+        return Err(BeginBlockPrecompileError::TeePayloadPolicyNotAuthoritative.into());
     }
 
     let committee = read_bootstrap_committee(ctx, payload)?;
 
-    let signing_hash = payload.signing_hash().map_err(|error| {
-        PrecompileError::Fatal(format!(
-            "canonical TeeBootstrapV2 cannot produce its signing hash: {error}"
-        ))
-    })?;
+    let signing_hash = payload
+        .signing_hash()
+        .map_err(BeginBlockPrecompileError::tee_cannot_produce_signing_hash)?;
     for signature in &payload.committee_signatures {
         let recovered = recover_signer(&signing_hash, &signature.signature)?;
         if recovered != signature.validator || !committee.contains(&signature.validator) {
-            return Err(PrecompileError::Revert(format!(
-                "TeeBootstrapV2: invalid committee signature for {}",
-                signature.validator
-            )));
+            return Err(BeginBlockPrecompileError::TeeInvalidCommitteeSignature {
+                validator: signature.validator,
+            }
+            .into());
         }
     }
 
     let snapshot =
         outbe_validatorset::state::read_committee_snapshot_for_epoch(ctx.storage.clone(), 0)?
-            .ok_or_else(|| {
-                PrecompileError::Revert(
-                    "TeeBootstrapV2: epoch-0 committee snapshot is missing".into(),
-                )
-            })?;
+            .ok_or(BeginBlockPrecompileError::TeeMissingEpoch0CommitteeSnapshot)?;
     let committee_snapshot_hash = outbe_validatorset::committee_set_hash_v2(0, &snapshot);
     if payload.authority.committee_snapshot_hash != committee_snapshot_hash {
-        return Err(PrecompileError::Revert(
-            "TeeBootstrapV2: committee snapshot hash mismatch".into(),
-        ));
+        return Err(BeginBlockPrecompileError::TeeCommitteeSnapshotHashMismatch.into());
     }
 
     for (index, participant) in payload.participants.iter().enumerate() {
@@ -98,9 +85,7 @@ pub(crate) fn run_tee_bootstrap_v1(
             .logical_evidence(index)
             .and_then(|evidence| evidence.encode_canonical())
             .map_err(|error| {
-                PrecompileError::Fatal(format!(
-                    "canonical TeeBootstrapV2 cannot reconstruct evidence {index}: {error}"
-                ))
+                BeginBlockPrecompileError::tee_cannot_reconstruct_evidence(index, error)
             })?;
         registry.register_enclave_v1(
             EnclaveEvidenceV1 {
@@ -117,11 +102,11 @@ pub(crate) fn run_tee_bootstrap_v1(
         )?;
     }
 
-    let policy_hash = payload.authority.policy.policy_hash().map_err(|error| {
-        PrecompileError::Fatal(format!(
-            "authoritative TeeBootstrapV2 policy cannot be hashed: {error}"
-        ))
-    })?;
+    let policy_hash = payload
+        .authority
+        .policy
+        .policy_hash()
+        .map_err(BeginBlockPrecompileError::tee_cannot_hash_authoritative_policy)?;
     registry.write_bootstrap(&TeeBootstrapData {
         tribute_offer_public_key: payload.authority.tribute_offer_public_key,
         policy_hash,
@@ -146,9 +131,7 @@ fn read_bootstrap_committee(
             .map(|record| record.validator_address)
             .collect();
     if committee.is_empty() {
-        return Err(PrecompileError::Revert(
-            "TeeBootstrapV2: active consensus committee is empty".into(),
-        ));
+        return Err(BeginBlockPrecompileError::TeeEmptyActiveConsensusCommittee.into());
     }
     let participant_validators = payload
         .participants
@@ -156,10 +139,7 @@ fn read_bootstrap_committee(
         .map(|participant| Address::from(participant.validator_binding.validator))
         .collect::<BTreeSet<_>>();
     if participant_validators != committee || payload.participants.len() != committee.len() {
-        return Err(PrecompileError::Revert(
-            "TeeBootstrapV2: participants must equal the complete active consensus committee"
-                .into(),
-        ));
+        return Err(BeginBlockPrecompileError::TeeParticipantsMismatchActiveCommittee.into());
     }
 
     Ok(committee)

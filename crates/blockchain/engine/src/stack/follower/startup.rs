@@ -156,7 +156,7 @@ fn read_startup_chain_state(node: &OutbeFullNode) -> Result<StartupChainState> {
     let last_execution_height = node
         .provider
         .last_block_number()
-        .map_err(|e| eyre::eyre!("failed to get last block number: {e}"))?;
+        .map_err(|e| crate::errors::FollowerStackError::GetLastBlockNumber(format!("{e}")))?;
     let initial_reth_forkchoice =
         read_reth_recovery_forkchoice(&node.provider.canonical_in_memory_state())?;
 
@@ -278,12 +278,19 @@ async fn inspect_archive_anchor<E: FollowerRuntime>(
         marshal::store::Certificates::last_index(finalizations_archive).map_or(0, Height::get);
     let archive_block_tip =
         marshal::store::Blocks::last_index(blocks_archive).map_or(0, Height::get);
-    ensure!(
-        archive_finalization_tip == archive_block_tip
-            && archive_finalization_tip >= replay_suffix_upper
-            && archive_finalization_tip <= replay_suffix_upper.saturating_add(64),
-        "certified follower replay normalization did not pair bounded archive tips from height {replay_suffix_upper}: finalizations={archive_finalization_tip}, blocks={archive_block_tip}",
-    );
+    if archive_finalization_tip != archive_block_tip
+        || archive_finalization_tip < replay_suffix_upper
+        || archive_finalization_tip > replay_suffix_upper.saturating_add(64)
+    {
+        return Err(
+            crate::errors::FollowerStackError::UnpairedReplayArchiveTips {
+                replay_suffix_upper,
+                archive_finalization_tip,
+                archive_block_tip,
+            }
+            .into(),
+        );
+    }
     let recovery_archive_tip = archive_finalization_tip.min(replay_suffix_upper);
     let preselected_anchor_height = recovery_archive_tip.min(last_execution_height);
     let archived_finalization = if preselected_anchor_height == 0 {
@@ -314,11 +321,11 @@ async fn inspect_archive_anchor<E: FollowerRuntime>(
                     "failed to read archived follower block at height {preselected_anchor_height}"
                 )
             })?
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "follower block archive tip includes height {preselected_anchor_height} but its exact record is missing"
-                )
-            })?,
+            .ok_or(
+                crate::errors::FollowerStackError::MissingArchivedFollowerBlockRecord(
+                    preselected_anchor_height,
+                ),
+            )?,
         )
     };
 
@@ -397,25 +404,31 @@ fn recovered_checkpoint(
                 .finalized
                 .map_or(0, |checkpoint| checkpoint.block_number),
         })?;
-    ensure!(
-        recovery_height == preselected_anchor_height,
-        "certified follower recovery height changed while Marshal archives were initialized: inspected {preselected_anchor_height}, selected {recovery_height}",
-    );
+    if recovery_height != preselected_anchor_height {
+        return Err(
+            crate::errors::FollowerStackError::RecoveryHeightChangedDuringMarshalInit {
+                inspected: preselected_anchor_height,
+                selected: recovery_height,
+            }
+            .into(),
+        );
+    }
     let recovery_hash = if recovery_height == 0 {
         genesis_hash
     } else {
         node.provider
             .block_hash(recovery_height)
-            .map_err(|error| {
-                eyre::eyre!(
-                    "failed to read canonical Reth hash at recovery height {recovery_height}: {error}"
-                )
-            })?
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "canonical Reth block is missing at recovery height {recovery_height}"
-                )
-            })?
+            .map_err(
+                |error| crate::errors::FollowerStackError::ReadCanonicalRethHashAtRecovery {
+                    recovery_height,
+                    error: format!("{error}"),
+                },
+            )?
+            .ok_or(
+                crate::errors::FollowerStackError::MissingCanonicalRethBlockAtRecovery(
+                    recovery_height,
+                ),
+            )?
     };
 
     Ok(ProjectionCheckpoint {
@@ -449,17 +462,17 @@ impl RecoveryAuthority<'_> {
                 block: marshal_genesis_anchor,
             }
         } else {
-            let local_block = archived_block.as_ref().ok_or_else(|| {
-                eyre::eyre!("missing local block for recovery height {recovery_height}")
-            })?;
+            let local_block = archived_block.as_ref().ok_or(
+                crate::errors::FollowerStackError::MissingLocalBlockForRecovery(recovery_height),
+            )?;
             let upstream = upstream_client
-            .get_finality_proof(Height::new(recovery_height))
-            .await
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "upstream did not return exact recovery finalization at height {recovery_height}"
-                )
-            })?;
+                .get_finality_proof(Height::new(recovery_height))
+                .await
+                .ok_or(
+                    crate::errors::FollowerStackError::MissingUpstreamRecoveryFinalization(
+                        recovery_height,
+                    ),
+                )?;
             validate_ancestor_follower_recovery_record(
                 crate::stack::recovery::anchor::FollowerRecoveryBlock {
                     checkpoint: ProjectionCheckpoint {
@@ -509,7 +522,7 @@ impl<E: FollowerRuntime> HistoryBootstrap<'_, E> {
                 let activation = restored
                     .epocher
                     .activation_height(epoch)
-                    .ok_or_else(|| eyre::eyre!("restored follower boundary is missing"))?;
+                    .ok_or(crate::errors::FollowerStackError::MissingRestoredFollowerBoundary)?;
                 info!(
                     anchor_epoch = epoch.get(),
                     anchor_height = activation.get(),
@@ -541,7 +554,7 @@ impl<E: FollowerRuntime> HistoryBootstrap<'_, E> {
         let chain = SharedCommitteeChain::new(chain);
         let view_retention_timeout = u64::from(config::ACTIVITY_TIMEOUT)
             .checked_mul(config::VIEW_RETENTION_MULTIPLIER)
-            .ok_or_else(|| eyre::eyre!("view retention timeout overflow"))?;
+            .ok_or(crate::errors::FollowerStackError::ViewRetentionTimeoutOverflow)?;
 
         let upstream_client = crate::follow_transport::UpstreamRpcClient::new(upstream)?;
         let tip_client = crate::follow_transport::UpstreamRpcClient::new(upstream)?;
@@ -931,7 +944,7 @@ impl<E: FollowerRuntime> LiveFollower<E> {
         );
         let executor_exit = async move {
             executor_handle.await.map_err(|error| {
-                eyre::eyre!("certified follower executor task failed: {error:?}")
+                crate::errors::FollowerStackError::ExecutorTaskFailed(format!("{error:?}"))
             })?
         };
         // A clean marshal stop must not hide an executor error observed while its
@@ -972,13 +985,18 @@ impl FinalityObserver {
                 .await
                 .is_none()
             {
-                ensure!(
-                    observer_mailbox
-                        .get_info(Height::new(height))
-                        .await
-                        .is_some(),
-                    "marshal lost finalized follower block {height} before proof drain"
-                );
+                if observer_mailbox
+                    .get_info(Height::new(height))
+                    .await
+                    .is_none()
+                {
+                    return Err(
+                        crate::errors::FollowerStackError::MarshalLostFinalizedBlockBeforeDrain(
+                            height,
+                        )
+                        .into(),
+                    );
+                }
                 continue;
             }
             FollowerProofPersistence {
@@ -991,21 +1009,25 @@ impl FinalityObserver {
             observer_bridge.set_last_finalized_block_number(height);
             last_persisted = Some(height);
         }
-        ensure!(
-            observer_ingress.is_quiescing()?,
-            "certified FullNode finality observer stopped before ingress quiesced"
-        );
+        if !observer_ingress.is_quiescing()? {
+            return Err(
+                crate::errors::FollowerStackError::FinalityObserverStoppedBeforeQuiesce.into(),
+            );
+        }
         if let Some(height) = last_persisted {
             let processed = observer_mailbox
                 .get_processed_height()
                 .await
-                .ok_or_else(|| {
-                    eyre::eyre!("marshal unavailable before follower proof drain completed")
-                })?;
-            ensure!(
-                processed.get() >= height,
-                "marshal has not acknowledged follower proof drain: processed {processed}, persisted {height}"
-            );
+                .ok_or(crate::errors::FollowerStackError::MarshalUnavailableBeforeDrainCompleted)?;
+            if processed.get() < height {
+                return Err(
+                    crate::errors::FollowerStackError::MarshalHasNotAcknowledgedProofDrain {
+                        processed,
+                        persisted: height,
+                    }
+                    .into(),
+                );
+            }
         }
         Ok::<(), eyre::Report>(())
     }

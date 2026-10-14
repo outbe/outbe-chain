@@ -1,3 +1,4 @@
+use crate::errors::TeeJoinError;
 use alloy_primitives::Address;
 use alloy_primitives::B256;
 
@@ -94,7 +95,7 @@ pub(in super::super) fn ensure_durable_join_registration_caller(
     current_caller: Address,
 ) -> Result<()> {
     if durable_caller.is_some_and(|caller| caller != current_caller) {
-        eyre::bail!("durable tee join was created with a different global --private-key");
+        return Err(TeeJoinError::DurableCallerMismatch.into());
     }
     Ok(())
 }
@@ -104,15 +105,11 @@ pub(in super::super) fn plan_missing_committed_relay(
     offer_key_state: JoinOfferKeyState,
 ) -> Result<MissingCommittedRelayPlan> {
     match (resumes_finalized_target, offer_key_state) {
-        (_, JoinOfferKeyState::ReadyMismatch) => {
-            eyre::bail!("resident permanent offer key does not match finalized TeeRegistry");
-        }
+        (_, JoinOfferKeyState::ReadyMismatch) => Err(TeeJoinError::OfferKeyMismatch.into()),
         (false, _) => Ok(MissingCommittedRelayPlan::ConstructAndPersist),
         (true, JoinOfferKeyState::ReadyExact) => Ok(MissingCommittedRelayPlan::CleanupReadyExact),
         (true, JoinOfferKeyState::Keyless) => {
-            eyre::bail!(
-                "finalized committed binding has no durable pre-relay transaction checkpoint"
-            );
+            Err(TeeJoinError::MissingCommittedRelayCheckpoint.into())
         }
     }
 }
@@ -122,7 +119,7 @@ pub(in super::super) fn plan_join_completion(
     is_candidate: bool,
 ) -> Result<JoinCompletionPlan> {
     if offer_key_state == JoinOfferKeyState::ReadyMismatch {
-        eyre::bail!("resident permanent offer key does not match finalized TeeRegistry");
+        return Err(TeeJoinError::OfferKeyMismatch.into());
     }
     Ok(JoinCompletionPlan {
         ingest_offer_key: offer_key_state == JoinOfferKeyState::Keyless,
@@ -135,7 +132,7 @@ pub(in super::super) fn classify_join_offer_key_state(
     expected_offer_pub: [u8; 32],
 ) -> Result<JoinOfferKeyState> {
     classify_join_offer_key_state_transport(response, expected_offer_pub)
-        .map_err(|error| eyre::eyre!(error))
+        .map_err(|error| TeeJoinError::Transport(error).into())
 }
 
 pub(in super::super) fn classify_join_offer_key_state_transport(
@@ -170,9 +167,7 @@ pub(in super::super) fn select_join_transport(
         (AttestationMode::DcapRequired, true) | (AttestationMode::GramineDirectDev, true) => {
             Ok(JoinTransport::AuthorizedNodeHost)
         }
-        (AttestationMode::DcapRequired, false) => Err(eyre::eyre!(
-            "DcapRequired tee join requires --node-data-dir"
-        )),
+        (AttestationMode::DcapRequired, false) => Err(TeeJoinError::DcapRequiresNodeDataDir.into()),
         (AttestationMode::GramineDirectDev, false) => Ok(JoinTransport::Development),
     }
 }
@@ -182,7 +177,7 @@ pub(in super::super) fn ensure_joinable_binding(
     finalized_timestamp: u64,
 ) -> Result<()> {
     if binding.is_some_and(|binding| finalized_timestamp < binding.valid_until) {
-        eyre::bail!("finalized enclave lease is live; use `outbe-cli tee renew`");
+        return Err(TeeJoinError::FinalizedLeaseLive.into());
     }
     Ok(())
 }
@@ -197,11 +192,11 @@ pub(in super::super) fn registration_counters(
         binding
             .binding_version
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("binding version exhausted"))?,
+            .ok_or(TeeJoinError::BindingVersionExhausted)?,
         binding
             .registration_version
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("registration version exhausted"))?,
+            .ok_or(TeeJoinError::RegistrationVersionExhausted)?,
         binding.renewal_nonce,
         binding.transition_nonce,
     ))
@@ -214,10 +209,10 @@ pub(in super::super) fn finalized_binding_matches_intent(
     let intent_node_id_hash = intent
         .node_id
         .node_id_hash()
-        .map_err(|error| eyre::eyre!("hash registration node identity: {error}"))?;
+        .map_err(TeeJoinError::HashRegistrationNodeIdentity)?;
     let intent_hash = intent
         .intent_hash()
-        .map_err(|error| eyre::eyre!("hash registration intent: {error}"))?;
+        .map_err(TeeJoinError::HashRegistrationIntent)?;
     let binding_tuple = (
         (
             binding.node_id_hash,
@@ -266,13 +261,13 @@ pub(in super::super) fn committed_manifest_matches_binding(
     let node_id_hash = manifest
         .node_id
         .node_id_hash()
-        .map_err(|error| eyre::eyre!("hash committed node identity: {error}"))?;
+        .map_err(TeeJoinError::HashCommittedNodeIdentity)?;
     let enclave_id = manifest
         .enclave_id()
-        .map_err(|error| eyre::eyre!("derive committed enclave identity: {error}"))?;
+        .map_err(TeeJoinError::DeriveCommittedEnclaveIdentity)?;
     let auth_hash = manifest
         .node_host_authorization_hash()
-        .map_err(|error| eyre::eyre!("derive committed NodeHost authorization: {error}"))?;
+        .map_err(TeeJoinError::DeriveCommittedAuthorization)?;
     let manifest_tuple = (
         node_id_hash,
         enclave_id,

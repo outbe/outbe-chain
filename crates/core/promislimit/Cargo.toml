@@ -11,6 +11,7 @@ outbe-ocomp-protocol.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 revm.workspace = true

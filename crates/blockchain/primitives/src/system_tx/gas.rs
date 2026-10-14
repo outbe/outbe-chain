@@ -170,5 +170,5 @@ fn system_tx_protocol_precharge(input: &SystemTxInputV2) -> Result<u64, SystemTx
             &crate::tee_attestation_v1::SystemGasScheduleV1::normative(),
             &crate::tee_attestation_v1::TeeRegistryGasScheduleV1::normative(),
         )
-        .map_err(|error| SystemTxError::Codec(error.to_string()))
+        .map_err(SystemTxError::codec)
 }

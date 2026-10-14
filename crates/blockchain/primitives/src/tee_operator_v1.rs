@@ -3,6 +3,8 @@
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 
+use crate::errors::TeeRenewalScheduleError;
+
 /// Exact finalized chain facts used for renewal scheduling and freeze-relative
 /// alerts. This is an operator view, not a new consensus object.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,26 +23,26 @@ pub struct TeeRenewalScheduleV1 {
 }
 
 impl TeeRenewalScheduleV1 {
-    pub fn validate(self) -> Result<Self, &'static str> {
+    pub fn validate(self) -> Result<Self, TeeRenewalScheduleError> {
         if self.finalized_hash.is_zero()
             || self.epoch_length_blocks == 0
             || self.minimum_block_time_millis == 0
         {
-            return Err("renewal schedule contains a zero mandatory field");
+            return Err(TeeRenewalScheduleError::ZeroMandatoryField);
         }
         let expected_activation = self
             .epoch_start_height
             .checked_add(u64::from(self.epoch_length_blocks))
-            .ok_or("renewal schedule activation height overflow")?;
+            .ok_or(TeeRenewalScheduleError::ActivationHeightOverflow)?;
         if self.planned_activation_height != expected_activation {
-            return Err("renewal schedule activation height is inconsistent");
+            return Err(TeeRenewalScheduleError::InconsistentActivationHeight);
         }
         let expected_freeze = expected_activation.saturating_sub(
             self.dkg_prepare_window_blocks
                 .min(u64::from(self.epoch_length_blocks)),
         );
         if self.next_freeze_height != expected_freeze {
-            return Err("renewal schedule freeze height is inconsistent");
+            return Err(TeeRenewalScheduleError::InconsistentFreezeHeight);
         }
         Ok(self)
     }

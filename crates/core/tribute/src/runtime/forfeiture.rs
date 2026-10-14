@@ -24,11 +24,7 @@ pub(super) fn apply(
         .total_supply
         .read()?
         .checked_sub(u64::from(forfeited_count))
-        .ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                "Tribute total supply underflow during CapacityForfeiture".into(),
-            )
-        })?;
+        .ok_or(TributeError::TotalSupplyUnderflowDuringCapacityForfeiture)?;
     contract.total_supply.write(supply)?;
     contract.store_day_pre_admission(&admission)?;
     contract.reset_day_nominal(&totals)?;
@@ -43,17 +39,13 @@ pub(super) fn apply(
         RetirementOutcome::NotPresent
     };
     if retirement_outcome != expected_retirement {
-        return Err(outbe_primitives::error::PrecompileError::Fatal(
-            "Tribute retirement outcome contradicts authenticated partition root".into(),
-        ));
+        return Err(TributeError::RetirementOutcomeContradictsAuthenticatedRoot.into());
     }
 
     let source_generation = admission.source_generation;
-    let retired_generation = source_generation.checked_add(1).ok_or_else(|| {
-        outbe_primitives::error::PrecompileError::BodyReadCorruption(
-            "Tribute source generation overflow during CapacityForfeiture".into(),
-        )
-    })?;
+    let retired_generation = source_generation
+        .checked_add(1)
+        .ok_or(TributeError::SourceGenerationOverflowDuringCapacityForfeiture)?;
     admission.source_generation = retired_generation;
     contract.store_day_pre_admission(&admission)?;
 
@@ -75,42 +67,26 @@ fn prepare(
 ) -> Result<ForfeitureState> {
     let totals = contract.get_day_totals(day)?;
     if !contract.ocomp_profile_ready.read()? || !totals.initialized || !totals.is_sealed {
-        return Err(
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                "CapacityForfeiture requires a fresh-profile sealed Tribute partition".into(),
-            ),
-        );
+        return Err(TributeError::CapacityForfeitureRequiresFreshSealedPartition.into());
     }
 
     let partition = PartitionRef::TributeWwd(day);
     let authenticated_root = scope.authenticated_partition_root(partition)?;
     if totals.tribute_count != 0 && authenticated_root.is_none() {
-        return Err(
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                "populated Tribute aggregate has no authenticated parent partition".into(),
-            ),
-        );
+        return Err(TributeError::PopulatedAggregateMissingAuthenticatedParent.into());
     }
     let sealed_root = authenticated_root.unwrap_or(B256::ZERO);
 
     let mut admission = contract.read_day_pre_admission(day)?;
     if admission.source_generation != 0 {
-        return Err(
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                "CapacityForfeiture requires unretired Tribute generation zero".into(),
-            ),
-        );
+        return Err(TributeError::CapacityForfeitureRequiresUnretiredGenerationZero.into());
     }
     if admission.is_sealed {
         if admission.sealed_collection_root != sealed_root
             || admission.sealed_tribute_count != totals.tribute_count
             || admission.sealed_tribute_nominal_total_minor != totals.tribute_nominal_total_minor
         {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                    "sealed Tribute pre-admission differs from authenticated aggregate".into(),
-                ),
-            );
+            return Err(TributeError::SealedPreAdmissionDiffersFromAuthenticatedAggregate.into());
         }
     } else {
         admission.initialized = true;

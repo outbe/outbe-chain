@@ -4,13 +4,14 @@
 //! network, so only mainnet runs PROD.
 
 use outbe_primitives::chain::is_mainnet;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::constants::{
     CALL_NOTICE_PERIOD, CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE,
     POSITION_VALIDITY_SECONDS,
 };
+use crate::errors::GemError;
 use crate::schema::GemContract;
 
 /// Resolve by network: PROD on mainnet, DEV everywhere else.
@@ -73,9 +74,7 @@ impl GemParams {
             PROFILE_AUTO => Ok(Self::for_chain_id(chain_id)),
             PROFILE_DEV => Ok(Self::DEV),
             PROFILE_PROD => Ok(Self::PROD),
-            other => Err(PrecompileError::Revert(format!(
-                "unknown gem profile selector: {other}"
-            ))),
+            other => Err(GemError::UnknownProfileSelector(other).into()),
         }
     }
 }

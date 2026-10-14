@@ -29,6 +29,7 @@
 //! A Mux that cannot register a sub-channel is in a state we cannot
 //! safely hide from a consensus runtime path.
 
+use crate::errors::EpochSubchannelError;
 use commonware_consensus::types::Epoch;
 use commonware_p2p::{
     utils::mux::{Error as MuxError, MuxHandle, SubReceiver, SubSender},
@@ -79,7 +80,12 @@ where
     try_register_epoch_subchannels(epoch, vote_mux, cert_mux, res_mux)
         .await
         .map_err(|(channel, error)| {
-            eyre::eyre!("register {channel} subchannel for epoch {epoch}: {error}")
+            EpochSubchannelError::Register {
+                channel,
+                epoch,
+                reason: format!("{error}"),
+            }
+            .into()
         })
 }
 
@@ -129,7 +135,7 @@ where
     let deadline = clock
         .current()
         .checked_add(timeout)
-        .ok_or_else(|| eyre::eyre!("same-epoch subchannel timeout overflows SystemTime"))?;
+        .ok_or(EpochSubchannelError::TimeoutOverflow)?;
     loop {
         match try_register_epoch_subchannels(epoch, vote_mux, cert_mux, res_mux).await {
             Ok(channels) => return Ok(channels),
@@ -142,14 +148,20 @@ where
                 clock.sleep(retry_interval).await;
             }
             Err((channel, MuxError::AlreadyRegistered(_))) => {
-                return Err(eyre::eyre!(
-                    "timed out after {timeout:?} reacquiring {channel} subchannel for epoch {epoch}"
-                ));
+                return Err(EpochSubchannelError::ReacquireTimeout {
+                    timeout,
+                    channel,
+                    epoch,
+                }
+                .into());
             }
             Err((channel, error)) => {
-                return Err(eyre::eyre!(
-                    "reacquire {channel} subchannel for epoch {epoch}: {error}"
-                ));
+                return Err(EpochSubchannelError::Reacquire {
+                    channel,
+                    epoch,
+                    reason: error.to_string(),
+                }
+                .into());
             }
         }
     }
@@ -226,10 +238,7 @@ where
         Some(s) => {
             let stash_epoch = s.epoch;
             drop(s);
-            Err(eyre::eyre!(
-                "pre-registered subchannels for epoch {stash_epoch} cannot be \
-                 used for current epoch {epoch}"
-            ))
+            Err(EpochSubchannelError::StashEpochMismatch { stash_epoch, epoch }.into())
         }
         None => register_epoch_subchannels(epoch, vote_mux, cert_mux, res_mux)
             .await

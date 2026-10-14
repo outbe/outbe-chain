@@ -8,7 +8,7 @@ use eyre::{Result, WrapErr as _};
 use outbe_primitives::{addresses::TEE_REGISTRY_ADDRESS, tee_registry_abi_v1::ITeeRegistryV1};
 use outbe_tee::dcap_protocol::DcapOnboardingArtifactV1;
 
-use crate::rpc::FinalityRpc;
+use crate::{errors::OnboardingError, rpc::FinalityRpc};
 
 use super::registry::ExpectedOnboardingBindingV1;
 
@@ -29,10 +29,7 @@ pub async fn await_finalized_onboarding_v1(
     let started = tokio::time::Instant::now();
     loop {
         if started.elapsed() >= timeout {
-            eyre::bail!(
-                "timed out after {}s waiting for exact finalized TeeRegistry onboarding",
-                timeout.as_secs()
-            );
+            return Err(OnboardingError::Timeout(timeout.as_secs()).into());
         }
         let Some(receipt) = rpc
             .transaction_receipt(transaction_hash)
@@ -44,10 +41,11 @@ pub async fn await_finalized_onboarding_v1(
         };
         let receipt_facts = receipt_facts(&receipt, transaction_hash)?;
         if !receipt_facts.success {
-            eyre::bail!(
-                "registerEnclave transaction {transaction_hash} reverted in block {}",
-                receipt_facts.block_number
-            );
+            return Err(OnboardingError::TransactionReverted {
+                transaction_hash: transaction_hash.to_owned(),
+                block_number: receipt_facts.block_number,
+            }
+            .into());
         }
 
         let finalized = rpc
@@ -66,9 +64,7 @@ pub async fn await_finalized_onboarding_v1(
             .wrap_err("read canonical receipt-height block")?;
         let canonical_hash = b256_field(&canonical, "hash", "canonical block")?;
         if canonical_hash != receipt_facts.block_hash {
-            eyre::bail!(
-                "registerEnclave receipt was reorged before finality; key possession is possible but canonical join is not claimed"
-            );
+            return Err(OnboardingError::ReceiptReorged.into());
         }
 
         let block_tag = format!("0x{:x}", receipt_facts.block_number);
@@ -107,7 +103,7 @@ pub async fn await_finalized_onboarding_v1(
             || !identity_matches
             || binding.recipientX25519 != B256::from(expected.recipient_x25519)
         {
-            eyre::bail!("finalized Registry binding does not match the submitted registration");
+            return Err(OnboardingError::BindingMismatch.into());
         }
         return Ok(FinalizedOnboardingV1 {
             artifact,
@@ -128,13 +124,13 @@ fn receipt_facts(receipt: &serde_json::Value, transaction_hash: &str) -> Result<
     let actual_hash = receipt
         .get("transactionHash")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("registration receipt has no transactionHash"))?;
+        .ok_or(OnboardingError::MissingReceiptTransactionHash)?;
     if !actual_hash.eq_ignore_ascii_case(transaction_hash) {
-        eyre::bail!("registration receipt transaction hash mismatch");
+        return Err(OnboardingError::ReceiptTransactionHashMismatch.into());
     }
     let status = hex_field_u64(receipt, "status", "registration receipt")?;
     if status > 1 {
-        eyre::bail!("registration receipt has non-canonical status {status}");
+        return Err(OnboardingError::NonCanonicalReceiptStatus(status).into());
     }
     Ok(ReceiptFactsV1 {
         success: status == 1,
@@ -156,7 +152,7 @@ fn exact_artifact(
             .get("transactionHash")
             .and_then(serde_json::Value::as_str)
         else {
-            eyre::bail!("onboarding log has no transactionHash");
+            return Err(OnboardingError::MissingLogTransactionHash.into());
         };
         if !actual_tx.eq_ignore_ascii_case(transaction_hash) {
             continue;
@@ -164,7 +160,7 @@ fn exact_artifact(
         let topics = log
             .get("topics")
             .and_then(serde_json::Value::as_array)
-            .ok_or_else(|| eyre::eyre!("onboarding log has no topics"))?;
+            .ok_or(OnboardingError::MissingLogTopics)?;
         if topics.len() != 2
             || topics[0]
                 .as_str()
@@ -173,17 +169,17 @@ fn exact_artifact(
                 .as_str()
                 .is_none_or(|value| !value.eq_ignore_ascii_case(topic1))
         {
-            eyre::bail!("onboarding event topics are non-canonical");
+            return Err(OnboardingError::NonCanonicalEventTopics.into());
         }
         let data = log
             .get("data")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| eyre::eyre!("onboarding log has no data"))?;
+            .ok_or(OnboardingError::MissingLogData)?;
         let encoded = hex::decode(data.strip_prefix("0x").unwrap_or(data))
             .wrap_err("decode onboarding event data")?;
         let bytes = decode_single_dynamic_bytes(&encoded)?;
         let artifact = DcapOnboardingArtifactV1::decode_canonical(&bytes)
-            .map_err(|code| eyre::eyre!("invalid onboarding artifact: {:#06x}", code.code()))?;
+            .map_err(|code| OnboardingError::InvalidArtifact(code.code()))?;
         let context = artifact.context;
         let chain_matches =
             context.chain_id == expected.chain_id && context.genesis_hash == expected.genesis_hash;
@@ -195,48 +191,56 @@ fn exact_artifact(
             && context.key_epoch == expected.key_epoch
             && context.tribute_offer_epoch == expected.tribute_offer_epoch;
         if !chain_matches || !registration_matches || !offer_key_matches {
-            eyre::bail!("onboarding artifact context does not match the exact registration");
+            return Err(OnboardingError::ArtifactContextMismatch.into());
         }
         if exact.replace(artifact).is_some() {
-            eyre::bail!("transaction emitted more than one exact onboarding artifact");
+            return Err(OnboardingError::DuplicateArtifact.into());
         }
     }
-    exact.ok_or_else(|| eyre::eyre!("finalized transaction has no exact onboarding artifact"))
+    exact.ok_or_else(|| OnboardingError::MissingArtifact.into())
 }
 
 fn decode_single_dynamic_bytes(data: &[u8]) -> Result<Vec<u8>> {
     if data.len() < 64 || U256::from_be_slice(&data[..32]) != U256::from(32) {
-        eyre::bail!("onboarding event has non-canonical bytes offset");
+        return Err(OnboardingError::NonCanonicalBytesOffset.into());
     }
     let len_word = U256::from_be_slice(&data[32..64]);
     if len_word > U256::from(outbe_tee::dcap_protocol::MAX_DCAP_ONBOARDING_ARTIFACT_BYTES) {
-        eyre::bail!("onboarding artifact exceeds its protocol cap");
+        return Err(OnboardingError::ArtifactExceedsCap.into());
     }
     let len = len_word.to::<usize>();
     let padded = len
         .checked_add(31)
         .map(|value| value / 32 * 32)
-        .ok_or_else(|| eyre::eyre!("onboarding event length overflow"))?;
+        .ok_or(OnboardingError::EventLengthOverflow)?;
     if data.len() != 64 + padded || data[64 + len..].iter().any(|byte| *byte != 0) {
-        eyre::bail!("onboarding event data or padding is non-canonical");
+        return Err(OnboardingError::NonCanonicalEventDataOrPadding.into());
     }
     Ok(data[64..64 + len].to_vec())
 }
 
-fn hex_field_u64(value: &serde_json::Value, field: &str, context: &str) -> Result<u64> {
+fn hex_field_u64(
+    value: &serde_json::Value,
+    field: &'static str,
+    context: &'static str,
+) -> Result<u64> {
     let encoded = value
         .get(field)
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("{context} has no {field}"))?;
+        .ok_or(OnboardingError::MissingField { context, field })?;
     u64::from_str_radix(encoded.strip_prefix("0x").unwrap_or(encoded), 16)
         .wrap_err_with(|| format!("parse {context} {field}"))
 }
 
-fn b256_field(value: &serde_json::Value, field: &str, context: &str) -> Result<B256> {
+fn b256_field(
+    value: &serde_json::Value,
+    field: &'static str,
+    context: &'static str,
+) -> Result<B256> {
     let encoded = value
         .get(field)
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("{context} has no {field}"))?;
+        .ok_or(OnboardingError::MissingField { context, field })?;
     encoded
         .parse::<B256>()
         .wrap_err_with(|| format!("parse {context} {field}"))

@@ -24,7 +24,9 @@ where
         .clone()
         .into_iter()
         .try_collect()
-        .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?;
+        .map_err(|e| crate::errors::StackDkgError::InvalidParticipantSet {
+            reason: format!("{e}"),
+        })?;
     let local_key_in_current_consensus_set = startup_participants.position(&local_pk).is_some();
     match startup_dkg_mode(startup_dkg_context, local_key_in_current_consensus_set) {
         StartupDkgMode::LiveJoinRequired => {

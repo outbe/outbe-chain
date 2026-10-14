@@ -453,9 +453,7 @@ impl Vote<'_> {
             BondSettlement::NoBond => return Ok(()),
             BondSettlement::Unsettled => {}
             BondSettlement::Refunded | BondSettlement::Burned => {
-                return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
-                    "pending proposal {proposal_id} has an already settled bond"
-                )));
+                return Err(VoteError::PendingProposalBondAlreadySettled { proposal_id }.into());
             }
         }
 

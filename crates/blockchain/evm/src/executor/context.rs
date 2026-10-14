@@ -34,15 +34,15 @@ pub(in crate::executor) fn validate_genesis_state(
     storage: StorageHandle,
     genesis: &GenesisValidators,
 ) -> OutbeResult<()> {
+    use crate::errors::ExecutorHookError;
+
     let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
     validate_genesis_configuration(&vs, genesis)?;
 
     let staking = outbe_staking::contract::Staking::new(storage.clone());
     let min_stake = staking.config_min_stake.read()?;
     if min_stake.is_zero() {
-        return Err(PrecompileError::Fatal(
-            "Staking min_stake must be initialized in genesis".into(),
-        ));
+        return Err(ExecutorHookError::StakingMinStakeUninitialized.into());
     }
 
     let mut expected_total = U256::ZERO;
@@ -52,21 +52,23 @@ pub(in crate::executor) fn validate_genesis_state(
 
         let staking_amount = staking.stake_amount.read(&validator.address)?;
         if staking_amount != bonded_stake {
-            return Err(PrecompileError::Fatal(format!(
-                "genesis validator {} stake mismatch between ValidatorSet and Staking",
-                validator.address
-            )));
+            return Err(ExecutorHookError::GenesisValidatorStakeMismatch {
+                address: validator.address,
+            }
+            .into());
         }
         expected_total = expected_total
             .checked_add(staking_amount)
-            .ok_or_else(|| PrecompileError::Fatal("genesis total stake overflow".into()))?;
+            .ok_or(ExecutorHookError::GenesisTotalStakeOverflow)?;
     }
 
     let total_staked = staking.total_staked.read()?;
     if total_staked != expected_total {
-        return Err(PrecompileError::Fatal(format!(
-            "genesis total_staked mismatch: state={total_staked}, expected={expected_total}"
-        )));
+        return Err(ExecutorHookError::GenesisTotalStakedMismatch {
+            state: total_staked,
+            expected: expected_total,
+        }
+        .into());
     }
 
     Ok(())
@@ -76,27 +78,28 @@ fn validate_genesis_configuration(
     vs: &outbe_validatorset::contract::ValidatorSet<'_>,
     genesis: &GenesisValidators,
 ) -> OutbeResult<()> {
+    use crate::errors::ExecutorHookError;
+
     if !vs.config_is_initialized.read()? {
-        return Err(PrecompileError::Fatal(
-            "ValidatorSet must be initialized in genesis; executor genesis backfill is disabled"
-                .into(),
-        ));
+        return Err(ExecutorHookError::ValidatorSetUninitializedInGenesis.into());
     }
 
     let epoch_length_blocks = vs.config_epoch_length_blocks.read()?;
     if epoch_length_blocks != genesis.epoch_length_blocks {
-        return Err(PrecompileError::Fatal(format!(
-            "genesis ValidatorSet epoch_length_blocks mismatch: state={epoch_length_blocks}, genesis={}",
-            genesis.epoch_length_blocks
-        )));
+        return Err(ExecutorHookError::GenesisEpochLengthMismatch {
+            state: epoch_length_blocks,
+            genesis: genesis.epoch_length_blocks,
+        }
+        .into());
     }
 
     let active_consensus_count = vs.active_consensus_count()?;
     if active_consensus_count as usize != genesis.validators.len() {
-        return Err(PrecompileError::Fatal(format!(
-            "genesis active consensus set size mismatch: state={active_consensus_count}, genesis validators={}",
-            genesis.validators.len()
-        )));
+        return Err(ExecutorHookError::GenesisActiveConsensusCountMismatch {
+            state: active_consensus_count,
+            genesis: genesis.validators.len(),
+        }
+        .into());
     }
 
     Ok(())
@@ -107,31 +110,33 @@ fn validate_genesis_member(
     validator: &outbe_primitives::consensus::GenesisValidator,
     min_stake: U256,
 ) -> OutbeResult<U256> {
+    use crate::errors::ExecutorHookError;
+
     if !state.is_registered() {
-        return Err(PrecompileError::Fatal(format!(
-            "genesis validator {} is missing from ValidatorSet",
-            validator.address
-        )));
+        return Err(ExecutorHookError::MissingGenesisValidator {
+            address: validator.address,
+        }
+        .into());
     }
 
     if state.consensus_pubkey().copied() != Some(validator.consensus_pubkey) {
-        return Err(PrecompileError::Fatal(format!(
-            "genesis validator {} consensus pubkey mismatch",
-            validator.address
-        )));
+        return Err(ExecutorHookError::GenesisConsensusPubkeyMismatch {
+            address: validator.address,
+        }
+        .into());
     }
     if !matches!(state.lifecycle(), ValidatorLifecycle::Active(_)) {
-        return Err(PrecompileError::Fatal(format!(
-            "genesis validator {} must be active with a BLS share",
-            validator.address
-        )));
+        return Err(ExecutorHookError::GenesisValidatorNotActive {
+            address: validator.address,
+        }
+        .into());
     }
     let bonded_stake = state.bonded_stake();
     if bonded_stake < min_stake {
-        return Err(PrecompileError::Fatal(format!(
-            "genesis validator {} stake below min_stake",
-            validator.address
-        )));
+        return Err(ExecutorHookError::GenesisValidatorStakeBelowMinimum {
+            address: validator.address,
+        }
+        .into());
     }
 
     Ok(bonded_stake)

@@ -1,6 +1,6 @@
 use alloy_primitives::U256;
 use async_trait::async_trait;
-use eyre::{ensure, eyre, Result};
+use eyre::Result;
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
@@ -13,6 +13,7 @@ use super::{
     math,
     pool::Decimals,
 };
+use crate::errors::{check, DexError};
 use crate::provider::evm_rpc::{quantity, Block, Log, Rpc};
 use crate::provider::{Provider, TickerPrice};
 
@@ -134,10 +135,10 @@ impl MarketWorker {
     }
 
     pub async fn refresh(&mut self) -> Result<(Block, TickerPrice)> {
-        ensure!(
+        check(
             self.rpc.chain_id().await? == self.config.chain_id,
-            "DEX RPC chain ID mismatch"
-        );
+            DexError::ChainIdMismatch,
+        )?;
         // Read `confirmations` blocks behind the head, not the finalized tag:
         // finality on Ethereum lags ~13 minutes and moves once per epoch,
         // while a few confirmations already rule out ordinary reorgs.
@@ -150,18 +151,18 @@ impl MarketWorker {
                 .await?
         };
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        ensure!(
+        check(
             head.timestamp <= now.saturating_add(30)
                 && now.saturating_sub(head.timestamp) <= self.config.max_block_age_secs,
-            "DEX block is stale or in the future"
-        );
+            DexError::StaleOrFutureBlock,
+        )?;
         if let Some(cursor) = &self.cursor {
             let canonical = self.rpc.block_at(cursor.number).await?;
             if canonical != *cursor || head.number < cursor.number {
                 self.cursor = None;
                 self.volumes.clear();
                 self.decimals = None;
-                return Err(eyre!("DEX chain history changed; rebuilding volume"));
+                return Err(DexError::ChainHistoryChanged.into());
             }
         }
         let decimals = match self.decimals {
@@ -175,10 +176,10 @@ impl MarketWorker {
         // Validate initialization before doing a potentially long log backfill.
         let price = self.market.read_rate(&self.rpc, &head, decimals).await?;
         self.collect_volume(&head).await?;
-        ensure!(
+        check(
             self.rpc.block_at(head.number).await? == head,
-            "DEX block changed during collection"
-        );
+            DexError::BlockChangedDuringCollection,
+        )?;
         let cutoff = head.timestamp.saturating_sub(WINDOW_SECS);
         self.volumes.retain(|_, (timestamp, _)| *timestamp > cutoff);
         let raw = self
@@ -186,7 +187,7 @@ impl MarketWorker {
             .values()
             .try_fold(U256::ZERO, |sum, (_, amount)| {
                 sum.checked_add(*amount)
-                    .ok_or_else(|| eyre!("DEX rolling volume overflow"))
+                    .ok_or(DexError::RollingVolumeOverflow)
             })?;
         Ok((
             head,
@@ -206,7 +207,7 @@ impl MarketWorker {
             cursor
                 .number
                 .checked_add(1)
-                .ok_or_else(|| eyre!("DEX block number overflow"))?
+                .ok_or(DexError::BlockNumberOverflow)?
         } else {
             self.rpc.first_after(cutoff, head).await?
         };
@@ -227,10 +228,10 @@ impl MarketWorker {
                 Err(error) => return Err(error),
             };
             let end = self.rpc.block_at(to).await?;
-            ensure!(
+            check(
                 end.timestamp <= head.timestamp,
-                "DEX log range extends past the head time"
-            );
+                DexError::LogRangePastHeadTime,
+            )?;
             let buckets = self.bucket_chunk(logs, from, &end, head).await?;
             // Commit only after validating the entire chunk. Retried requests
             // never append a partially processed chunk or count its logs twice.
@@ -262,36 +263,31 @@ impl MarketWorker {
         for log in logs {
             let number = quantity(&log.block_number)?;
             let index = quantity(&log.log_index)?;
-            ensure!(
-                (from..=to).contains(&number),
-                "DEX log outside requested range"
-            );
+            check((from..=to).contains(&number), DexError::LogOutsideRange)?;
             let amount = self.market.swap_volume(&log)?;
             // A block's log index is globally unique, including singleton
             // managers. Identical duplicates are harmless; conflicts fail.
             let identity = (log.block_hash, index);
             let value = (log.transaction_hash, log.data.clone(), log.topics.clone());
             if let Some(previous) = seen.insert(identity, value.clone()) {
-                ensure!(previous == value, "conflicting duplicate DEX log");
+                check(previous == value, DexError::ConflictingDuplicateLog)?;
                 continue;
             }
             if let std::collections::btree_map::Entry::Vacant(entry) = blocks.entry(number) {
                 entry.insert(self.rpc.block_at(number).await?);
             }
-            let block = blocks
-                .get(&number)
-                .ok_or_else(|| eyre!("missing DEX log block"))?;
-            ensure!(
+            let block = blocks.get(&number).ok_or(DexError::MissingLogBlock)?;
+            check(
                 block.hash == log.block_hash && block.timestamp <= head.timestamp,
-                "DEX log is not in the canonical history"
-            );
+                DexError::LogNotCanonical,
+            )?;
             let bucket = buckets
                 .entry(number)
                 .or_insert((block.timestamp, U256::ZERO));
             bucket.1 = bucket
                 .1
                 .checked_add(amount)
-                .ok_or_else(|| eyre!("DEX block volume overflow"))?;
+                .ok_or(DexError::BlockVolumeOverflow)?;
         }
         Ok(buckets)
     }

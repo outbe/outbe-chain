@@ -117,8 +117,8 @@ impl<P: ParentBodySource> Pagination<'_, '_, P> {
                 .filter(|id| self.request.after.is_none_or(|after| *id > after))
                 .collect();
             if index.observed_removed != relevant_removed {
-                return Err(PrecompileError::BodyReadCorruption(
-                    "Removed ID is missing from finalized-parent index".into(),
+                return Err(crate::errors::body_read_corruption(
+                    "Removed ID is missing from finalized-parent index",
                 ));
             }
         }
@@ -135,12 +135,12 @@ impl<P: ParentBodySource> Pagination<'_, '_, P> {
             self.scope
                 .deduct_explicit_gas(&self.storage, PARENT_ID_GAS)?;
             if deltas.added.contains(id) {
-                return Err(PrecompileError::BodyReadCorruption(format!(
+                return Err(crate::errors::body_read_corruption(format!(
                     "Added ID {id} already exists in finalized-parent index"
                 )));
             }
             if !index.seen.insert(*id) {
-                return Err(PrecompileError::BodyReadCorruption(format!(
+                return Err(crate::errors::body_read_corruption(format!(
                     "duplicate finalized-parent ID {id}"
                 )));
             }
@@ -155,8 +155,8 @@ impl<P: ParentBodySource> Pagination<'_, '_, P> {
                     && !index.observed_removed.contains(removed_id)
             });
             if skipped_removed {
-                return Err(PrecompileError::BodyReadCorruption(
-                    "Removed ID was skipped by the ordered finalized-parent index".into(),
+                return Err(crate::errors::body_read_corruption(
+                    "Removed ID was skipped by the ordered finalized-parent index",
                 ));
             }
         }
@@ -184,12 +184,12 @@ impl<P: ParentBodySource> Pagination<'_, '_, P> {
             let entity = entity_for_query(self.query, id);
             let body =
                 read(self.storage.clone(), self.scope, self.parent, entity)?.ok_or_else(|| {
-                    PrecompileError::BodyReadCorruption(format!(
+                    crate::errors::body_read_corruption(format!(
                         "listed compressed entity {id} is canonically absent"
                     ))
                 })?;
             if !verified_matches_query(&body, self.query) {
-                return Err(PrecompileError::BodyReadCorruption(format!(
+                return Err(crate::errors::body_read_corruption(format!(
                     "listed compressed entity {id} violates query predicate"
                 )));
             }

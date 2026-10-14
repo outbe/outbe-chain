@@ -29,9 +29,10 @@ use commonware_cryptography::bls12381;
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_parallel::Sequential;
 use commonware_utils::ordered::Set;
-use eyre::{bail, Result};
+use eyre::Result;
 
 use crate::digest::Digest;
+use crate::errors::FollowError;
 use crate::hybrid::{
     bls_batch_verification_rng, HybridScheme, HybridSchemeProvider, VrfMaterialProvider,
 };
@@ -96,7 +97,7 @@ impl CommitteeChain {
     /// provenance. Arbitrary upstream bytes cannot establish this trust anchor.
     pub fn from_trusted_local_boundary(epoch: Epoch, outcome: &[u8]) -> Result<Self> {
         let output = crate::dkg_manager::decode_boundary_outcome(outcome)
-            .ok_or_else(|| eyre::eyre!("local boundary is not a decodable full DKG output"))?;
+            .ok_or(FollowError::LocalBoundaryNotDecodable)?;
         let mut chain = Self::new(epoch, output.players().clone());
         chain.register_epoch_from_outcome(epoch, outcome)?;
         Ok(chain)
@@ -140,24 +141,22 @@ impl CommitteeChain {
     /// without changing the chain. Idempotent replays of the registered outcome
     /// prepare nothing to install.
     fn prepare_committee(&self, epoch: Epoch, outcome: &[u8]) -> Result<PreparedCommittee> {
-        let decoded = crate::dkg_manager::OdkoOutcome::decode(outcome).map_err(|error| {
-            eyre::eyre!("boundary outcome is not a decodable full DKG output: {error}")
-        })?;
+        let decoded = crate::dkg_manager::OdkoOutcome::decode(outcome)
+            .map_err(FollowError::BoundaryOutcomeDecode)?;
         if decoded.epoch != epoch {
-            bail!(
-                "boundary outcome epoch label {} does not match registered epoch {}",
-                decoded.epoch.get(),
-                epoch.get()
-            );
+            return Err(FollowError::BoundaryOutcomeEpochMismatch {
+                label: decoded.epoch.get(),
+                registered: epoch.get(),
+            }
+            .into());
         }
         let participants = decoded.output.players().clone();
         let outcome_hash = keccak256(outcome);
 
         if let Some(existing) = self.outcome_hashes.get(&epoch.get()) {
             if *existing != outcome_hash {
-                bail!(
-                    "conflicting committee outcome replay for epoch {}",
-                    epoch.get()
+                return Err(
+                    FollowError::ConflictingCommitteeOutcomeReplay { epoch: epoch.get() }.into(),
                 );
             }
             return Ok(PreparedCommittee {
@@ -170,18 +169,18 @@ impl CommitteeChain {
         if let Some(highest) = self.highest_registered {
             let expected = highest.get().saturating_add(1);
             if epoch.get() != expected {
-                bail!(
-                    "committee epoch {} is not sequential after authenticated epoch {}",
-                    epoch.get(),
-                    highest.get()
-                );
+                return Err(FollowError::NonSequentialCommitteeEpoch {
+                    epoch: epoch.get(),
+                    highest: highest.get(),
+                }
+                .into());
             }
         } else if epoch != self.anchor_epoch {
-            bail!(
-                "first registered committee epoch {} is not anchor epoch {}",
-                epoch.get(),
-                self.anchor_epoch.get()
-            );
+            return Err(FollowError::FirstRegisteredEpochNotAnchor {
+                epoch: epoch.get(),
+                anchor: self.anchor_epoch.get(),
+            }
+            .into());
         }
 
         // The anchor committee must match the trusted genesis or local finalized
@@ -189,13 +188,12 @@ impl CommitteeChain {
         // so matching the participant set (NOT the VRF group key) authenticates
         // the committee. Compare as ordered sets (both pubkey-sorted).
         if epoch == self.anchor_epoch && participants != self.anchor_participants {
-            bail!(
-                "anchor mismatch: start-epoch {} committee ({} validators) does not match the \
-                 trusted anchor validator set ({} validators)",
-                epoch.get(),
-                participants.len(),
-                self.anchor_participants.len(),
-            );
+            return Err(FollowError::AnchorMismatch {
+                epoch: epoch.get(),
+                committee_len: participants.len(),
+                anchor_len: self.anchor_participants.len(),
+            }
+            .into());
         }
 
         // Every successful DKG activation increments epoch and material version
@@ -211,12 +209,7 @@ impl CommitteeChain {
             participants.clone(),
             vrf_materials,
         )
-        .ok_or_else(|| {
-            eyre::eyre!(
-                "failed to build committee verifier for epoch {}",
-                epoch.get()
-            )
-        })?;
+        .ok_or_else(|| FollowError::BuildCommitteeVerifier { epoch: epoch.get() })?;
         Ok(PreparedCommittee {
             epoch,
             participants,
@@ -271,7 +264,7 @@ impl CommitteeChain {
         use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact as CHA;
         let artifacts =
             outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(extra_data)
-                .map_err(|e| eyre::eyre!("failed to decode block artifacts: {e:?}"))?;
+                .map_err(FollowError::decode_block_artifacts)?;
         match artifacts.consensus_header_artifact {
             Some(CHA::CommitteePreAnnounce { epoch, outcome }) => {
                 let epoch = Epoch::new(epoch);
@@ -302,9 +295,10 @@ impl CommitteeChain {
         epoch: Epoch,
         finalization: &Finalization<HybridScheme<MinSig>, Digest>,
     ) -> Result<()> {
-        let scheme = self.scheme_provider.scoped(epoch).ok_or_else(|| {
-            eyre::eyre!("no committee verifier registered for epoch {}", epoch.get())
-        })?;
+        let scheme = self
+            .scheme_provider
+            .scoped(epoch)
+            .ok_or_else(|| FollowError::NoCommitteeVerifier { epoch: epoch.get() })?;
         verify_with(scheme.as_ref(), epoch, finalization)
     }
 
@@ -340,10 +334,7 @@ fn verify_with(
 ) -> Result<()> {
     let mut rng = bls_batch_verification_rng();
     if !finalization.verify(&mut rng, scheme, &Sequential) {
-        bail!(
-            "finalization certificate failed verification for epoch {}",
-            epoch.get()
-        );
+        return Err(FollowError::FinalizationVerificationFailed { epoch: epoch.get() }.into());
     }
     Ok(())
 }

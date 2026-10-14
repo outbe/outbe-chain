@@ -1,7 +1,7 @@
 use alloy_primitives::U256;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
-use crate::schema::PromisLimitContract;
+use crate::{errors::PromisLimitError, schema::PromisLimitContract};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CarryOverCredit {
@@ -20,9 +20,9 @@ pub struct CarryOverTake {
 impl PromisLimitContract<'_> {
     pub fn checked_add_carry_over(&mut self, amount: U256) -> Result<CarryOverCredit> {
         let before = self.get_total_unallocated()?;
-        let after = before.checked_add(amount).ok_or_else(|| {
-            PrecompileError::Revert("promislimit total_unallocated overflow".into())
-        })?;
+        let after = before
+            .checked_add(amount)
+            .ok_or(PromisLimitError::TotalUnallocatedOverflow)?;
         self.set_total_unallocated(after)?;
         Ok(CarryOverCredit {
             before,
@@ -36,9 +36,9 @@ impl PromisLimitContract<'_> {
     pub fn checked_take_carry_over_up_to(&mut self, amount: U256) -> Result<CarryOverTake> {
         let before = self.get_total_unallocated()?;
         let taken = amount.min(before);
-        let after = before.checked_sub(taken).ok_or_else(|| {
-            PrecompileError::Revert("promislimit total_unallocated underflow".into())
-        })?;
+        let after = before
+            .checked_sub(taken)
+            .ok_or(PromisLimitError::TotalUnallocatedUnderflow)?;
         self.set_total_unallocated(after)?;
         Ok(CarryOverTake {
             before,

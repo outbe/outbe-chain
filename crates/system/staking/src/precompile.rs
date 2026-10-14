@@ -42,9 +42,7 @@ pub fn dispatch(
                 },
                 |sender, c, val| {
                     if val != c.amount {
-                        return Err(outbe_primitives::error::PrecompileError::Revert(
-                            "msg.value must equal stake amount".into(),
-                        ));
+                        return Err(crate::errors::StakingError::MsgValueMismatch.into());
                     }
                     staking.stake(sender, c.validatorAddress, c.amount)
                 },

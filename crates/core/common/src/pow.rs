@@ -41,13 +41,7 @@ impl MiningDomain {
     }
 }
 
-/// Proof-of-work failure modes. Factories map these onto their own error enums.
-/// The enum stays exhaustive, so a new variant forces every mapping site to handle it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PowError {
-    /// The computed hash does not have [`POW_DIFFICULTY`] leading zero bytes.
-    InsufficientProofOfWork,
-}
+pub use crate::errors::PowError;
 
 /// SHA256 over `domain_tag || right_id_be32 || owner_20 || mining_sequence_be8 || nonce_be8`.
 pub fn compute_mining_pow_hash(

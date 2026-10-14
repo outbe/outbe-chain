@@ -372,15 +372,14 @@ fn validate_amount_run(run: &AmountRunV1) -> Result<(), LysisArtifactErrorV1> {
     validate_shard_size(run.ordered_records.len())?;
     let count = u32::try_from(run.ordered_records.len())
         .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
-    if run.end_ordinal
-        != run
-            .start_ordinal
-            .checked_add(count)
-            .ok_or(LysisArtifactErrorV1::LengthOverflow)?
-        || run.checked_segment_gratis_total.is_zero()
+    let end_ordinal = run
+        .start_ordinal
+        .checked_add(count)
+        .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+    let has_zero_total = run.checked_segment_gratis_total.is_zero()
         || run.checked_segment_nominal_total.is_zero()
-        || run.checked_segment_settlement_cost_total.is_zero()
-    {
+        || run.checked_segment_settlement_cost_total.is_zero();
+    if run.end_ordinal != end_ordinal || has_zero_total {
         return Err(LysisArtifactErrorV1::InvalidEncoding(
             "amount run aggregate range",
         ));
@@ -418,10 +417,11 @@ fn validate_finalized_output_run(run: &FinalizedOutputRunV1) -> Result<(), Lysis
     validate_shard_size(run.ordered_records.len())?;
     let count = u32::try_from(run.ordered_records.len())
         .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
-    if !run.start_ordinal.is_multiple_of(PRIMARY_WORK_SHARD_SIZE)
-        || run.checked_tribute_nominal_total.is_zero()
+    let has_zero_total = run.checked_tribute_nominal_total.is_zero()
         || run.checked_segment_gratis_total.is_zero()
-        || run.checked_settlement_cost_total.is_zero()
+        || run.checked_settlement_cost_total.is_zero();
+    if !run.start_ordinal.is_multiple_of(PRIMARY_WORK_SHARD_SIZE)
+        || has_zero_total
         || run.end_ordinal
             != run
                 .start_ordinal

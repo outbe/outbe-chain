@@ -24,7 +24,7 @@ where
 
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
-            .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+            .map_err(BlockExecutionError::msg)?;
         let begin_count = self
             .begin_block_system_tx_inputs(block_number, &block_artifacts)?
             .len();

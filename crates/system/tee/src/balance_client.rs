@@ -3,6 +3,7 @@
 use alloy_primitives::B256;
 use outbe_primitives::error::{PrecompileError, Result};
 
+use crate::errors::BalanceClientError;
 use crate::protocol::{
     gratis_op_canonical_hash, promis_op_canonical_hash, EnclaveRequest, EnclaveResponse,
 };
@@ -32,18 +33,14 @@ pub fn execute_confidential_balance_op(request: EnclaveRequest) -> Result<Enclav
         EnclaveRequest::ApplyPromisOp { request } => {
             (BalanceOperation::Promis, promis_op_canonical_hash(request))
         }
-        _ => {
-            return Err(PrecompileError::Fatal(
-                "request is not a confidential balance operation".into(),
-            ))
-        }
+        _ => return Err(BalanceClientError::NotConfidentialBalanceOperation.into()),
     };
     let (attestation_pub, response) = crate::try_with_enclave(|client| {
         let attestation_pub = client.attestation_pub();
         let response = client.request(&request);
         (attestation_pub, response)
     })
-    .ok_or_else(|| PrecompileError::EnclaveUnavailable("tee_sidecar_unavailable".to_string()))?;
+    .ok_or(BalanceClientError::SidecarUnavailable)?;
     let response = response.map_err(request_failure)?;
     validate_response(operation, expected_hash, &attestation_pub, &response)?;
     Ok(response)
@@ -52,11 +49,7 @@ pub fn execute_confidential_balance_op(request: EnclaveRequest) -> Result<Enclav
 /// A balance op's `Error` answer only reports this enclave's state (no group key, session,
 /// readiness); input-driven refusals come back as a `Rejected` status instead.
 fn request_failure(error: TransportError) -> PrecompileError {
-    if error.is_node_local() || matches!(error, TransportError::EnclaveError(_)) {
-        PrecompileError::EnclaveUnavailable(format!("tee_sidecar_unavailable: {error}"))
-    } else {
-        PrecompileError::Fatal(format!("enclave request failed: {error}"))
-    }
+    BalanceClientError::request_failure(error)
 }
 
 fn validate_response(
@@ -75,9 +68,7 @@ fn validate_response(
                 result,
                 &result.attestation_tag,
             )
-            .map_err(|error| {
-                PrecompileError::Fatal(format!("tee_gratis_attestation_invalid: {error}"))
-            })
+            .map_err(BalanceClientError::gratis_attestation_invalid)
         }
         (BalanceOperation::Promis, EnclaveResponse::PromisOpApplied { result }) => {
             let actual_hash = result.inputs_canonical_hash;
@@ -88,24 +79,18 @@ fn validate_response(
                 result,
                 &result.attestation_tag,
             )
-            .map_err(|error| {
-                PrecompileError::Fatal(format!("tee_promis_attestation_invalid: {error}"))
-            })
+            .map_err(BalanceClientError::promis_attestation_invalid)
         }
-        (_, EnclaveResponse::Error { message }) => Err(PrecompileError::EnclaveUnavailable(
-            format!("enclave {} error: {message}", operation.name(),),
-        )),
-        _ => Err(PrecompileError::Fatal(format!(
-            "unexpected enclave response: {response:?}"
-        ))),
+        (_, EnclaveResponse::Error { message }) => Err(
+            BalanceClientError::enclave_operation_error(operation.name(), message),
+        ),
+        _ => Err(BalanceClientError::unexpected_response(response)),
     }
 }
 
 fn check_canonical_hash(expected_hash: B256, actual_hash: B256) -> Result<()> {
     if actual_hash != expected_hash {
-        return Err(PrecompileError::Fatal(
-            "tee_enclave_nondeterminism".to_string(),
-        ));
+        return Err(BalanceClientError::EnclaveNondeterminism.into());
     }
     Ok(())
 }

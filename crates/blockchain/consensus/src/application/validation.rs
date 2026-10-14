@@ -16,6 +16,7 @@ use outbe_primitives::{addresses::REWARDS_ADDRESS, system_tx::OcompLifecycleActi
 use crate::block::ConsensusBlock;
 use crate::committee_provider::CommitteeProvider;
 use crate::digest::Digest;
+use crate::errors::BlockValidationError;
 use crate::hybrid::HybridSchemeProvider;
 
 /// Chain policy and leader lookup dependencies for one immutable validation request.
@@ -31,13 +32,14 @@ pub(crate) struct SystemTxLeaderValidationContext<'a> {
 mod leader;
 
 /// A non-genesis block's beneficiary must be the protocol `REWARDS_ADDRESS`.
-pub(crate) fn validate_rewards_beneficiary(block: &ConsensusBlock) -> Result<(), String> {
+pub(crate) fn validate_rewards_beneficiary(
+    block: &ConsensusBlock,
+) -> Result<(), BlockValidationError> {
     if block.number() > 0 && block.header().beneficiary() != REWARDS_ADDRESS {
-        return Err(format!(
-            "non-genesis block beneficiary must be REWARDS_ADDRESS {}: got {}",
-            REWARDS_ADDRESS,
-            block.header().beneficiary()
-        ));
+        return Err(BlockValidationError::InvalidBeneficiary {
+            expected: REWARDS_ADDRESS,
+            actual: block.header().beneficiary(),
+        });
     }
     Ok(())
 }
@@ -49,39 +51,35 @@ pub(crate) fn validate_context_parent_binding(
     parent_block: Option<&ConsensusBlock>,
     context_parent_digest: Digest,
     genesis_hash: B256,
-) -> Result<(), String> {
+) -> Result<(), BlockValidationError> {
     if block.parent_digest() != context_parent_digest {
-        return Err(format!(
-            "proposed block parent digest {} does not match Simplex context parent {}",
-            block.parent_digest().0,
-            context_parent_digest.0
-        ));
+        return Err(BlockValidationError::ProposedParentDigestMismatch {
+            actual: block.parent_digest().0,
+            expected: context_parent_digest.0,
+        });
     }
 
     let expected_number = if context_parent_digest.0 == genesis_hash {
         1
     } else {
-        let parent = parent_block.ok_or_else(|| {
-            "non-genesis Simplex context parent was not resolved for height validation".to_string()
-        })?;
+        let parent = parent_block.ok_or(BlockValidationError::UnresolvedContextParent)?;
         if parent.digest() != context_parent_digest {
-            return Err(format!(
-                "resolved parent digest {} does not match Simplex context parent {}",
-                parent.digest().0,
-                context_parent_digest.0
-            ));
+            return Err(BlockValidationError::ResolvedParentDigestMismatch {
+                actual: parent.digest().0,
+                expected: context_parent_digest.0,
+            });
         }
-        parent.number().checked_add(1).ok_or_else(|| {
-            "parent block number overflow while validating proposal height".to_string()
-        })?
+        parent
+            .number()
+            .checked_add(1)
+            .ok_or(BlockValidationError::ParentHeightOverflow)?
     };
 
     if block.number() != expected_number {
-        return Err(format!(
-            "proposed block number {} does not extend Simplex parent height {}",
-            block.number(),
-            expected_number.saturating_sub(1)
-        ));
+        return Err(BlockValidationError::HeightDoesNotExtendParent {
+            actual: block.number(),
+            parent_height: expected_number.saturating_sub(1),
+        });
     }
 
     Ok(())
@@ -96,7 +94,7 @@ pub(crate) fn validate_context_parent_binding(
 pub(crate) fn validate_system_tx_leader_binding_for_activation(
     block: &ConsensusBlock,
     context: SystemTxLeaderValidationContext<'_>,
-) -> Result<(), String> {
+) -> Result<(), BlockValidationError> {
     let raw_block = block.clone().into_inner().into_block();
     leader::validate_gas_limit(&raw_block.header)?;
     let (layout, artifacts) = leader::validate_layout(
@@ -172,7 +170,9 @@ mod tests {
         let block = block_with_number_and_parent(1, B256::ZERO);
         let error = validate_rewards_beneficiary(&block)
             .expect_err("non-genesis beneficiary must be rewards escrow");
-        assert!(error.contains("beneficiary must be REWARDS_ADDRESS"));
+        assert!(error
+            .to_string()
+            .contains("beneficiary must be REWARDS_ADDRESS"));
     }
 
     #[test]
@@ -192,7 +192,9 @@ mod tests {
         let error =
             validate_context_parent_binding(&child, Some(&parent), parent.digest(), B256::ZERO)
                 .expect_err("child must bind header parent to Simplex context parent");
-        assert!(error.contains("does not match Simplex context parent"));
+        assert!(error
+            .to_string()
+            .contains("does not match Simplex context parent"));
     }
 
     #[test]
@@ -203,7 +205,9 @@ mod tests {
         let error =
             validate_context_parent_binding(&child, Some(&parent), parent.digest(), B256::ZERO)
                 .expect_err("child height must be parent height plus one");
-        assert!(error.contains("does not extend Simplex parent height"));
+        assert!(error
+            .to_string()
+            .contains("does not extend Simplex parent height"));
     }
 
     #[test]
@@ -233,7 +237,7 @@ mod tests {
         )
         .expect_err("block 1 must carry mandatory CycleTick system tx");
 
-        assert!(error.contains("invalid system tx set"));
+        assert!(error.to_string().contains("invalid system tx set"));
     }
 
     fn assert_fixture_leader_binding(
@@ -332,7 +336,7 @@ mod tests {
             ),
         )
         .expect_err("500M is valid only at block 1");
-        assert!(error.contains("protocol gas limit"));
+        assert!(error.to_string().contains("protocol gas limit"));
     }
 
     #[test]
@@ -394,7 +398,7 @@ mod tests {
             ),
         )
         .expect_err("the same payload must be invalid when OCOMP is not armed");
-        assert!(error.contains("active system tx set mismatch"));
+        assert!(error.to_string().contains("active system tx set mismatch"));
     }
 
     #[test]
@@ -428,7 +432,9 @@ mod tests {
             ),
         )
         .expect_err("non-leader system tx signer must be rejected");
-        assert!(error.contains("does not match consensus leader EVM address"));
+        assert!(error
+            .to_string()
+            .contains("does not match consensus leader EVM address"));
     }
 
     #[test]
@@ -453,7 +459,9 @@ mod tests {
             },
         )
         .expect_err("wrong active chain id must be rejected before Engine status");
-        assert!(error.contains("system tx signature_hash mismatch"));
+        assert!(error
+            .to_string()
+            .contains("system tx signature_hash mismatch"));
     }
 
     #[test]
@@ -481,7 +489,9 @@ mod tests {
         .expect_err(
             "CertifiedParentAccounting metadata must bind to header parent hash before Engine status",
         );
-        assert!(error.contains("CertifiedParentAccounting metadata hash must match block parent"));
+        assert!(error
+            .to_string()
+            .contains("CertifiedParentAccounting metadata hash must match block parent"));
     }
 
     #[test]
@@ -548,6 +558,8 @@ mod tests {
             ),
         )
         .expect_err("BoundaryOutcome calldata must bind to header artifact before Engine status");
-        assert!(error.contains("BoundaryOutcome system tx artifact mismatch"));
+        assert!(error
+            .to_string()
+            .contains("BoundaryOutcome system tx artifact mismatch"));
     }
 }

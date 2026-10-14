@@ -87,9 +87,7 @@ pub fn process_bids_batch(
             .chain_total_batches
             .write(&chain_key, u32::from(total_batches))?;
     } else if u32::from(total_batches) != stored_total {
-        return Err(PrecompileError::Revert(
-            "processBidsBatch: batch total mismatch".into(),
-        ));
+        return Err(DesisError::BatchTotalMismatch.into());
     }
 
     let bit = U256::from(1u8) << (batch_index as usize);
@@ -126,9 +124,7 @@ pub fn process_bids_done(
     require_origin_router(caller)?;
     require_nonzero_worldwide_day(worldwide_day)?;
     if total_batches == 0 || total_batches > MAX_BID_BATCHES {
-        return Err(PrecompileError::Revert(
-            "processBidsDone: invalid total batches".into(),
-        ));
+        return Err(DesisError::InvalidTotalBatches.into());
     }
     let mut contract = storage.contract::<DesisContract>();
 
@@ -158,9 +154,7 @@ pub fn process_bids_done(
 fn check_batch_shape(batch_index: u16, total_batches: u16, bids: &[BidData]) -> Result<()> {
     // The arrival bitmap is a U256, so at most 256 batches (batch_index 0..=255) are trackable.
     if total_batches == 0 || total_batches > MAX_BID_BATCHES || batch_index >= total_batches {
-        return Err(PrecompileError::Revert(
-            "processBidsBatch: invalid batch index/total".into(),
-        ));
+        return Err(DesisError::InvalidBatchIndexOrTotal.into());
     }
     // Same reason as the currency check below: an over-wide batch is admissible
     // here but not at clearing, where the refund fan-out would reject the day.

@@ -15,13 +15,13 @@ where
         &mut self,
     ) -> Result<(), BlockExecutionError> {
         validate_outbe_withdrawals(self.inner.ctx.withdrawals.as_deref())
-            .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+            .map_err(BlockExecutionError::msg)?;
 
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let beneficiary = self.inner.evm.block().beneficiary();
         if self.block_hash.is_some() && block_number > 0 {
             let artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
-                .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+                .map_err(BlockExecutionError::msg)?;
             validate_compressed_entities_root_scheme(artifacts.compressed_entities_root)?;
         }
         // Initialise the begin-zone phase cursor for this block
@@ -87,7 +87,7 @@ where
         let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
         let chain_id = self.inner.evm.chain_id();
         let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
-            .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+            .map_err(BlockExecutionError::msg)?;
         let proposer = self
             .begin_zone_proposer(block_number)?
             .unwrap_or_else(|| self.inner.evm.block().beneficiary());

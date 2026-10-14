@@ -35,13 +35,13 @@ impl Mailbox {
     ) -> eyre::Result<()> {
         self.inner
             .unbounded_send(Message::ProjectionFailed(failure))
-            .map_err(|_| eyre::eyre!("executor mailbox closed"))
+            .map_err(|_| crate::errors::ExecutorError::MailboxClosed.into())
     }
 
     pub(crate) fn report_pending_parent(&self, parent: PendingParent) -> eyre::Result<()> {
         self.inner
             .unbounded_send(Message::PendingParent(parent))
-            .map_err(|_| eyre::eyre!("executor mailbox closed"))
+            .map_err(|_| crate::errors::ExecutorError::MailboxClosed.into())
     }
 
     /// Request a validity decision without selecting a canonical head.
@@ -52,7 +52,7 @@ impl Mailbox {
         let (response, receiver) = futures::channel::oneshot::channel();
         self.inner
             .unbounded_send(Message::VerifyBlock(VerifyBlock { request, response }))
-            .map_err(|_| eyre::eyre!("executor mailbox closed"))?;
+            .map_err(|_| crate::errors::ExecutorError::MailboxClosed)?;
         Ok(receiver)
     }
     /// Create from a sender.
@@ -71,9 +71,9 @@ impl Mailbox {
                 digest,
                 response: tx,
             }))
-            .map_err(|_| eyre::eyre!("executor mailbox closed"))?;
+            .map_err(|_| crate::errors::ExecutorError::MailboxClosed)?;
         rx.await
-            .map_err(|_| eyre::eyre!("executor dropped response"))?
+            .map_err(|_| crate::errors::ExecutorError::DroppedResponse)?
     }
 
     /// Canonicalize head and request a new payload to be built.
@@ -94,9 +94,9 @@ impl Mailbox {
                 attributes,
                 response: tx,
             }))
-            .map_err(|_| eyre::eyre!("executor mailbox closed"))?;
+            .map_err(|_| crate::errors::ExecutorError::MailboxClosed)?;
         rx.await
-            .map_err(|_| eyre::eyre!("executor dropped response"))?
+            .map_err(|_| crate::errors::ExecutorError::DroppedResponse)?
     }
 
     /// Return once executor has processed/finalized at least `height`.
@@ -110,9 +110,9 @@ impl Mailbox {
                 height,
                 response: tx,
             }))
-            .map_err(|_| eyre::eyre!("executor mailbox closed"))?;
+            .map_err(|_| crate::errors::ExecutorError::MailboxClosed)?;
         rx.await
-            .map_err(|_| eyre::eyre!("executor dropped finalized subscription response"))
+            .map_err(|_| crate::errors::ExecutorError::DroppedFinalizedSubscriptionResponse.into())
     }
 }
 

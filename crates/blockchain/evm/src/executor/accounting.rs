@@ -17,42 +17,37 @@ pub(crate) fn validate_finalized_metadata(
     storage: StorageHandle,
     metadata: &CertifiedParentAccountingMetadata,
 ) -> outbe_primitives::error::Result<()> {
+    use crate::errors::ExecutorHookError;
+
     if metadata.signer_bitmap.len() != metadata.ordered_committee.len() {
-        return Err(PrecompileError::Fatal(
-            "consensus metadata signer bitmap length mismatch".into(),
-        ));
+        return Err(ExecutorHookError::SignerBitmapLengthMismatch.into());
     }
 
     let committee_set: BTreeSet<Address> = metadata.ordered_committee.iter().copied().collect();
     if committee_set.len() != metadata.ordered_committee.len() {
-        return Err(PrecompileError::Fatal(
-            "consensus metadata committee contains duplicate addresses".into(),
-        ));
+        return Err(ExecutorHookError::DuplicateCommitteeAddresses.into());
     }
 
     let vs_check = outbe_validatorset::contract::ValidatorSet::new(storage);
     for addr in &metadata.ordered_committee {
         if !vs_check.is_validator(*addr)? {
-            return Err(PrecompileError::Fatal(format!(
-                "consensus metadata committee member is not a registered validator: {addr}"
-            )));
+            return Err(ExecutorHookError::UnregisteredCommitteeMember { address: *addr }.into());
         }
     }
 
     for missed in &metadata.missed_proposers {
         if !committee_set.contains(&missed.validator) {
-            return Err(PrecompileError::Fatal(format!(
-                "consensus metadata missed proposer is not in finalized committee: {} (view {})",
-                missed.validator, missed.view,
-            )));
+            return Err(ExecutorHookError::MissedProposerNotInCommittee {
+                validator: missed.validator,
+                view: missed.view,
+            }
+            .into());
         }
     }
 
     for entry in &metadata.signer_bitmap {
         if *entry > 1 {
-            return Err(PrecompileError::Fatal(
-                "consensus metadata signer bitmap contains non-binary entry".into(),
-            ));
+            return Err(ExecutorHookError::NonBinarySignerBitmapEntry.into());
         }
     }
 

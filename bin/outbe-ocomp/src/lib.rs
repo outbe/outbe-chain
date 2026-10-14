@@ -9,6 +9,7 @@ pub mod discovery_control;
 pub mod discovery_spool;
 pub mod embedded;
 pub mod embedded_runtime;
+pub mod errors;
 pub mod export_binding;
 pub mod export_receipt;
 pub mod exporter;

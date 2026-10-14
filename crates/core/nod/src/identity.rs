@@ -32,8 +32,7 @@ pub fn generate_nod_id(
     owner: Address,
     worldwide_day: WorldwideDay,
 ) -> outbe_primitives::error::Result<WwdEntityId> {
-    derive_poseidon_entity_id(owner, worldwide_day)
-        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
+    derive_poseidon_entity_id(owner, worldwide_day).map_err(NodError::entity_id_derivation)
 }
 
 pub fn parse_nod_id(nod_id: &str) -> Result<WwdEntityId> {

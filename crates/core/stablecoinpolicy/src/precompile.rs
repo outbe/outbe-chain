@@ -4,7 +4,7 @@ use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
 
 pub use crate::abi::IStablecoinPolicyRegistry;
-use crate::errors::PolicyRegistryError;
+use crate::errors::{AbiDecodeError, PolicyRegistryError};
 use crate::schema::StablecoinPolicyRegistryContract;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -23,11 +23,11 @@ pub fn dispatch(
     }
     dispatch_call(
         data,
-        |input| {
-            let call = IStablecoinPolicyRegistry::IStablecoinPolicyRegistryCalls::abi_decode(input)
-                .map_err(|error| error.to_string())?;
+        |input| -> std::result::Result<_, AbiDecodeError> {
+            let call =
+                IStablecoinPolicyRegistry::IStablecoinPolicyRegistryCalls::abi_decode(input)?;
             if call.abi_encode().as_slice() != input {
-                return Err("non-canonical ABI calldata or trailing bytes".to_owned());
+                return Err(AbiDecodeError::NonCanonicalCalldata);
             }
             Ok(call)
         },

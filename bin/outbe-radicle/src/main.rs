@@ -1,4 +1,8 @@
+mod errors;
+
 use std::sync::mpsc;
+
+use crate::errors::RadicleBinaryError;
 
 fn main() {
     let _ = log::set_boxed_logger(Box::new(radicle_log::Logger::new()));
@@ -9,9 +13,9 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), heartwood_outbe_radicle::Error> {
+fn run() -> Result<(), RadicleBinaryError> {
     let options = heartwood_outbe_radicle::Options::from_env()?;
     let (sender, receiver) = mpsc::sync_channel(1);
     radicle_signals::install(sender)?;
-    heartwood_outbe_radicle::PreparedSidecar::prepare(options, receiver)?.run()
+    Ok(heartwood_outbe_radicle::PreparedSidecar::prepare(options, receiver)?.run()?)
 }

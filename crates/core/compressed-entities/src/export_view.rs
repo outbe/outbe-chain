@@ -21,8 +21,8 @@ pub struct AuthenticatedExportView {
 
 impl AuthenticatedExportView {
     pub fn new(catalog: AuthenticatedCatalogView) -> Result<Self, ExportViewError> {
-        let tree = MdbxAuthenticatedTree::from_view(catalog.clone())
-            .map_err(|error| ExportViewError::Tree(error.to_string()))?;
+        let tree =
+            MdbxAuthenticatedTree::from_view(catalog.clone()).map_err(ExportViewError::tree)?;
         Ok(Self { catalog, tree })
     }
 
@@ -39,8 +39,8 @@ impl AuthenticatedExportView {
     ) -> Result<AuthenticatedTributePartition<'_>, ExportViewError> {
         let partition = PartitionRef::TributeWwd(day);
         let identity = self.catalog.identity();
-        let (_, collection_key) = partition_collection_key(partition)
-            .map_err(|error| ExportViewError::Tree(error.to_string()))?;
+        let (_, collection_key) =
+            partition_collection_key(partition).map_err(ExportViewError::tree)?;
         let actual_collection_key = B256::from(*collection_key.as_bytes());
         if actual_collection_key != expected_collection_key {
             return Err(ExportViewError::CollectionKeyMismatch {
@@ -51,7 +51,7 @@ impl AuthenticatedExportView {
         let actual_root = self
             .tree
             .partition_root_verified(partition, identity.root)
-            .map_err(|error| ExportViewError::Tree(error.to_string()))?
+            .map_err(ExportViewError::tree)?
             .ok_or(ExportViewError::MissingPartition)?;
         if actual_root != expected_collection_root {
             return Err(ExportViewError::CollectionRootMismatch {
@@ -62,7 +62,7 @@ impl AuthenticatedExportView {
         let actual_count = self
             .catalog
             .collection_leaf_count(collection_key)
-            .map_err(|error| ExportViewError::Tree(error.to_string()))?;
+            .map_err(ExportViewError::tree)?;
         let actual_count =
             u32::try_from(actual_count).map_err(|_| ExportViewError::LeafCountOverflow)?;
         if actual_count != expected_leaf_count {
@@ -103,7 +103,7 @@ impl AuthenticatedTributePartition<'_> {
         self.export
             .tree
             .read_leaf_verified(EntityRef::Tribute(tribute_id), identity.root)
-            .map_err(|error| ExportViewError::Tree(error.to_string()))
+            .map_err(ExportViewError::tree)
     }
 }
 
@@ -123,4 +123,10 @@ pub enum ExportViewError {
     LeafCountMismatch { expected: u32, actual: u32 },
     #[error("Tribute belongs to WWD {actual}, expected {expected}")]
     TributeDayMismatch { expected: u32, actual: u32 },
+}
+
+impl ExportViewError {
+    pub(crate) fn tree(error: impl core::fmt::Display) -> Self {
+        Self::Tree(error.to_string())
+    }
 }

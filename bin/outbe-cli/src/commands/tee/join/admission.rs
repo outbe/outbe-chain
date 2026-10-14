@@ -8,6 +8,7 @@ use super::classify_join_offer_key_state_transport;
 use super::JoinEnclave;
 use super::JoinOfferKeyState;
 
+use crate::errors::TeeJoinAdmissionError;
 use crate::rpc::Rpc;
 use alloy_consensus::BlockHeader as _;
 
@@ -63,6 +64,12 @@ impl From<eyre::Report> for FinalizedAdmissionAttemptErrorV1 {
     }
 }
 
+impl From<TeeJoinAdmissionError> for FinalizedAdmissionAttemptErrorV1 {
+    fn from(error: TeeJoinAdmissionError) -> Self {
+        Self::Local(error.into())
+    }
+}
+
 pub(in super::super) trait FinalizedAdmissionRecoveryIoV1 {
     fn upload_once(
         &mut self,
@@ -75,44 +82,47 @@ pub(in super::super) trait FinalizedAdmissionRecoveryIoV1 {
     fn expected_offer_key(&self) -> [u8; 32];
 }
 
+fn reconnect_and_probe_offer_key(
+    io: &mut impl FinalizedAdmissionRecoveryIoV1,
+    error: TransportError,
+) -> std::result::Result<JoinOfferKeyState, TeeJoinAdmissionError> {
+    if let Err(reconnect) = io.reconnect_exact() {
+        return Err(TeeJoinAdmissionError::ReconnectFailed {
+            fault: error,
+            reconnect,
+        });
+    }
+    io.probe_offer_key()
+        .map_err(|probe| TeeJoinAdmissionError::RecoveryProbeFailed {
+            fault: error,
+            probe,
+        })
+}
+
 pub(in super::super) async fn run_finalized_admission_recovery_v1(
     io: &mut impl FinalizedAdmissionRecoveryIoV1,
 ) -> Result<[u8; 32]> {
     let mut uploads = 0_u8;
     loop {
         uploads += 1;
-        match io.upload_once().await {
+        let error = match io.upload_once().await {
             Ok(offer_public) => return Ok(offer_public),
             Err(FinalizedAdmissionAttemptErrorV1::Local(error)) => return Err(error),
             Err(FinalizedAdmissionAttemptErrorV1::Transport(error))
                 if !error.is_connection_fault() =>
             {
-                return Err(eyre::eyre!(error));
+                return Err(TeeJoinAdmissionError::Transport(error).into());
             }
-            Err(FinalizedAdmissionAttemptErrorV1::Transport(error)) => {
-                io.reconnect_exact().map_err(|reconnect| {
-                    eyre::eyre!(
-                        "finalized-admission connection fault ({error}); exact reconnect failed: {reconnect}"
-                    )
-                })?;
-                match io.probe_offer_key().map_err(|probe| {
-                    eyre::eyre!(
-                        "finalized-admission connection fault ({error}); authenticated recovery probe failed: {probe}"
-                    )
-                })? {
-                    JoinOfferKeyState::ReadyExact => return Ok(io.expected_offer_key()),
-                    JoinOfferKeyState::ReadyMismatch => {
-                        eyre::bail!(
-                            "resident permanent offer key does not match finalized TeeRegistry after reconnect"
-                        );
-                    }
-                    JoinOfferKeyState::Keyless if uploads == 1 => continue,
-                    JoinOfferKeyState::Keyless => {
-                        eyre::bail!(
-                            "finalized-admission replay exhausted after a second connection fault; authenticated enclave remains keyless"
-                        );
-                    }
-                }
+            Err(FinalizedAdmissionAttemptErrorV1::Transport(error)) => error,
+        };
+        match reconnect_and_probe_offer_key(io, error)? {
+            JoinOfferKeyState::ReadyExact => return Ok(io.expected_offer_key()),
+            JoinOfferKeyState::ReadyMismatch => {
+                return Err(TeeJoinAdmissionError::OfferKeyMismatchAfterReconnect.into());
+            }
+            JoinOfferKeyState::Keyless if uploads == 1 => continue,
+            JoinOfferKeyState::Keyless => {
+                break Err(TeeJoinAdmissionError::ReplayExhausted.into());
             }
         }
     }
@@ -205,16 +215,16 @@ pub(in super::super) fn persist_authorized_join_admission_anchor_v1(
     let binding = finalized
         .binding
         .as_ref()
-        .ok_or_else(|| eyre::eyre!("finalized Registry lost the completed join binding"))?;
+        .ok_or(TeeJoinAdmissionError::MissingCompletedJoinBinding)?;
     if binding.node_id_hash != node_id_hash
         || binding.enclave_id != enclave_id
         || binding.intent_hash != intent_hash
     {
-        eyre::bail!("finalized join admission anchor differs from the completed join binding");
+        return Err(TeeJoinAdmissionError::AnchorBindingMismatch.into());
     }
     let anchor = finalized_join_admission_anchor_v1(&finalized.view, binding);
     persist_finalized_join_admission_anchor(node_data_dir, anchor)
-        .map_err(|error| eyre::eyre!("persist finalized join admission anchor: {error}"))
+        .map_err(|error| TeeJoinAdmissionError::PersistAdmissionAnchor(error).into())
 }
 
 pub(in super::super) async fn load_finalized_admission_anchor_v1(
@@ -224,7 +234,7 @@ pub(in super::super) async fn load_finalized_admission_anchor_v1(
     context: &outbe_tee::dcap_protocol::DcapOnboardingContextV1,
 ) -> Result<Vec<u8>> {
     if finalized_height == 0 {
-        eyre::bail!("onboarding admission cannot be proved at genesis");
+        return Err(TeeJoinAdmissionError::GenesisHeightAdmission.into());
     }
     let genesis_json: serde_json::Value = serde_json::from_slice(
         &fs::read(genesis)
@@ -234,13 +244,13 @@ pub(in super::super) async fn load_finalized_admission_anchor_v1(
     let policy_schedule = genesis_json
         .pointer("/config/teeAttestationV1/policySchedule")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("final genesis has no TEE policy schedule"))?;
+        .ok_or(TeeJoinAdmissionError::MissingGenesisPolicySchedule)?;
     let policy_schedule = hex::decode(policy_schedule.trim_start_matches("0x"))
         .wrap_err("decode final genesis TEE policy schedule")?;
     let schedule = TeePolicyScheduleV1::decode_canonical(&policy_schedule)
-        .map_err(|error| eyre::eyre!("decode exact final genesis TEE policy schedule: {error}"))?;
+        .map_err(TeeJoinAdmissionError::DecodeGenesisPolicySchedule)?;
     if schedule.chain_id != context.chain_id || schedule.genesis_hash != context.genesis_hash {
-        eyre::bail!("exact final genesis does not match the onboarding network identity");
+        return Err(TeeJoinAdmissionError::GenesisNetworkIdentityMismatch.into());
     }
 
     for height in 1..=finalized_height {
@@ -256,7 +266,10 @@ pub(in super::super) async fn load_finalized_admission_anchor_v1(
             .wrap_err_with(|| format!("read finalization at height {height}"))?;
         let (block, _) = super::super::admission_history::compact_header(&public, height)?;
         let artifacts = decode_outbe_block_artifacts(block.header().extra_data().as_ref())
-            .map_err(|error| eyre::eyre!("decode block {height} artifacts: {error:?}"))?;
+            .map_err(|error| TeeJoinAdmissionError::DecodeBlockArtifacts {
+                height,
+                reason: format!("{error:?}"),
+            })?;
         if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
             artifacts.consensus_header_artifact
         {
@@ -266,7 +279,7 @@ pub(in super::super) async fn load_finalized_admission_anchor_v1(
         }
     }
 
-    eyre::bail!("finalized history has no epoch-0 BoundaryOutcome");
+    Err(TeeJoinAdmissionError::MissingEpochZeroBoundaryOutcome.into())
 }
 
 async fn stream_finalized_admission_attempt_v1<R: Rpc + Sync>(
@@ -310,7 +323,10 @@ async fn stream_finalized_admission_attempt_v1<R: Rpc + Sync>(
         };
         let (block, compact) = super::super::admission_history::compact_header(&public, height)?;
         let artifacts = decode_outbe_block_artifacts(block.header().extra_data().as_ref())
-            .map_err(|error| eyre::eyre!("decode block {height} artifacts: {error:?}"))?;
+            .map_err(|error| TeeJoinAdmissionError::DecodeBlockArtifacts {
+                height,
+                reason: format!("{error:?}"),
+            })?;
         if let Some(ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, .. }) =
             artifacts.consensus_header_artifact
         {
@@ -318,7 +334,7 @@ async fn stream_finalized_admission_attempt_v1<R: Rpc + Sync>(
                 let transition = compact
                     .clone()
                     .encode_canonical()
-                    .map_err(|error| eyre::eyre!("encode committee transition: {error}"))?;
+                    .map_err(TeeJoinAdmissionError::EncodeCommitteeTransition)?;
                 attempt.enclave.upload_finalized_admission_record_v1(
                     request_hash,
                     FinalizedAdmissionRecordKindV1::CommitteeTransition,
@@ -326,7 +342,7 @@ async fn stream_finalized_admission_attempt_v1<R: Rpc + Sync>(
                 )?;
                 next_transition_epoch = next_transition_epoch
                     .checked_add(1)
-                    .ok_or_else(|| eyre::eyre!("committee transition epoch overflow"))?;
+                    .ok_or(TeeJoinAdmissionError::CommitteeEpochOverflow)?;
             }
         }
         if height == finalized_height {
@@ -343,7 +359,7 @@ async fn stream_finalized_admission_attempt_v1<R: Rpc + Sync>(
     let storage = opening
         .get("storageProof")
         .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| eyre::eyre!("eth_getProof has no storageProof array"))?;
+        .ok_or(TeeJoinAdmissionError::MissingStorageProofArray)?;
     let mut registry_storage = Vec::with_capacity(storage.len());
     for item in storage {
         registry_storage.push(MptStorageProofV1 {
@@ -353,7 +369,7 @@ async fn stream_finalized_admission_attempt_v1<R: Rpc + Sync>(
         });
     }
     if registry_storage.len() != slots.len() {
-        return Err(eyre::eyre!("eth_getProof omitted a required TeeRegistry slot").into());
+        return Err(TeeJoinAdmissionError::OmittedRequiredRegistrySlot.into());
     }
     let admission_witness = FinalizedAdmissionWitnessV1 {
         admission: admission.expect("positive finalized height sets admission proof"),
@@ -361,7 +377,7 @@ async fn stream_finalized_admission_attempt_v1<R: Rpc + Sync>(
         registry_storage,
     }
     .encode_canonical()
-    .map_err(|error| eyre::eyre!("encode finalized onboarding admission witness: {error}"))?;
+    .map_err(TeeJoinAdmissionError::EncodeAdmissionWitness)?;
     attempt.enclave.upload_finalized_admission_record_v1(
         request_hash,
         FinalizedAdmissionRecordKindV1::Admission,

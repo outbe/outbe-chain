@@ -57,7 +57,7 @@ pub(super) fn run_registered_message_loop(
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|error| WorkerError::MessageTransport(error.to_string()))?;
+        .map_err(WorkerError::message_transport)?;
     runtime.block_on(run_registered_message_channel(
         config.clone(),
         registration,
@@ -95,14 +95,14 @@ async fn run_registered_message_channel(
     let peer: PeerIdentity = registration
         .worker_id
         .parse()
-        .map_err(|error: zeromq::ZmqError| WorkerError::MessageTransport(error.to_string()))?;
+        .map_err(|error: zeromq::ZmqError| WorkerError::message_transport(error))?;
     let mut options = SocketOptions::default();
     options.peer_identity(peer);
     let mut socket = DealerSocket::with_options(options);
     socket
         .connect(&registration.message_endpoint)
         .await
-        .map_err(|error| WorkerError::MessageTransport(error.to_string()))?;
+        .map_err(WorkerError::message_transport)?;
     let (mut sender, mut receiver) = socket.split();
     send_worker_event(
         &mut sender,
@@ -125,7 +125,7 @@ async fn run_registered_message_channel(
         tokio::select! {
             command = receiver.recv() => {
                 let command = command
-                    .map_err(|error| WorkerError::MessageTransport(error.to_string()))
+                    .map_err(WorkerError::message_transport)
                     .and_then(decode_supervisor_command)?;
                 observability.touch();
                 match command {
@@ -330,7 +330,7 @@ async fn send_worker_event(
     sender
         .send(body.into())
         .await
-        .map_err(|error| WorkerError::MessageTransport(error.to_string()))
+        .map_err(WorkerError::message_transport)
 }
 
 fn decode_success<T: serde::de::DeserializeOwned>(

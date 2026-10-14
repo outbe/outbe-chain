@@ -20,23 +20,20 @@ pub(super) fn read_pinned_bundle(root: &Path, hash: B256) -> eyre::Result<Pinned
         .codec
         .max_body_bytes
         .checked_add(outbe_ocomp_protocol::codec::OCB1_HEADER_LEN)
-        .ok_or_else(|| eyre::eyre!("bundle codec limit overflow"))?;
-    ensure!(
-        !entry.identity.is_directory,
-        "protocol bundle is not a file"
-    );
-    ensure!(
-        entry.identity.size <= u64::try_from(cap)?,
-        "protocol bundle exceeds codec limit"
-    );
+        .ok_or(SnapshotOcompError::BundleCodecLimitOverflow)?;
+    if entry.identity.is_directory {
+        return Err(SnapshotOcompError::ProtocolBundleNotFile.into());
+    }
+    if entry.identity.size > u64::try_from(cap)? {
+        return Err(SnapshotOcompError::ProtocolBundleExceedsCodecLimit.into());
+    }
     let mut bytes = Vec::new();
     (&mut entry.file)
         .take(entry.identity.size + 1)
         .read_to_end(&mut bytes)?;
-    ensure!(
-        bytes.len() as u64 == entry.identity.size,
-        "protocol bundle changed size"
-    );
+    if bytes.len() as u64 != entry.identity.size {
+        return Err(SnapshotOcompError::ProtocolBundleChangedSize.into());
+    }
     entry.verify_unchanged()?;
     source.reopen(&path, &entry.identity)?;
     source.verify_unchanged()?;

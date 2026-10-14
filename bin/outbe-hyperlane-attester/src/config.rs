@@ -3,6 +3,8 @@
 use eyre::{Context, Result};
 use serde::Deserialize;
 
+use crate::errors::AttesterError;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AttesterConfig {
@@ -84,13 +86,13 @@ impl AttesterConfig {
     pub fn validate(&self) -> Result<()> {
         let addr = self.account.validator_address.trim_start_matches("0x");
         if addr.len() != 40 || addr.chars().any(|c| !c.is_ascii_hexdigit()) {
-            return Err(eyre::eyre!(
-                "account.validator_address is not a valid 20-byte hex address: {}",
-                self.account.validator_address
-            ));
+            return Err(AttesterError::InvalidValidatorAddress(
+                self.account.validator_address.clone(),
+            )
+            .into());
         }
         if self.hyperlane.poll_interval_secs == 0 {
-            return Err(eyre::eyre!("hyperlane.poll_interval_secs must be > 0"));
+            return Err(AttesterError::ZeroPollInterval.into());
         }
         Ok(())
     }

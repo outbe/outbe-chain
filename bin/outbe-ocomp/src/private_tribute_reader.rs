@@ -26,5 +26,5 @@ pub fn install_private_tribute_reader(
         manifest,
         node_host,
     )
-    .map_err(|error| TransportError::EnclaveError(error.to_string()))
+    .map_err(crate::errors::transport_enclave_error)
 }

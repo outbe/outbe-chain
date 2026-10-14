@@ -10,7 +10,7 @@ pub const TRANSFER_CHUNK_BYTES: usize = 8 * 1024;
 pub(crate) fn request(
     request: EnclaveRequest,
 ) -> Result<([u8; 32], EnclaveResponse), TransportError> {
-    let bytes = serde_json::to_vec(&request).map_err(|e| TransportError::Codec(e.to_string()))?;
+    let bytes = serde_json::to_vec(&request).map_err(TransportError::codec)?;
     if bytes.len() > MAX_TRANSFER_BYTES {
         return Err(TransportError::NodMaterializationCapacityExceeded(
             "protected NOD request exceeds transfer bound".into(),
@@ -63,7 +63,7 @@ fn download(client: &mut EnclaveSession, id: B256) -> Result<EnclaveResponse, Tr
             "protected NOD response digest mismatch".into(),
         ));
     }
-    serde_json::from_slice(&output).map_err(|e| TransportError::Codec(e.to_string()))
+    serde_json::from_slice(&output).map_err(TransportError::codec)
 }
 
 fn read_chunk(

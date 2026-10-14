@@ -9,13 +9,14 @@ pub mod claim;
 pub mod codec;
 pub mod demo_tribute;
 pub mod error;
+pub mod errors;
 pub mod primitive;
 pub mod protocol;
 pub mod wire;
 
 pub use ark_bn254::Fr;
 pub use codec::{FieldElement, FieldEncode};
-pub use error::Error;
+pub use errors::Error;
 pub use protocol::zk::CircuitId;
 
 /// Depth of the TributeDraft commitment tree. Matches `demo_tribute` and

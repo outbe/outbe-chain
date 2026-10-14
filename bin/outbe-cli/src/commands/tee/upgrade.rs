@@ -5,6 +5,7 @@ use super::parse_nonzero_b256;
 use super::sign_node_hash;
 use super::CliFinalityRpc;
 
+use crate::errors::TeeUpgradeError;
 use crate::rpc::Rpc;
 
 use alloy_primitives::U256;
@@ -59,7 +60,7 @@ pub(super) async fn upgrade_prepare(
     } = args;
     let reth_p2p_secret_key = reth_p2p_secret_key.as_deref();
     let active = load_committed_enclave_manifest_v1(node_data_dir)
-        .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
+        .map_err(TeeUpgradeError::LoadCommittedManifest)?;
     let rpc_chain_id = client.eth_chain_id().await?;
     let (candidate, _, _) = connect_upgrade_candidate_v1(
         candidate_enclave_socket,
@@ -70,18 +71,18 @@ pub(super) async fn upgrade_prepare(
     )?;
     let staged = read_finalized_upgrade_policy_v1(&CliFinalityRpc(client))
         .await?
-        .ok_or_else(|| eyre::eyre!("no successor TEE policy is staged at finalized state"))?;
+        .ok_or(TeeUpgradeError::NoStagedSuccessorPolicy)?;
     let successor_policy_hash = staged
         .policy
         .policy_hash()
-        .map_err(|error| eyre::eyre!("hash finalized staged successor policy: {error}"))?;
+        .map_err(TeeUpgradeError::HashSuccessorPolicy)?;
     let predecessor_manifest_hash = active
         .authorization_hash()
-        .map_err(|error| eyre::eyre!("hash active NodeHost manifest: {error}"))?;
+        .map_err(TeeUpgradeError::HashActiveManifest)?;
     let candidate_manifest_hash = candidate
         .manifest()
         .authorization_hash()
-        .map_err(|error| eyre::eyre!("hash candidate NodeHost manifest: {error}"))?;
+        .map_err(TeeUpgradeError::HashCandidateManifest)?;
     let snapshot = prepare_upgrade_journal_v1(
         node_data_dir,
         UpgradeContextV1 {
@@ -106,13 +107,13 @@ pub(super) async fn upgrade_finalize(
     node_data_dir: &std::path::Path,
     timeout: Duration,
 ) -> Result<()> {
-    let checkpoint = inspect_upgrade_journal_v1(node_data_dir)?
-        .ok_or_else(|| eyre::eyre!("no upgrade is prepared"))?;
+    let checkpoint =
+        inspect_upgrade_journal_v1(node_data_dir)?.ok_or(TeeUpgradeError::NoUpgradePrepared)?;
     let context = checkpoint.lifecycle.context().clone();
     let committed = load_committed_enclave_manifest_v1(node_data_dir)?;
     if committed
         .authorization_hash()
-        .map_err(|e| eyre::eyre!("invalid manifest: {e}"))?
+        .map_err(TeeUpgradeError::InvalidManifest)?
         == context.candidate_manifest_hash
     {
         match checkpoint.lifecycle {
@@ -120,7 +121,7 @@ pub(super) async fn upgrade_finalize(
                 record_upgrade_promoted_v1(node_data_dir)?;
             }
             UpgradeJournalStateV1::Promoted { .. } => {}
-            _ => eyre::bail!("committed candidate has no finalized upgrade checkpoint"),
+            _ => return Err(TeeUpgradeError::MissingFinalizedUpgradeCheckpoint.into()),
         }
         println!("upgrade is already promoted; start the successor enclave and complete certified catch-up");
         return Ok(());
@@ -129,12 +130,12 @@ pub(super) async fn upgrade_finalize(
         checkpoint.lifecycle,
         UpgradeJournalStateV1::Submitted { .. } | UpgradeJournalStateV1::Finalized { .. }
     ) {
-        eyre::bail!("upgrade-finalize requires a submitted transition");
+        return Err(TeeUpgradeError::UpgradeNotSubmitted.into());
     }
     let submission = load_replacement_candidate_submission(node_data_dir)?
-        .ok_or_else(|| eyre::eyre!("durable transition evidence is missing"))?;
+        .ok_or(TeeUpgradeError::MissingDurableTransitionEvidence)?;
     let evidence = AttestationEvidenceV1::decode_canonical(submission.evidence())
-        .map_err(|e| eyre::eyre!("invalid durable transition evidence: {e}"))?;
+        .map_err(TeeUpgradeError::InvalidDurableTransitionEvidence)?;
     let intent = evidence.intent();
     let selector = NodeBindingSelectorV1::NodeHost(committed.node_id.reth_p2p_public);
     let started = Instant::now();
@@ -146,7 +147,7 @@ pub(super) async fn upgrade_finalize(
             }
         }
         if started.elapsed() >= timeout {
-            eyre::bail!("transition is not finalized; checkpoint retained for retry");
+            return Err(TeeUpgradeError::TransitionNotFinalized.into());
         }
         tokio::time::sleep(Duration::from_secs(2)).await;
     };
@@ -214,12 +215,10 @@ pub(super) async fn upgrade_submit(
         valid_until,
     } = args;
     let reth_p2p_secret_key = reth_p2p_secret_key.as_deref();
-    let private_key = private_key.ok_or_else(|| {
-        eyre::eyre!("tee upgrade-submit requires the global --private-key EVM signer")
-    })?;
+    let private_key = private_key.ok_or(TeeUpgradeError::SubmitPrivateKeyRequired)?;
     let evm_signer = RelaySignerV1::new(private_key)?;
     let active = load_committed_enclave_manifest_v1(node_data_dir)
-        .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
+        .map_err(TeeUpgradeError::LoadCommittedManifest)?;
     let rpc_chain_id = client.eth_chain_id().await?;
     let (mut candidate, node_signing_key, selector) = connect_upgrade_candidate_v1(
         candidate_enclave_socket,
@@ -230,7 +229,7 @@ pub(super) async fn upgrade_submit(
     )?;
     let signer = |hash| {
         sign_node_hash(&node_signing_key, hash)
-            .map_err(|error| eyre::eyre!("node authority signing failed: {error}"))
+            .map_err(|error| TeeUpgradeError::NodeAuthoritySigningFailed(error).into())
     };
     let outcome = run_upgrade_submission_v1(
         UpgradeSubmissionServicesV1 {
@@ -274,10 +273,9 @@ pub(super) fn connect_upgrade_candidate_v1(
     NodeBindingSelectorV1,
 )> {
     if active.chain_id != U256::from(rpc_chain_id).to_be_bytes() {
-        eyre::bail!("committed NodeHost manifest chain id does not match eth_chainId");
+        return Err(TeeUpgradeError::ManifestChainIdMismatch.into());
     }
-    let path = reth_p2p_secret_key
-        .ok_or_else(|| eyre::eyre!("NodeHost upgrade requires --reth-p2p-secret-key"))?;
+    let path = reth_p2p_secret_key.ok_or(TeeUpgradeError::MissingRethP2pSecretKey)?;
     let signing = load_secp256k1_key_file(path)?;
     ensure_signer_matches_node_id(&signing, &active.node_id)?;
     let candidate = outbe_tee::prepare_node_host_enclave_replacement_candidate(
@@ -289,7 +287,7 @@ pub(super) fn connect_upgrade_candidate_v1(
         },
         |hash| sign_node_hash(&signing, hash),
     )
-    .map_err(|error| eyre::eyre!("prepare NodeHost candidate B: {error}"))?;
+    .map_err(TeeUpgradeError::PrepareCandidateB)?;
     Ok((
         candidate,
         signing,

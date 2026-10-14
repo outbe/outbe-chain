@@ -3,6 +3,7 @@
 //! `validators.json` is a tooling/genesis artifact only. Runtime validator
 //! membership is read from the ValidatorSet precompile at specific block heights.
 
+use crate::errors::{validator_has_no_node_host_enclave_binding_error, ValidatorsError};
 use alloy_primitives::{Address, B256, U256};
 use commonware_codec::ReadExt as _;
 use commonware_cryptography::bls12381;
@@ -53,7 +54,7 @@ pub trait RethStateAccess {
 impl RethStateAccess for StateProviderBox {
     fn storage_read(&self, address: Address, key: B256) -> Result<Option<U256>> {
         self.storage(address, key)
-            .map_err(|e| eyre::eyre!("reth storage read failed: {e}"))
+            .map_err(|e| ValidatorsError::RethStorageRead(format!("{e}")).into())
     }
 }
 
@@ -149,9 +150,7 @@ pub fn read_local_tee_runtime_admission_from_state(
     identity: LocalTeeRuntimeIdentityV1,
 ) -> Result<LocalTeeRuntimeAdmissionV1> {
     if !context.is_complete() {
-        return Err(eyre::eyre!(
-            "TEE runtime admission requires a complete finalized block context"
-        ));
+        return Err(ValidatorsError::TeeRuntimeAdmissionIncompleteContext.into());
     }
     let reader = RethStateReader {
         state: state_access,
@@ -161,7 +160,7 @@ pub fn read_local_tee_runtime_admission_from_state(
     let registry = outbe_teeregistry::TeeRegistry::new(storage.clone());
     let Some(node_binding) = registry
         .node_host_enclave_binding_v1(identity.reth_p2p_public)
-        .map_err(|error| eyre::eyre!("read local NodeHost TEE binding: {error}"))?
+        .map_err(|error| ValidatorsError::ReadLocalNodeHostTeeBinding(format!("{error}")))?
     else {
         return Ok(
             if context.block_number
@@ -275,19 +274,19 @@ fn read_validator_set_from_state(
     let records = match kind {
         ValidatorSetKind::ActiveValidators => vs
             .get_active_validators()
-            .map_err(|e| eyre::eyre!("failed to read active validators: {e}")),
+            .map_err(|e| ValidatorsError::ReadActiveValidators(format!("{e}"))),
         ValidatorSetKind::ConsensusParticipants => vs
             .get_active_consensus_set()
-            .map_err(|e| eyre::eyre!("failed to read active consensus set: {e}")),
+            .map_err(|e| ValidatorsError::ReadActiveConsensusSet(format!("{e}"))),
         ValidatorSetKind::ReshareTarget => vs
             .get_reshare_target_set()
-            .map_err(|e| eyre::eyre!("failed to read reshare target set: {e}")),
+            .map_err(|e| ValidatorsError::ReadReshareTargetSet(format!("{e}"))),
         ValidatorSetKind::PendingValidators => vs
             .get_pending_validators()
-            .map_err(|e| eyre::eyre!("failed to read pending validators: {e}")),
+            .map_err(|e| ValidatorsError::ReadPendingValidators(format!("{e}"))),
         ValidatorSetKind::AdmittedNonConsensus => vs
             .get_admitted_non_consensus_validators()
-            .map_err(|e| eyre::eyre!("failed to read admitted non-consensus validators: {e}")),
+            .map_err(|e| ValidatorsError::ReadAdmittedNonConsensusValidators(format!("{e}"))),
     }?;
 
     let mut public_keys = Vec::with_capacity(records.len());
@@ -296,8 +295,13 @@ fn read_validator_set_from_state(
 
     for record in &records {
         // Read full 48-byte BLS MinPk pubkey (stored across two slots by ValidatorSet).
-        let pk = bls12381::PublicKey::read(&mut record.consensus_pubkey.as_slice())
-            .map_err(|e| eyre::eyre!("invalid BLS pubkey for {}: {e}", record.validator_address))?;
+        let pk =
+            bls12381::PublicKey::read(&mut record.consensus_pubkey.as_slice()).map_err(|e| {
+                ValidatorsError::InvalidBlsPubkey {
+                    validator: record.validator_address,
+                    error: format!("{e}"),
+                }
+            })?;
 
         public_keys.push(pk);
         addresses.push(record.validator_address);
@@ -359,8 +363,9 @@ fn outbe_p2p_to_commonware(
             ingress: match ingress {
                 P2pIngress::Socket(socket) => CommonwareIngress::Socket(socket),
                 P2pIngress::Dns { host, port } => CommonwareIngress::Dns {
-                    host: Hostname::new(host)
-                        .map_err(|err| eyre::eyre!("invalid commonware hostname: {err}"))?,
+                    host: Hostname::new(host).map_err(|err| {
+                        ValidatorsError::InvalidCommonwareHostname(format!("{err}"))
+                    })?,
                     port,
                 },
             },
@@ -377,9 +382,13 @@ pub fn read_validators_at_block(
     provider: &dyn StateProviderFactory,
     block_hash: B256,
 ) -> Result<ValidatorSet> {
-    let state = provider
-        .state_by_block_hash(block_hash)
-        .map_err(|e| eyre::eyre!("failed to get state at block {block_hash}: {e}"))?;
+    let state =
+        provider
+            .state_by_block_hash(block_hash)
+            .map_err(|e| ValidatorsError::GetStateAtBlock {
+                block_hash,
+                error: format!("{e}"),
+            })?;
     read_validators_from_state(&state)
 }
 
@@ -388,9 +397,13 @@ pub fn read_consensus_validators_at_block(
     provider: &dyn StateProviderFactory,
     block_hash: B256,
 ) -> Result<ValidatorSet> {
-    let state = provider
-        .state_by_block_hash(block_hash)
-        .map_err(|e| eyre::eyre!("failed to get state at block {block_hash}: {e}"))?;
+    let state =
+        provider
+            .state_by_block_hash(block_hash)
+            .map_err(|e| ValidatorsError::GetStateAtBlock {
+                block_hash,
+                error: format!("{e}"),
+            })?;
     read_consensus_validators_from_state(&state)
 }
 
@@ -400,9 +413,13 @@ pub fn read_pending_validators_at_block(
     provider: &dyn StateProviderFactory,
     block_hash: B256,
 ) -> Result<ValidatorSet> {
-    let state = provider
-        .state_by_block_hash(block_hash)
-        .map_err(|e| eyre::eyre!("failed to get state at block {block_hash}: {e}"))?;
+    let state =
+        provider
+            .state_by_block_hash(block_hash)
+            .map_err(|e| ValidatorsError::GetStateAtBlock {
+                block_hash,
+                error: format!("{e}"),
+            })?;
     read_pending_validators_from_state(&state)
 }
 
@@ -413,9 +430,13 @@ pub fn read_admitted_non_consensus_at_block(
     provider: &dyn StateProviderFactory,
     block_hash: B256,
 ) -> Result<ValidatorSet> {
-    let state = provider
-        .state_by_block_hash(block_hash)
-        .map_err(|e| eyre::eyre!("failed to get state at block {block_hash}: {e}"))?;
+    let state =
+        provider
+            .state_by_block_hash(block_hash)
+            .map_err(|e| ValidatorsError::GetStateAtBlock {
+                block_hash,
+                error: format!("{e}"),
+            })?;
     read_admitted_non_consensus_from_state(&state)
 }
 
@@ -426,7 +447,7 @@ pub fn read_admitted_non_consensus_at_block(
 pub fn read_validators_at_latest(provider: &dyn StateProviderFactory) -> Result<ValidatorSet> {
     let state = provider
         .latest()
-        .map_err(|e| eyre::eyre!("failed to get latest state: {e}"))?;
+        .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
     read_validators_from_state(&state)
 }
 
@@ -438,7 +459,7 @@ pub fn read_consensus_validators_at_latest(
 ) -> Result<ValidatorSet> {
     let state = provider
         .latest()
-        .map_err(|e| eyre::eyre!("failed to get latest state: {e}"))?;
+        .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
     read_consensus_validators_from_state(&state)
 }
 
@@ -454,7 +475,11 @@ pub fn read_committee_snapshot_from_state(
     let mut provider = ReadOnlyStorageProvider::new(reader);
     let storage = StorageHandle::new(&mut provider);
     outbe_validatorset::state::read_committee_snapshot_for_epoch(storage, epoch).map_err(|error| {
-        eyre::eyre!("failed to read committee snapshot for epoch {epoch}: {error}")
+        ValidatorsError::ReadCommitteeSnapshot {
+            epoch,
+            error: format!("{error}"),
+        }
+        .into()
     })
 }
 
@@ -465,7 +490,7 @@ pub fn read_committee_snapshot_at_latest(
 ) -> Result<Option<outbe_validatorset::state::CommitteeSnapshot>> {
     let state = provider
         .latest()
-        .map_err(|error| eyre::eyre!("failed to get latest state: {error}"))?;
+        .map_err(|error| ValidatorsError::GetLatestState(format!("{error}")))?;
     read_committee_snapshot_from_state(&state, epoch)
 }
 
@@ -484,7 +509,7 @@ pub fn has_pending_set_change(state_access: &dyn RethStateAccess) -> Result<bool
     {
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
         vs.has_pending_set_change()
-            .map_err(|e| eyre::eyre!("failed to check pending set change: {e}"))
+            .map_err(|e| ValidatorsError::CheckPendingSetChange(format!("{e}")).into())
     }
 }
 
@@ -502,7 +527,7 @@ pub fn read_tee_offer_public_from_state(state_access: &dyn RethStateAccess) -> R
     {
         let reg = outbe_teeregistry::TeeRegistry::new(storage);
         reg.offer_public_key()
-            .map_err(|e| eyre::eyre!("failed to read tee offer public key: {e}"))
+            .map_err(|e| ValidatorsError::ReadTeeOfferPublicKey(format!("{e}")).into())
     }
 }
 
@@ -510,7 +535,7 @@ pub fn read_tee_offer_public_from_state(state_access: &dyn RethStateAccess) -> R
 pub fn read_tee_offer_public_at_latest(provider: &dyn StateProviderFactory) -> Result<B256> {
     let state = provider
         .latest()
-        .map_err(|e| eyre::eyre!("failed to get latest state: {e}"))?;
+        .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
     read_tee_offer_public_from_state(&state)
 }
 
@@ -520,13 +545,13 @@ pub fn read_tee_offer_public_at_latest(provider: &dyn StateProviderFactory) -> R
 pub fn read_tee_offer_epoch_at_latest(provider: &dyn StateProviderFactory) -> Result<u64> {
     let state = provider
         .latest()
-        .map_err(|e| eyre::eyre!("failed to get latest state: {e}"))?;
+        .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
     let reader = RethStateReader { state: &state };
     let mut provider = ReadOnlyStorageProvider::new(reader);
     let storage = StorageHandle::new(&mut provider);
     let reg = outbe_teeregistry::TeeRegistry::new(storage);
     reg.tribute_offer_epoch()
-        .map_err(|e| eyre::eyre!("failed to read tee offer epoch: {e}"))
+        .map_err(|e| ValidatorsError::ReadTeeOfferEpoch(format!("{e}")).into())
 }
 
 /// Read a validator's on-chain registered `recipient_x25519` (`TeeRegistry` per-
@@ -549,13 +574,9 @@ pub fn read_tee_recipient_x25519_from_state(
             .and_then(|binding| {
                 binding
                     .map(|binding| binding.recipient_x25519)
-                    .ok_or_else(|| {
-                        outbe_primitives::error::PrecompileError::Revert(
-                            "validator has no NodeHost enclave binding".into(),
-                        )
-                    })
+                    .ok_or_else(validator_has_no_node_host_enclave_binding_error)
             })
-            .map_err(|e| eyre::eyre!("failed to read tee recipient_x25519: {e}"))
+            .map_err(|e| ValidatorsError::ReadTeeRecipientX25519(format!("{e}")).into())
     }
 }
 
@@ -566,7 +587,7 @@ pub fn read_tee_recipient_x25519_at_latest(
 ) -> Result<B256> {
     let state = provider
         .latest()
-        .map_err(|e| eyre::eyre!("failed to get latest state: {e}"))?;
+        .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
     read_tee_recipient_x25519_from_state(&state, validator)
 }
 
@@ -590,7 +611,7 @@ fn read_active_protocol_version_at_latest(
 ) -> Result<outbe_update::ProtocolVersion> {
     let state = provider
         .latest()
-        .map_err(|e| eyre::eyre!("failed to get latest state: {e}"))?;
+        .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
     let reader = RethStateReader { state: &state };
     let mut provider = ReadOnlyStorageProvider::new(reader);
     let storage = StorageHandle::new(&mut provider);
@@ -604,7 +625,7 @@ fn read_waiting_scheduled_updates_at_latest(
 ) -> Result<Vec<outbe_update::ScheduledUpdateInfo>> {
     let state = provider
         .latest()
-        .map_err(|e| eyre::eyre!("failed to get latest state: {e}"))?;
+        .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
     let reader = RethStateReader { state: &state };
     let mut provider = ReadOnlyStorageProvider::new(reader);
     let storage = StorageHandle::new(&mut provider);
@@ -626,7 +647,7 @@ fn read_local_validator_tee_rejection(
 ) -> Result<Option<LocalTeeRuntimeRejectionV1>> {
     let Some(validator_binding) = registry
         .validator_enclave_binding_v1(validator)
-        .map_err(|error| eyre::eyre!("read local validator TEE binding: {error}"))?
+        .map_err(|error| ValidatorsError::ReadLocalValidatorTeeBinding(format!("{error}")))?
     else {
         return Ok(Some(LocalTeeRuntimeRejectionV1::MissingBinding));
     };

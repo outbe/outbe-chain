@@ -46,7 +46,7 @@ where
         let state = self
             .provider
             .state_by_block_hash(block.hash)
-            .map_err(|error| ManagerError::Provider(error.to_string()))?;
+            .map_err(ManagerError::provider)?;
         let reader = RethStateReader {
             state: state.as_ref(),
         };
@@ -195,7 +195,7 @@ where
                         hash: block.hash,
                     })
                 })
-                .map_err(|error| ManagerError::Finality(error.to_string()))
+                .map_err(ManagerError::finality)
         })
     }
 }

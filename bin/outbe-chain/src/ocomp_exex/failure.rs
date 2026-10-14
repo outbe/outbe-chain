@@ -1,9 +1,10 @@
 use super::EmbeddedOcompExExV1;
 use super::OcompExExExitV1;
+use crate::errors::OcompExExError;
 
 use alloy_primitives::B256;
 
-use eyre::{bail, WrapErr as _};
+use eyre::WrapErr as _;
 
 use futures::{FutureExt as _, StreamExt as _};
 
@@ -149,7 +150,7 @@ where
             return error.wrap_err("OCOMP live notification stream failed");
         }
     }
-    eyre::eyre!("OCOMP live notification stream closed")
+    OcompExExError::LiveNotificationStreamClosed.into()
 }
 
 pub(super) fn publish_finished_height(
@@ -243,13 +244,13 @@ pub(super) fn load_persisted_fatal_evidence(root: &Path) -> eyre::Result<Option<
     let file = File::open(&path)?;
     let metadata = file.metadata()?;
     if !metadata.is_file() || metadata.len() > MAX_FATAL_EVIDENCE_BYTES {
-        bail!("embedded OCOMP fatal evidence has an invalid shape");
+        return Err(OcompExExError::InvalidFatalEvidenceShape.into());
     }
     let mut detail = String::new();
     file.take(MAX_FATAL_EVIDENCE_BYTES + 1)
         .read_to_string(&mut detail)?;
     if detail.is_empty() || detail.len() as u64 > MAX_FATAL_EVIDENCE_BYTES {
-        bail!("embedded OCOMP fatal evidence has an invalid length");
+        return Err(OcompExExError::InvalidFatalEvidenceLength.into());
     }
     Ok(Some(detail))
 }
