@@ -17,7 +17,7 @@ use crate::runtime::emit_event;
 
 /// Forfeit-burn the unpaid gems of the called buckets whose notice period closed.
 /// Returns the gems burned.
-pub fn sweep_expired(
+pub(crate) fn sweep_expired(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,

@@ -22,33 +22,39 @@ sol! {
 
 /// Runs a test-arming call, or returns `None` for any other calldata.
 pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Result<Bytes>> {
-    if let Ok(call) = ICredisFactoryTestArming::backdateCredisForTestCall::abi_decode(data) {
-        return Some(backdate(storage, call.credisId, call.issuedAt));
+    use ICredisFactoryTestArming::*;
+    if let Ok(call) = backdateCredisForTestCall::abi_decode(data) {
+        return Some(guarded(storage, || {
+            backdate(storage, call.credisId, call.issuedAt)
+        }));
     }
-    if let Ok(call) = ICredisFactoryTestArming::closeCallNoticeForTestCall::abi_decode(data) {
-        return Some(requeue(storage, call.credisId, call.deadline));
+    if let Ok(call) = closeCallNoticeForTestCall::abi_decode(data) {
+        return Some(guarded(storage, || {
+            requeue_called(storage, call.credisId, call.deadline)
+        }));
     }
     None
 }
 
-/// Moves issuance and the interest anchor together, so no interest is skipped.
-fn backdate(storage: &StorageHandle<'_>, credis_id: U256, issued_at: u64) -> Result<Bytes> {
+fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<()>) -> Result<Bytes> {
     ensure_mutation_allowed(storage)?;
+    hook().map(|()| Bytes::new())
+}
+
+/// Moves issuance and the interest anchor together, so no interest is skipped.
+fn backdate(storage: &StorageHandle<'_>, credis_id: U256, issued_at: u64) -> Result<()> {
     let mut credis = CredisContract::new(storage.clone());
     let mut record = credis.get_credis(credis_id)?;
     record.issued_at = issued_at;
     record.last_settled_at = issued_at;
-    credis.update_credis_record(&record)?;
-    Ok(Bytes::new())
+    credis.update_credis_record(&record)
 }
 
-fn requeue(storage: &StorageHandle<'_>, credis_id: U256, deadline: u64) -> Result<Bytes> {
-    ensure_mutation_allowed(storage)?;
+fn requeue_called(storage: &StorageHandle<'_>, credis_id: U256, deadline: u64) -> Result<()> {
     let mut credis = CredisContract::new(storage.clone());
     if credis.called_deadline.read(&credis_id)? == 0 {
         return Err(CredisFactoryError::NotCalled.into());
     }
     credis.remove_called(credis_id)?;
-    credis.push_called(credis_id, deadline)?;
-    Ok(Bytes::new())
+    credis.push_called(credis_id, deadline)
 }

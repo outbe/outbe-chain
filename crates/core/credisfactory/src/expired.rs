@@ -15,7 +15,7 @@ use crate::precompile::ICredisFactory::ExpiryDeferred;
 use crate::runtime;
 
 /// Runs from CycleTick every block. Returns the number of Credis forfeited.
-pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
     let mut expiry = CredisExpiry {
         ctx,

@@ -12,16 +12,19 @@ use outbe_primitives::{
 };
 
 use outbe_intex::precompile::IIntex;
-use outbe_intex::{ExpiryHours, IntexContract};
+use outbe_intex::{ExpiryHours, IntexContract, IntexState};
 
+use crate::errors::IntexFactoryError;
 use crate::runtime::emit_event;
 
 /// Retire every group whose settlement window has closed, earliest bucket first.
-pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<()> {
+/// Returns the series expired.
+pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = IntexContract::new(ctx.storage.clone());
     let mut expiry = IntexExpiry {
         storage: &ctx.storage,
         intex: IntexContract::new(ctx.storage.clone()),
+        expired: 0,
     };
     let mut budget = SweepBudget::per_block();
     expiry_queue::sweep(
@@ -30,12 +33,14 @@ pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<()> {
         ctx.block.timestamp,
         &mut budget,
         &mut expiry,
-    )
+    )?;
+    Ok(expiry.expired)
 }
 
 struct IntexExpiry<'a, 'storage> {
     storage: &'a StorageHandle<'storage>,
     intex: IntexContract<'storage>,
+    expired: u32,
 }
 
 /// A called group's members are its series, by their place in the group.
@@ -63,7 +68,15 @@ impl ExpiryHandler<u64> for IntexExpiry<'_, '_> {
 
     /// Returns the series' unrealized load to the pool and takes it out of the group.
     fn expire_member(&mut self, key: u64, (index, series_id): (u32, SeriesId)) -> Result<()> {
-        let forfeited = outbe_intex::api::expire_series(self.storage, series_id)?;
+        let series = outbe_intex::api::read_series(self.storage, series_id)?;
+        if series.lifecycle_state()? != IntexState::Called {
+            return Err(IntexFactoryError::InvalidState {
+                expected: IntexState::Called as u8,
+                actual: series.state,
+            }
+            .into());
+        }
+        let forfeited = outbe_intex::api::forfeitable_units(self.storage, series_id)?;
         let returned = forfeited
             .promis_load_minor
             .checked_mul(U256::from(forfeited.units))
@@ -79,7 +92,9 @@ impl ExpiryHandler<u64> for IntexExpiry<'_, '_> {
         }
         let (iso_code, worldwide_day) = IntexContract::unscoped(key);
         self.intex
-            .remove_group_member(iso_code, worldwide_day, index)
+            .remove_group_member(iso_code, worldwide_day, index)?;
+        self.expired = self.expired.saturating_add(1);
+        Ok(())
     }
 
     fn deferred(&mut self, key: u64, retry_at: u64) -> Result<()> {

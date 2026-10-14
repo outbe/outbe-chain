@@ -7,6 +7,8 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum IntexFactoryError {
+    #[error("invalid lifecycle state: expected {expected}, actual {actual}")]
+    InvalidState { expected: u8, actual: u8 },
     #[error("zero address")]
     ZeroAddress,
     #[error("amount must be positive")]

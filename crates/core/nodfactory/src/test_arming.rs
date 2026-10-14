@@ -42,7 +42,7 @@ pub(crate) fn dispatch(
     }
     if let Ok(call) = closeCallNoticeForTestCall::abi_decode(data) {
         return Some(guarded(storage, || {
-            requeue_called_bucket(storage, call.bucketKey, call.deadline)
+            requeue_called(storage, call.bucketKey, call.deadline)
         }));
     }
     None
@@ -89,7 +89,7 @@ fn issue(
 }
 
 /// Moves a called bucket's queue entry onto `deadline`.
-fn requeue_called_bucket(
+fn requeue_called(
     storage: &StorageHandle<'_>,
     bucket_key: B256,
     deadline: u64,

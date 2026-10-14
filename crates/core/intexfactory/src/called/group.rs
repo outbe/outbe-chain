@@ -1,5 +1,7 @@
 use outbe_intex::precompile::IIntex;
-use outbe_intex::{Group, IntexContract, IntexError, IntexState, SeriesId};
+use outbe_intex::{Group, IntexContract, IntexState, SeriesId};
+
+use crate::errors::IntexFactoryError;
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
     call_breach::BreachTerms,
@@ -84,7 +86,7 @@ pub(crate) fn mark_called(
 ) -> Result<()> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
     if series.lifecycle_state()? != IntexState::Issued {
-        return Err(IntexError::InvalidState {
+        return Err(IntexFactoryError::InvalidState {
             expected: IntexState::Issued as u8,
             actual: series.state,
         }

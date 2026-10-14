@@ -505,6 +505,30 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
 }
 
 #[test]
+fn a_series_that_was_never_called_does_not_expire() {
+    with_factory(|s| {
+        select_prod_profile(&s);
+        let now = ISSUED_AT as u64;
+        runtime::issue_intex(&s, sample(7)).unwrap();
+        IntexContract::new(s.clone())
+            .seed_called_group(REFERENCE_ISO, WorldwideDay::new(7), now + DAY, &[sid(7)])
+            .unwrap();
+
+        let due = IntexContract::bucket_end(IntexContract::deadline_bucket(now + DAY));
+        let ctx =
+            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, due, CHAIN_ID), s.clone());
+        assert_eq!(crate::expired::sweep_expired(&ctx).unwrap(), 0);
+        assert_eq!(
+            outbe_intex::api::read_series(&s, sid(7))
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            outbe_intex::IntexState::Issued
+        );
+    });
+}
+
+#[test]
 fn a_node_local_failure_while_expiring_fails_the_sweep() {
     let mut provider = factory_provider();
     let now = ISSUED_AT as u64;

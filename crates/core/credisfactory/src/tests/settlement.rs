@@ -130,7 +130,8 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
             advance_to(&storage, CREATED_AT + DAY);
             for (payment, remaining) in [(1u64, 5u64), (1, 4), (1, 3), (1, 2), (5, 0), (1, 0)] {
                 assert_eq!(
-                    runtime::settle_credis(storage.clone(), bob(), id, U256::from(payment)).unwrap(),
+                    runtime::settle_credis(storage.clone(), bob(), id, U256::from(payment))
+                        .unwrap(),
                     (U256::from(payment), U256::ZERO)
                 );
                 assert_eq!(view_pledged(&storage, alice()), U256::from(remaining));
@@ -701,7 +702,9 @@ fn the_owner_forfeits_an_issued_credis_burning_its_sources_pledge() {
         );
 
         assert!(forfeit_through_abi(&storage, bob(), credis_id, U256::ZERO).is_err());
-        assert!(runtime::settle_credis(storage.clone(), bob(), credis_id, U256::from(1u64)).is_err());
+        assert!(
+            runtime::settle_credis(storage.clone(), bob(), credis_id, U256::from(1u64)).is_err()
+        );
         assert_eq!(unallocated(&storage), pledge_cost());
     });
     teardown();
