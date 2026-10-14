@@ -1,5 +1,5 @@
 //! Direct-pledge issuance plus atomic repayment/forfeiture tests.
-use crate::{runtime, tests::common::*};
+use crate::{runtime, tests::*};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_credis::{CredisContract, CredisState};
