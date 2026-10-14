@@ -1,3 +1,9 @@
+//! Gem: the terms, profile and data of a Gem. Bodies, buckets, the call bins and the
+//! expiry queue live here, with the read-time state and qualification.
+//!
+//! GemFactory applies every rule and runs the call and forfeit sweeps through [`api`].
+//! The precompile surface is the Gem NFT and its views.
+
 pub mod api;
 pub mod config;
 pub mod constants;

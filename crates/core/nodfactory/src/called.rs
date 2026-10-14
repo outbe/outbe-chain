@@ -6,7 +6,7 @@
 //! price exceeded its call price on at least its `call_threshold_seconds` of the
 //! trailing `call_window_seconds`. The call queues it on its deadline, and every
 //! CycleTick forfeit-burns the unpaid Nods of the buckets whose
-//! `call_notice_period_seconds` lapsed ([`crate::expired::sweep_expired`]).
+//! `call_notice_period_seconds` lapsed (`expired::sweep_expired`).
 //!
 //! Issuance seals all four terms onto the bucket, and this scan reads them back
 //! from it. Retuning a constant therefore leaves every issued bucket on the
@@ -151,17 +151,19 @@ fn call_slice(
     let finished = call_sweep::walk_day(
         ctx,
         pinned_day,
-        &nod.call_currency_cursor,
-        |iso_code| CallBins(nod, iso_code),
-        |iso_code| scan_terms(nod, iso_code, &params),
-        |iso_code| {
-            emit_event(
-                &ctx.storage,
-                INodFactory::CallScanSkipped {
-                    referenceCurrency: iso_code,
-                    utcDay: pinned_day,
-                },
-            )
+        call_sweep::CallIndex {
+            currency_cursor: &nod.call_currency_cursor,
+            bins: |iso_code| CallBins(nod, iso_code),
+            scan_terms: |iso_code| scan_terms(nod, iso_code, &params),
+            skipped: |iso_code| {
+                emit_event(
+                    &ctx.storage,
+                    INodFactory::CallScanSkipped {
+                        referenceCurrency: iso_code,
+                        utcDay: pinned_day,
+                    },
+                )
+            },
         },
         |iso_code, window, ceiling, budget| {
             let scan = CurrencyScan {

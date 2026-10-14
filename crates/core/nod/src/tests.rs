@@ -239,8 +239,10 @@ fn same_day_and_entry_in_two_currencies_are_two_buckets_in_two_bins() {
         begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &usd,
             entry,
             crate::test_support::sealed_terms(&storage, &usd, entry),
@@ -248,8 +250,10 @@ fn same_day_and_entry_in_two_currencies_are_two_buckets_in_two_bins() {
         .unwrap();
         api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &eur,
             entry,
             crate::test_support::sealed_terms(&storage, &eur, entry),
@@ -302,8 +306,10 @@ fn same_day_and_currency_at_two_entries_are_two_buckets_with_their_own_terms() {
         begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &low,
             low_entry,
             crate::test_support::sealed_terms(&storage, &low, low_entry),
@@ -311,8 +317,10 @@ fn same_day_and_currency_at_two_entries_are_two_buckets_with_their_own_terms() {
         .unwrap();
         api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &high,
             high_entry,
             crate::test_support::sealed_terms(&storage, &high, high_entry),
@@ -359,8 +367,10 @@ fn qualification_skips_days_before_first_full_day() {
         begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &body,
             entry,
             crate::test_support::sealed_terms(&storage, &body, entry),
@@ -389,8 +399,10 @@ fn zero_reference_currency_is_rejected_at_issuance() {
         begin_block(storage.clone(), &scope).unwrap();
         let error = api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &body,
             U256::from(5),
             crate::test_support::sealed_terms(&storage, &body, U256::from(5)),
@@ -422,8 +434,10 @@ fn a_bucket_key_that_does_not_match_its_inputs_is_rejected() {
         begin_block(storage.clone(), &scope).unwrap();
         let error = api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &body,
             U256::from(5),
             crate::test_support::sealed_terms(&storage, &body, U256::from(5)),
@@ -452,8 +466,10 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
         let item = item(Address::repeat_byte(0x86), U256::from(20), USD);
         api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &item,
             U256::from(20),
             crate::test_support::sealed_terms(&storage, &item, U256::from(20)),
@@ -748,8 +764,10 @@ fn qualification_announces_nothing_and_settlement_updates_the_nod() {
         for (body, entry) in [(&first, 500_000u64), (&second, 600_000)] {
             api::add_nod(
                 &storage,
-                &scope,
-                &parent,
+                outbe_compressed_entities::ExecutionReaders {
+                    scope: &scope,
+                    parent: &parent,
+                },
                 body,
                 U256::from(entry),
                 crate::test_support::sealed_terms(&storage, body, U256::from(entry)),
@@ -807,8 +825,10 @@ fn transfer_logs_announce_issuance_and_removal() {
         begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &body,
             U256::from(5),
             crate::test_support::sealed_terms(&storage, &body, U256::from(5)),
@@ -942,8 +962,10 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &body,
             U256::from(400_000),
             crate::test_support::sealed_terms(&storage, &body, U256::from(400_000)),
@@ -1046,8 +1068,10 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
         let item = item(Address::repeat_byte(0x88), U256::from(20), USD);
         api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &item,
             U256::from(20),
             crate::test_support::sealed_terms(&storage, &item, U256::from(20)),
@@ -1132,8 +1156,7 @@ fn seed_public_lifecycle(
     let item = item(Address::repeat_byte(0x87), U256::from(20), USD);
     api::add_nod(
         storage,
-        scope,
-        parent,
+        outbe_compressed_entities::ExecutionReaders { scope, parent },
         &item,
         U256::from(20),
         crate::test_support::sealed_terms(storage, &item, U256::from(20)),

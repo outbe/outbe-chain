@@ -108,11 +108,7 @@ pub(super) fn dispatch(
     }
 }
 
-struct DkgOpenRequest {
-    ceremony_id: B256,
-    round: u64,
-    participants: Vec<outbe_tee::protocol::ParticipantAnnounce>,
-}
+use super::dkg::DkgOpenRequest;
 
 struct FoundingKeyRequest {
     ceremony_id: B256,
@@ -203,11 +199,6 @@ fn open(
         ..
     } = context;
     let DispatchInitializationContext { initialization, .. } = context;
-    let DkgOpenRequest {
-        ceremony_id,
-        round,
-        participants,
-    } = request;
     let network_binding = initialization
         .ok_or_else(|| "DkgOpen requires initialized state".to_string())
         .and_then(InitializationState::network_binding)
@@ -215,14 +206,7 @@ fn open(
             binding.ok_or_else(|| "DkgOpen requires a committed network binding".to_string())
         });
     match network_binding {
-        Ok(network_binding) => dispatch_dkg_open(
-            keys,
-            dkg,
-            &network_binding,
-            ceremony_id,
-            round,
-            participants,
-        ),
+        Ok(network_binding) => dispatch_dkg_open(keys, dkg, &network_binding, request),
         Err(message) => EnclaveResponse::Error { message },
     }
 }

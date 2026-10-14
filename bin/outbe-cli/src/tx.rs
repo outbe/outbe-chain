@@ -114,8 +114,15 @@ impl TxSigner {
             .checked_add(gas_limit / 5)
             .ok_or_else(|| eyre::eyre!("gas limit buffer overflow"))?;
 
-        let raw_tx =
-            self.sign_legacy_tx(nonce, gas_price, gas_limit, to, value, &data, chain_id)?;
+        let raw_tx = self.sign_legacy_tx(LegacyTx {
+            nonce,
+            gas_price,
+            gas_limit,
+            to,
+            value,
+            data: &data,
+            chain_id,
+        })?;
 
         client.eth_send_raw_transaction(&raw_tx).await
     }
@@ -134,34 +141,31 @@ impl TxSigner {
         let chain_id = client.eth_chain_id().await?;
         let nonce = client.eth_get_transaction_count(self.address).await?;
         let gas_price = buffered_gas_price(latest_base_fee(client).await?);
-        let raw_tx =
-            self.sign_legacy_tx(nonce, gas_price, gas_limit, to, value, &data, chain_id)?;
+        let raw_tx = self.sign_legacy_tx(LegacyTx {
+            nonce,
+            gas_price,
+            gas_limit,
+            to,
+            value,
+            data: &data,
+            chain_id,
+        })?;
         client.eth_send_raw_transaction(&raw_tx).await
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn sign_legacy_tx(
-        &self,
-        nonce: u64,
-        gas_price: U256,
-        gas_limit: u64,
-        to: Address,
-        value: U256,
-        data: &[u8],
-        chain_id: u64,
-    ) -> Result<Vec<u8>> {
+    fn sign_legacy_tx(&self, tx: LegacyTx<'_>) -> Result<Vec<u8>> {
         // EIP-155: hash [nonce, gasPrice, gasLimit, to, value, data, chainId, 0, 0]
         let mut unsigned = Vec::new();
         rlp_encode_list(
             &mut unsigned,
             &[
-                &rlp_encode_u64(nonce),
-                &rlp_encode_u256(gas_price),
-                &rlp_encode_u64(gas_limit),
-                &rlp_encode_bytes(to.as_slice()),
-                &rlp_encode_u256(value),
-                &rlp_encode_bytes(data),
-                &rlp_encode_u64(chain_id),
+                &rlp_encode_u64(tx.nonce),
+                &rlp_encode_u256(tx.gas_price),
+                &rlp_encode_u64(tx.gas_limit),
+                &rlp_encode_bytes(tx.to.as_slice()),
+                &rlp_encode_u256(tx.value),
+                &rlp_encode_bytes(tx.data),
+                &rlp_encode_u64(tx.chain_id),
                 &rlp_encode_u64(0),
                 &rlp_encode_u64(0),
             ],
@@ -178,19 +182,19 @@ impl TxSigner {
         let sig_bytes = sig.to_bytes();
         let r = U256::from_be_slice(&sig_bytes[..32]);
         let s = U256::from_be_slice(&sig_bytes[32..]);
-        let v = chain_id * 2 + 35 + recid.to_byte() as u64;
+        let v = tx.chain_id * 2 + 35 + recid.to_byte() as u64;
 
         // Encode signed tx: [nonce, gasPrice, gasLimit, to, value, data, v, r, s]
         let mut signed = Vec::new();
         rlp_encode_list(
             &mut signed,
             &[
-                &rlp_encode_u64(nonce),
-                &rlp_encode_u256(gas_price),
-                &rlp_encode_u64(gas_limit),
-                &rlp_encode_bytes(to.as_slice()),
-                &rlp_encode_u256(value),
-                &rlp_encode_bytes(data),
+                &rlp_encode_u64(tx.nonce),
+                &rlp_encode_u256(tx.gas_price),
+                &rlp_encode_u64(tx.gas_limit),
+                &rlp_encode_bytes(tx.to.as_slice()),
+                &rlp_encode_u256(tx.value),
+                &rlp_encode_bytes(tx.data),
                 &rlp_encode_u64(v),
                 &rlp_encode_u256(r),
                 &rlp_encode_u256(s),
@@ -201,19 +205,19 @@ impl TxSigner {
     }
 
     #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn sign_legacy_tx_for_test(
-        &self,
-        nonce: u64,
-        gas_price: U256,
-        gas_limit: u64,
-        to: Address,
-        value: U256,
-        data: &[u8],
-        chain_id: u64,
-    ) -> Result<Vec<u8>> {
-        self.sign_legacy_tx(nonce, gas_price, gas_limit, to, value, data, chain_id)
+    pub(crate) fn sign_legacy_tx_for_test(&self, tx: LegacyTx<'_>) -> Result<Vec<u8>> {
+        self.sign_legacy_tx(tx)
     }
+}
+
+pub(crate) struct LegacyTx<'a> {
+    pub(crate) nonce: u64,
+    pub(crate) gas_price: U256,
+    pub(crate) gas_limit: u64,
+    pub(crate) to: Address,
+    pub(crate) value: U256,
+    pub(crate) data: &'a [u8],
+    pub(crate) chain_id: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -501,16 +505,17 @@ mod tests {
 
     fn expected_raw_tx(signer: &TxSigner, gas_estimate: u64) -> Vec<u8> {
         let gas_limit = gas_estimate + gas_estimate / 5;
+        let data = tx_data();
         signer
-            .sign_legacy_tx_for_test(
-                NONCE,
-                buffered_gas_price(gas_price()),
+            .sign_legacy_tx_for_test(LegacyTx {
+                nonce: NONCE,
+                gas_price: buffered_gas_price(gas_price()),
                 gas_limit,
-                tx_target(),
-                tx_value(),
-                &tx_data(),
-                CHAIN_ID,
-            )
+                to: tx_target(),
+                value: tx_value(),
+                data: &data,
+                chain_id: CHAIN_ID,
+            })
             .unwrap()
     }
 

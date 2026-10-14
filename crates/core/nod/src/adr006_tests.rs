@@ -67,8 +67,10 @@ fn reverted_issuance_rolls_back_overlay_compact_state_and_events() {
         let outcome: Result<()> = storage.with_checkpoint(|| {
             api::add_nod(
                 &storage,
-                &scope,
-                &parent,
+                outbe_compressed_entities::ExecutionReaders {
+                    scope: &scope,
+                    parent: &parent,
+                },
                 &body,
                 U256::from(5),
                 crate::test_support::sealed_terms(&storage, &body, U256::from(5)),
@@ -115,8 +117,10 @@ fn membership_changes_preserve_bucket_body_and_commitment_until_last_removal() {
         begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &first,
             U256::from(5),
             crate::test_support::sealed_terms(&storage, &first, U256::from(5)),
@@ -128,8 +132,10 @@ fn membership_changes_preserve_bucket_body_and_commitment_until_last_removal() {
             .unwrap();
         api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &second,
             U256::from(5),
             crate::test_support::sealed_terms(&storage, &second, U256::from(5)),
@@ -246,8 +252,10 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
         begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &first,
             U256::from(5),
             crate::test_support::sealed_terms(&storage, &first, U256::from(5)),
@@ -263,8 +271,10 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
             .unwrap();
         let error = api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &second,
             U256::from(5),
             crate::test_support::sealed_terms(&storage, &second, U256::from(5)),
@@ -548,8 +558,7 @@ fn seed_bucket_issued(
         crate::identity::bucket_key(body.worldwide_day, entry, issuance.reference_currency);
     api::add_nod(
         storage,
-        scope,
-        parent,
+        outbe_compressed_entities::ExecutionReaders { scope, parent },
         &body,
         entry,
         crate::test_support::sealed_terms(storage, &body, entry),

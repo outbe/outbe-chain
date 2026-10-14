@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    delete, list, mint, read, update, BodyInput, EntityRef, ExecutionScope, IdPageRequest,
-    ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
+    delete, list, mint, read, update, BodyInput, EntityRef, ExecutionReaders, ExecutionScope,
+    IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
@@ -178,12 +178,12 @@ impl NodContract<'_> {
     /// Records compact issuance state and delegates both bodies to the generic lifecycle.
     pub(crate) fn record_nod_issued(
         &mut self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
+        readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
         item: &NodItemState,
         entry_price_minor: U256,
         call_terms: Option<CallTerms>,
     ) -> Result<()> {
+        let ExecutionReaders { scope, parent } = readers;
         crate::issuance::validate_item(item, entry_price_minor)?;
         if self
             .get_item_verified(scope, parent, item.nod_id)?
@@ -478,7 +478,7 @@ impl NodContract<'_> {
         expiry_queue::push(&ExpiryHours(self), bucket_key, deadline)
     }
 
-    /// Reads back the terms [`Self::seal_bucket_call_terms`] sealed at issuance.
+    /// Reads back the terms `seal_bucket_call_terms` sealed at issuance.
     pub fn read_call_terms(&self, bucket_key: B256) -> Result<CallTerms> {
         Ok(CallTerms {
             call_price_minor: self.bucket_call_price_minor.read(&bucket_key)?,

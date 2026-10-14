@@ -140,18 +140,7 @@ impl<R: Rpc + Sync> FinalizedAdmissionRecoveryIoV1 for CliFinalizedAdmissionIoV1
         &mut self,
     ) -> impl std::future::Future<Output = std::result::Result<[u8; 32], FinalizedAdmissionAttemptErrorV1>>
     {
-        stream_finalized_admission_attempt_v1(
-            self.rpc,
-            self.finalized_height,
-            self.context,
-            self.artifact,
-            self.anchor_outcome,
-            self.expected_intent_hash,
-            self.expected_offer_public,
-            self.expected_key_epoch,
-            self.expected_offer_epoch,
-            self.enclave,
-        )
+        stream_finalized_admission_attempt_v1(self)
     }
 
     fn reconnect_exact(&mut self) -> std::result::Result<(), TransportError> {
@@ -280,42 +269,37 @@ pub(in super::super) async fn load_finalized_admission_anchor_v1(
     eyre::bail!("finalized history has no epoch-0 BoundaryOutcome");
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn stream_finalized_admission_attempt_v1(
-    rpc: &(impl Rpc + Sync),
-    finalized_height: u64,
-    context: &outbe_tee::dcap_protocol::DcapOnboardingContextV1,
-    artifact: &[u8],
-    anchor_outcome: &[u8],
-    expected_intent_hash: B256,
-    expected_offer_public: [u8; 32],
-    expected_key_epoch: u64,
-    expected_offer_epoch: u64,
-    enclave: &mut JoinEnclave,
+async fn stream_finalized_admission_attempt_v1<R: Rpc + Sync>(
+    attempt: &mut CliFinalizedAdmissionIoV1<'_, R>,
 ) -> std::result::Result<[u8; 32], FinalizedAdmissionAttemptErrorV1> {
-    let request_hash = enclave.begin_finalized_admission_v1(
-        artifact,
-        anchor_outcome,
-        expected_intent_hash,
-        expected_offer_public,
-        expected_key_epoch,
-        expected_offer_epoch,
+    let request_hash = attempt.enclave.begin_finalized_admission_v1(
+        outbe_tee::FinalizedAdmissionBeginInputV1 {
+            artifact: attempt.artifact,
+            anchor_outcome: attempt.anchor_outcome,
+            expected_intent_hash: attempt.expected_intent_hash,
+            expected_tribute_offer_public: attempt.expected_offer_public,
+            expected_key_epoch: attempt.expected_key_epoch,
+            expected_tribute_offer_epoch: attempt.expected_offer_epoch,
+        },
     )?;
 
-    let slots = onboarding_registry_slots_v1(context);
+    let slots = onboarding_registry_slots_v1(attempt.context);
     let slot_params = slots
         .iter()
         .map(|slot| format!("{slot:#x}"))
         .collect::<Vec<_>>();
-    let (finalized_height, opening) =
-        super::super::admission_history::registry_opening(rpc, finalized_height, &slot_params)
-            .await?;
+    let (finalized_height, opening) = super::super::admission_history::registry_opening(
+        attempt.rpc,
+        attempt.finalized_height,
+        &slot_params,
+    )
+    .await?;
 
     let mut next_transition_epoch = 1_u64;
     let mut admission = None;
     for height in 1..=finalized_height {
         let Some(public) = super::super::admission_history::admission_public(
-            rpc,
+            attempt.rpc,
             height,
             finalized_height,
             next_transition_epoch,
@@ -335,7 +319,7 @@ async fn stream_finalized_admission_attempt_v1(
                     .clone()
                     .encode_canonical()
                     .map_err(|error| eyre::eyre!("encode committee transition: {error}"))?;
-                enclave.upload_finalized_admission_record_v1(
+                attempt.enclave.upload_finalized_admission_record_v1(
                     request_hash,
                     FinalizedAdmissionRecordKindV1::CommitteeTransition,
                     &transition,
@@ -378,12 +362,13 @@ async fn stream_finalized_admission_attempt_v1(
     }
     .encode_canonical()
     .map_err(|error| eyre::eyre!("encode finalized onboarding admission witness: {error}"))?;
-    enclave.upload_finalized_admission_record_v1(
+    attempt.enclave.upload_finalized_admission_record_v1(
         request_hash,
         FinalizedAdmissionRecordKindV1::Admission,
         &admission_witness,
     )?;
-    enclave
-        .finish_finalized_admission_v1(request_hash, expected_offer_public)
+    attempt
+        .enclave
+        .finish_finalized_admission_v1(request_hash, attempt.expected_offer_public)
         .map_err(Into::into)
 }

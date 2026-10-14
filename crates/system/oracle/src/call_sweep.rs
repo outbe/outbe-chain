@@ -122,19 +122,36 @@ pub fn continue_day<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut
     Ok(called)
 }
 
+/// How a day's walk reads one right's call index. `scan_terms` names the widest terms a
+/// currency's entries were sealed with, and `skipped` reports a currency whose window
+/// price fits no bin.
+pub struct CallIndex<'c, 's, Bins, Terms, Skipped> {
+    pub currency_cursor: &'c Value<'s, u32>,
+    pub bins: Bins,
+    pub scan_terms: Terms,
+    pub skipped: Skipped,
+}
+
 /// One block's slice of the pinned day: every currency from the cursor, each walked by
-/// `walk` up to the highest bin its window can have breached. `scan_terms` names the
-/// widest terms a currency's entries were sealed with, and `skipped` reports a currency
-/// whose window price fits no bin. Returns whether the day ended.
-pub fn walk_day<'s, B: CallBinStore<'s>>(
+/// `walk` up to the highest bin its window can have breached. Returns whether the day ended.
+pub fn walk_day<'s, B, Bins, Terms, Skipped>(
     ctx: &BlockRuntimeContext,
     pinned_day: u32,
-    currency_cursor: &Value<'s, u32>,
-    bins: impl Fn(u16) -> B,
-    mut scan_terms: impl FnMut(u16) -> Result<ScanTerms>,
-    mut skipped: impl FnMut(u16) -> Result<()>,
+    index: CallIndex<'_, 's, Bins, Terms, Skipped>,
     mut walk: impl FnMut(u16, &CallWindow, u32, &mut SweepBudget) -> Result<bool>,
-) -> Result<bool> {
+) -> Result<bool>
+where
+    B: CallBinStore<'s>,
+    Bins: Fn(u16) -> B,
+    Terms: FnMut(u16) -> Result<ScanTerms>,
+    Skipped: FnMut(u16) -> Result<()>,
+{
+    let CallIndex {
+        currency_cursor,
+        bins,
+        mut scan_terms,
+        mut skipped,
+    } = index;
     let currencies = get_all_reference_currencies(ctx)?;
     let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
     let mut budget = SweepBudget::per_block();

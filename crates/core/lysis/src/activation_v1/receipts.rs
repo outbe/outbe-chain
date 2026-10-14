@@ -5,8 +5,8 @@ use outbe_ocomp_protocol::{
     receipts::{
         apply_event_summary_hash, desis_request_brief_hash, CarryOverReceiptV1,
         CarryOverStateEventProjectionV1, EffectBindingV1, NodBatchReceiptV1,
-        NodStateEventProjectionV1, RequestLimitSplitReceiptV1,
-        TributeReceiptV1, TributeStateEventProjectionV1,
+        NodStateEventProjectionV1, RequestLimitSplitReceiptV1, TributeReceiptV1,
+        TributeStateEventProjectionV1,
     },
     registry::HashDomain,
     ProtocolError, SchemaLimits,

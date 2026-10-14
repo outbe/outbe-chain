@@ -168,24 +168,9 @@ impl WorkerInbox {
         unit_id: B256,
         bytes: &[u8],
     ) -> Result<StagedWorkerArtifact, WorkerInboxError> {
-        let declared = u64::try_from(bytes.len()).map_err(|_| WorkerInboxError::LengthOverflow)?;
-        if declared > self.limits.max_artifact_bytes {
-            return Err(WorkerInboxError::ArtifactLimitExceeded {
-                limit: self.limits.max_artifact_bytes,
-                actual: declared,
-            });
-        }
+        let declared = self.validate_artifact_size(bytes.len())?;
         let _lock = InboxLock::acquire(&self.root)?;
-        let attempted = self
-            .used_bytes()?
-            .checked_add(declared)
-            .ok_or(WorkerInboxError::LengthOverflow)?;
-        if attempted > self.limits.max_total_bytes {
-            return Err(WorkerInboxError::TotalLimitExceeded {
-                limit: self.limits.max_total_bytes,
-                attempted,
-            });
-        }
+        self.ensure_total_capacity(declared)?;
 
         let staging_path = self.next_staging_path();
         let result = self.stage_inner(unit_id, bytes, declared, &staging_path);
@@ -202,52 +187,21 @@ impl WorkerInbox {
         unit_id: B256,
         bytes: &[u8],
     ) -> Result<StagedWorkerArtifact, WorkerInboxError> {
-        let declared = u64::try_from(bytes.len()).map_err(|_| WorkerInboxError::LengthOverflow)?;
-        if declared > self.limits.max_artifact_bytes {
-            return Err(WorkerInboxError::ArtifactLimitExceeded {
-                limit: self.limits.max_artifact_bytes,
-                actual: declared,
-            });
-        }
+        let declared = self.validate_artifact_size(bytes.len())?;
         let candidate = staged_descriptor(unit_id, bytes)?;
         let _lock = InboxLock::acquire(&self.root)?;
         let artifact_path = self.artifact_path(unit_id);
-        match fs::symlink_metadata(&artifact_path) {
-            Ok(metadata)
-                if metadata.file_type().is_file() && !metadata.file_type().is_symlink() =>
-            {
-                return match self.read_verified(&candidate) {
-                    Ok(_) => Ok(candidate),
-                    Err(
-                        WorkerInboxError::LengthMismatch { .. }
-                        | WorkerInboxError::DigestMismatch { .. },
-                    ) => Err(WorkerInboxError::ArtifactConflict { unit_id }),
-                    Err(error) => Err(error),
-                };
-            }
-            Ok(_) => {
-                return Err(WorkerInboxError::UnsafeArtifact {
-                    path: artifact_path,
-                });
-            }
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => {
-                return Err(WorkerInboxError::Io {
-                    path: artifact_path,
-                    source,
-                });
-            }
+        if self.check_existing_regular_file(&artifact_path)? {
+            return match self.read_verified(&candidate) {
+                Ok(_) => Ok(candidate),
+                Err(
+                    WorkerInboxError::LengthMismatch { .. }
+                    | WorkerInboxError::DigestMismatch { .. },
+                ) => Err(WorkerInboxError::ArtifactConflict { unit_id }),
+                Err(error) => Err(error),
+            };
         }
-        let attempted = self
-            .used_bytes()?
-            .checked_add(declared)
-            .ok_or(WorkerInboxError::LengthOverflow)?;
-        if attempted > self.limits.max_total_bytes {
-            return Err(WorkerInboxError::TotalLimitExceeded {
-                limit: self.limits.max_total_bytes,
-                attempted,
-            });
-        }
+        self.ensure_total_capacity(declared)?;
         let staging_path = self.next_staging_path();
         let result = self.stage_inner(unit_id, bytes, declared, &staging_path);
         let _ = fs::remove_file(&staging_path);
@@ -262,51 +216,7 @@ impl WorkerInbox {
         bytes: &[u8],
         limits: &SchemaLimits,
     ) -> Result<CasObjectRefV1, WorkerInboxError> {
-        ShuffleRunArtifactV1::decode_canonical(bytes, limits)
-            .map_err(WorkerInboxError::InvalidShuffleObject)?;
-        let declared = u64::try_from(bytes.len()).map_err(|_| WorkerInboxError::LengthOverflow)?;
-        if declared > self.limits.max_artifact_bytes {
-            return Err(WorkerInboxError::ArtifactLimitExceeded {
-                limit: self.limits.max_artifact_bytes,
-                actual: declared,
-            });
-        }
-        let reference = content_descriptor(bytes, ObjectKind::ShuffleRunArtifactV1)?;
-        let _lock = InboxLock::acquire(&self.root)?;
-        let object_path = self.object_path(reference.transport_digest);
-        match fs::symlink_metadata(&object_path) {
-            Ok(metadata)
-                if metadata.file_type().is_file() && !metadata.file_type().is_symlink() =>
-            {
-                self.read_shuffle_object(&reference, limits)?;
-                return Ok(reference);
-            }
-            Ok(_) => {
-                return Err(WorkerInboxError::UnsafeArtifact { path: object_path });
-            }
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => {
-                return Err(WorkerInboxError::Io {
-                    path: object_path,
-                    source,
-                });
-            }
-        }
-        let attempted = self
-            .used_bytes()?
-            .checked_add(declared)
-            .ok_or(WorkerInboxError::LengthOverflow)?;
-        if attempted > self.limits.max_total_bytes {
-            return Err(WorkerInboxError::TotalLimitExceeded {
-                limit: self.limits.max_total_bytes,
-                attempted,
-            });
-        }
-        let staging_path = self.next_staging_path();
-        let result = self.stage_shuffle_inner(&reference, bytes, &staging_path);
-        let _ = fs::remove_file(&staging_path);
-        result?;
-        Ok(reference)
+        self.stage_typed_object(bytes, limits, TypedObjectKind::Shuffle)
     }
 
     pub fn read_shuffle_object(
@@ -314,19 +224,7 @@ impl WorkerInbox {
         reference: &CasObjectRefV1,
         limits: &SchemaLimits,
     ) -> Result<VerifiedWorkerObject, WorkerInboxError> {
-        if reference.expected_ocb1_kind != Some(ObjectKind::ShuffleRunArtifactV1.tag()) {
-            return Err(WorkerInboxError::InvalidShuffleObject(
-                ProtocolError::InvalidInvariant("typed shuffle child CAS reference"),
-            ));
-        }
-        let path = self.object_path(reference.transport_digest);
-        let bytes = read_verified_bytes(&path, reference, self.limits.max_artifact_bytes)?;
-        ShuffleRunArtifactV1::decode_canonical(&bytes, limits)
-            .map_err(WorkerInboxError::InvalidShuffleObject)?;
-        Ok(VerifiedWorkerObject {
-            reference: reference.clone(),
-            bytes,
-        })
+        self.read_typed_object(reference, limits, TypedObjectKind::Shuffle)
     }
 
     /// Stages one bounded Lysis result chunk by its transport digest.
@@ -337,51 +235,7 @@ impl WorkerInbox {
         bytes: &[u8],
         limits: &SchemaLimits,
     ) -> Result<CasObjectRefV1, WorkerInboxError> {
-        ResultChunkV1::decode_canonical(bytes, limits)
-            .map_err(WorkerInboxError::InvalidResultChunk)?;
-        let declared = u64::try_from(bytes.len()).map_err(|_| WorkerInboxError::LengthOverflow)?;
-        if declared > self.limits.max_artifact_bytes {
-            return Err(WorkerInboxError::ArtifactLimitExceeded {
-                limit: self.limits.max_artifact_bytes,
-                actual: declared,
-            });
-        }
-        let reference = content_descriptor(bytes, ObjectKind::ResultChunkV1)?;
-        let _lock = InboxLock::acquire(&self.root)?;
-        let object_path = self.object_path(reference.transport_digest);
-        match fs::symlink_metadata(&object_path) {
-            Ok(metadata)
-                if metadata.file_type().is_file() && !metadata.file_type().is_symlink() =>
-            {
-                self.read_result_chunk(&reference, limits)?;
-                return Ok(reference);
-            }
-            Ok(_) => {
-                return Err(WorkerInboxError::UnsafeArtifact { path: object_path });
-            }
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => {
-                return Err(WorkerInboxError::Io {
-                    path: object_path,
-                    source,
-                });
-            }
-        }
-        let attempted = self
-            .used_bytes()?
-            .checked_add(declared)
-            .ok_or(WorkerInboxError::LengthOverflow)?;
-        if attempted > self.limits.max_total_bytes {
-            return Err(WorkerInboxError::TotalLimitExceeded {
-                limit: self.limits.max_total_bytes,
-                attempted,
-            });
-        }
-        let staging_path = self.next_staging_path();
-        let result = self.stage_shuffle_inner(&reference, bytes, &staging_path);
-        let _ = fs::remove_file(&staging_path);
-        result?;
-        Ok(reference)
+        self.stage_typed_object(bytes, limits, TypedObjectKind::ResultChunk)
     }
 
     pub fn read_result_chunk(
@@ -389,15 +243,44 @@ impl WorkerInbox {
         reference: &CasObjectRefV1,
         limits: &SchemaLimits,
     ) -> Result<VerifiedWorkerObject, WorkerInboxError> {
-        if reference.expected_ocb1_kind != Some(ObjectKind::ResultChunkV1.tag()) {
-            return Err(WorkerInboxError::InvalidResultChunk(
-                ProtocolError::InvalidInvariant("typed result chunk CAS reference"),
-            ));
+        self.read_typed_object(reference, limits, TypedObjectKind::ResultChunk)
+    }
+
+    fn stage_typed_object(
+        &self,
+        bytes: &[u8],
+        limits: &SchemaLimits,
+        kind: TypedObjectKind,
+    ) -> Result<CasObjectRefV1, WorkerInboxError> {
+        kind.validate_payload(bytes, limits)?;
+        let declared = self.validate_artifact_size(bytes.len())?;
+        let reference = content_descriptor(bytes, kind.object_kind())?;
+        let _lock = InboxLock::acquire(&self.root)?;
+        let object_path = self.object_path(reference.transport_digest);
+        if self.check_existing_regular_file(&object_path)? {
+            self.read_typed_object(&reference, limits, kind)?;
+            return Ok(reference);
+        }
+        self.ensure_total_capacity(declared)?;
+        let staging_path = self.next_staging_path();
+        let result = self.stage_object_inner(&reference, bytes, &staging_path);
+        let _ = fs::remove_file(&staging_path);
+        result?;
+        Ok(reference)
+    }
+
+    fn read_typed_object(
+        &self,
+        reference: &CasObjectRefV1,
+        limits: &SchemaLimits,
+        kind: TypedObjectKind,
+    ) -> Result<VerifiedWorkerObject, WorkerInboxError> {
+        if reference.expected_ocb1_kind != Some(kind.object_kind().tag()) {
+            return Err(kind.kind_mismatch_error());
         }
         let path = self.object_path(reference.transport_digest);
         let bytes = read_verified_bytes(&path, reference, self.limits.max_artifact_bytes)?;
-        ResultChunkV1::decode_canonical(&bytes, limits)
-            .map_err(WorkerInboxError::InvalidResultChunk)?;
+        kind.validate_payload(&bytes, limits)?;
         Ok(VerifiedWorkerObject {
             reference: reference.clone(),
             bytes,
@@ -447,6 +330,49 @@ impl WorkerInbox {
         directory_file_count(&self.staging)
     }
 
+    fn validate_artifact_size(&self, byte_len: usize) -> Result<u64, WorkerInboxError> {
+        let declared = u64::try_from(byte_len).map_err(|_| WorkerInboxError::LengthOverflow)?;
+        if declared > self.limits.max_artifact_bytes {
+            return Err(WorkerInboxError::ArtifactLimitExceeded {
+                limit: self.limits.max_artifact_bytes,
+                actual: declared,
+            });
+        }
+        Ok(declared)
+    }
+
+    fn ensure_total_capacity(&self, declared: u64) -> Result<(), WorkerInboxError> {
+        let attempted = self
+            .used_bytes()?
+            .checked_add(declared)
+            .ok_or(WorkerInboxError::LengthOverflow)?;
+        if attempted > self.limits.max_total_bytes {
+            return Err(WorkerInboxError::TotalLimitExceeded {
+                limit: self.limits.max_total_bytes,
+                attempted,
+            });
+        }
+        Ok(())
+    }
+
+    fn check_existing_regular_file(&self, path: &Path) -> Result<bool, WorkerInboxError> {
+        match fs::symlink_metadata(path) {
+            Ok(metadata)
+                if metadata.file_type().is_file() && !metadata.file_type().is_symlink() =>
+            {
+                Ok(true)
+            }
+            Ok(_) => Err(WorkerInboxError::UnsafeArtifact {
+                path: path.to_path_buf(),
+            }),
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(source) => Err(WorkerInboxError::Io {
+                path: path.to_path_buf(),
+                source,
+            }),
+        }
+    }
+
     fn stage_inner(
         &self,
         unit_id: B256,
@@ -454,56 +380,18 @@ impl WorkerInbox {
         declared: u64,
         staging_path: &Path,
     ) -> Result<StagedWorkerArtifact, WorkerInboxError> {
-        let mut staging = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o660)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-            .open(staging_path)
-            .map_err(|source| WorkerInboxError::Io {
-                path: staging_path.to_path_buf(),
-                source,
-            })?;
-        let mut hasher = Keccak256::new();
-        for chunk in bytes.chunks(64 * 1024) {
-            staging
-                .write_all(chunk)
-                .map_err(|source| WorkerInboxError::Io {
-                    path: staging_path.to_path_buf(),
-                    source,
-                })?;
-            hasher.update(chunk);
-        }
-        staging.sync_all().map_err(|source| WorkerInboxError::Io {
-            path: staging_path.to_path_buf(),
-            source,
-        })?;
+        let transport_digest = write_and_hash_staging(staging_path, bytes)?;
         let staged = StagedWorkerArtifact {
             unit_id,
             reference: CasObjectRefV1 {
-                transport_digest: finalize_digest(hasher),
+                transport_digest,
                 encoded_bytes: declared,
                 expected_ocb1_kind: None,
             },
         };
         let artifact_path = self.artifact_path(unit_id);
-        match fs::symlink_metadata(&artifact_path) {
-            Ok(metadata) => {
-                return if metadata.file_type().is_file() && !metadata.file_type().is_symlink() {
-                    Err(WorkerInboxError::AlreadyStaged { unit_id })
-                } else {
-                    Err(WorkerInboxError::UnsafeArtifact {
-                        path: artifact_path,
-                    })
-                };
-            }
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => {
-                return Err(WorkerInboxError::Io {
-                    path: artifact_path,
-                    source,
-                });
-            }
+        if self.check_existing_regular_file(&artifact_path)? {
+            return Err(WorkerInboxError::AlreadyStaged { unit_id });
         }
         match fs::hard_link(staging_path, &artifact_path) {
             Ok(()) => {
@@ -517,19 +405,8 @@ impl WorkerInbox {
                 Ok(staged)
             }
             Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
-                let metadata = fs::symlink_metadata(&artifact_path).map_err(|source| {
-                    WorkerInboxError::Io {
-                        path: artifact_path.clone(),
-                        source,
-                    }
-                })?;
-                if metadata.file_type().is_file() && !metadata.file_type().is_symlink() {
-                    Err(WorkerInboxError::AlreadyStaged { unit_id })
-                } else {
-                    Err(WorkerInboxError::UnsafeArtifact {
-                        path: artifact_path,
-                    })
-                }
+                self.check_existing_regular_file(&artifact_path)?;
+                Err(WorkerInboxError::AlreadyStaged { unit_id })
             }
             Err(source) => Err(WorkerInboxError::Io {
                 path: artifact_path,
@@ -538,37 +415,13 @@ impl WorkerInbox {
         }
     }
 
-    fn stage_shuffle_inner(
+    fn stage_object_inner(
         &self,
         reference: &CasObjectRefV1,
         bytes: &[u8],
         staging_path: &Path,
     ) -> Result<(), WorkerInboxError> {
-        let mut staging = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o660)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-            .open(staging_path)
-            .map_err(|source| WorkerInboxError::Io {
-                path: staging_path.to_path_buf(),
-                source,
-            })?;
-        let mut hasher = Keccak256::new();
-        for chunk in bytes.chunks(64 * 1024) {
-            staging
-                .write_all(chunk)
-                .map_err(|source| WorkerInboxError::Io {
-                    path: staging_path.to_path_buf(),
-                    source,
-                })?;
-            hasher.update(chunk);
-        }
-        staging.sync_all().map_err(|source| WorkerInboxError::Io {
-            path: staging_path.to_path_buf(),
-            source,
-        })?;
-        let actual_digest = finalize_digest(hasher);
+        let actual_digest = write_and_hash_staging(staging_path, bytes)?;
         if actual_digest != reference.transport_digest {
             return Err(WorkerInboxError::DigestMismatch {
                 expected: reference.transport_digest,
@@ -577,21 +430,9 @@ impl WorkerInbox {
         }
 
         let object_path = self.object_path(reference.transport_digest);
-        match fs::symlink_metadata(&object_path) {
-            Ok(metadata) => {
-                if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-                    return Err(WorkerInboxError::UnsafeArtifact { path: object_path });
-                }
-                read_verified_bytes(&object_path, reference, self.limits.max_artifact_bytes)?;
-                return Ok(());
-            }
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => {
-                return Err(WorkerInboxError::Io {
-                    path: object_path,
-                    source,
-                });
-            }
+        if self.check_existing_regular_file(&object_path)? {
+            read_verified_bytes(&object_path, reference, self.limits.max_artifact_bytes)?;
+            return Ok(());
         }
         match fs::hard_link(staging_path, &object_path) {
             Ok(()) => {
@@ -636,6 +477,71 @@ impl WorkerInbox {
             .checked_add(directory_used_bytes(&self.objects)?)
             .ok_or(WorkerInboxError::LengthOverflow)
     }
+}
+
+#[derive(Clone, Copy)]
+enum TypedObjectKind {
+    Shuffle,
+    ResultChunk,
+}
+
+impl TypedObjectKind {
+    const fn object_kind(self) -> ObjectKind {
+        match self {
+            Self::Shuffle => ObjectKind::ShuffleRunArtifactV1,
+            Self::ResultChunk => ObjectKind::ResultChunkV1,
+        }
+    }
+
+    fn kind_mismatch_error(self) -> WorkerInboxError {
+        match self {
+            Self::Shuffle => WorkerInboxError::InvalidShuffleObject(
+                ProtocolError::InvalidInvariant("typed shuffle child CAS reference"),
+            ),
+            Self::ResultChunk => WorkerInboxError::InvalidResultChunk(
+                ProtocolError::InvalidInvariant("typed result chunk CAS reference"),
+            ),
+        }
+    }
+
+    fn validate_payload(self, bytes: &[u8], limits: &SchemaLimits) -> Result<(), WorkerInboxError> {
+        match self {
+            Self::Shuffle => ShuffleRunArtifactV1::decode_canonical(bytes, limits)
+                .map(|_| ())
+                .map_err(WorkerInboxError::InvalidShuffleObject),
+            Self::ResultChunk => ResultChunkV1::decode_canonical(bytes, limits)
+                .map(|_| ())
+                .map_err(WorkerInboxError::InvalidResultChunk),
+        }
+    }
+}
+
+fn write_and_hash_staging(staging_path: &Path, bytes: &[u8]) -> Result<B256, WorkerInboxError> {
+    let mut staging = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o660)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(staging_path)
+        .map_err(|source| WorkerInboxError::Io {
+            path: staging_path.to_path_buf(),
+            source,
+        })?;
+    let mut hasher = Keccak256::new();
+    for chunk in bytes.chunks(64 * 1024) {
+        staging
+            .write_all(chunk)
+            .map_err(|source| WorkerInboxError::Io {
+                path: staging_path.to_path_buf(),
+                source,
+            })?;
+        hasher.update(chunk);
+    }
+    staging.sync_all().map_err(|source| WorkerInboxError::Io {
+        path: staging_path.to_path_buf(),
+        source,
+    })?;
+    Ok(finalize_digest(hasher))
 }
 
 fn staged_descriptor(

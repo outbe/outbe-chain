@@ -315,8 +315,10 @@ fn mint_authenticated_nod(
         begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(
             &storage,
-            &scope,
-            readers,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: readers,
+            },
             &item,
             U256::from(5),
             outbe_nod::test_support::sealed_terms(&storage, &item, U256::from(5)),

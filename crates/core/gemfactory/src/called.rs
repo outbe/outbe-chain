@@ -98,17 +98,19 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
         let finished = call_sweep::walk_day(
             ctx,
             pinned_day,
-            &gem.call_currency_cursor,
-            |iso_code| CallBins(gem, iso_code),
-            |iso_code| scan_terms(gem, iso_code, &params),
-            |iso_code| {
-                emit_event(
-                    &ctx.storage,
-                    CallScanSkipped {
-                        referenceCurrency: iso_code,
-                        utcDay: pinned_day,
-                    },
-                )
+            call_sweep::CallIndex {
+                currency_cursor: &gem.call_currency_cursor,
+                bins: |iso_code| CallBins(gem, iso_code),
+                scan_terms: |iso_code| scan_terms(gem, iso_code, &params),
+                skipped: |iso_code| {
+                    emit_event(
+                        &ctx.storage,
+                        CallScanSkipped {
+                            referenceCurrency: iso_code,
+                            utcDay: pinned_day,
+                        },
+                    )
+                },
             },
             |iso_code, window, ceiling, budget| {
                 let (calls, finished) = call_currency(ctx, iso_code, window, ceiling, budget)?;

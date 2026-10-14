@@ -63,8 +63,7 @@ async fn main() -> Result<()> {
     );
     let attester = attester::Attester::new(
         config.hyperlane,
-        config.chain.rpc_endpoint,
-        config.chain.chain_id,
+        config.chain,
         wallet,
         config.account.validator_address.parse()?,
         health,

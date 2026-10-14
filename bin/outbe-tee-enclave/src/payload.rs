@@ -6,7 +6,7 @@
 //! node needs them to price and admit the offer. Issuance writes both to public
 //! chain state, so encrypting them protected nothing.
 //!
-//! NOTE (Enclave Return Rule): `creator`, `su_hashes`, `wallet_addresses`, and
+//! Enclave Return Rule: `creator`, `su_hashes`, `wallet_addresses`, and
 //! `sra_addresses` are L2-linking material. The enclave reads them to validate
 //! and (in a later slice) to emit privacy-preserving used-markers / agent-reward
 //! routing, but it MUST NOT return them raw to the host.

@@ -64,12 +64,10 @@ where
 
 pub(super) fn should_wake_nod_materializer(
     policy: EmbeddedNodePolicyV1,
-    represented_validator: Option<Address>,
-    block_proposer: Address,
+    (represented_validator, block_proposer): (Option<Address>, Address),
     finalized_height: u64,
     head: Option<&outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1>,
-    progress_observed: bool,
-    retry_interval_blocks: u64,
+    (progress_observed, retry_interval_blocks): (bool, u64),
 ) -> bool {
     if policy != EmbeddedNodePolicyV1::Validator
         || represented_validator != Some(block_proposer)
@@ -168,12 +166,10 @@ where
             .is_some_and(|head| head.last_progress_height == height);
         if !should_wake_nod_materializer(
             self.policy,
-            represented_validator,
-            proposer,
+            (represented_validator, proposer),
             height,
             head.as_ref(),
-            progress_observed,
-            profile.retry_interval_blocks,
+            (progress_observed, profile.retry_interval_blocks),
         ) {
             return Ok(());
         }

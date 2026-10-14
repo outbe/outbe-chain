@@ -78,6 +78,11 @@ use relations::{
 mod present_job;
 use present_job::verify_present_job;
 
+mod present_results;
+use present_results::{
+    verify_present_input_catalog, verify_present_reference_membership, PresentAdmissionsVerify,
+};
+
 mod projection;
 use projection::verify_present_projection_structure;
 

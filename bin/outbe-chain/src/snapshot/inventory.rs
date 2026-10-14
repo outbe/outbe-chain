@@ -195,8 +195,8 @@ pub(crate) fn enumerate_native_files(layout: &NativeLayout) -> eyre::Result<Nati
                 .into_iter()
                 .flat_map(|job| {
                     ["admissions"]
-                    .into_iter()
-                    .map(move |name| PathBuf::from("supervisor-v1/jobs").join(&job).join(name))
+                        .into_iter()
+                        .map(move |name| PathBuf::from("supervisor-v1/jobs").join(&job).join(name))
                 })
                 .collect(),
             _ => vec![PathBuf::from(path)],

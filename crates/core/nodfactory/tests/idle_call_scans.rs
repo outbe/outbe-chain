@@ -79,8 +79,10 @@ fn idle_daily_scans_do_not_write_storage() {
             outbe_nod::test_support::set_entry_price(&mut body, entry);
             api::add_nod(
                 &storage,
-                &scope,
-                &parent,
+                outbe_compressed_entities::ExecutionReaders {
+                    scope: &scope,
+                    parent: &parent,
+                },
                 &body,
                 entry,
                 outbe_nod::test_support::sealed_terms(&storage, &body, entry),

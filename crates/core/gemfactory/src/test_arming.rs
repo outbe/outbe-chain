@@ -6,7 +6,7 @@
 
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
+use outbe_compressed_entities::{ExecutionReaders, ExecutionScope, ParentBodySource};
 use outbe_gem::{api as gem_api, GemAddParams, GemContract};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -114,7 +114,13 @@ fn backdate(
     )?;
     storage.clone().with_checkpoint(|| {
         gem_api::remove_gem(storage, scope, item, bucket)?;
-        gem_api::record_issued(storage, scope, parent, &reissued, entry_price_minor, terms)
+        gem_api::record_issued(
+            storage,
+            ExecutionReaders { scope, parent },
+            &reissued,
+            entry_price_minor,
+            terms,
+        )
     })
 }
 

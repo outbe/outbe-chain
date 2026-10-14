@@ -1,3 +1,9 @@
+//! Credis: the terms, profile and records of a Credis. The call bins and the expiry queue
+//! live here, with the read-time state, accrued interest and outcome.
+//!
+//! CredisFactory applies every rule and runs the call and forfeit sweeps. The precompile
+//! surface is the Credis NFT and its views.
+
 pub mod config;
 pub mod constants;
 pub mod errors;

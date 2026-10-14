@@ -1,7 +1,9 @@
 //! Cross-module API for the Gem entity store.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, VerifiedBody, WwdEntityId};
+use outbe_compressed_entities::{
+    ExecutionReaders, ExecutionScope, ParentBodySource, VerifiedBody, WwdEntityId,
+};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{first_full_day, timestamp_to_date_key, WorldwideDay};
@@ -80,8 +82,7 @@ pub fn add_gem(
     };
     record_issued(
         storage,
-        scope,
-        parent,
+        ExecutionReaders { scope, parent },
         &item,
         params.entry_price_minor,
         params.call_terms,
@@ -92,16 +93,15 @@ pub fn add_gem(
 /// Records an already built gem body, opening its bucket with `call_terms` if it is the first.
 pub fn record_issued(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
+    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     item: &GemItemState,
     entry_price_minor: U256,
     call_terms: Option<CallTerms>,
 ) -> Result<()> {
     let mut gem = GemContract::new(storage.clone());
-    storage.clone().with_checkpoint(|| {
-        gem.record_gem_issued(scope, parent, item, entry_price_minor, call_terms)
-    })
+    storage
+        .clone()
+        .with_checkpoint(|| gem.record_gem_issued(readers, item, entry_price_minor, call_terms))
 }
 
 /// Loads a gem while retaining its verified generic mutation capability.

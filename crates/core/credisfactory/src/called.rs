@@ -106,17 +106,19 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
         let finished = call_sweep::walk_day(
             ctx,
             pinned_day,
-            &index.call_currency_cursor,
-            |iso_code| CallBins(index, iso_code),
-            |iso_code| scan_terms(index, iso_code, &live),
-            |iso_code| {
-                emit(
-                    &ctx.storage,
-                    &CallScanSkipped {
-                        referenceCurrency: iso_code,
-                        utcDay: pinned_day,
-                    },
-                )
+            call_sweep::CallIndex {
+                currency_cursor: &index.call_currency_cursor,
+                bins: |iso_code| CallBins(index, iso_code),
+                scan_terms: |iso_code| scan_terms(index, iso_code, &live),
+                skipped: |iso_code| {
+                    emit(
+                        &ctx.storage,
+                        &CallScanSkipped {
+                            referenceCurrency: iso_code,
+                            utcDay: pinned_day,
+                        },
+                    )
+                },
             },
             |iso_code, window, ceiling, budget| {
                 call_bins::walk(

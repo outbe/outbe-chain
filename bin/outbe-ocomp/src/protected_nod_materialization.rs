@@ -126,8 +126,7 @@ fn encrypted_source(
 
 pub fn prepare_protected_materialization(
     authority: NodMaterializationAuthorityV2,
-    head: &NodMaterializationHeadV1,
-    built: &BuiltNodMaterializationBatchV1,
+    (head, built): (&NodMaterializationHeadV1, &BuiltNodMaterializationBatchV1),
     sources: Vec<NodSourceV2>,
     league_fractions: Vec<outbe_tee::nod_materialization::LeagueFractionInputV2>,
     store: &PreparedNodMaterializationStoreV2,
@@ -529,11 +528,13 @@ mod tests {
                 subtree_height: 3,
                 sealed_tribute_root: B256::repeat_byte(1),
             },
-            &head,
-            &BuiltNodMaterializationBatchV1 {
-                batch: original,
-                dependencies: Vec::new(),
-            },
+            (
+                &head,
+                &BuiltNodMaterializationBatchV1 {
+                    batch: original,
+                    dependencies: Vec::new(),
+                },
+            ),
             Vec::new(),
             Vec::new(),
             &store,

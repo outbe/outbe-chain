@@ -345,8 +345,10 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         contract.issue(&scope, &parent, &tribute).unwrap();
         outbe_nod::api::add_nod(
             &storage,
-            &scope,
-            &parent,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
             &nod,
             U256::from(16),
             outbe_nod::test_support::sealed_terms(&storage, &nod, U256::from(16)),
