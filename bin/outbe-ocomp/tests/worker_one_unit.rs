@@ -1471,7 +1471,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     assert_eq!(summary.nod_count, 1);
     assert_eq!(summary.bucket_count, 1);
     assert_eq!(summary.tribute_nominal_total, tribute.nominal_amount_minor);
-    assert_eq!(summary.eligible_nominal_total, tribute.nominal_amount_minor);
     assert_eq!(
         summary.lysis_allocation_minor,
         amount.checked_segment_gratis_total
@@ -1605,7 +1604,6 @@ fn real_worker_processes_execute_through_output_finalize() {
                         canonical_chunk_bytes: chunk_bytes,
                     })),
                     bucket_records: std::iter::once(Ok(bucket_record.clone())),
-                    eligible_nominal_total: tribute.nominal_amount_minor,
                 },
                 &limits,
             )
@@ -1853,11 +1851,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         let nominal_total = (start..end).fold(U256::ZERO, |sum, ordinal| {
             sum + U256::from(u64::from(ordinal) + 1)
         });
-        let eligible_total = if start == 0 {
-            nominal_total - U256::ONE
-        } else {
-            nominal_total
-        };
         let incoming_remaining = U256::from(10_000_u64 - u64::from(start));
         let finalized = output_finalize(
             &AmountRunV1 {
@@ -1866,7 +1859,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
                 ordered_records: amount_records,
                 checked_segment_gratis_total: U256::from(shard_count),
                 checked_segment_nominal_total: nominal_total,
-                checked_segment_eligible_nominal_total: eligible_total,
                 checked_segment_settlement_cost_total: U256::from(shard_count) * U256::from(4),
             },
             &GratisLeafPrefixV1 {
@@ -2102,14 +2094,8 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         } else {
             U256::from(257_u32)
         };
-        let expected_eligible_nominal = if ordinal == 0 {
-            expected_tribute_nominal - U256::from(1)
-        } else {
-            expected_tribute_nominal
-        };
         assert_eq!(summary.tribute_count, expected_count);
         assert_eq!(summary.tribute_nominal_total, expected_tribute_nominal);
-        assert_eq!(summary.eligible_nominal_total, expected_eligible_nominal);
         let chunk_object = inbox
             .read_result_chunk(&output_manifest_entry.result_chunk_ref, &limits)
             .expect("read real root reduce ResultChunkV1");
@@ -2171,10 +2157,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     assert_eq!(reduced.covered_primary_count, 2);
     assert_eq!(reduced.tribute_count, tribute_count);
     assert_eq!(reduced.tribute_nominal_total, tribute_nominal_total);
-    assert_eq!(
-        reduced.eligible_nominal_total,
-        tribute_nominal_total - U256::from(1)
-    );
     assert_eq!(reduced.result_chunk_hashes.subtree_height, 1);
 }
 

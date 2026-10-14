@@ -336,18 +336,6 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
             .collect::<Vec<_>>(),
         sequential.nod_actions
     );
-    let eligible_nominal = tributes
-        .iter()
-        .filter(|observed| !observed.tribute.exclude_from_intex_issuance)
-        .map(|observed| observed.tribute.nominal_amount_minor)
-        .sum::<U256>();
-    assert_eq!(
-        finalized_left
-            .checked_eligible_nominal_total
-            .checked_add(finalized_right.checked_eligible_nominal_total)
-            .unwrap(),
-        eligible_nominal
-    );
     assert_eq!(
         right_prefix.outgoing_remaining,
         sequential.remaining_lysis_limit_minor
@@ -464,7 +452,6 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
             ordered_records,
             checked_segment_gratis_total: U256::from(2),
             checked_segment_nominal_total: nominal_total,
-            checked_segment_eligible_nominal_total: U256::ZERO,
             checked_segment_settlement_cost_total: U256::from(2),
         }
     };
@@ -477,7 +464,6 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
 
     let finalized = output_finalize(&run([U256::from(7), U256::from(11)]), &prefix).unwrap();
     assert_eq!(finalized.checked_tribute_nominal_total, U256::from(18));
-    assert_eq!(finalized.checked_eligible_nominal_total, U256::ZERO);
     let limits = poc_schema_limits();
     let encoded = encode_finalized_output_run(&finalized, &limits).unwrap();
     assert_eq!(

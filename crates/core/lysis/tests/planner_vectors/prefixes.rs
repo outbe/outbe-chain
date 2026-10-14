@@ -43,7 +43,6 @@ fn an_entry_beyond_the_call_price_bound_is_never_certified() {
         }],
         checked_segment_gratis_total: U256::from(1),
         checked_segment_nominal_total: U256::from(100),
-        checked_segment_eligible_nominal_total: U256::from(100),
         checked_segment_settlement_cost_total: U256::from(1),
     };
     let limits = poc_schema_limits();

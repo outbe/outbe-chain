@@ -90,7 +90,6 @@ pub fn encode_amount_run(
     encoded.write_u32(run.end_ordinal)?;
     encoded.write_u256(run.checked_segment_gratis_total)?;
     encoded.write_u256(run.checked_segment_nominal_total)?;
-    encoded.write_u256(run.checked_segment_eligible_nominal_total)?;
     encoded.write_u256(run.checked_segment_settlement_cost_total)?;
     encoded.write_u32(
         u32::try_from(run.ordered_records.len())
@@ -123,7 +122,6 @@ pub fn decode_amount_run(
     let end_ordinal = input.read_u32()?;
     let checked_segment_gratis_total = input.read_u256()?;
     let checked_segment_nominal_total = input.read_u256()?;
-    let checked_segment_eligible_nominal_total = input.read_u256()?;
     let checked_segment_settlement_cost_total = input.read_u256()?;
     let count = input.read_u32()?;
     validate_shard_size(usize::try_from(count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?)?;
@@ -154,7 +152,6 @@ pub fn decode_amount_run(
         ordered_records,
         checked_segment_gratis_total,
         checked_segment_nominal_total,
-        checked_segment_eligible_nominal_total,
         checked_segment_settlement_cost_total,
     };
     validate_amount_run(&run)?;
@@ -193,7 +190,6 @@ pub fn encode_finalized_output_run(
     }
     encoded.write_u256(run.checked_tribute_nominal_total)?;
     encoded.write_u256(run.checked_segment_gratis_total)?;
-    encoded.write_u256(run.checked_eligible_nominal_total)?;
     encoded.write_u256(run.checked_settlement_cost_total)?;
     Ok(encoded.into_bytes())
 }
@@ -244,7 +240,6 @@ pub fn decode_finalized_output_run(
     }
     let checked_tribute_nominal_total = input.read_u256()?;
     let checked_segment_gratis_total = input.read_u256()?;
-    let checked_eligible_nominal_total = input.read_u256()?;
     let checked_settlement_cost_total = input.read_u256()?;
     input.finish()?;
     let run = FinalizedOutputRunV1 {
@@ -253,7 +248,6 @@ pub fn decode_finalized_output_run(
         ordered_records,
         checked_tribute_nominal_total,
         checked_segment_gratis_total,
-        checked_eligible_nominal_total,
         checked_settlement_cost_total,
     };
     validate_finalized_output_run(&run)?;
@@ -390,7 +384,6 @@ fn validate_amount_run(run: &AmountRunV1) -> Result<(), LysisArtifactErrorV1> {
         || run.checked_segment_gratis_total.is_zero()
         || run.checked_segment_nominal_total.is_zero()
         || run.checked_segment_settlement_cost_total.is_zero()
-        || run.checked_segment_eligible_nominal_total > run.checked_segment_nominal_total
     {
         return Err(LysisArtifactErrorV1::InvalidEncoding(
             "amount run aggregate range",
@@ -433,7 +426,6 @@ fn validate_finalized_output_run(run: &FinalizedOutputRunV1) -> Result<(), Lysis
         || run.checked_tribute_nominal_total.is_zero()
         || run.checked_segment_gratis_total.is_zero()
         || run.checked_settlement_cost_total.is_zero()
-        || run.checked_eligible_nominal_total > run.checked_tribute_nominal_total
         || run.end_ordinal
             != run
                 .start_ordinal

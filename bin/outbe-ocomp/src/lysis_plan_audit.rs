@@ -379,30 +379,6 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
         Ok(nominals)
     }
 
-    /// Sum of opened Tribute nominals that still enter Intex issuance.
-    pub fn eligible_nominal_total(&self) -> Result<U256, ExactLysisPlanError> {
-        let mut total = U256::ZERO;
-        for verified in self.schedule.exact_verified_cursor()? {
-            let verified = verified?;
-            if verified.reference.kind != InputChunkKind::Tribute {
-                continue;
-            }
-            for record in &verified.chunk.canonical_records_or_openings {
-                let tribute =
-                    outbe_tribute::record::decode_canonical(&record.0)?.calculation_view()?;
-                if tribute.exclude_from_intex_issuance {
-                    continue;
-                }
-                total = total.checked_add(tribute.nominal_amount_minor).ok_or(
-                    ProtocolError::IntegerOverflow {
-                        what: "eligible nominal total",
-                    },
-                )?;
-            }
-        }
-        Ok(total)
-    }
-
     /// Public FixedReduce fractions for the enclave Nod load. One pair per league.
     pub fn league_fractions(&self) -> Result<Vec<(u16, U256)>, ExactLysisPlanError> {
         let position = PlannedUnitPositionV1::TreeNode {
