@@ -156,16 +156,13 @@ pub(super) fn connect_join_enclave(
     }
 }
 
-fn connect_authorized_node_host(
-    ctx: EnclaveConnectionContext<'_>,
-) -> Result<ConnectedJoinEnclave> {
+fn connect_authorized_node_host(ctx: EnclaveConnectionContext<'_>) -> Result<ConnectedJoinEnclave> {
     use eyre::WrapErr as _;
     let node_data_dir = ctx
         .node_data_dir
         .expect("transport selection requires node data dir");
-    std::fs::create_dir_all(node_data_dir).wrap_err_with(|| {
-        format!("create NodeHost data directory {}", node_data_dir.display())
-    })?;
+    std::fs::create_dir_all(node_data_dir)
+        .wrap_err_with(|| format!("create NodeHost data directory {}", node_data_dir.display()))?;
     let manifest_path = node_data_dir
         .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
         .join(outbe_tee::node_host::NODE_HOST_MANIFEST_V1);

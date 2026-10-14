@@ -156,8 +156,7 @@ impl LysisPlanTopologyV1 {
                 index,
                 start_run,
                 end_run,
-            } if phase == UnitPhase::BucketShuffle && level > 0 =>
-            {
+            } if phase == UnitPhase::BucketShuffle && level > 0 => {
                 let expected = self.run_span_position(phase, level, index)?;
                 if expected
                     != (PlannedUnitPositionV1::RunSpan {

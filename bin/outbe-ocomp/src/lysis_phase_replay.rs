@@ -170,8 +170,13 @@ pub fn admit_reported_core_phase_unit(
         (bundle, reader, inbox),
         limits,
     )?;
-    let (artifact_ref, admission) =
-        publish_and_admit_unit_artifact(position, spec, finished, reported.bytes(), (cas, catalog))?;
+    let (artifact_ref, admission) = publish_and_admit_unit_artifact(
+        position,
+        spec,
+        finished,
+        reported.bytes(),
+        (cas, catalog),
+    )?;
     Ok(AdmittedReplayedCoreUnitV1 {
         artifact_ref,
         admission,
@@ -209,8 +214,13 @@ pub fn admit_reported_output_finalize_unit(
         (plan, manifest, bundle),
         limits,
     )?;
-    let (artifact_ref, admission) =
-        publish_and_admit_unit_artifact(position, spec, finished, reported.bytes(), (cas, catalog))?;
+    let (artifact_ref, admission) = publish_and_admit_unit_artifact(
+        position,
+        spec,
+        finished,
+        reported.bytes(),
+        (cas, catalog),
+    )?;
     Ok(AdmittedOutputFinalizeUnitV1 {
         artifact_ref,
         admission,
@@ -410,10 +420,12 @@ fn matches_output_finalize_coverage(
     amount_header: &WorkOutputHeaderV1,
     prefix_header: &WorkOutputHeaderV1,
 ) -> Result<bool, LysisPhaseReplayError> {
-    Ok(amount.start_ordinal / PRIMARY_WORK_SHARD_SIZE == shard_ordinal
-        && amount.coverage_root()? == amount_header.output_coverage_root
-        && amount_header.output_coverage_root == prefix_header.output_coverage_root
-        && amount_header.output_coverage_count == prefix_header.output_coverage_count)
+    Ok(
+        amount.start_ordinal / PRIMARY_WORK_SHARD_SIZE == shard_ordinal
+            && amount.coverage_root()? == amount_header.output_coverage_root
+            && amount_header.output_coverage_root == prefix_header.output_coverage_root
+            && amount_header.output_coverage_count == prefix_header.output_coverage_count,
+    )
 }
 
 fn exact_unit_output_source(

@@ -255,11 +255,7 @@ pub(super) fn fail_selected(
     }
 }
 
-pub(super) fn block_on(
-    report: &mut ValidationReport,
-    check: CheckName,
-    prerequisite: CheckName,
-) {
+pub(super) fn block_on(report: &mut ValidationReport, check: CheckName, prerequisite: CheckName) {
     if report.check(check).status == CheckStatus::Failed {
         return;
     }

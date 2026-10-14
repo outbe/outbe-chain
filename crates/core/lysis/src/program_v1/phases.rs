@@ -8,9 +8,7 @@ use outbe_ocomp_protocol::result::NodActionV1 as CertifiedNodActionV1;
 use outbe_primitives::time::WorldwideDay;
 
 use super::{
-    execute::{
-        calculate_cost, calculate_gratis_load, compute_fraction_map_from_groups,
-    },
+    execute::{calculate_cost, calculate_gratis_load, compute_fraction_map_from_groups},
     FidelityPhaseV1, LeagueFractionV1, NodActionV1, ObservedTributeV1, ProgramErrorV1,
 };
 
@@ -448,9 +446,11 @@ fn checked_add_amount(
     raw_ordinal: u32,
     message: &str,
 ) -> Result<U256, ProgramErrorV1> {
-    total.checked_add(amount).ok_or_else(|| ProgramErrorV1::Arithmetic {
-        message: format!("{message} at {raw_ordinal}"),
-    })
+    total
+        .checked_add(amount)
+        .ok_or_else(|| ProgramErrorV1::Arithmetic {
+            message: format!("{message} at {raw_ordinal}"),
+        })
 }
 
 fn fractions_by_league(

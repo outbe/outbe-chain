@@ -1,9 +1,9 @@
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     intent::{
-        intent_storage_key, ActivationPreconditionsV1, DayType,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+        intent_storage_key, ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1,
+        JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus,
+        NodTargetPreconditionV1, TributeInputBindingV1,
     },
     profile::CapacityProfileV1,
     receipts::{desis_request_brief_hash, LimitSplitDestination, RequestLimitSplitReceiptV1},

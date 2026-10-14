@@ -128,7 +128,7 @@ fn fidelity_reducer_handles_every_padded_empty_shape_for_one_to_eight_shards() {
 #[test]
 fn two_direction_gratis_prefix_preserves_exact_sequential_budget_semantics() {
     let first_loads = vec![U256::from(1_u8); 256];
-    let second_loads = vec![U256::from(1_u8)];
+    let second_loads = [U256::from(1_u8)];
     let first = gratis_summary(0, first_loads.len(), U256::from(256_u16)).unwrap();
     let second = gratis_summary(256, second_loads.len(), U256::from(1_u8)).unwrap();
     let root = gratis_summary_reduce_pair(

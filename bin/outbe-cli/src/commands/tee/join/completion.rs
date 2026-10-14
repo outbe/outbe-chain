@@ -124,13 +124,15 @@ fn ingest_gramine_direct_dev_artifact(
             "GramineDirectDev post-bootstrap onboarding requires authenticated NodeHost state"
         );
     }
-    match enclave.request(&EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 {
-        artifact,
-        expected_intent_hash: ctx.intent_hash,
-        expected_tribute_offer_public: ctx.expected_offer_pub,
-        expected_key_epoch: ctx.key_epoch,
-        expected_tribute_offer_epoch: ctx.tribute_offer_epoch,
-    })? {
+    match enclave.request(
+        &EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 {
+            artifact,
+            expected_intent_hash: ctx.intent_hash,
+            expected_tribute_offer_public: ctx.expected_offer_pub,
+            expected_key_epoch: ctx.key_epoch,
+            expected_tribute_offer_epoch: ctx.tribute_offer_epoch,
+        },
+    )? {
         EnclaveResponse::GramineDirectDevOnboardingArtifactIngestedV1 {
             tribute_offer_public,
         } if tribute_offer_public == ctx.expected_offer_pub => Ok(tribute_offer_public),
@@ -163,23 +165,25 @@ pub(super) async fn finalize_and_reopen_join(
             .authorized_node_data_dir
             .expect("authorized NodeHost data directory was validated before key activation");
         let promotion = if ctx.promote_candidate {
-            Some(
-                load_candidate_promotion_binding(client, ctx.binding_selector, ctx.intent).await?,
-            )
+            Some(load_candidate_promotion_binding(client, ctx.binding_selector, ctx.intent).await?)
         } else {
             None
         };
         drop(enclave);
         if let Some(finalized_binding) = promotion {
-            let authorization = construct_finalized_replacement_authorization_v1(
-                node_data_dir,
-                &finalized_binding,
-            )
-            .map_err(|error| eyre::eyre!("authorize finalized candidate promotion: {error}"))?;
+            let authorization =
+                construct_finalized_replacement_authorization_v1(node_data_dir, &finalized_binding)
+                    .map_err(|error| {
+                        eyre::eyre!("authorize finalized candidate promotion: {error}")
+                    })?;
             promote_replacement_candidate(node_data_dir, &authorization)
                 .map_err(|error| eyre::eyre!("promote finalized rejoin candidate: {error}"))?;
         }
-        verify_reopened_committed_enclave(ctx.enclave_socket, node_data_dir, ctx.expected_offer_pub)?;
+        verify_reopened_committed_enclave(
+            ctx.enclave_socket,
+            node_data_dir,
+            ctx.expected_offer_pub,
+        )?;
         if ctx
             .durable_submission
             .is_some_and(DurableJoinSubmissionV1::is_committed)

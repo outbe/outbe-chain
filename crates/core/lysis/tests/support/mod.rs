@@ -2,9 +2,9 @@ use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     hash::hash_framed,
     intent::{
-        ActivationPreconditionsV1, DayType,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+        ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1, JobIntentV1,
+        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
+        TributeInputBindingV1,
     },
     profile::poc_schema_limits,
     receipts::{desis_request_brief_hash, LimitSplitDestination, RequestLimitSplitReceiptV1},

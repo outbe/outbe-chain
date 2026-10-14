@@ -5,9 +5,9 @@ use outbe_compressed_entities::{
 use outbe_nod::NodContract;
 use outbe_ocomp_protocol::{
     intent::{
-        ActivationPreconditionsV1, DayType,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+        ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1, JobIntentV1,
+        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
+        TributeInputBindingV1,
     },
     receipts::RequestLimitSplitReceiptV1,
 };

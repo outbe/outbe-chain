@@ -13,24 +13,22 @@ use outbe_ocomp_protocol::{
 use outbe_primitives::projection::ProjectionCheckpoint;
 use thiserror::Error;
 
-use crate::discovery_control::{
-    DiscoveryAckRefV1, DiscoveryControlError, DiscoveryOfferRefV1,
-};
+use crate::discovery_control::{DiscoveryAckRefV1, DiscoveryControlError, DiscoveryOfferRefV1};
 use crate::export_receipt::VerifiedExportReceipt;
 
 mod checkpoint;
 mod records;
 
-pub use checkpoint::{
-    inspect_closure_checkpoint, CheckpointAdvanceOutcomeV1, ClosureCheckpointInspectionV1,
-    ContiguousCheckpointStoreV1,
-};
+#[cfg(test)]
+use checkpoint::read_spool_bytes;
 use checkpoint::{
     create_private_directory, inspect_private_directory, inspect_private_file,
     persist_immutable_atomic, recover_crash_temps, regular_file_exists,
 };
-#[cfg(test)]
-use checkpoint::read_spool_bytes;
+pub use checkpoint::{
+    inspect_closure_checkpoint, CheckpointAdvanceOutcomeV1, ClosureCheckpointInspectionV1,
+    ContiguousCheckpointStoreV1,
+};
 pub use records::DiscoveryPendingCursorV1;
 use records::{
     encode_ack_record, encode_offer_record, io_error, parse_category_observation,
@@ -411,7 +409,13 @@ impl DiscoverySpoolV1 {
             receipt.receipt_ref().transport_digest,
             &self.limits,
         )?;
-        self.commit_ack_record(offer.observation_id, &stored_offer, receipt, reference, committed)
+        self.commit_ack_record(
+            offer.observation_id,
+            &stored_offer,
+            receipt,
+            reference,
+            committed,
+        )
     }
 
     fn resolve_offer_for_ack(
@@ -447,9 +451,9 @@ impl DiscoverySpoolV1 {
         committed: &SnapshotExportCommittedV1,
         bundle: &ProtocolBundleV1,
     ) -> bool {
-        let receipt_matches =
-            self.verified_receipt_matches_offer(&stored_offer.spec, receipt, bundle)
-                .unwrap_or(false);
+        let receipt_matches = self
+            .verified_receipt_matches_offer(&stored_offer.spec, receipt, bundle)
+            .unwrap_or(false);
         let expected_ack_fields = (
             &stored_offer.reference,
             self.chain_id,

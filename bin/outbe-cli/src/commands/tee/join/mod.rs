@@ -14,8 +14,8 @@ use eyre::{Result, WrapErr};
 use outbe_operator::tee::{read_finalized_registry_view_v1, NodeBindingSelectorV1};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1,
-    GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1, RegistryMutatorV1,
-    TeePolicyV1, TeeRegistryGasScheduleV1,
+    GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1, RegistryMutatorV1, TeePolicyV1,
+    TeeRegistryGasScheduleV1,
 };
 use outbe_tee::protocol::EnclaveRequest;
 use outbe_tee::{
@@ -39,8 +39,8 @@ pub(super) use policy::{
 pub(super) use policy::JoinCompletionPlan;
 
 mod enclave;
-use enclave::{connect_join_enclave, EnclaveConnectionContext, EnclaveIdentityKeys};
 pub(super) use enclave::JoinEnclave;
+use enclave::{connect_join_enclave, EnclaveConnectionContext, EnclaveIdentityKeys};
 
 mod admission;
 pub(super) use admission::{
@@ -55,8 +55,10 @@ pub(super) use admission::{
 };
 
 mod relay;
+pub(super) use relay::await_finalized_join_target;
+#[cfg(test)]
+pub(super) use relay::relay_exact_join_transaction;
 use relay::{submit_or_resume_join_tx, JoinRelayContext};
-pub(super) use relay::{await_finalized_join_target, relay_exact_join_transaction};
 
 mod preflight;
 use preflight::{
@@ -111,10 +113,8 @@ pub(super) async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> R
     let finalized = read_finalized_registry_view_v1(&CliFinalityRpc(client), &binding_selector)
         .await
         .wrap_err("read exact finalized TeeRegistry join state")?;
-    let policy =
-        resolve_join_policy(client, rpc_chain_id, &finalized, successor_policy).await?;
-    verify_finalized_node_ownership(client, &finalized, node_id_hash, evm_signer.address())
-        .await?;
+    let policy = resolve_join_policy(client, rpc_chain_id, &finalized, successor_policy).await?;
+    verify_finalized_node_ownership(client, &finalized, node_id_hash, evm_signer.address()).await?;
     let (mut durable_submission, durable_resume_intent) =
         load_durable_checkpoint(node_data_dir, evm_signer.address())?;
     let resumes_finalized_target = match evaluate_replay_and_lease(ReplayCheckInput {
@@ -430,39 +430,35 @@ fn prepare_join_evidence(
     durable_submission: &mut Option<DurableJoinSubmissionV1>,
     ctx: EvidencePrepContext<'_>,
 ) -> Result<(Vec<u8>, [u8; 65], [u8; 64])> {
-    let (evidence_value, node_signature, enclave_signature) =
-        if let Some(durable) = durable_submission.as_ref() {
-            let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
-                .map_err(|error| eyre::eyre!("decode durable join evidence: {error}"))?;
-            let durable_intent = match &evidence {
-                AttestationEvidenceV1::Dcap(value) => &value.intent,
-                AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
-            };
-            if durable_intent != ctx.intent || durable.node_signature() != ctx.fresh_node_signature
-            {
-                eyre::bail!("requested tee join conflicts with the durable registration");
-            }
-            (
-                evidence,
-                *durable.node_signature(),
-                *durable.enclave_signature(),
-            )
-        } else {
-            let (evidence, signature) = generate_fresh_evidence(
-                enclave,
-                ctx.policy,
-                ctx.intent,
-                ctx.attestation_ed25519,
-            )?;
-            persist_fresh_submission_if_needed(
-                durable_submission,
-                enclave.is_candidate(),
-                &ctx,
-                &evidence,
-                &signature,
-            )?;
-            (evidence, *ctx.fresh_node_signature, signature)
+    let (evidence_value, node_signature, enclave_signature) = if let Some(durable) =
+        durable_submission.as_ref()
+    {
+        let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
+            .map_err(|error| eyre::eyre!("decode durable join evidence: {error}"))?;
+        let durable_intent = match &evidence {
+            AttestationEvidenceV1::Dcap(value) => &value.intent,
+            AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
         };
+        if durable_intent != ctx.intent || durable.node_signature() != ctx.fresh_node_signature {
+            eyre::bail!("requested tee join conflicts with the durable registration");
+        }
+        (
+            evidence,
+            *durable.node_signature(),
+            *durable.enclave_signature(),
+        )
+    } else {
+        let (evidence, signature) =
+            generate_fresh_evidence(enclave, ctx.policy, ctx.intent, ctx.attestation_ed25519)?;
+        persist_fresh_submission_if_needed(
+            durable_submission,
+            enclave.is_candidate(),
+            &ctx,
+            &evidence,
+            &signature,
+        )?;
+        (evidence, *ctx.fresh_node_signature, signature)
+    };
     let encoded = evidence_value
         .encode_canonical()
         .map_err(|error| eyre::eyre!("encode canonical V1 evidence: {error}"))?;
@@ -515,7 +511,8 @@ fn persist_fresh_submission_if_needed(
 ) -> Result<()> {
     if is_candidate {
         let persisted = persist_replacement_candidate_submission(
-            ctx.node_data_dir.expect("candidate join requires NodeHost state"),
+            ctx.node_data_dir
+                .expect("candidate join requires NodeHost state"),
             evidence,
             ctx.fresh_node_signature,
             signature,
@@ -526,7 +523,8 @@ fn persist_fresh_submission_if_needed(
         && ctx.offer_key_state == JoinOfferKeyState::Keyless
     {
         let persisted = persist_committed_join_submission(
-            ctx.node_data_dir.expect("committed join requires NodeHost state"),
+            ctx.node_data_dir
+                .expect("committed join requires NodeHost state"),
             ctx.signer_address,
             evidence,
             ctx.fresh_node_signature,

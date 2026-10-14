@@ -173,7 +173,9 @@ waited_secs={}",
         Ok(())
     }
 
-    pub(super) fn drain_commands(&self) -> Result<Vec<(B256, SupervisorCommandV1)>, WorkerApiErrorV1> {
+    pub(super) fn drain_commands(
+        &self,
+    ) -> Result<Vec<(B256, SupervisorCommandV1)>, WorkerApiErrorV1> {
         let now = Instant::now();
         let mut registry = self.lock()?;
         self.cleanup_expired(&mut registry, now);
