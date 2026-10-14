@@ -31,6 +31,9 @@ pub struct GemAddParams {
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub issued_at: u64,
+    /// The terms the gem's bucket seals if this gem opens it. `None` leaves the bucket
+    /// out of the call index.
+    pub call_terms: Option<CallTerms>,
 }
 
 /// Runtime view of one canonical gem body. The entry price and the call terms are

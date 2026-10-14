@@ -53,6 +53,9 @@ pub enum GemFactoryError {
     #[error("invalid owner")]
     InvalidOwner,
 
+    #[error("only a genesis gem is issued without a floor")]
+    ZeroFloorPrice,
+
     #[error("overflow")]
     Overflow,
 

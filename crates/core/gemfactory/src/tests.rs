@@ -16,7 +16,7 @@ use outbe_tee_enclave::promis::{
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 
 const POSITION_VALIDITY_SECONDS: u64 = outbe_gem::GemParams::PROD.position_validity;
-use crate::expired;
+use crate::positions_expired;
 use crate::runtime;
 use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition, GemTypes};
 use crate::sol_ext::{IReferenceCurrency, IERC20};
@@ -281,7 +281,19 @@ fn register_currency(storage: &StorageHandle<'_>, iso: u16, rate: U256) {
 /// Qualifies `gem_id` and records Settled. The body stays until it is mined.
 fn force_settled(storage: &StorageHandle<'_>, world: &GemWorld, gem_id: U256) {
     seed_qualifying_day(storage, world, gem_id);
-    gem_api::settle_gem(storage, &world.scope, &world.parent, gem_id).unwrap();
+    record_settled(storage, world, gem_id);
+}
+
+/// Records Settled the way `settle_gem` does once payment is in, without the payment.
+fn record_settled(storage: &StorageHandle<'_>, world: &GemWorld, gem_id: U256) {
+    let gem = gem_api::get_view(storage, &world.scope, &world.parent, gem_id)
+        .unwrap()
+        .unwrap();
+    runtime::require_settleable(storage, &gem).unwrap();
+    let (item, bucket) = gem_api::load_pair(storage, &world.scope, &world.parent, gem_id)
+        .unwrap()
+        .unwrap();
+    gem_api::record_settled(storage, &world.scope, item, bucket).unwrap();
 }
 
 // --- Merchant gems ---
@@ -353,7 +365,7 @@ fn seed_called_source(storage: &StorageHandle, called_at: u64) {
             ..Default::default()
         },
     );
-    outbe_intex::api::mark_called(storage, source_intex_id(), called_at as u32).unwrap();
+    outbe_intex::api::record_called(storage, source_intex_id(), called_at as u32).unwrap();
 }
 
 fn send_whole_holding(storage: &StorageHandle) -> outbe_primitives::error::Result<U256> {
@@ -432,6 +444,7 @@ fn merchant_entry_price(storage: &StorageHandle, world: &GemWorld, source_entry:
 mod capacity_conservation;
 mod direct_fx_admission;
 mod eligibility;
+mod gem_lifecycle;
 mod issuance;
 mod merchant;
 mod mining;

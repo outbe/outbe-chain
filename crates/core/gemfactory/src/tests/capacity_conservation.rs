@@ -11,7 +11,7 @@ use outbe_primitives::{
 };
 use outbe_promislimit::PromisLimitContract;
 
-use crate::{expired, schema::GemPosition, GemFactoryContract};
+use crate::{positions_expired, schema::GemPosition, GemFactoryContract};
 
 const EXPIRES: u64 = 1_704_153_600;
 const REMAINDER: u64 = 3_000_007;
@@ -43,7 +43,7 @@ fn world() -> HashMapStorageProvider {
 
 fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<u32> {
     StorageHandle::enter(p, |s| {
-        expired::sweep_expired_positions(&BlockRuntimeContext::new(
+        positions_expired::sweep_expired_positions(&BlockRuntimeContext::new(
             BlockContext::empty_for_tests(2, at, 1),
             s,
         ))

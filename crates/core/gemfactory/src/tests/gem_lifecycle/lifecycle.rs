@@ -9,8 +9,8 @@ use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::StorageHandle;
 
 use super::*;
-use crate::config::GemParams;
-use crate::schema::{GemContract, GemState};
+use outbe_gem::config::GemParams;
+use outbe_gem::schema::{GemContract, GemState};
 
 #[test]
 fn coen_iso_one_maps_to_the_center_price_bin_at_six_decimals() {
@@ -84,7 +84,7 @@ fn add_gem_rejects_zero_owner() {
     with_storage(|storage, world| {
         let mut p = sample_params(ALICE);
         p.owner = Address::ZERO;
-        assert!(api::add_gem(storage, &world.scope, &world.parent, p).is_err());
+        assert!(crate::runtime::add_gem(storage, &world.scope, &world.parent, p).is_err());
     });
 }
 
@@ -93,7 +93,8 @@ fn a_duplicate_id_is_rejected_and_rolls_back() {
     with_storage(|storage, world| {
         let gem_id = add(storage, world, sample_params(ALICE));
         let error =
-            api::add_gem(storage, &world.scope, &world.parent, sample_params(ALICE)).unwrap_err();
+            crate::runtime::add_gem(storage, &world.scope, &world.parent, sample_params(ALICE))
+                .unwrap_err();
         assert!(format!("{error:?}").contains("already exists"), "{error:?}");
         assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
         assert_eq!(owned(storage, world, ALICE), [gem_id]);
@@ -122,7 +123,9 @@ fn enumerable_returns_only_owned_gems() {
 fn burn_requires_settled_state() {
     with_storage(|storage, world| {
         let gem_id = add(storage, world, sample_params(ALICE));
-        assert!(api::burn_settled(storage, &world.scope, &world.parent, gem_id).is_err());
+        assert!(
+            crate::runtime::burn_settled(storage, &world.scope, &world.parent, gem_id).is_err()
+        );
 
         qualify_and_settle(storage, world, gem_id);
         burn_settled(storage, world, gem_id);
@@ -162,7 +165,7 @@ fn a_bucket_holds_the_gems_of_one_day_entry_price_and_currency() {
         );
         assert_eq!(
             bucket,
-            crate::identity::bucket_key(
+            outbe_gem::identity::bucket_key(
                 item(storage, world, gems[0]).unwrap().worldwide_day(),
                 U256::from(500_000u64),
                 USD
@@ -186,7 +189,7 @@ fn a_bucket_holds_the_gems_of_one_day_entry_price_and_currency() {
             bucket,
             "the floor is the gem's own"
         );
-        set_profile(storage, crate::config::PROFILE_PROD);
+        set_profile(storage, outbe_gem::config::PROFILE_PROD);
         assert_eq!(
             apart(&|_| {}),
             bucket,
@@ -199,9 +202,9 @@ fn a_bucket_holds_the_gems_of_one_day_entry_price_and_currency() {
 #[test]
 fn profile_change_after_open_does_not_reterm_the_bucket() {
     with_storage(|storage, world| {
-        set_profile(storage, crate::config::PROFILE_DEV);
+        set_profile(storage, outbe_gem::config::PROFILE_DEV);
         let first = add(storage, world, sample_params(ALICE));
-        set_profile(storage, crate::config::PROFILE_PROD);
+        set_profile(storage, outbe_gem::config::PROFILE_PROD);
         let mut p = sample_params(BOB);
         p.issued_at += 3_600;
         let second = add(storage, world, p);
@@ -263,7 +266,7 @@ fn bucket_body_and_terms_survive_until_unpaid_and_settled_are_zero() {
         let gem = GemContract::new(storage.clone());
         let bin =
             GemContract::price_to_bin(view(storage, world, gem_id).terms.call_price_minor).unwrap();
-        assert!(tree_math::contains(&crate::state::CallBins(&gem, USD), bin).unwrap());
+        assert!(tree_math::contains(&outbe_gem::CallBins(&gem, USD), bin).unwrap());
 
         qualify_and_settle(storage, world, gem_id);
         assert_eq!(gem.bucket_gem_count.read(&bucket).unwrap(), 0);
@@ -283,9 +286,9 @@ fn bucket_body_and_terms_survive_until_unpaid_and_settled_are_zero() {
         let window = breach_window(
             T_NOW,
             view(storage, world, gem_id).terms.call_price_minor + U256::from(1u64),
-            (crate::constants::CALL_WINDOW / 86_400) as usize,
+            (outbe_gem::constants::CALL_WINDOW / 86_400) as usize,
         );
-        assert!(!scan.trigger_bucket_call(&window, bucket, T_NOW).unwrap());
+        assert!(!crate::called::trigger_bucket_call(&mut scan, &window, bucket, T_NOW).unwrap());
 
         burn_settled(storage, world, gem_id);
         assert_eq!(
@@ -293,7 +296,7 @@ fn bucket_body_and_terms_survive_until_unpaid_and_settled_are_zero() {
             0,
             "out of the trie"
         );
-        assert!(!tree_math::contains(&crate::state::CallBins(&gem, USD), bin).unwrap());
+        assert!(!tree_math::contains(&outbe_gem::CallBins(&gem, USD), bin).unwrap());
         assert!(
             api::get_bucket(storage, &world.scope, &world.parent, bucket_id)
                 .unwrap()
@@ -364,7 +367,7 @@ fn unpaid_removal_emits_no_bucket_update_settled_removal_decrements() {
 fn settle_requires_a_called_or_qualified_gem() {
     with_storage(|storage, world| {
         let gem_id = add(storage, world, sample_params(ALICE));
-        assert!(api::settle_gem(storage, &world.scope, &world.parent, gem_id).is_err());
+        assert!(try_settle(storage, world, gem_id).is_err());
         assert_eq!(gem_state(storage, world, gem_id), GemState::Issued as u8);
 
         qualify_and_settle(storage, world, gem_id);
@@ -372,7 +375,7 @@ fn settle_requires_a_called_or_qualified_gem() {
         assert_eq!(settled.state, GemState::Settled as u8);
         assert_eq!(settled.settled_at, T_NOW);
         assert_eq!(settled.called_at, 0);
-        assert!(api::settle_gem(storage, &world.scope, &world.parent, gem_id).is_err());
+        assert!(try_settle(storage, world, gem_id).is_err());
     });
 }
 
@@ -393,7 +396,7 @@ fn settle_requires_per_item_qualification_not_bucket_sibling() {
         assert!(is_qualified(storage, world, low));
         assert!(!is_qualified(storage, world, high));
         settle(storage, world, low);
-        assert!(api::settle_gem(storage, &world.scope, &world.parent, high).is_err());
+        assert!(try_settle(storage, world, high).is_err());
     });
 }
 
@@ -444,10 +447,10 @@ fn only_a_genesis_gem_is_issued_without_a_floor() {
     with_storage(|storage, world| {
         let mut p = sample_params(ALICE);
         p.floor_price_minor = U256::ZERO;
-        assert!(api::add_gem(storage, &world.scope, &world.parent, p.clone()).is_err());
+        assert!(crate::runtime::add_gem(storage, &world.scope, &world.parent, p.clone()).is_err());
 
-        p.gem_type = crate::GENESIS_GEM_TYPE;
-        assert!(api::add_gem(storage, &world.scope, &world.parent, p).is_ok());
+        p.gem_type = outbe_gem::GENESIS_GEM_TYPE;
+        assert!(crate::runtime::add_gem(storage, &world.scope, &world.parent, p).is_ok());
     });
 }
 
@@ -477,7 +480,7 @@ fn member_count_overflow_and_underflow_roll_back_gem_mutations() {
         let gem = GemContract::new(storage.clone());
         gem.bucket_gem_count.write(&bucket, 0).unwrap();
         call_gem(storage, world, gem_id, T_NOW);
-        assert!(api::settle_gem(storage, &world.scope, &world.parent, gem_id).is_err());
+        assert!(try_settle(storage, world, gem_id).is_err());
         assert_eq!(
             item(storage, world, gem_id).unwrap().state,
             GemState::Issued as u8
@@ -513,8 +516,8 @@ fn a_gem_id_is_its_raw_keccak_and_the_bucket_id_carries_the_day() {
 #[cfg(feature = "e2e-test")]
 #[test]
 fn backdate_that_changes_the_day_moves_the_gem_and_mints_a_new_bucket_body() {
-    use crate::precompile::IGemTestArming;
     use alloy_sol_types::SolCall;
+    use outbe_gem::precompile::IGemTestArming;
 
     with_storage(|storage, world| {
         let gem_id = add(storage, world, sample_params(ALICE));
@@ -537,7 +540,7 @@ fn backdate_that_changes_the_day_moves_the_gem_and_mints_a_new_bucket_body() {
         assert_ne!(after.bucket_key, before.bucket_key);
         assert_eq!(
             after.bucket_key,
-            crate::identity::bucket_key(after.worldwide_day(), U256::from(500_000u64), USD)
+            outbe_gem::identity::bucket_key(after.worldwide_day(), U256::from(500_000u64), USD)
         );
         assert!(
             api::get_bucket(storage, &world.scope, &world.parent, before.bucket_id())

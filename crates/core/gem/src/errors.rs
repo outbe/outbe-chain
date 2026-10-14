@@ -22,14 +22,8 @@ pub enum GemError {
     #[error("index out of bounds")]
     IndexOutOfBounds,
 
-    #[error("invalid owner")]
-    InvalidOwner,
-
     #[error("gem already exists")]
     AlreadyExists,
-
-    #[error("only a genesis gem is issued without a floor")]
-    ZeroFloorPrice,
 }
 
 /// Failure at the typed gem persistence boundary.

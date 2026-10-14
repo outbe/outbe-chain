@@ -8865,6 +8865,7 @@ dependencies = [
  "outbe-gem",
  "outbe-intex",
  "outbe-macros",
+ "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promis",

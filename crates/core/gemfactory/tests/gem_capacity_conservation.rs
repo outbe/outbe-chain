@@ -7,9 +7,10 @@ use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
 use outbe_compressed_entities::{begin_block, ExecutionScope};
 use outbe_gem::{
-    api, called, config::PROFILE_PROD, hooks, GemAddParams, GemContract, GemRepositoryReader,
-    GemState,
+    api, config::PROFILE_PROD, CallTerms, GemAddParams, GemContract, GemParams,
+    GemRepositoryReader, GemState,
 };
+use outbe_gemfactory::{called, hooks};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
@@ -28,6 +29,19 @@ const CALLED: u64 = ISSUED + 29 * DAY;
 const DEADLINE: u64 = CALLED + 7 * DAY;
 // Genesis, Validator, SRA, Wallet, Merchant.
 const TYPES: [u8; 5] = [0, 1, 2, 3, 5];
+
+/// The PROD call terms a bucket opened at `entry` seals.
+fn prod_terms(entry: U256) -> CallTerms {
+    let prod = GemParams::PROD;
+    CallTerms {
+        call_price_minor: outbe_primitives::markup::marked_up(entry, prod.call_rate).unwrap(),
+        reference_currency: 840,
+        call_rate: prod.call_rate,
+        call_window_seconds: prod.call_window_seconds,
+        call_threshold_seconds: prod.call_threshold_seconds,
+        call_notice_period_seconds: prod.call_notice_period_seconds,
+    }
+}
 
 struct World {
     scope: ExecutionScope,
@@ -71,6 +85,7 @@ fn world() -> (HashMapStorageProvider, World, Vec<(U256, U256)>) {
                         issuance_currency: 840,
                         reference_currency: 840,
                         issued_at: ISSUED,
+                        call_terms: Some(prod_terms(U256::from(1_000_000))),
                     },
                 )
                 .unwrap();
@@ -185,8 +200,14 @@ fn a_paid_then_mined_gem_returns_no_capacity_while_unpaid_siblings_forfeit() {
     // The completed settlement footprint; payment itself is covered by the
     // settlement tests.
     StorageHandle::enter(&mut p, |s| {
-        api::settle_gem(&s, &world.scope, &world.parent, paid).unwrap();
-        api::burn_settled(&s, &world.scope, &world.parent, paid).unwrap();
+        let (item, bucket) = api::load_pair(&s, &world.scope, &world.parent, paid)
+            .unwrap()
+            .unwrap();
+        api::record_settled(&s, &world.scope, item, bucket).unwrap();
+        let (item, bucket) = api::load_pair(&s, &world.scope, &world.parent, paid)
+            .unwrap()
+            .unwrap();
+        api::remove_gem(&s, &world.scope, item, bucket).unwrap();
         assert_eq!(
             PromisLimitContract::new(s).get_total_unallocated().unwrap(),
             U256::ZERO

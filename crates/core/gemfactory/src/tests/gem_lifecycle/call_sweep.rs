@@ -11,8 +11,8 @@ use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, times
 
 use super::*;
 use crate::called::{run_call_slice, run_daily, scan_and_call};
-use crate::config::GemParams;
-use crate::schema::{GemContract, GemState};
+use outbe_gem::config::GemParams;
+use outbe_gem::schema::{GemContract, GemState};
 
 /// Every day of the window closed at `vwap` on `pair`, finalized through yesterday.
 fn window_at(storage: &StorageHandle, pair: u32, vwap: U256) -> u32 {
@@ -23,8 +23,8 @@ fn window_at(storage: &StorageHandle, pair: u32, vwap: U256) -> u32 {
 
 fn full_window(last_closed_day: u32, vwap: U256) -> outbe_oracle::call_window::CallWindow {
     outbe_oracle::call_window::CallWindow::from_vwaps(
-        vec![(last_closed_day, Some(vwap)); (crate::constants::CALL_WINDOW / 86_400) as usize],
-        crate::constants::CALL_THRESHOLD / 86_400,
+        vec![(last_closed_day, Some(vwap)); (outbe_gem::constants::CALL_WINDOW / 86_400) as usize],
+        outbe_gem::constants::CALL_THRESHOLD / 86_400,
     )
 }
 
@@ -65,7 +65,7 @@ fn call_scan_reads_each_gem_own_pair_window() {
         let oracle = OracleContract::new(storage.clone());
         let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
         let mut day = last_closed_day;
-        for _ in 0..(crate::constants::CALL_THRESHOLD / 86_400) {
+        for _ in 0..(outbe_gem::constants::CALL_THRESHOLD / 86_400) {
             oracle.record_utc_day_vwap(day, eur_pair, breach).unwrap();
             day = previous_date_key(day);
         }
@@ -167,13 +167,17 @@ fn call_then_forfeit_lifecycle() {
     with_storage(|storage, world| {
         let gem_id = mature_gem(storage, world);
         let threshold = view(storage, world, gem_id).terms.call_price_minor;
-        let breach_days = (crate::constants::CALL_THRESHOLD / 86_400) as usize;
+        let breach_days = (outbe_gem::constants::CALL_THRESHOLD / 86_400) as usize;
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());
-        assert!(gem
-            .trigger_bucket_call(&window, bucket_of(storage, world, gem_id), T_NOW)
-            .unwrap());
+        assert!(crate::called::trigger_bucket_call(
+            &mut gem,
+            &window,
+            bucket_of(storage, world, gem_id),
+            T_NOW
+        )
+        .unwrap());
         let called = view(storage, world, gem_id);
         assert_eq!(called.effective_state(T_NOW), GemState::Called as u8);
         assert_eq!(called.called_at(), T_NOW);
@@ -193,7 +197,7 @@ fn call_then_forfeit_lifecycle() {
 
 #[test]
 fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
-    let threshold_days = (crate::constants::CALL_THRESHOLD / 86_400) as usize;
+    let threshold_days = (outbe_gem::constants::CALL_THRESHOLD / 86_400) as usize;
     // Oldest day of a breach run that is exactly threshold-long.
     let mut oldest_breach = timestamp_to_date_key(T_NOW);
     for _ in 1..threshold_days {
@@ -204,7 +208,7 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
     // A second past midnight loses the day and falls one breach short.
     for (issued_at, expected) in [(midnight, true), (midnight + 1, false)] {
         with_storage(|storage, world| {
-            set_profile(storage, crate::config::PROFILE_PROD);
+            set_profile(storage, outbe_gem::config::PROFILE_PROD);
             let mut p = sample_params(ALICE);
             p.issued_at = issued_at;
             let gem_id = add(storage, world, p);
@@ -213,8 +217,13 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
 
             let mut gem = GemContract::new(storage.clone());
             assert_eq!(
-                gem.trigger_bucket_call(&window, bucket_of(storage, world, gem_id), T_NOW)
-                    .unwrap(),
+                crate::called::trigger_bucket_call(
+                    &mut gem,
+                    &window,
+                    bucket_of(storage, world, gem_id),
+                    T_NOW
+                )
+                .unwrap(),
                 expected,
                 "issued at {issued_at}"
             );
@@ -226,14 +235,14 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
 /// later member issued the same day does not move it.
 #[test]
 fn second_member_with_a_different_issued_at_joins_the_first_members_bucket() {
-    let threshold_days = (crate::constants::CALL_THRESHOLD / 86_400) as usize;
+    let threshold_days = (outbe_gem::constants::CALL_THRESHOLD / 86_400) as usize;
     let mut oldest_breach = timestamp_to_date_key(T_NOW);
     for _ in 1..threshold_days {
         oldest_breach = previous_date_key(oldest_breach);
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach);
     with_storage(|storage, world| {
-        set_profile(storage, crate::config::PROFILE_PROD);
+        set_profile(storage, outbe_gem::config::PROFILE_PROD);
         let mut first = sample_params(ALICE);
         first.issued_at = midnight;
         let first = add(storage, world, first);
@@ -249,8 +258,13 @@ fn second_member_with_a_different_issued_at_joins_the_first_members_bucket() {
         let window = breach_window(T_NOW, threshold + U256::from(1u64), threshold_days);
         let mut gem = GemContract::new(storage.clone());
         assert!(
-            gem.trigger_bucket_call(&window, bucket_of(storage, world, first), T_NOW)
-                .unwrap(),
+            crate::called::trigger_bucket_call(
+                &mut gem,
+                &window,
+                bucket_of(storage, world, first),
+                T_NOW
+            )
+            .unwrap(),
             "the bucket counts from its first member's midnight"
         );
         assert_eq!(gem_state(storage, world, second), GemState::Called as u8);
@@ -263,13 +277,17 @@ fn call_skips_below_threshold() {
         let gem_id = mature_gem(storage, world);
         let threshold = view(storage, world, gem_id).terms.call_price_minor;
         // One below the threshold: not enough breach-days to force a call.
-        let breach_days = (crate::constants::CALL_THRESHOLD / 86_400) as usize - 1;
+        let breach_days = (outbe_gem::constants::CALL_THRESHOLD / 86_400) as usize - 1;
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());
-        assert!(!gem
-            .trigger_bucket_call(&window, bucket_of(storage, world, gem_id), T_NOW)
-            .unwrap());
+        assert!(!crate::called::trigger_bucket_call(
+            &mut gem,
+            &window,
+            bucket_of(storage, world, gem_id),
+            T_NOW
+        )
+        .unwrap());
         assert_eq!(gem_state(storage, world, gem_id), GemState::Issued as u8);
     });
 }
@@ -301,7 +319,7 @@ fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
         let gem = GemContract::new(storage.clone());
         let iso = sample_params(ALICE).reference_currency;
 
-        set_profile(storage, crate::config::PROFILE_DEV);
+        set_profile(storage, outbe_gem::config::PROFILE_DEV);
         add(storage, world, sample_params(ALICE));
         assert_eq!(
             gem.max_call_window_seconds.read(&iso).unwrap(),
@@ -309,7 +327,7 @@ fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
         );
 
         // A new bucket is sealed on the wider profile.
-        set_profile(storage, crate::config::PROFILE_PROD);
+        set_profile(storage, outbe_gem::config::PROFILE_PROD);
         let mut other = sample_params(BOB);
         other.entry_price_minor = U256::from(600_000u64);
         add(storage, world, other);
@@ -319,7 +337,7 @@ fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
             "a wider profile widens the span"
         );
 
-        set_profile(storage, crate::config::PROFILE_DEV);
+        set_profile(storage, outbe_gem::config::PROFILE_DEV);
         let mut third = sample_params(ALICE);
         third.entry_price_minor = U256::from(700_000u64);
         third.promis_load_minor = U256::from(2_000_000u64);
@@ -343,7 +361,7 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
         let oracle = OracleContract::new(storage.clone());
         let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
         let mut day = last_closed_day;
-        for _ in 0..crate::constants::CALL_THRESHOLD / 86_400 {
+        for _ in 0..outbe_gem::constants::CALL_THRESHOLD / 86_400 {
             oracle.record_utc_day_vwap(day, pair, U256::MAX).unwrap();
             day = previous_date_key(day);
         }
@@ -388,7 +406,7 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
 fn a_call_slice_refreshes_all_metadata_once() {
     let (mut provider, world) = provider_at(T_NOW);
     StorageHandle::enter(&mut provider, |storage| {
-        set_profile(&storage, crate::config::PROFILE_PROD);
+        set_profile(&storage, outbe_gem::config::PROFILE_PROD);
         let pair = seed_currency(&storage, USD, Some(U256::from(600_000u64)));
         for nonce in 0..3 {
             callable_gem_of(
@@ -423,7 +441,7 @@ fn a_call_slice_refreshes_all_metadata_once() {
 fn a_trigger_during_a_running_call_sweep_queues_its_day() {
     with_storage(|storage, world| {
         let gem = GemContract::new(storage.clone());
-        set_profile(storage, crate::config::PROFILE_PROD);
+        set_profile(storage, outbe_gem::config::PROFILE_PROD);
         let pair = seed_currency(storage, USD, Some(U256::from(600_000u64)));
         let issued_at = T_NOW - 100 * 86_400;
         // A bin whose calls spend the whole write budget, and one gem priced above it.
@@ -472,7 +490,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
 fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
     let (mut provider, world) = provider_at(T_NOW);
     let (in_flight, skipped) = StorageHandle::enter(&mut provider, |storage| {
-        set_profile(&storage, crate::config::PROFILE_PROD);
+        set_profile(&storage, outbe_gem::config::PROFILE_PROD);
         let pair = seed_currency(&storage, USD, Some(U256::from(600_000u64)));
         for nonce in 0..=u64::from(SWEEP_VISITS_PER_BLOCK) {
             callable_gem_of(
@@ -522,7 +540,7 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
 fn a_call_sweep_over_several_currencies_always_ends() {
     with_storage(|storage, world| {
         let gem = GemContract::new(storage.clone());
-        set_profile(storage, crate::config::PROFILE_PROD);
+        set_profile(storage, outbe_gem::config::PROFILE_PROD);
         let day = previous_date_key(timestamp_to_date_key(T_NOW));
         for iso in [USD, EUR] {
             let pair = seed_currency(storage, iso, Some(U256::from(600_000u64)));

@@ -780,7 +780,7 @@ fn gem_body_cost_inputs(item: &GemItemState) -> (u8, U256) {
 /// `entry x load x cost_rate / 100`, in six-decimal reference units.
 fn six_decimal_settlement_cost(entry: U256, load: U256, gem_type: u8) -> U256 {
     let cost_rate = if gem_type == GemTypes::Sra as u8 {
-        crate::constants::SRA_RATE
+        outbe_gem::constants::SRA_RATE
     } else {
         100
     };

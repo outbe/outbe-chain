@@ -248,9 +248,9 @@ fn issue_five_gems(world: &mut World) {
         // behind every day the scenario seeds.
         eth::send_call(
             &url,
-            addresses::GEM_ADDR,
+            addresses::GEM_FACTORY_ADDR,
             DEPLOYER_KEY,
-            &IGemTestArming::backdateGemForTestCall {
+            &IGemFactoryTestArming::backdateGemForTestCall {
                 gemId: gem_id,
                 issuedAt: head_time(world)
                     .saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * 86_400),
@@ -450,9 +450,9 @@ impl Lifecycle for GemLifecycle {
         }
         eth::send_call(
             &url,
-            addresses::GEM_ADDR,
+            addresses::GEM_FACTORY_ADDR,
             DEPLOYER_KEY,
-            &IGemTestArming::closeCallNoticeForTestCall {
+            &IGemFactoryTestArming::closeCallNoticeForTestCall {
                 gemId: id,
                 deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
             },
@@ -650,7 +650,7 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
 }
 
 alloy_sol_types::sol! {
-    interface IGemTestArming {
+    interface IGemFactoryTestArming {
         function backdateGemForTest(uint256 gemId, uint64 issuedAt) external;
         function closeCallNoticeForTest(uint256 gemId, uint64 deadline) external;
     }

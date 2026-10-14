@@ -1,7 +1,5 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
-#[cfg(feature = "e2e-test")]
-use outbe_compressed_entities::ExecutionScope;
 use outbe_compressed_entities::{ExecutionReaders, ParentBodySource};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::erc::{
@@ -31,70 +29,6 @@ sol!(
     "../../../contracts/precompiles/src/IGem.sol"
 );
 
-// A gem is stamped live, so only a throwaway build can move its issuance back
-// behind the closed days a scenario seeds for the call sweep. The forfeit sweep
-// opens a bucket only once its hour has closed. For that reason,
-// `closeCallNoticeForTest` moves a deadline that already lapsed into one that the
-// sweep will open on the next block.
-#[cfg(feature = "e2e-test")]
-sol! {
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IGemTestArming {
-        function backdateGemForTest(uint256 gemId, uint64 issuedAt) external;
-        function closeCallNoticeForTest(uint256 gemId, uint64 deadline) external;
-    }
-}
-
-/// Re-issues the gem on `issued_at`: it leaves its bucket and joins the bucket of the
-/// new day, which may open a new bucket body.
-#[cfg(feature = "e2e-test")]
-fn backdate_gem(
-    storage: &outbe_primitives::storage::StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    gem_id: U256,
-    issued_at: u64,
-) -> Result<()> {
-    let (item, bucket) =
-        api::load_pair(storage, scope, parent, gem_id)?.ok_or(GemError::GemNotFound)?;
-    if item.body().is_settled() {
-        return Err(GemError::InvalidState.into());
-    }
-    let body = item.body().clone();
-    let entry_price_minor = bucket.body().entry_price_minor;
-    let mut gem = GemContract::new(storage.clone());
-    storage.clone().with_checkpoint(|| {
-        gem.record_gem_removed(scope, item, bucket)?;
-        let mut reissued = body;
-        reissued.issued_at = issued_at;
-        reissued.bucket_key = crate::identity::bucket_key(
-            reissued.worldwide_day(),
-            entry_price_minor,
-            reissued.reference_currency,
-        );
-        gem.record_gem_issued(scope, parent, &reissued, entry_price_minor)
-    })
-}
-
-/// Move the queue entry of a called gem's bucket onto `deadline`.
-#[cfg(feature = "e2e-test")]
-fn requeue_called_gem(
-    storage: &outbe_primitives::storage::StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    gem_id: U256,
-    deadline: u64,
-) -> Result<()> {
-    let item = api::get_item(storage, scope, parent, gem_id)?.ok_or(GemError::GemNotFound)?;
-    let mut gem = GemContract::new(storage.clone());
-    let bucket = item.bucket_key;
-    if gem.called_deadline.read(&bucket)? == 0 {
-        return Err(GemError::InvalidState.into());
-    }
-    gem.remove_called(bucket)?;
-    gem.push_called(bucket, deadline)
-}
-
 /// Dispatches Gem calls through the block-scoped compressed-body lifecycle.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
@@ -104,34 +38,6 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
-    #[cfg(feature = "e2e-test")]
-    if let Ok(call) =
-        <IGemTestArming::backdateGemForTestCall as alloy_sol_types::SolCall>::abi_decode(data)
-    {
-        outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
-        backdate_gem(
-            &storage,
-            readers.scope,
-            readers.parent,
-            call.gemId,
-            call.issuedAt,
-        )?;
-        return Ok(Bytes::new());
-    }
-    #[cfg(feature = "e2e-test")]
-    if let Ok(call) =
-        <IGemTestArming::closeCallNoticeForTestCall as alloy_sol_types::SolCall>::abi_decode(data)
-    {
-        outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
-        requeue_called_gem(
-            &storage,
-            readers.scope,
-            readers.parent,
-            call.gemId,
-            call.deadline,
-        )?;
-        return Ok(Bytes::new());
-    }
     dispatch_call(data, IGem::IGemCalls::abi_decode, |call| {
         use IGem::IGemCalls::*;
         match call {

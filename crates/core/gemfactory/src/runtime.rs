@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
-use outbe_gem::{api as gem_api, GemAddParams, GemView};
+use outbe_gem::{api as gem_api, CallTerms, GemAddParams, GemParams, GemView};
 use outbe_intex::{IntexState, SeriesId};
 use outbe_oracle::api::get_utc_day_vwap_for_iso;
 use outbe_primitives::addresses::{GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS};
@@ -12,11 +12,11 @@ use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use outbe_common::pow;
 
-use crate::constants::SRA_RATE;
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemPositionIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition, GemTypes};
 use crate::sol_ext::IIntexNFT1155;
+use outbe_gem::constants::SRA_RATE;
 use outbe_vaultrouter::settlement::{self, Currencies, Obligation};
 
 /// Issues one agent-class gem priced at `entry_price`, the COEN rate in
@@ -68,8 +68,9 @@ pub fn issue_gem(
         issuance_currency,
         reference_currency,
         issued_at,
+        call_terms: None,
     };
-    let gem_id = gem_api::add_gem(storage, scope, parent, params)?;
+    let gem_id = add_gem(storage, scope, parent, params)?;
 
     let factory = GemFactoryContract::new(storage.clone());
     let prev_total = factory.total_gems_issued.read()?;
@@ -81,6 +82,53 @@ pub fn issue_gem(
     emit_gem_issued(storage, scope, parent, gem_id, U256::ZERO)?;
 
     Ok(gem_id)
+}
+
+/// Issues a gem on the live profile: the bucket it opens seals the profile's call terms.
+/// Only the genesis type is issued without a floor.
+pub(crate) fn add_gem(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    mut params: GemAddParams,
+) -> Result<U256> {
+    if params.owner.is_zero() {
+        return Err(GemFactoryError::InvalidOwner.into());
+    }
+    if params.floor_price_minor.is_zero() && params.gem_type != outbe_gem::GENESIS_GEM_TYPE {
+        return Err(GemFactoryError::ZeroFloorPrice.into());
+    }
+    params.call_terms = derived_call_terms(
+        params.entry_price_minor,
+        params.reference_currency,
+        outbe_gem::config::read(storage)?,
+    )?;
+    gem_api::add_gem(storage, scope, parent, params)
+}
+
+/// The entry marked up by the call rate, plus the profile's other call terms.
+///
+/// `None` when entry is zero: a zero call price would fire on the first scan. The
+/// profile is read exactly here. Every later check reads the bucket's sealed copy, so
+/// a retune cannot re-term an already-issued gem.
+pub(crate) fn derived_call_terms(
+    entry_price_minor: U256,
+    reference_currency: u16,
+    params: GemParams,
+) -> Result<Option<CallTerms>> {
+    if entry_price_minor.is_zero() {
+        return Ok(None);
+    }
+    let call_price = outbe_primitives::markup::marked_up(entry_price_minor, params.call_rate)
+        .ok_or_else(|| PrecompileError::Fatal("gem call price overflow".into()))?;
+    Ok(Some(CallTerms {
+        call_price_minor: call_price,
+        reference_currency,
+        call_rate: params.call_rate,
+        call_window_seconds: params.call_window_seconds,
+        call_threshold_seconds: params.call_threshold_seconds,
+        call_notice_period_seconds: params.call_notice_period_seconds,
+    }))
 }
 
 /// Announce a new gem with the terms its bucket sealed. A gem joining an open bucket
@@ -283,7 +331,7 @@ pub fn issue_merchant_gem(
     let floor_price =
         derived_floor(entry_price, terms.floor_rate)?.max(record.source_floor_price_minor);
 
-    let gem_id = gem_api::add_gem(
+    let gem_id = add_gem(
         storage,
         scope,
         parent,
@@ -296,6 +344,7 @@ pub fn issue_merchant_gem(
             issuance_currency: record.issuance_currency,
             reference_currency: record.reference_currency,
             issued_at: now,
+            call_terms: None,
         },
     )?;
 
@@ -333,25 +382,16 @@ pub fn settle_gem(
         snapshot_id,
     } = params;
     let gem = load_view(storage, scope, parent, gem_id)?;
-    let now = storage.timestamp()?.to::<u64>();
-    // The qualification walk goes last.
-    if gem.item.is_settled() {
-        return Err(GemFactoryError::InvalidState.into());
-    }
-    if gem.bucket_called_at != 0 {
-        if now > gem.settlement_deadline() {
-            return Err(GemFactoryError::DeadlineExpired.into());
-        }
-    } else if !gem_api::is_qualified(storage, &gem.item)? {
-        return Err(GemFactoryError::InvalidState.into());
-    }
+    require_settleable(storage, &gem)?;
 
     let quote = settlement::quote(storage, asset, currencies(&gem), &obligation(&gem))?;
     quote.require_snapshot(snapshot_id)?;
     storage.clone().with_checkpoint(|| {
         // Settle before payment so a token callback cannot settle the gem twice.
         // A failed payment rolls the state back.
-        gem_api::settle_gem(storage, scope, parent, gem_id)?;
+        let (item, bucket) = gem_api::load_pair(storage, scope, parent, gem_id)?
+            .ok_or(GemFactoryError::GemNotFound)?;
+        gem_api::record_settled(storage, scope, item, bucket)?;
         settlement::collect(
             storage,
             GEM_FACTORY_ADDRESS,
@@ -370,6 +410,37 @@ pub fn settle_gem(
             },
         )
     })
+}
+
+/// A gem the owner may pay for: a called one until its deadline, an uncalled one once
+/// qualified. The qualification walk goes last.
+pub(crate) fn require_settleable(storage: &StorageHandle<'_>, gem: &GemView) -> Result<()> {
+    if gem.item.is_settled() {
+        return Err(GemFactoryError::InvalidState.into());
+    }
+    if gem.bucket_called_at != 0 {
+        if storage.timestamp()?.to::<u64>() > gem.settlement_deadline() {
+            return Err(GemFactoryError::DeadlineExpired.into());
+        }
+    } else if !gem_api::is_qualified(storage, &gem.item)? {
+        return Err(GemFactoryError::InvalidState.into());
+    }
+    Ok(())
+}
+
+/// Burns a settled gem for Promis mining.
+pub(crate) fn burn_settled(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    gem_id: U256,
+) -> Result<()> {
+    let (item, bucket) =
+        gem_api::load_pair(storage, scope, parent, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
+    if !item.body().is_settled() {
+        return Err(GemFactoryError::InvalidState.into());
+    }
+    gem_api::remove_gem(storage, scope, item, bucket)
 }
 
 fn currencies(gem: &GemView) -> Currencies {
@@ -475,7 +546,7 @@ pub fn mine_promis(
     // Burn, mint and the exercise event are one transition: a rejected or
     // failed mint leaves the settled Gem in place so the owner can retry.
     storage.clone().with_checkpoint(|| {
-        gem_api::burn_settled(storage, scope, parent, gem_id)?;
+        burn_settled(storage, scope, parent, gem_id)?;
 
         // The Promis is confidential: the mint runs inside the enclave, authorized by
         // the gem owner's Promis modify key. The client's `mac`/`opNonce` must bind the

@@ -95,11 +95,11 @@ impl TriggerHandler {
             Self::ProtocolCycle => crate::handler::run_protocol_cycle(ctx, scope, parent),
             Self::IntexDaily => outbe_intexfactory::called::run_daily(ctx),
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
-            Self::GemDaily => outbe_gem::called::run_daily(ctx),
+            Self::GemDaily => outbe_gemfactory::called::run_daily(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
             Self::NodCallDaily => outbe_nod::called::run_daily(ctx),
-            Self::GemPositionDaily => outbe_gemfactory::expired::run_daily(ctx),
+            Self::GemPositionDaily => outbe_gemfactory::positions_expired::run_daily(ctx),
             Self::IntexDrainParked => outbe_intexfactory::parked::drain(ctx),
             Self::IntexVwapPush => outbe_intexfactory::vwap_push::run(ctx),
         }

@@ -9,37 +9,11 @@ use outbe_primitives::expiry_queue;
 
 use crate::{
     api::{LoadedGem, LoadedGemBucket},
-    config::GemParams,
     constants::{TOKEN_NAME, TOKEN_SYMBOL},
     errors::GemError,
     precompile::IGem,
     schema::{CallTerms, GemBucketState, GemContract, GemItemState, GemState},
 };
-
-/// The entry marked up by the call rate, plus the profile's other call terms.
-///
-/// `None` when entry is zero: a zero call price would fire on the first scan. The
-/// profile is read exactly here. Every later check reads the bucket's sealed copy, so
-/// a retune cannot re-term an already-issued gem.
-pub(crate) fn derived_call_terms(
-    entry_price_minor: U256,
-    reference_currency: u16,
-    params: GemParams,
-) -> Result<Option<CallTerms>> {
-    if entry_price_minor.is_zero() {
-        return Ok(None);
-    }
-    let call_price = outbe_primitives::markup::marked_up(entry_price_minor, params.call_rate)
-        .ok_or_else(|| PrecompileError::Fatal("gem call price overflow".into()))?;
-    Ok(Some(CallTerms {
-        call_price_minor: call_price,
-        reference_currency,
-        call_rate: params.call_rate,
-        call_window_seconds: params.call_window_seconds,
-        call_threshold_seconds: params.call_threshold_seconds,
-        call_notice_period_seconds: params.call_notice_period_seconds,
-    }))
-}
 
 impl GemContract<'_> {
     pub fn name() -> &'static str {
@@ -129,6 +103,7 @@ impl GemContract<'_> {
         parent: &impl ParentBodySource,
         item: &GemItemState,
         entry_price_minor: U256,
+        call_terms: Option<CallTerms>,
     ) -> Result<()> {
         if self
             .get_item_verified(scope, parent, item.gem_id)?
@@ -154,10 +129,7 @@ impl GemContract<'_> {
             Some(_) => None,
             None => {
                 self.bucket_issued_at.write(&bucket_key, item.issued_at)?;
-                let params = crate::config::read_from(self, self.storage.chain_id()?)?;
-                if let Some(terms) =
-                    derived_call_terms(entry_price_minor, item.reference_currency, params)?
-                {
+                if let Some(terms) = call_terms {
                     self.seal_bucket_call_terms(bucket_key, terms)?;
                     self.insert_call_bin(bucket_key)?;
                 }
@@ -281,7 +253,7 @@ impl GemContract<'_> {
 
     // --- Bucket member index ----------------------------------------------------
 
-    pub(crate) fn bucket_member_key(bucket: B256, index: u32) -> B256 {
+    pub fn bucket_member_key(bucket: B256, index: u32) -> B256 {
         let mut buf = [0u8; 36];
         buf[0..32].copy_from_slice(bucket.as_slice());
         buf[32..36].copy_from_slice(&index.to_be_bytes());
@@ -382,18 +354,12 @@ impl GemContract<'_> {
         })
     }
 
-    /// `Issued -> Called` for every unpaid member at once: the bucket leaves the trie
-    /// for the expiry queue, where it waits as one entry.
-    pub fn mark_bucket_called(&mut self, bucket: B256, terms: &CallTerms, now: u64) -> Result<()> {
+    /// Records every unpaid member called at once: the bucket leaves the trie for the
+    /// expiry queue, where it waits on `deadline` as one entry.
+    pub fn record_bucket_called(&mut self, bucket: B256, now: u64, deadline: u64) -> Result<()> {
         self.remove_call_bin(bucket)?;
         self.bucket_called_at.write(&bucket, now)?;
-        let deadline = now.saturating_add(u64::from(terms.call_notice_period_seconds));
-        self.push_called(bucket, deadline)?;
-        self.emit(IGem::GemBucketCalled {
-            bucketKey: bucket,
-            calledAt: now,
-            settlementDeadline: deadline,
-        })
+        self.push_called(bucket, deadline)
     }
 
     /// Forgets a bucket nothing refers to any more: its terms, its place in the call
@@ -414,32 +380,32 @@ impl GemContract<'_> {
 
     // --- Expiry queue -------------------------------------------------------------
 
-    pub(crate) fn push_called(&mut self, bucket: B256, deadline: u64) -> Result<()> {
+    pub fn push_called(&mut self, bucket: B256, deadline: u64) -> Result<()> {
         expiry_queue::push(&ExpiryHours(self), bucket, deadline)
     }
 
-    pub(crate) fn remove_called(&mut self, bucket: B256) -> Result<()> {
+    pub fn remove_called(&mut self, bucket: B256) -> Result<()> {
         expiry_queue::remove(&ExpiryHours(self), bucket)
     }
 
     /// Hour since the epoch a deadline falls in: plain UTC, not a WorldwideDay.
-    #[cfg(test)]
-    pub(crate) const fn deadline_hour(deadline: u64) -> u32 {
+    #[cfg(any(test, feature = "test-utils"))]
+    pub const fn deadline_hour(deadline: u64) -> u32 {
         expiry_queue::bucket_of(deadline)
     }
 
-    #[cfg(test)]
-    pub(crate) const fn hour_end(day: u32) -> u64 {
+    #[cfg(any(test, feature = "test-utils"))]
+    pub const fn hour_end(day: u32) -> u64 {
         expiry_queue::bucket_end(day)
     }
 
-    #[cfg(test)]
-    pub(crate) fn expiry_slot(&self, day: u32, slot: u32) -> Result<Option<B256>> {
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn expiry_slot(&self, day: u32, slot: u32) -> Result<Option<B256>> {
         expiry_queue::entry_at(&ExpiryHours(self), day, slot)
     }
 
-    #[cfg(test)]
-    pub(crate) fn first_expiry_day(&self) -> Result<Option<u32>> {
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn first_expiry_day(&self) -> Result<Option<u32>> {
         expiry_queue::first_bucket(&ExpiryHours(self))
     }
 
@@ -499,7 +465,7 @@ pub(crate) fn gem_bucket_from_verified(body: &VerifiedBody) -> Result<GemBucketS
 }
 
 /// Called buckets, queued by the hour their notice period closes in.
-pub(crate) struct ExpiryHours<'a, 'storage>(pub(crate) &'a GemContract<'storage>);
+pub struct ExpiryHours<'a, 'storage>(pub &'a GemContract<'storage>);
 
 outbe_primitives::impl_expiry_queue!(ExpiryHours<B256> {
     root: expiry_tree_root,
@@ -515,7 +481,7 @@ outbe_primitives::impl_expiry_queue!(ExpiryHours<B256> {
 });
 
 /// The uncalled buckets of one reference currency, by call price.
-pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
+pub struct CallBins<'a, 'storage>(pub &'a GemContract<'storage>, pub u16);
 
 outbe_primitives::impl_call_bins!(CallBins<B256> {
     root: call_bin_tree_root,

@@ -177,9 +177,9 @@ fn prepare(world: &mut World) -> SponsoredGem {
             .expect("committee head timestamp");
         eth::send_call(
             &url,
-            addresses::GEM_ADDR,
+            addresses::GEM_FACTORY_ADDR,
             DEPLOYER_KEY,
-            &crate::features::gem_lifecycle::IGemTestArming::backdateGemForTestCall {
+            &crate::features::gem_lifecycle::IGemFactoryTestArming::backdateGemForTestCall {
                 gemId: gem_id,
                 issuedAt: now.saturating_sub(3 * 86_400),
             },

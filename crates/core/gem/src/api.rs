@@ -6,8 +6,9 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{first_full_day, timestamp_to_date_key, WorldwideDay};
 
-use crate::errors::GemError;
-use crate::schema::{GemAddParams, GemBucketState, GemContract, GemItemState, GemState, GemView};
+use crate::schema::{
+    CallTerms, GemAddParams, GemBucketState, GemContract, GemItemState, GemState, GemView,
+};
 
 /// A decoded gem paired with the exact generic capability that verified it.
 pub struct LoadedGem {
@@ -45,21 +46,14 @@ impl LoadedGemBucket {
     }
 }
 
-/// Issues a gem into the bucket of its day, entry price and reference currency,
-/// opening that bucket if it is the first. Returns the gem id.
+/// Records a gem in the bucket of its day, entry price and reference currency,
+/// opening that bucket if it is the first. Returns the gem id. GemFactory decides the issue.
 pub fn add_gem(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     params: GemAddParams,
 ) -> Result<U256> {
-    if params.owner.is_zero() {
-        return Err(GemError::InvalidOwner.into());
-    }
-    // Only the genesis type is issued without a floor.
-    if params.floor_price_minor.is_zero() && params.gem_type != crate::schema::GENESIS_GEM_TYPE {
-        return Err(GemError::ZeroFloorPrice.into());
-    }
     let gem_id = GemContract::generate_gem_id(
         params.owner,
         params.promis_load_minor,
@@ -84,11 +78,30 @@ pub fn add_gem(
         called_at: 0,
         settled_at: 0,
     };
+    record_issued(
+        storage,
+        scope,
+        parent,
+        &item,
+        params.entry_price_minor,
+        params.call_terms,
+    )?;
+    Ok(gem_id)
+}
+
+/// Records an already built gem body, opening its bucket with `call_terms` if it is the first.
+pub fn record_issued(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    item: &GemItemState,
+    entry_price_minor: U256,
+    call_terms: Option<CallTerms>,
+) -> Result<()> {
     let mut gem = GemContract::new(storage.clone());
     storage.clone().with_checkpoint(|| {
-        gem.record_gem_issued(scope, parent, &item, params.entry_price_minor)
-    })?;
-    Ok(gem_id)
+        gem.record_gem_issued(scope, parent, item, entry_price_minor, call_terms)
+    })
 }
 
 /// Loads a gem while retaining its verified generic mutation capability.
@@ -225,63 +238,17 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, bucket_key: B256) -> Res
     Ok(called_at.saturating_add(u64::from(notice)))
 }
 
-/// Settles a gem the owner may pay for: a called one until its deadline, an uncalled
-/// one once qualified. Payment is the factory's; this records the state.
-pub fn settle_gem(
+/// Records a loaded gem paid for. GemFactory decides the settlement and takes the payment.
+pub fn record_settled(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    gem_id: U256,
+    item: LoadedGem,
+    bucket: LoadedGemBucket,
 ) -> Result<()> {
-    let (item, bucket) = load_pair(storage, scope, parent, gem_id)?.ok_or(GemError::GemNotFound)?;
-    if item.body().is_settled() {
-        return Err(GemError::InvalidState.into());
-    }
-    let now = storage.timestamp()?.to::<u64>();
-    match settlement_deadline(storage, item.body().bucket_key)? {
-        0 if is_qualified(storage, item.body())? => {}
-        0 => return Err(GemError::InvalidState.into()),
-        deadline if now > deadline => return Err(GemError::InvalidState.into()),
-        _ => {}
-    }
     let mut gem = GemContract::new(storage.clone());
     storage
         .clone()
         .with_checkpoint(|| gem.record_gem_settled(scope, item, bucket))
-}
-
-/// Burns a settled gem for Promis mining. The begin-block expiry sweep forfeits
-/// called gems through `GemContract::forfeit`.
-pub fn burn_settled(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    gem_id: U256,
-) -> Result<()> {
-    let (item, bucket) = load_pair(storage, scope, parent, gem_id)?.ok_or(GemError::GemNotFound)?;
-    if !item.body().is_settled() {
-        return Err(GemError::InvalidState.into());
-    }
-    remove_gem(storage, scope, item, bucket)
-}
-
-/// Issues a gem and settles it at once, skipping qualification. Only a throwaway
-/// build gets a paid gem out of thin air: scenarios mine it without living through a
-/// closed day.
-#[cfg(feature = "e2e-test")]
-pub fn issue_settled_for_test(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    params: GemAddParams,
-) -> Result<U256> {
-    let gem_id = add_gem(storage, scope, parent, params)?;
-    let (item, bucket) = load_pair(storage, scope, parent, gem_id)?.ok_or(GemError::GemNotFound)?;
-    let mut gem = GemContract::new(storage.clone());
-    storage
-        .clone()
-        .with_checkpoint(|| gem.record_gem_settled(scope, item, bucket))?;
-    Ok(gem_id)
 }
 
 /// Deletes a loaded gem, lowering membership or the paid count, and the bucket once

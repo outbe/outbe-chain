@@ -9,8 +9,8 @@ use outbe_primitives::sweep_budget::{SWEEP_BODY_WRITES_PER_BLOCK, SWEEP_WRITES_P
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use super::*;
-use crate::config::GemParams;
-use crate::schema::{GemContract, GemState};
+use outbe_gem::config::GemParams;
+use outbe_gem::schema::{GemContract, GemState};
 
 /// Unix time of the first block past the deadline of a bucket called at `T_NOW`.
 fn first_due_block(storage: &StorageHandle, world: &World, gem_id: U256) -> u64 {
@@ -409,7 +409,7 @@ fn a_storage_fault_in_a_forfeit_fails_the_block() {
 #[test]
 fn config_dev_profile_terms_a_new_bucket() {
     with_storage(|storage, world| {
-        set_profile(storage, crate::config::PROFILE_DEV);
+        set_profile(storage, outbe_gem::config::PROFILE_DEV);
         let gem_id = add(storage, world, sample_params(ALICE));
         let terms = view(storage, world, gem_id).terms;
         assert_eq!(
