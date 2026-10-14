@@ -481,9 +481,7 @@ fn copied_public_files_preserve_own_real_signatures_and_equivocation_guard_throu
     let signed = sign_once
         .record_or_replay(subject, |digest| {
             signing_digest = Some(digest);
-            signer
-                .sign_result_digest(digest)
-                .map_err(|error| error.to_string())
+            signer.sign_result_digest(digest)
         })
         .unwrap();
     let digest = signing_digest.expect("the initial record must really sign");
