@@ -259,9 +259,7 @@ fn read_verified_shuffle_records<'a>(
     reader: &'a crate::cas::FilesystemCasReader,
     cancelled: Option<&'a std::sync::atomic::AtomicBool>,
 ) -> Result<
-    impl Iterator<
-            Item = Result<VerifiedShuffleRecordV1, outbe_ocomp_protocol::ProtocolError>,
-        > + 'a,
+    impl Iterator<Item = Result<VerifiedShuffleRecordV1, outbe_ocomp_protocol::ProtocolError>> + 'a,
     WorkerError,
 > {
     verified_shuffle_run_records(root, limits, move |reference| {

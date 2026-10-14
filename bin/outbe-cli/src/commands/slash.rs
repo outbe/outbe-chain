@@ -186,9 +186,7 @@ impl SlashTopics {
             proposer_felony: slash_event_topic(b"ProposerFelony(address,uint64,uint64)"),
             proposer_misd: slash_event_topic(b"ProposerMisdemeanor(address,uint64)"),
             voter_misd: slash_event_topic(b"VoterMisdemeanor(address,uint64)"),
-            evidence: slash_event_topic(
-                b"EvidenceFelonyApplied(address,address,uint256,uint256)",
-            ),
+            evidence: slash_event_topic(b"EvidenceFelonyApplied(address,address,uint256,uint256)"),
         }
     }
 

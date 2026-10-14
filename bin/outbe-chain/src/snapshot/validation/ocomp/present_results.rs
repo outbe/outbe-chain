@@ -269,7 +269,13 @@ pub(super) fn verify_complete_present_results<'a>(
     })?;
     let roots = (nod.finish()?, bucket.finish()?, output.finish()?);
     if let Some(expected) = certified.filter(|expected| expected.job_id == id) {
-        verify_certified_result_outputs(&expected, (job, bundle), audit, roots, (allocation, cost))?;
+        verify_certified_result_outputs(
+            &expected,
+            (job, bundle),
+            audit,
+            roots,
+            (allocation, cost),
+        )?;
     }
     Ok(chunks)
 }

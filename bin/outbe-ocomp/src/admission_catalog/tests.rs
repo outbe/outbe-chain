@@ -65,7 +65,11 @@ fn open_catalog(
         );
     } else {
         ADMISSION_STORAGE_PROFILE
-            .persist_atomic(root, &header_path, &encode_header(&header, &limits).unwrap())
+            .persist_atomic(
+                root,
+                &header_path,
+                &encode_header(&header, &limits).unwrap(),
+            )
             .unwrap();
     }
     let abstained = path_exists(&root.join(CONFLICT_FILE)).unwrap();

@@ -180,8 +180,10 @@ impl SupervisorJobRunnerV1 {
         intent: &JobIntentV1,
         binding: &VerifiedExportedManifestBinding,
         tribute_refs: Vec<outbe_ocomp_protocol::input::InputChunkRefV1>,
-    ) -> Result<(outbe_ocomp_protocol::CasObjectRefV1, LysisPlanTopologyV1), SupervisorJobRunnerErrorV1>
-    {
+    ) -> Result<
+        (outbe_ocomp_protocol::CasObjectRefV1, LysisPlanTopologyV1),
+        SupervisorJobRunnerErrorV1,
+    > {
         let limits = &self.config.limits;
         let manifest = binding.manifest();
         let manifest_ref = binding.manifest_ref();

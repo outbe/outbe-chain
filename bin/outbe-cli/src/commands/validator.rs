@@ -188,11 +188,15 @@ async fn fetch_validator_addresses(
     if active_only {
         let call = IValidatorSet::getActiveValidatorsCall {}.abi_encode();
         let result = client.eth_call(abi::VALIDATOR_SET_ADDR, &call).await?;
-        Ok(IValidatorSet::getActiveValidatorsCall::abi_decode_returns(&result)?)
+        Ok(IValidatorSet::getActiveValidatorsCall::abi_decode_returns(
+            &result,
+        )?)
     } else {
         let call = IValidatorSet::getValidatorsCall {}.abi_encode();
         let result = client.eth_call(abi::VALIDATOR_SET_ADDR, &call).await?;
-        Ok(IValidatorSet::getValidatorsCall::abi_decode_returns(&result)?)
+        Ok(IValidatorSet::getValidatorsCall::abi_decode_returns(
+            &result,
+        )?)
     }
 }
 
@@ -311,7 +315,12 @@ async fn send_validator_set_tx(
     let signer = super::require_signer(private_key)?;
     let calldata = build_call(&signer)?;
     let tx_hash = signer
-        .send_tx(client, abi::VALIDATOR_SET_ADDR, calldata, Default::default())
+        .send_tx(
+            client,
+            abi::VALIDATOR_SET_ADDR,
+            calldata,
+            Default::default(),
+        )
         .await?;
     println!("Transaction sent: {tx_hash}");
     Ok(())

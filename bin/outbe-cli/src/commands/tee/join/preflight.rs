@@ -74,7 +74,10 @@ pub(super) async fn verify_finalized_node_ownership(
 pub(super) fn load_durable_checkpoint(
     node_data_dir: Option<&Path>,
     signer_address: Address,
-) -> Result<(Option<DurableJoinSubmissionV1>, Option<RegistrationIntentV1>)> {
+) -> Result<(
+    Option<DurableJoinSubmissionV1>,
+    Option<RegistrationIntentV1>,
+)> {
     let durable_submission = match node_data_dir {
         Some(dir) => load_node_dir_submission(dir)?,
         None => None,

@@ -245,11 +245,8 @@ pub(crate) fn audit_artifact(inputs: &ValidationInputs, files_requested: bool) -
                 .unwrap_or_else(|| Err(missing_artifact("signature"))),
         ),
     };
-    let agreement = check_detached_manifest_agreement(
-        inputs.archive.is_some(),
-        side_manifest.as_ref(),
-        &raw,
-    );
+    let agreement =
+        check_detached_manifest_agreement(inputs.archive.is_some(), side_manifest.as_ref(), &raw);
     let mut metadata = (|| -> eyre::Result<SnapshotManifestV1> {
         agreement.as_ref().map_err(artifact_error)?;
         Ok(SnapshotManifestV1::from_bytes(
@@ -369,9 +366,8 @@ fn verify_domain_members<'a>(
         .members
         .iter()
         .map(|path| {
-            path.to_str().ok_or_else(|| {
-                eyre::eyre!("native member path is not UTF-8: {}", path.display())
-            })
+            path.to_str()
+                .ok_or_else(|| eyre::eyre!("native member path is not UTF-8: {}", path.display()))
         })
         .collect::<eyre::Result<BTreeSet<_>>>()?;
     eyre::ensure!(

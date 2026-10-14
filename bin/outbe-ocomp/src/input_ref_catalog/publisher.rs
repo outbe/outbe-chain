@@ -43,7 +43,11 @@ fn inspect_optional_headers_match(
     }
     if final_header.or(prepared_header).is_some_and(|header| {
         (header.protocol_bundle_hash, header.job_id, header.attempt)
-            != (subject.protocol_bundle_hash, subject.job_id, subject.attempt)
+            != (
+                subject.protocol_bundle_hash,
+                subject.job_id,
+                subject.attempt,
+            )
     }) {
         return Err(InputRefCatalogError::AuthorityMismatch);
     }
@@ -87,11 +91,7 @@ impl InputRefCatalogPublisher {
         recover_staging_temps(&root)?;
         let final_header = read_optional_header(&root.join(HEADER_FILE), &limits)?;
         let prepared_header = read_optional_header(&root.join(PREPARED_FILE), &limits)?;
-        inspect_optional_headers_match(
-            final_header.as_ref(),
-            prepared_header.as_ref(),
-            subject,
-        )?;
+        inspect_optional_headers_match(final_header.as_ref(), prepared_header.as_ref(), subject)?;
         ensure_staging_subject(&root, subject, &limits)?;
         let abstained = path_exists(&root.join(CONFLICT_FILE))?;
         let (next_ordinal, previous_kind) = scan_staged_entries(&root, &limits)?;
@@ -583,7 +583,11 @@ fn recover_staging_temps(root: &Path) -> Result<(), InputRefCatalogError> {
         }
         let metadata = fs::symlink_metadata(&path)
             .map_err(|source| io_error("inspect temporary catalog object", &path, source))?;
-        if (metadata.file_type().is_file(), metadata.file_type().is_symlink()) != (true, false) {
+        if (
+            metadata.file_type().is_file(),
+            metadata.file_type().is_symlink(),
+        ) != (true, false)
+        {
             return Err(InputRefCatalogError::AmbiguousTemporary(path));
         }
         fs::remove_file(&path)

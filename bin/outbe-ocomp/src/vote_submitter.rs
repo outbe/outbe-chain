@@ -32,9 +32,9 @@ use outbe_primitives::signer::{OutbeEvmSigner, SignerError};
 use thiserror::Error;
 
 use self::journal::{record_nonce_bypass, record_stage_transition, VoteSubmissionJournalV1};
-pub use self::rpc::{PublicVoteRpcClientV1, PublicVoteRpcErrorV1};
 #[cfg(test)]
 use self::rpc::{canonical_nonce_params, parse_rpc_response};
+pub use self::rpc::{PublicVoteRpcClientV1, PublicVoteRpcErrorV1};
 use crate::result_attestation::{LocalResultAttestationErrorV1, LocalResultVoteAttesterV1};
 
 pub(self) const MAX_RAW_TRANSACTION_BYTES: usize = 4 * 1024;
