@@ -57,12 +57,10 @@ interface IIntexFactory {
     /// @notice Leading zero bytes `minePromis` requires of the work hash.
     function powDifficulty() external view returns (uint8);
 
-    /// @notice Credit auction proceeds (native COEN, sent as msg.value) from
-    ///         `srcChainId` into the day's pot. Callable only by the OriginRouter.
-    ///         A ready pot is burned once every winning chain has routed its
-    ///         proceeds, or once the fan-in deadline passes.
+    /// @notice Burn auction proceeds (native COEN, sent as msg.value) and credit the
+    ///         same COEN to the Promis limit pool. Callable only by the OriginRouter.
     /// @param worldwideDay Worldwide day (yyyymmdd) the proceeds belong to.
-    /// @param srcChainId Target chain the proceeds arrived from (for fan-in completeness).
+    /// @param srcChainId Target chain the proceeds arrived from.
     function distribute(uint32 worldwideDay, uint32 srcChainId) external payable;
 
     /// @notice The classes an issued unit can be in. Disjoint: they sum to
@@ -131,15 +129,9 @@ interface IIntexFactory {
     ///         parked it for another pass at `retryAt`.
     event ExpiryDeferred(uint16 indexed referenceCurrency, uint32 indexed worldwideDay, uint64 retryAt);
 
-    /// @notice One chain routed `amount` native COEN of `worldwideDay`'s auction
-    ///         proceeds into the day's pot. Emitted once per delivery, so a chain
-    ///         routing its proceeds in parts emits once per part.
-    event ProceedsCredited(uint32 indexed worldwideDay, uint32 indexed srcChainId, uint256 amount);
-
-    /// @notice The day's ready proceeds pot was burned.
-    event ProceedsBurned(uint32 indexed worldwideDay, uint256 amount);
-
-    /// @notice Proceeds arrived for `worldwideDay` after the day was finalized
-    ///         and were burned.
-    event LateProceedsBurned(uint32 indexed worldwideDay, uint256 amount);
+    /// @notice `amount` native COEN of `worldwideDay`'s auction proceeds from `srcChainId`
+    ///         was burned and `creditedPromisMinor` was added to the Promis limit pool.
+    event ProceedsBurned(
+        uint32 indexed worldwideDay, uint32 indexed srcChainId, uint256 amount, uint256 creditedPromisMinor
+    );
 }

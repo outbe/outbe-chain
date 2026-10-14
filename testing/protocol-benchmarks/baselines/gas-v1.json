@@ -4473,35 +4473,35 @@
         "fidelity": "full"
       },
       "gas_totals": {
-        "system_internal": 156300
+        "system_internal": 131100
       },
       "gas_components": [
         {
           "ledger": "system_internal",
           "key": "storage.intex.read",
-          "gas": 700,
-          "operations": 7,
+          "gas": 200,
+          "operations": 2,
           "module": "intex"
         },
         {
           "ledger": "system_internal",
           "key": "storage.intex.write",
-          "gas": 115000,
-          "operations": 23,
+          "gas": 80000,
+          "operations": 16,
           "module": "intex"
         },
         {
           "ledger": "system_internal",
           "key": "storage.intex_factory.read",
-          "gas": 600,
-          "operations": 6,
+          "gas": 900,
+          "operations": 9,
           "module": "intex_factory"
         },
         {
           "ledger": "system_internal",
           "key": "storage.intex_factory.write",
-          "gas": 40000,
-          "operations": 8,
+          "gas": 50000,
+          "operations": 10,
           "module": "intex_factory"
         }
       ],
@@ -4526,38 +4526,6 @@
           "module": "intex",
           "address": "0x0000000000000000000000000000000000001014",
           "slot": "0x22bb296d9f12c3b45f91b10a15a094a76df8f7c2bfe4c82ae9bdd928eff2dc00",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x23",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x23",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x25fce2d54acdfa2ce615f02ae15e20c975999644f82db04c1ba067294c6cbf73",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x25fce2d54acdfa2ce615f02ae15e20c975999644f82db04c1ba067294c6cbf73",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -4597,14 +4565,6 @@
         {
           "module": "intex",
           "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x683d08cedae7eadffa5fcf8e0a35724c2f9a91a5413feffea1856e7d28eec466",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
           "slot": "0x6bd4bf7a649a60aca9d8939bf798616e1935085911237f6f74482c8a06998841",
           "operation": "write",
           "count": 1,
@@ -4613,39 +4573,7 @@
         {
           "module": "intex",
           "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x6c6115a3910c704b0bd9840eb7cca935ef06162c2daa611c27aefb530c55fcba",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x6c6115a3910c704b0bd9840eb7cca935ef06162c2daa611c27aefb530c55fcba",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
           "slot": "0x7d7ee35d8dfccb06cf20672a099b8864937c55f2a2246888d4f411de5c1d1dbb",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x8a6d4e99d1dcdc086bbc545e525085c04658e95c7a7d9ccc65e2aab0c49b64b8",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x8a6d4e99d1dcdc086bbc545e525085c04658e95c7a7d9ccc65e2aab0c49b64b8",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -4662,14 +4590,6 @@
           "module": "intex",
           "address": "0x0000000000000000000000000000000000001014",
           "slot": "0xb1e4276ee26add1e05665999c200b4cf4756d0308e5994d3d302b6764a78e318",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0xb7634ec2165a7280a285aac3ec10cf370eca86d8aa9d3243c90b2151434091ad",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -4731,33 +4651,9 @@
           "gas": 5000
         },
         {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0xfb142cb2f2c58042888c9a3dbf911fc589cd576f8d4b9472ff5d53051fde92a6",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0xfb142cb2f2c58042888c9a3dbf911fc589cd576f8d4b9472ff5d53051fde92a6",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x37f5779fa936ce42e94fc67dcb9d225479aed783430249a47a11cf9880fece53",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x40e4fcd279436790a2adc497754079db1a2b1d8f16eab851a4061ab8f3d693ff",
+          "slot": "0x146d44c748e09d76d1e2de499ebc75b9ea8d0d3c859b11ec7b14958da515a312",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -4765,7 +4661,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x40e4fcd279436790a2adc497754079db1a2b1d8f16eab851a4061ab8f3d693ff",
+          "slot": "0x146d44c748e09d76d1e2de499ebc75b9ea8d0d3c859b11ec7b14958da515a312",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -4773,7 +4669,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x5b00d6d94bb7a9269fac842b17878ddd09677cc8d9ef4cb7b56e351787de3724",
+          "slot": "0x2b7d32e539b81b3f99ccde58fadf67af73389f8506ccf023d48b39dbcd931e08",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -4781,7 +4677,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x5e68e36b2ab3627d926b64d1b6afe5606d9e16e1872ee708b46d0ffcf8b5e6f",
+          "slot": "0x382b7cdd65f04db185e7edcc5c4507831997594564f156621d56e1aeecdac5f1",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -4789,7 +4685,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x5e68e36b2ab3627d926b64d1b6afe5606d9e16e1872ee708b46d0ffcf8b5e6f",
+          "slot": "0x382b7cdd65f04db185e7edcc5c4507831997594564f156621d56e1aeecdac5f1",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -4797,15 +4693,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x6f44e2309fadd321eb69f826c17c1fc544f2f65f70faf6560cdb050110072ab",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x712d3909226cf867d746cce98e3b6cc429804a1dfb1af38d6af0cc68dae27198",
+          "slot": "0x3b7512c6c63f6cc1d2f2923608ee9ca1176ffbcb55b356d93760f9ef858d9fb0",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -4813,7 +4701,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x712d3909226cf867d746cce98e3b6cc429804a1dfb1af38d6af0cc68dae27198",
+          "slot": "0x3b7512c6c63f6cc1d2f2923608ee9ca1176ffbcb55b356d93760f9ef858d9fb0",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -4821,7 +4709,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x7bc5628982dea1ae75740b29412391baadfdd54b30b8db9caf4a5935f4aed13b",
+          "slot": "0x5",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -4829,7 +4717,15 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x7bc5628982dea1ae75740b29412391baadfdd54b30b8db9caf4a5935f4aed13b",
+          "slot": "0x6eca5f57040d41f2fcc7cdc732df0e5558fc80e114060b207dbf002a7fc662f",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0x6eca5f57040d41f2fcc7cdc732df0e5558fc80e114060b207dbf002a7fc662f",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -4837,7 +4733,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x8d37450b4a383efd4532a7b8c27ee30acb5688924ab0572b722a06044d707678",
+          "slot": "0x7c64aa1f87ff1f1f6d9359279d17bba99d4648e342b5fe1f37e3a4d592f66829",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -4845,7 +4741,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x8d37450b4a383efd4532a7b8c27ee30acb5688924ab0572b722a06044d707678",
+          "slot": "0x7c64aa1f87ff1f1f6d9359279d17bba99d4648e342b5fe1f37e3a4d592f66829",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -4853,10 +4749,58 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0xd",
+          "slot": "0x8a34456f21419d59f9ffefb2ed31a7c38ddd87803a803d2fe3241df73ac02e58",
           "operation": "read",
           "count": 1,
           "gas": 100
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0x8a34456f21419d59f9ffefb2ed31a7c38ddd87803a803d2fe3241df73ac02e58",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0xa100a09f336a10f26c7b083b4c92a0b5fd25fe8698e253f8d91037fc2b904f17",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0xa100a09f336a10f26c7b083b4c92a0b5fd25fe8698e253f8d91037fc2b904f17",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0xc06e34ef2002a0e92f043326108bc22e4ada2a809da8456ed9eb131b8d9ac1cc",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0xc06e34ef2002a0e92f043326108bc22e4ada2a809da8456ed9eb131b8d9ac1cc",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0xd35cb479265232df41973ec701061c4ecc7ca7652571ca0665fb9b703deda16c",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
         }
       ],
       "events": [
@@ -4878,35 +4822,35 @@
         "fidelity": "full"
       },
       "gas_totals": {
-        "system_internal": 1109400
+        "system_internal": 947400
       },
       "gas_components": [
         {
           "ledger": "system_internal",
           "key": "storage.intex.read",
-          "gas": 6100,
-          "operations": 61,
+          "gas": 2000,
+          "operations": 20,
           "module": "intex"
         },
         {
           "ledger": "system_internal",
           "key": "storage.intex.write",
-          "gas": 970000,
-          "operations": 194,
+          "gas": 800000,
+          "operations": 160,
           "module": "intex"
         },
         {
           "ledger": "system_internal",
           "key": "storage.intex_factory.read",
-          "gas": 3300,
-          "operations": 33,
+          "gas": 5400,
+          "operations": 54,
           "module": "intex_factory"
         },
         {
           "ledger": "system_internal",
           "key": "storage.intex_factory.write",
-          "gas": 130000,
-          "operations": 26,
+          "gas": 140000,
+          "operations": 28,
           "module": "intex_factory"
         }
       ],
@@ -5019,38 +4963,6 @@
           "module": "intex",
           "address": "0x0000000000000000000000000000000000001014",
           "slot": "0x22bb296d9f12c3b45f91b10a15a094a76df8f7c2bfe4c82ae9bdd928eff2dc00",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x23",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x23",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x25fce2d54acdfa2ce615f02ae15e20c975999644f82db04c1ba067294c6cbf73",
-          "operation": "read",
-          "count": 10,
-          "gas": 1000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x25fce2d54acdfa2ce615f02ae15e20c975999644f82db04c1ba067294c6cbf73",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -5402,14 +5314,6 @@
         {
           "module": "intex",
           "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x683d08cedae7eadffa5fcf8e0a35724c2f9a91a5413feffea1856e7d28eec466",
-          "operation": "write",
-          "count": 10,
-          "gas": 50000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
           "slot": "0x6a680e49f21f614be7c37ee4b99900002634eae1fadf9c018504024f480d89ec",
           "operation": "write",
           "count": 1,
@@ -5430,22 +5334,6 @@
           "operation": "write",
           "count": 1,
           "gas": 5000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x6c6115a3910c704b0bd9840eb7cca935ef06162c2daa611c27aefb530c55fcba",
-          "operation": "read",
-          "count": 10,
-          "gas": 1000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x6c6115a3910c704b0bd9840eb7cca935ef06162c2daa611c27aefb530c55fcba",
-          "operation": "write",
-          "count": 10,
-          "gas": 50000
         },
         {
           "module": "intex",
@@ -5547,22 +5435,6 @@
           "module": "intex",
           "address": "0x0000000000000000000000000000000000001014",
           "slot": "0x82f28df96d199e055a169059360ecef8ddc7ab0174d659ec23b843d655b5ea79",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x8a6d4e99d1dcdc086bbc545e525085c04658e95c7a7d9ccc65e2aab0c49b64b8",
-          "operation": "read",
-          "count": 10,
-          "gas": 1000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0x8a6d4e99d1dcdc086bbc545e525085c04658e95c7a7d9ccc65e2aab0c49b64b8",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -5867,14 +5739,6 @@
           "module": "intex",
           "address": "0x0000000000000000000000000000000000001014",
           "slot": "0xb5a1e7cda73b1608e93d4d50ab796c3d35aa6216cb006a1f920df154d13ff618",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0xb7634ec2165a7280a285aac3ec10cf370eca86d8aa9d3243c90b2151434091ad",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -6250,22 +6114,6 @@
         {
           "module": "intex",
           "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0xfb142cb2f2c58042888c9a3dbf911fc589cd576f8d4b9472ff5d53051fde92a6",
-          "operation": "read",
-          "count": 10,
-          "gas": 1000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
-          "slot": "0xfb142cb2f2c58042888c9a3dbf911fc589cd576f8d4b9472ff5d53051fde92a6",
-          "operation": "write",
-          "count": 10,
-          "gas": 50000
-        },
-        {
-          "module": "intex",
-          "address": "0x0000000000000000000000000000000000001014",
           "slot": "0xfb294a7ea05dffae59f3ba909bfb9f4faf50ef85af5d76c399744d6471b5d89c",
           "operation": "write",
           "count": 1,
@@ -6306,47 +6154,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x1c2ab23a9ff3235a8793ee4997d705708ce237cb38000aa612a9289e3ccb9a5a",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x1fdda3ddfa6d5d574c40ff676be76dcb374cae6a81bd6be3d926c505a389f1b7",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x2bddc782a66c5c320eb5ea254eed2297ac1b89fbbc99d441c5ca9b8427cb25d9",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x37f5779fa936ce42e94fc67dcb9d225479aed783430249a47a11cf9880fece53",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x380cc41769360ed4384c840c4aff0f56be0a9d5755fa20997059b4afa642fcbc",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x40e4fcd279436790a2adc497754079db1a2b1d8f16eab851a4061ab8f3d693ff",
+          "slot": "0x146d44c748e09d76d1e2de499ebc75b9ea8d0d3c859b11ec7b14958da515a312",
           "operation": "read",
           "count": 1,
           "gas": 100
@@ -6354,7 +6162,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x40e4fcd279436790a2adc497754079db1a2b1d8f16eab851a4061ab8f3d693ff",
+          "slot": "0x146d44c748e09d76d1e2de499ebc75b9ea8d0d3c859b11ec7b14958da515a312",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -6362,7 +6170,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x51f7e12b6957e0f1f46a5d4356f8c441a8ffe8fd8c1f9178b6a13397d7470639",
+          "slot": "0x1c97aeb8a113dea374ec92cc644058e04c6f91de5826c216baed1505cc089b9e",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -6370,15 +6178,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x5b00d6d94bb7a9269fac842b17878ddd09677cc8d9ef4cb7b56e351787de3724",
-          "operation": "read",
-          "count": 9,
-          "gas": 900
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x5b00d6d94bb7a9269fac842b17878ddd09677cc8d9ef4cb7b56e351787de3724",
+          "slot": "0x2b7d32e539b81b3f99ccde58fadf67af73389f8506ccf023d48b39dbcd931e08",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -6386,7 +6186,15 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x5e68e36b2ab3627d926b64d1b6afe5606d9e16e1872ee708b46d0ffcf8b5e6f",
+          "slot": "0x3745c7da077b80831799c8068cf624e7780d8eeef516f3783616377b7d2d303",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0x382b7cdd65f04db185e7edcc5c4507831997594564f156621d56e1aeecdac5f1",
           "operation": "read",
           "count": 10,
           "gas": 1000
@@ -6394,7 +6202,23 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x5e68e36b2ab3627d926b64d1b6afe5606d9e16e1872ee708b46d0ffcf8b5e6f",
+          "slot": "0x382b7cdd65f04db185e7edcc5c4507831997594564f156621d56e1aeecdac5f1",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0x3b7512c6c63f6cc1d2f2923608ee9ca1176ffbcb55b356d93760f9ef858d9fb0",
+          "operation": "read",
+          "count": 10,
+          "gas": 1000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0x3b7512c6c63f6cc1d2f2923608ee9ca1176ffbcb55b356d93760f9ef858d9fb0",
           "operation": "write",
           "count": 10,
           "gas": 50000
@@ -6402,7 +6226,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x6f44e2309fadd321eb69f826c17c1fc544f2f65f70faf6560cdb050110072ab",
+          "slot": "0x3e73b5a0770417c20bf86261283e24f99c59d416fcbe3dd6e610c30dc23a9f86",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -6410,71 +6234,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x712d3909226cf867d746cce98e3b6cc429804a1dfb1af38d6af0cc68dae27198",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x712d3909226cf867d746cce98e3b6cc429804a1dfb1af38d6af0cc68dae27198",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x7bc5628982dea1ae75740b29412391baadfdd54b30b8db9caf4a5935f4aed13b",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x7bc5628982dea1ae75740b29412391baadfdd54b30b8db9caf4a5935f4aed13b",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x8d37450b4a383efd4532a7b8c27ee30acb5688924ab0572b722a06044d707678",
-          "operation": "read",
-          "count": 1,
-          "gas": 100
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0x8d37450b4a383efd4532a7b8c27ee30acb5688924ab0572b722a06044d707678",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0xa7fc43e4275f190c01f33fde1cb637135f9f481050dcbe700e12ddde10579c35",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0xaaa31d091e57aeece4617c4624f465a31b15a52f73c945320f087e7286350945",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "intex_factory",
-          "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0xd",
+          "slot": "0x5",
           "operation": "read",
           "count": 10,
           "gas": 1000
@@ -6482,7 +6242,7 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0xf2eeb0f07d5def3b4dab9eb462f2bc1020bdd3175b0d98b0159af5186769e13a",
+          "slot": "0x6dede4955395b7cb383f67a662770d21146bce48743520410a3d2befdbc46b09",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -6490,7 +6250,127 @@
         {
           "module": "intex_factory",
           "address": "0x0000000000000000000000000000000000001015",
-          "slot": "0xf87e5fc13d34433ae6a547f3ba940101171377ba1ccabb48f9f63acd4832ada6",
+          "slot": "0x6eca5f57040d41f2fcc7cdc732df0e5558fc80e114060b207dbf002a7fc662f",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0x6eca5f57040d41f2fcc7cdc732df0e5558fc80e114060b207dbf002a7fc662f",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0x773b3711d6f1f48254b9cedecb8f0646079109966ef72d45965b0d268b4c22f",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0x7c64aa1f87ff1f1f6d9359279d17bba99d4648e342b5fe1f37e3a4d592f66829",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0x7c64aa1f87ff1f1f6d9359279d17bba99d4648e342b5fe1f37e3a4d592f66829",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0x8a34456f21419d59f9ffefb2ed31a7c38ddd87803a803d2fe3241df73ac02e58",
+          "operation": "read",
+          "count": 10,
+          "gas": 1000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0x8a34456f21419d59f9ffefb2ed31a7c38ddd87803a803d2fe3241df73ac02e58",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0xa100a09f336a10f26c7b083b4c92a0b5fd25fe8698e253f8d91037fc2b904f17",
+          "operation": "read",
+          "count": 1,
+          "gas": 100
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0xa100a09f336a10f26c7b083b4c92a0b5fd25fe8698e253f8d91037fc2b904f17",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0xa805a780d2302d10e42b6c7f27cd41de2936049a1e7f7fcae57746148738d1a4",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0xbf606916b9de7e375aa06954b9c3b510d9611461afd9c169b0db5e06c4b192d4",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0xc06e34ef2002a0e92f043326108bc22e4ada2a809da8456ed9eb131b8d9ac1cc",
+          "operation": "read",
+          "count": 10,
+          "gas": 1000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0xc06e34ef2002a0e92f043326108bc22e4ada2a809da8456ed9eb131b8d9ac1cc",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0xd35cb479265232df41973ec701061c4ecc7ca7652571ca0665fb9b703deda16c",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0xe72b61c4094a94dfda524aa763d6a47c91a287746f0522dd1ccad33aa2ac6f2c",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "intex_factory",
+          "address": "0x0000000000000000000000000000000000001015",
+          "slot": "0xf46b75a3004e9d4db80738b2fb13bcb406c92696e195f426bbb80989fd02ffc7",
           "operation": "write",
           "count": 1,
           "gas": 5000

@@ -2,7 +2,7 @@
 //!
 //! Routing only: decode -> runtime -> encode. The settle calls / `minePromis` name the
 //! owner they act for, so `caller = msg.sender` only binds the payment.
-//! None accept value, except `distribute`, which credits auction proceeds.
+//! None accept value, except `distribute`, which burns auction proceeds.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
@@ -27,14 +27,10 @@ sol!(
     "../../../contracts/precompiles/src/IIntexFactory.sol"
 );
 
-// Arming the proceeds fan-in is production work of the issuance leg, which a
-// proceeds e2e never reaches: it runs no auction, so it issues nothing. This
-// stages that one precondition and exists only in a throwaway build.
 #[cfg(feature = "e2e-test")]
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IIntexFactoryTestArming {
-        function armProceedsForTest(uint32 worldwideDay, uint32[] chains, uint64 deadline) external;
         function seedDayVwapsForTest(uint16 isoCode, uint32 days, uint256 value) external;
         function issueForTest(
             bytes14[] seriesIds,
@@ -95,16 +91,6 @@ fn dispatch_test_arming(storage: &StorageHandle<'_>, data: &[u8]) -> Result<Opti
     if let Ok(call) = IIntexFactoryTestArming::closeCallNoticeForTestCall::abi_decode(data) {
         outbe_primitives::dispatch::ensure_mutation_allowed(storage)?;
         requeue_called_group(storage, call.isoCode, call.worldwideDay, call.deadline)?;
-        return Ok(Some(Bytes::new()));
-    }
-    if let Ok(call) = IIntexFactoryTestArming::armProceedsForTestCall::abi_decode(data) {
-        outbe_primitives::dispatch::ensure_mutation_allowed(storage)?;
-        outbe_intex::api::arm_proceeds(
-            storage,
-            call.worldwideDay.into(),
-            &call.chains,
-            call.deadline,
-        )?;
         return Ok(Some(Bytes::new()));
     }
     Ok(None)
@@ -266,8 +252,8 @@ pub fn dispatch(
                 powDifficulty(_) => metadata::<IIntexFactory::powDifficultyCall>(|| {
                     Ok(outbe_common::pow::POW_DIFFICULTY)
                 }),
-                // The only payable selector: credits auction proceeds (msg.value)
-                // from the source chain into the day's pot. A ready pot is burned.
+                // The only payable selector: burns auction proceeds (msg.value)
+                // into the Promis limit pool.
                 distribute(c) => mutate_void_payable(
                     &storage,
                     c,

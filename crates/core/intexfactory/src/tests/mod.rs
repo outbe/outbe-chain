@@ -160,7 +160,6 @@ impl SeedCalledGroup for IntexFactoryContract<'_> {
 }
 
 mod capacity_conservation;
-mod creator_reward;
 mod direct_fx_admission;
 mod entrypoints;
 mod groups;
@@ -169,6 +168,7 @@ mod lifecycle;
 mod mining_after_deadline;
 mod mining_sequence;
 mod parked;
+mod proceeds;
 mod router_fault;
 mod scans;
 mod settlement;

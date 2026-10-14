@@ -8,7 +8,6 @@ use alloy_primitives::{Address, U256};
 use outbe_intex::SeriesId;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
 
 use crate::config::{self, IntexParams};
 use crate::runtime;
@@ -27,13 +26,6 @@ pub fn issue(
 /// Send a day's issuance legs, packed into as few per-chain messages as the wire allows.
 pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<runtime::IssuanceLeg>) -> Result<()> {
     runtime::send_issuance(storage, legs)
-}
-
-/// Close a day's proceeds aggregation. The clearing engine calls this for a
-/// day that issued nothing at all. Finalizing marks the day, so a later arrival
-/// burns instead of sitting in the pot.
-pub fn finalize_empty_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<()> {
-    outbe_intex::api::finalize_proceeds(storage, worldwide_day)
 }
 
 /// Resolved IntexFactory protocol parameters (genesis profile). The clearing
