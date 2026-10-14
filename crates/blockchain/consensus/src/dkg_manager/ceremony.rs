@@ -40,7 +40,9 @@ use commonware_utils::{
     ordered::{Quorum as _, Set},
     N3f1,
 };
-use eyre::{ensure, Result, WrapErr};
+use eyre::{Result, WrapErr};
+
+use crate::errors::DkgError;
 
 /// A signed dealer log that passed cryptographic verification against the
 /// ceremony's `info` and committee.
@@ -119,15 +121,16 @@ impl DkgCeremony {
             &self.max_players,
         )
         .wrap_err("failed decoding signed dealer log")?;
-        ensure!(reader.is_empty(), "trailing bytes after signed dealer log");
+        if !reader.is_empty() {
+            return Err(DkgError::TrailingSignedDealerLogBytes.into());
+        }
 
         let (dealer, log) = signed_log
             .check(&self.info)
-            .ok_or_else(|| eyre::eyre!("signed dealer log failed cryptographic verification"))?;
-        ensure!(
-            self.dealers.index(&dealer).is_some(),
-            "signed dealer log dealer is not in ceremony committee"
-        );
+            .ok_or(DkgError::DealerLogVerificationFailed)?;
+        if self.dealers.index(&dealer).is_none() {
+            return Err(DkgError::DealerNotInCommittee.into());
+        }
         Ok(VerifiedDealerLog { dealer, log })
     }
 
@@ -223,7 +226,7 @@ fn try_reconstruct(
         logs,
         &Sequential,
     )
-    .map_err(|error| eyre::eyre!("{error}"))
+    .map_err(|error| DkgError::reconstruct(error).into())
 }
 
 /// Outcome of offering a P2P dealer-log candidate to the gossip buffer.

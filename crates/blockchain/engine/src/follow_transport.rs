@@ -205,9 +205,12 @@ impl UpstreamRpcClient {
             .request_timeout(limits.request_timeout)
             .max_response_size(limits.max_response_bytes)
             .build(&normalized)
-            .map_err(|e| {
-                eyre::eyre!("failed to build upstream RPC client for {normalized}: {e}")
-            })?;
+            .map_err(
+                |e| crate::errors::FollowTransportError::BuildUpstreamRpcClient {
+                    url: normalized.clone(),
+                    error: format!("{e}"),
+                },
+            )?;
         Ok(Self {
             client: Arc::new(client),
             url: normalized,
@@ -248,19 +251,25 @@ impl UpstreamRpcClient {
             .client
             .request("eth_call", rpc_params![call, "latest"])
             .await
-            .map_err(|e| eyre::eyre!("upstream eth_call tributeOfferPublicKey failed: {e}"))?;
-        let bytes = alloy_primitives::hex::decode(result.trim_start_matches("0x"))
-            .map_err(|e| eyre::eyre!("malformed eth_call result from upstream: {e}"))?;
+            .map_err(|e| {
+                crate::errors::FollowTransportError::UpstreamTributeOfferPublicKeyCall(format!(
+                    "{e}"
+                ))
+            })?;
+        let bytes =
+            alloy_primitives::hex::decode(result.trim_start_matches("0x")).map_err(|e| {
+                crate::errors::FollowTransportError::MalformedEthCallResult(format!("{e}"))
+            })?;
         decode_tribute_offer_public_key(&bytes)
     }
 }
 
 fn decode_tribute_offer_public_key(bytes: &[u8]) -> eyre::Result<B256> {
     if bytes.len() != 32 {
-        return Err(eyre::eyre!(
-            "upstream tributeOfferPublicKey returned {} bytes instead of one ABI word",
-            bytes.len()
-        ));
+        return Err(
+            crate::errors::FollowTransportError::UnexpectedTributeOfferPublicKeyLength(bytes.len())
+                .into(),
+        );
     }
     Ok(B256::from_slice(bytes))
 }

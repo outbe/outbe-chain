@@ -2,9 +2,10 @@
 //! round.
 
 use alloy_primitives::{Address, B256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_validatorset::contract::ValidatorSet;
 
+use crate::errors::SlashIndicatorError;
 use crate::evidence::{EvidenceBlock, EvidenceCommittee};
 use crate::runtime::{canonical_evidence_hash, registered_validator};
 use crate::schema::SlashIndicator;
@@ -26,9 +27,7 @@ impl<'a> EvidencePair<'a> {
         let first = EvidenceBlock::parse(block1)?;
         let second = EvidenceBlock::parse(block2)?;
         if first.pubkey != second.pubkey {
-            return Err(PrecompileError::Revert(
-                "evidence blocks must have the same signer".into(),
-            ));
+            return Err(SlashIndicatorError::EvidenceSignerMismatch.into());
         }
         Ok(Self {
             first,
@@ -45,18 +44,18 @@ impl<'a> EvidencePair<'a> {
 
     /// Requires one round (epoch + view) and returns it. `mismatch` is the
     /// revert reason.
-    fn same_round(&self, mismatch: &str) -> Result<(u64, u64)> {
+    fn same_round(&self, mismatch: SlashIndicatorError) -> Result<(u64, u64)> {
         let round = self.first.round()?;
         if round != self.second.round()? {
-            return Err(PrecompileError::Revert(mismatch.into()));
+            return Err(mismatch.into());
         }
         Ok(round)
     }
 
     /// Requires different proposal bytes. `same` is the revert reason.
-    fn require_distinct_proposals(&self, same: &str) -> Result<()> {
+    fn require_distinct_proposals(&self, same: SlashIndicatorError) -> Result<()> {
         if self.first.proposal_bytes == self.second.proposal_bytes {
-            return Err(PrecompileError::Revert(same.into()));
+            return Err(same.into());
         }
         Ok(())
     }
@@ -105,8 +104,8 @@ impl SlashIndicator<'_> {
     ) -> Result<()> {
         self.require_active_submitter(caller)?;
         let pair = EvidencePair::parse(block1, block2)?;
-        pair.require_distinct_proposals("proposals must differ for double-proposal evidence")?;
-        let round = pair.same_round("proposals must be for the same round")?;
+        pair.require_distinct_proposals(SlashIndicatorError::ProposalsMustDifferForDoubleProposal)?;
+        let round = pair.same_round(SlashIndicatorError::ProposalsMustBeSameRound)?;
         let evidence_hash = pair.evidence_hash();
         self.require_unprocessed_evidence(evidence_hash)?;
 
@@ -138,7 +137,7 @@ impl SlashIndicator<'_> {
     ) -> Result<()> {
         self.require_active_submitter(caller)?;
         let pair = EvidencePair::parse(vote1, vote2)?;
-        let round = pair.same_round("votes must be for the same round")?;
+        let round = pair.same_round(SlashIndicatorError::VotesMustBeSameRound)?;
         let evidence_hash = pair.evidence_hash();
         self.require_unprocessed_evidence(evidence_hash)?;
 
@@ -158,9 +157,7 @@ impl SlashIndicator<'_> {
                 EvidenceBlock::verify_notarize_signature,
             )
         {
-            return Err(PrecompileError::Revert(
-                "evidence must contain one valid notarize and one valid nullify signature".into(),
-            ));
+            return Err(SlashIndicatorError::ConflictingVoteSignaturesInvalid.into());
         }
 
         self.penalize_evidence_signer(&pair, evidence_hash, caller)
@@ -183,9 +180,11 @@ impl SlashIndicator<'_> {
     ) -> Result<()> {
         self.require_active_submitter(caller)?;
         let pair = EvidencePair::parse(block1, block2)?;
-        let round = pair.same_round("votes must be for the same round")?;
+        let round = pair.same_round(SlashIndicatorError::VotesMustBeSameRound)?;
         if class.require_distinct_proposals {
-            pair.require_distinct_proposals("conflicting votes must be for different proposals")?;
+            pair.require_distinct_proposals(
+                SlashIndicatorError::ConflictingVotesMustBeDifferentProposals,
+            )?;
         }
         let evidence_hash = pair.evidence_hash();
         self.require_unprocessed_evidence(evidence_hash)?;
@@ -263,7 +262,7 @@ impl SlashIndicator<'_> {
     /// Rejects an evidence hash that was already processed.
     fn require_unprocessed_evidence(&self, evidence_hash: B256) -> Result<()> {
         if self.evidence_processed.read(&evidence_hash)? {
-            return Err(PrecompileError::Revert("evidence already processed".into()));
+            return Err(SlashIndicatorError::EvidenceAlreadyProcessed.into());
         }
         Ok(())
     }

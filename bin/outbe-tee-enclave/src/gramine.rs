@@ -27,6 +27,8 @@ pub use outbe_tee::quote::{
     parse_quote_measurements, ReportMeasurements, MIN_QUOTE_LEN, REPORT_BODY_OFFSET,
 };
 
+use crate::errors::{EnclaveResult, GramineError};
+
 const ATTEST_DIR: &str = "/dev/attestation";
 
 /// What the running environment can attest.
@@ -135,16 +137,17 @@ pub fn attestation_type() -> AttestationType {
 /// `user_report_data`, then read back `quote`. Only succeeds under `gramine-sgx`
 /// with DCAP remote attestation. Under `gramine-direct` the `quote` read fails
 /// and this returns `Err` (the caller degrades honestly rather than faking).
-pub fn dcap_quote(report_data: &[u8; 64]) -> Result<Vec<u8>, String> {
+pub fn dcap_quote(report_data: &[u8; 64]) -> EnclaveResult<Vec<u8>> {
     let urd = format!("{ATTEST_DIR}/user_report_data");
-    fs::write(&urd, &report_data[..]).map_err(|e| format!("write {urd}: {e}"))?;
+    fs::write(&urd, &report_data[..]).map_err(|e| GramineError::write_path(&urd, e))?;
     let qf = format!("{ATTEST_DIR}/quote");
-    let quote = fs::read(&qf).map_err(|e| format!("read {qf}: {e}"))?;
+    let quote = fs::read(&qf).map_err(|e| GramineError::read_path(&qf, e))?;
     if quote.len() < MIN_QUOTE_LEN {
-        return Err(format!(
-            "quote too short: {} < {MIN_QUOTE_LEN}",
-            quote.len()
-        ));
+        return Err(GramineError::QuoteTooShort {
+            len: quote.len(),
+            min_len: MIN_QUOTE_LEN,
+        }
+        .into());
     }
     Ok(quote)
 }
@@ -154,46 +157,47 @@ pub fn dcap_quote(report_data: &[u8; 64]) -> Result<Vec<u8>, String> {
 /// `dcap-fixture-capture` builds. Production binaries do not expose arbitrary
 /// intent-driven quote generation.
 #[cfg(feature = "dcap-fixture-capture")]
-pub fn capture_report_data_from_intent(canonical_intent: &[u8]) -> Result<[u8; 64], String> {
+pub fn capture_report_data_from_intent(canonical_intent: &[u8]) -> EnclaveResult<[u8; 64]> {
     use outbe_primitives::tee_attestation_v1::{AttestationMode, RegistrationIntentV1};
 
     let intent = RegistrationIntentV1::decode_canonical(canonical_intent)
-        .map_err(|error| format!("decode canonical RegistrationIntentV1: {error}"))?;
+        .map_err(GramineError::decode_canonical_intent)?;
     if intent.attestation_mode != AttestationMode::DcapRequired {
-        return Err("capture intent does not require DCAP".to_owned());
+        return Err(GramineError::CaptureIntentNotDcap.into());
     }
     intent
         .report_data()
-        .map_err(|error| format!("derive RegistrationIntentV1 report_data: {error}"))
+        .map_err(GramineError::derive_intent_report_data)
 }
 
 /// Capture a real DCAP quote for one canonical intent into a new output file.
 /// Both paths are expected to live in the Gramine capture work directory.
 /// The capture launcher mounts that directory as an untrusted allowed file tree.
 #[cfg(feature = "dcap-fixture-capture")]
-pub fn capture_dcap_quote_to_file(intent_path: &str, quote_path: &str) -> Result<(), String> {
+pub fn capture_dcap_quote_to_file(intent_path: &str, quote_path: &str) -> EnclaveResult<()> {
     use std::io::Write;
 
     let canonical_intent =
-        fs::read(intent_path).map_err(|error| format!("read {intent_path}: {error}"))?;
+        fs::read(intent_path).map_err(|error| GramineError::read_path(intent_path, error))?;
     let report_data = capture_report_data_from_intent(&canonical_intent)?;
     let quote = dcap_quote(&report_data)?;
-    let measurements = parse_quote_measurements(&quote)?;
+    let measurements =
+        parse_quote_measurements(&quote).map_err(GramineError::quote_measurements)?;
     if measurements.report_data != report_data {
-        return Err("captured quote REPORT_DATA does not match the canonical intent".to_owned());
+        return Err(GramineError::CapturedReportDataMismatch.into());
     }
 
     let mut output = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(quote_path)
-        .map_err(|error| format!("create {quote_path}: {error}"))?;
+        .map_err(|error| GramineError::create_path(quote_path, error))?;
     output
         .write_all(&quote)
-        .map_err(|error| format!("write {quote_path}: {error}"))?;
+        .map_err(|error| GramineError::write_path(quote_path, error))?;
     output
         .sync_all()
-        .map_err(|error| format!("sync {quote_path}: {error}"))
+        .map_err(|error| GramineError::sync_path(quote_path, error))
 }
 
 /// Read this enclave's REAL measurements (MRENCLAVE/MRSIGNER/ISVSVN) from a LOCAL
@@ -205,38 +209,38 @@ pub fn capture_dcap_quote_to_file(intent_path: &str, quote_path: &str) -> Result
 /// local report still commits to the enclave's cleartext keys. Returns `Err` under
 /// `gramine-direct`/bare (no `/dev/attestation/report`). There the caller uses
 /// zero (unmeasured) as the fallback, never fabricated values.
-pub fn local_report_measurements(report_data: &[u8; 64]) -> Result<ReportMeasurements, String> {
+pub fn local_report_measurements(report_data: &[u8; 64]) -> EnclaveResult<ReportMeasurements> {
     let mti = format!("{ATTEST_DIR}/my_target_info");
     let ti = format!("{ATTEST_DIR}/target_info");
-    let my_target_info = fs::read(&mti).map_err(|e| format!("read {mti}: {e}"))?;
-    fs::write(&ti, &my_target_info).map_err(|e| format!("write {ti}: {e}"))?;
+    let my_target_info = fs::read(&mti).map_err(|e| GramineError::read_path(&mti, e))?;
+    fs::write(&ti, &my_target_info).map_err(|e| GramineError::write_path(&ti, e))?;
     let urd = format!("{ATTEST_DIR}/user_report_data");
-    fs::write(&urd, &report_data[..]).map_err(|e| format!("write {urd}: {e}"))?;
+    fs::write(&urd, &report_data[..]).map_err(|e| GramineError::write_path(&urd, e))?;
     let rf = format!("{ATTEST_DIR}/report");
-    let report = fs::read(&rf).map_err(|e| format!("read {rf}: {e}"))?;
+    let report = fs::read(&rf).map_err(|e| GramineError::read_path(&rf, e))?;
     // A standalone SGX report (`sgx_report_t`) has its report BODY at offset 0,
     // whereas `parse_quote_measurements` expects the body after the 48-byte quote
     // header. Prepend `REPORT_BODY_OFFSET` zero bytes so the single-source-of-truth
     // parser reads MRENCLAVE/MRSIGNER/ISVSVN at the identical field offsets.
     let mut as_quote = vec![0u8; REPORT_BODY_OFFSET];
     as_quote.extend_from_slice(&report);
-    parse_quote_measurements(&as_quote)
+    parse_quote_measurements(&as_quote).map_err(GramineError::quote_measurements)
 }
 
 /// EGETKEY-derived sealing key from Gramine's `/dev/attestation/keys/<name>`.
 /// `mrsigner` survives an enclave update by the same signer. `mrenclave` is
 /// strict per-build. Gramine returns a 128-bit key. We expand it to 256 bits with
 /// the caller's HKDF. Only available under `gramine-sgx`.
-pub fn sealing_key_raw(mrsigner_policy: bool) -> Result<Vec<u8>, String> {
+pub fn sealing_key_raw(mrsigner_policy: bool) -> EnclaveResult<Vec<u8>> {
     let name = if mrsigner_policy {
         "_sgx_mrsigner"
     } else {
         "_sgx_mrenclave"
     };
     let path = format!("{ATTEST_DIR}/keys/{name}");
-    let key = fs::read(&path).map_err(|e| format!("read {path}: {e}"))?;
+    let key = fs::read(&path).map_err(|e| GramineError::read_path(&path, e))?;
     if key.is_empty() {
-        return Err(format!("{path} returned empty key"));
+        return Err(GramineError::EmptyKey { path }.into());
     }
     Ok(key)
 }
@@ -248,9 +252,9 @@ pub fn sealing_key_raw(mrsigner_policy: bool) -> Result<Vec<u8>, String> {
 /// when no SGX hardware is present (gramine-direct/bare). There is no
 /// confidential at-rest persistence there, so the caller must not silently
 /// substitute a fixed key.
-pub fn sealing_key_256(mrsigner_policy: bool) -> Result<[u8; 32], String> {
+pub fn sealing_key_256(mrsigner_policy: bool) -> EnclaveResult<[u8; 32]> {
     let raw = sealing_key_raw(mrsigner_policy)?;
-    crate::crypto::hkdf_sha256(&raw, b"", b"outbe/tee/seal-key/v1").map_err(|e| e.to_string())
+    crate::crypto::hkdf_sha256(&raw, b"", b"outbe/tee/seal-key/v1").map_err(Into::into)
 }
 
 /// Diagnostic dump of the whole attestation surface. The `--probe-attestation`

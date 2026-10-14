@@ -36,10 +36,10 @@ where
         static GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
         let permit = GATE
             .try_acquire()
-            .map_err(|_| internal_err("upgrade key source is busy; retry".into()))?;
-        proof.validate().map_err(|e| internal_err(e.to_string()))?;
+            .map_err(|_| internal_err("upgrade key source is busy; retry"))?;
+        proof.validate().map_err(internal_err)?;
         let context = outbe_tee::dcap_protocol::DcapOnboardingContextV1::decode_canonical(&context)
-            .map_err(|_| internal_err("invalid upgrade context".into()))?;
+            .map_err(|_| internal_err("invalid upgrade context"))?;
         self.check_upgrade_candidate(&context, legacy_direct_dev_source)?;
         let result = tokio::task::spawn_blocking(move || {
             let _permit = permit;
@@ -51,7 +51,7 @@ where
         })
         .await
         .map_err(|e| internal_err(format!("upgrade export task: {e}")))?
-        .map_err(|e| internal_err(e.to_string()))?;
+        .map_err(internal_err)?;
         Ok(result.into())
     }
     fn check_upgrade_candidate(
@@ -62,26 +62,26 @@ where
         let finalized = self
             .provider
             .finalized_block_num_hash()
-            .map_err(|e| internal_err(e.to_string()))?
-            .ok_or_else(|| internal_err("finalized state unavailable".into()))?;
+            .map_err(internal_err)?
+            .ok_or_else(|| internal_err("finalized state unavailable"))?;
         let header = self
             .provider
             .sealed_header(finalized.number)
-            .map_err(|e| internal_err(e.to_string()))?
-            .ok_or_else(|| internal_err("finalized header unavailable".into()))?;
+            .map_err(internal_err)?
+            .ok_or_else(|| internal_err("finalized header unavailable"))?;
         if header.hash() != finalized.hash {
-            return Err(internal_err("finalized header mismatch".into()));
+            return Err(internal_err("finalized header mismatch"));
         }
         {
             let state = self
                 .provider
                 .state_by_block_hash(finalized.hash)
-                .map_err(|e| internal_err(e.to_string()))?;
+                .map_err(internal_err)?;
             let reader = RethStateReader { state: &state };
             let (chain_id, genesis_hash) = self
                 .chain_identity
                 .filter(|(id, hash)| *id != 0 && !hash.is_zero())
-                .ok_or_else(|| internal_err("immutable chain identity is not configured".into()))?;
+                .ok_or_else(|| internal_err("immutable chain identity is not configured"))?;
             let mut provider = ReadOnlyStorageProvider::new_with_block_context(
                 reader,
                 ReadOnlyBlockContext {
@@ -98,10 +98,10 @@ where
                 header.timestamp(),
                 legacy_direct_dev_source,
             )
-            .map_err(|e| internal_err(e.to_string()))?;
+            .map_err(internal_err)?;
             if !check {
                 return Err(internal_err(
-                    "recipient is not a live finalized upgrade candidate".into(),
+                    "recipient is not a live finalized upgrade candidate",
                 ));
             }
         }
@@ -111,11 +111,11 @@ where
         &self,
         config: Option<TeeRenewalScheduleConfigV1>,
     ) -> RpcResult<TeeRenewalScheduleV1> {
-        let config = config
-            .ok_or_else(|| internal_err("TEE renewal schedule is not configured".to_owned()))?;
+        let config =
+            config.ok_or_else(|| internal_err("TEE renewal schedule is not configured"))?;
         if config.minimum_block_time_millis == 0 {
             return Err(internal_err(
-                "TEE renewal schedule has zero minimum block time".to_owned(),
+                "TEE renewal schedule has zero minimum block time",
             ));
         }
         self.read_renewal_epoch()?.schedule(config)
@@ -125,7 +125,7 @@ where
             .provider
             .finalized_block_num_hash()
             .map_err(|error| internal_err(format!("failed to read finalized block: {error}")))?
-            .ok_or_else(|| internal_err("finalized block is unavailable".to_owned()))?;
+            .ok_or_else(|| internal_err("finalized block is unavailable"))?;
         let header = self
             .provider
             .sealed_header(finalized.number)
@@ -135,10 +135,10 @@ where
                     finalized.number
                 ))
             })?
-            .ok_or_else(|| internal_err("finalized header is unavailable".to_owned()))?;
+            .ok_or_else(|| internal_err("finalized header is unavailable"))?;
         if header.hash() != finalized.hash {
             return Err(internal_err(
-                "finalized block marker and canonical header disagree".to_owned(),
+                "finalized block marker and canonical header disagree",
             ));
         }
         let state = self
@@ -149,9 +149,7 @@ where
         let mut provider = ReadOnlyStorageProvider::new(reader);
         let storage = StorageHandle::new(&mut provider);
         let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
-        let epoch = validators
-            .epoch_snapshot()
-            .map_err(|error| internal_err(error.to_string()))?;
+        let epoch = validators.epoch_snapshot().map_err(internal_err)?;
         Ok(RenewalEpoch {
             finalized_height: finalized.number,
             finalized_hash: finalized.hash,

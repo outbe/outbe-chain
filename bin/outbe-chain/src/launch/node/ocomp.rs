@@ -1,4 +1,5 @@
 use super::*;
+use crate::errors::{LaunchError, LysisOpeningsError};
 
 pub(super) struct OcompBootstrap {
     pub config: ocomp_exex::OcompExExConfigV1,
@@ -16,7 +17,7 @@ pub(super) fn prepare(
     let ocomp_limits = outbe_ocomp_protocol::profile::poc_schema_limits();
     let ocomp_domain_root = node_data_dir
         .parent()
-        .ok_or_else(|| eyre::eyre!("node data directory has no OCOMP domain parent"))?
+        .ok_or(LaunchError::MissingOcompDomainParent)?
         .join("ocomp")
         .join("domain-v1");
     let ocomp_bundle_bytes = ocomp_fork_install
@@ -38,22 +39,21 @@ pub(super) fn prepare(
         .listen_address
         .port()
         .checked_add(1)
-        .ok_or_else(|| eyre::eyre!("consensus port leaves no OCOMP Worker endpoint port"))?;
+        .ok_or(LaunchError::MissingOcompWorkerPort)?;
     let mut ocomp_runtime_bundles = Vec::with_capacity(ocomp_bundles.len());
     let ocomp_lane_port_stride =
         u16::try_from(outbe_ocomp::worker_transport::MAX_REGISTERED_WORKERS)
-            .map_err(|_| eyre::eyre!("OCOMP worker limit exceeds u16"))?
+            .map_err(|_| LaunchError::OcompWorkerLimitExceedsU16)?
             .checked_add(2)
-            .ok_or_else(|| eyre::eyre!("OCOMP bundle lane port stride overflow"))?;
+            .ok_or(LaunchError::OcompLanePortStrideOverflow)?;
     for (index, bundle) in ocomp_bundles.into_iter().enumerate() {
-        let lane =
-            u16::try_from(index).map_err(|_| eyre::eyre!("OCOMP bundle lane count exceeds u16"))?;
+        let lane = u16::try_from(index).map_err(|_| LaunchError::OcompLaneCountExceedsU16)?;
         let port_offset = lane
             .checked_mul(ocomp_lane_port_stride)
-            .ok_or_else(|| eyre::eyre!("OCOMP bundle lane port offset overflow"))?;
+            .ok_or(LaunchError::OcompLanePortOffsetOverflow)?;
         let worker_port = ocomp_worker_base_port
             .checked_add(port_offset)
-            .ok_or_else(|| eyre::eyre!("OCOMP bundle lane leaves no Worker endpoint port"))?;
+            .ok_or(LaunchError::OcompLaneMissingWorkerPort)?;
         let worker_address = std::net::SocketAddr::new(
             std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
             worker_port,
@@ -82,7 +82,7 @@ pub(super) fn prepare(
     };
     let ocomp_validator_rpc_url = if args.is_validator {
         if !config.rpc.http {
-            eyre::bail!("validator OCOMP requires the local HTTP RPC server");
+            return Err(LaunchError::ValidatorOcompRequiresHttpRpc.into());
         }
         Some(format!("http://127.0.0.1:{}", config.rpc.http_port))
     } else {
@@ -119,65 +119,84 @@ pub(super) fn prepare(
     })
 }
 
+fn handle_lysis_openings_request<P>(
+    provider: &P,
+    intent_id: alloy_primitives::B256,
+    canonical_request: alloy_primitives::Bytes,
+) -> Result<alloy_primitives::Bytes, LysisOpeningsError>
+where
+    P: HeaderProvider + BlockIdReader + StateProviderFactory,
+{
+    let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+    let request = outbe_ocomp_protocol::control::BuildLysisOpeningsV1::decode_body(
+        canonical_request.as_ref(),
+        &limits,
+    )
+    .map_err(|error| LysisOpeningsError::DecodeRequest {
+        details: crate::errors::display_error(error),
+    })?;
+    let finalized_head = provider
+        .finalized_block_num_hash()
+        .map_err(|error| LysisOpeningsError::ReadFinalizedHead {
+            details: crate::errors::display_error(error),
+        })?
+        .ok_or(LysisOpeningsError::FinalizedHeadUnavailable)?;
+    let record = outbe_node::ocomp::retention::read_ocomp_job_record_at(
+        provider,
+        finalized_head.hash,
+        intent_id,
+        &limits,
+    )
+    .map_err(|error| LysisOpeningsError::ReadFinalizedJob {
+        details: crate::errors::display_error(error),
+    })?;
+    let finalized = record
+        .finalized
+        .as_ref()
+        .ok_or(LysisOpeningsError::JobNotFinalized)?;
+    if !ocomp_job_available_for_calculation(record.status) {
+        return Err(LysisOpeningsError::JobNotAvailable);
+    }
+    if request.job_id != finalized.job_id {
+        return Err(LysisOpeningsError::RequestJobIdMismatch);
+    }
+    let candidate = outbe_node::ocomp::retention::CandidatePinV1 {
+        block_number: record.intent_height,
+        block_hash: finalized.finalized_request_block_hash,
+        state_root: finalized.finalized_request_state_root,
+        intent_id,
+        wwd: record.intent.wwd,
+        ce_sealed_root: record.intent.ce_sealed_root,
+        protocol_bundle_hash: record.intent.protocol_bundle_hash,
+        input_lease_id: record.intent.input_lease_id().map_err(|error| {
+            LysisOpeningsError::DeriveInputLease {
+                details: crate::errors::display_error(error),
+            }
+        })?,
+    };
+    let openings =
+        outbe_node::ocomp::build_lysis_openings(provider, &limits, candidate, request.subjects)
+            .map_err(|error| LysisOpeningsError::BuildOpenings {
+                details: crate::errors::display_error(error),
+            })?;
+    if openings.job_id != finalized.job_id {
+        return Err(LysisOpeningsError::OpeningsJobIdMismatch);
+    }
+    openings
+        .encode_body(&limits)
+        .map(alloy_primitives::Bytes::from)
+        .map_err(|error| LysisOpeningsError::EncodeOpenings {
+            details: crate::errors::display_error(error),
+        })
+}
+
 pub(super) fn lysis_openings_runtime<P>(provider: Arc<P>) -> outbe_rpc::OcompLysisOpeningsRuntimeV1
 where
     P: HeaderProvider + BlockIdReader + StateProviderFactory + Send + Sync + 'static,
 {
     outbe_rpc::OcompLysisOpeningsRuntimeV1::new(move |intent_id, canonical_request| {
-        let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
-        let request = outbe_ocomp_protocol::control::BuildLysisOpeningsV1::decode_body(
-            canonical_request.as_ref(),
-            &limits,
-        )
-        .map_err(|error| format!("decode OCOMP openings request: {error}"))?;
-        let finalized_head = provider
-            .finalized_block_num_hash()
-            .map_err(|error| format!("read finalized head: {error}"))?
-            .ok_or_else(|| "finalized head is unavailable".to_owned())?;
-        let record = outbe_node::ocomp::retention::read_ocomp_job_record_at(
-            provider.as_ref(),
-            finalized_head.hash,
-            intent_id,
-            &limits,
-        )
-        .map_err(|error| format!("read finalized OCOMP job: {error}"))?;
-        let finalized = record
-            .finalized
-            .as_ref()
-            .ok_or_else(|| "OCOMP job is not finalized".to_owned())?;
-        if !ocomp_job_available_for_calculation(record.status) {
-            return Err("OCOMP job is not available for calculation or replay".to_owned());
-        }
-        if request.job_id != finalized.job_id {
-            return Err("OCOMP openings request JobId mismatch".to_owned());
-        }
-        let candidate = outbe_node::ocomp::retention::CandidatePinV1 {
-            block_number: record.intent_height,
-            block_hash: finalized.finalized_request_block_hash,
-            state_root: finalized.finalized_request_state_root,
-            intent_id,
-            wwd: record.intent.wwd,
-            ce_sealed_root: record.intent.ce_sealed_root,
-            protocol_bundle_hash: record.intent.protocol_bundle_hash,
-            input_lease_id: record
-                .intent
-                .input_lease_id()
-                .map_err(|error| format!("derive input lease: {error}"))?,
-        };
-        let openings = outbe_node::ocomp::build_lysis_openings(
-            provider.as_ref(),
-            &limits,
-            candidate,
-            request.subjects,
-        )
-        .map_err(|error| format!("build exact OCOMP openings: {error}"))?;
-        if openings.job_id != finalized.job_id {
-            return Err("OCOMP openings JobId mismatch".to_owned());
-        }
-        openings
-            .encode_body(&limits)
-            .map(alloy_primitives::Bytes::from)
-            .map_err(|error| format!("encode OCOMP openings: {error}"))
+        handle_lysis_openings_request(provider.as_ref(), intent_id, canonical_request)
+            .map_err(LysisOpeningsError::into_rpc_error)
     })
 }
 
@@ -196,9 +215,11 @@ pub(super) fn validate_startup_authority_and_pruning(
         outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
             config.chain.as_ref(),
         );
-    let tee_activation = tee_attestation_v1
-        .activation()
-        .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
+    let tee_activation = tee_attestation_v1.activation().map_err(|error| {
+        LaunchError::InvalidMandatoryTeeChainSpec {
+            details: crate::errors::display_error(error),
+        }
+    })?;
     let initial_tee_policy = tee_activation
         .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
         .map_err(eyre::Report::msg)?;
@@ -206,12 +227,16 @@ pub(super) fn validate_startup_authority_and_pruning(
     let dkg_prepare_window_blocks = extra
         .get_deserialized::<u64>("dkgPrepareWindowBlocks")
         .transpose()
-        .map_err(|error| eyre::eyre!("invalid dkgPrepareWindowBlocks: {error}"))?
+        .map_err(|error| LaunchError::InvalidDkgPrepareWindowBlocks {
+            details: crate::errors::display_error(error),
+        })?
         .unwrap_or(outbe_consensus::config::DEFAULT_DKG_PREPARE_WINDOW_BLOCKS);
     let minimum_block_time_millis = extra
         .get_deserialized::<u64>("minBlockTimeMs")
         .transpose()
-        .map_err(|error| eyre::eyre!("invalid minBlockTimeMs: {error}"))?
+        .map_err(|error| LaunchError::InvalidMinBlockTimeMs {
+            details: crate::errors::display_error(error),
+        })?
         .unwrap_or(outbe_consensus::timing::DEFAULT_MIN_BLOCK_TIME_MS);
     info!(
         attestation_mode = ?initial_tee_policy.attestation_mode,

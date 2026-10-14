@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 
 use crate::{
     chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID},
+    errors::TeeGenesisPolicyError,
     tee_attestation_v1::{
         AttestationMode, PlatformTcbStatusSetV1, QvlTcbStatusV1, ResourceScheduleV1,
         TeeMeasurementRuleV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1,
@@ -87,9 +88,9 @@ pub fn initial_tee_policy_v1(
     profile: InitialTeeProfileV1,
     chain_id: u64,
     genesis_hash: B256,
-) -> Result<TeePolicyV1, String> {
+) -> Result<TeePolicyV1, TeeGenesisPolicyError> {
     if genesis_hash.is_zero() {
-        return Err("TEE genesis policy requires a non-zero genesis hash".into());
+        return Err(TeeGenesisPolicyError::ZeroGenesisHash);
     }
     match profile.attestation_mode() {
         AttestationMode::DcapRequired
@@ -98,9 +99,11 @@ pub fn initial_tee_policy_v1(
                 AttestationMode::DcapRequired,
             ) =>
         {
-            return Err(format!(
-                "DcapRequired requires devnet, testnet, or mainnet chain ID ({DEVNET_CHAIN_ID}, {TESTNET_CHAIN_ID}, or {MAINNET_CHAIN_ID})"
-            ));
+            return Err(TeeGenesisPolicyError::InvalidDcapChainId {
+                devnet: DEVNET_CHAIN_ID,
+                testnet: TESTNET_CHAIN_ID,
+                mainnet: MAINNET_CHAIN_ID,
+            });
         }
         AttestationMode::GramineDirectDev
             if !is_attestation_mode_allowed_for_chain_id(
@@ -108,25 +111,24 @@ pub fn initial_tee_policy_v1(
                 AttestationMode::GramineDirectDev,
             ) =>
         {
-            return Err(format!(
-                "GramineDirectDev requires devnet or testnet chain ID ({DEVNET_CHAIN_ID} or {TESTNET_CHAIN_ID})"
-            ));
+            return Err(TeeGenesisPolicyError::InvalidGramineDirectDevChainId {
+                devnet: DEVNET_CHAIN_ID,
+                testnet: TESTNET_CHAIN_ID,
+            });
         }
         _ => {}
     }
 
     let resource_schedule_hash = ResourceScheduleV1::normative()
         .and_then(|schedule| schedule.schedule_hash())
-        .map_err(|error| format!("derive normative resource schedule: {error}"))?;
+        .map_err(TeeGenesisPolicyError::derive_normative_resource_schedule)?;
     let (minimum_tcb_evaluation_data_number, measurement_rule) = match profile {
         InitialTeeProfileV1::DcapRequired(measurement) => {
             if measurement.mrenclave.is_zero() || measurement.mrsigner.is_zero() {
-                return Err("DcapRequired measurements must be non-zero".into());
+                return Err(TeeGenesisPolicyError::ZeroDcapMeasurement);
             }
             if measurement.minimum_tcb_evaluation_data_number == 0 {
-                return Err(
-                    "DcapRequired minimum TCB evaluation data number must be non-zero".into(),
-                );
+                return Err(TeeGenesisPolicyError::ZeroMinimumTcbEvaluationDataNumber);
             }
             let rule = TeeMeasurementRuleV1 {
                 mrenclave: measurement.mrenclave,
@@ -180,13 +182,15 @@ pub fn initial_tee_policy_v1(
     };
     policy
         .encode_canonical()
-        .map_err(|error| format!("encode initial TEE policy: {error}"))?;
+        .map_err(TeeGenesisPolicyError::encode_initial_policy)?;
     Ok(policy)
 }
 
 /// Encode the canonical one-entry policy schedule into the genesis config
 /// field consumed by every testnet node.
-pub fn tee_attestation_v1_genesis_field(policy: &TeePolicyV1) -> Result<Value, String> {
+pub fn tee_attestation_v1_genesis_field(
+    policy: &TeePolicyV1,
+) -> Result<Value, TeeGenesisPolicyError> {
     let schedule = TeePolicyScheduleV1 {
         chain_id: policy.chain_id,
         genesis_hash: policy.genesis_hash,
@@ -197,10 +201,10 @@ pub fn tee_attestation_v1_genesis_field(policy: &TeePolicyV1) -> Result<Value, S
     };
     let encoded = schedule
         .encode_canonical()
-        .map_err(|error| format!("encode initial TEE policy schedule: {error}"))?;
+        .map_err(TeeGenesisPolicyError::encode_initial_policy_schedule)?;
     let policy_schedule_hash = schedule
         .schedule_hash()
-        .map_err(|error| format!("hash initial TEE policy schedule: {error}"))?;
+        .map_err(TeeGenesisPolicyError::hash_initial_policy_schedule)?;
     Ok(json!({
         "activationHeight": 1,
         "policySchedule": format!("0x{}", hex::encode(encoded)),

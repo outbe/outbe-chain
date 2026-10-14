@@ -2,7 +2,7 @@ use alloy_primitives::{Address, U256};
 use outbe_gemfactory::GemTypes;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
+    error::Result,
     time::{date_key_to_utc_timestamp, next_date_key},
 };
 
@@ -13,6 +13,7 @@ use super::batch::{
 use super::replay::require_identical_reward_gem_batch_replay;
 use super::{day_participation_complete, PreparedRewardGemBatch, RewardGemPreparationOutcome};
 use crate::constants::REWARD_GEM_CURRENCY;
+use crate::errors::RewardsError;
 use crate::schema::Rewards;
 
 /// Calculates and stores one exact validator reward Gem obligation without
@@ -36,9 +37,7 @@ fn prepare_daily_validator_gem_batch_inner(
     voters: &[(Address, u64)],
 ) -> Result<RewardGemPreparationOutcome> {
     if !day_participation_complete(ctx, utc_day)? {
-        return Err(PrecompileError::Fatal(
-            "GEM preparation before reward participation windows close".into(),
-        ));
+        return Err(RewardsError::GemPreparationBeforeParticipationWindowsClose.into());
     }
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     let gem_type = reward_utc_day_gem_type(ctx, utc_day)? as u8;

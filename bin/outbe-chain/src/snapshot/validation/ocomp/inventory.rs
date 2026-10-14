@@ -96,17 +96,17 @@ impl ReferenceMembership {
             .tx()?
             .get::<InventoryRows>(Self::key(job, reference))?
             .is_some();
-        if !present && !complete_evidence {
-            return Err(Incomplete(format!(
+        require(
+            present || complete_evidence,
+            Incomplete(format!(
                 "reference {} has no verified membership in partial job {job}",
                 reference.transport_digest
-            ))
-            .into());
-        }
-        ensure!(
+            )),
+        )?;
+        require(
             present,
-            "retained reference does not belong to verified job {job}"
-        );
+            SnapshotOcompError::RetainedReferenceNotInJob { job },
+        )?;
         Ok(())
     }
 }
@@ -144,9 +144,10 @@ pub(super) fn scan_budget(
     total: u64,
     maximum: Option<u64>,
 ) -> eyre::Result<()> {
-    if maximum.is_some_and(|maximum| visited >= maximum) {
-        return Err(Incomplete(format!("{label} scan stopped at {visited}/{total}")).into());
-    }
+    require(
+        !maximum.is_some_and(|maximum| visited >= maximum),
+        Incomplete(format!("{label} scan stopped at {visited}/{total}")),
+    )?;
     Ok(())
 }
 
@@ -231,12 +232,12 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
             active_intents,
         );
 
-        if maximum_records.is_some_and(|maximum| active_intents > maximum) {
-            return Err(Incomplete(format!(
+        require(
+            !maximum_records.is_some_and(|maximum| active_intents > maximum),
+            Incomplete(format!(
                 "active intent scan requires {active_intents} records, exceeding configured budget"
-            ))
-            .into());
-        }
+            )),
+        )?;
         let directory = tempfile::Builder::new()
             .prefix("outbe-ocomp-inventory-")
             .tempdir_in(scratch_parent)?;
@@ -244,20 +245,20 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
         db.create_and_track_tables_for::<InventoryRows>()?;
         let tx = db.tx_mut()?;
         let (nod_head, nod_tail) = state.nod_materialization_bounds()?;
-        ensure!(
-            nod_head > 0 && nod_head <= nod_tail,
-            "invalid NOD FIFO bounds"
-        );
+        require(
+            nod_head != 0 && nod_head <= nod_tail,
+            SnapshotOcompError::InvalidNodFifoBounds,
+        )?;
         observe_inventory_bound(report.as_deref_mut(), "nod_fifo", nod_head, nod_tail, 0);
-        ensure!(
+        require(
             state.nod_materialization_day(nod_tail)?.value() == 0,
-            "NOD FIFO next-free tail is occupied"
-        );
+            SnapshotOcompError::NodFifoTailOccupied,
+        )?;
         let head = state.nod_materialization_head()?;
-        ensure!(
+        require(
             head.is_some() == (nod_head != nod_tail),
-            "NOD FIFO head presence differs"
-        );
+            SnapshotOcompError::NodFifoHeadPresenceMismatch,
+        )?;
         let mut bounds = InventoryBounds {
             active_intents,
             nod_head,
@@ -272,24 +273,26 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
                 maximum_records,
             )?;
             let day = state.nod_materialization_day(sequence)?;
-            ensure!(
+            require(
                 day.value() != 0 && day.is_valid(),
-                "invalid NOD FIFO day at {sequence}"
-            );
+                SnapshotOcompError::InvalidNodFifoDay { sequence },
+            )?;
             let projection = state
                 .nod_certified_generation(day)?
-                .ok_or_else(|| eyre::eyre!("missing certified NOD generation at {sequence}"))?;
-            ensure!(
-                projection.worldwide_day == day
-                    && !projection.job_id.is_zero()
-                    && !projection.protocol_bundle_hash.is_zero()
-                    && !projection.program_semantics_hash.is_zero()
-                    && projection.next_nod_ordinal < projection.nod_count,
-                "invalid or completed NOD generation remains queued at {sequence}"
-            );
-            if sequence == nod_head {
-                ensure!(
-                    head.as_ref()
+                .ok_or(SnapshotOcompError::MissingCertifiedNodGeneration { sequence })?;
+            require(
+                (
+                    projection.worldwide_day == day,
+                    !projection.job_id.is_zero(),
+                    !projection.protocol_bundle_hash.is_zero(),
+                    !projection.program_semantics_hash.is_zero(),
+                    projection.next_nod_ordinal < projection.nod_count,
+                ) == (true, true, true, true, true),
+                SnapshotOcompError::InvalidOrCompletedNodGenerationQueued { sequence },
+            )?;
+            require(
+                sequence != nod_head
+                    || head.as_ref()
                         == Some(&NodMaterializationHeadV1 {
                             queue_sequence: sequence,
                             job_id: projection.job_id,
@@ -301,17 +304,16 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
                             next_nod_ordinal: projection.next_nod_ordinal,
                             last_progress_height: projection.last_progress_height,
                         }),
-                    "NOD FIFO first projection differs from native head"
-                );
-            }
+                SnapshotOcompError::NodFifoFirstProjectionMismatch,
+            )?;
             for key in [
                 inventory_key(b'd', &day.value().to_be_bytes()),
                 inventory_key(b'j', projection.job_id.as_slice()),
             ] {
-                ensure!(
+                require(
                     tx.get::<InventoryRows>(key.clone())?.is_none(),
-                    "duplicate NOD FIFO day/job"
-                );
+                    SnapshotOcompError::DuplicateNodFifoDayOrJob,
+                )?;
                 tx.put::<InventoryRows>(key, Vec::new())?;
             }
             bounds.nod_entries += 1;
@@ -354,11 +356,11 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
                 let job = hex::encode(projection.job_id);
                 let cas = FilesystemCasReader::open(ocomp_root.join("cas-v1"), cas_limits)?;
                 let bundle = read_pinned_bundle(ocomp_root, projection.protocol_bundle_hash)?;
-                ensure!(
+                require(
                     bundle.bundle().lysis_program_semantics_hash
                         == projection.program_semantics_hash,
-                    "canonical NOD program semantics differ from protocol bundle"
-                );
+                    SnapshotOcompError::NodProgramSemanticsMismatch,
+                )?;
                 let inputs = VerifiedInputChunkRefCatalog::reopen(
                     ocomp_root.join("exporter-v1/input-refs").join(&job),
                     &cas,
@@ -381,14 +383,22 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
                         &bundle,
                         &limits,
                     )?;
-                ensure!(
-                    audit.plan().job_id == projection.job_id
-                        && audit.plan().protocol_bundle_hash == projection.protocol_bundle_hash
-                        && audit.plan().wwd == projection.worldwide_day.value()
-                        && audit.plan().tribute_count == projection.tribute_count
-                        && projection.nod_count == projection.tribute_count,
-                    "canonical NOD generation differs from native plan"
-                );
+                require(
+                    (
+                        audit.plan().job_id,
+                        audit.plan().protocol_bundle_hash,
+                        audit.plan().wwd,
+                        audit.plan().tribute_count,
+                        projection.nod_count,
+                    ) == (
+                        projection.job_id,
+                        projection.protocol_bundle_hash,
+                        projection.worldwide_day.value(),
+                        projection.tribute_count,
+                        projection.tribute_count,
+                    ),
+                    SnapshotOcompError::NodGenerationPlanMismatch,
+                )?;
                 let mut head = NodMaterializationHeadV1 {
                     queue_sequence: sequence,
                     job_id: projection.job_id,
@@ -401,13 +411,13 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
                     last_progress_height: projection.last_progress_height,
                 };
                 while head.next_nod_ordinal < head.nod_count {
-                    if maximum_batches.is_some_and(|maximum| result.batches >= maximum) {
-                        return Err(Incomplete(format!(
+                    require(
+                        !maximum_batches.is_some_and(|maximum| result.batches >= maximum),
+                        Incomplete(format!(
                             "NOD job {job} stopped at {}/{} ordinals after {} batches",
                             head.next_nod_ordinal, head.nod_count, result.batches
-                        ))
-                        .into());
-                    }
+                        )),
+                    )?;
                     let built = build_nod_materialization_batch_with_references(
                         &audit,
                         &head,
@@ -417,25 +427,25 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
                     let next = head
                         .next_nod_ordinal
                         .checked_add(count)
-                        .ok_or_else(|| eyre::eyre!("NOD ordinal overflow"))?;
-                    ensure!(
-                        count > 0 && next <= head.nod_count,
-                        "invalid NOD batch progress"
-                    );
+                        .ok_or(SnapshotOcompError::NodOrdinalOverflow)?;
+                    require(
+                        count != 0 && next <= head.nod_count,
+                        SnapshotOcompError::InvalidNodBatchProgress,
+                    )?;
                     head.next_nod_ordinal = next;
                     result.batches = result
                         .batches
                         .checked_add(1)
-                        .ok_or_else(|| eyre::eyre!("NOD batch count overflow"))?;
+                        .ok_or(SnapshotOcompError::NodBatchCountOverflow)?;
                     result.actions = result
                         .actions
                         .checked_add(u64::from(count))
-                        .ok_or_else(|| eyre::eyre!("NOD action count overflow"))?;
+                        .ok_or(SnapshotOcompError::NodActionCountOverflow)?;
                 }
                 result.jobs = result
                     .jobs
                     .checked_add(1)
-                    .ok_or_else(|| eyre::eyre!("NOD job count overflow"))?;
+                    .ok_or(SnapshotOcompError::NodJobCountOverflow)?;
                 Ok(())
             };
             verify().map_err(|error| classify_nod_input_error(error, projection.job_id))
@@ -452,7 +462,7 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
             let projection = self
                 .state
                 .nod_certified_generation(day)?
-                .ok_or_else(|| eyre::eyre!("validated NOD generation disappeared"))?;
+                .ok_or(SnapshotOcompError::ValidatedNodGenerationDisappeared)?;
             visitor(sequence, projection)?;
         }
         Ok(())

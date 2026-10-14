@@ -16,7 +16,7 @@ impl ApplicationShared {
             }
             Ok(BuildBlockOutcome::EpochStale) => Ok(ProposeOutcome::EpochStale),
             Ok(BuildBlockOutcome::BoundaryUnavailable) => Ok(ProposeOutcome::BoundaryUnavailable),
-            Err(e) => Err(eyre::eyre!("failed to build block for proposal: {e}")),
+            Err(e) => Err(ApplicationError::BuildBlockFailed(e).into()),
         }
     }
     pub(in crate::application::handler) async fn publish_built_proposal(

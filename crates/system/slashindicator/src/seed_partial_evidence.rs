@@ -20,6 +20,8 @@
 use alloy_primitives::{keccak256, B256};
 use outbe_primitives::error::{PrecompileError, Result};
 
+use crate::errors::SlashIndicatorError;
+
 pub(crate) const SPE1_MAGIC: &[u8; 4] = b"SPE1";
 pub(crate) const SPE1_VERSION: u8 = 0x01;
 /// Fixed wire length: 4 + 1 + 8 + 8 + 8 + 48 + 48 + 96 + 48 + 96.
@@ -43,7 +45,7 @@ impl<'a> WireReader<'a> {
         let (field, rest) = self
             .rest
             .split_first_chunk::<N>()
-            .ok_or_else(|| PrecompileError::Revert("evidence field is truncated".into()))?;
+            .ok_or_else(|| PrecompileError::from(SlashIndicatorError::EvidenceFieldTruncated))?;
         self.rest = rest;
         Ok(*field)
     }
@@ -78,16 +80,17 @@ impl SeedPartialEquivocationEvidence {
     /// bytes), wrong magic, or wrong version.
     pub fn decode(data: &[u8]) -> Result<Self> {
         if data.len() != SPE1_LEN {
-            return Err(PrecompileError::Revert(format!(
-                "SPE1 evidence must be exactly {SPE1_LEN} bytes, got {}",
-                data.len()
-            )));
+            return Err(SlashIndicatorError::Spe1WrongLength {
+                expected: SPE1_LEN,
+                actual: data.len(),
+            }
+            .into());
         }
         if &data[0..4] != SPE1_MAGIC.as_slice() {
-            return Err(PrecompileError::Revert("SPE1 evidence bad magic".into()));
+            return Err(SlashIndicatorError::Spe1BadMagic.into());
         }
         if data[4] != SPE1_VERSION {
-            return Err(PrecompileError::Revert("SPE1 evidence bad version".into()));
+            return Err(SlashIndicatorError::Spe1BadVersion.into());
         }
         let mut wire = WireReader::new(&data[5..]);
         let round_epoch = wire.u64()?;
@@ -171,16 +174,17 @@ pub(crate) struct InvalidSeedPartialEvidence {
 impl InvalidSeedPartialEvidence {
     pub fn decode(data: &[u8]) -> Result<Self> {
         if data.len() < IPE1_PREFIX_LEN {
-            return Err(PrecompileError::Revert(format!(
-                "IPE1 evidence too short: need at least {IPE1_PREFIX_LEN} bytes, got {}",
-                data.len()
-            )));
+            return Err(SlashIndicatorError::Ipe1TooShort {
+                min_len: IPE1_PREFIX_LEN,
+                actual: data.len(),
+            }
+            .into());
         }
         if &data[0..4] != IPE1_MAGIC.as_slice() {
-            return Err(PrecompileError::Revert("IPE1 evidence bad magic".into()));
+            return Err(SlashIndicatorError::Ipe1BadMagic.into());
         }
         if data[4] != IPE1_VERSION {
-            return Err(PrecompileError::Revert("IPE1 evidence bad version".into()));
+            return Err(SlashIndicatorError::Ipe1BadVersion.into());
         }
         let mut wire = WireReader::new(&data[5..]);
         let committee_set_hash = B256::from(wire.bytes::<32>()?);
@@ -196,12 +200,12 @@ impl InvalidSeedPartialEvidence {
         debug_assert_eq!(pos, IPE1_PREFIX_LEN);
         let commitment = data
             .get(pos..pos + commitment_len)
-            .ok_or_else(|| PrecompileError::Revert("IPE1 commitment length exceeds input".into()))?
+            .ok_or_else(|| {
+                PrecompileError::from(SlashIndicatorError::Ipe1CommitmentLengthExceedsInput)
+            })?
             .to_vec();
         if pos + commitment_len != data.len() {
-            return Err(PrecompileError::Revert(
-                "IPE1 evidence has trailing bytes".into(),
-            ));
+            return Err(SlashIndicatorError::Ipe1TrailingBytes.into());
         }
         Ok(Self {
             committee_set_hash,
@@ -344,10 +348,7 @@ mod tests {
     /// The revert reason of a decode result, or `None` for success or another
     /// error kind.
     fn revert_reason<T>(result: Result<T>) -> Option<String> {
-        match result {
-            Err(PrecompileError::Revert(reason)) => Some(reason),
-            _ => None,
-        }
+        crate::errors::revert_reason(result)
     }
 
     /// Bytes `start, start + 1, ...` (wrapping), so each field is distinct.

@@ -25,7 +25,7 @@ pub(super) async fn prepare_attempt<
     let node_signer = preparation.node_signer;
     let config = preparation.config;
     let desired_valid_until = next_renewal_deadline(&view.binding, view.policy.maximum_lease)
-        .ok_or_else(|| eyre::eyre!("maximum renewal lease overflows timestamp"))?;
+        .ok_or(RenewalError::MaximumLeaseOverflow)?;
     let intent = renewal_intent(config, view, desired_valid_until)?;
     let generated_evidence = generate_renewal_evidence(
         enclave,
@@ -38,7 +38,7 @@ pub(super) async fn prepare_attempt<
     )?;
     let intent_hash = intent
         .intent_hash()
-        .map_err(|error| eyre::eyre!("hash renewal intent: {error}"))?;
+        .map_err(RenewalError::HashRenewalIntent)?;
     let node_signature = node_signer
         .sign_node_hash(intent_hash)
         .wrap_err("sign renewal intent with node authority")?;
@@ -59,17 +59,19 @@ pub(super) async fn prepare_attempt<
             view.policy.measurement_rules.len(),
             view.policy.attestation_mode,
         )
-        .map_err(|error| eyre::eyre!("calculate normative renewal gas: {error}"))?;
+        .map_err(RenewalError::CalculateNormativeGas)?;
     let chain_id = rpc.chain_id().await?;
     let account_nonce = rpc.transaction_count(evm_signer.address()).await?;
     let gas_price = buffered_gas_price(rpc.gas_price().await?);
     let required_balance = gas_price.saturating_mul(U256::from(gas_limit));
     let balance = rpc.balance(evm_signer.address()).await?;
     if balance < required_balance {
-        eyre::bail!(
-            "renewal EVM signer {} has {balance} but needs at least {required_balance}",
-            evm_signer.address()
-        );
+        return Err(RenewalError::InsufficientSignerBalance {
+            address: evm_signer.address(),
+            balance,
+            required_balance,
+        }
+        .into());
     }
     let raw = evm_signer.sign_renewal(UnsignedRelayTransactionV1 {
         chain_id,
@@ -81,7 +83,7 @@ pub(super) async fn prepare_attempt<
     })?;
     let intent_bytes = intent
         .encode_canonical()
-        .map_err(|error| eyre::eyre!("encode canonical renewal intent: {error}"))?;
+        .map_err(RenewalError::EncodeRenewalIntent)?;
     Ok(PreparedRenewalV1 {
         source: view.binding.clone(),
         intent: intent_bytes,
@@ -115,7 +117,7 @@ pub(super) fn renewal_intent(
         policy_hash: view
             .policy
             .policy_hash()
-            .map_err(|error| eyre::eyre!("hash active policy: {error}"))?,
+            .map_err(RenewalError::HashActivePolicy)?,
         node_id: config.manifest.node_id.clone(),
         enclave_id: view.binding.enclave_id,
         binding_id: view.binding.binding_id,
@@ -124,12 +126,12 @@ pub(super) fn renewal_intent(
             .binding
             .registration_version
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("registration version exhausted"))?,
+            .ok_or(RenewalError::RegistrationVersionExhausted)?,
         renewal_nonce: view
             .binding
             .renewal_nonce
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("renewal nonce exhausted"))?,
+            .ok_or(RenewalError::RenewalNonceExhausted)?,
         transition_nonce: view.binding.transition_nonce,
         requested_valid_until,
         recipient_x25519: config.manifest.recipient_x25519,
@@ -184,20 +186,20 @@ pub(super) fn generate_dcap_renewal(
     } = window;
     let (dcap, enclave_signature) = generate_dcap_evidence(enclave, intent, policy)?;
     let window = dcap_collateral_validity_window_v1(&dcap, policy)
-        .map_err(|error| eyre::eyre!("validate signed renewal collateral window: {error:?}"))?;
+        .map_err(RenewalError::ValidateSignedCollateralWindow)?;
     let ceiling = window
         .expiration_ceiling
         .checked_sub(policy.collateral_margin)
-        .ok_or_else(|| eyre::eyre!("renewal collateral cannot satisfy the active margin"))?;
+        .ok_or(RenewalError::CollateralMarginUnderflow)?;
     if window.issue_floor > finalized_timestamp || desired_valid_until > ceiling {
-        eyre::bail!("fresh Intel collateral cannot cover the exact next renewal deadline");
+        return Err(RenewalError::CollateralWindowDoesNotCoverDeadline.into());
     }
     let value = AttestationEvidenceV1::Dcap(dcap);
     let evidence = value
         .encode_canonical()
-        .map_err(|error| eyre::eyre!("encode canonical renewal evidence: {error}"))?;
-    let evidence_hash = dcap_evidence_hash_v1(&evidence)
-        .map_err(|code| eyre::eyre!("hash canonical renewal DCAP evidence: {code:?}"))?;
+        .map_err(RenewalError::EncodeRenewalEvidence)?;
+    let evidence_hash =
+        dcap_evidence_hash_v1(&evidence).map_err(RenewalError::HashDcapRenewalEvidence)?;
     Ok(GeneratedRenewalEvidenceV1 {
         evidence,
         evidence_hash,
@@ -215,7 +217,7 @@ pub(super) fn generate_direct_renewal(
         .sign_registration_intent_dev_v1(intent)
         .wrap_err("sign renewal intent inside GramineDirectDev enclave")?;
     if !intent.verify_enclave_signature(&enclave_signature) {
-        eyre::bail!("GramineDirectDev enclave signature does not bind renewal intent");
+        return Err(RenewalError::DirectDevSignatureMismatch.into());
     }
     let value = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
         transition_key_ready_proof: None,
@@ -225,10 +227,10 @@ pub(super) fn generate_direct_renewal(
     });
     let evidence_hash = value
         .evidence_hash()
-        .map_err(|error| eyre::eyre!("hash canonical renewal evidence: {error}"))?;
+        .map_err(RenewalError::HashRenewalEvidence)?;
     let evidence = value
         .encode_canonical()
-        .map_err(|error| eyre::eyre!("encode canonical renewal evidence: {error}"))?;
+        .map_err(RenewalError::EncodeRenewalEvidence)?;
     Ok(GeneratedRenewalEvidenceV1 {
         evidence,
         evidence_hash,
@@ -247,7 +249,7 @@ pub(super) fn generate_dcap_evidence(
         .generate_dcap_quote(intent)
         .wrap_err("generate intent-bound renewal quote")?;
     let components = acquire_dcap_collateral_v1(&generated.quote_body)
-        .map_err(|error| eyre::eyre!("acquire renewal collateral: {error}"))?;
+        .map_err(RenewalError::AcquireCollateral)?;
     let evidence = DcapEvidenceV1 {
         intent: intent.clone(),
         quote: generated.quote_body,
@@ -255,6 +257,6 @@ pub(super) fn generate_dcap_evidence(
         transition_key_ready_proof: generated.transition_key_ready_proof,
     };
     dcap_collateral_validity_window_v1(&evidence, policy)
-        .map_err(|error| eyre::eyre!("validate renewal collateral: {error:?}"))?;
+        .map_err(RenewalError::ValidateCollateral)?;
     Ok((evidence, generated.enclave_signature))
 }

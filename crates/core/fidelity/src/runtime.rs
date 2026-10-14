@@ -12,7 +12,7 @@
 //! `first_qualified_start` anchor.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_tee::protocol::{
     FidelityCohortOp, FidelityCohortRequest, FidelityOpOutcome, FidelityOpSection,
@@ -20,6 +20,7 @@ use outbe_tee::protocol::{
 };
 
 use crate::enclave_client;
+use crate::errors::FidelityFatalError;
 use crate::math::t_dec;
 use crate::schema::FidelityContract;
 
@@ -132,9 +133,7 @@ impl FidelityContract<'_> {
         self.snapshot_leagues(timestamp, &[account])?
             .first()
             .map(|(_, league)| *league)
-            .ok_or_else(|| {
-                PrecompileError::Fatal("fidelity snapshot returned no league".to_string())
-            })
+            .ok_or_else(|| FidelityFatalError::SnapshotReturnedNoLeague.into())
     }
 
     /// League for `account` at the current block time.

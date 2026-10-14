@@ -9,9 +9,10 @@
 
 use alloy_primitives::{Address, U256};
 
+use crate::errors::PromisFactoryError;
 use crate::precompile::IPromisFactory;
 use outbe_primitives::addresses::PROMIS_FACTORY_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::checked_protocol_to_native;
 use outbe_promis::api::{self as promis, ModifyAuth};
@@ -41,8 +42,8 @@ pub fn mine_coen(
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<U256> {
-    let native_amount = checked_protocol_to_native(amount)
-        .ok_or_else(|| PrecompileError::Revert("native COEN amount overflow".into()))?;
+    let native_amount =
+        checked_protocol_to_native(amount).ok_or(PromisFactoryError::NativeCoenOverflow)?;
 
     promis::burn(storage.clone(), account, amount, auth)?;
 

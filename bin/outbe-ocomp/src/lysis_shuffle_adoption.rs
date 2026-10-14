@@ -15,7 +15,7 @@ use crate::{
     },
     cas::{CasError, FilesystemCas, FilesystemCasReader},
     inbox::{WorkerInbox, WorkerInboxError},
-    lysis_phase_replay::{verify_dedicated_phase_replay, LysisPhaseReplayError},
+    lysis_phase_replay::{verify_producer_only_phase_replay, LysisPhaseReplayError},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -56,14 +56,14 @@ pub enum LysisShuffleAdoptionError {
 pub fn verify_lysis_shuffle_phase_replay(
     target: (u32, &UnitSpecV1, &UnitArtifactV1),
     commitment: (&PlanCommitmentV1, &InputManifestV1),
-    (producer_artifacts, bundle): (&[UnitArtifactV1], &ProtocolBundleV1),
+    upstream: (&[UnitArtifactV1], &ProtocolBundleV1),
     runtime: (&FilesystemCasReader, &WorkerInbox, &SchemaLimits),
 ) -> Result<(), LysisShuffleAdoptionError> {
-    if let Err(failure) = verify_dedicated_phase_replay(
+    if let Err(failure) = verify_producer_only_phase_replay(
         (UnitPhase::BucketShuffle, "shuffle replay phase"),
         target,
         commitment,
-        (&[], producer_artifacts, bundle),
+        upstream,
         runtime,
     ) {
         return Err(match failure {

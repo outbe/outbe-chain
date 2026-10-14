@@ -24,7 +24,7 @@ fn transition_quote_requires_resident_offer_key_and_signs_candidate_manifest() {
         AttestationOperationV1, RegistrationIntentV1, TransitionKeyReadyProofV1,
     };
 
-    fn quote(report_data: &[u8; 64]) -> Result<Vec<u8>, String> {
+    fn quote(report_data: &[u8; 64]) -> crate::errors::EnclaveResult<Vec<u8>> {
         let mut quote = vec![0_u8; outbe_tee::quote::MIN_QUOTE_LEN];
         let offset = quote.len() - report_data.len();
         quote[offset..].copy_from_slice(report_data);

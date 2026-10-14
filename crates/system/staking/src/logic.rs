@@ -1,9 +1,10 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::STAKING_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::contract::Staking;
+use crate::errors::StakingError;
 
 pub use crate::ocomp_recovery::{
     OcompMissPenalty, OcompRecoveryResolution, OcompRecoverySweep, OCOMP_MISS_SLASH_PERCENT,
@@ -20,16 +21,14 @@ impl Staking<'_> {
     /// - Updates val_stake in ValidatorSet.
     pub fn stake(&mut self, caller: Address, validator: Address, amount: U256) -> Result<()> {
         if amount.is_zero() {
-            return Err(PrecompileError::Revert("amount must be non-zero".into()));
+            return Err(StakingError::AmountZero.into());
         }
 
         // Enforce self-stake only. Third-party delegation is not allowed.
         // Without full delegation accounting, a delegator's funds would be
         // locked with no protocol-level withdrawal mechanism.
         if caller != validator {
-            return Err(PrecompileError::Revert(
-                "third-party staking not supported: caller must be validator".into(),
-            ));
+            return Err(StakingError::ThirdPartyStakingNotSupported.into());
         }
 
         // Do NOT call transfer_balance here. For payable precompile calls,
@@ -59,9 +58,7 @@ impl Staking<'_> {
             // Check: new_stake / new_total <= max_pct / 100
             // Equivalent to: new_stake * 100 <= max_pct * new_total
             if new_stake * U256::from(100u64) > U256::from(max_pct) * new_total {
-                return Err(PrecompileError::Revert(
-                    "stake would exceed max_stake_percent".into(),
-                ));
+                return Err(StakingError::StakeExceedsMaxStakePercent.into());
             }
         }
 
@@ -91,12 +88,12 @@ impl Staking<'_> {
     /// - Updates val_stake in ValidatorSet.
     pub fn unstake(&mut self, caller: Address, amount: U256) -> Result<()> {
         if amount.is_zero() {
-            return Err(PrecompileError::Revert("amount must be non-zero".into()));
+            return Err(StakingError::AmountZero.into());
         }
 
         let current = self.stake_amount.read(&caller)?;
         if amount > current {
-            return Err(PrecompileError::Revert("insufficient staked amount".into()));
+            return Err(StakingError::InsufficientStakedAmount.into());
         }
 
         let timestamp = self.storage.timestamp()?.to::<u64>();
@@ -136,16 +133,16 @@ impl Staking<'_> {
         if !registry.enclave_upgrade_v1()?.proposal_id.is_zero()
             && !registry.is_validator_enclave_ready_v1(caller)?
         {
-            return Err(PrecompileError::Revert(
-                "unjailValidator requires a live admitted enclave binding".into(),
-            ));
+            return Err(StakingError::UnjailRequiresLiveEnclaveBinding.into());
         }
         let stake = self.stake_amount.read(&caller)?;
         let min_stake = self.config_min_stake.read()?;
         if stake < min_stake {
-            return Err(PrecompileError::Revert(format!(
-                "unjailValidator requires stake >= min_stake: have {stake}, need {min_stake}"
-            )));
+            return Err(StakingError::UnjailInsufficientStake {
+                have: stake,
+                need: min_stake,
+            }
+            .into());
         }
         let mut val_set = ValidatorSet::new(self.storage.clone());
         val_set.unjail_after_stake_check(caller)
@@ -163,9 +160,7 @@ impl Staking<'_> {
     ///   SlashIndicator felony paths jail the validator. They do not force-exit it.
     pub fn slash_stake(&mut self, validator: Address, percent: u64) -> Result<U256> {
         if percent > 100 {
-            return Err(PrecompileError::Revert(
-                "slash percent must be <= 100".into(),
-            ));
+            return Err(StakingError::InvalidSlashPercent.into());
         }
 
         let current = self.stake_amount.read(&validator)?;

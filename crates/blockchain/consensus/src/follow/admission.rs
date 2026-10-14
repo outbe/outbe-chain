@@ -14,13 +14,13 @@
 
 use commonware_consensus::{simplex::types::Finalization, types::Epoch};
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
-use eyre::{bail, ensure, eyre, Result};
+use eyre::Result;
 use outbe_primitives::reshare_artifact::{
     decode_outbe_block_artifacts, ConsensusHeaderArtifact as Cha,
 };
 
 use super::{verify_with, CommitteeChain};
-use crate::{digest::Digest, hybrid::HybridScheme};
+use crate::{digest::Digest, errors::FollowError, hybrid::HybridScheme};
 
 /// What a certified header may change in the committee chain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,52 +69,58 @@ impl CommitteeChain {
         policy: AdmissionPolicy,
     ) -> Result<Admission> {
         if let AdmissionPolicy::Routed { routed_epoch } = policy {
-            ensure!(
-                certified == routed_epoch
-                    || routed_epoch.get().checked_add(1) == Some(certified.get()),
-                "certified epoch {} is neither routed epoch {} nor its successor",
-                certified.get(),
-                routed_epoch.get()
-            );
+            if certified != routed_epoch
+                && routed_epoch.get().checked_add(1) != Some(certified.get())
+            {
+                return Err(FollowError::CertifiedEpochNotRoutedOrSuccessor {
+                    certified: certified.get(),
+                    routed: routed_epoch.get(),
+                }
+                .into());
+            }
         }
         let artifact = decode_outbe_block_artifacts(extra_data)
-            .map_err(|error| eyre!("failed to decode authenticated block artifacts: {error:?}"))?
+            .map_err(FollowError::decode_authenticated_block_artifacts)?
             .consensus_header_artifact;
         let successor = certified.get().checked_add(1);
 
         match (policy, artifact) {
             (AdmissionPolicy::Routed { routed_epoch }, artifact) => {
-                if certified != routed_epoch {
-                    ensure!(
-                        matches!(&artifact, Some(Cha::BoundaryOutcome(boundary)) if boundary.epoch == certified.get()),
-                        "epoch changes from {} to {} without its BoundaryOutcome",
-                        routed_epoch.get(),
-                        certified.get()
-                    );
+                if certified != routed_epoch
+                    && !matches!(
+                        &artifact,
+                        Some(Cha::BoundaryOutcome(boundary)) if boundary.epoch == certified.get()
+                    )
+                {
+                    return Err(FollowError::EpochChangedWithoutBoundaryOutcome {
+                        from: routed_epoch.get(),
+                        to: certified.get(),
+                    }
+                    .into());
                 }
                 match artifact {
                     Some(Cha::CommitteePreAnnounce { epoch, outcome }) => {
-                        ensure!(
-                            successor == Some(epoch),
-                            "authenticated epoch {} block pre-announces non-successor epoch {epoch}",
-                            certified.get()
-                        );
+                        if successor != Some(epoch) {
+                            return Err(FollowError::PreAnnouncesNonSuccessor {
+                                certified: certified.get(),
+                                announced: epoch,
+                            }
+                            .into());
+                        }
                         self.register_epoch_from_outcome(Epoch::new(epoch), &outcome)?;
                         Ok(Admission::SuccessorRegistered(Epoch::new(epoch)))
                     }
                     Some(Cha::BoundaryOutcome(boundary)) => {
-                        ensure!(
-                            boundary.epoch == certified.get(),
-                            "boundary artifact epoch {} differs from certificate epoch {}",
-                            boundary.epoch,
-                            certified.get()
-                        );
+                        if boundary.epoch != certified.get() {
+                            return Err(FollowError::BoundaryEpochDiffersFromCertificate {
+                                boundary: boundary.epoch,
+                                certificate: certified.get(),
+                            }
+                            .into());
+                        }
                         self.register_epoch_from_outcome(certified, &boundary.outcome)
                             .map_err(|error| {
-                                eyre!(
-                                    "boundary outcome conflicts with authenticated epoch {} outcome: {error}",
-                                    certified.get()
-                                )
+                                FollowError::boundary_outcome_conflicts(certified.get(), error)
                             })?;
                         Ok(Admission::BoundaryRegistered(certified))
                     }
@@ -122,27 +128,27 @@ impl CommitteeChain {
                 }
             }
             (AdmissionPolicy::Successor, Some(Cha::CommitteePreAnnounce { epoch, outcome })) => {
-                ensure!(
-                    successor == Some(epoch),
-                    "committee transition does not announce the immediate successor"
-                );
+                if successor != Some(epoch) {
+                    return Err(FollowError::TransitionNotImmediateSuccessor.into());
+                }
                 self.register_epoch_from_outcome(Epoch::new(epoch), &outcome)?;
                 Ok(Admission::SuccessorRegistered(Epoch::new(epoch)))
             }
             (
                 AdmissionPolicy::Successor,
                 Some(Cha::BoundaryOutcome(_) | Cha::DealerLog(_)) | None,
-            ) => bail!("committee transition lacks a pre-announce"),
+            ) => Err(FollowError::TransitionLacksPreAnnounce.into()),
             (
                 AdmissionPolicy::CarrierFor { epoch: target },
                 Some(Cha::CommitteePreAnnounce { epoch, outcome }),
             ) if epoch == target.get() => {
-                ensure!(
-                    successor == Some(epoch),
-                    "epoch {} carrier is finalized by non-predecessor epoch {}",
-                    target.get(),
-                    certified.get()
-                );
+                if successor != Some(epoch) {
+                    return Err(FollowError::CarrierFinalizedByNonPredecessor {
+                        target: target.get(),
+                        certified: certified.get(),
+                    }
+                    .into());
+                }
                 self.register_epoch_from_outcome(target, &outcome)?;
                 Ok(Admission::SuccessorRegistered(target))
             }
@@ -165,25 +171,33 @@ impl CommitteeChain {
         extra_data: &[u8],
     ) -> Result<Epoch> {
         let anchor = self.anchor_epoch;
-        ensure!(
-            self.highest_registered.is_none(),
-            "anchor epoch {} is already established",
-            anchor.get()
-        );
+        if self.highest_registered.is_some() {
+            return Err(FollowError::AnchorAlreadyEstablished {
+                epoch: anchor.get(),
+            }
+            .into());
+        }
         let artifact = decode_outbe_block_artifacts(extra_data)
-            .map_err(|error| eyre!("failed to decode block artifacts: {error:?}"))?
+            .map_err(FollowError::decode_block_artifacts)?
             .consensus_header_artifact;
         let boundary = match artifact {
             Some(Cha::BoundaryOutcome(boundary)) if boundary.epoch == anchor.get() => boundary,
-            Some(Cha::BoundaryOutcome(_) | Cha::DealerLog(_) | Cha::CommitteePreAnnounce { .. })
-            | None => bail!(
-                "anchor epoch {}'s first block carried no boundary outcome; cannot establish the trust root",
-                anchor.get()
-            ),
+            Some(
+                Cha::BoundaryOutcome(_) | Cha::DealerLog(_) | Cha::CommitteePreAnnounce { .. },
+            )
+            | None => {
+                return Err(FollowError::AnchorMissingBoundaryOutcome {
+                    epoch: anchor.get(),
+                }
+                .into());
+            }
         };
         let prepared = self.prepare_committee(anchor, &boundary.outcome)?;
         let Some((verifier, _)) = prepared.install.as_ref() else {
-            bail!("anchor epoch {} is already established", anchor.get());
+            return Err(FollowError::AnchorAlreadyEstablished {
+                epoch: anchor.get(),
+            }
+            .into());
         };
         verify_with(verifier, anchor, finalization)?;
         self.commit_committee(prepared);

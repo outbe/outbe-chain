@@ -12,6 +12,7 @@
 mod math;
 
 use crate::config::{CurrencyPairConfig, CurrencyPairSource, FeederConfig};
+use crate::errors::AggregatorError;
 use crate::fixed::FixedValue;
 use crate::provider::{CandlePrice, Provider, TickerPrice};
 use alloy_primitives::{aliases::U1024, Address, U256, U512};
@@ -76,16 +77,16 @@ fn compute_weighted(prices: &[(FixedValue, FixedValue)]) -> Result<Option<(U256,
         let weight = if volume.is_zero() { SCALE_1E18 } else { volume };
         let weighted_price = U512::from(price)
             .checked_mul(U512::from(weight))
-            .ok_or_else(|| eyre::eyre!("price-volume product overflow"))?;
+            .ok_or(AggregatorError::PriceVolumeProductOverflow)?;
         price_volume_sum = price_volume_sum
             .checked_add(U1024::from(weighted_price))
-            .ok_or_else(|| eyre::eyre!("price-volume sum overflow"))?;
+            .ok_or(AggregatorError::PriceVolumeSumOverflow)?;
         weight_sum = weight_sum
             .checked_add(U512::from(weight))
-            .ok_or_else(|| eyre::eyre!("weight sum overflow"))?;
+            .ok_or(AggregatorError::WeightSumOverflow)?;
         volume_sum = volume_sum
             .checked_add(U512::from(volume))
-            .ok_or_else(|| eyre::eyre!("volume sum overflow"))?;
+            .ok_or(AggregatorError::VolumeSumOverflow)?;
     }
 
     if weight_sum.is_zero() {

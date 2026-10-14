@@ -46,6 +46,8 @@ use commonware_cryptography::bls12381::dkg::feldman_desmedt::{
 use std::collections::BTreeSet;
 use std::time::SystemTime;
 
+use crate::errors::DkgError;
+
 struct DealerOnlyConfig {
     signing_key: bls12381::PrivateKey,
     participants: Set<bls12381::PublicKey>,
@@ -130,7 +132,7 @@ async fn run(
         // Keep the original biased receive > retry > grace > timeout order.
         commonware_macros::select! {
             msg_result = channels.receiver.recv() => {
-                let (from, mut raw) = msg_result.map_err(|e| eyre::eyre!("dealer-only DKG P2P receiver error: {e}"))?;
+                let (from, mut raw) = msg_result.map_err(DkgError::dealer_only_p2p_receiver)?;
                 let Some(msg) = state.read_message(&from, &mut raw) else { continue };
                 state.handle_message(from, msg)?;
             },
@@ -161,16 +163,12 @@ impl DealerOnlyState {
         } = config;
         let my_pk = commonware_cryptography::Signer::public_key(&signing_key);
         if participants.position(&my_pk).is_some() {
-            return Err(eyre::eyre!(
-                "dealer-only DKG called for a target-set player"
-            ));
+            return Err(DkgError::DealerOnlyTargetSetPlayer.into());
         }
 
         let dealers = previous_output.players().clone();
         if dealers.position(&my_pk).is_none() {
-            return Err(eyre::eyre!(
-                "dealer-only DKG called for a key outside the previous dealer set"
-            ));
+            return Err(DkgError::DealerOnlyOutsidePreviousDealerSet.into());
         }
 
         let player_threshold = participants.quorum::<N3f1>();
@@ -184,10 +182,10 @@ impl DealerOnlyState {
             dealers,
             participants.clone(),
         )
-        .map_err(|e| eyre::eyre!("failed to create dealer-only DKG info: {e:?}"))?;
+        .map_err(DkgError::create_dealer_only_info)?;
 
         let max_players = NonZeroU32::new(participants.len() as u32)
-            .ok_or_else(|| eyre::eyre!("dealer-only DKG requires at least one target player"))?;
+            .ok_or(DkgError::DealerOnlyNoTargetPlayers)?;
         let ceremony_id = DkgCeremonyId::new(
             &crate::config::outbe_app_namespace(),
             round,
@@ -209,7 +207,7 @@ impl DealerOnlyState {
                 signing_key,
                 Some(previous_share),
             )
-            .map_err(|e| eyre::eyre!("failed to start dealer-only DKG dealer: {e:?}"))?;
+            .map_err(DkgError::start_dealer_only_dealer)?;
 
         let wire_cfg = DkgWireConfig {
             max_players,
@@ -224,9 +222,7 @@ impl DealerOnlyState {
         for (player_pk, ack) in &dealer_retry_snapshot.accepted_acks {
             dealer
                 .receive_player_ack(player_pk.clone(), ack.clone())
-                .map_err(|error| {
-                    eyre::eyre!("failed to replay durable dealer-only ACK: {error:?}")
-                })?;
+                .map_err(DkgError::replay_dealer_only_ack)?;
             acked_players.insert(player_pk.clone());
         }
         send_shares(sender, ceremony_id, &my_pub_msg, &restart_replay_shares).await;
@@ -364,12 +360,12 @@ impl DealerOnlyState {
         current_process_delivery_complete || ack_grace_elapsed
     }
     fn timeout_error(&self) -> eyre::Report {
-        eyre::eyre!(
-            "dealer-only DKG timed out after {:?} (acks: {}/{})",
-            DKG_TIMEOUT,
-            self.acked_players.len(),
-            self.player_threshold,
-        )
+        DkgError::DealerOnlyTimedOut {
+            timeout: DKG_TIMEOUT,
+            acks: self.acked_players.len(),
+            player_threshold: self.player_threshold,
+        }
+        .into()
     }
     fn publish(
         self,
@@ -378,16 +374,14 @@ impl DealerOnlyState {
     ) -> Result<DkgDealerOnlyComplete> {
         let signed_log = self.dealer.finalize::<N3f1>();
         if signed_log.clone().check(&self.info).is_none() {
-            return Err(eyre::eyre!(
-                "dealer-only DKG finalized log failed verification"
-            ));
+            return Err(DkgError::DealerOnlyFinalizedLogVerificationFailed.into());
         }
 
         progress_tx
             .send(DkgProgress::LocalDealerLog(Bytes::from(
                 signed_log.encode(),
             )))
-            .map_err(|_| eyre::eyre!("failed to publish dealer-only DKG local dealer log"))?;
+            .map_err(|_| DkgError::PublishDealerOnlyLocalDealerLog)?;
 
         if !send_finalized_log(sender, self.ceremony_id, signed_log) {
             debug!("dealer-only finalized-log broadcast had no accepting recipients this attempt (rate-limited/backpressure); recovered by the retry tick");

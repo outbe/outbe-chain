@@ -81,9 +81,8 @@ fn send(
     let call = IOriginRouter::sendDailyVwapCall { utcDay: day, rows };
     let sent = storage.with_checkpoint(|| {
         let out = storage.call(ORIGIN_ROUTER_ADDRESS, U256::ZERO, call.abi_encode().into())?;
-        IOriginRouter::sendDailyVwapCall::abi_decode_returns(&out).map_err(|_| {
-            outbe_primitives::error::PrecompileError::Revert("the router answered no legs".into())
-        })?;
+        IOriginRouter::sendDailyVwapCall::abi_decode_returns(&out)
+            .map_err(|_| crate::errors::IntexFactoryError::RouterAnsweredNoLegs)?;
         Ok(())
     });
     match sent {

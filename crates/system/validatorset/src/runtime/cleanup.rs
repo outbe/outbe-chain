@@ -1,7 +1,8 @@
+use crate::errors::ValidatorSetError;
 use crate::schema::ValidatorSet;
 use crate::state_machine::{self, ValidatorHistory, ValidatorLifecycle};
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
 impl ValidatorSet<'_> {
     /// Removes INACTIVE validator entries from the registry via swap-remove.
@@ -33,14 +34,10 @@ impl ValidatorSet<'_> {
             let deactivated_at = state
                 .history()
                 .and_then(ValidatorHistory::last_deactivated_at_height)
-                .ok_or_else(|| {
-                    PrecompileError::Fatal(format!(
-                        "inactive validator {addr} has no deactivation height"
-                    ))
-                })?;
+                .ok_or(ValidatorSetError::InactiveValidatorMissingDeactivationHeight { addr })?;
             let cleanup_at = deactivated_at
                 .checked_add(cooldown)
-                .ok_or_else(|| PrecompileError::Fatal("inactive cleanup height overflow".into()))?;
+                .ok_or(ValidatorSetError::InactiveCleanupHeightOverflow)?;
             if current_height < cleanup_at {
                 i += 1;
                 continue;

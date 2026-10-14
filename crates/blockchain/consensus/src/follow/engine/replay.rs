@@ -65,12 +65,13 @@ impl<F: FinalizedSource> ReplayAuthority<'_, F> {
             lower,
             upper,
         } = window;
-        ensure!(
-            lower <= upper,
-            "follower replay suffix lower height {} exceeds upper height {}",
-            lower.get(),
-            upper.get()
-        );
+        if lower > upper {
+            return Err(FollowError::ReplayLowerExceedsUpper {
+                lower: lower.get(),
+                upper: upper.get(),
+            }
+            .into());
+        }
         let lower_epoch =
             prepare_committee_chain(self.chain, self.source, self.epocher, anchor_epoch, lower)
                 .await?;
@@ -85,11 +86,8 @@ impl<F: FinalizedSource> ReplayAuthority<'_, F> {
                 .source
                 .get_finality_proof(height)
                 .await
-                .ok_or_else(|| {
-                    eyre!(
-                        "upstream did not return follower replay suffix height {}",
-                        height.get()
-                    )
+                .ok_or_else(|| FollowError::MissingReplaySuffixHeight {
+                    height: height.get(),
                 })?;
             authenticate_ancestor_proof(self.chain, self.epocher, height, &proof)?;
             archives = archives
@@ -143,12 +141,7 @@ impl<F: FinalizedSource> ReplayAuthority<'_, F> {
             let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
                 inspected_block.header().extra_data().as_ref(),
             )
-            .map_err(|error| {
-                eyre!(
-                    "failed to decode retained follower block {} artifacts: {error:?}",
-                    height.get()
-                )
-            })?;
+            .map_err(|error| FollowError::decode_retained_block_artifacts(height.get(), error))?;
             if !matches!(
                 artifacts.consensus_header_artifact,
                 Some(CHA::CommitteePreAnnounce { epoch, .. }) if epoch == successor
@@ -173,12 +166,7 @@ impl<F: FinalizedSource> ReplayAuthority<'_, F> {
         let local = blocks
             .get(Identifier::Index(height.get()))
             .await
-            .map_err(|error| {
-                eyre!(
-                    "failed to inspect follower replay block at height {}: {error}",
-                    height.get()
-                )
-            })?;
+            .map_err(|error| FollowError::inspect_replay_block(height.get(), error))?;
         if let Some(local) = local {
             return Ok(Some(RetainedReplayBlock::Local(local)));
         }
@@ -189,11 +177,8 @@ impl<F: FinalizedSource> ReplayAuthority<'_, F> {
             .source
             .get_finality_proof(height)
             .await
-            .ok_or_else(|| {
-                eyre!(
-                    "upstream did not return retained follower history height {}",
-                    height.get()
-                )
+            .ok_or_else(|| FollowError::MissingRetainedHistoryHeight {
+                height: height.get(),
             })?;
         Ok(Some(RetainedReplayBlock::Fetched(Box::new(fetched))))
     }
@@ -209,17 +194,15 @@ impl<F: FinalizedSource> ReplayAuthority<'_, F> {
                     .source
                     .get_finality_proof(height)
                     .await
-                    .ok_or_else(|| {
-                        eyre!(
-                            "upstream did not return retained follower preannounce height {}",
-                            height.get()
-                        )
+                    .ok_or_else(|| FollowError::MissingRetainedPreannounceHeight {
+                        height: height.get(),
                     })?;
-                ensure!(
-                    block.encode() == proof.target().encode(),
-                    "local retained follower preannounce differs from authenticated upstream at height {}",
-                    height.get()
-                );
+                if block.encode() != proof.target().encode() {
+                    return Err(FollowError::RetainedPreannounceDiffers {
+                        height: height.get(),
+                    }
+                    .into());
+                }
                 proof
             }
         };
@@ -254,27 +237,21 @@ where
             .certificates
             .get(Identifier::Index(height.get()))
             .await
-            .map_err(|error| {
-                eyre!(
-                    "failed to read follower replay finalization at height {}: {error}",
-                    height.get()
-                )
-            })? {
+            .map_err(|error| FollowError::read_replay_finalization(height.get(), error))?
+        {
             Some(local) => {
-                ensure!(
-                    local.proposal == certified.finalization.proposal,
-                    "local follower replay finalization proposal differs from authenticated upstream at height {}",
-                    height.get()
-                );
+                if local.proposal != certified.finalization.proposal {
+                    return Err(FollowError::ReplayFinalizationProposalDiffers {
+                        height: height.get(),
+                    }
+                    .into());
+                }
                 let epoch = local.proposal.round.epoch();
                 chain
                     .lock()
                     .verify_finalization(epoch, &local)
                     .map_err(|error| {
-                        eyre!(
-                            "local follower replay finalization certificate failed verification at height {}: {error}",
-                            height.get()
-                        )
+                        FollowError::replay_finalization_verification_failed(height.get(), error)
                     })?;
             }
             None => {
@@ -283,10 +260,7 @@ where
                     .put(height, digest, certified.finalization.clone())
                     .await
                     .map_err(|error| {
-                        eyre!(
-                            "failed to repair follower replay finalization at height {}: {error}",
-                            height.get()
-                        )
+                        FollowError::repair_replay_finalization(height.get(), error)
                     })?;
                 self.wrote_certificates = true;
             }
@@ -304,12 +278,11 @@ where
             .certificates
             .get(Identifier::Index(height.get()))
             .await
-            .map_err(|error| eyre!("read replay ancestor certificate: {error}"))?
+            .map_err(FollowError::read_replay_ancestor_certificate)?
         {
-            ensure!(
-                local_certificate.proposal.payload == block.digest(),
-                "local replay ancestor certificate payload mismatch"
-            );
+            if local_certificate.proposal.payload != block.digest() {
+                return Err(FollowError::ReplayAncestorCertificatePayloadMismatch.into());
+            }
             chain.lock().verify_finalization(
                 local_certificate.proposal.round.epoch(),
                 &local_certificate,
@@ -319,19 +292,22 @@ where
             .blocks
             .get(Identifier::Index(height.get()))
             .await
-            .map_err(|error| eyre!("read follower replay block: {error}"))?
+            .map_err(FollowError::read_replay_block)?
         {
-            Some(local) => ensure!(
-                local.encode() == block.encode(),
-                "local follower replay block differs from authenticated upstream at height {}",
-                height.get()
-            ),
+            Some(local) => {
+                if local.encode() != block.encode() {
+                    return Err(FollowError::ReplayBlockDiffers {
+                        height: height.get(),
+                    }
+                    .into());
+                }
+            }
             None => {
                 self.blocks = self
                     .blocks
                     .put(block.clone())
                     .await
-                    .map_err(|error| eyre!("repair follower replay block: {error}"))?;
+                    .map_err(FollowError::repair_replay_block)?;
                 self.wrote_blocks = true;
             }
         }
@@ -339,14 +315,18 @@ where
     }
     async fn sync(mut self) -> Result<Self> {
         if self.wrote_certificates {
-            self.certificates = self.certificates.sync().await.map_err(|error| {
-                eyre!("failed to sync repaired follower replay finalizations: {error}")
-            })?;
+            self.certificates = self
+                .certificates
+                .sync()
+                .await
+                .map_err(FollowError::sync_replay_finalizations)?;
         }
         if self.wrote_blocks {
-            self.blocks = self.blocks.sync().await.map_err(|error| {
-                eyre!("failed to sync repaired follower replay blocks: {error}")
-            })?;
+            self.blocks = self
+                .blocks
+                .sync()
+                .await
+                .map_err(FollowError::sync_replay_blocks)?;
         }
 
         Ok(self)

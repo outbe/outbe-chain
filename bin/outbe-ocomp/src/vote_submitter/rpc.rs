@@ -28,12 +28,11 @@ impl PublicVoteRpcClientV1 {
             return Err(PublicVoteRpcErrorV1::InvalidConfiguration);
         }
         let endpoint = endpoint.into();
-        reqwest::Url::parse(&endpoint)
-            .map_err(|error| PublicVoteRpcErrorV1::Transport(error.to_string()))?;
+        reqwest::Url::parse(&endpoint).map_err(PublicVoteRpcErrorV1::transport)?;
         let client = reqwest::blocking::Client::builder()
             .timeout(RPC_TIMEOUT)
             .build()
-            .map_err(|error| PublicVoteRpcErrorV1::Transport(error.to_string()))?;
+            .map_err(PublicVoteRpcErrorV1::transport)?;
         Ok(Self {
             endpoint,
             client,
@@ -59,7 +58,7 @@ impl PublicVoteRpcClientV1 {
             }))
             .send()
             .and_then(reqwest::blocking::Response::error_for_status)
-            .map_err(|error| PublicVoteRpcErrorV1::Transport(error.to_string()))?;
+            .map_err(PublicVoteRpcErrorV1::transport)?;
         if response
             .content_length()
             .is_some_and(|length| length > self.max_response_bytes as u64)
@@ -72,7 +71,7 @@ impl PublicVoteRpcClientV1 {
         response
             .take(read_limit.saturating_add(1))
             .read_to_end(&mut bytes)
-            .map_err(|error| PublicVoteRpcErrorV1::Transport(error.to_string()))?;
+            .map_err(PublicVoteRpcErrorV1::transport)?;
         if bytes.len() > self.max_response_bytes {
             return Err(PublicVoteRpcErrorV1::ResponseTooLarge);
         }
@@ -101,8 +100,8 @@ pub(super) fn parse_rpc_response(
         message: String,
     }
 
-    let envelope: serde_json::Value = serde_json::from_slice(bytes)
-        .map_err(|error| PublicVoteRpcErrorV1::Malformed(error.to_string()))?;
+    let envelope: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(PublicVoteRpcErrorV1::malformed)?;
     if envelope.get("jsonrpc").and_then(serde_json::Value::as_str) != Some("2.0")
         || envelope.get("id").and_then(serde_json::Value::as_u64) != Some(expected_id)
     {
@@ -111,8 +110,8 @@ pub(super) fn parse_rpc_response(
         ));
     }
     if let Some(error) = envelope.get("error").filter(|error| !error.is_null()) {
-        let error: RpcError = serde_json::from_value(error.clone())
-            .map_err(|error| PublicVoteRpcErrorV1::Malformed(error.to_string()))?;
+        let error: RpcError =
+            serde_json::from_value(error.clone()).map_err(PublicVoteRpcErrorV1::malformed)?;
         return Err(PublicVoteRpcErrorV1::Remote {
             code: error.code,
             message: error.message,
@@ -256,10 +255,7 @@ fn parse_b256(value: serde_json::Value, field: &'static str) -> Result<B256, Pub
     value
         .as_str()
         .ok_or_else(|| PublicVoteRpcErrorV1::Malformed(format!("{field} is not a string")))
-        .and_then(|encoded| {
-            B256::from_str(encoded)
-                .map_err(|error| PublicVoteRpcErrorV1::Malformed(error.to_string()))
-        })
+        .and_then(|encoded| B256::from_str(encoded).map_err(PublicVoteRpcErrorV1::malformed))
 }
 
 fn parse_b256_field(

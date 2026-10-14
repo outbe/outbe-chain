@@ -2,7 +2,6 @@ use alloy_primitives::Address;
 use alloy_primitives::B256;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
-use outbe_primitives::error::PrecompileError;
 use outbe_primitives::error::Result;
 use outbe_primitives::reshare_artifact::LateFinalizeCreditsArtifact;
 use outbe_primitives::reshare_artifact::PerBlockCredit;
@@ -23,19 +22,27 @@ pub(crate) fn authenticate_late_credit(
     authenticate_late_credit_hash(&rewards, credit)?;
     let escrowed_epoch = rewards.pending_epoch_at.read(&credit.fb_number)?;
     if escrowed_epoch != credit.epoch {
-        return Err(PrecompileError::Fatal(format!(
-            "LateFinalizeCredits: epoch mismatch for fb_number {} (escrow {escrowed_epoch}, credit {})",
-            credit.fb_number, credit.epoch
-        )));
+        return Err(
+            crate::errors::BeginBlockPrecompileError::LateCreditEpochMismatch {
+                fb_number: credit.fb_number,
+                escrowed_epoch,
+                credit_epoch: credit.epoch,
+            }
+            .into(),
+        );
     }
     let escrowed_csh = rewards
         .pending_committee_set_hash_at
         .read(&credit.fb_number)?;
     if escrowed_csh != credit.committee_set_hash {
-        return Err(PrecompileError::Fatal(format!(
-            "LateFinalizeCredits: committee_set_hash mismatch for fb_number {} (escrow {escrowed_csh}, credit {})",
-            credit.fb_number, credit.committee_set_hash
-        )));
+        return Err(
+            crate::errors::BeginBlockPrecompileError::LateCreditCommitteeSetHashMismatch {
+                fb_number: credit.fb_number,
+                escrowed_csh,
+                credit_csh: credit.committee_set_hash,
+            }
+            .into(),
+        );
     }
     // Pin the rest of the signed binding (view, parent_view) to the canonical
     // certificate. This check rejects a credit whose aggregate is over a
@@ -44,17 +51,25 @@ pub(crate) fn authenticate_late_credit(
     // the credit's view to its signatures, not to the finalized view. full binding.
     let escrowed_view = rewards.pending_view_at.read(&credit.fb_number)?;
     if escrowed_view != credit.view {
-        return Err(PrecompileError::Fatal(format!(
-            "LateFinalizeCredits: view mismatch for fb_number {} (escrow {escrowed_view}, credit {})",
-            credit.fb_number, credit.view
-        )));
+        return Err(
+            crate::errors::BeginBlockPrecompileError::LateCreditViewMismatch {
+                fb_number: credit.fb_number,
+                escrowed_view,
+                credit_view: credit.view,
+            }
+            .into(),
+        );
     }
     let escrowed_parent_view = rewards.pending_parent_view_at.read(&credit.fb_number)?;
     if escrowed_parent_view != credit.parent_view {
-        return Err(PrecompileError::Fatal(format!(
-            "LateFinalizeCredits: parent_view mismatch for fb_number {} (escrow {escrowed_parent_view}, credit {})",
-            credit.fb_number, credit.parent_view
-        )));
+        return Err(
+            crate::errors::BeginBlockPrecompileError::LateCreditParentViewMismatch {
+                fb_number: credit.fb_number,
+                escrowed_parent_view,
+                credit_parent_view: credit.parent_view,
+            }
+            .into(),
+        );
     }
     Ok(())
 }
@@ -65,16 +80,23 @@ fn authenticate_late_credit_hash(
 ) -> Result<()> {
     let escrowed_hash = rewards.pending_fb_hash_at.read(&credit.fb_number)?;
     if escrowed_hash == B256::ZERO {
-        return Err(PrecompileError::Fatal(format!(
-            "LateFinalizeCredits: no escrow for fb_number {} (credit fb_hash {})",
-            credit.fb_number, credit.fb_hash
-        )));
+        return Err(
+            crate::errors::BeginBlockPrecompileError::LateCreditMissingEscrow {
+                fb_number: credit.fb_number,
+                fb_hash: credit.fb_hash,
+            }
+            .into(),
+        );
     }
     if escrowed_hash != credit.fb_hash {
-        return Err(PrecompileError::Fatal(format!(
-            "LateFinalizeCredits: fb_hash mismatch for fb_number {} (escrow {escrowed_hash}, credit {})",
-            credit.fb_number, credit.fb_hash
-        )));
+        return Err(
+            crate::errors::BeginBlockPrecompileError::LateCreditFbHashMismatch {
+                fb_number: credit.fb_number,
+                escrowed_hash,
+                credit_hash: credit.fb_hash,
+            }
+            .into(),
+        );
     }
     Ok(())
 }
@@ -111,23 +133,28 @@ pub(crate) fn run_late_finalize_credits(
         // But this path must stand on its own: a credit outside the window must
         // never be recorded. The check runs FIRST, before the expensive snapshot
         // read + BLS verify, so this path rejects an out-of-window credit cheaply.
-        let k_u64 = block_number.checked_sub(credit.fb_number).ok_or_else(|| {
-            PrecompileError::Fatal(format!(
-                "LateFinalizeCredits: fb_number {} >= block {block_number}",
-                credit.fb_number
-            ))
-        })?;
+        let k_u64 = block_number.checked_sub(credit.fb_number).ok_or(
+            crate::errors::BeginBlockPrecompileError::LateCreditFbNumberAtOrAboveBlock {
+                fb_number: credit.fb_number,
+                block_number,
+            },
+        )?;
         if k_u64 == 0 || k_u64 > LATE_FINALIZE_WINDOW_K {
-            return Err(PrecompileError::Fatal(format!(
-                "LateFinalizeCredits: fb_number {} outside inclusion window \
-                 (distance {k_u64}, K={LATE_FINALIZE_WINDOW_K}) for block {block_number}",
-                credit.fb_number
-            )));
+            return Err(
+                crate::errors::BeginBlockPrecompileError::LateCreditOutsideInclusionWindow {
+                    fb_number: credit.fb_number,
+                    distance: k_u64,
+                    window_k: LATE_FINALIZE_WINDOW_K,
+                    block_number,
+                }
+                .into(),
+            );
         }
         let k = u8::try_from(k_u64).map_err(|_| {
-            PrecompileError::Fatal(format!(
-                "LateFinalizeCredits: inclusion distance {k_u64} exceeds u8 for block {block_number}"
-            ))
+            crate::errors::BeginBlockPrecompileError::LateCreditInclusionDistanceExceedsU8 {
+                distance: k_u64,
+                block_number,
+            }
         })?;
 
         // bind the proposer-supplied
@@ -142,20 +169,18 @@ pub(crate) fn run_late_finalize_credits(
         // (FATAL on failure - never a soft receipt). The snapshot must exist (the
         // pre-exec preflight already read and verified against it).
         let snapshot_key = committee_snapshot_key(credit.epoch, credit.committee_set_hash);
-        let snapshot = read_committee_snapshot(ctx.storage.clone(), snapshot_key)?.ok_or_else(
-            || {
-                PrecompileError::Fatal(format!(
-                    "LateFinalizeCredits: missing committee snapshot for epoch={} key={snapshot_key}",
-                    credit.epoch
-                ))
+        let snapshot = read_committee_snapshot(ctx.storage.clone(), snapshot_key)?.ok_or(
+            crate::errors::BeginBlockPrecompileError::LateCreditMissingCommitteeSnapshot {
+                epoch: credit.epoch,
+                snapshot_key,
             },
         )?;
 
         let signer_indices = verify_late_finalize_proof(&snapshot, credit).map_err(|error| {
-            PrecompileError::Fatal(format!(
-                "LateFinalizeCredits: proof verify failed for fb={}: {error}",
-                credit.fb_hash
-            ))
+            crate::errors::BeginBlockPrecompileError::late_credit_proof_verify_failed(
+                credit.fb_hash,
+                error,
+            )
         })?;
 
         for idx in signer_indices {
@@ -163,11 +188,11 @@ pub(crate) fn run_late_finalize_credits(
                 .committee
                 .get(idx)
                 .map(|entry| entry.address)
-                .ok_or_else(|| {
-                    PrecompileError::Fatal(format!(
-                        "LateFinalizeCredits: signer index {idx} out of committee range"
-                    ))
-                })?;
+                .ok_or(
+                    crate::errors::BeginBlockPrecompileError::LateCreditSignerIndexOutOfRange {
+                        idx,
+                    },
+                )?;
             outbe_rewards::late_settlement::record_late_credit(ctx, credit.fb_hash, voter, k)?;
         }
     }

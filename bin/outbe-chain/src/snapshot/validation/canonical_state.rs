@@ -2,7 +2,6 @@
 
 use alloy_consensus::Sealable;
 use alloy_primitives::{keccak256, Address, B256, U256};
-use eyre::ensure;
 use outbe_nod::schema::{NodCertifiedGenerationProjection, NodContract};
 #[cfg(all(test, feature = "snapshot-integration"))]
 use outbe_ocomp_protocol::receipts::AggregateActivationReceiptV1;
@@ -23,7 +22,10 @@ use reth_ethereum::provider::db::{
 };
 
 use super::{evm::VerifiedState, headers::HeaderAudit, Incomplete};
-use crate::snapshot::native::RethReadOnlyView;
+use crate::{
+    errors::{CanonicalStatePrecompileError, SnapshotError},
+    snapshot::native::RethReadOnlyView,
+};
 
 #[derive(Clone, Copy)]
 struct ScratchStorageReader<'a> {
@@ -46,7 +48,11 @@ impl StorageReader for ScratchStorageReader<'_> {
                 .filter(|entry| entry.key == hashed_key)
                 .map_or(U256::ZERO, |entry| entry.value))
         };
-        read().map_err(|error| PrecompileError::Fatal(format!("read verified storage: {error:#}")))
+        read().map_err(|error| {
+            PrecompileError::from(CanonicalStatePrecompileError::ReadVerifiedStorage {
+                details: format!("{error:#}"),
+            })
+        })
     }
 
     fn read_canonical_block_hash(&self, number: u64) -> StorageResult<Option<B256>> {
@@ -59,7 +65,10 @@ impl StorageReader for ScratchStorageReader<'_> {
             return Ok(None);
         }
         self.source.canonical_hash(number).map_err(|error| {
-            PrecompileError::Fatal(format!("read verified retained header {number}: {error:#}"))
+            PrecompileError::from(CanonicalStatePrecompileError::ReadVerifiedRetainedHeader {
+                number,
+                details: format!("{error:#}"),
+            })
         })
     }
 }
@@ -95,8 +104,13 @@ impl<'a> CanonicalState<'a> {
             timestamp: header.timestamp,
         };
         let mut provider = ReadOnlyStorageProvider::new_with_block_context(self.reader, context);
-        read(StorageHandle::new(&mut provider))
-            .map_err(|error| eyre::eyre!("canonical owner state at E={}: {error}", header.number))
+        read(StorageHandle::new(&mut provider)).map_err(|error| {
+            SnapshotError::CanonicalOwnerState {
+                number: header.number,
+                error,
+            }
+            .into()
+        })
     }
 
     pub(crate) fn live_ocomp_jobs(&self) -> eyre::Result<Vec<(B256, OcompJobRecordV1)>> {
@@ -113,19 +127,19 @@ impl<'a> CanonicalState<'a> {
             .with_storage(|storage| outbe_metadosis::api::get_offchain_job(storage, intent_id))?;
         let limits = poc_schema_limits();
         let record = OcompJobRecordV1::decode_canonical(&bytes, &limits)?;
-        ensure!(
-            record.intent.intent_id(&limits)? == intent_id
-                && record.intent.wwd == expected_day.value(),
-            "canonical Metadosis job intent/day binding differs"
-        );
+        if record.intent.intent_id(&limits)? != intent_id
+            || record.intent.wwd != expected_day.value()
+        {
+            return Err(SnapshotError::MetadosisJobIntentDayMismatch.into());
+        }
         if let Some(expected) = expected_job_id {
-            ensure!(
-                record
-                    .finalized
-                    .as_ref()
-                    .is_some_and(|job| job.job_id == expected),
-                "canonical Metadosis JobId binding differs"
-            );
+            if !record
+                .finalized
+                .as_ref()
+                .is_some_and(|job| job.job_id == expected)
+            {
+                return Err(SnapshotError::MetadosisJobIdMismatch.into());
+            }
         }
         if let Some(finalized) = &record.finalized {
             let number = record.intent_height;
@@ -138,13 +152,13 @@ impl<'a> CanonicalState<'a> {
                 .with_storage(|storage| storage.canonical_block_hash(number))?
                 .ok_or_else(missing)?;
             let header = self.reader.source.header(number)?.ok_or_else(missing)?;
-            ensure!(
-                header.inner.number == number
-                    && header.hash_slow() == hash
-                    && finalized.finalized_request_block_hash == hash
-                    && finalized.finalized_request_state_root == header.inner.state_root,
-                "canonical Metadosis request binding differs from retained header B={number}"
-            );
+            if header.inner.number != number
+                || header.hash_slow() != hash
+                || finalized.finalized_request_block_hash != hash
+                || finalized.finalized_request_state_root != header.inner.state_root
+            {
+                return Err(SnapshotError::MetadosisRequestBindingMismatch { number }.into());
+            }
         }
         Ok(record)
     }
@@ -161,10 +175,9 @@ impl<'a> CanonicalState<'a> {
             outbe_metadosis::api::get_lysis_terminal_receipt(storage, intent_id)
         })?;
         let receipt = AggregateActivationReceiptV1::decode_canonical(&bytes, &poc_schema_limits())?;
-        ensure!(
-            receipt.binding.intent_id == intent_id && receipt.binding.job_id == expected_job_id,
-            "canonical Lysis terminal receipt intent/job binding differs"
-        );
+        if receipt.binding.intent_id != intent_id || receipt.binding.job_id != expected_job_id {
+            return Err(SnapshotError::LysisTerminalReceiptMismatch.into());
+        }
         Ok(receipt)
     }
 

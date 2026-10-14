@@ -4,6 +4,7 @@ use super::AsyncOutcomeProjectionV1;
 use super::EmbeddedOcompExExV1;
 use super::MaterializationAttemptKeyV1;
 use super::OcompExExStateReaderV1;
+use crate::errors::OcompExExError;
 
 use alloy_primitives::Address;
 use alloy_primitives::B256;
@@ -42,7 +43,7 @@ where
 {
     let transaction = transactions
         .next()
-        .ok_or_else(|| eyre::eyre!("finalized block has no proposer-signed system transaction"))?;
+        .ok_or(OcompExExError::FinalizedBlockMissingSystemTx)?;
 
     transaction
         .try_recover()
@@ -173,7 +174,7 @@ where
         ) {
             return Ok(());
         }
-        let head = head.ok_or_else(|| eyre::eyre!("materialization wake lost FIFO head"))?;
+        let head = head.ok_or(OcompExExError::MaterializationWakeLostFifoHead)?;
         let key = MaterializationAttemptKeyV1 {
             queue_sequence: head.queue_sequence,
             first_nod_ordinal: head.next_nod_ordinal,
@@ -189,7 +190,7 @@ where
             .ocomp_certified_generation(outbe_primitives::time::WorldwideDay::from(
                 head.worldwide_day,
             ))?
-            .ok_or_else(|| eyre::eyre!("materialization head has no certified generation"))?
+            .ok_or(OcompExExError::MaterializationHeadMissingCertifiedGeneration)?
             .protocol_bundle_hash;
         self.domain.spawn_validator_materialization(
             protocol_bundle_hash,

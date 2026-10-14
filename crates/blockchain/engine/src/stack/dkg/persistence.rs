@@ -82,7 +82,7 @@ pub(in crate::stack) fn dkg_retry_store(
     args.keys_dir
         .as_ref()
         .map(|keys_dir| dkg_actor::DkgRetryStore::in_keys_dir(keys_dir, key_backend.clone()))
-        .ok_or_else(|| eyre::eyre!("DKG participant recovery requires --consensus.keys-dir"))
+        .ok_or_else(|| crate::errors::StackDkgError::DkgParticipantRecoveryRequiresKeysDir.into())
 }
 
 pub(in crate::stack) fn retire_activated_dkg_retry_state(
@@ -146,25 +146,28 @@ pub(in crate::stack) fn decode_boundary_output(
     artifact: &DkgBoundaryArtifact,
 ) -> Result<Output<MinSig, bls12381::PublicKey>> {
     let decoded = dkg_manager::OdkoOutcome::decode(artifact.outcome.as_ref())?;
-    ensure!(
-        decoded.epoch.get() == artifact.epoch,
-        "DKG boundary outcome epoch {} does not match artifact epoch {}",
-        decoded.epoch.get(),
-        artifact.epoch
-    );
+    if decoded.epoch.get() != artifact.epoch {
+        return Err(crate::errors::StackDkgError::BoundaryOutcomeEpochMismatch {
+            decoded_epoch: decoded.epoch.get(),
+            artifact_epoch: artifact.epoch,
+        }
+        .into());
+    }
     Ok(decoded.output)
 }
 
 pub(in crate::stack) fn encode_pending_dkg_boundary_snapshot(
     snapshot: &PendingDkgBoundarySnapshot,
 ) -> Result<Vec<u8>> {
-    let boundary = encode_boundary_artifact(&snapshot.artifact)
-        .map_err(|error| eyre::eyre!("failed to encode pending DKG boundary artifact: {error}"))?;
+    let boundary = encode_boundary_artifact(&snapshot.artifact).map_err(|error| {
+        crate::errors::StackDkgError::EncodePendingBoundaryArtifact {
+            reason: format!("{error}"),
+        }
+    })?;
     let len: u32 = boundary.len().try_into().map_err(|_| {
-        eyre::eyre!(
-            "pending DKG boundary artifact too large: {} bytes",
-            boundary.len()
-        )
+        crate::errors::StackDkgError::PendingBoundaryArtifactTooLarge {
+            len: boundary.len(),
+        }
     })?;
     let mut out = Vec::with_capacity(DKG_PENDING_BOUNDARY_MAGIC.len() + 8 + 4 + boundary.len());
     out.extend_from_slice(DKG_PENDING_BOUNDARY_MAGIC);
@@ -178,46 +181,54 @@ pub(in crate::stack) fn decode_pending_dkg_boundary_snapshot(
     bytes: &[u8],
 ) -> Result<PendingDkgBoundarySnapshot> {
     let header_len = DKG_PENDING_BOUNDARY_MAGIC.len() + 8 + 4;
-    ensure!(
-        bytes.len() >= header_len,
-        "pending DKG boundary snapshot too short: {} < {header_len}",
-        bytes.len()
-    );
+    if bytes.len() < header_len {
+        return Err(
+            crate::errors::StackDkgError::PendingBoundarySnapshotTooShort {
+                actual: bytes.len(),
+                expected: header_len,
+            }
+            .into(),
+        );
+    }
     let magic = &bytes[..DKG_PENDING_BOUNDARY_MAGIC.len()];
-    ensure!(
-        magic != DKG_PENDING_BOUNDARY_LEGACY_MAGIC,
-        "unsupported pending DKG boundary snapshot version ODKGPB01"
-    );
-    ensure!(
-        magic == DKG_PENDING_BOUNDARY_MAGIC,
-        "invalid pending DKG boundary snapshot magic"
-    );
+    if magic == DKG_PENDING_BOUNDARY_LEGACY_MAGIC {
+        return Err(crate::errors::StackDkgError::UnsupportedPendingBoundarySnapshotVersion.into());
+    }
+    if magic != DKG_PENDING_BOUNDARY_MAGIC {
+        return Err(crate::errors::StackDkgError::InvalidPendingBoundarySnapshotMagic.into());
+    }
     let height_offset = DKG_PENDING_BOUNDARY_MAGIC.len();
     let completed_at_height = u64::from_be_bytes(
         bytes[height_offset..height_offset + 8]
             .try_into()
-            .map_err(|_| eyre::eyre!("invalid pending DKG boundary height field"))?,
+            .map_err(|_| crate::errors::StackDkgError::InvalidPendingBoundaryHeightField)?,
     );
     let len_offset = height_offset + 8;
     let artifact_len = u32::from_be_bytes(
         bytes[len_offset..len_offset + 4]
             .try_into()
-            .map_err(|_| eyre::eyre!("invalid pending DKG boundary length field"))?,
+            .map_err(|_| crate::errors::StackDkgError::InvalidPendingBoundaryLengthField)?,
     ) as usize;
     let artifact_start = len_offset + 4;
     let artifact_end = artifact_start
         .checked_add(artifact_len)
-        .ok_or_else(|| eyre::eyre!("pending DKG boundary length overflow"))?;
-    ensure!(
-        bytes.len() == artifact_end,
-        "pending DKG boundary snapshot length mismatch: expected {artifact_end}, got {}",
-        bytes.len()
-    );
+        .ok_or(crate::errors::StackDkgError::PendingBoundaryLengthOverflow)?;
+    if bytes.len() != artifact_end {
+        return Err(
+            crate::errors::StackDkgError::PendingBoundarySnapshotLengthMismatch {
+                expected: artifact_end,
+                actual: bytes.len(),
+            }
+            .into(),
+        );
+    }
     let artifact = decode_boundary_artifact(&bytes[artifact_start..artifact_end])
-        .map_err(|error| eyre::eyre!("failed to decode pending DKG boundary artifact: {error}"))?
-        .ok_or_else(|| {
-            eyre::eyre!("pending DKG boundary snapshot does not contain a BoundaryOutcome")
-        })?;
+        .map_err(
+            |error| crate::errors::StackDkgError::DecodePendingBoundaryArtifact {
+                reason: format!("{error}"),
+            },
+        )?
+        .ok_or(crate::errors::StackDkgError::PendingBoundarySnapshotMissingBoundaryOutcome)?;
     Ok(PendingDkgBoundarySnapshot {
         artifact,
         completed_at_height,
@@ -242,10 +253,9 @@ pub(in crate::stack) fn build_completed_dkg_boundary(
     let activated_validator_set =
         validator_set_for_dkg_output_players(output, &target.validator_set)?;
     let activated_participants = participants_from_validator_set(&activated_validator_set)?;
-    ensure!(
-        completed_participants == &activated_participants,
-        "completed DKG participant set does not match reconstructed output players"
-    );
+    if completed_participants != &activated_participants {
+        return Err(crate::errors::StackDkgError::CompletedParticipantSetMismatch.into());
+    }
     let next_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
     let next_vrf_material_version =
         outbe_validatorset::next_vrf_material_version(vrf_material_version)?;
@@ -399,16 +409,13 @@ fn validate_pending_boundary_snapshot(
         &boundary_output,
         "pending boundary snapshot",
     )?;
-    let (frozen, tee_expired_target_exclusions) = require_frozen_validator_set(
-        node,
-        snapshot.artifact.freeze_height,
-        || {
-            eyre::eyre!(
-            "pending DKG boundary freeze-height state unavailable at height {}; refusing unsafe recovery",
-            snapshot.artifact.freeze_height
-        )
-        },
-    )?;
+    let (frozen, tee_expired_target_exclusions) =
+        require_frozen_validator_set(node, snapshot.artifact.freeze_height, || {
+            crate::errors::StackDkgError::PendingBoundaryFreezeHeightStateUnavailable {
+                height: snapshot.artifact.freeze_height,
+            }
+            .into()
+        })?;
     let activated_validator_set = validator_set_for_dkg_output_players(local_output, &frozen)?;
     let rebuilt = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
         epoch: Epoch::new(snapshot.artifact.epoch),
@@ -422,10 +429,9 @@ fn validate_pending_boundary_snapshot(
         is_validator_set_change: snapshot.artifact.is_validator_set_change,
         tee_expired_target_exclusions,
     })?;
-    ensure!(
-        rebuilt == snapshot.artifact,
-        "pending DKG boundary snapshot does not match freeze-height validator set and DKG output"
-    );
+    if rebuilt != snapshot.artifact {
+        return Err(crate::errors::StackDkgError::PendingBoundarySnapshotFreezeMismatch.into());
+    }
     Ok(())
 }
 
@@ -440,11 +446,14 @@ pub(in crate::stack) fn recover_pending_dkg_boundary_snapshot(
         return Ok(None);
     };
     if let Some((_height, finalized)) = recovered_boundary {
-        ensure!(
-            finalized.dkg_cycle != snapshot.artifact.dkg_cycle || finalized == &snapshot.artifact,
-            "finalized DKG boundary conflicts with pending snapshot for cycle {}",
-            snapshot.artifact.dkg_cycle
-        );
+        if finalized.dkg_cycle == snapshot.artifact.dkg_cycle && finalized != &snapshot.artifact {
+            return Err(
+                crate::errors::StackDkgError::FinalizedBoundaryConflictsWithPendingSnapshot {
+                    cycle: snapshot.artifact.dkg_cycle,
+                }
+                .into(),
+            );
+        }
     }
     if pending_boundary_is_finalized(&snapshot, recovered_boundary) {
         let exact_boundary_finalized =
@@ -457,12 +466,13 @@ pub(in crate::stack) fn recover_pending_dkg_boundary_snapshot(
                 .position(local_consensus_key)
                 .is_some()
             {
-                let (share, polynomial, pending_output) =
-                    load_pending_dkg_state(storage_dir, key_backend)?.ok_or_else(|| {
-                        eyre::eyre!(
-                            "finalized pending DKG boundary includes the local validator but pending private material is unavailable"
-                        )
-                    })?;
+                let (share, polynomial, pending_output) = load_pending_dkg_state(
+                    storage_dir,
+                    key_backend,
+                )?
+                .ok_or(
+                    crate::errors::StackDkgError::FinalizedPendingBoundaryMissingPrivateMaterial,
+                )?;
                 dkg_manager::assert_canonical_output(
                     &pending_output,
                     &boundary_output,
@@ -510,9 +520,9 @@ pub(in crate::stack) fn recover_pending_dkg_boundary_snapshot(
             )?;
         }
         None if local_is_incoming_participant => {
-            return Err(eyre::eyre!(
-                "pending DKG boundary includes the local validator but matching pending private material is unavailable"
-            ));
+            return Err(
+                crate::errors::StackDkgError::PendingBoundaryMissingMatchingPrivateMaterial.into(),
+            );
         }
         None => {
             info!(
@@ -536,18 +546,17 @@ pub(in crate::stack) fn restore_pending_dkg_activation(
         .wrap_err("failed to decode pending DKG output during runtime restore")?;
     let (validator_set, tee_expired_target_exclusions) =
         require_frozen_validator_set(node, snapshot.artifact.freeze_height, || {
-            eyre::eyre!(
-                "pending DKG freeze-height state unavailable at height {} during runtime restore",
-                snapshot.artifact.freeze_height
-            )
+            crate::errors::StackDkgError::PendingFreezeHeightStateUnavailableDuringRestore {
+                height: snapshot.artifact.freeze_height,
+            }
+            .into()
         })?;
     let activated_validator_set = validator_set_for_dkg_output_players(&output, &validator_set)
         .wrap_err("pending DKG output does not match its frozen validator set")?;
     let participants = participants_from_validator_set(&activated_validator_set)?;
-    ensure!(
-        tee_expired_target_exclusions == snapshot.artifact.tee_expired_target_exclusions,
-        "pending DKG TEE expiry exclusions do not match freeze-height state"
-    );
+    if tee_expired_target_exclusions != snapshot.artifact.tee_expired_target_exclusions {
+        return Err(crate::errors::StackDkgError::PendingTeeExpiryExclusionsMismatch.into());
+    }
     let target = FrozenDkgTarget {
         dkg_cycle: snapshot.artifact.dkg_cycle,
         freeze_height: snapshot.artifact.freeze_height,
@@ -560,11 +569,8 @@ pub(in crate::stack) fn restore_pending_dkg_activation(
 
     if participants.position(local_consensus_key).is_some() {
         let (share, _polynomial, pending_output) =
-            load_pending_dkg_state(storage_dir, key_backend)?.ok_or_else(|| {
-                eyre::eyre!(
-                    "pending DKG boundary includes the local validator but pending private material is unavailable"
-                )
-            })?;
+            load_pending_dkg_state(storage_dir, key_backend)?
+                .ok_or(crate::errors::StackDkgError::PendingBoundaryMissingPrivateMaterial)?;
         dkg_manager::assert_canonical_output(
             &pending_output,
             &output,
@@ -621,14 +627,16 @@ fn load_dkg_state_files(
         return Ok(None);
     }
 
-    ensure!(
-        has_share && has_poly && has_output,
-        "{label} DKG state is incomplete in {}: expected {}, {}, and {}",
-        storage_dir.display(),
-        share_file,
-        polynomial_file,
-        output_file,
-    );
+    if !(has_share && has_poly && has_output) {
+        return Err(crate::errors::StackDkgError::IncompleteDkgState {
+            label,
+            dir: format!("{}", storage_dir.display()),
+            share_file,
+            polynomial_file,
+            output_file,
+        }
+        .into());
+    }
 
     let signing_share = bls::load_signing_share(&share_path, key_backend)
         .wrap_err_with(|| format!("failed to load BLS signing share from {label} DKG state"))?;

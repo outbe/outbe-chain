@@ -1,9 +1,11 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::AGENT_REWARD_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::types::StorageKey;
 use outbe_primitives::time::WorldwideDay;
+
+use crate::errors::AgentRewardError;
 
 /// EVM storage layout for the Agent Reward contract.
 ///
@@ -71,9 +73,7 @@ impl RewardPool {
             0 => Ok(Self::Waa),
             1 => Ok(Self::Sra),
             2 => Ok(Self::Cca),
-            _ => Err(PrecompileError::Revert(format!(
-                "agentreward unknown reward pool {value}"
-            ))),
+            _ => Err(AgentRewardError::UnknownRewardPool(value).into()),
         }
     }
 }

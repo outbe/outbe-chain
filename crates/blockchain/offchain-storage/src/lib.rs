@@ -4,6 +4,7 @@ pub mod body_projection;
 mod config;
 mod day_databases;
 mod day_directory;
+pub mod errors;
 mod memory;
 mod mongo;
 pub mod partitioned;

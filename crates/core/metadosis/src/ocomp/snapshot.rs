@@ -40,7 +40,7 @@ impl MetadosisContract<'_> {
         owners.sort_unstable();
         if owners.windows(2).any(|pair| pair[0] >= pair[1]) {
             return Err(crate::errors::storage_corruption(
-                "OCOMP day owner set is not strictly ordered and unique".into(),
+                "OCOMP day owner set is not strictly ordered and unique",
             ));
         }
         // Snapshot the whole day's leagues in ONE enclave round-trip (was one

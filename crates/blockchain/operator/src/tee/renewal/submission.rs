@@ -20,7 +20,7 @@ pub(super) async fn submit_attempt(
     let raw = attempt
         .relay_variants
         .last()
-        .ok_or_else(|| eyre::eyre!("renewal attempt has no relay transaction"))?;
+        .ok_or(RenewalError::MissingRelayTransaction)?;
     let already_observed = replayed && exact_transaction_receipt_exists(rpc, raw).await?;
     let returned_hash = if already_observed {
         raw.transaction_hash
@@ -28,7 +28,7 @@ pub(super) async fn submit_attempt(
         send_exact_transaction(rpc, raw).await?
     };
     if returned_hash != raw.transaction_hash {
-        eyre::bail!("RPC returned a transaction hash different from the signed renewal bytes");
+        return Err(RenewalError::SubmittedHashMismatch.into());
     }
     let hashes = attempt
         .relay_variants
@@ -80,19 +80,17 @@ pub(super) async fn exact_transaction_receipt_exists(
     let observed_hash = receipt
         .get("transactionHash")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("exact renewal transaction receipt has no transactionHash"))?;
-    eyre::ensure!(
-        observed_hash.eq_ignore_ascii_case(&expected_hash),
-        "renewal RPC returned a receipt for a different transaction hash"
-    );
+        .ok_or(RenewalError::MissingReceiptTransactionHash)?;
+    if !observed_hash.eq_ignore_ascii_case(&expected_hash) {
+        return Err(RenewalError::ReceiptTransactionHashMismatch.into());
+    }
     let status = receipt
         .get("status")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("exact renewal transaction receipt has no status"))?;
-    eyre::ensure!(
-        status == "0x1",
-        "exact renewal transaction receipt has non-success status {status}"
-    );
+        .ok_or(RenewalError::MissingReceiptStatus)?;
+    if status != "0x1" {
+        return Err(RenewalError::NonSuccessReceiptStatus(status.to_owned()).into());
+    }
     Ok(true)
 }
 

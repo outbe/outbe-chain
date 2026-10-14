@@ -305,6 +305,13 @@ fn absent_owner_generations_remain_optional() {
         assert_eq!(state.nod_materialization_bounds().unwrap(), (1, 1));
         assert!(state.nod_materialization_head().unwrap().is_none());
         assert!(state.nod_certified_generation(DAY).unwrap().is_none());
+        let absent = state.with_storage(|storage| {
+            outbe_metadosis::api::get_active_lysis_generation(storage, DAY)
+        });
+        assert!(absent
+            .unwrap_err()
+            .to_string()
+            .contains("ActiveGenerationV1 not found"));
     });
 }
 
@@ -726,5 +733,84 @@ fn terminal_receipt_rejects_cross_intent_and_cross_job_bindings() {
                     .is_err());
             },
         );
+    }
+}
+
+#[test]
+fn active_generation_decodes_present_record_and_rejects_malformed_bytes() {
+    use std::{cell::Cell, rc::Rc};
+
+    use outbe_ocomp_protocol::{result::ExactCountsV1, state::ActiveGenerationV1};
+    use outbe_primitives::{
+        error::{PrecompileError, Result},
+        storage::readonly::{ReadOnlyStorageProvider, StorageReader},
+    };
+
+    struct AbsentGenerationReader(Rc<Cell<Option<U256>>>);
+
+    impl StorageReader for AbsentGenerationReader {
+        fn read_storage(&self, address: Address, key: B256) -> Result<U256> {
+            assert_eq!(address, METADOSIS_ADDRESS);
+            assert!(self.0.replace(Some(U256::from_be_bytes(key.0))).is_none());
+            Ok(U256::ZERO)
+        }
+    }
+
+    // Discover the one native length slot through the public owner getter.
+    // This fixture does not import or replicate the private Metadosis schema.
+    let observed_slot = Rc::new(Cell::new(None));
+    let mut reader = ReadOnlyStorageProvider::new(AbsentGenerationReader(observed_slot.clone()));
+    let absent =
+        outbe_metadosis::api::get_active_lysis_generation(StorageHandle::new(&mut reader), DAY);
+    assert!(
+        matches!(absent, Err(PrecompileError::Revert(message)) if message == "ActiveGenerationV1 not found")
+    );
+    let slot = observed_slot.get().unwrap();
+    let expected = ActiveGenerationV1 {
+        job_id: B256::repeat_byte(1),
+        program_semantics_hash: B256::repeat_byte(2),
+        nod_root: B256::repeat_byte(3),
+        bucket_root: B256::repeat_byte(4),
+        output_manifest_root: B256::repeat_byte(6),
+        exact_counts: ExactCountsV1 {
+            tribute_count: 2,
+            nod_count: 2,
+            bucket_count: 1,
+            semantic_event_count: 3,
+        },
+        result_evidence_hash: B256::repeat_byte(7),
+        availability_certificate_hash: None,
+    };
+    for version in [1, 2] {
+        for malformed in [false, true] {
+            let mut encoded = expected.encode_canonical(&poc_schema_limits()).unwrap();
+            if malformed {
+                encoded[0] ^= 1;
+            }
+            let mut owner = HashMapStorageProvider::new(1);
+            StorageHandle::enter(&mut owner, |storage| {
+                StorageBytes::new(slot, METADOSIS_ADDRESS, storage)
+                    .write(&encoded)
+                    .unwrap();
+            });
+            with_owner_storage(version, owner, |state, _| {
+                let actual = state
+                    .with_storage(|storage| {
+                        outbe_metadosis::api::get_active_lysis_generation(storage, DAY)
+                    })
+                    .and_then(|bytes| {
+                        ActiveGenerationV1::decode_canonical(&bytes, &poc_schema_limits())
+                            .map_err(eyre::Error::from)
+                    });
+                if malformed {
+                    assert!(
+                        actual.is_err(),
+                        "present malformed bytes must not become absent"
+                    );
+                } else {
+                    assert_eq!(actual.unwrap(), expected);
+                }
+            });
+        }
     }
 }

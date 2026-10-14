@@ -100,6 +100,8 @@ pub(crate) fn apply_boundary_outcome(
     block_number: u64,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<()> {
+    use crate::errors::ExecutorHookError;
+
     let reshare = &boundary.reshare;
 
     let expected_tee_expiry_hash =
@@ -107,36 +109,40 @@ pub(crate) fn apply_boundary_outcome(
             &boundary.tee_expired_target_exclusions,
         )?;
     if boundary.tee_expired_target_exclusions_hash != expected_tee_expiry_hash {
-        return Err(PrecompileError::Fatal(format!(
-            "boundary TEE expiry exclusions commitment mismatch: expected {expected_tee_expiry_hash}, got {}",
-            boundary.tee_expired_target_exclusions_hash
-        )));
+        return Err(ExecutorHookError::TeeExpiryExclusionsHashMismatch {
+            expected: expected_tee_expiry_hash,
+            actual: boundary.tee_expired_target_exclusions_hash,
+        }
+        .into());
     }
 
     let expected_active_set_hash = hash_boundary_active_set(&reshare.new_active_set);
     if reshare.active_set_hash != expected_active_set_hash {
-        return Err(PrecompileError::Fatal(format!(
-            "boundary active_set_hash mismatch: expected {expected_active_set_hash}, got {}",
-            reshare.active_set_hash
-        )));
+        return Err(ExecutorHookError::ActiveSetHashMismatch {
+            expected: expected_active_set_hash,
+            actual: reshare.active_set_hash,
+        }
+        .into());
     }
 
     let expected_vrf_group_public_key = keccak256(boundary.vrf_group_public_key_bytes.as_ref());
     if boundary.vrf_group_public_key != expected_vrf_group_public_key {
-        return Err(PrecompileError::Fatal(format!(
-            "boundary VRF group public key hash mismatch: expected {expected_vrf_group_public_key}, got {}",
-            boundary.vrf_group_public_key
-        )));
+        return Err(ExecutorHookError::VrfGroupPublicKeyHashMismatch {
+            expected: expected_vrf_group_public_key,
+            actual: boundary.vrf_group_public_key,
+        }
+        .into());
     }
 
     let incoming_snapshot = committee_snapshot_from_boundary(storage.clone(), boundary)?;
     let expected_committee_set_hash =
         outbe_validatorset::committee_set_hash_v2(boundary.epoch, &incoming_snapshot);
     if boundary.committee_set_hash != expected_committee_set_hash {
-        return Err(PrecompileError::Fatal(format!(
-            "boundary committee_set_hash mismatch: expected {expected_committee_set_hash}, got {}",
-            boundary.committee_set_hash
-        )));
+        return Err(ExecutorHookError::CommitteeSetHashMismatch {
+            expected: expected_committee_set_hash,
+            actual: boundary.committee_set_hash,
+        }
+        .into());
     }
 
     let vs_check = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
@@ -145,13 +151,16 @@ pub(crate) fn apply_boundary_outcome(
         .epoch_snapshot()?
         .number
         .try_into()
-        .map_err(|_| PrecompileError::Fatal("ValidatorSet epoch exceeds u64".into()))?;
+        .map_err(|_| ExecutorHookError::ValidatorSetEpochExceedsU64)?;
 
     if current_hash != reshare.active_set_hash && !boundary.is_validator_set_change {
-        return Err(PrecompileError::Fatal(format!(
-            "boundary active_set_hash changed without validator-set change: current={current_hash}, boundary={}",
-            reshare.active_set_hash
-        )));
+        return Err(
+            ExecutorHookError::ActiveSetHashChangedWithoutValidatorSetChange {
+                current: current_hash,
+                boundary: reshare.active_set_hash,
+            }
+            .into(),
+        );
     }
 
     let advances_epoch =
@@ -187,18 +196,23 @@ fn validate_boundary_epoch_transition(
     incoming_epoch: u64,
     block_number: u64,
 ) -> outbe_primitives::error::Result<bool> {
+    use crate::errors::ExecutorHookError;
+
     if block_number == 1 && current_epoch == 0 && incoming_epoch == 0 {
         return Ok(false);
     }
-    let next_epoch = current_epoch.checked_add(1).ok_or_else(|| {
-        PrecompileError::Fatal("ValidatorSet epoch overflow at BoundaryOutcome".into())
-    })?;
+    let next_epoch = current_epoch
+        .checked_add(1)
+        .ok_or(ExecutorHookError::ValidatorSetEpochOverflow)?;
     if block_number > 1 && incoming_epoch == next_epoch {
         return Ok(true);
     }
-    Err(PrecompileError::Fatal(format!(
-        "BoundaryOutcome epoch must bootstrap epoch 0 at block 1 or activate current+1: current={current_epoch}, incoming={incoming_epoch}, block={block_number}"
-    )))
+    Err(ExecutorHookError::InvalidBoundaryEpochTransition {
+        current: current_epoch,
+        incoming: incoming_epoch,
+        block: block_number,
+    }
+    .into())
 }
 
 /// Resets outgoing-epoch counters only for a block that actually carries the
@@ -238,13 +252,15 @@ fn committee_snapshot_from_boundary(
     storage: StorageHandle,
     boundary: &outbe_primitives::consensus::DkgBoundaryArtifact,
 ) -> outbe_primitives::error::Result<outbe_validatorset::CommitteeSnapshot> {
+    use crate::errors::ExecutorHookError;
+
     let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
     let mut committee = Vec::with_capacity(boundary.reshare.new_active_set.len());
     for address in &boundary.reshare.new_active_set {
         let Some(consensus_pubkey) = vs.consensus_pubkey_of(*address)? else {
-            return Err(PrecompileError::Fatal(format!(
-                "boundary active set contains unregistered validator {address}"
-            )));
+            return Err(
+                ExecutorHookError::UnregisteredBoundaryValidator { address: *address }.into(),
+            );
         };
         committee.push(outbe_validatorset::CommitteeEntry {
             address: *address,

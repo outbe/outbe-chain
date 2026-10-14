@@ -59,6 +59,7 @@ use tokio::sync::oneshot;
 use tracing::info;
 
 mod cli;
+pub(crate) mod errors;
 mod execution_runtime;
 mod launch;
 mod ocomp_exex;

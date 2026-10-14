@@ -1,8 +1,9 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
+use crate::errors::surface_query_error;
 use crate::math::{DECIMALS, MAX_LEAGUE, MIN_LEAGUE};
 use crate::schema::FidelityContract;
 
@@ -47,22 +48,4 @@ pub fn dispatch(
             maxLeague(_) => metadata::<IFidelity::maxLeagueCall>(|| Ok(MAX_LEAGUE)),
         }
     })
-}
-
-/// The owner-authorized index query is a read-only `eth_call`, so its failures
-/// are user-facing, not node-fatal:
-/// - bad or wrong-signer signature
-/// - wrong chain
-/// - expired auth
-/// - enclave sidecar unavailable / DKG incomplete
-///
-/// Surface the reason as a `Revert` so it reaches the caller as `Error(string)`.
-/// The enclave client returns these failures as `Fatal`, which `eth_call` would
-/// otherwise drop as data-less "missing revert data". Already-`Revert` errors pass
-/// through.
-fn surface_query_error(e: PrecompileError) -> PrecompileError {
-    match e {
-        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => e,
-        other => PrecompileError::Revert(other.to_string()),
-    }
 }

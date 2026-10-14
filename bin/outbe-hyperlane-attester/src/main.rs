@@ -9,6 +9,7 @@ mod abi;
 mod attester;
 mod client;
 mod config;
+mod errors;
 mod health;
 
 use std::sync::Arc;

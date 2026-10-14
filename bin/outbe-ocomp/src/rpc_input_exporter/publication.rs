@@ -231,7 +231,7 @@ impl RpcInputExporterV1 {
                 || {
                     fidelity_cursor
                         .next_opening()
-                        .map_err(|error| InputArtifactError::OpeningSource(error.to_string()))
+                        .map_err(InputArtifactError::opening_source)
                 },
                 on_progress,
             )
@@ -283,15 +283,17 @@ impl RpcInputExporterV1 {
                         subjects: subjects.clone(),
                     }
                     .encode_body(&self.config.limits)
-                    .map_err(|error| OpeningStageError::Resolver(error.to_string()))?;
+                    .map_err(OpeningStageError::resolver)?;
                     let openings = match self
                         .rpc
                         .lysis_openings(finalized.intent_id, &canonical_request)
                         .and_then(|encoded| {
                             LysisOpeningsProofV1::decode_body(&encoded, &self.config.limits)
-                                .map_err(|error| crate::public_rpc::PublicRpcError::Malformed {
-                                    method: "outbe_getOcompLysisOpeningsV1",
-                                    detail: error.to_string(),
+                                .map_err(|error| {
+                                    crate::public_rpc::PublicRpcError::malformed(
+                                        "outbe_getOcompLysisOpeningsV1",
+                                        error,
+                                    )
                                 })
                         }) {
                         Ok(openings) => openings,
@@ -299,18 +301,18 @@ impl RpcInputExporterV1 {
                             return Ok(OpeningResolutionV1::Split);
                         }
                         Err(error) => {
-                            return Err(OpeningStageError::Resolver(error.to_string()));
+                            return Err(OpeningStageError::resolver(error));
                         }
                     };
                     verify_lysis_openings(&openings, finalized, subjects, &self.config.limits)
-                        .map_err(|error| OpeningStageError::Resolver(error.to_string()))?;
+                        .map_err(OpeningStageError::resolver)?;
                     on_progress();
                     let materialized = materialize_authenticated_openings(
                         &openings,
                         self.config.protocol_bundle.bundle(),
                         &self.config.limits,
                     )
-                    .map_err(|error| OpeningStageError::Resolver(error.to_string()))?;
+                    .map_err(OpeningStageError::resolver)?;
                     Ok(OpeningResolutionV1::Complete(Box::new(materialized)))
                 },
                 |subjects, fidelity, oracle| {

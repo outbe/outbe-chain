@@ -76,7 +76,7 @@ pub fn derive_poseidon_digest(
             Fr::from_be_bytes_mod_order(owner.as_slice()),
             Fr::from(worldwide_day.value()),
         ])
-        .map_err(|error| CommitmentError::Poseidon(error.to_string()))?;
+        .map_err(CommitmentError::poseidon)?;
     Ok(B256::from(field_to_be32(digest)))
 }
 
@@ -185,7 +185,7 @@ pub(crate) fn poseidon(tag: u64, inputs: &[Fr]) -> Result<Fr, CommitmentError> {
     tagged.extend_from_slice(inputs);
     Poseidon2::<Fr>::new()
         .hash(&tagged)
-        .map_err(|error| CommitmentError::Poseidon(error.to_string()))
+        .map_err(CommitmentError::poseidon)
 }
 
 pub(crate) fn field_to_be32(value: Fr) -> [u8; 32] {
@@ -212,4 +212,10 @@ pub enum CommitmentError {
     ZeroPresentLeaf,
     #[error("value is not a canonical BN254 scalar field element")]
     NonCanonicalFieldElement,
+}
+
+impl CommitmentError {
+    pub(crate) fn poseidon(error: impl core::fmt::Display) -> Self {
+        Self::Poseidon(error.to_string())
+    }
 }

@@ -35,27 +35,25 @@ fn generate_quote(context: RequestContext<'_>, intent: Vec<u8>) -> EnclaveRespon
             message: "DCAP quote generation requires initialized production state".to_string(),
         };
     };
-    let result = (|| -> Result<GeneratedDcapQuoteResponse, String> {
+    let result = (|| -> EnclaveResult<GeneratedDcapQuoteResponse> {
         let report_data = initialization.quote_report_data(&intent)?;
         let decoded_intent = RegistrationIntentV1::decode_canonical(&intent)
-            .map_err(|error| format!("registration intent is not canonical: {error}"))?;
+            .map_err(TransportDispatchError::registration_intent_not_canonical)?;
         let transition_key_ready_proof = if decoded_intent.operation
             == AttestationOperationV1::TransitionEnclaveMeasurement
         {
             let resident_offer_public = offer_key
                 .get()
-                .ok_or_else(|| {
-                    "transition quote generation requires the permanent offer key".to_string()
-                })?
+                .ok_or(TransportDispatchError::TransitionQuoteRequiresOfferKey)?
                 .public();
             let manifest = initialization
                 .manifest()?
-                .ok_or_else(|| "enclave is not initialized".to_string())?;
+                .ok_or(TransportDispatchError::EnclaveNotInitialized)?;
             let (_, proof) =
                 signed_transition_proof(keys, &decoded_intent, &manifest, resident_offer_public)?;
             proof
                 .encode_canonical()
-                .map_err(|error| error.to_string())?
+                .map_err(TransportDispatchError::detail)?
         } else {
             Vec::new()
         };
@@ -77,7 +75,9 @@ fn generate_quote(context: RequestContext<'_>, intent: Vec<u8>) -> EnclaveRespon
                 transition_key_ready_proof,
             }
         }
-        Err(message) => EnclaveResponse::Error { message },
+        Err(message) => EnclaveResponse::Error {
+            message: message.to_string(),
+        },
     }
 }
 
@@ -89,26 +89,28 @@ fn generate_transition_evidence(context: RequestContext<'_>, intent: Vec<u8>) ->
         ..
     } = context;
     let DispatchInitializationContext { initialization, .. } = context;
-    let result = (|| -> Result<Vec<u8>, String> {
-        let initialization = initialization.ok_or("transition requires initialized enclave")?;
+    let result = (|| -> EnclaveResult<Vec<u8>> {
+        let initialization =
+            initialization.ok_or(TransportDispatchError::TransitionRequiresInitializedEnclave)?;
         if !initialization.gramine_direct_dev_evidence_allowed() {
-            return Err("DirectDev transition is disabled for this enclave mode".into());
+            return Err(TransportDispatchError::DirectDevTransitionDisabled.into());
         }
-        let decoded = RegistrationIntentV1::decode_canonical(&intent).map_err(|e| e.to_string())?;
+        let decoded = RegistrationIntentV1::decode_canonical(&intent)
+            .map_err(TransportDispatchError::detail)?;
         if decoded.attestation_mode != AttestationMode::GramineDirectDev
             || decoded.operation != AttestationOperationV1::TransitionEnclaveMeasurement
         {
-            return Err("expected a DirectDev measurement transition".into());
+            return Err(TransportDispatchError::ExpectedDirectDevMeasurementTransition.into());
         }
         let manifest = initialization
             .manifest()?
-            .ok_or("enclave is not initialized")?;
+            .ok_or(TransportDispatchError::EnclaveNotInitialized)?;
         manifest
             .validate_intent_binding(&decoded)
-            .map_err(|e| e.to_string())?;
+            .map_err(TransportDispatchError::detail)?;
         let resident_offer_public = offer_key
             .get()
-            .ok_or("transition requires the permanent offer key")?
+            .ok_or(TransportDispatchError::TransitionRequiresPermanentOfferKey)?
             .public();
         let (intent_hash, proof) =
             signed_transition_proof(keys, &decoded, &manifest, resident_offer_public)?;
@@ -121,11 +123,13 @@ fn generate_transition_evidence(context: RequestContext<'_>, intent: Vec<u8>) ->
             },
         )
         .encode_canonical()
-        .map_err(|e| e.to_string())
+        .map_err(|e| TransportDispatchError::detail(e).into())
     })();
     match result {
         Ok(evidence) => EnclaveResponse::TransitionEvidenceDevV1 { evidence },
-        Err(message) => EnclaveResponse::Error { message },
+        Err(message) => EnclaveResponse::Error {
+            message: message.to_string(),
+        },
     }
 }
 
@@ -147,19 +151,21 @@ fn sign_registration_intent(context: RequestContext<'_>, intent: Vec<u8>) -> Enc
                 .to_string(),
         };
     }
-    let result = (|| -> Result<Vec<u8>, String> {
-        let decoded =
-            RegistrationIntentV1::decode_canonical(&intent).map_err(|error| error.to_string())?;
+    let result = (|| -> EnclaveResult<Vec<u8>> {
+        let decoded = RegistrationIntentV1::decode_canonical(&intent)
+            .map_err(TransportDispatchError::detail)?;
         if decoded.attestation_mode != AttestationMode::GramineDirectDev
             || decoded.attestation_ed25519 != keys.attestation_pub()
             || decoded
                 .derived_enclave_id()
-                .map_err(|error| error.to_string())?
+                .map_err(TransportDispatchError::detail)?
                 != decoded.enclave_id
         {
-            return Err("GramineDirectDev intent does not bind this enclave identity".into());
+            return Err(TransportDispatchError::GramineDirectDevIntentIdentityMismatch.into());
         }
-        let intent_hash = decoded.intent_hash().map_err(|error| error.to_string())?;
+        let intent_hash = decoded
+            .intent_hash()
+            .map_err(TransportDispatchError::detail)?;
         Ok(keys.sign_attestation(intent_hash.as_slice()).to_vec())
     })();
     match result {
@@ -167,7 +173,9 @@ fn sign_registration_intent(context: RequestContext<'_>, intent: Vec<u8>) -> Enc
             intent,
             enclave_signature,
         },
-        Err(message) => EnclaveResponse::Error { message },
+        Err(message) => EnclaveResponse::Error {
+            message: message.to_string(),
+        },
     }
 }
 
@@ -176,20 +184,24 @@ fn signed_transition_proof(
     intent: &RegistrationIntentV1,
     manifest: &EnclaveInitializationManifestV1,
     resident_offer_public: [u8; 32],
-) -> Result<(B256, TransitionKeyReadyProofV1), String> {
-    let intent_hash = intent.intent_hash().map_err(|error| error.to_string())?;
+) -> EnclaveResult<(B256, TransitionKeyReadyProofV1)> {
+    let intent_hash = intent
+        .intent_hash()
+        .map_err(TransportDispatchError::detail)?;
     let mut proof = TransitionKeyReadyProofV1 {
         chain_id: intent.chain_id,
         genesis_hash: intent.genesis_hash,
         transition_intent_hash: intent_hash,
         candidate_manifest_hash: manifest
             .authorization_hash()
-            .map_err(|error| error.to_string())?,
+            .map_err(TransportDispatchError::detail)?,
         transition_nonce: intent.transition_nonce,
         resident_offer_public,
         candidate_attestation_signature: [0; 64],
     };
-    let signing_hash = proof.signing_hash().map_err(|error| error.to_string())?;
+    let signing_hash = proof
+        .signing_hash()
+        .map_err(TransportDispatchError::detail)?;
     proof.candidate_attestation_signature = keys.sign_attestation(signing_hash.as_slice());
     Ok((intent_hash, proof))
 }

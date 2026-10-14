@@ -98,7 +98,7 @@ impl SystemTxInputV2 {
             }
             Self::TeeBootstrap { payload } => out.extend_from_slice(
                 crate::tee_bootstrap_v2::codec::encode_canonical(payload)
-                    .map_err(|error| SystemTxError::Codec(error.to_string()))?
+                    .map_err(SystemTxError::codec)?
                     .as_ref(),
             ),
         }
@@ -152,7 +152,7 @@ impl SystemTxInputV2 {
             }
             SystemTxKind::TeeBootstrap => Ok(Self::TeeBootstrap {
                 payload: crate::tee_bootstrap_v2::codec::decode_canonical(body)
-                    .map_err(|error| SystemTxError::Codec(error.to_string()))?,
+                    .map_err(SystemTxError::codec)?,
             }),
         }
     }

@@ -88,7 +88,7 @@ pub(super) fn fetch_targets(
         .into(),
     )?;
     IOriginRouter::targetsOfCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("targetsOf undecodable".into()))
+        .map_err(|_| DesisError::TargetsOfUndecodable.into())
 }
 
 /// Split the snapshot into chains whose intake finalized and chains still missing.

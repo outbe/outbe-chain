@@ -14,12 +14,13 @@ use outbe_tee::release_dcap_artifacts::DCAP_COLLATERAL_COMPONENT_FILES;
 use outbe_tee::{
     dcap_protocol::DcapVerdictV1,
     dcap_v1::{verify_dcap_evidence, DcapRejectCodeV1},
+    errors::DcapFixtureError,
     native_qvl::{verify_quote_native, NativeDcapCollateral},
     quote::parse_quote_measurements,
 };
 use sha2::{Digest, Sha256};
 
-pub fn run(arguments: &[String]) -> Result<(), String> {
+pub fn run(arguments: &[String]) -> Result<(), DcapFixtureError> {
     let capture = load_capture(arguments)?;
     let collateral = load_and_preflight_collateral(&capture)?;
     let verified = verify_evidence(&capture, &collateral)?;
@@ -38,7 +39,7 @@ struct CaptureInputs {
     expected_report_data: [u8; 64],
 }
 
-fn load_capture(arguments: &[String]) -> Result<CaptureInputs, String> {
+fn load_capture(arguments: &[String]) -> Result<CaptureInputs, DcapFixtureError> {
     let policy_path = PathBuf::from(argument(arguments, "--policy")?);
     let intent_path = PathBuf::from(argument(arguments, "--intent")?);
     let quote_path = PathBuf::from(argument(arguments, "--quote")?);
@@ -50,16 +51,16 @@ fn load_capture(arguments: &[String]) -> Result<CaptureInputs, String> {
     let intent_bytes = read(&intent_path)?;
     let quote = read(&quote_path)?;
     let policy = TeePolicyV1::decode_canonical(&policy_bytes)
-        .map_err(|error| format!("decode canonical TeePolicyV1: {error}"))?;
+        .map_err(DcapFixtureError::decode_tee_policy)?;
     let intent = RegistrationIntentV1::decode_canonical(&intent_bytes)
-        .map_err(|error| format!("decode canonical RegistrationIntentV1: {error}"))?;
-    let measurements = parse_quote_measurements(&quote)
-        .map_err(|error| format!("parse captured SGX quote: {error}"))?;
+        .map_err(DcapFixtureError::decode_registration_intent)?;
+    let measurements =
+        parse_quote_measurements(&quote).map_err(DcapFixtureError::parse_captured_quote)?;
     let expected_report_data = intent
         .report_data()
-        .map_err(|error| format!("derive RegistrationIntentV1 report_data: {error}"))?;
+        .map_err(DcapFixtureError::derive_report_data)?;
     if measurements.report_data != expected_report_data {
-        return Err("quote REPORT_DATA does not match the canonical intent".to_owned());
+        return Err(DcapFixtureError::ReportDataMismatch);
     }
     Ok(CaptureInputs {
         collateral_dir,
@@ -80,7 +81,9 @@ struct CapturedCollateral {
     provenance: Vec<u8>,
 }
 
-fn load_and_preflight_collateral(capture: &CaptureInputs) -> Result<CapturedCollateral, String> {
+fn load_and_preflight_collateral(
+    capture: &CaptureInputs,
+) -> Result<CapturedCollateral, DcapFixtureError> {
     let mut files = BTreeMap::new();
     let components = DCAP_COLLATERAL_COMPONENT_FILES
         .into_iter()
@@ -89,15 +92,15 @@ fn load_and_preflight_collateral(capture: &CaptureInputs) -> Result<CapturedColl
             files.insert(name, bytes.clone());
             Ok(DcapCollateralComponentV1 { kind, bytes })
         })
-        .collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>, DcapFixtureError>>()?;
     let provenance = read(&capture.collateral_dir.join("capture-provenance.json"))?;
     serde_json::from_slice::<serde_json::Value>(&provenance)
-        .map_err(|error| format!("decode capture-provenance.json: {error}"))?;
-    let component = |name: &str| {
+        .map_err(DcapFixtureError::decode_capture_provenance)?;
+    let component = |name: &'static str| {
         files
             .get(name)
             .map(Vec::as_slice)
-            .ok_or_else(|| format!("missing captured component {name}"))
+            .ok_or_else(|| DcapFixtureError::MissingCapturedComponent(name.to_owned()))
     };
     let native_collateral = NativeDcapCollateral {
         pck_crl_issuer_chain: component("pck-crl-issuer-chain.pem")?,
@@ -111,9 +114,9 @@ fn load_and_preflight_collateral(capture: &CaptureInputs) -> Result<CapturedColl
     let native_preflight = verify_quote_native(
         &capture.quote,
         &native_collateral,
-        i64::try_from(capture.timestamp).map_err(|_| "timestamp exceeds i64".to_owned())?,
+        i64::try_from(capture.timestamp).map_err(DcapFixtureError::timestamp_exceeds_i64)?,
     )
-    .map_err(|error| format!("native QVL preflight failed: {error:?}"))?;
+    .map_err(DcapFixtureError::native_qvl_preflight_failed)?;
     eprintln!("native QVL preflight: {native_preflight:?}");
     eprintln!(
         "native QVL supplemental: issue={}..{} expiration={} combined_eval_ref={} qe_eval_ref={}",
@@ -142,7 +145,7 @@ struct VerifiedEvidence {
 fn verify_evidence(
     capture: &CaptureInputs,
     collateral: &CapturedCollateral,
-) -> Result<VerifiedEvidence, String> {
+) -> Result<VerifiedEvidence, DcapFixtureError> {
     let evidence = DcapEvidenceV1 {
         intent: capture.intent.clone(),
         quote: capture.quote.clone(),
@@ -151,34 +154,28 @@ fn verify_evidence(
     };
     let evidence_bytes = AttestationEvidenceV1::Dcap(evidence.clone())
         .encode_canonical()
-        .map_err(|error| format!("encode valid AttestationEvidenceV1: {error}"))?;
-    let verdict =
-        verify_dcap_evidence(&evidence, &capture.policy, capture.timestamp).map_err(|code| {
-            format!(
-                "valid evidence rejected with stable code 0x{:04x}",
-                code.code()
-            )
-        })?;
+        .map_err(DcapFixtureError::encode_valid_evidence)?;
+    let verdict = verify_dcap_evidence(&evidence, &capture.policy, capture.timestamp)
+        .map_err(DcapFixtureError::valid_evidence_rejected)?;
     let verdict_bytes = verdict
         .encode_canonical()
-        .map_err(|code| format!("encode stable verdict 0x{:04x}", code.code()))?;
+        .map_err(DcapFixtureError::encode_stable_verdict)?;
 
     let mut tampered = evidence;
     let signature_byte = tampered
         .quote
         .get_mut(436)
-        .ok_or_else(|| "captured quote has no ECDSA signature byte".to_owned())?;
+        .ok_or(DcapFixtureError::MissingQuoteSignatureByte)?;
     *signature_byte ^= 1;
     let tampered_evidence_bytes = AttestationEvidenceV1::Dcap(tampered.clone())
         .encode_canonical()
-        .map_err(|error| format!("encode tampered AttestationEvidenceV1: {error}"))?;
+        .map_err(DcapFixtureError::encode_tampered_evidence)?;
     let tampered_reject = verify_dcap_evidence(&tampered, &capture.policy, capture.timestamp)
         .expect_err("tampered quote unexpectedly passed public verifier");
     if tampered_reject != DcapRejectCodeV1::NativeVerificationFailed {
-        return Err(format!(
-            "tampered quote returned 0x{:04x}, expected NativeVerificationFailed",
-            tampered_reject.code()
-        ));
+        return Err(DcapFixtureError::UnexpectedTamperedRejectCode {
+            code: tampered_reject.code(),
+        });
     }
     let reject_bytes = tampered_reject.code().to_be_bytes();
     Ok(VerifiedEvidence {
@@ -195,7 +192,7 @@ fn write_fixture(
     capture: &CaptureInputs,
     collateral: &CapturedCollateral,
     verified: &VerifiedEvidence,
-) -> Result<(), String> {
+) -> Result<(), DcapFixtureError> {
     ensure_empty_directory(&capture.output_dir)?;
     let mut artifacts = BTreeMap::new();
     write_artifact(
@@ -257,7 +254,7 @@ fn write_fixture_manifest(
     capture: &CaptureInputs,
     verified: &VerifiedEvidence,
     artifacts: BTreeMap<String, serde_json::Value>,
-) -> Result<(), String> {
+) -> Result<(), DcapFixtureError> {
     let manifest = serde_json::to_vec_pretty(&serde_json::json!({
         "schema_version": 1,
         "capture_timestamp": capture.timestamp,
@@ -273,7 +270,7 @@ fn write_fixture_manifest(
         "negative_reject_code": verified.tampered_reject.code(),
         "artifacts": artifacts,
     }))
-    .map_err(|error| format!("encode fixture manifest: {error}"))?;
+    .map_err(DcapFixtureError::encode_fixture_manifest)?;
     let mut manifest_with_newline = manifest;
     manifest_with_newline.push(b'\n');
     write_new(
@@ -282,8 +279,8 @@ fn write_fixture_manifest(
     )
 }
 
-fn read(path: &Path) -> Result<Vec<u8>, String> {
-    fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))
+fn read(path: &Path) -> Result<Vec<u8>, DcapFixtureError> {
+    fs::read(path).map_err(DcapFixtureError::read_path(path))
 }
 
 fn write_artifact(
@@ -291,7 +288,7 @@ fn write_artifact(
     name: &str,
     value: &[u8],
     artifacts: &mut BTreeMap<String, serde_json::Value>,
-) -> Result<(), String> {
+) -> Result<(), DcapFixtureError> {
     write_new(&output_dir.join(name), value)?;
     artifacts.insert(
         name.to_owned(),

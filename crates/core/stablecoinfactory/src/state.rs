@@ -292,6 +292,17 @@ impl StablecoinFactoryContract<'_> {
         token: Address,
     ) -> Result<()> {
         let ticker_hash = ticker_hash(ticker)?;
+        self.ensure_identity_unregistered(token_id, ticker, ticker_hash, token)?;
+        self.ensure_identity_unreserved(token_id, ticker, ticker_hash, token)
+    }
+
+    fn ensure_identity_unregistered(
+        &self,
+        token_id: B256,
+        ticker: &str,
+        ticker_hash: B256,
+        token: Address,
+    ) -> Result<()> {
         let registered_by_id = self.token_by_id_index.read(&token_id)?;
         if !registered_by_id.is_zero() {
             return Err(StablecoinFactoryError::TokenIdAlreadyRegistered {
@@ -316,7 +327,16 @@ impl StablecoinFactoryContract<'_> {
             }
             .into());
         }
+        Ok(())
+    }
 
+    fn ensure_identity_unreserved(
+        &self,
+        token_id: B256,
+        ticker: &str,
+        ticker_hash: B256,
+        token: Address,
+    ) -> Result<()> {
         let token_id_owner = self.pending_token_id.read(&token_id)?;
         if !token_id_owner.is_zero() {
             return Err(StablecoinFactoryError::TokenIdReserved {
@@ -383,9 +403,7 @@ impl StablecoinFactoryContract<'_> {
         if schema == 0 || schema == FACTORY_SCHEMA_VERSION {
             return Ok(());
         }
-        Err(PrecompileError::Fatal(format!(
-            "stablecoin Factory schema {schema} is unsupported"
-        )))
+        Err(StablecoinFactoryError::UnsupportedSchema { schema }.into())
     }
 
     fn install_schema_for_write(&self) -> Result<()> {
@@ -393,9 +411,7 @@ impl StablecoinFactoryContract<'_> {
         match schema {
             0 => self.schema_version.write(FACTORY_SCHEMA_VERSION),
             FACTORY_SCHEMA_VERSION => Ok(()),
-            _ => Err(PrecompileError::Fatal(format!(
-                "stablecoin Factory schema {schema} is unsupported"
-            ))),
+            _ => Err(StablecoinFactoryError::UnsupportedSchema { schema }.into()),
         }
     }
 

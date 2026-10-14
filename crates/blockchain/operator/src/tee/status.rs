@@ -6,7 +6,7 @@ use eyre::Result;
 use outbe_primitives::tee_attestation_v1::AttestationMode;
 use serde::Serialize;
 
-use crate::rpc::RegistryRpc;
+use crate::{errors::StatusError, rpc::RegistryRpc};
 
 use super::{
     registry::{read_finalized_bound_renewal_view_v1, NodeBindingSelectorV1},
@@ -46,7 +46,7 @@ pub async fn read_renewal_status_v1(
     critical_blocks: u64,
 ) -> Result<RenewalStatusV1> {
     if critical_blocks > warning_blocks {
-        eyre::bail!("critical renewal margin cannot exceed warning margin");
+        return Err(StatusError::CriticalMarginExceedsWarning.into());
     }
     let view = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
     let journal = inspect_journal(node_data_dir)?;

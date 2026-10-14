@@ -21,7 +21,7 @@ use crate::{
     },
     cas::{CasError, FilesystemCas, FilesystemCasReader},
     inbox::{WorkerInbox, WorkerInboxError},
-    lysis_phase_replay::{verify_dedicated_phase_replay, LysisPhaseReplayError},
+    worker::{execute_unit, UnitExecutionAuthority},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,44 +63,42 @@ pub enum LysisResultAdoptionError {
     ReplayMismatch,
 }
 
-/// Re-executes one ROOT_REDUCE unit against exact admitted producer artifacts
-/// and, for a leaf, the shard's authenticated Tribute chunk.
+/// Re-executes one ROOT_REDUCE unit against exact admitted producer artifacts.
 ///
 /// A leaf writes its expected ResultChunkV1 only into the supervisor-owned
 /// replay inbox. Byte equality of the root artifact therefore also proves that
 /// the worker-reported manifest entry names the deterministic chunk bytes.
 pub fn verify_lysis_root_reduce_phase_replay(
-    unit: (u32, &UnitSpecV1, &UnitArtifactV1),
-    authority: (&PlanCommitmentV1, &InputManifestV1),
-    producers: (
-        &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
-        &[UnitArtifactV1],
-        &ProtocolBundleV1,
-    ),
-    storage: (&FilesystemCasReader, &WorkerInbox, &SchemaLimits),
+    (plan_ordinal, spec, reported): (u32, &UnitSpecV1, &UnitArtifactV1),
+    (plan, manifest): (&PlanCommitmentV1, &InputManifestV1),
+    input_chunks: &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
+    (producer_artifacts, bundle): (&[UnitArtifactV1], &ProtocolBundleV1),
+    (reader, replay_inbox, limits): (&FilesystemCasReader, &WorkerInbox, &SchemaLimits),
 ) -> Result<(), LysisResultAdoptionError> {
-    verify_dedicated_phase_replay(
-        (UnitPhase::RootReduce, "ROOT_REDUCE replay phase"),
-        unit,
-        authority,
-        producers,
-        storage,
-    )
-    .map_err(SelfError::into_adoption)
-}
-
-trait SelfError {
-    fn into_adoption(self) -> LysisResultAdoptionError;
-}
-
-impl SelfError for LysisPhaseReplayError {
-    fn into_adoption(self) -> LysisResultAdoptionError {
-        match self {
-            Self::Protocol(inner) => LysisResultAdoptionError::Protocol(inner),
-            Self::ReplayMismatch => LysisResultAdoptionError::ReplayMismatch,
-            _ => LysisResultAdoptionError::ReplayExecutionFailed,
-        }
+    if spec.phase != UnitPhase::RootReduce {
+        return Err(ProtocolError::InvalidInvariant("ROOT_REDUCE replay phase").into());
     }
+    reported.validate_against(spec, limits)?;
+    let expected = execute_unit(
+        spec,
+        UnitExecutionAuthority {
+            plan,
+            unit_index: plan_ordinal,
+            manifest,
+            input_chunks,
+            producer_artifacts,
+            bundle,
+            limits,
+            reader,
+            inbox: replay_inbox,
+            cancelled: None,
+        },
+    )
+    .map_err(|_| LysisResultAdoptionError::ReplayExecutionFailed)?;
+    if expected.encode_canonical(limits)? != reported.encode_canonical(limits)? {
+        return Err(LysisResultAdoptionError::ReplayMismatch);
+    }
+    Ok(())
 }
 
 /// Makes one reported ROOT_REDUCE leaf ready only after its manifest-discovered

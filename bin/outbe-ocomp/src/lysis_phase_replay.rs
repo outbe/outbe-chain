@@ -108,15 +108,11 @@ pub fn verify_core_phase_replay(
     Ok(())
 }
 
-pub(crate) fn verify_dedicated_phase_replay(
+pub(crate) fn verify_producer_only_phase_replay(
     (expected_phase, invariant): (UnitPhase, &'static str),
     (plan_ordinal, spec, reported): (u32, &UnitSpecV1, &UnitArtifactV1),
     (plan, manifest): (&PlanCommitmentV1, &InputManifestV1),
-    (input_chunks, producer_artifacts, bundle): (
-        &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
-        &[UnitArtifactV1],
-        &ProtocolBundleV1,
-    ),
+    (producer_artifacts, bundle): (&[UnitArtifactV1], &ProtocolBundleV1),
     (reader, replay_inbox, limits): (&FilesystemCasReader, &WorkerInbox, &SchemaLimits),
 ) -> Result<(), LysisPhaseReplayError> {
     if spec.phase != expected_phase {
@@ -129,7 +125,7 @@ pub(crate) fn verify_dedicated_phase_replay(
             plan,
             unit_index: plan_ordinal,
             manifest,
-            input_chunks,
+            input_chunks: &[],
             producer_artifacts,
             bundle,
             limits,

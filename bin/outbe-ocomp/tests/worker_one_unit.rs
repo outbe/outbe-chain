@@ -52,8 +52,8 @@ use outbe_ocomp::worker::{run_worker, WorkerConfig};
 use outbe_ocomp::worker_transport::{SupervisorWorkerDispatcherV1, SupervisorWorkerServerV1};
 use outbe_ocomp_protocol::common::{BoundedBytes, ProofBytes};
 use outbe_ocomp_protocol::input::{
-    materialize_authenticated_openings, AuthenticatedInputChunkV1, CheckpointIdentityV1,
-    Compression, InputChunkKind, InputManifestV1,
+    materialize_authenticated_openings, CheckpointIdentityV1, Compression, InputChunkKind,
+    InputManifestV1,
 };
 use outbe_ocomp_protocol::intent::{
     ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1, JobIntentV1,
@@ -1412,14 +1412,32 @@ fn real_worker_processes_execute_through_output_finalize() {
     verify_lysis_root_reduce_phase_replay(
         (root_reduce_offset, &root_reduce_spec, &root_reduce_artifact),
         (&plan, &manifest),
+        &replay_inputs,
         (
-            &replay_inputs,
             &[output_finalize_artifact.clone(), bucket_artifact.clone()],
             &bundle,
         ),
         (&reader, &semantic_replay_inbox, &limits),
     )
     .expect("supervisor semantic replay accepts exact RootReduce bytes and ResultChunk");
+    let mut wrong_shard = replay_inputs.clone();
+    wrong_shard[0].0.ordinal += 1;
+    let mut wrong_kind = replay_inputs.clone();
+    wrong_kind[0].0.kind = InputChunkKind::Oracle;
+    wrong_kind[0].1.kind = InputChunkKind::Oracle;
+    for invalid_inputs in [Vec::new(), wrong_shard, wrong_kind] {
+        assert!(verify_lysis_root_reduce_phase_replay(
+            (root_reduce_offset, &root_reduce_spec, &root_reduce_artifact),
+            (&plan, &manifest),
+            &invalid_inputs,
+            (
+                &[output_finalize_artifact.clone(), bucket_artifact.clone(),],
+                &bundle
+            ),
+            (&reader, &semantic_replay_inbox, &limits),
+        )
+        .is_err());
+    }
     let reduced = decode_root_reduce_output(
         root_reduce_artifact.phase_payload(&limits).unwrap(),
         &limits,
@@ -1445,13 +1463,13 @@ fn real_worker_processes_execute_through_output_finalize() {
         (
             root_reduce_offset,
             &root_reduce_spec,
-            &forged_root_reduce_artifact,
+            &forged_root_reduce_artifact
         ),
         (&plan, &manifest),
+        &replay_inputs,
         (
-            &replay_inputs,
-            &[output_finalize_artifact.clone(), bucket_artifact.clone()],
-            &bundle,
+            &[output_finalize_artifact.clone(), bucket_artifact.clone(),],
+            &bundle
         ),
         (&reader, &semantic_replay_inbox, &limits),
     )
@@ -1742,7 +1760,7 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         sealed_tribute_collection_root: B256::repeat_byte(0x76),
         tribute_count,
         tribute_nominal_total,
-        input_chunk_count: 1,
+        input_chunk_count: 2,
         input_chunk_list_root: B256::repeat_byte(0x77),
         fidelity_opening_root: B256::repeat_byte(0x78),
         oracle_opening_root: B256::repeat_byte(0x79),
@@ -2065,39 +2083,37 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         finalized_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
         let start = ordinal * 256;
         let end = (start + 256).min(tribute_count);
-        let tribute_chunk = AuthenticatedInputChunkV1 {
+        let source_chunk = outbe_ocomp_protocol::input::AuthenticatedInputChunkV1 {
             protocol_bundle_hash,
             job_id,
             kind: InputChunkKind::Tribute,
             ordinal,
-            canonical_records_or_openings: (start..end)
-                .map(|raw_ordinal| {
-                    let (tribute_id, owner) = identities[raw_ordinal as usize];
+            canonical_records_or_openings: identities[start as usize..end as usize]
+                .iter()
+                .enumerate()
+                .map(|(offset, (tribute_id, owner))| {
+                    let raw_ordinal = start + u32::try_from(offset).unwrap();
                     BoundedBytes(
                         encode_tribute_v1(&TributeBodyV1 {
-                            tribute_id,
-                            owner,
+                            tribute_id: *tribute_id,
+                            owner: *owner,
                             worldwide_day: day,
-                            issuance_amount_minor: U256::from(1),
+                            issuance_amount_minor: U256::ONE,
                             issuance_currency: 840,
                             nominal_amount_minor: U256::from(raw_ordinal + 1),
                             reference_currency: 978,
                             tribute_price_minor: U256::from(2),
                             exclude_from_intex_issuance: raw_ordinal == 0,
                         })
-                        .expect("encode merge Tribute body"),
+                        .unwrap(),
                     )
                 })
                 .collect(),
         };
-        let mut tribute_ref = cas
-            .publish_bytes(
-                &tribute_chunk
-                    .encode_canonical(&limits)
-                    .expect("canonical merge Tribute chunk"),
-            )
-            .expect("publish merge Tribute chunk");
-        tribute_ref.expected_ocb1_kind = Some(ObjectKind::AuthenticatedInputChunkV1.tag());
+        let mut source_ref = cas
+            .publish_bytes(&source_chunk.encode_canonical(&limits).unwrap())
+            .unwrap();
+        source_ref.expected_ocb1_kind = Some(ObjectKind::AuthenticatedInputChunkV1.tag());
         let artifact = execute_real_worker_unit(
             707 + u64::from(ordinal),
             0xa7 + u8::try_from(ordinal).expect("root reduce boot"),
@@ -2111,7 +2127,7 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
             plan_hash,
             plan_ref.clone(),
             manifest_ref.clone(),
-            vec![finalized_ref, bucket_root_ref.clone(), tribute_ref],
+            vec![finalized_ref, bucket_root_ref.clone(), source_ref],
         );
         artifact
             .validate_against(&leaf_spec, &limits)

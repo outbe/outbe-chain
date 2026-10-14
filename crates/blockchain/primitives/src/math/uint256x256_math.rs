@@ -82,12 +82,12 @@ fn get_end_of_div_round_down(
 ) -> Result<U256> {
     if prod1.is_zero() {
         if denom.is_zero() {
-            return Err(PrecompileError::Revert("lb_math: mul_div by zero".into()));
+            return Err(PrecompileError::revert("lb_math: mul_div by zero"));
         }
         return Ok(prod0_in / denom);
     }
     if prod1 >= denom {
-        return Err(PrecompileError::Revert("lb_math: mul_div overflow".into()));
+        return Err(PrecompileError::revert("lb_math: mul_div overflow"));
     }
 
     // Make division exact by subtracting remainder from [prod1, prod0].
@@ -145,9 +145,7 @@ pub fn mul_shift_round_down(x: U256, y: U256, offset: u8) -> Result<U256> {
     if !prod1.is_zero() {
         // Result must fit in 256 bits.
         if prod1 >= (U256::ONE << off) {
-            return Err(PrecompileError::Revert(
-                "lb_math: mul_shift overflow".into(),
-            ));
+            return Err(PrecompileError::revert("lb_math: mul_shift overflow"));
         }
         // (256 - offset) is in (0, 256]. Guard offset == 0.
         if off > 0 {

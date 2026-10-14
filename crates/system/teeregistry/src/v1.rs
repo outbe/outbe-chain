@@ -26,7 +26,7 @@ use outbe_validatorset::contract::ValidatorSet;
 #[cfg(feature = "tee-attestation-v1")]
 use outbe_validatorset::runtime::status as validator_status;
 
-use crate::schema::TeeRegistry;
+use crate::{errors::TeeRegistryError, schema::TeeRegistry};
 #[cfg(feature = "tee-attestation-v1")]
 use alloy_primitives::keccak256;
 
@@ -92,10 +92,7 @@ struct RegistrationCallerContextV1 {
 impl VerifiedEnclaveClaimsV1 {
     fn from_dcap(verdict: &DcapVerdictV1) -> Result<Self> {
         let verdict_bytes = verdict.encode_canonical().map_err(|code| {
-            PrecompileError::Fatal(format!(
-                "verified DCAP verdict cannot be encoded: {:#06x}",
-                code.code()
-            ))
+            TeeRegistryError::VerifiedDcapVerdictEncodingFailed { code: code.code() }
         })?;
         Ok(Self {
             mrenclave: verdict.mrenclave,
@@ -152,14 +149,10 @@ fn ensure_continuous_binding(
         && B256::from(intent.noise_responder_x25519) == current.noise_responder_x25519
         && B256::from(intent.node_host_authorization_hash) == current.node_host_authorization_hash;
     if !same_identity || !same_authorization {
-        return Err(PrecompileError::Revert(
-            "renewal targets a superseded or different enclave identity".into(),
-        ));
+        return Err(TeeRegistryError::RenewalTargetsDifferentIdentity.into());
     }
     if !matches_current_measurement(current, claims) {
-        return Err(PrecompileError::Revert(
-            "renewal cannot replace the admitted enclave measurement".into(),
-        ));
+        return Err(TeeRegistryError::RenewalCannotReplaceMeasurement.into());
     }
     Ok(())
 }
@@ -184,15 +177,11 @@ fn direct_dev_claims(
     let mut matching = policy.measurement_rules.iter().filter(|rule| {
         height >= rule.admit_from_height && height < rule.admit_until_height_exclusive
     });
-    let rule = matching.next().ok_or_else(|| {
-        PrecompileError::Revert(
-            "GramineDirectDev policy has no active measurement projection".into(),
-        )
-    })?;
+    let rule = matching
+        .next()
+        .ok_or(TeeRegistryError::DirectDevNoActiveMeasurement)?;
     if matching.next().is_some() {
-        return Err(PrecompileError::Revert(
-            "GramineDirectDev policy has overlapping measurement projections".into(),
-        ));
+        return Err(TeeRegistryError::DirectDevOverlappingMeasurements.into());
     }
     Ok(VerifiedEnclaveClaimsV1 {
         mrenclave: rule.mrenclave,
@@ -209,15 +198,13 @@ fn direct_dev_claims(
 fn next_counter(current: u64, name: &'static str) -> Result<u64> {
     current
         .checked_add(1)
-        .ok_or_else(|| PrecompileError::Revert(format!("{name} is exhausted")))
+        .ok_or_else(|| TeeRegistryError::CounterExhausted(name).into())
 }
 
 #[cfg(feature = "tee-attestation-v1")]
 fn ensure_live_binding(current: &NodeEnclaveBindingV1, now: u64) -> Result<()> {
     if now >= current.valid_until {
-        return Err(PrecompileError::Revert(
-            "enclave lease expired; registerEnclave rejoin is required".into(),
-        ));
+        return Err(TeeRegistryError::EnclaveLeaseExpired.into());
     }
     Ok(())
 }
@@ -230,15 +217,11 @@ fn ensure_renewal_window(
 ) -> Result<()> {
     ensure_live_binding(current, now)?;
     if policy.maximum_lease == 0 || !policy.maximum_lease.is_multiple_of(2) {
-        return Err(PrecompileError::Fatal(
-            "active V1 lease period is not a positive even duration".into(),
-        ));
+        return Err(TeeRegistryError::InvalidActiveV1LeasePeriod.into());
     }
     let opens_at = current.valid_until.saturating_sub(policy.maximum_lease / 2);
     if now < opens_at {
-        return Err(PrecompileError::Revert(
-            "renewal window has not opened".into(),
-        ));
+        return Err(TeeRegistryError::RenewalWindowNotOpen.into());
     }
     Ok(())
 }
@@ -274,19 +257,17 @@ fn chain_id_word(chain_id: u64) -> [u8; 32] {
 
 fn consensus_timestamp(storage: &outbe_primitives::storage::StorageHandle<'_>) -> Result<u64> {
     u64::try_from(storage.timestamp()?)
-        .map_err(|_| PrecompileError::Revert("consensus timestamp exceeds u64".into()))
+        .map_err(|_| TeeRegistryError::ConsensusTimestampExceedsU64.into())
 }
 
 fn checked_u16(value: u64, field: &'static str) -> Result<u16> {
-    u16::try_from(value)
-        .map_err(|_| PrecompileError::Fatal(format!("{field} exceeds its canonical width")))
+    u16::try_from(value).map_err(|_| TeeRegistryError::FieldExceedsCanonicalWidth(field).into())
 }
 
 fn checked_u8(value: u64, field: &'static str) -> Result<u8> {
-    u8::try_from(value)
-        .map_err(|_| PrecompileError::Fatal(format!("{field} exceeds its canonical width")))
+    u8::try_from(value).map_err(|_| TeeRegistryError::FieldExceedsCanonicalWidth(field).into())
 }
 
 fn revert_codec(context: &'static str, error: impl std::fmt::Display) -> PrecompileError {
-    PrecompileError::Revert(format!("{context}: {error}"))
+    TeeRegistryError::codec_revert(context, error)
 }

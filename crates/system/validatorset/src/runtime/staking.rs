@@ -1,8 +1,9 @@
 use super::status;
+use crate::errors::ValidatorSetError;
 use crate::schema::ValidatorSet;
 use crate::state_machine::{self, StakeProjection, ValidatorLifecycle};
 use alloy_primitives::{Address, U256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
 impl ValidatorSet<'_> {
     /// Records a successful stake increase from Staking and performs the
@@ -24,9 +25,7 @@ impl ValidatorSet<'_> {
         }
         let (lifecycle, became_pending) = match before.lifecycle().clone() {
             ValidatorLifecycle::Exiting(_) | ValidatorLifecycle::Unbonding(_) => {
-                return Err(PrecompileError::Revert(
-                    "cannot increase stake while validator is exiting or unbonding".into(),
-                ));
+                return Err(ValidatorSetError::CannotIncreaseStakeWhileExitingOrUnbonding.into());
             }
             ValidatorLifecycle::WaitingForStake(waiting) if bonded >= minimum => (
                 ValidatorLifecycle::WaitingForReadiness(state_machine::reach_minimum(
@@ -66,10 +65,10 @@ impl ValidatorSet<'_> {
         let height = self.storage.block_number()?;
         let next = match lifecycle {
             ValidatorLifecycle::Absent => {
-                return Err(PrecompileError::Revert("validator not registered".into()));
+                return Err(ValidatorSetError::ValidatorNotRegistered.into());
             }
             ValidatorLifecycle::Inactive(_) => {
-                return Err(PrecompileError::Revert("validator is inactive".into()));
+                return Err(ValidatorSetError::ValidatorIsInactive.into());
             }
             ValidatorLifecycle::WaitingForReadiness(waiting) if bonded < minimum => {
                 set_change = true;
@@ -125,10 +124,10 @@ impl ValidatorSet<'_> {
         let height = self.storage.block_number()?;
         let next = match lifecycle {
             ValidatorLifecycle::Absent => {
-                return Err(PrecompileError::Revert("validator not registered".into()));
+                return Err(ValidatorSetError::ValidatorNotRegistered.into());
             }
             ValidatorLifecycle::Inactive(_) => {
-                return Err(PrecompileError::Revert("validator is inactive".into()));
+                return Err(ValidatorSetError::ValidatorIsInactive.into());
             }
             ValidatorLifecycle::WaitingForReadiness(waiting) if below_minimum => {
                 set_change = true;

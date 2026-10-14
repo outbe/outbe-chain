@@ -114,6 +114,7 @@ pub(in crate::transport::tests) fn persist_test_offer_key(
     offer_key: &SharedTributeOfferKey,
 ) -> Result<(), String> {
     persist_offer_key_required(cfg, binding, offer_key.get().expect("resident test key"))
+        .map_err(|err| err.to_string())
 }
 
 /// An enclave with a resident group key installed, so `DeriveAccountKeys` can

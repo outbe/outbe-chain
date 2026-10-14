@@ -3,6 +3,8 @@ use alloy_sol_types::{sol, SolCall, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate_void, reject_value, view};
 use outbe_primitives::error::{PrecompileError, Result};
 
+use crate::errors::ValidatorSetError;
+
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time. If you add a selector
 /// here and do not flip the route, the build fails.
@@ -121,7 +123,7 @@ type ValidatorView = (
 fn validator_view(vs: &crate::schema::ValidatorSet<'_>, addr: Address) -> Result<ValidatorView> {
     let v = vs
         .get_validator(addr)?
-        .ok_or_else(|| PrecompileError::Revert("validator not found".into()))?;
+        .ok_or_else(|| PrecompileError::from(ValidatorSetError::ValidatorNotFound))?;
     Ok((
         v.validator_address,
         Bytes::copy_from_slice(&v.consensus_pubkey),
@@ -142,7 +144,7 @@ fn validator_view(vs: &crate::schema::ValidatorSet<'_>, addr: Address) -> Result
 fn validator_view_at(vs: &crate::schema::ValidatorSet<'_>, index: u64) -> Result<ValidatorView> {
     let addr = vs
         .validator_address_at(index)?
-        .ok_or_else(|| PrecompileError::Revert("validator not found at index".into()))?;
+        .ok_or_else(|| PrecompileError::from(ValidatorSetError::ValidatorNotFoundAtIndex))?;
     validator_view(vs, addr)
 }
 
@@ -196,21 +198,17 @@ fn registration_key_and_proof<'a>(
     signature: &'a [u8],
 ) -> Result<([u8; 48], &'a [u8; 96])> {
     if consensus_pubkey.len() != 48 {
-        return Err(PrecompileError::Revert(
-            "consensus pubkey must be 48 bytes".into(),
-        ));
+        return Err(ValidatorSetError::ConsensusPubkeyWrongLength.into());
     }
     let pubkey: [u8; 48] = consensus_pubkey[..48]
         .try_into()
-        .map_err(|_| PrecompileError::Revert("consensus pubkey conversion failed".into()))?;
+        .map_err(|_| PrecompileError::from(ValidatorSetError::ConsensusPubkeyConversionFailed))?;
     if signature.len() != 96 {
-        return Err(PrecompileError::Revert(
-            "BLS proof of possession must be exactly 96 bytes".into(),
-        ));
+        return Err(ValidatorSetError::BlsPopWrongLength.into());
     }
     let sig: &[u8; 96] = signature[..96]
         .try_into()
-        .map_err(|_| PrecompileError::Revert("BLS signature conversion failed".into()))?;
+        .map_err(|_| PrecompileError::from(ValidatorSetError::BlsSignatureConversionFailed))?;
     Ok((pubkey, sig))
 }
 

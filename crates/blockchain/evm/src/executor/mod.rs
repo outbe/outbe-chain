@@ -27,7 +27,7 @@ use outbe_primitives::{
     block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
     consensus::{ConsensusExecutionBridge, GenesisValidators},
     consensus_metadata::CertifiedParentAccountingMetadata,
-    error::{PrecompileError, Result as OutbeResult},
+    error::Result as OutbeResult,
     hook_events::partition_hook_events,
     payload::validate_outbe_withdrawals,
     reshare_artifact::{

@@ -155,12 +155,9 @@ impl BoundedTributePartitionVerifier {
                 actual,
             });
         }
-        let key = derive_tree_key(Collection::Tribute, entity_id)
-            .map_err(|error| TributePartitionReconstructionError::Tree(error.to_string()))?;
-        let shard = shard_index(key, CeDomain::Tribute.shard_count())
-            .map_err(|error| TributePartitionReconstructionError::Tree(error.to_string()))?;
-        let leaf = TreeLeaf::from_be_bytes(*commitment.as_bytes())
-            .map_err(|error| TributePartitionReconstructionError::Tree(error.to_string()))?;
+        let key = derive_tree_key(Collection::Tribute, entity_id).map_err(map_tree)?;
+        let shard = shard_index(key, CeDomain::Tribute.shard_count()).map_err(map_tree)?;
+        let leaf = TreeLeaf::from_be_bytes(*commitment.as_bytes()).map_err(map_tree)?;
         self.buffered.push(RunRecord { shard, key, leaf });
         self.peak_buffered_records = self.peak_buffered_records.max(self.buffered.len());
         self.pushed_count = actual;
@@ -625,7 +622,7 @@ fn sync_directory(path: &Path) -> Result<(), TributePartitionReconstructionError
         .map_err(|source| io_error("fsync scratch directory", path, source))
 }
 
-fn map_tree(error: crate::smt::TreeError) -> TributePartitionReconstructionError {
+pub(crate) fn map_tree(error: impl core::fmt::Display) -> TributePartitionReconstructionError {
     TributePartitionReconstructionError::Tree(error.to_string())
 }
 

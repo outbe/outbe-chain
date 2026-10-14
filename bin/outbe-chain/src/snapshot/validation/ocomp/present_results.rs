@@ -45,11 +45,11 @@ impl PresentAdmissionsVerify<'_, '_, '_> {
                 Some(audit.plan().plan_hash(&schema)?),
             )?;
         }
-        if let Some(expected) = manifest.as_ref() {
-            ensure!(
-                audit.manifest() == expected,
-                "present admission/receipt manifest mismatch"
-            );
+        if manifest
+            .as_ref()
+            .is_some_and(|expected| audit.manifest() != expected)
+        {
+            return Err(SnapshotOcompError::PresentAdmissionReceiptManifestMismatch.into());
         }
         *manifest = Some(audit.manifest().clone());
         let present = verify_present_admissions(
@@ -96,11 +96,11 @@ pub(super) fn verify_present_input_catalog(
     let (mut bytes, mut records, mut tribute) = (0_u64, 0_u64, 0_u64);
     for entry in &mut cursor {
         let entry = entry?;
-        ensure!(
-            entry.chunk.job_id == id
-                && entry.chunk.protocol_bundle_hash == job.intent.protocol_bundle_hash,
-            "present input chunk differs from canonical job"
-        );
+        if entry.chunk.job_id != id
+            || entry.chunk.protocol_bundle_hash != job.intent.protocol_bundle_hash
+        {
+            return Err(SnapshotOcompError::PresentInputChunkJobMismatch.into());
+        }
         ordered.push(
             &entry.reference.encode_canonical_record(&schema)?,
             schema.max_bounded_bytes,
@@ -118,16 +118,16 @@ pub(super) fn verify_present_input_catalog(
         ))
     })?;
     validate_present_manifest(expected, job, bundle)?;
-    ensure!(
-        (
-            expected.input_chunk_count,
-            expected.input_chunk_list_root,
-            expected.exact_encoded_bytes,
-            u64::from(expected.exact_record_count),
-            u64::from(expected.tribute_count),
-        ) == (expected_count, list_root, bytes, records, tribute),
-        "present input catalog differs from authenticated manifest"
-    );
+    if (
+        expected.input_chunk_count,
+        expected.input_chunk_list_root,
+        expected.exact_encoded_bytes,
+        u64::from(expected.exact_record_count),
+        u64::from(expected.tribute_count),
+    ) != (expected_count, list_root, bytes, records, tribute)
+    {
+        return Err(SnapshotOcompError::PresentInputCatalogManifestMismatch.into());
+    }
     record_tribute_input_membership(id, (cas, bundle), inputs, job, membership)?;
     Ok(u64::from(expected_count))
 }
@@ -142,11 +142,11 @@ fn record_tribute_input_membership(
     for entry in inputs.exact_verified_integrity_cursor(cas, bundle.bundle())? {
         let entry = entry?;
         if entry.reference.kind == outbe_ocomp_protocol::input::InputChunkKind::Tribute {
-            ensure!(
-                entry.chunk.job_id == id
-                    && entry.chunk.protocol_bundle_hash == job.intent.protocol_bundle_hash,
-                "present input chunk differs from canonical job"
-            );
+            if entry.chunk.job_id != id
+                || entry.chunk.protocol_bundle_hash != job.intent.protocol_bundle_hash
+            {
+                return Err(SnapshotOcompError::PresentInputChunkJobMismatch.into());
+            }
             membership.insert(
                 id,
                 &outbe_ocomp_protocol::CasObjectRefV1 {
@@ -206,7 +206,7 @@ pub(super) fn verify_complete_present_results<'a>(
     let id = job
         .finalized
         .as_ref()
-        .ok_or_else(|| eyre::eyre!("result catalog without finalized job"))?
+        .ok_or(SnapshotOcompError::ResultCatalogWithoutFinalizedJob)?
         .job_id;
     let certified = context
         .state
@@ -217,10 +217,9 @@ pub(super) fn verify_complete_present_results<'a>(
                 "job {id}: retained materialization reference lacks certified generation comparison"
             ))
         })?;
-        ensure!(
-            expected.job_id == id,
-            "materialization reference job differs from canonical certified generation"
-        );
+        if expected.job_id != id {
+            return Err(SnapshotOcompError::MaterializationRefJobCertifiedMismatch.into());
+        }
     }
     let sorted = PresentJobUnion::create(context.scratch, context.protected)?;
     let mut nod = StreamingOrderedListRoot::new(ListKind::NodActions, audit.plan().tribute_count)?;
@@ -244,10 +243,10 @@ pub(super) fn verify_complete_present_results<'a>(
                 )?;
                 allocation = allocation
                     .checked_add(chunk.summary().lysis_allocation_minor)
-                    .ok_or_else(|| eyre::eyre!("result allocation overflow"))?;
+                    .ok_or(SnapshotOcompError::ResultAllocationOverflow)?;
                 cost = cost
                     .checked_add(chunk.summary().nod_cost_total)
-                    .ok_or_else(|| eyre::eyre!("result NOD cost overflow"))?;
+                    .ok_or(SnapshotOcompError::ResultNodCostOverflow)?;
                 record_result_chunk_actions(
                     &sorted,
                     &mut nod,
@@ -260,7 +259,9 @@ pub(super) fn verify_complete_present_results<'a>(
             _ => {}
         }
     }
-    ensure!(complete, "native result catalog did not reach Complete");
+    if !complete {
+        return Err(SnapshotOcompError::ResultCatalogNotComplete.into());
+    }
     let mut bucket =
         StreamingOrderedListRoot::new(ListKind::BucketRecords, audit.plan().tribute_count)?;
     sorted.visit_prefix(b"b", &mut |_, record| {
@@ -305,10 +306,9 @@ fn record_result_chunk_actions(
         let mut key = vec![b'b'];
         key.extend_from_slice(record.bucket_key.as_slice());
         key.extend_from_slice(&record.raw_ordinal.to_be_bytes());
-        ensure!(
-            tx.get::<InventoryRows>(key.clone())?.is_none(),
-            "duplicate native bucket record sort key"
-        );
+        if tx.get::<InventoryRows>(key.clone())?.is_some() {
+            return Err(SnapshotOcompError::DuplicateNativeBucketSortKey.into());
+        }
         tx.put::<InventoryRows>(key, record.encode_canonical_record(limits)?)?;
     }
     tx.commit()?;
@@ -323,31 +323,30 @@ fn verify_certified_result_outputs(
     (allocation, cost): (U256, U256),
 ) -> eyre::Result<()> {
     let tribute_count = audit.plan().tribute_count;
-    ensure!(
-        (
-            expected.protocol_bundle_hash,
-            expected.program_semantics_hash,
-            expected.tribute_count,
-            expected.nod_count,
-            expected.bucket_count,
-            expected.nod_root,
-            expected.bucket_root,
-            expected.output_manifest_root,
-            expected.lysis_allocation_minor,
-            expected.nod_amount_total,
-        ) == (
-            job.intent.protocol_bundle_hash,
-            bundle.bundle().lysis_program_semantics_hash,
-            tribute_count,
-            tribute_count,
-            tribute_count,
-            nod_root,
-            bucket_root,
-            output_root,
-            allocation,
-            cost,
-        ),
-        "complete present result catalog differs from canonical certified outputs"
-    );
+    if (
+        expected.protocol_bundle_hash,
+        expected.program_semantics_hash,
+        expected.tribute_count,
+        expected.nod_count,
+        expected.bucket_count,
+        expected.nod_root,
+        expected.bucket_root,
+        expected.output_manifest_root,
+        expected.lysis_allocation_minor,
+        expected.nod_amount_total,
+    ) != (
+        job.intent.protocol_bundle_hash,
+        bundle.bundle().lysis_program_semantics_hash,
+        tribute_count,
+        tribute_count,
+        tribute_count,
+        nod_root,
+        bucket_root,
+        output_root,
+        allocation,
+        cost,
+    ) {
+        return Err(SnapshotOcompError::PresentResultCatalogCertifiedMismatch.into());
+    }
     Ok(())
 }

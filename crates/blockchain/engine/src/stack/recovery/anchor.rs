@@ -67,21 +67,33 @@ pub(in crate::stack) fn select_certified_follower_recovery_height(
         .archive_finalization_tip
         .min(floors.archive_block_tip)
         .min(floors.execution_tip);
-    ensure!(
-        floors.marshal_processed <= anchor,
-        "Marshal processed floor {} exceeds certified follower recovery anchor {anchor}",
-        floors.marshal_processed,
-    );
-    ensure!(
-        anchor <= floors.marshal_processed.saturating_add(1),
-        "certified follower recovery anchor {anchor} exceeds Marshal processed floor {} by more than one block",
-        floors.marshal_processed,
-    );
-    ensure!(
-        floors.reth_finalized <= anchor,
-        "Reth finalized height {} exceeds recovery anchor {anchor}",
-        floors.reth_finalized,
-    );
+    if floors.marshal_processed > anchor {
+        return Err(
+            crate::errors::StackRecoveryError::MarshalFloorExceedsAnchor {
+                marshal_processed: floors.marshal_processed,
+                anchor,
+            }
+            .into(),
+        );
+    }
+    if anchor > floors.marshal_processed.saturating_add(1) {
+        return Err(
+            crate::errors::StackRecoveryError::AnchorExceedsMarshalFloorByMoreThanOne {
+                anchor,
+                marshal_processed: floors.marshal_processed,
+            }
+            .into(),
+        );
+    }
+    if floors.reth_finalized > anchor {
+        return Err(
+            crate::errors::StackRecoveryError::RethFinalizedExceedsAnchor {
+                reth_finalized: floors.reth_finalized,
+                anchor,
+            }
+            .into(),
+        );
+    }
     Ok(anchor)
 }
 
@@ -114,22 +126,22 @@ pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
     } = local;
     use commonware_consensus::types::Epocher as _;
     upstream.validate_envelope(Height::new(height))?;
-    ensure!(
-        local_block.number() == height && local_block.block_hash() == canonical_hash,
-        "local recovery block differs from canonical Reth checkpoint"
-    );
-    ensure!(
-        local_block == upstream.target(),
-        "upstream recovery ancestor differs from local block"
-    );
+    if local_block.number() != height || local_block.block_hash() != canonical_hash {
+        return Err(crate::errors::StackRecoveryError::LocalBlockDiffersFromCheckpoint.into());
+    }
+    if local_block != upstream.target() {
+        return Err(
+            crate::errors::StackRecoveryError::UpstreamAncestorDiffersFromLocalBlock.into(),
+        );
+    }
     let certified = &upstream.certified;
     let epoch = certified.finalization.proposal.round.epoch();
-    ensure!(
-        epocher
-            .containing(Height::new(height))
-            .is_some_and(|bounds| bounds.epoch() == epoch),
-        "recovery ancestor certificate is not from its authenticated historical committee"
-    );
+    if !epocher
+        .containing(Height::new(height))
+        .is_some_and(|bounds| bounds.epoch() == epoch)
+    {
+        return Err(crate::errors::StackRecoveryError::AncestorCertificateCommitteeMismatch.into());
+    }
     if upstream.ancestors.is_empty() {
         return validate_certified_follower_recovery_record(
             crate::stack::recovery::anchor::FollowerRecoveryBlock {
@@ -140,7 +152,7 @@ pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
                 block: local_block,
             },
             local_finalization
-                .ok_or_else(|| eyre::eyre!("missing normalized direct recovery certificate"))?,
+                .ok_or(crate::errors::StackRecoveryError::MissingDirectRecoveryCertificate)?,
             &certified.finalization,
             &certified.block,
             schemes,
@@ -148,24 +160,29 @@ pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
     }
     let scheme = schemes
         .scoped(epoch)
-        .ok_or_else(|| eyre::eyre!("missing recovery ancestor committee"))?;
+        .ok_or(crate::errors::StackRecoveryError::MissingRecoveryAncestorCommittee)?;
     let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
-    ensure!(
-        certified
-            .finalization
-            .verify(&mut rng, scheme.as_ref(), &commonware_parallel::Sequential,),
-        "recovery descendant certificate failed verification"
-    );
+    if !certified
+        .finalization
+        .verify(&mut rng, scheme.as_ref(), &commonware_parallel::Sequential)
+    {
+        return Err(
+            crate::errors::StackRecoveryError::DescendantCertificateVerificationFailed.into(),
+        );
+    }
     if let Some(local) = local_finalization {
-        ensure!(
-            local.proposal.payload.0 == canonical_hash && local.proposal.round.epoch() == epoch,
-            "local recovery certificate conflicts with authenticated ancestor"
-        );
+        if local.proposal.payload.0 != canonical_hash || local.proposal.round.epoch() != epoch {
+            return Err(
+                crate::errors::StackRecoveryError::LocalCertificateConflictsWithAncestor.into(),
+            );
+        }
         let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
-        ensure!(
-            local.verify(&mut rng, scheme.as_ref(), &commonware_parallel::Sequential),
-            "local recovery ancestor certificate failed verification"
-        );
+        if !local.verify(&mut rng, scheme.as_ref(), &commonware_parallel::Sequential) {
+            return Err(
+                crate::errors::StackRecoveryError::LocalAncestorCertificateVerificationFailed
+                    .into(),
+            );
+        }
     }
     Ok(CertifiedFollowerRecoveryAnchor {
         checkpoint: ProjectionCheckpoint {
@@ -193,68 +210,100 @@ pub(in crate::stack) fn validate_certified_follower_recovery_record(
         block: local_block,
     } = local;
 
-    ensure!(
-        local_block.number() == height,
-        "local archived block reports height {}, expected {height}",
-        local_block.number(),
-    );
-    ensure!(
-        upstream_block.number() == height,
-        "upstream certified block reports height {}, expected {height}",
-        upstream_block.number(),
-    );
-    ensure!(
-        local_block.block_hash() == canonical_hash,
-        "local archived block hash {} differs from canonical Reth hash {canonical_hash} at height {height}",
-        local_block.block_hash(),
-    );
-    ensure!(
-        upstream_block.block_hash() == canonical_hash,
-        "upstream certified block hash {} differs from canonical Reth hash {canonical_hash} at height {height}",
-        upstream_block.block_hash(),
-    );
-    ensure!(
-        local_finalization.proposal.payload.0 == canonical_hash,
-        "local archived finalization payload {} differs from canonical Reth hash {canonical_hash} at height {height}",
-        local_finalization.proposal.payload.0,
-    );
-    ensure!(
-        upstream_finalization.proposal.payload.0 == canonical_hash,
-        "upstream finalization payload {} differs from canonical Reth hash {canonical_hash} at height {height}",
-        upstream_finalization.proposal.payload.0,
-    );
+    if local_block.number() != height {
+        return Err(
+            crate::errors::StackRecoveryError::LocalArchivedBlockHeightMismatch {
+                actual: local_block.number(),
+                expected: height,
+            }
+            .into(),
+        );
+    }
+    if upstream_block.number() != height {
+        return Err(
+            crate::errors::StackRecoveryError::UpstreamCertifiedBlockHeightMismatch {
+                actual: upstream_block.number(),
+                expected: height,
+            }
+            .into(),
+        );
+    }
+    if local_block.block_hash() != canonical_hash {
+        return Err(
+            crate::errors::StackRecoveryError::LocalArchivedBlockHashMismatch {
+                actual: local_block.block_hash(),
+                canonical_hash,
+                height,
+            }
+            .into(),
+        );
+    }
+    if upstream_block.block_hash() != canonical_hash {
+        return Err(
+            crate::errors::StackRecoveryError::UpstreamCertifiedBlockHashMismatch {
+                actual: upstream_block.block_hash(),
+                canonical_hash,
+                height,
+            }
+            .into(),
+        );
+    }
+    if local_finalization.proposal.payload.0 != canonical_hash {
+        return Err(
+            crate::errors::StackRecoveryError::LocalFinalizationPayloadMismatch {
+                actual: local_finalization.proposal.payload.0,
+                canonical_hash,
+                height,
+            }
+            .into(),
+        );
+    }
+    if upstream_finalization.proposal.payload.0 != canonical_hash {
+        return Err(
+            crate::errors::StackRecoveryError::UpstreamFinalizationPayloadMismatch {
+                actual: upstream_finalization.proposal.payload.0,
+                canonical_hash,
+                height,
+            }
+            .into(),
+        );
+    }
     let local_epoch = local_finalization.proposal.round.epoch();
     let upstream_epoch = upstream_finalization.proposal.round.epoch();
-    ensure!(
-        local_epoch == upstream_epoch,
-        "local archived finalization epoch {} differs from authenticated upstream epoch {} at height {height}",
-        local_epoch.get(),
-        upstream_epoch.get(),
-    );
+    if local_epoch != upstream_epoch {
+        return Err(
+            crate::errors::StackRecoveryError::FinalizationEpochMismatch {
+                local_epoch: local_epoch.get(),
+                upstream_epoch: upstream_epoch.get(),
+                height,
+            }
+            .into(),
+        );
+    }
     let scheme = schemes.scoped(local_epoch).ok_or_else(|| {
-        eyre::eyre!(
-            "certified follower has no verifier scheme for recovery epoch {}",
-            local_epoch.get()
-        )
+        crate::errors::StackRecoveryError::MissingRecoveryEpochVerifierScheme(local_epoch.get())
     })?;
     let mut local_rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
-    ensure!(
-        local_finalization.verify(
-            &mut local_rng,
-            scheme.as_ref(),
-            &commonware_parallel::Sequential,
-        ),
-        "local archived finalization certificate failed verification at height {height}",
-    );
+    if !local_finalization.verify(
+        &mut local_rng,
+        scheme.as_ref(),
+        &commonware_parallel::Sequential,
+    ) {
+        return Err(
+            crate::errors::StackRecoveryError::LocalFinalizationVerificationFailed(height).into(),
+        );
+    }
     let mut upstream_rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
-    ensure!(
-        upstream_finalization.verify(
-            &mut upstream_rng,
-            scheme.as_ref(),
-            &commonware_parallel::Sequential,
-        ),
-        "upstream finalization certificate failed verification at height {height}",
-    );
+    if !upstream_finalization.verify(
+        &mut upstream_rng,
+        scheme.as_ref(),
+        &commonware_parallel::Sequential,
+    ) {
+        return Err(
+            crate::errors::StackRecoveryError::UpstreamFinalizationVerificationFailed(height)
+                .into(),
+        );
+    }
 
     Ok(CertifiedFollowerRecoveryAnchor {
         checkpoint: ProjectionCheckpoint {
@@ -281,24 +330,27 @@ pub(in crate::stack) fn reconcile_recovered_execution_head(
     recovered: Option<RecoveredApplicationFinalization>,
 ) -> Result<(u64, B256, Option<Round>)> {
     if last_execution_height == 0 {
-        ensure!(
-            recovered.is_none(),
-            "marshal returned a finalization record for genesis execution height"
-        );
+        if recovered.is_some() {
+            return Err(crate::errors::StackRecoveryError::MarshalFinalizationAtGenesis.into());
+        }
         return Ok((0, last_execution_hash, None));
     }
 
-    let recovered = recovered.ok_or_else(|| {
-        eyre::eyre!(
-            "marshal returned no finalization for non-genesis execution height {last_execution_height}"
-        )
-    })?;
-    ensure!(
-        recovered.digest.0 == last_execution_hash,
-        "marshal finalization digest mismatch at execution height {last_execution_height}: \
-         execution={last_execution_hash}, marshal={}",
-        recovered.digest.0
-    );
+    let recovered = recovered.ok_or(
+        crate::errors::StackRecoveryError::MarshalFinalizationMissingForHeight(
+            last_execution_height,
+        ),
+    )?;
+    if recovered.digest.0 != last_execution_hash {
+        return Err(
+            crate::errors::StackRecoveryError::MarshalFinalizationDigestMismatch {
+                height: last_execution_height,
+                execution: last_execution_hash,
+                marshal: recovered.digest.0,
+            }
+            .into(),
+        );
+    }
 
     Ok((
         last_execution_height,

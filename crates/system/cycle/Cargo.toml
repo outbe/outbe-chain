@@ -27,6 +27,7 @@ outbe-credisfactory.workspace = true
 outbe-nod.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

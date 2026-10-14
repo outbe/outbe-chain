@@ -11,6 +11,8 @@ use outbe_primitives::tee_attestation_v1::{
     RegistrationIntentV1, TeeMeasurementRuleV1, TeePolicyV1, INTEL_QE_VENDOR_ID,
 };
 
+use outbe_tee::errors::DcapFixtureError;
+
 #[path = "outbe-dcap-fixture/assemble.rs"]
 mod assemble;
 #[path = "outbe-dcap-fixture/cli.rs"]
@@ -27,19 +29,15 @@ fn main() {
     }
 }
 
-fn run(arguments: &[String]) -> Result<(), String> {
+fn run(arguments: &[String]) -> Result<(), DcapFixtureError> {
     match arguments.get(1).map(String::as_str) {
         Some("prepare") => prepare(arguments),
         Some("assemble") => assemble::run(arguments),
-        _ => Err(
-            "usage: outbe-dcap-fixture prepare --mrenclave <hex32> --mrsigner <hex32> \
-             --isv-prod-id <u16> --isv-svn <u16> --timestamp <u64> --output-dir <empty-dir>"
-                .to_owned(),
-        ),
+        _ => Err(DcapFixtureError::Usage),
     }
 }
 
-fn prepare(arguments: &[String]) -> Result<(), String> {
+fn prepare(arguments: &[String]) -> Result<(), DcapFixtureError> {
     let mrenclave = parse_hex32(&argument(arguments, "--mrenclave")?)?;
     let mrsigner = parse_hex32(&argument(arguments, "--mrsigner")?)?;
     let isv_prod_id = parse_u16(&argument(arguments, "--isv-prod-id")?, "isv-prod-id")?;
@@ -52,13 +50,13 @@ fn prepare(arguments: &[String]) -> Result<(), String> {
     let intent = intent(&policy, timestamp)?;
     let policy_bytes = policy
         .encode_canonical()
-        .map_err(|error| format!("encode TeePolicyV1: {error}"))?;
+        .map_err(DcapFixtureError::encode_tee_policy)?;
     let intent_bytes = intent
         .encode_canonical()
-        .map_err(|error| format!("encode RegistrationIntentV1: {error}"))?;
+        .map_err(DcapFixtureError::encode_registration_intent)?;
     let report_data = intent
         .report_data()
-        .map_err(|error| format!("derive RegistrationIntentV1 report_data: {error}"))?;
+        .map_err(DcapFixtureError::derive_report_data)?;
 
     write_new(&output_dir.join("policy.bin"), &policy_bytes)?;
     write_new(&output_dir.join("intent.bin"), &intent_bytes)?;
@@ -72,7 +70,7 @@ fn prepare(arguments: &[String]) -> Result<(), String> {
         "isv_svn": isv_svn,
         "report_data": hex::encode(report_data),
     }))
-    .map_err(|error| format!("encode capture metadata: {error}"))?;
+    .map_err(DcapFixtureError::encode_capture_metadata)?;
     let mut metadata_with_newline = metadata;
     metadata_with_newline.push(b'\n');
     write_new(
@@ -86,7 +84,7 @@ fn policy(
     mrsigner: [u8; 32],
     isv_prod_id: u16,
     isv_svn: u16,
-) -> Result<TeePolicyV1, String> {
+) -> Result<TeePolicyV1, DcapFixtureError> {
     Ok(TeePolicyV1 {
         policy_version: 1,
         chain_id: [0x11; 32],
@@ -120,14 +118,14 @@ fn policy(
     })
 }
 
-fn intent(policy: &TeePolicyV1, timestamp: u64) -> Result<RegistrationIntentV1, String> {
+fn intent(policy: &TeePolicyV1, timestamp: u64) -> Result<RegistrationIntentV1, DcapFixtureError> {
     let reth_p2p_public = k256::ecdsa::SigningKey::from_bytes((&[0x77; 32]).into())
-        .map_err(|error| format!("construct fixture NodeHost key: {error}"))?
+        .map_err(DcapFixtureError::construct_fixture_node_host_key)?
         .verifying_key()
         .to_encoded_point(true)
         .as_bytes()
         .try_into()
-        .map_err(|_| "encode fixture NodeHost key".to_owned())?;
+        .map_err(DcapFixtureError::encode_fixture_node_host_key)?;
     Ok(RegistrationIntentV1 {
         chain_id: policy.chain_id,
         genesis_hash: policy.genesis_hash,
@@ -135,7 +133,7 @@ fn intent(policy: &TeePolicyV1, timestamp: u64) -> Result<RegistrationIntentV1, 
         attestation_mode: AttestationMode::DcapRequired,
         policy_hash: policy
             .policy_hash()
-            .map_err(|error| format!("hash TeePolicyV1: {error}"))?,
+            .map_err(DcapFixtureError::hash_tee_policy)?,
         node_id: NodeIdV1 { reth_p2p_public },
         enclave_id: B256::repeat_byte(0x99),
         binding_id: B256::repeat_byte(0xaa),
@@ -145,7 +143,7 @@ fn intent(policy: &TeePolicyV1, timestamp: u64) -> Result<RegistrationIntentV1, 
         transition_nonce: 0,
         requested_valid_until: timestamp
             .checked_add(86_400)
-            .ok_or_else(|| "requested_valid_until overflows u64".to_owned())?,
+            .ok_or(DcapFixtureError::RequestedValidUntilOverflowsU64)?,
         recipient_x25519: [0xbb; 32],
         attestation_ed25519: [0xcc; 32],
         noise_responder_x25519: [0xdd; 32],
@@ -153,15 +151,13 @@ fn intent(policy: &TeePolicyV1, timestamp: u64) -> Result<RegistrationIntentV1, 
     })
 }
 
-fn parse_u16(value: &str, label: &str) -> Result<u16, String> {
-    value
-        .parse()
-        .map_err(|_| format!("{label} is not a canonical u16"))
+fn parse_u16(value: &str, label: &'static str) -> Result<u16, DcapFixtureError> {
+    value.parse().map_err(DcapFixtureError::invalid_u16(label))
 }
 
-fn parse_hex32(value: &str) -> Result<[u8; 32], String> {
+fn parse_hex32(value: &str) -> Result<[u8; 32], DcapFixtureError> {
     if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("expected exactly 32 hexadecimal bytes".to_owned());
+        return Err(DcapFixtureError::ExpectedHex32);
     }
     let mut decoded = [0u8; 32];
     for (index, byte) in decoded.iter_mut().enumerate() {
@@ -171,11 +167,11 @@ fn parse_hex32(value: &str) -> Result<[u8; 32], String> {
     Ok(decoded)
 }
 
-fn hex_nibble(value: u8) -> Result<u8, String> {
+fn hex_nibble(value: u8) -> Result<u8, DcapFixtureError> {
     match value {
         b'0'..=b'9' => Ok(value - b'0'),
         b'a'..=b'f' => Ok(value - b'a' + 10),
         b'A'..=b'F' => Ok(value - b'A' + 10),
-        _ => Err("invalid hexadecimal digit".to_owned()),
+        _ => Err(DcapFixtureError::InvalidHexDigit),
     }
 }

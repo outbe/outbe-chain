@@ -7,9 +7,9 @@ use super::LocalResultRestorePolicyV1;
 use super::LocalVoteEligibilityV1;
 use super::RequestLocatorV1;
 use super::RuntimeJobV1;
+use crate::errors::OcompExExError;
 
 use alloy_primitives::B256;
-use eyre::bail;
 use eyre::Context as _;
 use outbe_ocomp::discovery_control::DiscoveryOfferRefV1;
 use outbe_ocomp::embedded::EmbeddedJobEventV1;
@@ -164,24 +164,24 @@ where
         let finalized = record
             .finalized
             .as_ref()
-            .ok_or_else(|| eyre::eyre!("OCOMP finalized payload disappeared"))?;
+            .ok_or(OcompExExError::FinalizedPayloadDisappeared)?;
         if (
             finalized.finalized_request_block_hash,
             finalized.finalized_request_state_root,
         ) != (locator.block_hash, locator.state_root)
         {
-            bail!("OCOMP finalized job disagrees with its request block identity");
+            return Err(OcompExExError::FinalizedJobRequestBlockIdentityMismatch.into());
         }
         let job_id = record
             .intent
             .job_id(locator.block_hash, locator.state_root, limits)
             .wrap_err("derive finalized OCOMP JobId")?;
         if job_id != finalized.job_id {
-            bail!("OCOMP finalized job carries a conflicting JobId");
+            return Err(OcompExExError::FinalizedJobConflictingJobId.into());
         }
         if let Some(existing) = self.intent_jobs.insert(locator.intent_id, job_id) {
             if existing != job_id {
-                bail!("OCOMP intent replay resolved to a conflicting JobId");
+                return Err(OcompExExError::IntentReplayConflictingJobId.into());
             }
         }
         Ok(job_id)
@@ -205,7 +205,7 @@ where
         let finalized = record
             .finalized
             .as_ref()
-            .ok_or_else(|| eyre::eyre!("OCOMP finalized payload disappeared"))?;
+            .ok_or(OcompExExError::FinalizedPayloadDisappeared)?;
         let generation = self
             .state
             .observe_job(job_id, finalized.deadline_height)
@@ -276,13 +276,13 @@ where
             disposition,
             CanonicalJobDispositionV1::Closed { .. } | CanonicalJobDispositionV1::Completed
         ) {
-            bail!("released OCOMP job is not canonically terminal");
+            return Err(OcompExExError::ReleasedJobNotCanonicallyTerminal.into());
         }
         self.verify_released_export_ack(locator, record, job_id, limits)?;
         let finalized = record
             .finalized
             .as_ref()
-            .ok_or_else(|| eyre::eyre!("OCOMP finalized payload disappeared"))?;
+            .ok_or(OcompExExError::FinalizedPayloadDisappeared)?;
         Ok(vec![(
             released.source_generation,
             outbe_node::ocomp::retention::FinalizedJobPinV1 {
@@ -311,12 +311,14 @@ where
         let mut selected = None;
         for (source_generation, retained) in retained_candidates {
             if !retained_pin_matches_finalized(&retained, locator, record, job_id, input_lease_id) {
-                bail!("OCOMP retained pin disagrees with finalized typed state");
+                return Err(OcompExExError::RetainedPinDisagreesWithFinalizedState.into());
             }
             let candidate = discovery_record(locator, record, job_id, source_generation, limits)?;
             if self.candidate_has_durable_authority(&candidate, record, limits)? {
                 if selected.replace(candidate).is_some() {
-                    bail!("multiple OCOMP discovery generations have durable authority");
+                    return Err(
+                        OcompExExError::MultipleDiscoveryGenerationsHaveDurableAuthority.into(),
+                    );
                 }
             } else if fallback.is_none() {
                 fallback = Some(candidate);
@@ -324,7 +326,7 @@ where
         }
         selected
             .or(fallback)
-            .ok_or_else(|| eyre::eyre!("OCOMP retention returned no discovery generation"))
+            .ok_or_else(|| OcompExExError::RetentionReturnedNoDiscoveryGeneration.into())
     }
 
     fn candidate_has_durable_authority(
@@ -336,12 +338,9 @@ where
         let spool = self
             .discovery_spools
             .get(&record.intent.protocol_bundle_hash)
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "OCOMP discovery spool is missing for bundle {}",
-                    record.intent.protocol_bundle_hash
-                )
-            })?;
+            .ok_or(OcompExExError::DiscoverySpoolMissingForBundle(
+                record.intent.protocol_bundle_hash,
+            ))?;
         let probe = DiscoveryOfferRefV1::from_spec(
             self.chain_id,
             self.genesis_hash,
@@ -434,7 +433,7 @@ where
         let compute_started = self
             .jobs
             .get(&job_id)
-            .ok_or_else(|| eyre::eyre!("embedded OCOMP job disappeared"))?
+            .ok_or(OcompExExError::EmbeddedJobDisappeared)?
             .compute_started;
         if local_result_restore_policy(
             disposition,
@@ -462,7 +461,7 @@ where
             let compute_started = self
                 .jobs
                 .get(&job_id)
-                .ok_or_else(|| eyre::eyre!("embedded OCOMP job disappeared"))?
+                .ok_or(OcompExExError::EmbeddedJobDisappeared)?
                 .compute_started;
             if local_result_restore_policy(
                 disposition,
@@ -488,7 +487,7 @@ where
         let finalized = record
             .finalized
             .as_ref()
-            .ok_or_else(|| eyre::eyre!("OCOMP finalized payload disappeared"))?;
+            .ok_or(OcompExExError::FinalizedPayloadDisappeared)?;
         if height >= finalized.deadline_height
             && matches!(
                 self.state.state(job_id),

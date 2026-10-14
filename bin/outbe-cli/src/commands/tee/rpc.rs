@@ -1,5 +1,5 @@
 use crate::abi;
-
+use crate::errors::TeeRpcError;
 use crate::rpc::Rpc;
 
 use alloy_primitives::keccak256;
@@ -41,15 +41,14 @@ pub(super) async fn refresh_call_context(
         )
         .await?;
     let version = U256::abi_decode(&bytes)?;
-    eyre::ensure!(
-        version <= U256::from(u32::MAX),
-        "active protocol version overflow"
-    );
+    if version > U256::from(u32::MAX) {
+        return Err(TeeRpcError::ProtocolVersionOverflow.into());
+    }
     let genesis = rpc.eth_get_block_by_number(0).await?;
     let genesis_hash: B256 = genesis
         .get("hash")
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("genesis RPC block has no hash"))?
+        .ok_or(TeeRpcError::MissingGenesisHash)?
         .parse()?;
     outbe_tee::call_context::set_snapshot(EnclaveCallContextV1 {
         kind: EnclaveContextKindV1::Snapshot,
@@ -137,7 +136,7 @@ pub(super) fn json_hex_bytes(value: &serde_json::Value, field: &str) -> Result<V
     let raw = value
         .get(field)
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("RPC response has no {field}"))?;
+        .ok_or_else(|| TeeRpcError::MissingField(field.to_owned()))?;
     hex::decode(raw.trim_start_matches("0x")).wrap_err_with(|| format!("decode RPC {field}"))
 }
 
@@ -145,12 +144,12 @@ pub(super) fn json_hex_array(value: &serde_json::Value, field: &str) -> Result<V
     value
         .get(field)
         .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| eyre::eyre!("RPC response has no {field} array"))?
+        .ok_or_else(|| TeeRpcError::MissingArrayField(field.to_owned()))?
         .iter()
         .map(|item| {
             let raw = item
                 .as_str()
-                .ok_or_else(|| eyre::eyre!("RPC {field} contains a non-string node"))?;
+                .ok_or_else(|| TeeRpcError::NonStringArrayNode(field.to_owned()))?;
             hex::decode(raw.trim_start_matches("0x"))
                 .wrap_err_with(|| format!("decode RPC {field} node"))
         })
@@ -161,7 +160,7 @@ pub(super) fn json_hex_u64_field(value: &serde_json::Value, field: &str) -> Resu
     let raw = value
         .get(field)
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("RPC response has no {field}"))?;
+        .ok_or_else(|| TeeRpcError::MissingField(field.to_owned()))?;
     u64::from_str_radix(raw.trim_start_matches("0x"), 16)
         .wrap_err_with(|| format!("decode RPC {field}"))
 }
@@ -170,16 +169,21 @@ pub(super) fn json_hex_u256_field(value: &serde_json::Value, field: &str) -> Res
     let raw = value
         .get(field)
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("RPC response has no {field}"))?;
-    U256::from_str_radix(raw.trim_start_matches("0x"), 16)
-        .map_err(|error| eyre::eyre!("decode RPC {field}: {error}"))
+        .ok_or_else(|| TeeRpcError::MissingField(field.to_owned()))?;
+    U256::from_str_radix(raw.trim_start_matches("0x"), 16).map_err(|source| {
+        TeeRpcError::DecodeU256Field {
+            field: field.to_owned(),
+            source,
+        }
+        .into()
+    })
 }
 
 pub(super) fn json_b256_field(value: &serde_json::Value, field: &str) -> Result<B256> {
     let raw = value
         .get(field)
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("RPC response has no {field}"))?;
+        .ok_or_else(|| TeeRpcError::MissingField(field.to_owned()))?;
     raw.parse::<B256>()
         .wrap_err_with(|| format!("decode RPC {field}"))
 }

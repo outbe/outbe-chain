@@ -115,16 +115,15 @@ pub(crate) fn write_once_0600(path: &std::path::Path, data: &[u8]) -> std::io::R
 pub fn unseal_tribute_offer_and_group_sig_on_boot(
     cfg: &EnclaveBootConfig,
     network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
-) -> Result<Option<DerivedTributeOfferKey>, String> {
+) -> EnclaveResult<Option<DerivedTributeOfferKey>> {
     let path = cfg.sealed_root_path();
     let blob = match std::fs::read(&path) {
         Ok(blob) => blob,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
-            return Err(format!(
-                "read sealed permanent offer key {}: {error}; no recovery or fallback exists",
-                path.display()
-            ));
+            return Err(
+                TransportDispatchError::read_sealed_permanent_offer_key(&path, error).into(),
+            );
         }
     };
     match crate::sgx_sealing::unseal_bound(&blob, network_binding, cfg.isv_svn) {
@@ -144,10 +143,9 @@ pub fn unseal_tribute_offer_and_group_sig_on_boot(
                 ),
             ))
         }
-        Err(error) => Err(format!(
-            "unseal permanent offer key {} failed: {error}; this identity has lost its key and no recovery or fallback exists",
-            path.display()
-        )),
+        Err(error) => {
+            Err(TransportDispatchError::unseal_permanent_offer_key_failed(&path, error).into())
+        }
     }
 }
 
@@ -155,11 +153,11 @@ pub(in crate::transport) fn persist_offer_key_required(
     cfg: &EnclaveBootConfig,
     network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
     derived: &DerivedTributeOfferKey,
-) -> Result<(), String> {
+) -> EnclaveResult<()> {
     let path = cfg.sealed_root_path();
     let mut nonce = [0u8; 12];
     ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut nonce)
-        .map_err(|_| "offer-key seal nonce RNG failed".to_string())?;
+        .map_err(|_| TransportDispatchError::OfferKeySealNonceRngFailed)?;
     let header = SealHeader {
         format_version: SEAL_FORMAT,
         key_policy: KeyPolicy::MrEnclaveAndSigner,
@@ -174,28 +172,25 @@ pub(in crate::transport) fn persist_offer_key_required(
         network_binding,
         &header,
     )
-    .map_err(|error| format!("seal permanent offer key: {error}"))?;
+    .map_err(TransportDispatchError::seal_permanent_offer_key)?;
     match write_once_0600(&path, &blob) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             let existing = std::fs::read(&path)
-                .map_err(|error| format!("read concurrent sealed offer key: {error}"))?;
+                .map_err(TransportDispatchError::read_concurrent_sealed_offer_key)?;
             let existing =
                 crate::sgx_sealing::unseal_bound(&existing, network_binding, cfg.isv_svn)
-                    .map_err(|error| format!("verify existing sealed offer key: {error}"))?;
+                    .map_err(TransportDispatchError::verify_existing_sealed_offer_key)?;
             if existing.tribute_offer_secret.as_ref() != derived.secret()
                 || existing.group_sig.as_slice() != derived.group_sig()
                 || existing.header.key_epoch != derived.key_epoch()
                 || existing.header.tribute_offer_epoch != derived.tribute_offer_epoch()
             {
-                return Err("existing sealed offer key differs from onboarding result".into());
+                return Err(TransportDispatchError::ExistingSealedOfferKeyDiffers.into());
             }
             Ok(())
         }
-        Err(error) => Err(format!(
-            "write sealed offer key {}: {error}",
-            path.display()
-        )),
+        Err(error) => Err(TransportDispatchError::write_sealed_offer_key(&path, error).into()),
     }
 }
 
@@ -207,11 +202,11 @@ pub(in crate::transport) fn persist_then_activate_offer_key(
     network_binding: NetworkBindingV1,
     offer_key: &SharedTributeOfferKey,
     derived: DerivedTributeOfferKey,
-) -> Result<(), String> {
+) -> EnclaveResult<()> {
     persist_offer_key_required(boot, network_binding, &derived)?;
     if let Err(rejected) = offer_key.set(derived) {
         if offer_key.get().map(DerivedTributeOfferKey::public) != Some(rejected.public()) {
-            return Err("offer key divergence after durable persistence".to_string());
+            return Err(TransportDispatchError::OfferKeyDivergenceAfterPersistence.into());
         }
     }
     Ok(())

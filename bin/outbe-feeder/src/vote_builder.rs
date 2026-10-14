@@ -9,6 +9,7 @@ use outbe_primitives::asset_type::AssetType;
 
 use crate::abi::IOracle;
 use crate::aggregator::AggregatedPrice;
+use crate::errors::VoteDecodeError;
 
 /// Render an already validated Oracle asset for log lines.
 fn show_asset(address: Address) -> String {
@@ -23,8 +24,7 @@ fn show_asset(address: Address) -> String {
 ///
 /// Shows exactly what goes on-chain: `COEN/840:rate,vol | ETH/840:rate,vol`
 pub fn decode_vote_log(calldata: &[u8]) -> eyre::Result<String> {
-    let call = IOracle::submitVoteCall::abi_decode(calldata)
-        .map_err(|e| eyre::eyre!("decode submitVote: {e}"))?;
+    let call = IOracle::submitVoteCall::abi_decode(calldata).map_err(VoteDecodeError::AbiDecode)?;
     let parts: Vec<String> = call
         .tuples
         .iter()
