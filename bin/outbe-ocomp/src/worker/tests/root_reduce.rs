@@ -19,7 +19,6 @@ fn root_reduce_rejects_finalized_payload_that_no_longer_matches_coverage_header(
                 entry_price_minor: U256::from(2),
                 issuance_currency: 840,
                 reference_currency: 978,
-                exclude_from_intex_issuance: false,
             }],
             checked_segment_gratis_total: U256::from(1),
             checked_segment_nominal_total: U256::from(10),

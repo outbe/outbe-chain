@@ -55,7 +55,6 @@ pub struct AmountRecordV1 {
     pub entry_price_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
-    pub exclude_from_intex_issuance: bool,
 }
 
 struct AmountMathV1 {
@@ -531,7 +530,6 @@ fn amount_record(
             entry_price_minor,
             issuance_currency: item.tribute.issuance_currency,
             reference_currency: item.tribute.reference_currency,
-            exclude_from_intex_issuance: item.tribute.exclude_from_intex_issuance,
         },
         nominal_amount_minor: item.tribute.nominal_amount_minor,
         gratis_load_minor,

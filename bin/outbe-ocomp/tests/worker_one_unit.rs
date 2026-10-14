@@ -1843,7 +1843,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
                     entry_price_minor: U256::from(2),
                     issuance_currency: 840,
                     reference_currency: 978,
-                    exclude_from_intex_issuance: raw_ordinal == 0,
                 }
             })
             .collect::<Vec<_>>();

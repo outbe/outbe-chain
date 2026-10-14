@@ -52,8 +52,6 @@ struct CorpusTribute {
     nominal: String,
     reference_currency: u16,
     tribute_price: String,
-    #[serde(rename = "excluded")]
-    _excluded: bool,
     f1: Option<u16>,
     f2: Option<u16>,
     entry_price: Option<String>,

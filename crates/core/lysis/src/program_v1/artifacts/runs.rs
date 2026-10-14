@@ -105,7 +105,6 @@ pub fn encode_amount_run(
         encoded.write_u256(record.entry_price_minor)?;
         encoded.write_u16(record.issuance_currency)?;
         encoded.write_u16(record.reference_currency)?;
-        encoded.write_bool(record.exclude_from_intex_issuance)?;
     }
     Ok(encoded.into_bytes())
 }
@@ -142,7 +141,6 @@ pub fn decode_amount_run(
             entry_price_minor: input.read_u256()?,
             issuance_currency: input.read_u16()?,
             reference_currency: input.read_u16()?,
-            exclude_from_intex_issuance: input.read_bool()?,
         });
     }
     input.finish()?;
@@ -280,7 +278,6 @@ pub fn encode_enumerated_run(
         output.write_u16(record.tribute.issuance_currency)?;
         output.write_u16(record.tribute.reference_currency)?;
         output.write_u256(record.tribute.tribute_price_minor)?;
-        output.write_bool(record.tribute.exclude_from_intex_issuance)?;
     }
     Ok(output.into_bytes())
 }
@@ -319,7 +316,6 @@ pub fn decode_enumerated_run(
                 nominal_amount_minor: U256::ZERO,
                 reference_currency: input.read_u16()?,
                 tribute_price_minor: input.read_u256()?,
-                exclude_from_intex_issuance: input.read_bool()?,
             },
         });
     }

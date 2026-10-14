@@ -27,7 +27,7 @@ fn primary_work_is_unbounded_in_total_and_partitioned_in_exact_256_record_shards
 fn enumerate_artifact_is_bounded_canonical_and_commits_raw_coverage() {
     let limits = poc_schema_limits();
     let day = WorldwideDay::new(20_260_724);
-    let mut tributes = vec![tribute(1, day, 10, false), tribute(2, day, 20, true)];
+    let mut tributes = vec![tribute(1, day, 10), tribute(2, day, 20)];
     tributes.sort_by_key(|tribute| tribute.tribute_id);
     let run = enumerate_tributes(256, day, &tributes).unwrap();
 
@@ -54,12 +54,12 @@ fn enumerate_rejects_empty_oversized_and_noncanonical_shards() {
     assert!(enumerate_tributes(0, day, &[]).is_err());
 
     let mut oversized = (0..257)
-        .map(|index| tribute(index + 1, day, 1, false))
+        .map(|index| tribute(index + 1, day, 1))
         .collect::<Vec<_>>();
     oversized.sort_by_key(|tribute| tribute.tribute_id);
     assert!(enumerate_tributes(0, day, &oversized).is_err());
 
-    let duplicate = tribute(1, day, 1, false);
+    let duplicate = tribute(1, day, 1);
     assert!(enumerate_tributes(0, day, &[duplicate.clone(), duplicate]).is_err());
 }
 
@@ -67,10 +67,7 @@ fn enumerate_rejects_empty_oversized_and_noncanonical_shards() {
 fn fidelity_map_artifact_is_bounded_canonical_and_preserves_raw_coverage() {
     let limits = poc_schema_limits();
     let day = WorldwideDay::new(20_260_724);
-    let mut observed = vec![
-        observed(1, day, 10, 2, false),
-        observed(2, day, 20, 3, true),
-    ];
+    let mut observed = vec![observed(1, day, 10, 2), observed(2, day, 20, 3)];
     observed.sort_by_key(|item| item.tribute.tribute_id);
     let output = fidelity_map(256, &observed).unwrap();
 

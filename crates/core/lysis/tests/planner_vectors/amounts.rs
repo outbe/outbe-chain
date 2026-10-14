@@ -53,7 +53,6 @@ fn fidelity_map_and_fixed_reduce_match_the_native_lysis_fraction_table() {
                     nominal_amount_minor: U256::from(1_000_000_u64) * SCALE_1E6_U256,
                     reference_currency: 840,
                     tribute_price_minor: U256::ZERO,
-                    exclude_from_intex_issuance: ordinal.is_multiple_of(11),
                 },
                 first_league: ObservationValueV1::Value(league),
                 second_league: ObservationValueV1::Value(league),
@@ -108,7 +107,6 @@ fn fidelity_phase_rejects_missing_mismatched_and_non_adjacent_evidence() {
             nominal_amount_minor: SCALE_1E6_U256,
             reference_currency: 840,
             tribute_price_minor: U256::ZERO,
-            exclude_from_intex_issuance: false,
         },
         first_league: ObservationValueV1::Unavailable,
         second_league: ObservationValueV1::Value(7),
@@ -134,7 +132,7 @@ fn dust_cost_matches_between_worker_sequential_lysis_and_nod_settlement() {
         .into_iter()
         .enumerate()
         .map(|(index, load)| {
-            let mut item = observed(index as u32 + 1, day, load, 1, false);
+            let mut item = observed(index as u32 + 1, day, load, 1);
             item.tribute.reference_currency = 840;
             item.entry_price_minor = ObservationValueV1::Value(entry_price);
             item
@@ -213,7 +211,6 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
                     nominal_amount_minor: U256::from(1_000_000_u64) * SCALE_1E6_U256,
                     reference_currency: 840,
                     tribute_price_minor: U256::from(2_u8) * SCALE_1E6_U256,
-                    exclude_from_intex_issuance: ordinal.is_multiple_of(11),
                 },
                 first_league: ObservationValueV1::Value(league),
                 second_league: ObservationValueV1::Value(league),
@@ -422,7 +419,7 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
 }
 
 #[test]
-fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overflow() {
+fn output_finalize_commits_nominal_once_per_shard_and_checks_overflow() {
     let day = WorldwideDay::new(20_260_724);
     let make_record = |seed: u8| {
         let owner = Address::repeat_byte(seed);
@@ -436,7 +433,6 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
             entry_price_minor: SCALE_1E6_U256,
             issuance_currency: 840,
             reference_currency: 978,
-            exclude_from_intex_issuance: true,
         }
     };
     let run = |nominals: [U256; 2]| {

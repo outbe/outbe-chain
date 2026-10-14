@@ -16,7 +16,6 @@ pub struct TributeInputV1 {
     pub nominal_amount_minor: U256,
     pub reference_currency: u16,
     pub tribute_price_minor: U256,
-    pub exclude_from_intex_issuance: bool,
 }
 
 impl From<&TributeBodyV1> for TributeInputV1 {
@@ -29,7 +28,6 @@ impl From<&TributeBodyV1> for TributeInputV1 {
             nominal_amount_minor: body.nominal_amount_minor,
             reference_currency: body.reference_currency,
             tribute_price_minor: body.tribute_price_minor,
-            exclude_from_intex_issuance: body.exclude_from_intex_issuance,
         }
     }
 }
