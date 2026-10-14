@@ -65,7 +65,14 @@ fn reverted_issuance_rolls_back_overlay_compact_state_and_events() {
         seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
         let outcome: Result<()> = storage.with_checkpoint(|| {
-            api::add_nod(&storage, &scope, &parent, &body, U256::from(5))?;
+            api::add_nod(
+                &storage,
+                &scope,
+                &parent,
+                &body,
+                U256::from(5),
+                crate::test_support::sealed_terms(&storage, &body, U256::from(5)),
+            )?;
             assert!(api::get_item(&storage, &scope, &parent, body.nod_id)?.is_some());
             Err(PrecompileError::Revert("nested caller reverted".into()))
         });
@@ -106,12 +113,28 @@ fn membership_changes_preserve_bucket_body_and_commitment_until_last_removal() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
-        api::add_nod(&storage, &scope, &parent, &first, U256::from(5)).unwrap();
+        api::add_nod(
+            &storage,
+            &scope,
+            &parent,
+            &first,
+            U256::from(5),
+            crate::test_support::sealed_terms(&storage, &first, U256::from(5)),
+        )
+        .unwrap();
         let original = NodContract::new(storage.clone())
             .get_bucket_verified(&scope, &parent, bucket_id)
             .unwrap()
             .unwrap();
-        api::add_nod(&storage, &scope, &parent, &second, U256::from(5)).unwrap();
+        api::add_nod(
+            &storage,
+            &scope,
+            &parent,
+            &second,
+            U256::from(5),
+            crate::test_support::sealed_terms(&storage, &second, U256::from(5)),
+        )
+        .unwrap();
         let after_issue = NodContract::new(storage.clone())
             .get_bucket_verified(&scope, &parent, bucket_id)
             .unwrap()
@@ -221,7 +244,15 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         begin_block(storage.clone(), &scope).unwrap();
-        api::add_nod(&storage, &scope, &parent, &first, U256::from(5)).unwrap();
+        api::add_nod(
+            &storage,
+            &scope,
+            &parent,
+            &first,
+            U256::from(5),
+            crate::test_support::sealed_terms(&storage, &first, U256::from(5)),
+        )
+        .unwrap();
         let nod = NodContract::new(storage.clone());
         let original = nod
             .get_bucket_verified(&scope, &parent, bucket_id)
@@ -230,7 +261,15 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
         nod.bucket_nod_count
             .write(&first.bucket_key, u32::MAX)
             .unwrap();
-        let error = api::add_nod(&storage, &scope, &parent, &second, U256::from(5)).unwrap_err();
+        let error = api::add_nod(
+            &storage,
+            &scope,
+            &parent,
+            &second,
+            U256::from(5),
+            crate::test_support::sealed_terms(&storage, &second, U256::from(5)),
+        )
+        .unwrap_err();
         assert!(
             matches!(error, PrecompileError::Fatal(message) if message.contains("member index overflow"))
         );
@@ -513,7 +552,15 @@ fn seed_bucket_issued(
     body.issued_at = issuance.issued_at;
     body.bucket_key =
         crate::identity::bucket_key(body.worldwide_day, entry, issuance.reference_currency);
-    api::add_nod(storage, scope, parent, &body, entry).unwrap();
+    api::add_nod(
+        storage,
+        scope,
+        parent,
+        &body,
+        entry,
+        crate::test_support::sealed_terms(&storage, &body, entry),
+    )
+    .unwrap();
     WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key)
 }
 

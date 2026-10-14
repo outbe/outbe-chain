@@ -1,6 +1,4 @@
 use alloy_primitives::{Address, Bytes, U256};
-#[cfg(feature = "e2e-test")]
-use alloy_sol_types::SolCall;
 use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, mutate, view};
 use outbe_primitives::error::{PrecompileError, Result};
@@ -23,62 +21,6 @@ mod abi {
 }
 pub use abi::INodFactory;
 
-// Lysis issues a Nod over a certified generation. Only a throwaway build may
-// skip that.
-#[cfg(feature = "e2e-test")]
-alloy_sol_types::sol! {
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface INodFactoryTestArming {
-        function issueForTest(
-            address owner,
-            bytes32 creatorPublicKey,
-            uint32 worldwideDay,
-            uint256 gratisLoadMinor,
-            uint256 entryPriceMinor,
-            uint16 issuanceCurrency,
-            uint16 referenceCurrency,
-            uint64 issuedAt
-        ) external;
-    }
-}
-
-/// Issue one Nod straight to its owner. A non-zero `issuedAt` restamps the bucket,
-/// since calls and qualification count only days after it.
-#[cfg(feature = "e2e-test")]
-fn issue_for_test(
-    storage: &outbe_primitives::storage::StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    call: INodFactoryTestArming::issueForTestCall,
-) -> Result<()> {
-    use outbe_nod::schema::NodContract;
-    let day = outbe_primitives::time::WorldwideDay::new(call.worldwideDay);
-    let encrypted = outbe_tee::nod_mine::create_nod_for_test(
-        outbe_primitives::nod_encryption::NodTermsV2 {
-            chain_id: storage.chain_id()?,
-            nod_id: outbe_nod::identity::generate_nod_id(call.owner, day)?,
-            owner: call.owner,
-            worldwide_day: day,
-            league_id: 1,
-            entry_price_minor: call.entryPriceMinor,
-            issuance_currency: call.issuanceCurrency,
-            reference_currency: call.referenceCurrency,
-        },
-        call.creatorPublicKey.0,
-        call.gratisLoadMinor,
-    )
-    .map_err(|e| PrecompileError::Revert(e.to_string()))?;
-    runtime::issue_nod(storage, scope, parent, &encrypted)?;
-    if call.issuedAt != 0 {
-        let bucket_key =
-            outbe_nod::identity::bucket_key(day, call.entryPriceMinor, call.referenceCurrency);
-        NodContract::new(storage.clone())
-            .callable_bucket_issued_at
-            .write(&bucket_key, call.issuedAt)?;
-    }
-    Ok(())
-}
-
 /// Dispatches NodFactory calls through the block-scoped compressed-body lifecycle.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
@@ -90,10 +32,8 @@ pub fn dispatch(
     let ExecutionReaders { scope, parent } = readers;
     outbe_primitives::dispatch::reject_value(&value)?;
     #[cfg(feature = "e2e-test")]
-    if let Ok(call) = INodFactoryTestArming::issueForTestCall::abi_decode(data) {
-        outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
-        issue_for_test(&storage, scope, parent, call)?;
-        return Ok(Bytes::new());
+    if let Some(answer) = crate::test_arming::dispatch(&storage, scope, parent, data) {
+        return answer;
     }
     if data.get(..4)
         == Some(outbe_ocomp_protocol::abi::MATERIALIZE_CERTIFIED_NODS_SELECTOR.as_slice())

@@ -1,13 +1,10 @@
 pub mod api;
-pub mod called;
 pub mod config;
 pub mod constants;
 mod enclave_client;
 pub mod errors;
-pub(crate) mod expired;
-pub mod hooks;
 pub mod identity;
-mod index_keys;
+pub mod index_keys;
 mod issuance;
 mod metadata;
 pub mod openings;
@@ -35,7 +32,5 @@ pub use schema::{
 #[cfg(test)]
 mod adr006_tests;
 
-#[cfg(test)]
-mod called_tests;
 #[cfg(test)]
 mod tests;

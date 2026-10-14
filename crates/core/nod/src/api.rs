@@ -9,7 +9,7 @@ use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
-use crate::schema::{EffectiveState, NodBucketState, NodContract, NodItemState};
+use crate::schema::{CallTerms, EffectiveState, NodBucketState, NodContract, NodItemState};
 
 /// Derives the current entitlement state without waiting for sweep cleanup.
 /// Paid entitlements survive expiry; the settlement deadline is inclusive.
@@ -146,17 +146,19 @@ impl LoadedNodBucket {
 }
 
 /// Inserts a Nod item, increments membership and creates its bucket if absent atomically.
+/// A new bucket seals `call_terms`; NodFactory derives them from the live profile.
 pub fn add_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     item: &NodItemState,
     entry_price_minor: U256,
+    call_terms: Option<CallTerms>,
 ) -> Result<()> {
     let mut nod = NodContract::new(storage.clone());
-    storage
-        .clone()
-        .with_checkpoint(|| nod.record_nod_issued(scope, parent, item, entry_price_minor))
+    storage.clone().with_checkpoint(|| {
+        nod.record_nod_issued(scope, parent, item, entry_price_minor, call_terms)
+    })
 }
 
 /// Removes a loaded Nod item and decrements membership, deleting the bucket only if empty.

@@ -8,14 +8,14 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::NOD_FACTORY_ADDRESS;
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
 use outbe_common::pow;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodBucket, LoadedNodItem};
-use outbe_nod::schema::{NodBucketState, NodContract, NodItemState};
+use outbe_nod::schema::{CallTerms, NodBucketState, NodContract, NodItemState};
 use outbe_primitives::nod_encryption::EncryptedNodV2;
 
 use crate::errors::NodFactoryError;
@@ -85,7 +85,15 @@ pub(crate) fn issue_nod_at(
         terms.entry_price_minor,
         nod_api::calculation_amount(&item)?,
     )?;
-    nod_api::add_nod(storage, scope, parent, &item, terms.entry_price_minor)?;
+    let call_terms = call_terms(storage, terms.entry_price_minor, terms.reference_currency)?;
+    nod_api::add_nod(
+        storage,
+        scope,
+        parent,
+        &item,
+        terms.entry_price_minor,
+        call_terms,
+    )?;
     emit_event(
         storage,
         INodFactory::NodIssued {
@@ -212,6 +220,32 @@ fn obligation(item: &NodItemState, bucket: &NodBucketState) -> Result<Obligation
         units: U256::ONE,
         cost_rate_pct: 100,
     })
+}
+
+/// The call terms a bucket opened at `entry_price_minor` seals: the entry marked up by
+/// the live profile's call rate, plus the profile's window, threshold and notice.
+///
+/// `None` when entry is zero: a zero call price would fire on the first scan. Every
+/// later check reads the bucket's sealed copy, so a retune cannot re-term an issued Nod.
+pub fn call_terms(
+    storage: &StorageHandle<'_>,
+    entry_price_minor: U256,
+    reference_currency: u16,
+) -> Result<Option<CallTerms>> {
+    if entry_price_minor.is_zero() {
+        return Ok(None);
+    }
+    let params = outbe_nod::config::read(storage)?;
+    let call_price = outbe_primitives::markup::marked_up(entry_price_minor, params.call_rate)
+        .ok_or_else(|| PrecompileError::Fatal("Nod call price overflow".into()))?;
+    Ok(Some(CallTerms {
+        call_price_minor: call_price,
+        reference_currency,
+        call_rate: params.call_rate,
+        call_window_seconds: params.call_window_seconds,
+        call_threshold_seconds: params.call_threshold_seconds,
+        call_notice_period_seconds: params.call_notice_period_seconds,
+    }))
 }
 
 /// Exercises a paid entitlement without payment or a deadline. Mint failure

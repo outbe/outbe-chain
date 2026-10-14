@@ -1,3 +1,6 @@
+//! Forfeit sweep: burns the unpaid Nods of the called buckets whose notice period lapsed
+//! and returns their load to the Promis Reserve.
+
 use alloy_primitives::B256;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_primitives::{
@@ -9,7 +12,8 @@ use outbe_primitives::{
 };
 
 use crate::called::{materializing, sweep_failure};
-use crate::{api, precompile::INod, schema::NodContract, state::ExpiryHours};
+use outbe_nod::state::ExpiryHours;
+use outbe_nod::{api, precompile::INod, schema::NodContract};
 
 /// The storage, scope and parent bodies a forfeit loads and removes Nods through.
 pub(crate) struct Bodies<'a, 's, P> {
@@ -75,7 +79,7 @@ impl<P: ParentBodySource> ExpiryHandler<B256> for NodExpiry<'_, '_, P> {
     fn member_at(&self, bucket_key: B256, index: u32) -> Result<WwdEntityId> {
         self.nod
             .bucket_nods
-            .read(&crate::index_keys::bucket_nod_key(bucket_key, index))
+            .read(&outbe_nod::index_keys::bucket_nod_key(bucket_key, index))
     }
 
     fn charge(&self, budget: &mut SweepBudget) -> bool {
@@ -93,7 +97,7 @@ impl<P: ParentBodySource> ExpiryHandler<B256> for NodExpiry<'_, '_, P> {
     }
 
     fn deferred(&mut self, bucket_key: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::nod", %bucket_key, retry_at, "forfeit sweep: bucket deferred");
+        tracing::warn!(target: "outbe::nodfactory", %bucket_key, retry_at, "forfeit sweep: bucket deferred");
         self.nod.emit(INod::ExpiryDeferred {
             bucketKey: bucket_key,
             retryAt: retry_at,

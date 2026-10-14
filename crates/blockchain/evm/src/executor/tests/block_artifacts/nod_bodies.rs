@@ -345,6 +345,11 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
                     &nod_reader,
                     &nod_fixture(),
                     U256::from(16),
+                    outbe_nod::test_support::sealed_terms(
+                        &hook_ctx.storage,
+                        &nod_fixture(),
+                        U256::from(16),
+                    ),
                 )?;
                 outbe_compressed_entities::end_block(hook_ctx.storage.clone(), &scope).map(|_| ())
             })
@@ -413,6 +418,11 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
             &nod_reader,
             &nod_fixture(),
             U256::from(16),
+            outbe_nod::test_support::sealed_terms(
+                &hook_ctx.storage,
+                &nod_fixture(),
+                U256::from(16),
+            ),
         )?;
         Err(outbe_primitives::error::PrecompileError::Fatal(
             "later transaction stage failed".into(),
@@ -517,6 +527,7 @@ fn seed_called_nod(
         &empty_reader,
         &fixture.item,
         fixture.entry_price_minor,
+        outbe_nod::test_support::sealed_terms(&storage, &fixture.item, fixture.entry_price_minor),
     )?;
     // CycleTick forfeits the lapsed called bucket and deletes both bodies.
     let nod = NodContract::new(storage.clone());

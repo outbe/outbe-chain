@@ -119,6 +119,41 @@ fn item(owner: Address, entry: U256, reference_currency: u16) -> NodItemState {
     )
 }
 
+/// Pin the selector slot index: the genesis seeder writes a raw slot.
+#[test]
+fn config_profile_slot_matches_seeder_layout() {
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(
+            NodContract::new(storage).config_profile.slot(),
+            U256::from(49)
+        );
+    });
+}
+
+#[test]
+fn the_profile_selector_resolves_like_gem_and_intex() {
+    use crate::config::{NodParams, PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
+    use outbe_primitives::chain::MAINNET_CHAIN_ID;
+    assert_eq!(
+        NodParams::from_selector(PROFILE_AUTO, MAINNET_CHAIN_ID).unwrap(),
+        NodParams::PROD
+    );
+    assert_eq!(
+        NodParams::from_selector(PROFILE_AUTO, 1).unwrap(),
+        NodParams::DEV
+    );
+    assert_eq!(
+        NodParams::from_selector(PROFILE_DEV, MAINNET_CHAIN_ID).unwrap(),
+        NodParams::DEV
+    );
+    assert_eq!(
+        NodParams::from_selector(PROFILE_PROD, 1).unwrap(),
+        NodParams::PROD
+    );
+    assert!(NodParams::from_selector(3, 1).is_err());
+}
+
 /// Dense `order`-packing puts these fields at contiguous offsets 0..=8.
 #[test]
 fn nod_contract_slot_layout_is_pinned() {
@@ -232,8 +267,24 @@ fn same_day_and_entry_in_two_currencies_are_two_buckets_in_two_bins() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        api::add_nod(&storage, &scope, &parent, &usd, entry).unwrap();
-        api::add_nod(&storage, &scope, &parent, &eur, entry).unwrap();
+        api::add_nod(
+            &storage,
+            &scope,
+            &parent,
+            &usd,
+            entry,
+            crate::test_support::sealed_terms(&storage, &usd, entry),
+        )
+        .unwrap();
+        api::add_nod(
+            &storage,
+            &scope,
+            &parent,
+            &eur,
+            entry,
+            crate::test_support::sealed_terms(&storage, &eur, entry),
+        )
+        .unwrap();
 
         let nod = NodContract::new(storage.clone());
         let call_price = nod
@@ -282,8 +333,24 @@ fn same_day_and_currency_at_two_entries_are_two_buckets_with_their_own_terms() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        api::add_nod(&storage, &scope, &parent, &low, low_entry).unwrap();
-        api::add_nod(&storage, &scope, &parent, &high, high_entry).unwrap();
+        api::add_nod(
+            &storage,
+            &scope,
+            &parent,
+            &low,
+            low_entry,
+            crate::test_support::sealed_terms(&storage, &low, low_entry),
+        )
+        .unwrap();
+        api::add_nod(
+            &storage,
+            &scope,
+            &parent,
+            &high,
+            high_entry,
+            crate::test_support::sealed_terms(&storage, &high, high_entry),
+        )
+        .unwrap();
 
         let nod = NodContract::new(storage.clone());
         for (body, entry, floor, call_price) in [
@@ -325,7 +392,15 @@ fn qualification_skips_days_before_first_full_day() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        api::add_nod(&storage, &scope, &parent, &body, entry).unwrap();
+        api::add_nod(
+            &storage,
+            &scope,
+            &parent,
+            &body,
+            entry,
+            crate::test_support::sealed_terms(&storage, &body, entry),
+        )
+        .unwrap();
         let qualified =
             || api::is_qualified(&storage, &bucket_of(&storage, &scope, &parent, &body)).unwrap();
 
@@ -347,7 +422,15 @@ fn zero_reference_currency_is_rejected_at_issuance() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        let error = api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap_err();
+        let error = api::add_nod(
+            &storage,
+            &scope,
+            &parent,
+            &body,
+            U256::from(5),
+            crate::test_support::sealed_terms(&storage, &body, U256::from(5)),
+        )
+        .unwrap_err();
         assert!(
             error.to_string().contains("reference currency"),
             "unexpected error: {error}"
@@ -372,7 +455,15 @@ fn a_bucket_key_that_does_not_match_its_inputs_is_rejected() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        let error = api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap_err();
+        let error = api::add_nod(
+            &storage,
+            &scope,
+            &parent,
+            &body,
+            U256::from(5),
+            crate::test_support::sealed_terms(&storage, &body, U256::from(5)),
+        )
+        .unwrap_err();
         assert!(
             error.to_string().contains("bucket identity mismatch"),
             "unexpected error: {error}"
@@ -394,7 +485,15 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let item = item(Address::repeat_byte(0x86), U256::from(20), USD);
-        api::add_nod(&storage, &scope, &parent, &item, U256::from(20)).unwrap();
+        api::add_nod(
+            &storage,
+            &scope,
+            &parent,
+            &item,
+            U256::from(20),
+            crate::test_support::sealed_terms(&storage, &item, U256::from(20)),
+        )
+        .unwrap();
         qualify(&storage, &item, U256::from(20));
         let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
         api::settle_nod(
@@ -682,7 +781,15 @@ fn qualification_announces_nothing_and_settlement_updates_the_nod() {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         for (body, entry) in [(&first, 500_000u64), (&second, 600_000)] {
-            api::add_nod(&storage, &scope, &parent, body, U256::from(entry)).unwrap();
+            api::add_nod(
+                &storage,
+                &scope,
+                &parent,
+                body,
+                U256::from(entry),
+                crate::test_support::sealed_terms(&storage, &body, U256::from(entry)),
+            )
+            .unwrap();
         }
         close_day_above(
             &storage,
@@ -733,7 +840,15 @@ fn transfer_logs_announce_issuance_and_removal() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+        api::add_nod(
+            &storage,
+            &scope,
+            &parent,
+            &body,
+            U256::from(5),
+            crate::test_support::sealed_terms(&storage, &body, U256::from(5)),
+        )
+        .unwrap();
         let bucket_id = WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key);
         api::remove_nod(
             &storage,
@@ -860,7 +975,15 @@ fn token_uri_renders_the_nod_image_and_metadata() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
-        api::add_nod(&storage, &scope, &parent, &body, U256::from(400_000)).unwrap();
+        api::add_nod(
+            &storage,
+            &scope,
+            &parent,
+            &body,
+            U256::from(400_000),
+            crate::test_support::sealed_terms(&storage, &body, U256::from(400_000)),
+        )
+        .unwrap();
         let read = || {
             let data = INod::tokenURICall {
                 nodId: body.nod_id.to_u256(),
@@ -956,7 +1079,15 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
         seed_production_nod_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let item = item(Address::repeat_byte(0x88), U256::from(20), USD);
-        api::add_nod(&storage, &scope, &parent, &item, U256::from(20)).unwrap();
+        api::add_nod(
+            &storage,
+            &scope,
+            &parent,
+            &item,
+            U256::from(20),
+            crate::test_support::sealed_terms(&storage, &item, U256::from(20)),
+        )
+        .unwrap();
         let mut nod = NodContract::new(storage.clone());
         nod.seal_bucket_call_terms(
             item.bucket_key,
@@ -1034,7 +1165,15 @@ fn seed_public_lifecycle(
     seed_production_nod_genesis(storage);
     begin_block(storage.clone(), scope).unwrap();
     let item = item(Address::repeat_byte(0x87), U256::from(20), USD);
-    api::add_nod(storage, scope, parent, &item, U256::from(20)).unwrap();
+    api::add_nod(
+        storage,
+        scope,
+        parent,
+        &item,
+        U256::from(20),
+        crate::test_support::sealed_terms(&storage, &item, U256::from(20)),
+    )
+    .unwrap();
     let mut nod = NodContract::new(storage.clone());
     nod.seal_bucket_call_terms(
         item.bucket_key,

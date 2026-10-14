@@ -15,8 +15,7 @@
 //! The breach rule needs no per-bucket streak state. The daily series is global
 //! per currency, so one trailing window per currency decides every bucket
 //! denominated in it. Every run recomputes the count from oracle history rather
-//! than carrying it. Mirrors `outbe_gem::called::scan_and_call` and
-//! `outbe_credisfactory::called::scan_and_call`, which evaluate the same shape.
+//! than carrying it. Gem, Credis and Intex run the same shape from their factories.
 //!
 //! Calls count only days from `first_full_day` of the bucket's sealed `issued_at`.
 
@@ -36,7 +35,8 @@ use outbe_primitives::{
     time::first_full_day,
 };
 
-use crate::{api, precompile::INod, schema::NodContract, state::CallBins};
+use outbe_nod::state::CallBins;
+use outbe_nod::{api, precompile::INod, schema::NodContract};
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 ///
@@ -148,7 +148,7 @@ fn call_slice(
     pinned_day: u32,
     called_days: &mut BTreeSet<u32>,
 ) -> Result<(u32, bool)> {
-    let params = crate::config::read_from(nod, ctx.block.chain_id)?;
+    let params = outbe_nod::config::read(&ctx.storage)?;
     let mut caller = NodContract::new(ctx.storage.clone());
     let mut called: u32 = 0;
     let finished = call_sweep::walk_day(
@@ -181,7 +181,7 @@ fn call_slice(
 fn scan_terms(
     nod: &NodContract<'_>,
     iso_code: u16,
-    params: &crate::config::NodParams,
+    params: &outbe_nod::config::NodParams,
 ) -> Result<ScanTerms> {
     outbe_primitives::call_breach::scan_terms(
         &nod.max_call_window_seconds,

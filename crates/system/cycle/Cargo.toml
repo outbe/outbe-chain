@@ -25,6 +25,7 @@ outbe-gem.workspace = true
 outbe-gemfactory.workspace = true
 outbe-credisfactory.workspace = true
 outbe-nod.workspace = true
+outbe-nodfactory.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 tracing.workspace = true

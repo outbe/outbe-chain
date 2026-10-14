@@ -98,7 +98,7 @@ impl TriggerHandler {
             Self::GemDaily => outbe_gemfactory::called::run_daily(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
-            Self::NodCallDaily => outbe_nod::called::run_daily(ctx),
+            Self::NodCallDaily => outbe_nodfactory::called::run_daily(ctx),
             Self::GemPositionDaily => outbe_gemfactory::positions_expired::run_daily(ctx),
             Self::IntexDrainParked => outbe_intexfactory::parked::drain(ctx),
             Self::IntexVwapPush => outbe_intexfactory::vwap_push::run(ctx),
