@@ -39,9 +39,9 @@ use outbe_ocomp_protocol::{
         materialize_authenticated_openings, CheckpointIdentityV1, InputChunkKind, InputManifestV1,
     },
     intent::{
-        ActivationPreconditionsV1, DayType,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+        ActivationPreconditionsV1, DayType, FrozenMetadosisValuesV1, JobIntentV1,
+        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
+        TributeInputBindingV1,
     },
     league_snapshot::league_snapshot_slot,
     opening::{
@@ -453,16 +453,11 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
             }
 
             let admitted = admit_reported_lysis_unit_v1(
-                ordinal,
-                &finished,
-                &mut admissions,
-                &input_refs,
-                &pinned_bundle,
-                &reader,
-                &worker_inbox,
-                &replay_inbox,
-                &cas,
-                &limits,
+                (ordinal, &finished),
+                (&mut admissions, &input_refs),
+                (&pinned_bundle, &reader),
+                (&worker_inbox, &replay_inbox),
+                (&cas, &limits),
             )
             .unwrap_or_else(|error| panic!("admit deterministic unit {ordinal}: {error}"));
             assert!(matches!(
@@ -471,16 +466,11 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
             ));
             if let Some(retry) = retry {
                 let replayed = admit_reported_lysis_unit_v1(
-                    ordinal,
-                    &retry,
-                    &mut admissions,
-                    &input_refs,
-                    &pinned_bundle,
-                    &reader,
-                    &worker_inbox,
-                    &replay_inbox,
-                    &cas,
-                    &limits,
+                    (ordinal, &retry),
+                    (&mut admissions, &input_refs),
+                    (&pinned_bundle, &reader),
+                    (&worker_inbox, &replay_inbox),
+                    (&cas, &limits),
                 )
                 .unwrap_or_else(|error| {
                     panic!("replay exact deterministic unit {ordinal}: {error}")

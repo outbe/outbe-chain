@@ -93,6 +93,129 @@ fn retained_segments(view: &RethReadOnlyView) -> eyre::Result<Vec<HeaderSegment>
     Ok(segments)
 }
 
+fn read_static_header_row(
+    view: &RethReadOnlyView,
+    segments: &[HeaderSegment],
+    segment_index: &mut usize,
+    static_number: &mut Option<u64>,
+    number: u64,
+) -> eyre::Result<Option<(OutbeHeader, B256)>> {
+    if *static_number != Some(number) {
+        return Ok(None);
+    }
+    let segment = &segments[*segment_index];
+    let jar = view
+        .static_files
+        .get_segment_provider_for_path(&segment.path)?
+        .ok_or_else(|| eyre::eyre!("missing header segment for {number}"))?;
+    let header = jar
+        .header_by_number(number)?
+        .ok_or_else(|| eyre::eyre!("missing header {number} inside static range"))?;
+    let hash = jar
+        .block_hash(number)?
+        .ok_or_else(|| eyre::eyre!("missing canonical hash {number} inside static range"))?;
+    if number == *segment.range.end() {
+        *segment_index += 1;
+        *static_number = segments
+            .get(*segment_index)
+            .map(|segment| *segment.range.start());
+    } else {
+        *static_number = Some(number + 1);
+    }
+    Ok(Some((header, hash)))
+}
+
+fn verify_merged_header_row<'a>(
+    view: &RethReadOnlyView,
+    number: u64,
+    static_row: Option<&'a (OutbeHeader, B256)>,
+    stored_header: Option<&'a OutbeHeader>,
+    stored_hash: Option<B256>,
+) -> eyre::Result<(&'a OutbeHeader, B256)> {
+    let header = static_row
+        .map(|(header, _)| header)
+        .or(stored_header)
+        .ok_or_else(|| eyre::eyre!("missing retained header {number} for canonical row"))?;
+    let canonical_hash = static_row
+        .map(|(_, hash)| *hash)
+        .or(stored_hash)
+        .ok_or_else(|| eyre::eyre!("missing canonical hash for retained header {number}"))?;
+    ensure!(
+        header.inner.number == number,
+        "header number mismatch at {number}"
+    );
+    let hash = header.hash_slow();
+    ensure!(
+        hash == canonical_hash,
+        "canonical header hash mismatch at {number}"
+    );
+    if let Some(stored) = stored_header {
+        ensure!(
+            stored.inner.number == number,
+            "MDBX header number mismatch at {number}"
+        );
+        ensure!(
+            stored.hash_slow() == hash,
+            "conflicting MDBX/static header hash at {number}"
+        );
+    }
+    if let Some(stored) = stored_hash {
+        ensure!(stored == hash, "MDBX canonical hash mismatch at {number}");
+    }
+    if number == 0 {
+        ensure!(
+            hash == view.chain.genesis_hash(),
+            "retained genesis differs from configured chain"
+        );
+    }
+    Ok((header, hash))
+}
+
+fn record_header_interval(
+    audit: &mut HeaderAudit,
+    previous: &mut Option<(u64, B256)>,
+    number: u64,
+    hash: B256,
+    parent_hash: B256,
+) -> eyre::Result<()> {
+    if let Some((parent_number, expected_parent_hash)) = *previous {
+        if parent_number.checked_add(1) == Some(number) {
+            ensure!(
+                parent_hash == expected_parent_hash,
+                "retained header parent mismatch at {number}"
+            );
+            let last = audit
+                .intervals
+                .last_mut()
+                .expect("previous header interval");
+            *last = *last.start()..=number;
+        } else {
+            audit.intervals.push(number..=number);
+        }
+    } else {
+        audit.intervals.push(number..=number);
+    }
+    *previous = Some((number, hash));
+    audit.verified_headers = audit
+        .verified_headers
+        .checked_add(1)
+        .ok_or_else(|| eyre::eyre!("verified header count overflow"))?;
+    Ok(())
+}
+
+fn missing_required_headers(intervals: &[RangeInclusive<u64>], required: &[u64]) -> Vec<u64> {
+    required
+        .iter()
+        .copied()
+        .filter(|number| {
+            let index = intervals.partition_point(|range| range.end() < number);
+            !intervals
+                .get(index)
+                .is_some_and(|range| range.contains(number))
+        })
+        .collect()
+}
+
 /// Merge the native static intervals and both MDBX tables with at most one row
 /// from each source in memory. A row missing inside a static interval is corrupt.
 /// A gap in the union is retention, and the merge never scans it from genesis onwards.
@@ -124,31 +247,13 @@ pub(crate) fn verify_retained_headers(
     .flatten()
     .min()
     {
-        let static_row = if static_number == Some(number) {
-            let segment = &segments[segment_index];
-            let jar = view
-                .static_files
-                .get_segment_provider_for_path(&segment.path)?
-                .ok_or_else(|| eyre::eyre!("missing header segment for {number}"))?;
-            let header = jar
-                .header_by_number(number)?
-                .ok_or_else(|| eyre::eyre!("missing header {number} inside static range"))?;
-            let hash = jar.block_hash(number)?.ok_or_else(|| {
-                eyre::eyre!("missing canonical hash {number} inside static range")
-            })?;
-            if number == *segment.range.end() {
-                segment_index += 1;
-                static_number = segments
-                    .get(segment_index)
-                    .map(|segment| *segment.range.start());
-            } else {
-                static_number = Some(number + 1);
-            }
-            Some((header, hash))
-        } else {
-            None
-        };
-
+        let static_row = read_static_header_row(
+            view,
+            &segments,
+            &mut segment_index,
+            &mut static_number,
+            number,
+        )?;
         let stored_header = db_header
             .as_ref()
             .filter(|(key, _)| *key == number)
@@ -157,70 +262,20 @@ pub(crate) fn verify_retained_headers(
             .as_ref()
             .filter(|(key, _)| *key == number)
             .map(|(_, hash)| *hash);
-        let header = static_row
-            .as_ref()
-            .map(|(header, _)| header)
-            .or(stored_header)
-            .ok_or_else(|| eyre::eyre!("missing retained header {number} for canonical row"))?;
-        let canonical_hash = static_row
-            .as_ref()
-            .map(|(_, hash)| *hash)
-            .or(stored_hash)
-            .ok_or_else(|| eyre::eyre!("missing canonical hash for retained header {number}"))?;
-        ensure!(
-            header.inner.number == number,
-            "header number mismatch at {number}"
-        );
-        let hash = header.hash_slow();
-        ensure!(
-            hash == canonical_hash,
-            "canonical header hash mismatch at {number}"
-        );
-        if let Some(stored) = stored_header {
-            ensure!(
-                stored.inner.number == number,
-                "MDBX header number mismatch at {number}"
-            );
-            ensure!(
-                stored.hash_slow() == hash,
-                "conflicting MDBX/static header hash at {number}"
-            );
-        }
-        if let Some(stored) = stored_hash {
-            ensure!(stored == hash, "MDBX canonical hash mismatch at {number}");
-        }
-        if number == 0 {
-            ensure!(
-                hash == view.chain.genesis_hash(),
-                "retained genesis differs from configured chain"
-            );
-        }
-        if let Some((parent_number, parent_hash)) = previous {
-            if parent_number.checked_add(1) == Some(number) {
-                ensure!(
-                    header.inner.parent_hash == parent_hash,
-                    "retained header parent mismatch at {number}"
-                );
-                let start = *audit
-                    .intervals
-                    .last()
-                    .expect("previous header interval")
-                    .start();
-                *audit
-                    .intervals
-                    .last_mut()
-                    .expect("previous header interval") = start..=number;
-            } else {
-                audit.intervals.push(number..=number);
-            }
-        } else {
-            audit.intervals.push(number..=number);
-        }
-        previous = Some((number, hash));
-        audit.verified_headers = audit
-            .verified_headers
-            .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("verified header count overflow"))?;
+        let (header, hash) = verify_merged_header_row(
+            view,
+            number,
+            static_row.as_ref(),
+            stored_header,
+            stored_hash,
+        )?;
+        record_header_interval(
+            &mut audit,
+            &mut previous,
+            number,
+            hash,
+            header.inner.parent_hash,
+        )?;
         if stored_header.is_some() {
             db_header = headers.next()?;
         }
@@ -228,19 +283,7 @@ pub(crate) fn verify_retained_headers(
             db_hash = canonical.next()?;
         }
     }
-    audit.required_missing = required
-        .iter()
-        .copied()
-        .filter(|number| {
-            let index = audit
-                .intervals
-                .partition_point(|range| range.end() < number);
-            !audit
-                .intervals
-                .get(index)
-                .is_some_and(|range| range.contains(number))
-        })
-        .collect();
+    audit.required_missing = missing_required_headers(&audit.intervals, required);
     Ok(audit)
 }
 

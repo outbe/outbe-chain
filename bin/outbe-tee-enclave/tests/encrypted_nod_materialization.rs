@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    CeDomain, StoredBody, TRIBUTE_BODY_SCHEMA_V2, encode_tribute_v2,
-    test_support::single_collection_body_proof,
+    encode_tribute_v2, test_support::single_collection_body_proof, CeDomain, StoredBody,
+    TRIBUTE_BODY_SCHEMA_V2,
 };
 use outbe_ocomp_protocol::{
     list::{leaf_hash, root_hash},

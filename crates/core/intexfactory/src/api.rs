@@ -32,10 +32,7 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<runtime::IssuanceLeg
 /// Close a day's proceeds aggregation. The clearing engine calls this for a
 /// day that issued nothing at all. Finalizing marks the day, so a later arrival
 /// burns instead of sitting in the pot.
-pub fn finalize_empty_day(
-    storage: &StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-) -> Result<()> {
+pub fn finalize_empty_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<()> {
     outbe_intex::api::finalize_proceeds(storage, worldwide_day)
 }
 

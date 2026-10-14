@@ -127,12 +127,12 @@ impl MaterializationJob {
             .league_fractions()
             .map_err(|error| stage("read league fractions", error))?
             .into_iter()
-            .map(|(league_id, fraction_fp)| {
-                outbe_tee::nod_materialization::LeagueFractionInputV2 {
+            .map(
+                |(league_id, fraction_fp)| outbe_tee::nod_materialization::LeagueFractionInputV2 {
                     league_id,
                     fraction_fp,
-                }
-            })
+                },
+            )
             .collect();
         let protected = prepare_protected_materialization(
             outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {
@@ -143,8 +143,7 @@ impl MaterializationJob {
                 subtree_height: batch_subtree_height,
                 sealed_tribute_root: audit.manifest().sealed_tribute_collection_root,
             },
-            head,
-            &built,
+            (head, &built),
             sources,
             league_fractions,
             &preparation,

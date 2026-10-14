@@ -78,9 +78,11 @@ fn run(
     let before = fingerprint(root);
     let result = verify_present_admissions(
         root,
-        &expected.manifest,
-        expected.lysis_limit,
-        expected.evaluation_time,
+        (
+            &expected.manifest,
+            expected.lysis_limit,
+            expected.evaluation_time,
+        ),
         CAS_LIMITS,
         maximum,
         visitor,

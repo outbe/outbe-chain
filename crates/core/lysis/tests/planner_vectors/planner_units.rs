@@ -656,7 +656,11 @@ fn root_reduce_units_bind_exact_leaf_shuffle_roots_and_padded_summaries() {
     assert!(planner
         .root_reduce_unit_at(
             2,
-            &[Some(finalized), Some(bucket_root), Some(B256::repeat_byte(0x82))],
+            &[
+                Some(finalized),
+                Some(bucket_root),
+                Some(B256::repeat_byte(0x82))
+            ],
             &limits,
         )
         .is_err());

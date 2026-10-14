@@ -263,10 +263,7 @@ impl UnitSpecV1 {
                         | UnitPhase::RootReduce,
                     UnitInterval::BinaryReducerNode(_)
                 )
-                | (
-                    UnitPhase::BucketShuffle,
-                    UnitInterval::CanonicalRunSpan(_)
-                )
+                | (UnitPhase::BucketShuffle, UnitInterval::CanonicalRunSpan(_))
         );
         require(interval_matches, "phase interval binding")?;
         for input in &self.canonical_ordered_inputs {

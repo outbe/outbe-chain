@@ -1,10 +1,10 @@
-use alloy_primitives::{B256, U256, address};
+use alloy_primitives::{address, B256, U256};
 use outbe_ocomp_protocol::{
-    StreamingOrderedListRoot,
-    list::{OrderedListProofTarget, streaming_ordered_list_membership_proof},
+    list::{streaming_ordered_list_membership_proof, OrderedListProofTarget},
     profile::poc_schema_limits,
     registry::ListKind,
     result::{ActiveNodSetV1, NodActionV1, NodMembershipProofV1},
+    StreamingOrderedListRoot,
 };
 
 const WWD: u32 = 20_260_726;
@@ -111,11 +111,9 @@ fn proof_cannot_be_substituted_across_active_jobs_or_generations() {
 
     let mut different_generation = authority;
     different_generation.generation += 1;
-    assert!(
-        proof
-            .verify_against(&different_generation, &limits)
-            .is_err()
-    );
+    assert!(proof
+        .verify_against(&different_generation, &limits)
+        .is_err());
 
     let mut different_day = authority;
     different_day.worldwide_day += 1;

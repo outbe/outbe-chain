@@ -57,8 +57,10 @@ pub(super) async fn preflight(
 pub(super) fn start(
     node: &OutbeFullNode,
     args: &ConsensusArgs,
-    radicle_preflight: Option<Preflight>,
-    radicle_status: outbe_radicle::integration::RadicleStatusHandle,
+    (radicle_preflight, radicle_status): (
+        Option<Preflight>,
+        outbe_radicle::integration::RadicleStatusHandle,
+    ),
     radicle_shutdown_token: tokio_util::sync::CancellationToken,
     shutdown: outbe_node::shutdown::NodeShutdown,
 ) -> eyre::Result<RadicleLaunch> {
