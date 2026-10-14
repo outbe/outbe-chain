@@ -132,110 +132,6 @@ where
     })
 }
 
-enum ShufflePageRecords {
-    Bucket(Vec<ShuffleBucketRecordV1>),
-}
-
-impl ShufflePageRecords {
-    fn into_verified(self) -> Vec<VerifiedShuffleRecordV1> {
-        match self {
-            Self::Bucket(records) => records
-                .into_iter()
-                .map(VerifiedShuffleRecordV1::Bucket)
-                .collect(),
-        }
-    }
-}
-
-struct ShufflePageSlice<'a> {
-    page_span: &'a ShufflePageSpanV1,
-    first_record_ordinal: u32,
-    record_count: u32,
-    page_ordinal: u32,
-}
-
-fn selected_shuffle_child(
-    left: ShuffleRunChildV1,
-    right: ShuffleRunChildV1,
-    page_ordinal: u32,
-) -> Result<ShuffleRunChildV1, ProtocolError> {
-    if page_ordinal >= left.page_span.start_page && page_ordinal < left.page_span.end_page {
-        Ok(left)
-    } else if page_ordinal >= right.page_span.start_page && page_ordinal < right.page_span.end_page
-    {
-        Ok(right)
-    } else {
-        Err(ProtocolError::InvalidInvariant(
-            "shuffle page child coverage",
-        ))
-    }
-}
-
-/// Opens one canonical 256-record page from an already admitted shuffle root.
-///
-/// The lookup follows only the unique authenticated child path for
-/// `page_ordinal`. It never scans the preceding population. A request beyond
-/// the exact record stream returns the canonical empty slice.
-pub fn verified_shuffle_run_page<R>(
-    root: ShuffleRunArtifactV1,
-    page_ordinal: u32,
-    limits: &SchemaLimits,
-    mut resolver: R,
-) -> Result<Vec<VerifiedShuffleRecordV1>, ProtocolError>
-where
-    R: FnMut(&CasObjectRefV1) -> Result<Vec<u8>, ProtocolError>,
-{
-    root.validate_root_semantics(limits)?;
-    let root_page_end = exact_shuffle_page_count(root.record_count)?;
-    require(
-        root.page_span.end_page == root_page_end,
-        "shuffle root exact page count",
-    )?;
-    if page_ordinal >= root_page_end {
-        return Ok(Vec::new());
-    }
-    let context = ShuffleRunContextV1 {
-        protocol_bundle_hash: root.protocol_bundle_hash,
-        job_id: root.job_id,
-        attempt: root.attempt,
-        unit_id: root.unit_id,
-        kind: root.kind,
-        run_span: root.run_span.clone(),
-        root_page_end,
-        root_record_count: root.record_count,
-        source_coverage_root: root.source_coverage_root,
-        source_coverage_count: root.source_coverage_count,
-    };
-    let mut artifact = root;
-    loop {
-        require_shuffle_context(&context, &artifact, limits)?;
-        let records = match artifact.payload {
-            ShuffleRunPayloadV1::Node { left, right } => {
-                let expected = selected_shuffle_child(left, right, page_ordinal)?;
-                artifact = resolve_shuffle_child(&context, &expected, limits, &mut resolver)?;
-                continue;
-            }
-            ShuffleRunPayloadV1::BucketLeaf(records) => {
-                require(
-                    context.kind == ShuffleRunKindV1::Bucket,
-                    "shuffle page bucket kind",
-                )?;
-                ShufflePageRecords::Bucket(records)
-            }
-        };
-        require_shuffle_page_leaf(
-            &context,
-            &ShufflePageSlice {
-                page_span: &artifact.page_span,
-                first_record_ordinal: artifact.first_record_ordinal,
-                record_count: artifact.record_count,
-                page_ordinal,
-            },
-        )?;
-        return Ok(records.into_verified());
-    }
-}
-
 pub fn merge_verified_shuffle_runs<L, R>(
     kind: ShuffleRunKindV1,
     left: L,
@@ -258,9 +154,8 @@ mod builder;
 mod verifier;
 pub use builder::build_bucket_shuffle_run;
 use verifier::{
-    exact_shuffle_page_count, require_shuffle_context, require_shuffle_page_leaf,
-    require_valid_run_span, resolve_shuffle_child, validate_bucket_records, validate_child,
-    validate_shuffle_run_artifact,
+    require_shuffle_context, require_valid_run_span, resolve_shuffle_child,
+    validate_bucket_records, validate_child, validate_shuffle_run_artifact,
 };
 
 impl<R> Iterator for VerifiedShuffleRunIterV1<'_, R>

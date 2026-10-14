@@ -70,10 +70,9 @@ fn external_live_job_view_exposes_public_protocol_types() {
 use std::collections::BTreeMap;
 
 use alloy_consensus::Sealable;
-use outbe_intex::schema::{IntexContract, SeriesId, SeriesRecord};
 use outbe_nod::schema::{NodCertifiedGenerationProjection, NodContract};
 use outbe_primitives::{
-    storage::{hashmap::HashMapStorageProvider, types::Storable, StorageHandle},
+    storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::WorldwideDay,
 };
 use reth_ethereum::{
@@ -259,50 +258,19 @@ fn seed_nod_generation(
     generation
 }
 
-fn series(day: WorldwideDay, currency: [u8; 3]) -> SeriesRecord {
-    SeriesRecord {
-        series_id: SeriesId::pack(day, currency, b'U').unwrap(),
-        issuance_currency: 840,
-        reference_currency: 840,
-        issued_units: 3,
-        promis_load_minor: U256::from(10),
-        entry_price_minor: U256::from(11),
-        floor_price_minor: U256::from(12),
-        call_price_minor: U256::from(13),
-        call_window_seconds: 14,
-        call_threshold_seconds: 15,
-        call_notice_period_seconds: 16,
-        issued_at: 1_000,
-        called_at: 0,
-        state: 0,
-        worldwide_day: day,
-    }
-}
-
 #[test]
-fn typed_owner_reads_enumerate_all_nod_sequences_and_intex_words_at_e() {
+fn typed_owner_reads_enumerate_all_nod_sequences_at_e() {
     for version in [1, 2] {
         let mut owner = HashMapStorageProvider::new(1);
         let days = [DAY, WorldwideDay::new(DAY.value() + 1)];
-        let records = [series(days[0], *b"USD"), series(days[1], *b"EUR")];
         let generations = StorageHandle::enter(&mut owner, |storage| {
             let nod = NodContract::new(storage.clone());
             nod.ocomp_materialization_head_sequence.write(7).unwrap();
             nod.ocomp_materialization_tail_sequence.write(9).unwrap();
-            let generations = [
+            [
                 seed_nod_generation(storage.clone(), days[0], 7),
                 seed_nod_generation(storage.clone(), days[1], 8),
-            ];
-            let intex = IntexContract::new(storage);
-            intex.total_series.write(2).unwrap();
-            for (index, record) in records.iter().enumerate() {
-                intex.series.create(record).unwrap();
-                intex
-                    .series_id_at_index
-                    .write(&(index as u64), record.series_id.to_word())
-                    .unwrap();
-            }
-            generations
+            ]
         });
         with_owner_storage(version, owner, |state, _| {
             assert_eq!(state.nod_materialization_bounds().unwrap(), (7, 9));
@@ -311,7 +279,6 @@ fn typed_owner_reads_enumerate_all_nod_sequences_and_intex_words_at_e() {
                 (head.queue_sequence, head.worldwide_day),
                 (7, days[0].value())
             );
-            assert_eq!(state.intex_total_series().unwrap(), 2);
             for (index, day) in days.into_iter().enumerate() {
                 assert_eq!(
                     state.nod_materialization_day(7 + index as u64).unwrap(),
@@ -320,14 +287,6 @@ fn typed_owner_reads_enumerate_all_nod_sequences_and_intex_words_at_e() {
                 assert_eq!(
                     state.nod_certified_generation(day).unwrap(),
                     Some(generations[index])
-                );
-                assert_eq!(
-                    state.intex_series_id_at(index as u64).unwrap(),
-                    records[index].series_id
-                );
-                assert_eq!(
-                    state.intex_read_series(records[index].series_id).unwrap(),
-                    records[index]
                 );
             }
         });
@@ -346,10 +305,6 @@ fn absent_owner_generations_remain_optional() {
         assert_eq!(state.nod_materialization_bounds().unwrap(), (1, 1));
         assert!(state.nod_materialization_head().unwrap().is_none());
         assert!(state.nod_certified_generation(DAY).unwrap().is_none());
-        assert!(state
-            .metadosis_active_lysis_generation(DAY)
-            .unwrap()
-            .is_none());
     });
 }
 
@@ -364,27 +319,6 @@ fn malformed_nod_head_keeps_owner_errors() {
     });
     with_owner_storage(2, owner, |state, _| {
         assert!(state.nod_materialization_head().is_err());
-    });
-}
-
-#[test]
-fn intex_series_index_rejects_nonzero_padding_lost_by_native_decode() {
-    let mut owner = HashMapStorageProvider::new(1);
-    let id = series(DAY, *b"USD").series_id;
-    StorageHandle::enter(&mut owner, |storage| {
-        let intex = IntexContract::new(storage);
-        intex.total_series.write(1).unwrap();
-        intex
-            .series_id_at_index
-            .write(&0, id.to_word() | U256::ONE)
-            .unwrap();
-        assert_eq!(
-            outbe_intex::api::series_id_at(&intex.storage, 0).unwrap(),
-            id
-        );
-    });
-    with_owner_storage(2, owner, |state, _| {
-        assert!(state.intex_series_id_at(0).is_err());
     });
 }
 
@@ -792,77 +726,5 @@ fn terminal_receipt_rejects_cross_intent_and_cross_job_bindings() {
                     .is_err());
             },
         );
-    }
-}
-
-#[test]
-fn active_generation_decodes_present_record_and_rejects_malformed_bytes() {
-    use std::{cell::Cell, rc::Rc};
-
-    use outbe_ocomp_protocol::{result::ExactCountsV1, state::ActiveGenerationV1};
-    use outbe_primitives::{
-        error::{PrecompileError, Result},
-        storage::readonly::{ReadOnlyStorageProvider, StorageReader},
-    };
-
-    struct AbsentGenerationReader(Rc<Cell<Option<U256>>>);
-
-    impl StorageReader for AbsentGenerationReader {
-        fn read_storage(&self, address: Address, key: B256) -> Result<U256> {
-            assert_eq!(address, METADOSIS_ADDRESS);
-            assert!(self.0.replace(Some(U256::from_be_bytes(key.0))).is_none());
-            Ok(U256::ZERO)
-        }
-    }
-
-    // Discover the one native length slot through the public owner getter.
-    // This fixture does not import or replicate the private Metadosis schema.
-    let observed_slot = Rc::new(Cell::new(None));
-    let mut reader = ReadOnlyStorageProvider::new(AbsentGenerationReader(observed_slot.clone()));
-    let absent =
-        outbe_metadosis::api::get_active_lysis_generation(StorageHandle::new(&mut reader), DAY);
-    assert!(
-        matches!(absent, Err(PrecompileError::Revert(message)) if message == "ActiveGenerationV1 not found")
-    );
-    let slot = observed_slot.get().unwrap();
-    let expected = ActiveGenerationV1 {
-        job_id: B256::repeat_byte(1),
-        program_semantics_hash: B256::repeat_byte(2),
-        nod_root: B256::repeat_byte(3),
-        bucket_root: B256::repeat_byte(4),
-        output_manifest_root: B256::repeat_byte(6),
-        exact_counts: ExactCountsV1 {
-            tribute_count: 2,
-            nod_count: 2,
-            bucket_count: 1,
-            semantic_event_count: 3,
-        },
-        result_evidence_hash: B256::repeat_byte(7),
-        availability_certificate_hash: None,
-    };
-    for version in [1, 2] {
-        for malformed in [false, true] {
-            let mut encoded = expected.encode_canonical(&poc_schema_limits()).unwrap();
-            if malformed {
-                encoded[0] ^= 1;
-            }
-            let mut owner = HashMapStorageProvider::new(1);
-            StorageHandle::enter(&mut owner, |storage| {
-                StorageBytes::new(slot, METADOSIS_ADDRESS, storage)
-                    .write(&encoded)
-                    .unwrap();
-            });
-            with_owner_storage(version, owner, |state, _| {
-                let actual = state.metadosis_active_lysis_generation(DAY);
-                if malformed {
-                    assert!(
-                        actual.is_err(),
-                        "present malformed bytes must not become absent"
-                    );
-                } else {
-                    assert_eq!(actual.unwrap(), Some(expected.clone()));
-                }
-            });
-        }
     }
 }

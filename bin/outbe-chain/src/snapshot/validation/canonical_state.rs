@@ -3,12 +3,9 @@
 use alloy_consensus::Sealable;
 use alloy_primitives::{keccak256, Address, B256, U256};
 use eyre::ensure;
-use outbe_intex::schema::{IntexContract, SeriesId, SeriesRecord};
 use outbe_nod::schema::{NodCertifiedGenerationProjection, NodContract};
 #[cfg(all(test, feature = "snapshot-integration"))]
 use outbe_ocomp_protocol::receipts::AggregateActivationReceiptV1;
-#[cfg(all(test, feature = "snapshot-integration"))]
-use outbe_ocomp_protocol::state::ActiveGenerationV1;
 use outbe_ocomp_protocol::{
     nod_materialization::NodMaterializationHeadV1, profile::poc_schema_limits,
     state::OcompJobRecordV1,
@@ -17,7 +14,6 @@ use outbe_primitives::{
     error::{PrecompileError, Result as StorageResult},
     storage::{
         readonly::{ReadOnlyBlockContext, ReadOnlyStorageProvider, StorageReader},
-        types::Storable,
         StorageHandle,
     },
     time::WorldwideDay,
@@ -201,48 +197,5 @@ impl<'a> CanonicalState<'a> {
         day: WorldwideDay,
     ) -> eyre::Result<Option<NodCertifiedGenerationProjection>> {
         self.with_storage(|storage| NodContract::new(storage).ocomp_certified_generation(day))
-    }
-
-    pub(crate) fn intex_total_series(&self) -> eyre::Result<u64> {
-        self.with_storage(|storage| outbe_intex::api::total_series(&storage))
-    }
-
-    pub(crate) fn intex_series_id_at(&self, index: u64) -> eyre::Result<SeriesId> {
-        self.with_storage(|storage| {
-            let id = outbe_intex::api::series_id_at(&storage, index)?;
-            let raw = IntexContract::new(storage)
-                .series_id_at_index
-                .read(&index)?;
-            if raw != id.to_word() {
-                return Err(PrecompileError::Fatal(
-                    "Intex series index has noncanonical padding".into(),
-                ));
-            }
-            Ok(id)
-        })
-    }
-
-    pub(crate) fn intex_read_series(&self, id: SeriesId) -> eyre::Result<SeriesRecord> {
-        self.with_storage(|storage| outbe_intex::api::read_series(&storage, id))
-    }
-
-    #[cfg(all(test, feature = "snapshot-integration"))]
-    pub(crate) fn metadosis_active_lysis_generation(
-        &self,
-        day: WorldwideDay,
-    ) -> eyre::Result<Option<ActiveGenerationV1>> {
-        self.with_storage(|storage| {
-            match outbe_metadosis::api::get_active_lysis_generation(storage, day) {
-                Ok(bytes) => ActiveGenerationV1::decode_canonical(&bytes, &poc_schema_limits())
-                    .map(Some)
-                    .map_err(|error| PrecompileError::Fatal(error.to_string())),
-                Err(PrecompileError::Revert(message))
-                    if message == "ActiveGenerationV1 not found" =>
-                {
-                    Ok(None)
-                }
-                Err(error) => Err(error),
-            }
-        })
     }
 }

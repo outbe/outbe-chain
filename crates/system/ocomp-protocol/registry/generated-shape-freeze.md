@@ -5,50 +5,49 @@
 Classification: `measurement_only`. Armable: `false`.
 
 - Generator source SHA-256: `ba5ab090ad67cecff7d40e978ee9ee333656e973eba9669ba6bba24d36b89089`
-- Input-set SHA-256: `e95e101f4ded63f6659bbefa4e421b866e1c3105145c72715558e948841788e9`
-- Candidate-limit SHA-256: `886ca153f055177d86db1beaa9352c95d1b280b18972603e80501a317a189a7d`
+- Input-set SHA-256: `b874ada95e293da14b08089667e9c80e3651c918e1c88ebabfc50a1a27da9b94`
+- Candidate-limit SHA-256: `141d63839c8ac17765f80af2aa79dc39a14b998e83cb25002e4a3470554a38a2`
 - Object kinds: `35`
 
 ## Candidate compile ceilings
 
 | Field | Value |
 |---|---:|
-| `activation_base_gas` | 100000 |
-| `activation_per_input_byte_gas` | 16 |
-| `activation_per_opening_or_proof_byte_gas` | 16 |
-| `activation_per_root_transition_gas` | 25000 |
-| `activation_per_signature_gas` | 50000 |
-| `max_activation_calldata_bytes` | 2097216 |
-| `max_activation_gas` | 30000000 |
-| `max_activation_internal_work` | 10000000 |
-| `max_activation_ocb1_bytes` | 2097152 |
-| `max_activation_payload_bytes` | 65536 |
-| `max_activation_root_transitions` | 4 |
-| `max_activation_storage_reads` | 64 |
-| `max_activation_storage_writes` | 32 |
-| `max_active_scurve_entries` | 256 |
-| `max_bucket_records_per_result_chunk` | 256 |
-| `max_contributor_actions_per_result_chunk` | 256 |
-| `max_fidelity_openings_per_work_shard` | 256 |
-| `max_finalized_intent_proof_bytes` | 524288 |
-| `max_input_chunk_bytes` | 1048576 |
-| `max_input_manifest_bytes` | 262144 |
+| `max_tributes_per_work_shard` | 256 |
 | `max_inputs_per_work_unit` | 13 |
-| `max_log_bytes` | 65536 |
-| `max_log_count` | 8 |
-| `max_nod_actions_per_result_chunk` | 256 |
-| `max_opening_bytes` | 262144 |
-| `max_oracle_openings` | 256 |
-| `max_oracle_wwd_pair_entries` | 256 |
-| `max_protocol_collection_items` | 4096 |
-| `max_receipt_bytes` | 65536 |
-| `max_records_per_input_chunk` | 768 |
 | `max_result_chunk_bytes` | 524288 |
 | `max_result_summary_bytes` | 1048576 |
+| `max_activation_payload_bytes` | 65536 |
+| `max_finalized_intent_proof_bytes` | 524288 |
 | `max_result_vote_bytes` | 2048 |
-| `max_signature_verifications` | 3 |
+| `max_activation_ocb1_bytes` | 2097152 |
+| `max_activation_calldata_bytes` | 2097216 |
 | `max_transaction_rlp_bytes` | 2097408 |
-| `max_tributes_per_work_shard` | 256 |
+| `max_receipt_bytes` | 65536 |
+| `max_log_count` | 8 |
+| `max_log_bytes` | 65536 |
+| `max_input_manifest_bytes` | 262144 |
+| `max_input_chunk_bytes` | 1048576 |
+| `max_records_per_input_chunk` | 768 |
+| `max_fidelity_openings_per_work_shard` | 256 |
+| `max_oracle_openings` | 256 |
+| `max_oracle_wwd_pair_entries` | 256 |
+| `max_active_scurve_entries` | 256 |
+| `max_opening_bytes` | 262144 |
+| `max_nod_actions_per_result_chunk` | 256 |
+| `max_bucket_records_per_result_chunk` | 256 |
+| `max_protocol_collection_items` | 4096 |
+| `max_activation_storage_reads` | 64 |
+| `max_activation_storage_writes` | 32 |
+| `max_activation_root_transitions` | 3 |
+| `max_signature_verifications` | 3 |
+| `activation_base_gas` | 100000 |
+| `activation_per_input_byte_gas` | 16 |
+| `activation_per_root_transition_gas` | 25000 |
+| `activation_per_opening_or_proof_byte_gas` | 16 |
+| `activation_per_signature_gas` | 50000 |
+| `max_activation_gas` | 30000000 |
+| `max_activation_internal_work` | 10000000 |
 | `source_retention_after_terminal_blocks` | 64 |
 
 ## Measurement machine

@@ -1,9 +1,9 @@
 use super::*;
 
-pub(super) fn snapshot_public_kind(
+pub(super) fn is_copied_materialization(
     tx: &serde_json::Value,
     copied_queue_sequence: u64,
-) -> eyre::Result<Option<bool>> {
+) -> eyre::Result<bool> {
     use crate::internal::addresses;
     use alloy_primitives::Address;
     use outbe_ocomp_protocol::{
@@ -15,10 +15,10 @@ pub(super) fn snapshot_public_kind(
     };
     let limits = poc_schema_limits();
     let Some(to) = tx["to"].as_str().and_then(|s| s.parse::<Address>().ok()) else {
-        return Ok(None);
+        return Ok(false);
     };
     if to != addresses::NOD_FACTORY_ADDR {
-        return Ok(None);
+        return Ok(false);
     }
     let input = hex::decode(
         tx["input"]
@@ -27,14 +27,12 @@ pub(super) fn snapshot_public_kind(
             .trim_start_matches("0x"),
     )?;
     if input.get(..4) != Some(MATERIALIZE_CERTIFIED_NODS_SELECTOR.as_slice()) {
-        return Ok(None);
+        return Ok(false);
     }
-    if decode_protected_materialize_certified_nods_calldata(&input, &limits)?.queue_sequence
-        != copied_queue_sequence
-    {
-        return Ok(None);
-    }
-    Ok(Some(true))
+    Ok(
+        decode_protected_materialize_certified_nods_calldata(&input, &limits)?.queue_sequence
+            == copied_queue_sequence,
+    )
 }
 
 pub(super) fn snapshot_public_transactions(
@@ -64,7 +62,6 @@ pub(super) fn snapshot_public_transactions(
         copied_queue_sequence,
     };
     let mut transactions = Vec::new();
-    let mut materialization_count = 0;
     let mut first = cut_height
         .checked_add(1)
         .ok_or_else(|| eyre!("cut overflow"))?;
@@ -77,19 +74,15 @@ pub(super) fn snapshot_public_transactions(
                 .as_array()
                 .ok_or_else(|| eyre!("missing public transactions"))?
             {
-                let Some((materialization, observed)) = scan.observe(tx, &block, height)? else {
-                    continue;
-                };
-                if materialization {
-                    materialization_count += 1;
+                if let Some(observed) = scan.observe(tx, &block, height)? {
+                    transactions.push(observed);
                 }
-                transactions.push(observed);
             }
         }
         first = last.checked_add(1).ok_or_else(|| eyre!("scan overflow"))?;
     }
     ensure!(
-        materialization_count > 0,
+        !transactions.is_empty(),
         "missing actual post-cut materialization transactions"
     );
     Ok(transactions)
@@ -218,12 +211,12 @@ impl SnapshotPublicScan<'_> {
         tx: &serde_json::Value,
         block: &serde_json::Value,
         height: u64,
-    ) -> eyre::Result<Option<(bool, serde_json::Value)>> {
+    ) -> eyre::Result<Option<serde_json::Value>> {
         use crate::internal::eth;
         use alloy_primitives::Address;
-        let Some(materialization) = snapshot_public_kind(tx, self.copied_queue_sequence)? else {
+        if !is_copied_materialization(tx, self.copied_queue_sequence)? {
             return Ok(None);
-        };
+        }
         let signer: Address = tx["from"]
             .as_str()
             .ok_or_else(|| eyre!("missing sender"))?
@@ -249,9 +242,8 @@ impl SnapshotPublicScan<'_> {
             .get(&signer)
             .ok_or_else(|| eyre!("successful sender is not an existing OCOMP delegate"))?;
         assert_snapshot_delegate(self.url, signer, validator, height)?;
-        Ok(Some((
-            materialization,
+        Ok(Some(
             serde_json::json!({"block_number":height,"transaction":tx,"receipt":receipt,"validator":validator,"delegate":signer}),
-        )))
+        ))
     }
 }

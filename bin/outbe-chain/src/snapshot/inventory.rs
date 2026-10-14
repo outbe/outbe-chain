@@ -293,7 +293,6 @@ fn protected_native_paths(layout: &NativeLayout) -> eyre::Result<ProtectedPaths>
         "supervisor-v1/sign-once",
         "supervisor-v1/vote-submissions",
         "supervisor-v1/materialization-submissions",
-        "supervisor-v1/payout-submissions",
     ] {
         protected.0.push(layout.ocomp_root.join(name));
     }

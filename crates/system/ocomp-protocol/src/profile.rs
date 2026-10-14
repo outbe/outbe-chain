@@ -19,13 +19,7 @@ pub fn poc_schema_limits() -> SchemaLimits {
 
 const POC_SCHEMA_LIMITS: SchemaLimits = {
     let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
-    let max_action_items = if candidate.max_nod_actions_per_result_chunk
-        <= candidate.max_contributor_actions_per_result_chunk
-    {
-        candidate.max_nod_actions_per_result_chunk
-    } else {
-        candidate.max_contributor_actions_per_result_chunk
-    };
+    let max_action_items = candidate.max_nod_actions_per_result_chunk;
     assert!(
         candidate.max_activation_ocb1_bytes <= usize::MAX as u64,
         "generated body cap fits usize"

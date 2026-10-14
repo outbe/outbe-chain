@@ -13,55 +13,9 @@ use crate::{
 };
 
 use super::{
-    ShuffleBucketRecordV1, ShufflePageSlice, ShufflePageSpanV1, ShuffleRunArtifactV1,
-    ShuffleRunChildV1, ShuffleRunContextV1, ShuffleRunKindV1, ShuffleRunPayloadV1,
-    MAX_SHUFFLE_LEAF_RECORDS,
+    ShuffleBucketRecordV1, ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunChildV1,
+    ShuffleRunContextV1, ShuffleRunKindV1, ShuffleRunPayloadV1, MAX_SHUFFLE_LEAF_RECORDS,
 };
-
-pub(super) fn exact_shuffle_page_count(record_count: u32) -> Result<u32, ProtocolError> {
-    if record_count == 0 {
-        return Err(ProtocolError::InvalidInvariant(
-            "non-empty bucket shuffle run",
-        ));
-    }
-    Ok(record_count.div_ceil(MAX_SHUFFLE_LEAF_RECORDS as u32))
-}
-
-pub(super) fn require_shuffle_page_leaf(
-    context: &ShuffleRunContextV1,
-    slice: &ShufflePageSlice<'_>,
-) -> Result<(), ProtocolError> {
-    let page_ordinal = slice.page_ordinal;
-    let page_end = page_ordinal
-        .checked_add(1)
-        .ok_or(ProtocolError::IntegerOverflow {
-            what: "shuffle requested page end",
-        })?;
-    let expected_first = page_ordinal
-        .checked_mul(MAX_SHUFFLE_LEAF_RECORDS as u32)
-        .ok_or(ProtocolError::IntegerOverflow {
-            what: "shuffle requested first record",
-        })?;
-    let expected_end = if page_end == context.root_page_end {
-        context.root_record_count
-    } else {
-        page_end
-            .checked_mul(MAX_SHUFFLE_LEAF_RECORDS as u32)
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "shuffle requested record end",
-            })?
-    };
-    require(
-        slice.page_span.start_page == page_ordinal
-            && slice.page_span.end_page == page_end
-            && slice.first_record_ordinal == expected_first
-            && slice
-                .first_record_ordinal
-                .checked_add(slice.record_count)
-                .is_some_and(|actual| actual == expected_end),
-        "shuffle exact page slice",
-    )
-}
 
 pub(super) fn resolve_shuffle_child<R>(
     context: &ShuffleRunContextV1,

@@ -1,7 +1,7 @@
 //! inventory obligations for the offline OCOMP audit.
 use super::*;
 
-/// Scratch-only sets avoid retaining the permanent series index in RAM.
+/// Scratch-only set of NOD FIFO day/job keys, kept out of RAM.
 #[derive(Debug)]
 pub(super) struct InventoryRows;
 impl Table for InventoryRows {
@@ -117,8 +117,6 @@ pub(crate) struct InventoryBounds {
     pub nod_head: u64,
     pub nod_tail: u64,
     pub nod_entries: u64,
-    pub series: u64,
-    pub days: u64,
 }
 
 /// Canonical obligation discovery is independent of local job directories.
@@ -326,48 +324,6 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
             );
         }
 
-        let total_series = state.intex_total_series()?;
-        observe_inventory_bound(report.as_deref_mut(), "intex_series", 0, total_series, 0);
-        observe_inventory_bound(report.as_deref_mut(), "intex_days", 0, 0, 0);
-        for index in 0..total_series {
-            scan_budget("Intex series", index, total_series, maximum_records)?;
-            let id = state.intex_series_id_at(index)?;
-            let day = verify_series_day(id)?;
-            let record = state.intex_read_series(id)?;
-            ensure!(
-                record.series_id == id && record.worldwide_day == day,
-                "Intex series record identity/day differs from permanent index"
-            );
-            let key = inventory_key(b's', id.as_bytes());
-            ensure!(
-                tx.get::<InventoryRows>(key.clone())?.is_none(),
-                "duplicate Intex series identity"
-            );
-            tx.put::<InventoryRows>(key, Vec::new())?;
-            bounds.series += 1;
-            observe_inventory_bound(
-                report.as_deref_mut(),
-                "intex_series",
-                0,
-                total_series,
-                bounds.series,
-            );
-            let day_key = inventory_key(b'w', &day.value().to_be_bytes());
-            if tx.get::<InventoryRows>(day_key.clone())?.is_some() {
-                continue;
-            }
-            tx.put::<InventoryRows>(day_key, Vec::new())?;
-            bounds.days += 1;
-            // Distinct days are discovered through the permanent series index.
-            // This records the population reached, not an unobserved final count.
-            observe_inventory_bound(
-                report.as_deref_mut(),
-                "intex_days",
-                0,
-                bounds.days,
-                bounds.days,
-            );
-        }
         tx.commit()?;
         Ok(Self {
             state,

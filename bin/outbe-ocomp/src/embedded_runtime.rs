@@ -758,12 +758,12 @@ mod tests {
     }
 
     #[test]
-    fn one_validator_signer_serializes_vote_materialization_and_payout() {
+    fn one_validator_signer_serializes_votes_and_materialization() {
         let gate = Arc::new(ValidatorOcompSubmissionGateV1::default());
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_vote_tx, release_vote_rx) = mpsc::channel();
         let (release_materialization_tx, release_materialization_rx) = mpsc::channel();
-        let (release_payout_tx, release_payout_rx) = mpsc::channel();
+        let (release_next_vote_tx, release_next_vote_rx) = mpsc::channel();
 
         let first_gate = Arc::clone(&gate);
         let first_entered = entered_tx.clone();
@@ -788,8 +788,10 @@ mod tests {
         let third_gate = Arc::clone(&gate);
         let third = thread::spawn(move || {
             let _permit = third_gate.acquire().expect("third signer permit");
-            entered_tx.send(3).expect("payout entered signal");
-            release_payout_rx.recv().expect("release payout submission");
+            entered_tx.send(3).expect("next vote entered signal");
+            release_next_vote_rx
+                .recv()
+                .expect("release next vote submission");
         });
         assert!(entered_rx.recv_timeout(Duration::from_millis(50)).is_err());
 
@@ -806,20 +808,20 @@ mod tests {
             assert_eq!(
                 entered_rx
                     .recv_timeout(Duration::from_secs(1))
-                    .expect("payout entered after materialization"),
+                    .expect("next vote entered after materialization"),
                 3
             );
-            release_payout_tx
+            release_next_vote_tx
                 .send(())
-                .expect("release payout submission");
+                .expect("release next vote submission");
         } else {
-            release_payout_tx
+            release_next_vote_tx
                 .send(())
-                .expect("release payout submission");
+                .expect("release next vote submission");
             assert_eq!(
                 entered_rx
                     .recv_timeout(Duration::from_secs(1))
-                    .expect("materialization entered after payout"),
+                    .expect("materialization entered after next vote"),
                 2
             );
             release_materialization_tx
@@ -828,7 +830,7 @@ mod tests {
         }
         first.join().expect("first vote thread");
         second.join().expect("materialization thread");
-        third.join().expect("payout thread");
+        third.join().expect("next vote thread");
     }
 
     #[cfg(feature = "test-protocol-overrides")]
