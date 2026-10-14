@@ -246,7 +246,7 @@ fn issue_five_gems(world: &mut World) {
         .gemId;
         // Qualification and the call count only days a gem held in full: stamp it
         // behind every day the scenario seeds.
-        eth::send_call(
+        let backdated = eth::send_call_outcome(
             &url,
             addresses::GEM_FACTORY_ADDR,
             DEPLOYER_KEY,
@@ -258,6 +258,7 @@ fn issue_five_gems(world: &mut World) {
             None,
         )
         .expect("backdate the gem's issuance stamp");
+        assert_mined_success(&backdated, "backdate the gem's issuance stamp");
         gems.push(gem_id);
     }
     world.state.lifecycle_gems = gems;
@@ -448,7 +449,7 @@ impl Lifecycle for GemLifecycle {
                 "gem {id} is unreadable past its call deadline but was not burned"
             ),
         }
-        eth::send_call(
+        let closed = eth::send_call_outcome(
             &url,
             addresses::GEM_FACTORY_ADDR,
             DEPLOYER_KEY,
@@ -459,6 +460,7 @@ impl Lifecycle for GemLifecycle {
             None,
         )
         .expect("close the expiry bucket the gem sits in");
+        assert_mined_success(&closed, "close the expiry bucket the gem sits in");
     }
 
     fn assert_forfeited(&self, world: &World) {
