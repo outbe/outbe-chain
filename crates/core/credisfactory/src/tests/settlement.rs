@@ -1,7 +1,7 @@
 //! Repayment, forfeiture and stake behaviour of Credis backed by a direct pledge.
 use crate::rules::CredisRules;
 use crate::{precompile::ICredisFactory, runtime, tests::common::*};
-use alloy_primitives::{b256, keccak256, Bytes, B256, U256};
+use alloy_primitives::{b256, keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_credis::precompile::ICredis;
 use outbe_credis::{CredisContract, CredisState};
@@ -636,6 +636,95 @@ fn a_half_paid_call_forfeits_only_the_unpaid_backing_of_another_accounts_source(
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
             U256::ZERO
         );
+    });
+    teardown();
+}
+
+fn forfeit_through_abi(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+    id: U256,
+    value: U256,
+) -> outbe_primitives::error::Result<ICredisFactory::forfeitCredisReturn> {
+    let data = ICredisFactory::forfeitCredisCall { credisId: id }.abi_encode();
+    let out = crate::precompile::dispatch(storage.clone(), &data, caller, value)?;
+    Ok(ICredisFactory::forfeitCredisCall::abi_decode_returns(&out).unwrap())
+}
+
+#[test]
+fn the_owner_forfeits_an_issued_credis_burning_its_sources_pledge() {
+    let mut provider = env();
+    StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost() * U256::from(2u64));
+        let id = seed_reservation(&storage, bob(), alice(), pledge_stables());
+        pledge(&storage, alice(), id, 1);
+        fund_stake(&storage, pledge_stake());
+        let credis_id = runtime::issue_credis(storage.clone(), cca(), id, pledge_stake())
+            .unwrap()
+            .0;
+        let day = outbe_primitives::time::timestamp_to_date_key(CREATED_AT);
+        let liquid = view_balance(&storage, alice());
+
+        for stranger in [alice(), cca()] {
+            let err = forfeit_through_abi(&storage, stranger, credis_id, U256::ZERO)
+                .err()
+                .unwrap();
+            assert!(err.to_string().contains("only the Credis owner"), "{err}");
+        }
+        assert!(forfeit_through_abi(&storage, bob(), credis_id, U256::from(1u64)).is_err());
+
+        let out = forfeit_through_abi(&storage, bob(), credis_id, U256::ZERO).unwrap();
+        assert_eq!(out.gratisBurnedMinor, pledge_cost());
+        assert_eq!(out.principalWrittenOffMinor, pledge_stables());
+        assert_eq!(
+            record(&storage, credis_id).lifecycle_state().unwrap(),
+            CredisState::Forfeited
+        );
+        assert_eq!(collateral(&storage, credis_id), U256::ZERO);
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(view_balance(&storage, alice()), liquid);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(unallocated(&storage), pledge_cost());
+        assert_eq!(
+            outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            CredisContract::new(storage.clone())
+                .call_bin_tree_root
+                .read(&REFERENCE_ISO)
+                .unwrap(),
+            U256::ZERO
+        );
+
+        assert!(forfeit_through_abi(&storage, bob(), credis_id, U256::ZERO).is_err());
+        assert!(runtime::settle(storage.clone(), bob(), credis_id, U256::from(1u64)).is_err());
+        assert_eq!(unallocated(&storage), pledge_cost());
+    });
+    teardown();
+}
+
+#[test]
+fn the_owners_forfeit_of_a_lapsed_call_leaves_the_sweep_nothing() {
+    let mut provider = env();
+    StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let id = open(&storage, 1);
+        let called_at = now_of(&storage);
+        assert!(CredisContract::new(storage.clone())
+            .mark_called(id, called_at)
+            .unwrap());
+        let lapsed = outbe_credis::settlement_deadline(&record(&storage, id)) + HOUR;
+        advance_to(&storage, lapsed);
+        finalize_through(&storage, lapsed);
+
+        forfeit_through_abi(&storage, alice(), id, U256::ZERO).unwrap();
+        assert_eq!(expire(&storage, lapsed), 0);
+        assert_eq!(unallocated(&storage), pledge_cost());
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
     });
     teardown();
 }

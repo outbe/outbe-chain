@@ -47,9 +47,6 @@
 use crate::error::PrecompileError;
 
 pub use crate::addresses::OUTBE_SYSTEM_TX_ADDRESS;
-pub use outbe_ocomp_protocol::abi::{
-    OCOMP_LIFECYCLE_BEGIN_SELECTOR, OCOMP_TERMINAL_REQUEST_SELECTOR,
-};
 
 pub mod binding;
 
@@ -109,6 +106,10 @@ pub const ORACLE_SLASH_WINDOW_SELECTOR: [u8; 4] = *b"OSO2";
 pub const TEE_BOOTSTRAP_SELECTOR: [u8; 4] = *b"OST3";
 /// Selector for [`SystemTxKind::LateFinalizeCredits`].
 pub const LATE_FINALIZE_CREDITS_SELECTOR: [u8; 4] = *b"OSL2";
+/// Selector for [`SystemTxKind::OcompLifecycleBegin`] (V2 OSE2).
+pub const OCOMP_LIFECYCLE_BEGIN_SELECTOR: [u8; 4] = *b"OSE2";
+/// Selector for [`SystemTxKind::OcompTerminalRequest`] (V2 OSR2).
+pub const OCOMP_TERMINAL_REQUEST_SELECTOR: [u8; 4] = *b"OSR2";
 /// Selector for [`SystemTxKind::HookEvents`] (V2 OSH2).
 pub const HOOK_EVENTS_SELECTOR: [u8; 4] = *b"OSH2";
 

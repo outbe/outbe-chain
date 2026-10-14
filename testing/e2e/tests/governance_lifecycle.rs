@@ -4,7 +4,7 @@
 //! directly. Unlike them, this test exercises the full path: ABI decode -> dispatch -> caller
 //! gating -> ABI encode of the return value.
 //!
-//! Flow: seed one authority (as genesis does) -> update canon/meta-canon -> submit an OIP ->
+//! Flow: activate one validator in the live ValidatorSet -> update canon/meta-canon -> submit an OIP ->
 //! drive its status Draft -> Approved -> Implemented -> submit a GIP and diff it against the
 //! canon. The test also covers the negative paths: a non-authority cannot write the canon or
 //! move a proposal's status.
@@ -12,8 +12,8 @@
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_governance::precompile::{dispatch as gov_dispatch, IGovernance};
-use outbe_governance::GovernanceContract;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_validatorset::contract::ValidatorSet;
 
 const CHAIN_ID: u64 = 1;
 const AUTHORITY: Address = address!("0x1111111111111111111111111111111111111111");
@@ -29,10 +29,15 @@ const IMPLEMENTED: u8 = 4;
 fn governance_full_lifecycle_via_dispatch() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {
-        // Seed one authority directly, exactly as the genesis alloc does.
+        // The write gate reads the live ValidatorSet: an ACTIVE validator is an authority.
         {
-            let gov = GovernanceContract::new(storage.clone());
-            gov.authorities.write(&AUTHORITY, true).unwrap();
+            let owner = address!("0xffffffffffffffffffffffffffffffffffffffff");
+            let mut vs = ValidatorSet::new(storage.clone());
+            vs.config_owner.write(owner).unwrap();
+            vs.set_config_max_validators(100).unwrap();
+            vs.register_validator(owner, AUTHORITY, &[1u8; 48]).unwrap();
+            vs.activate_validator_via_boundary_for_test(AUTHORITY)
+                .unwrap();
         }
 
         // --- canon / meta-canon: authority writes, anyone reads ---

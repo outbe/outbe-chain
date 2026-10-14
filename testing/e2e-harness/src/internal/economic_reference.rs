@@ -42,15 +42,12 @@ pub(crate) fn emission_day(genesis_timestamp: u64, timestamp: u64) -> u64 {
 }
 
 /// Each fixture has exactly one WAA beneficiary and one SRA beneficiary.
-/// WAA receives 32% of its 4% daily pool; SRA receives its full 4% pool.
+/// WAA and SRA each receive their full 4% daily pool.
 /// Floors precede conversion to native eighteen-decimal units.
 pub(crate) fn single_beneficiary_rewards(day: u64) -> (U256, U256) {
     let pool = emission_units(day) * U256::from(4) / U256::from(100);
-    let capped = pool * U256::from(32) / U256::from(100);
-    (
-        capped * U256::from(NATIVE_PER_PROTOCOL_UNIT),
-        pool * U256::from(NATIVE_PER_PROTOCOL_UNIT),
-    )
+    let native = pool * U256::from(NATIVE_PER_PROTOCOL_UNIT);
+    (native, native)
 }
 
 #[cfg(test)]
@@ -59,13 +56,13 @@ mod tests {
     use alloy_primitives::uint;
 
     #[test]
-    fn waa_cap_and_full_sra_pool_floor_before_native_conversion() {
+    fn full_waa_and_sra_pools_floor_before_native_conversion() {
         // Independent Decimal day-1 emission = 268480452000000.
-        // floor(4% emission) = 10739218080000. floor(32% pool) = 3436549785600.
+        // floor(4% emission) = 10739218080000 for both pools.
         assert_eq!(
             single_beneficiary_rewards(1),
             (
-                uint!(3436549785600000000000000_U256),
+                uint!(10739218080000000000000000_U256),
                 uint!(10739218080000000000000000_U256),
             )
         );

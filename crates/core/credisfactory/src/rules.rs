@@ -88,6 +88,7 @@ pub trait CredisRules {
     fn mark_called(&mut self, credis_id: U256, now: u64) -> Result<bool>;
     fn settle(&mut self, credis_id: U256, amount: U256, now: u64) -> Result<Settlement>;
     fn forfeit(&mut self, credis_id: U256, now: u64) -> Result<Forfeit>;
+    fn forfeit_by_owner(&mut self, credis_id: U256, caller: Address) -> Result<Forfeit>;
 }
 
 impl CredisRules for CredisContract<'_> {
@@ -334,46 +335,72 @@ impl CredisRules for CredisContract<'_> {
     fn forfeit(&mut self, credis_id: U256, now: u64) -> Result<Forfeit> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            let mut record = self.load_credis(credis_id)?;
+            let record = self.load_credis(credis_id)?;
             if record.lifecycle_state()? != CredisState::Called {
                 return Err(CredisFactoryError::NotCalled.into());
             }
             if now <= settlement_deadline(&record) {
                 return Err(CredisFactoryError::SettlementDeadlineNotPassed.into());
             }
-            if record.outstanding_principal_minor.is_zero() {
-                return Err(CredisFactoryError::NothingOutstanding.into());
-            }
-
-            let gratis_burned_minor = record.outstanding_gratis_minor;
-            let principal_written_off = record.outstanding_principal_minor;
-
-            outbe_ccaregistry::api::credis_forfeited(
-                &self.storage,
-                record.cca,
-                reward_day(&self.storage)?,
-                gratis_burned_minor,
-            )?;
-            // The remainders stay on the record: they are what was written off and burned.
-            record.state = CredisState::Forfeited as u8;
-            self.update_credis_record(&record)?;
-            self.remove_call_bin(&record)?;
-            self.remove_called(credis_id)?;
-
-            self.emit(outbe_credis::precompile::ICredis::CredisForfeited {
-                credisId: credis_id,
-                cca: record.cca,
-                gratisBurnedMinor: gratis_burned_minor,
-                principalWrittenOffMinor: principal_written_off,
-            })?;
-            self.emit(outbe_credis::precompile::ICredis::MetadataUpdate {
-                _tokenId: credis_id,
-            })?;
-
-            Ok(Forfeit {
-                gratis_burned_minor,
-                principal_written_off,
-            })
+            close_forfeited(self, record)
         })
     }
+
+    /// The owner gives up an Issued or Called Credis at any time, with the same
+    /// write-off and burn as a lapsed call.
+    fn forfeit_by_owner(&mut self, credis_id: U256, caller: Address) -> Result<Forfeit> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let record = self.load_credis(credis_id)?;
+            if caller != record.owner {
+                return Err(CredisFactoryError::NotCredisOwner.into());
+            }
+            match record.lifecycle_state()? {
+                CredisState::Issued | CredisState::Called => {}
+                CredisState::Settled | CredisState::Forfeited => {
+                    return Err(CredisFactoryError::CredisClosed.into())
+                }
+            }
+            close_forfeited(self, record)
+        })
+    }
+}
+
+fn close_forfeited(credis: &mut CredisContract<'_>, mut record: Credis) -> Result<Forfeit> {
+    if record.outstanding_principal_minor.is_zero() {
+        return Err(CredisFactoryError::NothingOutstanding.into());
+    }
+    let was_called = record.lifecycle_state()? == CredisState::Called;
+    let credis_id = record.credis_id;
+    let gratis_burned_minor = record.outstanding_gratis_minor;
+    let principal_written_off = record.outstanding_principal_minor;
+
+    outbe_ccaregistry::api::credis_forfeited(
+        &credis.storage,
+        record.cca,
+        reward_day(&credis.storage)?,
+        gratis_burned_minor,
+    )?;
+    // The remainders stay on the record: they are what was written off and burned.
+    record.state = CredisState::Forfeited as u8;
+    credis.update_credis_record(&record)?;
+    credis.remove_call_bin(&record)?;
+    if was_called {
+        credis.remove_called(credis_id)?;
+    }
+
+    credis.emit(outbe_credis::precompile::ICredis::CredisForfeited {
+        credisId: credis_id,
+        cca: record.cca,
+        gratisBurnedMinor: gratis_burned_minor,
+        principalWrittenOffMinor: principal_written_off,
+    })?;
+    credis.emit(outbe_credis::precompile::ICredis::MetadataUpdate {
+        _tokenId: credis_id,
+    })?;
+
+    Ok(Forfeit {
+        gratis_burned_minor,
+        principal_written_off,
+    })
 }

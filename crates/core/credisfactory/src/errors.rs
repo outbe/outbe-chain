@@ -36,6 +36,8 @@ pub enum CredisFactoryError {
     SettlementDeadlinePassed,
     #[error("Credis has no outstanding principal")]
     NothingOutstanding,
+    #[error("only the Credis owner can forfeit it")]
+    NotCredisOwner,
 }
 
 impl From<CredisFactoryError> for PrecompileError {
