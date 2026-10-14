@@ -3,6 +3,7 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 use crate::api;
 use crate::config;
@@ -14,7 +15,7 @@ use outbe_primitives::storage::types::{Storable, StorageKey};
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
-const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 60 * 60;
+const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 const ENTRY_PRICE_MINOR: u64 = 2_000_000;
 const FLOOR_PRICE_MINOR: u64 = 1_500_000;
 const CALL_PRICE_MINOR: u64 = 900_000;
@@ -45,8 +46,8 @@ fn sample_params(worldwide_day: u32) -> CreateSeriesParams {
         floor_price_minor: U256::from(FLOOR_PRICE_MINOR),
         call_price_minor: U256::from(CALL_PRICE_MINOR),
         call_trigger: IntexCallTrigger {
-            call_window_seconds: 30 * 24 * 60 * 60,
-            call_threshold_seconds: 5 * 24 * 60 * 60,
+            call_window_seconds: 30 * SECONDS_PER_DAY_U32,
+            call_threshold_seconds: 5 * SECONDS_PER_DAY_U32,
             call_notice_period_seconds: CALL_NOTICE_PERIOD,
         },
         issued_at: ISSUED_AT,
@@ -76,8 +77,8 @@ fn create_then_read_round_trip() {
         assert_eq!(
             r.call_trigger(),
             IntexCallTrigger {
-                call_window_seconds: 30 * 24 * 60 * 60,
-                call_threshold_seconds: 5 * 24 * 60 * 60,
+                call_window_seconds: 30 * SECONDS_PER_DAY_U32,
+                call_threshold_seconds: 5 * SECONDS_PER_DAY_U32,
                 call_notice_period_seconds: CALL_NOTICE_PERIOD,
             }
         );
@@ -200,8 +201,8 @@ fn precompile_series_data_round_trip() {
         assert_eq!(data.entryPriceMinor, U256::from(ENTRY_PRICE_MINOR));
         assert_eq!(data.floorPriceMinor, U256::from(FLOOR_PRICE_MINOR));
         assert_eq!(data.issuedUnits, 100);
-        assert_eq!(data.callWindow, 30 * 24 * 60 * 60);
-        assert_eq!(data.callThreshold, 5 * 24 * 60 * 60);
+        assert_eq!(data.callWindow, 30 * SECONDS_PER_DAY_U32);
+        assert_eq!(data.callThreshold, 5 * SECONDS_PER_DAY_U32);
         assert_eq!(data.callPriceMinor, U256::from(CALL_PRICE_MINOR));
         assert_eq!(data.state, IntexState::Issued as u8);
         assert_eq!(data.issuedAt, ISSUED_AT);

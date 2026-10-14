@@ -2,6 +2,7 @@ use super::*;
 
 use super::lifecycle::{fill_days, setup_pair};
 use outbe_primitives::storage::types::Storable as _;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 /// Well past issuance: the closed day before it is one every seeded series held in full.
 const MATURE_TS: u64 = ISSUED_AT as u64 + 21 * DAY + 1;
@@ -229,8 +230,8 @@ fn seed_issued_at(s: &StorageHandle<'_>, id: u32, issued_at: u32) {
             floor_price_minor: U256::from(EXPECTED_FLOOR),
             call_price_minor: U256::from(EXPECTED_TRIGGER),
             call_trigger: outbe_intex::IntexCallTrigger {
-                call_window_seconds: 30 * DAY as u32,
-                call_threshold_seconds: 21 * DAY as u32,
+                call_window_seconds: 30 * SECONDS_PER_DAY_U32,
+                call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
                 call_notice_period_seconds: CALL_NOTICE_PERIOD,
             },
             issued_at,
@@ -397,8 +398,8 @@ fn terms(window_days: u32, threshold_days: u32) -> outbe_primitives::call_breach
 fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
     with_factory(|s| {
         let mut f = IntexContract::new(s.clone());
-        let live_window = 28 * 24 * 3600;
-        let live_threshold = 21 * 24 * 3600;
+        let live_window = 28 * SECONDS_PER_DAY_U32;
+        let live_threshold = 21 * SECONDS_PER_DAY_U32;
 
         assert_eq!(
             f.scan_call_terms(REFERENCE_ISO, live_window, live_threshold)
@@ -407,8 +408,12 @@ fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
             "nothing issued yet, so the live profile is the whole range"
         );
 
-        f.widen_call_terms(REFERENCE_ISO, 40 * 24 * 3600, 10 * 24 * 3600)
-            .unwrap();
+        f.widen_call_terms(
+            REFERENCE_ISO,
+            40 * SECONDS_PER_DAY_U32,
+            10 * SECONDS_PER_DAY_U32,
+        )
+        .unwrap();
         assert_eq!(
             f.scan_call_terms(REFERENCE_ISO, live_window, live_threshold)
                 .unwrap(),

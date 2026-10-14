@@ -7,6 +7,8 @@ use outbe_primitives::addresses::GEM_ADDRESS;
 use outbe_primitives::math::constants::REAL_ID_SHIFT;
 use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 use super::*;
 use outbe_gem::config::GemParams;
@@ -180,7 +182,11 @@ fn a_bucket_holds_the_gems_of_one_day_entry_price_and_currency() {
             edit(&mut params);
             bucket_of(storage, world, add(storage, world, params))
         };
-        assert_ne!(apart(&|p| p.issued_at += 86_400), bucket, "another day");
+        assert_ne!(
+            apart(&|p| p.issued_at += SECONDS_PER_DAY),
+            bucket,
+            "another day"
+        );
         assert_eq!(apart(&|p| p.issued_at += 1), bucket, "the same day");
         assert_ne!(apart(&|p| p.reference_currency = EUR), bucket);
         assert_ne!(apart(&|p| p.entry_price_minor += U256::from(1u64)), bucket);
@@ -288,7 +294,7 @@ fn bucket_body_and_terms_survive_until_unpaid_and_settled_are_zero() {
         let window = breach_window(
             T_NOW,
             view(storage, world, gem_id).terms.call_price_minor + U256::from(1u64),
-            (outbe_gem::constants::CALL_WINDOW / 86_400) as usize,
+            (outbe_gem::constants::CALL_WINDOW / SECONDS_PER_DAY_U32) as usize,
         );
         assert!(!crate::called::trigger_bucket_call(&mut scan, &window, bucket, T_NOW).unwrap());
 
@@ -434,7 +440,7 @@ fn leaving_called_frees_the_expiry_slot() {
         let gem_id = mature_gem(storage, world);
         let gem = GemContract::new(storage.clone());
         call_gem(storage, world, gem_id, T_NOW);
-        let hour = GemContract::deadline_hour(T_NOW + 7 * 86_400);
+        let hour = GemContract::deadline_hour(T_NOW + 7 * SECONDS_PER_DAY);
         assert_eq!(gem.expiry_bucket_live.read(&hour).unwrap(), 1);
 
         settle(storage, world, gem_id);
@@ -524,7 +530,7 @@ fn backdate_that_changes_the_day_moves_the_gem_and_mints_a_new_bucket_body() {
     with_storage(|storage, world| {
         let gem_id = add(storage, world, sample_params(ALICE));
         let before = item(storage, world, gem_id).unwrap();
-        let issued_at = T_NOW - 3 * 86_400;
+        let issued_at = T_NOW - 3 * SECONDS_PER_DAY;
 
         let data = IGemFactoryTestArming::backdateGemForTestCall {
             gemId: gem_id,

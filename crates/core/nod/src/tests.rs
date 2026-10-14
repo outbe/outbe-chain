@@ -7,6 +7,7 @@ use std::sync::Arc;
 use alloy_primitives::{Address, U256};
 use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{first_full_day, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::{
     math::{constants::MAX_BIN_ID, tree_math},
@@ -643,7 +644,7 @@ fn assert_sealed_call_terms(data: &crate::precompile::INod::NodData, notice: u32
             data.callThreshold,
             data.callNoticePeriod
         ),
-        (23, 432_000, 172_800, notice)
+        (23, 5 * SECONDS_PER_DAY_U32, 2 * SECONDS_PER_DAY_U32, notice)
     );
 }
 
@@ -1084,8 +1085,8 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
                 call_price_minor: U256::from(937),
                 reference_currency: USD,
                 call_rate: 23,
-                call_window_seconds: 432_000,
-                call_threshold_seconds: 172_800,
+                call_window_seconds: 5 * SECONDS_PER_DAY_U32,
+                call_threshold_seconds: 2 * SECONDS_PER_DAY_U32,
                 call_notice_period_seconds: 17,
             },
         )
@@ -1169,8 +1170,8 @@ fn seed_public_lifecycle(
             call_price_minor: U256::from(937),
             reference_currency: USD,
             call_rate: 23,
-            call_window_seconds: 432_000,
-            call_threshold_seconds: 172_800,
+            call_window_seconds: 5 * SECONDS_PER_DAY_U32,
+            call_threshold_seconds: 2 * SECONDS_PER_DAY_U32,
             call_notice_period_seconds: notice,
         },
     )

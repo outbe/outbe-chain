@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 #[test]
 fn issue_enrolls_in_call_bin() {
@@ -184,8 +185,8 @@ fn try_call_excludes_pre_issuance_days() {
                 floor_price_minor: U256::from(EXPECTED_FLOOR),
                 call_price_minor: U256::from(EXPECTED_TRIGGER),
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window_seconds: 30 * DAY as u32,
-                    call_threshold_seconds: 27 * DAY as u32,
+                    call_window_seconds: 30 * SECONDS_PER_DAY_U32,
+                    call_threshold_seconds: 27 * SECONDS_PER_DAY_U32,
                     call_notice_period_seconds: CALL_NOTICE_PERIOD,
                 },
                 issued_at: ISSUED_AT,
@@ -244,7 +245,7 @@ mod call_sweep {
     const REFERENCE_ISO: u16 = 840;
     const PAIR_ID: u32 = 1;
     const ISSUED_AT: u32 = 1_700_000_000;
-    const DAY: u64 = 24 * 60 * 60;
+    use outbe_primitives::time::{SECONDS_PER_DAY as DAY, SECONDS_PER_DAY_U32};
     const TRIGGER: u64 = 1_000_000;
     const WINDOW_DAYS: u32 = 28;
 
@@ -325,9 +326,9 @@ mod call_sweep {
                 floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window_seconds: WINDOW_DAYS * DAY as u32,
-                    call_threshold_seconds: 21 * DAY as u32,
-                    call_notice_period_seconds: 7 * DAY as u32,
+                    call_window_seconds: WINDOW_DAYS * SECONDS_PER_DAY_U32,
+                    call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
+                    call_notice_period_seconds: 7 * SECONDS_PER_DAY_U32,
                 },
                 issued_at,
                 issuance_currency: 840,
@@ -528,9 +529,9 @@ mod call_sweep {
                 floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window_seconds: WINDOW_DAYS * DAY as u32,
-                    call_threshold_seconds: 21 * DAY as u32,
-                    call_notice_period_seconds: 7 * DAY as u32,
+                    call_window_seconds: WINDOW_DAYS * SECONDS_PER_DAY_U32,
+                    call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
+                    call_notice_period_seconds: 7 * SECONDS_PER_DAY_U32,
                 },
                 issued_at: ISSUED_AT,
                 issuance_currency: issuance,
@@ -570,9 +571,9 @@ mod call_sweep {
                 floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window_seconds: WINDOW_DAYS * DAY as u32,
-                    call_threshold_seconds: 21 * DAY as u32,
-                    call_notice_period_seconds: 7 * DAY as u32,
+                    call_window_seconds: WINDOW_DAYS * SECONDS_PER_DAY_U32,
+                    call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
+                    call_notice_period_seconds: 7 * SECONDS_PER_DAY_U32,
                 },
                 issued_at: ISSUED_AT,
                 issuance_currency: issuance,
@@ -895,9 +896,9 @@ mod call_sweep {
                 floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window_seconds: WINDOW_DAYS * DAY as u32,
-                    call_threshold_seconds: 21 * DAY as u32,
-                    call_notice_period_seconds: 7 * DAY as u32,
+                    call_window_seconds: WINDOW_DAYS * SECONDS_PER_DAY_U32,
+                    call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
+                    call_notice_period_seconds: 7 * SECONDS_PER_DAY_U32,
                 },
                 issued_at,
                 issuance_currency: 840,
@@ -1068,9 +1069,9 @@ mod call_sweep {
                 floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window_seconds: WINDOW_DAYS * DAY as u32,
-                    call_threshold_seconds: 21 * DAY as u32,
-                    call_notice_period_seconds: 7 * DAY as u32,
+                    call_window_seconds: WINDOW_DAYS * SECONDS_PER_DAY_U32,
+                    call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
+                    call_notice_period_seconds: 7 * SECONDS_PER_DAY_U32,
                 },
                 issued_at: ISSUED_AT,
                 issuance_currency: 840,
@@ -1280,9 +1281,9 @@ mod call_sweep {
                 floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
-                    call_window_seconds: WINDOW_DAYS * DAY as u32,
-                    call_threshold_seconds: 21 * DAY as u32,
-                    call_notice_period_seconds: 7 * DAY as u32,
+                    call_window_seconds: WINDOW_DAYS * SECONDS_PER_DAY_U32,
+                    call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
+                    call_notice_period_seconds: 7 * SECONDS_PER_DAY_U32,
                 },
                 issued_at,
                 issuance_currency: 840,
@@ -1322,7 +1323,7 @@ mod called_pstar {
     const WINDOW: u32 = 28;
     const THRESHOLD: u32 = 21;
     const ISSUED_AT: u32 = 1_700_000_000;
-    const DAY_SECS: u64 = 24 * 60 * 60;
+    use outbe_primitives::time::SECONDS_PER_DAY as DAY_SECS;
 
     fn with_oracle<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);

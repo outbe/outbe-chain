@@ -6,6 +6,7 @@ use outbe_intex::SeriesId;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 use outbe_promisfactory::api::ModifyAuth;
 use outbe_tee::protocol::PromisOp;
@@ -126,7 +127,10 @@ fn test_storage(rate: Option<U256>) -> (HashMapStorageProvider, GemWorld) {
         // reference currency in every fixture, priced or not.
         let oracle = OracleContract::new(handle.clone());
         oracle.reference_currencies.push(840u16).unwrap();
-        oracle.config_lookback_duration.write(86_400).unwrap();
+        oracle
+            .config_lookback_duration
+            .write(SECONDS_PER_DAY)
+            .unwrap();
         if let Some(rate) = rate {
             outbe_oracle::test_support::publish_day_type_rate(&handle, rate, 1, T_NOW).unwrap();
         }

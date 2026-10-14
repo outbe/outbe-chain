@@ -9,6 +9,7 @@ use outbe_primitives::math::constants::REAL_ID_SHIFT;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use crate::called;
@@ -21,7 +22,7 @@ use outbe_intex::{Group, IntexContract};
 
 /// ISO code every fixture prices in.
 const REFERENCE_ISO: u16 = 840;
-const DAY: u64 = 24 * 60 * 60;
+use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 
 fn owner() -> Address {
     address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
@@ -34,7 +35,7 @@ fn payment_token() -> Address {
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
-const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 60 * 60;
+const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 
 // COEN clearing price and the floor/trigger derived from it at issuance.
 const ENTRY_PRICE: u64 = 1_000_000;
@@ -94,7 +95,7 @@ fn call_group<'s>(
     last_closed_day: u32,
     now_ts: u64,
 ) -> u32 {
-    let secs_per_day = DAY as u32;
+    let secs_per_day = SECONDS_PER_DAY_U32;
     let window = outbe_oracle::call_window::CallWindow::load(
         s,
         group.iso_code,

@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 /// Settlement at the deadline remains valid. The paid Nod can then be mined.
 #[test]
@@ -122,7 +123,7 @@ fn settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline()
         world.settle(nod_id, input.owner).is_err(),
         "duplicate settlement"
     );
-    world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD) + 365 * 86_400);
+    world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD) + 365 * SECONDS_PER_DAY);
     assert_eq!(public_nod_data(&mut world, nod_id).effectiveState, 3);
     let nonce = world.pow_nonce(nod_id);
     for (caller, candidate, auth) in [

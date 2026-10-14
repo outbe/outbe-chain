@@ -2,6 +2,7 @@
 //! to five owners. Two are paid while qualified, two are inside the call notice, and one is
 //! forfeited.
 
+use outbe_primitives::time::SECONDS_PER_DAY;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -78,7 +79,7 @@ fn issue_five_nods(world: &mut World) {
     let day = outbe_primitives::time::worldwide_day_from_timestamp(now);
     // Qualification and the call count only days after the bucket's stamp: stamp it
     // behind every day the scenario seeds.
-    let issued_at = now.saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * 86_400);
+    let issued_at = now.saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * SECONDS_PER_DAY);
     holders::fund(world, HOLDER_SEED);
     let mut nods = Vec::with_capacity(HOLDERS);
     for index in 0..HOLDERS {

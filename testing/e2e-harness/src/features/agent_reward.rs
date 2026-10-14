@@ -25,7 +25,7 @@ const SRA_BENEFICIARY_KEY: &str =
 // A Gem mint costs more gas than the native transfer the claim used to do.
 const BENEFICIARY_GAS_FUNDING_COEN: u64 = 25;
 const AGENT_REWARD_WAIT: Duration = Duration::from_secs(300);
-const SECONDS_PER_DAY: u64 = 86_400;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 #[when("a user of the registered L2 submits an encrypted Tribute with ZKP and WAA and SRA beneficiaries")]
 fn submit_reward_bearing_tribute(world: &mut World) {

@@ -4,6 +4,7 @@
 use super::*;
 use outbe_offchain_data::runtime_body_readers;
 use outbe_primitives::projection::{ExecutionReadBudget, ExecutionReadCancelled};
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 type NodBlockObservation = (
     B256,
@@ -564,7 +565,7 @@ fn seed_nod_daily_trigger(
         .last_executed_at
         .write(
             &outbe_cycle::triggers::TriggerId::NodCallDaily.as_u32(),
-            TEST_BLOCK_TIMESTAMP_BASE - 86_400,
+            TEST_BLOCK_TIMESTAMP_BASE - SECONDS_PER_DAY,
         )?;
 
     Ok(())
