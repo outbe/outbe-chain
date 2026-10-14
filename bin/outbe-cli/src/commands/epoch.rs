@@ -235,6 +235,7 @@ async fn transitions(client: &(impl Rpc + Sync), limit: usize) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 use super::format_topic_addr;
 
 #[cfg(test)]

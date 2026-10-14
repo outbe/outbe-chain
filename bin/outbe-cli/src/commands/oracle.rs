@@ -479,7 +479,7 @@ async fn vwap_range(
 async fn twaps(client: &(impl Rpc + Sync), seconds: u64) -> Result<()> {
     let ret = call_oracle(client, IOracle::getTwapsCall { lookback: seconds }).await?;
     print_lookback_table(
-        &"TWAP",
+        "TWAP",
         &ret.bases,
         &ret.quotes,
         &ret.twaps,
@@ -513,7 +513,7 @@ async fn worldwide_day_vwap(
 
     println!("WorldwideDay VWAP window: {start_time}..{end_time}");
     print_lookback_table(
-        &"VWAP",
+        "VWAP",
         &ret.bases,
         &ret.quotes,
         &ret.vwaps,

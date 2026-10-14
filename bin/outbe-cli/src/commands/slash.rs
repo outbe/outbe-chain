@@ -1,6 +1,6 @@
 //! Slash information and evidence submission commands.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, Address, B256};
 use alloy_sol_types::SolCall;
 use clap::Subcommand;
 use eyre::Result;
@@ -268,6 +268,7 @@ use super::format_topic_addr;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::U256;
 
     #[test]
     fn test_format_topic_addr_standard_padded() {

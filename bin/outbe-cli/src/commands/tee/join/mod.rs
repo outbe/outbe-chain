@@ -55,7 +55,9 @@ pub(super) use admission::{
 };
 
 mod relay;
-pub(super) use relay::{await_finalized_join_target, relay_exact_join_transaction};
+pub(super) use relay::await_finalized_join_target;
+#[cfg(test)]
+pub(super) use relay::relay_exact_join_transaction;
 use relay::{submit_or_resume_join_tx, JoinRelayContext};
 
 mod preflight;
