@@ -5,6 +5,7 @@ use alloy_primitives::{Address, FixedBytes, B256, U256};
 use outbe_gemfactory::errors::GemFactoryError;
 use outbe_intexfactory::errors::IntexFactoryError;
 use outbe_nodfactory::errors::NodFactoryError;
+use outbe_vaultrouter::settlement::SettlementError;
 
 use super::entity::{Item, Target};
 use super::markets::{currency, EUR_ISO, MYR_ISO};
@@ -62,7 +63,7 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target) {
                 payer,
                 factory(target),
                 &erc20_gem(*id, myr, U256::ZERO),
-                GemFactoryError::VwapSnapshotMismatch {
+                SettlementError::SnapshotMismatch {
                     authorized: U256::ZERO,
                     required,
                 },
@@ -72,7 +73,7 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target) {
                 payer,
                 factory(target),
                 &erc20_gem(*id, eur, U256::ZERO),
-                GemFactoryError::SettlementCurrencyMismatch { iso_code: EUR_ISO },
+                SettlementError::CurrencyMismatch { iso_code: EUR_ISO },
             );
         }
         Item::Series { id, units } => {
@@ -81,7 +82,7 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target) {
                 payer,
                 factory(target),
                 &erc20_series(target, *id, *units, myr, U256::ZERO),
-                IntexFactoryError::VwapSnapshotMismatch {
+                SettlementError::SnapshotMismatch {
                     authorized: U256::ZERO,
                     required,
                 },
@@ -91,7 +92,7 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target) {
                 payer,
                 factory(target),
                 &erc20_series(target, *id, *units, eur, U256::ZERO),
-                IntexFactoryError::SettlementCurrencyMismatch(EUR_ISO),
+                SettlementError::CurrencyMismatch { iso_code: EUR_ISO },
             );
         }
         Item::Nod(id) => {
@@ -100,7 +101,7 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target) {
                 payer,
                 factory(target),
                 &erc20_nod(*id, myr, U256::ZERO),
-                NodFactoryError::VwapSnapshotMismatch {
+                SettlementError::SnapshotMismatch {
                     authorized: U256::ZERO,
                     required,
                 },
@@ -110,7 +111,7 @@ pub(crate) fn assert_payment_guards(world: &World, target: &Target) {
                 payer,
                 factory(target),
                 &erc20_nod(*id, eur, U256::ZERO),
-                NodFactoryError::SettlementCurrencyMismatch { iso_code: EUR_ISO },
+                SettlementError::CurrencyMismatch { iso_code: EUR_ISO },
             );
         }
     }

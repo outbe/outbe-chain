@@ -1,6 +1,4 @@
-use alloy_primitives::{Address, U256};
 use outbe_common::pow::PowError;
-use outbe_common::settlement::RoundingError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -28,29 +26,8 @@ pub enum NodFactoryError {
     #[error("nod is not settled")]
     NodNotSettled,
 
-    #[error("settlement asset {asset} has no registered vault")]
-    SettlementAssetNotRegistered { asset: Address },
-
-    #[error("settlement asset currency {iso_code} does not match the nod")]
-    SettlementCurrencyMismatch { iso_code: u16 },
-
-    #[error("ERC20 operation failed or returned malformed data")]
-    TokenOperationFailed,
-
-    #[error("ERC20 payment did not move the exact Nod cost")]
-    SettlementAmountMismatch,
-
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
-
-    #[error("{0}")]
-    Rounding(RoundingError),
-
-    #[error("oracle nominal unavailable")]
-    OracleUnavailable,
-
-    #[error("VWAP snapshot {authorized:#x} does not match the required {required:#x}")]
-    VwapSnapshotMismatch { authorized: U256, required: U256 },
 
     #[error("caller is not an active OCOMP materializer")]
     UnauthorizedMaterializer,
@@ -83,12 +60,6 @@ pub enum NodFactoryError {
 impl From<NodFactoryError> for PrecompileError {
     fn from(value: NodFactoryError) -> Self {
         PrecompileError::Revert(value.to_string())
-    }
-}
-
-impl From<RoundingError> for NodFactoryError {
-    fn from(value: RoundingError) -> Self {
-        Self::Rounding(value)
     }
 }
 

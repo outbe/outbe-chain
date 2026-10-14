@@ -354,8 +354,7 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
     let error = settle(&mut world, stranger, foreign).unwrap_err();
     assert_eq!(
         error.to_string(),
-        PrecompileError::from(NodFactoryError::SettlementCurrencyMismatch { iso_code: 978 })
-            .to_string()
+        PrecompileError::from(SettlementError::CurrencyMismatch { iso_code: 978 }).to_string()
     );
     assert!(
         !world
@@ -431,10 +430,13 @@ fn erc20_settlement_uses_the_existing_inclusive_deadline() {
     let foreign = Address::repeat_byte(0x94);
     world.register_settlement_asset(foreign, 978);
     for (timestamp, expected) in [
-        (deadline + 1, NodFactoryError::CallDeadlineExpired),
+        (
+            deadline + 1,
+            PrecompileError::from(NodFactoryError::CallDeadlineExpired),
+        ),
         (
             deadline,
-            NodFactoryError::SettlementCurrencyMismatch { iso_code: 978 },
+            PrecompileError::from(SettlementError::CurrencyMismatch { iso_code: 978 }),
         ),
     ] {
         world.set_timestamp(timestamp);
@@ -453,10 +455,7 @@ fn erc20_settlement_uses_the_existing_inclusive_deadline() {
                 )
             })
             .unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            PrecompileError::from(expected).to_string()
-        );
+        assert_eq!(error.to_string(), expected.to_string());
     }
 }
 

@@ -29,6 +29,7 @@ use crate::{
     sol_ext::{IReferenceCurrency, IERC20},
 };
 use outbe_vaultrouter::api::IVaultRouter;
+use outbe_vaultrouter::settlement::SettlementError;
 
 fn dummy_auth() -> ModifyAuth {
     ModifyAuth {

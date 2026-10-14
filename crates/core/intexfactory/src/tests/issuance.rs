@@ -529,7 +529,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
         .unwrap()
         .cutoff();
     let reached_payment = outbe_primitives::error::PrecompileError::from(
-        crate::errors::IntexFactoryError::SettlementAmountMismatch,
+        outbe_vaultrouter::settlement::SettlementError::AmountMismatch,
     )
     .to_string();
 
@@ -542,7 +542,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     assert_eq!(
         settle(&mut storage, quoted),
         outbe_primitives::error::PrecompileError::from(
-            crate::errors::IntexFactoryError::VwapSnapshotMismatch {
+            outbe_vaultrouter::settlement::SettlementError::SnapshotMismatch {
                 authorized: quoted,
                 required,
             }
@@ -560,7 +560,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     assert_eq!(
         settle(&mut storage, other_policy.to_u256()),
         outbe_primitives::error::PrecompileError::from(
-            crate::errors::IntexFactoryError::VwapSnapshotMismatch {
+            outbe_vaultrouter::settlement::SettlementError::SnapshotMismatch {
                 authorized: other_policy.to_u256(),
                 required,
             }
@@ -627,7 +627,7 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
     assert_eq!(
         settle(&mut storage, quoted),
         outbe_primitives::error::PrecompileError::from(
-            crate::errors::IntexFactoryError::VwapSnapshotMismatch {
+            outbe_vaultrouter::settlement::SettlementError::SnapshotMismatch {
                 authorized: quoted,
                 required,
             }
@@ -666,7 +666,7 @@ fn a_reference_payment_ignores_the_snapshot_it_names() {
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::IntexFactoryError::SettlementAmountMismatch
+                outbe_vaultrouter::settlement::SettlementError::AmountMismatch
             )
             .to_string()
         );

@@ -1,7 +1,6 @@
 //! Module-local error types. Other errors come from
 //! `outbe_primitives::error::PrecompileError`.
 
-use outbe_common::settlement::RoundingError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -28,19 +27,6 @@ pub enum IntexFactoryError {
     InsufficientSettled,
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
-    #[error("{0}")]
-    Rounding(RoundingError),
-    #[error("oracle nominal unavailable")]
-    OracleUnavailable,
-    #[error("VWAP snapshot {authorized:#x} does not match the required {required:#x}")]
-    VwapSnapshotMismatch {
-        authorized: alloy_primitives::U256,
-        required: alloy_primitives::U256,
-    },
-    #[error("settlement asset {0} has no registered vault")]
-    SettlementAssetNotRegistered(alloy_primitives::Address),
-    #[error("settlement asset currency {0} does not match the series")]
-    SettlementCurrencyMismatch(u16),
     #[error("no COEN rate published for currency {0}")]
     FxRateUnavailable(u16),
     #[error("COEN rate for currency {0} is too old to convert with")]
@@ -61,12 +47,6 @@ pub enum IntexFactoryError {
         iso: u16,
         worldwide_day: outbe_primitives::time::WorldwideDay,
     },
-
-    #[error("settlement token call failed")]
-    TokenOperationFailed,
-
-    #[error("settlement token moved an unexpected amount")]
-    SettlementAmountMismatch,
 }
 
 impl From<outbe_common::pow::PowError> for IntexFactoryError {
@@ -80,11 +60,5 @@ impl From<outbe_common::pow::PowError> for IntexFactoryError {
 impl From<IntexFactoryError> for PrecompileError {
     fn from(err: IntexFactoryError) -> Self {
         PrecompileError::Revert(err.to_string())
-    }
-}
-
-impl From<RoundingError> for IntexFactoryError {
-    fn from(err: RoundingError) -> Self {
-        Self::Rounding(err)
     }
 }

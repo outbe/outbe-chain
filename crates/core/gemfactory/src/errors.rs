@@ -1,5 +1,4 @@
 use outbe_common::pow::PowError;
-use outbe_common::settlement::RoundingError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -42,32 +41,14 @@ pub enum GemFactoryError {
     #[error("position expired")]
     PositionExpired,
 
-    #[error("invalid asset")]
-    InvalidAsset,
-
-    #[error("settlement asset {asset} has no registered vault")]
-    SettlementAssetNotRegistered { asset: alloy_primitives::Address },
-
-    #[error("settlement asset currency {iso_code} does not match the gem")]
-    SettlementCurrencyMismatch { iso_code: u16 },
-
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 
     #[error("{currency} is not an ISO 4217 currency code")]
     InvalidCurrency { currency: u16 },
 
-    #[error("{0}")]
-    Rounding(RoundingError),
-
     #[error("oracle nominal unavailable")]
     OracleUnavailable,
-
-    #[error("VWAP snapshot {authorized:#x} does not match the required {required:#x}")]
-    VwapSnapshotMismatch {
-        authorized: alloy_primitives::U256,
-        required: alloy_primitives::U256,
-    },
 
     #[error("invalid owner")]
     InvalidOwner,
@@ -77,23 +58,11 @@ pub enum GemFactoryError {
 
     #[error("promis load must be positive")]
     ZeroPromisLoad,
-
-    #[error("settlement token call failed")]
-    TokenOperationFailed,
-
-    #[error("settlement token moved an unexpected amount")]
-    SettlementAmountMismatch,
 }
 
 impl From<GemFactoryError> for PrecompileError {
     fn from(value: GemFactoryError) -> Self {
         PrecompileError::Revert(value.to_string())
-    }
-}
-
-impl From<RoundingError> for GemFactoryError {
-    fn from(value: RoundingError) -> Self {
-        Self::Rounding(value)
     }
 }
 

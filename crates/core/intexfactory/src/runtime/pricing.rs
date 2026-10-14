@@ -1,34 +1,39 @@
 use super::*;
-use outbe_common::settlement::PaymentCurrency;
+use outbe_vaultrouter::settlement::{Currencies, Obligation};
 
-/// Cost of `units` in payment-asset minor units, floored once above the
-/// purchase minimum of one reference-currency minor unit. `rate` is
-/// `(COEN/target, COEN/reference)` when the asset is not in the reference currency.
+pub(crate) fn currencies(series: &outbe_intex::SeriesRecord) -> Currencies {
+    Currencies {
+        issuance: series.issuance_currency,
+        reference: series.reference_currency,
+    }
+}
+
+/// `units` of a series: its entry price times its Promis load per unit.
+pub(crate) fn obligation(series: &outbe_intex::SeriesRecord, units: U256) -> Obligation {
+    Obligation {
+        entry_price_minor: series.entry_price_minor,
+        load_minor: series.promis_load_minor,
+        units,
+        cost_rate_pct: 100,
+    }
+}
+
+/// Cost of `units` at a per-unit `product` of entry price and load.
+#[cfg(test)]
 pub(crate) fn settlement_units(
     product: U256,
     units: U256,
     rate: Option<(U256, U256)>,
     payment_decimals: u8,
 ) -> Result<U256> {
-    let overflow = || PrecompileError::Revert("settlement cost overflow".into());
-    let obligation = product.checked_mul(units).ok_or_else(overflow)?;
-    // A priceless series stays free.
-    let obligation = if obligation.is_zero() {
-        obligation
-    } else {
-        obligation.max(SCALE_1E6_U256)
+    let obligation = Obligation {
+        entry_price_minor: product,
+        load_minor: U256::ONE,
+        units,
+        cost_rate_pct: 100,
     };
-    let (numerator, denominator) = match rate {
-        Some((to, from)) => (obligation.checked_mul(to).ok_or_else(overflow)?, from),
-        None => (obligation, U256::ONE),
-    };
-    floor_to_asset_units(
-        numerator,
-        denominator,
-        OBLIGATION_DECIMALS,
-        payment_decimals,
-    )
-    .map_err(|e| IntexFactoryError::from(e).into())
+    outbe_common::settlement::obligation_units(&obligation, rate, payment_decimals)
+        .map_err(|e| settlement::SettlementError::Rounding(e).into())
 }
 
 /// Whether the series has qualified. It is derived from finalized daily VWAPs and never stored.
@@ -54,95 +59,15 @@ pub fn quote_settlement(
     units: U256,
 ) -> Result<(u16, U256, U256)> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    let currency = accept_payment_asset(storage, asset, &series)?;
-    let settlement_currency = match currency {
-        PaymentCurrency::Reference => series.reference_currency,
-        PaymentCurrency::Issuance => series.issuance_currency,
-    };
-    let (cost, snapshot) = cost_in_asset(storage, &series, asset, currency, units)?;
-    Ok((
-        settlement_currency,
-        cost,
-        snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
-    ))
-}
-
-/// Cost of `units` in `asset`'s minor units and, on the issuance rail, the
-/// VWAP snapshot both COEN legs came from. The Cost Amount is denominated in the
-/// reference currency. An issuance-currency asset is charged at the snapshot's
-/// COEN cross rate, folded into the same fraction so the conversion floors once.
-pub(super) fn cost_in_asset(
-    storage: &StorageHandle<'_>,
-    series: &outbe_intex::SeriesRecord,
-    asset: Address,
-    currency: PaymentCurrency,
-    units: U256,
-) -> Result<(U256, Option<VwapSnapshotId>)> {
-    let payment_decimals = erc20_decimals(storage, asset)?;
-    let product = series
-        .entry_price_minor
-        .checked_mul(series.promis_load_minor)
-        .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))?;
-    let (rate, snapshot) = currency.conversion(|| -> Result<_> {
-        let fx = settlement_fx_rates(
-            storage.clone(),
-            series.issuance_currency,
-            series.reference_currency,
-        )?
-        .ok_or(IntexFactoryError::OracleUnavailable)?;
-        let rate = (
-            fx.issuance_currency_vwap_minor,
-            fx.reference_currency_vwap_minor,
-        );
-        Ok((rate, fx.snapshot))
-    })?;
-    Ok((
-        settlement_units(product, units, rate, payment_decimals)?,
-        snapshot,
-    ))
-}
-
-/// Rejects `asset` unless the router holds a vault for it and the asset reports
-/// one of the series' two currencies. Returns which one. Registration is checked
-/// first: an unregistered asset need not implement `isoCode()` at all.
-pub(super) fn accept_payment_asset(
-    storage: &StorageHandle<'_>,
-    asset: Address,
-    series: &outbe_intex::SeriesRecord,
-) -> Result<PaymentCurrency> {
-    let ret = storage.staticcall(
-        VAULT_ROUTER_ADDRESS,
-        IVaultRouter::assetVaultsCountCall { asset }
-            .abi_encode()
-            .into(),
-    )?;
-    let vaults = IVaultRouter::assetVaultsCountCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("assetVaultsCount undecodable".into()))?;
-    if vaults.is_zero() {
-        return Err(IntexFactoryError::SettlementAssetNotRegistered(asset).into());
-    }
-
-    let iso = asset_iso_code(storage, asset)?;
-    if iso == series.reference_currency {
-        return Ok(PaymentCurrency::Reference);
-    }
-    if iso == series.issuance_currency {
-        return Ok(PaymentCurrency::Issuance);
-    }
-    Err(IntexFactoryError::SettlementCurrencyMismatch(iso).into())
-}
-
-fn asset_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
-    let ret = storage.staticcall(
+    let quote = settlement::quote(
+        storage,
         asset,
-        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
+        currencies(&series),
+        &obligation(&series, units),
     )?;
-    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
-}
-
-fn erc20_decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
-    let ret = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
-    IERC20::decimalsCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("ERC20 decimals undecodable".into()))
+    Ok((
+        quote.settlement_currency,
+        quote.payment_minor,
+        quote.snapshot_id(),
+    ))
 }

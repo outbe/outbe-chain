@@ -3,25 +3,21 @@ use alloy_sol_types::{SolCall, SolEvent};
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_gem::{api as gem_api, GemAddParams, GemView};
 use outbe_intex::{IntexState, SeriesId};
-use outbe_oracle::api::{get_utc_day_vwap_for_iso, settlement_fx_rates, VwapSnapshotId};
-use outbe_primitives::addresses::{
-    GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
-};
+use outbe_oracle::api::get_utc_day_vwap_for_iso;
+use outbe_primitives::addresses::{GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::markup::marked_up;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
-use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
-use outbe_common::settlement::{floor_to_asset_units, PaymentCurrency, OBLIGATION_DECIMALS};
 
 use crate::constants::SRA_RATE;
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemPositionIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition, GemTypes};
-use crate::sol_ext::{IIntexNFT1155, IReferenceCurrency, IERC20};
-use outbe_vaultrouter::api::IVaultRouter;
+use crate::sol_ext::IIntexNFT1155;
+use outbe_vaultrouter::settlement::{self, Currencies, Obligation};
 
 /// Issues one agent-class gem priced at `entry_price`, the COEN rate in
 /// `reference_currency` that the caller resolved for the gem's own day.
@@ -350,206 +346,57 @@ pub fn settle_gem(
         return Err(GemFactoryError::InvalidState.into());
     }
 
-    let currency = accept_payment_asset(storage, asset, &gem)?;
-    let (amount_paid, snapshot) = cost_in_asset(storage, &gem, asset, currency)?;
-    require_snapshot(snapshot, snapshot_id)?;
+    let quote = settlement::quote(storage, asset, currencies(&gem), &obligation(&gem))?;
+    quote.require_snapshot(snapshot_id)?;
     storage.clone().with_checkpoint(|| {
         // Settle before payment so a token callback cannot settle the gem twice.
         // A failed payment rolls the state back.
         gem_api::settle_gem(storage, scope, parent, gem_id)?;
-        deposit_payment(storage, caller, asset, amount_paid)?;
+        settlement::collect(
+            storage,
+            GEM_FACTORY_ADDRESS,
+            caller,
+            asset,
+            quote.payment_minor,
+        )?;
         emit_event(
             storage,
             GemSettled {
                 gemId: gem_id,
                 owner: gem.item.owner,
                 asset,
-                paymentMinor: amount_paid,
-                settlementCurrency: settlement_currency(&gem, currency),
+                paymentMinor: quote.payment_minor,
+                settlementCurrency: quote.settlement_currency,
             },
         )
     })
 }
 
-fn settlement_currency(gem: &GemView, currency: PaymentCurrency) -> u16 {
-    match currency {
-        PaymentCurrency::Reference => gem.item.reference_currency,
-        PaymentCurrency::Issuance => gem.item.issuance_currency,
+fn currencies(gem: &GemView) -> Currencies {
+    Currencies {
+        issuance: gem.item.issuance_currency,
+        reference: gem.item.reference_currency,
     }
 }
 
-/// Pulls exactly `cost` of `asset` from `payer` and deposits it into the reserve
-/// vault through the router, leaving the factory's own balance untouched.
-fn deposit_payment(
-    storage: &StorageHandle<'_>,
-    payer: Address,
-    asset: Address,
-    cost: U256,
-) -> Result<()> {
-    if cost.is_zero() {
-        return Ok(());
-    }
-    let before = token_balance(storage, asset)?;
-    checked_token_call(
-        storage,
-        asset,
-        IERC20::transferFromCall {
-            from: payer,
-            to: GEM_FACTORY_ADDRESS,
-            amount: cost,
-        },
-    )?;
-    if token_balance(storage, asset)?.checked_sub(before) != Some(cost) {
-        return Err(GemFactoryError::SettlementAmountMismatch.into());
-    }
-    checked_token_call(
-        storage,
-        asset,
-        IERC20::approveCall {
-            spender: VAULT_ROUTER_ADDRESS,
-            amount: cost,
-        },
-    )?;
-    outbe_vaultrouter::api::deposit(storage, asset, cost)?;
-    if token_balance(storage, asset)? != before {
-        return Err(GemFactoryError::SettlementAmountMismatch.into());
-    }
-    Ok(())
-}
-
-fn checked_token_call(
-    storage: &StorageHandle<'_>,
-    asset: Address,
-    call: impl SolCall,
-) -> Result<()> {
-    let ret = storage.call(asset, U256::ZERO, call.abi_encode().into())?;
-    if !ret.is_empty() && ret.as_ref() != U256::ONE.to_be_bytes::<32>() {
-        return Err(GemFactoryError::TokenOperationFailed.into());
-    }
-    Ok(())
-}
-
-fn token_balance(storage: &StorageHandle<'_>, asset: Address) -> Result<U256> {
-    let ret = storage.staticcall(
-        asset,
-        IERC20::balanceOfCall {
-            account: GEM_FACTORY_ADDRESS,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    IERC20::balanceOfCall::abi_decode_returns(&ret)
-        .map_err(|_| GemFactoryError::TokenOperationFailed.into())
-}
-
-/// Reads the settlement asset's `decimals()` via a static sub-call.
-fn read_decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
-    let ret = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
-    IERC20::decimalsCall::abi_decode_returns(&ret).map_err(|_| GemFactoryError::InvalidAsset.into())
-}
-
-/// Which of the gem's two currencies `asset` is denominated in. The function checks
-/// registration first, so an unregistered asset need not implement `isoCode()` at all.
-/// It matches reference first, so a single-currency gem takes the no-rate branch.
-fn accept_payment_asset(
-    storage: &StorageHandle<'_>,
-    asset: Address,
-    gem: &GemView,
-) -> Result<PaymentCurrency> {
-    let ret = storage.staticcall(
-        VAULT_ROUTER_ADDRESS,
-        IVaultRouter::assetVaultsCountCall { asset }
-            .abi_encode()
-            .into(),
-    )?;
-    let vaults = IVaultRouter::assetVaultsCountCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("assetVaultsCount undecodable".into()))?;
-    if vaults.is_zero() {
-        return Err(GemFactoryError::SettlementAssetNotRegistered { asset }.into());
-    }
-
-    let iso = asset_iso_code(storage, asset)?;
-    if iso == gem.item.reference_currency {
-        return Ok(PaymentCurrency::Reference);
-    }
-    if iso == gem.item.issuance_currency {
-        return Ok(PaymentCurrency::Issuance);
-    }
-    Err(GemFactoryError::SettlementCurrencyMismatch { iso_code: iso }.into())
-}
-
-/// Cost of one gem in `asset`'s minor units and, on the issuance rail, the VWAP
-/// snapshot both COEN legs came from. The function folds the cross rate into the same
-/// fraction, so it floors the whole thing once.
-fn cost_in_asset(
-    storage: &StorageHandle<'_>,
-    gem: &GemView,
-    asset: Address,
-    currency: PaymentCurrency,
-) -> Result<(U256, Option<VwapSnapshotId>)> {
-    let asset_decimals = read_decimals(storage, asset)?;
-    let (rate, snapshot) = currency.conversion(|| -> Result<_> {
-        let fx = settlement_fx_rates(
-            storage.clone(),
-            gem.item.issuance_currency,
-            gem.item.reference_currency,
-        )?
-        .ok_or(GemFactoryError::OracleUnavailable)?;
-        let rate = (
-            fx.issuance_currency_vwap_minor,
-            fx.reference_currency_vwap_minor,
-        );
-        Ok((rate, fx.snapshot))
-    })?;
-    Ok((settlement_units(gem, rate, asset_decimals)?, snapshot))
-}
-
-/// Rejects an issuance-rail payment authorized for any snapshot but the required one.
-fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Result<()> {
-    match required.map(VwapSnapshotId::to_u256) {
-        Some(required) if required != authorized => Err(GemFactoryError::VwapSnapshotMismatch {
-            authorized,
-            required,
-        }
-        .into()),
-        _ => Ok(()),
+/// One gem: its bucket's entry price times its Promis load, at its type's cost rate.
+pub(crate) fn obligation(gem: &GemView) -> Obligation {
+    Obligation {
+        entry_price_minor: gem.bucket.entry_price_minor,
+        load_minor: gem.item.promis_load_minor,
+        units: U256::ONE,
+        cost_rate_pct: cost_rate(gem.item.gem_type),
     }
 }
 
-/// `floor(entry x load x percent x rate_to / (100 x rate_from))` in asset units,
-/// with `rate` as `(COEN/issuance, COEN/reference)` on the issuance rail. A
-/// positive cost is at least one reference-currency minor unit before conversion.
+#[cfg(test)]
 pub(crate) fn settlement_units(
     gem: &GemView,
     rate: Option<(U256, U256)>,
     asset_decimals: u8,
 ) -> Result<U256> {
-    let percent = U256::from(100u64);
-    // The entry price is the bucket's; the load and the type are the gem's.
-    let obligation = gem
-        .bucket
-        .entry_price_minor
-        .checked_mul(gem.item.promis_load_minor)
-        .ok_or(GemFactoryError::Overflow)?
-        .checked_mul(U256::from(cost_rate(gem.item.gem_type)))
-        .ok_or(GemFactoryError::Overflow)?;
-    // The obligation keeps the x100 of the rate: one reference minor unit is 1e8.
-    let obligation = if obligation.is_zero() {
-        obligation
-    } else {
-        obligation.max(SCALE_1E6_U256 * percent)
-    };
-    let (numerator, denominator) = match rate {
-        Some((to, from)) => (
-            obligation
-                .checked_mul(to)
-                .ok_or(GemFactoryError::Overflow)?,
-            from.checked_mul(percent).ok_or(GemFactoryError::Overflow)?,
-        ),
-        None => (obligation, percent),
-    };
-    floor_to_asset_units(numerator, denominator, OBLIGATION_DECIMALS, asset_decimals)
-        .map_err(|e| GemFactoryError::from(e).into())
+    outbe_common::settlement::obligation_units(&obligation(gem), rate, asset_decimals)
+        .map_err(|e| settlement::SettlementError::Rounding(e).into())
 }
 
 /// What settlement charges in a six-decimal reference-currency asset.
@@ -567,16 +414,6 @@ fn cost_rate(gem_type: u8) -> u64 {
     }
 }
 
-/// Reads the settlement asset's ISO 4217 code via a static sub-call.
-fn asset_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
-    let ret = storage.staticcall(
-        asset,
-        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
-    )?;
-    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
-}
-
 /// What settling `gem_id` with `asset` costs, in which currency, and the VWAP
 /// snapshot an issuance-currency payment must name (zero on the reference rail).
 pub fn quote_settlement(
@@ -587,12 +424,11 @@ pub fn quote_settlement(
     asset: Address,
 ) -> Result<(u16, U256, U256)> {
     let gem = load_view(storage, scope, parent, gem_id)?;
-    let currency = accept_payment_asset(storage, asset, &gem)?;
-    let (cost, snapshot) = cost_in_asset(storage, &gem, asset, currency)?;
+    let quote = settlement::quote(storage, asset, currencies(&gem), &obligation(&gem))?;
     Ok((
-        settlement_currency(&gem, currency),
-        cost,
-        snapshot.map_or(U256::ZERO, VwapSnapshotId::to_u256),
+        quote.settlement_currency,
+        quote.payment_minor,
+        quote.snapshot_id(),
     ))
 }
 

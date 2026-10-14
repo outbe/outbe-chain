@@ -3,18 +3,15 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
-use outbe_common::settlement::{floor_to_asset_units, OBLIGATION_DECIMALS};
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
-use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
-use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
+use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result, SweepFailure};
 use outbe_primitives::markup::marked_up;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_intex::{IntexState, SeriesRecord};
-use outbe_vaultrouter::api::IVaultRouter;
+use outbe_vaultrouter::settlement;
 
 use crate::config;
 use crate::constants::{
@@ -23,7 +20,7 @@ use crate::constants::{
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
-use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IReferenceCurrency, IERC1155, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IERC1155};
 use IOriginRouter::IssuanceInstructionsParams;
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
@@ -356,9 +353,13 @@ pub fn settle_intex(
         return Err(IntexFactoryError::UnitsExceedBalance.into());
     }
 
-    let currency = accept_payment_asset(storage, asset, &series)?;
-    let (cost, snapshot) = cost_in_asset(storage, &series, asset, currency, units)?;
-    require_snapshot(snapshot, snapshot_id)?;
+    let quote = settlement::quote(
+        storage,
+        asset,
+        pricing::currencies(&series),
+        &pricing::obligation(&series, units),
+    )?;
+    quote.require_snapshot(snapshot_id)?;
     storage.clone().with_checkpoint(|| {
         // The units move before payment so a token callback cannot settle them
         // twice. A failed payment rolls the move back.
@@ -378,7 +379,13 @@ pub fn settle_intex(
             .map_err(|_| PrecompileError::Revert("settled units exceed u32".into()))?;
         outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;
 
-        deposit_payment(storage, settler, asset, cost)?;
+        settlement::collect(
+            storage,
+            INTEX_FACTORY_ADDRESS,
+            settler,
+            asset,
+            quote.payment_minor,
+        )?;
 
         emit_event(
             storage,
@@ -408,102 +415,6 @@ fn require_settleable(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Res
     }
 }
 
-/// Rejects an issuance-rail payment authorized for any snapshot but the required one.
-fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Result<()> {
-    match required.map(VwapSnapshotId::to_u256) {
-        Some(required) if required != authorized => Err(IntexFactoryError::VwapSnapshotMismatch {
-            authorized,
-            required,
-        }
-        .into()),
-        _ => Ok(()),
-    }
-}
-
-/// Pulls exactly `cost` of `asset` from `payer` and deposits it into the reserve
-/// vault through the router, leaving the factory's own balance untouched.
-fn deposit_payment(
-    storage: &StorageHandle<'_>,
-    payer: Address,
-    asset: Address,
-    cost: U256,
-) -> Result<()> {
-    if cost.is_zero() {
-        return Ok(());
-    }
-    let before = token_balance(storage, asset)?;
-    pull_exact(storage, payer, asset, cost, before)?;
-    forward_to_reserve(storage, asset, cost, before)
-}
-
-fn pull_exact(
-    storage: &StorageHandle<'_>,
-    payer: Address,
-    asset: Address,
-    cost: U256,
-    before: U256,
-) -> Result<()> {
-    checked_token_call(
-        storage,
-        asset,
-        IERC20::transferFromCall {
-            from: payer,
-            to: INTEX_FACTORY_ADDRESS,
-            amount: cost,
-        },
-    )?;
-    if token_balance(storage, asset)?.checked_sub(before) != Some(cost) {
-        return Err(IntexFactoryError::SettlementAmountMismatch.into());
-    }
-    Ok(())
-}
-
-fn forward_to_reserve(
-    storage: &StorageHandle<'_>,
-    asset: Address,
-    cost: U256,
-    before: U256,
-) -> Result<()> {
-    checked_token_call(
-        storage,
-        asset,
-        IERC20::approveCall {
-            spender: VAULT_ROUTER_ADDRESS,
-            amount: cost,
-        },
-    )?;
-    outbe_vaultrouter::api::deposit(storage, asset, cost)?;
-    if token_balance(storage, asset)? != before {
-        return Err(IntexFactoryError::SettlementAmountMismatch.into());
-    }
-    Ok(())
-}
-
-fn checked_token_call(
-    storage: &StorageHandle<'_>,
-    asset: Address,
-    call: impl SolCall,
-) -> Result<()> {
-    let ret = storage.call(asset, U256::ZERO, call.abi_encode().into())?;
-    if !ret.is_empty() && ret.as_ref() != U256::ONE.to_be_bytes::<32>() {
-        return Err(IntexFactoryError::TokenOperationFailed.into());
-    }
-    Ok(())
-}
-
-fn token_balance(storage: &StorageHandle<'_>, asset: Address) -> Result<U256> {
-    let ret = storage.staticcall(
-        asset,
-        IERC20::balanceOfCall {
-            account: INTEX_FACTORY_ADDRESS,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    IERC20::balanceOfCall::abi_decode_returns(&ret)
-        .map_err(|_| IntexFactoryError::TokenOperationFailed.into())
-}
-
 // --- storage.call helpers (localnet-exercised) ---
 
 fn nft_units_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Result<u32> {
@@ -529,8 +440,8 @@ pub(crate) use mining::compute_pow_hash;
 pub(crate) use mining::{issued_token_id, settled_token_id, validate_pow};
 pub use mining::{mine_promis, MiningProof};
 #[cfg(test)]
+#[cfg(test)]
 pub(crate) use pricing::settlement_units;
-use pricing::{accept_payment_asset, cost_in_asset};
 pub use pricing::{is_qualified, is_series_qualified, quote_settlement};
 pub use proceeds::distribute;
 pub(crate) use proceeds::sweep_proceeds_deadlines;

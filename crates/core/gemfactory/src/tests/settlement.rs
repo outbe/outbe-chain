@@ -498,7 +498,7 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
             format!(
                 "{:?}",
                 outbe_primitives::error::PrecompileError::from(
-                    crate::errors::GemFactoryError::VwapSnapshotMismatch {
+                    outbe_vaultrouter::settlement::SettlementError::SnapshotMismatch {
                         authorized: quoted,
                         required,
                     }
@@ -604,7 +604,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
             format!(
                 "{:?}",
                 outbe_primitives::error::PrecompileError::from(
-                    crate::errors::GemFactoryError::VwapSnapshotMismatch {
+                    outbe_vaultrouter::settlement::SettlementError::SnapshotMismatch {
                         authorized: quoted,
                         required,
                     }
@@ -635,7 +635,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
             format!(
                 "{:?}",
                 outbe_primitives::error::PrecompileError::from(
-                    crate::errors::GemFactoryError::VwapSnapshotMismatch {
+                    outbe_vaultrouter::settlement::SettlementError::SnapshotMismatch {
                         authorized: other_policy.to_u256(),
                         required,
                     }

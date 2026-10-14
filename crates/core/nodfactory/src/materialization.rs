@@ -13,13 +13,13 @@ use outbe_nod::NodContract;
 use outbe_nod::NodIssueParams;
 #[cfg(any(test, feature = "test-utils"))]
 use outbe_ocomp_protocol::nod_materialization::{
-    NodMaterializationBatchV1, verify_nod_materialization_batch,
+    verify_nod_materialization_batch, NodMaterializationBatchV1,
 };
 #[cfg(any(test, feature = "test-utils"))]
 use outbe_ocomp_protocol::result::NodActionV1;
 use outbe_ocomp_protocol::{
-    SchemaLimits,
     nod_materialization::{NodMaterializationHeadV1, ProtectedNodMaterializationV2},
+    SchemaLimits,
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
