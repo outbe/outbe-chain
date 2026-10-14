@@ -16,8 +16,8 @@ use crate::{
     list::StreamingOrderedListRoot,
     registry::{HashDomain, ListKind},
     schema::{
-        encode_nested_value, impl_nested_record_codec, impl_top_level_codec, require, wire_enum_u8,
-        wire_struct, NestedCodec, SchemaLimits,
+        encode_nested_value, impl_nested_record_codec, impl_top_level_codec, require, wire_struct,
+        NestedCodec, SchemaLimits,
     },
     unit::CanonicalRunSpan,
 };
@@ -43,11 +43,6 @@ pub struct ShuffleRunBuildContextV1 {
     pub source_coverage_count: u32,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum VerifiedShuffleRecordV1 {
-    Bucket(ShuffleBucketRecordV1),
-}
-
 pub struct VerifiedShuffleRunIterV1<'a, R>
 where
     R: FnMut(&CasObjectRefV1) -> Result<Vec<u8>, ProtocolError>,
@@ -56,7 +51,7 @@ where
     resolver: R,
     context: ShuffleRunContextV1,
     stack: Vec<ShuffleRunArtifactV1>,
-    pending_records: VecDeque<VerifiedShuffleRecordV1>,
+    pending_records: VecDeque<ShuffleBucketRecordV1>,
     next_page: u32,
     leaf_count: u32,
     previous_leaf_record_count: Option<u32>,
@@ -67,19 +62,13 @@ where
 
 pub struct MergedVerifiedShuffleRunIterV1<L, R>
 where
-    L: Iterator<Item = Result<VerifiedShuffleRecordV1, ProtocolError>>,
-    R: Iterator<Item = Result<VerifiedShuffleRecordV1, ProtocolError>>,
+    L: Iterator<Item = Result<ShuffleBucketRecordV1, ProtocolError>>,
+    R: Iterator<Item = Result<ShuffleBucketRecordV1, ProtocolError>>,
 {
-    kind: ShuffleRunKindV1,
     left: std::iter::Peekable<L>,
     right: std::iter::Peekable<R>,
-    previous_key: Option<VerifiedShuffleRecordKeyV1>,
+    previous_key: Option<(B256, u32)>,
     finished: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum VerifiedShuffleRecordKeyV1 {
-    Bucket(B256, u32),
 }
 
 #[derive(Clone, Debug)]
@@ -88,7 +77,6 @@ struct ShuffleRunContextV1 {
     job_id: B256,
     attempt: u32,
     unit_id: B256,
-    kind: ShuffleRunKindV1,
     run_span: CanonicalRunSpan,
     root_page_end: u32,
     root_record_count: u32,
@@ -110,7 +98,6 @@ where
         job_id: root.job_id,
         attempt: root.attempt,
         unit_id: root.unit_id,
-        kind: root.kind,
         run_span: root.run_span.clone(),
         root_page_end: root.page_span.end_page,
         root_record_count: root.record_count,
@@ -133,16 +120,14 @@ where
 }
 
 pub fn merge_verified_shuffle_runs<L, R>(
-    kind: ShuffleRunKindV1,
     left: L,
     right: R,
 ) -> MergedVerifiedShuffleRunIterV1<L::IntoIter, R::IntoIter>
 where
-    L: IntoIterator<Item = Result<VerifiedShuffleRecordV1, ProtocolError>>,
-    R: IntoIterator<Item = Result<VerifiedShuffleRecordV1, ProtocolError>>,
+    L: IntoIterator<Item = Result<ShuffleBucketRecordV1, ProtocolError>>,
+    R: IntoIterator<Item = Result<ShuffleBucketRecordV1, ProtocolError>>,
 {
     MergedVerifiedShuffleRunIterV1 {
-        kind,
         left: left.into_iter().peekable(),
         right: right.into_iter().peekable(),
         previous_key: None,
@@ -162,7 +147,7 @@ impl<R> Iterator for VerifiedShuffleRunIterV1<'_, R>
 where
     R: FnMut(&CasObjectRefV1) -> Result<Vec<u8>, ProtocolError>,
 {
-    type Item = Result<VerifiedShuffleRecordV1, ProtocolError>;
+    type Item = Result<ShuffleBucketRecordV1, ProtocolError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -186,10 +171,10 @@ where
 
 impl<L, R> Iterator for MergedVerifiedShuffleRunIterV1<L, R>
 where
-    L: Iterator<Item = Result<VerifiedShuffleRecordV1, ProtocolError>>,
-    R: Iterator<Item = Result<VerifiedShuffleRecordV1, ProtocolError>>,
+    L: Iterator<Item = Result<ShuffleBucketRecordV1, ProtocolError>>,
+    R: Iterator<Item = Result<ShuffleBucketRecordV1, ProtocolError>>,
 {
-    type Item = Result<VerifiedShuffleRecordV1, ProtocolError>;
+    type Item = Result<ShuffleBucketRecordV1, ProtocolError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.finished {
@@ -217,17 +202,15 @@ where
 
 impl<L, R> MergedVerifiedShuffleRunIterV1<L, R>
 where
-    L: Iterator<Item = Result<VerifiedShuffleRecordV1, ProtocolError>>,
-    R: Iterator<Item = Result<VerifiedShuffleRecordV1, ProtocolError>>,
+    L: Iterator<Item = Result<ShuffleBucketRecordV1, ProtocolError>>,
+    R: Iterator<Item = Result<ShuffleBucketRecordV1, ProtocolError>>,
 {
     fn select_side(&mut self) -> Result<Option<MergeSideV1>, ProtocolError> {
         let side = match (self.left.peek(), self.right.peek()) {
             (Some(Err(_)), _) => MergeSideV1::Left,
             (_, Some(Err(_))) => MergeSideV1::Right,
             (Some(Ok(left)), Some(Ok(right))) => {
-                let left_key = shuffle_record_key(self.kind, left)?;
-                let right_key = shuffle_record_key(self.kind, right)?;
-                if left_key <= right_key {
+                if shuffle_record_key(left) <= shuffle_record_key(right) {
                     MergeSideV1::Left
                 } else {
                     MergeSideV1::Right
@@ -242,13 +225,10 @@ where
 
     fn accept_record(
         &mut self,
-        record: VerifiedShuffleRecordV1,
-    ) -> Result<VerifiedShuffleRecordV1, ProtocolError> {
-        let key = shuffle_record_key(self.kind, &record)?;
-        if self
-            .previous_key
-            .is_some_and(|previous| !strict_shuffle_key_order(previous, key))
-        {
+        record: ShuffleBucketRecordV1,
+    ) -> Result<ShuffleBucketRecordV1, ProtocolError> {
+        let key = shuffle_record_key(&record);
+        if self.previous_key.is_some_and(|previous| previous >= key) {
             return Err(ProtocolError::InvalidInvariant(
                 "strict merged shuffle order",
             ));
@@ -264,27 +244,8 @@ enum MergeSideV1 {
     Right,
 }
 
-fn shuffle_record_key(
-    kind: ShuffleRunKindV1,
-    record: &VerifiedShuffleRecordV1,
-) -> Result<VerifiedShuffleRecordKeyV1, ProtocolError> {
-    let _kind = kind;
-    let VerifiedShuffleRecordV1::Bucket(record) = record;
-    Ok(VerifiedShuffleRecordKeyV1::Bucket(
-        record.bucket_key,
-        record.raw_ordinal,
-    ))
-}
-
-fn strict_shuffle_key_order(
-    previous: VerifiedShuffleRecordKeyV1,
-    current: VerifiedShuffleRecordKeyV1,
-) -> bool {
-    let (
-        VerifiedShuffleRecordKeyV1::Bucket(previous_bucket, previous_ordinal),
-        VerifiedShuffleRecordKeyV1::Bucket(current_bucket, current_ordinal),
-    ) = (previous, current);
-    (previous_bucket, previous_ordinal) < (current_bucket, current_ordinal)
+fn shuffle_record_key(record: &ShuffleBucketRecordV1) -> (B256, u32) {
+    (record.bucket_key, record.raw_ordinal)
 }
 
 impl<R> VerifiedShuffleRunIterV1<'_, R>
@@ -300,8 +261,7 @@ where
                     artifact.first_record_ordinal,
                     artifact.record_count,
                 )?;
-                self.pending_records
-                    .extend(records.into_iter().map(VerifiedShuffleRecordV1::Bucket));
+                self.pending_records.extend(records);
             }
             ShuffleRunPayloadV1::Node { left, right } => {
                 let right = self.resolve_child(&right)?;
@@ -361,22 +321,14 @@ where
 
     fn validate_next_record(
         &mut self,
-        record: VerifiedShuffleRecordV1,
-    ) -> Result<VerifiedShuffleRecordV1, ProtocolError> {
-        match &record {
-            VerifiedShuffleRecordV1::Bucket(record) => {
-                require(
-                    self.context.kind == ShuffleRunKindV1::Bucket,
-                    "shuffle traversal record kind",
-                )?;
-                let key = (record.bucket_key, record.raw_ordinal);
-                require(
-                    self.previous_bucket.is_none_or(|previous| previous < key),
-                    "global bucket shuffle order",
-                )?;
-                self.previous_bucket = Some(key);
-            }
-        }
+        record: ShuffleBucketRecordV1,
+    ) -> Result<ShuffleBucketRecordV1, ProtocolError> {
+        let key = shuffle_record_key(&record);
+        require(
+            self.previous_bucket.is_none_or(|previous| previous < key),
+            "global bucket shuffle order",
+        )?;
+        self.previous_bucket = Some(key);
         self.yielded_record_count =
             self.yielded_record_count
                 .checked_add(1)
@@ -464,12 +416,6 @@ impl ShuffleSourceCoverageV1 {
             root: hash_framed(HashDomain::ShuffleSourceCoverage, payload.as_slice())?,
             count,
         })
-    }
-}
-
-wire_enum_u8! {
-    pub enum ShuffleRunKindV1 {
-        Bucket = 2,
     }
 }
 
@@ -569,7 +515,6 @@ wire_struct! {
         pub job_id: B256,
         pub attempt: u32,
         pub unit_id: B256,
-        pub kind: ShuffleRunKindV1,
         pub run_span: CanonicalRunSpan,
         pub page_span: ShufflePageSpanV1,
         pub first_record_ordinal: u32,
@@ -614,7 +559,6 @@ impl ShuffleRunArtifactV1 {
                 left.validate(limits)?;
                 right.validate(limits)?;
                 let mut payload = CanonicalWriter::new(limits.codec);
-                payload.write_u8(self.kind as u8)?;
                 payload.write_u32(self.page_span.start_page)?;
                 payload.write_u32(self.page_span.end_page)?;
                 payload.write_u32(self.first_record_ordinal)?;

@@ -47,8 +47,7 @@ use outbe_ocomp_protocol::{
         LysisArithmeticSummaryV1, LysisResultV1, MetadosisCompletionSummaryV1, ResultChunkV1,
     },
     shuffle::{
-        ShuffleBucketRecordV1, ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1,
-        ShuffleRunPayloadV1,
+        ShuffleBucketRecordV1, ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunPayloadV1,
     },
     state::{
         ActiveGenerationV1, LysisTerminalV1, OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus,
@@ -990,7 +989,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         job_id: hash(59),
         attempt: 0,
         unit_id: hash(117),
-        kind: ShuffleRunKindV1::Bucket,
         run_span: outbe_ocomp_protocol::unit::CanonicalRunSpan {
             start_run: 0,
             end_run: 1,

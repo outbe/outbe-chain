@@ -14,8 +14,8 @@ use outbe_lysis::program_v1::{
     result::{decode_root_reduce_output, RootReduceOutputV1},
 };
 use outbe_ocomp_protocol::{
-    intent::JobIntentV1, result::LysisResultV1, shuffle::VerifiedShuffleRecordV1, CasObjectRefV1,
-    ObjectKind, ProtocolError, SchemaLimits,
+    intent::JobIntentV1, result::LysisResultV1, CasObjectRefV1, ObjectKind, ProtocolError,
+    SchemaLimits,
 };
 use thiserror::Error;
 
@@ -143,10 +143,7 @@ pub fn finalize_verified_lysis_v1(
     let buckets =
         authoritative_bucket_shuffle_records(audit.admissions(), reader, limits)?.map(|record| {
             match record {
-                Ok(record) => {
-                    let VerifiedShuffleRecordV1::Bucket(bucket) = record;
-                    Ok(bucket)
-                }
+                Ok(bucket) => Ok(bucket),
                 Err(_) => Err(LysisFinalizationErrorV1::Authority(
                     "cold-reloaded authoritative BucketShuffle cursor",
                 )),

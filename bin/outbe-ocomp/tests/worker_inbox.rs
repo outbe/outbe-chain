@@ -9,8 +9,7 @@ use outbe_ocomp::inbox::{WorkerInbox, WorkerInboxError, WorkerInboxLimits};
 use outbe_ocomp_protocol::{
     result::ResultChunkV1,
     shuffle::{
-        ShuffleBucketRecordV1, ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1,
-        ShuffleRunPayloadV1,
+        ShuffleBucketRecordV1, ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunPayloadV1,
     },
     unit::CanonicalRunSpan,
     ObjectKind,
@@ -23,7 +22,6 @@ fn shuffle_leaf_bytes() -> Vec<u8> {
         job_id: B256::repeat_byte(2),
         attempt: 0,
         unit_id: B256::repeat_byte(3),
-        kind: ShuffleRunKindV1::Bucket,
         run_span: CanonicalRunSpan {
             start_run: 0,
             end_run: 1,

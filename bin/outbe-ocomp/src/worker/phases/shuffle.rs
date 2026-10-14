@@ -29,9 +29,7 @@ use outbe_ocomp_protocol::shuffle::verified_shuffle_run_records;
 use outbe_ocomp_protocol::shuffle::ShuffleBucketRecordV1;
 use outbe_ocomp_protocol::shuffle::ShuffleRunArtifactV1;
 use outbe_ocomp_protocol::shuffle::ShuffleRunBuildContextV1;
-use outbe_ocomp_protocol::shuffle::ShuffleRunKindV1;
 use outbe_ocomp_protocol::shuffle::ShuffleSourceCoverageV1;
-use outbe_ocomp_protocol::shuffle::VerifiedShuffleRecordV1;
 
 use outbe_ocomp_protocol::unit::InputPurpose;
 use outbe_ocomp_protocol::unit::InputSourceKind;
@@ -132,8 +130,7 @@ fn resolve_shuffle_producers<'a>(
         authority.bundle,
         authority.limits,
     )?;
-    if planner.shuffle_unit_at(spec.phase, phase_ordinal, &producer_ids, authority.limits)? != *spec
-    {
+    if planner.shuffle_unit_at(phase_ordinal, &producer_ids, authority.limits)? != *spec {
         return Err(WorkerError::UnitBindingMismatch);
     }
     let expected = topology.required_producers(position)?;
@@ -212,18 +209,15 @@ fn execute_branch_shuffle_unit(
     if resolved.len() != 2 {
         return Err(WorkerError::UnitBindingMismatch);
     }
-    let expected_kind = ShuffleRunKindV1::Bucket;
     let left = decode_shuffle_producer_root(
         spec,
         resolved[0].ok_or(WorkerError::UnitBindingMismatch)?,
-        expected_kind,
         expected[0],
         limits,
     )?;
     let right = decode_shuffle_producer_root(
         spec,
         resolved[1].ok_or(WorkerError::UnitBindingMismatch)?,
-        expected_kind,
         expected[1],
         limits,
     )?;
@@ -245,11 +239,7 @@ fn execute_branch_shuffle_unit(
     }
     let left_records = read_verified_shuffle_records(left, limits, reader, cancelled)?;
     let right_records = read_verified_shuffle_records(right, limits, reader, cancelled)?;
-    let merged = merge_verified_shuffle_runs(expected_kind, left_records, right_records);
-    let records = merged.map(|record| {
-        let VerifiedShuffleRecordV1::Bucket(record) = record?;
-        Ok(record)
-    });
+    let records = merge_verified_shuffle_runs(left_records, right_records);
     build_bucket_shuffle_unit_artifact(spec, (run_span, coverage), records, (limits, inbox))
 }
 
@@ -259,7 +249,7 @@ fn read_verified_shuffle_records<'a>(
     reader: &'a crate::cas::FilesystemCasReader,
     cancelled: Option<&'a std::sync::atomic::AtomicBool>,
 ) -> Result<
-    impl Iterator<Item = Result<VerifiedShuffleRecordV1, outbe_ocomp_protocol::ProtocolError>> + 'a,
+    impl Iterator<Item = Result<ShuffleBucketRecordV1, outbe_ocomp_protocol::ProtocolError>> + 'a,
     WorkerError,
 > {
     verified_shuffle_run_records(root, limits, move |reference| {
@@ -334,7 +324,6 @@ fn finish_shuffle_unit_artifact(
 pub(in super::super) fn decode_shuffle_producer_root(
     consumer: &UnitSpecV1,
     artifact: &UnitArtifactV1,
-    expected_kind: ShuffleRunKindV1,
     expected_position: PlannedProducerV1,
     limits: &SchemaLimits,
 ) -> Result<ShuffleRunArtifactV1, WorkerError> {
@@ -359,7 +348,6 @@ pub(in super::super) fn decode_shuffle_producer_root(
         consumer.job_id,
         consumer.attempt,
         artifact.unit_id,
-        expected_kind,
         start_run,
         end_run,
         header.source_coverage_root,
@@ -372,7 +360,6 @@ pub(in super::super) fn decode_shuffle_producer_root(
         root.job_id,
         root.attempt,
         root.unit_id,
-        root.kind,
         root.run_span.start_run,
         root.run_span.end_run,
         root.source_coverage_root,

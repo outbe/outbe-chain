@@ -538,9 +538,7 @@ fn shuffle_units_bind_only_the_exact_materialized_producer_runs() {
     let limits = poc_schema_limits();
     let planner = LysisPlannerV1::new(planner_bindings(513)).unwrap();
     let leaf_source = B256::repeat_byte(0x71);
-    let leaf = planner
-        .shuffle_unit_at(UnitPhase::BucketShuffle, 2, &[leaf_source], &limits)
-        .unwrap();
+    let leaf = planner.shuffle_unit_at(2, &[leaf_source], &limits).unwrap();
     assert_eq!(
         leaf.interval,
         UnitInterval::CanonicalRunSpan(outbe_ocomp_protocol::unit::CanonicalRunSpan {
@@ -556,9 +554,7 @@ fn shuffle_units_bind_only_the_exact_materialized_producer_runs() {
 
     let left = B256::repeat_byte(0x72);
     let right = B256::repeat_byte(0x73);
-    let root = planner
-        .shuffle_unit_at(UnitPhase::BucketShuffle, 4, &[left, right], &limits)
-        .unwrap();
+    let root = planner.shuffle_unit_at(4, &[left, right], &limits).unwrap();
     assert_eq!(
         root.interval,
         UnitInterval::CanonicalRunSpan(outbe_ocomp_protocol::unit::CanonicalRunSpan {
@@ -584,14 +580,9 @@ fn shuffle_units_bind_only_the_exact_materialized_producer_runs() {
             ),
         ]
     );
+    assert!(planner.shuffle_unit_at(4, &[left], &limits).is_err());
     assert!(planner
-        .shuffle_unit_at(UnitPhase::BucketShuffle, 4, &[left], &limits)
-        .is_err());
-    assert!(planner
-        .shuffle_unit_at(UnitPhase::BucketShuffle, 4, &[left, B256::ZERO], &limits,)
-        .is_err());
-    assert!(planner
-        .shuffle_unit_at(UnitPhase::RootReduce, 4, &[left, right], &limits)
+        .shuffle_unit_at(4, &[left, B256::ZERO], &limits,)
         .is_err());
 }
 

@@ -5,13 +5,13 @@
   "generator": {
     "invocation": "cargo xtask ocomp shape",
     "source_sha256": "ba5ab090ad67cecff7d40e978ee9ee333656e973eba9669ba6bba24d36b89089",
-    "input_set_sha256": "b874ada95e293da14b08089667e9c80e3651c918e1c88ebabfc50a1a27da9b94"
+    "input_set_sha256": "5dcaa35b02e5bfa6af71072c20e3b7be121cba3ed3abe7738821f06d6a3d7a13"
   },
   "registries": {
     "object_domain_list_sha256": "618cacc0271a6fa163d20e79792f9c07867e0930953f072e77ca442f941168a4",
     "input_codecs_sha256": "e7d8f11ac0f9d9aeac9253e4ed1839c3179a4f7589b0451088b9b9ddcfa9a110",
-    "canonical_schema_sha256": "2fb13d8851f0b0dd8478a5dddb9fff456824f5d8993b0f57233bf1c9f5105e8b",
-    "domain_preimage_sha256": "49d308198e0630866a6d6ec4b34f43ac4e9aebc817c5ad91df59926f1dc5139f",
+    "canonical_schema_sha256": "ab167585bd726375f43e3d01987c5ec523959d0ef3f00d677156b3c11ba8773e",
+    "domain_preimage_sha256": "169a09872bb4aa77a141cec05406792e0325dd040edbe76798bf6bffbaab0e14",
     "object_count": 35,
     "tribute_body_codec_id": "52e3d1c35620ae70cc1da8e840348c60c4b58971960badea704a37fe3340ffca",
     "fidelity_opening_codec_id": "8e655521b1f67dd006f714236eefb1fc9bbd1b7f619ab5083c26d6e2251cee96",
