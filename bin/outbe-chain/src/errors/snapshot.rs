@@ -222,6 +222,7 @@ pub(crate) enum SnapshotError {
     MetadosisJobIdMismatch,
     /// Canonical Lysis terminal receipt intent or job binding differs.
     #[error("canonical Lysis terminal receipt intent/job binding differs")]
+    #[cfg(all(test, feature = "snapshot-integration"))]
     LysisTerminalReceiptMismatch,
     /// Canonical Metadosis request binding differs from the retained header.
     #[error("canonical Metadosis request binding differs from retained header B={number}")]
