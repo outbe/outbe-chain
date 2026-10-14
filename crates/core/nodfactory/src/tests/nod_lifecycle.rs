@@ -222,7 +222,7 @@ fn issue_qualified_item(
         parent,
         &item,
         entry_price(),
-        crate::runtime::call_terms(&storage, entry_price(), item.reference_currency).unwrap(),
+        crate::runtime::call_terms(storage, entry_price(), item.reference_currency).unwrap(),
     )
     .unwrap();
     qualify(storage, &item, entry_price());
@@ -339,7 +339,7 @@ fn arm_lapsed(
                 parent,
                 &item,
                 entry_price(),
-                crate::runtime::call_terms(&storage, entry_price(), item.reference_currency)
+                crate::runtime::call_terms(storage, entry_price(), item.reference_currency)
                     .unwrap(),
             )
             .unwrap();
@@ -446,7 +446,7 @@ fn issuance_seals_the_call_terms_on_the_bucket() {
             parent,
             &item,
             entry_price(),
-            crate::runtime::call_terms(&storage, entry_price(), item.reference_currency).unwrap(),
+            crate::runtime::call_terms(storage, entry_price(), item.reference_currency).unwrap(),
         )
         .unwrap();
         let nod = NodContract::new(storage.clone());
@@ -497,7 +497,7 @@ fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
             parent,
             &item,
             entry_price(),
-            crate::runtime::call_terms(&storage, entry_price(), item.reference_currency).unwrap(),
+            crate::runtime::call_terms(storage, entry_price(), item.reference_currency).unwrap(),
         )
         .unwrap();
         let dev = outbe_nod::config::NodParams::DEV;
@@ -536,7 +536,7 @@ fn a_later_member_does_not_reissue_the_bucket_stamp() {
             parent,
             &first,
             entry_price(),
-            crate::runtime::call_terms(&storage, entry_price(), first.reference_currency).unwrap(),
+            crate::runtime::call_terms(storage, entry_price(), first.reference_currency).unwrap(),
         )
         .unwrap();
         let mut second = nod_item(Address::repeat_byte(0x22), ISO);
@@ -547,7 +547,7 @@ fn a_later_member_does_not_reissue_the_bucket_stamp() {
             parent,
             &second,
             entry_price(),
-            crate::runtime::call_terms(&storage, entry_price(), second.reference_currency).unwrap(),
+            crate::runtime::call_terms(storage, entry_price(), second.reference_currency).unwrap(),
         )
         .unwrap();
         assert_eq!(first.bucket_key, second.bucket_key);
@@ -974,7 +974,7 @@ fn the_member_index_tracks_issuance_and_removal_in_a_qualified_bucket() {
             parent,
             &b_item,
             entry_price(),
-            crate::runtime::call_terms(&storage, entry_price(), b_item.reference_currency).unwrap(),
+            crate::runtime::call_terms(storage, entry_price(), b_item.reference_currency).unwrap(),
         )
         .unwrap();
         assert_eq!(a.bucket_key, b_item.bucket_key, "same bucket");
@@ -1030,7 +1030,7 @@ fn a_bucket_is_callable_from_issuance_and_settles_once_called() {
             parent,
             &item,
             entry_price(),
-            crate::runtime::call_terms(&storage, entry_price(), item.reference_currency).unwrap(),
+            crate::runtime::call_terms(storage, entry_price(), item.reference_currency).unwrap(),
         )
         .unwrap();
 
@@ -1075,7 +1075,7 @@ fn every_member_of_a_lapsed_bucket_burns_in_one_pass() {
                     parent,
                     &item,
                     entry_price(),
-                    crate::runtime::call_terms(&storage, entry_price(), item.reference_currency)
+                    crate::runtime::call_terms(storage, entry_price(), item.reference_currency)
                         .unwrap(),
                 )
                 .unwrap();
@@ -1123,7 +1123,7 @@ fn a_lapsed_bucket_returns_every_forfeited_load_to_the_promis_reserve() {
                     parent,
                     &item,
                     entry_price(),
-                    crate::runtime::call_terms(&storage, entry_price(), item.reference_currency)
+                    crate::runtime::call_terms(storage, entry_price(), item.reference_currency)
                         .unwrap(),
                 )
                 .unwrap();
@@ -1171,7 +1171,7 @@ fn a_bucket_inside_its_notice_waits_while_its_neighbours_burn() {
                     parent,
                     &item,
                     entry,
-                    crate::runtime::call_terms(&storage, entry, item.reference_currency).unwrap(),
+                    crate::runtime::call_terms(storage, entry, item.reference_currency).unwrap(),
                 )
                 .unwrap();
                 item
@@ -1230,7 +1230,7 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
                 parent,
                 &item,
                 entry,
-                crate::runtime::call_terms(&storage, entry, item.reference_currency).unwrap(),
+                crate::runtime::call_terms(storage, entry, item.reference_currency).unwrap(),
             )
             .unwrap();
             item
@@ -1342,7 +1342,7 @@ fn a_bucket_over_the_forfeit_budget_burns_across_slices_of_one_sweep() {
                     parent,
                     &item,
                     entry_price(),
-                    crate::runtime::call_terms(&storage, entry_price(), item.reference_currency)
+                    crate::runtime::call_terms(storage, entry_price(), item.reference_currency)
                         .unwrap(),
                 )
                 .unwrap();
@@ -1455,7 +1455,7 @@ fn a_call_slice_out_of_visits_resumes_on_its_currency_without_holding_back_forfe
             parent,
             &lapsed,
             entry_price(),
-            crate::runtime::call_terms(&storage, entry_price(), lapsed.reference_currency).unwrap(),
+            crate::runtime::call_terms(storage, entry_price(), lapsed.reference_currency).unwrap(),
         )
         .unwrap();
         assert_eq!(scan(storage, scope, parent, at), 1);
@@ -1475,7 +1475,7 @@ fn a_call_slice_out_of_visits_resumes_on_its_currency_without_holding_back_forfe
             parent,
             &fresh,
             entry_price(),
-            crate::runtime::call_terms(&storage, entry_price(), fresh.reference_currency).unwrap(),
+            crate::runtime::call_terms(storage, entry_price(), fresh.reference_currency).unwrap(),
         )
         .unwrap();
         let past = at + NOTICE + HOUR;
@@ -1514,7 +1514,7 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
                     parent,
                     &item,
                     entry_price(),
-                    crate::runtime::call_terms(&storage, entry_price(), item.reference_currency)
+                    crate::runtime::call_terms(storage, entry_price(), item.reference_currency)
                         .unwrap(),
                 )
                 .unwrap();
@@ -1665,7 +1665,7 @@ fn a_fully_paid_bucket_is_not_called_and_corrupt_paid_membership_is_not_forfeite
             parent,
             &newcomer,
             entry_price(),
-            crate::runtime::call_terms(&storage, entry_price(), newcomer.reference_currency)
+            crate::runtime::call_terms(storage, entry_price(), newcomer.reference_currency)
                 .unwrap(),
         )
         .unwrap();
@@ -2413,4 +2413,35 @@ fn token_uri_turns_forfeited_past_the_settlement_deadline() {
     assert!(json.contains(&format!(
         r#"{{"trait_type":"Settlement Deadline","value":{deadline},"display_type":"date"}}"#
     )));
+}
+
+#[cfg(feature = "e2e-test")]
+#[test]
+fn static_test_command_is_rejected_before_bucket_validation() {
+    use crate::precompile::dispatch;
+    use crate::test_arming::INodFactoryTestArming;
+    use alloy_sol_types::SolCall;
+    use outbe_primitives::error::PrecompileError;
+    let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
+    provider.set_static(true);
+    let scope = ExecutionScope::default();
+    let parent = outbe_nod::nod_reader(Arc::new(MemoryStorage::new()));
+    let result = dispatch(
+        outbe_primitives::storage::StorageHandle::new(&mut provider),
+        ExecutionReaders {
+            scope: &scope,
+            parent: &parent,
+        },
+        &INodFactoryTestArming::closeCallNoticeForTestCall {
+            bucketKey: alloy_primitives::B256::repeat_byte(1),
+            deadline: 1,
+        }
+        .abi_encode(),
+        Address::ZERO,
+        U256::ZERO,
+    );
+    assert!(
+        matches!(result, Err(PrecompileError::WriteProtection)),
+        "{result:?}"
+    );
 }

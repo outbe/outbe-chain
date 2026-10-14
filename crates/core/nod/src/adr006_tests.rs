@@ -552,7 +552,7 @@ fn seed_bucket_issued(
         parent,
         &body,
         entry,
-        crate::test_support::sealed_terms(&storage, &body, entry),
+        crate::test_support::sealed_terms(storage, &body, entry),
     )
     .unwrap();
     WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key)

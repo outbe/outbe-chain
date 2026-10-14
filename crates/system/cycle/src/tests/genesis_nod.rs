@@ -191,7 +191,7 @@ fn issue_nod(
         parent,
         &body,
         U256::from(entry),
-        outbe_nod::test_support::sealed_terms(&storage, &body, U256::from(entry)),
+        outbe_nod::test_support::sealed_terms(storage, &body, U256::from(entry)),
     )?;
     Ok(body.bucket_key)
 }

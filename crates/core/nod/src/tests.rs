@@ -18,36 +18,6 @@ use crate::{api, state::CallBins, NodBucketState, NodContract, NodItemState, Nod
 const USD: u16 = 840;
 const EUR: u16 = 978;
 
-#[cfg(feature = "e2e-test")]
-#[test]
-fn static_test_command_is_rejected_before_bucket_validation() {
-    use crate::precompile::{dispatch, INodTestArming};
-    use alloy_sol_types::SolCall;
-    use outbe_primitives::error::PrecompileError;
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.set_static(true);
-    let scope = ExecutionScope::default();
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
-    let result = dispatch(
-        StorageHandle::new(&mut provider),
-        ExecutionReaders {
-            scope: &scope,
-            parent: &parent,
-        },
-        &INodTestArming::closeCallNoticeForTestCall {
-            bucketKey: alloy_primitives::B256::repeat_byte(1),
-            deadline: 1,
-        }
-        .abi_encode(),
-        Address::ZERO,
-        U256::ZERO,
-    );
-    assert!(
-        matches!(result, Err(PrecompileError::WriteProtection)),
-        "{result:?}"
-    );
-}
-
 fn seed_production_nod_genesis(storage: &StorageHandle<'_>) {
     seed_compressed_entities_genesis(storage).expect("CE genesis fixture");
     // These tests exercise the production call terms.
@@ -782,7 +752,7 @@ fn qualification_announces_nothing_and_settlement_updates_the_nod() {
                 &parent,
                 body,
                 U256::from(entry),
-                crate::test_support::sealed_terms(&storage, &body, U256::from(entry)),
+                crate::test_support::sealed_terms(&storage, body, U256::from(entry)),
             )
             .unwrap();
         }
@@ -1166,7 +1136,7 @@ fn seed_public_lifecycle(
         parent,
         &item,
         U256::from(20),
-        crate::test_support::sealed_terms(&storage, &item, U256::from(20)),
+        crate::test_support::sealed_terms(storage, &item, U256::from(20)),
     )
     .unwrap();
     let mut nod = NodContract::new(storage.clone());
