@@ -251,7 +251,7 @@ def apply_seed(
     if validators:
         _seed_founders(genesis, seed, validators, alloc)
 
-    _seed_system_state(genesis, seed, validators, alloc, canon_dir)
+    _seed_system_state(genesis, seed, alloc, canon_dir)
 
     # Gratis and Promis use TEE encryption at rest. Per-account balances are
     # ciphertext that uses enclave state keys. Genesis cannot seed plaintext balances.
@@ -328,7 +328,7 @@ def main():
         "--canon-dir",
         help="Directory holding metacanon.md and canon.md to seed into the "
         "Governance precompile at version 1. Defaults to <script-dir>/canon. "
-        "When absent, the canon texts start empty and an authority sets them "
+        "When absent, the canon texts start empty and an ACTIVE validator sets them "
         "post-genesis.",
     )
     parser.add_argument(
