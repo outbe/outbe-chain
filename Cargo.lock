@@ -8963,7 +8963,6 @@ dependencies = [
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
- "revm",
  "thiserror 2.0.18",
 ]
 

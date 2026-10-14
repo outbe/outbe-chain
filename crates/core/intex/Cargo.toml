@@ -16,8 +16,5 @@ thiserror.workspace = true
 [features]
 test-utils = []
 
-[dev-dependencies]
-revm.workspace = true
-
 [lints]
 workspace = true
