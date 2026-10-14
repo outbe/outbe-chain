@@ -474,7 +474,7 @@ pub(crate) fn verify_canonical_obligations(
         state,
         inventory.active_jobs(),
         (&pins, &pin_by_intent, projection.block_number),
-        report.as_deref_mut(),
+        report,
     )?;
     let source_leases = u64::try_from(verifier.checked_leases.len())?;
     let complete_exports = u64::try_from(verifier.checked_exports.len())?;

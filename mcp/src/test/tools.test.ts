@@ -156,6 +156,7 @@ const TOOLS: Case[] = [
   ["gratis_cancel_pledge", { reservation_id: "1" }],
   ["credis_issue", { reservation_id: "1", stake: "1" }],
   ["credis_settle", { credis_id: "7", amount: "500000" }],
+  ["credis_forfeit", { credis_id: "7" }],
   [
     "tribute_offer",
     {

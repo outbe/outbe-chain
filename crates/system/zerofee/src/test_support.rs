@@ -1,36 +1,15 @@
 //! Shared fixtures for the zero-fee hook tests.
 
-use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_hyperlanecontroller::precompile::IHyperlaneController;
-use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
 use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
 use outbe_validatorset::{
     contract::ValidatorSet, delegation::ValidatorDelegateRole, StakeProjection,
 };
 
-use crate::hooks::ZeroFeeTransaction;
-
 /// Owner of the validator set configuration in hook tests.
 const VALIDATOR_SET_OWNER: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
-
-/// A zero-fee transaction from `signer` to `to` that pays the protocol minimum
-/// fee cap and no priority fee.
-#[allow(dead_code)]
-pub(crate) fn hook_tx(signer: Address, to: Address, input: &[u8]) -> ZeroFeeTransaction<'_> {
-    ZeroFeeTransaction {
-        signer,
-        call: TransactionCallFields {
-            to: Some(to),
-            value: U256::ZERO,
-            input,
-            gas_limit: 1_000_000,
-            max_fee_per_gas: u128::from(MIN_PROTOCOL_BASE_FEE),
-            max_priority_fee_per_gas: Some(0),
-        },
-    }
-}
 
 /// Valid `HyperlaneController.submitCheckpoint` calldata.
 pub(crate) fn checkpoint_calldata() -> Bytes {

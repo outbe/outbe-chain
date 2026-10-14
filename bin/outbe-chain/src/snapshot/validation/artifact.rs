@@ -355,11 +355,13 @@ fn verify_regular_file_member(
     Ok(())
 }
 
+type VerifiedDomainMembers<'a> = (SourceRoot, Vec<(&'a PathBuf, FileIdentity)>);
+
 fn verify_domain_members<'a>(
     native: &'a NativeDomain,
     domain: &DomainInventory,
     totals: &mut (u64, u64),
-) -> eyre::Result<Option<(SourceRoot, Vec<(&'a PathBuf, FileIdentity)>)>> {
+) -> eyre::Result<Option<VerifiedDomainMembers<'a>>> {
     let wanted: BTreeMap<_, _> = domain
         .entries
         .iter()

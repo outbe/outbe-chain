@@ -37,7 +37,7 @@ use self::rpc::{canonical_nonce_params, parse_rpc_response};
 pub use self::rpc::{PublicVoteRpcClientV1, PublicVoteRpcErrorV1};
 use crate::result_attestation::{LocalResultAttestationErrorV1, LocalResultVoteAttesterV1};
 
-pub(self) const MAX_RAW_TRANSACTION_BYTES: usize = 4 * 1024;
+const MAX_RAW_TRANSACTION_BYTES: usize = 4 * 1024;
 /// Operational ceiling for the outer OCOMP transaction's fee cap.
 ///
 /// ZeroFee waives the canonical execution debit, but a compromised RPC must

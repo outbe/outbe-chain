@@ -41,6 +41,8 @@ pub enum CredisError {
     NonTransferable,
     #[error("unknown credis profile selector: {0}")]
     UnknownProfileSelector(u8),
+    #[error("only the Credis owner can forfeit it")]
+    NotCredisOwner,
 }
 
 impl From<CredisError> for PrecompileError {

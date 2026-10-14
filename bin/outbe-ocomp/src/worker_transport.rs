@@ -515,11 +515,11 @@ impl IntoResponse for WorkerApiErrorV1 {
     }
 }
 
-pub(self) fn parse_b256(value: &str) -> Result<B256, WorkerApiErrorV1> {
+fn parse_b256(value: &str) -> Result<B256, WorkerApiErrorV1> {
     B256::from_str(value).map_err(|_| WorkerApiErrorV1::MalformedRequest)
 }
 
-pub(self) fn duration_ms(duration: Duration) -> u64 {
+fn duration_ms(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 

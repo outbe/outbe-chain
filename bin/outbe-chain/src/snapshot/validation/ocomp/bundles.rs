@@ -83,15 +83,13 @@ fn missing_catalog_native_input(error: &(dyn std::error::Error + 'static)) -> Op
             Admission::Io { source, .. } => missing_native_input(source),
             _ => false,
         })
-    } else if let Some(error) = error.downcast_ref::<Refs>() {
-        Some(match error {
+    } else {
+        error.downcast_ref::<Refs>().map(|error| match error {
             Refs::MissingHeader | Refs::MissingReference { .. } => true,
             Refs::Cas(error) => missing_native_input(error),
             Refs::Io { source, .. } => missing_native_input(source),
             _ => false,
         })
-    } else {
-        None
     }
 }
 
@@ -123,14 +121,12 @@ fn missing_composite_native_input(error: &(dyn std::error::Error + 'static)) -> 
             ResultCatalog::Cas(error) => missing_native_input(error),
             _ => false,
         })
-    } else if let Some(error) = error.downcast_ref::<Build>() {
-        Some(match error {
+    } else {
+        error.downcast_ref::<Build>().map(|error| match error {
             Build::Plan(error) => missing_native_input(error),
             Build::ResultCatalog(error) => missing_native_input(error),
             _ => false,
         })
-    } else {
-        None
     }
 }
 

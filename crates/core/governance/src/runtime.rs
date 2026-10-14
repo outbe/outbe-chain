@@ -173,7 +173,7 @@ macro_rules! impl_proposal_ops {
 }
 
 impl GovernanceContract<'_> {
-    // --- authorities gate ---
+    // --- authority gate (live ValidatorSet) ---
 
     fn ensure_authority(&self, caller: Address) -> Result<()> {
         if self.is_authority(caller)? {
@@ -181,14 +181,6 @@ impl GovernanceContract<'_> {
         } else {
             Err(GovernanceError::NotAuthorized.into())
         }
-    }
-
-    /// Adds an authority. Only an existing authority may add another. Tests and
-    /// genesis-adjacent tooling use this. The genesis seed writes the initial set
-    /// directly.
-    pub fn add_authority(&mut self, caller: Address, who: Address) -> Result<()> {
-        self.ensure_authority(caller)?;
-        self.authorities.write(&who, true)
     }
 
     // --- meta-canon / canon writes (authorities-gated, full overwrite) ---

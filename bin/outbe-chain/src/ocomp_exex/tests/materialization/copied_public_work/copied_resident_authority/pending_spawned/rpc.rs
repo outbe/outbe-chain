@@ -34,7 +34,7 @@ impl ScriptedResponses {
                 serde_json::json!("0x7")
             }
             "eth_gasPrice" => serde_json::json!("0x1"),
-            "eth_call" => self.read_call(params, state),
+            "eth_call" => self.read_call(params),
             "eth_sendRawTransaction" => self.submit_transaction(params, state),
             "eth_getTransactionReceipt" => {
                 let hash = params[0].as_str().unwrap().parse::<B256>().unwrap();
@@ -55,7 +55,7 @@ impl ScriptedResponses {
             other => panic!("unexpected RPC method: {other}"),
         }
     }
-    fn read_call(&self, params: &serde_json::Value, state: &mut RpcEvidence) -> serde_json::Value {
+    fn read_call(&self, params: &serde_json::Value) -> serde_json::Value {
         assert_eq!(params[1], "finalized");
         let to = params[0]["to"]
             .as_str()

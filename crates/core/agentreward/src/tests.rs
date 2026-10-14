@@ -765,100 +765,100 @@ mod distribute_daily_tests {
     }
 
     #[test]
-    fn waa_capped_distribution_mints_only_credited_rewards() {
-        run(|ctx| {
-            let alice = address!("0x1111111111111111111111111111111111111111");
-            let bob = address!("0x2222222222222222222222222222222222222222");
-            let mut c = AgentRewardContract::new(ctx.storage.clone());
-            // alice 9, bob 1 -> both are capped at 32 % of 1000 = 320 each.
-            // residue = 1000 - 640 = 360.
-            for _ in 0..9 {
-                c.increment_waa_tribute(DAY, alice).unwrap();
-            }
-            c.increment_waa_tribute(DAY, bob).unwrap();
-
-            let excess =
-                distribute_daily(ctx, DAY, &[(PoolKind::Waa, U256::from(1000u64))]).unwrap();
-
-            assert_eq!(excess, U256::from(360u64));
-            let c2 = AgentRewardContract::new(ctx.storage.clone());
-            assert_eq!(c2.get_claimable_reward(alice).unwrap(), native(320));
-            assert_eq!(c2.get_claimable_reward(bob).unwrap(), native(320));
-            // Mint/burn parity: AGENT_REWARD now holds exactly the
-            // total claimable.
-            assert_eq!(
-                ctx.storage
-                    .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
-                    .unwrap(),
-                native(640)
-            );
-            // Distribution clears the WAA index.
-            assert!(c2.get_all_waa_counts(DAY).unwrap().is_empty());
-        });
+    fn sole_waa_and_sra_receive_full_pools_with_native_backing() {
+        check_tribute_distribution(1_000, &[(0xaa, 1, 1_000)], 0);
     }
 
     #[test]
-    fn sole_sra_receives_full_pool_with_native_backing() {
-        check_sra_distribution(1_000, &[(0xaa, 1, 1_000)], 0);
+    fn waa_and_sra_rewards_follow_tribute_weights_without_a_cap() {
+        check_tribute_distribution(1_000, &[(0xaa, 9, 900), (0xbb, 1, 100)], 0);
     }
 
     #[test]
-    fn sra_rewards_follow_tribute_weights_without_a_cap() {
-        check_sra_distribution(1_000, &[(0xaa, 9, 900), (0xbb, 1, 100)], 0);
+    fn waa_and_sra_floor_each_share_and_return_rounding_residue() {
+        check_tribute_distribution(10, &[(0xaa, 1, 3), (0xbb, 1, 3), (0xcc, 1, 3)], 1);
     }
 
     #[test]
-    fn sra_floors_each_share_and_returns_rounding_residue() {
-        check_sra_distribution(10, &[(0xaa, 1, 3), (0xbb, 1, 3), (0xcc, 1, 3)], 1);
+    fn waa_and_sra_leave_rounding_residue_without_redistribution() {
+        check_tribute_distribution(
+            11,
+            &[(0xaa, 1, 2), (0xbb, 1, 2), (0xcc, 1, 2), (0xdd, 1, 2)],
+            3,
+        );
     }
 
-    fn check_sra_distribution(pool: u64, recipients: &[(u8, u64, u64)], expected_excess: u64) {
-        run(|ctx| {
-            let mut contract = AgentRewardContract::new(ctx.storage.clone());
-            for &(byte, weight, _) in recipients {
-                for _ in 0..weight {
-                    contract
-                        .increment_sra_tribute(DAY, Address::repeat_byte(byte))
-                        .unwrap();
+    fn check_tribute_distribution(pool: u64, recipients: &[(u8, u64, u64)], expected_excess: u64) {
+        for (kind, reward_pool) in [
+            (PoolKind::Waa, RewardPool::Waa),
+            (PoolKind::Sra, RewardPool::Sra),
+        ] {
+            run(|ctx| {
+                let mut contract = AgentRewardContract::new(ctx.storage.clone());
+                for &(byte, weight, _) in recipients {
+                    for _ in 0..weight {
+                        let address = Address::repeat_byte(byte);
+                        if kind == PoolKind::Waa {
+                            contract.increment_waa_tribute(DAY, address).unwrap();
+                        } else {
+                            contract.increment_sra_tribute(DAY, address).unwrap();
+                        }
+                    }
                 }
-            }
-            let excess = distribute_daily(ctx, DAY, &[(PoolKind::Sra, U256::from(pool))]).unwrap();
-            assert_eq!(excess, U256::from(expected_excess));
-            let mut credited = U256::ZERO;
-            for &(byte, _, expected) in recipients {
-                let address = Address::repeat_byte(byte);
-                let reward = contract
-                    .get_pool_claimable_reward(RewardPool::Sra, address)
-                    .unwrap();
-                assert_eq!(reward, native(expected));
-                credited += reward;
+                let excess = distribute_daily(ctx, DAY, &[(kind, U256::from(pool))]).unwrap();
+                assert_eq!(excess, U256::from(expected_excess));
+                let (counts, address_count, addresses) = if kind == PoolKind::Waa {
+                    (
+                        &contract.waa_tribute_counts,
+                        &contract.waa_address_count,
+                        &contract.waa_addresses,
+                    )
+                } else {
+                    (
+                        &contract.sra_tribute_counts,
+                        &contract.sra_address_count,
+                        &contract.sra_addresses,
+                    )
+                };
+                let mut credited = U256::ZERO;
+                for &(byte, _, expected) in recipients {
+                    let address = Address::repeat_byte(byte);
+                    let reward = contract
+                        .get_pool_claimable_reward(reward_pool, address)
+                        .unwrap();
+                    assert_eq!(reward, native(expected));
+                    credited += reward;
+                    assert_eq!(
+                        counts
+                            .read(&AgentRewardContract::tribute_count_key(DAY, address))
+                            .unwrap(),
+                        0
+                    );
+                }
+                let remaining = if kind == PoolKind::Waa {
+                    contract.get_all_waa_counts(DAY).unwrap()
+                } else {
+                    contract.get_all_sra_counts(DAY).unwrap()
+                };
+                assert!(remaining.is_empty());
+                assert_eq!(address_count.read(&DAY).unwrap(), 0);
+                for index in 0..u32::try_from(recipients.len()).unwrap() {
+                    assert_eq!(
+                        addresses
+                            .read(&AgentRewardContract::address_index_key(DAY, index))
+                            .unwrap(),
+                        Address::ZERO
+                    );
+                }
                 assert_eq!(
-                    contract
-                        .sra_tribute_counts
-                        .read(&AgentRewardContract::tribute_count_key(DAY, address))
+                    ctx.storage
+                        .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
                         .unwrap(),
-                    0
+                    credited
                 );
-            }
-            assert!(contract.get_all_sra_counts(DAY).unwrap().is_empty());
-            assert_eq!(contract.sra_address_count.read(&DAY).unwrap(), 0);
-            for index in 0..u32::try_from(recipients.len()).unwrap() {
-                assert_eq!(
-                    contract
-                        .sra_addresses
-                        .read(&AgentRewardContract::address_index_key(DAY, index))
-                        .unwrap(),
-                    Address::ZERO
-                );
-            }
-            assert_eq!(
-                ctx.storage
-                    .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
-                    .unwrap(),
-                credited
-            );
-            assert_eq!(credited + native(expected_excess), native(pool));
-        });
+                assert_eq!(credited + native(expected_excess), native(pool));
+            });
+        }
     }
 
     #[test]
@@ -955,16 +955,16 @@ mod distribute_daily_tests {
                 ctx,
                 DAY,
                 &[
-                    (PoolKind::Waa, U256::from(1000u64)), // alice capped 320 -> excess 680
+                    (PoolKind::Waa, U256::from(1000u64)), // alice receives the full pool
                     (PoolKind::Sra, U256::from(500u64)),  // no tribute -> excess 500
                     (PoolKind::Cca, U256::from(100u64)),  // no eligible CCA
                 ],
             )
             .unwrap();
 
-            assert_eq!(excess, U256::from(1280u64)); // 680 + 500 + 100
+            assert_eq!(excess, U256::from(600u64)); // 500 + 100
             let c2 = AgentRewardContract::new(ctx.storage.clone());
-            assert_eq!(c2.get_claimable_reward(alice).unwrap(), native(320));
+            assert_eq!(c2.get_claimable_reward(alice).unwrap(), native(1000));
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS)
@@ -972,12 +972,12 @@ mod distribute_daily_tests {
                 U256::ZERO
             );
             // burn parity: AGENT_REWARD holds exactly alice's
-            // 320 claimable. Distribution did not mint the SRA no-tribute pool.
+            // 1000 claimable. Distribution did not mint the SRA no-tribute pool.
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
                     .unwrap(),
-                native(320)
+                native(1000)
             );
         });
     }

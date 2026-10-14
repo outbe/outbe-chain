@@ -199,40 +199,39 @@ fn exact_plan_positions_round_trip_to_their_global_ordinals() {
 #[test]
 fn three_shuffle_runs_have_only_real_binary_merges() {
     let topology = LysisPlanTopologyV1::new(3).unwrap();
-    for phase in [UnitPhase::BucketShuffle] {
-        assert_eq!(topology.phase_unit_count(phase), 5);
+    let phase = UnitPhase::BucketShuffle;
+    assert_eq!(topology.phase_unit_count(phase), 5);
 
-        let root = topology.phase_position_at(phase, 4).unwrap();
-        assert_eq!(
-            root,
-            PlannedUnitPositionV1::RunSpan {
+    let root = topology.phase_position_at(phase, 4).unwrap();
+    assert_eq!(
+        root,
+        PlannedUnitPositionV1::RunSpan {
+            phase,
+            level: 2,
+            index: 0,
+            start_run: 0,
+            end_run: 3,
+        }
+    );
+    assert_eq!(
+        topology.required_producers(root).unwrap(),
+        [
+            PlannedProducerV1::Unit(PlannedUnitPositionV1::RunSpan {
                 phase,
-                level: 2,
+                level: 1,
                 index: 0,
                 start_run: 0,
+                end_run: 2,
+            }),
+            PlannedProducerV1::Unit(PlannedUnitPositionV1::RunSpan {
+                phase,
+                level: 0,
+                index: 2,
+                start_run: 2,
                 end_run: 3,
-            }
-        );
-        assert_eq!(
-            topology.required_producers(root).unwrap(),
-            [
-                PlannedProducerV1::Unit(PlannedUnitPositionV1::RunSpan {
-                    phase,
-                    level: 1,
-                    index: 0,
-                    start_run: 0,
-                    end_run: 2,
-                }),
-                PlannedProducerV1::Unit(PlannedUnitPositionV1::RunSpan {
-                    phase,
-                    level: 0,
-                    index: 2,
-                    start_run: 2,
-                    end_run: 3,
-                }),
-            ]
-        );
-    }
+            }),
+        ]
+    );
 }
 
 #[test]
