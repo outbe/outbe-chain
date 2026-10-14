@@ -7,15 +7,17 @@
 //! (canonical-hash recheck), attestation (verify-then-discard), and
 //! `tee_sidecar_unavailable` failure mode.
 
-use outbe_primitives::error::Result;
+use alloy_primitives::B256;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::protocol::{
     fidelity_cohort_canonical_hash, fidelity_query_canonical_hash,
     fidelity_snapshot_canonical_hash, EnclaveRequest, EnclaveResponse, FidelityCohortRequest,
     FidelityCohortResult, FidelityLeagueEntry, FidelityQueryRequest, FidelityQueryResult,
     FidelitySnapshotRequest,
 };
+use outbe_tee::TransportError;
 
-use crate::errors::{FidelityError, FidelityFatalError};
+use crate::errors::FidelityFatalError;
 
 /// Apply a standalone Fidelity cohort op inside the enclave and validate the
 /// response (determinism recheck + attestation verify-then-discard).
@@ -26,41 +28,12 @@ pub(crate) fn apply_cohort_op(req: FidelityCohortRequest) -> Result<FidelityCoho
     }
 
     let expected_hash = fidelity_cohort_canonical_hash(&req);
-    let (attestation_pub, response) = outbe_tee::try_with_enclave(|client| {
-        let attestation_pub = client.attestation_pub();
-        let response = client.request(&EnclaveRequest::ApplyFidelityCohortOp {
+    call_enclave(
+        expected_hash,
+        EnclaveRequest::ApplyFidelityCohortOp {
             request: Box::new(req),
-        });
-        (attestation_pub, response)
-    })
-    .ok_or(FidelityFatalError::SidecarUnavailable {
-        context: "ApplyFidelityCohortOp",
-    })?;
-    let response = response
-        .map_err(|e| FidelityFatalError::sidecar_request_failed("ApplyFidelityCohortOp", e))?;
-
-    let result = match response {
-        EnclaveResponse::FidelityCohortApplied { result } => *result,
-        EnclaveResponse::Error { message } => {
-            return Err(FidelityFatalError::EnclaveOpError {
-                context: "ApplyFidelityCohortOp",
-                message,
-            }
-            .into())
-        }
-        other => return Err(FidelityFatalError::UnexpectedEnclaveResponse(Box::new(other)).into()),
-    };
-    if result.inputs_canonical_hash != expected_hash {
-        return Err(FidelityFatalError::EnclaveNondeterminism.into());
-    }
-    outbe_tee::verify_fidelity_cohort_attestation(
-        &attestation_pub,
-        result.inputs_canonical_hash,
-        &result,
-        &result.attestation_tag,
+        },
     )
-    .map_err(FidelityFatalError::attestation_invalid)?;
-    Ok(result)
 }
 
 /// Batch-snapshot per-owner leagues inside the enclave.
@@ -71,45 +44,13 @@ pub(crate) fn snapshot_leagues(req: FidelitySnapshotRequest) -> Result<Vec<Fidel
     }
 
     let expected_hash = fidelity_snapshot_canonical_hash(&req);
-    let (attestation_pub, response) = outbe_tee::try_with_enclave(|client| {
-        let attestation_pub = client.attestation_pub();
-        let response = client.request(&EnclaveRequest::SnapshotFidelityLeagues {
+    let snapshot: LeagueSnapshot = call_enclave(
+        expected_hash,
+        EnclaveRequest::SnapshotFidelityLeagues {
             request: Box::new(req),
-        });
-        (attestation_pub, response)
-    })
-    .ok_or(FidelityFatalError::SidecarUnavailable {
-        context: "SnapshotFidelityLeagues",
-    })?;
-    let response = response
-        .map_err(|e| FidelityFatalError::sidecar_request_failed("SnapshotFidelityLeagues", e))?;
-
-    let (leagues, inputs_canonical_hash, attestation_tag) = match response {
-        EnclaveResponse::FidelityLeaguesSnapshotted {
-            leagues,
-            inputs_canonical_hash,
-            attestation_tag,
-        } => (leagues, inputs_canonical_hash, attestation_tag),
-        EnclaveResponse::Error { message } => {
-            return Err(FidelityFatalError::EnclaveOpError {
-                context: "SnapshotFidelityLeagues",
-                message,
-            }
-            .into())
-        }
-        other => return Err(FidelityFatalError::UnexpectedEnclaveResponse(Box::new(other)).into()),
-    };
-    if inputs_canonical_hash != expected_hash {
-        return Err(FidelityFatalError::EnclaveNondeterminism.into());
-    }
-    outbe_tee::verify_fidelity_snapshot_attestation(
-        &attestation_pub,
-        inputs_canonical_hash,
-        &leagues,
-        &attestation_tag,
-    )
-    .map_err(FidelityFatalError::attestation_invalid)?;
-    Ok(leagues)
+        },
+    )?;
+    Ok(snapshot.leagues)
 }
 
 /// Owner-authorized RCFI/league query inside the enclave (eth_call path).
@@ -120,40 +61,153 @@ pub(crate) fn query_index(req: FidelityQueryRequest) -> Result<FidelityQueryResu
     }
 
     let expected_hash = fidelity_query_canonical_hash(&req);
+    call_enclave(
+        expected_hash,
+        EnclaveRequest::QueryFidelityIndex {
+            request: Box::new(req),
+        },
+    )
+}
+
+fn call_enclave<T: AttestedAnswer>(expected_hash: B256, request: EnclaveRequest) -> Result<T> {
     let (attestation_pub, response) = outbe_tee::try_with_enclave(|client| {
         let attestation_pub = client.attestation_pub();
-        let response = client.request(&EnclaveRequest::QueryFidelityIndex {
-            request: Box::new(req),
-        });
+        let response = client.request(&request);
         (attestation_pub, response)
     })
     .ok_or(FidelityFatalError::SidecarUnavailable {
-        context: "QueryFidelityIndex",
+        context: T::OPERATION,
     })?;
-    let response = response
-        .map_err(|e| FidelityFatalError::sidecar_request_failed("QueryFidelityIndex", e))?;
+    let response =
+        response.map_err(|e| FidelityFatalError::sidecar_request_failed(T::OPERATION, e))?;
+    validate_answer(expected_hash, &attestation_pub, response)
+}
 
-    let result = match response {
-        EnclaveResponse::FidelityIndexQueried { result } => *result,
-        EnclaveResponse::Error { message } => {
-            return Err(FidelityError::QueryFailed(format!(
-                "enclave QueryFidelityIndex error: {message}"
-            ))
-            .into())
-        }
-        other => return Err(FidelityFatalError::UnexpectedEnclaveResponse(Box::new(other)).into()),
-    };
-    if result.inputs_canonical_hash != expected_hash {
+/// Checks the answer variant, then the canonical input hash, then the attestation tag.
+pub(crate) fn validate_answer<T: AttestedAnswer>(
+    expected_hash: B256,
+    attestation_pub: &[u8; 32],
+    response: EnclaveResponse,
+) -> Result<T> {
+    let answer = T::from_response(response)?;
+    if answer.inputs_canonical_hash() != expected_hash {
         return Err(FidelityFatalError::EnclaveNondeterminism.into());
     }
-    outbe_tee::verify_fidelity_query_attestation(
-        &attestation_pub,
-        result.inputs_canonical_hash,
-        &result,
-        &result.attestation_tag,
-    )
-    .map_err(FidelityFatalError::attestation_invalid)?;
-    Ok(result)
+    answer
+        .verify_attestation(attestation_pub)
+        .map_err(FidelityFatalError::attestation_invalid)?;
+    Ok(answer)
+}
+
+fn failed_response(operation: &'static str, response: EnclaveResponse) -> PrecompileError {
+    match response {
+        EnclaveResponse::Error { message } => FidelityFatalError::EnclaveOpError {
+            context: operation,
+            message,
+        }
+        .into(),
+        other => FidelityFatalError::UnexpectedEnclaveResponse(Box::new(other)).into(),
+    }
+}
+
+/// A Fidelity enclave answer that carries its canonical input hash and attestation tag.
+pub(crate) trait AttestedAnswer: Sized {
+    const OPERATION: &'static str;
+
+    fn from_response(response: EnclaveResponse) -> Result<Self>;
+
+    fn inputs_canonical_hash(&self) -> B256;
+
+    fn verify_attestation(
+        &self,
+        attestation_pub: &[u8; 32],
+    ) -> core::result::Result<(), TransportError>;
+}
+
+macro_rules! boxed_answer {
+    ($answer:ty, $variant:ident, $operation:literal, $verify:path) => {
+        impl AttestedAnswer for $answer {
+            const OPERATION: &'static str = $operation;
+
+            fn from_response(response: EnclaveResponse) -> Result<Self> {
+                match response {
+                    EnclaveResponse::$variant { result } => Ok(*result),
+                    other => Err(failed_response($operation, other)),
+                }
+            }
+
+            fn inputs_canonical_hash(&self) -> B256 {
+                self.inputs_canonical_hash
+            }
+
+            fn verify_attestation(
+                &self,
+                attestation_pub: &[u8; 32],
+            ) -> core::result::Result<(), TransportError> {
+                $verify(
+                    attestation_pub,
+                    self.inputs_canonical_hash,
+                    self,
+                    &self.attestation_tag,
+                )
+            }
+        }
+    };
+}
+
+boxed_answer!(
+    FidelityCohortResult,
+    FidelityCohortApplied,
+    "ApplyFidelityCohortOp",
+    outbe_tee::verify_fidelity_cohort_attestation
+);
+boxed_answer!(
+    FidelityQueryResult,
+    FidelityIndexQueried,
+    "QueryFidelityIndex",
+    outbe_tee::verify_fidelity_query_attestation
+);
+
+#[derive(Debug)]
+pub(crate) struct LeagueSnapshot {
+    pub(crate) leagues: Vec<FidelityLeagueEntry>,
+    inputs_canonical_hash: B256,
+    attestation_tag: Vec<u8>,
+}
+
+impl AttestedAnswer for LeagueSnapshot {
+    const OPERATION: &'static str = "SnapshotFidelityLeagues";
+
+    fn from_response(response: EnclaveResponse) -> Result<Self> {
+        match response {
+            EnclaveResponse::FidelityLeaguesSnapshotted {
+                leagues,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Ok(Self {
+                leagues,
+                inputs_canonical_hash,
+                attestation_tag,
+            }),
+            other => Err(failed_response(Self::OPERATION, other)),
+        }
+    }
+
+    fn inputs_canonical_hash(&self) -> B256 {
+        self.inputs_canonical_hash
+    }
+
+    fn verify_attestation(
+        &self,
+        attestation_pub: &[u8; 32],
+    ) -> core::result::Result<(), TransportError> {
+        outbe_tee::verify_fidelity_snapshot_attestation(
+            attestation_pub,
+            self.inputs_canonical_hash,
+            &self.leagues,
+            &self.attestation_tag,
+        )
+    }
 }
 
 /// In-process enclave stand-in for tests (this crate's tests and any downstream
@@ -164,6 +218,7 @@ pub(crate) fn query_index(req: FidelityQueryRequest) -> Result<FidelityQueryResu
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_enclave {
     use super::*;
+    use crate::errors::FidelityError;
     use alloy_primitives::B256;
     use std::cell::RefCell;
 

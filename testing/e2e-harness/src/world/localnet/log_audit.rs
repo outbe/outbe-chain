@@ -1018,6 +1018,20 @@ fn expected_tee_sidecar_outage_records(
             accepted.insert((path.clone(), sidecar));
         }
         accepted.insert((path.clone(), fatal));
+        let process_start = lines[..fatal]
+            .iter()
+            .rposition(|line| process_start_boundary(line))
+            .unwrap_or(0);
+        let expected_payload_error = format!(
+            "WARN payload_builder: failed to resolve pending payload err=evm execution error: \
+             internal EVM error occurred when executing transaction {tx_hash}: fatal: fatal: \
+             tee_sidecar_unavailable: io error: Connection refused (os error 111)"
+        );
+        for (index, line) in lines.iter().enumerate().take(fatal).skip(process_start) {
+            if line.ends_with(&expected_payload_error) {
+                accepted.insert((path.clone(), index));
+            }
+        }
     }
     if sinks != BTreeSet::from(["node.log", "reth.log"]) || !node_proof {
         return Err(format!(
@@ -1425,6 +1439,50 @@ mod tests {
 
     const PROCESS_A: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const PROCESS_B: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    #[test]
+    fn expected_sidecar_payload_warning_requires_exact_outage_and_process() {
+        let tx = format!("0x{}", "11".repeat(32));
+        let other_tx = format!("0x{}", "22".repeat(32));
+        let warning = |tx: &str| {
+            format!(
+                "WARN payload_builder: failed to resolve pending payload err=evm execution error: \
+             internal EVM error occurred when executing transaction {tx}: fatal: fatal: \
+             tee_sidecar_unavailable: io error: Connection refused (os error 111)"
+            )
+        };
+        let lines = [
+            warning(&tx),
+            "INFO reth::cli: Starting Reth version=example".to_owned(),
+            warning(&tx),
+            warning(&other_tx),
+            warning(&tx).replace("Connection refused", "Connection reset"),
+            "ERROR outbe_chain::launch::node::consensus: consensus stack failed e=executor actor returned fatal error".to_owned(),
+            "0: executor actor returned fatal error".to_owned(),
+            format!("2: internal EVM error occurred when executing transaction {tx}: tee_sidecar_unavailable: io error: Connection refused"),
+            "INFO reth::cli: Starting Reth version=example".to_owned(),
+            warning(&tx),
+        ];
+        let node = PathBuf::from("validator-3/node.log");
+        let reth = PathBuf::from("validator-3/logs/54322345/reth.log");
+        let other = PathBuf::from("validator-2/node.log");
+        let logs = vec![
+            (node.clone(), lines.join("\n")),
+            (reth.clone(), lines.join("\n")),
+            (other.clone(), lines.join("\n")),
+        ];
+        let accepted = super::expected_tee_sidecar_outage_records(&logs, 4, 3, &tx).unwrap();
+        for path in [&node, &reth] {
+            assert!(accepted.contains(&(path.clone(), 2)));
+            for rejected in [0, 3, 4, 9] {
+                assert!(!accepted.contains(&(path.clone(), rejected)));
+            }
+        }
+        assert!(!accepted.iter().any(|(path, _)| path == &other));
+        assert!(super::expected_tee_sidecar_outage_records(&logs, 4, 3, &other_tx).is_err());
+        let without_fail_stop = vec![(node, warning(&tx)), (reth, warning(&tx))];
+        assert!(super::expected_tee_sidecar_outage_records(&without_fail_stop, 4, 3, &tx).is_err());
+    }
 
     fn event(fields: &str, human_message: &str) -> String {
         event_for(PROCESS_A, fields, human_message)

@@ -66,9 +66,11 @@ pub fn dispatch(
                         call.spender,
                         call.value,
                         call.deadline,
-                        call.v,
-                        call.r,
-                        call.s,
+                        crate::api::PermitSignature {
+                            v: call.v,
+                            r: call.r,
+                            s: call.s,
+                        },
                     )
                 }),
                 currency(call) => view(call, |_| {

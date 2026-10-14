@@ -41,13 +41,11 @@ pub fn dispatch_with_readers(
         outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
         let mut contract = AgentRewardContract::new(storage.clone());
         let claimed = contract.abi_claim_reward(
-            readers.scope,
-            readers.parent,
+            readers,
             caller,
             call.pool,
             call.amount,
-            call.issuanceCurrency,
-            call.referenceCurrency,
+            (call.issuanceCurrency, call.referenceCurrency),
         )?;
         return Ok(IAgentRewardClaim::claimRewardCall::abi_encode_returns(&claimed).into());
     }
@@ -55,17 +53,13 @@ pub fn dispatch_with_readers(
 }
 
 impl AgentRewardContract<'_> {
-    // Claim ABI arguments are accompanied by the caller and block-scoped readers.
-    #[allow(clippy::too_many_arguments)]
     fn abi_claim_reward(
         &mut self,
-        scope: &outbe_compressed_entities::ExecutionScope,
-        parent: &impl ParentBodySource,
+        readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
         sender: Address,
         pool: u8,
         amount: U256,
-        issuance_currency: u16,
-        reference_currency: u16,
+        currencies: (u16, u16),
     ) -> Result<U256> {
         let pool = RewardPool::from_abi(pool)?;
         // A zero amount claims the whole pool balance. Empty WAA and SRA pools permit no-op
@@ -77,15 +71,7 @@ impl AgentRewardContract<'_> {
         {
             return Ok(U256::ZERO);
         }
-        self.claim_reward(
-            scope,
-            parent,
-            pool,
-            sender,
-            amount,
-            issuance_currency,
-            reference_currency,
-        )
+        self.claim_reward(readers, pool, sender, amount, currencies)
     }
 }
 

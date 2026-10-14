@@ -18,6 +18,14 @@ pub struct FactoryTokenInitialization {
     pub payload: StablecoinCreatePayload,
 }
 
+/// An EIP-2612 permit signature.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PermitSignature {
+    pub v: u8,
+    pub r: B256,
+    pub s: B256,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TokenIdentity {
     pub token_id: B256,

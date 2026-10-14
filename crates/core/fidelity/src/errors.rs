@@ -21,6 +21,11 @@ impl From<FidelityError> for PrecompileError {
 pub(crate) fn surface_query_error(err: PrecompileError) -> PrecompileError {
     match err {
         PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => err,
+        PrecompileError::EnclaveUnavailable(msg)
+            if msg.starts_with("enclave QueryFidelityIndex error:") =>
+        {
+            FidelityError::QueryFailed(msg).into()
+        }
         err if err.is_node_local() => err,
         other => FidelityError::QueryFailed(other.to_string()).into(),
     }
