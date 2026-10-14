@@ -369,8 +369,7 @@ async fn feeder_tick(ctx: &mut FeederTickContext<'_>) -> Result<()> {
         ctx.journal.pending().map(|p| p.created_at).unwrap_or(0),
     );
     ctx.observe_oracle_freshness(&head).await;
-    let PendingReconciliation::Continue { replace_pending } =
-        ctx.reconcile_pending(&head).await?
+    let PendingReconciliation::Continue { replace_pending } = ctx.reconcile_pending(&head).await?
     else {
         return Ok(());
     };
@@ -386,7 +385,8 @@ async fn feeder_tick(ctx: &mut FeederTickContext<'_>) -> Result<()> {
         return Ok(());
     }
     let pending = ctx.journal.pending().expect("persisted before broadcast");
-    ctx.health.set_pending(Some(&pending.hash), pending.created_at);
+    ctx.health
+        .set_pending(Some(&pending.hash), pending.created_at);
     ctx.health.set_reason("awaiting canonical receipt");
     // Retain bytes before any send. Retries use the same bytes. A stalled or
     // failed vote can be fee-bumped only at the SAME nonce, never queued behind it.

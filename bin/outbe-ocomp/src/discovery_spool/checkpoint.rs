@@ -557,7 +557,10 @@ impl DiscoverySpoolV1 {
         Ok(true)
     }
 
-    pub(super) fn has_ack_or_pending(&self, observation: &B256) -> Result<bool, DiscoverySpoolError> {
+    pub(super) fn has_ack_or_pending(
+        &self,
+        observation: &B256,
+    ) -> Result<bool, DiscoverySpoolError> {
         Ok(regular_file_exists(&self.ack_path(observation))?
             || regular_file_exists(&self.pending_path(observation))?)
     }

@@ -184,7 +184,10 @@ fn record_header_interval(
                 parent_hash == expected_parent_hash,
                 "retained header parent mismatch at {number}"
             );
-            let last = audit.intervals.last_mut().expect("previous header interval");
+            let last = audit
+                .intervals
+                .last_mut()
+                .expect("previous header interval");
             *last = *last.start()..=number;
         } else {
             audit.intervals.push(number..=number);

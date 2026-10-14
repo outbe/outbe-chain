@@ -330,4 +330,3 @@ pub(crate) async fn drain_launcher_tasks(
         abort_and_record(handle, "enclave-upgrade watcher", shutdown).await;
     }
 }
-

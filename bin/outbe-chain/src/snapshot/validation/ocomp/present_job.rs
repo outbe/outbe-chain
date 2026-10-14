@@ -263,8 +263,7 @@ fn load_and_verify_present_binding(
     ),
     receipt_manifest: Option<&InputManifestV1>,
 ) -> eyre::Result<InputManifestV1> {
-    let binding =
-        reader.load_integrity(cas, &canonical_job_spec(job)?, bundle.bundle(), inputs)?;
+    let binding = reader.load_integrity(cas, &canonical_job_spec(job)?, bundle.bundle(), inputs)?;
     validate_present_manifest(binding.manifest(), job, bundle)?;
     if let Some(ack) = ack {
         let request = binding.commit_replay_request();
@@ -284,7 +283,10 @@ fn load_and_verify_present_binding(
             "present receipt/binding manifest mismatch"
         );
     }
-    if let Some(receipt_reader) = readers.receipt_reader.as_ref().filter(|_| readers.receipt_present)
+    if let Some(receipt_reader) = readers
+        .receipt_reader
+        .as_ref()
+        .filter(|_| readers.receipt_present)
     {
         let receipt = receipt_reader.load_exact(cas)?;
         ensure!(
@@ -326,8 +328,7 @@ pub(super) fn verify_present_job(
         errors.observe(compare_surviving_ack_export(ack, export));
     }
     let result_binding = context.work.result_binding(id)?;
-    let readers =
-        PresentJobReaders::open(root, id, (flags, active, ack.is_some()), &mut errors)?;
+    let readers = PresentJobReaders::open(root, id, (flags, active, ack.is_some()), &mut errors)?;
     if !readers.needs_cas(flags) {
         return errors.finish();
     }

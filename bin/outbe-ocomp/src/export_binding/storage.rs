@@ -95,7 +95,12 @@ pub(crate) fn decode_checkpoint_at(
 pub(crate) fn encode_manifest_ref(output: &mut Vec<u8>, reference: &CasObjectRefV1) {
     output.extend_from_slice(reference.transport_digest.as_slice());
     output.extend_from_slice(&reference.encoded_bytes.to_be_bytes());
-    output.extend_from_slice(&reference.expected_ocb1_kind.unwrap_or_default().to_be_bytes());
+    output.extend_from_slice(
+        &reference
+            .expected_ocb1_kind
+            .unwrap_or_default()
+            .to_be_bytes(),
+    );
 }
 
 pub(crate) fn decode_manifest_ref_at(
@@ -285,7 +290,11 @@ pub(crate) fn persist_atomic(
             temp,
             file_mode,
             encoded,
-            ("create temporary file", "write temporary file", "fsync temporary file"),
+            (
+                "create temporary file",
+                "write temporary file",
+                "fsync temporary file",
+            ),
         )?;
         fs::rename(temp, final_path)
             .map_err(|source| io_error("publish file", final_path, source))?;

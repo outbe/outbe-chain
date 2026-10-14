@@ -93,10 +93,17 @@ pub(in super::super) fn execute_root_reduce_unit(
     )
 }
 
+type RootReduceProducers<'a> = (
+    u32,
+    u16,
+    Vec<PlannedProducerV1>,
+    Vec<Option<&'a UnitArtifactV1>>,
+);
+
 fn resolve_root_reduce_producers<'a>(
     spec: &UnitSpecV1,
     authority: &'a UnitExecutionAuthority<'a>,
-) -> Result<(u32, u16, Vec<PlannedProducerV1>, Vec<Option<&'a UnitArtifactV1>>), WorkerError> {
+) -> Result<RootReduceProducers<'a>, WorkerError> {
     let topology = LysisPlanTopologyV1::new(authority.plan.primary_work_unit_count)?;
     let phase_ordinal = authority
         .unit_index

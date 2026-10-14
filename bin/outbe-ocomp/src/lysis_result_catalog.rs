@@ -310,7 +310,10 @@ impl<'a> ExactLysisResultCatalogCursorV1<'a> {
             &chunk,
             self.audit.plan(),
             entry,
-            (pending.expected_first_nod_ordinal, pending.summary.nod_count),
+            (
+                pending.expected_first_nod_ordinal,
+                pending.summary.nod_count,
+            ),
             self.audit.limits(),
         )? {
             return Err(

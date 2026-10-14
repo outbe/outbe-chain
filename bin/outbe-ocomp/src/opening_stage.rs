@@ -239,7 +239,7 @@ impl DurableOpeningStage {
                 self.process_split(start, owners, ctx)
             }
             OpeningResolutionV1::Complete(openings) => {
-                self.complete_resolved_task(ordinal, & paths.done, subjects, *openings, ctx)
+                self.complete_resolved_task(ordinal, &paths.done, subjects, *openings, ctx)
             }
         }
     }

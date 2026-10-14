@@ -325,8 +325,7 @@ fn read_verified_object(
         });
     }
     let path = digest_object_path(objects, reference.transport_digest);
-    let (bytes, actual_digest) =
-        stream_and_hash_cas_file(&path, reference.encoded_bytes)?;
+    let (bytes, actual_digest) = stream_and_hash_cas_file(&path, reference.encoded_bytes)?;
     if actual_digest != reference.transport_digest {
         return Err(CasError::DigestMismatch {
             expected: reference.transport_digest,
@@ -340,10 +339,7 @@ fn read_verified_object(
     })
 }
 
-fn stream_and_hash_cas_file(
-    path: &Path,
-    expected_len: u64,
-) -> Result<(Vec<u8>, B256), CasError> {
+fn stream_and_hash_cas_file(path: &Path, expected_len: u64) -> Result<(Vec<u8>, B256), CasError> {
     let mut file = open_cas_file(path)?;
     let before = CasDescriptorStamp::capture(&file, path)?;
     if before.len != expected_len {

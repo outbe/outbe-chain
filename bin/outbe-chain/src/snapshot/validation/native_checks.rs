@@ -236,7 +236,10 @@ pub(super) fn run_native_checks(
         audit_ce_and_bodies(
             (layout, &view, scratch),
             (reader, marker),
-            (selection.checks.contains(&Bodies), projection_error.is_none()),
+            (
+                selection.checks.contains(&Bodies),
+                projection_error.is_none(),
+            ),
             report,
         );
     } else if selection.checks.contains(&Bodies) {

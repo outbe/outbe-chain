@@ -46,12 +46,14 @@ pub struct TxSender<'a> {
 /// the transaction for the ZeroFee txpool policy. The priority fee is zero. The
 /// fee cap is at the protocol minimum, so Reth's public txpool checks still pass.
 pub async fn send_tx(sender: &TxSender<'_>, to: Address, calldata: &[u8]) -> Result<B256> {
-    let provider = ProviderBuilder::new().wallet(sender.wallet.clone()).connect_http(
-        sender
-            .rpc_endpoint
-            .parse()
-            .with_context(|| "invalid RPC URL")?,
-    );
+    let provider = ProviderBuilder::new()
+        .wallet(sender.wallet.clone())
+        .connect_http(
+            sender
+                .rpc_endpoint
+                .parse()
+                .with_context(|| "invalid RPC URL")?,
+        );
     let mut tx = TransactionRequest::default()
         .to(to)
         .input(Bytes::copy_from_slice(calldata).into())
