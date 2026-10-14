@@ -125,9 +125,9 @@ mod tests;
 mod authority;
 pub(crate) use authority::UnitExecutionAuthority;
 use authority::{
-    exact_unit_output_source, planner_from_authority, require_authenticated_input,
-    require_plan_binding, resolve_scan_artifacts, scan_producer_inputs, unit_or_empty_id,
-    validate_scan_artifact, ExpectedPlanBindingsV1,
+    exact_unit_output_source, planner_from_authority, primary_unit_spec_from_authority,
+    require_authenticated_input, require_plan_binding, resolve_scan_artifacts,
+    scan_producer_inputs, unit_or_empty_id, validate_scan_artifact, ExpectedPlanBindingsV1,
 };
 
 mod phases;

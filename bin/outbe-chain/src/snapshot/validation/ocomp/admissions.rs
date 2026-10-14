@@ -36,9 +36,11 @@ pub(crate) struct AdmissionAudit {
 /// not reexecution of the worker program or complete result-catalog closure.
 pub(crate) fn verify_present_admissions(
     ocomp_root: &Path,
-    expected_manifest: &outbe_ocomp_protocol::input::InputManifestV1,
-    expected_lysis_limit: U256,
-    expected_evaluation_time: u64,
+    (expected_manifest, expected_lysis_limit, expected_evaluation_time): (
+        &outbe_ocomp_protocol::input::InputManifestV1,
+        U256,
+        u64,
+    ),
     cas_limits: CasLimits,
     maximum_records: Option<u64>,
     visitor: &mut impl FnMut(&outbe_ocomp_protocol::CasObjectRefV1) -> eyre::Result<()>,
@@ -300,9 +302,11 @@ pub(crate) fn verify_present_local_results(
         let job = locate_request_job(
             state,
             view,
-            summary.logical_evaluation_height,
-            job_id,
-            WorldwideDay::new(summary.wwd),
+            (
+                summary.logical_evaluation_height,
+                job_id,
+                WorldwideDay::new(summary.wwd),
+            ),
             maximum_records,
         )?;
         let observation = verify_loaded_local_result(&job, &loaded)?;

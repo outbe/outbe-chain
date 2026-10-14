@@ -186,49 +186,11 @@ impl EmbeddedOcompJobsV1 {
             EmbeddedJobEventV1::LocalCompleted {
                 generation,
                 result_digest,
-            } => {
-                if result_digest.is_zero() {
-                    return Err(EmbeddedOcompStateErrorV1::InvalidResult);
-                }
-                if generation != job.generation {
-                    EmbeddedJobActionV1::ProtocolOwned
-                } else {
-                    reduce_local_completed(self.mode, job_id, job, result_digest)?
-                }
-            }
+            } => reduce_local_completed_event(self.mode, job_id, job, generation, result_digest)?,
             EmbeddedJobEventV1::LocalFailed { generation } => {
-                if generation != job.generation {
-                    EmbeddedJobActionV1::ProtocolOwned
-                } else {
-                    match job.state {
-                        EmbeddedJobStateV1::Computing | EmbeddedJobStateV1::WaitAtDeadline
-                            if self.mode == EmbeddedOcompModeV1::FullNode =>
-                        {
-                            EmbeddedJobActionV1::FatalLocalFailure
-                        }
-                        EmbeddedJobStateV1::Computing | EmbeddedJobStateV1::WaitAtDeadline => {
-                            EmbeddedJobActionV1::Abstain
-                        }
-                        EmbeddedJobStateV1::LocalReady
-                        | EmbeddedJobStateV1::Verified
-                        | EmbeddedJobStateV1::Closed
-                        | EmbeddedJobStateV1::FatalMismatch => EmbeddedJobActionV1::ProtocolOwned,
-                    }
-                }
+                reduce_local_failed(self.mode, job, generation)
             }
-            EmbeddedJobEventV1::Deadline => {
-                if job.terminal_reason.is_some() || self.mode == EmbeddedOcompModeV1::Validator {
-                    EmbeddedJobActionV1::ProtocolOwned
-                } else if job.local_result_digest.is_some() {
-                    EmbeddedJobActionV1::AwaitCanonical { job_id }
-                } else {
-                    job.state = EmbeddedJobStateV1::WaitAtDeadline;
-                    EmbeddedJobActionV1::HoldProgress {
-                        job_id,
-                        through_height: job.deadline_height,
-                    }
-                }
-            }
+            EmbeddedJobEventV1::Deadline => reduce_deadline(self.mode, job_id, job),
             EmbeddedJobEventV1::CanonicalCompleted { result_digest } => {
                 if result_digest.is_zero() {
                     return Err(EmbeddedOcompStateErrorV1::InvalidResult);
@@ -236,40 +198,13 @@ impl EmbeddedOcompJobsV1 {
                 reduce_canonical_completed(self.mode, job_id, job, result_digest)?
             }
             EmbeddedJobEventV1::CanonicalClosed { reason } => {
-                if reason == EmbeddedTerminalReasonV1::Completed {
-                    return Err(EmbeddedOcompStateErrorV1::InvalidTerminalReason);
-                }
-                match job.terminal_reason {
-                    Some(existing) if existing != reason => {
-                        return Err(EmbeddedOcompStateErrorV1::ConflictingCanonicalTerminal {
-                            job_id,
-                        });
-                    }
-                    Some(_) => {}
-                    None => {
-                        job.terminal_reason = Some(reason);
-                        job.state = EmbeddedJobStateV1::Closed;
-                    }
-                }
-                EmbeddedJobActionV1::CloseTerminal { job_id, reason }
+                reduce_canonical_closed(job_id, job, reason)?
             }
             EmbeddedJobEventV1::VoteFinalized {
                 generation,
                 success,
-            } => {
-                if generation != job.generation || job.terminal_reason.is_some() {
-                    EmbeddedJobActionV1::ProtocolOwned
-                } else {
-                    EmbeddedJobActionV1::VoteFinalized { success }
-                }
-            }
-            EmbeddedJobEventV1::VoteFailed { generation } => {
-                if generation != job.generation || job.terminal_reason.is_some() {
-                    EmbeddedJobActionV1::ProtocolOwned
-                } else {
-                    EmbeddedJobActionV1::FatalVoteFailure
-                }
-            }
+            } => reduce_vote_finalized(job, generation, success),
+            EmbeddedJobEventV1::VoteFailed { generation } => reduce_vote_failed(job, generation),
         };
         Ok(EmbeddedTransitionPlanV1 {
             generation: job.generation,
@@ -342,6 +277,108 @@ impl EmbeddedOcompJobsV1 {
             .fold(finalized_height, |limit, job| {
                 limit.min(job.deadline_height.saturating_sub(1))
             })
+    }
+}
+
+fn reduce_local_completed_event(
+    mode: EmbeddedOcompModeV1,
+    job_id: B256,
+    job: &mut EmbeddedJobV1,
+    generation: EmbeddedJobGenerationV1,
+    result_digest: B256,
+) -> Result<EmbeddedJobActionV1, EmbeddedOcompStateErrorV1> {
+    if result_digest.is_zero() {
+        return Err(EmbeddedOcompStateErrorV1::InvalidResult);
+    }
+    if generation != job.generation {
+        return Ok(EmbeddedJobActionV1::ProtocolOwned);
+    }
+    reduce_local_completed(mode, job_id, job, result_digest)
+}
+
+fn reduce_local_failed(
+    mode: EmbeddedOcompModeV1,
+    job: &EmbeddedJobV1,
+    generation: EmbeddedJobGenerationV1,
+) -> EmbeddedJobActionV1 {
+    if generation != job.generation {
+        return EmbeddedJobActionV1::ProtocolOwned;
+    }
+    match job.state {
+        EmbeddedJobStateV1::Computing | EmbeddedJobStateV1::WaitAtDeadline
+            if mode == EmbeddedOcompModeV1::FullNode =>
+        {
+            EmbeddedJobActionV1::FatalLocalFailure
+        }
+        EmbeddedJobStateV1::Computing | EmbeddedJobStateV1::WaitAtDeadline => {
+            EmbeddedJobActionV1::Abstain
+        }
+        EmbeddedJobStateV1::LocalReady
+        | EmbeddedJobStateV1::Verified
+        | EmbeddedJobStateV1::Closed
+        | EmbeddedJobStateV1::FatalMismatch => EmbeddedJobActionV1::ProtocolOwned,
+    }
+}
+
+fn reduce_deadline(
+    mode: EmbeddedOcompModeV1,
+    job_id: B256,
+    job: &mut EmbeddedJobV1,
+) -> EmbeddedJobActionV1 {
+    if job.terminal_reason.is_some() || mode == EmbeddedOcompModeV1::Validator {
+        return EmbeddedJobActionV1::ProtocolOwned;
+    }
+    if job.local_result_digest.is_some() {
+        return EmbeddedJobActionV1::AwaitCanonical { job_id };
+    }
+    job.state = EmbeddedJobStateV1::WaitAtDeadline;
+    EmbeddedJobActionV1::HoldProgress {
+        job_id,
+        through_height: job.deadline_height,
+    }
+}
+
+fn reduce_canonical_closed(
+    job_id: B256,
+    job: &mut EmbeddedJobV1,
+    reason: EmbeddedTerminalReasonV1,
+) -> Result<EmbeddedJobActionV1, EmbeddedOcompStateErrorV1> {
+    if reason == EmbeddedTerminalReasonV1::Completed {
+        return Err(EmbeddedOcompStateErrorV1::InvalidTerminalReason);
+    }
+    match job.terminal_reason {
+        Some(existing) if existing != reason => {
+            return Err(EmbeddedOcompStateErrorV1::ConflictingCanonicalTerminal { job_id });
+        }
+        Some(_) => {}
+        None => {
+            job.terminal_reason = Some(reason);
+            job.state = EmbeddedJobStateV1::Closed;
+        }
+    }
+    Ok(EmbeddedJobActionV1::CloseTerminal { job_id, reason })
+}
+
+fn reduce_vote_finalized(
+    job: &EmbeddedJobV1,
+    generation: EmbeddedJobGenerationV1,
+    success: bool,
+) -> EmbeddedJobActionV1 {
+    if generation != job.generation || job.terminal_reason.is_some() {
+        EmbeddedJobActionV1::ProtocolOwned
+    } else {
+        EmbeddedJobActionV1::VoteFinalized { success }
+    }
+}
+
+fn reduce_vote_failed(
+    job: &EmbeddedJobV1,
+    generation: EmbeddedJobGenerationV1,
+) -> EmbeddedJobActionV1 {
+    if generation != job.generation || job.terminal_reason.is_some() {
+        EmbeddedJobActionV1::ProtocolOwned
+    } else {
+        EmbeddedJobActionV1::FatalVoteFailure
     }
 }
 

@@ -10,9 +10,14 @@ fn empty_canonical_composition_needs_no_job_or_cas_directories() {
             |_| queued_owner(0),
             |state, source, layout, scratch| {
                 for maximum in [None, Some(0)] {
-                    let audit =
-                        verify_canonical_obligations(state, source, layout, scratch, maximum, None)
-                            .unwrap();
+                    let audit = verify_canonical_obligations(
+                        state,
+                        source,
+                        (layout, scratch),
+                        maximum,
+                        None,
+                    )
+                    .unwrap();
                     assert_eq!(audit.projection.block_number, 100);
                     assert_eq!(audit.closure.checkpoint.current.block_number, 100);
                     assert_eq!(audit.closure.replay.blocks, 0);
@@ -61,9 +66,10 @@ fn canonical_inventory_failure_precedes_missing_projection_and_local_population(
             owner
         },
         |state, source, layout, scratch| {
-            let error = verify_canonical_obligations(state, source, layout, scratch, None, None)
-                .err()
-                .expect("invalid canonical inventory cannot be skipped");
+            let error =
+                verify_canonical_obligations(state, source, (layout, scratch), None, None)
+                    .err()
+                    .expect("invalid canonical inventory cannot be skipped");
             assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
             assert!(
                 error

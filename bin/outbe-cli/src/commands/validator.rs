@@ -175,6 +175,39 @@ struct SetP2pOptions {
     egress: Option<SocketAddr>,
 }
 
+struct ValidatorRow {
+    addr: Address,
+    status: u8,
+    stake: alloy_primitives::U256,
+}
+
+async fn fetch_validator_addresses(
+    client: &(impl Rpc + Sync),
+    active_only: bool,
+) -> Result<Vec<Address>> {
+    if active_only {
+        let call = IValidatorSet::getActiveValidatorsCall {}.abi_encode();
+        let result = client.eth_call(abi::VALIDATOR_SET_ADDR, &call).await?;
+        Ok(IValidatorSet::getActiveValidatorsCall::abi_decode_returns(&result)?)
+    } else {
+        let call = IValidatorSet::getValidatorsCall {}.abi_encode();
+        let result = client.eth_call(abi::VALIDATOR_SET_ADDR, &call).await?;
+        Ok(IValidatorSet::getValidatorsCall::abi_decode_returns(&result)?)
+    }
+}
+
+fn sort_validator_rows(rows: &mut [ValidatorRow], sort_by: Option<&str>) {
+    let Some(sort) = sort_by else {
+        return;
+    };
+    match sort.to_lowercase().as_str() {
+        "stake" => rows.sort_by_key(|a| std::cmp::Reverse(a.stake)),
+        "address" => rows.sort_by_key(|a| a.addr),
+        "status" => rows.sort_by_key(|a| a.status),
+        _ => {} // keep original order
+    }
+}
+
 async fn list(
     client: &(impl Rpc + Sync),
     active_only: bool,
@@ -184,20 +217,7 @@ async fn list(
     // `--active-only` reads only the active set, and `--status` filters that set.
     // Thus `--active-only` with a non-active status gives an empty list.
     // Without `--active-only`, the command reads all validators.
-    let fetch_all = status_filter.is_some() && !active_only;
-    let call = if active_only && !fetch_all {
-        IValidatorSet::getActiveValidatorsCall {}.abi_encode()
-    } else {
-        IValidatorSet::getValidatorsCall {}.abi_encode()
-    };
-
-    let result = client.eth_call(abi::VALIDATOR_SET_ADDR, &call).await?;
-
-    let addrs = if active_only && !fetch_all {
-        IValidatorSet::getActiveValidatorsCall::abi_decode_returns(&result)?
-    } else {
-        IValidatorSet::getValidatorsCall::abi_decode_returns(&result)?
-    };
+    let addrs = fetch_validator_addresses(client, active_only).await?;
 
     if addrs.is_empty() {
         println!("No validators found.");
@@ -206,13 +226,6 @@ async fn list(
 
     // The codes must match `outbe_validatorset::runtime::status` (0..=6).
     let status_code: Option<u8> = status_filter.as_deref().map(parse_status_filter);
-
-    // Fetch details for all validators
-    struct Row {
-        addr: Address,
-        status: u8,
-        stake: alloy_primitives::U256,
-    }
     let mut rows = Vec::with_capacity(addrs.len());
 
     for addr in &addrs {
@@ -222,29 +235,18 @@ async fn list(
             .await?;
         let detail = IValidatorSet::validatorByAddressCall::abi_decode_returns(&detail_result)?;
 
-        // Apply status filter
-        if let Some(code) = status_code {
-            if detail.status != code {
-                continue;
-            }
+        if status_code.is_some_and(|code| detail.status != code) {
+            continue;
         }
 
-        rows.push(Row {
+        rows.push(ValidatorRow {
             addr: *addr,
             status: detail.status,
             stake: detail.stake,
         });
     }
 
-    // Apply sorting
-    if let Some(ref sort) = sort_by {
-        match sort.to_lowercase().as_str() {
-            "stake" => rows.sort_by_key(|a| std::cmp::Reverse(a.stake)),
-            "address" => rows.sort_by_key(|a| a.addr),
-            "status" => rows.sort_by_key(|a| a.status),
-            _ => {} // keep original order
-        }
-    }
+    sort_validator_rows(&mut rows, sort_by.as_deref());
 
     if rows.is_empty() {
         println!("No validators match the filter.");
@@ -301,6 +303,20 @@ async fn info(client: &(impl Rpc + Sync), address: Address) -> Result<()> {
     Ok(())
 }
 
+async fn send_validator_set_tx(
+    client: &(impl Rpc + Sync),
+    private_key: Option<&str>,
+    build_call: impl FnOnce(&crate::tx::TxSigner) -> Result<Vec<u8>>,
+) -> Result<()> {
+    let signer = super::require_signer(private_key)?;
+    let calldata = build_call(&signer)?;
+    let tx_hash = signer
+        .send_tx(client, abi::VALIDATOR_SET_ADDR, calldata, Default::default())
+        .await?;
+    println!("Transaction sent: {tx_hash}");
+    Ok(())
+}
+
 async fn register(
     client: &(impl Rpc + Sync),
     private_key: Option<&str>,
@@ -308,45 +324,28 @@ async fn register(
     radicle_node_id: B256,
     bls_sig: String,
 ) -> Result<()> {
-    let signer = super::require_signer(private_key)?;
-    let pubkey_bytes = hex::decode(pubkey.strip_prefix("0x").unwrap_or(&pubkey))?;
-    let sig_bytes = hex::decode(bls_sig.strip_prefix("0x").unwrap_or(&bls_sig))?;
-
-    let call = IValidatorSet::registerValidatorCall {
-        validatorAddress: signer.address(),
-        consensusPubkey: pubkey_bytes.into(),
-        radicleNodeId: radicle_node_id,
-        blsRegistrationSignature: sig_bytes.into(),
-    };
-
-    let tx_hash = signer
-        .send_tx(
-            client,
-            abi::VALIDATOR_SET_ADDR,
-            call.abi_encode(),
-            Default::default(),
-        )
-        .await?;
-    println!("Transaction sent: {tx_hash}");
-    Ok(())
+    send_validator_set_tx(client, private_key, |signer| {
+        let pubkey_bytes = hex::decode(pubkey.strip_prefix("0x").unwrap_or(&pubkey))?;
+        let sig_bytes = hex::decode(bls_sig.strip_prefix("0x").unwrap_or(&bls_sig))?;
+        Ok(IValidatorSet::registerValidatorCall {
+            validatorAddress: signer.address(),
+            consensusPubkey: pubkey_bytes.into(),
+            radicleNodeId: radicle_node_id,
+            blsRegistrationSignature: sig_bytes.into(),
+        }
+        .abi_encode())
+    })
+    .await
 }
 
 async fn deactivate(client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
-    let signer = super::require_signer(private_key)?;
-    let call = IValidatorSet::deactivateValidatorCall {
-        validatorAddress: signer.address(),
-    };
-
-    let tx_hash = signer
-        .send_tx(
-            client,
-            abi::VALIDATOR_SET_ADDR,
-            call.abi_encode(),
-            Default::default(),
-        )
-        .await?;
-    println!("Transaction sent: {tx_hash}");
-    Ok(())
+    send_validator_set_tx(client, private_key, |signer| {
+        Ok(IValidatorSet::deactivateValidatorCall {
+            validatorAddress: signer.address(),
+        }
+        .abi_encode())
+    })
+    .await
 }
 
 async fn confirm_ready(
@@ -354,28 +353,20 @@ async fn confirm_ready(
     private_key: Option<&str>,
     registration_path: PathBuf,
 ) -> Result<()> {
-    let signer = super::require_signer(private_key)?;
-    let registration = std::fs::read(&registration_path).wrap_err_with(|| {
-        format!(
-            "failed to read canonical OCOMP registration {}",
-            registration_path.display()
-        )
-    })?;
-    ensure!(!registration.is_empty(), "OCOMP registration file is empty");
-    let call = IValidatorSet::confirmValidatorReadyCall {
-        registration: registration.into(),
-    };
-
-    let tx_hash = signer
-        .send_tx(
-            client,
-            abi::VALIDATOR_SET_ADDR,
-            call.abi_encode(),
-            Default::default(),
-        )
-        .await?;
-    println!("Transaction sent: {tx_hash}");
-    Ok(())
+    send_validator_set_tx(client, private_key, |_| {
+        let registration = std::fs::read(&registration_path).wrap_err_with(|| {
+            format!(
+                "failed to read canonical OCOMP registration {}",
+                registration_path.display()
+            )
+        })?;
+        ensure!(!registration.is_empty(), "OCOMP registration file is empty");
+        Ok(IValidatorSet::confirmValidatorReadyCall {
+            registration: registration.into(),
+        }
+        .abi_encode())
+    })
+    .await
 }
 
 async fn delegate(
@@ -384,21 +375,14 @@ async fn delegate(
     role: ValidatorDelegateRoleArg,
     delegate: Address,
 ) -> Result<()> {
-    let signer = super::require_signer(private_key)?;
-    let call = IValidatorSet::setDelegateCall {
-        role: role.id(),
-        delegate,
-    };
-    let tx_hash = signer
-        .send_tx(
-            client,
-            abi::VALIDATOR_SET_ADDR,
-            call.abi_encode(),
-            Default::default(),
-        )
-        .await?;
-    println!("Transaction sent: {tx_hash}");
-    Ok(())
+    send_validator_set_tx(client, private_key, |_| {
+        Ok(IValidatorSet::setDelegateCall {
+            role: role.id(),
+            delegate,
+        }
+        .abi_encode())
+    })
+    .await
 }
 
 async fn revoke_delegate(
@@ -406,18 +390,10 @@ async fn revoke_delegate(
     private_key: Option<&str>,
     role: ValidatorDelegateRoleArg,
 ) -> Result<()> {
-    let signer = super::require_signer(private_key)?;
-    let call = IValidatorSet::revokeDelegateCall { role: role.id() };
-    let tx_hash = signer
-        .send_tx(
-            client,
-            abi::VALIDATOR_SET_ADDR,
-            call.abi_encode(),
-            Default::default(),
-        )
-        .await?;
-    println!("Transaction sent: {tx_hash}");
-    Ok(())
+    send_validator_set_tx(client, private_key, |_| {
+        Ok(IValidatorSet::revokeDelegateCall { role: role.id() }.abi_encode())
+    })
+    .await
 }
 
 async fn get_delegate(
@@ -610,7 +586,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_status_filter_maps_to_correct_codes() {
+    fn test_status_filter_maps_to_expected_codes() {
         // Must match `validator_status` in validatorset/src/runtime.rs.
         assert_eq!(parse_status_filter("registered"), 0);
         assert_eq!(parse_status_filter("pending"), 1);
@@ -682,7 +658,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_validator_info_returns_correct_data() {
+    async fn test_validator_info_returns_expected_data() {
         let addr: Address = "0x1111111111111111111111111111111111111111"
             .parse()
             .unwrap();

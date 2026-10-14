@@ -7,6 +7,61 @@ pub(crate) struct CasAudit {
     pub bytes: u64,
 }
 
+fn verify_cas_object_entry(
+    cas: &FilesystemCasReader,
+    prefix: &str,
+    entry: std::fs::DirEntry,
+    (limits, maximum_objects): (CasLimits, Option<u64>),
+    result: &mut CasAudit,
+) -> eyre::Result<()> {
+    if maximum_objects.is_some_and(|maximum| result.objects >= maximum) {
+        return Err(Incomplete(format!(
+            "CAS scan stopped after {} objects",
+            result.objects
+        ))
+        .into());
+    }
+    ensure!(
+        entry.file_type()?.is_file(),
+        "CAS object is not a regular file"
+    );
+    let suffix = entry.file_name();
+    let suffix = suffix
+        .to_str()
+        .ok_or_else(|| eyre::eyre!("invalid CAS object locator"))?;
+    let encoded = format!("{prefix}{suffix}");
+    let mut digest = [0_u8; 32];
+    hex::decode_to_slice(&encoded, &mut digest)?;
+    ensure!(
+        hex::encode(digest) == encoded,
+        "noncanonical CAS digest locator"
+    );
+    let length = entry.metadata()?.len();
+    let total = result
+        .bytes
+        .checked_add(length)
+        .ok_or_else(|| eyre::eyre!("CAS total byte count overflow"))?;
+    if total > limits.max_total_bytes {
+        return Err(Incomplete(format!(
+            "CAS scan exceeds {} byte budget after {} objects and {} bytes",
+            limits.max_total_bytes, result.objects, result.bytes
+        ))
+        .into());
+    }
+    let reference = outbe_ocomp_protocol::CasObjectRefV1 {
+        transport_digest: B256::from(digest),
+        encoded_bytes: length,
+        expected_ocb1_kind: None,
+    };
+    cas.read_verified(&reference)?;
+    result.objects = result
+        .objects
+        .checked_add(1)
+        .ok_or_else(|| eyre::eyre!("CAS object count overflow"))?;
+    result.bytes = total;
+    Ok(())
+}
+
 /// Check transport integrity of every published native CAS object, including
 /// unreferenced historical objects. Typed artifact/job relationships are checked
 /// separately through their native references. This does not infer an OCB1 kind.
@@ -37,54 +92,13 @@ pub(crate) fn verify_present_cas(
                 "invalid native CAS shard"
             );
             for entry in std::fs::read_dir(shard.path())? {
-                let entry = entry?;
-                if maximum_objects.is_some_and(|maximum| result.objects >= maximum) {
-                    return Err(Incomplete(format!(
-                        "CAS scan stopped after {} objects",
-                        result.objects
-                    ))
-                    .into());
-                }
-                ensure!(
-                    entry.file_type()?.is_file(),
-                    "CAS object is not a regular file"
-                );
-                let suffix = entry.file_name();
-                let suffix = suffix
-                    .to_str()
-                    .ok_or_else(|| eyre::eyre!("invalid CAS object locator"))?;
-                let encoded = format!("{prefix}{suffix}");
-                let mut digest = [0_u8; 32];
-                hex::decode_to_slice(&encoded, &mut digest)?;
-                ensure!(
-                    hex::encode(digest) == encoded,
-                    "noncanonical CAS digest locator"
-                );
-                let length = entry.metadata()?.len();
-                let total = result
-                    .bytes
-                    .checked_add(length)
-                    .ok_or_else(|| eyre::eyre!("CAS total byte count overflow"))?;
-                if total > limits.max_total_bytes {
-                    return Err(Incomplete(format!(
-                        "CAS scan exceeds {} byte budget after {} objects and {} bytes",
-                        limits.max_total_bytes, result.objects, result.bytes
-                    ))
-                    .into());
-                }
-                let reference = outbe_ocomp_protocol::CasObjectRefV1 {
-                    transport_digest: B256::from(digest),
-                    encoded_bytes: length,
-                    expected_ocb1_kind: None,
-                };
-                // Native reader checks digest, exact size and descriptor identity.
-                // It buffers one bounded object, not the entire CAS population.
-                cas.read_verified(&reference)?;
-                result.objects = result
-                    .objects
-                    .checked_add(1)
-                    .ok_or_else(|| eyre::eyre!("CAS object count overflow"))?;
-                result.bytes = total;
+                verify_cas_object_entry(
+                    &cas,
+                    prefix,
+                    entry?,
+                    (limits, maximum_objects),
+                    &mut result,
+                )?;
             }
         }
         Ok(result)

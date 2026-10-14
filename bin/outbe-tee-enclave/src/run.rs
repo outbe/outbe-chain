@@ -62,17 +62,23 @@ impl RunOpts {
 pub fn run(opts: RunOpts) -> i32 {
     crate::telemetry::mark_process_start();
     let args: Vec<String> = std::env::args().collect();
+    match run_with_args(opts, &args) {
+        Ok(()) => 0,
+        Err(code) => code,
+    }
+}
 
+fn run_with_args(opts: RunOpts, args: &[String]) -> Result<(), i32> {
     // Diagnostic mode: read the real Gramine /dev/attestation surface and exit.
     // Run under `gramine-direct`/`gramine-sgx` to observe what hardware exposes.
     if args.iter().any(|a| a == "--probe-attestation") {
         crate::gramine::probe_to_stderr();
-        return 0;
+        return Ok(());
     }
 
-    let Some(socket) = arg_value(&args, "--socket") else {
+    let Some(socket) = arg_value(args, "--socket") else {
         eprintln!("usage: outbe-tee-enclave --socket <path>");
-        return 2;
+        return Err(2);
     };
 
     #[cfg(feature = "mock")]
@@ -83,23 +89,60 @@ pub fn run(opts: RunOpts) -> i32 {
         );
     }
 
-    let chain_id = B256::from(
-        arg_value(&args, "--chain-id")
+    let fallback_chain_id = B256::from(
+        arg_value(args, "--chain-id")
             .and_then(|h| parse_hex32(&h))
             .unwrap_or([0u8; 32]),
     );
     let development_network_binding =
-        match resolve_development_network_binding(&args, opts.is_mock(), chain_id) {
-            Ok(binding) => binding,
-            Err(error) => {
+        resolve_development_network_binding(args, opts.is_mock(), fallback_chain_id).map_err(
+            |error| {
                 eprintln!("outbe-tee-enclave: development network binding failed: {error}");
-                return 2;
-            }
-        };
+                2
+            },
+        )?;
 
+    let attest = crate::gramine::attestation_type();
+    log_attestation_banner(&attest);
+
+    let (keys, identity_id) = init_enclave_keys(opts, args)?;
+    let boot = build_boot_config(args, &keys)?;
+
+    // Shared, write-once permanent offer-key slot. It is restored only after the
+    // sealed initialization manifest establishes the exact network binding.
+    let offer_key: crate::transport::SharedTributeOfferKey =
+        std::sync::Arc::new(std::sync::OnceLock::new());
+
+    let initialization =
+        build_initialization_state(opts, development_network_binding, boot.clone(), &keys)?;
+    restore_sealed_offer_key(boot.as_deref(), &initialization, &offer_key)?;
+
+    // Resident chain id. When the initialization state has a network binding
+    // (initialization manifest or mock development binding), its chain id wins.
+    // `--chain-id` (default ZERO) is only the fallback. It is bound INDEPENDENTLY
+    // of sealing. It scopes every state-key derivation and the owner-authorized
+    // fidelity query, which cross-checks it against the node's chain. The fallback
+    // lets a non-sealing enclave still answer chain-scoped queries.
+    let chain_id = initialization
+        .network_binding()
+        .ok()
+        .flatten()
+        .map(|binding| B256::from(binding.chain_id))
+        .unwrap_or(fallback_chain_id);
+
+    let server_ctx = ServerContext {
+        keys: std::sync::Arc::new(keys),
+        boot,
+        offer_key,
+        initialization: std::sync::Arc::new(initialization),
+        chain_id,
+    };
+    serve_endpoint(&socket, &attest, identity_id, server_ctx)
+}
+
+fn log_attestation_banner(attest: &crate::gramine::AttestationType) {
     // Detect the real attestation environment up front so the startup banner
     // tells the truth (hardware-attested vs unattested) instead of claiming SGX.
-    let attest = crate::gramine::attestation_type();
     if attest.is_hardware() {
         eprintln!(
             "outbe-tee-enclave: MODE = gramine-sgx - hardware attestation ENABLED ({})",
@@ -121,7 +164,9 @@ pub fn run(opts: RunOpts) -> i32 {
             attest.label()
         );
     }
+}
 
+fn init_enclave_keys(opts: RunOpts, args: &[String]) -> Result<(EnclaveKeys, &'static str), i32> {
     #[cfg(feature = "mock")]
     let tribute_offer_secret = if opts.is_mock() {
         dev_bytes_from_env("TEE_DEV_OFFER_SECRET", [0x07; 32])
@@ -133,7 +178,7 @@ pub fn run(opts: RunOpts) -> i32 {
     // Explicit, deterministic DKG identity seed (dev/CI): `--dkg-seed <hex32>` or
     // env `TEE_DEV_DKG_SEED`. The gramine-direct mock path uses this since it has
     // no EGETKEY and so cannot persist a self-generated identity across restart.
-    let cli_dkg_seed = arg_value(&args, "--dkg-seed").and_then(|hex| parse_hex32(&hex));
+    let cli_dkg_seed = arg_value(args, "--dkg-seed").and_then(|hex| parse_hex32(&hex));
     #[cfg(feature = "mock")]
     let cli_dkg_seed = if opts.is_mock() {
         cli_dkg_seed.or_else(|| {
@@ -146,196 +191,161 @@ pub fn run(opts: RunOpts) -> i32 {
     };
     // Production accepts only an enclave-generated, successfully sealed seed.
     // Explicit deterministic seeds and the offer-secret fallback are mock-only.
-    let identity = match resolve_enclave_identity_seed(&args, cli_dkg_seed, opts.is_mock()) {
-        Ok(identity) => identity,
-        Err(error) => {
+    let identity =
+        resolve_enclave_identity_seed(args, cli_dkg_seed, opts.is_mock()).map_err(|error| {
             eprintln!("outbe-tee-enclave: identity init failed: {error}");
-            return 1;
-        }
-    };
+            1
+        })?;
     let identity_id = identity.description;
-    let keys = match EnclaveKeys::new_with_identity_seed(
+    let keys = EnclaveKeys::new_with_identity_seed(
         tribute_offer_secret,
         identity.seed,
         identity.network_binding,
-    ) {
-        Ok(keys) => keys,
-        Err(err) => {
-            eprintln!("outbe-tee-enclave: key init failed: {err}");
-            return 1;
-        }
-    };
+    )
+    .map_err(|err| {
+        eprintln!("outbe-tee-enclave: key init failed: {err}");
+        1
+    })?;
+    Ok((keys, identity_id))
+}
 
-    // Seal/unseal boot configuration. Production requires it. An explicitly
-    // selected development process may omit it and starts as a fresh keyless
-    // identity on its separate chain.
-    let boot = match build_boot_config(&args, &keys) {
-        Ok(boot) => boot,
-        Err(code) => return code,
-    };
-
-    // Shared, write-once permanent offer-key slot. It is restored only after the
-    // sealed initialization manifest establishes the exact network binding.
-    let offer_key: crate::transport::SharedTributeOfferKey =
-        std::sync::Arc::new(std::sync::OnceLock::new());
-
+fn build_initialization_state(
+    opts: RunOpts,
+    development_network_binding: Option<NetworkBindingV1>,
+    boot: Option<std::sync::Arc<EnclaveBootConfig>>,
+    keys: &EnclaveKeys,
+) -> Result<crate::initialization::InitializationState, i32> {
     #[cfg(feature = "mock")]
-    let initialization = if opts.is_mock() {
-        crate::initialization::factory::development_for_network(
+    if opts.is_mock() {
+        return Ok(crate::initialization::factory::development_for_network(
             development_network_binding.expect("mock binding was required above"),
-        )
-    } else {
-        let Some(boot) = boot.clone() else {
-            eprintln!(
-                "outbe-tee-enclave: production mode requires --tee-dir for write-once node authorization"
-            );
-            return 2;
-        };
-        match crate::initialization::factory::production(boot, &keys) {
-            Ok(state) => state,
-            Err(error) => {
-                eprintln!("outbe-tee-enclave: initialization state failed: {error}");
-                return 1;
-            }
-        }
-    };
+        ));
+    }
     #[cfg(not(feature = "mock"))]
-    let initialization = {
-        let _ = development_network_binding;
-        let Some(boot) = boot.clone() else {
+    let _ = (opts, development_network_binding);
+    let Some(boot) = boot else {
+        eprintln!(
+            "outbe-tee-enclave: production mode requires --tee-dir for write-once node authorization"
+        );
+        return Err(2);
+    };
+    crate::initialization::factory::production(boot, keys).map_err(|error| {
+        eprintln!("outbe-tee-enclave: initialization state failed: {error}");
+        1
+    })
+}
+
+fn restore_sealed_offer_key(
+    boot: Option<&EnclaveBootConfig>,
+    initialization: &crate::initialization::InitializationState,
+    offer_key: &crate::transport::SharedTributeOfferKey,
+) -> Result<(), i32> {
+    let Some(cfg) = boot else {
+        return Ok(());
+    };
+    let network_binding = match initialization.network_binding() {
+        Ok(Some(binding)) => Some(binding),
+        Ok(None) if cfg.sealed_root_path().exists() => {
             eprintln!(
-                "outbe-tee-enclave: production mode requires --tee-dir for write-once node authorization"
+                "outbe-tee-enclave: sealed permanent offer key exists without sealed initialization authority"
             );
-            return 2;
-        };
-        match crate::initialization::factory::production(boot, &keys) {
-            Ok(state) => state,
-            Err(error) => {
-                eprintln!("outbe-tee-enclave: initialization state failed: {error}");
-                return 1;
-            }
+            return Err(1);
+        }
+        Ok(None) => None,
+        Err(error) => {
+            eprintln!("outbe-tee-enclave: initialization binding unavailable: {error}");
+            return Err(1);
         }
     };
-    if let Some(cfg) = boot.as_deref() {
-        let network_binding = match initialization.network_binding() {
-            Ok(Some(binding)) => Some(binding),
-            Ok(None) if cfg.sealed_root_path().exists() => {
-                eprintln!(
-                    "outbe-tee-enclave: sealed permanent offer key exists without sealed initialization authority"
-                );
-                return 1;
+    if let Some(network_binding) = network_binding {
+        match crate::transport::unseal_tribute_offer_and_group_sig_on_boot(cfg, network_binding) {
+            Ok(Some(derived)) => {
+                let _ = offer_key.set(derived);
             }
-            Ok(None) => None,
+            Ok(None) => {}
             Err(error) => {
-                eprintln!("outbe-tee-enclave: initialization binding unavailable: {error}");
-                return 1;
-            }
-        };
-        if let Some(network_binding) = network_binding {
-            match crate::transport::unseal_tribute_offer_and_group_sig_on_boot(cfg, network_binding)
-            {
-                Ok(Some(derived)) => {
-                    let _ = offer_key.set(derived);
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    eprintln!("outbe-tee-enclave: {error}");
-                    return 1;
-                }
+                eprintln!("outbe-tee-enclave: {error}");
+                return Err(1);
             }
         }
     }
-    // Resident chain id. When the initialization state has a network binding
-    // (initialization manifest or mock development binding), its chain id wins.
-    // `--chain-id` (default ZERO) is only the fallback. It is bound INDEPENDENTLY
-    // of sealing. It scopes every state-key derivation and the owner-authorized
-    // fidelity query, which cross-checks it against the node's chain. The fallback
-    // lets a non-sealing enclave still answer chain-scoped queries.
-    let chain_id = initialization
-        .network_binding()
-        .ok()
-        .flatten()
-        .map(|binding| B256::from(binding.chain_id))
-        .unwrap_or(chain_id);
-    let keys = std::sync::Arc::new(keys);
-    let initialization = std::sync::Arc::new(initialization);
+    Ok(())
+}
 
+fn serve_endpoint(
+    socket: &str,
+    attest: &crate::gramine::AttestationType,
+    identity_id: &str,
+    server_ctx: ServerContext,
+) -> Result<(), i32> {
     // A `host:port` endpoint listens on TCP (required under Gramine, whose
     // pathname UDS are process-internal so a host process cannot reach them).
     // Anything else is a UDS path. The Noise-IK handshake authenticates +
     // encrypts every byte either way, so the carrier choice does not weaken the
     // channel.
     let result = if socket.contains(':') {
-        // The TCP carrier is loopback-only. It exists solely because Gramine
-        // pathname UDS are process-internal (unreachable from the host). It must
-        // never expose the enclave off-host. Reject any non-loopback bind. (Noise-IK
-        // still authenticates + encrypts every byte regardless of carrier. This
-        // guard is defense-in-depth so a misconfigured `--socket 0.0.0.0:port`
-        // cannot accidentally publish the enclave.)
-        if !is_loopback_endpoint(&socket) {
-            eprintln!(
-                "outbe-tee-enclave: refusing to bind non-loopback TCP endpoint {socket} \
-                 (the TCP carrier is 127.0.0.1/::1 only)"
-            );
-            return 2;
-        }
-        let listener = match std::net::TcpListener::bind(&socket) {
-            Ok(listener) => listener,
-            Err(err) => {
-                eprintln!("outbe-tee-enclave: bind tcp {socket} failed: {err}");
-                return 1;
-            }
-        };
-        eprintln!(
-            "outbe-tee-enclave: listening on tcp://{socket} (attestation: {}; enclave identity: {identity_id})",
-            attest.label()
-        );
-        serve_tcp(
-            &listener,
-            ServerContext {
-                keys,
-                boot,
-                offer_key,
-                initialization,
-                chain_id,
-            },
-        )
+        serve_tcp_endpoint(socket, attest, identity_id, server_ctx)?
     } else {
-        // Fresh socket. UDS mode 0600 (owner-only), per plan section "Transport".
-        let _ = std::fs::remove_file(&socket);
-        let listener = match UnixListener::bind(&socket) {
-            Ok(listener) => listener,
-            Err(err) => {
-                eprintln!("outbe-tee-enclave: bind {socket} failed: {err}");
-                return 1;
-            }
-        };
-        // Best-effort 0600 (non-fatal under Gramine: the bound UDS is an
-        // emulated socket object, not a chmod-able host file).
-        if let Err(err) = std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))
-        {
-            eprintln!("outbe-tee-enclave: chmod 0600 {socket} failed (continuing): {err}");
-        }
-        eprintln!(
-            "outbe-tee-enclave: listening on {socket} (attestation: {}; enclave identity: {identity_id})",
-            attest.label()
-        );
-        serve(
-            &listener,
-            ServerContext {
-                keys,
-                boot,
-                offer_key,
-                initialization,
-                chain_id,
-            },
-        )
+        serve_uds_endpoint(socket, attest, identity_id, server_ctx)?
     };
-    if let Err(err) = result {
+    result.map_err(|err| {
         eprintln!("outbe-tee-enclave: serve error: {err}");
-        return 1;
+        1
+    })
+}
+
+fn serve_tcp_endpoint(
+    socket: &str,
+    attest: &crate::gramine::AttestationType,
+    identity_id: &str,
+    server_ctx: ServerContext,
+) -> Result<Result<(), outbe_tee::TransportError>, i32> {
+    // The TCP carrier is loopback-only. It exists solely because Gramine
+    // pathname UDS are process-internal (unreachable from the host). It must
+    // never expose the enclave off-host. Reject any non-loopback bind. (Noise-IK
+    // still authenticates + encrypts every byte regardless of carrier. This
+    // guard is defense-in-depth so a misconfigured `--socket 0.0.0.0:port`
+    // cannot accidentally publish the enclave.)
+    if !is_loopback_endpoint(socket) {
+        eprintln!(
+            "outbe-tee-enclave: refusing to bind non-loopback TCP endpoint {socket} \
+             (the TCP carrier is 127.0.0.1/::1 only)"
+        );
+        return Err(2);
     }
-    0
+    let listener = std::net::TcpListener::bind(socket).map_err(|err| {
+        eprintln!("outbe-tee-enclave: bind tcp {socket} failed: {err}");
+        1
+    })?;
+    eprintln!(
+        "outbe-tee-enclave: listening on tcp://{socket} (attestation: {}; enclave identity: {identity_id})",
+        attest.label()
+    );
+    Ok(serve_tcp(&listener, server_ctx))
+}
+
+fn serve_uds_endpoint(
+    socket: &str,
+    attest: &crate::gramine::AttestationType,
+    identity_id: &str,
+    server_ctx: ServerContext,
+) -> Result<Result<(), outbe_tee::TransportError>, i32> {
+    // Fresh socket. UDS mode 0600 (owner-only), per plan section "Transport".
+    let _ = std::fs::remove_file(socket);
+    let listener = UnixListener::bind(socket).map_err(|err| {
+        eprintln!("outbe-tee-enclave: bind {socket} failed: {err}");
+        1
+    })?;
+    // Best-effort 0600 (non-fatal under Gramine: the bound UDS is an
+    // emulated socket object, not a chmod-able host file).
+    if let Err(err) = std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600)) {
+        eprintln!("outbe-tee-enclave: chmod 0600 {socket} failed (continuing): {err}");
+    }
+    eprintln!(
+        "outbe-tee-enclave: listening on {socket} (attestation: {}; enclave identity: {identity_id})",
+        attest.label()
+    );
+    Ok(serve(&listener, server_ctx))
 }
 
 fn resolve_development_network_binding(
@@ -429,48 +439,10 @@ fn resolve_enclave_identity_seed(
         .map_err(|error| format!("chmod identity directory {}: {error}", tee_dir.display()))?;
     let path = tee_dir.join("sealed_identity.bin");
 
-    match std::fs::read(&path) {
-        Ok(blob) => {
-            let unsealed = crate::sgx_sealing::unseal_payload(&blob, isv_svn).map_err(|error| {
-                format!(
-                    "sealed identity at {} is unusable and will not be replaced: {error}",
-                    path.display()
-                )
-            })?;
-            if !unsealed.group_sig.is_empty() {
-                return Err(format!(
-                    "sealed identity at {} contains unexpected group-signature bytes",
-                    path.display()
-                ));
-            }
-            return Ok(EnclaveIdentitySeedResolution {
-                seed: Some(unsealed.tribute_offer_secret),
-                network_binding: Some(unsealed.network_binding),
-                description: "self-generated (restored from network-bound seal)",
-            });
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(format!("read sealed identity {}: {error}", path.display()));
-        }
+    if let Some(restored) = try_restore_sealed_identity(&path, isv_svn)? {
+        return Ok(restored);
     }
-
-    let authorization_path = tee_dir.join("sealed_node_authorization_v1.bin");
-    match std::fs::symlink_metadata(&authorization_path) {
-        Ok(_) => {
-            return Err(format!(
-                "sealed identity is missing while node authorization exists at {}; old identity cannot be recovered",
-                authorization_path.display()
-            ));
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(format!(
-                "inspect sealed node authorization {}: {error}",
-                authorization_path.display()
-            ));
-        }
-    }
+    ensure_no_orphaned_authorization(&tee_dir)?;
 
     // First boot only: generate in enclave memory. Initialization seals the seed
     // with the signed NetworkBinding before it persists NodeHost authorization.
@@ -482,6 +454,49 @@ fn resolve_enclave_identity_seed(
         network_binding: None,
         description: "self-generated (fresh, pending network-bound seal)",
     })
+}
+
+fn try_restore_sealed_identity(
+    path: &std::path::Path,
+    isv_svn: u16,
+) -> Result<Option<EnclaveIdentitySeedResolution>, String> {
+    let blob = match std::fs::read(path) {
+        Ok(blob) => blob,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("read sealed identity {}: {error}", path.display())),
+    };
+    let unsealed = crate::sgx_sealing::unseal_payload(&blob, isv_svn).map_err(|error| {
+        format!(
+            "sealed identity at {} is unusable and will not be replaced: {error}",
+            path.display()
+        )
+    })?;
+    if !unsealed.group_sig.is_empty() {
+        return Err(format!(
+            "sealed identity at {} contains unexpected group-signature bytes",
+            path.display()
+        ));
+    }
+    Ok(Some(EnclaveIdentitySeedResolution {
+        seed: Some(unsealed.tribute_offer_secret),
+        network_binding: Some(unsealed.network_binding),
+        description: "self-generated (restored from network-bound seal)",
+    }))
+}
+
+fn ensure_no_orphaned_authorization(tee_dir: &std::path::Path) -> Result<(), String> {
+    let authorization_path = tee_dir.join("sealed_node_authorization_v1.bin");
+    match std::fs::symlink_metadata(&authorization_path) {
+        Ok(_) => Err(format!(
+            "sealed identity is missing while node authorization exists at {}; old identity cannot be recovered",
+            authorization_path.display()
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "inspect sealed node authorization {}: {error}",
+            authorization_path.display()
+        )),
+    }
 }
 
 /// Build the optional seal/unseal boot configuration from CLI args.

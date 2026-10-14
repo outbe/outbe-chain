@@ -132,68 +132,83 @@ async fn history(client: &(impl Rpc + Sync), limit: usize) -> Result<()> {
     );
     println!("{}", "-".repeat(62));
 
-    let start = if logs.len() > limit {
-        logs.len() - limit
-    } else {
-        0
-    };
-    for log in &logs[start..] {
-        let block = log["blockNumber"]
-            .as_str()
+    for log in super::recent_logs(&logs, limit) {
+        let parsed = super::ParsedLog::from_value(log);
+        let epoch = parsed
+            .topics
+            .get(1)
             .and_then(|s| u64::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16).ok())
             .unwrap_or(0);
-
-        // Indexed newEpochNumber is in topics[1]
-        let epoch = log["topics"]
-            .as_array()
-            .and_then(|t| t.get(1))
-            .and_then(|v| v.as_str())
-            .and_then(|s| u64::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16).ok())
-            .unwrap_or(0);
-
-        // Non-indexed data: timestamp(32) + activeValidatorCount(32)
-        let data = log["data"].as_str().unwrap_or("0x");
-        let data = data.strip_prefix("0x").unwrap_or(data);
-        let bytes = hex::decode(data).unwrap_or_default();
-
-        let timestamp = if bytes.len() >= 32 {
-            U256::from_be_slice(&bytes[0..32]).to::<u64>()
-        } else {
-            0
-        };
-        let active_count = if bytes.len() >= 64 {
-            U256::from_be_slice(&bytes[32..64]).to::<u64>()
-        } else {
-            0
-        };
+        let timestamp = parsed.word_u64(0);
+        let active_count = parsed.word_u64(1);
 
         println!(
             "{:<8} {:<14} {:<20} {:<20}",
-            epoch, block, timestamp, active_count
+            epoch, parsed.block, timestamp, active_count
         );
     }
 
     Ok(())
 }
 
+struct TransitionTopics {
+    registered: String,
+    activated: String,
+    deactivated: String,
+    forced_exit: String,
+}
+
+impl TransitionTopics {
+    fn new() -> Self {
+        Self {
+            registered: event_topic(b"ValidatorRegistered(address,uint64)"),
+            activated: event_topic(b"ValidatorActivated(address)"),
+            deactivated: event_topic(b"ValidatorDeactivated(address,uint64)"),
+            forced_exit: event_topic(b"ValidatorForcedExit(address,uint64)"),
+        }
+    }
+
+    fn format_row(&self, parsed: &super::ParsedLog<'_>) -> Option<String> {
+        let topic0 = parsed.topic(0);
+        let validator = parsed.topic_addr(1);
+        if topic0 == self.registered {
+            Some(format!(
+                "{:<14} {:<14} {:<44} index={}",
+                parsed.block,
+                "REGISTERED",
+                validator,
+                parsed.word_u64(0)
+            ))
+        } else if topic0 == self.activated {
+            Some(format!(
+                "{:<14} {:<14} {:<44}",
+                parsed.block, "ACTIVATED", validator
+            ))
+        } else if topic0 == self.deactivated || topic0 == self.forced_exit {
+            let label = if topic0 == self.forced_exit {
+                "FORCED_EXIT"
+            } else {
+                "DEACTIVATED"
+            };
+            Some(format!(
+                "{:<14} {:<14} {:<44} at_height={}",
+                parsed.block,
+                label,
+                validator,
+                parsed.word_u64(0)
+            ))
+        } else {
+            None
+        }
+    }
+}
+
+fn event_topic(signature: &[u8]) -> String {
+    format!("{:?}", B256::from(keccak256(signature)))
+}
+
 async fn transitions(client: &(impl Rpc + Sync), limit: usize) -> Result<()> {
-    // Query all validator lifecycle events from ValidatorSet contract
-    let topic_registered = format!(
-        "{:?}",
-        B256::from(keccak256(b"ValidatorRegistered(address,uint64)"))
-    );
-    let topic_activated = format!(
-        "{:?}",
-        B256::from(keccak256(b"ValidatorActivated(address)"))
-    );
-    let topic_deactivated = format!(
-        "{:?}",
-        B256::from(keccak256(b"ValidatorDeactivated(address,uint64)"))
-    );
-    let topic_forced_exit = format!(
-        "{:?}",
-        B256::from(keccak256(b"ValidatorForcedExit(address,uint64)"))
-    );
+    let topics = TransitionTopics::new();
     // Fetch all logs from ValidatorSet (no topic filter to get all event types)
     let all_logs = client
         .eth_get_logs(VALIDATOR_SET_ADDR, &[], "earliest", "latest")
@@ -207,66 +222,10 @@ async fn transitions(client: &(impl Rpc + Sync), limit: usize) -> Result<()> {
     println!("{:<14} {:<14} {:<44} Details", "Block", "Type", "Validator");
     println!("{}", "-".repeat(90));
 
-    let start = if all_logs.len() > limit {
-        all_logs.len() - limit
-    } else {
-        0
-    };
-
-    for log in &all_logs[start..] {
-        let block = log["blockNumber"]
-            .as_str()
-            .and_then(|s| u64::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16).ok())
-            .unwrap_or(0);
-
-        let topics = log["topics"].as_array().cloned().unwrap_or_default();
-        let topic0 = topics.first().and_then(|v| v.as_str()).unwrap_or("");
-
-        let data = log["data"].as_str().unwrap_or("0x");
-        let data_hex = data.strip_prefix("0x").unwrap_or(data);
-        let bytes = hex::decode(data_hex).unwrap_or_default();
-
-        if topic0 == topic_registered {
-            let validator = topics.get(1).and_then(|v| v.as_str()).unwrap_or("?");
-            let index = if bytes.len() >= 32 {
-                U256::from_be_slice(&bytes[0..32]).to::<u64>()
-            } else {
-                0
-            };
-            println!(
-                "{:<14} {:<14} {:<44} index={}",
-                block,
-                "REGISTERED",
-                format_topic_addr(validator),
-                index
-            );
-        } else if topic0 == topic_activated {
-            let validator = topics.get(1).and_then(|v| v.as_str()).unwrap_or("?");
-            println!(
-                "{:<14} {:<14} {:<44}",
-                block,
-                "ACTIVATED",
-                format_topic_addr(validator)
-            );
-        } else if topic0 == topic_deactivated || topic0 == topic_forced_exit {
-            let validator = topics.get(1).and_then(|v| v.as_str()).unwrap_or("?");
-            let at_height = if bytes.len() >= 32 {
-                U256::from_be_slice(&bytes[0..32]).to::<u64>()
-            } else {
-                0
-            };
-            let event_label = if topic0 == topic_forced_exit {
-                "FORCED_EXIT"
-            } else {
-                "DEACTIVATED"
-            };
-            println!(
-                "{:<14} {:<14} {:<44} at_height={}",
-                block,
-                event_label,
-                format_topic_addr(validator),
-                at_height
-            );
+    for log in super::recent_logs(&all_logs, limit) {
+        let parsed = super::ParsedLog::from_value(log);
+        if let Some(line) = topics.format_row(&parsed) {
+            println!("{line}");
         }
         // This loop skips all other ValidatorSet events. `history` shows
         // `EpochTransition`. No command shows `ConsensusSetUpdated`,
@@ -276,15 +235,7 @@ async fn transitions(client: &(impl Rpc + Sync), limit: usize) -> Result<()> {
     Ok(())
 }
 
-/// Extracts the last 40 hex chars from a topic (address is zero-padded to 32 bytes).
-fn format_topic_addr(topic: &str) -> String {
-    let s = topic.strip_prefix("0x").unwrap_or(topic);
-    if s.len() >= 40 {
-        format!("0x{}", &s[s.len() - 40..])
-    } else {
-        topic.to_string()
-    }
-}
+use super::format_topic_addr;
 
 #[cfg(test)]
 mod tests {

@@ -152,41 +152,9 @@ impl RpcClient {
     }
 
     async fn call_rpc(&self, method: &str, params: Value) -> Result<Value> {
-        let id = self.id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0",
-            method: method.to_string(),
-            params,
-            id,
-        };
-
-        let resp: JsonRpcResponse = self
-            .client
-            .post(&self.url)
-            .json(&req)
-            .send()
-            .await
-            .wrap_err("failed to send RPC request")?
-            .error_for_status()
-            .wrap_err("RPC HTTP request failed")?
-            .json()
-            .await
-            .wrap_err("failed to parse RPC response")?;
-
-        if resp.id.as_ref() != Some(&Value::from(id)) {
-            eyre::bail!(
-                "RPC response id mismatch: expected {}, got {:?}",
-                id,
-                resp.id
-            );
-        }
-
-        if let Some(err) = resp.error {
-            eyre::bail!("RPC error {}: {}", err.code, err.message);
-        }
-
-        resp.result.ok_or_else(|| eyre::eyre!("empty RPC result"))
+        self.call_rpc_optional(method, params)
+            .await?
+            .ok_or_else(|| eyre::eyre!("empty RPC result"))
     }
 
     /// Call an RPC method whose successful result may canonically be `null`,
@@ -552,8 +520,15 @@ pub mod mock {
         let gas_price = crate::tx::buffered_gas_price(base_fee);
         let signer = TxSigner::new(private_key)?;
         let gas_limit = GAS_ESTIMATE + GAS_ESTIMATE / 5;
-        let raw_tx = signer
-            .sign_legacy_tx_for_test(NONCE, gas_price, gas_limit, to, value, &data, CHAIN_ID)?;
+        let raw_tx = signer.sign_legacy_tx_for_test(crate::tx::LegacyTx {
+            nonce: NONCE,
+            gas_price,
+            gas_limit,
+            to,
+            value,
+            data: &data,
+            chain_id: CHAIN_ID,
+        })?;
 
         Ok(RecordingRpc::new([
             ExpectedRpcCall::ok(
@@ -894,37 +869,10 @@ mod tests {
 
         tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            let mut buf = [0u8; 1024];
-
-            loop {
-                let n = socket.read(&mut buf).await.unwrap();
-                if n == 0 {
-                    break;
-                }
-                request.extend_from_slice(&buf[..n]);
-
-                if let Some(header_end) = find_header_end(&request) {
-                    let headers = String::from_utf8_lossy(&request[..header_end]);
-                    let content_len = content_length(&headers);
-                    if request.len() >= header_end + 4 + content_len {
-                        break;
-                    }
-                }
-            }
-
-            let body_start = find_header_end(&request)
-                .map(|pos| pos + 4)
-                .unwrap_or(request.len());
-            let body = String::from_utf8_lossy(&request[body_start..]).to_string();
+            let body = read_http_request_body(&mut socket).await;
             let _ = body_tx.send(body);
 
-            let response = format!(
-                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                response_body.len(),
-                response_body
-            );
-            socket.write_all(response.as_bytes()).await.unwrap();
+            write_http_response(&mut socket, &status, &response_body).await;
         });
 
         (format!("http://{addr}"), body_rx)
@@ -941,26 +889,17 @@ mod tests {
         tokio::spawn(async move {
             for response_body in response_bodies {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                let request = read_http_request(&mut socket).await;
-                let body_start = find_header_end(&request)
-                    .map(|pos| pos + 4)
-                    .unwrap_or(request.len());
-                let body = String::from_utf8_lossy(&request[body_start..]).to_string();
+                let body = read_http_request_body(&mut socket).await;
                 let _ = body_tx.send(body).await;
 
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                    response_body.len(),
-                    response_body
-                );
-                socket.write_all(response.as_bytes()).await.unwrap();
+                write_http_response(&mut socket, "200 OK", &response_body).await;
             }
         });
 
         (format!("http://{addr}"), body_rx)
     }
 
-    async fn read_http_request(socket: &mut tokio::net::TcpStream) -> Vec<u8> {
+    async fn read_http_request_body(socket: &mut tokio::net::TcpStream) -> String {
         let mut request = Vec::new();
         let mut buf = [0u8; 1024];
 
@@ -980,7 +919,19 @@ mod tests {
             }
         }
 
-        request
+        let body_start = find_header_end(&request)
+            .map(|pos| pos + 4)
+            .unwrap_or(request.len());
+        String::from_utf8_lossy(&request[body_start..]).to_string()
+    }
+
+    async fn write_http_response(socket: &mut tokio::net::TcpStream, status: &str, body: &str) {
+        let response = format!(
+            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        socket.write_all(response.as_bytes()).await.unwrap();
     }
 
     fn find_header_end(buf: &[u8]) -> Option<usize> {
@@ -1438,78 +1389,55 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_rpc_client_json_rpc_error_returns_error() {
-        let (url, _body_rx) = serve_rpc_once(
-            "200 OK",
-            r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"missing method"},"id":1}"#,
-        )
-        .await;
+    async fn assert_block_number_rpc_error(status: &str, response_body: &str, expected_msg: &str) {
+        let (url, _body_rx) = serve_rpc_once(status, response_body).await;
         let client = RpcClient::new(&url);
-
         let err = client.eth_block_number().await.unwrap_err();
-
         assert!(
-            err.to_string().contains("RPC error -32601: missing method"),
+            err.to_string().contains(expected_msg),
             "unexpected error: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_rpc_client_json_rpc_error_returns_error() {
+        assert_block_number_rpc_error(
+            "200 OK",
+            r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"missing method"},"id":1}"#,
+            "RPC error -32601: missing method",
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn test_rpc_client_missing_result_errors() {
-        let (url, _body_rx) = serve_rpc_once("200 OK", r#"{"jsonrpc":"2.0","id":1}"#).await;
-        let client = RpcClient::new(&url);
-
-        let err = client.eth_block_number().await.unwrap_err();
-
-        assert!(
-            err.to_string().contains("empty RPC result"),
-            "unexpected error: {err}"
-        );
+        assert_block_number_rpc_error("200 OK", r#"{"jsonrpc":"2.0","id":1}"#, "empty RPC result")
+            .await;
     }
 
     #[tokio::test]
     async fn test_rpc_client_invalid_json_errors() {
-        let (url, _body_rx) = serve_rpc_once("200 OK", "not json").await;
-        let client = RpcClient::new(&url);
-
-        let err = client.eth_block_number().await.unwrap_err();
-
-        assert!(
-            err.to_string().contains("failed to parse RPC response"),
-            "unexpected error: {err}"
-        );
+        assert_block_number_rpc_error("200 OK", "not json", "failed to parse RPC response").await;
     }
 
     #[tokio::test]
     async fn test_rpc_client_http_status_error() {
-        let (url, _body_rx) = serve_rpc_once(
+        assert_block_number_rpc_error(
             "500 Internal Server Error",
             r#"{"jsonrpc":"2.0","result":"0x1","id":1}"#,
+            "RPC HTTP request failed",
         )
         .await;
-        let client = RpcClient::new(&url);
-
-        let err = client.eth_block_number().await.unwrap_err();
-
-        assert!(
-            err.to_string().contains("RPC HTTP request failed"),
-            "unexpected error: {err}"
-        );
     }
 
     #[tokio::test]
     async fn test_rpc_client_response_id_mismatch_errors() {
-        let (url, _body_rx) =
-            serve_rpc_once("200 OK", r#"{"jsonrpc":"2.0","result":"0x1","id":99}"#).await;
-        let client = RpcClient::new(&url);
-
-        let err = client.eth_block_number().await.unwrap_err();
-
-        assert!(
-            err.to_string().contains("RPC response id mismatch"),
-            "unexpected error: {err}"
-        );
+        assert_block_number_rpc_error(
+            "200 OK",
+            r#"{"jsonrpc":"2.0","result":"0x1","id":99}"#,
+            "RPC response id mismatch",
+        )
+        .await;
     }
 
     // --- parse_hex_u64 ---

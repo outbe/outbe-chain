@@ -99,7 +99,7 @@ use launch::node::run_node;
 
 use launch::shutdown::{
     await_consensus_stack_shutdown, await_radicle_drain, consensus_shutdown_result,
-    handle_consensus_thread_join, run_with_lifetime_pin, ConsensusThreadGuard, LauncherExitCause,
+    handle_consensus_thread_join, run_with_lifetime_pin, ConsensusThreadGuard,
     RADICLE_DRAIN_DEADLINE,
 };
 

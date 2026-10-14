@@ -95,14 +95,13 @@ pub fn verified_result_chunk_at(
         .read_verified(&admitted_entry.result_chunk_ref)?;
     let canonical_chunk_bytes = object.bytes().to_vec();
     let chunk = ResultChunkV1::decode_canonical(&canonical_chunk_bytes, audit.limits())?;
-    if chunk.protocol_bundle_hash != audit.plan().protocol_bundle_hash
-        || chunk.job_id != audit.plan().job_id
-        || chunk.attempt != audit.plan().attempt
-        || chunk.chunk_ordinal != admitted_entry.chunk_ordinal
-        || chunk.first_nod_ordinal != primary_shard.start_ordinal
-        || chunk.result_chunk_hash(audit.limits())? != admitted_entry.result_chunk_hash
-        || u32::try_from(chunk.ordered_nod_actions.len()).ok() != Some(summary.nod_count)
-    {
+    if !matches_result_chunk_binding(
+        &chunk,
+        audit.plan(),
+        &admitted_entry,
+        (primary_shard.start_ordinal, summary.nod_count),
+        audit.limits(),
+    )? {
         return Err(ProtocolError::InvalidInvariant("exact result chunk semantic binding").into());
     }
     require_chunk_summary(&chunk, &summary, chunk_ordinal, audit.limits())?;
@@ -307,15 +306,13 @@ impl<'a> ExactLysisResultCatalogCursorV1<'a> {
         let object = self.audit.reader().read_verified(&entry.result_chunk_ref)?;
         let canonical_chunk_bytes = object.bytes().to_vec();
         let chunk = ResultChunkV1::decode_canonical(&canonical_chunk_bytes, self.audit.limits())?;
-        if chunk.protocol_bundle_hash != self.audit.plan().protocol_bundle_hash
-            || chunk.job_id != self.audit.plan().job_id
-            || chunk.attempt != self.audit.plan().attempt
-            || chunk.chunk_ordinal != entry.chunk_ordinal
-            || chunk.first_nod_ordinal != pending.expected_first_nod_ordinal
-            || chunk.result_chunk_hash(self.audit.limits())? != entry.result_chunk_hash
-            || u32::try_from(chunk.ordered_nod_actions.len()).ok()
-                != Some(pending.summary.nod_count)
-        {
+        if !matches_result_chunk_binding(
+            &chunk,
+            self.audit.plan(),
+            entry,
+            (pending.expected_first_nod_ordinal, pending.summary.nod_count),
+            self.audit.limits(),
+        )? {
             return Err(
                 ProtocolError::InvalidInvariant("exact result chunk semantic binding").into(),
             );
@@ -529,23 +526,41 @@ fn require_leaf_summary(
         .end_ordinal
         .checked_sub(primary_shard.start_ordinal)
         .ok_or(PlannerErrorV1::IntegerOverflow)?;
-    if summary.protocol_bundle_hash != plan.protocol_bundle_hash
-        || summary.job_id != plan.job_id
-        || summary.attempt != plan.attempt
-        || summary.plan_hash != plan.plan_hash(audit.limits())?
-        || summary.covered_primary_start != chunk_ordinal
-        || summary.covered_primary_count != 1
-        || summary.tribute_count != expected_count
-        || summary.nod_count != expected_count
-        || summary.bucket_count != expected_count
-        || summary.first_error_ordinal.is_some()
-        || entry.chunk_ordinal != chunk_ordinal
-    {
+    let matches_identity = summary.protocol_bundle_hash == plan.protocol_bundle_hash
+        && summary.job_id == plan.job_id
+        && summary.attempt == plan.attempt
+        && summary.plan_hash == plan.plan_hash(audit.limits())?;
+    let matches_coverage =
+        summary.covered_primary_start == chunk_ordinal && summary.covered_primary_count == 1;
+    let matches_counts = summary.tribute_count == expected_count
+        && summary.nod_count == expected_count
+        && summary.bucket_count == expected_count;
+    let matches_entry =
+        summary.first_error_ordinal.is_none() && entry.chunk_ordinal == chunk_ordinal;
+    if !matches_identity || !matches_coverage || !matches_counts || !matches_entry {
         return Err(
             ProtocolError::InvalidInvariant("exact ROOT_REDUCE leaf summary binding").into(),
         );
     }
     Ok(primary_shard)
+}
+
+fn matches_result_chunk_binding(
+    chunk: &ResultChunkV1,
+    plan: &outbe_ocomp_protocol::unit::PlanCommitmentV1,
+    entry: &OutputManifestEntryV1,
+    (expected_first_nod_ordinal, expected_nod_count): (u32, u32),
+    limits: &outbe_ocomp_protocol::SchemaLimits,
+) -> Result<bool, ProtocolError> {
+    let matches_identity = chunk.protocol_bundle_hash == plan.protocol_bundle_hash
+        && chunk.job_id == plan.job_id
+        && chunk.attempt == plan.attempt;
+    let matches_entry = chunk.chunk_ordinal == entry.chunk_ordinal
+        && chunk.first_nod_ordinal == expected_first_nod_ordinal
+        && chunk.result_chunk_hash(limits)? == entry.result_chunk_hash;
+    Ok(matches_identity
+        && matches_entry
+        && u32::try_from(chunk.ordered_nod_actions.len()).ok() == Some(expected_nod_count))
 }
 
 fn expected_primary_shard(
