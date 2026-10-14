@@ -143,7 +143,7 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
     }
 }
 
-fn emit(storage: &StorageHandle<'_>, event: &impl SolEvent) -> Result<()> {
+pub(crate) fn emit(storage: &StorageHandle<'_>, event: &impl SolEvent) -> Result<()> {
     storage.emit_event(CREDIS_FACTORY_ADDRESS, SolEvent::encode_log_data(event))
 }
 

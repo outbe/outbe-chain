@@ -17,7 +17,7 @@ use outbe_primitives::sweep_budget::{
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
-    addresses::NOD_ADDRESS,
+    addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},
     math::constants::MAX_BIN_ID,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -1918,9 +1918,11 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
     });
 
     let events: Vec<_> = provider
-        .get_events(NOD_ADDRESS)
+        .get_events(NOD_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| INod::SweepDaySkipped::decode_log_data(log).ok())
+        .filter_map(|log| {
+            crate::precompile::INodFactory::SweepDaySkipped::decode_log_data(log).ok()
+        })
         .collect();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].sweep, outbe_oracle::call_sweep::CALL_SWEEP);

@@ -11,6 +11,7 @@ use outbe_primitives::{
     sweep_budget::SweepBudget,
 };
 
+use outbe_intex::precompile::IIntex;
 use outbe_intex::{ExpiryHours, IntexContract};
 
 use crate::runtime::emit_event;
@@ -67,14 +68,11 @@ impl ExpiryHandler<u64> for IntexExpiry<'_, '_> {
             .promis_load_minor
             .checked_mul(U256::from(forfeited.units))
             .ok_or_else(|| PrecompileError::Revert("forfeited promis load overflow".into()))?;
-        emit_event(
-            self.storage,
-            crate::precompile::IIntexFactory::SeriesExpired {
-                seriesId: series_id.into(),
-                forfeitedUnits: forfeited.units,
-                returnedPromisMinor: returned,
-            },
-        )?;
+        IntexContract::new(self.storage.clone()).emit(IIntex::IntexSeriesExpired {
+            seriesId: series_id.into(),
+            forfeitedUnits: forfeited.units,
+            returnedPromisMinor: returned,
+        })?;
         if !returned.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
                 .add_to_total_unallocated(returned)?;

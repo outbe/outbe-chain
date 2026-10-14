@@ -9,7 +9,7 @@ use outbe_intex::{
     SeriesId,
 };
 use outbe_primitives::{
-    addresses::INTEX_FACTORY_ADDRESS,
+    addresses::INTEX_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -132,9 +132,11 @@ fn partial_intex_expiry_returns_only_five_unpaid_units_and_never_paid_or_convert
     sweep(&mut p, due + DAY).unwrap();
     ledger(&mut p, id, true);
     let events = p
-        .get_events(INTEX_FACTORY_ADDRESS)
+        .get_events(INTEX_ADDRESS)
         .iter()
-        .filter_map(|e| crate::precompile::IIntexFactory::SeriesExpired::decode_log_data(e).ok())
+        .filter_map(|e| {
+            outbe_intex::precompile::IIntex::IntexSeriesExpired::decode_log_data(e).ok()
+        })
         .collect::<Vec<_>>();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].forfeitedUnits, 5);
@@ -163,10 +165,10 @@ fn every_intex_expiry_write_failure_preserves_credit_debt_and_retries_exactly_on
             sweep(&mut p, due + DAY).unwrap();
             ledger(&mut p, id, true);
             let closed = p
-                .get_events(INTEX_FACTORY_ADDRESS)
+                .get_events(INTEX_ADDRESS)
                 .iter()
                 .filter_map(|e| {
-                    crate::precompile::IIntexFactory::SeriesExpired::decode_log_data(e).ok()
+                    outbe_intex::precompile::IIntex::IntexSeriesExpired::decode_log_data(e).ok()
                 })
                 .count();
             assert_eq!(closed, 1);

@@ -478,7 +478,7 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
                 scope: &scope,
                 parent: &parent,
             },
-            &INod::nodDataCall {
+            &INod::getNodCall {
                 nodId: item.nod_id.to_u256(),
             }
             .abi_encode(),
@@ -487,7 +487,7 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
         )
         .unwrap();
         assert!(
-            INod::nodDataCall::abi_decode_returns(&data)
+            INod::getNodCall::abi_decode_returns(&data)
                 .unwrap()
                 .isSettled
         );
@@ -546,7 +546,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
                     notice,
                 },
             );
-            let call = INod::nodDataCall {
+            let call = INod::getNodCall {
                 nodId: item.nod_id.to_u256(),
             };
             let bytes = dispatch(
@@ -560,7 +560,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
                 U256::ZERO,
             )
             .unwrap();
-            let data = INod::nodDataCall::abi_decode_returns(&bytes).unwrap();
+            let data = INod::getNodCall::abi_decode_returns(&bytes).unwrap();
             assert_eq!(data.effectiveState, state);
             assert_eq!(data.isQualified, qualified);
             assert_eq!(data.isSettled, paid);

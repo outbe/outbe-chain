@@ -141,7 +141,7 @@ impl Rpc {
             let last_observation = match self.materialized_nod_for_owner(port, owner) {
                 Ok(Some((nod_id, body))) => {
                     if body.owner != owner || body.nodId != U256::from_be_slice(&nod_id) {
-                        return Err(eyre!("owner enumeration and nodData disagree"));
+                        return Err(eyre!("owner enumeration and getNod disagree"));
                     }
                     return Ok(());
                 }
@@ -313,7 +313,7 @@ impl Rpc {
         eth::read_call_result(
             &self.url(port),
             addresses::NOD_ADDR,
-            &INod::nodDataCall {
+            &INod::getNodCall {
                 nodId: U256::from_be_slice(nod_id),
             },
         )

@@ -612,8 +612,8 @@ fn repay(world: &mut World) {
         };
         assert_receipt_event(
             &receipt,
-            CREDIS_ADDRESS,
-            &ICredis::SettlementApplied {
+            CREDIS_FACTORY_ADDRESS,
+            &ICredisFactory::SettlementApplied {
                 credisId: f.credis_id,
                 interestPaidMinor: interest,
                 principalPaidMinor: principal,
@@ -624,8 +624,8 @@ fn repay(world: &mut World) {
         if payment_index == 2 {
             assert_receipt_event(
                 &receipt,
-                CREDIS_ADDRESS,
-                &ICredis::CredisSettled {
+                CREDIS_FACTORY_ADDRESS,
+                &ICredisFactory::CredisSettled {
                     credisId: f.credis_id,
                 },
             );

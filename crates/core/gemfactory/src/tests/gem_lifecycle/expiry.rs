@@ -3,7 +3,7 @@
 
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_primitives::addresses::{GEM_ADDRESS, PROMIS_LIMIT_ADDRESS};
+use outbe_primitives::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::sweep_budget::{SWEEP_BODY_WRITES_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
@@ -67,7 +67,7 @@ fn forfeit_deletes_the_gem_body_and_returns_promis_load() {
     assert_eq!(deleted.gemId, gem_id);
     let expired = events
         .iter()
-        .find_map(|log| IGem::GemExpired::decode_log_data(log).ok())
+        .find_map(|log| IGem::GemForfeited::decode_log_data(log).ok())
         .unwrap();
     assert_eq!(
         (expired.gemId, expired.owner, expired.promisLoadMinor),
@@ -268,9 +268,9 @@ fn forfeit_fails_once() -> (
 fn a_bucket_whose_member_fails_to_burn_is_deferred_and_burned_later() {
     let (provider, _) = forfeit_fails_once();
     let deferred = provider
-        .get_events(GEM_ADDRESS)
+        .get_events(GEM_FACTORY_ADDRESS)
         .iter()
-        .filter(|log| IGem::ExpiryDeferred::decode_log_data(log).is_ok())
+        .filter(|log| crate::precompile::IGemFactory::ExpiryDeferred::decode_log_data(log).is_ok())
         .count();
     assert_eq!(deferred, 1);
 }
@@ -331,9 +331,9 @@ fn a_broken_bucket_index_defers_the_bucket_and_keeps_blocks_going() {
         bucket
     });
     let deferred: Vec<_> = provider
-        .get_events(GEM_ADDRESS)
+        .get_events(GEM_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| IGem::ExpiryDeferred::decode_log_data(log).ok())
+        .filter_map(|log| crate::precompile::IGemFactory::ExpiryDeferred::decode_log_data(log).ok())
         .map(|event| event.bucketKey)
         .collect();
     assert_eq!(deferred, vec![bucket]);

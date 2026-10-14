@@ -233,9 +233,6 @@ pub fn dispatch(
                         snapshotId: snapshot_id,
                     })
                 }),
-                isSeriesQualified(c) => metadata::<IIntexFactory::isSeriesQualifiedCall>(|| {
-                    runtime::is_series_qualified(&storage, SeriesId::from(c.seriesId))
-                }),
                 maxUtcDayVwapSince(c) => view(c, |c| {
                     outbe_oracle::api::max_utc_day_vwap_since(
                         storage.clone(),
@@ -286,9 +283,6 @@ pub fn dispatch(
                         )
                     },
                 ),
-                seriesUnitCounts(c) => view(c, |c| {
-                    runtime::series_unit_counts(&storage, c.seriesId.into())
-                }),
                 ownerBalances(c) => view(c, |c| {
                     runtime::owner_balances(&storage, c.seriesId.into(), c.owner)
                 }),

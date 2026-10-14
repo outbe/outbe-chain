@@ -125,7 +125,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
 
     emit_event(
         storage,
-        crate::precompile::IIntexFactory::SeriesIssued {
+        crate::precompile::IIntexFactory::IntexSeriesIssued {
             seriesId: params.series_id.into(),
             issuedUnits: params.issued_units,
             entryPriceMinor: params.entry_price_minor,
@@ -270,22 +270,6 @@ pub fn to_wire_price(price_minor: U256) -> Result<u64> {
         .map_err(|_| PrecompileError::Revert("price exceeds the wire type".into()))
 }
 
-/// Disjoint unit counts of a series, for a reader that must not redo the arithmetic.
-pub(crate) fn series_unit_counts(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-) -> Result<crate::precompile::IIntexFactory::UnitCounts> {
-    let counts = outbe_intex::api::unit_counts(storage, series_id)?;
-    Ok(crate::precompile::IIntexFactory::UnitCounts {
-        issuedUnits: counts.issued,
-        activeUnits: counts.active,
-        settledUnits: counts.settled,
-        exercisedUnits: counts.exercised,
-        gemFactoryUnits: counts.gem_factory,
-        forfeitedUnits: counts.forfeited,
-    })
-}
-
 /// One owner's units of `series_id`: its current balances, Issued ones only until the
 /// series expires, and its own exercise and Gem Factory history.
 pub(crate) fn owner_balances(
@@ -388,7 +372,7 @@ pub fn settle_intex(
 
         emit_event(
             storage,
-            crate::precompile::IIntexFactory::Settled {
+            crate::precompile::IIntexFactory::IntexSettled {
                 seriesId: series_id.into(),
                 owner,
                 units,
@@ -441,6 +425,6 @@ pub use mining::{mine_promis, MiningProof};
 #[cfg(test)]
 #[cfg(test)]
 pub(crate) use pricing::settlement_units;
-pub use pricing::{is_qualified, is_series_qualified, quote_settlement};
+pub use pricing::{is_qualified, quote_settlement};
 pub use proceeds::distribute;
 pub(crate) use proceeds::sweep_proceeds_deadlines;

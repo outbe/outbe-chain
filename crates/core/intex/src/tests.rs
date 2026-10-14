@@ -188,12 +188,12 @@ fn precompile_series_data_round_trip() {
     with_registry(|s| {
         api::create_series(&s, sample_params(7)).unwrap();
 
-        let call = IIntex::seriesDataCall {
+        let call = IIntex::getIntexSeriesCall {
             seriesId: sid(7).into(),
         }
         .abi_encode();
         let out = dispatch(s.clone(), &call, Address::ZERO, U256::ZERO).unwrap();
-        let data = IIntex::seriesDataCall::abi_decode_returns(&out).unwrap();
+        let data = IIntex::getIntexSeriesCall::abi_decode_returns(&out).unwrap();
 
         assert_eq!(data.seriesId, alloy_primitives::FixedBytes::from(sid(7)));
         assert_eq!(data.promisLoadMinor, U256::from(PROMIS_LOAD_MINOR));
@@ -212,7 +212,7 @@ fn precompile_series_data_round_trip() {
 #[test]
 fn precompile_series_data_missing_reverts() {
     with_registry(|s| {
-        let call = IIntex::seriesDataCall {
+        let call = IIntex::getIntexSeriesCall {
             seriesId: sid(99).into(),
         }
         .abi_encode();
@@ -460,7 +460,7 @@ fn the_view_carries_the_whole_split() {
 }
 
 fn dispatch_series_data(storage: &StorageHandle, series_id: SeriesId) -> IIntex::SeriesData {
-    let call = IIntex::seriesDataCall {
+    let call = IIntex::getIntexSeriesCall {
         seriesId: series_id.into(),
     };
     let out = dispatch(
@@ -470,7 +470,7 @@ fn dispatch_series_data(storage: &StorageHandle, series_id: SeriesId) -> IIntex:
         U256::ZERO,
     )
     .unwrap();
-    IIntex::seriesDataCall::abi_decode_returns(&out).unwrap()
+    IIntex::getIntexSeriesCall::abi_decode_returns(&out).unwrap()
 }
 
 #[test]

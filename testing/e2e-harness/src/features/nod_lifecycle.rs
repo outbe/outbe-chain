@@ -140,7 +140,7 @@ impl Lifecycle for NodLifecycle {
             let data = eth::read_call_result(
                 &url,
                 addresses::NOD_ADDR,
-                &eth::INod::nodDataCall { nodId: id },
+                &eth::INod::getNodCall { nodId: id },
             )?;
             if data.owner != target.owner || data.isSettled || data.effectiveState != expected_state {
                 return Err(format!(
@@ -391,7 +391,7 @@ fn assert_burned(world: &World, owner: Address, id: U256, timeout: Duration) {
         eth::read_call(
             &world.rpc.url(world.validators.primary_port()),
             addresses::NOD_ADDR,
-            &eth::INod::nodDataCall { nodId: id }
+            &eth::INod::getNodCall { nodId: id }
         )
         .is_none(),
         "a burned Nod must not be readable"
@@ -403,7 +403,7 @@ fn nod_balance(world: &World, owner: Address) -> U256 {
 }
 
 fn read_nod(world: &World, id: U256) -> eth::INod::NodData {
-    read_nod_view(world, &eth::INod::nodDataCall { nodId: id }, "Nod data")
+    read_nod_view(world, &eth::INod::getNodCall { nodId: id }, "Nod data")
 }
 
 /// Nod views read through the compressed-body projection. The projection trails the block

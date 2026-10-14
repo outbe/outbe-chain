@@ -58,9 +58,11 @@ fn a_called_series_reports_its_settlement_deadline() {
     });
 
     let events: Vec<_> = storage
-        .get_events(INTEX_FACTORY_ADDRESS)
+        .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
         .iter()
-        .filter_map(|log| IIntexFactory::SeriesCalled::decode_log_data(log).ok())
+        .filter_map(|log| {
+            outbe_intex::precompile::IIntex::IntexSeriesCalled::decode_log_data(log).ok()
+        })
         .collect();
     assert_eq!(events.len(), 1);
     assert_eq!(u64::from(events[0].calledAt), scan_ts);
@@ -356,11 +358,11 @@ fn a_currency_rate_never_qualifies_another_currency_series() {
 
         // Both carry the same floor. Only the euro's own day price decides for it.
         let eur_id = eur_series(8).series_id;
-        assert!(runtime::is_series_qualified(&s, sid(7)).unwrap());
-        assert!(!runtime::is_series_qualified(&s, eur_id).unwrap());
+        assert!(is_series_qualified(&s, sid(7)).unwrap());
+        assert!(!is_series_qualified(&s, eur_id).unwrap());
 
         write_day_vwap(&oracle, EUR_ISO, EUR_PAIR_ID, MATURE_TS, above);
-        assert!(runtime::is_series_qualified(&s, eur_id).unwrap());
+        assert!(is_series_qualified(&s, eur_id).unwrap());
     });
 }
 
@@ -663,9 +665,11 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
     assert_eq!(deferred[0].worldwideDay, day.value());
     assert_eq!(deferred[0].retryAt, IntexContract::bucket_end(later));
     let expired = provider
-        .get_events(INTEX_FACTORY_ADDRESS)
+        .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
         .iter()
-        .filter_map(|log| IIntexFactory::SeriesExpired::decode_log_data(log).ok())
+        .filter_map(|log| {
+            outbe_intex::precompile::IIntex::IntexSeriesExpired::decode_log_data(log).ok()
+        })
         .count();
     assert_eq!(expired, 1);
 }
@@ -853,7 +857,7 @@ fn a_spike_the_day_price_does_not_share_qualifies_nothing() {
             U256::from(EXPECTED_FLOOR),
         );
 
-        assert!(!runtime::is_series_qualified(&s, sid(7)).unwrap());
+        assert!(!is_series_qualified(&s, sid(7)).unwrap());
     });
 }
 
@@ -874,7 +878,7 @@ fn the_issue_day_qualifies_only_a_series_issued_at_midnight() {
                 U256::from(EXPECTED_FLOOR + 1),
             );
             assert_eq!(
-                runtime::is_series_qualified(&s, sid(7)).unwrap(),
+                is_series_qualified(&s, sid(7)).unwrap(),
                 expected,
                 "issued at {issued_at}"
             );

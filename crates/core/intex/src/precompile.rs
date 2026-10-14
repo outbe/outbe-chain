@@ -37,7 +37,7 @@ pub fn dispatch(
         let registry = IntexContract::new(storage.clone());
         use IIntex::IIntexCalls::*;
         match call {
-            seriesData(c) => view(c, |c| {
+            getIntexSeries(c) => view(c, |c| {
                 let series_id = SeriesId::from(c.seriesId);
                 let record = registry.load_series(series_id)?;
                 let settled = registry.settled_units.read(&series_id)?;
@@ -51,6 +51,21 @@ pub fn dispatch(
                     data.state = 1;
                 }
                 Ok(data)
+            }),
+            isQualified(c) => view(c, |c| {
+                let record = registry.load_series(SeriesId::from(c.seriesId))?;
+                crate::api::is_qualified(&storage, &record)
+            }),
+            seriesUnitCounts(c) => view(c, |c| {
+                let counts = crate::api::unit_counts(&storage, SeriesId::from(c.seriesId))?;
+                Ok(IIntex::UnitCounts {
+                    issuedUnits: counts.issued,
+                    activeUnits: counts.active,
+                    settledUnits: counts.settled,
+                    exercisedUnits: counts.exercised,
+                    gemFactoryUnits: counts.gem_factory,
+                    forfeitedUnits: counts.forfeited,
+                })
             }),
             seriesExists(c) => view(c, |c| registry.series_exists(SeriesId::from(c.seriesId))),
             totalSeries(_) => metadata::<IIntex::totalSeriesCall>(|| registry.read_total_series()),

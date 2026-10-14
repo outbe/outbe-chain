@@ -694,9 +694,11 @@ fn lifetime_interest_paid_sums_interest_only_and_principal_deltas() {
     });
 
     let applied: Vec<_> = provider
-        .get_events(outbe_primitives::addresses::CREDIS_ADDRESS)
+        .get_events(outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| ICredis::SettlementApplied::decode_log_data(log).ok())
+        .filter_map(|log| {
+            crate::precompile::ICredisFactory::SettlementApplied::decode_log_data(log).ok()
+        })
         .collect();
     assert_eq!(applied.len(), 2);
     assert_eq!(applied[0].credisId, id);
@@ -737,9 +739,11 @@ fn rejected_settlement_leaves_lifetime_interest_and_emits_nothing() {
     });
 
     let applied: Vec<_> = provider
-        .get_events(outbe_primitives::addresses::CREDIS_ADDRESS)
+        .get_events(outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| ICredis::SettlementApplied::decode_log_data(log).ok())
+        .filter_map(|log| {
+            crate::precompile::ICredisFactory::SettlementApplied::decode_log_data(log).ok()
+        })
         .collect();
     assert_eq!(applied.len(), 1);
     assert_eq!(applied[0].interestPaidMinor, U256::from(8_000_000u64));

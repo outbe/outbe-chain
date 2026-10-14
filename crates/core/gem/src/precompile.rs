@@ -55,7 +55,7 @@ pub fn dispatch(
             | ownerOf(_)
             | tokenURI(_)
             | tokenOfOwnerByIndex(_)
-            | getGemStatus(_)
+            | getGem(_)
             | isQualified(_)) => dispatch_entity(&storage, readers, call),
         }
     })
@@ -112,7 +112,7 @@ fn dispatch_entity(
                 .map(|item| item.gem_id.to_u256())
                 .ok_or_else(|| GemError::IndexOutOfBounds.into())
         }),
-        getGemStatus(c) => view(c, |c| {
+        getGem(c) => view(c, |c| {
             let gem =
                 api::get_view(storage, scope, parent, c.gemId)?.ok_or(GemError::GemNotFound)?;
             let mut data = to_abi_data(&gem, storage.timestamp()?.to::<u64>());

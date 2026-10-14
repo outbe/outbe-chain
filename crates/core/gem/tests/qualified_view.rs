@@ -100,12 +100,12 @@ fn status(s: &StorageHandle<'_>, world: &World, id: U256) -> IGem::GemData {
     let result = dispatch(
         s.clone(),
         world.readers(),
-        &IGem::getGemStatusCall { gemId: id }.abi_encode(),
+        &IGem::getGemCall { gemId: id }.abi_encode(),
         Address::ZERO,
         U256::ZERO,
     )
     .unwrap();
-    IGem::getGemStatusCall::abi_decode_returns(&result).unwrap()
+    IGem::getGemCall::abi_decode_returns(&result).unwrap()
 }
 
 fn agrees(s: &StorageHandle<'_>, world: &World, id: U256, expected: u8) {

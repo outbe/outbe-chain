@@ -94,7 +94,7 @@ fn config_dev_profile_drives_issuance_and_qualification() {
             ISSUED_AT as u64 + 2 * DAY,
             r.floor_price_minor + U256::from(1),
         );
-        assert!(runtime::is_series_qualified(&s, sid(7)).unwrap());
+        assert!(is_series_qualified(&s, sid(7)).unwrap());
     });
 }
 

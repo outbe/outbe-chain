@@ -63,6 +63,7 @@ pub fn dispatch(
                         interestPaidMinor: interest,
                     })
                 }),
+                quoteSettlement(c) => view(c, |c| runtime::quote_settlement(&storage, c.credisId)),
                 supportsInterface(c) => view(c, |c| {
                     let id: [u8; 4] = c.interfaceId.0;
                     Ok(id == ERC165_INTERFACE_ID)
