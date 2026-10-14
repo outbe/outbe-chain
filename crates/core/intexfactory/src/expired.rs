@@ -76,7 +76,7 @@ impl ExpiryHandler<u64> for IntexExpiry<'_, '_> {
             }
             .into());
         }
-        let forfeited = outbe_intex::api::forfeitable_units(self.storage, series_id)?;
+        let forfeited = outbe_intex::api::forfeitable_units(self.storage, &series)?;
         let returned = forfeited
             .promis_load_minor
             .checked_mul(U256::from(forfeited.units))

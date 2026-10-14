@@ -518,12 +518,14 @@ fn a_series_that_was_never_called_does_not_expire() {
         let ctx =
             BlockRuntimeContext::new(BlockContext::empty_for_tests(1, due, CHAIN_ID), s.clone());
         assert_eq!(crate::expired::sweep_expired(&ctx).unwrap(), 0);
+        let key = IntexContract::scoped(REFERENCE_ISO, WorldwideDay::new(7).value());
         assert_eq!(
-            outbe_intex::api::read_series(&s, sid(7))
-                .unwrap()
-                .lifecycle_state()
+            IntexContract::new(s.clone())
+                .call_group_count
+                .read(&key)
                 .unwrap(),
-            outbe_intex::IntexState::Issued
+            1,
+            "the uncalled series stays in its group"
         );
     });
 }

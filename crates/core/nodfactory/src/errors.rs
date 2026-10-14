@@ -132,6 +132,7 @@ pub enum NodFactoryError {
 
     #[error("Nod materialization bypassed its bounded dispatcher")]
     MaterializationBypassedDispatcher,
+
     #[error("Nod bucket {bucket_key} has an empty member slot during forfeit")]
     EmptyBucketMemberSlotDuringForfeit { bucket_key: B256 },
 

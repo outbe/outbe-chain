@@ -261,7 +261,9 @@ fn a_called_credis_quotes_its_payoff_until_the_deadline_and_nothing_after() {
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());
         let id = open(&storage, 1);
-        rules::mark_called(&mut CredisContract::new(storage.clone()), id, CREATED_AT).unwrap();
+        assert!(
+            rules::mark_called(&mut CredisContract::new(storage.clone()), id, CREATED_AT).unwrap()
+        );
         let quote = |storage: &StorageHandle<'_>| {
             let data = ICredisFactory::quoteSettlementCall { credisId: id }.abi_encode();
             let out =

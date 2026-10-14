@@ -4,44 +4,18 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_common::settlement::{obligation_units, PaymentCurrency, RoundingError};
+use outbe_common::settlement::{obligation_units, PaymentCurrency};
 use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 pub use outbe_common::settlement::Obligation;
 
+pub use crate::errors::SettlementError;
+
 use crate::api::IVaultRouter;
 use crate::sol_ext::{IReferenceCurrency, IERC20};
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum SettlementError {
-    #[error("settlement asset {asset} has no registered vault")]
-    AssetNotRegistered { asset: Address },
-    #[error("settlement asset currency {iso_code} does not match the right")]
-    CurrencyMismatch { iso_code: u16 },
-    #[error("settlement asset decimals undecodable")]
-    AssetDecimals,
-    #[error("settlement asset isoCode undecodable")]
-    AssetIsoCode,
-    #[error("{0}")]
-    Rounding(RoundingError),
-    #[error("oracle nominal unavailable")]
-    OracleUnavailable,
-    #[error("VWAP snapshot {authorized:#x} does not match the required {required:#x}")]
-    SnapshotMismatch { authorized: U256, required: U256 },
-    #[error("settlement token call failed")]
-    TokenOperationFailed,
-    #[error("settlement token moved an unexpected amount")]
-    AmountMismatch,
-}
-
-impl From<SettlementError> for PrecompileError {
-    fn from(error: SettlementError) -> Self {
-        PrecompileError::Revert(error.to_string())
-    }
-}
 
 /// The two currencies of a right: what its values are stated in, and what gates it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,7 +139,7 @@ fn accept_payment_asset(
             .into(),
     )?;
     let vaults = IVaultRouter::assetVaultsCountCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("assetVaultsCount undecodable".into()))?;
+        .map_err(|_| SettlementError::AssetVaultsCount)?;
     if vaults.is_zero() {
         return Err(SettlementError::AssetNotRegistered { asset }.into());
     }

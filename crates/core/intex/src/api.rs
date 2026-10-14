@@ -81,9 +81,9 @@ pub struct Forfeited {
 
 /// The units a series would forfeit now and their load: everything issued and not yet
 /// settled, exercised or sent to the Gem Factory. Writes nothing.
-pub fn forfeitable_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<Forfeited> {
+pub fn forfeitable_units(storage: &StorageHandle<'_>, record: &SeriesRecord) -> Result<Forfeited> {
     let registry = IntexContract::new(storage.clone());
-    let record = registry.load_series(series_id)?;
+    let series_id = record.series_id;
     let settled = registry.settled_units.read(&series_id)?;
     let exercised = registry.exercised_units.read(&series_id)?;
     let gem_factory = registry.gem_factory_units.read(&series_id)?;

@@ -115,7 +115,7 @@ pub enum NodError {
     #[error("Nod bucket {bucket_id} settled count underflow")]
     BucketSettledCountUnderflow { bucket_id: WwdEntityId },
 
-    #[error("Nod is already settled")]
+    #[error("nod is already settled")]
     AlreadySettled,
 
     #[error("Nod settled count overflow")]
