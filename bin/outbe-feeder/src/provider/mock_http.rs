@@ -9,11 +9,12 @@
 //! numeric price/volume fields.
 
 use async_trait::async_trait;
-use eyre::{eyre, Context, Result};
+use eyre::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::config::ApiProviderConfig;
+use crate::errors::MockHttpError;
 use crate::fixed::JsonDecimal;
 
 use super::{CandlePrice, Provider, TickerPrice, VolumeInput};
@@ -99,10 +100,7 @@ impl Provider for MockHttpProvider {
             .with_context(|| format!("failed to fetch mock_http tickers from {url}"))?;
 
         if !response.status().is_success() {
-            return Err(eyre!(
-                "mock_http ticker endpoint returned status {}",
-                response.status()
-            ));
+            return Err(MockHttpError::TickerStatus(response.status()).into());
         }
 
         let body: TickerResponse = response
@@ -119,21 +117,24 @@ impl Provider for MockHttpProvider {
                 continue;
             };
             if prices.contains_key(key) {
-                return Err(eyre!("duplicate mock_http ticker for {symbol}"));
+                return Err(MockHttpError::DuplicateTicker(symbol).into());
             }
 
             let ticker = TickerPrice::from_parsed(
                 ticker.price.fixed(),
                 VolumeInput::Present(ticker.volume.fixed()),
             )
-            .map_err(|error| eyre!("invalid mock_http ticker for {symbol}: {error}"))?;
+            .map_err(|source| MockHttpError::InvalidTicker {
+                symbol: symbol.clone(),
+                source,
+            })?;
             tracing::info!(symbol = %symbol, price = %ticker.price.raw(), volume = %ticker.volume.raw(), "mock_http ticker received");
             prices.insert(key.clone(), ticker);
         }
 
         for (symbol, key) in &requested {
             if !prices.contains_key(key) {
-                return Err(eyre!("missing mock_http ticker for {symbol}"));
+                return Err(MockHttpError::MissingTicker(symbol.clone()).into());
             }
         }
 
@@ -155,10 +156,7 @@ impl Provider for MockHttpProvider {
             .with_context(|| format!("failed to fetch mock_http candles from {url}"))?;
 
         if !response.status().is_success() {
-            return Err(eyre!(
-                "mock_http candle endpoint returned status {}",
-                response.status()
-            ));
+            return Err(MockHttpError::CandleStatus(response.status()).into());
         }
 
         let body: CandleResponse = response
@@ -180,7 +178,10 @@ impl Provider for MockHttpProvider {
                 VolumeInput::Present(candle.volume.fixed()),
                 candle.timestamp.max(0) as u64,
             )
-            .map_err(|error| eyre!("invalid mock_http candle for {symbol}: {error}"))?;
+            .map_err(|source| MockHttpError::InvalidCandle {
+                symbol: symbol.clone(),
+                source,
+            })?;
 
             candles.entry(key.clone()).or_default().push(candle);
         }
@@ -215,7 +216,7 @@ fn ensure_complete_candle_response(
 ) -> Result<()> {
     for (symbol, key) in requested {
         if !candles.contains_key(key) {
-            return Err(eyre!("missing mock_http candles for {symbol}"));
+            return Err(MockHttpError::MissingCandles(symbol.clone()).into());
         }
     }
     Ok(())

@@ -4,7 +4,6 @@ use std::path::Path;
 
 use alloy_consensus::Sealable;
 use alloy_primitives::{keccak256, B256};
-use eyre::ensure;
 use outbe_primitives::OutbeHeader;
 use reth_ethereum::{
     provider::db::{
@@ -26,6 +25,7 @@ use reth_primitives_traits::StorageEntry;
 
 use super::super::native::RethReadOnlyView;
 use super::Incomplete;
+use crate::errors::SnapshotError;
 
 pub(crate) struct VerifiedState {
     pub db: DatabaseEnv,
@@ -57,12 +57,12 @@ pub(crate) fn verify_current_evm(
             progress.execution.number
         ))
     })?;
-    ensure!(
-        header.inner.number == progress.execution.number
-            && view.canonical_hash(progress.execution.number)? == Some(header.hash_slow())
-            && hex::encode(header.hash_slow()) == progress.execution.hash,
-        "execution header does not match the observed canonical identity"
-    );
+    if header.inner.number != progress.execution.number
+        || view.canonical_hash(progress.execution.number)? != Some(header.hash_slow())
+        || hex::encode(header.hash_slow()) != progress.execution.hash
+    {
+        return Err(SnapshotError::ExecutionHeaderIdentityMismatch.into());
+    }
     outbe_snapshot::layout::validate_layout(&[], &view.protected, &[scratch_parent.to_path_buf()])?;
     let directory = tempfile::Builder::new()
         .prefix("outbe-evm-audit-")
@@ -73,12 +73,14 @@ pub(crate) fn verify_current_evm(
     copy_authoritative_state_to_scratch(&source, &scratch, progress.storage_version)?;
     verify_bytecodes(&source, &scratch)?;
     let state_root = recompute_state_root(&scratch)?;
-    ensure!(
-        state_root == header.inner.state_root,
-        "current EVM state root differs at E={}: computed {state_root}, header {}",
-        header.inner.number,
-        header.inner.state_root
-    );
+    if state_root != header.inner.state_root {
+        return Err(SnapshotError::CurrentStateRootMismatch {
+            number: header.inner.number,
+            computed: state_root,
+            header: header.inner.state_root,
+        }
+        .into());
+    }
     scratch.commit()?;
     drop(source);
     Ok(VerifiedState {
@@ -146,7 +148,7 @@ fn copy_authoritative_state_to_scratch(
                 )?;
             }
         }
-        _ => eyre::bail!("unsupported state storage version {version}"),
+        _ => return Err(SnapshotError::UnsupportedStateStorageVersion { version }.into()),
     }
     Ok(())
 }
@@ -156,8 +158,11 @@ fn copy_authoritative_state_to_scratch(
 // error, the source stays untouched, and the caller still drops its disposable scratch.
 fn read_native_value<V: Value>(value: &RawValue<V>, table: &str) -> eyre::Result<V> {
     Ok(
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| value.value()))
-            .map_err(|_| eyre::eyre!("malformed native value in {table}"))??,
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| value.value())).map_err(
+            |_| SnapshotError::MalformedNativeValue {
+                table: table.to_owned(),
+            },
+        )??,
     )
 }
 
@@ -169,10 +174,12 @@ fn read_canonical_native_value<V: Value + Clone>(
     table: &str,
 ) -> eyre::Result<V> {
     let decoded = read_native_value(&value, table)?;
-    ensure!(
-        RawValue::new(decoded.clone()).raw_value() == value.raw_value(),
-        "malformed native value in {table}"
-    );
+    if RawValue::new(decoded.clone()).raw_value() != value.raw_value() {
+        return Err(SnapshotError::MalformedNativeValue {
+            table: table.to_owned(),
+        }
+        .into());
+    }
     Ok(decoded)
 }
 
@@ -181,23 +188,26 @@ fn copy_storage(
     address: B256,
     entry: StorageEntry,
 ) -> eyre::Result<()> {
-    ensure!(
-        scratch.get::<tables::HashedAccounts>(address)?.is_some(),
-        "orphan storage for account {address}"
-    );
-    ensure!(
-        !entry.value.is_zero(),
-        "noncanonical zero storage at {address}/{}",
-        entry.key
-    );
+    if scratch.get::<tables::HashedAccounts>(address)?.is_none() {
+        return Err(SnapshotError::OrphanStorage { address }.into());
+    }
+    if entry.value.is_zero() {
+        return Err(SnapshotError::NoncanonicalZeroStorage {
+            address,
+            key: entry.key,
+        }
+        .into());
+    }
     let existing = scratch
         .cursor_dup_read::<tables::HashedStorages>()?
         .seek_by_key_subkey(address, entry.key)?;
-    ensure!(
-        existing.is_none_or(|value| value.key != entry.key),
-        "duplicate storage at {address}/{}",
-        entry.key
-    );
+    if !existing.is_none_or(|value| value.key != entry.key) {
+        return Err(SnapshotError::DuplicateStorage {
+            address,
+            key: entry.key,
+        }
+        .into());
+    }
     scratch.put::<tables::HashedStorages>(address, entry)?;
     Ok(())
 }
@@ -210,10 +220,9 @@ fn verify_bytecodes(source: &impl DbTx, scratch: &impl DbTx) -> eyre::Result<()>
         let (hash, bytecode) = row?;
         let hash = hash.key()?;
         let bytecode = read_native_value(&bytecode, "Bytecodes")?;
-        ensure!(
-            keccak256(bytecode.original_bytes()) == hash,
-            "bytecode differs from its hash {hash}"
-        );
+        if keccak256(bytecode.original_bytes()) != hash {
+            return Err(SnapshotError::BytecodeHashMismatch { hash }.into());
+        }
     }
     for row in scratch
         .cursor_read::<tables::HashedAccounts>()?
@@ -221,12 +230,12 @@ fn verify_bytecodes(source: &impl DbTx, scratch: &impl DbTx) -> eyre::Result<()>
     {
         let (address, account) = row?;
         if let Some(hash) = account.bytecode_hash.filter(|hash| *hash != keccak256([])) {
-            ensure!(
-                source
-                    .get::<RawTable<tables::Bytecodes>>(RawKey::new(hash))?
-                    .is_some(),
-                "missing bytecode {hash} for account {address}"
-            );
+            if source
+                .get::<RawTable<tables::Bytecodes>>(RawKey::new(hash))?
+                .is_none()
+            {
+                return Err(SnapshotError::MissingBytecode { hash, address }.into());
+            }
         }
     }
     Ok(())

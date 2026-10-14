@@ -81,15 +81,7 @@ pub enum ManagerPhase {
     RuntimeDegraded,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum PhaseError {
-    #[error("validator sidecar is unavailable before readiness")]
-    SidecarUnavailable,
-    #[error("local Heartwood NodeId is unavailable")]
-    LocalNodeIdUnavailable,
-    #[error("local Heartwood NodeId does not match finalized ValidatorSet binding")]
-    BindingMismatch,
-}
+pub use crate::errors::{ManagerError, PhaseError};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ManagerStatus {
@@ -171,33 +163,6 @@ pub struct ManagerDependencies {
     pub endpoints: Arc<dyn EndpointResolver>,
     pub control: Arc<dyn HeartwoodControl>,
     pub repository_status: Arc<dyn RepositoryStatus>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum ManagerError {
-    #[error("finality source failed: {0}")]
-    Finality(String),
-    #[error("exact finalized provider failed: {0}")]
-    Provider(String),
-    #[error("finalized state is inconsistent: {0}")]
-    Snapshot(String),
-    #[error("endpoint discovery failed: {0}")]
-    Endpoint(String),
-    #[error("Heartwood control failed: {0}")]
-    Control(String),
-    #[error("sidecar status failed: {0}")]
-    Status(String),
-    #[error("manager stopped")]
-    Stopped,
-    #[error("{0} shutdown deadline exceeded")]
-    ShutdownDeadline(&'static str),
-    #[error("Radicle task failed: {0}")]
-    Task(String),
-    #[error("manager shutdown failed: {manager}; endpoint shutdown failed: {endpoint}")]
-    Shutdown {
-        manager: Box<ManagerError>,
-        endpoint: Box<ManagerError>,
-    },
 }
 
 pub trait FinalizedFeed: Send + Sync + 'static {

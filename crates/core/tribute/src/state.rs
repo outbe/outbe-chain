@@ -36,9 +36,7 @@ impl TributeContract<'_> {
                 return Ok(());
             }
             if self.total_supply.read()? != 0 {
-                return Err(outbe_primitives::error::PrecompileError::Fatal(
-                    "Tribute OCOMP profile requires empty live state".into(),
-                ));
+                return Err(TributeError::OcompProfileRequiresEmptyLiveState.into());
             }
             self.ocomp_profile_ready.write(true)
         })
@@ -216,11 +214,7 @@ impl TributeContract<'_> {
         if totals.tribute_nominal_total_minor
             != self.day_nominal_amount(totals.worldwide_day, false)?
         {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                    "day metadata write differs from encrypted amount".into(),
-                ),
-            );
+            return Err(TributeError::DayMetadataDiffersFromEncryptedAmount.into());
         }
         self.store_day_metadata(totals)
     }
@@ -236,11 +230,7 @@ impl TributeContract<'_> {
         if admission.sealed_tribute_nominal_total_minor
             != self.day_nominal_amount(admission.worldwide_day, true)?
         {
-            return Err(
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                    "sealed day metadata write differs from encrypted amount".into(),
-                ),
-            );
+            return Err(TributeError::SealedDayMetadataDiffersFromEncryptedAmount.into());
         }
         self.store_pre_admission_metadata(admission)
     }
@@ -261,16 +251,11 @@ impl TributeContract<'_> {
 
         let body_bytes = tribute
             .stored_body()
-            .map_err(|error| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(error.to_string())
-            })?
+            .map_err(crate::errors::body_read_corruption)?
             .payload()
             .len();
-        let body_bytes = u64::try_from(body_bytes).map_err(|_| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                "Tribute canonical body length exceeds u64".into(),
-            )
-        })?;
+        let body_bytes =
+            u64::try_from(body_bytes).map_err(|_| TributeError::CanonicalBodyLengthOverflow)?;
         let currency_key = reference_currency_refcount_key(day, tribute.reference_currency);
         let currency_refcount = self.day_reference_currency_refcount.read(&currency_key)?;
 
@@ -278,49 +263,29 @@ impl TributeContract<'_> {
             admission.canonical_body_bytes = admission
                 .canonical_body_bytes
                 .checked_add(body_bytes)
-                .ok_or_else(|| {
-                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                        "Tribute canonical body byte total overflow".into(),
-                    )
-                })?;
+                .ok_or(TributeError::CanonicalBodyByteTotalOverflow)?;
             if currency_refcount == 0 {
                 admission.distinct_reference_currency_count = admission
                     .distinct_reference_currency_count
                     .checked_add(1)
-                    .ok_or_else(|| {
-                        outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                            "Tribute distinct reference currency count overflow".into(),
-                        )
-                    })?;
+                    .ok_or(TributeError::DistinctReferenceCurrencyCountOverflow)?;
             }
-            currency_refcount.checked_add(1).ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                    "Tribute reference currency membership refcount overflow".into(),
-                )
-            })?
+            currency_refcount
+                .checked_add(1)
+                .ok_or(TributeError::ReferenceCurrencyRefcountOverflow)?
         } else {
             admission.canonical_body_bytes = admission
                 .canonical_body_bytes
                 .checked_sub(body_bytes)
-                .ok_or_else(|| {
-                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                        "Tribute canonical body byte total underflow".into(),
-                    )
-                })?;
-            let next_currency = currency_refcount.checked_sub(1).ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                    "Tribute reference currency membership refcount underflow".into(),
-                )
-            })?;
+                .ok_or(TributeError::CanonicalBodyByteTotalUnderflow)?;
+            let next_currency = currency_refcount
+                .checked_sub(1)
+                .ok_or(TributeError::ReferenceCurrencyRefcountUnderflow)?;
             if next_currency == 0 {
                 admission.distinct_reference_currency_count = admission
                     .distinct_reference_currency_count
                     .checked_sub(1)
-                    .ok_or_else(|| {
-                        outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                            "Tribute distinct reference currency count underflow".into(),
-                        )
-                    })?;
+                    .ok_or(TributeError::DistinctReferenceCurrencyCountUnderflow)?;
             }
             next_currency
         };
@@ -351,11 +316,7 @@ impl TributeContract<'_> {
         } else {
             totals.tribute_count.checked_sub(1)
         }
-        .ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                "Tribute day count overflow or underflow".into(),
-            )
-        })?;
+        .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
         let operation = match record.encrypted() {
             Some(tribute) => outbe_tee::tribute_day::TributeDayOperationV2::Adjust {
                 tribute: Box::new(tribute.clone()),
@@ -450,11 +411,10 @@ pub(crate) fn record_from_verified(body: &VerifiedBody) -> Result<TributeRecord>
     if let Some(encrypted) = body.payload().as_encrypted_tribute() {
         return Ok(crate::record::from_encrypted(encrypted.clone()));
     }
-    let payload = body.payload().as_tribute().ok_or_else(|| {
-        outbe_primitives::error::PrecompileError::BodyReadCorruption(
-            "compressed-entity read returned a non-Tribute payload".into(),
-        )
-    })?;
+    let payload = body
+        .payload()
+        .as_tribute()
+        .ok_or(TributeError::NonTributePayload)?;
     Ok(crate::record::from_legacy(
         crate::repository::from_canonical_body(payload.clone()),
     ))
@@ -465,11 +425,9 @@ pub(crate) fn tribute_from_verified(body: &VerifiedBody) -> Result<TributeData> 
 }
 
 fn calculation_view(record: &TributeRecord) -> Result<TributeData> {
-    record.calculation_view().map_err(|error| {
-        outbe_primitives::error::PrecompileError::Fatal(format!(
-            "Tribute private amount read failed: {error}"
-        ))
-    })
+    record
+        .calculation_view()
+        .map_err(TributeError::private_amount_read_failed)
 }
 
 pub(crate) fn validate_tribute_for_issue(tribute: &TributeData) -> Result<()> {
@@ -480,12 +438,13 @@ pub(crate) fn validate_tribute_for_issue(tribute: &TributeData) -> Result<()> {
         return Err(TributeError::SettlementAmountMustBePositive.into());
     }
     let expected = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day)
-        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
+        .map_err(TributeError::entity_id_derivation)?;
     if tribute.tribute_id != expected {
-        return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
-            "Tribute canonical identity mismatch: expected {expected}, found {}",
-            tribute.tribute_id
-        )));
+        return Err(TributeError::CanonicalIdentityMismatch {
+            expected,
+            found: tribute.tribute_id,
+        }
+        .into());
     }
     Ok(())
 }

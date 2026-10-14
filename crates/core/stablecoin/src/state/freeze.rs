@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, U256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
 use crate::abi::IStablecoin;
 use crate::errors::StablecoinStateError;
@@ -60,9 +60,9 @@ impl StablecoinContract<'_> {
         if consumed.is_zero() {
             return Ok(());
         }
-        let next_frozen = frozen.checked_sub(consumed).ok_or_else(|| {
-            PrecompileError::Fatal("stablecoin frozen-balance invariant is corrupted".into())
-        })?;
+        let next_frozen = frozen
+            .checked_sub(consumed)
+            .ok_or(StablecoinStateError::FrozenBalanceInvariantCorrupted)?;
         self.frozen.write(&account, next_frozen)?;
         self.emit(IStablecoin::Frozen {
             account,

@@ -24,13 +24,14 @@
 //! layer, which already depends on jsonrpsee and the reth node handle. Keeping
 //! the trait here lets `outbe-consensus` stay free of the RPC stack.
 
-use std::future::Future;
+use std::{fmt, future::Future};
 
 use commonware_codec::Read as _;
 use commonware_consensus::types::Height;
 
 use crate::block::ConsensusBlock;
 use crate::bls::MAX_COMMITTEE_MEMBERS;
+use crate::errors::FollowError;
 use crate::marshal_types::Finalization;
 
 /// Recover an exact direct certificate from the child's on-chain accounting
@@ -99,18 +100,22 @@ impl AncestorFinalityProof {
     }
 
     pub fn validate_envelope(&self, height: Height) -> eyre::Result<()> {
-        eyre::ensure!(self.ancestors.len() <= 64, "too many finality ancestors");
-        eyre::ensure!(
-            self.target().number() == height.get(),
-            "certified block reports height {}, expected {}",
-            self.target().number(),
-            height.get()
-        );
-        eyre::ensure!(
-            self.certified.finalization.proposal.payload == self.certified.block.digest(),
-            "finalization payload differs from block at height {}",
-            self.certified.block.number()
-        );
+        if self.ancestors.len() > 64 {
+            return Err(FollowError::TooManyFinalityAncestors.into());
+        }
+        if self.target().number() != height.get() {
+            return Err(FollowError::CertifiedBlockHeightMismatch {
+                actual: self.target().number(),
+                expected: height.get(),
+            }
+            .into());
+        }
+        if self.certified.finalization.proposal.payload != self.certified.block.digest() {
+            return Err(FollowError::FinalizationPayloadMismatch {
+                height: self.certified.block.number(),
+            }
+            .into());
+        }
         let mut previous = self.target();
         for child in self
             .ancestors
@@ -121,11 +126,11 @@ impl AncestorFinalityProof {
             if self.ancestors.is_empty() {
                 break;
             }
-            eyre::ensure!(
-                previous.number().checked_add(1) == Some(child.number())
-                    && child.parent_digest() == previous.digest(),
-                "invalid finality ancestor chain"
-            );
+            if previous.number().checked_add(1) != Some(child.number())
+                || child.parent_digest() != previous.digest()
+            {
+                return Err(FollowError::InvalidFinalityAncestorChain.into());
+            }
             previous = child;
         }
         Ok(())
@@ -144,6 +149,16 @@ pub enum PublicFinalizedBlockDecodeError {
     TrailingBlock,
     #[error("finalization committee decode bound must be non-zero")]
     ZeroCommitteeBound,
+}
+
+impl PublicFinalizedBlockDecodeError {
+    fn finalization(error: impl fmt::Display) -> Self {
+        Self::Finalization(error.to_string())
+    }
+
+    fn block(error: impl fmt::Display) -> Self {
+        Self::Block(error.to_string())
+    }
 }
 
 /// Canonically decode the two byte strings exposed by
@@ -174,7 +189,7 @@ pub fn decode_public_block(
 ) -> Result<ConsensusBlock, PublicFinalizedBlockDecodeError> {
     let mut block_reader = block_bytes;
     let block = ConsensusBlock::read_cfg(&mut block_reader, &())
-        .map_err(|error| PublicFinalizedBlockDecodeError::Block(error.to_string()))?;
+        .map_err(PublicFinalizedBlockDecodeError::block)?;
     if !block_reader.is_empty() {
         return Err(PublicFinalizedBlockDecodeError::TrailingBlock);
     }
@@ -193,7 +208,7 @@ pub fn decode_public_finalization(
     }
     let mut reader = finalization_bytes;
     let finalization = Finalization::read_cfg(&mut reader, &max_committee_members)
-        .map_err(|error| PublicFinalizedBlockDecodeError::Finalization(error.to_string()))?;
+        .map_err(PublicFinalizedBlockDecodeError::finalization)?;
     if !reader.is_empty() {
         return Err(PublicFinalizedBlockDecodeError::TrailingFinalization);
     }

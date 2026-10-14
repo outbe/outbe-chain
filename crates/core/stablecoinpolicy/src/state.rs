@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, U256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
 use crate::abi::IStablecoinPolicyRegistry;
 use crate::errors::PolicyRegistryError;
@@ -222,10 +222,11 @@ impl StablecoinPolicyRegistryContract<'_> {
 
     fn descriptor_type(&self, descriptor: &PolicyDescriptor) -> Result<PolicyType> {
         PolicyType::try_from(descriptor.policy_type).map_err(|_| {
-            PrecompileError::Fatal(format!(
-                "policy {} has unknown stored descriptor {}",
-                descriptor.policy_id, descriptor.policy_type
-            ))
+            PolicyRegistryError::UnknownStoredDescriptor {
+                policy_id: descriptor.policy_id,
+                policy_type: descriptor.policy_type,
+            }
+            .into()
         })
     }
 
@@ -242,9 +243,7 @@ impl StablecoinPolicyRegistryContract<'_> {
             return Ok(FIRST_MUTABLE_POLICY_ID);
         }
         if stored < FIRST_MUTABLE_POLICY_ID {
-            return Err(PrecompileError::Fatal(
-                "stablecoin policy next id is corrupt".into(),
-            ));
+            return Err(PolicyRegistryError::NextIdCorrupt.into());
         }
         Ok(stored)
     }
@@ -258,9 +257,7 @@ impl StablecoinPolicyRegistryContract<'_> {
     ) -> Result<U256> {
         let policy_id = self.next_id()?;
         if self.policies.exists(policy_id)? {
-            return Err(PrecompileError::Fatal(
-                "stablecoin policy next id collides with an existing descriptor".into(),
-            ));
+            return Err(PolicyRegistryError::NextIdCollision.into());
         }
         let next = policy_id
             .checked_add(U256::from(1u64))

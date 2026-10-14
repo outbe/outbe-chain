@@ -16,6 +16,7 @@ use crate::constants::{
     DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD, DEFAULT_SLASH_AMOUNT_PERCENT,
     DEFAULT_VOTER_FELONY_THRESHOLD, DEFAULT_VOTER_MISDEMEANOR_THRESHOLD,
 };
+use crate::errors::SlashIndicatorError;
 use crate::evidence::EvidenceCommittee;
 use crate::precompile::ISlashIndicator;
 use crate::schema::SlashIndicator;
@@ -103,10 +104,11 @@ impl SlashIndicator<'_> {
         let vs = ValidatorSet::new(self.storage.clone());
         let lifecycle = vs.validator_lifecycle(caller)?;
         if !lifecycle.is_active_status() {
-            return Err(PrecompileError::Revert(format!(
-                "submitter {caller} is not an ACTIVE validator (status: {})",
-                lifecycle.stored_status().unwrap_or_default()
-            )));
+            return Err(SlashIndicatorError::SubmitterNotActiveValidator {
+                caller,
+                status: lifecycle.stored_status().unwrap_or_default(),
+            }
+            .into());
         }
         Ok(())
     }
@@ -120,15 +122,14 @@ impl SlashIndicator<'_> {
     pub(crate) fn committee_set_for_epoch(&self, epoch: u64) -> Result<EvidenceCommittee> {
         let snapshot =
             read_committee_snapshot_for_epoch(self.storage.clone(), epoch)?.ok_or_else(|| {
-                PrecompileError::Revert(format!(
-                    "no committee snapshot for evidence epoch {epoch}; cannot verify the \
-                     committee-bound vote signature"
-                ))
+                PrecompileError::from(SlashIndicatorError::MissingCommitteeSnapshotForEpoch {
+                    epoch,
+                })
             })?;
         let mut keys = Vec::with_capacity(snapshot.committee.len());
         for entry in &snapshot.committee {
             let pk = bls12381::PublicKey::read(&mut entry.consensus_pubkey.as_slice()).map_err(
-                |_| PrecompileError::Revert("invalid committee pubkey in snapshot".into()),
+                |_| PrecompileError::from(SlashIndicatorError::InvalidCommitteePubkeyInSnapshot),
             )?;
             keys.push(pk);
         }
@@ -311,9 +312,7 @@ impl SlashIndicator<'_> {
 pub(crate) fn registered_validator(vs: &ValidatorSet<'_>, pubkey_hash: B256) -> Result<Address> {
     let validator = vs.lookup_by_pubkey_hash(pubkey_hash)?;
     if validator.is_zero() {
-        return Err(PrecompileError::Revert(
-            "signer is not a registered validator".into(),
-        ));
+        return Err(SlashIndicatorError::SignerNotRegisteredValidator.into());
     }
     Ok(validator)
 }

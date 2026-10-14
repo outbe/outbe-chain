@@ -245,7 +245,7 @@ async fn blocking<T: Send + 'static>(
 ) -> Result<T, ManagerError> {
     tokio::task::spawn_blocking(operation)
         .await
-        .map_err(|error| ManagerError::Control(error.to_string()))?
+        .map_err(ManagerError::control)?
 }
 
 fn encode_node_id(node_id: [u8; 32]) -> String {

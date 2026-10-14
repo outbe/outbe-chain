@@ -111,10 +111,10 @@ where
 /// actor use it to surface DKG boundary / dealer-log payloads.
 pub fn extract_header_artifact_from_block(
     block: &ConsensusBlock,
-) -> Result<Option<ConsensusHeaderArtifact>, String> {
+) -> Result<Option<ConsensusHeaderArtifact>, crate::errors::HeaderArtifactDecodeError> {
     let raw_block = block.clone().into_inner().into_block();
     decode_consensus_header_artifact(raw_block.header.inner.extra_data.as_ref())
-        .map_err(|error| error.to_string())
+        .map_err(crate::errors::HeaderArtifactDecodeError::from)
 }
 
 /// Canonical one-byte-per-participant signer bitmap from a certificate.

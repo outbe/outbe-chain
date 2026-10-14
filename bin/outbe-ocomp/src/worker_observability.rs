@@ -18,7 +18,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const HEALTH_STALE_AFTER: Duration = Duration::from_secs(30);
-static PROMETHEUS_HANDLE: OnceLock<Result<PrometheusHandle, String>> = OnceLock::new();
+static PROMETHEUS_HANDLE: OnceLock<Result<PrometheusHandle, WorkerObservabilityErrorV1>> =
+    OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -386,10 +387,9 @@ fn prometheus_handle() -> Result<PrometheusHandle, WorkerObservabilityErrorV1> {
         .get_or_init(|| {
             PrometheusBuilder::new()
                 .install_recorder()
-                .map_err(|error| error.to_string())
+                .map_err(WorkerObservabilityErrorV1::recorder)
         })
         .clone()
-        .map_err(WorkerObservabilityErrorV1::Recorder)
 }
 
 fn start_server(
@@ -408,7 +408,7 @@ fn start_server(
             {
                 Ok(runtime) => runtime,
                 Err(error) => {
-                    let _ = ready_tx.send(Err(error.to_string()));
+                    let _ = ready_tx.send(Err(WorkerObservabilityErrorV1::start(error)));
                     return;
                 }
             };
@@ -416,14 +416,14 @@ fn start_server(
                 let acceptor = match salvo::conn::TcpListener::new(address).try_bind().await {
                     Ok(acceptor) => acceptor,
                     Err(error) => {
-                        let _ = ready_tx.send(Err(error.to_string()));
+                        let _ = ready_tx.send(Err(WorkerObservabilityErrorV1::start(error)));
                         return;
                     }
                 };
                 let bound_address = match acceptor.local_addr() {
                     Ok(address) => address,
                     Err(error) => {
-                        let _ = ready_tx.send(Err(error.to_string()));
+                        let _ = ready_tx.send(Err(WorkerObservabilityErrorV1::start(error)));
                         return;
                     }
                 };
@@ -435,11 +435,10 @@ fn start_server(
                 server.serve(router).await;
             });
         })
-        .map_err(|error| WorkerObservabilityErrorV1::Start(error.to_string()))?;
+        .map_err(WorkerObservabilityErrorV1::start)?;
     let (address, handle) = ready_rx
         .recv_timeout(Duration::from_secs(10))
-        .map_err(|error| WorkerObservabilityErrorV1::Start(error.to_string()))?
-        .map_err(WorkerObservabilityErrorV1::Start)?;
+        .map_err(WorkerObservabilityErrorV1::start)??;
     Ok(ObservabilityServerParts {
         address,
         handle,
@@ -649,7 +648,7 @@ fn snapshot_exporter_snapshot(
     })
 }
 
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum WorkerObservabilityErrorV1 {
     #[error("worker observability address {0} must be a loopback endpoint")]
     InvalidAddress(SocketAddr),

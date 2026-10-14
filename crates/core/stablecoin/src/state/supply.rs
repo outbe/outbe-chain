@@ -101,9 +101,9 @@ impl StablecoinContract<'_> {
             .into());
         }
         let to_balance = self.balances.read(&to)?;
-        let next_to = to_balance.checked_add(amount).ok_or_else(|| {
-            PrecompileError::Fatal("stablecoin forced-transfer recipient overflow".into())
-        })?;
+        let next_to = to_balance
+            .checked_add(amount)
+            .ok_or(StablecoinStateError::ForcedTransferRecipientOverflow)?;
         let frozen = self.frozen.read(&from)?;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -171,9 +171,7 @@ impl StablecoinContract<'_> {
         let supply = self.total_supply.read()?;
         let supply_cap = self.supply_cap.read()?;
         if supply > supply_cap {
-            return Err(PrecompileError::Fatal(
-                "stablecoin total supply exceeds its stored cap".into(),
-            ));
+            return Err(StablecoinStateError::TotalSupplyExceedsCap.into());
         }
         let requested_supply = supply.checked_add(amount).ok_or_else(|| {
             PrecompileError::from(StablecoinStateError::SupplyCapExceeded {
@@ -191,7 +189,7 @@ impl StablecoinContract<'_> {
         let balance = self.balances.read(&to)?;
         let next_balance = balance
             .checked_add(amount)
-            .ok_or_else(|| PrecompileError::Fatal("stablecoin balance overflow".into()))?;
+            .ok_or(StablecoinStateError::BalanceOverflow)?;
 
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -219,9 +217,9 @@ impl StablecoinContract<'_> {
             .into());
         }
         let supply = self.total_supply.read()?;
-        let next_supply = supply.checked_sub(amount).ok_or_else(|| {
-            PrecompileError::Fatal("stablecoin supply/balance invariant is corrupted".into())
-        })?;
+        let next_supply = supply
+            .checked_sub(amount)
+            .ok_or(StablecoinStateError::SupplyBalanceInvariantCorrupted)?;
 
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {

@@ -127,7 +127,7 @@ fn validate_outbe_body_withdrawals(body: &OutbeBlockBody) -> Result<(), Consensu
             .as_ref()
             .map(|withdrawals| withdrawals.0.as_slice()),
     )
-    .map_err(|error| consensus_other(error.to_string()))
+    .map_err(crate::errors::consensus_display_error)
 }
 
 /// Reject a block whose RLP-encoded size exceeds the consensus P2P transport

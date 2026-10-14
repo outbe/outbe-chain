@@ -90,7 +90,10 @@ impl Walk {
                 match outcome {
                     WaitOutcome::Ready => self.step = Step::Ready,
                     WaitOutcome::Fatal(failure) => {
-                        return Poll::Ready(Err(eyre::eyre!("projection failed: {failure:?}")))
+                        return Poll::Ready(Err(crate::errors::ExecutorError::ProjectionFailed(
+                            failure,
+                        )
+                        .into()))
                     }
                     _ => {}
                 }

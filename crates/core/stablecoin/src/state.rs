@@ -3,7 +3,7 @@ use std::string::String;
 use alloy_primitives::{b256, keccak256, Address, B256, U256};
 use alloy_sol_types::SolValue;
 use outbe_primitives::addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::stablecoin::{
     encode_canonical_stablecoin_create, stablecoin_address, stablecoin_token_id,
 };
@@ -40,9 +40,7 @@ impl StablecoinContract<'_> {
                 if stored_schema == u64::from(STABLECOIN_V1_SCHEMA_VERSION) {
                     StablecoinStateError::AlreadyInitialized.into()
                 } else {
-                    PrecompileError::Fatal(format!(
-                    "stablecoin Factory initialization reached incompatible schema {stored_schema}"
-                ))
+                    StablecoinStateError::IncompatibleInitializationSchema { stored_schema }.into()
                 },
             );
         }
@@ -91,9 +89,9 @@ impl StablecoinContract<'_> {
     pub(crate) fn identity(&self) -> Result<TokenIdentity> {
         self.validated_schema_version()?;
         let name = String::from_utf8(self.name.read()?)
-            .map_err(|_| PrecompileError::Fatal("stablecoin name storage is not UTF-8".into()))?;
+            .map_err(|_| StablecoinStateError::InvalidNameUtf8)?;
         let symbol = String::from_utf8(self.symbol.read()?)
-            .map_err(|_| PrecompileError::Fatal("stablecoin symbol storage is not UTF-8".into()))?;
+            .map_err(|_| StablecoinStateError::InvalidSymbolUtf8)?;
         Ok(TokenIdentity {
             token_id: self.token_id.read()?,
             name,
@@ -108,13 +106,13 @@ impl StablecoinContract<'_> {
     pub fn name_value(&self) -> Result<String> {
         self.validated_schema_version()?;
         String::from_utf8(self.name.read()?)
-            .map_err(|_| PrecompileError::Fatal("stablecoin name storage is not UTF-8".into()))
+            .map_err(|_| StablecoinStateError::InvalidNameUtf8.into())
     }
 
     pub fn symbol_value(&self) -> Result<String> {
         self.validated_schema_version()?;
         String::from_utf8(self.symbol.read()?)
-            .map_err(|_| PrecompileError::Fatal("stablecoin symbol storage is not UTF-8".into()))
+            .map_err(|_| StablecoinStateError::InvalidSymbolUtf8.into())
     }
 
     pub fn decimals_value(&self) -> Result<u8> {
@@ -162,9 +160,7 @@ impl StablecoinContract<'_> {
         if role == ADMIN_ROLE {
             let admin = self.admin.read()?;
             if member != (account == admin) {
-                return Err(PrecompileError::Fatal(
-                    "stablecoin ADMIN slot/role membership mismatch".into(),
-                ));
+                return Err(StablecoinStateError::AdminRoleMismatch.into());
             }
         }
         Ok(member)

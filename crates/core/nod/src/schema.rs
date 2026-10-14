@@ -462,20 +462,23 @@ impl<'storage> NodContract<'storage> {
                     .iter()
                     .all(U256::is_zero);
             if !words_clear || next_nod_ordinal != 0 || last_progress_height != 0 {
-                return Err(outbe_primitives::error::PrecompileError::Fatal(
-                    "absent Nod OCOMP generation has residual state".into(),
-                ));
+                return Err(crate::errors::NodError::AbsentOcompGenerationHasResidualState.into());
             }
             return Ok(None);
         }
 
         if roots_and_binding.iter().any(B256::is_zero) || !(metadata >> 160usize).is_zero() {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
-                "installed Nod OCOMP generation is malformed: day {} generation {generation} \
-                 nod_root {nod_root} bucket_root {bucket_root} manifest {output_manifest_root} \
-                 job {job_id} bundle {protocol_bundle_hash} semantics {program_semantics_hash}",
-                worldwide_day.value()
-            )));
+            return Err(crate::errors::NodError::MalformedOcompGeneration {
+                day: worldwide_day.value(),
+                generation,
+                nod_root,
+                bucket_root,
+                output_manifest_root,
+                job_id,
+                protocol_bundle_hash,
+                program_semantics_hash,
+            }
+            .into());
         }
         let (issued_at, tribute_count, nod_count, bucket_count) =
             decode_generation_metadata(metadata, next_nod_ordinal, last_progress_height)?;
@@ -537,30 +540,20 @@ impl<'storage> NodContract<'storage> {
         let head = self.ocomp_materialization_head_sequence.read()?;
         let tail = self.ocomp_materialization_tail_sequence.read()?;
         if head == 0 || tail == 0 || head > tail {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "Nod materialization FIFO bounds are malformed".into(),
-            ));
+            return Err(crate::errors::NodError::MalformedMaterializationFifoBounds.into());
         }
         if head == tail {
             return Ok(None);
         }
         let worldwide_day = self.ocomp_materialization_queue_wwd.read(&head)?;
         if worldwide_day.value() == 0 {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "Nod materialization FIFO head entry is missing".into(),
-            ));
+            return Err(crate::errors::NodError::MissingMaterializationFifoHeadEntry.into());
         }
         let projection = self
             .ocomp_certified_generation(worldwide_day)?
-            .ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::Fatal(
-                    "Nod materialization FIFO head projection is missing".into(),
-                )
-            })?;
+            .ok_or(crate::errors::NodError::MissingMaterializationFifoHeadProjection)?;
         if projection.next_nod_ordinal >= projection.nod_count {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "Nod materialization FIFO head is already complete".into(),
-            ));
+            return Err(crate::errors::NodError::CompletedMaterializationFifoHead.into());
         }
         Ok(Some(NodMaterializationHeadV1 {
             queue_sequence: head,
@@ -590,9 +583,7 @@ fn decode_generation_metadata(
         && bucket_count <= nod_count
         && next_nod_ordinal <= nod_count;
     if issued_at == 0 || last_progress_height == 0 || !counts_consistent {
-        return Err(outbe_primitives::error::PrecompileError::Fatal(
-            "installed Nod OCOMP generation metadata is malformed".into(),
-        ));
+        return Err(crate::errors::NodError::MalformedOcompGenerationMetadata.into());
     }
     Ok((issued_at, tribute_count, nod_count, bucket_count))
 }

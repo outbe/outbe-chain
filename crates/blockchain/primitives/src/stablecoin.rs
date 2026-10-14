@@ -100,7 +100,7 @@ pub enum CurrencyCodeError {
 
 impl From<CurrencyCodeError> for PrecompileError {
     fn from(value: CurrencyCodeError) -> Self {
-        PrecompileError::Revert(value.to_string())
+        PrecompileError::revert(value.to_string())
     }
 }
 

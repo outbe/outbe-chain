@@ -11,10 +11,12 @@
 //! recheck) and attestation (verify-then-discard) guarantees. It has the same
 //! `tee_sidecar_unavailable` failure mode when no enclave is configured.
 
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_tee::protocol::{
     promis_op_canonical_hash, EnclaveRequest, EnclaveResponse, PromisOpRequest, PromisOpResult,
 };
+
+use crate::errors::PromisFatalError;
 
 /// Run one Promis op inside the enclave and validate the response.
 ///
@@ -39,28 +41,19 @@ pub(crate) fn apply_promis_op(req: PromisOpRequest) -> Result<PromisOpResult> {
         });
         (attestation_pub, response)
     })
-    .ok_or_else(|| PrecompileError::Fatal("tee_sidecar_unavailable".to_string()))?;
-    let response =
-        response.map_err(|e| PrecompileError::Fatal(format!("tee_sidecar_unavailable: {e}")))?;
+    .ok_or(PromisFatalError::SidecarUnavailable)?;
+    let response = response.map_err(PromisFatalError::sidecar_request_failed)?;
 
     let result = match response {
         EnclaveResponse::PromisOpApplied { result } => *result,
         EnclaveResponse::Error { message } => {
-            return Err(PrecompileError::Fatal(format!(
-                "enclave ApplyPromisOp error: {message}"
-            )))
+            return Err(PromisFatalError::EnclaveOpError(message).into())
         }
-        other => {
-            return Err(PrecompileError::Fatal(format!(
-                "unexpected enclave response: {other:?}"
-            )))
-        }
+        other => return Err(PromisFatalError::UnexpectedEnclaveResponse(Box::new(other)).into()),
     };
 
     if result.inputs_canonical_hash != expected_hash {
-        return Err(PrecompileError::Fatal(
-            "tee_enclave_nondeterminism".to_string(),
-        ));
+        return Err(PromisFatalError::EnclaveNondeterminism.into());
     }
     outbe_tee::verify_promis_op_attestation(
         &attestation_pub,
@@ -68,7 +61,7 @@ pub(crate) fn apply_promis_op(req: PromisOpRequest) -> Result<PromisOpResult> {
         &result,
         &result.attestation_tag,
     )
-    .map_err(|e| PrecompileError::Fatal(format!("tee_promis_attestation_invalid: {e}")))?;
+    .map_err(PromisFatalError::attestation_invalid)?;
     Ok(result)
 }
 

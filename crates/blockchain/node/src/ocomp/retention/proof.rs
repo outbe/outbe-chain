@@ -27,10 +27,7 @@ impl OcompRetentionCoordinator {
             || intent.wwd != candidate.wwd;
         if finalized_request_mismatch
             || intent.ce_sealed_root != candidate.ce_sealed_root
-            || intent
-                .input_lease_id()
-                .map_err(|error| RetentionError::Source(error.to_string()))?
-                != candidate.input_lease_id
+            || intent.input_lease_id().map_err(RetentionError::source)? != candidate.input_lease_id
         {
             return Err(RetentionError::Source(
                 "finalized-intent proof differs from the exact live pin".to_owned(),

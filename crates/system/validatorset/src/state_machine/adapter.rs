@@ -4,6 +4,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::consensus_p2p::{decode_versioned, encode_v1, P2P_ADDRESS_VERSION_V1};
 use outbe_primitives::error::{PrecompileError, Result};
 
+use crate::errors::ValidatorSetError;
 use crate::runtime::status::{ACTIVE, EXITING, INACTIVE, JAILED, PENDING, REGISTERED, UNBONDING};
 
 use super::state::{
@@ -369,9 +370,7 @@ impl ValidatorLifecycle {
         if status <= JAILED {
             Ok(())
         } else {
-            Err(PrecompileError::Fatal(format!(
-                "unknown validator status {status}"
-            )))
+            Err(ValidatorSetError::UnknownValidatorStatus { status }.into())
         }
     }
 
@@ -541,5 +540,9 @@ fn validate_hint(address: Address, stake: StakeProjection) -> Result<()> {
 }
 
 fn corrupt_state(address: Address, detail: impl std::fmt::Display) -> PrecompileError {
-    PrecompileError::Fatal(format!("corrupt validator state for {address}: {detail}"))
+    ValidatorSetError::CorruptValidatorState {
+        address,
+        detail: detail.to_string(),
+    }
+    .into()
 }

@@ -50,7 +50,7 @@ impl StablecoinContract<'_> {
         self.validate_allowance_update(owner, spender, value)?;
         let next_nonce = nonce
             .checked_add(U256::from(1))
-            .ok_or_else(|| PrecompileError::Fatal("stablecoin permit nonce overflow".into()))?;
+            .ok_or(StablecoinStateError::PermitNonceOverflow)?;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             self.nonces.write(&owner, next_nonce)?;
@@ -79,9 +79,10 @@ impl StablecoinContract<'_> {
         let next_to = if from == to {
             from_balance
         } else {
-            self.balances.read(&to)?.checked_add(value).ok_or_else(|| {
-                PrecompileError::Fatal("stablecoin recipient balance overflow".into())
-            })?
+            self.balances
+                .read(&to)?
+                .checked_add(value)
+                .ok_or(StablecoinStateError::RecipientBalanceOverflow)?
         };
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -132,9 +133,10 @@ impl StablecoinContract<'_> {
         let next_to = if from == to {
             from_balance
         } else {
-            self.balances.read(&to)?.checked_add(value).ok_or_else(|| {
-                PrecompileError::Fatal("stablecoin recipient balance overflow".into())
-            })?
+            self.balances
+                .read(&to)?
+                .checked_add(value)
+                .ok_or(StablecoinStateError::RecipientBalanceOverflow)?
         };
 
         let storage = self.storage.clone();

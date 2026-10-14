@@ -90,7 +90,7 @@ impl<'frame> CertifiedLysisActivation<'frame> {
         owner: &'static str,
     ) -> Result<()> {
         if self.cursor != expected {
-            return Err(PrecompileError::Fatal(format!(
+            return Err(PrecompileError::fatal(format!(
                 "certified Lysis activation {owner} cursor is out of order"
             )));
         }

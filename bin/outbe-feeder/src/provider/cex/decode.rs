@@ -4,7 +4,7 @@
 use std::io::Read as _;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use eyre::{eyre, Result, WrapErr};
+use eyre::{Result, WrapErr};
 use flate2::read::GzDecoder;
 use prost::Message as ProstMessage;
 use serde_json::{json, Value};
@@ -13,6 +13,7 @@ use tokio::time::Instant;
 use super::{
     ExchangeKind, PairRoute, SharedCache, MAX_CANDLES_PER_PAIR, MAX_DECOMPRESSED_MESSAGE_BYTES,
 };
+use crate::errors::CexError;
 use crate::fixed::FixedValue;
 use crate::provider::{checked_candle, checked_ticker, VolumeInput};
 
@@ -186,16 +187,16 @@ fn parse_kraken(
         let price = body["c"]
             .as_array()
             .and_then(|values| values.first())
-            .ok_or_else(|| eyre!("kraken ticker has no close"))?;
+            .ok_or(CexError::KrakenMissingClose)?;
         let volume = body["v"]
             .as_array()
             .and_then(|values| values.get(1))
-            .ok_or_else(|| eyre!("kraken ticker has no 24h volume"))?;
+            .ok_or(CexError::KrakenMissingVolume)?;
         insert_ticker(cache, route, decimal_value(price)?, decimal_value(volume)?);
     } else if channel.starts_with("ohlc-") {
         let values = message[1]
             .as_array()
-            .ok_or_else(|| eyre!("kraken candle is not an array"))?;
+            .ok_or(CexError::KrakenCandleNotArray)?;
         insert_candle(
             cache,
             route,
@@ -320,17 +321,14 @@ fn parse_mexc(payload: &[u8], routes: &[PairRoute], cache: &SharedCache) -> Resu
         Some(mexc_push_data::Body::MiniTicker(ticker)) => insert_ticker(
             cache,
             route,
-            FixedValue::parse(&ticker.price)
-                .ok_or_else(|| eyre!("invalid MEXC mini-ticker price"))?,
-            FixedValue::parse(&ticker.quantity)
-                .ok_or_else(|| eyre!("invalid MEXC mini-ticker quantity"))?,
+            FixedValue::parse(&ticker.price).ok_or(CexError::InvalidMexcTickerPrice)?,
+            FixedValue::parse(&ticker.quantity).ok_or(CexError::InvalidMexcTickerQuantity)?,
         ),
         Some(mexc_push_data::Body::SpotKline(candle)) => insert_candle(
             cache,
             route,
-            FixedValue::parse(&candle.closing_price)
-                .ok_or_else(|| eyre!("invalid MEXC candle close"))?,
-            FixedValue::parse(&candle.volume).ok_or_else(|| eyre!("invalid MEXC candle volume"))?,
+            FixedValue::parse(&candle.closing_price).ok_or(CexError::InvalidMexcCandleClose)?,
+            FixedValue::parse(&candle.volume).ok_or(CexError::InvalidMexcCandleVolume)?,
             u64::try_from(candle.window_start).unwrap_or(0),
         ),
         None => {}
@@ -521,7 +519,7 @@ fn decimal_field(value: &Value, key: &str) -> Result<FixedValue> {
     decimal_value(
         value
             .get(key)
-            .ok_or_else(|| eyre!("missing decimal field `{key}`"))?,
+            .ok_or_else(|| CexError::MissingDecimalField(key.to_owned()))?,
     )
 }
 
@@ -529,7 +527,7 @@ fn decimal_map_field(value: &serde_json::Map<String, Value>, key: &str) -> Resul
     decimal_value(
         value
             .get(key)
-            .ok_or_else(|| eyre!("missing decimal field `{key}`"))?,
+            .ok_or_else(|| CexError::MissingDecimalField(key.to_owned()))?,
     )
 }
 
@@ -537,7 +535,7 @@ fn decimal_index(values: &[Value], index: usize) -> Result<FixedValue> {
     decimal_value(
         values
             .get(index)
-            .ok_or_else(|| eyre!("missing decimal index {index}"))?,
+            .ok_or(CexError::MissingDecimalIndex(index))?,
     )
 }
 
@@ -546,7 +544,7 @@ fn decimal_value(value: &Value) -> Result<FixedValue> {
         .as_str()
         .map(str::to_owned)
         .unwrap_or_else(|| value.to_string());
-    FixedValue::parse(&lexeme).ok_or_else(|| eyre!("invalid fixed-point decimal `{lexeme}`"))
+    FixedValue::parse(&lexeme).ok_or_else(|| CexError::InvalidFixedPointDecimal(lexeme).into())
 }
 
 fn integer_field(value: &Value, key: &str) -> Option<u64> {
@@ -587,7 +585,7 @@ pub(super) fn decompress_gzip(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut output = Vec::new();
     decoder.read_to_end(&mut output)?;
     if output.len() > MAX_DECOMPRESSED_MESSAGE_BYTES {
-        return Err(eyre!("decompressed websocket message exceeds size limit"));
+        return Err(CexError::DecompressedMessageTooLarge.into());
     }
     Ok(output)
 }

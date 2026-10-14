@@ -1,4 +1,5 @@
 //! Restore a follower committee only from accepted local finalized history.
+use crate::errors::FollowerStackError;
 use alloy_consensus::BlockHeader as _;
 use alloy_primitives::B256;
 use commonware_consensus::{
@@ -7,7 +8,7 @@ use commonware_consensus::{
 };
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_storage::archive::Identifier;
-use eyre::{ensure, eyre, Result};
+use eyre::Result;
 use outbe_consensus::{
     block::ConsensusBlock,
     digest::Digest,
@@ -59,11 +60,9 @@ where
             .certificates
             .get(Identifier::Index(self.floor))
             .await
-            .map_err(|error| {
-                eyre!(
-                    "failed to read local floor certificate {}: {error}",
-                    self.floor
-                )
+            .map_err(|error| FollowerStackError::ReadLocalFloorCertificate {
+                floor: self.floor,
+                error: format!("{error}"),
             })?
         else {
             return Ok(None);
@@ -72,16 +71,17 @@ where
             .blocks
             .get(Identifier::Index(self.floor))
             .await
-            .map_err(|error| eyre!("failed to read local floor block {}: {error}", self.floor))?
+            .map_err(|error| FollowerStackError::ReadLocalFloorBlock {
+                floor: self.floor,
+                error: format!("{error}"),
+            })?
         else {
             return Ok(None);
         };
         self.validate_canonical(&block, self.floor)?;
-        ensure!(
-            certificate.proposal.payload == block.digest(),
-            "local finalized floor {} certificate disagrees with canonical execution state",
-            self.floor
-        );
+        if certificate.proposal.payload != block.digest() {
+            return Err(FollowerStackError::LocalFloorCertificateDisagrees(self.floor).into());
+        }
         Ok(Some(certificate))
     }
 
@@ -95,8 +95,9 @@ where
                 self.blocks
                     .get(Identifier::Index(height))
                     .await
-                    .map_err(|error| {
-                        eyre!("failed to inspect local follower block {height}: {error}")
+                    .map_err(|error| FollowerStackError::InspectLocalFollowerBlock {
+                        height,
+                        error: format!("{error}"),
                     })?
             else {
                 continue;
@@ -104,7 +105,10 @@ where
             let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
                 block.header().extra_data().as_ref(),
             )
-            .map_err(|error| eyre!("invalid local boundary candidate {height}: {error:?}"))?;
+            .map_err(|error| FollowerStackError::InvalidLocalBoundaryCandidate {
+                height,
+                error: format!("{error:?}"),
+            })?;
             let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
                 artifacts.consensus_header_artifact
             else {
@@ -124,11 +128,10 @@ where
 
     fn validate_canonical(&self, block: &ConsensusBlock, height: u64) -> Result<()> {
         let canonical = (self.canonical_hash)(height)?
-            .ok_or_else(|| eyre!("missing canonical local block at height {height}"))?;
-        ensure!(
-            block.number() == height && block.block_hash() == canonical,
-            "local finalized block {height} disagrees with canonical execution state"
-        );
+            .ok_or(FollowerStackError::MissingCanonicalLocalBlock(height))?;
+        if block.number() != height || block.block_hash() != canonical {
+            return Err(FollowerStackError::LocalFinalizedBlockDisagrees(height).into());
+        }
         Ok(())
     }
 
@@ -144,13 +147,16 @@ where
             .certificates
             .get(Identifier::Index(height))
             .await
-            .map_err(|error| eyre!("failed to read local boundary certificate {height}: {error}"))?
+            .map_err(|error| FollowerStackError::ReadLocalBoundaryCertificate {
+                height,
+                error: format!("{error}"),
+            })?
         {
-            ensure!(
-                certificate.proposal.payload == block.digest()
-                    && certificate.proposal.round.epoch() == epoch,
-                "local boundary certificate conflicts with canonical block {height}"
-            );
+            if certificate.proposal.payload != block.digest()
+                || certificate.proposal.round.epoch() != epoch
+            {
+                return Err(FollowerStackError::LocalBoundaryCertificateConflict(height).into());
+            }
             chain.verify_finalization(epoch, &certificate)?;
         }
         let epocher = FollowerEpocher::from_anchor(
@@ -159,13 +165,18 @@ where
             epoch,
             Height::new(height),
         );
-        ensure!(
-            epocher
-                .containing(Height::new(self.floor))
-                .is_some_and(|value| value.epoch() == epoch),
-            "local committee boundary {height} cannot contain floor {}",
-            self.floor
-        );
+        if !epocher
+            .containing(Height::new(self.floor))
+            .is_some_and(|value| value.epoch() == epoch)
+        {
+            return Err(
+                FollowerStackError::LocalCommitteeBoundaryCannotContainFloor {
+                    height,
+                    floor: self.floor,
+                }
+                .into(),
+            );
+        }
         Ok(RestoredCommittee { chain, epocher })
     }
 }

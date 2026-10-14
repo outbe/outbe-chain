@@ -24,7 +24,7 @@ pub(super) fn read_preamble(
         (InitializationMode::Production, EnclaveRequest::GetInitializationChallenge) => {
             let response = initialization
                 .challenge_response(keys)
-                .map_err(TransportError::Handshake)?;
+                .map_err(transport_handshake)?;
             write_frame(stream, &encode_response(&response)?)?;
             return Ok(None);
         }
@@ -37,31 +37,30 @@ pub(super) fn read_preamble(
         ) => Some(
             initialization
                 .prepare(&manifest, &node_signature, keys)
-                .map_err(TransportError::Handshake)?,
+                .map_err(transport_handshake)?,
         ),
         (InitializationMode::Production, EnclaveRequest::OpenSession) => {
             initialization
                 .expected_node_host()
-                .map_err(TransportError::Handshake)?;
+                .map_err(transport_handshake)?;
             None
         }
         (InitializationMode::Production, EnclaveRequest::OpenRemoteSessionV1 { ticket_id }) => {
             remote_session = Some(
                 initialization
                     .take_remote_session(ticket_id)
-                    .map_err(TransportError::Handshake)?,
+                    .map_err(transport_handshake)?,
             );
             None
         }
         (InitializationMode::Development, _) => {
-            return Err(TransportError::Handshake(
-                "development transport expected GetQuote before handshake".to_string(),
+            return Err(transport_handshake(
+                "development transport expected GetQuote before handshake",
             ));
         }
         (InitializationMode::Production, _) => {
-            return Err(TransportError::Handshake(
-                "production transport expected initialization discovery, Initialize, OpenSession, or OpenRemoteSessionV1"
-                    .to_string(),
+            return Err(transport_handshake(
+                "production transport expected initialization discovery, Initialize, OpenSession, or OpenRemoteSessionV1",
             ));
         }
     };
@@ -87,19 +86,17 @@ pub(super) fn negotiate(
         remote: remote_session,
     } = preamble;
     // 2. Noise-IK responder handshake.
-    let params = NOISE_PARAMS
-        .parse()
-        .map_err(|e| TransportError::Noise(format!("{e:?}")))?;
+    let params = NOISE_PARAMS.parse().map_err(transport_noise_debug)?;
     let mut handshake = snow::Builder::new(params)
         .local_private_key(keys.noise_private())
         .build_responder()
-        .map_err(|e| TransportError::Handshake(e.to_string()))?;
+        .map_err(transport_handshake)?;
 
     let mut buf = [0u8; 1024];
     let msg1 = read_frame(stream)?;
     handshake
         .read_message(&msg1, &mut buf)
-        .map_err(|e| TransportError::Handshake(e.to_string()))?;
+        .map_err(transport_handshake)?;
 
     authenticate_initiator(&handshake, context, &pending, remote_session)?;
 
@@ -107,24 +104,24 @@ pub(super) fn negotiate(
     if let Some(pending) = pending {
         initialization
             .commit(pending, keys)
-            .map_err(TransportError::Handshake)?;
+            .map_err(transport_handshake)?;
     }
 
     let n = handshake
         .write_message(&[], &mut buf)
-        .map_err(|e| TransportError::Handshake(e.to_string()))?;
+        .map_err(transport_handshake)?;
     write_frame(stream, &buf[..n])?;
 
     let mut noise = handshake
         .into_transport_mode()
-        .map_err(|e| TransportError::Handshake(e.to_string()))?;
+        .map_err(transport_handshake)?;
 
     // Initialization success is disclosed only inside the newly authenticated
     // channel. OpenSession and the dev path wait for the first explicit command.
     if initialized_this_connection {
         let response = initialization
             .initialized_response()
-            .map_err(TransportError::Handshake)?;
+            .map_err(transport_handshake)?;
         write_encrypted_response(stream, &mut noise, &response)?;
     }
 
@@ -148,14 +145,14 @@ fn authenticate_initiator(
                 .map(PendingInitialization::node_host_noise_x25519)
                 .map(Ok)
                 .unwrap_or_else(|| initialization.expected_node_host())
-                .map_err(TransportError::Handshake)?,
+                .map_err(transport_handshake)?,
         };
         let remote = handshake.get_remote_static().ok_or_else(|| {
-            TransportError::Handshake("Noise IK message 1 omitted initiator static key".to_string())
+            transport_handshake("Noise IK message 1 omitted initiator static key")
         })?;
         if remote != expected {
-            return Err(TransportError::Handshake(
-                "Noise IK initiator is not the authorized NodeHost".to_string(),
+            return Err(transport_handshake(
+                "Noise IK initiator is not the authorized NodeHost",
             ));
         }
     }

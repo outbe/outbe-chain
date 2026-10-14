@@ -1,5 +1,5 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_validatorset::contract::ValidatorSet;
 use tracing::warn;
@@ -234,9 +234,7 @@ impl<'storage> Vote<'storage> {
             }
         };
         if !valid_pair {
-            return Err(PrecompileError::Fatal(format!(
-                "proposal {proposal_id} has inconsistent bond amount and settlement"
-            )));
+            return Err(VoteError::InconsistentBondState { proposal_id }.into());
         }
         Ok(ProposalBond { amount, settlement })
     }

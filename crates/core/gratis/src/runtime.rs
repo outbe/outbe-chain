@@ -2,7 +2,7 @@
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::GRATIS_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_tee::protocol::{
     FidelityOpOutcome, FidelityOpSection, GratisOp, GratisOpRequest, GratisOpResult,
@@ -10,15 +10,14 @@ use outbe_tee::protocol::{
 };
 
 use crate::enclave_client::apply_gratis_op;
+use crate::errors::{GratisError, GratisFatalError};
 use crate::precompile::IGratis;
 use crate::schema::Gratis;
 
 /// A co-located fidelity section was sent, so the enclave must return its
 /// outcome. A missing outcome is an enclave/transport fault.
 fn require_fidelity_outcome(outcome: Option<FidelityOpOutcome>) -> Result<FidelityOpOutcome> {
-    outcome.ok_or_else(|| {
-        PrecompileError::Fatal("enclave dropped the fidelity section outcome".to_string())
-    })
+    outcome.ok_or_else(|| GratisFatalError::MissingFidelityOutcome.into())
 }
 
 /// The chain id the enclave binds a modify-auth to, as a `B256` (host and client
@@ -55,9 +54,11 @@ fn base_request(op: GratisOp, chain_id: B256, account: Address, amount: U256) ->
 fn check_op_nonce(gratis: &Gratis<'_>, account: Address, provided: u64) -> Result<()> {
     let current = crate::state::account(gratis, account).op_nonce()?;
     if provided != current {
-        return Err(PrecompileError::Revert(format!(
-            "invalid op nonce: expected {current}, got {provided}"
-        )));
+        return Err(GratisError::InvalidOpNonce {
+            expected: current,
+            provided,
+        }
+        .into());
     }
     Ok(())
 }
@@ -66,7 +67,7 @@ fn check_op_nonce(gratis: &Gratis<'_>, account: Address, provided: u64) -> Resul
 fn ensure_applied(result: &GratisOpResult) -> Result<()> {
     match &result.status {
         GratisOpStatus::Applied => Ok(()),
-        GratisOpStatus::Rejected { reason } => Err(PrecompileError::Revert(reason.clone())),
+        GratisOpStatus::Rejected { reason } => Err(GratisError::Rejected(reason.clone()).into()),
     }
 }
 
@@ -109,7 +110,7 @@ fn apply_owner_movement(
             account,
             amount: result.event_amount,
         }),
-        _ => return Err(PrecompileError::Fatal("invalid owner movement".into())),
+        _ => return Err(GratisFatalError::InvalidOwnerMovement.into()),
     };
     storage.emit_event(GRATIS_ADDRESS, event)?;
     Ok(result.fidelity)
@@ -207,14 +208,12 @@ pub(crate) fn pledge_with_fidelity(
         req.fidelity = Some(fidelity);
         let result = apply_collateral_op(&storage, req)?;
         if next_nonce != Some(result.next_op_nonce) {
-            return Err(PrecompileError::Fatal(
-                "enclave returned a wrong op nonce".into(),
-            ));
+            return Err(GratisFatalError::WrongOpNonce.into());
         }
         crate::state::account(&gratis, caller).set_op_nonce(result.next_op_nonce)?;
         let pledged = crate::state::pledged_total_supply(&gratis)?
             .checked_add(amount)
-            .ok_or_else(|| PrecompileError::Revert("pledged supply overflow".into()))?;
+            .ok_or(GratisError::PledgedSupplyOverflow)?;
         crate::state::set_pledged_total_supply(&gratis, pledged)?;
         require_fidelity_outcome(result.fidelity)
     })
@@ -240,7 +239,7 @@ fn apply_collateral_op(
         || result.new_pledged.is_empty()
         || result.new_balance.is_empty() == moves_balance
     {
-        return Err(PrecompileError::Fatal("collateral result mismatch".into()));
+        return Err(GratisFatalError::CollateralResultMismatch.into());
     }
     write_account_blobs(&gratis, account, &result)?;
     Ok(result)
@@ -266,7 +265,7 @@ pub(crate) fn release_pledged(
             &gratis,
             crate::state::pledged_total_supply(&gratis)?
                 .checked_sub(amount)
-                .ok_or_else(|| PrecompileError::Fatal("pledged supply underflow".into()))?,
+                .ok_or(GratisFatalError::PledgedSupplyUnderflow)?,
         )
     })
 }
@@ -290,7 +289,7 @@ pub(crate) fn burn_pledged(
             &gratis,
             crate::state::pledged_total_supply(&gratis)?
                 .checked_sub(amount)
-                .ok_or_else(|| PrecompileError::Fatal("pledged supply underflow".into()))?,
+                .ok_or(GratisFatalError::PledgedSupplyUnderflow)?,
         )?;
         storage.emit_event(
             GRATIS_ADDRESS,
@@ -306,7 +305,7 @@ pub(crate) fn mint_encrypted_nod(
     fidelity: FidelityOpSection,
 ) -> Result<FidelityOpOutcome> {
     if nod.terms.chain_id != storage.chain_id()? {
-        return Err(PrecompileError::Revert("NOD chain mismatch".into()));
+        return Err(GratisError::NodChainMismatch.into());
     }
     let gratis = Gratis::new(storage.clone());
     check_op_nonce(&gratis, nod.terms.owner, auth.op_nonce)?;

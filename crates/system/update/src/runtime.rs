@@ -1,7 +1,7 @@
 use alloy_primitives::U256;
 use outbe_ocompregistry::{poc_schema_limits, OcompRegistry};
 use outbe_primitives::block::BlockRuntimeContext;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_teeregistry::TeeRegistry;
 use serde_json::Value;
 
@@ -13,7 +13,6 @@ use crate::handlers::UpgradeHandlerRegistry;
 use crate::payload::decode_schedule_update_json;
 use crate::precompile::IUpdate;
 use crate::schema::{ScheduledUpdateStatus, Update};
-use crate::version::format_protocol_version;
 use crate::ProtocolVersion;
 
 struct ScheduledUpdateRequest {
@@ -171,22 +170,18 @@ impl Update<'_> {
 
         let ceiling = max_activatable_version(self.storage.chain_id()?);
         if scheduled.version > ceiling {
-            return Err(PrecompileError::Fatal(format!(
-                "cannot activate protocol version {}: binary supports at most {}",
-                format_protocol_version(scheduled.version),
-                format_protocol_version(ceiling),
-            )));
+            return Err(UpdateError::CannotActivateVersionAboveCeiling {
+                version: scheduled.version,
+                ceiling,
+            }
+            .into());
         }
 
         ctx.with_checkpoint(|| {
             for handler in registry.lookup(scheduled.version) {
-                handler.handle(ctx, &scheduled).map_err(|err| match err {
-                    PrecompileError::Fatal(message) => PrecompileError::Fatal(message),
-                    other => PrecompileError::Fatal(format!(
-                        "upgrade handler '{}' failed: {other}",
-                        handler.label()
-                    )),
-                })?;
+                handler
+                    .handle(ctx, &scheduled)
+                    .map_err(|err| UpdateError::wrap_upgrade_handler_error(err, handler.label()))?;
             }
 
             self.reconcile_staged_tee_policy(ctx, &scheduled)?;
@@ -214,22 +209,24 @@ impl Update<'_> {
         if staged_proposal_id == activating.proposal_id {
             return tee_registry
                 .promote_staged_successor_policy_v1(staged_proposal_id, ctx.block.block_number)
-                .map_err(|err| fatal_tee_policy_activation(err, staged_proposal_id));
+                .map_err(|err| {
+                    UpdateError::wrap_tee_policy_activation_error(err, staged_proposal_id)
+                });
         }
 
-        let staged_update = self
-            .read_scheduled_update(staged_proposal_id)?
-            .ok_or_else(|| {
-                PrecompileError::Fatal(format!(
-                    "staged TEE policy references missing Update proposal {staged_proposal_id}"
-                ))
-            })?;
+        let staged_update = self.read_scheduled_update(staged_proposal_id)?.ok_or(
+            UpdateError::StagedTeePolicyMissingProposal {
+                proposal_id: staged_proposal_id,
+            },
+        )?;
         if staged_update.status != ScheduledUpdateStatus::Scheduled
             || staged_update.version <= activating.version
         {
             tee_registry
                 .discard_staged_successor_policy_v1(staged_proposal_id)
-                .map_err(|err| fatal_tee_policy_activation(err, staged_proposal_id))?;
+                .map_err(|err| {
+                    UpdateError::wrap_tee_policy_activation_error(err, staged_proposal_id)
+                })?;
         }
         Ok(())
     }
@@ -250,13 +247,11 @@ impl Update<'_> {
                 &poc_schema_limits(),
             );
         }
-        let staged_update = self
-            .read_scheduled_update(staged_proposal_id)?
-            .ok_or_else(|| {
-                PrecompileError::Fatal(format!(
-                "staged OCOMP successor references missing Update proposal {staged_proposal_id}"
-            ))
-            })?;
+        let staged_update = self.read_scheduled_update(staged_proposal_id)?.ok_or(
+            UpdateError::StagedOcompSuccessorMissingProposal {
+                proposal_id: staged_proposal_id,
+            },
+        )?;
         if staged_update.status != ScheduledUpdateStatus::Scheduled
             || staged_update.version <= activating.version
         {
@@ -311,14 +306,5 @@ impl Update<'_> {
             }
         }
         Ok(false)
-    }
-}
-
-fn fatal_tee_policy_activation(err: PrecompileError, proposal_id: U256) -> PrecompileError {
-    match err {
-        PrecompileError::Fatal(message) => PrecompileError::Fatal(message),
-        other => PrecompileError::Fatal(format!(
-            "TEE policy activation for Update proposal {proposal_id} failed: {other}"
-        )),
     }
 }

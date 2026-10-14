@@ -38,12 +38,14 @@ where
         }
         let response = self.engine.fork_choice_updated(next.forkchoice, None).await;
         self.reset_fcu_heartbeat_deadline();
-        let response =
-            response.map_err(|error| eyre::eyre!("consensus parent forkchoice failed: {error}"))?;
+        let response = response.map_err(|error| {
+            crate::errors::ExecutorError::ParentForkchoiceFailed(format!("{error}"))
+        })?;
         if !response.is_valid() {
-            return Err(eyre::eyre!(
-                "consensus parent forkchoice must be VALID: {response:?}"
-            ));
+            return Err(
+                crate::errors::ExecutorError::ParentForkchoiceNotValid(format!("{response:?}"))
+                    .into(),
+            );
         }
         self.state = next;
         Ok(())

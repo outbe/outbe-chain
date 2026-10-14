@@ -102,11 +102,9 @@ impl LocalResultVoteAttesterV1 {
             result_digest,
         };
         let expected_signing_digest = subject.signing_digest()?;
-        let record = self.sign_once.record_or_replay(subject, |digest| {
-            self.signer
-                .sign_result_digest(digest)
-                .map_err(|error| error.to_string())
-        })?;
+        let record = self
+            .sign_once
+            .record_or_replay(subject, |digest| self.signer.sign_result_digest(digest))?;
         let vote = ResultVoteV1 {
             protocol_bundle_hash: result.protocol_bundle_hash,
             job_id: result.job_id,

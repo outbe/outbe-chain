@@ -10,8 +10,9 @@ pub(crate) fn settlement_units(
     rate: Option<(U256, U256)>,
     payment_decimals: u8,
 ) -> Result<U256> {
-    let overflow = || PrecompileError::Revert("settlement cost overflow".into());
-    let obligation = product.checked_mul(units).ok_or_else(overflow)?;
+    let obligation = product
+        .checked_mul(units)
+        .ok_or(IntexFactoryError::SettlementCostOverflow)?;
     // A priceless series stays free.
     let obligation = if obligation.is_zero() {
         obligation
@@ -19,7 +20,12 @@ pub(crate) fn settlement_units(
         obligation.max(SCALE_1E6_U256)
     };
     let (numerator, denominator) = match rate {
-        Some((to, from)) => (obligation.checked_mul(to).ok_or_else(overflow)?, from),
+        Some((to, from)) => (
+            obligation
+                .checked_mul(to)
+                .ok_or(IntexFactoryError::SettlementCostOverflow)?,
+            from,
+        ),
         None => (obligation, U256::ONE),
     };
     floor_to_asset_units(
@@ -82,7 +88,7 @@ pub(super) fn cost_in_asset(
     let product = series
         .entry_price_minor
         .checked_mul(series.promis_load_minor)
-        .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))?;
+        .ok_or(IntexFactoryError::CostAmountOverflow)?;
     let (rate, snapshot) = currency.conversion(|| -> Result<_> {
         let fx = settlement_fx_rates(
             storage.clone(),
@@ -117,7 +123,7 @@ pub(super) fn accept_payment_asset(
             .into(),
     )?;
     let vaults = IVaultRouter::assetVaultsCountCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("assetVaultsCount undecodable".into()))?;
+        .map_err(|_| IntexFactoryError::AssetVaultsCountUndecodable)?;
     if vaults.is_zero() {
         return Err(IntexFactoryError::SettlementAssetNotRegistered(asset).into());
     }
@@ -138,11 +144,11 @@ fn asset_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
         IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
     )?;
     IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
+        .map_err(|_| IntexFactoryError::IsoCodeUndecodable.into())
 }
 
 fn erc20_decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
     let ret = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
     IERC20::decimalsCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("ERC20 decimals undecodable".into()))
+        .map_err(|_| IntexFactoryError::Erc20DecimalsUndecodable.into())
 }

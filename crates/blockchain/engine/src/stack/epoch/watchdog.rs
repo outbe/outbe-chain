@@ -9,9 +9,9 @@ pub(in crate::stack) fn provider_matches_consensus_tip(
         return Ok(false);
     }
     let Some(provider_hash) = provider.block_hash(tip.height.get()).map_err(|error| {
-        eyre::eyre!(
-            "failed to read provider block hash at consensus tip height {}: {error}",
-            tip.height.get()
+        crate::errors::StackEpochError::read_provider_block_hash_at_consensus_tip(
+            tip.height.get(),
+            error,
         )
     })?
     else {

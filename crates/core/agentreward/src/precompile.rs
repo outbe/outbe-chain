@@ -105,8 +105,6 @@ impl AgentRewardContract<'_> {
         _issuance_currency: u16,
         _reference_currency: u16,
     ) -> Result<U256> {
-        Err(outbe_primitives::error::PrecompileError::Fatal(
-            "claimReward requires the compressed-entity readers route".into(),
-        ))
+        Err(crate::errors::AgentRewardFatalError::ClaimRewardRequiresReaders.into())
     }
 }

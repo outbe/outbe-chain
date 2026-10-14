@@ -1,8 +1,9 @@
 use alloy_primitives::U256;
 use outbe_primitives::addresses::UPDATE_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
+use crate::errors::UpdateError;
 use crate::schema::Update;
 use crate::ProtocolVersion;
 
@@ -18,9 +19,7 @@ pub fn get_active_version(storage: StorageHandle) -> Result<ProtocolVersion> {
 pub fn resolve_active_version(storage: StorageHandle) -> Result<ProtocolVersion> {
     let raw = storage.sload(UPDATE_ADDRESS, U256::ZERO)?;
     if raw > U256::from(u32::MAX) {
-        return Err(PrecompileError::Fatal(
-            "active Outbe protocol version does not fit the canonical u32 codec".into(),
-        ));
+        return Err(UpdateError::ActiveVersionDoesNotFitU32.into());
     }
     Ok(ProtocolVersion::from_raw(raw.to::<u32>()))
 }

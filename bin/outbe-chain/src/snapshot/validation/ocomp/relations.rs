@@ -131,10 +131,9 @@ fn audit_present_job_union(
     let mut counts = PresentArtifactCounts::default();
     let mut jobs = 0_u64;
     work.visit_prefix(b"u", &mut |key, value| {
-        ensure!(
-            key.len() == 33 && value.len() == 1,
-            "invalid scratch job union"
-        );
+        if key.len() != 33 || value.len() != 1 {
+            return Err(SnapshotOcompError::InvalidScratchJobUnion.into());
+        }
         let job = B256::from_slice(&key[1..]);
         if let Some(canonical) = canonical {
             let active = canonical.active.iter().any(|active| {
@@ -154,7 +153,7 @@ fn audit_present_job_union(
         }
         jobs = jobs
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("present job union overflow"))?;
+            .ok_or(SnapshotOcompError::PresentJobUnionOverflow)?;
         Ok(())
     })?;
     present_count(report, "present_job_union", jobs);
@@ -253,7 +252,7 @@ pub(super) fn collect_present_references(root: &Path, work: &PresentJobUnion) ->
             work.save_refs(job, ordinal, &refs)?;
             count = count
                 .checked_add(1)
-                .ok_or_else(|| eyre::eyre!("reference record count overflow"))?;
+                .ok_or(SnapshotOcompError::ReferenceRecordCountOverflow)?;
             Ok(())
         })();
         result.map_err(|error| {
@@ -280,7 +279,7 @@ pub(super) struct PresentArtifactCounts {
 pub(super) fn increment_present(count: &mut u64, add: u64) -> eyre::Result<()> {
     *count = count
         .checked_add(add)
-        .ok_or_else(|| eyre::eyre!("present artifact count overflow"))?;
+        .ok_or(SnapshotOcompError::PresentArtifactCountOverflow)?;
     Ok(())
 }
 
@@ -292,28 +291,46 @@ pub(super) fn validate_present_manifest(
     let finalized = job
         .finalized
         .as_ref()
-        .ok_or_else(|| eyre::eyre!("present manifest has no canonical finalized job"))?;
-    ensure!(
-        manifest.job_id == finalized.job_id
-            && manifest.protocol_bundle_hash == job.intent.protocol_bundle_hash
-            && manifest.attempt == job.intent.attempt
-            && manifest.wwd == job.intent.wwd
-            && manifest.sealed_tribute_collection_key == job.intent.sealed_tribute_collection_key
-            && manifest.sealed_tribute_collection_root == job.intent.sealed_tribute_collection_root
-            && manifest.tribute_count == job.intent.authenticated_day_count
-            && manifest.tribute_nominal_total == job.intent.authenticated_day_nominal,
-        "present manifest differs from canonical frozen job authority"
-    );
+        .ok_or(SnapshotOcompError::PresentManifestLacksFinalizedJob)?;
+    require(
+        (
+            manifest.job_id,
+            manifest.protocol_bundle_hash,
+            manifest.attempt,
+            manifest.wwd,
+            manifest.sealed_tribute_collection_key,
+            manifest.sealed_tribute_collection_root,
+            manifest.tribute_count,
+            manifest.tribute_nominal_total,
+        ) == (
+            finalized.job_id,
+            job.intent.protocol_bundle_hash,
+            job.intent.attempt,
+            job.intent.wwd,
+            job.intent.sealed_tribute_collection_key,
+            job.intent.sealed_tribute_collection_root,
+            job.intent.authenticated_day_count,
+            job.intent.authenticated_day_nominal,
+        ),
+        SnapshotOcompError::PresentManifestAuthorityMismatch,
+    )?;
     let checkpoint = &manifest.checkpoint;
-    ensure!(
-        checkpoint.finalized_block_number == job.intent_height
-            && checkpoint.finalized_block_hash == finalized.finalized_request_block_hash
-            && checkpoint.finalized_state_root == finalized.finalized_request_state_root
-            && checkpoint.finalized_ce_root == job.intent.ce_sealed_root
-            && checkpoint.ce_schema_version
-                == u16::try_from(outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION)?,
-        "present manifest differs from canonical checkpoint"
-    );
+    require(
+        (
+            checkpoint.finalized_block_number,
+            checkpoint.finalized_block_hash,
+            checkpoint.finalized_state_root,
+            checkpoint.finalized_ce_root,
+            checkpoint.ce_schema_version,
+        ) == (
+            job.intent_height,
+            finalized.finalized_request_block_hash,
+            finalized.finalized_request_state_root,
+            job.intent.ce_sealed_root,
+            u16::try_from(outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION)?,
+        ),
+        SnapshotOcompError::PresentManifestCheckpointMismatch,
+    )?;
     manifest.validate_against_bundle(bundle.bundle(), &poc_schema_limits())?;
     Ok(())
 }
@@ -332,12 +349,12 @@ pub(super) fn compare_surviving_ack_export(
     ack: &outbe_ocomp::discovery_spool::StoredDiscoveryAckV1,
     export: outbe_node::ocomp::retention::ExportAuthorityV1,
 ) -> eyre::Result<()> {
-    ensure!(
-        ack.reference.generation == export.source_generation
-            && ack.lease_generation == export.lease_generation
-            && ack.manifest_hash == export.manifest_hash,
-        "surviving discovery ACK differs from export authority"
-    );
+    if ack.reference.generation != export.source_generation
+        || ack.lease_generation != export.lease_generation
+        || ack.manifest_hash != export.manifest_hash
+    {
+        return Err(SnapshotOcompError::SurvivingAckExportMismatch.into());
+    }
     Ok(())
 }
 
@@ -346,15 +363,11 @@ pub(super) fn compare_surviving_result_binding(
     manifest: &outbe_ocomp_protocol::input::InputManifestV1,
     plan_hash: Option<B256>,
 ) -> eyre::Result<()> {
-    ensure!(
-        result.0 == manifest.manifest_hash(&poc_schema_limits())?,
-        "surviving local result differs from input manifest"
-    );
-    if let Some(plan_hash) = plan_hash {
-        ensure!(
-            result.1 == plan_hash,
-            "surviving local result differs from plan"
-        );
+    if result.0 != manifest.manifest_hash(&poc_schema_limits())? {
+        return Err(SnapshotOcompError::SurvivingLocalResultManifestMismatch.into());
+    }
+    if plan_hash.is_some_and(|expected| result.1 != expected) {
+        return Err(SnapshotOcompError::SurvivingLocalResultPlanMismatch.into());
     }
     Ok(())
 }

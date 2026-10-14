@@ -16,9 +16,9 @@ fn insert_submission(
     let validator = validate_submission(&submission, policy, committee)?;
     if let Some(existing) = submissions.get(&validator) {
         if existing != &submission {
-            return Err(eyre::eyre!(
-                "validator {validator} equivocated between two valid OST3 submissions"
-            ));
+            return Err(
+                crate::errors::TeeBootstrapError::ValidatorEquivocatedSubmissions(validator).into(),
+            );
         }
         return Ok(());
     }
@@ -40,13 +40,11 @@ pub async fn coordinate_tee_bootstrap_v2<G: BootstrapGossip>(
         evm_signer,
     } = coordination;
     if committee.is_empty() || committee.len() > 256 {
-        return Err(eyre::eyre!(
-            "OST3 committee size is outside protocol bounds"
-        ));
+        return Err(crate::errors::TeeBootstrapError::CommitteeSizeOutOfBounds.into());
     }
     let local_validator = validate_submission(&local_submission, &authority.policy, committee)?;
     if local_validator != evm_signer.address() {
-        return Err(eyre::eyre!("OST3 local submission and EVM signer differ"));
+        return Err(crate::errors::TeeBootstrapError::LocalSubmissionAndEvmSignerDiffer.into());
     }
 
     let CollectedSubmissions {
@@ -58,13 +56,15 @@ pub async fn coordinate_tee_bootstrap_v2<G: BootstrapGossip>(
         authority,
         submissions.into_values().collect(),
     )
-    .map_err(|error| eyre::eyre!("OST3 unsigned assembly failed: {error}"))?;
+    .map_err(|error| {
+        crate::errors::TeeBootstrapError::UnsignedAssemblyFailed(format!("{error}"))
+    })?;
     let signing_hash = payload
         .signing_hash()
-        .map_err(|error| eyre::eyre!("OST3 signing hash failed: {error}"))?;
-    let local_signature = evm_signer
-        .sign_hash(&signing_hash)
-        .map_err(|error| eyre::eyre!("OST3 local signature failed: {error}"))?;
+        .map_err(|error| crate::errors::TeeBootstrapError::SigningHashFailed(format!("{error}")))?;
+    let local_signature = evm_signer.sign_hash(&signing_hash).map_err(|error| {
+        crate::errors::TeeBootstrapError::LocalSignatureFailed(format!("{error}"))
+    })?;
     let signatures = SignatureCollection {
         signing_hash,
         committee,
@@ -76,11 +76,11 @@ pub async fn coordinate_tee_bootstrap_v2<G: BootstrapGossip>(
     for record in &mut payload.committee_signatures {
         record.signature = *signatures
             .get(&record.validator)
-            .ok_or_else(|| eyre::eyre!("OST3 signature set is incomplete"))?;
+            .ok_or(crate::errors::TeeBootstrapError::SignatureSetIncomplete)?;
     }
-    payload
-        .preflight()
-        .map_err(|error| eyre::eyre!("signed OST3 payload failed preflight: {error}"))?;
+    payload.preflight().map_err(|error| {
+        crate::errors::TeeBootstrapError::SignedPayloadFailedPreflight(format!("{error}"))
+    })?;
     Ok(payload)
 }
 
@@ -98,7 +98,9 @@ async fn collect_submissions<G: BootstrapGossip>(
     gossip
         .broadcast(Ost3WireMessage::Submission(Box::new(local_submission.clone())).encode()?)
         .await
-        .map_err(|error| eyre::eyre!("OST3 submission broadcast failed: {error}"))?;
+        .map_err(|error| {
+            crate::errors::TeeBootstrapError::SubmissionBroadcastFailed(format!("{error}"))
+        })?;
     let mut submissions = BTreeMap::new();
     insert_submission(&mut submissions, local_submission, policy, committee)?;
     let mut early_signatures = Vec::new();
@@ -106,7 +108,7 @@ async fn collect_submissions<G: BootstrapGossip>(
         let bytes = gossip
             .recv()
             .await
-            .ok_or_else(|| eyre::eyre!("OST3 gossip closed before all submissions arrived"))?;
+            .ok_or(crate::errors::TeeBootstrapError::GossipClosedBeforeAllSubmissions)?;
         match Ost3WireMessage::decode(&bytes) {
             Some(Ost3WireMessage::Submission(submission))
                 if validate_submission(&submission, policy, committee).is_ok() =>
@@ -151,12 +153,13 @@ impl SignatureCollection<'_> {
             || recover_signer(&self.signing_hash, &signature).ok() != Some(validator)
         {
             return Ok(());
-        }
+        };
         if let Some(existing) = signatures.get(&validator) {
             if existing != &signature {
-                return Err(eyre::eyre!(
-                    "validator {validator} equivocated between OST3 signatures"
-                ));
+                return Err(
+                    crate::errors::TeeBootstrapError::ValidatorEquivocatedSignatures(validator)
+                        .into(),
+                );
             }
             return Ok(());
         }
@@ -179,7 +182,9 @@ impl SignatureCollection<'_> {
                 .encode()?,
             )
             .await
-            .map_err(|error| eyre::eyre!("OST3 signature broadcast failed: {error}"))?;
+            .map_err(|error| {
+                crate::errors::TeeBootstrapError::SignatureBroadcastFailed(format!("{error}"))
+            })?;
 
         let mut signatures = BTreeMap::from([(self.local_validator, self.local_signature)]);
         for message in early_signatures {
@@ -189,7 +194,7 @@ impl SignatureCollection<'_> {
             let bytes = gossip
                 .recv()
                 .await
-                .ok_or_else(|| eyre::eyre!("OST3 gossip closed before all signatures arrived"))?;
+                .ok_or(crate::errors::TeeBootstrapError::GossipClosedBeforeAllSignatures)?;
             if let Some(message) = Ost3WireMessage::decode(&bytes) {
                 self.accept(message, &mut signatures)?;
             }

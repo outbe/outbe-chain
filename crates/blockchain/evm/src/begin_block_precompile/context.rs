@@ -4,7 +4,6 @@ use alloy_primitives::B256;
 use alloy_primitives::U256;
 use outbe_primitives::block::BlockContext;
 use outbe_primitives::block::BlockRuntimeContext;
-use outbe_primitives::error::PrecompileError;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -121,11 +120,11 @@ pub(super) fn read_preloaded_finalized_summary(
     Ok(current_preloaded_system_tx_context().and_then(|context| context.finalized_summary))
 }
 
-fn u256_to_u64(name: &str, value: U256) -> Result<u64> {
+fn u256_to_u64(name: &'static str, value: U256) -> Result<u64> {
     if value > U256::from(u64::MAX) {
-        return Err(PrecompileError::Fatal(format!(
-            "{name} exceeds u64 range: {value}"
-        )));
+        return Err(
+            crate::errors::BeginBlockPrecompileError::ValueExceedsU64 { name, value }.into(),
+        );
     }
     Ok(value.to::<u64>())
 }

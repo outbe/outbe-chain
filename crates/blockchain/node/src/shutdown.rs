@@ -1,6 +1,7 @@
 //! Process-owned execution shutdown state, independent of the cancellable launcher.
 
-use eyre::{eyre, Result};
+use crate::errors::NodeShutdownError;
+use eyre::Result;
 use futures::FutureExt;
 use outbe_primitives::OutbePayloadTypes;
 use reth_payload_builder_primitives::Events;
@@ -103,11 +104,10 @@ impl NodeShutdown {
         let mut state = self
             .inner
             .lock()
-            .map_err(|_| eyre!("shutdown state poisoned"))?;
-        eyre::ensure!(
-            state.payload_events.is_none(),
-            "payload service already registered"
-        );
+            .map_err(|_| NodeShutdownError::StatePoisoned)?;
+        if state.payload_events.is_some() {
+            return Err(NodeShutdownError::PayloadServiceAlreadyRegistered.into());
+        }
         state.payload_events = Some(sender);
         Ok(())
     }
@@ -123,8 +123,10 @@ impl NodeShutdown {
             let mut state = self
                 .inner
                 .lock()
-                .map_err(|_| eyre!("shutdown state poisoned"))?;
-            eyre::ensure!(!state.observing, "engine exit already observed");
+                .map_err(|_| NodeShutdownError::StatePoisoned)?;
+            if state.observing {
+                return Err(NodeShutdownError::EngineExitAlreadyObserved.into());
+            }
             state.observing = true;
         }
         let owner = self.clone();
@@ -137,10 +139,10 @@ impl NodeShutdown {
                     .catch_unwind()
                     .await
                     .unwrap_or_else(|panic| {
-                        Err(eyre!(
-                            "execution exit observer panicked: {}",
-                            panic_message(panic.as_ref())
-                        ))
+                        Err(NodeShutdownError::ExecutionExitObserverPanicked(
+                            panic_message(panic.as_ref()).to_owned(),
+                        )
+                        .into())
                     });
                 match owner.inner.lock() {
                     Ok(mut state) => {
@@ -187,10 +189,10 @@ impl NodeShutdown {
 
     /// Keep a consensus panic observable after its thread has been joined.
     pub fn record_panic(&self, panic: Box<dyn std::any::Any + Send>) {
-        self.record_failure(eyre!(
-            "consensus thread panicked: {}",
-            panic_message(panic.as_ref())
-        ));
+        self.record_failure(
+            NodeShutdownError::ConsensusThreadPanicked(panic_message(panic.as_ref()).to_owned())
+                .into(),
+        );
     }
 
     /// Publish a task panic before forwarding it to its existing JoinHandle.
@@ -207,7 +209,13 @@ impl NodeShutdown {
         let owner = self.clone();
         async move {
             if let Err(panic) = AssertUnwindSafe(task).catch_unwind().await {
-                owner.record_failure(eyre!("{name} panicked: {}", panic_message(panic.as_ref())));
+                owner.record_failure(
+                    NodeShutdownError::TaskPanicked {
+                        name,
+                        message: panic_message(panic.as_ref()).to_owned(),
+                    }
+                    .into(),
+                );
                 std::panic::resume_unwind(panic);
             }
         }
@@ -220,7 +228,7 @@ impl NodeShutdown {
         let mut state = self
             .inner
             .lock()
-            .map_err(|_| eyre!("shutdown state poisoned"))?;
+            .map_err(|_| NodeShutdownError::StatePoisoned)?;
         let mut failures = Vec::new();
         if let Err(error) = command_result {
             failures.push(error);
@@ -229,9 +237,7 @@ impl NodeShutdown {
             match state.engine_result.take() {
                 Some(Ok(())) => {}
                 Some(Err(error)) => failures.push(error.wrap_err("execution engine failed")),
-                None => failures.push(eyre!(
-                    "execution engine completion missing after runtime teardown"
-                )),
+                None => failures.push(NodeShutdownError::ExecutionEngineCompletionMissing.into()),
             }
         }
         failures.append(&mut state.failures);
@@ -258,6 +264,7 @@ fn panic_message(panic: &(dyn std::any::Any + Send)) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eyre::eyre;
     use tokio::sync::oneshot;
 
     #[test]

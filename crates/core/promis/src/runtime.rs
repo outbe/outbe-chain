@@ -15,11 +15,12 @@
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::PROMIS_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_tee::protocol::{ModifyAuth, PromisOp, PromisOpRequest, PromisOpResult, PromisOpStatus};
 
 use crate::enclave_client::apply_promis_op;
+use crate::errors::{PromisError, PromisFatalError};
 use crate::precompile::IPromis;
 use crate::schema::Promis;
 
@@ -50,9 +51,11 @@ fn base_request(op: PromisOp, chain_id: B256, account: Address, amount: U256) ->
 fn check_op_nonce(promis: &Promis<'_>, account: Address, provided: u64) -> Result<()> {
     let current = promis.op_nonce_of(account)?;
     if provided != current {
-        return Err(PrecompileError::Revert(format!(
-            "invalid op nonce: expected {current}, got {provided}"
-        )));
+        return Err(PromisError::InvalidOpNonce {
+            expected: current,
+            provided,
+        }
+        .into());
     }
     Ok(())
 }
@@ -61,7 +64,7 @@ fn check_op_nonce(promis: &Promis<'_>, account: Address, provided: u64) -> Resul
 fn ensure_applied(result: &PromisOpResult) -> Result<()> {
     match &result.status {
         PromisOpStatus::Applied => Ok(()),
-        PromisOpStatus::Rejected { reason } => Err(PrecompileError::Revert(reason.clone())),
+        PromisOpStatus::Rejected { reason } => Err(PromisError::Rejected(reason.clone()).into()),
     }
 }
 
@@ -94,7 +97,7 @@ pub(crate) fn mint(
     let new_supply = promis
         .total_supply()?
         .checked_add(result.event_amount)
-        .ok_or_else(|| PrecompileError::Fatal("promis total_supply overflow".to_string()))?;
+        .ok_or(PromisFatalError::TotalSupplyOverflow)?;
     promis.set_total_supply(new_supply)?;
     storage.emit_event(
         PROMIS_ADDRESS,
@@ -127,7 +130,7 @@ pub(crate) fn burn(
     let remaining = promis
         .total_supply()?
         .checked_sub(result.event_amount)
-        .ok_or_else(|| PrecompileError::Fatal("promis total_supply underflow".to_string()))?;
+        .ok_or(PromisFatalError::TotalSupplyUnderflow)?;
     promis.set_total_supply(remaining)?;
     storage.emit_event(
         PROMIS_ADDRESS,

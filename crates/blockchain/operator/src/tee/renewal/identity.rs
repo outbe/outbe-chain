@@ -9,17 +9,17 @@ pub(super) fn validate_identity(
     let node_id_hash = manifest
         .node_id
         .node_id_hash()
-        .map_err(|error| eyre::eyre!("hash manifest node identity: {error}"))?;
+        .map_err(RenewalError::HashManifestNodeIdentity)?;
     let enclave_id = manifest
         .enclave_id()
-        .map_err(|error| eyre::eyre!("derive manifest enclave identity: {error}"))?;
+        .map_err(RenewalError::DeriveManifestEnclaveIdentity)?;
     let authorization = manifest
         .node_host_authorization_hash()
-        .map_err(|error| eyre::eyre!("derive manifest NodeHost authorization: {error}"))?;
+        .map_err(RenewalError::DeriveManifestAuthorization)?;
     let policy_hash = view
         .policy
         .policy_hash()
-        .map_err(|error| eyre::eyre!("hash finalized policy: {error}"))?;
+        .map_err(RenewalError::HashFinalizedPolicy)?;
     let hashes = RenewalManifestHashes {
         node_id_hash,
         enclave_id,
@@ -27,12 +27,12 @@ pub(super) fn validate_identity(
         policy_hash,
     };
     if !manifest_matches(manifest, view, &hashes) {
-        eyre::bail!("committed NodeHost manifest does not match the finalized Registry binding");
+        return Err(RenewalError::ManifestBindingMismatch.into());
     }
     match &config.selector {
         NodeBindingSelectorV1::NodeHost(public) if public == &manifest.node_id.reth_p2p_public => {}
         _ => {
-            eyre::bail!("renewal selector does not match the committed node identity");
+            return Err(RenewalError::SelectorMismatch.into());
         }
     }
     Ok(())
@@ -82,7 +82,7 @@ pub(super) fn ensure_source_or_conflict(
     source: &RenewalBindingV1,
 ) -> Result<()> {
     if current != source {
-        eyre::bail!("finalized Registry binding matches neither renewal source nor target");
+        return Err(RenewalError::BindingNeitherSourceNorTarget.into());
     }
     Ok(())
 }
@@ -92,7 +92,7 @@ pub(super) fn target_matches(
     attempt: &PreparedRenewalV1,
 ) -> Result<bool> {
     let intent = RegistrationIntentV1::decode_canonical(&attempt.intent)
-        .map_err(|error| eyre::eyre!("decode journal renewal intent: {error}"))?;
+        .map_err(RenewalError::DecodeJournalIntent)?;
     Ok(target_identity_matches(current, attempt, &intent)
         && target_counters_match(current, &intent)
         && target_keys_match(current, &intent))

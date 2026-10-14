@@ -22,6 +22,8 @@ pub enum IntexError {
     InvalidSeriesId,
     #[error("realized units exceed the issued count for series")]
     RealizedUnitsOverflow,
+    #[error("proceeds deadline cannot be the finalized marker")]
+    ProceedsDeadlineFinalizedMarker,
 }
 
 impl From<IntexError> for PrecompileError {

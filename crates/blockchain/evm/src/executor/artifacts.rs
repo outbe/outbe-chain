@@ -28,7 +28,7 @@ pub(in crate::executor) fn validate_finish_artifacts(
     current_summary: ExecutionSummaryArtifact,
 ) -> Result<outbe_primitives::reshare_artifact::OutbeBlockArtifacts, BlockExecutionError> {
     let block_artifacts = decode_outbe_block_artifacts(executor.final_extra_data().as_ref())
-        .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+        .map_err(BlockExecutionError::msg)?;
     if block_number > 0 {
         let seal_output = executor
             .compressed_entities_seal_output

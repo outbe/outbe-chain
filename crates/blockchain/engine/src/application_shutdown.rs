@@ -29,7 +29,9 @@ impl ApplicationDrain {
     }
 
     pub async fn drain(&self) -> Result<()> {
-        self.0.clone().await.map_err(|error| eyre::eyre!("{error}"))
+        self.0.clone().await.map_err(|error| {
+            crate::errors::ApplicationShutdownError::DrainFailed(format!("{error}")).into()
+        })
     }
 
     /// Run *inside* the retained Commonware supervision task. Catch an inner
@@ -44,7 +46,12 @@ impl ApplicationDrain {
                     .map(String::as_str)
                     .or_else(|| panic.downcast_ref::<&str>().copied())
                     .unwrap_or("non-string panic payload");
-                Err(eyre::eyre!("consensus stack panicked: {message}"))
+                Err(
+                    crate::errors::ApplicationShutdownError::ConsensusStackPanicked(
+                        message.to_string(),
+                    )
+                    .into(),
+                )
             });
         combine(result, self.drain().await)
     }

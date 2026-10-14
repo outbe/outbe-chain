@@ -16,6 +16,7 @@ pub mod daily_sweep;
 pub mod dispatch;
 pub mod erc;
 pub mod error;
+pub mod errors;
 pub mod expiry_queue;
 pub mod filesystem;
 pub mod governance_journal;

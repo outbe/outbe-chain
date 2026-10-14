@@ -177,7 +177,7 @@ impl MetadosisContract<'_> {
         let valid_binding = day_limit == persisted_day_limit && block_number != 0;
         if !valid_arithmetic || !valid_binding {
             return Err(crate::errors::storage_corruption(
-                "formed OCOMP day-limit receipt is inconsistent".into(),
+                "formed OCOMP day-limit receipt is inconsistent",
             ));
         }
         Ok(Some(OcompDayLimitFormation {

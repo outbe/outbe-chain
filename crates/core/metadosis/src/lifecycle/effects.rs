@@ -9,11 +9,7 @@ use crate::{
 };
 use alloy_primitives::U256;
 use outbe_compressed_entities::ExecutionScope;
-use outbe_primitives::{
-    block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
-    time::WorldwideDay,
-};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result, time::WorldwideDay};
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 
@@ -39,7 +35,7 @@ pub(super) fn apply_wwd_advance_edges(
         };
         if rate_resolution.replace(resolution).is_some() {
             return Err(crate::errors::storage_corruption(
-                duplicate_resolution_message.into(),
+                duplicate_resolution_message,
             ));
         }
     }
@@ -93,7 +89,7 @@ fn prepare_capacity_forfeiture(
 ) -> Result<(u32, u32)> {
     if retained_count != MAX_RETAINED_WWDS {
         return Err(crate::errors::storage_corruption(
-            "CapacityForfeiture requires the exact retained admission cap".into(),
+            "CapacityForfeiture requires the exact retained admission cap",
         ));
     }
     if !metadosis
@@ -102,7 +98,7 @@ fn prepare_capacity_forfeiture(
         .is_empty()?
     {
         return Err(crate::errors::storage_corruption(
-            "CapacityForfeiture victim already has OCOMP state".into(),
+            "CapacityForfeiture victim already has OCOMP state",
         ));
     }
     if metadosis
@@ -110,15 +106,15 @@ fn prepare_capacity_forfeiture(
         .is_some()
     {
         return Err(crate::errors::storage_corruption(
-            "active CapacityForfeiture victim already has a receipt".into(),
+            "active CapacityForfeiture victim already has a receipt",
         ));
     }
     metadosis.validate_day_limit_binding(effect.current, "CapacityForfeiture")?;
 
     let max_retained_wwds = u32::try_from(MAX_RETAINED_WWDS)
-        .map_err(|_| crate::errors::storage_corruption("retained WWD cap exceeds u32".into()))?;
+        .map_err(|_| crate::errors::storage_corruption("retained WWD cap exceeds u32"))?;
     let retained_count_before = u32::try_from(retained_count)
-        .map_err(|_| crate::errors::storage_corruption("retained WWD count exceeds u32".into()))?;
+        .map_err(|_| crate::errors::storage_corruption("retained WWD count exceeds u32"))?;
     Ok((max_retained_wwds, retained_count_before))
 }
 
@@ -186,7 +182,7 @@ pub(super) fn apply_missed_offering(
         .is_some()
     {
         return Err(crate::errors::storage_corruption(
-            "active WWD already has a terminal receipt".into(),
+            "active WWD already has a terminal receipt",
         ));
     }
 
@@ -228,9 +224,7 @@ pub(super) fn apply_missed_offering(
     result
 }
 
-fn is_vwap_overflow(err: &PrecompileError) -> bool {
-    matches!(err, PrecompileError::Revert(message) if message.starts_with("VWAP overflow:"))
-}
+use crate::errors::is_vwap_overflow;
 
 fn store_worldwide_day_vwap_snapshot(
     metadosis: &mut MetadosisContract,

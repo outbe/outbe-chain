@@ -1,4 +1,5 @@
 //! Borrowed canonical ABI validation before policy reads or verifier execution.
+use crate::errors::TeeRegistryError;
 use alloy_sol_types::SolCall;
 use outbe_primitives::{
     error::{PrecompileError, Result},
@@ -86,19 +87,17 @@ fn common_signatures<'a>(head: &MutatorAbiHead<'a>) -> Result<(RegisterPreflight
     } = *head;
     let (evidence, next_offset) = dynamic_bytes(args, evidence_offset)?;
     if evidence.len() > MAX_ATTESTATION_EVIDENCE_BYTES {
-        return Err(PrecompileError::Revert(format!(
-            "attestation evidence exceeds {} bytes",
-            MAX_ATTESTATION_EVIDENCE_BYTES
-        )));
+        return Err(TeeRegistryError::AttestationEvidenceExceedsMaxBytes(
+            MAX_ATTESTATION_EVIDENCE_BYTES,
+        )
+        .into());
     }
     if node_signature_offset != next_offset {
         return Err(invalid_register_abi("non-canonical node signature offset"));
     }
     let (node_signature, next_offset) = dynamic_bytes(args, node_signature_offset)?;
     if node_signature.len() != 65 {
-        return Err(PrecompileError::Revert(
-            "node proof-of-possession signature must be 65 bytes".into(),
-        ));
+        return Err(TeeRegistryError::NodePopSignatureLengthInvalid.into());
     }
     if enclave_signature_offset != next_offset {
         return Err(invalid_register_abi(
@@ -107,9 +106,7 @@ fn common_signatures<'a>(head: &MutatorAbiHead<'a>) -> Result<(RegisterPreflight
     }
     let (enclave_signature, next_offset) = dynamic_bytes(args, enclave_signature_offset)?;
     if enclave_signature.len() != 64 {
-        return Err(PrecompileError::Revert(
-            "enclave proof-of-possession signature must be 64 bytes".into(),
-        ));
+        return Err(TeeRegistryError::EnclavePopSignatureLengthInvalid.into());
     }
     Ok((
         RegisterPreflight {
@@ -142,9 +139,7 @@ fn validator_binding<'a>(
     }
     let (validator_signature, next_offset) = dynamic_bytes(args, validator_signature_offset)?;
     if validator_signature.len() != 65 {
-        return Err(PrecompileError::Revert(
-            "validator NodeHost binding signature must be 65 bytes".into(),
-        ));
+        return Err(TeeRegistryError::ValidatorBindingSignatureLengthInvalid.into());
     }
     if node_binding_signature_offset != next_offset {
         return Err(invalid_register_abi(
@@ -154,9 +149,7 @@ fn validator_binding<'a>(
     let (node_binding_signature, final_offset) =
         dynamic_bytes(args, node_binding_signature_offset)?;
     if node_binding_signature.len() != 65 {
-        return Err(PrecompileError::Revert(
-            "NodeHost binding signature must be 65 bytes".into(),
-        ));
+        return Err(TeeRegistryError::NodeBindingSignatureLengthInvalid.into());
     }
     preflight.validator_node_binding = Some(binding);
     preflight.validator_signature = Some(validator_signature);
@@ -176,10 +169,10 @@ fn validator_node_binding(
     }
     let (binding, next_offset) = dynamic_bytes(args, binding_offset)?;
     if binding.len() != ValidatorNodeBindingV1::CANONICAL_LEN {
-        return Err(PrecompileError::Revert(format!(
-            "validator NodeHost binding must be {} bytes",
-            ValidatorNodeBindingV1::CANONICAL_LEN
-        )));
+        return Err(TeeRegistryError::ValidatorNodeBindingLengthInvalid(
+            ValidatorNodeBindingV1::CANONICAL_LEN,
+        )
+        .into());
     }
     Ok((binding, next_offset))
 }
@@ -198,10 +191,10 @@ fn validate_call_end(
         .checked_sub(evidence_len)
         .ok_or_else(|| invalid_register_abi("evidence length exceeds calldata"))?;
     if framing_len > MAX_EVIDENCE_CALL_FRAMING_BYTES {
-        return Err(PrecompileError::Revert(format!(
-            "evidence call framing exceeds {} bytes",
-            MAX_EVIDENCE_CALL_FRAMING_BYTES
-        )));
+        return Err(TeeRegistryError::EvidenceCallFramingExceedsMaxBytes(
+            MAX_EVIDENCE_CALL_FRAMING_BYTES,
+        )
+        .into());
     }
 
     Ok(())
@@ -212,11 +205,11 @@ impl RegisterPreflight<'_> {
         let node_signature = self
             .node_signature
             .try_into()
-            .map_err(|_| PrecompileError::Fatal("preflight node signature mismatch".into()))?;
+            .map_err(|_| TeeRegistryError::PreflightNodeSignatureMismatch)?;
         let enclave_signature = self
             .enclave_signature
             .try_into()
-            .map_err(|_| PrecompileError::Fatal("preflight enclave signature mismatch".into()))?;
+            .map_err(|_| TeeRegistryError::PreflightEnclaveSignatureMismatch)?;
         Ok((node_signature, enclave_signature))
     }
 }
@@ -262,5 +255,5 @@ fn abi_usize(word: &[u8]) -> Result<usize> {
 }
 
 fn invalid_register_abi(reason: &'static str) -> PrecompileError {
-    PrecompileError::Revert(format!("invalid canonical V1 registration ABI: {reason}"))
+    TeeRegistryError::InvalidCanonicalRegistrationAbi(reason).into()
 }

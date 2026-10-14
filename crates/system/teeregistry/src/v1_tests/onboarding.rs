@@ -172,5 +172,5 @@ fn verified_onboarding_artifact_must_match_the_committed_binding_exactly() {
             )
             .unwrap_err()
     });
-    assert!(matches!(error, PrecompileError::Fatal(_)));
+    assert!(crate::errors::is_fatal_error(&error));
 }

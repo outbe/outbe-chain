@@ -7,6 +7,7 @@ use eyre::Result;
 use k256::ecdsa::signature::hazmat::PrehashSigner;
 use k256::ecdsa::SigningKey;
 
+use crate::errors::TxError;
 use crate::rpc::Rpc;
 
 /// Price a legacy tx from the block's base fee, with `2x` headroom so it survives a
@@ -47,13 +48,12 @@ impl TxSigner {
             .strip_prefix("0x")
             .unwrap_or(private_key_hex);
         let key_bytes: [u8; 32] = hex::decode(hex_str)?.try_into().map_err(|bytes: Vec<u8>| {
-            eyre::eyre!(
-                "invalid private key length: expected 32 bytes, got {}",
-                bytes.len()
-            )
+            TxError::InvalidPrivateKeyLength {
+                actual: bytes.len(),
+            }
         })?;
-        let key = SigningKey::from_bytes((&key_bytes).into())
-            .map_err(|e| eyre::eyre!("invalid private key: {e}"))?;
+        let key =
+            SigningKey::from_bytes((&key_bytes).into()).map_err(TxError::InvalidPrivateKey)?;
 
         // Derive Ethereum address: keccak256(uncompressed_pubkey[1..])[-20..]
         let pubkey = key.verifying_key();
@@ -83,7 +83,7 @@ impl TxSigner {
         let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = self
             .key
             .sign_prehash(hash.as_slice())
-            .map_err(|error| eyre::eyre!("EIP-7702 transaction signing failed: {error}"))?;
+            .map_err(TxError::Eip7702SigningFailed)?;
         let signature = Signature::from_bytes_and_parity(
             signature.to_bytes().as_slice(),
             recovery_id.to_byte() != 0,
@@ -112,7 +112,7 @@ impl TxSigner {
         // Add 20% buffer to gas estimate
         let gas_limit = gas_limit
             .checked_add(gas_limit / 5)
-            .ok_or_else(|| eyre::eyre!("gas limit buffer overflow"))?;
+            .ok_or(TxError::GasLimitBufferOverflow)?;
 
         let raw_tx = self.sign_legacy_tx(LegacyTx {
             nonce,
@@ -177,7 +177,7 @@ impl TxSigner {
         let (sig, recid): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = self
             .key
             .sign_prehash(hash.as_slice())
-            .map_err(|e| eyre::eyre!("signing failed: {e}"))?;
+            .map_err(TxError::SigningFailed)?;
 
         let sig_bytes = sig.to_bytes();
         let r = U256::from_be_slice(&sig_bytes[..32]);

@@ -169,28 +169,34 @@ fn validate_canary_batch(
         Ok(()) => CanaryTickOutcome::Success { latency_ms },
         Err(reason) => CanaryTickOutcome::Failure {
             unreachable: false,
-            reason,
+            reason: reason.to_string(),
         },
     }
 }
-fn validate_batch_echo(batch: &CanaryBatch<'_>) -> Result<(), String> {
+fn validate_batch_echo(
+    batch: &CanaryBatch<'_>,
+) -> Result<(), crate::errors::CanaryBatchValidationError> {
+    use crate::errors::CanaryBatchValidationError;
     let results = batch.results;
     if results.len() != 1 {
-        return Err(format!("canary expected 1 result, got {}", results.len()));
+        return Err(CanaryBatchValidationError::UnexpectedResultCount(
+            results.len(),
+        ));
     }
     let result = &results[0];
     if let TributeOfferStatus::Rejected { reason } = &result.status {
-        return Err(format!("canary offer rejected: {reason}"));
+        return Err(CanaryBatchValidationError::OfferRejected(reason.clone()));
     }
     if result.owner != CANARY_OWNER {
-        return Err("canary result echoes a different owner".to_string());
+        return Err(CanaryBatchValidationError::OwnerMismatch);
     }
     Ok(())
 }
 fn validate_batch_proof(
     requester: &dyn EnclaveRequester,
     batch: &CanaryBatch<'_>,
-) -> Result<(), String> {
+) -> Result<(), crate::errors::CanaryBatchValidationError> {
+    use crate::errors::CanaryBatchValidationError;
     let CanaryBatch {
         offers,
         results,
@@ -198,19 +204,18 @@ fn validate_batch_proof(
         attestation_tag,
     } = *batch;
     if reported_hash != inputs_canonical_hash(offers) {
-        return Err("canary inputs_canonical_hash mismatch (non-determinism)".to_string());
+        return Err(CanaryBatchValidationError::InputsCanonicalHashMismatch);
     }
     let Some(attestation_pub) = requester.attestation_pub() else {
-        return Err("no pinned attestation key".to_string());
+        return Err(CanaryBatchValidationError::NoPinnedAttestationKey);
     };
-    if let Err(error) = outbe_tee::verify_tribute_offer_attestation(
+    outbe_tee::verify_tribute_offer_attestation(
         &attestation_pub,
         reported_hash,
         results,
         attestation_tag,
-    ) {
-        return Err(format!("canary attestation tag invalid: {error}"));
-    }
+    )
+    .map_err(CanaryBatchValidationError::invalid_attestation_tag)?;
     Ok(())
 }
 

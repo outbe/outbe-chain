@@ -1,12 +1,13 @@
 use alloy_primitives::{Address, B256};
 use outbe_primitives::{
-    error::{PrecompileError, Result},
+    error::Result,
     storage::{
         finalized_guard_ring::{FinalizedGuardRing, FINALIZED_GUARD_RETAIN},
         StorageHandle,
     },
 };
 
+use crate::errors::SlashIndicatorError;
 use crate::misses::MissKind;
 use crate::schema::SlashIndicator;
 
@@ -92,7 +93,7 @@ pub fn prune_slash_guards(storage: StorageHandle, fb_hash: B256) -> Result<()> {
             si.voter_window_slashed.write(&evicted, false)?;
             si.proposer_window_slashed.write(&evicted, false)
         },
-        || PrecompileError::Revert("slash_guard_ring_seq overflow".into()),
+        || SlashIndicatorError::SlashGuardRingSeqOverflow.into(),
     )
 }
 

@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_stablecoinpolicy::api::policy_exists;
 
 use crate::abi::IStablecoin;
@@ -92,9 +92,7 @@ impl StablecoinContract<'_> {
             || !self.roles.read(&role_key(ADMIN_ROLE, previous))?
             || self.roles.read(&role_key(ADMIN_ROLE, actor))?
         {
-            return Err(PrecompileError::Fatal(
-                "stablecoin admin transfer reached inconsistent role state".into(),
-            ));
+            return Err(StablecoinStateError::InconsistentAdminTransferRoleState.into());
         }
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {

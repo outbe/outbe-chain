@@ -1,6 +1,8 @@
 use alloy_primitives::{Address, Bytes, U256};
 use outbe_primitives::dispatch::reject_value;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
+
+use crate::errors::RewardsError;
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -24,7 +26,5 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     reject_value(&value)?;
-    Err(PrecompileError::Revert(
-        "Rewards precompile exposes no callable methods".into(),
-    ))
+    Err(RewardsError::NoCallableMethods.into())
 }

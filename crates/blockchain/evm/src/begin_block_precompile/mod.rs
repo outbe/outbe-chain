@@ -11,7 +11,6 @@ use alloy_primitives::Address;
 use alloy_primitives::Bytes;
 use alloy_primitives::U256;
 use outbe_primitives::addresses::SYSTEM_ADDRESS;
-use outbe_primitives::error::PrecompileError;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -185,19 +184,15 @@ fn dispatch_inner(
         tee_attestation_v1,
     } = authorities;
     if caller != SYSTEM_ADDRESS {
-        return Err(PrecompileError::Revert(
-            "system precompile can only be called by SYSTEM_ADDRESS".into(),
-        ));
+        return Err(crate::errors::BeginBlockPrecompileError::InvalidSystemCaller.into());
     }
     if !value.is_zero() {
-        return Err(PrecompileError::Revert(
-            "system precompile does not accept native token value".into(),
-        ));
+        return Err(crate::errors::BeginBlockPrecompileError::NativeValueRejected.into());
     }
     outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
 
     let input = SystemTxInputV2::decode(data)
-        .map_err(|error| PrecompileError::Fatal(format!("invalid system tx input: {error}")))?;
+        .map_err(crate::errors::BeginBlockPrecompileError::invalid_system_tx_input)?;
 
     match input {
         SystemTxInputV2::CertifiedParentAccounting { metadata } => {
@@ -210,11 +205,8 @@ fn dispatch_inner(
         }
         SystemTxInputV2::OcompLifecycleBegin => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            let (scope, _) = body_readers.ok_or_else(|| {
-                PrecompileError::Fatal(
-                    "OcompLifecycleBegin requires the active compressed-entity scope".into(),
-                )
-            })?;
+            let (scope, _) = body_readers
+                .ok_or(crate::errors::BeginBlockPrecompileError::OcompLifecycleBeginMissingScope)?;
             run_ocomp_lifecycle_begin(&ctx, scope, ocomp_fork_install)?;
         }
         SystemTxInputV2::CycleTick => {
@@ -267,11 +259,9 @@ fn dispatch_inner(
         }
         SystemTxInputV2::OcompTerminalRequest => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            let (scope, _) = body_readers.ok_or_else(|| {
-                PrecompileError::Fatal(
-                    "OCOMP terminal request requires execution seal authority".into(),
-                )
-            })?;
+            let (scope, _) = body_readers.ok_or(
+                crate::errors::BeginBlockPrecompileError::OcompTerminalRequestMissingSealAuthority,
+            )?;
             run_ocomp_terminal_request(&ctx, scope)?;
         }
     }

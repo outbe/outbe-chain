@@ -27,19 +27,18 @@ pub(super) fn prepare(
             collection_key,
             crate::CollectionOperation::Mutate(collection_batch),
         );
-        let catalog_key = crate::smt::TreeKey::from_be_bytes(*collection_key.as_bytes())
-            .map_err(|error| fatal_scope(error.to_string()))?;
-        let catalog_leaf = TreeLeaf::from_be_bytes(new_collection_root.0)
-            .map_err(|error| fatal_scope(error.to_string()))?;
+        let catalog_key =
+            crate::smt::TreeKey::from_be_bytes(*collection_key.as_bytes()).map_err(fatal_scope)?;
+        let catalog_leaf = TreeLeaf::from_be_bytes(new_collection_root.0).map_err(fatal_scope)?;
         catalog_updates.push((catalog_key, catalog_leaf));
         let persisted_catalog_key =
             crate::persistence::TreeKey::try_from(B256::from(*collection_key.as_bytes()))
-                .map_err(|error| fatal_scope(error.to_string()))?;
+                .map_err(fatal_scope)?;
         catalog_leaf_changes.insert(
             persisted_catalog_key,
             TreeChange::Set(
                 crate::persistence::LeafValue::try_from(new_collection_root)
-                    .map_err(|error| fatal_scope(error.to_string()))?,
+                    .map_err(fatal_scope)?,
             ),
         );
     }
@@ -47,7 +46,7 @@ pub(super) fn prepare(
     let new_catalog_root = B256::from(
         catalog
             .update_all(catalog_updates)
-            .map_err(|error| fatal_scope(error.to_string()))?
+            .map_err(fatal_scope)?
             .as_bytes(),
     );
     let catalog_batch = (!changed_collections.is_empty()).then_some(ProvisionalCatalogBatch {
@@ -62,8 +61,7 @@ pub(super) fn prepare(
         crate::staging::CatalogRoots {
             sealed: crate::staging::RootTransition {
                 parent: parent_root,
-                new: crate::sealed_root(new_catalog_root)
-                    .map_err(|error| fatal_scope(error.to_string()))?,
+                new: crate::sealed_root(new_catalog_root).map_err(fatal_scope)?,
             },
             catalog: crate::staging::RootTransition {
                 parent: B256::ZERO,
@@ -73,7 +71,7 @@ pub(super) fn prepare(
         changed_collections,
         catalog_batch,
     )
-    .map_err(|error| fatal_scope(error.to_string()))
+    .map_err(fatal_scope)
 }
 
 fn group_mutations(mutations: &[FinalLeafMutation]) -> Result<GroupedLeaves> {
@@ -89,10 +87,8 @@ fn group_mutations(mutations: &[FinalLeafMutation]) -> Result<GroupedLeaves> {
         let Some(commitment) = mutation.final_leaf else {
             continue;
         };
-        let collection_key = crate::collection_key(domain, entity_id)
-            .map_err(|error| fatal_scope(error.to_string()))?;
-        let key = derive_tree_key(collection, entity_id)
-            .map_err(|error| fatal_scope(error.to_string()))?;
+        let collection_key = crate::collection_key(domain, entity_id).map_err(fatal_scope)?;
+        let key = derive_tree_key(collection, entity_id).map_err(fatal_scope)?;
         grouped
             .entry(collection_key)
             .or_insert_with(|| (domain, Vec::new()))
@@ -111,8 +107,7 @@ fn prepare_collection(
     let mut by_shard: BTreeMap<u32, Vec<(crate::smt::TreeKey, crate::Commitment)>> =
         BTreeMap::new();
     for (key, commitment) in keyed {
-        let shard = shard_index(key, domain.shard_count())
-            .map_err(|error| fatal_scope(error.to_string()))?;
+        let shard = shard_index(key, domain.shard_count()).map_err(fatal_scope)?;
         by_shard.entry(shard).or_default().push((key, commitment));
     }
     let parent_roots = vec![B256::ZERO; domain.shard_count() as usize];
@@ -123,12 +118,10 @@ fn prepare_collection(
         new_roots[shard as usize] = new_root;
         changed_shards.insert(shard, batch);
     }
-    let parent_top = crate::empty_shard_top_root(domain.shard_count())
-        .map_err(|error| fatal_scope(error.to_string()))?;
-    let new_top = crate::sharding::aggregate_b256_shard_roots(&new_roots)
-        .map_err(|error| fatal_scope(error.to_string()))?;
-    let new_collection_root = crate::collection_root(domain, collection_key, new_top)
-        .map_err(|error| fatal_scope(error.to_string()))?;
+    let parent_top = crate::empty_shard_top_root(domain.shard_count()).map_err(fatal_scope)?;
+    let new_top = crate::sharding::aggregate_b256_shard_roots(&new_roots).map_err(fatal_scope)?;
+    let new_collection_root =
+        crate::collection_root(domain, collection_key, new_top).map_err(fatal_scope)?;
     let shard_set = ProvisionalShardSetBatch::new(
         domain.shard_count(),
         crate::staging::RootTransition {
@@ -139,9 +132,9 @@ fn prepare_collection(
         new_roots,
         changed_shards,
     )
-    .map_err(|error| fatal_scope(error.to_string()))?;
+    .map_err(fatal_scope)?;
     let batch = CollectionBatch::new(domain, collection_key, None, new_collection_root, shard_set)
-        .map_err(|error| fatal_scope(error.to_string()))?;
+        .map_err(fatal_scope)?;
     Ok((new_collection_root, batch))
 }
 
@@ -153,24 +146,24 @@ fn prepare_shard(updates: KeyedLeaves) -> Result<(B256, ProvisionalShardBatch)> 
             TreeLeaf::from_be_bytes(*commitment.as_bytes()).map(|leaf| (*key, leaf))
         })
         .collect::<core::result::Result<Vec<_>, _>>()
-        .map_err(|error| fatal_scope(error.to_string()))?;
+        .map_err(fatal_scope)?;
     let new_root = B256::from(
         tree.update_all(smt_updates)
-            .map_err(|error| fatal_scope(error.to_string()))?
+            .map_err(fatal_scope)?
             .as_bytes(),
     );
     let mut leaf_changes = BTreeMap::new();
     for (key, commitment) in updates {
         leaf_changes.insert(
             crate::persistence::TreeKey::try_from(B256::from(key.as_bytes()))
-                .map_err(|error| fatal_scope(error.to_string()))?,
+                .map_err(fatal_scope)?,
             TreeChange::Set(
                 crate::persistence::LeafValue::try_from(B256::from(*commitment.as_bytes()))
-                    .map_err(|error| fatal_scope(error.to_string()))?,
+                    .map_err(fatal_scope)?,
             ),
         );
     }
     let batch = ProvisionalShardBatch::new(B256::ZERO, new_root, BTreeMap::new(), leaf_changes)
-        .map_err(|error| fatal_scope(error.to_string()))?;
+        .map_err(fatal_scope)?;
     Ok((new_root, batch))
 }

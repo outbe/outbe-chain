@@ -39,6 +39,7 @@ use outbe_tee::{
 };
 
 use crate::{
+    errors::RenewalError,
     rpc::{RelayPreparationRpc, RelayRpc, RenewalRpc, TransactionReceiptRpc},
     tx::{buffered_gas_price, RelaySignerV1},
 };
@@ -63,7 +64,7 @@ pub trait RenewalEnclaveV1 {
         &mut self,
         _intent: &RegistrationIntentV1,
     ) -> Result<[u8; 64]> {
-        eyre::bail!("renewal enclave does not support GramineDirectDev intent signing");
+        Err(RenewalError::DirectDevSigningUnsupported.into())
     }
 }
 
@@ -72,16 +73,16 @@ impl RenewalEnclaveV1 for AuthorizedEnclaveClient {
         &mut self,
         intent: &RegistrationIntentV1,
     ) -> Result<GeneratedDcapQuoteV1> {
-        AuthorizedEnclaveClient::generate_dcap_quote(self, intent)
-            .map_err(|error| eyre::eyre!(error))
+        Ok(AuthorizedEnclaveClient::generate_dcap_quote(self, intent)?)
     }
 
     fn sign_registration_intent_dev_v1(
         &mut self,
         intent: &RegistrationIntentV1,
     ) -> Result<[u8; 64]> {
-        AuthorizedEnclaveClient::sign_registration_intent_dev_v1(self, intent)
-            .map_err(|error| eyre::eyre!(error))
+        Ok(AuthorizedEnclaveClient::sign_registration_intent_dev_v1(
+            self, intent,
+        )?)
     }
 }
 

@@ -4,13 +4,14 @@
 //! network, so only mainnet runs PROD.
 
 use outbe_primitives::chain::is_mainnet;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18_U128;
 
 use crate::constants::{
     CALL_NOTICE_PERIOD, CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, COMMIT_BOND_MINOR, FLOOR_RATE,
 };
+use crate::errors::IntexFactoryError;
 use crate::schema::IntexFactoryContract;
 
 /// Resolve by network: PROD on mainnet, DEV everywhere else.
@@ -71,9 +72,7 @@ impl IntexParams {
             PROFILE_AUTO => Ok(Self::for_chain_id(chain_id)),
             PROFILE_DEV => Ok(Self::DEV),
             PROFILE_PROD => Ok(Self::PROD),
-            other => Err(PrecompileError::Revert(format!(
-                "unknown intex profile selector: {other}"
-            ))),
+            other => Err(IntexFactoryError::UnknownProfileSelector(other).into()),
         }
     }
 }

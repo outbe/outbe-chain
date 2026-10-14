@@ -57,6 +57,12 @@ pub enum VoteError {
     UnknownTargetModule,
     #[error("duplicate vote target module handler")]
     DuplicateTargetModule,
+    #[error("stored {module} proposal payload is invalid")]
+    StoredPayloadInvalid { module: String },
+    #[error("pending proposal {proposal_id} has an already settled bond")]
+    PendingProposalBondAlreadySettled { proposal_id: U256 },
+    #[error("proposal {proposal_id} has inconsistent bond amount and settlement")]
+    InconsistentBondState { proposal_id: U256 },
 }
 
 impl From<VoteError> for PrecompileError {
@@ -68,8 +74,21 @@ impl From<VoteError> for PrecompileError {
             VoteError::InvalidBondSettlement
             | VoteError::BondLiabilityOverflow
             | VoteError::BondLiabilityUnderflow
-            | VoteError::BondLiabilityInvariant { .. } => PrecompileError::Fatal(err.to_string()),
+            | VoteError::BondLiabilityInvariant { .. }
+            | VoteError::StoredPayloadInvalid { .. }
+            | VoteError::PendingProposalBondAlreadySettled { .. }
+            | VoteError::InconsistentBondState { .. } => PrecompileError::Fatal(err.to_string()),
             _ => PrecompileError::Revert(err.to_string()),
         }
+    }
+}
+
+impl VoteError {
+    /// Creates a fatal precompile error for an invalid stored proposal payload.
+    pub fn stored_payload_invalid(module: &str) -> PrecompileError {
+        Self::StoredPayloadInvalid {
+            module: module.to_string(),
+        }
+        .into()
     }
 }

@@ -10,7 +10,7 @@ pub(crate) fn read_amount(record: &EncryptedNodV2) -> Result<U256, TransportErro
             &test_enclave::NETWORK_SECRET,
             record,
         )
-        .map_err(|error| TransportError::EnclaveError(error.to_string()));
+        .map_err(crate::errors::enclave_transport_error);
     }
     outbe_tee::nod_mine::read_nod_amount(record)
 }

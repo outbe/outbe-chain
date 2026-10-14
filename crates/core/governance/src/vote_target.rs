@@ -15,7 +15,7 @@ use outbe_vote::schema::Vote;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::errors::GovernanceError;
+use crate::errors::{GovernanceError, GovernanceFatalError};
 use crate::runtime::MAX_TEXT_BYTES;
 use crate::schema::GovernanceContract;
 
@@ -77,9 +77,8 @@ impl VoteTarget for GovernanceVoteTarget {
     }
 
     fn validate(&self, payload: &[u8], _context: VoteTargetContext) -> PrecompileResult<()> {
-        let payload: Value = serde_json::from_slice(payload).map_err(|_| {
-            outbe_primitives::error::PrecompileError::Revert("invalid proposal payload".into())
-        })?;
+        let payload: Value =
+            serde_json::from_slice(payload).map_err(|_| GovernanceError::InvalidProposalPayload)?;
         GovernanceVotePayload::validate_json(&payload).map_err(Into::into)
     }
 
@@ -90,11 +89,8 @@ impl VoteTarget for GovernanceVoteTarget {
         payload: &[u8],
         _context: VoteTargetContext,
     ) -> PrecompileResult<TargetExecutionOutcome> {
-        let payload: Value = serde_json::from_slice(payload).map_err(|_| {
-            outbe_primitives::error::PrecompileError::Fatal(
-                "stored Governance proposal payload is invalid".into(),
-            )
-        })?;
+        let payload: Value = serde_json::from_slice(payload)
+            .map_err(|_| GovernanceFatalError::InvalidStoredProposalPayload)?;
         let decoded = GovernanceVotePayload::from_value(&payload)?;
         decoded.validate()?;
 

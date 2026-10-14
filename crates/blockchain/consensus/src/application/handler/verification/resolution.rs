@@ -6,6 +6,7 @@ use crate::application::{
     verify_resolution::{resolve_for_verify, VerifyResolveTarget},
 };
 use crate::block::ConsensusBlock;
+use crate::errors::ApplicationError;
 use tracing::warn;
 
 enum ResolutionFailure {
@@ -59,7 +60,9 @@ impl ApplicationShared {
         )
         .await
         .map_err(|error| {
-            ResolutionFailure::Unavailable(eyre::eyre!("candidate unavailable: {error:?}"))
+            ResolutionFailure::Unavailable(
+                ApplicationError::CandidateUnavailable(format!("{error:?}")).into(),
+            )
         })?;
         // Persistence outlives parent resolution and response cancellation.
         if self.epoch_fence.check(round, block.number()).is_ok() {
@@ -99,9 +102,9 @@ impl ApplicationShared {
                 return Err(ResolutionFailure::InvalidParent);
             }
             Err(error) => {
-                return Err(ResolutionFailure::Unavailable(eyre::eyre!(
-                    "could not resolve epoch boundary parent: {error}"
-                )))
+                return Err(ResolutionFailure::Unavailable(
+                    ApplicationError::EpochBoundaryParentUnavailable(error).into(),
+                ))
             }
         }
         if parent_digest.0 == self.genesis_hash {
@@ -120,7 +123,9 @@ impl ApplicationShared {
         .await
         .map(Some)
         .map_err(|error| {
-            ResolutionFailure::Unavailable(eyre::eyre!("parent unavailable: {error:?}"))
+            ResolutionFailure::Unavailable(
+                ApplicationError::ParentUnavailable(format!("{error:?}")).into(),
+            )
         })
     }
 }

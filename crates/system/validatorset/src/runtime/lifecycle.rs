@@ -1,11 +1,12 @@
 use super::{registered_status, status};
+use crate::errors::ValidatorSetError;
 use crate::precompile::IValidatorSet;
 use crate::schema::ValidatorSet;
 use crate::state_machine::{
     self, Active, HistoryCounters, ValidatorHistory, ValidatorLifecycle, ValidatorState,
 };
 use alloy_primitives::Address;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::slashing_journal::{iso8601_now, record as journal_record, JournalRecord};
 use tracing::{info, warn};
 
@@ -52,26 +53,20 @@ impl ValidatorSet<'_> {
     pub fn deactivate_validator(&mut self, caller: Address, addr: Address) -> Result<()> {
         let owner = self.config_owner.read()?;
         if caller != owner && caller != addr {
-            return Err(PrecompileError::Revert(
-                "unauthorized: caller must be owner or validator itself".into(),
-            ));
+            return Err(ValidatorSetError::UnauthorizedOwnerOrValidator.into());
         }
         let before = self.validator_state(addr)?;
         let active = match before.lifecycle().clone() {
             ValidatorLifecycle::Active(active) => active,
             ValidatorLifecycle::Absent => {
-                return Err(PrecompileError::Revert("validator not registered".into()))
+                return Err(ValidatorSetError::ValidatorNotRegistered.into())
             }
-            _ => {
-                return Err(PrecompileError::Revert(
-                    "can only deactivate an active validator".into(),
-                ))
-            }
+            _ => return Err(ValidatorSetError::CanOnlyDeactivateActiveValidator.into()),
         };
         let height = self.storage.block_number()?;
-        let stake = *before.stake().ok_or_else(|| {
-            PrecompileError::Fatal("active validator is missing stake projection".into())
-        })?;
+        let stake = *before
+            .stake()
+            .ok_or(ValidatorSetError::ActiveValidatorMissingStakeProjection)?;
         let lifecycle =
             ValidatorLifecycle::Exiting(state_machine::begin_exit(active, stake, height)?);
         let after = before.clone().with_lifecycle(lifecycle)?;
@@ -166,13 +161,14 @@ impl ValidatorSet<'_> {
                 return Ok(false);
             }
             ValidatorLifecycle::Absent => {
-                return Err(PrecompileError::Revert("validator not registered".into()));
+                return Err(ValidatorSetError::ValidatorNotRegistered.into());
             }
             lifecycle => {
-                return Err(PrecompileError::Fatal(format!(
-                    "TEE expiry sweep selected validator {addr} with ineligible status {}",
-                    registered_status(&lifecycle)?
-                )));
+                return Err(ValidatorSetError::TeeExpirySweepIneligibleStatus {
+                    addr,
+                    status: registered_status(&lifecycle)?,
+                }
+                .into());
             }
         };
         let block_number = self.storage.block_number()?;
@@ -214,16 +210,17 @@ impl ValidatorSet<'_> {
         let before = self.validator_state(addr)?;
         let lifecycle = before.lifecycle().clone();
         if matches!(lifecycle, ValidatorLifecycle::Absent) {
-            return Err(PrecompileError::Revert("validator not registered".into()));
+            return Err(ValidatorSetError::ValidatorNotRegistered.into());
         }
         let current_status = registered_status(&lifecycle)?;
         let punishment = Punishment {
             jail,
             block_number: self.storage.block_number()?,
         };
-        let history = before.history().copied().ok_or_else(|| {
-            PrecompileError::Fatal("registered validator is missing history".into())
-        })?;
+        let history = before
+            .history()
+            .copied()
+            .ok_or(ValidatorSetError::RegisteredValidatorMissingHistory)?;
         let Some(active) = punishable_active(lifecycle, punishment, current_status)? else {
             return Ok(None);
         };
@@ -266,18 +263,16 @@ impl ValidatorSet<'_> {
         let jailed = match before.lifecycle().clone() {
             ValidatorLifecycle::Jail(jailed) => jailed,
             ValidatorLifecycle::JailRetained(_) => {
-                return Err(PrecompileError::Revert(
-                    "jailed validator is still retained in the current committee".into(),
-                ));
+                return Err(ValidatorSetError::JailedValidatorStillRetained.into());
             }
             ValidatorLifecycle::Absent => {
-                return Err(PrecompileError::Revert("validator not registered".into()));
+                return Err(ValidatorSetError::ValidatorNotRegistered.into());
             }
             lifecycle => {
-                return Err(PrecompileError::Revert(format!(
-                    "unjailValidator requires JAILED status, got {}",
-                    registered_status(&lifecycle)?
-                )));
+                return Err(ValidatorSetError::UnjailRequiresJailedStatus {
+                    status: registered_status(&lifecycle)?,
+                }
+                .into());
             }
         };
         let block_number = self.storage.block_number()?;
@@ -370,9 +365,11 @@ fn punishable_active(
             } else {
                 "force-exit"
             };
-            Err(PrecompileError::Revert(format!(
-                "cannot {action} validator with status {current_status}: only ACTIVE, EXITING, UNBONDING, or INACTIVE allowed"
-            )))
+            Err(ValidatorSetError::CannotPunishValidatorStatus {
+                action,
+                status: current_status,
+            }
+            .into())
         }
     }
 }
@@ -386,9 +383,9 @@ fn punished_state(
     punishment: Punishment,
 ) -> Result<ValidatorState> {
     let block_number = punishment.block_number;
-    let stake = *before.stake().ok_or_else(|| {
-        PrecompileError::Fatal("active validator is missing stake projection".into())
-    })?;
+    let stake = *before
+        .stake()
+        .ok_or(ValidatorSetError::ActiveValidatorMissingStakeProjection)?;
     let next = if punishment.jail {
         ValidatorLifecycle::JailRetained(state_machine::jail(active, block_number)?)
     } else {
@@ -403,7 +400,7 @@ fn punished_state(
                 slash_count: history
                     .slash_count()
                     .checked_add(1)
-                    .ok_or_else(|| PrecompileError::Fatal("slash count overflow".into()))?,
+                    .ok_or(ValidatorSetError::SlashCountOverflow)?,
                 missed_blocks: history.missed_blocks(),
                 missed_votes: history.missed_votes(),
                 blocks_proposed: history.blocks_proposed(),

@@ -342,9 +342,7 @@ where
             read_finalized_replacement_binding(view, registry, node_data_dir, node_id)?;
         let authorization =
             construct_finalized_replacement_authorization_v1(node_data_dir, &finalized_binding)
-                .map_err(|error| {
-                    LocalRegistryAdmissionError::ReplacementAuthorization(error.to_string())
-                })?;
+                .map_err(LocalRegistryAdmissionError::replacement_authorization)?;
         let successor_activation_height = registry
             .staged_successor_policy_v1()
             .map_err(registry_error)?
@@ -376,26 +374,25 @@ fn read_finalized_replacement_binding(
         .node_enclave_binding_for_identity_v1(node_id)
         .map_err(registry_error)?
         .ok_or(LocalRegistryAdmissionError::ReplacementBindingMissing)?;
-    let submission = load_replacement_candidate_submission(node_data_dir).map_err(|error| {
-        LocalRegistryAdmissionError::ReplacementAuthorization(error.to_string())
-    })?;
+    let submission = load_replacement_candidate_submission(node_data_dir)
+        .map_err(LocalRegistryAdmissionError::replacement_authorization)?;
     let submission = submission.ok_or_else(|| {
         LocalRegistryAdmissionError::ReplacementAuthorization(
             "durable replacement submission is missing".into(),
         )
     })?;
     let AttestationEvidenceV1::Dcap(dcap) =
-        AttestationEvidenceV1::decode_canonical(submission.evidence()).map_err(|error| {
-            LocalRegistryAdmissionError::ReplacementAuthorization(error.to_string())
-        })?
+        AttestationEvidenceV1::decode_canonical(submission.evidence())
+            .map_err(LocalRegistryAdmissionError::replacement_authorization)?
     else {
         return Err(LocalRegistryAdmissionError::ReplacementAuthorization(
             "durable replacement evidence is not DCAP".into(),
         ));
     };
-    let intent_hash = dcap.intent.intent_hash().map_err(|error| {
-        LocalRegistryAdmissionError::ReplacementAuthorization(error.to_string())
-    })?;
+    let intent_hash = dcap
+        .intent
+        .intent_hash()
+        .map_err(LocalRegistryAdmissionError::replacement_authorization)?;
     if !replacement_intent_matches(&binding, &dcap.intent, intent_hash) {
         return Err(LocalRegistryAdmissionError::ReplacementBindingMissing);
     }
@@ -559,11 +556,11 @@ pub fn admit_anchored_remote_session_v1(
     let registry = TeeRegistry::new(StorageHandle::new(&mut storage));
     let source = registry
         .node_enclave_binding_for_identity_v1(&source_witness.node_id)
-        .map_err(|error| ExternalRegistryAdmissionError::Registry(error.to_string()))?
+        .map_err(ExternalRegistryAdmissionError::registry)?
         .ok_or(ExternalRegistryAdmissionError::SourceBindingMissing)?;
     let target = registry
         .node_enclave_binding_for_identity_v1(target_node)
-        .map_err(|error| ExternalRegistryAdmissionError::Registry(error.to_string()))?
+        .map_err(ExternalRegistryAdmissionError::registry)?
         .ok_or(ExternalRegistryAdmissionError::TargetBindingMissing)?;
     if !binding_codes_admitted(
         &registry,
@@ -606,11 +603,11 @@ fn verify_registry_binding_proof(
     let layout_registry = TeeRegistry::new(StorageHandle::new(&mut layout_storage));
     let mut slots = layout_registry
         .node_enclave_binding_storage_slots_v1(&request.source_witness.node_id)
-        .map_err(|error| ExternalRegistryAdmissionError::SlotPlan(error.to_string()))?;
+        .map_err(ExternalRegistryAdmissionError::slot_plan)?;
     slots.extend(
         layout_registry
             .node_enclave_binding_storage_slots_v1(request.target_node)
-            .map_err(|error| ExternalRegistryAdmissionError::SlotPlan(error.to_string()))?,
+            .map_err(ExternalRegistryAdmissionError::slot_plan)?,
     );
     slots.sort_unstable();
     slots.dedup();
@@ -620,7 +617,7 @@ fn verify_registry_binding_proof(
         &slots,
         checkpoint.view.state_root,
     )
-    .map_err(|error| ExternalRegistryAdmissionError::Proof(error.to_string()))?;
+    .map_err(ExternalRegistryAdmissionError::proof)?;
 
     Ok(())
 }

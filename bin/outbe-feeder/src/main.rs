@@ -6,6 +6,7 @@
 mod abi;
 mod aggregator;
 mod config;
+mod errors;
 mod fixed;
 mod health;
 mod journal;
@@ -24,6 +25,7 @@ use eyre::Result;
 use tracing::{info, warn};
 
 use crate::config::FeederConfig;
+use crate::errors::FeederError;
 use crate::health::FeederHealth;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -197,7 +199,9 @@ fn pending_vote_journal_path(config_path: &Path, identity: &str) -> Result<PathB
             .expect("canonical config has a parent")
             .to_path_buf(),
     };
-    eyre::ensure!(directory.is_dir(), "feeder state path is not a directory");
+    if !directory.is_dir() {
+        return Err(FeederError::StatePathNotDirectory.into());
+    }
     Ok(directory.join(format!("pending-{}.json", keccak256(identity.as_bytes()))))
 }
 
@@ -318,7 +322,9 @@ impl FeederTickContext<'_> {
             aggregator::fetch_and_aggregate(self.providers, self.config),
         )
         .await??;
-        eyre::ensure!(!aggregated.is_empty(), "no price data available");
+        if aggregated.is_empty() {
+            return Err(FeederError::NoPriceDataAvailable.into());
+        }
         let fresh = self.client.head().await?;
         if fresh.period(self.config.oracle.vote_period) != period {
             self.health

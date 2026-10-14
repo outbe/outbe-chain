@@ -10,15 +10,11 @@ use outbe_credis::{CredisContract, Forfeit, IssueCredisParams};
 use outbe_gratisfactory::api as pledges;
 use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
-    error::{PrecompileError, Result},
+    error::Result,
     storage::StorageHandle,
     units::checked_protocol_to_native,
 };
 use outbe_vaultrouter::LiquidityReservation;
-
-fn revert(message: &str) -> PrecompileError {
-    PrecompileError::Revert(message.into())
-}
 
 /// The caller's live reservation. Returns it with the block time.
 fn live_reservation(
@@ -27,7 +23,8 @@ fn live_reservation(
     reservation_id: U256,
 ) -> Result<(LiquidityReservation, u64)> {
     let r = outbe_vaultrouter::api::reservation_of(storage, reservation_id)?;
-    let now = u64::try_from(storage.timestamp()?).map_err(|_| revert("timestamp exceeds u64"))?;
+    let now =
+        u64::try_from(storage.timestamp()?).map_err(|_| CredisFactoryError::TimestampOverflow)?;
     let error = if r.asset.is_zero() {
         CredisFactoryError::ReservationNotFound
     } else if r.cca != caller {
@@ -44,15 +41,15 @@ fn live_reservation(
 fn ensure_asset_metadata(storage: &StorageHandle<'_>, r: &LiquidityReservation) -> Result<()> {
     let decimals = storage.staticcall(r.asset, IERC20::decimalsCall {}.abi_encode().into())?;
     let decimals = IERC20::decimalsCall::abi_decode_returns_validate(&decimals)
-        .map_err(|_| revert("asset decimals undecodable"))?;
+        .map_err(|_| CredisFactoryError::AssetDecimalsUndecodable)?;
     let currency = storage.staticcall(
         r.asset,
         IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
     )?;
     let currency = IReferenceCurrency::isoCodeCall::abi_decode_returns_validate(&currency)
-        .map_err(|_| revert("asset currency undecodable"))?;
+        .map_err(|_| CredisFactoryError::AssetCurrencyUndecodable)?;
     if currency != r.issuance_currency || decimals != r.asset_decimals {
-        return Err(revert("asset metadata changed"));
+        return Err(CredisFactoryError::AssetMetadataChanged.into());
     }
     Ok(())
 }
@@ -70,7 +67,7 @@ pub fn issue_credis(
         let (r, now) = live_reservation(&storage, caller, reservation_id)?;
         ensure_asset_metadata(&storage, &r)?;
         let required = checked_protocol_to_native(r.gratis_minor)
-            .ok_or_else(|| revert("COEN stake overflow"))?;
+            .ok_or(CredisFactoryError::CoenStakeOverflow)?;
         if stake != required {
             return Err(CredisFactoryError::CcaStakeMismatch.into());
         }
@@ -99,7 +96,7 @@ pub fn issue_credis(
             r.amount,
         )?;
         if paid != r.amount || credis.get_credis(id)? != opened {
-            return Err(revert("Credis changed during issuance"));
+            return Err(CredisFactoryError::CredisChangedDuringIssuance.into());
         }
         storage.emit_event(
             CREDIS_FACTORY_ADDRESS,
@@ -137,7 +134,7 @@ fn collect_payment(
     if !returned.is_empty()
         && IERC20::transferFromCall::abi_decode_returns_validate(&returned) != Ok(true)
     {
-        return Err(revert("ERC20 transfer failed"));
+        return Err(CredisFactoryError::Erc20TransferFailed.into());
     }
     let returned = storage.call(
         asset,
@@ -152,7 +149,7 @@ fn collect_payment(
     if !returned.is_empty()
         && IERC20::approveCall::abi_decode_returns_validate(&returned) != Ok(true)
     {
-        return Err(revert("ERC20 approval failed"));
+        return Err(CredisFactoryError::Erc20ApprovalFailed.into());
     }
     outbe_vaultrouter::api::deposit(storage, asset, amount)?;
     Ok(())
@@ -172,23 +169,23 @@ pub fn settle(
         }
         let mut credis = CredisContract::new(storage.clone());
         let before = credis.get_credis(credis_id)?;
-        let now =
-            u64::try_from(storage.timestamp()?).map_err(|_| revert("timestamp exceeds u64"))?;
+        let now = u64::try_from(storage.timestamp()?)
+            .map_err(|_| CredisFactoryError::TimestampOverflow)?;
         let settlement = credis.settle(credis_id, amount, now)?;
         let after = credis.get_credis(credis_id)?;
         let released = before
             .outstanding_gratis_minor
             .checked_sub(after.outstanding_gratis_minor)
-            .ok_or_else(|| revert("collateral increased"))?;
+            .ok_or(CredisFactoryError::CollateralIncreased)?;
         if released != settlement.gratis_returned_minor {
-            return Err(revert("collateral release mismatch"));
+            return Err(CredisFactoryError::CollateralReleaseMismatch.into());
         }
         let paid = settlement.total_paid;
         if !paid.is_zero() {
             collect_payment(&storage, settlement.asset, caller, paid)?;
         }
         if credis.get_credis(credis_id)? != after {
-            return Err(revert("Credis changed during payment"));
+            return Err(CredisFactoryError::CredisChangedDuringPayment.into());
         }
         if !released.is_zero() {
             pledges::return_from_credis(&storage, credis_id, released)?;
@@ -199,7 +196,8 @@ pub fn settle(
 
 /// Forfeit a Credis whose call lapsed.
 pub fn forfeit_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()> {
-    let now = u64::try_from(storage.timestamp()?).map_err(|_| revert("timestamp exceeds u64"))?;
+    let now =
+        u64::try_from(storage.timestamp()?).map_err(|_| CredisFactoryError::TimestampOverflow)?;
     burn_forfeited_collateral(storage, credis_id, |credis| credis.forfeit(credis_id, now))?;
     Ok(())
 }
@@ -232,7 +230,7 @@ fn burn_forfeited_collateral(
             ..before.clone()
         } == after;
         if forfeit.gratis_burned_minor != before.outstanding_gratis_minor || !only_state_moved {
-            return Err(revert("forfeiture collateral mismatch"));
+            return Err(CredisFactoryError::ForfeitureCollateralMismatch.into());
         }
         if !forfeit.gratis_burned_minor.is_zero() {
             pledges::burn_from_credis(&storage, credis_id, forfeit.gratis_burned_minor)?;

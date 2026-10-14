@@ -71,12 +71,11 @@ where
                 self.signing_key.clone(),
                 self.vrf_materials.clone(),
             )
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "signing key or BLS share invalid for validator set (epoch {current_epoch})",
-                    current_epoch = self.state.current_epoch
-                )
-            })?
+            .ok_or(
+                crate::errors::StackEpochError::InvalidSignerSchemeForEpoch {
+                    epoch: self.state.current_epoch,
+                },
+            )?
         } else {
             // Verifier mode (no threshold share this epoch): the engine follows and
             // verifies finalized blocks, which drives its execution layer to sync. It
@@ -94,13 +93,11 @@ where
                 self.vrf_materials.clone(),
             )
             .ok_or_else(|| {
-                eyre::eyre!(
-                    "verifier scheme invalid for validator set (epoch {current_epoch}): \
-                     polynomial total ({}) must equal participant count ({})",
-                    self.vrf_materials.active_polynomial_total().unwrap_or(0),
-                    self.state.participants.len(),
-                    current_epoch = self.state.current_epoch
-                )
+                crate::errors::StackEpochError::InvalidVerifierSchemeForEpoch {
+                    epoch: self.state.current_epoch,
+                    polynomial_total: self.vrf_materials.active_polynomial_total().unwrap_or(0),
+                    participant_count: self.state.participants.len(),
+                }
             })?
         };
 

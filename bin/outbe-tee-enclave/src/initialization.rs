@@ -15,6 +15,7 @@ use outbe_primitives::tee_attestation_v1::{
 use outbe_primitives::tee_genesis_v1::is_attestation_mode_allowed_for_chain_id;
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 
+use crate::errors::{EnclaveResult, InitError};
 use crate::keys::EnclaveKeys;
 use crate::seal::{EnclaveBootConfig, SealHeader, SEAL_FORMAT};
 
@@ -80,15 +81,15 @@ impl CommandDenial {
 }
 
 impl SessionAuthorityV1 {
-    pub fn ensure_live(self) -> Result<(), &'static str> {
+    pub fn ensure_live(self) -> EnclaveResult<()> {
         self.ensure_live_at(unix_time_seconds()?)
     }
 
-    fn ensure_live_at(self, now: u64) -> Result<(), &'static str> {
+    fn ensure_live_at(self, now: u64) -> EnclaveResult<()> {
         match self {
             Self::LocalNodeHost => Ok(()),
             Self::RemoteActiveNode { deadline } if now < deadline => Ok(()),
-            Self::RemoteActiveNode { .. } => Err("remote session lease expired"),
+            Self::RemoteActiveNode { .. } => Err(InitError::RemoteSessionLeaseExpired.into()),
         }
     }
 }
@@ -130,12 +131,12 @@ impl InitializationState {
         self.gramine_direct_dev_evidence_allowed
     }
 
-    pub fn challenge_response(&self, keys: &EnclaveKeys) -> Result<EnclaveResponse, String> {
+    pub fn challenge_response(&self, keys: &EnclaveKeys) -> EnclaveResult<EnclaveResponse> {
         if self.mode != InitializationMode::Production {
-            return Err("initialization challenge is unavailable in development mode".to_string());
+            return Err(InitError::ChallengeUnavailableInDev.into());
         }
         if self.manifest()?.is_some() {
-            return Err("enclave is already initialized".to_string());
+            return Err(InitError::AlreadyInitialized.into());
         }
         Ok(EnclaveResponse::InitializationChallenge {
             challenge: self.challenge,
@@ -153,40 +154,40 @@ impl InitializationState {
         manifest_bytes: &[u8],
         node_signature: &[u8],
         keys: &EnclaveKeys,
-    ) -> Result<PendingInitialization, String> {
+    ) -> EnclaveResult<PendingInitialization> {
         if self.mode != InitializationMode::Production {
-            return Err("production initialization is unavailable in development mode".to_string());
+            return Err(InitError::ProdInitUnavailableInDev.into());
         }
         if self.manifest()?.is_some() {
-            return Err("enclave is already initialized".to_string());
+            return Err(InitError::AlreadyInitialized.into());
         }
         let manifest = EnclaveInitializationManifestV1::decode_canonical(manifest_bytes)
-            .map_err(|error| format!("initialization manifest is not canonical: {error}"))?;
+            .map_err(InitError::manifest_not_canonical)?;
         let signature: [u8; 65] = node_signature
             .try_into()
-            .map_err(|_| "initialization node signature must be 65 bytes".to_string())?;
+            .map_err(|_| InitError::NodeSignatureLen)?;
         self.validate_manifest(&manifest, keys)?;
         if !manifest.verify_node_signature(&signature) {
-            return Err("initialization node signature is invalid".to_string());
+            return Err(InitError::NodeSignatureInvalid.into());
         }
         Ok(PendingInitialization { manifest })
     }
 
     /// Persist before publishing the authorization in memory. A replay or a
     /// conflicting second manifest always rejects, including an exact replay.
-    pub fn commit(&self, pending: PendingInitialization, keys: &EnclaveKeys) -> Result<(), String> {
+    pub fn commit(&self, pending: PendingInitialization, keys: &EnclaveKeys) -> EnclaveResult<()> {
         let mut stored = self
             .stored
             .lock()
-            .map_err(|_| "initialization state lock is poisoned".to_string())?;
+            .map_err(|_| InitError::StateLockPoisoned)?;
         if stored.is_some() {
-            return Err("enclave is already initialized".to_string());
+            return Err(InitError::AlreadyInitialized.into());
         }
         self.validate_manifest(&pending.manifest, keys)?;
         let boot = self
             .boot
             .as_deref()
-            .ok_or_else(|| "production initialization requires sealed storage".to_string())?;
+            .ok_or(InitError::RequiresSealedStorage)?;
         persist_identity(boot, keys, pending.manifest.network_binding())?;
         persist_manifest(boot, &pending.manifest)?;
         *stored = Some(StoredInitialization {
@@ -196,37 +197,32 @@ impl InitializationState {
         Ok(())
     }
 
-    pub fn initialized_response(&self) -> Result<EnclaveResponse, String> {
+    pub fn initialized_response(&self) -> EnclaveResult<EnclaveResponse> {
         let stored = self
             .stored
             .lock()
-            .map_err(|_| "initialization state lock is poisoned".to_string())?;
-        let stored = stored
-            .as_ref()
-            .ok_or_else(|| "enclave is not initialized".to_string())?;
+            .map_err(|_| InitError::StateLockPoisoned)?;
+        let stored = stored.as_ref().ok_or(InitError::NotInitialized)?;
         Ok(EnclaveResponse::Initialized {
-            enclave_id: stored
-                .manifest
-                .enclave_id()
-                .map_err(|error| error.to_string())?,
+            enclave_id: stored.manifest.enclave_id().map_err(InitError::other)?,
             node_host_authorization_hash: stored
                 .manifest
                 .node_host_authorization_hash()
-                .map_err(|error| error.to_string())?,
+                .map_err(InitError::other)?,
             sealed_loaded: stored.loaded_from_seal,
         })
     }
 
-    pub fn manifest(&self) -> Result<Option<EnclaveInitializationManifestV1>, String> {
+    pub fn manifest(&self) -> EnclaveResult<Option<EnclaveInitializationManifestV1>> {
         self.stored
             .lock()
             .map(|stored| stored.as_ref().map(|value| value.manifest.clone()))
-            .map_err(|_| "initialization state lock is poisoned".to_string())
+            .map_err(|_| InitError::StateLockPoisoned.into())
     }
 
     pub fn network_binding(
         &self,
-    ) -> Result<Option<outbe_primitives::tee_attestation_v1::NetworkBindingV1>, String> {
+    ) -> EnclaveResult<Option<outbe_primitives::tee_attestation_v1::NetworkBindingV1>> {
         self.manifest().map(|manifest| {
             manifest
                 .map(|value| value.network_binding())
@@ -238,27 +234,23 @@ impl InitializationState {
         self.trusted_network_descriptor.as_ref()
     }
 
-    pub fn expected_node_host(&self) -> Result<[u8; 32], String> {
+    pub fn expected_node_host(&self) -> EnclaveResult<[u8; 32]> {
         self.manifest()?
             .map(|manifest| manifest.node_host_noise_x25519)
-            .ok_or_else(|| "enclave is not initialized".to_string())
+            .ok_or_else(|| InitError::NotInitialized.into())
     }
 
-    pub fn quote_report_data(&self, intent_bytes: &[u8]) -> Result<[u8; 64], String> {
-        let manifest = self
-            .manifest()?
-            .ok_or_else(|| "enclave is not initialized".to_string())?;
+    pub fn quote_report_data(&self, intent_bytes: &[u8]) -> EnclaveResult<[u8; 64]> {
+        let manifest = self.manifest()?.ok_or(InitError::NotInitialized)?;
         let intent = RegistrationIntentV1::decode_canonical(intent_bytes)
-            .map_err(|error| format!("registration intent is not canonical: {error}"))?;
+            .map_err(InitError::registration_intent_not_canonical)?;
         if intent.attestation_mode != AttestationMode::DcapRequired {
-            return Err(
-                "production quote generation requires DcapRequired attestation mode".to_string(),
-            );
+            return Err(InitError::QuoteRequiresDcapRequired.into());
         }
         manifest
             .validate_intent_binding(&intent)
-            .map_err(|error| error.to_string())?;
-        intent.report_data().map_err(|error| error.to_string())
+            .map_err(InitError::other)?;
+        intent.report_data().map_err(InitError::other)
     }
 
     pub fn authorize_command(
@@ -270,7 +262,9 @@ impl InitializationState {
         if self.mode == InitializationMode::Development {
             return Ok(());
         }
-        authority.ensure_live().map_err(CommandDenial::NotReady)?;
+        authority
+            .ensure_live()
+            .map_err(|err| CommandDenial::NotReady(err.as_static_str()))?;
         if matches!(authority, SessionAuthorityV1::RemoteActiveNode { .. }) {
             return matches!(request, EnclaveRequest::GetPublicKeys)
                 .then_some(())
@@ -304,7 +298,7 @@ impl InitializationState {
         &self,
         authorization: RemoteSessionAuthorization,
         keys: &EnclaveKeys,
-    ) -> Result<(), String> {
+    ) -> EnclaveResult<()> {
         self.authorize_remote_session_at_generation(authorization, 0, keys)
     }
 
@@ -313,14 +307,12 @@ impl InitializationState {
         authorization: RemoteSessionAuthorization,
         generation: u64,
         keys: &EnclaveKeys,
-    ) -> Result<(), String> {
+    ) -> EnclaveResult<()> {
         if self.mode != InitializationMode::Production || self.manifest()?.is_none() {
-            return Err(
-                "remote session authorization requires initialized production state".into(),
-            );
+            return Err(InitError::RemoteSessionRequiresProdInit.into());
         }
         authorization.validate_responder(keys)?;
-        let now = unix_time_seconds().map_err(str::to_owned)?;
+        let now = unix_time_seconds()?;
         authorization.ensure_live_at(now)?;
         let RemoteSessionAuthorization {
             ticket_id,
@@ -331,20 +323,20 @@ impl InitializationState {
         let mut sessions = self
             .remote_sessions
             .lock()
-            .map_err(|_| "remote session authorization lock is poisoned".to_string())?;
+            .map_err(|_| InitError::RemoteSessionAuthLockPoisoned)?;
         if generation
             != self
                 .remote_admission_generation
                 .load(std::sync::atomic::Ordering::Acquire)
         {
-            return Err("remote session authorization predates enclave retirement".into());
+            return Err(InitError::RemoteSessionPredatesRetirement.into());
         }
         sessions.retain(|_, session| session.deadline > now);
         if sessions.len() >= MAX_PENDING_REMOTE_SESSIONS_V1 {
-            return Err("pending remote session capacity reached".into());
+            return Err(InitError::RemoteSessionCapacityReached.into());
         }
         if sessions.contains_key(&ticket_id) {
-            return Err("remote session ticket already exists".into());
+            return Err(InitError::RemoteSessionTicketExists.into());
         }
         sessions.insert(
             ticket_id,
@@ -359,15 +351,15 @@ impl InitializationState {
         Ok(())
     }
 
-    pub fn retire_remote_sessions(&self, height: u64) -> Result<(), String> {
+    pub fn retire_remote_sessions(&self, height: u64) -> EnclaveResult<()> {
         use std::sync::atomic::Ordering;
         if height == 0 {
-            return Err("remote retirement height is zero".into());
+            return Err(InitError::RemoteRetirementHeightZero.into());
         }
         let mut sessions = self
             .remote_sessions
             .lock()
-            .map_err(|_| "remote admission lock poisoned")?;
+            .map_err(|_| InitError::RemoteAdmissionLockPoisoned)?;
         if height > self.remote_admission_generation.load(Ordering::Acquire) {
             self.remote_admission_generation
                 .store(height, Ordering::Release);
@@ -379,57 +371,52 @@ impl InitializationState {
     pub fn ensure_remote_admission_current(
         &self,
         session: PendingRemoteSessionV1,
-    ) -> Result<(), String> {
+    ) -> EnclaveResult<()> {
         if session.admission_generation
             != self
                 .remote_admission_generation
                 .load(std::sync::atomic::Ordering::Acquire)
         {
-            return Err("remote session retired at enclave upgrade deadline".into());
+            return Err(InitError::RemoteSessionRetiredAtUpgradeDeadline.into());
         }
         Ok(())
     }
 
-    pub fn take_remote_session(&self, ticket_id: B256) -> Result<PendingRemoteSessionV1, String> {
+    pub fn take_remote_session(&self, ticket_id: B256) -> EnclaveResult<PendingRemoteSessionV1> {
         if self.mode != InitializationMode::Production || ticket_id.is_zero() {
-            return Err("remote session ticket is invalid".into());
+            return Err(InitError::RemoteSessionTicketInvalid.into());
         }
-        let now = unix_time_seconds().map_err(str::to_owned)?;
+        let now = unix_time_seconds()?;
         let mut sessions = self
             .remote_sessions
             .lock()
-            .map_err(|_| "remote session authorization lock is poisoned".to_string())?;
+            .map_err(|_| InitError::RemoteSessionAuthLockPoisoned)?;
         sessions.retain(|_, session| session.deadline > now);
         sessions
             .remove(&ticket_id)
-            .ok_or_else(|| "remote session ticket is unavailable, expired, or already used".into())
+            .ok_or_else(|| InitError::RemoteSessionTicketUnavailable.into())
     }
 
     fn validate_manifest(
         &self,
         manifest: &EnclaveInitializationManifestV1,
         keys: &EnclaveKeys,
-    ) -> Result<(), String> {
+    ) -> EnclaveResult<()> {
         self.validate_network_binding(manifest)?;
         if manifest.initialization_challenge != self.challenge {
-            return Err("initialization challenge mismatch".to_string());
+            return Err(InitError::ChallengeMismatch.into());
         }
         if manifest.recipient_x25519 != keys.tribute_offer_public()
             || manifest.attestation_ed25519 != keys.attestation_pub()
             || manifest.noise_responder_x25519 != keys.noise_public()
         {
-            return Err(
-                "initialization manifest does not bind this enclave's persistent keys".to_string(),
-            );
+            return Err(InitError::ManifestDoesNotBindPersistentKeys.into());
         }
         if keys
             .sealed_network_binding()
             .is_some_and(|binding| binding != manifest.network_binding())
         {
-            return Err(
-                "initialization network binding differs from the sealed enclave identity"
-                    .to_string(),
-            );
+            return Err(InitError::NetworkBindingDiffersFromSealedIdentity.into());
         }
         Ok(())
     }
@@ -437,32 +424,29 @@ impl InitializationState {
     fn validate_network_binding(
         &self,
         manifest: &EnclaveInitializationManifestV1,
-    ) -> Result<(), String> {
+    ) -> EnclaveResult<()> {
         let boot = self
             .boot
             .as_deref()
-            .ok_or_else(|| "production initialization requires sealed storage".to_string())?;
+            .ok_or(InitError::RequiresSealedStorage)?;
         if manifest.chain_id != boot.chain_id.0 {
-            return Err("initialization chain id does not match enclave boot config".to_string());
+            return Err(InitError::ChainIdMismatchBootConfig.into());
         }
         if self
             .trusted_network_descriptor
             .as_ref()
             .is_some_and(|descriptor| descriptor.network_binding != manifest.network_binding())
         {
-            return Err(
-                "initialization network binding differs from the release-measured descriptor"
-                    .to_string(),
-            );
+            return Err(InitError::NetworkBindingDiffersFromDescriptor.into());
         }
         let chain_id = manifest.chain_id[24..]
             .try_into()
             .map(u64::from_be_bytes)
-            .map_err(|_| "initialization chain id has invalid width".to_string())?;
+            .map_err(|_| InitError::InvalidChainIdWidth)?;
         if manifest.chain_id[..24] != [0; 24]
             || !is_attestation_mode_allowed_for_chain_id(chain_id, manifest.attestation_mode)
         {
-            return Err("attestation mode is forbidden for the initialized network".to_string());
+            return Err(InitError::AttestationModeForbidden.into());
         }
         let runtime_matches = matches!(
             (&self.attestation, manifest.attestation_mode),
@@ -475,29 +459,23 @@ impl InitializationState {
             )
         );
         if !runtime_matches {
-            return Err(format!(
-                "runtime attestation {} does not satisfy {:?}",
-                self.attestation.label(),
-                manifest.attestation_mode
-            ));
+            return Err(InitError::RuntimeAttestationDoesNotSatisfy {
+                runtime: self.attestation.label(),
+                mode: manifest.attestation_mode,
+            }
+            .into());
         }
         Ok(())
     }
 }
 
 #[cfg(not(feature = "mock"))]
-fn load_trusted_network_descriptor_v1() -> Result<TrustedNetworkDescriptorV1, String> {
+fn load_trusted_network_descriptor_v1() -> EnclaveResult<TrustedNetworkDescriptorV1> {
     let bytes = std::fs::read(TRUSTED_NETWORK_DESCRIPTOR_PATH).map_err(|error| {
-        format!(
-            "SGX initialization requires release-measured network descriptor {}: {error}",
-            TRUSTED_NETWORK_DESCRIPTOR_PATH
-        )
+        InitError::read_network_descriptor(TRUSTED_NETWORK_DESCRIPTOR_PATH, error)
     })?;
     TrustedNetworkDescriptorV1::decode_canonical(&bytes).map_err(|error| {
-        format!(
-            "release-measured network descriptor {} is invalid: {error}",
-            TRUSTED_NETWORK_DESCRIPTOR_PATH
-        )
+        InitError::invalid_network_descriptor(TRUSTED_NETWORK_DESCRIPTOR_PATH, error).into()
     })
 }
 
@@ -600,11 +578,11 @@ pub(crate) fn request_class_label(request: &EnclaveRequest) -> crate::telemetry:
     }
 }
 
-fn unix_time_seconds() -> Result<u64, &'static str> {
+fn unix_time_seconds() -> EnclaveResult<u64> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs())
-        .map_err(|_| "system time precedes Unix epoch")
+        .map_err(|_| InitError::SystemTimePrecedesEpoch.into())
 }
 
 fn command_allowed_for_environment(
@@ -629,7 +607,7 @@ fn command_allowed_for_environment(
 fn persist_manifest(
     boot: &EnclaveBootConfig,
     manifest: &EnclaveInitializationManifestV1,
-) -> Result<(), String> {
+) -> EnclaveResult<()> {
     let mut nonce = [0u8; 12];
     rand_core::OsRng.fill_bytes(&mut nonce);
     let header = SealHeader {
@@ -640,40 +618,33 @@ fn persist_manifest(
         tribute_offer_epoch: 0,
         nonce,
     };
-    let encoded = manifest
-        .encode_canonical()
-        .map_err(|error| error.to_string())?;
-    let authorization_hash = manifest
-        .authorization_hash()
-        .map_err(|error| error.to_string())?;
+    let encoded = manifest.encode_canonical().map_err(InitError::other)?;
+    let authorization_hash = manifest.authorization_hash().map_err(InitError::other)?;
     let blob = crate::sgx_sealing::seal_payload(
         &authorization_hash.0,
         &encoded,
         manifest.network_binding(),
         &header,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     let path = boot.sealed_node_authorization_path();
-    crate::transport::write_once_0600(&path, &blob)
-        .map_err(|error| format!("persist sealed node authorization: {error}"))
+    crate::transport::write_once_0600(&path, &blob).map_err(InitError::persist_sealed_node_auth)
 }
 
 fn persist_identity(
     boot: &EnclaveBootConfig,
     keys: &EnclaveKeys,
     network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1,
-) -> Result<(), String> {
+) -> EnclaveResult<()> {
     let path = boot.sealed_identity_path();
     if path.exists() {
-        let blob =
-            std::fs::read(&path).map_err(|error| format!("read sealed identity: {error}"))?;
+        let blob = std::fs::read(&path).map_err(InitError::read_sealed_identity)?;
         let unsealed = crate::sgx_sealing::unseal_payload(&blob, boot.isv_svn)
-            .map_err(|error| format!("verify sealed identity: {error}"))?;
+            .map_err(InitError::verify_sealed_identity)?;
         if unsealed.network_binding != network_binding
             || unsealed.tribute_offer_secret.as_ref() != keys.identity_seed()
             || !unsealed.group_sig.is_empty()
         {
-            return Err("sealed enclave identity differs from initialization".to_string());
+            return Err(InitError::SealedIdentityDiffersFromInit.into());
         }
         return Ok(());
     }
@@ -689,32 +660,27 @@ fn persist_identity(
     };
     let blob =
         crate::sgx_sealing::seal_payload(keys.identity_seed(), &[], network_binding, &header)
-            .map_err(|error| format!("seal enclave identity: {error}"))?;
-    crate::transport::write_once_0600(&path, &blob)
-        .map_err(|error| format!("persist sealed enclave identity: {error}"))
+            .map_err(InitError::seal_enclave_identity)?;
+    crate::transport::write_once_0600(&path, &blob).map_err(InitError::persist_sealed_identity)
 }
 
 fn restore_manifest(
     boot: &EnclaveBootConfig,
     keys: &EnclaveKeys,
-) -> Result<Option<EnclaveInitializationManifestV1>, String> {
+) -> EnclaveResult<Option<EnclaveInitializationManifestV1>> {
     let path = boot.sealed_node_authorization_path();
     let blob = match std::fs::read(&path) {
         Ok(blob) => blob,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("read sealed node authorization: {error}")),
+        Err(error) => return Err(InitError::read_sealed_node_auth(error)),
     };
     let unsealed = crate::sgx_sealing::unseal_payload(&blob, boot.isv_svn)
-        .map_err(|error| format!("unseal node authorization: {error}"))?;
+        .map_err(InitError::unseal_node_auth)?;
     let manifest = EnclaveInitializationManifestV1::decode_canonical(&unsealed.group_sig)
-        .map_err(|error| format!("sealed node authorization is non-canonical: {error}"))?;
-    if *unsealed.tribute_offer_secret
-        != manifest
-            .authorization_hash()
-            .map_err(|error| error.to_string())?
-            .0
+        .map_err(InitError::sealed_node_auth_non_canonical)?;
+    if *unsealed.tribute_offer_secret != manifest.authorization_hash().map_err(InitError::other)?.0
     {
-        return Err("sealed node authorization hash mismatch".to_string());
+        return Err(InitError::SealedNodeAuthHashMismatch.into());
     }
     if unsealed.network_binding != manifest.network_binding()
         || manifest.chain_id != boot.chain_id.0
@@ -722,13 +688,13 @@ fn restore_manifest(
             .sealed_network_binding()
             .is_some_and(|binding| binding != manifest.network_binding())
     {
-        return Err("sealed node authorization does not match this enclave identity".to_string());
+        return Err(InitError::SealedNodeAuthDoesNotMatchIdentity.into());
     }
     if manifest.recipient_x25519 != keys.tribute_offer_public()
         || manifest.attestation_ed25519 != keys.attestation_pub()
         || manifest.noise_responder_x25519 != keys.noise_public()
     {
-        return Err("sealed node authorization does not match this enclave identity".to_string());
+        return Err(InitError::SealedNodeAuthDoesNotMatchIdentity.into());
     }
     Ok(Some(manifest))
 }

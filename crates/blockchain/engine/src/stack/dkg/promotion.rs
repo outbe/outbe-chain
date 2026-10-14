@@ -67,9 +67,7 @@ pub(in crate::stack) async fn promote_committed_boundary(
             );
             return Ok(BoundaryPromotion::LocalExcluded);
         }
-        return Err(eyre::eyre!(
-            "finalized DKG boundary output does not match active local DKG output"
-        ));
+        return Err(crate::errors::StackDkgError::FinalizedBoundaryOutputMismatch.into());
     }
     let Some(keys_dir) = keys_dir else {
         return Ok(BoundaryPromotion::Promoted);
@@ -124,17 +122,21 @@ pub(in crate::stack) fn adopt_finalized_boundary_carrier(
         return Ok(false);
     }
     let Some(header) = provider.sealed_header(carrier_height).map_err(|error| {
-        eyre::eyre!("failed to read finalized boundary carrier {carrier_height}: {error}")
+        crate::errors::StackDkgError::ReadFinalizedBoundaryCarrier {
+            height: carrier_height,
+            reason: format!("{error}"),
+        }
     })?
     else {
         return Ok(false);
     };
     let artifacts = decode_outbe_block_artifacts(header.header().inner.extra_data.as_ref())
-        .map_err(|error| {
-            eyre::eyre!(
-                "failed to decode finalized boundary carrier artifacts at {carrier_height}: {error}"
-            )
-        })?;
+        .map_err(
+            |error| crate::errors::StackDkgError::DecodeFinalizedBoundaryCarrierArtifacts {
+                height: carrier_height,
+                reason: format!("{error}"),
+            },
+        )?;
     match artifacts.consensus_header_artifact {
         Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) if boundary == pending => {
             dkg_manager.adopt_finalized_boundary(carrier_height, header.hash(), &boundary)

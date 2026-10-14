@@ -5,8 +5,8 @@ use k256::ecdsa::{RecoveryId, Signature as EcdsaSignature, VerifyingKey};
 
 use crate::error::{PrecompileError, Result};
 
-fn revert(message: String) -> PrecompileError {
-    PrecompileError::Revert(message)
+fn revert(message: impl Into<String>) -> PrecompileError {
+    PrecompileError::revert(message)
 }
 
 /// Recover the compressed public key that produced a recoverable secp256k1
@@ -34,7 +34,7 @@ pub fn recover_signer_public_key(prehash: &B256, signature: &[u8; 65]) -> Result
     encoded
         .as_bytes()
         .try_into()
-        .map_err(|_| revert("recovered compressed public key is not 33 bytes".to_string()))
+        .map_err(|_| revert("recovered compressed public key is not 33 bytes"))
 }
 
 /// Recover the EVM address that produced a recoverable secp256k1 signature.

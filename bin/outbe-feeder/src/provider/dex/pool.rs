@@ -3,13 +3,14 @@ use alloy_primitives::{
     keccak256, B256, U256, U512,
 };
 use alloy_sol_types::{SolEvent, SolValue};
-use eyre::{ensure, Result};
+use eyre::Result;
 
 use super::{
     abi::*,
     config::{DexMarketConfig, PoolConfig},
     math,
 };
+use crate::errors::DexError;
 use crate::fixed::FixedValue;
 use crate::provider::evm_rpc::{Block, Log, Rpc};
 
@@ -84,22 +85,22 @@ impl DexMarketConfig {
                 state_view,
                 ..
             } => {
-                ensure!(
-                    rpc.call(state_view, StateView::poolManagerCall {}, block)
-                        .await?
-                        == manager,
-                    "StateView belongs to a different PoolManager"
-                );
+                if rpc
+                    .call(state_view, StateView::poolManagerCall {}, block)
+                    .await?
+                    != manager
+                {
+                    return Err(DexError::StateViewManagerMismatch.into());
+                }
             }
             PoolConfig::InfinityCl { .. } | PoolConfig::InfinityBin { .. } => {}
             _ => {
                 let address = self.pool.address();
                 let token0 = rpc.call(address, Pair::token0Call {}, block).await?;
                 let token1 = rpc.call(address, Pair::token1Call {}, block).await?;
-                ensure!(
-                    (token0, token1) == self.tokens(),
-                    "configured DEX tokens do not match pool"
-                );
+                if (token0, token1) != self.tokens() {
+                    return Err(DexError::PoolTokenMismatch.into());
+                }
             }
         }
         let base = rpc
@@ -108,10 +109,9 @@ impl DexMarketConfig {
         let quote = rpc
             .call(self.quote_token, Token::decimalsCall {}, block)
             .await?;
-        ensure!(
-            base <= 77 && quote <= 77,
-            "unsupported DEX token decimals (>77)"
-        );
+        if base > 77 || quote > 77 {
+            return Err(DexError::UnsupportedDexTokenDecimals.into());
+        }
         Ok(Decimals { base, quote })
     }
 
@@ -180,16 +180,16 @@ impl DexMarketConfig {
     /// Absolute base-token balance delta, once for each core Swap event. A V2 flash
     /// swap can have both input and output. Use its net delta, not double turnover.
     pub(super) fn swap_volume(&self, log: &Log) -> Result<U256> {
-        ensure!(
-            !log.removed && log.address == self.pool.address(),
-            "invalid DEX log address/removal flag"
-        );
-        ensure!(
-            log.topics.len() == 3 && log.topics[0] == self.pool.swap_topic(),
-            "invalid DEX Swap topics"
-        );
+        if log.removed || log.address != self.pool.address() {
+            return Err(DexError::InvalidLogAddressOrRemoved.into());
+        }
+        if log.topics.len() != 3 || log.topics[0] != self.pool.swap_topic() {
+            return Err(DexError::InvalidSwapTopics.into());
+        }
         if let Some(id) = self.pool.pool_id(self)? {
-            ensure!(log.topics[1] == id, "DEX Swap belongs to another pool");
+            if log.topics[1] != id {
+                return Err(DexError::SwapPoolIdMismatch.into());
+            }
         }
         self.base_delta(log)
     }
