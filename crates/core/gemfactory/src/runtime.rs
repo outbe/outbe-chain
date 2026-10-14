@@ -119,7 +119,7 @@ pub(crate) fn derived_call_terms(
     if entry_price_minor.is_zero() {
         return Ok(None);
     }
-    let call_price = outbe_primitives::markup::marked_up(entry_price_minor, params.call_rate)
+    let call_price = marked_up(entry_price_minor, params.call_rate)
         .ok_or_else(|| PrecompileError::Fatal("gem call price overflow".into()))?;
     Ok(Some(CallTerms {
         call_price_minor: call_price,

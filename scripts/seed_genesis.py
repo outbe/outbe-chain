@@ -260,14 +260,14 @@ def apply_seed(
     # not in flat Gem slots, so genesis cannot seed a Gem either. A demo account gets
     # its Gem through a runtime issuance and mines Gem -> Promis -> Gratis through the
     # enclave. Fail loudly if a stale seed still carries these keys.
-    if "intex_factory" in seed:
-        raise ValueError("intex_factory was renamed to intex_profile")
     for _unsupported_key in ("gratis_balances", "promis_balances", "gems"):
         if _unsupported_key in seed:
             raise ValueError(
                 f"{_unsupported_key} is no longer supported at genesis: issue the Gem at "
                 f"runtime and mine Gem -> Promis -> Gratis"
             )
+    if "intex_factory" in seed:
+        raise ValueError("intex_factory was renamed to intex_profile")
 
     _seed_economic_state(seed, alloc)
 

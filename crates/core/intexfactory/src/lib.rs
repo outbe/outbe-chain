@@ -1,6 +1,6 @@
-//! IntexFactory: Intex issuance, settlement (settle / minePromis), and the
-//! autonomous call lifecycle over the data Intex keeps. Qualification is derived from
-//! daily VWAPs and is never stored.
+//! IntexFactory: Intex issuance, settlement (settle / minePromis), the auction proceeds
+//! fan-in, the target-chain notices and VWAP push, and the call and expiry sweeps over
+//! the data Intex keeps. Qualification is derived from daily VWAPs and is never stored.
 
 pub mod api;
 pub mod called;

@@ -179,6 +179,9 @@ tee:
 # intex_profile:
 #   profile: dev
 
+# credis_profile:
+#   profile: dev
+
 # vault_router:
 #   owner: "0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05"
 

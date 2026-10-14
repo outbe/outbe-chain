@@ -259,7 +259,7 @@ fn assert_paid_event(
             assert_eq!(
                 (settled.seriesId, settled.owner, settled.units),
                 (*id, target.owner, U256::from(*units)),
-                "Settled does not record this payment"
+                "IntexSettled does not record this payment"
             );
         }
         Item::Nod(id) => {

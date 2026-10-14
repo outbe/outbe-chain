@@ -2241,14 +2241,14 @@ fn metadata_update_marks_call_settlement_and_forfeit() {
 #[cfg(feature = "e2e-test")]
 #[test]
 fn static_test_arming_is_rejected() {
-    use crate::test_arming::ICredisFactoryTestArming as ICredisTestArming;
+    use crate::test_arming::ICredisFactoryTestArming;
     use alloy_sol_types::SolCall;
     use outbe_primitives::error::PrecompileError;
     let mut provider = prod_provider();
     provider.set_static(true);
     let result = crate::precompile::dispatch(
         StorageHandle::new(&mut provider),
-        &ICredisTestArming::closeCallNoticeForTestCall {
+        &ICredisFactoryTestArming::closeCallNoticeForTestCall {
             credisId: U256::ONE,
             deadline: 1,
         }
@@ -2265,14 +2265,14 @@ fn static_test_arming_is_rejected() {
 #[cfg(feature = "e2e-test")]
 #[test]
 fn test_arming_backdates_and_requeues_only_a_called_credis() {
-    use crate::test_arming::ICredisFactoryTestArming as ICredisTestArming;
+    use crate::test_arming::ICredisFactoryTestArming;
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage.clone());
         let id = credis.issue(params(alice())).unwrap();
         let arm = |data: Vec<u8>| {
             crate::precompile::dispatch(storage.clone(), &data, alice(), U256::ZERO)
         };
-        let requeue = ICredisTestArming::closeCallNoticeForTestCall {
+        let requeue = ICredisFactoryTestArming::closeCallNoticeForTestCall {
             credisId: id,
             deadline: at(5),
         }
@@ -2280,7 +2280,7 @@ fn test_arming_backdates_and_requeues_only_a_called_credis() {
         let err = arm(requeue.clone()).unwrap_err();
         assert!(err.to_string().contains("not called"), "{err}");
 
-        arm(ICredisTestArming::backdateCredisForTestCall {
+        arm(ICredisFactoryTestArming::backdateCredisForTestCall {
             credisId: id,
             issuedAt: at(0) - 30 * DAY,
         }

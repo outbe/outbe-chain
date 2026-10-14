@@ -36,14 +36,6 @@ pub(crate) fn settlement_units(
         .map_err(|e| settlement::SettlementError::Rounding(e).into())
 }
 
-/// Whether the series has qualified. It is derived from finalized daily VWAPs and never stored.
-pub fn is_qualified(
-    storage: &StorageHandle<'_>,
-    series: &outbe_intex::SeriesRecord,
-) -> Result<bool> {
-    outbe_intex::api::is_qualified(storage, series)
-}
-
 /// What settling `units` of `series_id` with `asset` costs, which
 /// of the series' two currencies that asset settles on, and the VWAP snapshot an
 /// issuance-currency payment must name (zero on the reference rail). Priced exactly

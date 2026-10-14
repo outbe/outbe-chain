@@ -396,7 +396,7 @@ fn require_settleable(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Res
             }
             Ok(())
         }
-        IntexState::Issued if is_qualified(storage, series)? => Ok(()),
+        IntexState::Issued if outbe_intex::api::is_qualified(storage, series)? => Ok(()),
         _ => Err(IntexFactoryError::NotSettleable(series.state).into()),
     }
 }
@@ -425,9 +425,8 @@ mod proceeds;
 pub(crate) use mining::compute_pow_hash;
 pub(crate) use mining::{issued_token_id, settled_token_id, validate_pow};
 pub use mining::{mine_promis, MiningProof};
-#[cfg(test)]
+pub use pricing::quote_settlement;
 #[cfg(test)]
 pub(crate) use pricing::settlement_units;
-pub use pricing::{is_qualified, quote_settlement};
 pub use proceeds::distribute;
 pub(crate) use proceeds::sweep_proceeds_deadlines;

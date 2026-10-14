@@ -52,7 +52,7 @@ interface ICredis {
     }
 
     /// Where the principal and the pledged Gratis went, cumulative. Per-payment
-    /// deltas are in the events.
+    /// deltas are in `ICredisFactory.SettlementApplied`.
     struct Outcome {
         uint256 principalPaidMinor;
         /// Principal left unpaid at forfeiture.
@@ -97,7 +97,7 @@ interface ICredis {
         /// Forfeited, with its outcome, before the forfeit sweep reaches it.
         uint8 state;
         /// Lifetime interest collected, in asset minor units. The sum of successful
-        /// `SettlementApplied.interestPaidMinor` payments. Current-period accrual is
+        /// `ICredisFactory.SettlementApplied.interestPaidMinor` payments. Current-period accrual is
         /// {interestAccruedMinor}.
         uint256 interestPaidMinor;
         CallTerms call;
@@ -139,7 +139,7 @@ interface ICredis {
     function interestAccruedMinor(uint256 credisId) external view returns (uint256);
 
     /// @notice Lifetime interest collected on this Credis, in asset minor units.
-    ///         Equals the sum of `SettlementApplied.interestPaidMinor` over successful
+    ///         Equals the sum of `ICredisFactory.SettlementApplied.interestPaidMinor` over successful
     ///         settlements. Forfeiture does not add unpaid interest.
     function interestPaidMinor(uint256 credisId) external view returns (uint256);
 

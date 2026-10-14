@@ -462,7 +462,7 @@ fn a_qualified_series_called_past_its_deadline_stays_closed() {
     ));
     StorageHandle::enter(&mut storage, |s| {
         let series = outbe_intex::api::read_series(&s, sid(7)).unwrap();
-        assert!(runtime::is_qualified(&s, &series).unwrap());
+        assert!(outbe_intex::api::is_qualified(&s, &series).unwrap());
         let err = runtime::settle_intex(
             &s,
             sid(7),

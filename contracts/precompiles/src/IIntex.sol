@@ -2,10 +2,10 @@
 pragma solidity ^0.8.30;
 
 /// @title IIntex
-/// @notice Read-only view surface for the Intex runtime module: the
+/// @notice View surface and lifecycle events of the Intex runtime module: the
 ///         canonical, cross-chain Intex series ledger (identity + lifecycle).
-/// @dev Writes are Rust-to-Rust only (IntexFactory). This interface exposes
-///      reads for off-chain observability. `promisLoadMinor` is returned as uint256
+/// @dev Writes are Rust-to-Rust only (IntexFactory). Its call and expiry sweeps emit
+///      the series events here. `promisLoadMinor` is returned as uint256
 ///      (its storage representation). The Origin `uint128` bounds it.
 interface IIntex {
     struct SeriesData {
