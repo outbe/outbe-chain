@@ -7,10 +7,11 @@ use outbe_intex::schema::{IntexContract, SeriesId, SeriesRecord};
 use outbe_nod::schema::{NodCertifiedGenerationProjection, NodContract};
 #[cfg(all(test, feature = "snapshot-integration"))]
 use outbe_ocomp_protocol::receipts::AggregateActivationReceiptV1;
+#[cfg(all(test, feature = "snapshot-integration"))]
+use outbe_ocomp_protocol::state::ActiveGenerationV1;
 use outbe_ocomp_protocol::{
-    nod_materialization::NodMaterializationHeadV1,
-    profile::poc_schema_limits,
-    state::{ActiveGenerationV1, OcompJobRecordV1},
+    nod_materialization::NodMaterializationHeadV1, profile::poc_schema_limits,
+    state::OcompJobRecordV1,
 };
 use outbe_primitives::{
     error::{PrecompileError, Result as StorageResult},
@@ -225,6 +226,7 @@ impl<'a> CanonicalState<'a> {
         self.with_storage(|storage| outbe_intex::api::read_series(&storage, id))
     }
 
+    #[cfg(all(test, feature = "snapshot-integration"))]
     pub(crate) fn metadosis_active_lysis_generation(
         &self,
         day: WorldwideDay,
