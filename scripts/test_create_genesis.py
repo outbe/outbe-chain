@@ -513,6 +513,22 @@ class SeedStageTests(unittest.TestCase):
                 int(nod["storage"][slot], 16), SEED_GENESIS.PROFILE_SELECTORS["dev"]
             )
 
+    def test_a_credis_profile_reaches_the_credis_selector_slot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = minimal_config(tmp) | {"credis_profile": {"profile": "dev"}}
+            seeded = self.seed_once(pathlib.Path(tmp), config)
+
+            credis = seeded["alloc"][SEED_GENESIS.CREDIS_ADDRESS]
+            slot = "0x" + f"{SEED_GENESIS.CREDIS_PROFILE_SLOT:064x}"
+            self.assertEqual(
+                int(credis["storage"][slot], 16), SEED_GENESIS.PROFILE_SELECTORS["dev"]
+            )
+
+    def test_the_old_intex_profile_key_is_refused_with_its_new_name(self):
+        config = minimal_config("./keys") | {"intex_factory": {"profile": "dev"}}
+        with self.assertRaisesRegex(ValueError, "renamed to intex_profile"):
+            CG.validate_config(config)
+
     def test_production_seed_stage_preserves_oracle_orientation_and_wire_scales(self):
         token = "0x1111111111111111111111111111111111111111"
         pairs = [
@@ -674,7 +690,7 @@ class ExampleFileTests(unittest.TestCase):
             "rewards",
             "validator_set",
             "radicle_registry",
-            "intex_factory",
+            "intex_profile",
             "vault_router",
             "oracle",
         ):

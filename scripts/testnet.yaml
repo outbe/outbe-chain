@@ -177,7 +177,7 @@ oracle:
 # the gap instead of closing it.
 
 # Intex profile selector. `prod` seeds nothing.
-intex_factory:
+intex_profile:
   profile: dev
 
 # VaultRouter owner: may register vaults and liquidity routes.

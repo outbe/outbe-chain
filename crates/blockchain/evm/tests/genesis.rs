@@ -569,9 +569,10 @@ fn load_seeded_storage(provider: &mut HashMapStorageProvider, genesis: &Value, a
 #[test]
 fn seeded_profiles_and_gems_read_back_through_their_schemas() {
     const SEED: &str = r#"{
-      "intex_factory": { "profile": "dev" },
+      "intex_profile": { "profile": "dev" },
       "gem_profile": { "profile": "prod" },
-      "nod_profile": { "profile": "prod" }
+      "nod_profile": { "profile": "prod" },
+      "credis_profile": { "profile": "dev" }
     }"#;
     let (_tmp, genesis, _raw) =
         run_seed_genesis(FIXTURE_GENESIS, SEED, FIXTURE_VALIDATORS_4_PUBLIC_ONLY);
@@ -583,8 +584,20 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
         &genesis,
         outbe_primitives::addresses::NOD_ADDRESS,
     );
+    load_seeded_storage(
+        &mut provider,
+        &genesis,
+        outbe_primitives::addresses::CREDIS_ADDRESS,
+    );
 
     StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(
+            outbe_credis::CredisContract::new(storage.clone())
+                .config_profile
+                .read()
+                .unwrap(),
+            outbe_credis::config::PROFILE_DEV
+        );
         assert_eq!(
             IntexContract::new(storage.clone())
                 .config_profile

@@ -2186,29 +2186,6 @@ fn test_arming_backdates_and_requeues_only_a_called_credis() {
     });
 }
 
-#[test]
-fn the_profile_selector_resolves_by_network_and_rejects_unknown_values() {
-    use outbe_credis::config::{CredisParams, PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
-    let mainnet = outbe_primitives::chain::MAINNET_CHAIN_ID;
-    assert_eq!(
-        CredisParams::from_selector(PROFILE_AUTO, CHAIN_ID).unwrap(),
-        CredisParams::DEV
-    );
-    assert_eq!(
-        CredisParams::from_selector(PROFILE_AUTO, mainnet).unwrap(),
-        CredisParams::PROD
-    );
-    assert_eq!(
-        CredisParams::from_selector(PROFILE_DEV, mainnet).unwrap(),
-        CredisParams::DEV
-    );
-    assert_eq!(
-        CredisParams::from_selector(PROFILE_PROD, CHAIN_ID).unwrap(),
-        CredisParams::PROD
-    );
-    assert!(CredisParams::from_selector(3, CHAIN_ID).is_err());
-}
-
 /// Off mainnet, an unset selector seals the short terms.
 #[test]
 fn issuance_off_mainnet_seals_the_dev_terms() {

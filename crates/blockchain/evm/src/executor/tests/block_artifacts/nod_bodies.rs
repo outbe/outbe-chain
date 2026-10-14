@@ -532,9 +532,7 @@ fn seed_called_nod(
     // CycleTick forfeits the lapsed called bucket and deletes both bodies.
     let nod = NodContract::new(storage.clone());
     nod.bucket_called_at.write(&bucket_key, 1)?;
-    let notice = nod
-        .bucket_call_notice_period_seconds
-        .read(&bucket_key)?;
+    let notice = nod.bucket_call_notice_period_seconds.read(&bucket_key)?;
     outbe_primitives::expiry_queue::push(
         &outbe_nod::state::ExpiryHours(&nod),
         bucket_key,
