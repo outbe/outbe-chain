@@ -1,16 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { chacha20poly1305 } from "@noble/ciphers/chacha";
-import { hkdf } from "@noble/hashes/hkdf";
-import { sha256 } from "@noble/hashes/sha256";
-import { type Address, bytesToHex, concat, hexToBytes, numberToBytes } from "viem";
+import { type Address, bytesToHex, hexToBytes } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { createCtx } from "../chain.js";
 import { contextNetwork } from "../net/resolver.js";
 import { CONTRACTS } from "../registry.js";
 import { FakeChain } from "../test/fake-chain.js";
-import { MODIFY_KEY, VIEW_KEY, fakeEnclave } from "../test/fake-enclave.js";
+import { MODIFY_KEY, fakeEnclave, promisBlob } from "../test/fake-enclave.js";
 import { OUTBE_RPC, SIGNER, SIGNER_KEY, startHarness } from "../test/harness.js";
 import { withAuthorization } from "./authorize.js";
 import { openGratis, openPromis } from "./balances.js";
@@ -127,12 +124,6 @@ test("balance blobs open to the amounts of the shared vectors", () => {
 });
 
 test("the signer's balance is shown decrypted, another account's stays ciphertext", async () => {
-  const promisBlob = (account: Address, amount: bigint) => {
-    const version = numberToBytes(1n, { size: 8 });
-    const ikm = concat([hexToBytes(account), new Uint8Array([0]), version]);
-    const nonce = hkdf(sha256, ikm, VIEW_KEY, new TextEncoder().encode("outbe/promis/nonce/v1"), 32).slice(0, 12);
-    return bytesToHex(concat([version, chacha20poly1305(VIEW_KEY, nonce).encrypt(numberToBytes(amount, { size: 32 }))]));
-  };
   const harness = await startHarness((chain) => {
     for (const entry of Object.values(CONTRACTS)) chain.register(entry.abi, entry.address);
     fakeEnclave(chain);

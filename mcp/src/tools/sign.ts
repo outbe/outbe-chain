@@ -3,6 +3,7 @@ import type { Ctx } from "../chain.js";
 import { registerAgentRewardTools } from "./sign/agentreward.js";
 import { registerCredisTools } from "./sign/credis.js";
 import { registerGemTools } from "./sign/gem.js";
+import { registerMineTools } from "./sign/mine.js";
 import { registerNodTools } from "./sign/nod.js";
 import { registerOracleTools } from "./sign/oracle.js";
 import { registerStakingTools } from "./sign/staking.js";
@@ -17,4 +18,5 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   registerOracleTools(server, ctx);
   registerGemTools(server, ctx);
   registerNodTools(server, ctx);
+  registerMineTools(server, ctx);
 }

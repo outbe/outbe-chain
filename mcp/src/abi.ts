@@ -20,6 +20,7 @@ import INod from "./abi/generated/precompiles/INod.js";
 import INodFactory from "./abi/generated/precompiles/INodFactory.js";
 import IOracle from "./abi/generated/precompiles/IOracle.js";
 import IPromis from "./abi/generated/precompiles/IPromis.js";
+import IPromisFactory from "./abi/generated/precompiles/IPromisFactory.js";
 import IPromisLimit from "./abi/generated/precompiles/IPromisLimit.js";
 import ISlashIndicator from "./abi/generated/precompiles/ISlashIndicator.js";
 import IStaking from "./abi/generated/precompiles/IStaking.js";
@@ -45,6 +46,7 @@ export const PRECOMPILE_ABI = {
   INodFactory,
   IOracle,
   IPromis,
+  IPromisFactory,
   IPromisLimit,
   ISlashIndicator,
   IStaking,

@@ -2,8 +2,10 @@ import { chacha20poly1305 } from "@noble/ciphers/chacha";
 import { hkdf } from "@noble/hashes/hkdf";
 import { sha256 } from "@noble/hashes/sha256";
 import { type Address, type Hex, bytesToBigInt, concat, formatUnits, getAddress, hexToBytes } from "viem";
+import { PRECOMPILE_ABI } from "../abi.js";
 import type { Ctx } from "../chain.js";
 import type { Network } from "../net/resolver.js";
+import { CONTRACTS } from "../registry.js";
 import { accountKeys } from "./keys.js";
 import type { Ledger } from "./mac.js";
 
@@ -57,4 +59,15 @@ export async function signerAmounts(
   } catch (error) {
     return { decryptError: (error as Error).message };
   }
+}
+
+/** The signer's liquid balance on `ledger`, opened with its view key. */
+export async function signerBalance(ctx: Ctx, network: Network, ledger: Ledger): Promise<bigint> {
+  if (!ctx.account) throw new Error("signing requires a key - set OUTBE_PRIVATE_KEY in the MCP server env");
+  const account = ctx.account.address;
+  const { view } = await accountKeys(network, ledger, ctx.account);
+  const contract = ledger === "Promis" ? CONTRACTS.promis : CONTRACTS.gratis;
+  const abi = ledger === "Promis" ? PRECOMPILE_ABI.IPromis : PRECOMPILE_ABI.IGratis;
+  const blob = await network.client.readContract({ address: contract.address, abi, functionName: "balanceOf", args: [account] });
+  return ledger === "Promis" ? openPromis(view, account, blob) : openGratis(view, account, FIELD.balance, blob);
 }
