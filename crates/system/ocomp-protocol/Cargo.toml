@@ -17,6 +17,7 @@ alloy-eips.workspace = true
 k256.workspace = true
 rustix.workspace = true
 serde.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

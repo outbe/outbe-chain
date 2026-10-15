@@ -583,6 +583,11 @@ fn semantic_artifacts(
         source_availability_policy_id: digest("source_availability_policy_id")?,
     };
     ensure!(
+        artifacts.lysis_program_semantics_hash
+            == outbe_ocomp_protocol::profile::supported_lysis_v1_semantics_hash()?,
+        "generated Lysis semantics differ from the executable registry identity"
+    );
+    ensure!(
         descriptors.len() == 19,
         "semantic descriptor registry has unexpected rows"
     );
@@ -1018,6 +1023,22 @@ mod tests {
             .parent()
             .expect("xtask has repository parent")
             .to_path_buf()
+    }
+
+    #[test]
+    fn executable_lysis_semantics_match_the_final_artifact_identity() {
+        let root = repository_root();
+        let registry = hash_source_set(&root, REGISTRY_SOURCES).unwrap();
+        let descriptors = semantic_descriptors(&root).unwrap();
+        let generated = semantic_digest(
+            "lysis_program_semantics_hash",
+            &descriptors["lysis_program_semantics_hash"],
+            &[registry],
+        );
+        assert_eq!(
+            generated,
+            outbe_ocomp_protocol::profile::supported_lysis_v1_semantics_hash().unwrap()
+        );
     }
 
     fn capacity_manifest() -> Vec<u8> {
