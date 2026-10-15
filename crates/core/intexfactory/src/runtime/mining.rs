@@ -68,7 +68,7 @@ pub fn mine_promis(
 
         emit_event(
             storage,
-            crate::precompile::IIntexFactory::PromisMined {
+            crate::precompile::IIntexFactory::IntexExercised {
                 seriesId: series_id.into(),
                 owner,
                 units,

@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    delete, list, mint, read, update, BodyInput, EntityRef, ExecutionScope, IdPageRequest,
-    ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
+    delete, list, mint, read, update, BodyInput, EntityRef, ExecutionReaders, ExecutionScope,
+    IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
@@ -11,42 +11,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     api::{LoadedNodBucket, LoadedNodItem},
-    config::NodParams,
     errors::NodError,
     precompile::INod,
     schema::{CallTerms, NodBucketState, NodContract, NodItemState},
 };
 
-/// `entry × (100 + call_rate) / 100` plus the profile's other call terms.
-///
-/// `None` when entry is zero: a zero call price would fire on the first scan.
-/// The profile is read exactly here. Every later check reads the bucket's
-/// sealed copy, so a retune cannot re-term an already-issued Nod.
-pub(crate) fn derived_call_terms(
-    entry_price_minor: U256,
-    reference_currency: u16,
-    params: NodParams,
-) -> Result<Option<CallTerms>> {
-    if entry_price_minor.is_zero() {
-        return Ok(None);
-    }
-    let call_price = entry_price_minor
-        .checked_mul(U256::from(100 + u32::from(params.call_rate)))
-        .ok_or(NodError::CallPriceOverflow)?
-        / U256::from(100u64);
-    Ok(Some(CallTerms {
-        call_price_minor: call_price,
-        reference_currency,
-        call_rate: params.call_rate,
-        call_window_seconds: params.call_window_seconds,
-        call_threshold_seconds: params.call_threshold_seconds,
-        call_notice_period_seconds: params.call_notice_period_seconds,
-    }))
-}
-
 impl NodContract<'_> {
     /// A Nod id carries its Worldwide Day as a prefix, so each day is one id range.
-    pub(crate) fn emit_days_metadata_update(&mut self, days: &BTreeSet<u32>) -> Result<()> {
+    pub fn emit_days_metadata_update(&mut self, days: &BTreeSet<u32>) -> Result<()> {
         for &day in days {
             let day = WorldwideDay::new(day);
             self.emit(INod::BatchMetadataUpdate {
@@ -129,7 +101,7 @@ impl NodContract<'_> {
         self.total_supply.read()
     }
 
-    pub(crate) fn get_item_verified(
+    pub fn get_item_verified(
         &self,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
@@ -143,7 +115,7 @@ impl NodContract<'_> {
         )
     }
 
-    pub(crate) fn get_bucket_verified(
+    pub fn get_bucket_verified(
         &self,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
@@ -206,11 +178,12 @@ impl NodContract<'_> {
     /// Records compact issuance state and delegates both bodies to the generic lifecycle.
     pub(crate) fn record_nod_issued(
         &mut self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
+        readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
         item: &NodItemState,
         entry_price_minor: U256,
+        call_terms: Option<CallTerms>,
     ) -> Result<()> {
+        let ExecutionReaders { scope, parent } = readers;
         crate::issuance::validate_item(item, entry_price_minor)?;
         if self
             .get_item_verified(scope, parent, item.nod_id)?
@@ -246,12 +219,9 @@ impl NodContract<'_> {
                 };
                 self.bucket_worldwide_day
                     .write(&item.bucket_key, item.worldwide_day)?;
-                self.callable_bucket_issued_at
+                self.bucket_issued_at
                     .write(&item.bucket_key, item.issued_at)?;
-                let params = crate::config::read_from(self, self.storage.clone().chain_id()?)?;
-                if let Some(terms) =
-                    derived_call_terms(entry_price_minor, item.reference_currency, params)?
-                {
+                if let Some(terms) = call_terms {
                     self.seal_bucket_call_terms(item.bucket_key, terms)?;
                     self.insert_call_bin(item.bucket_key)?;
                 }
@@ -316,9 +286,9 @@ impl NodContract<'_> {
         delete(self.storage.clone(), scope, current_item)?;
         if remaining == 0 && bucket.settled_nods == 0 {
             self.bucket_worldwide_day.get(&item.bucket_key).delete()?;
-            self.callable_bucket_issued_at.clear(&item.bucket_key)?;
+            self.bucket_issued_at.clear(&item.bucket_key)?;
             self.bucket_nod_count.clear(&item.bucket_key)?;
-            self.remove_callable_bucket(item.bucket_key)?;
+            self.close_bucket(item.bucket_key)?;
             delete(self.storage.clone(), scope, current_bucket)?;
         } else if item.is_settled {
             update(
@@ -345,8 +315,8 @@ impl NodContract<'_> {
         let (mut item, current_item) = item.into_parts();
         let (mut bucket, current_bucket) = bucket.into_parts();
         self.check_loaded_bucket(&item, &current_bucket)?;
-        if item.is_settled || !self.settlement_open(&bucket)? {
-            return Err(NodError::SettlementRequiresUnpaidCalledOrQualifiedItem.into());
+        if item.is_settled {
+            return Err(NodError::AlreadySettled.into());
         }
         bucket.settled_nods = bucket
             .settled_nods
@@ -371,15 +341,6 @@ impl NodContract<'_> {
         })
     }
 
-    /// A called bucket settles until its deadline, an uncalled one once qualified.
-    fn settlement_open(&self, bucket: &NodBucketState) -> Result<bool> {
-        let storage = self.storage.clone();
-        match crate::api::settlement_deadline(&storage, bucket.bucket_key)? {
-            0 => crate::api::is_qualified(&storage, bucket),
-            deadline => Ok(storage.timestamp()?.to::<u64>() <= deadline),
-        }
-    }
-
     fn check_loaded_bucket(&self, item: &NodItemState, current: &VerifiedBody) -> Result<()> {
         let expected = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
         if current.entity_id() != expected {
@@ -395,16 +356,17 @@ impl NodContract<'_> {
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------
 
     /// Parks a new bucket in the bin of its sealed call price.
-    pub(crate) fn insert_call_bin(&mut self, bucket_key: B256) -> Result<()> {
-        let iso = self.callable_bucket_currency.read(&bucket_key)?;
-        let bin =
-            crate::pricing::price_to_bin(self.callable_bucket_call_price_minor.read(&bucket_key)?)?;
+    pub fn insert_call_bin(&mut self, bucket_key: B256) -> Result<()> {
+        let iso = self.bucket_currency.read(&bucket_key)?;
+        let bin = outbe_primitives::call_bins::price_to_bin(
+            self.bucket_call_price_minor.read(&bucket_key)?,
+        )?;
         call_bins::insert(&CallBins(self, iso), bucket_key, bin)
     }
 
     /// No-op for a bucket the trie does not hold.
-    pub(crate) fn remove_call_bin(&mut self, bucket_key: B256) -> Result<()> {
-        let iso = self.callable_bucket_currency.read(&bucket_key)?;
+    pub fn remove_call_bin(&mut self, bucket_key: B256) -> Result<()> {
+        let iso = self.bucket_currency.read(&bucket_key)?;
         call_bins::remove(&CallBins(self, iso), bucket_key)?;
         Ok(())
     }
@@ -484,17 +446,16 @@ impl NodContract<'_> {
         bucket_key: B256,
         terms: CallTerms,
     ) -> Result<()> {
-        self.callable_bucket_call_price_minor
+        self.bucket_call_price_minor
             .write(&bucket_key, terms.call_price_minor)?;
-        self.callable_bucket_currency
+        self.bucket_currency
             .write(&bucket_key, terms.reference_currency)?;
-        self.callable_bucket_call_rate
-            .write(&bucket_key, terms.call_rate)?;
-        self.callable_bucket_call_window_seconds
+        self.bucket_call_rate.write(&bucket_key, terms.call_rate)?;
+        self.bucket_call_window_seconds
             .write(&bucket_key, terms.call_window_seconds)?;
-        self.callable_bucket_call_threshold_seconds
+        self.bucket_call_threshold_seconds
             .write(&bucket_key, terms.call_threshold_seconds)?;
-        self.callable_bucket_call_notice_period_seconds
+        self.bucket_call_notice_period_seconds
             .write(&bucket_key, terms.call_notice_period_seconds)?;
         outbe_primitives::call_breach::widen_scan_terms(
             &self.max_call_window_seconds,
@@ -506,46 +467,52 @@ impl NodContract<'_> {
     }
 
     /// Queues a called bucket on the deadline its notice period closes at.
-    pub(crate) fn push_called_bucket(&mut self, bucket_key: B256, deadline: u64) -> Result<()> {
+    pub fn push_called(&mut self, bucket_key: B256, deadline: u64) -> Result<()> {
         expiry_queue::push(&ExpiryHours(self), bucket_key, deadline)
     }
 
-    /// Reads back the terms [`Self::seal_bucket_call_terms`] sealed at issuance.
-    pub(crate) fn read_call_terms(&self, bucket_key: B256) -> Result<CallTerms> {
+    /// Records every unpaid member called at once: the bucket leaves the trie for the
+    /// expiry queue, where it waits on `deadline` as one entry.
+    pub fn record_bucket_called(
+        &mut self,
+        bucket_key: B256,
+        now: u64,
+        deadline: u64,
+    ) -> Result<()> {
+        self.remove_call_bin(bucket_key)?;
+        self.bucket_called_at.write(&bucket_key, now)?;
+        self.push_called(bucket_key, deadline)
+    }
+
+    /// Reads back the terms `seal_bucket_call_terms` sealed at issuance.
+    pub fn read_call_terms(&self, bucket_key: B256) -> Result<CallTerms> {
         Ok(CallTerms {
-            call_price_minor: self.callable_bucket_call_price_minor.read(&bucket_key)?,
-            reference_currency: self.callable_bucket_currency.read(&bucket_key)?,
-            call_rate: self.callable_bucket_call_rate.read(&bucket_key)?,
-            call_window_seconds: self.callable_bucket_call_window_seconds.read(&bucket_key)?,
-            call_threshold_seconds: self
-                .callable_bucket_call_threshold_seconds
-                .read(&bucket_key)?,
-            call_notice_period_seconds: self
-                .callable_bucket_call_notice_period_seconds
-                .read(&bucket_key)?,
+            call_price_minor: self.bucket_call_price_minor.read(&bucket_key)?,
+            reference_currency: self.bucket_currency.read(&bucket_key)?,
+            call_rate: self.bucket_call_rate.read(&bucket_key)?,
+            call_window_seconds: self.bucket_call_window_seconds.read(&bucket_key)?,
+            call_threshold_seconds: self.bucket_call_threshold_seconds.read(&bucket_key)?,
+            call_notice_period_seconds: self.bucket_call_notice_period_seconds.read(&bucket_key)?,
         })
     }
 
     /// No-op for a bucket the queue does not hold.
-    pub(crate) fn remove_called_bucket(&mut self, bucket_key: B256) -> Result<()> {
+    pub fn remove_called(&mut self, bucket_key: B256) -> Result<()> {
         expiry_queue::remove(&ExpiryHours(self), bucket_key)
     }
 
     /// No-op for a bucket the call index never held, so the removal funnel can call it
     /// unconditionally.
-    pub(crate) fn remove_callable_bucket(&mut self, bucket_key: B256) -> Result<()> {
+    pub(crate) fn close_bucket(&mut self, bucket_key: B256) -> Result<()> {
         self.remove_call_bin(bucket_key)?;
-        self.remove_called_bucket(bucket_key)?;
-        self.callable_bucket_call_price_minor.clear(&bucket_key)?;
-        self.callable_bucket_currency.get(&bucket_key).delete()?;
-        self.callable_bucket_call_rate.get(&bucket_key).delete()?;
-        self.callable_bucket_call_window_seconds
-            .clear(&bucket_key)?;
-        self.callable_bucket_call_threshold_seconds
-            .clear(&bucket_key)?;
-        self.callable_bucket_call_notice_period_seconds
-            .clear(&bucket_key)?;
-        self.callable_bucket_issued_at.clear(&bucket_key)?;
+        self.remove_called(bucket_key)?;
+        self.bucket_call_price_minor.clear(&bucket_key)?;
+        self.bucket_currency.get(&bucket_key).delete()?;
+        self.bucket_call_rate.get(&bucket_key).delete()?;
+        self.bucket_call_window_seconds.clear(&bucket_key)?;
+        self.bucket_call_threshold_seconds.clear(&bucket_key)?;
+        self.bucket_call_notice_period_seconds.clear(&bucket_key)?;
+        self.bucket_issued_at.clear(&bucket_key)?;
         self.bucket_called_at.clear(&bucket_key)?;
         Ok(())
     }
@@ -568,7 +535,7 @@ pub(crate) fn nod_bucket_from_verified(body: &VerifiedBody) -> Result<NodBucketS
 }
 
 /// One currency's call-price trie, like `outbe_gem::state::CallBins`.
-pub(crate) struct CallBins<'a, 'storage>(pub(crate) &'a NodContract<'storage>, pub(crate) u16);
+pub struct CallBins<'a, 'storage>(pub &'a NodContract<'storage>, pub u16);
 
 outbe_primitives::impl_call_bins!(CallBins<B256> {
     root: call_bin_tree_root,

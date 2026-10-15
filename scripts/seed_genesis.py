@@ -56,6 +56,7 @@ from genesis_seed_codec import (
     COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT,
     COMPRESSED_ENTITIES_SCHEMA_VERSION,
     CREDIS_ADDRESS,
+    CREDIS_PROFILE_SLOT,
     CREDIS_FACTORY_ADDRESS,
     CYCLE_ADDRESS,
     DEFAULT_EPOCH_LENGTH_BLOCKS,
@@ -69,7 +70,7 @@ from genesis_seed_codec import (
     GOVERNANCE_ADDRESS,
     GRATIS_ADDRESS,
     GRATIS_FACTORY_ADDRESS,
-    INTEX_FACTORY_ADDRESS,
+    INTEX_ADDRESS,
     INTEX_PROFILE_SLOT,
     ISO_MARKER,
     MARKER_CODE,
@@ -265,6 +266,8 @@ def apply_seed(
                 f"{_unsupported_key} is no longer supported at genesis: issue the Gem at "
                 f"runtime and mine Gem -> Promis -> Gratis"
             )
+    if "intex_factory" in seed:
+        raise ValueError("intex_factory was renamed to intex_profile")
 
     _seed_economic_state(seed, alloc)
 
@@ -276,9 +279,10 @@ def apply_seed(
 def _seed_contract_alloc(alloc, seed, contracts_dir):
     # Seed the profile selectors (auto seeds nothing).
     for section, address, slot, label in (
-        ("intex_factory", INTEX_FACTORY_ADDRESS, INTEX_PROFILE_SLOT, "IntexFactory"),
+        ("intex_profile", INTEX_ADDRESS, INTEX_PROFILE_SLOT, "Intex"),
         ("gem_profile", GEM_ADDRESS, GEM_PROFILE_SLOT, "Gem"),
         ("nod_profile", NOD_ADDRESS, NOD_PROFILE_SLOT, "Nod"),
+        ("credis_profile", CREDIS_ADDRESS, CREDIS_PROFILE_SLOT, "Credis"),
     ):
         if section not in seed:
             continue

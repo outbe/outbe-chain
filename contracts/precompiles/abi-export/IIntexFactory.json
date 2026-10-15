@@ -19,25 +19,6 @@
   },
   {
     "type": "function",
-    "name": "isSeriesQualified",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "maxUtcDayVwapSince",
     "inputs": [
       {
@@ -209,57 +190,6 @@
   },
   {
     "type": "function",
-    "name": "seriesUnitCounts",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct IIntexFactory.UnitCounts",
-        "components": [
-          {
-            "name": "issuedUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "activeUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "settledUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "exercisedUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "gemFactoryUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "forfeitedUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "settleIntex",
     "inputs": [
       {
@@ -356,38 +286,7 @@
   },
   {
     "type": "event",
-    "name": "ProceedsBurned",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "srcChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "creditedPromisMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PromisMined",
+    "name": "IntexExercised",
     "inputs": [
       {
         "name": "seriesId",
@@ -418,57 +317,7 @@
   },
   {
     "type": "event",
-    "name": "SeriesCalled",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "indexed": true,
-        "internalType": "bytes14"
-      },
-      {
-        "name": "calledAt",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "settlementDeadline",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SeriesExpired",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "indexed": true,
-        "internalType": "bytes14"
-      },
-      {
-        "name": "forfeitedUnits",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "returnedPromisMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SeriesIssued",
+    "name": "IntexSeriesIssued",
     "inputs": [
       {
         "name": "seriesId",
@@ -493,7 +342,7 @@
   },
   {
     "type": "event",
-    "name": "Settled",
+    "name": "IntexSettled",
     "inputs": [
       {
         "name": "seriesId",
@@ -509,6 +358,37 @@
       },
       {
         "name": "units",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ProceedsBurned",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "srcChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "creditedPromisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

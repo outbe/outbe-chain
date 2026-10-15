@@ -1,5 +1,5 @@
 //! Direct-pledge issuance plus atomic repayment/forfeiture tests.
-use crate::{runtime, tests::common::*};
+use crate::{runtime, tests::*};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_credis::{CredisContract, CredisState};
@@ -99,7 +99,7 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
         assert_eq!(record.call_anchor_price_minor, oracle_rate());
         assert_eq!(
             record.call_price_minor,
-            outbe_credis::calc_call_price(oracle_rate()).unwrap()
+            crate::rules::calc_call_price(oracle_rate()).unwrap()
         );
         assert_eq!(
             record.call_notice_period_seconds,
@@ -187,7 +187,7 @@ fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing(
             .unwrap();
         let interest = CredisContract::accrued_interest(&record, CREATED_AT + DAY).unwrap();
         assert!(!interest.is_zero());
-        runtime::settle(storage.clone(), bob(), credis_id, interest).unwrap();
+        runtime::settle_credis(storage.clone(), bob(), credis_id, interest).unwrap();
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
 
@@ -238,7 +238,7 @@ fn false_token_return_rolls_back_credis_and_pledged_collateral() {
         let record = credis.get_credis(id).unwrap();
         let pledged = outbe_gratis::api::pledged_ct(storage.clone(), alice()).unwrap();
         let liquid = outbe_gratis::api::balance_ct(storage.clone(), alice()).unwrap();
-        assert!(runtime::settle(storage.clone(), bob(), id, pledge_stables()).is_err());
+        assert!(runtime::settle_credis(storage.clone(), bob(), id, pledge_stables()).is_err());
         assert_eq!(credis.get_credis(id).unwrap(), record);
         assert_eq!(
             outbe_gratis::api::pledged_ct(storage.clone(), alice()).unwrap(),
@@ -342,7 +342,7 @@ fn issuance_uses_reserved_terms_across_midnight_and_oracle_changes() {
         );
         assert_eq!(
             record.call_price_minor,
-            outbe_credis::calc_call_price(reservation.call_anchor_price_minor).unwrap()
+            crate::rules::calc_call_price(reservation.call_anchor_price_minor).unwrap()
         );
         assert_eq!(record.issued_at, midnight + 300);
         assert_eq!(record.last_settled_at, record.issued_at);

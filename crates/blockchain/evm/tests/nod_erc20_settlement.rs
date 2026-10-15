@@ -315,7 +315,7 @@ impl World {
     fn assert_unpaid(&mut self) {
         let data = self.view(
             NOD_ADDRESS,
-            INod::nodDataCall {
+            INod::getNodCall {
                 nodId: self.nod.to_u256(),
             },
         );
@@ -338,7 +338,7 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
         .journaled_state
         .logs()
         .iter()
-        .filter_map(|log| INodFactory::NodPaid::decode_log_data(&log.data).ok())
+        .filter_map(|log| INodFactory::NodSettled::decode_log_data(&log.data).ok())
         .collect();
     assert_eq!(paid.len(), 1);
     assert_eq!(paid[0].owner, OWNER);
@@ -444,7 +444,7 @@ fn an_issuance_currency_payment_moves_the_converted_cost_at_the_quoted_snapshot(
         .journaled_state
         .logs()
         .iter()
-        .filter_map(|log| INodFactory::NodPaid::decode_log_data(&log.data).ok())
+        .filter_map(|log| INodFactory::NodSettled::decode_log_data(&log.data).ok())
         .collect();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].asset, ASSET);
@@ -495,7 +495,7 @@ fn a_third_party_pays_and_the_nod_stays_with_the_owner() {
     );
     let data = world.view(
         NOD_ADDRESS,
-        INod::nodDataCall {
+        INod::getNodCall {
             nodId: world.nod.to_u256(),
         },
     );
@@ -506,7 +506,7 @@ fn a_third_party_pays_and_the_nod_stays_with_the_owner() {
         .journaled_state
         .logs()
         .iter()
-        .filter_map(|log| INodFactory::NodPaid::decode_log_data(&log.data).ok())
+        .filter_map(|log| INodFactory::NodSettled::decode_log_data(&log.data).ok())
         .collect();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].owner, OWNER);

@@ -73,7 +73,7 @@ interface IGem {
     function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
 
     // outbe-specific views
-    function getGemStatus(uint256 gemId) external view returns (GemData memory);
+    function getGem(uint256 gemId) external view returns (GemData memory);
     /// @notice Born Qualified (Genesis), or derived from finalized daily VWAPs. Never stored.
     function isQualified(uint256 gemId) external view returns (bool);
 
@@ -91,14 +91,5 @@ interface IGem {
     /// @notice The daily Call scan force-called every gem in the bucket.
     event GemBucketCalled(bytes32 indexed bucketKey, uint64 calledAt, uint64 settlementDeadline);
     /// @notice Called gem forfeit-burned after its notice period lapsed.
-    event GemExpired(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
-    /// @notice A due Called bucket was not fully forfeited. The expiry sweep tries its
-    ///         remaining gems again at `retryAt`.
-    event ExpiryDeferred(bytes32 indexed bucketKey, uint64 retryAt);
-    /// @notice A reference currency was left out of one day's Call scan because its
-    ///         window price could not be indexed. The next daily pass tries it again.
-    event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
-    /// @notice The daily call sweep (`sweep` = 1) fell two days behind: `skippedDay`
-    ///         gave its place to a newer day and will not be walked.
-    event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
+    event GemForfeited(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
 }

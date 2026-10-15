@@ -113,6 +113,15 @@ interface IGemFactory {
     );
     /// @notice A settled gem right was exercised: it burned to mine confidential Promis.
     event GemExercised(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
+    /// @notice A due Called bucket was not fully forfeited. The expiry sweep tries its
+    ///         remaining gems again at `retryAt`.
+    event ExpiryDeferred(bytes32 indexed bucketKey, uint64 retryAt);
+    /// @notice A reference currency was left out of one day's Call scan because its
+    ///         window price could not be indexed. The next daily pass tries it again.
+    event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
+    /// @notice The daily call sweep (`sweep` = 1) fell two days behind: `skippedDay`
+    ///         gave its place to a newer day and will not be walked.
+    event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
     /// @notice A position ended its validity with capacity it never issued.
     event GemPositionExpired(
         uint256 indexed positionId, address indexed merchant, bytes14 sourceIntexId, uint256 returnedCapacityMinor

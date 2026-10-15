@@ -494,7 +494,7 @@ fn claim_gem_and_assert_gas_only_cost(
         let gem = eth::read_call_at_result(
             &url,
             addresses::GEM_ADDR,
-            &eth::IGem::getGemStatusCall { gemId: added[0] },
+            &eth::IGem::getGemCall { gemId: added[0] },
             height,
         )
         .expect("finalized claim Gem");

@@ -176,7 +176,10 @@ tee:
 # writes its limit amount without the formation record the runtime requires,
 # so the day kills the ProtocolCycle the moment it reaches MissedOffering.
 
-# intex_factory:
+# intex_profile:
+#   profile: dev
+
+# credis_profile:
 #   profile: dev
 
 # vault_router:

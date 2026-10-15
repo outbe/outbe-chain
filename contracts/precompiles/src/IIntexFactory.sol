@@ -6,13 +6,13 @@ pragma solidity ^0.8.30;
 ///         settlement, Promis mining, and auction proceeds intake. Issuance is
 ///         a module-to-module call (Desis -> IntexFactory) exposed through the
 ///         Rust `api`, not a precompile selector. Series identity + lifecycle
-///         live in Intex. This precompile owns settlement bookkeeping and the
-///         call-price index.
+///         live in Intex. This precompile runs settlement, mining and the call and
+///         expiry sweeps over the Intex call-price index.
 interface IIntexFactory {
     /// @notice Settle `units` Issued Intexes of `seriesId` held by
     ///         `owner`, paying the cost in `asset`. Any caller may pay. The
     ///         settled units stay with the owner. Allowed once qualified (voluntary,
-    ///         see `isSeriesQualified`) and once called (forced, until the deadline).
+    ///         see `IIntex.isQualified`) and once called (forced, until the deadline).
     /// @dev Approve IntexFactory for the `quoteSettlement` amount before calling.
     ///      Payment is deposited into the reserve vault through VaultRouter.
     /// @param asset Token registered with the vault router under either of the
@@ -34,9 +34,6 @@ interface IIntexFactory {
         external
         view
         returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
-
-    /// @notice Derived from finalized daily VWAPs on every call, never stored.
-    function isSeriesQualified(bytes14 seriesId) external view returns (bool);
 
     /// @notice The origin's `IVwapSource`: the highest finalized daily VWAP from `fromUtcDay`
     ///         on, 0 when none.
@@ -63,23 +60,6 @@ interface IIntexFactory {
     /// @param srcChainId Target chain the proceeds arrived from.
     function distribute(uint32 worldwideDay, uint32 srcChainId) external payable;
 
-    /// @notice The classes an issued unit can be in. Disjoint: they sum to
-    ///         `issuedUnits`. `activeUnits` is what is still unpaid while the series
-    ///         lives, and `forfeitedUnits` is the same remainder once it is Expired.
-    ///         `settledUnits` is what is paid and not yet exercised, the same
-    ///         measure `IIntex.seriesData` reports.
-    struct UnitCounts {
-        uint32 issuedUnits;
-        uint32 activeUnits;
-        uint32 settledUnits;
-        uint32 exercisedUnits;
-        uint32 gemFactoryUnits;
-        uint32 forfeitedUnits;
-    }
-
-    /// @notice Read the disjoint unit counts of `seriesId`.
-    function seriesUnitCounts(bytes14 seriesId) external view returns (UnitCounts memory);
-
     /// @notice One owner's units of a series. `issuedUnits` and `settledUnits` are the
     ///         owner's current balances on this, the origin chain, with Issued units counted
     ///         only while the series has not expired. Units held on a target chain are not
@@ -98,16 +78,13 @@ interface IIntexFactory {
     function ownerBalances(bytes14 seriesId, address owner) external view returns (OwnerBalances memory);
 
     /// @notice A new series was created from a cleared auction.
-    event SeriesIssued(bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPriceMinor);
+    event IntexSeriesIssued(bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPriceMinor);
 
     /// @notice `units` Issued Intexes of `seriesId` were settled.
-    event Settled(bytes14 indexed seriesId, address indexed owner, uint256 units);
+    event IntexSettled(bytes14 indexed seriesId, address indexed owner, uint256 units);
 
     /// @notice Settled Intexes were burned and `promisMinor` Promis minted.
-    event PromisMined(bytes14 indexed seriesId, address indexed owner, uint256 units, uint256 promisMinor);
-
-    /// @notice The series was force-called. It settles until `settlementDeadline`, inclusive.
-    event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt, uint64 settlementDeadline);
+    event IntexExercised(bytes14 indexed seriesId, address indexed owner, uint256 units, uint256 promisMinor);
 
     /// @notice The router kept refusing the series' Called notice, so it was dropped
     ///         and the targets were not told of the call.
@@ -120,10 +97,6 @@ interface IIntexFactory {
     /// @notice The daily call sweep (`sweep` = 1) fell two days behind: `skippedDay`
     ///         gave its place to a newer day and will not be walked.
     event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
-
-    /// @notice The series' settlement window closed. Both are zero when every unit
-    ///         was realized in time.
-    event SeriesExpired(bytes14 indexed seriesId, uint32 forfeitedUnits, uint256 returnedPromisMinor);
 
     /// @notice The expiry sweep left members of a called group unretired and
     ///         parked it for another pass at `retryAt`.

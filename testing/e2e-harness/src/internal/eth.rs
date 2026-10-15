@@ -861,6 +861,7 @@ pub(crate) fn send_call<C: SolCall>(
 
 /// Submit a paid claim with a 50% execution-gas reserve. This changes the
 /// transaction limit, not its gas price or its receipt success requirement.
+#[cfg(feature = "ocomp-integration")]
 pub(crate) fn send_call_with_gas_reserve<C: SolCall>(
     url: &str,
     to: Address,

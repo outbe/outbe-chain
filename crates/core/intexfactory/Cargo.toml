@@ -36,4 +36,4 @@ workspace = true
 bench-utils = []
 # Retarget the intex contract addresses at the throwaway CREATE3 set an e2e chain
 # deploys with the well-known anvil key. Never enabled in a release build.
-e2e-test = ["outbe-intex/test-utils", "outbe-primitives/e2e-test"]
+e2e-test = ["outbe-intex/test-utils", "outbe-intex/e2e-test", "outbe-primitives/e2e-test"]

@@ -65,14 +65,14 @@ impl BlockLifecycle for CycleLifecycle {
         }
         // What fell due is settled first, so its returns reach the ProtocolCycle
         // that forms the day.
-        outbe_nod::hooks::sweep_forfeits(&ctx.runtime, ctx.scope, &ctx.parent)?;
-        outbe_gem::hooks::sweep_forfeits(&ctx.runtime, ctx.scope, &ctx.parent)?;
+        outbe_nodfactory::hooks::sweep_forfeits(&ctx.runtime, ctx.scope, &ctx.parent)?;
+        outbe_gemfactory::hooks::sweep_forfeits(&ctx.runtime, ctx.scope, &ctx.parent)?;
         outbe_intexfactory::hooks::sweep_forfeits(&ctx.runtime)?;
         outbe_credisfactory::hooks::sweep_forfeits(&ctx.runtime)?;
         crate::runtime::dispatch_triggers(&ctx.runtime, ctx.scope, &ctx.parent)?;
         // The daily triggers only schedule. Each right walks one slice of its pinned day.
-        outbe_nod::called::run_call_slice(&ctx.runtime)?;
-        outbe_gem::called::run_call_slice(&ctx.runtime)?;
+        outbe_nodfactory::called::run_call_slice(&ctx.runtime)?;
+        outbe_gemfactory::called::run_call_slice(&ctx.runtime)?;
         outbe_intexfactory::called::run_call_slice(&ctx.runtime)?;
         outbe_credisfactory::called::run_call_slice(&ctx.runtime)?;
         outbe_intexfactory::notify::send_notices(&ctx.runtime)?;

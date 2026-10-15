@@ -3,7 +3,7 @@
 //! the settlement asset's minor units.
 
 use alloy_primitives::U256;
-use outbe_primitives::units::{MAX_ASSET_DECIMALS, PROTOCOL_AMOUNT_DECIMALS};
+use outbe_primitives::units::{MAX_ASSET_DECIMALS, PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U256};
 
 pub use crate::errors::RoundingError;
 
@@ -73,6 +73,47 @@ impl PaymentCurrency {
             }
         }
     }
+}
+
+/// What a settlement charges for: `entry x load x units`, scaled by `cost_rate_pct / 100`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Obligation {
+    pub entry_price_minor: U256,
+    pub load_minor: U256,
+    pub units: U256,
+    /// Share of the full cost charged, in percent.
+    pub cost_rate_pct: u64,
+}
+
+/// The obligation in the asset's minor units, floored once. A positive obligation costs at
+/// least one reference-currency minor unit. `rate` is `(COEN/issuance, COEN/reference)` on
+/// the issuance rail.
+pub fn obligation_units(
+    obligation: &Obligation,
+    rate: Option<(U256, U256)>,
+    asset_decimals: u8,
+) -> Result<U256, RoundingError> {
+    let percent = U256::from(100u64);
+    let amount = obligation
+        .entry_price_minor
+        .checked_mul(obligation.load_minor)
+        .and_then(|v| v.checked_mul(obligation.units))
+        .and_then(|v| v.checked_mul(U256::from(obligation.cost_rate_pct)))
+        .ok_or(RoundingError::Overflow)?;
+    // The amount keeps the x100 of the cost rate, so the minimum is 1e6 x 100.
+    let amount = if amount.is_zero() {
+        amount
+    } else {
+        amount.max(SCALE_1E6_U256 * percent)
+    };
+    let (numerator, denominator) = match rate {
+        Some((to, from)) => (
+            amount.checked_mul(to).ok_or(RoundingError::Overflow)?,
+            from.checked_mul(percent).ok_or(RoundingError::Overflow)?,
+        ),
+        None => (amount, percent),
+    };
+    floor_to_asset_units(numerator, denominator, OBLIGATION_DECIMALS, asset_decimals)
 }
 
 #[cfg(test)]
@@ -161,5 +202,77 @@ mod tests {
             floor_to_asset_units(U256::MAX, U256::ONE, 6, 18),
             Err(RoundingError::Overflow)
         );
+    }
+
+    #[test]
+    fn an_obligation_is_entry_times_load_times_units_at_its_cost_rate() {
+        let full = Obligation {
+            entry_price_minor: u(2_000_000),
+            load_minor: u(3_000_000),
+            units: u(2),
+            cost_rate_pct: 100,
+        };
+        // 2.0 x 3.0 x 2 = 12.0 in a six-decimal asset.
+        assert_eq!(obligation_units(&full, None, 6), Ok(u(12_000_000)));
+        let share = Obligation {
+            cost_rate_pct: 64,
+            ..full
+        };
+        assert_eq!(obligation_units(&share, None, 6), Ok(u(7_680_000)));
+        // At COEN/issuance 3 over COEN/reference 2 the issuance asset pays 1.5x.
+        assert_eq!(
+            obligation_units(&full, Some((u(3), u(2))), 6),
+            Ok(u(18_000_000))
+        );
+        let dust = Obligation {
+            entry_price_minor: U256::ONE,
+            load_minor: U256::ONE,
+            units: U256::ONE,
+            cost_rate_pct: 100,
+        };
+        assert_eq!(obligation_units(&dust, None, 6), Ok(U256::ONE));
+    }
+
+    #[test]
+    fn the_minimum_precedes_asset_and_currency_conversion() {
+        let at = |entry: u64, load: u64| Obligation {
+            entry_price_minor: u(entry.into()),
+            load_minor: u(load.into()),
+            units: U256::ONE,
+            cost_rate_pct: 100,
+        };
+        let dust = at(19, 25_629);
+        for (decimals, rate, expected) in [
+            (6, None, 1_u64),
+            (18, None, 1_000_000_000_000),
+            (6, Some((2, 1)), 2),
+            (18, Some((1, 2)), 500_000_000_000),
+        ] {
+            let rate = rate.map(|(to, from): (u128, u128)| (u(to), u(from)));
+            assert_eq!(
+                obligation_units(&dust, rate, decimals),
+                Ok(U256::from(expected))
+            );
+        }
+        // A positive payment the asset cannot represent is refused, after a conversion too.
+        for (decimals, rate) in [(0, None), (6, Some((U256::ONE, u(2))))] {
+            assert_eq!(
+                obligation_units(&dust, rate, decimals),
+                Err(RoundingError::RoundsToZero)
+            );
+        }
+        // Obligations above the minimum keep their sub-minor-unit precision.
+        assert_eq!(
+            obligation_units(&at(1_500_001, 1), None, 18),
+            Ok(u(1_500_001_000_000))
+        );
+        assert_eq!(obligation_units(&at(0, 1), None, 6), Ok(U256::ZERO));
+        assert_eq!(obligation_units(&at(1, 0), None, 6), Ok(U256::ZERO));
+        let huge = Obligation {
+            entry_price_minor: U256::MAX,
+            ..at(1, 2)
+        };
+        assert!(obligation_units(&huge, None, 6).is_err());
+        assert!(obligation_units(&dust, Some((U256::ONE, U256::ZERO)), 6).is_err());
     }
 }
