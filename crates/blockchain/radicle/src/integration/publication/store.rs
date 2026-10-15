@@ -143,11 +143,12 @@ impl ReviewPackageStore {
             return Err(Error::Corrupt);
         }
         let slot = review_slot_key(publication.body());
-        if self
-            .selection(slot)?
-            .is_some_and(|(body, _)| body != body_hash)
-        {
-            return Err(Error::SlotConflict);
+        if let Some((body, witness)) = self.selection(slot)? {
+            if body != body_hash {
+                return Err(Error::SlotConflict);
+            }
+            // The durable pointer keeps its original witness even if a new valid subset arrives.
+            self.load(body, witness, repo)?;
         }
         let directory = self.package_dir(body_hash);
         private_dir(&directory)?;
