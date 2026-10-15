@@ -15,6 +15,7 @@ use eyre::{bail, ensure, Result, WrapErr};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use super::io::read_assertions;
 use super::{
     capture_source_identity, discover, hash_file, publish_assertions, publish_manifest,
     publish_member, AssertionRecordV1, AssertionStatus, EvidenceMode, MemberDigestV1,
@@ -311,7 +312,7 @@ pub(crate) fn verify_command_lane_manifest_semantics(
             && manifest.sections.get("exact_binary_hashes") == Some(&json!(&run.artifact_set)),
         "command lane manifest identity differs from its independently verified receipt"
     );
-    let assertions = read_manifest_assertions(evidence_dir, manifest)?;
+    let assertions = read_assertions(evidence_dir, manifest)?;
     let mut by_test = BTreeMap::new();
     for assertion in assertions {
         ensure!(
@@ -344,26 +345,6 @@ pub(crate) fn verify_command_lane_manifest_semantics(
         "command lane manifest contains assertions outside its exact command plan"
     );
     Ok(())
-}
-
-fn read_manifest_assertions(
-    evidence_dir: &Path,
-    manifest: &RunManifestV1,
-) -> Result<Vec<AssertionRecordV1>> {
-    let text = std::fs::read_to_string(evidence_dir.join(&manifest.assertions_path))
-        .wrap_err("read command lane assertions")?;
-    text.lines()
-        .enumerate()
-        .map(|(index, line)| {
-            ensure!(
-                !line.trim().is_empty(),
-                "blank command assertion line {}",
-                index + 1
-            );
-            serde_json::from_str(line)
-                .wrap_err_with(|| format!("decode command assertion line {}", index + 1))
-        })
-        .collect()
 }
 
 fn validate_command_run(
