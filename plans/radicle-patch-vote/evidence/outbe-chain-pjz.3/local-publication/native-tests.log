@@ -1,0 +1,45 @@
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+   Compiling radicle-node v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-node)
+error[E0433]: cannot find `cob` in `git`
+   --> crates/radicle/src/cob/store/native_test.rs:305:32
+    |
+305 |     let drafts = storage::git::cob::DraftStore::new(&repo, owner);
+    |                                ^^^ could not find `cob` in `git`
+    |
+help: consider importing this struct
+    |
+  1 + use crate::storage::git::cob::DraftStore;
+    |
+help: if you import `DraftStore`, refer to it directly
+    |
+305 -     let drafts = storage::git::cob::DraftStore::new(&repo, owner);
+305 +     let drafts = DraftStore::new(&repo, owner);
+    |
+
+error[E0603]: module import `git` is private
+   --> crates/radicle/src/cob/store/native_test.rs:305:27
+    |
+305 |     let drafts = storage::git::cob::DraftStore::new(&repo, owner);
+    |                           ^^^ private module import
+    |
+note: the module import `git` is defined here...
+   --> crates/radicle/src/storage/git.rs:26:13
+    |
+ 26 | use crate::{git, git::Oid, node};
+    |             ^^^
+note: ...and refers to the module `git` which is defined here
+   --> crates/radicle/src/lib.rs:14:1
+    |
+ 14 | pub mod git;
+    | ^^^^^^^^^^^^ you could import this directly
+help: consider importing this module instead
+    |
+305 -     let drafts = storage::git::cob::DraftStore::new(&repo, owner);
+305 +     let drafts = crate::git::cob::DraftStore::new(&repo, owner);
+    |
+
+   Compiling radicle-fetch v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-fetch)
+Some errors have detailed explanations: E0433, E0603.
+For more information about an error, try `rustc --explain E0433`.
+error: could not compile `radicle` (lib test) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...

@@ -2,13 +2,13 @@
   "feature": "outbe-chain-pjz",
   "goal_status": "active",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-15T17:03:00Z",
-  "next_periodic_report_due_utc": "2026-10-15T17:33:00Z",
+  "last_periodic_report_utc": "2026-10-15T17:18:14Z",
+  "next_periodic_report_due_utc": "2026-10-15T17:48:14Z",
   "period_minutes": 30,
-  "stage": "P5 closed; P2 native prepare/runtime/static BLS/stream/CLI/Ed compatibility verified; managed publication and cache paths incomplete",
+  "stage": "P2 current-entry local/draft publication verifier, static patch cache/reopen/rebuild and missing-policy receiver rejection verified; P2 incomplete",
   "decision_gate": {
     "id": "D1",
-    "status": "original_approval_request_withdrawn_pending_concrete_semantic_evidence",
+    "status": "historical_approval_request_withdrawn; no active user approval question",
     "proposal": "decisions/D1/proposal.md",
     "snapshot": "decisions/D1/snapshot.json",
     "dependent_implementation": "D1 not implemented; original frozen source/proposal preserved",
@@ -16,15 +16,15 @@
     "rule": "three independent checks -> concrete proposal to user -> wait explicit answer; never infer approval from silence or reviewers PASS",
     "user_proposal": "decisions/D1/user-proposal.md",
     "user_proposal_sha256": "f97944c485f9ee3538760011329511fb9eaacbcd4fa7fcfd44589c440ac68d89",
-    "clarification": "Do not use old shares or a user-delegation feature as justification for D1; initial repro proves dependency-load gap only, not unauthorized patch acceptance. No new confirmation requested on that evidence."
+    "clarification": "Original D1 raw dependency-load repro is not a patch acceptance exploit. No shared closure redesign approved or implemented. New current-entry direct/read/local writer verification reuses existing verifier as explicitly required by P2. D2 excluded from implementation by user; no D2 work."
   },
   "acceptance": "P0/P1/P5 closed; P2 incomplete; P3/P4/P6/P7/P8 incomplete",
   "last_periodic_report": {
-    "completed": "Closed P5 after three independent full-AC PASS; P2 raw/typed external COB prepare and sole BLS identity evaluator/reopen, actual two-runtime BLS repo/Ed patch/BLS Review, invalid refs rejection/state preservation, policy-aware native streams and real CLI BLS pretty/JSON; current and legacy Ed peers",
-    "proof": "Source6c19aaaf514b7d5bd77c3de3559185459eaf425f:669 native lib tests+10 sidecar+2 CLI,fullvendor all-target Clippy/fmt,root consumers PASS; both actual Ed peer scenarios PASS",
-    "limitations": "P2 incomplete; full managed publication/CAS, reachable closure/cache provenance/reopen/rebuild not implemented; no D1 permission or implementation; P5 broad root lint unchanged Tribute failure remains preserved",
-    "tasks": "P0/P1/P5 closed; P2 in_progress; P3/P4/P6-P8 incomplete",
-    "next": "Inspect remaining managed publication/cache requirements against actual entry/read/promotion callers; no D1 shared-closure implementation without proper decision gate"
+    "completed": "P2 actual receiver static BLS patch cache write/reopen/rebuild before and after BLS Review and rejected forged refs; current-entry local/draft writer guard with existing native/document verifiers; fresh managed receiver persisted-marker missing-provider rejection; actual Ed current/legacy peers",
+    "proof": "0dbd83c40:670 native tests,full vendor workspace/all-target Clippy -D warnings/fmt and both actual Ed peers PASS. Same production source53f369ff5:670 native+2 CLI+10 sidecar,root consumers and vendor lint/fmt PASS. Initial3c9637afa test-path compile failure preserved FAIL. Intermediate evidence only.",
+    "tasks": "P0/P1/P5 closed verified in Beads; P2 in_progress; P3/P4/P6-P8 open",
+    "limitations": "P2 full managed promotion/closure/cache provenance incomplete; no P2 acceptance reviews, no P3/P4/P6-P8 completion; D2 excluded, no active approval question",
+    "next": "Continue only specified remaining managed admission/cache provenance paths before full P2 evidence/reviews"
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
@@ -37,7 +37,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "b7ee1e16536e80ab4295ca3017303179b8371d47",
+  "source_sha": "0dbd83c40ace71773a0e358809bd2f1876c18f37",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -56,18 +56,23 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "b7ee1e165 direct native BLS identity verification; intermediate evidence frozen; no D2 production implementation",
+  "current_source_changes": "Tracked source clean at0dbd83c40; production current-entry writer gate3c9637afa corrected test53f369ff5; test-only receiver extension0dbd83c40; no D2 production changes",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
     "stream_failed_probe": "evidence/outbe-chain-pjz.3/native-stream",
     "ed_compatibility": "evidence/outbe-chain-pjz.3/ed-compatibility",
     "all_acceptance_criteria_complete": false,
-    "native_identity": "evidence/outbe-chain-pjz.3/native-identity"
+    "native_identity": "evidence/outbe-chain-pjz.3/native-identity",
+    "native_cache": "evidence/outbe-chain-pjz.3/native-cache",
+    "local_publication": "evidence/outbe-chain-pjz.3/local-publication-r2",
+    "local_publication_failed_attempt": "evidence/outbe-chain-pjz.3/local-publication",
+    "managed_receiver": "evidence/outbe-chain-pjz.3/managed-receiver",
+    "current_ed_peers": "evidence/outbe-chain-pjz.3/local-publication-ed-compatibility"
   },
   "scope_control": {
     "D2": "excluded from implementation per explicit user correction; no D2 production changes; do not investigate or dispatch reviews",
-    "next": "P2 specified native cache/reopen/rebuild and current-source Ed compatibility only",
+    "next": "P2 remaining specified managed admission and cache receipt provenance; no new goals or storage architecture",
     "constraint": "No new architecture or deliverable outside approved P0-P8"
   }
 }
