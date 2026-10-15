@@ -2,10 +2,10 @@
   "feature": "outbe-chain-pjz",
   "goal_status": "active",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-15T21:50:25Z",
-  "next_periodic_report_due_utc": "2026-10-15T22:20:25Z",
+  "last_periodic_report_utc": "2026-10-15T22:16:00Z",
+  "next_periodic_report_due_utc": "2026-10-15T22:46:00Z",
   "period_minutes": 30,
-  "stage": "P3 current finalized gate/local signing actor, independent public-only q-witness verifier and bounded separate witness bundle verified; complete native Git/package verifier, protected UDS/collector/bootstrap/Merge/E2E incomplete",
+  "stage": "P3 native Review package reconstruction/independent verification and pinned Git closure before typed signing job verified; actual attestation actor/guard wiring, protected UDS/collector/journal/bootstrap/Merge/E2E incomplete",
   "decision_gate": {
     "id": "D1",
     "status": "historical_approval_request_withdrawn; no active user approval question",
@@ -20,11 +20,11 @@
   },
   "acceptance": "P0/P1/P5 closed; P2/P3 in_progress and incomplete; P4/P6/P7/P8 open; P4 descriptor prerequisite implemented under P3 activation only",
   "last_periodic_report": {
-    "completed": "289d3a51e: one exact current finalized state for committee/terminal approval/execution stage/latest receipt/material; sealed checkpoint-derived Review/refs jobs; engine local Arc provider capability and bounded actor partial signing without Share export. No Git storage/fetch-gate/D2 changes.",
-    "proof": "267 full engine +49 full adapter lib tests(316/0 ignored);7 consumers all-target check;adapter/engine scopedClippy -D warnings;scoped rootfmt PASS; exact source/spec/log hashes in .4/current-signing.",
-    "tasks": "P0/P1/P5 closed;P2/P3 in_progress;P4/P6/P7/P8 open. No new acceptance reviews/closure.",
-    "limitations": "No active approval question. Protected UDS and complete package verification,collector/journal/bootstrap/Merge/E2E incomplete. No git.rs/fetch-gate/D2.",
-    "next": "Implement independent q-partial witness verification for actual native subjects per P3/P6; then protected transport/collector."
+    "completed": "83f6690b9 public-only q-witness verification;9352d9538 canonical bounded separate bundle;57a4aac88 pinned Git closure before typed signing and exact complete Review package reconstruction/verification with fresh sealed proof guard.",
+    "proof": "50 full adapter lib tests/0 ignored;7 consumer all-target checks;adapter scopedClippy -D warnings;scopedfmt PASS; exact source/spec/log hashes in .4/review-package; earlier .4/public-witness and .4/witness-bundle evidence retained.",
+    "tasks": "Live bd --sandbox show check: P0/P1/P5 closed;P2/P3 in_progress;P4/P6/P7/P8 open. No new acceptance reviews/closure.",
+    "limitations": "No active approval question. Distinct receiver uses ODB copy/test authority/receipt providers, not normal network/live checkpoint E2E. Actual attestation/protected UDS/collector/journal/bootstrap/Merge/E2E incomplete; graph worker budgets unmeasured. No git.rs/fetch-gate/D2.",
+    "next": "Connect verified Review publication to fresh local identity attestation path, then protected typed node/sidecar transport and collector/journal per P3/P6."
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
@@ -37,7 +37,7 @@
     "user_confirmation": "\u0434\u0430 \u0432\u0441\u0435 \u0432\u0441\u0435\u0440\u043d\u043e, goal \u043c\u043e\u0436\u043d\u043e \u0441\u043d\u0438\u043c\u0430\u0442\u044c \u0441 \u043f\u0430\u0443\u0437\u044b ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "9352d953838866f5a9cdcfebdb7119d933d6601a",
+  "source_sha": "57a4aac883529227227315c148d2589df32c1eef",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -56,7 +56,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "9352d9538: separate canonical witness bundle codec(total1MiB,<=3 subjects/<=256 frames), strict ordinal/index ordering, exact trusted public Output and per-subject q verification. Previous83f6690b9 public-only verifier and289d3a51e fresh local signing gate retained. No native wire/git.rs/fetch-gate/D2 changes.",
+  "current_source_changes": "57a4aac88: actual pinned Git closure before checkpoint-bound partial-signing job, deterministic complete Review package body/native object type/OID/SHA256/refs manifest reconstruction, separate q witness verification on independent Git storage and sealed current publication proof guard. No native wire/git.rs/fetch-gate/D2.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -82,10 +82,10 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "9352d953838866f5a9cdcfebdb7119d933d6601a",
-    "checks": "49 full adapter lib tests/0 ignored;7 consumer all-target checks;adapter scopedClippy -D warnings;scopedfmt PASS",
-    "acceptance": "Intermediate only; no full-AC acceptance/closure/reviewer PASS. Complete actual object/package verification and protected UDS/live collector protocol incomplete.",
-    "scenarios": "Actual COB/refs012/123 bundle roundtrips differ but verify same native envelopes/OIDs/manifest; exact total1MiB structural boundary passes,limit+1/overflow/counts/duplicates/gaps/order/fields/version/hex/truncation/insufficient-q/Output/subject mismatch rejects. Structural size fixture is not valid DKG proof or live maxcommittee evidence."
+    "source_sha": "57a4aac883529227227315c148d2589df32c1eef",
+    "checks": "50 full adapter lib tests/0 ignored;7 consumer all-target checks;adapter scopedClippy -D warnings;scopedfmt PASS",
+    "acceptance": "Intermediate P3/P6 only; no full-AC acceptance/closure/reviewer PASS. Actual publication attestation wiring, protected UDS/live collector protocol and production E2E incomplete.",
+    "scenarios": "Distinct Git storage with copied ODB/public-only material rejects missing approved blob; after delivery verifies both012/123 Review packages. Type/SHA/missing/extra pinned/unapproved-object/refs/snapshot/sequence/anchor substitutions reject. Current proof guard rejects consumed/changed/stale observations; fresh material on newer observation preserves same package. Gitlink external repo remains valid. No normal network replication/live checkpoint; graph worker budgets unmeasured."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
@@ -95,6 +95,7 @@
   "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing",
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
-  "last_goal_turn_classification": "progress: source289d3a51e/83f6690b9/9352d9538 implemented and frozen exact-SHA evidence recorded; no decision pending; no task closed",
-  "next_required_work": "Complete actual native Git/package validation before attestation, then protected typed node/sidecar transport and distributed collector/journal per P3/P6. Preserve approved full P0-P8 end state and gates."
+  "last_goal_turn_classification": "progress: source57a4aac88 implements and tests exact native Review package validation and dependency closure before typed signing; frozen evidence and live Beads status recorded; no decision pending/task closure",
+  "next_required_work": "Connect verified Review publication to fresh local identity attestation path, then protected typed node/sidecar transport and collector/journal per P3/P6. Preserve approved full P0-P8 end state and gates.",
+  "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package"
 }
