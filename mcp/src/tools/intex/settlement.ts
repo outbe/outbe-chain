@@ -138,24 +138,25 @@ export function registerPromisTools(server: McpServer, deps: IntexDeps): void {
         args: [series],
       });
       const promisMinor = sd.promisLoadMinor * amount;
-      const seq = await exerciseCount(n, series, owner);
       const difficulty = await n.client.readContract({
         address: addr(n, "factory"),
         abi: FACTORY_ABI,
         functionName: "powDifficulty",
       });
-      const pow = grindNonce(owner, promisMinor, series, seq, difficulty);
-      const sent = await withAuthorization(
+      // The mining sequence moves with every Promis mint, so it is read under the same lock.
+      const { pow, seq, sent } = await withAuthorization(
         ctx,
         n,
         [{ ledger: "Promis", op: OP.Promis.Mint, amount: promisMinor }],
         async ([auth]) => {
+          const seq = await exerciseCount(n, series, owner);
+          const pow = grindNonce(owner, promisMinor, series, seq, difficulty);
           const data = encodeFunctionData({
             abi: FACTORY_ABI,
             functionName: "minePromis",
             args: [series, owner, amount, pow.nonce, auth.mac, auth.opNonce],
           });
-          return await submit(n, addr(n, "factory"), data, 0n);
+          return { pow, seq, sent: await submit(n, addr(n, "factory"), data, 0n) };
         },
       );
       return ok({
