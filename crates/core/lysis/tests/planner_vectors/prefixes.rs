@@ -8,7 +8,7 @@ fn an_entry_beyond_the_call_price_bound_is_never_certified() {
     let mut item = observed(1, day, 100, 1);
     item.entry_price_minor = ObservationValueV1::Value(entry);
     let tributes = vec![item];
-    let budget = U256::from(100);
+    let budget = U256::from(102_400);
     assert!(matches!(
         execute(ProgramInputV1 {
             worldwide_day: day,
@@ -21,7 +21,13 @@ fn an_entry_beyond_the_call_price_bound_is_never_certified() {
     let fidelity = fidelity_map(0, &tributes).unwrap();
     let fractions = finalize_fi_fraction_table(&fidelity.aggregate, budget).unwrap();
     assert!(matches!(
-        amount_map(0, &tributes, &fidelity.observations, &fractions),
+        amount_map(
+            0,
+            &tributes,
+            &fidelity.observations,
+            &fractions,
+            budget / U256::from(1024)
+        ),
         Err(ProgramErrorV1::Arithmetic { .. })
     ));
 

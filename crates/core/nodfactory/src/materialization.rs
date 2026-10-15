@@ -271,6 +271,9 @@ fn current_materialization_authority(
     head: &NodMaterializationHeadV1,
     rules: &MaterializationRules<'_>,
 ) -> Result<outbe_tee::nod_materialization::NodMaterializationAuthorityV2> {
+    let generation = NodContract::new(storage.clone())
+        .ocomp_certified_generation(WorldwideDay::new(head.worldwide_day))?
+        .ok_or(NodFactoryError::InvalidMaterializationProof)?;
     let source = outbe_tribute::TributeContract::new(storage.clone())
         .pre_admission_projection(WorldwideDay::new(head.worldwide_day))?;
     if !source.is_sealed || source.sealed_collection_root.is_zero() {
@@ -284,6 +287,7 @@ fn current_materialization_authority(
                 .map_err(|_| PrecompileError::from(NodFactoryError::InvalidMaterializationProof))?,
             subtree_height: rules.profile.batch_subtree_height,
             sealed_tribute_root: source.sealed_collection_root,
+            nod_gratis_load_max: generation.nod_gratis_load_max,
         },
     )
 }

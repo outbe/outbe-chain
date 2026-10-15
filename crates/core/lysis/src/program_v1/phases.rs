@@ -369,6 +369,7 @@ pub fn amount_map(
     observed: &[ObservedTributeV1],
     fidelity_observations: &[FidelityObservationV1],
     fractions: &[LeagueFractionV1],
+    nod_gratis_load_max: U256,
 ) -> Result<AmountRunV1, ProgramErrorV1> {
     if observed.is_empty()
         || observed.len() != fidelity_observations.len()
@@ -391,7 +392,13 @@ pub fn amount_map(
                 u32::try_from(local_ordinal).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
             )
             .ok_or(ProgramErrorV1::OutputCountMismatch)?;
-        let math = amount_record(raw_ordinal, item, fidelity, &fraction_by_league)?;
+        let math = amount_record(
+            raw_ordinal,
+            item,
+            fidelity,
+            &fraction_by_league,
+            nod_gratis_load_max,
+        )?;
         checked_segment_gratis_total = checked_add_amount(
             checked_segment_gratis_total,
             math.gratis_load_minor,
@@ -459,6 +466,7 @@ fn amount_record(
     item: &ObservedTributeV1,
     fidelity: &FidelityObservationV1,
     fraction_by_league: &BTreeMap<u16, U256>,
+    nod_gratis_load_max: U256,
 ) -> Result<AmountMathV1, ProgramErrorV1> {
     if fidelity.raw_ordinal != raw_ordinal
         || fidelity.tribute_id != item.tribute.tribute_id
@@ -498,6 +506,7 @@ fn amount_record(
     let gratis_load_minor = calculate_gratis_load(
         item.tribute.nominal_amount_minor,
         fraction,
+        nod_gratis_load_max,
         raw_ordinal as usize,
     )?;
     let entry_price_minor =

@@ -15,6 +15,7 @@ pub struct NodMaterializationAuthorityV2 {
     pub head: Vec<u8>,
     pub subtree_height: u8,
     pub sealed_tribute_root: B256,
+    pub nod_gratis_load_max: U256,
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NodSourceV2 {

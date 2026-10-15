@@ -159,14 +159,23 @@ fn verify_and_encrypt(
                 .get(&action.league_id)
                 .copied()
                 .ok_or_else(|| rejected("NOD league fraction"))?;
-            let load = gratis_load(amounts.nominal_amount_minor, fraction)?;
+            let load = gratis_load(
+                amounts.nominal_amount_minor,
+                fraction,
+                request.authority.nod_gratis_load_max,
+            )?;
             crate::nod_encryption::encrypt_nod_for_tribute(secret, tribute, terms, load)
         })
         .collect()
 }
-fn gratis_load(nominal_amount_minor: U256, fraction_fp: U256) -> Result<U256> {
+fn gratis_load(
+    nominal_amount_minor: U256,
+    fraction_fp: U256,
+    nod_gratis_load_max: U256,
+) -> Result<U256> {
     let load = checked_mul_div_floor(nominal_amount_minor, fraction_fp, SCALE_1E6_U256)
-        .map_err(|_| rejected("NOD gratis load"))?;
+        .map_err(|_| rejected("NOD gratis load"))?
+        .min(nod_gratis_load_max);
     if load.is_zero() {
         return Err(rejected("NOD gratis load"));
     }
