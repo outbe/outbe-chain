@@ -115,7 +115,7 @@ where
     let (dkg_init_tx, dkg_init_rx) = dkg_mux
         .register(0)
         .await
-        .map_err(|e| eyre::eyre!("failed to register initial DKG subchannel: {e}"))?;
+        .map_err(crate::errors::StackEpochError::register_initial_dkg_subchannel)?;
 
     let recovered_shareless_output = recovered_boundary
         .as_ref()
@@ -185,11 +185,9 @@ where
     // snapshot does not and must not exist in provider state until block 1
     // executes.
     let genesis_dkg_boundary_artifact = if coordinate_genesis_bootstrap {
-        let bootstrap_output = last_dkg_output.as_ref().ok_or_else(|| {
-            eyre::eyre!(
-                "fresh bootstrap requires full DKG output; public polynomial alone cannot build canonical boundary"
-            )
-        })?;
+        let bootstrap_output = last_dkg_output
+            .as_ref()
+            .ok_or(crate::errors::StackEpochError::FreshBootstrapRequiresFullDkgOutput)?;
         Some(build_genesis_dkg_boundary_artifact(
             validator_set,
             bootstrap_output,
@@ -217,7 +215,7 @@ where
                 .clone()
                 .into_iter()
                 .try_collect()
-                .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?,
+                .map_err(crate::errors::StackEpochError::invalid_participant_set)?,
         };
 
     let reshare_target_validator_set = {

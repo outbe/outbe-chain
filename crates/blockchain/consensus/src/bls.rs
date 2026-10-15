@@ -11,6 +11,7 @@
 //!
 //! Also includes a centralized DKG bootstrap utility for genesis setup.
 
+use crate::errors::BlsKeyError;
 use commonware_codec::{Encode, EncodeSize, Read as CodecRead, ReadExt as _, Write as CodecWrite};
 use commonware_cryptography::bls12381::{
     self,
@@ -22,7 +23,7 @@ use commonware_cryptography::bls12381::{
     },
 };
 use commonware_utils::{ordered::Set, N3f1};
-use eyre::{ensure, Result, WrapErr};
+use eyre::{Result, WrapErr};
 use std::{
     io::Write as _,
     num::NonZeroU32,
@@ -73,7 +74,7 @@ fn derive_key(passphrase: &str, salt: &[u8; 32]) -> Result<[u8; 32]> {
     // structured error instead of `expect` on the key-load/startup path.
     Argon2::default()
         .hash_password_into(passphrase.as_bytes(), salt, &mut key)
-        .map_err(|e| eyre::eyre!("argon2 key derivation failed: {e}"))?;
+        .map_err(|e| BlsKeyError::Argon2Derive(format!("{e}")))?;
     Ok(key)
 }
 
@@ -88,14 +89,14 @@ fn save_encrypted(path: &Path, data: &[u8], passphrase: &str) -> Result<()> {
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
 
     let key = derive_key(passphrase, &salt)?;
-    let unbound = aead::UnboundKey::new(&aead::AES_256_GCM, &key)
-        .map_err(|_| eyre::eyre!("failed to create AES-256-GCM key"))?;
+    let unbound =
+        aead::UnboundKey::new(&aead::AES_256_GCM, &key).map_err(|_| BlsKeyError::CreateAesKey)?;
     let mut sealing_key = aead::SealingKey::new(unbound, OneNonce::new(nonce_bytes));
 
     let mut in_out = data.to_vec();
     sealing_key
         .seal_in_place_append_tag(aead::Aad::empty(), &mut in_out)
-        .map_err(|_| eyre::eyre!("AES-GCM encryption failed"))?;
+        .map_err(|_| BlsKeyError::AesGcmEncrypt)?;
 
     let mut out = Vec::with_capacity(ENC_MAGIC.len() + 32 + 12 + in_out.len());
     out.extend_from_slice(ENC_MAGIC);
@@ -124,10 +125,10 @@ fn save_to_keychain(path: &Path, data: &[u8]) -> Result<()> {
     );
 
     let entry = keyring::Entry::new(service, &account)
-        .map_err(|e| eyre::eyre!("keychain entry creation failed: {e}"))?;
+        .map_err(|e| BlsKeyError::KeychainEntry(format!("{e}")))?;
     entry
         .set_password(&hex::encode(data))
-        .map_err(|e| eyre::eyre!("keychain store failed: {e}"))?;
+        .map_err(|e| BlsKeyError::KeychainStore(format!("{e}")))?;
 
     // Write marker file on disk (pointer to keychain entry)
     let marker = format!("{KEYCHAIN_MARKER}{service}\n{account}\n");
@@ -158,7 +159,10 @@ fn save_plaintext(path: &Path, data: &[u8]) -> Result<()> {
 fn atomic_write_secret(path: &Path, data: &[u8], kind: &str) -> Result<()> {
     let file_name = path
         .file_name()
-        .ok_or_else(|| eyre::eyre!("{kind} path has no file name: {}", path.display()))?
+        .ok_or_else(|| BlsKeyError::MissingFileName {
+            kind: kind.to_owned(),
+            path: path.display().to_string(),
+        })?
         .to_string_lossy();
     let open_temp = || -> Result<(PathBuf, std::fs::File)> {
         loop {
@@ -207,11 +211,14 @@ fn atomic_write_secret(path: &Path, data: &[u8], kind: &str) -> Result<()> {
                 .permissions()
                 .mode()
                 & 0o777;
-            ensure!(
-                mode == 0o600,
-                "{kind} file {} has mode {mode:o}, expected 600",
-                tmp_path.display()
-            );
+            if mode != 0o600 {
+                return Err(BlsKeyError::InsecureFileMode {
+                    kind: kind.to_owned(),
+                    path: tmp_path.display().to_string(),
+                    mode,
+                }
+                .into());
+            }
         }
 
         std::fs::rename(&tmp_path, path).wrap_err_with(|| {
@@ -246,19 +253,15 @@ pub(crate) fn load_raw(path: &Path, backend: &KeyBackend) -> Result<Vec<u8>> {
         // AES-256-GCM encrypted
         let passphrase = match backend {
             KeyBackend::Encrypted(p) => p.as_str(),
-            _ => {
-                return Err(eyre::eyre!(
-                    "file is encrypted but backend is not Encrypted (need passphrase)"
-                ))
-            }
+            _ => return Err(BlsKeyError::EncryptedFileRequiresPassphrase.into()),
         };
         let header_len = ENC_MAGIC.len();
         if raw.len() < header_len + 32 + 12 {
-            return Err(eyre::eyre!("encrypted file too short"));
+            return Err(BlsKeyError::EncryptedFileTooShort.into());
         }
         let salt: &[u8; 32] = raw[header_len..header_len + 32]
             .try_into()
-            .map_err(|_| eyre::eyre!("encrypted file salt slice"))?;
+            .map_err(|_| BlsKeyError::EncryptedFileSaltSlice)?;
         let nonce_bytes = &raw[header_len + 32..header_len + 44];
         let ciphertext = &raw[header_len + 44..];
 
@@ -267,30 +270,30 @@ pub(crate) fn load_raw(path: &Path, backend: &KeyBackend) -> Result<Vec<u8>> {
         let key = derive_key(passphrase, salt)?;
         let nonce: [u8; 12] = nonce_bytes
             .try_into()
-            .map_err(|_| eyre::eyre!("invalid nonce length"))?;
+            .map_err(|_| BlsKeyError::InvalidNonceLength)?;
         let unbound = aead::UnboundKey::new(&aead::AES_256_GCM, &key)
-            .map_err(|_| eyre::eyre!("failed to create AES-256-GCM key"))?;
+            .map_err(|_| BlsKeyError::CreateAesKey)?;
         let mut opening_key = aead::OpeningKey::new(unbound, OneNonce::new(nonce));
 
         let mut in_out = ciphertext.to_vec();
         let plaintext = opening_key
             .open_in_place(aead::Aad::empty(), &mut in_out)
-            .map_err(|_| eyre::eyre!("decryption failed (wrong passphrase?)"))?;
+            .map_err(|_| BlsKeyError::DecryptionFailed)?;
         Ok(plaintext.to_vec())
     } else if raw.starts_with(KEYCHAIN_MARKER.as_bytes()) {
         // OS keychain reference
         let text = String::from_utf8(raw).wrap_err("keychain marker not UTF-8")?;
         let lines: Vec<&str> = text.trim().lines().collect();
         if lines.len() < 3 {
-            return Err(eyre::eyre!("invalid keychain marker file"));
+            return Err(BlsKeyError::InvalidKeychainMarker.into());
         }
         let service = lines[1];
         let account = lines[2];
         let entry = keyring::Entry::new(service, account)
-            .map_err(|e| eyre::eyre!("keychain entry creation failed: {e}"))?;
+            .map_err(|e| BlsKeyError::KeychainEntry(format!("{e}")))?;
         let hex_str = entry
             .get_password()
-            .map_err(|e| eyre::eyre!("keychain read failed (key not found?): {e}"))?;
+            .map_err(|e| BlsKeyError::KeychainRead(format!("{e}")))?;
         hex::decode(&hex_str).wrap_err("invalid hex in keychain entry")
     } else {
         // Legacy/plaintext hex
@@ -318,7 +321,9 @@ pub(crate) fn remove_raw(path: &Path, backend: &KeyBackend) -> Result<()> {
         if raw.starts_with(KEYCHAIN_MARKER.as_bytes()) {
             let text = String::from_utf8(raw).wrap_err("keychain marker not UTF-8")?;
             let lines: Vec<&str> = text.trim().lines().collect();
-            ensure!(lines.len() >= 3, "invalid keychain marker file");
+            if lines.len() < 3 {
+                return Err(BlsKeyError::InvalidKeychainMarker.into());
+            }
             Some((lines[1].to_owned(), lines[2].to_owned()))
         } else {
             None
@@ -337,10 +342,10 @@ pub(crate) fn remove_raw(path: &Path, backend: &KeyBackend) -> Result<()> {
 
     if let Some((service, account)) = keychain_entry {
         let entry = keyring::Entry::new(&service, &account)
-            .map_err(|e| eyre::eyre!("keychain entry creation failed: {e}"))?;
+            .map_err(|e| BlsKeyError::KeychainEntry(format!("{e}")))?;
         entry
             .delete_credential()
-            .map_err(|e| eyre::eyre!("keychain cleanup failed: {e}"))?;
+            .map_err(|e| BlsKeyError::KeychainCleanup(format!("{e}")))?;
     }
     Ok(())
 }
@@ -353,7 +358,7 @@ pub(crate) fn remove_raw(path: &Path, backend: &KeyBackend) -> Result<()> {
 pub fn load_signing_share(path: &Path, backend: &KeyBackend) -> Result<Share> {
     let bytes = load_raw(path, backend)?;
     Share::read(&mut bytes.as_slice())
-        .map_err(|e| eyre::eyre!("invalid BLS12-381 signing share: {e}"))
+        .map_err(|e| BlsKeyError::InvalidSigningShare(format!("{e}")).into())
 }
 
 /// Save a BLS12-381 signing share.
@@ -370,7 +375,7 @@ pub fn load_public_polynomial(path: &Path, backend: &KeyBackend) -> Result<Shari
     let bytes = load_raw(path, backend)?;
     let cfg = (NonZeroU32::new(MAX_VALIDATORS).unwrap(), ModeVersion::v0());
     Sharing::read_cfg(&mut bytes.as_slice(), &cfg)
-        .map_err(|e| eyre::eyre!("invalid BLS12-381 public polynomial: {e}"))
+        .map_err(|e| BlsKeyError::InvalidPublicPolynomial(format!("{e}")).into())
 }
 
 /// Save a BLS12-381 public polynomial (Sharing).
@@ -396,7 +401,7 @@ pub fn load_dkg_output(
     let bytes = load_raw(path, backend)?;
     let cfg = (NonZeroU32::new(MAX_VALIDATORS).unwrap(), ModeVersion::v0());
     dkg::Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut bytes.as_slice(), &cfg)
-        .map_err(|e| eyre::eyre!("invalid BLS12-381 DKG output: {e}"))
+        .map_err(|e| BlsKeyError::InvalidDkgOutput(format!("{e}")).into())
 }
 
 /// Save a BLS12-381 DKG output artifact.
@@ -418,7 +423,7 @@ pub fn save_dkg_output(
 pub fn load_individual_key(path: &Path, backend: &KeyBackend) -> Result<bls12381::PrivateKey> {
     let bytes = load_raw(path, backend)?;
     bls12381::PrivateKey::read(&mut bytes.as_slice())
-        .map_err(|e| eyre::eyre!("invalid BLS12-381 individual key: {e}"))
+        .map_err(|e| BlsKeyError::InvalidIndividualKey(format!("{e}")).into())
 }
 
 /// Save a BLS12-381 individual signing key (MinPk).
@@ -470,7 +475,7 @@ pub struct ParticipantDkgBootstrapResult {
 /// a secure offline channel. Production use should use a distributed DKG
 /// protocol instead.
 pub fn bootstrap_dkg(n: u32) -> Result<DkgBootstrapResult> {
-    let n = NonZeroU32::new(n).ok_or_else(|| eyre::eyre!("validator count must be > 0"))?;
+    let n = NonZeroU32::new(n).ok_or(BlsKeyError::ZeroValidatorCount)?;
     let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
 
     let (polynomial, shares) =
@@ -494,13 +499,15 @@ pub fn bootstrap_dkg(n: u32) -> Result<DkgBootstrapResult> {
 pub fn bootstrap_dkg_for_participants(
     participants: Set<bls12381::PublicKey>,
 ) -> Result<ParticipantDkgBootstrapResult> {
-    ensure!(!participants.is_empty(), "validator count must be > 0");
+    if participants.is_empty() {
+        return Err(BlsKeyError::ZeroValidatorCount.into());
+    }
     let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
     let validators = participants.len();
 
     let (output, shares) =
         dkg::deal::<MinSig, _, N3f1>(&mut rng, Mode::NonZeroCounter, participants)
-            .map_err(|e| eyre::eyre!("BLS DKG failed: {e}"))?;
+            .map_err(|e| BlsKeyError::BlsDkgFailed(format!("{e}")))?;
     let polynomial = output.public().clone();
     let shares = shares.values().to_vec();
 
@@ -521,7 +528,7 @@ pub fn bootstrap_dkg_for_participants(
 pub fn validate_share(share: &Share, polynomial: &Sharing<MinSig>) -> Result<bool> {
     let expected_public = polynomial
         .partial_public(share.index)
-        .map_err(|e| eyre::eyre!("failed to compute partial public key: {e}"))?;
+        .map_err(|e| BlsKeyError::ComputePartialPublicKey(format!("{e}")))?;
     Ok(share.public::<MinSig>() == expected_public)
 }
 
@@ -531,14 +538,12 @@ pub fn validate_dkg_triplet(
     polynomial: &Sharing<MinSig>,
     output: &dkg::Output<MinSig, bls12381::PublicKey>,
 ) -> Result<()> {
-    ensure!(
-        validate_share(share, polynomial)?,
-        "signing share does not match public polynomial"
-    );
-    ensure!(
-        output.public() == polynomial,
-        "DKG output public polynomial does not match saved public polynomial"
-    );
+    if !validate_share(share, polynomial)? {
+        return Err(BlsKeyError::SigningSharePolynomialMismatch.into());
+    }
+    if output.public() != polynomial {
+        return Err(BlsKeyError::DkgOutputPolynomialMismatch.into());
+    }
     Ok(())
 }
 

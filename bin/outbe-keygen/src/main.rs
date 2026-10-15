@@ -6,6 +6,8 @@
 //! Supports key storage backends: plaintext, encrypted (AES-256-GCM),
 //! OS keychain (macOS Keychain / Linux Secret Service).
 
+mod errors;
+
 use alloy_primitives::{keccak256, Address, B256};
 use clap::{Parser, Subcommand, ValueEnum};
 use commonware_codec::Encode;
@@ -22,6 +24,8 @@ use outbe_ocomp_protocol::{
     profile::poc_schema_limits,
 };
 use outbe_primitives::validators::{validator_registration_message, VALIDATOR_REGISTRATION_DST};
+
+use crate::errors::KeygenError;
 
 #[cfg(not(test))]
 fn exit_process(code: i32) -> ! {
@@ -232,12 +236,11 @@ struct OcompRegistrationArgs {
     consensus_bls_min_pk: [u8; 48],
 }
 
-fn parse_consensus_bls_min_pk(value: &str) -> std::result::Result<[u8; 48], String> {
+fn parse_consensus_bls_min_pk(value: &str) -> std::result::Result<[u8; 48], KeygenError> {
     let value = value.strip_prefix("0x").unwrap_or(value);
     let mut public_key = [0u8; 48];
-    hex::decode_to_slice(value, &mut public_key).map_err(|error| {
-        format!("consensus BLS MinPk key must be exactly 48 bytes of hex: {error}")
-    })?;
+    hex::decode_to_slice(value, &mut public_key)
+        .map_err(KeygenError::InvalidConsensusBlsMinPkHex)?;
     Ok(public_key)
 }
 
@@ -246,9 +249,10 @@ fn resolve_backend(cli: &Cli) -> Result<KeyBackend> {
     match cli.key_backend {
         KeyBackendArg::Plaintext => Ok(KeyBackend::Plaintext),
         KeyBackendArg::Encrypted => {
-            let passphrase = cli.passphrase.as_deref().ok_or_else(|| {
-                eyre::eyre!("--passphrase (or BLS_PASSPHRASE env) required for encrypted backend")
-            })?;
+            let passphrase = cli
+                .passphrase
+                .as_deref()
+                .ok_or(KeygenError::MissingPassphrase)?;
             Ok(KeyBackend::Encrypted(passphrase.to_string()))
         }
         KeyBackendArg::OsLevel => Ok(KeyBackend::OsLevel),
@@ -306,8 +310,8 @@ fn cmd_sign_registration(
 
     // Convert commonware PrivateKey (32-byte scalar) to blst SecretKey for signing.
     let sk_bytes = key.encode();
-    let blst_sk = blst::min_pk::SecretKey::from_bytes(&sk_bytes)
-        .map_err(|e| eyre::eyre!("failed to create blst SecretKey: {e:?}"))?;
+    let blst_sk =
+        blst::min_pk::SecretKey::from_bytes(&sk_bytes).map_err(KeygenError::BlstSecretKey)?;
 
     let message = validator_registration_message(chain_id, validator_address, radicle_node_id);
     let sig = blst_sk.sign(&message, VALIDATOR_REGISTRATION_DST, &[]);
@@ -371,10 +375,9 @@ fn generate_radicle_identity(output_dir: &Path) -> Result<RadicleIdentity> {
     let node_id_display = node_id.to_string();
     let inner = node_id.into_inner();
     let node_id_slice: &[u8] = inner.as_ref();
-    eyre::ensure!(
-        node_id_slice.len() == 32,
-        "Radicle NodeId is not a 32-byte Ed25519 key"
-    );
+    if node_id_slice.len() != 32 {
+        return Err(KeygenError::InvalidRadicleNodeIdLength.into());
+    }
     Ok(RadicleIdentity {
         key_path: keystore.secret_key_path().to_path_buf(),
         public_path: keystore.public_key_path().map(Path::to_path_buf),
@@ -416,7 +419,7 @@ fn show_address(private_key: String) -> Result<Address> {
     let encoded = encoded.strip_prefix("0x").unwrap_or(encoded);
     let mut bytes = Zeroizing::new([0u8; 32]);
     hex::decode_to_slice(encoded, bytes.as_mut())
-        .map_err(|_| eyre::eyre!("EVM private key must be exactly 32 bytes of hex"))?;
+        .map_err(|_| KeygenError::InvalidEvmPrivateKeyHex)?;
     let signing_key =
         SigningKey::from_slice(bytes.as_ref()).wrap_err("invalid secp256k1 private key")?;
     evm_address(&signing_key)
@@ -428,7 +431,7 @@ fn evm_address(signing_key: &SigningKey) -> Result<Address> {
         .as_bytes()
         .get(1..)
         .filter(|raw| raw.len() == 64)
-        .ok_or_else(|| eyre::eyre!("EVM public key is not an uncompressed SEC1-65 point"))?;
+        .ok_or(KeygenError::InvalidEvmPublicKeyPoint)?;
     Ok(Address::from_raw_public_key(public_key_raw))
 }
 
@@ -472,10 +475,7 @@ fn generate_validator_bundle(
     .map(|path| path.display().to_string())
     .collect();
     if !preexisting.is_empty() {
-        eyre::bail!(
-            "validator key artifacts already exist, refusing to overwrite: {}",
-            preexisting.join(", ")
-        );
+        return Err(KeygenError::ValidatorKeyArtifactsExist(preexisting.join(", ")).into());
     }
 
     // 1. BLS12-381 MinPk consensus key.
@@ -486,7 +486,7 @@ fn generate_validator_bundle(
     let bls_public_key: [u8; 48] = bls_pk_bytes
         .as_ref()
         .try_into()
-        .map_err(|_| eyre::eyre!("BLS MinPk public key is not 48 bytes"))?;
+        .map_err(|_| KeygenError::InvalidBlsPublicKeyLength)?;
     let bls_pubkey_hash = keccak256(bls_public_key);
     bls::save_individual_key(&bls_key_path, &bls_key, backend)
         .wrap_err_with(|| format!("failed to write BLS key: {}", bls_key_path.display()))?;
@@ -526,8 +526,8 @@ fn generate_validator_bundle(
 
     // 6. Registration signature for the ValidatorSet precompile.
     let sk_bytes = bls_key.encode();
-    let blst_sk = blst::min_pk::SecretKey::from_bytes(&sk_bytes)
-        .map_err(|e| eyre::eyre!("failed to create blst SecretKey: {e:?}"))?;
+    let blst_sk =
+        blst::min_pk::SecretKey::from_bytes(&sk_bytes).map_err(KeygenError::BlstSecretKey)?;
     let message =
         validator_registration_message(chain_id, validator_address, radicle.node_id_bytes);
     let registration_signature = blst_sk
@@ -694,7 +694,7 @@ fn cmd_hybrid(output_dir: PathBuf, backend: &KeyBackend) -> Result<()> {
     let mut ecdsa_bytes = [0u8; 32];
     rand_core::OsRng.fill_bytes(&mut ecdsa_bytes);
     if ecdsa_bytes.iter().all(|&b| b == 0) {
-        eyre::bail!("generated zero ECDSA key - extremely unlikely, try again");
+        return Err(KeygenError::ZeroEcdsaKey.into());
     }
 
     let ecdsa_key_path = output_dir.join("evm-key.hex");
@@ -722,10 +722,7 @@ fn cmd_ocomp(output_dir: PathBuf, args: OcompRegistrationArgs) -> Result<()> {
     let directory_metadata = std::fs::symlink_metadata(&output_dir)
         .wrap_err_with(|| format!("failed to inspect output dir: {}", output_dir.display()))?;
     if !directory_metadata.file_type().is_dir() {
-        eyre::bail!(
-            "OCOMP output path is not a regular directory: {}",
-            output_dir.display()
-        );
+        return Err(KeygenError::OcompOutputNotRegularDir(output_dir).into());
     }
     let key_path = output_dir.join(OCOMP_KEY_FILENAME);
     let registration_path = output_dir.join(OCOMP_REGISTRATION_FILENAME);
@@ -733,7 +730,7 @@ fn cmd_ocomp(output_dir: PathBuf, args: OcompRegistrationArgs) -> Result<()> {
         match std::fs::symlink_metadata(path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Ok(_) => {
-                eyre::bail!("OCOMP artifact already exists: {}", path.display());
+                return Err(KeygenError::OcompArtifactAlreadyExists(path.clone()).into());
             }
             Err(error) => {
                 return Err(error).wrap_err_with(|| {
@@ -748,7 +745,7 @@ fn cmd_ocomp(output_dir: PathBuf, args: OcompRegistrationArgs) -> Result<()> {
     let public_key_sec1: [u8; 33] = public_key
         .as_bytes()
         .try_into()
-        .map_err(|_| eyre::eyre!("generated OCOMP public key is not compressed SEC1-33"))?;
+        .map_err(|_| KeygenError::InvalidOcompPublicKeyLength)?;
     let core = OcompKeyRegistrationCoreV1 {
         chain_id: args.chain_id,
         genesis_hash: args.genesis_hash,
@@ -768,7 +765,7 @@ fn cmd_ocomp(output_dir: PathBuf, args: OcompRegistrationArgs) -> Result<()> {
     let pop_digest = registration.proof_of_possession_digest(&limits)?;
     let proof: Signature = signing_key
         .sign_prehash(pop_digest.as_slice())
-        .map_err(|_| eyre::eyre!("failed to sign OCOMP proof of possession"))?;
+        .map_err(|_| KeygenError::OcompPopSignFailed)?;
     let proof = proof.normalize_s().unwrap_or(proof);
     registration.proof_of_possession = proof.to_bytes().into();
     registration.validate_proof_of_possession(&limits)?;
@@ -786,12 +783,13 @@ fn cmd_ocomp(output_dir: PathBuf, args: OcompRegistrationArgs) -> Result<()> {
         let cleanup = std::fs::remove_file(&registration_path)
             .and_then(|()| File::open(&output_dir)?.sync_all());
         if let Err(cleanup_error) = cleanup {
-            eyre::bail!(
-                "OCOMP secret installation failed at {}: {error}; \
-                 cleanup of the new public registration at {} also failed: {cleanup_error}",
-                key_path.display(),
-                registration_path.display()
-            );
+            return Err(KeygenError::OcompSecretInstallAndCleanupFailed {
+                key_path,
+                error: error.to_string(),
+                registration_path,
+                cleanup_error,
+            }
+            .into());
         }
         return Err(error)
             .wrap_err_with(|| format!("failed to install OCOMP key: {}", key_path.display()));
@@ -808,10 +806,10 @@ fn cmd_ocomp(output_dir: PathBuf, args: OcompRegistrationArgs) -> Result<()> {
 fn write_immutable_file(path: &Path, contents: &[u8], mode: u32) -> Result<()> {
     let parent = path
         .parent()
-        .ok_or_else(|| eyre::eyre!("artifact path has no parent: {}", path.display()))?;
+        .ok_or_else(|| KeygenError::ArtifactPathMissingParent(path.to_path_buf()))?;
     let file_name = path
         .file_name()
-        .ok_or_else(|| eyre::eyre!("artifact path has no file name: {}", path.display()))?
+        .ok_or_else(|| KeygenError::ArtifactPathMissingFileName(path.to_path_buf()))?
         .to_string_lossy();
     let pending_path = parent.join(format!(".{file_name}.pending.{}", std::process::id()));
 
@@ -838,7 +836,7 @@ fn write_immutable_file(path: &Path, contents: &[u8], mode: u32) -> Result<()> {
 fn write_secret_hex_file(path: &Path, contents: &str) -> Result<()> {
     let file_name = path
         .file_name()
-        .ok_or_else(|| eyre::eyre!("secret key path has no file name: {}", path.display()))?
+        .ok_or_else(|| KeygenError::SecretKeyPathMissingFileName(path.to_path_buf()))?
         .to_string_lossy();
     let tmp_path = path.with_file_name(format!(".{file_name}.tmp.{}", std::process::id()));
 
@@ -1123,7 +1121,7 @@ mod tests {
 
     // TC-007: verify signature end-to-end with registration DST
     #[test]
-    fn test_sign_registration_verifies_with_dst() {
+    fn sign_registration_verifies_with_dst() {
         let dir = tempfile::tempdir().unwrap();
         cmd_generate(dir.path().to_path_buf(), &KeyBackend::Plaintext).unwrap();
         let key_path = dir.path().join("signing-key.hex");

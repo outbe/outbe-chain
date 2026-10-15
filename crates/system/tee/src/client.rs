@@ -343,23 +343,19 @@ impl EnclaveClient {
 
         // 2. Noise-IK handshake (initiator). The host static key is ephemeral
         //    per connection. The enclave static key is the bound, pinned one.
-        let params = NOISE_PARAMS
-            .parse()
-            .map_err(|e| TransportError::Noise(format!("{e:?}")))?;
+        let params = NOISE_PARAMS.parse().map_err(TransportError::noise_debug)?;
         let builder = snow::Builder::new(params);
-        let host_keys = builder
-            .generate_keypair()
-            .map_err(|e| TransportError::Noise(e.to_string()))?;
+        let host_keys = builder.generate_keypair().map_err(TransportError::noise)?;
         let mut handshake = builder
             .local_private_key(&host_keys.private)
             .remote_public_key(&enclave_static)
             .build_initiator()
-            .map_err(|e| TransportError::Handshake(e.to_string()))?;
+            .map_err(TransportError::handshake)?;
 
         let mut buf = [0u8; 1024];
         let n = handshake
             .write_message(&[], &mut buf)
-            .map_err(|e| TransportError::Handshake(e.to_string()))?;
+            .map_err(TransportError::handshake)?;
         with_io_phase(
             write_frame(&mut stream, &buf[..n]),
             "Noise handshake request write",
@@ -368,11 +364,11 @@ impl EnclaveClient {
         let msg2 = with_io_phase(read_frame(&mut stream), "Noise handshake response read")?;
         handshake
             .read_message(&msg2, &mut buf)
-            .map_err(|e| TransportError::Handshake(e.to_string()))?;
+            .map_err(TransportError::handshake)?;
 
         let noise = handshake
             .into_transport_mode()
-            .map_err(|e| TransportError::Handshake(e.to_string()))?;
+            .map_err(TransportError::handshake)?;
         Ok(Self {
             stream,
             noise,
@@ -470,9 +466,7 @@ impl AuthorizedEnclaveClient {
                 "initialization manifest does not bind the supplied NodeHost key".to_string(),
             ));
         }
-        let manifest_bytes = manifest
-            .encode_canonical()
-            .map_err(|error| TransportError::Codec(error.to_string()))?;
+        let manifest_bytes = manifest.encode_canonical().map_err(TransportError::codec)?;
         let preamble = EnclaveRequest::Initialize {
             manifest: manifest_bytes,
             node_signature: node_signature.to_vec(),
@@ -485,12 +479,10 @@ impl AuthorizedEnclaveClient {
             manifest.attestation_ed25519,
         )?;
         let response = client.receive_response("initialization acknowledgement read")?;
-        let expected_enclave_id = manifest
-            .enclave_id()
-            .map_err(|error| TransportError::Codec(error.to_string()))?;
+        let expected_enclave_id = manifest.enclave_id().map_err(TransportError::codec)?;
         let expected_node_host_authorization_hash = manifest
             .node_host_authorization_hash()
-            .map_err(|error| TransportError::Codec(error.to_string()))?;
+            .map_err(TransportError::codec)?;
         match response {
             EnclaveResponse::Initialized {
                 enclave_id,
@@ -518,9 +510,7 @@ impl AuthorizedEnclaveClient {
                 "sealed manifest does not bind the supplied NodeHost key".to_string(),
             ));
         }
-        manifest
-            .encode_canonical()
-            .map_err(|error| TransportError::Codec(error.to_string()))?;
+        manifest.encode_canonical().map_err(TransportError::codec)?;
         Self::connect_with_preamble(
             endpoint,
             &EnclaveRequest::OpenSession,
@@ -542,18 +532,16 @@ impl AuthorizedEnclaveClient {
             write_frame(&mut stream, &encode_request(preamble)?),
             "production preamble write",
         )?;
-        let params = NOISE_PARAMS
-            .parse()
-            .map_err(|error| TransportError::Noise(format!("{error:?}")))?;
+        let params = NOISE_PARAMS.parse().map_err(TransportError::noise_debug)?;
         let mut handshake = snow::Builder::new(params)
             .local_private_key(node_host.private.as_ref())
             .remote_public_key(&enclave_static)
             .build_initiator()
-            .map_err(|error| TransportError::Handshake(error.to_string()))?;
+            .map_err(TransportError::handshake)?;
         let mut buffer = [0u8; 1024];
         let length = handshake
             .write_message(&[], &mut buffer)
-            .map_err(|error| TransportError::Handshake(error.to_string()))?;
+            .map_err(TransportError::handshake)?;
         with_io_phase(
             write_frame(&mut stream, &buffer[..length]),
             "Noise handshake request write",
@@ -561,10 +549,10 @@ impl AuthorizedEnclaveClient {
         let message = with_io_phase(read_frame(&mut stream), "Noise handshake response read")?;
         handshake
             .read_message(&message, &mut buffer)
-            .map_err(|error| TransportError::Handshake(error.to_string()))?;
+            .map_err(TransportError::handshake)?;
         let noise = handshake
             .into_transport_mode()
-            .map_err(|error| TransportError::Handshake(error.to_string()))?;
+            .map_err(TransportError::handshake)?;
         Ok(Self {
             stream,
             noise,
@@ -582,7 +570,7 @@ impl AuthorizedEnclaveClient {
         let length = self
             .noise
             .read_message(&ciphertext, &mut plaintext)
-            .map_err(|error| TransportError::Noise(error.to_string()))?;
+            .map_err(TransportError::noise)?;
         enclave_answer(decode_response(&plaintext[..length])?)
     }
 
@@ -676,7 +664,7 @@ impl AuthorizedEnclaveClient {
             expected_tribute_offer_epoch,
         } = input;
         let request_hash = onboarding_artifact_ingest_request_hash_v1(input)
-            .map_err(|error| TransportError::DcapVerification(error.to_string()))?;
+            .map_err(TransportError::dcap_verification)?;
         match self.request_internal(&EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 {
             request_hash,
             artifact: artifact.to_vec(),
@@ -785,7 +773,7 @@ impl AuthorizedEnclaveClient {
         let length = self
             .noise
             .write_message(&plaintext, &mut ciphertext)
-            .map_err(|error| TransportError::Noise(error.to_string()))?;
+            .map_err(TransportError::noise)?;
         with_io_phase(
             write_frame(&mut self.stream, &ciphertext[..length]),
             "encrypted enclave request write",
@@ -862,9 +850,7 @@ impl AuthorizedEnclaveClient {
                 "registration intent does not bind the initialized enclave attestation key".into(),
             ));
         }
-        let canonical_intent = intent
-            .encode_canonical()
-            .map_err(|error| TransportError::Codec(error.to_string()))?;
+        let canonical_intent = intent.encode_canonical().map_err(TransportError::codec)?;
         let response = self.request(&EnclaveRequest::GenerateDcapQuote {
             intent: canonical_intent.clone(),
         })?;
@@ -1076,9 +1062,7 @@ fn request_gramine_direct_dev_signature(
             "GramineDirectDev registration intent does not bind this enclave and mode".into(),
         ));
     }
-    let canonical = intent
-        .encode_canonical()
-        .map_err(|error| TransportError::Codec(error.to_string()))?;
+    let canonical = intent.encode_canonical().map_err(TransportError::codec)?;
     match request(&EnclaveRequest::SignRegistrationIntentDevV1 {
         intent: canonical.clone(),
     })? {
@@ -1179,13 +1163,13 @@ fn encrypted_round_trip(
     let mut ciphertext = vec![0_u8; plaintext.len() + 64];
     let length = noise
         .write_message(&plaintext, &mut ciphertext)
-        .map_err(|error| TransportError::Noise(error.to_string()))?;
+        .map_err(TransportError::noise)?;
     with_io_phase(write_frame(stream, &ciphertext[..length]), write_phase)?;
     let ciphertext = with_io_phase(read_frame(stream), read_phase)?;
     let mut plaintext = vec![0_u8; ciphertext.len()];
     let length = noise
         .read_message(&ciphertext, &mut plaintext)
-        .map_err(|error| TransportError::Noise(error.to_string()))?;
+        .map_err(TransportError::noise)?;
     enclave_answer(decode_response(&plaintext[..length])?)
 }
 

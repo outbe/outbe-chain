@@ -46,6 +46,7 @@ sol!(
     "../../../contracts/precompiles/src/ICycle.sol"
 );
 
+pub mod errors;
 pub mod handler;
 pub mod lifecycle;
 pub mod runtime;

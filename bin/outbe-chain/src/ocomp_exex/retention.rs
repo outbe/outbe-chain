@@ -2,10 +2,10 @@ use super::discovery_record;
 use super::released_export_authority_for_status;
 use super::EmbeddedOcompExExV1;
 use super::RequestLocatorV1;
+use crate::errors::OcompExExError;
 
 use alloy_primitives::B256;
 
-use eyre::bail;
 use eyre::Context as _;
 
 use outbe_ocomp::discovery_control::DiscoveryOfferRefV1;
@@ -90,11 +90,12 @@ where
         let job = self
             .jobs
             .get(&job_id)
-            .ok_or_else(|| eyre::eyre!("embedded OCOMP job disappeared before export"))?;
+            .ok_or(OcompExExError::EmbeddedJobDisappearedBeforeExport)?;
         let bundle_hash = job.record.spec.summary.protocol_bundle_hash;
-        let spool = self.discovery_spools.get(&bundle_hash).ok_or_else(|| {
-            eyre::eyre!("OCOMP discovery spool is missing for bundle {bundle_hash}")
-        })?;
+        let spool = self
+            .discovery_spools
+            .get(&bundle_hash)
+            .ok_or(OcompExExError::DiscoverySpoolMissingForBundle(bundle_hash))?;
         let offer = match self.pending_offers.get(&job_id) {
             Some(reference) => reference.clone(),
             None if !publish_offer => DiscoveryOfferRefV1::from_spec(
@@ -120,7 +121,7 @@ where
             return Ok(false);
         };
         if acknowledgment.reference.offer_ref() != offer {
-            bail!("OCOMP spool ACK differs from the exact finalized offer");
+            return Err(OcompExExError::SpoolAckDiffersFromOffer.into());
         }
         self.retention_selector
             .confirm_canonical_export_ack(
@@ -155,22 +156,35 @@ where
         let released = self
             .retention_selector
             .released_job_authority(job_id)?
-            .ok_or_else(|| eyre::eyre!("closed OCOMP job has no released retention authority"))?;
+            .ok_or(OcompExExError::ClosedJobMissingReleasedRetentionAuthority)?;
         let input_lease_id = record
             .intent
             .input_lease_id()
             .wrap_err("derive released OCOMP input lease")?;
-        if released.job_id != job_id
-            || released.candidate.block_number != locator.block_number
-            || released.candidate.block_hash != locator.block_hash
-            || released.candidate.state_root != locator.state_root
-            || released.candidate.intent_id != locator.intent_id
-            || released.candidate.wwd != locator.wwd
-            || released.candidate.ce_sealed_root != record.intent.ce_sealed_root
-            || released.candidate.protocol_bundle_hash != record.intent.protocol_bundle_hash
-            || released.candidate.input_lease_id != input_lease_id
-        {
-            bail!("released OCOMP retention authority conflicts with canonical typed state");
+        let expected_authority = (
+            job_id,
+            locator.block_number,
+            locator.block_hash,
+            locator.state_root,
+            locator.intent_id,
+            locator.wwd,
+            record.intent.ce_sealed_root,
+            record.intent.protocol_bundle_hash,
+            input_lease_id,
+        );
+        let actual_authority = (
+            released.job_id,
+            released.candidate.block_number,
+            released.candidate.block_hash,
+            released.candidate.state_root,
+            released.candidate.intent_id,
+            released.candidate.wwd,
+            released.candidate.ce_sealed_root,
+            released.candidate.protocol_bundle_hash,
+            released.candidate.input_lease_id,
+        );
+        if actual_authority != expected_authority {
+            return Err(OcompExExError::ReleasedRetentionAuthorityConflictsWithState.into());
         }
         let candidate =
             discovery_record(locator, record, job_id, released.source_generation, limits)?;
@@ -179,7 +193,7 @@ where
                 let spool = self
                     .discovery_spools
                     .get(&candidate.spec.summary.protocol_bundle_hash)
-                    .ok_or_else(|| eyre::eyre!("released OCOMP job references an unknown spool"))?;
+                    .ok_or(OcompExExError::ReleasedJobReferencesUnknownSpool)?;
                 let probe = DiscoveryOfferRefV1::from_spec(
                     self.chain_id,
                     self.genesis_hash,
@@ -187,11 +201,11 @@ where
                     &candidate.spec,
                     limits,
                 )?;
-                let ack = spool.ack(&probe.observation_id)?.ok_or_else(|| {
-                    eyre::eyre!("released OCOMP job has no durable discovery ACK")
-                })?;
+                let ack = spool
+                    .ack(&probe.observation_id)?
+                    .ok_or(OcompExExError::ReleasedJobMissingDurableDiscoveryAck)?;
                 if ack.reference.offer_ref() != probe {
-                    bail!("released OCOMP ACK differs from its original finalized offer");
+                    return Err(OcompExExError::ReleasedAckDiffersFromOffer.into());
                 }
                 let export = outbe_node::ocomp::retention::ExportAuthorityV1 {
                     source_generation: probe.generation,
@@ -209,9 +223,10 @@ where
             return Ok(());
         };
         let bundle_hash = candidate.spec.summary.protocol_bundle_hash;
-        let spool = self.discovery_spools.get(&bundle_hash).ok_or_else(|| {
-            eyre::eyre!("OCOMP discovery spool is missing for bundle {bundle_hash}")
-        })?;
+        let spool = self
+            .discovery_spools
+            .get(&bundle_hash)
+            .ok_or(OcompExExError::DiscoverySpoolMissingForBundle(bundle_hash))?;
         let probe = DiscoveryOfferRefV1::from_spec(
             self.chain_id,
             self.genesis_hash,
@@ -221,13 +236,13 @@ where
         )?;
         let acknowledgment = spool
             .ack(&probe.observation_id)?
-            .ok_or_else(|| eyre::eyre!("released OCOMP export has no durable discovery ACK"))?;
+            .ok_or(OcompExExError::ReleasedExportMissingDurableDiscoveryAck)?;
         let reference = acknowledgment.reference.offer_ref();
         if reference != probe
             || acknowledgment.lease_generation != export.lease_generation
             || acknowledgment.manifest_hash != export.manifest_hash
         {
-            bail!("released OCOMP ACK conflicts with canonical durable authority");
+            return Err(OcompExExError::ReleasedAckConflictsWithCanonicalAuthority.into());
         }
         Ok(())
     }

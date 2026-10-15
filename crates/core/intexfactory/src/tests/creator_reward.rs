@@ -30,7 +30,10 @@ fn ready_proceeds_pot_burns() {
 
         assert_eq!(s.balance(VAULT_ROUTER_ADDRESS).unwrap(), U256::ZERO);
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
-        assert_eq!(outbe_intex::api::proceeds_deadline(&s, day).unwrap(), u64::MAX);
+        assert_eq!(
+            outbe_intex::api::proceeds_deadline(&s, day).unwrap(),
+            u64::MAX
+        );
         assert_eq!(outbe_intex::api::awaiting_proceeds_count(&s).unwrap(), 0);
     });
 
@@ -128,7 +131,6 @@ fn distribute_receives_the_call_value() {
     });
 }
 
-
 #[test]
 fn late_proceeds_after_finalize_burn() {
     use alloy_sol_types::SolEvent;
@@ -147,7 +149,10 @@ fn late_proceeds_after_finalize_burn() {
         s.increase_balance(INTEX_FACTORY_ADDRESS, late).unwrap();
         runtime::distribute(&s, crate::constants::ORIGIN_ROUTER_ADDRESS, day, 11, late).unwrap();
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
-        assert_eq!(outbe_intex::api::proceeds_deadline(&s, day).unwrap(), u64::MAX);
+        assert_eq!(
+            outbe_intex::api::proceeds_deadline(&s, day).unwrap(),
+            u64::MAX
+        );
     });
 
     let sig = IIntexFactory::LateProceedsBurned::SIGNATURE_HASH;
@@ -171,7 +176,14 @@ fn incomplete_fan_in_holds_the_pot_until_the_deadline() {
     StorageHandle::enter(&mut storage, |s| {
         outbe_intex::api::arm_proceeds(&s, day, &[10, 11], DEADLINE_FUTURE).unwrap();
         s.increase_balance(INTEX_FACTORY_ADDRESS, arrived).unwrap();
-        runtime::distribute(&s, crate::constants::ORIGIN_ROUTER_ADDRESS, day, 10, arrived).unwrap();
+        runtime::distribute(
+            &s,
+            crate::constants::ORIGIN_ROUTER_ADDRESS,
+            day,
+            10,
+            arrived,
+        )
+        .unwrap();
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), arrived);
         assert_eq!(outbe_intex::api::awaiting_proceeds_count(&s).unwrap(), 1);
 
@@ -180,7 +192,10 @@ fn incomplete_fan_in_holds_the_pot_until_the_deadline() {
 
         runtime::sweep_proceeds_deadlines(&s, DEADLINE_FUTURE).unwrap();
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
-        assert_eq!(outbe_intex::api::proceeds_deadline(&s, day).unwrap(), u64::MAX);
+        assert_eq!(
+            outbe_intex::api::proceeds_deadline(&s, day).unwrap(),
+            u64::MAX
+        );
         assert_eq!(outbe_intex::api::awaiting_proceeds_count(&s).unwrap(), 0);
     });
 
@@ -209,7 +224,10 @@ fn a_day_no_chain_ever_paid_into_leaves_the_awaiting_set() {
         // Past it there is nothing left to wait for, so the day stops being swept.
         runtime::sweep_proceeds_deadlines(&s, DEADLINE_FUTURE + 1).unwrap();
         assert_eq!(outbe_intex::api::awaiting_proceeds_count(&s).unwrap(), 0);
-        assert_eq!(outbe_intex::api::proceeds_deadline(&s, wwd).unwrap(), u64::MAX);
+        assert_eq!(
+            outbe_intex::api::proceeds_deadline(&s, wwd).unwrap(),
+            u64::MAX
+        );
     });
 }
 

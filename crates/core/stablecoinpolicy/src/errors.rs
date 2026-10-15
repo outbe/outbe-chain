@@ -1,3 +1,5 @@
+//! Typed error definitions for the StablecoinPolicyRegistry precompile.
+
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
@@ -5,6 +7,7 @@ use thiserror::Error;
 
 use crate::abi::IStablecoinPolicyRegistry;
 
+/// Represents errors returned by the StablecoinPolicyRegistry runtime.
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PolicyRegistryError {
@@ -65,6 +68,29 @@ pub enum PolicyRegistryError {
 
     #[error("policy {policy_id} of type {policy_type} cannot enumerate members")]
     PolicyMemberEnumerationUnsupported { policy_id: U256, policy_type: u8 },
+
+    #[error("policy member set length/data mismatch")]
+    MemberSetMismatch,
+
+    #[error("policy {policy_id} has unknown stored descriptor {policy_type}")]
+    UnknownStoredDescriptor { policy_id: U256, policy_type: u8 },
+
+    #[error("stablecoin policy next id is corrupt")]
+    NextIdCorrupt,
+
+    #[error("stablecoin policy next id collides with an existing descriptor")]
+    NextIdCollision,
+
+    #[error("validated policy membership changed during mutation")]
+    MembershipChangedDuringMutation,
+}
+
+#[derive(Debug, Error)]
+pub enum AbiDecodeError {
+    #[error(transparent)]
+    Sol(#[from] alloy_sol_types::Error),
+    #[error("non-canonical ABI calldata or trailing bytes")]
+    NonCanonicalCalldata,
 }
 
 impl From<PolicyRegistryError> for PrecompileError {
@@ -157,6 +183,13 @@ impl From<PolicyRegistryError> for PrecompileError {
                 policyType: policy_type,
             }
             .abi_encode(),
+            fatal @ (PolicyRegistryError::MemberSetMismatch
+            | PolicyRegistryError::UnknownStoredDescriptor { .. }
+            | PolicyRegistryError::NextIdCorrupt
+            | PolicyRegistryError::NextIdCollision
+            | PolicyRegistryError::MembershipChangedDuringMutation) => {
+                return PrecompileError::Revert(fatal.to_string());
+            }
         };
         PrecompileError::RevertBytes(Bytes::from(encoded))
     }

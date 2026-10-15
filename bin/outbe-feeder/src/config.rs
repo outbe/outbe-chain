@@ -6,6 +6,7 @@ use outbe_primitives::stablecoin::{iso_4217_alpha, ISO_4217_NUMERIC_CODES};
 use serde::Deserialize;
 use std::path::Path;
 
+use crate::errors::ConfigError;
 use crate::fixed::FixedValue;
 use outbe_primitives::asset_type::AssetType;
 use outbe_primitives::units::SCALE_1E18;
@@ -176,19 +177,19 @@ impl FeederConfig {
     pub fn load(path: &str) -> Result<Self> {
         let mut table = read_table(Path::new(path))?;
         if let Some(pairs) = table.remove("pairs") {
-            let pairs = pairs
-                .as_str()
-                .ok_or_else(|| eyre::eyre!("`pairs` must be a file path"))?;
+            let pairs = pairs.as_str().ok_or(ConfigError::PairsPathNotString)?;
             let pairs_path = Path::new(path)
                 .parent()
                 .unwrap_or(Path::new(""))
                 .join(pairs);
             for (key, value) in read_table(&pairs_path)? {
                 if table.insert(key.clone(), value).is_some() {
-                    return Err(eyre::eyre!(
-                        "`{key}` is set in both {path} and {}",
-                        pairs_path.display()
-                    ));
+                    return Err(ConfigError::SectionInBothFiles {
+                        key,
+                        main: path.to_owned(),
+                        pairs: pairs_path.display().to_string(),
+                    }
+                    .into());
                 }
             }
         }
@@ -244,18 +245,16 @@ impl FeederConfig {
     fn validate_oracle_and_account(&self) -> Result<()> {
         // vote_period must be > 0
         if self.oracle.vote_period == 0 {
-            return Err(eyre::eyre!(
-                "oracle.vote_period must be > 0, got 0 (would cause division by zero)"
-            ));
+            return Err(ConfigError::ZeroVotePeriod.into());
         }
 
         // validator_address must parse as a hex address
         let addr = self.account.validator_address.trim_start_matches("0x");
         if addr.len() != 40 || addr.chars().any(|c| !c.is_ascii_hexdigit()) {
-            return Err(eyre::eyre!(
-                "account.validator_address is not a valid 20-byte hex address: {}",
-                self.account.validator_address
-            ));
+            return Err(ConfigError::InvalidValidatorAddress(
+                self.account.validator_address.clone(),
+            )
+            .into());
         }
         Ok(())
     }
@@ -268,20 +267,20 @@ impl FeederConfig {
             let base = parse_oracle_asset(&pair.base)?;
             let quote = parse_oracle_asset(&pair.quote)?;
             if base == quote {
-                return Err(eyre::eyre!(
-                    "Oracle pair {}/{} uses the same asset twice",
-                    pair.base,
-                    pair.quote
-                ));
+                return Err(ConfigError::SameAssetPair {
+                    base: pair.base.clone(),
+                    quote: pair.quote.clone(),
+                }
+                .into());
             }
             if matches!(AssetType::from(base), AssetType::IsoCurrency(_))
                 && matches!(AssetType::from(quote), AssetType::Native)
             {
-                return Err(eyre::eyre!(
-                    "ISO/COEN pair {}/{} is invalid; configure COEN/ISO",
-                    pair.base,
-                    pair.quote
-                ));
+                return Err(ConfigError::InvalidIsoCoenOrientation {
+                    base: pair.base.clone(),
+                    quote: pair.quote.clone(),
+                }
+                .into());
             }
             let unordered_key = if base < quote {
                 (base, quote)
@@ -289,11 +288,11 @@ impl FeederConfig {
                 (quote, base)
             };
             if !oracle_pairs.insert(unordered_key) {
-                return Err(eyre::eyre!(
-                    "duplicate or inverse Oracle pair {}/{}",
-                    pair.base,
-                    pair.quote
-                ));
+                return Err(ConfigError::DuplicateOrInversePair {
+                    base: pair.base.clone(),
+                    quote: pair.quote.clone(),
+                }
+                .into());
             }
             self.validate_cross(pair)?;
             self.validate_pair_sources(pair)?;
@@ -309,19 +308,20 @@ impl FeederConfig {
         };
         let iso = |code: &str| code.parse::<u16>().is_ok_and(|c| (1..=999).contains(&c));
         if iso(&pair.base) || !iso(&pair.quote) || !iso(cross) {
-            return Err(eyre::eyre!(
-                "cross pair {}/{} with cross '{cross}' needs a COEN or token base, an ISO quote and an ISO cross",
-                pair.base,
-                pair.quote
-            ));
+            return Err(ConfigError::InvalidCrossPair {
+                base: pair.base.clone(),
+                quote: pair.quote.clone(),
+                cross: cross.clone(),
+            }
+            .into());
         }
         if self.cross_leg(pair).is_none() {
-            return Err(eyre::eyre!(
-                "cross pair {}/{} needs a direct {}/{cross} pair",
-                pair.base,
-                pair.quote,
-                pair.base
-            ));
+            return Err(ConfigError::MissingCrossLeg {
+                base: pair.base.clone(),
+                quote: pair.quote.clone(),
+                cross: cross.clone(),
+            }
+            .into());
         }
         Ok(())
     }
@@ -341,11 +341,11 @@ impl FeederConfig {
     /// known provider and appears once.
     fn validate_pair_sources(&self, pair: &CurrencyPairConfig) -> Result<()> {
         if pair.sources.is_empty() {
-            return Err(eyre::eyre!(
-                "currency pair {}/{} has no sources configured",
-                pair.base,
-                pair.quote
-            ));
+            return Err(ConfigError::NoSourcesConfigured {
+                base: pair.base.clone(),
+                quote: pair.quote.clone(),
+            }
+            .into());
         }
         crate::provider::validate_currency_rate_sources(pair)?;
         let mut sources = std::collections::BTreeSet::new();
@@ -357,38 +357,38 @@ impl FeederConfig {
             if quote.parse::<u16>().is_ok()
                 && oracle_quote_of(&source.quote).as_deref() != Some(quote)
             {
-                return Err(eyre::eyre!(
-                    "provider '{}' market quote '{}' does not price pair {}/{}",
-                    source.provider,
-                    source.quote,
-                    pair.base,
-                    pair.quote
-                ));
+                return Err(ConfigError::MarketQuoteMismatch {
+                    provider: source.provider.clone(),
+                    quote: source.quote.clone(),
+                    base: pair.base.clone(),
+                    pair_quote: pair.quote.clone(),
+                }
+                .into());
             }
             if !Self::KNOWN_PROVIDERS.contains(&source.provider.as_str())
                 && !crate::provider::onchain_feed::is_section_name(self, &source.provider)
             {
-                return Err(eyre::eyre!(
-                    "unknown provider '{}' for pair {}/{}. Known: {:?} or an onchain_providers entry name",
-                    source.provider,
-                    pair.base,
-                    pair.quote,
-                    Self::KNOWN_PROVIDERS
-                ));
+                return Err(ConfigError::UnknownPairProvider {
+                    provider: source.provider.clone(),
+                    base: pair.base.clone(),
+                    quote: pair.quote.clone(),
+                    known: Self::KNOWN_PROVIDERS,
+                }
+                .into());
             }
             if !sources.insert((
                 source.provider.as_str(),
                 source.base.as_str(),
                 source.quote.as_str(),
             )) {
-                return Err(eyre::eyre!(
-                    "duplicate provider source '{}' {}/{} for pair {}/{}",
-                    source.provider,
-                    source.base,
-                    source.quote,
-                    pair.base,
-                    pair.quote
-                ));
+                return Err(ConfigError::DuplicateProviderSource {
+                    provider: source.provider.clone(),
+                    source_base: source.base.clone(),
+                    source_quote: source.quote.clone(),
+                    pair_base: pair.base.clone(),
+                    pair_quote: pair.quote.clone(),
+                }
+                .into());
             }
         }
         Ok(())
@@ -400,19 +400,19 @@ impl FeederConfig {
         let mut endpoint_names = std::collections::BTreeSet::new();
         for endpoint in &self.api_providers {
             if !Self::KNOWN_PROVIDERS.contains(&endpoint.name.as_str()) {
-                return Err(eyre::eyre!(
-                    "unknown api provider '{}'. Known: {:?}",
-                    endpoint.name,
-                    Self::KNOWN_PROVIDERS
-                ));
+                return Err(ConfigError::UnknownApiProvider {
+                    name: endpoint.name.clone(),
+                    known: Self::KNOWN_PROVIDERS,
+                }
+                .into());
             }
             if !endpoint_names.insert(endpoint.name.as_str()) {
-                return Err(eyre::eyre!("duplicate api provider '{}'", endpoint.name));
+                return Err(ConfigError::DuplicateApiProvider(endpoint.name.clone()).into());
             }
             if !endpoint.api_key.is_empty()
                 && !matches!(endpoint.name.as_str(), "redstone" | "pyth")
             {
-                return Err(eyre::eyre!("provider '{}' takes no api_key", endpoint.name));
+                return Err(ConfigError::UnexpectedApiKey(endpoint.name.clone()).into());
             }
             if !endpoint.websocket.is_empty() {
                 Self::validate_websocket_endpoint(endpoint)?;
@@ -425,10 +425,7 @@ impl FeederConfig {
     /// or `wss://` URL or a bare host.
     fn validate_websocket_endpoint(endpoint: &ApiProviderConfig) -> Result<()> {
         if crate::provider::cex::ExchangeKind::for_name(&endpoint.name).is_none() {
-            return Err(eyre::eyre!(
-                "provider '{}' does not support websocket market streams",
-                endpoint.name
-            ));
+            return Err(ConfigError::WebsocketNotSupported(endpoint.name.clone()).into());
         }
         let websocket = endpoint.websocket.trim();
         if websocket.is_empty()
@@ -437,11 +434,11 @@ impl FeederConfig {
                 && !websocket.starts_with("ws://")
                 && !websocket.starts_with("wss://"))
         {
-            return Err(eyre::eyre!(
-                "provider '{}' has invalid websocket endpoint '{}'",
-                endpoint.name,
-                endpoint.websocket
-            ));
+            return Err(ConfigError::InvalidWebsocketEndpoint {
+                name: endpoint.name.clone(),
+                websocket: endpoint.websocket.clone(),
+            }
+            .into());
         }
         Ok(())
     }
@@ -497,7 +494,7 @@ fn parse_oracle_asset(symbol: &str) -> Result<Address> {
         }
     }
     text.parse::<Address>()
-        .map_err(|_| eyre::eyre!("unknown on-chain Oracle asset '{symbol}'"))
+        .map_err(|_| ConfigError::UnknownOracleAsset(symbol.to_owned()).into())
 }
 
 #[cfg(test)]
@@ -614,7 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_accepts_mock_http_provider() {
+    fn validate_accepts_mock_http_provider() {
         let mut cfg = minimal_config(2);
         cfg.api_providers.push(ApiProviderConfig {
             name: "mock_http".to_string(),
@@ -922,7 +919,7 @@ mod tests {
         let cfg = FeederConfig::load(&path).unwrap();
         // Canonical localnet chain id (scripts/prepare_network.py DEFAULT_CHAIN_ID).
         assert_eq!(cfg.chain.chain_id, 54322345);
-        assert_eq!(cfg.oracle.vote_period, 8);
+        assert_eq!(cfg.oracle.vote_period, 60);
         // COEN/840 is the only pair the chain registers. The decorative
         // XAU/BTC/ETH/stablecoin entries were dropped because no code read them
         // and they name assets with no on-chain address.

@@ -9,6 +9,7 @@ use alloy_signer_local::PrivateKeySigner;
 use eyre::{Context, Result};
 
 use crate::config::AccountConfig;
+use crate::errors::AttesterError;
 
 pub fn create_wallet(account: &AccountConfig) -> Result<EthereumWallet> {
     let signer: PrivateKeySigner = account
@@ -34,27 +35,32 @@ pub async fn eth_call<P: Provider>(
         .with_context(|| "eth_call failed")
 }
 
+pub struct TxSender<'a> {
+    pub rpc_endpoint: &'a str,
+    pub wallet: &'a EthereumWallet,
+    pub chain_id: u64,
+    pub gasless: bool,
+}
+
 /// Submits `calldata` to `to` as a signed EIP-1559 transaction and returns
 /// its hash without waiting for inclusion. With `gasless`, the function shapes
 /// the transaction for the ZeroFee txpool policy. The priority fee is zero. The
 /// fee cap is at the protocol minimum, so Reth's public txpool checks still pass.
-pub async fn send_tx(
-    rpc_endpoint: &str,
-    wallet: &EthereumWallet,
-    chain_id: u64,
-    to: Address,
-    calldata: &[u8],
-    gasless: bool,
-) -> Result<B256> {
+pub async fn send_tx(sender: &TxSender<'_>, to: Address, calldata: &[u8]) -> Result<B256> {
     let provider = ProviderBuilder::new()
-        .wallet(wallet.clone())
-        .connect_http(rpc_endpoint.parse().with_context(|| "invalid RPC URL")?);
+        .wallet(sender.wallet.clone())
+        .connect_http(
+            sender
+                .rpc_endpoint
+                .parse()
+                .with_context(|| "invalid RPC URL")?,
+        );
     let mut tx = TransactionRequest::default()
         .to(to)
         .input(Bytes::copy_from_slice(calldata).into())
         .gas_limit(1_000_000);
-    tx.set_chain_id(chain_id);
-    if gasless {
+    tx.set_chain_id(sender.chain_id);
+    if sender.gasless {
         let fee_cap = provider
             .get_gas_price()
             .await
@@ -65,6 +71,6 @@ pub async fn send_tx(
     let pending = provider
         .send_transaction(tx)
         .await
-        .map_err(|e| eyre::eyre!("transaction failed: {e:#}"))?;
+        .map_err(|e| AttesterError::TransactionFailed(format!("{e:#}")))?;
     Ok(*pending.tx_hash())
 }

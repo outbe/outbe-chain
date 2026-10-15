@@ -32,16 +32,16 @@ where
         biased;
         engine_result = &mut *engine => {
             engine_result.map_err(|error| {
-                eyre::eyre!("simplex engine failed while draining: {error:?}")
+                crate::errors::StackShutdownError::SimplexEngineFailedWhileDraining(format!("{error:?}")).into()
             })
         }
         _ = &mut deadline => {
             engine.abort();
             let _ = (&mut *engine).await;
-            Err(eyre::eyre!(
-                "timed out after {:?} while draining simplex engine",
-                STACK_ENGINE_DRAIN_TIMEOUT
-            ))
+            Err(crate::errors::StackShutdownError::SimplexEngineDrainTimedOut(
+                STACK_ENGINE_DRAIN_TIMEOUT,
+            )
+            .into())
         }
     }
 }
@@ -60,15 +60,23 @@ where
 
     let stop_result = stop_handle
         .await
-        .map_err(|error| eyre::eyre!("terminal stack stop task failed: {error:?}"))?
-        .map_err(|error| eyre::eyre!("terminal stack stop failed: {error:?}"));
+        .map_err(|error| {
+            crate::errors::StackShutdownError::TerminalStackStopTaskFailed(format!("{error:?}"))
+        })?
+        .map_err(|error| -> eyre::Report {
+            crate::errors::StackShutdownError::TerminalStackStopFailed(format!("{error:?}")).into()
+        });
 
     match (engine_result, stop_result) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
-        (Err(engine_error), Err(stop_error)) => Err(eyre::eyre!(
-            "simplex engine drain failed: {engine_error:#}; terminal stack stop also failed: {stop_error:#}"
-        )),
+        (Err(engine_error), Err(stop_error)) => Err(
+            crate::errors::StackShutdownError::EngineDrainAndTerminalStopFailed {
+                engine_error: format!("{engine_error:#}"),
+                stop_error: format!("{stop_error:#}"),
+            }
+            .into(),
+        ),
     }
 }
 
@@ -79,7 +87,9 @@ where
     ctx.child("terminal_stack_stop")
         .stop(0, Some(STACK_ENGINE_DRAIN_TIMEOUT))
         .await
-        .map_err(|error| eyre::eyre!("terminal stack stop failed: {error:?}"))
+        .map_err(|error| {
+            crate::errors::StackShutdownError::TerminalStackStopFailed(format!("{error:?}")).into()
+        })
 }
 
 pub(in crate::stack) fn preserve_stack_result_after_drain<T>(
@@ -125,9 +135,13 @@ where
             Ok(EpochLoopAction::ExitStack)
         }
         Ok(EpochLoopOutcome::EngineExit(engine_result)) => {
-            let engine_result = engine_result
-                .map(|()| EpochLoopAction::ExitStack)
-                .map_err(|error| eyre::eyre!("simplex engine exited: {error:?}"));
+            let engine_result =
+                engine_result
+                    .map(|()| EpochLoopAction::ExitStack)
+                    .map_err(|error| {
+                        crate::errors::StackShutdownError::SimplexEngineExited(format!("{error:?}"))
+                            .into()
+                    });
             preserve_stack_result_after_drain(
                 engine_result,
                 signal_global_stop_after_engine_exit(ctx).await,

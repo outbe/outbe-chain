@@ -17,9 +17,9 @@ use super::OcompExExExitV1;
 use super::OcompReadinessV1;
 use super::RetentionReconciliationDispositionV1;
 use super::POLL_INTERVAL;
+use crate::errors::OcompExExError;
 use alloy_primitives::B256;
 
-use eyre::bail;
 use eyre::Context as _;
 
 use metrics::counter;
@@ -161,7 +161,7 @@ where
         validator_rpc_url: config.validator_rpc_url,
         limits,
     })
-    .map_err(|error| eyre::eyre!("open Node-owned OCOMP domain: {error}"))?;
+    .map_err(|error| OcompExExError::OpenNodeOwnedDomain(crate::errors::display_error(error)))?;
     if let Some(detail) = load_persisted_fatal_evidence(domain.fatal_evidence_root())? {
         gauge!("outbe_ocomp_finalized_loop_fatal").set(1.0);
         let failure = ProjectionFailure::new(
@@ -180,9 +180,9 @@ where
         let canonical = provider
             .block_hash(closed.block_number)
             .wrap_err("validate unified OCOMP closure checkpoint")?
-            .ok_or_else(|| eyre::eyre!("unified OCOMP closure checkpoint is unavailable"))?;
+            .ok_or(OcompExExError::UnifiedClosureCheckpointUnavailable)?;
         if canonical != closed.block_hash {
-            bail!("unified OCOMP closure checkpoint conflicts with canonical history");
+            return Err(OcompExExError::UnifiedClosureCheckpointConflictsWithHistory.into());
         }
     }
     readiness.publish(ProjectionStatus::CatchingUp {
@@ -194,7 +194,7 @@ where
     let (mut projection_runtime_failures, projection_runtime_recovery) = {
         let sink = projection_sink
             .lock()
-            .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?;
+            .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?;
         (
             sink.runtime_failure_receiver()?,
             sink.runtime_recovery_handle()?,
@@ -203,16 +203,16 @@ where
     {
         let sink = projection_sink
             .lock()
-            .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?;
+            .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?;
         if let Some(projected) = sink.durable_checkpoint() {
             if projected.block_number < closed.block_number
                 || (projected.block_number == closed.block_number
                     && projected.block_hash != closed.block_hash)
             {
-                bail!("unified OCOMP closure checkpoint is ahead of durable projection");
+                return Err(OcompExExError::UnifiedClosureCheckpointAheadOfProjection.into());
             }
         } else if closed.block_number != 0 {
-            bail!("unified OCOMP closure exists before the durable projection checkpoint");
+            return Err(OcompExExError::UnifiedClosureExistsBeforeDurableProjection.into());
         }
     }
     let mut startup_retirements = RetirementReportV1::default();
@@ -287,7 +287,7 @@ where
                 ) {
                     projection_sink
                         .lock()
-                        .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?
+                        .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?
                         .publish_failure(failure.clone());
                     runtime.latch_external_failure(failure);
                     wait_for_node_teardown().await;
@@ -302,7 +302,7 @@ where
                 ).await {
                     projection_sink
                         .lock()
-                        .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?
+                        .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?
                         .publish_failure(failure.clone());
                     runtime.latch_external_failure(failure);
                     wait_for_node_teardown().await;
@@ -322,7 +322,7 @@ where
                 if let Some(failure) = failure {
                     projection_sink
                         .lock()
-                        .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?
+                        .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?
                         .publish_failure(failure.clone());
                     runtime.latch_external_failure(failure);
                     wait_for_node_teardown().await;
@@ -365,7 +365,7 @@ where
                     .wrap_err("sample unified finalized head")?;
                 let reconciliation = projection_sink
                     .lock()
-                    .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?
+                    .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?
                     .reconcile_finalized_target(finalized_target.as_ref().map(|target| {
                         ProjectionCheckpoint {
                             block_number: target.number,
@@ -378,31 +378,27 @@ where
                         target,
                         recovered_floor,
                     } => {
-                        let sampled = finalized_target.ok_or_else(|| {
-                            eyre::eyre!("projection accepted an absent finalized target")
-                        })?;
+                        let sampled = finalized_target
+                            .ok_or(OcompExExError::ProjectionAcceptedAbsentFinalizedTarget)?;
                         if sampled.number != target.block_number || sampled.hash != target.block_hash {
-                            bail!("projection reconciled a different finalized target identity");
+                            return Err(OcompExExError::ProjectionReconciledDifferentTargetIdentity.into());
                         }
                         if let Some(floor) = recovered_floor {
                             let canonical = runtime
                                 .provider
                                 .block_hash(floor.block_number)
                                 .wrap_err("revalidate recovered durable projection floor")?
-                                .ok_or_else(|| {
-                                    eyre::eyre!(
-                                        "recovered durable projection floor {} ({}) is unavailable",
-                                        floor.block_number,
-                                        floor.block_hash
-                                    )
+                                .ok_or(OcompExExError::RecoveredProjectionFloorUnavailable {
+                                    block_number: floor.block_number,
+                                    block_hash: floor.block_hash,
                                 })?;
                             if canonical != floor.block_hash {
-                                bail!(
-                                    "recovered durable projection floor {} changed from {} to {}",
-                                    floor.block_number,
-                                    floor.block_hash,
-                                    canonical
-                                );
+                                return Err(OcompExExError::RecoveredProjectionFloorChanged {
+                                    block_number: floor.block_number,
+                                    expected: floor.block_hash,
+                                    actual: canonical,
+                                }
+                                .into());
                             }
                         }
                         Some(*recovery_target.get_or_insert(sampled))
@@ -412,7 +408,7 @@ where
                     if !initial_finished_height_published {
                         let checkpoint = runtime.closure_checkpoint.current()?;
                         if checkpoint.block_number > target.number {
-                            bail!("durable OCOMP closure is ahead of recovered finality");
+                            return Err(OcompExExError::DurableClosureAheadOfRecoveredFinality.into());
                         }
                         publish_finished_height(&ctx.events, checkpoint)?;
                         initial_finished_height_published = true;
@@ -425,13 +421,32 @@ where
                     let next_height = runtime
                         .scanned_height
                         .checked_add(1)
-                        .ok_or_else(|| eyre::eyre!("unified finalized height overflow"))?;
+                        .ok_or(OcompExExError::UnifiedFinalizedHeightOverflow)?;
                     let source = frame_source.clone();
-                    let batch = tokio::task::spawn_blocking(move || {
+                    let batch = match tokio::task::spawn_blocking(move || {
                         read_bounded_finalized_frames(&source, next_height, target)
                     })
                     .await
-                    .wrap_err("unified finalized reader worker failed")??;
+                    .wrap_err("unified finalized reader worker failed")?
+                    {
+                        Ok(batch) => batch,
+                        Err(error)
+                            if error
+                                .downcast_ref::<outbe_node::errors::FinalizedFrameError>()
+                                .is_some_and(
+                                    outbe_node::errors::FinalizedFrameError::is_transient_unavailability,
+                                ) =>
+                        {
+                            warn!(
+                                %error,
+                                next_height,
+                                target_height = target.number,
+                                "unified finalized frame temporarily unavailable from provider; retrying on next poll"
+                            );
+                            return Ok(());
+                        }
+                        Err(error) => return Err(error),
+                    };
                     if let Some(batch) = batch {
                         histogram!("outbe_ocomp_finalized_reader_batch_blocks")
                             .record(batch.frames().len() as f64);
@@ -465,7 +480,7 @@ where
                             let projection_write_deadline = projection_deadline.into_std();
                             let mut projection_task = tokio::task::spawn_blocking(move || {
                                 sink.lock()
-                                    .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?
+                                    .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?
                                     .project_frame_until(&projected_frame, projection_write_deadline)
                             });
                             let projection_result = loop {
@@ -527,7 +542,7 @@ where
                                 let failure = projection_task_failure(error);
                                 projection_sink
                                     .lock()
-                                    .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?
+                                    .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?
                                     .publish_failure(failure.clone());
                                 runtime.latch_external_failure(failure);
                                 wait_for_node_teardown().await;
@@ -551,7 +566,7 @@ where
                     }
                     projection_sink
                         .lock()
-                        .map_err(|_| eyre::eyre!("unified projection sink lock is poisoned"))?
+                        .map_err(|_| OcompExExError::UnifiedProjectionSinkLockPoisoned)?
                         .publish_progress(ProjectionCheckpoint {
                             block_number: target.number,
                             block_hash: target.hash,

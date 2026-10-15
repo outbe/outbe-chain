@@ -70,7 +70,10 @@ pub use client_global::{
 };
 #[cfg(feature = "native-dcap")]
 pub use dcap_v1::{dcap_collateral_validity_window_v1, DcapCollateralValidityWindowV1};
-pub use errors::TransportError;
+pub use errors::{
+    BalanceClientError, CallContextError, CallContextProviderError, DcapFixtureError,
+    DevIdentityMismatchError, LocalCryptoError, QuoteParseError, TransportError,
+};
 pub use host_collateral::acquire_dcap_collateral_v1;
 pub use node_host::{
     clear_committed_join_checkpoint, connect_committed_node_host_enclave,

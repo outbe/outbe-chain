@@ -1,9 +1,10 @@
 use super::{registered_status, status};
+use crate::errors::ValidatorSetError;
 use crate::precompile::IValidatorSet;
 use crate::schema::ValidatorSet;
 use crate::state_machine::{self, ValidatorHistory, ValidatorLifecycle, ValidatorState};
 use alloy_primitives::{Address, B256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::slashing_journal::{iso8601_now, record as journal_record, JournalRecord};
 use std::collections::HashSet;
 use tracing::{info, warn};
@@ -23,28 +24,28 @@ impl ValidatorSet<'_> {
         if tee_expired_target_exclusions.len()
             > outbe_primitives::validators::MAX_TEE_EXPIRED_TARGET_EXCLUSIONS
         {
-            return Err(PrecompileError::Fatal(format!(
-                "TEE expiry exclusions exceed protocol cap: {} > {}",
-                tee_expired_target_exclusions.len(),
-                outbe_primitives::validators::MAX_TEE_EXPIRED_TARGET_EXCLUSIONS
-            )));
+            return Err(ValidatorSetError::TeeExpiryExclusionsExceedCap {
+                count: tee_expired_target_exclusions.len(),
+                cap: outbe_primitives::validators::MAX_TEE_EXPIRED_TARGET_EXCLUSIONS,
+            }
+            .into());
         }
         let mut unique_exclusions = std::collections::BTreeSet::new();
         for address in tee_expired_target_exclusions {
             if address.is_zero() || !unique_exclusions.insert(*address) {
-                return Err(PrecompileError::Fatal(
-                    "TEE expiry exclusions must contain unique non-zero validators".into(),
-                ));
+                return Err(ValidatorSetError::TeeExpiryExclusionsNotUniqueNonZero.into());
             }
             if new_active_set.contains(address) {
-                return Err(PrecompileError::Fatal(format!(
-                    "TEE-expired validator {address} is also present in the new active set"
-                )));
+                return Err(ValidatorSetError::TeeExpiredValidatorInNewActiveSet {
+                    address: *address,
+                }
+                .into());
             }
             if self.address_to_index.read(address)? == 0 {
-                return Err(PrecompileError::Fatal(format!(
-                    "TEE expiry exclusions contain unregistered validator {address}"
-                )));
+                return Err(ValidatorSetError::TeeExpiryExclusionUnregistered {
+                    address: *address,
+                }
+                .into());
             }
         }
         self.apply_reshared_set(
@@ -65,7 +66,7 @@ impl ValidatorSet<'_> {
         let active_count: u32 = new_active_set
             .len()
             .try_into()
-            .map_err(|_| PrecompileError::Revert("active set count exceeds u32".into()))?;
+            .map_err(|_| ValidatorSetError::ActiveSetCountExceedsU32)?;
         let plan =
             self.plan_boundary(new_active_set, freeze_height, tee_expired_target_exclusions)?;
         plan.ensure_participants_match(new_active_set)?;
@@ -120,10 +121,10 @@ impl ValidatorSet<'_> {
         match before.lifecycle().clone() {
             ValidatorLifecycle::Joining(joining) => {
                 if self.ocomp_registration(before.address())?.is_none() {
-                    return Err(PrecompileError::Fatal(format!(
-                        "certified active set contains validator {} without OCOMP admission",
-                        before.address()
-                    )));
+                    return Err(ValidatorSetError::CertifiedActiveValidatorWithoutOcomp {
+                        address: before.address(),
+                    }
+                    .into());
                 }
                 Ok(ValidatorLifecycle::Active(
                     state_machine::activate_at_boundary(joining),
@@ -135,20 +136,28 @@ impl ValidatorSet<'_> {
             ValidatorLifecycle::Exiting(exiting) => {
                 let changed_at = exiting_deactivation_height(before)?;
                 if changed_at <= freeze_height {
-                    return Err(PrecompileError::Fatal(format!(
-                        "validated boundary retained validator {} that exited at {changed_at} before freeze {freeze_height}",
-                        before.address()
-                    )));
+                    return Err(
+                        ValidatorSetError::BoundaryRetainedValidatorExitedBeforeFreeze {
+                            address: before.address(),
+                            changed_at,
+                            freeze_height,
+                        }
+                        .into(),
+                    );
                 }
                 Ok(ValidatorLifecycle::Exiting(exiting))
             }
             ValidatorLifecycle::JailRetained(jailed) => {
                 let jailed_at = before.stored_jailed_at();
                 if jailed_at <= freeze_height {
-                    return Err(PrecompileError::Fatal(format!(
-                        "validated boundary retained validator {} jailed at {jailed_at} before freeze {freeze_height}",
-                        before.address()
-                    )));
+                    return Err(
+                        ValidatorSetError::BoundaryRetainedValidatorJailedBeforeFreeze {
+                            address: before.address(),
+                            jailed_at,
+                            freeze_height,
+                        }
+                        .into(),
+                    );
                 }
                 Ok(ValidatorLifecycle::JailRetained(jailed))
             }
@@ -164,11 +173,11 @@ impl ValidatorSet<'_> {
                     demotion_height(before, freeze_height)?,
                 )?,
             )),
-            lifecycle => Err(PrecompileError::Fatal(format!(
-                "validated boundary included ineligible validator {} with status {}",
-                before.address(),
-                registered_status(&lifecycle)?
-            ))),
+            lifecycle => Err(ValidatorSetError::BoundaryIncludedIneligibleValidator {
+                address: before.address(),
+                status: registered_status(&lifecycle)?,
+            }
+            .into()),
         }
     }
 
@@ -292,9 +301,11 @@ impl BoundaryPlan {
                 .iter()
                 .any(|address| !unique_artifact_members.contains(address))
         {
-            return Err(PrecompileError::Fatal(format!(
-                "validated boundary participant membership mismatch: planned {planned_participants:?}, artifact {new_active_set:?}"
-            )));
+            return Err(ValidatorSetError::BoundaryParticipantMembershipMismatch {
+                planned: planned_participants,
+                artifact: new_active_set.to_vec(),
+            }
+            .into());
         }
         Ok(())
     }
@@ -423,11 +434,11 @@ fn tee_expired_lifecycle(
             ValidatorLifecycle::WaitingForReadiness(waiting),
             Some(BoundaryEffect::TeeExpiredPending),
         )),
-        (lifecycle, _) => Err(PrecompileError::Fatal(format!(
-            "TEE expiry exclusion contains validator {} with ineligible status {}",
-            before.address(),
-            registered_status(&lifecycle)?
-        ))),
+        (lifecycle, _) => Err(ValidatorSetError::TeeExpiryExclusionIneligibleStatus {
+            address: before.address(),
+            status: registered_status(&lifecycle)?,
+        }
+        .into()),
     }
 }
 
@@ -437,17 +448,21 @@ fn omitted_lifecycle(
     freeze_height: u64,
 ) -> Result<(ValidatorLifecycle, Option<BoundaryEffect>)> {
     match before.lifecycle().clone() {
-        ValidatorLifecycle::Active(_) => Err(PrecompileError::Fatal(format!(
-            "validated boundary omitted active validator {}",
-            before.address()
-        ))),
+        ValidatorLifecycle::Active(_) => Err(ValidatorSetError::BoundaryOmittedActiveValidator {
+            address: before.address(),
+        }
+        .into()),
         ValidatorLifecycle::Exiting(exiting) => {
             let changed_at = exiting_deactivation_height(before)?;
             if changed_at > freeze_height {
-                return Err(PrecompileError::Fatal(format!(
-                    "validated boundary omitted validator {} that exited at {changed_at} after freeze {freeze_height}",
-                    before.address()
-                )));
+                return Err(
+                    ValidatorSetError::BoundaryOmittedValidatorExitedAfterFreeze {
+                        address: before.address(),
+                        changed_at,
+                        freeze_height,
+                    }
+                    .into(),
+                );
             }
             Ok((
                 ValidatorLifecycle::Unbonding(state_machine::exclude_exiting_at_boundary(exiting)),
@@ -457,10 +472,14 @@ fn omitted_lifecycle(
         ValidatorLifecycle::JailRetained(jailed) => {
             let jailed_at = before.stored_jailed_at();
             if jailed_at > freeze_height {
-                return Err(PrecompileError::Fatal(format!(
-                    "validated boundary omitted validator {} jailed at {jailed_at} after freeze {freeze_height}",
-                    before.address()
-                )));
+                return Err(
+                    ValidatorSetError::BoundaryOmittedValidatorJailedAfterFreeze {
+                        address: before.address(),
+                        jailed_at,
+                        freeze_height,
+                    }
+                    .into(),
+                );
             }
             Ok((
                 ValidatorLifecycle::Jail(state_machine::exclude_jailed_at_boundary(jailed)),
@@ -481,10 +500,10 @@ fn last_deactivation_height(before: &ValidatorState) -> Option<u64> {
 /// The deactivation height that every exiting validator must record.
 fn exiting_deactivation_height(before: &ValidatorState) -> Result<u64> {
     last_deactivation_height(before).ok_or_else(|| {
-        PrecompileError::Fatal(format!(
-            "exiting validator {} has no deactivation height",
-            before.address()
-        ))
+        ValidatorSetError::ExitingValidatorMissingDeactivationHeight {
+            address: before.address(),
+        }
+        .into()
     })
 }
 
@@ -512,15 +531,13 @@ fn post_freeze_demotion_height(
 ) -> Result<u64> {
     match changed_at {
         Some(height) if height > freeze_height => Ok(height),
-        Some(_) => Err(PrecompileError::Fatal(format!(
-            "validated boundary included ineligible validator {address} with status {status}"
-        ))),
+        Some(_) => {
+            Err(ValidatorSetError::BoundaryIncludedIneligibleValidator { address, status }.into())
+        }
         None => {
             let height = freeze_height.saturating_add(1);
             if height <= freeze_height {
-                return Err(PrecompileError::Fatal(
-                    "validator deactivation height must be non-zero".into(),
-                ));
+                return Err(ValidatorSetError::ValidatorDeactivationHeightZero.into());
             }
             Ok(height)
         }

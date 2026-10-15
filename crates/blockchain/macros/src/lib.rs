@@ -2,6 +2,8 @@
 
 mod contract_codegen;
 mod dispatch_codegen;
+#[allow(dead_code)]
+mod errors;
 mod field_attrs;
 mod record_codegen;
 

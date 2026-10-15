@@ -163,7 +163,7 @@ pub(super) fn verify_account_witness(
         storage_proofs: Vec::new(),
     }
     .verify(state_root)
-    .map_err(|error| FinalizedIntentVerifierError::AccountProof(error.to_string()))?;
+    .map_err(FinalizedIntentVerifierError::account_proof)?;
 
     Ok(account.storage_root)
 }

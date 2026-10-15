@@ -23,6 +23,7 @@
 
 pub mod api;
 pub mod enclave_client;
+pub mod errors;
 pub mod precompile;
 pub mod schema;
 

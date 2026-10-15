@@ -33,6 +33,10 @@ impl VerificationWork {
                 self.retire_cancelled(delivery.request, cancelled)?;
                 return Ok(None);
             }
+            ExecutionStatus::NodeLocalAbort(abort) => {
+                self.retire_node_local_abort(delivery.request, abort);
+                return Ok(None);
+            }
         };
         let reply = ExecutionReply {
             owner: delivery.request.owner,
@@ -58,10 +62,12 @@ impl VerificationWork {
         cancelled: ExecutionReadCancelled,
     ) -> eyre::Result<()> {
         if !cancelled.budget.same_request(&request.budget) || !request.budget.is_cancelled() {
-            eyre::bail!("execution cancellation does not match its cancelled request");
+            return Err(crate::errors::ExecutorError::CancellationMismatch.into());
         }
         let Owner::Verification(round) = request.owner else {
-            eyre::bail!("unexpected cancellation of parent convergence execution");
+            return Err(
+                crate::errors::ExecutorError::UnexpectedParentConvergenceCancellation.into(),
+            );
         };
         if self.queued.get(&round).is_some_and(|queued| {
             queued.walk.id == request.id && queued.walk.cursor.digest() == request.digest
@@ -71,6 +77,45 @@ impl VerificationWork {
         tracing::debug!(request_id = request.id, digest = %request.digest,
             "cancelled verification execution retired without a verdict");
         Ok(())
+    }
+
+    fn retire_node_local_abort(
+        &mut self,
+        request: ExecutionRequest,
+        abort: NodeLocalExecutionAbort,
+    ) {
+        match request.owner {
+            Owner::Verification(round) => {
+                if self.queued.get(&round).is_some_and(|queued| {
+                    queued.walk.id == request.id && queued.walk.cursor.digest() == request.digest
+                }) {
+                    if let Some(queued) = self.queued.remove(&round) {
+                        let _ = queued.response.send(VerificationOutcome::Unavailable);
+                    }
+                }
+                tracing::warn!(
+                    request_id = request.id,
+                    digest = %request.digest,
+                    reason = %abort.reason,
+                    "aborted verification execution due to node-local unavailability without voting"
+                );
+            }
+            Owner::Convergence => {
+                if let Some(walk) = self
+                    .convergence
+                    .as_mut()
+                    .filter(|walk| walk.id == request.id && walk.cursor.digest() == request.digest)
+                {
+                    walk.step = Step::Stopped;
+                }
+                tracing::warn!(
+                    request_id = request.id,
+                    digest = %request.digest,
+                    reason = %abort.reason,
+                    "stopped parent convergence execution due to node-local unavailability"
+                );
+            }
+        }
     }
 
     fn convergence_delivered(

@@ -20,7 +20,7 @@ use outbe_primitives::{
 
 use reth_ethereum::TransactionSigned;
 
-use reth_evm::execute::BlockExecutionError;
+use reth_evm::execute::{BlockExecutionError, BlockValidationError};
 
 use reth_primitives_traits::{
     AlloyBlockHeader as _, Recovered, SealedBlock, SignedTransaction as _,
@@ -73,10 +73,13 @@ pub(super) fn system_tx_expectations_for_block(
         return (Vec::new(), Vec::new(), Some(error.to_string()), None);
     }
 
-    let recover = |tx: &TransactionSigned| -> Result<Recovered<TransactionSigned>, String> {
+    let recover = |tx: &TransactionSigned| -> Result<
+        Recovered<TransactionSigned>,
+        crate::errors::SystemTxExpectationError,
+    > {
         let signer = tx
             .try_recover()
-            .map_err(|error| format!("recover system tx signer: {error}"))?;
+            .map_err(crate::errors::SystemTxExpectationError::recover_signer)?;
         Ok(Recovered::new_unchecked(tx.clone(), signer))
     };
 
@@ -84,7 +87,7 @@ pub(super) fn system_tx_expectations_for_block(
     for tx in layout.begin {
         match recover(tx) {
             Ok(recovered) => begin.push(recovered),
-            Err(error) => return (Vec::new(), Vec::new(), Some(error), None),
+            Err(error) => return (Vec::new(), Vec::new(), Some(error.to_string()), None),
         }
     }
 
@@ -92,7 +95,7 @@ pub(super) fn system_tx_expectations_for_block(
     for tx in layout.end {
         match recover(tx) {
             Ok(recovered) => end.push(recovered),
-            Err(error) => return (Vec::new(), Vec::new(), Some(error), None),
+            Err(error) => return (Vec::new(), Vec::new(), Some(error.to_string()), None),
         }
     }
 
@@ -147,7 +150,7 @@ impl OutbeEvmConfig {
         }
 
         let artifacts = decode_outbe_block_artifacts(extra_data.as_ref())
-            .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+            .map_err(|err| -> BlockExecutionError { BlockValidationError::msg(err).into() })?;
         let mut inputs = Vec::new();
         if block_number >= 2 {
             let metadata = parent_consensus_metadata.ok_or_else(|| {

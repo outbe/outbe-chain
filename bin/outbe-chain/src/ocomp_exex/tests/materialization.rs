@@ -48,12 +48,10 @@ fn finalized_materialization_wake_uses_the_authenticated_system_tx_signer() {
     );
     assert!(should_wake_nod_materializer(
         EmbeddedNodePolicyV1::Validator,
-        Some(signer.address()),
-        proposer,
+        (Some(signer.address()), proposer),
         100,
         Some(&materialization_head(90)),
-        true,
-        30,
+        (true, 30),
     ));
 }
 
@@ -75,30 +73,24 @@ fn only_the_validator_representing_the_finalized_proposer_wakes_materialization(
 
     assert!(should_wake_nod_materializer(
         EmbeddedNodePolicyV1::Validator,
-        Some(represented),
-        represented,
+        (Some(represented), represented),
         100,
         Some(&head),
-        true,
-        30,
+        (true, 30),
     ));
     assert!(!should_wake_nod_materializer(
         EmbeddedNodePolicyV1::Validator,
-        Some(represented),
-        other,
+        (Some(represented), other),
         100,
         Some(&head),
-        true,
-        30,
+        (true, 30),
     ));
     assert!(!should_wake_nod_materializer(
         EmbeddedNodePolicyV1::FullNode,
-        None,
-        represented,
+        (None, represented),
         100,
         Some(&head),
-        true,
-        30,
+        (true, 30),
     ));
 }
 
@@ -109,30 +101,24 @@ fn retry_wake_uses_the_resolved_interval_and_requires_an_incomplete_head() {
 
     assert!(!should_wake_nod_materializer(
         EmbeddedNodePolicyV1::Validator,
-        Some(represented),
-        represented,
+        (Some(represented), represented),
         119,
         Some(&head),
-        false,
-        30,
+        (false, 30),
     ));
     assert!(should_wake_nod_materializer(
         EmbeddedNodePolicyV1::Validator,
-        Some(represented),
-        represented,
+        (Some(represented), represented),
         120,
         Some(&head),
-        false,
-        30,
+        (false, 30),
     ));
     assert!(!should_wake_nod_materializer(
         EmbeddedNodePolicyV1::Validator,
-        Some(represented),
-        represented,
+        (Some(represented), represented),
         120,
         None,
-        true,
-        30,
+        (true, 30),
     ));
 }
 

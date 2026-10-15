@@ -59,45 +59,23 @@ fn root_reduce_rejects_bucket_population_that_misses_a_tribute() {
 #[test]
 fn complete_root_rejects_manifest_total_mismatch_for_leaf_and_node() {
     for primary_work_unit_count in [1, 2] {
-        assert!(
-            require_complete_root_values(
-                0,
-                primary_work_unit_count,
-                primary_work_unit_count,
-                257,
-                257,
-                257,
-                U256::from(256),
-                U256::from(200),
-                U256::from(257),
-            )
-            .is_err()
-        );
+        assert!(require_complete_root_values(
+            (0, primary_work_unit_count, primary_work_unit_count),
+            (257, 257, 257),
+            (U256::from(256), U256::from(200), U256::from(257)),
+        )
+        .is_err());
     }
     require_complete_root_values(
-        0,
-        1,
-        2,
-        256,
-        257,
-        257,
-        U256::from(256),
-        U256::from(200),
-        U256::from(257),
+        (0, 1, 2),
+        (256, 257, 257),
+        (U256::from(256), U256::from(200), U256::from(257)),
     )
     .unwrap();
-    assert!(
-        require_complete_root_values(
-            0,
-            2,
-            2,
-            257,
-            257,
-            257,
-            U256::from(257),
-            U256::from(258),
-            U256::from(257),
-        )
-        .is_err()
-    );
+    assert!(require_complete_root_values(
+        (0, 2, 2),
+        (257, 257, 257),
+        (U256::from(257), U256::from(258), U256::from(257)),
+    )
+    .is_err());
 }

@@ -2,6 +2,7 @@
 
 pub mod archive;
 pub mod create;
+pub mod errors;
 pub mod fs;
 pub mod layout;
 pub mod manifest;

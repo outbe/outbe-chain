@@ -5,7 +5,7 @@ use outbe_lysis::program_v1::{
     result::{decode_root_reduce_output, RootReduceOutputV1},
 };
 use outbe_ocomp_protocol::{
-    input::InputManifestV1,
+    input::{AuthenticatedInputChunkV1, InputChunkRefV1, InputManifestV1},
     profile::ProtocolBundleV1,
     result::ResultChunkV1,
     unit::{
@@ -68,18 +68,12 @@ pub enum LysisResultAdoptionError {
 /// A leaf writes its expected ResultChunkV1 only into the supervisor-owned
 /// replay inbox. Byte equality of the root artifact therefore also proves that
 /// the worker-reported manifest entry names the deterministic chunk bytes.
-#[allow(clippy::too_many_arguments)]
 pub fn verify_lysis_root_reduce_phase_replay(
-    plan_ordinal: u32,
-    spec: &UnitSpecV1,
-    reported: &UnitArtifactV1,
-    plan: &PlanCommitmentV1,
-    manifest: &InputManifestV1,
-    producer_artifacts: &[UnitArtifactV1],
-    bundle: &ProtocolBundleV1,
-    reader: &FilesystemCasReader,
-    replay_inbox: &WorkerInbox,
-    limits: &SchemaLimits,
+    (plan_ordinal, spec, reported): (u32, &UnitSpecV1, &UnitArtifactV1),
+    (plan, manifest): (&PlanCommitmentV1, &InputManifestV1),
+    input_chunks: &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
+    (producer_artifacts, bundle): (&[UnitArtifactV1], &ProtocolBundleV1),
+    (reader, replay_inbox, limits): (&FilesystemCasReader, &WorkerInbox, &SchemaLimits),
 ) -> Result<(), LysisResultAdoptionError> {
     if spec.phase != UnitPhase::RootReduce {
         return Err(ProtocolError::InvalidInvariant("ROOT_REDUCE replay phase").into());
@@ -91,7 +85,7 @@ pub fn verify_lysis_root_reduce_phase_replay(
             plan,
             unit_index: plan_ordinal,
             manifest,
-            input_chunks: &[],
+            input_chunks,
             producer_artifacts,
             bundle,
             limits,
@@ -113,10 +107,8 @@ pub fn admit_reported_lysis_root_reduce_leaf(
     position: AdmissionPositionV1,
     spec: &UnitSpecV1,
     finished: &UnitFinishedV1,
-    inbox: &WorkerInbox,
-    cas: &FilesystemCas,
-    catalog: &mut VerifiedAdmissionCatalog,
-    limits: &SchemaLimits,
+    (inbox, cas): (&WorkerInbox, &FilesystemCas),
+    (catalog, limits): (&mut VerifiedAdmissionCatalog, &SchemaLimits),
 ) -> Result<AdmittedLysisRootReduceLeafV1, LysisResultAdoptionError> {
     spec.validate_semantics(limits)?;
     let unit_id = spec.unit_id(limits)?;
@@ -162,10 +154,8 @@ pub fn admit_reported_lysis_root_reduce_node(
     position: AdmissionPositionV1,
     spec: &UnitSpecV1,
     finished: &UnitFinishedV1,
-    inbox: &WorkerInbox,
-    cas: &FilesystemCas,
-    catalog: &mut VerifiedAdmissionCatalog,
-    limits: &SchemaLimits,
+    (inbox, cas): (&WorkerInbox, &FilesystemCas),
+    (catalog, limits): (&mut VerifiedAdmissionCatalog, &SchemaLimits),
 ) -> Result<AdmittedLysisRootReduceNodeV1, LysisResultAdoptionError> {
     spec.validate_semantics(limits)?;
     let UnitInterval::BinaryReducerNode(BinaryReducerNode { level, .. }) = spec.interval else {
@@ -246,12 +236,7 @@ pub fn adopt_lysis_result_chunk(
 
     let object = inbox.read_result_chunk(&entry.result_chunk_ref, limits)?;
     let chunk = ResultChunkV1::decode_canonical(object.bytes(), limits)?;
-    if chunk.protocol_bundle_hash != root_reduce_spec.protocol_bundle_hash
-        || chunk.job_id != root_reduce_spec.job_id
-        || chunk.attempt != root_reduce_spec.attempt
-        || chunk.chunk_ordinal != entry.chunk_ordinal
-        || chunk.result_chunk_hash(limits)? != entry.result_chunk_hash
-    {
+    if !matches_result_chunk_manifest(&chunk, root_reduce_spec, &entry, limits)? {
         return Err(
             ProtocolError::InvalidInvariant("result chunk semantic manifest binding").into(),
         );
@@ -278,4 +263,18 @@ pub fn adopt_lysis_result_chunk(
         authoritative_ref: entry.result_chunk_ref.clone(),
         output_manifest_entry: entry,
     })
+}
+
+fn matches_result_chunk_manifest(
+    chunk: &ResultChunkV1,
+    spec: &UnitSpecV1,
+    entry: &outbe_ocomp_protocol::result::OutputManifestEntryV1,
+    limits: &SchemaLimits,
+) -> Result<bool, ProtocolError> {
+    let matches_identity = chunk.protocol_bundle_hash == spec.protocol_bundle_hash
+        && chunk.job_id == spec.job_id
+        && chunk.attempt == spec.attempt;
+    Ok(matches_identity
+        && chunk.chunk_ordinal == entry.chunk_ordinal
+        && chunk.result_chunk_hash(limits)? == entry.result_chunk_hash)
 }

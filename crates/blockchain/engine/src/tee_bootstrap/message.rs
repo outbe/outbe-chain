@@ -16,22 +16,20 @@ impl Ost3WireMessage {
     pub(super) fn encode(&self) -> eyre::Result<Vec<u8>> {
         match self {
             Self::Submission(submission) => {
-                let evidence = submission
-                    .evidence
-                    .encode_canonical()
-                    .map_err(|error| eyre::eyre!("cannot encode OST3 evidence: {error}"))?;
+                let evidence = submission.evidence.encode_canonical().map_err(|error| {
+                    crate::errors::TeeBootstrapError::EncodeEvidenceFailed(format!("{error}"))
+                })?;
                 let evidence_len = u32::try_from(evidence.len())
-                    .map_err(|_| eyre::eyre!("OST3 evidence length exceeds u32"))?;
+                    .map_err(|_| crate::errors::TeeBootstrapError::EvidenceLengthExceedsU32)?;
                 let mut out = Vec::with_capacity(OST3_SUBMISSION_FIXED_BYTES + evidence.len());
                 out.push(OST3_SUBMISSION);
                 out.extend_from_slice(&evidence_len.to_be_bytes());
                 out.extend_from_slice(&evidence);
-                out.extend_from_slice(
-                    &submission
-                        .validator_binding
-                        .encode_canonical()
-                        .map_err(|error| eyre::eyre!("cannot encode OST3 binding: {error}"))?,
-                );
+                out.extend_from_slice(&submission.validator_binding.encode_canonical().map_err(
+                    |error| {
+                        crate::errors::TeeBootstrapError::EncodeBindingFailed(format!("{error}"))
+                    },
+                )?);
                 out.extend_from_slice(&submission.validator_signature);
                 out.extend_from_slice(&submission.node_binding_signature);
                 out.extend_from_slice(&submission.node_signature);

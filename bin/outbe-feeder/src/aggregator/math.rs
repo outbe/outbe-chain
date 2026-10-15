@@ -1,6 +1,7 @@
 //! Deterministic integer helpers for the source aggregation: the sigma-based
 //! deviation filter and the wide-integer narrowing and square root it uses.
 
+use crate::errors::AggregatorError;
 use crate::fixed::FixedValue;
 use alloy_primitives::{aliases::U1024, U256, U512};
 use eyre::Result;
@@ -30,14 +31,14 @@ pub(super) fn filter_deviations(
 
     let sum = sorted.iter().try_fold(U512::ZERO, |sum, price| {
         sum.checked_add(U512::from(*price))
-            .ok_or_else(|| eyre::eyre!("deviation mean sum overflow"))
+            .ok_or(AggregatorError::DeviationMeanSumOverflow)
     })?;
     let mean = narrow_u512(sum / U512::from(sorted.len()), "deviation mean")?;
     let sum_sq = sorted.iter().try_fold(U1024::ZERO, |sum, price| {
         let deviation = price.abs_diff(mean);
         let wide = U1024::from(deviation);
         sum.checked_add(wide * wide)
-            .ok_or_else(|| eyre::eyre!("deviation square sum overflow"))
+            .ok_or(AggregatorError::DeviationSquareSumOverflow)
     })?;
     let variance = sum_sq / U1024::from(sorted.len());
     let std_dev = narrow_u1024(isqrt_u1024(variance), "deviation standard deviation")?;
@@ -59,14 +60,14 @@ pub(super) fn filter_deviations(
 
 pub(super) fn narrow_u512(value: U512, label: &'static str) -> Result<U256> {
     if value > U512::from(U256::MAX) {
-        return Err(eyre::eyre!("{label} exceeds U256"));
+        return Err(AggregatorError::ValueExceedsU256 { label }.into());
     }
     Ok(value.wrapping_to::<U256>())
 }
 
 pub(super) fn narrow_u1024(value: U1024, label: &'static str) -> Result<U256> {
     if value > U1024::from(U256::MAX) {
-        return Err(eyre::eyre!("{label} exceeds U256"));
+        return Err(AggregatorError::ValueExceedsU256 { label }.into());
     }
     Ok(value.wrapping_to::<U256>())
 }

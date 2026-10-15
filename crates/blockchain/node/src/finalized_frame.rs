@@ -5,9 +5,11 @@ use std::{error::Error, sync::Arc};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use alloy_rlp::{Decodable, Encodable};
-use eyre::{bail, Context};
+use eyre::Context;
 use reth_ethereum::{Block, Receipt};
 use reth_provider::{BlockHashReader, BlockReader, ProviderError, ReceiptProvider};
+
+use crate::errors::FinalizedFrameError;
 
 /// Maximum number of finalized heights read during one scheduler turn.
 pub const MAX_FINALIZED_FRAMES_PER_TURN: u64 = 100;
@@ -216,58 +218,86 @@ where
     };
     let mut frames = Vec::new();
     for height in plan.first()..=plan.last() {
-        let canonical_hash = source
-            .canonical_hash(height)
-            .wrap_err_with(|| format!("load canonical hash for finalized block {height}"))?
-            .ok_or_else(|| eyre::eyre!("canonical finalized block {height} is unavailable"))?;
-        let block = source
-            .block_by_hash(canonical_hash)
-            .wrap_err_with(|| {
-                format!("load canonical finalized block {height} ({canonical_hash})")
-            })?
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "canonical finalized block {height} ({canonical_hash}) is unavailable by hash"
-                )
-            })?;
-        if block.header.number != height {
-            bail!(
-                "provider returned finalized block {} while height {height} was requested",
-                block.header.number
-            );
-        }
-        let block_hash = block.header.hash_slow();
-        if block_hash != canonical_hash {
-            bail!(
-                "finalized block at height {height} recomputed to {block_hash}, expected {canonical_hash}"
-            );
-        }
-        if height == finalized_target.number && block_hash != finalized_target.hash {
-            bail!(
-                "canonical block hash {block_hash} conflicts with finalized hash {} at height {height}",
-                finalized_target.hash
-            );
-        }
-        let receipts = source
-            .receipts_by_hash(canonical_hash)
-            .wrap_err_with(|| format!("load receipts for finalized block {height}"))?
-            .ok_or_else(|| eyre::eyre!("receipts for finalized block {height} are unavailable"))?;
-        if block.body.transactions.len() != receipts.len() {
-            bail!(
-                "finalized block {height} has {} transactions but {} receipts",
-                block.body.transactions.len(),
-                receipts.len()
-            );
-        }
-        frames.push(FinalizedFrame {
-            identity: BlockNumHash::new(height, block_hash),
-            parent_hash: block.header.parent_hash,
-            state_root: block.header.state_root,
-            block: Arc::new(block),
-            receipts: Arc::from(receipts),
-        });
+        let frame = match load_single_finalized_frame(source, height, finalized_target) {
+            Ok(frame) => frame,
+            Err(first_error) => {
+                let should_reread = first_error
+                    .downcast_ref::<FinalizedFrameError>()
+                    .is_some_and(|err| !err.is_transient_unavailability());
+                if should_reread {
+                    load_single_finalized_frame(source, height, finalized_target)?
+                } else {
+                    return Err(first_error);
+                }
+            }
+        };
+        frames.push(frame);
     }
     Ok(Some(FinalizedFrameBatch { plan, frames }))
+}
+
+fn load_single_finalized_frame<S>(
+    source: &S,
+    height: u64,
+    finalized_target: BlockNumHash,
+) -> eyre::Result<FinalizedFrame>
+where
+    S: FinalizedFrameSource,
+{
+    let canonical_hash = source
+        .canonical_hash(height)
+        .wrap_err_with(|| format!("load canonical hash for finalized block {height}"))?
+        .ok_or(FinalizedFrameError::CanonicalBlockUnavailable { height })?;
+    let block = source
+        .block_by_hash(canonical_hash)
+        .wrap_err_with(|| format!("load canonical finalized block {height} ({canonical_hash})"))?
+        .ok_or(FinalizedFrameError::BlockUnavailableByHash {
+            height,
+            hash: canonical_hash,
+        })?;
+    if block.header.number != height {
+        return Err(FinalizedFrameError::BlockHeightMismatch {
+            actual: block.header.number,
+            requested: height,
+        }
+        .into());
+    }
+    let block_hash = block.header.hash_slow();
+    if block_hash != canonical_hash {
+        return Err(FinalizedFrameError::RecomputedBlockHashMismatch {
+            height,
+            actual: block_hash,
+            expected: canonical_hash,
+        }
+        .into());
+    }
+    if height == finalized_target.number && block_hash != finalized_target.hash {
+        return Err(FinalizedFrameError::FinalizedTargetHashConflict {
+            canonical: block_hash,
+            finalized: finalized_target.hash,
+            height,
+        }
+        .into());
+    }
+    let receipts = source
+        .receipts_by_hash(canonical_hash)
+        .wrap_err_with(|| format!("load receipts for finalized block {height}"))?
+        .ok_or(FinalizedFrameError::ReceiptsUnavailable { height })?;
+    if block.body.transactions.len() != receipts.len() {
+        return Err(FinalizedFrameError::ReceiptCountMismatch {
+            height,
+            transactions: block.body.transactions.len(),
+            receipts: receipts.len(),
+        }
+        .into());
+    }
+    Ok(FinalizedFrame {
+        identity: BlockNumHash::new(height, block_hash),
+        parent_hash: block.header.parent_hash,
+        state_root: block.header.state_root,
+        block: Arc::new(block),
+        receipts: Arc::from(receipts),
+    })
 }
 
 #[cfg(test)]

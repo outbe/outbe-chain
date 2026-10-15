@@ -29,8 +29,6 @@ metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-consensus.workspace = true
-outbe-intex.workspace = true
-outbe-intexfactory.workspace = true
 outbe-lysis.workspace = true
 outbe-metadosis.workspace = true
 outbe-node.workspace = true
@@ -42,7 +40,6 @@ outbe-nod.workspace = true
 outbe-primitives.workspace = true
 outbe-tribute.workspace = true
 outbe-tee.workspace = true
-outbe-zerofee.workspace = true
 postcard.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 salvo.workspace = true

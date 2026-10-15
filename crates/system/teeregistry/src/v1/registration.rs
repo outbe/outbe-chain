@@ -8,26 +8,22 @@ impl TeeRegistry<'_> {
         binding: &ValidatorNodeBindingV1,
     ) -> Result<RegistrationCallerContextV1> {
         if caller != Address::from(binding.validator) {
-            return Err(PrecompileError::Revert(
-                "registration caller does not match the NodeHost EVM association".into(),
-            ));
+            return Err(TeeRegistryError::RegistrationCallerAssociationMismatch.into());
         }
         let associated_node = self.validator_v1_node_hash.read(&caller)?;
         let current = self.node_enclave_binding_v1(binding.node_id_hash)?;
         let Some(current) = current else {
             if !associated_node.is_zero() {
-                return Err(PrecompileError::Revert(
-                    "registration caller is already associated with another NodeHost".into(),
-                ));
+                return Err(TeeRegistryError::RegistrationCallerAlreadyAssociated.into());
             }
             return Ok(RegistrationCallerContextV1 {
                 expired_rejoin: false,
             });
         };
         if associated_node != binding.node_id_hash {
-            return Err(PrecompileError::Revert(
-                "registration caller is not associated with the existing NodeHost".into(),
-            ));
+            return Err(
+                TeeRegistryError::RegistrationCallerNotAssociatedWithExistingNodeHost.into(),
+            );
         }
         let expired_rejoin = consensus_timestamp(&self.storage)? >= current.valid_until;
         if expired_rejoin
@@ -35,9 +31,7 @@ impl TeeRegistry<'_> {
                 .get_validator(caller)?
                 .is_some_and(|record| record.status == validator_status::JAILED)
         {
-            return Err(PrecompileError::Revert(
-                "jailed validator must complete ordinary unjail before enclave rejoin".into(),
-            ));
+            return Err(TeeRegistryError::JailedValidatorCannotRejoin.into());
         }
         Ok(RegistrationCallerContextV1 { expired_rejoin })
     }
@@ -49,9 +43,7 @@ impl TeeRegistry<'_> {
         node_id_hash: B256,
     ) -> Result<()> {
         if self.validator_v1_node_hash.read(&caller)? != node_id_hash {
-            return Err(PrecompileError::Revert(
-                "TEE mutator caller is not associated with the target NodeHost".into(),
-            ));
+            return Err(TeeRegistryError::MutatorCallerNotAssociated.into());
         }
         Ok(())
     }
@@ -66,10 +58,7 @@ impl TeeRegistry<'_> {
             .node_id_hash()
             .map_err(|error| revert_codec("registration NodeHost identity is invalid", error))?;
         if binding.node_id_hash != registered_node_id_hash {
-            return Err(PrecompileError::Revert(
-                "initial address association must reference the same NodeHost as the registration"
-                    .into(),
-            ));
+            return Err(TeeRegistryError::InitialAssociationTargetMismatch.into());
         }
         Ok(())
     }
@@ -107,36 +96,24 @@ impl TeeRegistry<'_> {
         if !binding.verify_validator_signature(validator_signature)
             || !binding.verify_node_signature(node_signature)
         {
-            return Err(PrecompileError::Revert(
-                "validator NodeHost binding proof of possession is invalid".into(),
-            ));
+            return Err(TeeRegistryError::ValidatorNodeBindingPopInvalid.into());
         }
         let validator = Address::from(binding.validator);
         let node = self
             .node_enclave_binding_v1(binding.node_id_hash)?
-            .ok_or_else(|| {
-                PrecompileError::Revert(
-                    "validator NodeHost binding references an unregistered NodeHost".into(),
-                )
-            })?;
+            .ok_or(TeeRegistryError::ValidatorNodeBindingUnregisteredNodeHost)?;
         if node.valid_until <= consensus_timestamp(&self.storage)? {
-            return Err(PrecompileError::Revert(
-                "validator NodeHost binding references an expired NodeHost".into(),
-            ));
+            return Err(TeeRegistryError::ValidatorNodeBindingExpiredNodeHost.into());
         }
         if !self.binding_code_admitted_v1(&node)? {
-            return Err(PrecompileError::Revert(
-                "validator NodeHost binding references a retired enclave".into(),
-            ));
+            return Err(TeeRegistryError::ValidatorNodeBindingRetiredEnclave.into());
         }
         let current = self.validator_v1_node_hash.read(&validator)?;
         if current == binding.node_id_hash {
             return Ok(V1RegistrationOutcome::Idempotent);
         }
         if !current.is_zero() {
-            return Err(PrecompileError::Revert(
-                "validator is already bound to another NodeHost".into(),
-            ));
+            return Err(TeeRegistryError::ValidatorAlreadyBoundToAnotherNodeHost.into());
         }
         self.validator_v1_node_hash
             .write(&validator, binding.node_id_hash)?;
@@ -159,9 +136,7 @@ impl TeeRegistry<'_> {
             | (V1RegistrationOutcome::Idempotent, V1RegistrationOutcome::Idempotent, _) => {
                 Ok(registration)
             }
-            _ => Err(PrecompileError::Fatal(
-                "NodeHost registration and address association outcomes are inconsistent".into(),
-            )),
+            _ => Err(TeeRegistryError::InconsistentRegistrationAndAssociationOutcomes.into()),
         }
     }
 

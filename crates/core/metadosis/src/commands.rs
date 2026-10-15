@@ -95,7 +95,7 @@ pub fn record_certified_parent_finality(
         || certified.current_block_number() != ctx.block.block_number
     {
         return Err(crate::errors::storage_corruption(
-            "certified Metadosis finality binding execution scope mismatch".into(),
+            "certified Metadosis finality binding execution scope mismatch",
         ));
     }
     commit_transition::<MetadosisCertifiedFinality, _>(

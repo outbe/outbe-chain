@@ -114,25 +114,19 @@ impl TeeRegistry<'_> {
         } = *context;
         if self.is_same_active_upgrade_candidate_v1(mutation, context)? {
             if self.upgrade_candidate_evidence.read(&node_id_hash)? != evidence_hash {
-                return Err(PrecompileError::Revert(
-                    "candidate is not an exact evidence replay".into(),
-                ));
+                return Err(TeeRegistryError::CandidateNotExactEvidenceReplay.into());
             }
             return Ok(true);
         }
         let current_intent_hash = self.v1_node_intent_hash.read(&node_id_hash)?;
         if !current_intent_hash.is_zero() && current_intent_hash == intent_hash {
             if self.v1_node_evidence_hash.read(&node_id_hash)? != evidence_hash {
-                return Err(PrecompileError::Revert(
-                    "registry mutation is not an exact evidence replay".into(),
-                ));
+                return Err(TeeRegistryError::MutationNotExactEvidenceReplay.into());
             }
             if self.v1_node_binding_id.read(&node_id_hash)? != intent.binding_id
                 || self.v1_node_enclave_id.read(&node_id_hash)? != intent.enclave_id
             {
-                return Err(PrecompileError::Fatal(
-                    "stored V1 idempotency identity is inconsistent".into(),
-                ));
+                return Err(TeeRegistryError::StoredV1IdempotencyIdentityInconsistent.into());
             }
             return Ok(true);
         }

@@ -1,7 +1,7 @@
 //! Pyth Network price provider via the Hermes REST API.
 
 use async_trait::async_trait;
-use eyre::{eyre, Context, Result};
+use eyre::{Context, Result};
 use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::units::SCALE_1E18;
 use serde::Deserialize;
@@ -12,6 +12,7 @@ use tokio::sync::OnceCell;
 use super::onchain_feed::MAX_FEED_AGE_SECS;
 use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::config::ApiProviderConfig;
+use crate::errors::{check, PythError};
 use crate::fixed::FixedValue;
 
 /// Hermes after the Pyth Core upgrade (2026-08-26). It requires a key.
@@ -29,7 +30,7 @@ pub struct PythProvider {
 impl PythProvider {
     pub fn new(endpoint: Option<&ApiProviderConfig>) -> Result<Self> {
         let api_key = endpoint.map_or("", |e| e.api_key.trim()).to_owned();
-        eyre::ensure!(!api_key.is_empty(), "api provider pyth needs an api_key");
+        check(!api_key.is_empty(), PythError::MissingApiKey)?;
         let rest = endpoint.map_or("", |e| e.rest.trim());
         let hermes_url = if rest.is_empty() {
             DEFAULT_HERMES_URL.to_owned()
@@ -58,10 +59,12 @@ impl PythProvider {
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             let path = path.split('?').next().unwrap_or(path);
-            return Err(eyre!(
-                "pyth {path} returned status {status}: {}",
-                body.chars().take(200).collect::<String>()
-            ));
+            return Err(PythError::Status {
+                path: path.to_owned(),
+                status,
+                body: body.chars().take(200).collect(),
+            }
+            .into());
         }
         response
             .json()

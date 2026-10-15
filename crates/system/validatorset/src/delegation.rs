@@ -2,6 +2,7 @@ use alloy_primitives::Address;
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::{
+    errors::ValidatorSetError,
     precompile::IValidatorSet,
     runtime::{status, ValidatorRecord},
     schema::ValidatorSet,
@@ -33,9 +34,7 @@ impl TryFrom<u8> for ValidatorDelegateRole {
         match value {
             1 => Ok(Self::Oracle),
             2 => Ok(Self::Ocomp),
-            _ => Err(PrecompileError::Revert(
-                "unsupported validator delegate role".into(),
-            )),
+            _ => Err(ValidatorSetError::UnsupportedDelegateRole.into()),
         }
     }
 }
@@ -55,28 +54,20 @@ impl ValidatorSet<'_> {
     ) -> Result<()> {
         self.ensure_registered_validator(validator)?;
         if delegate.is_zero() {
-            return Err(PrecompileError::Revert(
-                "delegate address must not be zero".into(),
-            ));
+            return Err(ValidatorSetError::ZeroDelegateAddress.into());
         }
         if delegate == validator {
-            return Err(PrecompileError::Revert(
-                "delegate must differ from validator".into(),
-            ));
+            return Err(ValidatorSetError::DelegateMatchesValidator.into());
         }
         if self.get_validator(delegate)?.is_some() {
-            return Err(PrecompileError::Revert(
-                "delegate must not be a registered validator".into(),
-            ));
+            return Err(ValidatorSetError::DelegateIsRegisteredValidator.into());
         }
 
         let role_id = role.id();
         let reverse = self.validator_by_role_delegate.get_nested(&role_id);
         let assigned_validator = reverse.read(&delegate)?;
         if !assigned_validator.is_zero() && assigned_validator != validator {
-            return Err(PrecompileError::Revert(
-                "delegate already assigned for role".into(),
-            ));
+            return Err(ValidatorSetError::DelegateAlreadyAssigned.into());
         }
 
         let forward = self.delegate_by_validator_role.get_nested(&validator);
@@ -174,9 +165,7 @@ impl ValidatorSet<'_> {
 
     fn ensure_registered_validator(&self, validator: Address) -> Result<()> {
         if self.get_validator(validator)?.is_none() {
-            return Err(PrecompileError::Revert(
-                "caller is not a registered validator".into(),
-            ));
+            return Err(ValidatorSetError::CallerNotRegisteredValidator.into());
         }
         Ok(())
     }
@@ -188,9 +177,7 @@ impl ValidatorSet<'_> {
                 .get_nested(&role.id())
                 .read(&address)?;
             if !validator.is_zero() {
-                return Err(PrecompileError::Revert(
-                    "validator address is already assigned as an operational delegate".into(),
-                ));
+                return Err(ValidatorSetError::ValidatorAlreadyOperationalDelegate.into());
             }
         }
         Ok(())

@@ -169,7 +169,7 @@ impl Mailbox {
                 }
                 self.verify_pending_boundary_artifact(round_epoch, boundary)
                     .await
-                    .map_err(|error| rejected(error.to_string()))?;
+                    .map_err(rejected)?;
             }
             (
                 ResolvedBoundary::MustEmit(_),
@@ -199,7 +199,7 @@ impl Mailbox {
                 Some(ConsensusHeaderArtifact::DealerLog(bytes)),
             ) => {
                 self.verify_dealer_log_sync(round_epoch, bytes.as_ref())
-                    .map_err(|error| rejected(error.to_string()))?;
+                    .map_err(rejected)?;
             }
             (
                 ResolvedBoundary::AlreadyCommitted | ResolvedBoundary::NoPending,
@@ -267,6 +267,6 @@ impl Mailbox {
     }
 }
 
-fn rejected(message: impl Into<String>) -> ArtifactAdmissionError {
-    ArtifactAdmissionError::Rejected(message.into())
+fn rejected(message: impl fmt::Display) -> ArtifactAdmissionError {
+    ArtifactAdmissionError::Rejected(message.to_string())
 }

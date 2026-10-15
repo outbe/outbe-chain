@@ -28,7 +28,7 @@ use outbe_primitives::{
 use outbe_tee::dcap_protocol::dcap_evidence_hash_v1;
 use serde::{Deserialize, Serialize};
 
-use crate::tx::RawRelayTransactionV1;
+use crate::{errors::RenewalJournalError, tx::RawRelayTransactionV1};
 
 use super::registry::RenewalBindingV1;
 
@@ -109,7 +109,7 @@ pub type RenewalJournalSnapshotV1 = JournalSnapshotV1<RenewalJournalStateV1>;
 impl RenewalJournalSnapshotV1 {
     fn validate(&self) -> Result<()> {
         if self.version != 1 || self.generation == 0 {
-            eyre::bail!("unsupported renewal journal version or generation");
+            return Err(RenewalJournalError::UnsupportedVersionOrGeneration.into());
         }
         self.lifecycle.validate()
     }
@@ -130,7 +130,7 @@ impl RenewalJournalGuard {
         {
             let error = std::io::Error::from(error);
             if error.kind() == std::io::ErrorKind::WouldBlock {
-                eyre::bail!("another renewal process owns the journal lock");
+                return Err(RenewalJournalError::JournalLocked.into());
             }
             return Err(error).wrap_err("lock renewal journal");
         }
@@ -147,7 +147,7 @@ impl RenewalJournalGuard {
             snapshot.generation = current
                 .generation
                 .checked_add(1)
-                .ok_or_else(|| eyre::eyre!("renewal journal generation exhausted"))?;
+                .ok_or(RenewalJournalError::GenerationExhausted)?;
         }
         snapshot.validate()?;
         let mut options = OpenOptions::new();
@@ -173,7 +173,7 @@ fn create_or_validate_directory(path: &Path) -> Result<()> {
     match builder.create(path) {
         Ok(()) => sync_directory(
             path.parent()
-                .ok_or_else(|| eyre::eyre!("renewal directory has no parent"))?,
+                .ok_or(RenewalJournalError::DirectoryHasNoParent)?,
         ),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => validate_directory(path),
         Err(error) => Err(error).wrap_err("create renewal journal directory"),
@@ -186,7 +186,7 @@ fn validate_directory(path: &Path) -> Result<()> {
         || metadata.uid() != rustix::process::geteuid().as_raw()
         || metadata.permissions().mode() & 0o777 != DIRECTORY_MODE
     {
-        eyre::bail!("renewal journal directory is not owner-only 0700");
+        return Err(RenewalJournalError::InvalidDirectoryPermissions.into());
     }
     Ok(())
 }
@@ -206,10 +206,10 @@ fn validate_private_file(path: &Path) -> Result<()> {
         || metadata.uid() != rustix::process::geteuid().as_raw()
         || metadata.permissions().mode() & 0o777 != FILE_MODE
     {
-        eyre::bail!("renewal journal file is not owner-only 0600");
+        return Err(RenewalJournalError::InvalidFilePermissions.into());
     }
     if metadata.len() > MAX_JOURNAL_BYTES {
-        eyre::bail!("renewal journal file exceeds its size cap");
+        return Err(RenewalJournalError::FileSizeCapExceeded.into());
     }
     Ok(())
 }
@@ -235,7 +235,7 @@ fn read_snapshot(path: &Path) -> Result<Option<RenewalJournalSnapshotV1>> {
         .read_to_end(&mut bytes)
         .wrap_err("read renewal journal")?;
     if bytes.len() as u64 > MAX_JOURNAL_BYTES {
-        eyre::bail!("renewal journal exceeds its size cap");
+        return Err(RenewalJournalError::JournalSizeCapExceeded.into());
     }
     let snapshot: RenewalJournalSnapshotV1 =
         serde_json::from_slice(&bytes).wrap_err("decode renewal journal")?;

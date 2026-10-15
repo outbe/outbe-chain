@@ -40,7 +40,7 @@ impl PublicOcompRpcClientV1 {
         let client = reqwest::blocking::Client::builder()
             .timeout(RPC_TIMEOUT)
             .build()
-            .map_err(|error| PublicRpcError::Transport(error.to_string()))?;
+            .map_err(PublicRpcError::transport)?;
         Ok(Self {
             url: url.into(),
             client,
@@ -112,10 +112,7 @@ impl PublicOcompRpcClientV1 {
         let raw = parse_hex_bytes(&raw, "eth_call")?;
         IMetadosis::getOffchainJobCall::abi_decode_returns(&raw)
             .map(|decoded| decoded.to_vec())
-            .map_err(|error| PublicRpcError::Malformed {
-                method: "eth_call",
-                detail: error.to_string(),
-            })
+            .map_err(|error| PublicRpcError::malformed("eth_call", error))
     }
 
     pub fn call(&self, method: &'static str, params: Value) -> Result<Value, PublicRpcError> {
@@ -131,7 +128,7 @@ impl PublicOcompRpcClientV1 {
             }))
             .send()
             .and_then(reqwest::blocking::Response::error_for_status)
-            .map_err(|error| PublicRpcError::Transport(error.to_string()))?;
+            .map_err(PublicRpcError::transport)?;
         if response
             .content_length()
             .is_some_and(|length| length > self.max_response_bytes as u64)
@@ -146,15 +143,12 @@ impl PublicOcompRpcClientV1 {
         response
             .take(read_cap as u64)
             .read_to_end(&mut body)
-            .map_err(|error| PublicRpcError::Transport(error.to_string()))?;
+            .map_err(PublicRpcError::transport)?;
         if body.len() > self.max_response_bytes {
             return Err(PublicRpcError::ResponseTooLarge);
         }
-        let envelope: Value =
-            serde_json::from_slice(&body).map_err(|error| PublicRpcError::Malformed {
-                method,
-                detail: error.to_string(),
-            })?;
+        let envelope: Value = serde_json::from_slice(&body)
+            .map_err(|error| PublicRpcError::malformed(method, error))?;
         if envelope.get("id") != Some(&Value::from(id)) {
             return Err(PublicRpcError::ResponseId);
         }
@@ -269,7 +263,7 @@ fn normalize_block_receipts(
                 .as_str()
                 .ok_or_else(|| malformed("eth_getBlockReceipts", "log address is not a string"))?
                 .parse::<Address>()
-                .map_err(|error| malformed("eth_getBlockReceipts", &error.to_string()))?;
+                .map_err(|error| PublicRpcError::malformed("eth_getBlockReceipts", error))?;
             let topics = field(raw, "topics", "eth_getBlockReceipts")?
                 .as_array()
                 .ok_or_else(|| malformed("eth_getBlockReceipts", "topics is not an array"))?
@@ -326,7 +320,7 @@ fn parse_hex_bytes(value: &Value, method: &'static str) -> Result<Vec<u8>, Publi
         .as_str()
         .ok_or_else(|| malformed(method, "hex value is not a string"))?;
     hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded))
-        .map_err(|error| malformed(method, &error.to_string()))
+        .map_err(|error| PublicRpcError::malformed(method, error))
 }
 
 fn parse_b256(value: &Value, what: &'static str) -> Result<B256, PublicRpcError> {
@@ -334,20 +328,19 @@ fn parse_b256(value: &Value, what: &'static str) -> Result<B256, PublicRpcError>
         .as_str()
         .ok_or_else(|| malformed("RPC", what))?
         .parse()
-        .map_err(|error: alloy_primitives::hex::FromHexError| malformed("RPC", &error.to_string()))
+        .map_err(|error: alloy_primitives::hex::FromHexError| {
+            PublicRpcError::malformed("RPC", error)
+        })
 }
 
 fn parse_hex_u64(value: &Value, what: &'static str) -> Result<u64, PublicRpcError> {
     let encoded = value.as_str().ok_or_else(|| malformed("RPC", what))?;
     u64::from_str_radix(encoded.strip_prefix("0x").unwrap_or(encoded), 16)
-        .map_err(|error| malformed("RPC", &error.to_string()))
+        .map_err(|error| PublicRpcError::malformed("RPC", error))
 }
 
 fn malformed(method: &'static str, detail: &str) -> PublicRpcError {
-    PublicRpcError::Malformed {
-        method,
-        detail: detail.to_owned(),
-    }
+    PublicRpcError::malformed(method, detail)
 }
 
 #[derive(Debug, Error)]

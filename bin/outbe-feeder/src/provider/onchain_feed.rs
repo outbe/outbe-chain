@@ -15,7 +15,7 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::sol;
 use async_trait::async_trait;
-use eyre::{ensure, eyre, Result};
+use eyre::Result;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,6 +26,7 @@ use super::dex::math::scale_fp18;
 use super::evm_rpc::Rpc;
 use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
 use crate::config::FeederConfig;
+use crate::errors::{check, OnchainFeedError};
 use crate::fixed::FixedValue;
 
 sol! {
@@ -73,38 +74,46 @@ pub(crate) struct FeedConfig {
 impl OnchainFeedConfig {
     pub fn validate(&self) -> Result<()> {
         let name = &self.name;
-        ensure!(
+        check(
             !name.trim().is_empty() && !name.contains(char::is_whitespace),
-            "onchain_feed provider name must be a single non-empty word"
-        );
-        ensure!(self.chain_id > 0, "onchain_feed chain_id must be positive");
-        let url = reqwest::Url::parse(&self.rpc_endpoint)
-            .map_err(|_| eyre!("invalid onchain_feed RPC URL"))?;
-        ensure!(
+            OnchainFeedError::InvalidProviderName,
+        )?;
+        check(self.chain_id > 0, OnchainFeedError::NonPositiveChainId)?;
+        let url =
+            reqwest::Url::parse(&self.rpc_endpoint).map_err(|_| OnchainFeedError::InvalidRpcUrl)?;
+        check(
             matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
-            "onchain_feed RPC requires HTTP(S)"
-        );
-        ensure!(
+            OnchainFeedError::NonHttpRpcUrl,
+        )?;
+        check(
             !self.markets.is_empty(),
-            "onchain_feed provider {name} feed is not attached to a pair"
-        );
+            OnchainFeedError::UnattachedFeed(name.clone()),
+        )?;
         let mut addresses = BTreeSet::new();
         for (key, feed) in &self.markets {
-            ensure!(
-                key.split_once('/').is_some_and(
-                    |(base, quote)| !base.trim().is_empty() && !quote.trim().is_empty()
-                ),
-                "onchain_feed feed key {key:?} in provider {name} must be BASE/QUOTE"
-            );
-            ensure!(
+            check(
+                key.split_once('/').is_some_and(|(base, quote)| {
+                    !base.trim().is_empty() && !quote.trim().is_empty()
+                }),
+                OnchainFeedError::InvalidFeedKey {
+                    key: key.clone(),
+                    name: name.clone(),
+                },
+            )?;
+            check(
                 !feed.contract.is_zero(),
-                "onchain_feed feed {key} in provider {name} has no contract address"
-            );
-            ensure!(
+                OnchainFeedError::ZeroContractAddress {
+                    key: key.clone(),
+                    name: name.clone(),
+                },
+            )?;
+            check(
                 addresses.insert(feed.contract),
-                "contract {} configured twice in onchain_feed provider {name}",
-                feed.contract
-            );
+                OnchainFeedError::DuplicateContractAddress {
+                    contract: feed.contract,
+                    name: name.clone(),
+                },
+            )?;
         }
         Ok(())
     }
@@ -137,18 +146,18 @@ pub(crate) fn validate_config(config: &FeederConfig, builtin: &[&str]) -> Result
     for entry in &config.onchain_providers {
         entry.validate()?;
         let name = entry.name.as_str();
-        ensure!(
+        check(
             names.insert(name),
-            "duplicate onchain_providers entry '{name}'"
-        );
-        ensure!(
+            OnchainFeedError::DuplicateProviderEntry(name.to_owned()),
+        )?;
+        check(
             !builtin.contains(&name),
-            "onchain_providers name '{name}' is a built-in provider"
-        );
-        ensure!(
+            OnchainFeedError::ReservedProviderName(name.to_owned()),
+        )?;
+        check(
             !config.api_providers.iter().any(|e| e.name == name),
-            "configure the feed RPC in onchain_providers, not api_providers"
-        );
+            OnchainFeedError::ConfiguredInApiProviders,
+        )?;
     }
     Ok(())
 }
@@ -189,11 +198,9 @@ impl OnchainFeedProvider {
         if self.chain_verified.load(Ordering::Relaxed) {
             return Ok(());
         }
-        ensure!(
-            self.rpc.chain_id().await? == self.chain_id,
-            "RPC chain ID mismatch for chain {}",
-            self.chain_id
-        );
+        if self.rpc.chain_id().await? != self.chain_id {
+            return Err(OnchainFeedError::ChainIdMismatch(self.chain_id).into());
+        }
         self.chain_verified.store(true, Ordering::Relaxed);
         Ok(())
     }
@@ -206,7 +213,9 @@ impl OnchainFeedProvider {
             .rpc
             .call_latest(feed.contract, AggregatorV3::decimalsCall {})
             .await?;
-        ensure!(decimals <= 77, "unsupported feed decimals (>77)");
+        if decimals > 77 {
+            return Err(OnchainFeedError::UnsupportedDecimals.into());
+        }
         self.decimals
             .write()
             .await
@@ -221,16 +230,20 @@ impl OnchainFeedProvider {
             .rpc
             .call_latest(feed.contract, AggregatorV3::latestRoundDataCall {})
             .await?;
-        ensure!(round.answer.is_positive(), "feed answer is not positive");
-        ensure!(
-            round.updatedAt <= U256::from(now.saturating_add(MAX_FUTURE_SECS)),
-            "feed updatedAt is in the future"
-        );
+        if !round.answer.is_positive() {
+            return Err(OnchainFeedError::NonPositiveAnswer.into());
+        }
+        if round.updatedAt > U256::from(now.saturating_add(MAX_FUTURE_SECS)) {
+            return Err(OnchainFeedError::FutureUpdatedAt.into());
+        }
         let age = U256::from(now).saturating_sub(round.updatedAt);
-        ensure!(
-            age <= U256::from(MAX_FEED_AGE_SECS),
-            "feed round is stale ({age} s > {MAX_FEED_AGE_SECS} s)"
-        );
+        if age > U256::from(MAX_FEED_AGE_SECS) {
+            return Err(OnchainFeedError::StaleRound {
+                age,
+                max_age: MAX_FEED_AGE_SECS,
+            }
+            .into());
+        }
         scale_fp18(round.answer.into_raw(), decimals)
     }
 }

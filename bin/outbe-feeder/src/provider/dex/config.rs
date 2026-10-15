@@ -1,9 +1,10 @@
 use alloy_primitives::{Address, B256};
-use eyre::{ensure, Result};
+use eyre::Result;
 use serde::Deserialize;
 use std::collections::BTreeSet;
 
 use crate::config::FeederConfig;
+use crate::errors::{check, DexError};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -113,60 +114,54 @@ impl DexMarketConfig {
 
 impl DexProviderConfig {
     pub fn validate(&self) -> Result<()> {
-        ensure!(
+        check(
             matches!(
                 (self.name.as_str(), self.chain_id),
                 ("uniswap", 1) | ("pancakeswap", 56)
             ),
-            "DEX v1 requires uniswap on chain 1 or pancakeswap on chain 56"
-        );
-        let url = reqwest::Url::parse(&self.rpc_endpoint)
-            .map_err(|_| eyre::eyre!("invalid DEX RPC URL"))?;
-        ensure!(
+            DexError::UnsupportedChainOrName,
+        )?;
+        let url = reqwest::Url::parse(&self.rpc_endpoint).map_err(|_| DexError::InvalidRpcUrl)?;
+        check(
             matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
-            "DEX RPC requires HTTP(S)"
-        );
-        ensure!(
+            DexError::NonHttpRpcUrl,
+        )?;
+        check(
             (1..=10).contains(&self.poll_interval_secs),
-            "DEX poll_interval_secs must be 1..=10"
-        );
-        ensure!(
+            DexError::InvalidPollInterval,
+        )?;
+        check(
             (1..=10_000).contains(&self.log_chunk_blocks),
-            "DEX log_chunk_blocks must be 1..=10000"
-        );
-        ensure!(
-            self.confirmations <= 1_000,
-            "DEX confirmations must be 0..=1000"
-        );
-        ensure!(
+            DexError::InvalidLogChunkBlocks,
+        )?;
+        check(self.confirmations <= 1_000, DexError::InvalidConfirmations)?;
+        check(
             self.max_block_age_secs > 0,
-            "DEX max_block_age_secs must be positive"
-        );
-        ensure!(
+            DexError::NonPositiveMaxBlockAge,
+        )?;
+        check(
             self.markets.len() == 1,
-            "DEX provider {} pool is not attached to a pair",
-            self.name
-        );
+            DexError::UnattachedPool(self.name.clone()),
+        )?;
         let mut markets = BTreeSet::new();
         let mut pools = BTreeSet::new();
         for market in &self.markets {
-            ensure!(
+            check(
                 !market.base_token.is_zero()
                     && !market.quote_token.is_zero()
                     && market.base_token != market.quote_token,
-                "DEX requires two distinct ERC20 addresses"
-            );
-            ensure!(
+                DexError::InvalidTokenAddresses,
+            )?;
+            check(
                 markets.insert(market.key()),
-                "duplicate DEX market {}",
-                market.key()
-            );
+                DexError::DuplicateMarket(market.key()),
+            )?;
             market.pool.validate(&self.name)?;
             let id = market.pool.pool_id(market)?;
-            ensure!(
+            check(
                 pools.insert((market.pool.address(), id)),
-                "DEX pool configured more than once"
-            );
+                DexError::DuplicatePool,
+            )?;
         }
         Ok(())
     }
@@ -186,18 +181,15 @@ impl PoolConfig {
     }
 
     fn validate(&self, provider: &str) -> Result<()> {
-        ensure!(
-            !self.address().is_zero(),
-            "DEX pool/manager address must be nonzero"
-        );
+        check(!self.address().is_zero(), DexError::ZeroPoolAddress)?;
         let uniswap = matches!(
             self,
             Self::UniswapV2 { .. } | Self::UniswapV3 { .. } | Self::UniswapV4 { .. }
         );
-        ensure!(
+        check(
             uniswap == (provider == "uniswap"),
-            "DEX protocol does not match provider"
-        );
+            DexError::ProtocolMismatch,
+        )?;
         match *self {
             Self::UniswapV4 {
                 state_view,
@@ -205,11 +197,11 @@ impl PoolConfig {
                 tick_spacing,
                 ..
             } => {
-                ensure!(!state_view.is_zero(), "Uniswap V4 requires StateView");
-                ensure!(
+                check(!state_view.is_zero(), DexError::MissingStateView)?;
+                check(
                     (1..=32_767).contains(&tick_spacing),
-                    "invalid V4 tick spacing"
-                );
+                    DexError::InvalidV4TickSpacing,
+                )?;
                 validate_fee(fee)?;
             }
             Self::InfinityCl {
@@ -218,22 +210,22 @@ impl PoolConfig {
                 validate_fee(fee)?;
                 let value = alloy_primitives::U256::from_be_bytes(parameters.0);
                 let spacing = (value >> 16) & alloy_primitives::U256::from(0xff_ffffu32);
-                ensure!(
+                check(
                     value >> 40 == alloy_primitives::U256::ZERO
                         && spacing > alloy_primitives::U256::ZERO
                         && spacing <= alloy_primitives::U256::from(32_767u32),
-                    "invalid Infinity CL parameters"
-                );
+                    DexError::InvalidInfinityClParameters,
+                )?;
             }
             Self::InfinityBin {
                 fee, parameters, ..
             } => {
                 validate_fee(fee)?;
                 let value = alloy_primitives::U256::from_be_bytes(parameters.0);
-                ensure!(
+                check(
                     value >> 32 == alloy_primitives::U256::ZERO && self.bin_step() > 0,
-                    "invalid Infinity Bin parameters"
-                );
+                    DexError::InvalidInfinityBinParameters,
+                )?;
             }
             _ => {}
         }
@@ -251,8 +243,10 @@ impl PoolConfig {
 }
 
 fn validate_fee(fee: u32) -> Result<()> {
-    ensure!(fee <= 1_000_000 || fee == 0x80_0000, "invalid pool fee");
-    Ok(())
+    check(
+        fee <= 1_000_000 || fee == 0x80_0000,
+        DexError::InvalidPoolFee,
+    )
 }
 
 /// Rebuilds every DEX entry's market from the source that names it.
@@ -278,29 +272,27 @@ pub(crate) fn validate_config(config: &FeederConfig) -> Result<()> {
     let mut names = BTreeSet::new();
     for dex in &config.dex_providers {
         dex.validate()?;
-        ensure!(
+        check(
             names.insert(dex.name.as_str()),
-            "duplicate DEX provider {}",
-            dex.name
-        );
-        ensure!(
+            DexError::DuplicateDexProvider(dex.name.clone()),
+        )?;
+        check(
             !config.api_providers.iter().any(|e| e.name == dex.name),
-            "configure DEX RPC in dex_providers, not api_providers"
-        );
+            DexError::ConfiguredInApiProviders,
+        )?;
     }
     for pair in &config.currency_pairs {
         for source in &pair.sources {
             if !matches!(source.provider.as_str(), "uniswap" | "pancakeswap") {
                 continue;
             }
-            ensure!(
+            check(
                 config
                     .dex_providers
                     .iter()
                     .any(|d| d.name == source.provider),
-                "missing DEX configuration for {}",
-                source.provider
-            );
+                DexError::MissingDexConfig(source.provider.clone()),
+            )?;
         }
     }
     Ok(())

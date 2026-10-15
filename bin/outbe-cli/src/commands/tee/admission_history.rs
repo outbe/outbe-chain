@@ -1,5 +1,6 @@
 //! History discovery is untrusted. Only certified headers authorize admission.
 use super::*;
+use crate::errors::TeeAdmissionHistoryError;
 use eyre::WrapErr;
 use outbe_primitives::{
     addresses::TEE_REGISTRY_ADDRESS,
@@ -29,10 +30,9 @@ pub(super) async fn registry_opening(
                 }
                 let fresh = rpc.eth_get_finalized_block().await?;
                 let next = json_hex_u64_field(&fresh, "number")?;
-                eyre::ensure!(
-                    next >= height && next > 0,
-                    "finalized proof height regressed"
-                );
+                (next >= height && next > 0)
+                    .then_some(())
+                    .ok_or(TeeAdmissionHistoryError::FinalizedProofHeightRegressed)?;
                 height = next;
                 eprintln!("TeeRegistry proof window expired; retrying finalized height {height}");
             }
@@ -49,13 +49,17 @@ pub(super) async fn history_artifact(
         .eth_get_block_by_number(height)
         .await
         .wrap_err_with(|| format!("read finalized history header at height {height}"))?;
-    eyre::ensure!(
-        json_hex_u64_field(&block, "number")? == height,
-        "history header height mismatch at {height}"
-    );
+    (json_hex_u64_field(&block, "number")? == height)
+        .then_some(())
+        .ok_or(TeeAdmissionHistoryError::HistoryHeaderHeightMismatch(
+            height,
+        ))?;
     let extra = json_hex_bytes(&block, "extraData")?;
     Ok(decode_outbe_block_artifacts(&extra)
-        .map_err(|error| eyre::eyre!("decode history header {height}: {error:?}"))?
+        .map_err(|error| TeeAdmissionHistoryError::DecodeHistoryHeader {
+            height,
+            reason: format!("{error:?}"),
+        })?
         .consensus_header_artifact)
 }
 
@@ -69,10 +73,9 @@ pub(super) async fn admission_public(
     finalized_height: u64,
     next_transition_epoch: u64,
 ) -> Result<Option<serde_json::Value>> {
-    eyre::ensure!(
-        height > 0 && height <= finalized_height,
-        "invalid admission history height"
-    );
+    (height > 0 && height <= finalized_height)
+        .then_some(())
+        .ok_or(TeeAdmissionHistoryError::InvalidAdmissionHistoryHeight)?;
     if height < finalized_height
         && !matches!(
             history_artifact(rpc, height).await?,
@@ -101,34 +104,30 @@ pub(super) fn compact_header(
         &encoded,
         outbe_consensus::bls::MAX_COMMITTEE_MEMBERS,
     )?;
-    eyre::ensure!(
-        certified.finalization.proposal.payload == certified.block.digest(),
-        "finality certificate payload mismatch"
-    );
+    (certified.finalization.proposal.payload == certified.block.digest())
+        .then_some(())
+        .ok_or(TeeAdmissionHistoryError::FinalityCertificatePayloadMismatch)?;
     let ancestors = match public.get("ancestorBlocksHex") {
         None => Vec::new(),
         Some(_) => json_hex_array(public, "ancestorBlocksHex")?,
     };
-    eyre::ensure!(
-        ancestors.len() <= outbe_tee::finalized_admission::MAX_FINALITY_DESCENDANTS,
-        "too many finality ancestors"
-    );
+    (ancestors.len() <= outbe_tee::finalized_admission::MAX_FINALITY_DESCENDANTS)
+        .then_some(())
+        .ok_or(TeeAdmissionHistoryError::TooManyFinalityAncestors)?;
     let mut blocks = Vec::with_capacity(ancestors.len() + 1);
     for bytes in &ancestors {
         let block = outbe_consensus::follow::upstream::decode_public_block(bytes)?;
         blocks.push(block);
     }
     blocks.push(certified.block);
-    eyre::ensure!(
-        blocks[0].number() == height,
-        "finality proof height mismatch at {height}"
-    );
+    (blocks[0].number() == height).then_some(()).ok_or(
+        TeeAdmissionHistoryError::FinalityProofHeightMismatch(height),
+    )?;
     for pair in blocks.windows(2) {
-        eyre::ensure!(
-            pair[0].number().checked_add(1) == Some(pair[1].number())
-                && pair[1].parent_digest() == pair[0].digest(),
-            "invalid finality ancestor chain"
-        );
+        (pair[0].number().checked_add(1) == Some(pair[1].number())
+            && pair[1].parent_digest() == pair[0].digest())
+        .then_some(())
+        .ok_or(TeeAdmissionHistoryError::InvalidFinalityAncestorChain)?;
     }
     let target = blocks[0].clone();
     Ok((

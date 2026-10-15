@@ -229,19 +229,24 @@ fn ensure_provider_ready(
     block: &ConsensusBlock,
 ) -> eyre::Result<()> {
     let height = block.height().get();
-    let Some(provider_hash) = provider
-        .block_hash(height)
-        .map_err(|error| eyre::eyre!("failed to read provider block hash at {height}: {error}"))?
+    let Some(provider_hash) = provider.block_hash(height).map_err(|error| {
+        crate::errors::PeerManagerError::ReadProviderBlockHash {
+            height,
+            error: format!("{error}"),
+        }
+    })?
     else {
-        return Err(eyre::eyre!(
-            "provider has no canonical hash at finalized block height {height}"
-        ));
+        return Err(
+            crate::errors::PeerManagerError::MissingCanonicalHashAtFinalizedHeight(height).into(),
+        );
     };
     if provider_hash != block.block_hash() {
-        return Err(eyre::eyre!(
-            "provider hash mismatch at height {height}: provider={provider_hash}, consensus={}",
-            block.block_hash()
-        ));
+        return Err(crate::errors::PeerManagerError::ProviderHashMismatch {
+            height,
+            provider_hash,
+            consensus_hash: block.block_hash(),
+        }
+        .into());
     }
     Ok(())
 }

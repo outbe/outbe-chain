@@ -1,5 +1,6 @@
 //! Quote once, before withdrawing the reserved principal. Issuance never refreshes these terms.
 use crate::{
+    errors::VaultRouterError,
     schema::LiquidityReservation,
     sol_ext::{IReferenceCurrency, IERC20},
 };
@@ -10,15 +11,12 @@ use outbe_oracle::{
     schema::OracleContract,
 };
 use outbe_primitives::{
-    error::{PrecompileError, Result},
+    error::Result,
     math::scaled_math::checked_quote,
     storage::StorageHandle,
     time::{previous_date_key, timestamp_to_date_key},
     units::MAX_ASSET_DECIMALS,
 };
-fn invalid(message: &str) -> PrecompileError {
-    PrecompileError::Revert(message.into())
-}
 pub(crate) fn quote(
     storage: &StorageHandle<'_>,
     asset: Address,
@@ -26,42 +24,43 @@ pub(crate) fn quote(
     reference_currency: u16,
 ) -> Result<LiquidityReservation> {
     if storage.with_account_info(asset, |info| Ok(info.is_empty_code_hash()))? {
-        return Err(invalid("invalid asset"));
+        return Err(VaultRouterError::InvalidAsset.into());
     }
     let data = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
     let decimals = IERC20::decimalsCall::abi_decode_returns_validate(&data)
-        .map_err(|_| invalid("invalid asset decimals"))?;
+        .map_err(|_| VaultRouterError::InvalidAssetDecimals)?;
     if decimals > MAX_ASSET_DECIMALS {
-        return Err(invalid("unsupported asset decimals"));
+        return Err(VaultRouterError::UnsupportedAssetDecimalsSimple.into());
     }
     let data = storage.staticcall(
         asset,
         IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
     )?;
     let currency = IReferenceCurrency::isoCodeCall::abi_decode_returns_validate(&data)
-        .map_err(|_| invalid("invalid asset currency"))?;
+        .map_err(|_| VaultRouterError::InvalidAssetCurrency)?;
     api::check_reference_currency_with_storage(storage.clone(), currency)?;
     api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
     let snapshot = current_vwap_snapshot(storage.clone())?;
     let valuation = get_finalized_window_vwap(storage.clone(), currency, snapshot)?
         .filter(|v| !v.is_zero())
-        .ok_or_else(|| invalid("pledge price unavailable"))?;
+        .ok_or(VaultRouterError::PledgePriceUnavailable)?;
     let (gratis_minor, entry_price_minor) = checked_quote(amount, decimals, valuation)?;
     let policy_rate = api::get_policy_rate(storage.clone(), currency)?;
-    let now = u64::try_from(storage.timestamp()?).map_err(|_| invalid("timestamp exceeds u64"))?;
+    let now =
+        u64::try_from(storage.timestamp()?).map_err(|_| VaultRouterError::TimestampExceedsU64)?;
     let day = previous_date_key(timestamp_to_date_key(now));
     if OracleContract::new(storage.clone())
         .utc_day_vwap_last_finalized
         .read()?
         < day
     {
-        return Err(invalid("previous day VWAP unavailable"));
+        return Err(VaultRouterError::PreviousDayVwapUnavailable.into());
     }
     let index = api::coen_pair_index_opt(storage.clone(), reference_currency)?
-        .ok_or_else(|| invalid("reference pair unavailable"))?;
+        .ok_or(VaultRouterError::ReferencePairUnavailable)?;
     let anchor = api::get_utc_day_vwap(storage.clone(), day, index)?
         .filter(|p| !p.is_zero())
-        .ok_or_else(|| invalid("previous day VWAP unavailable"))?;
+        .ok_or(VaultRouterError::PreviousDayVwapUnavailable)?;
     Ok(LiquidityReservation {
         asset,
         amount,

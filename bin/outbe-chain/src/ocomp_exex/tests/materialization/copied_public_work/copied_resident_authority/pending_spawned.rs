@@ -1,7 +1,7 @@
 use super::*;
-use alloy_consensus::{BlockHeader as _, Sealable, Transaction as _};
+use alloy_consensus::{Sealable, Transaction as _};
 use alloy_primitives::{Bytes, TxKind};
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::{sol, SolCall, SolValue};
 use outbe_node::finalized_frame::{read_bounded_finalized_frames, RethFinalizedFrameSource};
 use outbe_ocomp::embedded_runtime::{EmbeddedOcompBundleConfigV1, EmbeddedOcompDomainConfigV1};
 use outbe_ocomp_protocol::{
@@ -10,8 +10,7 @@ use outbe_ocomp_protocol::{
     state::ActiveGenerationV1,
 };
 use outbe_primitives::{
-    addresses::METADOSIS_ADDRESS,
-    OutbeHeader, OutbePrimitives, OutbeReceipt, OutbeTxEnvelope,
+    addresses::METADOSIS_ADDRESS, OutbeHeader, OutbePrimitives, OutbeReceipt, OutbeTxEnvelope,
 };
 use reth_ethereum::provider::db::{
     database::Database,

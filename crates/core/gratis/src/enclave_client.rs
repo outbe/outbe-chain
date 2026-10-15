@@ -12,8 +12,10 @@
 //! (verify-then-discard). It also has the same `tee_sidecar_unavailable` failure mode
 //! when no enclave is configured.
 
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse, GratisOpRequest, GratisOpResult};
+
+use crate::errors::{map_nod_transport_error, GratisFatalError};
 
 /// Run one Gratis op inside the enclave and validate the response.
 ///
@@ -36,9 +38,7 @@ pub(crate) fn apply_gratis_op(req: GratisOpRequest) -> Result<GratisOpResult> {
         },
     )? {
         EnclaveResponse::GratisOpApplied { result } => Ok(*result),
-        other => Err(PrecompileError::Fatal(format!(
-            "unexpected enclave response: {other:?}"
-        ))),
+        other => Err(GratisFatalError::UnexpectedEnclaveResponse(Box::new(other)).into()),
     }
 }
 
@@ -50,6 +50,7 @@ pub(crate) fn apply_gratis_op(req: GratisOpRequest) -> Result<GratisOpResult> {
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_enclave {
     use super::*;
+    use crate::errors::map_test_enclave_error;
     use alloy_primitives::B256;
     use std::cell::RefCell;
 
@@ -106,14 +107,9 @@ pub mod test_enclave {
                     outbe_tee_enclave::dev::fidelity_chain(),
                     DEV_EPOCH,
                 )
-                .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
+                .map_err(map_test_enclave_error)?;
                 outbe_tee_enclave::nod_mine::apply(&[0x5a; 32], &state_key, &fidelity_key, request)
-                    .map_err(|error| match error {
-                        outbe_tee_enclave::errors::TeeError::TributeOfferReject(reason) => {
-                            PrecompileError::Revert(reason)
-                        }
-                        other => PrecompileError::Fatal(other.to_string()),
-                    })
+                    .map_err(map_test_enclave_error)
             })
         })
     }
@@ -166,8 +162,5 @@ pub(crate) fn mine_encrypted_nod(
     if let Some(result) = test_enclave::try_mine(&request) {
         return result;
     }
-    outbe_tee::nod_mine::mine_encrypted_nod(request).map_err(|error| match error {
-        outbe_tee::TransportError::NodMintRejected(reason) => PrecompileError::Revert(reason),
-        other => PrecompileError::Fatal(format!("encrypted NOD enclave operation failed: {other}")),
-    })
+    outbe_tee::nod_mine::mine_encrypted_nod(request).map_err(map_nod_transport_error)
 }

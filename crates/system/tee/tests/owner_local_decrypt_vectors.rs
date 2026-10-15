@@ -229,7 +229,7 @@ impl MalformedCiphertextCase<EncryptedTributeV2> {
 
 fn assert_malformed_ciphertext_cases<T: Clone, R: std::fmt::Debug>(
     original: &T,
-    decrypt: impl Fn(&[u8; 32], &T) -> Result<R, String>,
+    decrypt: impl Fn(&[u8; 32], &T) -> Result<R, outbe_tee::LocalCryptoError>,
     enclave_public: &[u8; 32],
     case: MalformedCiphertextCase<T>,
 ) {

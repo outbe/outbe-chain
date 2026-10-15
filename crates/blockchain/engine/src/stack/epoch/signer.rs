@@ -27,7 +27,7 @@ pub(in crate::stack) fn radicle_signer_enabled(
                 RadicleVotingGateError::ActiveBindingMissing => "active binding missing",
                 RadicleVotingGateError::BindingMismatch => "binding mismatch",
             };
-            Err(eyre::eyre!("Radicle voting gate is fatal: {reason}"))
+            Err(crate::errors::StackEpochError::RadicleVotingGateFatal { reason }.into())
         }
     }
 }
@@ -63,9 +63,7 @@ pub(in crate::stack) fn epoch_validation_inputs(
         participants.clone(),
         vrf_materials.clone(),
     )
-    .ok_or_else(|| {
-        eyre::eyre!("failed to build verifier scheme for validator set (epoch {epoch})")
-    })?;
+    .ok_or(crate::errors::StackEpochError::BuildVerifierSchemeFailed { epoch })?;
     // Simplex participant indices follow ordered::Set pubkey ordering, not the
     // original validator_set order. Certificate signer bitmaps use this order.
     // On restart/live-join with a recovered DKG boundary, provider-latest state
@@ -156,17 +154,19 @@ fn authorize_recovered_signer(
             let target_public_key = reshare_target_validator_set
                 .public_keys
                 .get(target_index)
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "current reshare target is missing the BLS public key for EVM address {}",
-                        signer_address
-                    )
-                })?;
-            ensure!(
-                target_public_key == &local_public_key,
-                "validator EVM key address {} belongs to a different BLS consensus key in the current reshare target",
-                signer_address
-            );
+                .ok_or(
+                    crate::errors::StackEpochError::ReshareTargetMissingBlsPublicKey {
+                        address: signer_address,
+                    },
+                )?;
+            if target_public_key != &local_public_key {
+                return Err(
+                    crate::errors::StackEpochError::EvmKeyBelongsToDifferentReshareBlsKey {
+                        address: signer_address,
+                    }
+                    .into(),
+                );
+            }
             info!(
                 %signer_address,
                 epoch = boundary.epoch,
@@ -175,25 +175,27 @@ fn authorize_recovered_signer(
             );
             return Ok(Some(signer_address));
         }
-        eyre::bail!(
-            "local BLS key is not in recovered DKG boundary committee for epoch {}; \
-             refusing latest-state EVM signer authorization",
-            boundary.epoch
+        return Err(
+            crate::errors::StackEpochError::LocalBlsKeyNotInRecoveredBoundaryCommittee {
+                epoch: boundary.epoch,
+            }
+            .into(),
         );
     };
-    let expected_address = ordered_addresses.get(participant_index).ok_or_else(|| {
-        eyre::eyre!(
-            "recovered DKG boundary address mapping missing participant index {}",
-            participant_index
-        )
-    })?;
-    ensure!(
-        *expected_address == signer_address,
-        "validator EVM key address {} does not match recovered DKG boundary address {} \
-         for local BLS consensus key",
-        signer_address,
-        expected_address
-    );
+    let expected_address = ordered_addresses.get(participant_index).ok_or(
+        crate::errors::StackEpochError::RecoveredBoundaryAddressMappingMissingParticipant {
+            index: participant_index,
+        },
+    )?;
+    if *expected_address != signer_address {
+        return Err(
+            crate::errors::StackEpochError::EvmKeyMismatchWithRecoveredBoundaryAddress {
+                signer_address,
+                expected_address: *expected_address,
+            }
+            .into(),
+        );
+    }
     info!(
         address = %signer_address,
         epoch = boundary.epoch,
@@ -244,24 +246,29 @@ fn authorize_current_signer(
             );
             return Ok(None);
         }
-        eyre::bail!(
-            "validator EVM key address {} is neither in the active consensus participant set nor the active validator set",
-            signer_address
-        );
+        return Err(crate::errors::StackEpochError::EvmKeyNotInActiveSets {
+            address: signer_address,
+        }
+        .into());
     };
 
     let local_public_key = signing_key.public_key();
     let Some(registered_public_key) = public_keys.get(index) else {
-        eyre::bail!(
-            "validator set missing BLS public key for EVM address {}",
-            signer_address
+        return Err(
+            crate::errors::StackEpochError::ValidatorSetMissingBlsPublicKey {
+                address: signer_address,
+            }
+            .into(),
         );
     };
-    ensure!(
-        registered_public_key == &local_public_key,
-        "validator EVM key address {} belongs to a different BLS consensus key",
-        signer_address
-    );
+    if registered_public_key != &local_public_key {
+        return Err(
+            crate::errors::StackEpochError::EvmKeyBelongsToDifferentBlsKey {
+                address: signer_address,
+            }
+            .into(),
+        );
+    }
     let address = signer_address;
     info!(
         address = %address,

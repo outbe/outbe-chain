@@ -16,4 +16,5 @@
 //! [`ProofVerifier`](outbe_zk::protocol::zk::ProofVerifier) seams.
 
 pub mod barretenberg;
+pub mod errors;
 pub mod witness;

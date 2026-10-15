@@ -2,6 +2,7 @@ use outbe_primitives::projection::ProjectionCheckpoint;
 use outbe_primitives::projection::ProjectionReadinessHandle;
 
 /// Whether to update head or finalized.
+#[derive(Debug)]
 pub(super) enum HeadOrFinalized {
     Head,
     Finalized,
@@ -16,20 +17,20 @@ pub(super) async fn wait_for_finalized_parent(
         .await
         .map_err(|failure| {
             failure.into_error(
-                || eyre::eyre!("finalized parent projection wait expired without a request budget"),
+                || crate::errors::ExecutorError::FinalizedParentWaitExpired.into(),
                 || {
-                    eyre::eyre!(
-                        "projection is ahead of finalized parent {} at height {}",
-                        required.block_hash,
-                        required.block_number
-                    )
+                    crate::errors::ExecutorError::ProjectionAheadOfFinalizedParent {
+                        block_hash: required.block_hash,
+                        block_number: required.block_number,
+                    }
+                    .into()
                 },
                 |failure| {
-                    eyre::eyre!(
-                        "projection readiness failed ({:?}): {}",
-                        failure.class,
-                        failure.message
-                    )
+                    crate::errors::ExecutorError::ProjectionReadinessFailed {
+                        class: failure.class,
+                        message: failure.message,
+                    }
+                    .into()
                 },
             )
         })
@@ -44,5 +45,5 @@ pub(super) async fn wait_for_optional_ocomp_parent(
     };
     wait_for_finalized_parent(readiness, required)
         .await
-        .map_err(|error| eyre::eyre!("FullNode OCOMP readiness failed: {error}"))
+        .map_err(|error| crate::errors::ExecutorError::FullNodeOcompReadinessFailed(error).into())
 }

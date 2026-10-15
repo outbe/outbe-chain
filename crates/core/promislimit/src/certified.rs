@@ -11,11 +11,15 @@ use outbe_ocomp_protocol::{
 };
 use outbe_primitives::{
     addresses::PROMIS_LIMIT_ADDRESS,
-    error::{PrecompileError, Result},
+    error::Result,
     storage::{CertifiedLysisActivation, StorageHandle},
 };
 
-use crate::{precompile::IPromisLimit, PromisLimitContract};
+use crate::{
+    errors::{PromisLimitError, PromisLimitFatalError},
+    precompile::IPromisLimit,
+    PromisLimitContract,
+};
 
 /// Closed, constant-size PromisLimit owner input derived from a verified Lysis
 /// apply plan. Raw values do not grant mutation authority.
@@ -53,7 +57,7 @@ pub fn credit_certified_carry_over(
         };
         let state_event_digest =
             carry_over_state_event_digest(&input.binding, &state_projection, limits)
-                .map_err(protocol_error)?;
+                .map_err(PromisLimitFatalError::from)?;
         let receipt = CarryOverReceiptV1 {
             binding: input.binding.clone(),
             source_wwd: input.source_wwd,
@@ -64,8 +68,10 @@ pub fn credit_certified_carry_over(
         };
         receipt
             .validate_projection(&state_projection, limits)
-            .map_err(protocol_error)?;
-        receipt.receipt_hash(limits).map_err(protocol_error)?;
+            .map_err(PromisLimitFatalError::from)?;
+        receipt
+            .receipt_hash(limits)
+            .map_err(PromisLimitFatalError::from)?;
 
         storage.emit_event(
             PROMIS_LIMIT_ADDRESS,
@@ -91,26 +97,16 @@ fn validate_input(
     input: &CertifiedCarryOverCreditV1,
 ) -> Result<()> {
     if capability.activation_call_id() != input.binding.activation_call_id {
-        return Err(revert("certified carry-over activation binding mismatch"));
+        return Err(PromisLimitError::ActivationBindingMismatch.into());
     }
     if input
         .lysis_allocation_minor
         .checked_add(input.unused_lysis_limit_minor)
         != Some(input.lysis_limit_minor)
     {
-        return Err(revert("invalid certified carry-over limit conservation"));
+        return Err(PromisLimitError::InvalidLimitConservation.into());
     }
     Ok(())
-}
-
-fn protocol_error(error: impl std::fmt::Display) -> PrecompileError {
-    PrecompileError::Fatal(format!(
-        "invalid certified carry-over protocol value: {error}"
-    ))
-}
-
-fn revert(reason: &'static str) -> PrecompileError {
-    PrecompileError::Revert(reason.into())
 }
 
 #[cfg(test)]
@@ -147,7 +143,7 @@ mod tests {
     impl PrecompileStorageProvider for ActivationTestProvider {
         fn begin_lysis_activation_frame(&mut self, activation_call_id: B256) -> Result<()> {
             if self.active_call.replace(activation_call_id).is_some() {
-                return Err(PrecompileError::Fatal(
+                return Err(PrecompileError::Revert(
                     "test activation lease is already active".into(),
                 ));
             }
@@ -160,7 +156,7 @@ mod tests {
             _completed: bool,
         ) -> Result<()> {
             if self.active_call.take() != Some(activation_call_id) {
-                return Err(PrecompileError::Fatal(
+                return Err(PrecompileError::Revert(
                     "test activation lease identity mismatch".into(),
                 ));
             }

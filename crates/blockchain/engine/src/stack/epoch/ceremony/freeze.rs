@@ -169,9 +169,12 @@ where
                         let _ = self.execution_finalized_height_tx.send(current_height);
                         return Ok(None);
                     }
-                    return Err(eyre::eyre!(
-                                        "local validator is neither previous DKG dealer nor frozen target player at height {freeze_height}"
-                                    ));
+                    return Err(
+                        crate::errors::StackEpochError::LocalValidatorNotParticipantAtHeight {
+                            height: freeze_height,
+                        }
+                        .into(),
+                    );
                 }
 
                 // Update P2P oracle so new validators can participate in DKG.
@@ -199,25 +202,34 @@ where
                     PendingFreezeBlockHashDecision::Expired => {
                         self.vrf_safety.mark_expired(current_height);
                         publish_randomness_status(&self.bridge, &self.vrf_safety);
-                        return Err(eyre::eyre!(
-                                            "frozen validator set block hash unavailable by planned activation: freeze height {freeze_height}, current height {current_height}, planned activation {planned_activation_height}"
-                                        ));
+                        return Err(
+                            crate::errors::StackEpochError::FrozenValidatorSetBlockHashUnavailable {
+                                freeze_height,
+                                current_height,
+                                planned_activation_height,
+                            }
+                            .into(),
+                        );
                     }
                 }
                 warn!(
-                                    current_height,
-                                    freeze_height,
-                                    planned_activation_height,
-                                    "frozen validator set block hash is not available yet; retrying on next finalized height"
-                                );
+                    current_height,
+                    freeze_height,
+                    planned_activation_height,
+                    "frozen validator set block hash is not available yet; retrying on next finalized height"
+                );
                 return Ok(None);
             }
             Err(e) => {
                 self.vrf_safety.mark_expired(current_height);
                 publish_randomness_status(&self.bridge, &self.vrf_safety);
-                return Err(eyre::eyre!(
-                    "failed to refresh frozen validator set at height {freeze_height}: {e}"
-                ));
+                return Err(
+                    crate::errors::StackEpochError::refresh_frozen_validator_set_failed(
+                        freeze_height,
+                        e,
+                    )
+                    .into(),
+                );
             }
         };
 

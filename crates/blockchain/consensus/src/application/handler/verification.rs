@@ -128,7 +128,7 @@ pub(super) async fn validate_header_consensus_artifacts_for_activation(
     if role == ValidatorRole::VerifierOnly {
         return Ok(());
     }
-    validate_rewards_beneficiary(block).map_err(ArtifactAdmissionError::Rejected)?;
+    validate_rewards_beneficiary(block)?;
     validate_system_tx_leader_binding_for_activation(
         block,
         SystemTxLeaderValidationContext {
@@ -139,11 +139,9 @@ pub(super) async fn validate_header_consensus_artifacts_for_activation(
             certificate_scheme_provider,
             committee_provider,
         },
-    )
-    .map_err(ArtifactAdmissionError::Rejected)?;
+    )?;
 
-    let artifact =
-        extract_header_artifact_from_block(block).map_err(ArtifactAdmissionError::Rejected)?;
+    let artifact = extract_header_artifact_from_block(block)?;
     let requirement = dkg_manager
         .admit_header_artifact(parent_block, round.epoch(), artifact.as_ref(), ancestry)
         .await?;

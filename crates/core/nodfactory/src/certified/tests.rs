@@ -98,7 +98,7 @@ impl ActivationTestProvider {
 impl PrecompileStorageProvider for ActivationTestProvider {
     fn begin_lysis_activation_frame(&mut self, activation_call_id: B256) -> Result<()> {
         if self.active_call.replace(activation_call_id).is_some() {
-            return Err(PrecompileError::Fatal(
+            return Err(PrecompileError::Revert(
                 "test activation lease is already active".into(),
             ));
         }
@@ -111,7 +111,7 @@ impl PrecompileStorageProvider for ActivationTestProvider {
         _completed: bool,
     ) -> Result<()> {
         if self.active_call.take() != Some(activation_call_id) {
-            return Err(PrecompileError::Fatal(
+            return Err(PrecompileError::Revert(
                 "test activation lease identity mismatch".into(),
             ));
         }

@@ -118,7 +118,7 @@ pub(in crate::transport) struct ConnectionContext<'a> {
     pub(in crate::transport) boot: Option<&'a EnclaveBootConfig>,
     pub(in crate::transport) initialization: &'a InitializationState,
     pub(in crate::transport) chain_id: B256,
-    pub(in crate::transport) quote_generator: fn(&[u8; 64]) -> Result<Vec<u8>, String>,
+    pub(in crate::transport) quote_generator: fn(&[u8; 64]) -> EnclaveResult<Vec<u8>>,
 }
 
 pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTransportStream>(
@@ -159,7 +159,7 @@ fn serve_requests<S: EnclaveTransportStream>(
         let mut pt = vec![0u8; frame.len()];
         let n = noise
             .read_message(&frame, &mut pt)
-            .map_err(|e| TransportError::Noise(e.to_string()))?;
+            .map_err(transport_noise)?;
         let call = outbe_tee::codec::decode_call(&pt[..n])?;
         call_stream.accept(&call.request, call.ctx)?;
         let _call_context = outbe_tee::call_context::ContextScope::enter(call.ctx);
@@ -184,11 +184,9 @@ fn ensure_admission(
         context
             .initialization
             .ensure_remote_admission_current(session)
-            .map_err(TransportError::Handshake)?;
+            .map_err(transport_handshake)?;
     }
-    authority
-        .ensure_live()
-        .map_err(|message| TransportError::Handshake(message.to_string()))
+    authority.ensure_live().map_err(transport_handshake)
 }
 
 fn read_live_frame(
@@ -218,9 +216,7 @@ fn read_live_frame(
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                 ) =>
         {
-            authority
-                .ensure_live()
-                .map_err(|message| TransportError::Handshake(message.to_string()))?;
+            authority.ensure_live().map_err(transport_handshake)?;
             return Err(TransportError::Io(error));
         }
         Err(error) => return Err(error),
@@ -238,7 +234,7 @@ fn write_encrypted_response(
     let mut ct = vec![0u8; plain.len() + 64];
     let n = noise
         .write_message(&plain, &mut ct)
-        .map_err(|e| TransportError::Noise(e.to_string()))?;
+        .map_err(transport_noise)?;
     write_frame(stream, &ct[..n])?;
     Ok(())
 }

@@ -125,14 +125,14 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
         self.internals
             .set_code(address, code)
-            .map_err(|e| PrecompileError::Storage(e.to_string()))
+            .map_err(PrecompileError::storage_err)
     }
 
     fn account_info(&mut self, address: Address) -> Result<AccountInfo> {
         let account = self
             .internals
             .load_account_code(address)
-            .map_err(|e| PrecompileError::Storage(e.to_string()))?;
+            .map_err(PrecompileError::storage_err)?;
         Ok(account.data.account().info.clone())
     }
 
@@ -142,14 +142,14 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
         let value = self
             .internals
             .sload(address, key)
-            .map_err(|e| PrecompileError::Storage(e.to_string()))?;
+            .map_err(PrecompileError::storage_err)?;
         Ok(value.data)
     }
     fn enclave_upgrade_id(&mut self) -> Result<U256> {
         self.internals
             .sload(crate::addresses::TEE_REGISTRY_ADDRESS, U256::from(45))
             .map(|value| value.data)
-            .map_err(|e| PrecompileError::Storage(e.to_string()))
+            .map_err(PrecompileError::storage_err)
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
@@ -162,7 +162,7 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
         self.gas.deduct(SSTORE_RESET)?;
         self.internals
             .sstore(address, key, value)
-            .map_err(|e| PrecompileError::Storage(e.to_string()))?;
+            .map_err(PrecompileError::storage_err)?;
         Ok(())
     }
 
@@ -221,7 +221,7 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
         // Ok(None) on success, Err on DB error.
         match self.internals.transfer(from, to, amount) {
             Ok(None) => Ok(()),
-            Ok(Some(_transfer_error)) => Err(PrecompileError::Fatal(format!(
+            Ok(Some(_transfer_error)) => Err(PrecompileError::revert(format!(
                 "insufficient balance for transfer from {from}: needs {amount}"
             ))),
             Err(e) => Err(PrecompileError::Storage(format!("transfer failed: {e}"))),
@@ -249,7 +249,7 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
             .map_err(|e| PrecompileError::Storage(format!("burn account load failed: {e}")))?;
         let balance = account.data.info.balance;
         let new_balance = balance.checked_sub(amount).ok_or_else(|| {
-            PrecompileError::Fatal(format!(
+            PrecompileError::revert(format!(
                 "insufficient balance for burn from {address}: has {balance} but needs {amount}"
             ))
         })?;

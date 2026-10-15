@@ -310,7 +310,7 @@ fn validated_snapshot_rejects_a_pending_fsm_missing_from_the_live_scheduler() {
             .unwrap();
         let error =
             crate::aggregate::ValidatedWwdAggregate::load_and_validate(storage).unwrap_err();
-        assert!(matches!(error, PrecompileError::Fatal(_)));
+        assert!(matches!(error, PrecompileError::Revert(_)));
         assert!(error
             .to_string()
             .contains("pending FSM membership does not exactly match"));
@@ -472,7 +472,7 @@ fn retained_cap_minus_one_admits_cap_forfeits_and_cap_plus_one_is_corruption() {
     let before_storage = above.storage.clone();
     let before_events = above.events.clone();
     let error = run_advance(&mut above, &scope, 2, scheduled).unwrap_err();
-    assert!(matches!(error, PrecompileError::Fatal(_)));
+    assert!(matches!(error, PrecompileError::Revert(_)));
     assert_eq!(above.storage, before_storage);
     assert_eq!(above.events, before_events);
     StorageHandle::enter(&mut above, |storage| {
@@ -768,7 +768,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
             .unwrap_err();
         assert!(matches!(
             error,
-            PrecompileError::Fatal(message)
+            PrecompileError::Revert(message)
                 if message == "Metadosis capacity-forfeiture receipt is immutable"
         ));
         assert_eq!(
@@ -973,7 +973,7 @@ fn malformed_capacity_detail_is_fatal() {
 
         assert!(matches!(
             metadosis.read_capacity_forfeiture_receipt(victim),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     });
 }
@@ -1003,11 +1003,11 @@ fn capacity_receipt_without_detail_is_fatal_in_reader_and_aggregate() {
 
         assert!(matches!(
             metadosis.read_capacity_forfeiture_receipt(victim),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
         assert!(matches!(
             crate::aggregate::ValidatedWwdAggregate::load_and_validate(storage),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     });
 }
@@ -1265,7 +1265,7 @@ fn active_cap_rejects_create_before_an_orphan_record_or_event() {
         crate::commands::apply_cycle_day_limit(&ctx, U256::from(1))
     })
     .unwrap_err();
-    assert!(matches!(error, PrecompileError::Fatal(_)));
+    assert!(matches!(error, PrecompileError::Revert(_)));
     assert_eq!(provider.storage, storage_before);
     assert_eq!(provider.events, events_before);
     StorageHandle::enter(&mut provider, |storage| {

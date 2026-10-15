@@ -744,7 +744,7 @@ fn emergency_failure_cannot_construct_the_reserved_failed_job_state() {
     )
     .expect_err("a live canonical job must be left for its deadline");
 
-    assert!(matches!(error, PrecompileError::Fatal(_)));
+    assert!(matches!(error, PrecompileError::Revert(_)));
     assert_eq!(provider.storage, storage_before);
     assert_eq!(provider.events, events_before);
     let (_, after_record) = live_intent(&mut provider, fixture.wwd);
@@ -762,7 +762,7 @@ fn malformed_persisted_request_receipt_remains_fatal_and_atomic() {
 
     let error = fixture.apply().unwrap_err();
 
-    assert!(matches!(error, PrecompileError::Fatal(_)));
+    assert!(matches!(error, PrecompileError::Revert(_)));
     assert_eq!(fixture.rollback_snapshot(), before);
 }
 

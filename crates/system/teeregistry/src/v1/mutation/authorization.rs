@@ -23,9 +23,7 @@ impl TeeRegistry<'_> {
         if intent.operation != expected_operation
             || intent.attestation_mode != policy.attestation_mode
         {
-            return Err(PrecompileError::Revert(
-                "attestation intent operation or mode does not match the registry mutator".into(),
-            ));
+            return Err(TeeRegistryError::IntentOperationOrModeMismatch.into());
         }
         Ok(())
     }
@@ -47,9 +45,7 @@ impl TeeRegistry<'_> {
             || !self
                 .policy_hash_admitted_v1(policy_hash, expected_operation.is_measurement_upgrade())?
         {
-            return Err(PrecompileError::Revert(
-                "registration intent does not bind the authoritative V1 policy".into(),
-            ));
+            return Err(TeeRegistryError::IntentPolicyHashMismatch.into());
         }
         Ok(policy_hash)
     }
@@ -69,19 +65,13 @@ impl TeeRegistry<'_> {
             .map_err(|error| revert_codec("registration enclave identity is invalid", error))?
             != intent.enclave_id
         {
-            return Err(PrecompileError::Revert(
-                "registration enclave id is not derived from its persistent keys".into(),
-            ));
+            return Err(TeeRegistryError::EnclaveIdDerivationMismatch.into());
         }
         if !intent.verify_node_signature(node_signature) {
-            return Err(PrecompileError::Revert(
-                "node proof of possession is invalid".into(),
-            ));
+            return Err(TeeRegistryError::NodePopInvalid.into());
         }
         if !intent.verify_enclave_signature(enclave_signature) {
-            return Err(PrecompileError::Revert(
-                "enclave proof of possession is invalid".into(),
-            ));
+            return Err(TeeRegistryError::EnclavePopInvalid.into());
         }
 
         Ok(())
@@ -107,10 +97,7 @@ impl TeeRegistry<'_> {
             height,
         ) != 1
         {
-            return Err(PrecompileError::Revert(
-                "verified enclave claims must match exactly one active profile measurement rule"
-                    .into(),
-            ));
+            return Err(TeeRegistryError::ClaimsMeasurementRuleMatchInvalid.into());
         }
         let platform_requires_advisory_policy = matches!(
             claims.platform_tcb_status,
@@ -124,9 +111,7 @@ impl TeeRegistry<'_> {
             && policy.accepted_platform_tcb_statuses
                 != PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded
         {
-            return Err(PrecompileError::Revert(
-                "QVL Platform TCB status is stricter than active policy allows".into(),
-            ));
+            return Err(TeeRegistryError::PlatformTcbStatusDisallowed.into());
         }
 
         Ok(())

@@ -25,8 +25,12 @@ use crate::{
     CeDomain, CollectionKey, WwdEntityId,
 };
 
-fn invalid(message: impl Into<String>) -> CeAuditError {
-    CeAuditError::Invalid(message.into())
+fn invalid(message: impl core::fmt::Display) -> CeAuditError {
+    CeAuditError::Invalid(message.to_string())
+}
+
+fn create_scratch_db_error(error: impl core::fmt::Display) -> CeAuditError {
+    CeAuditError::Invalid(format!("create audit scratch database: {error:#}"))
 }
 
 pub(in crate::persistence) fn audit(
@@ -44,7 +48,7 @@ pub(in crate::persistence) fn audit(
     }
     verify_source(source, &source_path, identity, required)?;
     let mut database = create_db(scratch_path.join("trees"), DatabaseArguments::default())
-        .map_err(|error| invalid(format!("create audit scratch database: {error:#}")))?;
+        .map_err(create_scratch_db_error)?;
     database.create_and_track_tables_for::<tables::CeTables>()?;
     let rebuilt = database.tx_mut()?;
     let mut report = CeAuditReport {
@@ -102,9 +106,8 @@ fn verify_collection(
     let domain = domain_for_collection(collection)?;
     let roots = read_collection_roots(source, path, collection, domain.shard_count())?
         .ok_or_else(|| invalid("catalog entry has no materialized collection roots"))?;
-    let top = aggregate_b256_shard_roots(&roots).map_err(|error| invalid(error.to_string()))?;
-    let expected =
-        collection_root(domain, collection, top).map_err(|error| invalid(error.to_string()))?;
+    let top = aggregate_b256_shard_roots(&roots).map_err(invalid)?;
+    let expected = collection_root(domain, collection, top).map_err(invalid)?;
     let key = prefixed_key(TreeNamespace::Catalog, collection.as_bytes());
     let actual = source
         .get::<tables::CeLeaves>(key)?
@@ -146,10 +149,7 @@ fn domain_for_collection(key: CollectionKey) -> Result<CeDomain, CeAuditError> {
         CeDomain::Gem,
         CeDomain::GemBucket,
     ] {
-        if crate::collection_key(domain, WwdEntityId::from([0; 32]))
-            .map_err(|error| invalid(error.to_string()))?
-            == key
-        {
+        if crate::collection_key(domain, WwdEntityId::from([0; 32])).map_err(invalid)? == key {
             return Ok(domain);
         }
     }
@@ -184,7 +184,7 @@ fn verify_source(
             "genesis must use its native empty catalog and configured block identity",
         ));
     }
-    if sealed_root(catalog).map_err(|error| invalid(error.to_string()))? != required.root {
+    if sealed_root(catalog).map_err(invalid)? != required.root {
         return Err(invalid("sealed catalog root differs from required root"));
     }
     Ok(())

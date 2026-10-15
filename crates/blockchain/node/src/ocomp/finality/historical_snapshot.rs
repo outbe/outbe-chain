@@ -10,7 +10,7 @@ pub(super) fn read_historical_committee_snapshot(
     let word = |slot: U256| -> Result<U256, FinalizedIntentProofBuildError> {
         state
             .storage(VALIDATOR_SET_ADDRESS, B256::new(slot.to_be_bytes::<32>()))
-            .map_err(|error| FinalizedIntentProofBuildError::State(error.to_string()))
+            .map_err(FinalizedIntentProofBuildError::state)
             .map(Option::unwrap_or_default)
     };
 

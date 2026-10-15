@@ -15,6 +15,7 @@ use zeroize::Zeroizing;
 use crate::{
     compute::{compute_nominal, compute_token_id, parse_canonical_amount},
     crypto::ecdhe_tribute_offer_decrypt,
+    errors::{EnclaveResult, PayloadError, ProcessError},
     payload::{self, TributeInputPayload},
     process::TributeOfferKeyMaterial,
     tribute_encryption::encrypt_tribute,
@@ -37,7 +38,7 @@ pub fn process_encrypted_tribute_offer_batch(
         .iter()
         .map(|offer| {
             process_one(key, chain_id, offer)
-                .unwrap_or_else(EncryptedTributeOfferResultV2::rejected)
+                .unwrap_or_else(|e| EncryptedTributeOfferResultV2::rejected(e.to_string()))
         })
         .collect();
     (results, encrypted_offer_inputs_hash(chain_id, offers))
@@ -46,7 +47,7 @@ pub fn process_encrypted_tribute_offer_batch(
 fn decrypt_payload(
     key: &TributeOfferKeyMaterial<'_>,
     offer: &EncryptedTributeOffer,
-) -> Result<PayloadV2, String> {
+) -> EnclaveResult<PayloadV2> {
     let plaintext = Zeroizing::new(
         ecdhe_tribute_offer_decrypt(
             key.tribute_offer_private_key,
@@ -55,10 +56,10 @@ fn decrypt_payload(
             &offer.nonce,
             &offer.cipher_text,
         )
-        .map_err(|error| format!("decryption failed: {error}"))?,
+        .map_err(ProcessError::decryption_failed)?,
     );
     let payload: PayloadV2 = serde_json::from_slice(&plaintext)
-        .map_err(|error| format!("invalid encrypted Tribute payload: {error}"))?;
+        .map_err(PayloadError::parse_encrypted_tribute_payload)?;
     payload::validate(&payload.input)?;
     Ok(payload)
 }
@@ -67,23 +68,23 @@ fn process_one(
     key: &TributeOfferKeyMaterial<'_>,
     chain_id: u64,
     offer: &EncryptedTributeOffer,
-) -> Result<EncryptedTributeOfferResultV2, String> {
+) -> EnclaveResult<EncryptedTributeOfferResultV2> {
     if offer
         .zk_context
         .as_ref()
         .is_some_and(|context| context.chain_id != chain_id)
     {
-        return Err("offer proof chain differs from resident chain".into());
+        return Err(ProcessError::OfferProofChainMismatch.into());
     }
     let payload = decrypt_payload(key, offer)?;
     let owner = payload
         .input
         .creator
         .parse::<Address>()
-        .map_err(|_| "creator must be an L1 address")?;
+        .map_err(|_| ProcessError::InvalidCreatorAddress)?;
     let amount = parse_canonical_amount(&payload.input.amount_base, &payload.input.amount_micro)?;
     if amount.amount_minor.is_zero() {
-        return Err("amount must be positive".into());
+        return Err(ProcessError::AmountNotPositive.into());
     }
     let zk_expected_hashes = derive_expected_hashes(offer, &payload.input, &amount)?;
     let (nominal_amount_minor, tribute_price_minor) = compute_nominal(
@@ -114,7 +115,7 @@ fn process_one(
         context,
         &amounts,
     )
-    .map_err(|error| format!("Tribute encryption failed: {error}"))?;
+    .map_err(ProcessError::tribute_encryption_failed)?;
     Ok(EncryptedTributeOfferResultV2 {
         token_id,
         tribute: Some(tribute),

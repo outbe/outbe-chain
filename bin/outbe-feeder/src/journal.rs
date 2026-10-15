@@ -11,8 +11,10 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use eyre::{bail, Context, Result};
+use eyre::{Context, Result};
 use serde::{Deserialize, Serialize};
+
+use crate::errors::JournalError;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -45,7 +47,7 @@ pub struct Journal {
 impl Journal {
     pub fn open(path: &Path, identity: &str) -> Result<Self> {
         if identity.is_empty() {
-            bail!("pending vote journal identity must not be empty");
+            return Err(JournalError::EmptyIdentity.into());
         }
         let lock_path = suffixed(path, ".lock");
         reject_symlink(&lock_path)?;
@@ -67,13 +69,10 @@ impl Journal {
                 let record: Record = serde_json::from_reader(file)
                     .wrap_err("invalid pending vote journal; refusing to discard it")?;
                 if record.version != 1 {
-                    bail!(
-                        "unsupported pending vote journal version {}",
-                        record.version
-                    );
+                    return Err(JournalError::UnsupportedVersion(record.version).into());
                 }
                 if record.identity != identity {
-                    bail!("pending vote journal belongs to a different chain or signer");
+                    return Err(JournalError::IdentityMismatch.into());
                 }
                 Some(record)
             }
@@ -104,7 +103,7 @@ impl Journal {
             if existing == &pending {
                 return Ok(());
             }
-            bail!("cannot replace an unresolved pending vote");
+            return Err(JournalError::UnresolvedPendingVote.into());
         }
         self.persist(Some(pending))
     }
@@ -118,26 +117,26 @@ impl Journal {
     pub fn replace(&mut self, pending: PendingVote) -> Result<()> {
         self.ensure_writable()?;
         let Some(existing) = &self.pending else {
-            bail!("cannot replace a vote without an unresolved pending transaction");
+            return Err(JournalError::NoPendingTransaction.into());
         };
         if pending.nonce != existing.nonce {
-            bail!("replacement must retain the unresolved nonce");
+            return Err(JournalError::NonceMismatch.into());
         }
         if pending.hash == existing.hash || pending.raw == existing.raw {
-            bail!("replacement must be a different signed transaction");
+            return Err(JournalError::IdenticalTransaction.into());
         }
         if pending.max_fee_per_gas <= existing.max_fee_per_gas {
-            bail!("replacement fee cap must increase");
+            return Err(JournalError::FeeCapNotIncreased.into());
         }
         if pending.created_at != existing.created_at {
-            bail!("replacement must preserve the original pending age");
+            return Err(JournalError::PendingAgeChanged.into());
         }
         self.persist(Some(pending))
     }
 
     fn ensure_writable(&self) -> Result<()> {
         if self.poisoned {
-            bail!("journal durability is uncertain; restart and reconcile before submitting");
+            return Err(JournalError::DurabilityUncertain.into());
         }
         Ok(())
     }
@@ -210,7 +209,7 @@ fn set_private(file: &File) -> Result<()> {
 fn reject_symlink(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
-            bail!("journal path must not be a symlink: {}", path.display())
+            Err(JournalError::SymlinkPath(path.to_owned()).into())
         }
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),

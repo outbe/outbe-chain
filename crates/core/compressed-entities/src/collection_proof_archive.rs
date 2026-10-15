@@ -151,10 +151,9 @@ impl TributeProofArchiveV1 {
             return Err(corrupt(&path));
         }
         Ok(CollectionBodyProofV1 {
-            shard_smt_proof: CkbCompiledProofV1::new(proof.0)
-                .map_err(|e| protocol_error(e.to_string()))?,
+            shard_smt_proof: CkbCompiledProofV1::new(proof.0).map_err(protocol_error)?,
             shard_top_siblings: top_siblings(&self.shard_roots, shard as u32)
-                .map_err(|e| protocol_error(e.to_string()))?,
+                .map_err(protocol_error)?,
         })
     }
 
@@ -206,7 +205,7 @@ fn compile_archived_proof(
     siblings.reverse();
     let proof = MerkleProof::new(vec![bitmap], siblings)
         .compile(vec![H256::from(key.as_bytes())])
-        .map_err(|e| tree_error(TreeError::Vendor(e.to_string())))?;
+        .map_err(protocol_error)?;
     Ok((proof, leaf))
 }
 
@@ -225,9 +224,7 @@ impl ArchiveNodeWriter {
         Ok(Self { file, count: 0 })
     }
     pub(crate) fn finish(self) -> Result<()> {
-        self.file
-            .sync_all()
-            .map_err(|e| protocol_error(format!("sync proof shard: {e}")))
+        self.file.sync_all().map_err(sync_proof_shard_error)
     }
     fn append(&mut self, node: ArchiveNode) -> std::result::Result<u64, TreeError> {
         let mut bytes = Vec::with_capacity(NODE_BYTES);
@@ -238,9 +235,7 @@ impl ArchiveNodeWriter {
         encode_merge(&mut bytes, &node.left);
         encode_merge(&mut bytes, &node.right);
         debug_assert_eq!(bytes.len(), NODE_BYTES);
-        self.file
-            .write_all(&bytes)
-            .map_err(|e| TreeError::Vendor(e.to_string()))?;
+        self.file.write_all(&bytes).map_err(TreeError::vendor)?;
         self.count = self
             .count
             .checked_add(1)
@@ -376,11 +371,14 @@ fn decode_merge(bytes: &[u8], path: &Path) -> Result<MergeValue> {
 fn shard_path(root: &Path, shard: usize) -> PathBuf {
     root.join(format!("proof-shard-{shard:02}.bin"))
 }
-fn tree_error(error: TreeError) -> TributePartitionReconstructionError {
-    protocol_error(error.to_string())
+fn tree_error(error: impl core::fmt::Display) -> TributePartitionReconstructionError {
+    protocol_error(error)
 }
-fn protocol_error(message: String) -> TributePartitionReconstructionError {
-    TributePartitionReconstructionError::Tree(message)
+fn protocol_error(message: impl core::fmt::Display) -> TributePartitionReconstructionError {
+    TributePartitionReconstructionError::Tree(message.to_string())
+}
+fn sync_proof_shard_error(error: impl core::fmt::Display) -> TributePartitionReconstructionError {
+    TributePartitionReconstructionError::Tree(format!("sync proof shard: {error}"))
 }
 fn corrupt(path: &Path) -> TributePartitionReconstructionError {
     TributePartitionReconstructionError::CorruptRun(path.to_path_buf())

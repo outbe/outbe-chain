@@ -35,6 +35,10 @@ use crate::dcap_verifier::{
     DcapVerificationProgressV1, DcapVerificationSessionV1,
 };
 use crate::dkg::{build_ceremony_info, DkgSessionStore};
+use crate::errors::{
+    transport_handshake, transport_noise, transport_noise_debug, EnclaveResult,
+    TransportDispatchError,
+};
 use crate::initialization::{
     InitializationMode, InitializationState, PendingInitialization, PendingRemoteSessionV1,
     SessionAuthorityV1,
@@ -90,7 +94,7 @@ use dispatch::dkg::dispatch_dkg_open;
 
 use dispatch::onboarding::{
     complete_gramine_direct_dev_onboarding_ingest_response,
-    complete_onboarding_artifact_ingest_response,
+    complete_onboarding_artifact_ingest_response, OnboardingArtifactExpectations,
 };
 
 use dispatch::requests::{

@@ -13,6 +13,7 @@
 //! paths for external callers. Migrate those callers opportunistically.
 pub mod constants;
 mod equivocation;
+pub mod errors;
 mod evidence;
 pub mod hooks;
 pub mod metrics;

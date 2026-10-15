@@ -6,6 +6,7 @@
 mod abi;
 mod aggregator;
 mod config;
+mod errors;
 mod fixed;
 mod health;
 mod journal;
@@ -24,6 +25,7 @@ use eyre::Result;
 use tracing::{info, warn};
 
 use crate::config::FeederConfig;
+use crate::errors::FeederError;
 use crate::health::FeederHealth;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -155,9 +157,20 @@ async fn run_feeder(config: FeederConfig, config_path: &std::path::Path) -> Resu
     // A zero configured interval must not cause a busy loop.
     let interval = std::time::Duration::from_secs(config.oracle.poll_interval_secs.max(1));
     let mut shutdown = std::pin::pin!(shutdown_signal());
+    let mut tick_ctx = FeederTickContext {
+        config: &config,
+        providers: &providers,
+        client: &client,
+        wallet: &wallet,
+        signer,
+        validator,
+        journal: &mut journal,
+        health: &health,
+        last_attempt: &mut last_attempt,
+    };
     loop {
         let result = tokio::select! {
-            result=feeder_tick(&config,&providers,&client,&wallet,signer,validator,&mut journal,&health,&mut last_attempt)=>result,
+            result=feeder_tick(&mut tick_ctx)=>result,
             reason=&mut shutdown=>{info!(signal=reason.as_str(),"shutdown; pending transaction preserved");return Ok(());}
         };
         if let Err(error) = result {
@@ -186,146 +199,204 @@ fn pending_vote_journal_path(config_path: &Path, identity: &str) -> Result<PathB
             .expect("canonical config has a parent")
             .to_path_buf(),
     };
-    eyre::ensure!(directory.is_dir(), "feeder state path is not a directory");
+    if !directory.is_dir() {
+        return Err(FeederError::StatePathNotDirectory.into());
+    }
     Ok(directory.join(format!("pending-{}.json", keccak256(identity.as_bytes()))))
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn feeder_tick(
-    config: &FeederConfig,
-    providers: &[Box<dyn provider::Provider>],
-    client: &oracle_client::OracleClient,
-    wallet: &alloy_network::EthereumWallet,
-    signer: alloy_primitives::Address,
-    validator: alloy_primitives::Address,
-    journal: &mut journal::Journal,
-    health: &FeederHealth,
-    last_attempt: &mut Option<u64>,
-) -> Result<()> {
-    use oracle_client::PreflightResult;
-    let head = client.head().await?;
-    let period = head.period(config.oracle.vote_period);
-    health.record_head(head.height);
-    health.set_period(period);
-    health.set_pending(
-        journal.pending().map(|p| p.hash.as_str()),
-        journal.pending().map(|p| p.created_at).unwrap_or(0),
-    );
-    // All reads refer to the same canonical block, including price freshness.
-    // A failed price-monitor read must not prevent voting. Freshness expires.
-    let monitor = async {
-        for pair in &config.currency_pairs {
-            let (base, quote) = pair.oracle_pair()?;
-            match client.price_observation(&head, base, quote).await {
-                Ok((block, time)) => {
-                    health.record_oracle(&format!("{}/{}", pair.base, pair.quote), block, time)
+pub(crate) struct FeederTickContext<'a> {
+    pub config: &'a FeederConfig,
+    pub providers: &'a [Box<dyn provider::Provider>],
+    pub client: &'a oracle_client::OracleClient,
+    pub wallet: &'a alloy_network::EthereumWallet,
+    pub signer: alloy_primitives::Address,
+    pub validator: alloy_primitives::Address,
+    pub journal: &'a mut journal::Journal,
+    pub health: &'a FeederHealth,
+    pub last_attempt: &'a mut Option<u64>,
+}
+
+enum PendingReconciliation {
+    Settled,
+    Continue { replace_pending: bool },
+}
+
+impl FeederTickContext<'_> {
+    async fn observe_oracle_freshness(&self, head: &oracle_client::Head) {
+        // All reads refer to the same canonical block, including price freshness.
+        // A failed price-monitor read must not prevent voting. Freshness expires.
+        let monitor = async {
+            for pair in &self.config.currency_pairs {
+                let (base, quote) = pair.oracle_pair()?;
+                match self.client.price_observation(head, base, quote).await {
+                    Ok((block, time)) => self.health.record_oracle(
+                        &format!("{}/{}", pair.base, pair.quote),
+                        block,
+                        time,
+                    ),
+                    Err(error) => warn!(error=%error,"cannot read oracle freshness"),
                 }
-                Err(error) => warn!(error=%error,"cannot read oracle freshness"),
             }
+            Ok::<_, eyre::Report>(())
+        };
+        if let result @ (Err(_) | Ok(Err(_))) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), monitor).await
+        {
+            warn!(
+                ?result,
+                "oracle freshness observation incomplete; voting continues"
+            );
         }
-        Ok::<_, eyre::Report>(())
-    };
-    match tokio::time::timeout(std::time::Duration::from_secs(2), monitor).await {
-        Ok(Ok(())) => {}
-        result => warn!(
-            ?result,
-            "oracle freshness observation incomplete; voting continues"
-        ),
     }
-    let mut replace_pending = false;
-    if let Some(pending) = journal.pending().cloned() {
-        if let Some(receipt) = client.receipt(&pending).await? {
+
+    fn clear_settled_pending(&mut self) -> Result<()> {
+        self.journal.clear().map_err(persistence)?;
+        self.health.set_pending(None, 0);
+        *self.last_attempt = None;
+        Ok(())
+    }
+
+    async fn reconcile_pending(
+        &mut self,
+        head: &oracle_client::Head,
+    ) -> Result<PendingReconciliation> {
+        let Some(pending) = self.journal.pending().cloned() else {
+            return Ok(PendingReconciliation::Continue {
+                replace_pending: false,
+            });
+        };
+        let mut replace_pending = false;
+        if let Some(receipt) = self.client.receipt(&pending).await? {
             if receipt.success {
-                info!(tx_hash=%receipt.hash,block=receipt.height,period=receipt.height/config.oracle.vote_period,"oracle vote submitted");
-                health.record_success(receipt.height);
-                journal.clear().map_err(persistence)?;
-                health.set_pending(None, 0);
-                *last_attempt = None;
-                return Ok(());
-            } else {
-                health.record_failure();
-                warn!(tx_hash=%receipt.hash,block=receipt.height,"oracle vote reverted; rechecking canonical nonce and period");
+                info!(tx_hash=%receipt.hash,block=receipt.height,period=receipt.height/self.config.oracle.vote_period,"oracle vote submitted");
+                self.health.record_success(receipt.height);
+                self.clear_settled_pending()?;
+                return Ok(PendingReconciliation::Settled);
             }
+            self.health.record_failure();
+            warn!(tx_hash=%receipt.hash,block=receipt.height,"oracle vote reverted; rechecking canonical nonce and period");
             // Outbe can emit a synthetic failure receipt without consuming the
             // nonce. Keep it until a fresh, fee-bumped same-nonce vote is durable.
             replace_pending = true;
         }
-        if client.nonce(&head, signer).await? > pending.nonce {
+        if self.client.nonce(head, self.signer).await? > pending.nonce {
             warn!(tx_hash=%pending.hash,nonce=pending.nonce,"canonical nonce consumed without this receipt; reconciling from chain state");
-            journal.clear().map_err(persistence)?;
-            health.set_pending(None, 0);
-            *last_attempt = None;
-            return Ok(());
+            self.clear_settled_pending()?;
+            return Ok(PendingReconciliation::Settled);
         }
         replace_pending |= head.height.saturating_sub(pending.observed_height)
-            > config.oracle.vote_period.saturating_mul(2).max(8);
+            > self.config.oracle.vote_period.saturating_mul(2).max(8);
+        Ok(PendingReconciliation::Continue { replace_pending })
     }
-    match client
-        .preflight(&head, config.oracle.vote_period, validator, signer)
-        .await?
-    {
-        PreflightResult::AlreadyVoted => {
-            health.set_reason("already voted in observed period");
-            return Ok(());
+
+    async fn check_preflight(&self, head: &oracle_client::Head) -> Result<bool> {
+        use oracle_client::PreflightResult;
+        match self
+            .client
+            .preflight(
+                head,
+                self.config.oracle.vote_period,
+                self.validator,
+                self.signer,
+            )
+            .await?
+        {
+            PreflightResult::AlreadyVoted => {
+                self.health.set_reason("already voted in observed period");
+                Ok(false)
+            }
+            PreflightResult::Blocked(reason) => {
+                self.health.set_reason(&reason);
+                warn!(%reason,"oracle voting blocked; will recheck");
+                Ok(false)
+            }
+            PreflightResult::Eligible => Ok(true),
         }
-        PreflightResult::Blocked(reason) => {
-            health.set_reason(&reason);
-            warn!(%reason,"oracle voting blocked; will recheck");
-            return Ok(());
-        }
-        PreflightResult::Eligible => {}
     }
-    // At most one aggregation/broadcast per observed head. Errors never consume
-    // a whole period. Receipt polling continues even on an unchanged head.
-    if *last_attempt == Some(head.height) {
-        return Ok(());
-    }
-    *last_attempt = Some(head.height);
-    if journal.pending().is_none() || replace_pending {
+
+    async fn prepare_pending_vote(&mut self, period: u64, replace_pending: bool) -> Result<bool> {
+        use oracle_client::{PreflightResult, VoteSigningContext};
         let aggregated = tokio::time::timeout(
             std::time::Duration::from_secs(15),
-            aggregator::fetch_and_aggregate(providers, config),
+            aggregator::fetch_and_aggregate(self.providers, self.config),
         )
         .await??;
-        eyre::ensure!(!aggregated.is_empty(), "no price data available");
-        let fresh = client.head().await?;
-        if fresh.period(config.oracle.vote_period) != period {
-            health.set_reason("period changed during aggregation; fetching fresh prices");
-            return Ok(());
+        if aggregated.is_empty() {
+            return Err(FeederError::NoPriceDataAvailable.into());
         }
-        if client
-            .preflight(&fresh, config.oracle.vote_period, validator, signer)
-            .await?
-            != PreflightResult::Eligible
-        {
-            return Ok(());
+        let fresh = self.client.head().await?;
+        if fresh.period(self.config.oracle.vote_period) != period {
+            self.health
+                .set_reason("period changed during aggregation; fetching fresh prices");
+            return Ok(false);
+        }
+        let preflight = self
+            .client
+            .preflight(
+                &fresh,
+                self.config.oracle.vote_period,
+                self.validator,
+                self.signer,
+            )
+            .await?;
+        if preflight != PreflightResult::Eligible {
+            return Ok(false);
         }
         let calldata = vote_builder::encode_vote(&aggregated);
         if let Ok(decoded) = vote_builder::decode_vote_log(&calldata) {
             info!(vote=%decoded,"vote calldata");
         }
-        let pending = client
-            .sign_vote(
-                &fresh,
-                wallet,
-                signer,
-                &config.chain,
-                &calldata,
-                journal.pending(),
-            )
+        let sign_ctx = VoteSigningContext {
+            wallet: self.wallet,
+            signer: self.signer,
+            chain: &self.config.chain,
+        };
+        let pending = self
+            .client
+            .sign_vote(&fresh, &sign_ctx, &calldata, self.journal.pending())
             .await?;
         if replace_pending {
-            journal.replace(pending).map_err(persistence)?;
+            self.journal.replace(pending).map_err(persistence)?;
         } else {
-            journal.store(pending).map_err(persistence)?;
+            self.journal.store(pending).map_err(persistence)?;
         }
+        Ok(true)
     }
-    let pending = journal.pending().expect("persisted before broadcast");
-    health.set_pending(Some(&pending.hash), pending.created_at);
-    health.set_reason("awaiting canonical receipt");
+}
+
+async fn feeder_tick(ctx: &mut FeederTickContext<'_>) -> Result<()> {
+    let head = ctx.client.head().await?;
+    let period = head.period(ctx.config.oracle.vote_period);
+    ctx.health.record_head(head.height);
+    ctx.health.set_period(period);
+    ctx.health.set_pending(
+        ctx.journal.pending().map(|p| p.hash.as_str()),
+        ctx.journal.pending().map(|p| p.created_at).unwrap_or(0),
+    );
+    ctx.observe_oracle_freshness(&head).await;
+    let PendingReconciliation::Continue { replace_pending } = ctx.reconcile_pending(&head).await?
+    else {
+        return Ok(());
+    };
+    // At most one aggregation/broadcast per observed head. Errors never consume
+    // a whole period. Receipt polling continues even on an unchanged head.
+    if !ctx.check_preflight(&head).await? || *ctx.last_attempt == Some(head.height) {
+        return Ok(());
+    }
+    *ctx.last_attempt = Some(head.height);
+    if (ctx.journal.pending().is_none() || replace_pending)
+        && !ctx.prepare_pending_vote(period, replace_pending).await?
+    {
+        return Ok(());
+    }
+    let pending = ctx.journal.pending().expect("persisted before broadcast");
+    ctx.health
+        .set_pending(Some(&pending.hash), pending.created_at);
+    ctx.health.set_reason("awaiting canonical receipt");
     // Retain bytes before any send. Retries use the same bytes. A stalled or
     // failed vote can be fee-bumped only at the SAME nonce, never queued behind it.
-    client.broadcast(pending).await?;
+    ctx.client.broadcast(pending).await?;
     info!(tx_hash=%pending.hash,nonce=pending.nonce,period,"oracle vote broadcast; awaiting inclusion");
     Ok(())
 }

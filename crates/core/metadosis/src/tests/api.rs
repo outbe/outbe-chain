@@ -44,7 +44,7 @@ fn typed_day_query_rejects_each_invalid_membership_cardinality() {
             }
             let error = api::worldwide_day(storage, wwd).unwrap_err();
             assert!(
-                matches!(error, outbe_primitives::error::PrecompileError::Fatal(message)
+                matches!(error, outbe_primitives::error::PrecompileError::Revert(message)
                 if message == "Metadosis WWD membership is not exactly one of active/closed")
             );
         });

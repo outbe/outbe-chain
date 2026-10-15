@@ -26,7 +26,7 @@ use crate::dcap_protocol::{
     DcapOnboardingArtifactV1, DcapOnboardingContextV1, DcapOnboardingVerificationResultV1,
     DcapVerificationOutcomeV1, RegistrationVerificationRequest,
 };
-use crate::errors::TransportError;
+use crate::errors::{DevIdentityMismatchError, TransportError};
 use crate::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_primitives::tee_attestation_v1::{EnclaveInitializationManifestV1, RegistrationIntentV1};
 
@@ -57,19 +57,19 @@ impl DevPinnedIdentity {
 
     /// Exact-equality identity check (including the attestation label, so a
     /// `dcap` peer can never be replaced by a `none` peer).
-    fn matches(&self, client: &EnclaveClient) -> Result<(), String> {
+    fn matches(&self, client: &EnclaveClient) -> Result<(), DevIdentityMismatchError> {
         let (mrenclave, mrsigner, isv_svn) = client.measurements();
         if (mrenclave, mrsigner, isv_svn) != (self.mrenclave, self.mrsigner, self.isv_svn) {
-            return Err("enclave measurements changed across reconnect".into());
+            return Err(DevIdentityMismatchError::MeasurementsChanged);
         }
         if client.attestation_pub() != self.attestation_pub {
-            return Err("enclave attestation key changed across reconnect".into());
+            return Err(DevIdentityMismatchError::AttestationKeyChanged);
         }
         if client.noise_static_pub() != self.noise_static_pub {
-            return Err("enclave Noise static key changed across reconnect".into());
+            return Err(DevIdentityMismatchError::NoiseStaticKeyChanged);
         }
         if client.attestation_label() != self.attestation_label {
-            return Err("enclave attestation environment changed across reconnect".into());
+            return Err(DevIdentityMismatchError::AttestationEnvironmentChanged);
         }
         Ok(())
     }
@@ -464,7 +464,7 @@ impl EnclaveSession {
         }
     }
 
-    fn revoke(&mut self, reason: &'static str, detail: String) -> TransportError {
+    fn revoke(&mut self, reason: &'static str, detail: impl std::fmt::Display) -> TransportError {
         self.revoked = Some(reason);
         self.client = None;
         TransportError::IdentityMismatch(format!("{reason}: {detail}"))

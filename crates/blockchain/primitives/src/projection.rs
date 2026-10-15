@@ -69,6 +69,28 @@ impl ExecutionReadCancelled {
     }
 }
 
+/// Positive evidence that execution stopped on a node-local dependency failure
+/// (such as local TEE sidecar unavailability, off-chain body reader unavailability,
+/// or compressed-entity tree unavailability). This is a local abort, never a
+/// consensus block-validity verdict or a reason to crash the node process.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("execution stopped on a node-local dependency failure: {reason}")]
+pub struct NodeLocalExecutionAbort {
+    pub reason: String,
+}
+
+impl NodeLocalExecutionAbort {
+    /// Finds the typed node-local abort through adapters without parsing error messages.
+    pub fn find<'a>(mut error: &'a (dyn std::error::Error + 'static)) -> Option<&'a Self> {
+        loop {
+            if let Some(aborted) = error.downcast_ref::<Self>() {
+                return Some(aborted);
+            }
+            error = error.source()?;
+        }
+    }
+}
+
 /// Exact block identity through which one projection view has applied all events.
 ///
 /// The owner defines durability: consensus readiness uses the logical overlay boundary, while

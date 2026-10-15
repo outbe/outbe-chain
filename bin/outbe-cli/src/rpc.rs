@@ -6,6 +6,8 @@ use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::errors::RpcError;
+
 /// Abstraction over JSON-RPC transport for testability.
 pub trait Rpc {
     fn upgrade_key_v1(
@@ -15,7 +17,7 @@ pub trait Rpc {
         legacy_direct_dev: bool,
     ) -> impl std::future::Future<Output = Result<Vec<u8>>> + Send {
         let _ = (context, proof, legacy_direct_dev);
-        async { Err(eyre::eyre!("upgrade-key RPC unsupported")) }
+        async { Err(RpcError::UpgradeKeyUnsupported.into()) }
     }
 
     fn eth_call(
@@ -31,7 +33,7 @@ pub trait Rpc {
     ) -> impl std::future::Future<Output = Result<Vec<u8>>> + Send {
         async move {
             let _ = (to, data, block_tag);
-            Err(eyre::eyre!("eth_call at an explicit block is unsupported"))
+            Err(RpcError::EthCallAtUnsupported.into())
         }
     }
     fn eth_block_number(&self) -> impl std::future::Future<Output = Result<u64>> + Send;
@@ -66,7 +68,7 @@ pub trait Rpc {
     fn outbe_tee_renewal_schedule_v1(
         &self,
     ) -> impl std::future::Future<Output = Result<TeeRenewalScheduleV1>> + Send {
-        async { Err(eyre::eyre!("TEE renewal schedule RPC is unsupported")) }
+        async { Err(RpcError::TeeRenewalScheduleUnsupported.into()) }
     }
     fn eth_get_block_by_number(
         &self,
@@ -74,7 +76,7 @@ pub trait Rpc {
     ) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn eth_get_latest_block(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn eth_get_finalized_block(&self) -> impl std::future::Future<Output = Result<Value>> + Send {
-        async { Err(eyre::eyre!("finalized block RPC is unsupported")) }
+        async { Err(RpcError::FinalizedBlockUnsupported.into()) }
     }
     fn outbe_get_finalization(
         &self,
@@ -82,7 +84,7 @@ pub trait Rpc {
     ) -> impl std::future::Future<Output = Result<Value>> + Send {
         async move {
             let _ = height;
-            Err(eyre::eyre!("outbe finalization RPC is unsupported"))
+            Err(RpcError::OutbeFinalizationUnsupported.into())
         }
     }
     fn outbe_get_finality_proof(
@@ -99,7 +101,7 @@ pub trait Rpc {
     ) -> impl std::future::Future<Output = Result<Value>> + Send {
         async move {
             let _ = (address, storage_slots, block);
-            Err(eyre::eyre!("eth_getProof RPC is unsupported"))
+            Err(RpcError::EthGetProofUnsupported.into())
         }
     }
     fn outbe_get_vrf_seed(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
@@ -152,41 +154,9 @@ impl RpcClient {
     }
 
     async fn call_rpc(&self, method: &str, params: Value) -> Result<Value> {
-        let id = self.id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0",
-            method: method.to_string(),
-            params,
-            id,
-        };
-
-        let resp: JsonRpcResponse = self
-            .client
-            .post(&self.url)
-            .json(&req)
-            .send()
-            .await
-            .wrap_err("failed to send RPC request")?
-            .error_for_status()
-            .wrap_err("RPC HTTP request failed")?
-            .json()
-            .await
-            .wrap_err("failed to parse RPC response")?;
-
-        if resp.id.as_ref() != Some(&Value::from(id)) {
-            eyre::bail!(
-                "RPC response id mismatch: expected {}, got {:?}",
-                id,
-                resp.id
-            );
-        }
-
-        if let Some(err) = resp.error {
-            eyre::bail!("RPC error {}: {}", err.code, err.message);
-        }
-
-        resp.result.ok_or_else(|| eyre::eyre!("empty RPC result"))
+        self.call_rpc_optional(method, params)
+            .await?
+            .ok_or_else(|| RpcError::EmptyResult.into())
     }
 
     /// Call an RPC method whose successful result may canonically be `null`,
@@ -212,40 +182,38 @@ impl RpcClient {
             .await
             .wrap_err("failed to parse RPC response")?;
         if resp.id.as_ref() != Some(&Value::from(id)) {
-            eyre::bail!(
-                "RPC response id mismatch: expected {}, got {:?}",
-                id,
-                resp.id
-            );
+            return Err(RpcError::ResponseIdMismatch {
+                expected: id,
+                actual: resp.id,
+            }
+            .into());
         }
         if let Some(err) = resp.error {
-            eyre::bail!("RPC error {}: {}", err.code, err.message);
+            return Err(RpcError::Server {
+                code: err.code,
+                message: err.message,
+            }
+            .into());
         }
         Ok(resp.result)
     }
 
     fn parse_hex_u64(val: &Value) -> Result<u64> {
-        let hex_str = val
-            .as_str()
-            .ok_or_else(|| eyre::eyre!("expected hex string"))?;
+        let hex_str = val.as_str().ok_or(RpcError::ExpectedHexString)?;
         let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
         u64::from_str_radix(hex_str, 16).wrap_err("failed to parse hex u64")
     }
 
     fn parse_hex_bytes(val: &Value) -> Result<Vec<u8>> {
-        let hex_str = val
-            .as_str()
-            .ok_or_else(|| eyre::eyre!("expected hex string"))?;
+        let hex_str = val.as_str().ok_or(RpcError::ExpectedHexString)?;
         let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
         hex::decode(hex_str).wrap_err("failed to decode hex bytes")
     }
 
     fn parse_hex_u256(val: &Value) -> Result<U256> {
-        let hex_str = val
-            .as_str()
-            .ok_or_else(|| eyre::eyre!("expected hex string"))?;
+        let hex_str = val.as_str().ok_or(RpcError::ExpectedHexString)?;
         let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-        U256::from_str_radix(hex_str, 16).map_err(|e| eyre::eyre!("failed to parse U256: {e}"))
+        U256::from_str_radix(hex_str, 16).map_err(|e| RpcError::ParseU256(e).into())
     }
 
     /// Call `outbe_getVrfSeed` with a specific block number.
@@ -351,7 +319,7 @@ impl Rpc for RpcClient {
         result
             .as_str()
             .map(|s| s.to_string())
-            .ok_or_else(|| eyre::eyre!("expected tx hash string"))
+            .ok_or_else(|| RpcError::ExpectedTxHashString.into())
     }
 
     async fn eth_get_transaction_receipt(&self, transaction_hash: &str) -> Result<Option<Value>> {
@@ -522,7 +490,7 @@ impl Rpc for RpcClient {
         result
             .as_array()
             .cloned()
-            .ok_or_else(|| eyre::eyre!("expected array of logs"))
+            .ok_or_else(|| RpcError::ExpectedLogsArray.into())
     }
 }
 
@@ -552,8 +520,15 @@ pub mod mock {
         let gas_price = crate::tx::buffered_gas_price(base_fee);
         let signer = TxSigner::new(private_key)?;
         let gas_limit = GAS_ESTIMATE + GAS_ESTIMATE / 5;
-        let raw_tx = signer
-            .sign_legacy_tx_for_test(NONCE, gas_price, gas_limit, to, value, &data, CHAIN_ID)?;
+        let raw_tx = signer.sign_legacy_tx_for_test(crate::tx::LegacyTx {
+            nonce: NONCE,
+            gas_price,
+            gas_limit,
+            to,
+            value,
+            data: &data,
+            chain_id: CHAIN_ID,
+        })?;
 
         Ok(RecordingRpc::new([
             ExpectedRpcCall::ok(
@@ -618,27 +593,27 @@ pub mod mock {
     impl Default for MockRpc {
         fn default() -> Self {
             Self {
-                block_number: Err(eyre::eyre!("not mocked")),
-                chain_id: Err(eyre::eyre!("not mocked")),
-                gas_price: Err(eyre::eyre!("not mocked")),
-                balance: Err(eyre::eyre!("not mocked")),
-                peer_count: Err(eyre::eyre!("not mocked")),
-                tx_count: Err(eyre::eyre!("not mocked")),
-                estimate_gas: Err(eyre::eyre!("not mocked")),
-                send_raw_tx: Err(eyre::eyre!("not mocked")),
-                transaction_receipt: Err(eyre::eyre!("not mocked")),
+                block_number: Err(RpcError::NotMocked.into()),
+                chain_id: Err(RpcError::NotMocked.into()),
+                gas_price: Err(RpcError::NotMocked.into()),
+                balance: Err(RpcError::NotMocked.into()),
+                peer_count: Err(RpcError::NotMocked.into()),
+                tx_count: Err(RpcError::NotMocked.into()),
+                estimate_gas: Err(RpcError::NotMocked.into()),
+                send_raw_tx: Err(RpcError::NotMocked.into()),
+                transaction_receipt: Err(RpcError::NotMocked.into()),
                 eth_call_map: None,
                 eth_call_overrides: std::collections::HashMap::new(),
-                consensus_status: Err(eyre::eyre!("not mocked")),
-                epoch_info: Err(eyre::eyre!("not mocked")),
-                latest_block: Err(eyre::eyre!("not mocked")),
-                finalized_block: Err(eyre::eyre!("not mocked")),
+                consensus_status: Err(RpcError::NotMocked.into()),
+                epoch_info: Err(RpcError::NotMocked.into()),
+                latest_block: Err(RpcError::NotMocked.into()),
+                finalized_block: Err(RpcError::NotMocked.into()),
                 proof_fn: None,
-                block_by_number: Err(eyre::eyre!("not mocked")),
-                vrf_seed: Err(eyre::eyre!("not mocked")),
-                emission_info: Err(eyre::eyre!("not mocked")),
-                slash_config: Err(eyre::eyre!("not mocked")),
-                logs: Err(eyre::eyre!("not mocked")),
+                block_by_number: Err(RpcError::NotMocked.into()),
+                vrf_seed: Err(RpcError::NotMocked.into()),
+                emission_info: Err(RpcError::NotMocked.into()),
+                slash_config: Err(RpcError::NotMocked.into()),
+                logs: Err(RpcError::NotMocked.into()),
             }
         }
     }
@@ -646,7 +621,7 @@ pub mod mock {
     fn clone_result<T: Clone>(r: &Result<T>) -> Result<T> {
         match r {
             Ok(v) => Ok(v.clone()),
-            Err(e) => Err(eyre::eyre!("{e}")),
+            Err(e) => Err(RpcError::ClonedMock(e.to_string()).into()),
         }
     }
 
@@ -660,7 +635,7 @@ pub mod mock {
             }
             match &self.eth_call_map {
                 Some(map) => map.dispatch(to, data),
-                None => Err(eyre::eyre!("eth_call not mocked")),
+                None => Err(RpcError::EthCallNotMocked.into()),
             }
         }
         async fn eth_block_number(&self) -> Result<u64> {
@@ -715,9 +690,7 @@ pub mod mock {
             clone_result(&self.finalized_block)
         }
         async fn eth_get_proof(&self, _: Address, _: &[String], block: u64) -> Result<Value> {
-            self.proof_fn
-                .as_ref()
-                .ok_or_else(|| eyre::eyre!("proof not mocked"))?(block)
+            self.proof_fn.as_ref().ok_or(RpcError::ProofNotMocked)?(block)
         }
         async fn outbe_get_vrf_seed(&self) -> Result<Value> {
             clone_result(&self.vrf_seed)
@@ -894,37 +867,10 @@ mod tests {
 
         tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            let mut buf = [0u8; 1024];
-
-            loop {
-                let n = socket.read(&mut buf).await.unwrap();
-                if n == 0 {
-                    break;
-                }
-                request.extend_from_slice(&buf[..n]);
-
-                if let Some(header_end) = find_header_end(&request) {
-                    let headers = String::from_utf8_lossy(&request[..header_end]);
-                    let content_len = content_length(&headers);
-                    if request.len() >= header_end + 4 + content_len {
-                        break;
-                    }
-                }
-            }
-
-            let body_start = find_header_end(&request)
-                .map(|pos| pos + 4)
-                .unwrap_or(request.len());
-            let body = String::from_utf8_lossy(&request[body_start..]).to_string();
+            let body = read_http_request_body(&mut socket).await;
             let _ = body_tx.send(body);
 
-            let response = format!(
-                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                response_body.len(),
-                response_body
-            );
-            socket.write_all(response.as_bytes()).await.unwrap();
+            write_http_response(&mut socket, &status, &response_body).await;
         });
 
         (format!("http://{addr}"), body_rx)
@@ -941,26 +887,17 @@ mod tests {
         tokio::spawn(async move {
             for response_body in response_bodies {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                let request = read_http_request(&mut socket).await;
-                let body_start = find_header_end(&request)
-                    .map(|pos| pos + 4)
-                    .unwrap_or(request.len());
-                let body = String::from_utf8_lossy(&request[body_start..]).to_string();
+                let body = read_http_request_body(&mut socket).await;
                 let _ = body_tx.send(body).await;
 
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                    response_body.len(),
-                    response_body
-                );
-                socket.write_all(response.as_bytes()).await.unwrap();
+                write_http_response(&mut socket, "200 OK", &response_body).await;
             }
         });
 
         (format!("http://{addr}"), body_rx)
     }
 
-    async fn read_http_request(socket: &mut tokio::net::TcpStream) -> Vec<u8> {
+    async fn read_http_request_body(socket: &mut tokio::net::TcpStream) -> String {
         let mut request = Vec::new();
         let mut buf = [0u8; 1024];
 
@@ -980,7 +917,19 @@ mod tests {
             }
         }
 
-        request
+        let body_start = find_header_end(&request)
+            .map(|pos| pos + 4)
+            .unwrap_or(request.len());
+        String::from_utf8_lossy(&request[body_start..]).to_string()
+    }
+
+    async fn write_http_response(socket: &mut tokio::net::TcpStream, status: &str, body: &str) {
+        let response = format!(
+            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        socket.write_all(response.as_bytes()).await.unwrap();
     }
 
     fn find_header_end(buf: &[u8]) -> Option<usize> {
@@ -1438,78 +1387,55 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_rpc_client_json_rpc_error_returns_error() {
-        let (url, _body_rx) = serve_rpc_once(
-            "200 OK",
-            r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"missing method"},"id":1}"#,
-        )
-        .await;
+    async fn assert_block_number_rpc_error(status: &str, response_body: &str, expected_msg: &str) {
+        let (url, _body_rx) = serve_rpc_once(status, response_body).await;
         let client = RpcClient::new(&url);
-
         let err = client.eth_block_number().await.unwrap_err();
-
         assert!(
-            err.to_string().contains("RPC error -32601: missing method"),
+            err.to_string().contains(expected_msg),
             "unexpected error: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_rpc_client_json_rpc_error_returns_error() {
+        assert_block_number_rpc_error(
+            "200 OK",
+            r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"missing method"},"id":1}"#,
+            "RPC error -32601: missing method",
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn test_rpc_client_missing_result_errors() {
-        let (url, _body_rx) = serve_rpc_once("200 OK", r#"{"jsonrpc":"2.0","id":1}"#).await;
-        let client = RpcClient::new(&url);
-
-        let err = client.eth_block_number().await.unwrap_err();
-
-        assert!(
-            err.to_string().contains("empty RPC result"),
-            "unexpected error: {err}"
-        );
+        assert_block_number_rpc_error("200 OK", r#"{"jsonrpc":"2.0","id":1}"#, "empty RPC result")
+            .await;
     }
 
     #[tokio::test]
     async fn test_rpc_client_invalid_json_errors() {
-        let (url, _body_rx) = serve_rpc_once("200 OK", "not json").await;
-        let client = RpcClient::new(&url);
-
-        let err = client.eth_block_number().await.unwrap_err();
-
-        assert!(
-            err.to_string().contains("failed to parse RPC response"),
-            "unexpected error: {err}"
-        );
+        assert_block_number_rpc_error("200 OK", "not json", "failed to parse RPC response").await;
     }
 
     #[tokio::test]
     async fn test_rpc_client_http_status_error() {
-        let (url, _body_rx) = serve_rpc_once(
+        assert_block_number_rpc_error(
             "500 Internal Server Error",
             r#"{"jsonrpc":"2.0","result":"0x1","id":1}"#,
+            "RPC HTTP request failed",
         )
         .await;
-        let client = RpcClient::new(&url);
-
-        let err = client.eth_block_number().await.unwrap_err();
-
-        assert!(
-            err.to_string().contains("RPC HTTP request failed"),
-            "unexpected error: {err}"
-        );
     }
 
     #[tokio::test]
     async fn test_rpc_client_response_id_mismatch_errors() {
-        let (url, _body_rx) =
-            serve_rpc_once("200 OK", r#"{"jsonrpc":"2.0","result":"0x1","id":99}"#).await;
-        let client = RpcClient::new(&url);
-
-        let err = client.eth_block_number().await.unwrap_err();
-
-        assert!(
-            err.to_string().contains("RPC response id mismatch"),
-            "unexpected error: {err}"
-        );
+        assert_block_number_rpc_error(
+            "200 OK",
+            r#"{"jsonrpc":"2.0","result":"0x1","id":99}"#,
+            "RPC response id mismatch",
+        )
+        .await;
     }
 
     // --- parse_hex_u64 ---

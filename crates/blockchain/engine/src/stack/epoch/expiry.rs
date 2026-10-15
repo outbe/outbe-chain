@@ -44,13 +44,13 @@ where
                 .saturating_add(self.dkg_rotation_params.activation_grace_blocks);
             self.vrf_safety.mark_expired(finalized_height);
             publish_randomness_status(&self.bridge, &self.vrf_safety);
-            return Err(eyre::eyre!(
-                "{}: cycle {}, height {}, deadline {}",
+            return Err(crate::errors::StackEpochError::DkgTargetExpired {
                 diagnostic,
-                target.cycle,
-                finalized_height,
-                deadline
-            ));
+                cycle: target.cycle,
+                height: finalized_height,
+                deadline,
+            }
+            .into());
         }
         Ok(())
     }

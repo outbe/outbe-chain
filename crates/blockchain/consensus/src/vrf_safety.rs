@@ -24,7 +24,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use eyre::{ensure, Result};
+use crate::errors::VrfSafetyError;
+use eyre::Result;
 use outbe_primitives::consensus::RandomnessStatus;
 
 #[derive(Debug, Clone)]
@@ -156,12 +157,15 @@ impl VrfSafetyGate {
 
     pub fn ensure_block_allowed(&self, block_height: u64) -> Result<()> {
         let snapshot = self.snapshot();
-        ensure!(
-            snapshot.randomness_status != RandomnessStatus::Expired
-                && block_height <= snapshot.vrf_expiry_height,
-            "VRF material expired: block {block_height} exceeds expiry height {}",
-            snapshot.vrf_expiry_height
-        );
+        if snapshot.randomness_status == RandomnessStatus::Expired
+            || block_height > snapshot.vrf_expiry_height
+        {
+            return Err(VrfSafetyError::MaterialExpired {
+                block_height,
+                expiry_height: snapshot.vrf_expiry_height,
+            }
+            .into());
+        }
         Ok(())
     }
 

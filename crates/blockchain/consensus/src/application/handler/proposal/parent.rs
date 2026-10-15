@@ -91,16 +91,10 @@ impl ApplicationShared {
             {
                 Ok(Ok(block)) => (*block).clone(),
                 Ok(Err(_)) => {
-                    return Err(eyre::eyre!(
-                        "failed to resolve parent block {} for proposal",
-                        parent_digest.0
-                    ));
+                    return Err(ApplicationError::ResolveParentFailed(parent_digest.0).into());
                 }
                 Err(_) => {
-                    return Err(eyre::eyre!(
-                        "timed out resolving parent block {} for proposal",
-                        parent_digest.0
-                    ));
+                    return Err(ApplicationError::ResolveParentTimedOut(parent_digest.0).into());
                 }
             }
         };
@@ -178,16 +172,18 @@ impl ApplicationShared {
                         debug!(parent = %parent_digest.0, ?status, "parent verified by execution layer");
                     }
                     Ok(status) => {
-                        return Err(eyre::eyre!(
-                            "parent {} rejected by execution layer: {status:?}",
-                            parent_digest.0
-                        ));
+                        return Err(ApplicationError::ParentRejected {
+                            parent: parent_digest.0,
+                            status: format!("{status:?}"),
+                        }
+                        .into());
                     }
                     Err(e) => {
-                        return Err(eyre::eyre!(
-                            "new_payload failed for parent {}: {e}",
-                            parent_digest.0
-                        ));
+                        return Err(ApplicationError::ParentNewPayloadFailed {
+                            parent: parent_digest.0,
+                            reason: format!("{e}"),
+                        }
+                        .into());
                     }
                 }
             }

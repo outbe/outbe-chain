@@ -78,9 +78,7 @@ pub fn dispatch_auction_brief(
             let max_accepted = U256::from(u128::MAX);
             let reason = AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain;
             if matches!(overflow, BriefOverflowPolicy::Reject) {
-                return Err(outbe_primitives::error::PrecompileError::Revert(
-                    "auction brief limit exceeds Desis u128 domain".into(),
-                ));
+                return Err(crate::errors::DesisError::AuctionBriefLimitExceedsDomain.into());
             }
             let mut contract = storage.contract::<DesisContract>();
             contract.emit(IDesis::AuctionBriefRejectedToCarryOver {

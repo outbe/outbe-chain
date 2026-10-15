@@ -3,17 +3,18 @@
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::STAKING_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::{ValidatorLifecycle, ValidatorState};
 
 use crate::contract::Staking;
+use crate::errors::StakingError;
 
 impl Staking<'_> {
     pub(crate) fn checked_complete_time(&self, timestamp: u64, period: u64) -> Result<u64> {
-        timestamp.checked_add(period).ok_or_else(|| {
-            PrecompileError::Revert("unbonding completion timestamp overflow".into())
-        })
+        timestamp
+            .checked_add(period)
+            .ok_or_else(|| StakingError::UnbondingCompletionTimestampOverflow.into())
     }
 
     pub(crate) fn slashed_withdrawal_delay(&self) -> Result<u64> {
@@ -24,7 +25,7 @@ impl Staking<'_> {
         let unbonding_period = self.config_unbonding_period.read()?;
         unbonding_period
             .checked_mul(2)
-            .ok_or_else(|| PrecompileError::Revert("slashed withdrawal delay overflow".into()))
+            .ok_or_else(|| StakingError::SlashedWithdrawalDelayOverflow.into())
     }
 
     pub(crate) fn enqueue_unbonding(
@@ -182,19 +183,14 @@ impl Staking<'_> {
         }
         let total = self.total_staked.read()?;
         if stake > total {
-            return Err(PrecompileError::Revert(format!(
-                "stake accounting underflow for validator {}",
-                validator
-            )));
+            return Err(StakingError::StakeAccountingUnderflow { validator }.into());
         }
         self.stake_amount.write(&validator, U256::ZERO)?;
         self.total_staked.write(total - stake)?;
 
         let slash_count = state
             .history()
-            .ok_or_else(|| {
-                PrecompileError::Fatal("registered validator is missing history".into())
-            })?
+            .ok_or(StakingError::MissingValidatorHistory)?
             .slash_count();
         let period = if slash_count > 0 {
             self.slashed_withdrawal_delay()?

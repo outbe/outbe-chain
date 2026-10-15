@@ -268,7 +268,7 @@ fn invalid_or_repeated_initialization_does_not_mutate_state() {
         factory.initialize(&valid).unwrap();
         assert!(matches!(
             factory.initialize(&valid),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
         assert_eq!(token.token_id.read().unwrap(), valid.token_id);
         assert_eq!(token.total_supply.read().unwrap(), U256::ZERO);
@@ -284,7 +284,7 @@ fn unknown_schema_fails_closed_with_exact_migration_error() {
         token.schema_version.write(9).unwrap();
         assert!(matches!(
             StablecoinFactoryApi::new(storage).initialize(&init),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
         let error = token.identity().unwrap_err();
         let expected = IStablecoin::MigrationRequired {
@@ -312,7 +312,7 @@ fn non_pristine_root_is_rejected_without_overwrite() {
         let factory = StablecoinFactoryApi::new(storage.clone());
         assert!(matches!(
             factory.initialize(&init),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
         let token = StablecoinContract::new(storage, init.token_address);
         assert_eq!(token.schema_version.read().unwrap(), 0);

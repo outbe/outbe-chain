@@ -1,3 +1,4 @@
+use crate::errors::{display_error, CliError};
 use crate::*;
 
 #[derive(Debug, Clone, Default)]
@@ -6,11 +7,13 @@ pub(crate) struct OutbeChainSpecParser;
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct OutbeRpcModuleValidator;
 
-impl RpcModuleValidator for OutbeRpcModuleValidator {
-    fn parse_selection(s: &str) -> Result<RpcModuleSelection, String> {
-        let selection = s
-            .parse::<RpcModuleSelection>()
-            .map_err(|error| format!("Failed to parse RPC modules: {error}"))?;
+impl OutbeRpcModuleValidator {
+    fn parse_selection_typed(s: &str) -> Result<RpcModuleSelection, CliError> {
+        let selection =
+            s.parse::<RpcModuleSelection>()
+                .map_err(|error| CliError::ParseRpcModules {
+                    details: display_error(error),
+                })?;
 
         if let RpcModuleSelection::Selection(modules) = &selection {
             for module in modules {
@@ -18,12 +21,18 @@ impl RpcModuleValidator for OutbeRpcModuleValidator {
                     continue;
                 };
                 if name != "outbe" {
-                    return Err(format!("Unknown RPC module: '{name}'"));
+                    return Err(CliError::UnknownRpcModule { name: name.clone() });
                 }
             }
         }
 
         Ok(selection)
+    }
+}
+
+impl RpcModuleValidator for OutbeRpcModuleValidator {
+    fn parse_selection(s: &str) -> Result<RpcModuleSelection, std::string::String> {
+        Self::parse_selection_typed(s).map_err(display_error)
     }
 }
 
@@ -44,23 +53,27 @@ impl ChainSpecParser for OutbeChainSpecParser {
                 .map_header(OutbeHeader::new)
                 .into();
         validate_outbe_chain_spec(chain_spec.as_ref())?;
-        outbe_consensus::proof::init_consensus_chain_id(chain_spec.chain().id())
-            .map_err(|error| eyre::eyre!("invalid consensus chain identity: {error}"))?;
+        outbe_consensus::proof::init_consensus_chain_id(chain_spec.chain().id()).map_err(
+            |error| CliError::InvalidConsensusChainIdentity {
+                details: display_error(error),
+            },
+        )?;
         Ok(chain_spec)
     }
 }
 
 pub(crate) fn validate_outbe_chain_spec(chain_spec: &ChainSpec<OutbeHeader>) -> eyre::Result<()> {
     let chain_id = chain_spec.chain().id();
-    eyre::ensure!(
-        outbe_primitives::chain::network_for_chain_id(chain_id).is_some(),
-        "unknown Outbe chain ID {chain_id}"
-    );
+    if outbe_primitives::chain::network_for_chain_id(chain_id).is_none() {
+        return Err(CliError::UnknownOutbeChainId { chain_id }.into());
+    }
     outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
         chain_spec,
     )
     .activation()
-    .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
+    .map_err(|error| CliError::InvalidMandatoryTeeChainSpec {
+        details: display_error(error),
+    })?;
     outbe_node::ocomp::fork::require_startup_ocomp_fork_install(chain_spec)?;
     outbe_chain_constants::initialize(
         chain_spec
@@ -69,6 +82,8 @@ pub(crate) fn validate_outbe_chain_spec(chain_spec: &ChainSpec<OutbeHeader>) -> 
             .extra_fields
             .get(outbe_chain_constants::GENESIS_CONFIG_KEY),
     )
-    .map_err(|error| eyre::eyre!("invalid config.outbeProtocol: {error}"))?;
+    .map_err(|error| CliError::InvalidOutbeProtocolConfig {
+        details: display_error(error),
+    })?;
     Ok(())
 }

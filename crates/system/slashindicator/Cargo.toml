@@ -26,6 +26,7 @@ metrics.workspace = true
 commonware-codec.workspace = true
 commonware-cryptography.workspace = true
 commonware-utils.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 #     we can register in ValidatorSet + put in the committee snapshot.

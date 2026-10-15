@@ -25,13 +25,14 @@ where
         &mut self,
     ) -> Result<(), BlockExecutionError> {
         if self.ethereum_post_execution_requests.is_some() {
-            return Err(BlockExecutionError::msg(
+            return Err(BlockValidationError::msg(
                 "standard Ethereum post-execution changes already applied",
-            ));
+            )
+            .into());
         }
 
         validate_outbe_withdrawals(self.inner.ctx.withdrawals.as_deref())
-            .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+            .map_err(|err| BlockExecutionError::from(BlockValidationError::msg(err)))?;
 
         let requests = if self
             .inner

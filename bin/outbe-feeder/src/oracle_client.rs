@@ -8,12 +8,13 @@ use alloy_primitives::{keccak256, Address, Bytes};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
-use eyre::{ensure, eyre, Context, Result};
+use eyre::{Context, Result};
 use serde_json::{json, Value};
 
 use crate::{
     abi::{IOracle, IValidatorSet},
     config::{AccountConfig, ChainConfig},
+    errors::OracleError,
     journal::PendingVote,
 };
 
@@ -50,18 +51,6 @@ pub struct VoteReceipt {
     pub success: bool,
 }
 
-#[derive(Debug)]
-struct RpcFailure {
-    method: String,
-    error: Value,
-}
-impl std::fmt::Display for RpcFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.method, self.error)
-    }
-}
-impl std::error::Error for RpcFailure {}
-
 pub struct OracleClient {
     http: reqwest::Client,
     endpoint: String,
@@ -87,16 +76,18 @@ impl OracleClient {
             .json()
             .await?;
         if let Some(error) = response.get("error") {
-            return Err(RpcFailure {
+            return Err(OracleError::RpcFailure {
                 method: method.into(),
                 error: error.clone(),
             }
             .into());
         }
-        response
-            .get("result")
-            .cloned()
-            .ok_or_else(|| eyre!("{method}: missing result"))
+        response.get("result").cloned().ok_or_else(|| {
+            OracleError::MissingResult {
+                method: method.into(),
+            }
+            .into()
+        })
     }
     pub async fn head(&self) -> Result<Head> {
         let value = self
@@ -106,7 +97,7 @@ impl OracleClient {
             height: quantity(&value["number"])?,
             hash: value["hash"]
                 .as_str()
-                .ok_or_else(|| eyre!("missing block hash"))?
+                .ok_or(OracleError::MissingBlockHash)?
                 .into(),
         })
     }
@@ -117,16 +108,19 @@ impl OracleClient {
         validator: Address,
     ) -> Result<String> {
         let chain = quantity(&self.rpc("eth_chainId", json!([])).await?)?;
-        ensure!(
-            chain == expected_chain,
-            "RPC chain id {chain} differs from configured {expected_chain}"
-        );
+        if chain != expected_chain {
+            return Err(OracleError::ChainIdMismatch {
+                chain,
+                expected_chain,
+            }
+            .into());
+        }
         let genesis = self
             .rpc("eth_getBlockByNumber", json!(["0x0", false]))
             .await?;
         let hash = genesis["hash"]
             .as_str()
-            .ok_or_else(|| eyre!("missing genesis hash"))?;
+            .ok_or(OracleError::MissingGenesisHash)?;
         Ok(format!("{chain}:{hash}:{signer:#x}:{validator:#x}"))
     }
     async fn call<C: SolCall>(&self, head: &Head, to: Address, call: C) -> Result<C::Return> {
@@ -218,42 +212,44 @@ impl OracleClient {
                 .await?,
         )
     }
+}
+
+pub struct VoteSigningContext<'a> {
+    pub wallet: &'a EthereumWallet,
+    pub signer: Address,
+    pub chain: &'a ChainConfig,
+}
+
+impl OracleClient {
     pub async fn sign_vote(
         &self,
         head: &Head,
-        wallet: &EthereumWallet,
-        signer: Address,
-        chain: &ChainConfig,
+        ctx: &VoteSigningContext<'_>,
         calldata: &[u8],
         replacement: Option<&PendingVote>,
     ) -> Result<PendingVote> {
-        let nonce = self.nonce(head, signer).await?;
+        let nonce = self.nonce(head, ctx.signer).await?;
         // Do not jump over a transaction from another process using this key.
         let pending_nonce = quantity(
             &self
-                .rpc("eth_getTransactionCount", json!([signer, "pending"]))
+                .rpc("eth_getTransactionCount", json!([ctx.signer, "pending"]))
                 .await?,
         )?;
         if let Some(old) = replacement {
-            ensure!(
-                nonce == old.nonce,
-                "pending nonce already consumed; reconcile before replacement"
-            );
-            ensure!(
-                pending_nonce <= nonce.saturating_add(1),
-                "other transactions queued behind feeder nonce"
-            );
-        } else {
-            ensure!(
-                pending_nonce == nonce,
-                "signer has an untracked pending transaction; waiting for nonce {nonce}"
-            );
+            if nonce != old.nonce {
+                return Err(OracleError::PendingNonceConsumed.into());
+            }
+            if pending_nonce > nonce.saturating_add(1) {
+                return Err(OracleError::TransactionsQueuedBehindNonce.into());
+            }
+        } else if pending_nonce != nonce {
+            return Err(OracleError::UntrackedPendingTransaction { nonce }.into());
         }
         let price = self.rpc("eth_gasPrice", json!([])).await?;
         let gas_price = u128::from_str_radix(
             price
                 .as_str()
-                .ok_or_else(|| eyre!("invalid gas price"))?
+                .ok_or(OracleError::InvalidGasPrice)?
                 .trim_start_matches("0x"),
             16,
         )?;
@@ -267,21 +263,21 @@ impl OracleClient {
                     .saturating_add(1),
             );
         }
-        let priority = if chain.gasless_oracle_votes {
+        let priority = if ctx.chain.gasless_oracle_votes {
             0
         } else {
             gas_price.max(replacement.map(|old| old.max_fee_per_gas).unwrap_or(0))
         };
         let mut tx = TransactionRequest::default()
-            .from(signer)
+            .from(ctx.signer)
             .to(ORACLE_ADDRESS)
             .input(Bytes::copy_from_slice(calldata).into())
             .gas_limit(1_000_000)
             .nonce(nonce)
             .max_fee_per_gas(cap)
             .max_priority_fee_per_gas(priority);
-        tx.set_chain_id(chain.chain_id);
-        let envelope = tx.build(wallet).await?;
+        tx.set_chain_id(ctx.chain.chain_id);
+        let envelope = tx.build(ctx.wallet).await?;
         let raw = Bytes::from(envelope.encoded_2718());
         Ok(PendingVote {
             hash: format!("{:#x}", keccak256(&raw)),
@@ -297,10 +293,9 @@ impl OracleClient {
             .raw
             .parse()
             .context("invalid pending raw transaction")?;
-        ensure!(
-            format!("{:#x}", keccak256(&bytes)) == pending.hash,
-            "pending transaction hash does not match signed bytes"
-        );
+        if format!("{:#x}", keccak256(&bytes)) != pending.hash {
+            return Err(OracleError::PendingHashMismatch.into());
+        }
         let hash = match self
             .rpc("eth_sendRawTransaction", json!([pending.raw]))
             .await
@@ -309,10 +304,14 @@ impl OracleClient {
             Err(error) => {
                 // Reth can acknowledge an idempotent rebroadcast this way.
                 // It is not inclusion: keep waiting for the receipt.
-                let known = error.downcast_ref::<RpcFailure>().is_some_and(|rpc| {
-                    rpc.method == "eth_sendRawTransaction"
-                        && rpc.error["code"].as_i64() == Some(-32000)
-                        && rpc.error["message"].as_str() == Some("already known")
+                let known = error.downcast_ref::<OracleError>().is_some_and(|rpc| {
+                    matches!(
+                        rpc,
+                        OracleError::RpcFailure { method, error }
+                            if method == "eth_sendRawTransaction"
+                                && error["code"].as_i64() == Some(-32000)
+                                && error["message"].as_str() == Some("already known")
+                    )
                 });
                 if known {
                     return Ok(());
@@ -320,10 +319,9 @@ impl OracleClient {
                 return Err(error);
             }
         };
-        ensure!(
-            hash.as_str() == Some(&pending.hash),
-            "broadcast returned an unexpected transaction hash"
-        );
+        if hash.as_str() != Some(&pending.hash) {
+            return Err(OracleError::UnexpectedBroadcastHash.into());
+        }
         Ok(())
     }
     pub async fn receipt(&self, pending: &PendingVote) -> Result<Option<VoteReceipt>> {
@@ -333,10 +331,9 @@ impl OracleClient {
         if r.is_null() {
             return Ok(None);
         }
-        ensure!(
-            r["transactionHash"].as_str() == Some(&pending.hash),
-            "receipt transaction hash mismatch"
-        );
+        if r["transactionHash"].as_str() != Some(&pending.hash) {
+            return Err(OracleError::ReceiptHashMismatch.into());
+        }
         let height = quantity(&r["blockNumber"])?;
         let canonical = self
             .rpc(
@@ -344,10 +341,9 @@ impl OracleClient {
                 json!([format!("{height:#x}"), false]),
             )
             .await?;
-        ensure!(
-            canonical["hash"].is_string() && canonical["hash"] == r["blockHash"],
-            "receipt is not canonical"
-        );
+        if !canonical["hash"].is_string() || canonical["hash"] != r["blockHash"] {
+            return Err(OracleError::ReceiptNotCanonical.into());
+        }
         Ok(Some(VoteReceipt {
             height,
             hash: pending.hash.clone(),
@@ -362,12 +358,10 @@ pub fn create_wallet(account: &AccountConfig) -> Result<(EthereumWallet, Address
     Ok((EthereumWallet::from(signer), address))
 }
 fn quantity(value: &Value) -> Result<u64> {
-    let text = value
-        .as_str()
-        .ok_or_else(|| eyre!("invalid RPC quantity"))?;
+    let text = value.as_str().ok_or(OracleError::InvalidQuantity)?;
     Ok(u64::from_str_radix(
         text.strip_prefix("0x")
-            .ok_or_else(|| eyre!("invalid RPC quantity prefix"))?,
+            .ok_or(OracleError::InvalidQuantityPrefix)?,
         16,
     )?)
 }

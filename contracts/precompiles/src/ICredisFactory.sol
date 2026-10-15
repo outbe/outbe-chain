@@ -26,5 +26,9 @@ interface ICredisFactory {
     function settleCredis(uint256 credisId, uint256 amountMinor)
         external
         returns (uint256 principalPaidMinor, uint256 interestPaidMinor);
+    /// The owner gives up an Issued or Called Credis: its remaining Gratis burns, the principal is written off.
+    function forfeitCredis(uint256 credisId)
+        external
+        returns (uint256 gratisBurnedMinor, uint256 principalWrittenOffMinor);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

@@ -2,7 +2,7 @@
 //! No hardware identity, isolation, or confidentiality is claimed. Keys are
 //! derived from public fixtures. LE2E blobs are never production SGX blobs.
 use crate::{
-    initialization::InitializationState,
+    errors::{EnclaveResult, SgxSealingError},
     keys::EnclaveKeys,
     seal::{self, EnclaveBootConfig, KeyPolicy, SealHeader, UnsealedTributeOfferAndGroupSig},
     transport,
@@ -97,11 +97,11 @@ mod tests {
         }
     }
 }
-fn validate_binding(binding: NetworkBindingV1) -> Result<(), String> {
+fn validate_binding(binding: NetworkBindingV1) -> EnclaveResult<()> {
     if binding.chain_id != U256::from(DEVNET_CHAIN_ID).to_be_bytes::<32>()
         || binding.attestation_mode != AttestationMode::GramineDirectDev
     {
-        return Err("local E2E fixture accepts only DirectDev devnet".into());
+        return Err(SgxSealingError::LocalE2eDirectDevOnly.into());
     }
     Ok(())
 }
@@ -110,7 +110,7 @@ pub(crate) fn seal(
     extra: &[u8],
     binding: NetworkBindingV1,
     header: &SealHeader,
-) -> Result<Vec<u8>, String> {
+) -> EnclaveResult<Vec<u8>> {
     validate_binding(binding)?;
     let combined = FIXTURE.get().unwrap().combined;
     let mut header = *header;
@@ -120,52 +120,55 @@ pub(crate) fn seal(
     } else {
         b"LE2E0".to_vec()
     };
-    bytes.extend(
-        seal::seal_tribute_offer_and_group_sig(secret, extra, &key(combined), binding, &header)
-            .map_err(|e| e.to_string())?,
-    );
+    bytes.extend(seal::seal_tribute_offer_and_group_sig(
+        secret,
+        extra,
+        &key(combined),
+        binding,
+        &header,
+    )?);
     Ok(bytes)
 }
-pub(crate) fn unseal(bytes: &[u8], svn: u16) -> Result<UnsealedTributeOfferAndGroupSig, String> {
+pub(crate) fn unseal(bytes: &[u8], svn: u16) -> EnclaveResult<UnsealedTributeOfferAndGroupSig> {
     let combined = if bytes.starts_with(b"LE2E1") {
         true
     } else if bytes.starts_with(b"LE2E0") {
         false
     } else {
-        return Err("not an explicitly simulated local seal".into());
+        return Err(SgxSealingError::NotSimulatedLocalSeal.into());
     };
-    let value = seal::unseal_network_bound_payload(&bytes[5..], &key(combined), svn)
-        .map_err(|e| e.to_string())?;
+    let value = seal::unseal_network_bound_payload(&bytes[5..], &key(combined), svn)?;
     validate_binding(value.network_binding)?;
     if value.header.key_policy != KeyPolicy::Mock {
-        return Err("invalid local seal policy".into());
+        return Err(SgxSealingError::InvalidLocalSealPolicy.into());
     }
     Ok(value)
 }
 
-pub fn run() -> Result<(), String> {
+pub fn run() -> EnclaveResult<()> {
     let args: Vec<String> = std::env::args().collect();
-    let arg = |name: &str| -> Result<String, String> {
+    let arg = |name: &'static str| -> EnclaveResult<String> {
         args.windows(2)
             .find(|a| a[0] == name)
             .map(|a| a[1].clone())
-            .ok_or_else(|| format!("missing {name}"))
+            .ok_or_else(|| SgxSealingError::missing_arg(name).into())
     };
-    let hex32 = |name: &str| -> Result<[u8; 32], String> {
+    let hex32 = |name: &'static str| -> EnclaveResult<[u8; 32]> {
         hex::decode(arg(name)?.trim_start_matches("0x"))
-            .map_err(|e| e.to_string())?
+            .map_err(SgxSealingError::other)?
             .try_into()
-            .map_err(|_| format!("invalid {name}"))
+            .map_err(|_| SgxSealingError::invalid_arg(name).into())
     };
     let descriptor = TrustedNetworkDescriptorV1::decode_canonical(
-        &std::fs::read(arg("--network-descriptor")?).map_err(|e| e.to_string())?,
+        &std::fs::read(arg("--network-descriptor")?).map_err(SgxSealingError::other)?,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(SgxSealingError::other)?;
     validate_binding(descriptor.network_binding)?;
-    outbe_consensus::config::init_consensus_chain_id(DEVNET_CHAIN_ID).map_err(|e| e.to_string())?;
+    outbe_consensus::config::init_consensus_chain_id(DEVNET_CHAIN_ID)
+        .map_err(SgxSealingError::other)?;
     let policy = arg("--seal-policy")?;
     if policy != "legacy" && policy != "combined" {
-        return Err("seal policy must be legacy or combined".into());
+        return Err(SgxSealingError::other("seal policy must be legacy or combined").into());
     }
     FIXTURE
         .set(Fixture {
@@ -174,11 +177,11 @@ pub fn run() -> Result<(), String> {
             platform: hex32("--platform")?,
             combined: policy == "combined",
         })
-        .map_err(|_| "fixture already configured")?;
+        .map_err(|_| SgxSealingError::other("fixture already configured"))?;
     let dir = PathBuf::from(arg("--tee-dir")?);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(SgxSealingError::other)?;
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
-        .map_err(|e| e.to_string())?;
+        .map_err(SgxSealingError::other)?;
     let boot = Arc::new(EnclaveBootConfig::new(
         descriptor.network_binding.chain_id,
         dir,
@@ -192,20 +195,22 @@ pub fn run() -> Result<(), String> {
     )?);
     let offer_key: transport::SharedTributeOfferKey = Arc::new(OnceLock::new());
     if boot.sealed_root_path().exists() && state.manifest()?.is_none() {
-        return Err("seal exists without initialization authority".into());
+        return Err(SgxSealingError::other("seal exists without initialization authority").into());
     }
     if let Some(key) =
         transport::unseal_tribute_offer_and_group_sig_on_boot(&boot, descriptor.network_binding)?
     {
-        offer_key.set(key).map_err(|_| "key already loaded")?;
+        offer_key
+            .set(key)
+            .map_err(|_| SgxSealingError::other("key already loaded"))?;
     }
     let endpoint: std::net::SocketAddr = arg("--socket")?
         .parse()
-        .map_err(|e| format!("endpoint: {e}"))?;
+        .map_err(SgxSealingError::endpoint)?;
     if !endpoint.ip().is_loopback() {
-        return Err("local E2E requires loopback".into());
+        return Err(SgxSealingError::other("local E2E requires loopback").into());
     }
-    let listener = std::net::TcpListener::bind(endpoint).map_err(|e| e.to_string())?;
+    let listener = std::net::TcpListener::bind(endpoint).map_err(SgxSealingError::other)?;
     eprintln!("LOCAL_E2E: software identity/sealing, no SGX guarantees; listening {endpoint}");
     transport::serve_tcp(
         &listener,
@@ -217,5 +222,5 @@ pub fn run() -> Result<(), String> {
             chain_id: descriptor.network_binding.chain_id.into(),
         },
     )
-    .map_err(|e| e.to_string())
+    .map_err(|err| SgxSealingError::other(err).into())
 }

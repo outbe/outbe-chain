@@ -38,11 +38,23 @@ fn three_day_halt_forfeits_every_missed_day() {
 #[test]
 fn active_day_after_block_day_is_rejected() {
     let error = protocol_day_action(20_260_820, 20_260_819).unwrap_err();
-    assert!(error.to_string().contains("active UTC day"));
+    assert!(matches!(
+        error,
+        outbe_primitives::error::PrecompileError::Revert(ref msg) if msg.contains("active UTC day")
+    ));
 }
 
 #[test]
 fn invalid_calendar_day_is_rejected() {
     let error = protocol_day_action(20_260_231, 20_260_301).unwrap_err();
-    assert!(error.to_string().contains("invalid UTC day"));
+    assert!(matches!(
+        error,
+        outbe_primitives::error::PrecompileError::Fatal(ref msg) if msg.contains("invalid UTC day")
+    ));
+
+    let block_error = protocol_day_action(20_260_228, 20_260_231).unwrap_err();
+    assert!(matches!(
+        block_error,
+        outbe_primitives::error::PrecompileError::Revert(ref msg) if msg.contains("invalid UTC day")
+    ));
 }

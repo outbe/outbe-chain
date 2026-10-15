@@ -8200,6 +8200,7 @@ dependencies = [
  "outbe-evm",
  "outbe-macros",
  "outbe-primitives",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -8268,7 +8269,7 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-operator",
  "outbe-primitives",
- "outbe-radicle 0.1.0",
+ "outbe-radicle",
  "outbe-rpc",
  "outbe-snapshot",
  "outbe-tee",
@@ -8292,6 +8293,7 @@ dependencies = [
  "serde_json",
  "tar",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
@@ -8333,6 +8335,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "zeroize",
 ]
@@ -8346,6 +8349,7 @@ dependencies = [
  "outbe-primitives",
  "ring",
  "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8488,6 +8492,7 @@ dependencies = [
  "outbe-tribute",
  "outbe-validatorset",
  "proptest",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -8580,7 +8585,7 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-radicle 0.1.0",
+ "outbe-radicle",
  "outbe-slashindicator",
  "outbe-tee",
  "outbe-tee-enclave",
@@ -8616,6 +8621,7 @@ dependencies = [
  "outbe-metadosis",
  "outbe-primitives",
  "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8654,7 +8660,7 @@ dependencies = [
  "outbe-node",
  "outbe-ocomp-protocol",
  "outbe-primitives",
- "outbe-radicle 0.1.0",
+ "outbe-radicle",
  "outbe-tee",
  "outbe-teeregistry",
  "outbe-update",
@@ -8775,6 +8781,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -8799,6 +8806,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite 0.28.0",
  "toml 0.8.23",
@@ -8812,6 +8820,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "ed25519-dalek",
  "k256 0.13.4",
  "outbe-fidelity-math",
  "outbe-macros",
@@ -8819,6 +8828,7 @@ dependencies = [
  "outbe-tee",
  "outbe-tee-enclave",
  "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8827,6 +8837,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "outbe-primitives",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8902,6 +8913,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-tee",
  "outbe-tee-enclave",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8936,6 +8948,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "tokio",
  "toml 0.8.23",
  "tracing",
@@ -9013,6 +9026,7 @@ dependencies = [
  "rand_core 0.10.1",
  "rand_core 0.6.4",
  "tempfile",
+ "thiserror 2.0.18",
  "zeroize",
 ]
 
@@ -9053,6 +9067,7 @@ dependencies = [
  "outbe-primitives",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -9094,7 +9109,6 @@ dependencies = [
  "outbe-consensus",
  "outbe-desis",
  "outbe-fidelity",
- "outbe-intex",
  "outbe-lysis",
  "outbe-macros",
  "outbe-nod",
@@ -9272,8 +9286,6 @@ dependencies = [
  "outbe-compressed-entities",
  "outbe-consensus",
  "outbe-fidelity",
- "outbe-intex",
- "outbe-intexfactory",
  "outbe-lysis",
  "outbe-metadosis",
  "outbe-nod",
@@ -9287,7 +9299,6 @@ dependencies = [
  "outbe-tee-enclave",
  "outbe-tribute",
  "outbe-validatorset",
- "outbe-zerofee",
  "postcard",
  "rand 0.10.2",
  "reqwest 0.12.28",
@@ -9411,6 +9422,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "zeroize",
 ]
@@ -9457,7 +9469,6 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "k256 0.13.4",
- "outbe-ocomp-protocol",
  "proptest",
  "reth-codecs",
  "reth-ethereum",
@@ -9489,6 +9500,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-tee",
  "outbe-tee-enclave",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -9504,6 +9516,7 @@ dependencies = [
  "outbe-promis",
  "outbe-tee",
  "outbe-tee-enclave",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -9516,6 +9529,7 @@ dependencies = [
  "outbe-ocomp-protocol",
  "outbe-primitives",
  "revm",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -9605,9 +9619,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-radicle"
+name = "outbe-radicle-runtime"
 version = "0.1.0"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "lexopt",
  "log",
@@ -9618,6 +9631,7 @@ dependencies = [
  "radicle-signals",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 
@@ -9626,9 +9640,10 @@ name = "outbe-radicle-sidecar"
 version = "0.1.0"
 dependencies = [
  "log",
- "outbe-radicle 0.1.0 (git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e)",
+ "outbe-radicle-runtime",
  "radicle-log",
  "radicle-signals",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -9669,6 +9684,7 @@ dependencies = [
  "rand 0.8.6",
  "rand_chacha 0.3.1",
  "tempfile",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -9687,7 +9703,7 @@ dependencies = [
  "outbe-offchain-data",
  "outbe-offchain-storage",
  "outbe-primitives",
- "outbe-radicle 0.1.0",
+ "outbe-radicle",
  "outbe-rewards",
  "outbe-slashindicator",
  "outbe-staking",
@@ -9701,6 +9717,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
 ]
 
@@ -9729,6 +9746,7 @@ dependencies = [
  "rand 0.10.2",
  "rand 0.8.6",
  "rand_chacha 0.3.1",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -9803,6 +9821,7 @@ dependencies = [
  "outbe-promislimit",
  "outbe-teeregistry",
  "outbe-validatorset",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -9897,6 +9916,7 @@ dependencies = [
  "outbe-tee-enclave",
  "outbe-validatorset",
  "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -10076,7 +10096,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-hyperlanecontroller",
- "outbe-intexfactory",
  "outbe-macros",
  "outbe-ocomp-protocol",
  "outbe-oracle",
@@ -10125,6 +10144,7 @@ dependencies = [
  "outbe-zk",
  "reqwest 0.13.2",
  "sha2 0.10.9",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -10909,6 +10929,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "qcheck"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b439bd4242da51d62d18c95e6a6add749346756b0d1a587dfd0cc22fa6b5f3f0"
+dependencies = [
+ "rand 0.8.6",
+]
+
+[[package]]
 name = "quanta"
 version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11019,7 +11048,6 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "radicle"
 version = "0.25.1"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "base64 0.21.7",
  "bytesize",
@@ -11033,6 +11061,7 @@ dependencies = [
  "log",
  "multibase",
  "nonempty 0.9.0",
+ "qcheck",
  "radicle-cob",
  "radicle-core",
  "radicle-crypto",
@@ -11045,6 +11074,7 @@ dependencies = [
  "serde_json",
  "siphasher 1.0.2",
  "sqlite",
+ "tempfile",
  "thiserror 2.0.18",
  "uds_windows",
  "unicode-normalization",
@@ -11053,7 +11083,6 @@ dependencies = [
 [[package]]
 name = "radicle-cob"
 version = "0.21.1"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "fastrand",
  "git2 0.21.0",
@@ -11072,10 +11101,10 @@ dependencies = [
 [[package]]
 name = "radicle-core"
 version = "0.4.1"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "git2 0.21.0",
  "multibase",
+ "qcheck",
  "radicle-crypto",
  "radicle-oid",
  "schemars 1.2.1",
@@ -11087,13 +11116,13 @@ dependencies = [
 [[package]]
 name = "radicle-crypto"
 version = "0.19.0"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "curve25519-dalek 4.1.3",
  "cyphernet",
  "ed25519-dalek",
  "getrandom 0.4.3",
  "multibase",
+ "qcheck",
  "radicle-git-ref-format",
  "schemars 1.2.1",
  "serde",
@@ -11108,7 +11137,6 @@ dependencies = [
 [[package]]
 name = "radicle-dag"
 version = "0.10.0"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "fastrand",
 ]
@@ -11116,7 +11144,6 @@ dependencies = [
 [[package]]
 name = "radicle-fetch"
 version = "0.21.1"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "bstr",
  "either",
@@ -11135,7 +11162,6 @@ dependencies = [
 [[package]]
 name = "radicle-git-metadata"
 version = "0.2.1"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "thiserror 2.0.18",
 ]
@@ -11143,7 +11169,6 @@ dependencies = [
 [[package]]
 name = "radicle-git-ref-format"
 version = "0.2.0"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "bstr",
  "serde",
@@ -11153,7 +11178,6 @@ dependencies = [
 [[package]]
 name = "radicle-localtime"
 version = "0.1.0"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "serde",
 ]
@@ -11161,7 +11185,6 @@ dependencies = [
 [[package]]
 name = "radicle-log"
 version = "0.2.0"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "chrono",
  "colored",
@@ -11172,7 +11195,6 @@ dependencies = [
 [[package]]
 name = "radicle-node"
 version = "0.21.1"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "bytes",
  "crossbeam-channel",
@@ -11202,17 +11224,16 @@ dependencies = [
 [[package]]
 name = "radicle-oid"
 version = "0.2.2"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "git2 0.21.0",
  "gix-hash",
+ "qcheck",
  "serde",
 ]
 
 [[package]]
 name = "radicle-protocol"
 version = "0.9.1"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "bloomy",
  "bytes",
@@ -11233,7 +11254,6 @@ dependencies = [
 [[package]]
 name = "radicle-signals"
 version = "0.12.1"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "libc",
  "signals_receipts",
@@ -11243,7 +11263,6 @@ dependencies = [
 [[package]]
 name = "radicle-windows"
 version = "0.1.0"
-source = "git+https://github.com/outbe/outbe-heartwood.git?rev=b76a17801329291153585ed31db61ee3c658046e#b76a17801329291153585ed31db61ee3c658046e"
 dependencies = [
  "thiserror 2.0.18",
  "windows 0.62.2",
@@ -14869,9 +14888,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.45"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "aws-lc-rs",
  "log",

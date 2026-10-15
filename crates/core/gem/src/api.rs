@@ -135,10 +135,10 @@ pub fn load_pair(
     };
     let bucket =
         load_bucket(storage, scope, parent, item.body().bucket_id())?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Fatal(format!(
-                "gem {gem_id} has no bucket body {}",
-                item.body().bucket_id()
-            ))
+            crate::errors::GemFatalError::MissingBucketBody {
+                gem_id,
+                bucket_id: item.body().bucket_id(),
+            }
         })?;
     Ok(Some((item, bucket)))
 }

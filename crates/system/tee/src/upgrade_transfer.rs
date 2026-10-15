@@ -125,7 +125,7 @@ impl<'a> PreparedTransfer<'a> {
     ) -> Result<Self, TransportError> {
         let proof = ValidatedUpgradeProof::new(proof)?;
         let hash = upgrade_key_transfer_request_hash_v1(artifact, proof.anchor_outcome, export)
-            .map_err(|e| invalid(&e.to_string()))?;
+            .map_err(TransportError::enclave_error)?;
         Ok(Self {
             proof,
             artifact,

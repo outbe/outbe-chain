@@ -113,7 +113,7 @@ fn source_complete_active_before_projection_request_passes_without_local_pin_or_
                 )
                 .job;
                 let audit =
-                    verify_canonical_obligations(state, source, layout, scratch, None, None)
+                    verify_canonical_obligations(state, source, (layout, scratch), None, None)
                         .unwrap();
                 assert_eq!(audit.projection.block_number, 100);
                 assert_eq!(audit.closure.checkpoint.current.block_number, 100);
@@ -170,8 +170,7 @@ fn later_series_budget_preserves_reached_bounds_and_active_identity() {
                 let error = verify_canonical_obligations(
                     state,
                     source,
-                    layout,
-                    scratch,
+                    (layout, scratch),
                     Some(1),
                     Some(&mut report),
                 )
@@ -244,8 +243,7 @@ fn later_fifo_budget_preserves_discovered_active_identity_and_partial_scan_bound
                 let error = verify_canonical_obligations(
                     state,
                     source,
-                    layout,
-                    scratch,
+                    (layout, scratch),
                     Some(1),
                     Some(&mut report),
                 )
@@ -314,8 +312,7 @@ fn missing_projection_preserves_active_identity_with_unknown_frontier_relationsh
                 let error = verify_canonical_obligations(
                     state,
                     source,
-                    layout,
-                    scratch,
+                    (layout, scratch),
                     None,
                     Some(&mut report),
                 )
@@ -407,8 +404,7 @@ fn full_canonical_composition_finds_active_obligation_without_any_local_pin_or_j
                     let error = verify_canonical_obligations(
                         state,
                         source,
-                        layout,
-                        scratch,
+                        (layout, scratch),
                         None,
                         Some(&mut report),
                     )
@@ -456,9 +452,10 @@ fn canonical_active_budget_is_incomplete_before_missing_local_inputs() {
         |_| {},
         |request| fixture(request, Phase::VotingOpen, |_| {}).owner,
         |state, source, layout, scratch| {
-            let error = verify_canonical_obligations(state, source, layout, scratch, Some(0), None)
-                .err()
-                .expect("active inventory cannot truncate to zero success");
+            let error =
+                verify_canonical_obligations(state, source, (layout, scratch), Some(0), None)
+                    .err()
+                    .expect("active inventory cannot truncate to zero success");
             assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
             assert!(
                 error.to_string().contains("active intent scan requires 1"),

@@ -1,4 +1,5 @@
 use crate::endpoint::{EndpointAddress, MAX_ADDRESSES};
+pub use crate::errors::SidecarError;
 use serde_json::Value;
 use std::{
     io::{BufRead, BufReader, Write},
@@ -15,20 +16,6 @@ pub struct SidecarInfo {
     pub addresses: Vec<EndpointAddress>,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum SidecarError {
-    #[error("Heartwood control command failed: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("Heartwood control command exceeded its deadline")]
-    Deadline,
-    #[error("Heartwood control response is malformed: {0}")]
-    Malformed(String),
-    #[error("Heartwood NodeId is invalid")]
-    NodeId,
-    #[error("Heartwood externalAddresses must contain 1..={MAX_ADDRESSES} unique addresses")]
-    Addresses,
-}
-
 pub async fn query_sidecar(
     socket: impl AsRef<Path>,
     deadline: Duration,
@@ -38,7 +25,7 @@ pub async fn query_sidecar(
     tokio::time::timeout(deadline, task)
         .await
         .map_err(|_| SidecarError::Deadline)?
-        .map_err(|error| SidecarError::Malformed(error.to_string()))?
+        .map_err(SidecarError::malformed)?
 }
 
 fn query_sidecar_blocking(socket: &Path, deadline: Duration) -> Result<SidecarInfo, SidecarError> {
@@ -84,11 +71,11 @@ fn command(socket: &Path, command: &str, deadline: Instant) -> Result<Value, Sid
     stream.set_read_timeout(Some(remaining))?;
     stream.set_write_timeout(Some(remaining))?;
     serde_json::to_writer(&mut stream, &serde_json::json!({ "command": command }))
-        .map_err(|error| SidecarError::Malformed(error.to_string()))?;
+        .map_err(SidecarError::malformed)?;
     stream.write_all(b"\n")?;
     let mut response = String::new();
     BufReader::new(stream).read_line(&mut response)?;
-    serde_json::from_str(&response).map_err(|error| SidecarError::Malformed(error.to_string()))
+    serde_json::from_str(&response).map_err(SidecarError::malformed)
 }
 
 fn parse_address(value: &str) -> Result<EndpointAddress, SidecarError> {
@@ -97,7 +84,7 @@ fn parse_address(value: &str) -> Result<EndpointAddress, SidecarError> {
             IpAddr::V4(ip) => EndpointAddress::ipv4(ip.octets(), socket.port()),
             IpAddr::V6(ip) => EndpointAddress::ipv6(ip.octets(), socket.port()),
         }
-        .map_err(|error| SidecarError::Malformed(error.to_string()));
+        .map_err(SidecarError::malformed);
     }
     let (host, port) = value
         .rsplit_once(':')
@@ -105,5 +92,5 @@ fn parse_address(value: &str) -> Result<EndpointAddress, SidecarError> {
     let port = port
         .parse::<u16>()
         .map_err(|_| SidecarError::Malformed(format!("invalid external address {value}")))?;
-    EndpointAddress::dns(host, port).map_err(|error| SidecarError::Malformed(error.to_string()))
+    EndpointAddress::dns(host, port).map_err(SidecarError::malformed)
 }

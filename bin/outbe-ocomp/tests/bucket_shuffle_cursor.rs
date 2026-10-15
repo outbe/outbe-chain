@@ -161,10 +161,8 @@ fn admitted_bucket_fixture() -> AdmittedBucketFixture {
         AdmissionPositionV1 { plan_ordinal },
         &spec,
         &finished,
-        &inbox,
-        &cas,
-        &mut catalog,
-        &limits,
+        (&inbox, &cas),
+        (&mut catalog, &limits),
     )
     .unwrap();
     assert_eq!(

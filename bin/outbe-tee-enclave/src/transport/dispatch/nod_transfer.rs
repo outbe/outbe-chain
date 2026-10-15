@@ -1,6 +1,10 @@
 //! Bounded temporary transfer buffers, never economic authority or key caches.
-use crate::{keys::EnclaveKeys, transport::SharedTributeOfferKey};
-use alloy_primitives::{B256, keccak256};
+use crate::{
+    errors::{EnclaveResult, TransportDispatchError},
+    keys::EnclaveKeys,
+    transport::SharedTributeOfferKey,
+};
+use alloy_primitives::{keccak256, B256};
 use outbe_tee::{
     nod_transport::{MAX_TRANSFER_BYTES, TRANSFER_CHUNK_BYTES},
     protocol::{EnclaveRequest, EnclaveResponse},
@@ -23,21 +27,21 @@ fn store() -> std::sync::MutexGuard<'static, BTreeMap<B256, Transfer>> {
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())
 }
-fn error(message: &str) -> EnclaveResponse {
+fn error(message: impl std::fmt::Display) -> EnclaveResponse {
     EnclaveResponse::Error {
-        message: message.into(),
+        message: message.to_string(),
     }
 }
-fn check_chunk_bounds(total: usize, offset: usize, bytes: &[u8]) -> Result<(), &'static str> {
+fn check_chunk_bounds(total: usize, offset: usize, bytes: &[u8]) -> EnclaveResult<()> {
     if total == 0 || total > MAX_TRANSFER_BYTES || bytes.is_empty() {
-        return Err("invalid NOD transfer bounds");
+        return Err(TransportDispatchError::InvalidNodTransferBounds.into());
     }
     if bytes.len() > TRANSFER_CHUNK_BYTES
         || offset
             .checked_add(bytes.len())
             .is_none_or(|end| end > total)
     {
-        return Err("invalid NOD transfer chunk bounds");
+        return Err(TransportDispatchError::InvalidNodTransferChunkBounds.into());
     }
     Ok(())
 }
@@ -126,10 +130,10 @@ fn dispatch_request(
     keys: &EnclaveKeys,
     offer: &SharedTributeOfferKey,
     chain: B256,
-) -> Result<EnclaveResponse, &'static str> {
+) -> EnclaveResult<EnclaveResponse> {
     let request: EnclaveRequest = match serde_json::from_slice(input) {
         Ok(request) => request,
-        Err(_) => return Err("NOD transfer request encoding"),
+        Err(_) => return Err(TransportDispatchError::NodTransferRequestEncoding.into()),
     };
     match request {
         EnclaveRequest::PrepareEncryptedNodsV2 { request } => {
@@ -138,7 +142,7 @@ fn dispatch_request(
         EnclaveRequest::OpenEncryptedNodsV2 { authority, carrier } => {
             Ok(super::nod::open(keys, offer, chain, &authority, &carrier))
         }
-        _ => Err("NOD transfer command not permitted"),
+        _ => Err(TransportDispatchError::NodTransferCommandNotPermitted.into()),
     }
 }
 pub(super) fn read(id: B256, offset: u32) -> EnclaveResponse {

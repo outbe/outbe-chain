@@ -693,6 +693,32 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
 }
 
 #[test]
+fn an_owner_forfeit_mid_pass_leaves_the_rest_of_the_bin_to_the_scan() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        let ids = open_three(&storage);
+        let at = CREATED_AT + AFTER_WINDOW;
+        advance_to(&storage, at);
+        fill_days(
+            &storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        pin_sweep(&storage, last_closed_day(at), ids[0], 2);
+
+        crate::runtime::forfeit_by_owner(storage.clone(), alice(), ids[0]).unwrap();
+        assert!(!is_indexed(&storage, ids[0]));
+
+        assert_eq!(slice(&storage, at), 2);
+        assert_eq!(state_of(&storage, ids[0]), CredisState::Forfeited);
+        assert_eq!(state_of(&storage, ids[1]), CredisState::Called);
+        assert_eq!(state_of(&storage, ids[2]), CredisState::Called);
+    });
+    teardown();
+}
+
+#[test]
 fn a_newer_closed_day_waits_for_the_pass_in_flight() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {

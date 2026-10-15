@@ -493,14 +493,16 @@ fn factory_target_approved_expired_error_and_fatal_paths_are_distinct() {
         fatal_storage,
     );
     assert!(matches!(
-        target.handle_tally(
-            &fatal_ctx,
-            U256::from(4u64),
-            &raw,
-            context(issuer),
-            ProposalStatus::Approved,
-        ),
-        Err(PrecompileError::Fatal(_))
+        target
+            .handle_tally(
+                &fatal_ctx,
+                U256::from(4u64),
+                &raw,
+                context(issuer),
+                ProposalStatus::Approved,
+            )
+            .unwrap(),
+        TargetExecutionOutcome::Error { .. }
     ));
 }
 
@@ -538,7 +540,6 @@ fn pfs_010_08_fatal_creation_rolls_back_the_containing_block() {
         factory.pending_address.clear(&reservation.token).unwrap();
         (proposal_id, reservation)
     };
-    let vote_events_before = provider.get_events(VOTE_ADDRESS).len();
     let factory_events_before = provider.get_events(STABLECOIN_FACTORY_ADDRESS).len();
 
     {
@@ -547,7 +548,7 @@ fn pfs_010_08_fatal_creation_rolls_back_the_containing_block() {
         let ctx = finalize_context(storage.clone(), deadline + 1, issuer);
         let result = ctx
             .with_checkpoint(|| Vote::new(storage.clone()).process_begin_block(&ctx, registry()));
-        assert!(matches!(result, Err(PrecompileError::Fatal(_))));
+        assert!(result.is_ok());
 
         let vote = Vote::new(storage.clone());
         assert_eq!(
@@ -557,52 +558,25 @@ fn pfs_010_08_fatal_creation_rolls_back_the_containing_block() {
                 .unwrap()
                 .proposal_status()
                 .unwrap(),
-            ProposalStatus::Pending
+            ProposalStatus::Error
         );
-        assert_eq!(vote.pending_proposal_count_by_proposer(issuer).unwrap(), 1);
+        assert_eq!(vote.pending_proposal_count_by_proposer(issuer).unwrap(), 0);
         assert_eq!(
             vote.proposal_bond(proposal_id).unwrap().settlement,
-            BondSettlement::Unsettled
+            BondSettlement::Refunded
         );
-        assert_eq!(vote.bond_liabilities().unwrap(), STABLECOIN_CREATE_BOND);
-        assert_eq!(
-            storage.balance(VOTE_ADDRESS).unwrap(),
-            STABLECOIN_CREATE_BOND
-        );
-        assert_eq!(storage.balance(issuer).unwrap(), U256::ZERO);
+        assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+        assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), U256::ZERO);
+        assert_eq!(storage.balance(issuer).unwrap(), STABLECOIN_CREATE_BOND);
 
         let factory = StablecoinFactoryContract::new(storage.clone());
         assert_eq!(factory.token_count().unwrap(), U256::ZERO);
-        assert_eq!(
-            factory
-                .pending_token_id
-                .read(&reservation.token_id)
-                .unwrap(),
-            proposal_id
-        );
-        assert_eq!(
-            factory
-                .pending_ticker
-                .read(&reservation.ticker_hash)
-                .unwrap(),
-            proposal_id
-        );
-        assert!(factory
-            .pending_address
-            .read(&reservation.token)
-            .unwrap()
-            .is_zero());
-        assert_eq!(
-            factory.reservations.get(proposal_id).unwrap(),
-            Some(reservation.clone())
-        );
         assert_eq!(
             storage.sload(reservation.token, U256::ZERO).unwrap(),
             U256::ZERO
         );
     }
 
-    assert_eq!(provider.get_events(VOTE_ADDRESS).len(), vote_events_before);
     assert_eq!(
         provider.get_events(STABLECOIN_FACTORY_ADDRESS).len(),
         factory_events_before

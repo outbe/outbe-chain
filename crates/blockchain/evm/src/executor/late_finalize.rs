@@ -59,25 +59,18 @@ where
         for credit in &artifact.batches {
             // Inclusion window: 1 <= block_number - fb_number <= K.
             let distance = block_number.checked_sub(credit.fb_number).ok_or_else(|| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!(
-                        "LateFinalizeCredits pre-exec: fb_number {} >= block {block_number}",
-                        credit.fb_number
-                    )
-                    .into(),
-                ))
+                BlockExecutionError::from(BlockValidationError::msg(format!(
+                    "LateFinalizeCredits pre-exec: fb_number {} >= block {block_number}",
+                    credit.fb_number
+                )))
             })?;
             if distance == 0 || distance > LATE_FINALIZE_WINDOW_K {
-                return Err(BlockExecutionError::Internal(
-                    InternalBlockExecutionError::Other(
-                        format!(
-                            "LateFinalizeCredits pre-exec: fb_number {} outside inclusion window \
-                             (distance {distance}, K={LATE_FINALIZE_WINDOW_K}) for block {block_number}",
-                            credit.fb_number
-                        )
-                        .into(),
-                    ),
-                ));
+                return Err(BlockValidationError::msg(format!(
+                    "LateFinalizeCredits pre-exec: fb_number {} outside inclusion window \
+                     (distance {distance}, K={LATE_FINALIZE_WINDOW_K}) for block {block_number}",
+                    credit.fb_number
+                ))
+                .into());
             }
 
             // NOTE: the canonical-binding authentication (fb_number/epoch/
@@ -104,38 +97,33 @@ where
                 let mut provider = DirectStorageProvider::new(db, ctx);
                 let storage = StorageHandle::new(&mut provider);
                 read_committee_snapshot(storage, snapshot_key).map_err(|error| {
-                    BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                        format!(
+                    if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
+                        BlockExecutionError::other(error)
+                    } else {
+                        BlockValidationError::msg(format!(
                             "LateFinalizeCredits pre-exec: read committee snapshot epoch={} \
                              key={snapshot_key}: {error}",
                             credit.epoch
-                        )
-                        .into(),
-                    ))
+                        ))
+                        .into()
+                    }
                 })?
             };
             let Some(snapshot) = snapshot else {
-                return Err(BlockExecutionError::Internal(
-                    InternalBlockExecutionError::Other(
-                        format!(
-                            "LateFinalizeCredits pre-exec: missing committee snapshot epoch={} \
-                             key={snapshot_key} for block {block_number}",
-                            credit.epoch
-                        )
-                        .into(),
-                    ),
-                ));
+                return Err(BlockValidationError::msg(format!(
+                    "LateFinalizeCredits pre-exec: missing committee snapshot epoch={} \
+                     key={snapshot_key} for block {block_number}",
+                    credit.epoch
+                ))
+                .into());
             };
 
             verify_late_finalize_proof(&snapshot, credit).map_err(|error| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!(
-                        "LateFinalizeCredits pre-exec: proof rejected for fb={} at block \
-                         {block_number}: {error}",
-                        credit.fb_hash
-                    )
-                    .into(),
-                ))
+                BlockExecutionError::from(BlockValidationError::msg(format!(
+                    "LateFinalizeCredits pre-exec: proof rejected for fb={} at block \
+                     {block_number}: {error}",
+                    credit.fb_hash
+                )))
             })?;
         }
 

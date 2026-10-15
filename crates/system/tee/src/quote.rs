@@ -26,13 +26,15 @@ pub struct ReportMeasurements {
     pub report_data: [u8; 64],
 }
 
+use crate::errors::QuoteParseError;
+
 /// Parse MRENCLAVE/MRSIGNER/ISVSVN/report_data from a real DCAP quote.
-pub fn parse_quote_measurements(quote: &[u8]) -> Result<ReportMeasurements, String> {
+pub fn parse_quote_measurements(quote: &[u8]) -> Result<ReportMeasurements, QuoteParseError> {
     if quote.len() < MIN_QUOTE_LEN {
-        return Err(format!(
-            "quote too short: {} < {MIN_QUOTE_LEN}",
-            quote.len()
-        ));
+        return Err(QuoteParseError::TooShort {
+            actual: quote.len(),
+            min: MIN_QUOTE_LEN,
+        });
     }
     let base = REPORT_BODY_OFFSET;
     let mut mrenclave = [0u8; 32];

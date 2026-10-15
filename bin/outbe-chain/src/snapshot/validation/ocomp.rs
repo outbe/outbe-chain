@@ -1,7 +1,7 @@
 //! Offline OCOMP observations at the verified current canonical state.
 
+use crate::errors::{require, SnapshotOcompError};
 use alloy_primitives::{B256, U256};
-use eyre::ensure;
 use outbe_intex::schema::SeriesId;
 use outbe_primitives::time::WorldwideDay;
 
@@ -77,6 +77,11 @@ use relations::{
 
 mod present_job;
 use present_job::verify_present_job;
+
+mod present_results;
+use present_results::{
+    verify_present_input_catalog, verify_present_reference_membership, PresentAdmissionsVerify,
+};
 
 mod projection;
 use projection::verify_present_projection_structure;

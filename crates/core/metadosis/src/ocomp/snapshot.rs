@@ -33,14 +33,14 @@ impl MetadosisContract<'_> {
             return Ok(());
         }
         let tributes =
-            TributeContract::new(self.storage.clone()).read_all_by_day(scope, parent, wwd)?;
+            TributeContract::new(self.storage.clone()).read_records_by_day(scope, parent, wwd)?;
         // One canonical Tribute per owner per day -> the owner set must be
         // unique. Sorting also yields the canonical OCOMP subject order.
         let mut owners: Vec<Address> = tributes.iter().map(|t| t.owner).collect();
         owners.sort_unstable();
         if owners.windows(2).any(|pair| pair[0] >= pair[1]) {
             return Err(crate::errors::storage_corruption(
-                "OCOMP day owner set is not strictly ordered and unique".into(),
+                "OCOMP day owner set is not strictly ordered and unique",
             ));
         }
         // Snapshot the whole day's leagues in ONE enclave round-trip (was one

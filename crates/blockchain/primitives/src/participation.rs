@@ -64,7 +64,7 @@ pub fn encode_participation_extended_with_limit(
 ) -> Result<Bytes> {
     // Return structured error instead of panicking on length mismatch.
     if validators.len() != signers.len() {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(PrecompileError::revert(format!(
             "validators/signers length mismatch: {} vs {}",
             validators.len(),
             signers.len()
@@ -72,21 +72,21 @@ pub fn encode_participation_extended_with_limit(
     }
 
     if validators.len() > u16::MAX as usize {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(PrecompileError::revert(format!(
             "validator set too large for participation encoding: {}",
             validators.len()
         )));
     }
 
     if missed_proposers.len() > u8::MAX as usize {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(PrecompileError::revert(format!(
             "missed proposer list too large for participation encoding: {}",
             missed_proposers.len()
         )));
     }
 
     if byzantine_validators.len() > u8::MAX as usize {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(PrecompileError::revert(format!(
             "byzantine validator list too large for participation encoding: {}",
             byzantine_validators.len()
         )));
@@ -98,7 +98,7 @@ pub fn encode_participation_extended_with_limit(
     let total_len = header_len + (missed_proposers.len() * 20) + (byzantine_validators.len() * 20);
 
     if total_len > max_extra_data_size {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(PrecompileError::revert(format!(
             "participation metadata exceeds extra_data budget: {total_len} > {max_extra_data_size}"
         )));
     }
@@ -478,7 +478,7 @@ mod tests {
         let err = encode_participation_extended_with_limit(&validators, &signers, &missed, &[], 40)
             .unwrap_err();
 
-        assert!(matches!(err, PrecompileError::Fatal(_)));
+        assert!(matches!(err, PrecompileError::Revert(_)));
     }
 }
 

@@ -281,7 +281,7 @@ impl Rpc {
         issuance_currency: u16,
         reference_currency: u16,
     ) -> Result<serde_json::Value> {
-        let tx_hash = eth::send_call_with_gas_reserve(
+        let outcome = eth::send_call_outcome(
             &self.cfg.rpc0,
             addresses::AGENT_REWARD_ADDR,
             key,
@@ -293,12 +293,13 @@ impl Rpc {
             },
             None,
         )?;
-        let receipt = eth::receipt_json(&self.cfg.rpc0, &tx_hash)
-            .ok_or_else(|| eyre!("AgentReward claim receipt unavailable: {tx_hash}"))?;
-        if !receipt_status(&receipt) {
-            return Err(eyre!("AgentReward claim reverted: {tx_hash}"));
+        if !outcome.success {
+            return Err(eyre!(
+                "AgentReward claim reverted: {}",
+                outcome.transaction_hash
+            ));
         }
-        Ok(receipt)
+        Ok(outcome.receipt)
     }
 
     pub fn staking_balance_on(&self, port: u16) -> Option<U256> {

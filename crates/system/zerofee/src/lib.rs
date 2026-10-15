@@ -24,6 +24,7 @@
 
 pub mod constants;
 mod envelope;
+pub mod errors;
 #[cfg(test)]
 mod hook_registry_tests;
 pub mod hooks;

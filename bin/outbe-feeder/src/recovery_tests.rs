@@ -311,18 +311,18 @@ markets = [{{ provider = "mock", quote = "840" }}]
         }
     }
     async fn tick(&mut self) -> Result<()> {
-        feeder_tick(
-            &self.config,
-            &self.providers,
-            &self.client,
-            &self.wallet,
-            self.signer,
-            self.validator,
-            self.journal.as_mut().unwrap(),
-            &self.health,
-            &mut self.last_attempt,
-        )
-        .await
+        let mut ctx = FeederTickContext {
+            config: &self.config,
+            providers: &self.providers,
+            client: &self.client,
+            wallet: &self.wallet,
+            signer: self.signer,
+            validator: self.validator,
+            journal: self.journal.as_mut().unwrap(),
+            health: &self.health,
+            last_attempt: &mut self.last_attempt,
+        };
+        feeder_tick(&mut ctx).await
     }
     fn pending(&self) -> journal::PendingVote {
         self.journal.as_ref().unwrap().pending().unwrap().clone()

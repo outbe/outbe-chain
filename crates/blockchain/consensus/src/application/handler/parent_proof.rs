@@ -4,6 +4,7 @@ use crate::block::ConsensusBlock;
 
 use crate::digest::Digest;
 
+use crate::errors::ParentProofError;
 use crate::finalization::parent_cert_store::CertifiedParentProofKey;
 use crate::finalization::parent_cert_store::CertifiedParentProofRecord;
 
@@ -27,23 +28,17 @@ pub(super) fn finalized_parent_attestation_from_phase1_system_tx(
 
     let raw_block = block.clone().into_inner().into_block();
     let layout = outbe_primitives::system_tx::split_system_layout(&raw_block.body.transactions)
-        .map_err(|error| {
-            eyre::eyre!("invalid system tx layout while extracting Phase 1: {error}")
-        })?;
-    let phase1 = *layout.begin.first().ok_or_else(|| {
-        eyre::eyre!(
-            "missing Phase 1 finalization system transaction for block {}",
-            block.number()
-        )
-    })?;
+        .map_err(ParentProofError::InvalidSystemTxLayout)?;
+    let phase1 = *layout
+        .begin
+        .first()
+        .ok_or_else(|| ParentProofError::MissingPhase1SystemTx(block.number()))?;
     let input = outbe_primitives::system_tx::SystemTxInputV2::decode(phase1.input().as_ref())
-        .map_err(|error| eyre::eyre!("decode Phase 1 system transaction input: {error}"))?;
+        .map_err(ParentProofError::DecodePhase1Input)?;
     let outbe_primitives::system_tx::SystemTxInputV2::CertifiedParentAccounting { metadata } =
         input
     else {
-        return Err(eyre::eyre!(
-            "expected Phase 1 finalization system transaction at begin ordinal 0"
-        ));
+        return Err(ParentProofError::UnexpectedBeginOrdinal0.into());
     };
 
     Ok(Some(FinalizedParentAttestation {

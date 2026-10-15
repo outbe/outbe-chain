@@ -20,8 +20,9 @@ use serde::Deserialize;
 use tracing::{debug, info, warn};
 
 use crate::abi::{IHyperlaneController, IValidatorAnnounce};
-use crate::client;
-use crate::config::HyperlaneConfig;
+use crate::client::{self, TxSender};
+use crate::config::{ChainConfig, HyperlaneConfig};
+use crate::errors::AttesterError;
 use crate::health::AttesterHealth;
 
 /// HyperlaneController precompile address (0xEE14).
@@ -59,16 +60,15 @@ pub struct Attester {
 impl Attester {
     pub fn new(
         config: HyperlaneConfig,
-        rpc_endpoint: String,
-        chain_id: u64,
+        chain: ChainConfig,
         wallet: EthereumWallet,
         validator: Address,
         health: Arc<AttesterHealth>,
     ) -> Self {
         Self {
             config,
-            rpc_endpoint,
-            chain_id,
+            rpc_endpoint: chain.rpc_endpoint,
+            chain_id: chain.chain_id,
             wallet,
             validator,
             client: reqwest::Client::new(),
@@ -257,16 +257,13 @@ impl Attester {
             signature: checkpoint.serialized_signature.clone(),
         }
         .abi_encode();
-        match client::send_tx(
-            &self.rpc_endpoint,
-            &self.wallet,
-            self.chain_id,
-            HYPERLANE_CONTROLLER_ADDRESS,
-            &calldata,
-            self.config.gasless,
-        )
-        .await
-        {
+        let sender = TxSender {
+            rpc_endpoint: &self.rpc_endpoint,
+            wallet: &self.wallet,
+            chain_id: self.chain_id,
+            gasless: self.config.gasless,
+        };
+        match client::send_tx(&sender, HYPERLANE_CONTROLLER_ADDRESS, &calldata).await {
             Ok(tx_hash) => {
                 self.health.record_success();
                 info!(domain, index, %tx_hash, "hyperlane checkpoint submitted");
@@ -284,13 +281,13 @@ impl Attester {
 fn bucket_base(location: &str) -> Result<String> {
     let rest = location
         .strip_prefix("s3+")
-        .ok_or_else(|| eyre::eyre!("unsupported storage location '{location}'"))?;
+        .ok_or_else(|| AttesterError::UnsupportedStorageLocation(location.to_string()))?;
     let (scheme, path) = rest
         .split_once("://")
-        .ok_or_else(|| eyre::eyre!("malformed storage location '{location}'"))?;
+        .ok_or_else(|| AttesterError::MalformedStorageLocation(location.to_string()))?;
     let mut segments = path.split('/').filter(|s| !s.is_empty());
     let (Some(host), Some(bucket)) = (segments.next(), segments.next()) else {
-        return Err(eyre::eyre!("storage location '{location}' has no bucket"));
+        return Err(AttesterError::StorageLocationMissingBucket(location.to_string()).into());
     };
     Ok(format!("{scheme}://{host}/{bucket}"))
 }

@@ -37,7 +37,11 @@ fn enumerate_artifact_is_bounded_canonical_and_commits_raw_coverage() {
     assert_ne!(run.coverage_root().unwrap(), B256::ZERO);
 
     let encoded = encode_enumerated_run(&run, &limits).unwrap();
-    assert_eq!(decode_enumerated_run(&encoded, &limits).unwrap(), run);
+    let mut published = run.clone();
+    for record in &mut published.ordered_records {
+        record.tribute.nominal_amount_minor = U256::ZERO;
+    }
+    assert_eq!(decode_enumerated_run(&encoded, &limits).unwrap(), published);
 
     let mut changed = encoded.clone();
     changed[24] ^= 1;
@@ -386,20 +390,12 @@ fn fixed_capacity_result_carriers_merge_by_position_without_becoming_dense_roots
         .map(|value| value.to_be_bytes().to_vec())
         .collect::<Vec<_>>();
     let second_items = vec![b"last".to_vec()];
-    let first = LysisListSubtreeCarrierV1::from_primary_page(
-        ListKind::NodActions,
-        0,
-        &first_items,
-        16,
-    )
-    .unwrap();
-    let second = LysisListSubtreeCarrierV1::from_primary_page(
-        ListKind::NodActions,
-        1,
-        &second_items,
-        16,
-    )
-    .unwrap();
+    let first =
+        LysisListSubtreeCarrierV1::from_primary_page(ListKind::NodActions, 0, &first_items, 16)
+            .unwrap();
+    let second =
+        LysisListSubtreeCarrierV1::from_primary_page(ListKind::NodActions, 1, &second_items, 16)
+            .unwrap();
     let merged = first.merge_adjacent(second).unwrap();
 
     assert_eq!(first.subtree_height, 8);
@@ -426,21 +422,15 @@ fn fixed_capacity_result_carriers_merge_by_position_without_becoming_dense_roots
     assert_eq!(merged_dense_root, dense_root);
 
     let sparse_items = vec![b"only".to_vec()];
-    let sparse = LysisListSubtreeCarrierV1::from_primary_page(
-        ListKind::NodActions,
-        0,
-        &sparse_items,
-        16,
-    )
-    .unwrap();
-    let empty =
-        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::NodActions, 1)
+    let sparse =
+        LysisListSubtreeCarrierV1::from_primary_page(ListKind::NodActions, 0, &sparse_items, 16)
             .unwrap();
+    let empty =
+        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::NodActions, 1).unwrap();
     assert!(!empty.tree_root.is_zero());
     assert_eq!(
         empty,
-        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::NodActions, 1,)
-            .unwrap()
+        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::NodActions, 1,).unwrap()
     );
 
     let sparse_coverage = sparse.merge_adjacent(empty).unwrap();
@@ -460,8 +450,7 @@ fn fixed_capacity_result_carriers_merge_by_position_without_becoming_dense_roots
     assert_ne!(sparse_wrapped, canonical_sparse);
 
     let non_adjacent =
-        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::NodActions, 2)
-            .unwrap();
+        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::NodActions, 2).unwrap();
     assert!(sparse.merge_adjacent(non_adjacent).is_err());
     let wrong_kind =
         LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::BucketRecords, 1)
@@ -471,58 +460,56 @@ fn fixed_capacity_result_carriers_merge_by_position_without_becoming_dense_roots
 
 #[test]
 fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
-    let summary = |primary_ordinal: u32,
-                   tribute_count: u32,
-                   marker: u8,
-                   first_error_ordinal: Option<u32>| {
-        let actions = vec![vec![marker]; usize::try_from(tribute_count).unwrap()];
-        let manifest_entry = vec![vec![marker]];
-        let result_hash = vec![vec![marker; 32]];
-        RootReduceSummaryV1 {
-            protocol_bundle_hash: B256::repeat_byte(1),
-            job_id: B256::repeat_byte(2),
-            attempt: 3,
-            plan_hash: B256::repeat_byte(4),
-            covered_primary_start: primary_ordinal,
-            covered_primary_count: 1,
-            nod_actions: LysisListSubtreeCarrierV1::from_primary_page(
-                ListKind::NodActions,
-                primary_ordinal,
-                &actions,
-                16,
-            )
-            .unwrap(),
-            bucket_records: LysisListSubtreeCarrierV1::from_primary_page(
-                ListKind::BucketRecords,
-                primary_ordinal,
-                &actions,
-                16,
-            )
-            .unwrap(),
-            output_manifest_entries: LysisListSubtreeCarrierV1::from_primary_page(
-                ListKind::CompleteOutputManifest,
-                primary_ordinal,
-                &manifest_entry,
-                16,
-            )
-            .unwrap(),
-            result_chunk_hashes: LysisListSubtreeCarrierV1::from_primary_page(
-                ListKind::ResultChunkHashes,
-                primary_ordinal,
-                &result_hash,
-                32,
-            )
-            .unwrap(),
-            tribute_count,
-            nod_count: tribute_count,
-            bucket_count: tribute_count,
-            tribute_nominal_total: U256::from(tribute_count) * U256::from(10),
-            eligible_nominal_total: U256::from(tribute_count) * U256::from(8),
-            lysis_allocation_minor: U256::from(tribute_count) * U256::from(3),
-            nod_cost_total: U256::from(tribute_count) * U256::from(7),
-            first_error_ordinal,
-        }
-    };
+    let summary =
+        |primary_ordinal: u32, tribute_count: u32, marker: u8, first_error_ordinal: Option<u32>| {
+            let actions = vec![vec![marker]; usize::try_from(tribute_count).unwrap()];
+            let manifest_entry = vec![vec![marker]];
+            let result_hash = vec![vec![marker; 32]];
+            RootReduceSummaryV1 {
+                protocol_bundle_hash: B256::repeat_byte(1),
+                job_id: B256::repeat_byte(2),
+                attempt: 3,
+                plan_hash: B256::repeat_byte(4),
+                covered_primary_start: primary_ordinal,
+                covered_primary_count: 1,
+                nod_actions: LysisListSubtreeCarrierV1::from_primary_page(
+                    ListKind::NodActions,
+                    primary_ordinal,
+                    &actions,
+                    16,
+                )
+                .unwrap(),
+                bucket_records: LysisListSubtreeCarrierV1::from_primary_page(
+                    ListKind::BucketRecords,
+                    primary_ordinal,
+                    &actions,
+                    16,
+                )
+                .unwrap(),
+                output_manifest_entries: LysisListSubtreeCarrierV1::from_primary_page(
+                    ListKind::CompleteOutputManifest,
+                    primary_ordinal,
+                    &manifest_entry,
+                    16,
+                )
+                .unwrap(),
+                result_chunk_hashes: LysisListSubtreeCarrierV1::from_primary_page(
+                    ListKind::ResultChunkHashes,
+                    primary_ordinal,
+                    &result_hash,
+                    32,
+                )
+                .unwrap(),
+                tribute_count,
+                nod_count: tribute_count,
+                bucket_count: tribute_count,
+                tribute_nominal_total: U256::from(tribute_count) * U256::from(10),
+                eligible_nominal_total: U256::from(tribute_count) * U256::from(8),
+                lysis_allocation_minor: U256::from(tribute_count) * U256::from(3),
+                nod_cost_total: U256::from(tribute_count) * U256::from(7),
+                first_error_ordinal,
+            }
+        };
 
     let left = summary(0, 256, 11, Some(1));
     let right = summary(1, 1, 12, Some(256));
