@@ -1,6 +1,7 @@
 use super::*;
 use blst::min_sig;
 use radicle::cob::identity::{self, Identity};
+use radicle::cob::patch::cache::Patches as _;
 use radicle::cob::patch::{self, Patch, Patches, Verdict};
 use radicle::cob::store::Transaction;
 use radicle::cob::stream::CobStream as _;
@@ -128,6 +129,56 @@ fn code_commit(repo: &Repository, parent: Option<git::Oid>, text: &[u8]) -> git:
         .into()
 }
 
+fn assert_cached_patch(
+    repo: &Repository,
+    id: patch::PatchId,
+    expected: &Patch,
+    path: &std::path::Path,
+) {
+    let revision = expected.latest().0;
+    for rebuild in [false, true] {
+        let db = cob::cache::StoreWriter::open(path)
+            .unwrap()
+            .with_migrations(cob::cache::migrate::ignore)
+            .unwrap();
+        let mut cache = patch::Cache::open(Patches::open(repo, ReadOnly).unwrap(), db);
+        if rebuild {
+            cache
+                .write_all(|result, _| {
+                    assert!(result.is_ok(), "cache rebuild: {result:?}");
+                    std::ops::ControlFlow::Continue(())
+                })
+                .unwrap();
+        } else {
+            cache.write(&id).unwrap();
+        }
+        assert_eq!(cache.get(&id).unwrap().as_ref(), Some(expected));
+        let found = cache.find_by_revision(&revision).unwrap().unwrap();
+        assert_eq!(found.id, id);
+        assert_eq!(found.revision_id, revision);
+        assert_eq!(&found.patch, expected);
+        assert_eq!(
+            cache
+                .list()
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            vec![(id, expected.clone())]
+        );
+        drop(cache);
+
+        let db = cob::cache::StoreReader::reader(path).unwrap();
+        db.check_version().unwrap();
+        let cache = patch::Cache::reader(Patches::open(repo, ReadOnly).unwrap(), db);
+        assert_eq!(cache.get(&id).unwrap().as_ref(), Some(expected));
+        assert_eq!(
+            &cache.find_by_revision(&revision).unwrap().unwrap().patch,
+            expected
+        );
+        assert_eq!(cache.counts().unwrap().total(), 1);
+    }
+}
+
 #[test_log::test]
 fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
     let tmp = tempfile::tempdir().unwrap();
@@ -248,6 +299,8 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
             .review_by(&owner)
             .is_none()
     );
+    let cache_path = tmp.path().join("receiver-patches.db");
+    assert_cached_patch(&received, patch_id, &fetched, &cache_path);
     let mut tx = Transaction::<Patch, Repository>::default();
     tx.review(revision, Some(Verdict::Accept), None, vec![])
         .unwrap();
@@ -281,6 +334,7 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
         .unwrap();
     assert_eq!(accepted.verdict(), Some(Verdict::Accept));
     assert_eq!(accepted.id(), review.id.into());
+    assert_cached_patch(&reopened, patch_id, &patch, &cache_path);
     assert!(reopened.validate().unwrap().is_empty());
     assert_eq!(reopened.remote(&owner).unwrap().refs.at, at);
     let operations = patch::PatchStream::init(patch_id, &reopened)
@@ -368,5 +422,6 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
             .unwrap(),
         patch
     );
+    assert_cached_patch(&preserved, patch_id, &patch, &cache_path);
     println!("forged_sigrefs={forged} fetch={result:?} preserved_sigrefs={at}");
 }
