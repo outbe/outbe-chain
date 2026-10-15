@@ -17,9 +17,13 @@ def main():
     parser.add_argument("--rad", type=Path, required=True)
     parser.add_argument("--helper", type=Path, required=True)
     parser.add_argument("--sidecar", type=Path, required=True)
+    parser.add_argument("--legacy-dir", type=Path, help="Use b76a178 rad/sidecar for the author peer")
     parser.add_argument("--evidence", type=Path, required=True)
     args = parser.parse_args()
     binaries = {name: getattr(args, name).resolve() for name in ("rad", "helper", "sidecar")}
+    if args.legacy_dir:
+        binaries.update(legacy_rad=args.legacy_dir.resolve() / "rad",
+                        legacy_sidecar=args.legacy_dir.resolve() / "outbe-radicle")
     assert binaries["helper"].name == "git-remote-rad"
     args.evidence.mkdir(parents=True, exist_ok=True)
     transcript = []
@@ -50,7 +54,7 @@ def main():
         transcript.append(dict(control=command, fields=fields, response=response))
         return response
 
-    temp = tempfile.TemporaryDirectory(prefix="ob-p1-", dir="/private/tmp")
+    temp = tempfile.TemporaryDirectory(prefix="ob-p1-", dir="/tmp")
     try:
         root = Path(temp.name)
         revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -58,11 +62,18 @@ def main():
             version = run([binaries[name], "--version"], root, env)
             match = re.search(r" \(([0-9a-f]{7,40})\)$", version)
             assert match and revision.startswith(match[1]), (revision, version)
+        if args.legacy_dir:
+            version = run([binaries["legacy_rad"], "--version"], root, env)
+            match = re.search(r" \(([0-9a-f]{7,40})\)$", version)
+            assert match and "b76a17801329291153585ed31db61ee3c658046e".startswith(match[1]), version
         peers = []
         for alias in ("alice", "bob"):
             home = root / alias
             peer_env = dict(env, RAD_HOME=str(home), RAD_SOCKET=str(home / "node" / "control.sock"))
-            run([binaries["rad"], "auth", "--alias", alias], root, peer_env)
+            author = alias == "alice" and args.legacy_dir
+            rad = binaries["legacy_rad"] if author else binaries["rad"]
+            sidecar = binaries["legacy_sidecar"] if author else binaries["sidecar"]
+            run([rad, "auth", "--alias", alias], root, peer_env)
             config = home / "config.json"
             data = json.loads(config.read_text())
             data["node"]["network"] = "outbe"
@@ -70,7 +81,7 @@ def main():
             config.write_text(json.dumps(data))
             log = (args.evidence / f"{alias}-sidecar.log").open("w")
             logs.append(log)
-            command = [binaries["sidecar"], "--home", home, "--control-socket", home / "node" / "control.sock",
+            command = [sidecar, "--home", home, "--control-socket", home / "node" / "control.sock",
                        "--listen", "127.0.0.1:0", "--advertise", "127.0.0.1:8776", "--max-validators", "4",
                        "--external-inbound-reserve", "2", "--status-listen", "127.0.0.1:0"]
             proc = subprocess.Popen([str(x) for x in command], cwd=root, env=peer_env, stdout=log, stderr=log)
@@ -96,7 +107,8 @@ def main():
         run(["git", "add", "README.md"], source, env)
         run(["git", "-c", "commit.gpgsign=false", "commit", "-m", "Initial fixture"], source, env)
         expected = run(["git", "rev-parse", "HEAD"], source, env)
-        run([binaries["rad"], "init", "--name", "p1-fixture", "--description", "Outbe stable replication",
+        author_rad = binaries["legacy_rad"] if args.legacy_dir else binaries["rad"]
+        run([author_rad, "init", "--name", "p1-fixture", "--description", "Outbe stable replication",
              "--default-branch", "main", "--public", "--no-confirm"], source, alice_env)
         rid = run([binaries["rad"], "inspect"], source, alice_env)
         assert re.fullmatch(r"rad:z[1-9A-HJ-NP-Za-km-z]+", rid), rid

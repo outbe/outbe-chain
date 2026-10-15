@@ -25,9 +25,9 @@
 - `crates/radicle-protocol/src/service.rs` and `service/command.rs`: disconnect
   acknowledgement and disposition at the service boundary.
 - `crates/radicle-node/src/control.rs`, `runtime/handle.rs`, `test/handle.rs` and
-  `tests.rs`: bounded control requests, optional raw control, runtime limits and
-  matching handle/test implementations. Raw control remains disabled by the
-  Outbe wrapper unless explicitly requested.
+  `tests.rs`: bounded disconnect requests and matching handle/test implementations.
+  The Outbe wrapper retains its runtime limits, private control UDS and read-only
+  loopback HTTP status interface.
 - `build.rs`: track enclosing Git refs and version environment overrides,
   including linked worktrees, to refresh build revision metadata.
 - `crates/radicle-cli/Cargo.toml` and `crates/radicle-surf/Cargo.toml`: existing
