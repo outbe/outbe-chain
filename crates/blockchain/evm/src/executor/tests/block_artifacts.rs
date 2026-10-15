@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 mod factory_boundary;
 mod nod_bodies;
@@ -67,7 +68,7 @@ fn proposer_and_validator_r_sealed_match_after_gem_issue_settle_and_mine() {
                         issuance_currency: 840,
                         reference_currency: 840,
                         issued_at: block_ts - 1,
-                        expires_at: block_ts + 86_400,
+                        expires_at: block_ts + SECONDS_PER_DAY,
                     })
                     .unwrap();
                 seed_previous_day_vwap(&storage, block_ts, U256::from(1_000_000u64));

@@ -331,7 +331,7 @@ where
         let mut from_info = self.effective_account_info(from)?;
 
         if from_info.balance < amount {
-            return Err(PrecompileError::fatal(format!(
+            return Err(PrecompileError::revert(format!(
                 "insufficient balance: {from} has {} but needs {amount}",
                 from_info.balance
             )));
@@ -339,7 +339,7 @@ where
 
         let mut to_info = self.effective_account_info(to)?;
         let credited = to_info.balance.checked_add(amount).ok_or_else(|| {
-            PrecompileError::fatal(format!(
+            PrecompileError::revert(format!(
                 "balance overflow: crediting {amount} to {to} with balance {}",
                 to_info.balance
             ))
@@ -358,7 +358,7 @@ where
 
         let mut info = self.effective_account_info(address)?;
         info.balance = info.balance.checked_add(amount).ok_or_else(|| {
-            PrecompileError::fatal(format!(
+            PrecompileError::revert(format!(
                 "balance overflow: increasing {address} by {amount} from {}",
                 info.balance
             ))
@@ -375,7 +375,7 @@ where
         let mut info = self.effective_account_info(address)?;
 
         if info.balance < amount {
-            return Err(PrecompileError::fatal(format!(
+            return Err(PrecompileError::revert(format!(
                 "insufficient balance for burn: {address} has {} but needs {amount}",
                 info.balance
             )));

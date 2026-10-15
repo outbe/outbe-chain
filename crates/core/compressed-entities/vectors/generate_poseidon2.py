@@ -104,7 +104,7 @@ def generate():
     vectors['identities'] = identities
     tribute, nod, bucket = [bytes.fromhex(x['identity_hex']) for x in identities]
     tribute_payload = (bfield(1, tribute) + bfield(2, bytes([0x42])*20) + vfield(3, 0x01020304)
-                       + amount(4,1) + vfield(5,840) + amount(6,2) + vfield(7,978) + amount(8,3) + vfield(9,1))
+                       + amount(4,1) + vfield(5,840) + amount(6,2) + vfield(7,978) + amount(8,3))
     nod_payload = (bfield(1,nod) + bfield(2,bytes([0x24])*20) + amount(3,1) + vfield(4,0x0a0b0c0d)
                    + vfield(5,2) + bfield(7,bytes([0x33])*32)
                    + vfield(9,840) + vfield(10,978) + vfield(11,5))
@@ -118,7 +118,7 @@ def generate():
     amounts_blob = (1).to_bytes(8,'big') + bytes([0x66])*80
     encrypted_tribute = (bfield(1,tribute) + bfield(2,bytes([0x42])*20) + vfield(3,0x01020304)
                          + bfield(4,amounts_blob) + vfield(5,840) + bfield(6,public_key_blob)
-                         + vfield(7,978) + amount(8,3) + vfield(9,1) + vfield(10,99)
+                         + vfield(7,978) + amount(8,3) + vfield(10,99)
                          + bfield(11,bytes([0x77])*32))
     encrypted_nod = (bfield(1,nod) + bfield(2,bytes([0x24])*20) + bfield(3,public_key_blob)
                      + bfield(4,public_key_blob) + vfield(5,99) + vfield(6,0x0a0b0c0d)

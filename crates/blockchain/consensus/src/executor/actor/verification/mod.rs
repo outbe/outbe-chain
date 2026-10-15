@@ -13,7 +13,7 @@ use commonware_runtime::Clock;
 use futures::{future::BoxFuture, FutureExt};
 use outbe_primitives::{
     error::PrecompileError,
-    projection::{ExecutionReadBudget, ExecutionReadCancelled},
+    projection::{ExecutionReadBudget, ExecutionReadCancelled, NodeLocalExecutionAbort},
     OutbeExecutionData,
 };
 use std::{collections::BTreeMap, sync::Arc, task::Poll};
@@ -50,6 +50,7 @@ enum ExecutionStatus {
     Completed(PayloadStatus),
     Cancelled(ExecutionReadCancelled),
     CryptoBackendUnavailable,
+    NodeLocalAbort(NodeLocalExecutionAbort),
 }
 
 pub(super) enum Event {
@@ -241,7 +242,10 @@ impl VerificationWork {
                         PayloadStatusEnum::Valid,
                     )))
                 } else {
-                    ExecutionStatus::from_engine(engine.new_payload(execution_data).await, digest)
+                    ExecutionStatus::from_engine_with_crypto(
+                        engine.new_payload(execution_data).await,
+                        digest,
+                    )
                 };
                 Delivery {
                     request: ExecutionRequest {
@@ -310,30 +314,17 @@ impl Event {
 }
 
 impl ExecutionStatus {
-    fn from_engine(
+    fn from_engine_with_crypto(
         result: Result<PayloadStatus, reth_ethereum::node::api::BeaconOnNewPayloadError>,
         digest: Digest,
     ) -> eyre::Result<Self> {
-        let error = match result {
-            Ok(status) => return Ok(Self::Completed(status)),
-            Err(error) => error,
-        };
-        let cancelled = match &error {
-            reth_ethereum::node::api::BeaconOnNewPayloadError::Internal(source) => {
-                if PrecompileError::find_crypto_backend_failure(source.as_ref()).is_some() {
-                    tracing::error!(error = %source,
-                        "native cryptographic backend unavailable; block validity not determined");
-                    return Ok(Self::CryptoBackendUnavailable);
-                }
-                ExecutionReadCancelled::find(source.as_ref())
+        if let Err(reth_ethereum::node::api::BeaconOnNewPayloadError::Internal(source)) = &result {
+            if PrecompileError::find_crypto_backend_failure(source.as_ref()).is_some() {
+                tracing::error!(error = %source,
+                    "native cryptographic backend unavailable; block validity not determined");
+                return Ok(Self::CryptoBackendUnavailable);
             }
-            _ => None,
-        };
-        if let Some(cancelled) = cancelled {
-            return Ok(Self::Cancelled(cancelled.clone()));
         }
-        Err(eyre::Report::new(error).wrap_err(format!(
-            "new_payload failed during executor verification: target={digest}"
-        )))
+        Self::from_engine(result, digest)
     }
 }

@@ -46,18 +46,6 @@ interface INod {
     /// lapsed while the Nod was still unpaid. No Gratis is minted.
     event NodForfeited(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
 
-    /// @notice The daily call sweep (`sweep` = 1) fell two days behind. `skippedDay`
-    ///         gave its place to a newer day, and the sweep will not walk it.
-    event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);
-
-    /// @notice A reference currency was left out of one day's Call scan because its
-    ///         window price could not be indexed. The next daily pass tries it again.
-    event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
-
-    /// @notice A lapsed bucket kept a Nod that could not burn, or its Nods were still
-    ///         landing. The forfeit sweep comes back to it at `retryAt`.
-    event ExpiryDeferred(bytes32 indexed bucketKey, uint64 retryAt);
-
     struct NodData {
         uint256 nodId;
         address owner;
@@ -146,6 +134,6 @@ interface INod {
     function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
 
     // outbe-specific
-    function nodData(uint256 nodId) external view returns (NodData memory);
+    function getNod(uint256 nodId) external view returns (NodData memory);
     function certifiedGeneration(uint32 worldwideDay) external view returns (CertifiedGenerationData memory);
 }

@@ -3,8 +3,9 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
-use super::{compute_scurve_value, truncate_to_day, DAY_SECONDS};
+use super::{compute_scurve_value, truncate_to_day};
 use crate::schema::OracleContract;
 
 /// `(bases, quotes, peak_days, peak_prices)` - every active S-curve entry.
@@ -42,7 +43,7 @@ pub fn get_max_active_scurve_value(
             continue;
         }
 
-        let days_since = ((target_day - peak_day) / DAY_SECONDS) as usize;
+        let days_since = ((target_day - peak_day) / SECONDS_PER_DAY) as usize;
         let value = compute_scurve_value(peak_price, days_since);
         if value > max_value {
             max_value = value;
@@ -77,7 +78,7 @@ pub fn get_scurve_entries(
         let peak_price = oracle.scurve_peak_price.read(&idx)?;
 
         let days_since = if target_day >= peak_day {
-            ((target_day - peak_day) / DAY_SECONDS) as usize
+            ((target_day - peak_day) / SECONDS_PER_DAY) as usize
         } else {
             continue;
         };

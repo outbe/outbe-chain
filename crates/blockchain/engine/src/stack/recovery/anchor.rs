@@ -109,63 +109,45 @@ pub(in crate::stack) struct FollowerRecoveryBlock<'a> {
     pub(in crate::stack) block: &'a outbe_consensus::block::ConsensusBlock,
 }
 
-pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
-    local: FollowerRecoveryBlock<'_>,
-    local_finalization: Option<&outbe_consensus::marshal_types::Finalization>,
+fn check_ancestor_recovery_envelope_and_epoch(
+    local: &FollowerRecoveryBlock<'_>,
     upstream: &outbe_consensus::follow::upstream::AncestorFinalityProof,
-    schemes: &HybridSchemeProvider<MinSig>,
     epocher: &outbe_consensus::follow::FollowerEpocher,
-) -> Result<CertifiedFollowerRecoveryAnchor> {
-    let FollowerRecoveryBlock {
-        checkpoint:
-            ProjectionCheckpoint {
-                block_number: height,
-                block_hash: canonical_hash,
-            },
-        block: local_block,
-    } = local;
+) -> Result<Epoch> {
     use commonware_consensus::types::Epocher as _;
+    let height = local.checkpoint.block_number;
+    let canonical_hash = local.checkpoint.block_hash;
     upstream.validate_envelope(Height::new(height))?;
-    if local_block.number() != height || local_block.block_hash() != canonical_hash {
+    if local.block.number() != height || local.block.block_hash() != canonical_hash {
         return Err(crate::errors::StackRecoveryError::LocalBlockDiffersFromCheckpoint.into());
     }
-    if local_block != upstream.target() {
+    if local.block != upstream.target() {
         return Err(
             crate::errors::StackRecoveryError::UpstreamAncestorDiffersFromLocalBlock.into(),
         );
     }
-    let certified = &upstream.certified;
-    let epoch = certified.finalization.proposal.round.epoch();
-    if !epocher
+    let epoch = upstream.certified.finalization.proposal.round.epoch();
+    if epocher
         .containing(Height::new(height))
-        .is_some_and(|bounds| bounds.epoch() == epoch)
+        .is_none_or(|bounds| bounds.epoch() != epoch)
     {
         return Err(crate::errors::StackRecoveryError::AncestorCertificateCommitteeMismatch.into());
     }
-    if upstream.ancestors.is_empty() {
-        return validate_certified_follower_recovery_record(
-            crate::stack::recovery::anchor::FollowerRecoveryBlock {
-                checkpoint: ProjectionCheckpoint {
-                    block_number: height,
-                    block_hash: canonical_hash,
-                },
-                block: local_block,
-            },
-            local_finalization
-                .ok_or(crate::errors::StackRecoveryError::MissingDirectRecoveryCertificate)?,
-            &certified.finalization,
-            &certified.block,
-            schemes,
-        );
-    }
+    Ok(epoch)
+}
+
+fn verify_ancestor_certificates(
+    epoch: Epoch,
+    canonical_hash: B256,
+    certified_finalization: &outbe_consensus::marshal_types::Finalization,
+    local_finalization: Option<&outbe_consensus::marshal_types::Finalization>,
+    schemes: &HybridSchemeProvider<MinSig>,
+) -> Result<()> {
     let scheme = schemes
         .scoped(epoch)
         .ok_or(crate::errors::StackRecoveryError::MissingRecoveryAncestorCommittee)?;
     let mut rng = rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng);
-    if !certified
-        .finalization
-        .verify(&mut rng, scheme.as_ref(), &commonware_parallel::Sequential)
-    {
+    if !certified_finalization.verify(&mut rng, scheme.as_ref(), &commonware_parallel::Sequential) {
         return Err(
             crate::errors::StackRecoveryError::DescendantCertificateVerificationFailed.into(),
         );
@@ -184,36 +166,52 @@ pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
             );
         }
     }
+    Ok(())
+}
+
+pub(in crate::stack) fn validate_ancestor_follower_recovery_record(
+    local: FollowerRecoveryBlock<'_>,
+    local_finalization: Option<&outbe_consensus::marshal_types::Finalization>,
+    upstream: &outbe_consensus::follow::upstream::AncestorFinalityProof,
+    schemes: &HybridSchemeProvider<MinSig>,
+    epocher: &outbe_consensus::follow::FollowerEpocher,
+) -> Result<CertifiedFollowerRecoveryAnchor> {
+    let epoch = check_ancestor_recovery_envelope_and_epoch(&local, upstream, epocher)?;
+    let certified = &upstream.certified;
+    if upstream.ancestors.is_empty() {
+        return validate_certified_follower_recovery_record(
+            local,
+            local_finalization
+                .ok_or(crate::errors::StackRecoveryError::MissingDirectRecoveryCertificate)?,
+            &certified.finalization,
+            &certified.block,
+            schemes,
+        );
+    }
+    verify_ancestor_certificates(
+        epoch,
+        local.checkpoint.block_hash,
+        &certified.finalization,
+        local_finalization,
+        schemes,
+    )?;
     Ok(CertifiedFollowerRecoveryAnchor {
-        checkpoint: ProjectionCheckpoint {
-            block_number: height,
-            block_hash: canonical_hash,
-        },
+        checkpoint: local.checkpoint,
         finalization: local_finalization.cloned(),
-        block: local_block.clone(),
+        block: local.block.clone(),
     })
 }
 
-pub(in crate::stack) fn validate_certified_follower_recovery_record(
-    local: FollowerRecoveryBlock<'_>,
-    local_finalization: &outbe_consensus::marshal_types::Finalization,
-    upstream_finalization: &outbe_consensus::marshal_types::Finalization,
+fn check_certified_recovery_blocks(
+    local: &FollowerRecoveryBlock<'_>,
     upstream_block: &outbe_consensus::block::ConsensusBlock,
-    schemes: &HybridSchemeProvider<MinSig>,
-) -> Result<CertifiedFollowerRecoveryAnchor> {
-    let FollowerRecoveryBlock {
-        checkpoint:
-            ProjectionCheckpoint {
-                block_number: height,
-                block_hash: canonical_hash,
-            },
-        block: local_block,
-    } = local;
-
-    if local_block.number() != height {
+) -> Result<()> {
+    let height = local.checkpoint.block_number;
+    let canonical_hash = local.checkpoint.block_hash;
+    if local.block.number() != height {
         return Err(
             crate::errors::StackRecoveryError::LocalArchivedBlockHeightMismatch {
-                actual: local_block.number(),
+                actual: local.block.number(),
                 expected: height,
             }
             .into(),
@@ -228,10 +226,10 @@ pub(in crate::stack) fn validate_certified_follower_recovery_record(
             .into(),
         );
     }
-    if local_block.block_hash() != canonical_hash {
+    if local.block.block_hash() != canonical_hash {
         return Err(
             crate::errors::StackRecoveryError::LocalArchivedBlockHashMismatch {
-                actual: local_block.block_hash(),
+                actual: local.block.block_hash(),
                 canonical_hash,
                 height,
             }
@@ -248,6 +246,16 @@ pub(in crate::stack) fn validate_certified_follower_recovery_record(
             .into(),
         );
     }
+    Ok(())
+}
+
+fn check_certified_recovery_finalizations(
+    checkpoint: ProjectionCheckpoint,
+    local_finalization: &outbe_consensus::marshal_types::Finalization,
+    upstream_finalization: &outbe_consensus::marshal_types::Finalization,
+) -> Result<Epoch> {
+    let height = checkpoint.block_number;
+    let canonical_hash = checkpoint.block_hash;
     if local_finalization.proposal.payload.0 != canonical_hash {
         return Err(
             crate::errors::StackRecoveryError::LocalFinalizationPayloadMismatch {
@@ -280,6 +288,23 @@ pub(in crate::stack) fn validate_certified_follower_recovery_record(
             .into(),
         );
     }
+    Ok(local_epoch)
+}
+
+pub(in crate::stack) fn validate_certified_follower_recovery_record(
+    local: FollowerRecoveryBlock<'_>,
+    local_finalization: &outbe_consensus::marshal_types::Finalization,
+    upstream_finalization: &outbe_consensus::marshal_types::Finalization,
+    upstream_block: &outbe_consensus::block::ConsensusBlock,
+    schemes: &HybridSchemeProvider<MinSig>,
+) -> Result<CertifiedFollowerRecoveryAnchor> {
+    check_certified_recovery_blocks(&local, upstream_block)?;
+    let local_epoch = check_certified_recovery_finalizations(
+        local.checkpoint,
+        local_finalization,
+        upstream_finalization,
+    )?;
+    let height = local.checkpoint.block_number;
     let scheme = schemes.scoped(local_epoch).ok_or_else(|| {
         crate::errors::StackRecoveryError::MissingRecoveryEpochVerifierScheme(local_epoch.get())
     })?;
@@ -306,12 +331,9 @@ pub(in crate::stack) fn validate_certified_follower_recovery_record(
     }
 
     Ok(CertifiedFollowerRecoveryAnchor {
-        checkpoint: ProjectionCheckpoint {
-            block_number: height,
-            block_hash: canonical_hash,
-        },
+        checkpoint: local.checkpoint,
         finalization: Some(local_finalization.clone()),
-        block: local_block.clone(),
+        block: local.block.clone(),
     })
 }
 

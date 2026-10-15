@@ -298,7 +298,7 @@ fn exact_parent_identity_and_read_root_mismatches_are_corruption_not_readiness()
     ));
     assert!(matches!(
         parent.read_leaf_verified(entity, b256(88)),
-        Err(PrecompileError::Fatal(_))
+        Err(PrecompileError::TreeUnavailable(_))
     ));
 }
 

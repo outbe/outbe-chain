@@ -2,7 +2,7 @@
 
 use alloy_primitives::B256;
 use outbe_compressed_entities::WwdEntityId;
-use outbe_primitives::error::{PrecompileError, SweepFailure};
+use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
 use crate::NodRepositoryError;
@@ -47,24 +47,6 @@ pub enum NodError {
     #[error("unknown nod profile selector: {selector}")]
     UnknownProfileSelector { selector: u8 },
 
-    #[error("Nod bucket {bucket_key} has an empty member slot during forfeit")]
-    EmptyBucketMemberSlotDuringForfeit { bucket_key: B256 },
-
-    #[error("Nod bucket {bucket_key} member {nod_id} has no body during forfeit")]
-    MissingBucketMemberBodyDuringForfeit {
-        bucket_key: B256,
-        nod_id: WwdEntityId,
-    },
-
-    #[error("Nod bucket {bucket_key} indexes an ineligible member {nod_id}")]
-    IneligibleBucketMember {
-        bucket_key: B256,
-        nod_id: WwdEntityId,
-    },
-
-    #[error("Nod bucket {bucket_key} has no body during forfeit")]
-    MissingBucketBodyDuringForfeit { bucket_key: B256 },
-
     #[error("{0}")]
     EntityIdDerivation(String),
 
@@ -82,9 +64,6 @@ pub enum NodError {
 
     #[error("Nod bucket identity mismatch: expected {expected}, found {found}")]
     BucketIdentityMismatch { expected: B256, found: B256 },
-
-    #[error("closeCallNoticeForTest: bucket not queued")]
-    BucketNotQueuedForTest,
 
     #[error("absent Nod OCOMP generation has residual state")]
     AbsentOcompGenerationHasResidualState,
@@ -118,9 +97,6 @@ pub enum NodError {
     #[error("installed Nod OCOMP generation metadata is malformed")]
     MalformedOcompGenerationMetadata,
 
-    #[error("Nod call price overflow")]
-    CallPriceOverflow,
-
     #[error("nod already exists")]
     NodAlreadyExists,
 
@@ -139,8 +115,8 @@ pub enum NodError {
     #[error("Nod bucket {bucket_id} settled count underflow")]
     BucketSettledCountUnderflow { bucket_id: WwdEntityId },
 
-    #[error("Nod settlement requires an unpaid item of a called or qualified bucket")]
-    SettlementRequiresUnpaidCalledOrQualifiedItem,
+    #[error("nod is already settled")]
+    AlreadySettled,
 
     #[error("Nod settled count overflow")]
     SettledCountOverflow,
@@ -188,55 +164,7 @@ impl NodError {
 
 impl From<NodError> for PrecompileError {
     fn from(value: NodError) -> Self {
-        let message = value.to_string();
-        match value {
-            NodError::EntityIdDerivation(_)
-            | NodError::CanonicalIdentityMismatch { .. }
-            | NodError::BucketIdentityMismatch { .. }
-            | NodError::AbsentOcompGenerationHasResidualState
-            | NodError::MalformedOcompGeneration { .. }
-            | NodError::MalformedMaterializationFifoBounds
-            | NodError::MissingMaterializationFifoHeadEntry
-            | NodError::MissingMaterializationFifoHeadProjection
-            | NodError::CompletedMaterializationFifoHead
-            | NodError::MalformedOcompGenerationMetadata
-            | NodError::CallPriceOverflow
-            | NodError::BucketMemberIndexOverflow { .. }
-            | NodError::NonNodItemPayload
-            | NodError::NonNodBucketPayload => PrecompileError::Fatal(message),
-            NodError::InvalidNodIdLength
-            | NodError::InvalidNodIdHex
-            | NodError::NodNotFound
-            | NodError::BucketNotFound
-            | NodError::IndexOutOfBounds
-            | NodError::QueryLimitExceeded
-            | NodError::ZeroReferenceCurrency
-            | NodError::FloorPriceOverflow
-            | NodError::EntryPricesAlreadyFrozen
-            | NodError::InvalidEntryPriceSnapshot
-            | NodError::NonTransferable
-            | NodError::UnknownProfileSelector { .. }
-            | NodError::EmptyBucketMemberSlotDuringForfeit { .. }
-            | NodError::MissingBucketMemberBodyDuringForfeit { .. }
-            | NodError::IneligibleBucketMember { .. }
-            | NodError::MissingBucketBodyDuringForfeit { .. }
-            | NodError::EncryptedTermsMismatch
-            | NodError::CannotIssueSettledNod
-            | NodError::BucketNotQueuedForTest
-            | NodError::NodAlreadyExists
-            | NodError::BucketExistenceDisagreesWithMemberCount { .. }
-            | NodError::TotalSupplyOverflowDuringIssuance
-            | NodError::TotalSupplyUnderflowDuringRemoval
-            | NodError::BucketSettledCountUnderflow { .. }
-            | NodError::SettlementRequiresUnpaidCalledOrQualifiedItem
-            | NodError::SettledCountOverflow
-            | NodError::LoadedBucketMismatch { .. }
-            | NodError::BucketMemberCountUnderflowDuringRemoval { .. }
-            | NodError::NodNotIndexedInBucket { .. }
-            | NodError::EmptyBucketMemberSlotDuringRemoval { .. } => {
-                PrecompileError::Revert(message)
-            }
-        }
+        PrecompileError::Revert(value.to_string())
     }
 }
 
@@ -246,15 +174,7 @@ pub(crate) fn map_amount_read_error(error: outbe_tee::TransportError) -> Precomp
     if error.is_node_local() {
         PrecompileError::EnclaveUnavailable(message)
     } else {
-        PrecompileError::Fatal(message)
-    }
-}
-
-/// Classifies a sweep error and propagates compressed-body corruption.
-pub(crate) fn sweep_failure(error: &PrecompileError) -> SweepFailure {
-    match error {
-        PrecompileError::BodyReadCorruption(_) => SweepFailure::Propagate,
-        other => other.sweep_failure(),
+        PrecompileError::Revert(message)
     }
 }
 

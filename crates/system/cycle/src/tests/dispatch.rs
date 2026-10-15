@@ -678,7 +678,7 @@ fn settled_cycle_marker_without_metadosis_semantic_receipt_is_fatal() {
         outbe_rewards::api::mark_day_settled(&ctx, 20_240_101).unwrap();
         assert!(matches!(
             run_emission_limit_daily(&ctx),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
     });
 }
@@ -698,7 +698,7 @@ fn metadosis_semantic_receipt_without_settled_cycle_marker_is_fatal_before_effec
         let scope = ExecutionScope::default();
         assert!(matches!(
             crate::handler::run_emission_limit_daily(&ctx, &scope, &parent),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
     });
 }

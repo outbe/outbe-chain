@@ -30,7 +30,6 @@ fn self_contained_nod_rederives_keys_and_separates_divergent_amounts() {
             issuance_currency: 840,
             reference_currency: 978,
             tribute_price_minor: U256::ONE,
-            exclude_from_intex_issuance: false,
             offer_input_hash: B256::repeat_byte(5),
         },
         &TributeAmountsV2 {

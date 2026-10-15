@@ -2,10 +2,10 @@
 pragma solidity ^0.8.30;
 
 /// @title IIntex
-/// @notice Read-only view surface for the Intex runtime module: the
+/// @notice View surface and lifecycle events of the Intex runtime module: the
 ///         canonical, cross-chain Intex series ledger (identity + lifecycle).
-/// @dev Writes are Rust-to-Rust only (IntexFactory). This interface exposes
-///      reads for off-chain observability. `promisLoadMinor` is returned as uint256
+/// @dev Writes are Rust-to-Rust only (IntexFactory). Its call and expiry sweeps emit
+///      the series events here. `promisLoadMinor` is returned as uint256
 ///      (its storage representation). The Origin `uint128` bounds it.
 interface IIntex {
     struct SeriesData {
@@ -38,7 +38,27 @@ interface IIntex {
 
     /// @notice Full identity + lifecycle record for a series. Reverts if the
     ///         series does not exist.
-    function seriesData(bytes14 seriesId) external view returns (SeriesData memory);
+    function getIntexSeries(bytes14 seriesId) external view returns (SeriesData memory);
+
+    /// @notice Derived from finalized daily VWAPs on every call, never stored.
+    function isQualified(bytes14 seriesId) external view returns (bool);
+
+    /// @notice The classes an issued unit can be in. Disjoint: they sum to
+    ///         `issuedUnits`. `activeUnits` is what is still unpaid while the series
+    ///         lives, and `forfeitedUnits` is the same remainder once it is Expired.
+    ///         `settledUnits` is what is paid and not yet exercised, the same
+    ///         measure `getIntexSeries` reports.
+    struct UnitCounts {
+        uint32 issuedUnits;
+        uint32 activeUnits;
+        uint32 settledUnits;
+        uint32 exercisedUnits;
+        uint32 gemFactoryUnits;
+        uint32 forfeitedUnits;
+    }
+
+    /// @notice Read the disjoint unit counts of `seriesId`.
+    function seriesUnitCounts(bytes14 seriesId) external view returns (UnitCounts memory);
 
     /// @notice Whether a series exists.
     function seriesExists(bytes14 seriesId) external view returns (bool);
@@ -48,4 +68,11 @@ interface IIntex {
 
     /// @notice The series id at a dense-enumeration index.
     function seriesAt(uint64 index) external view returns (bytes14);
+
+    /// @notice The series was force-called. It settles until `settlementDeadline`, inclusive.
+    event IntexSeriesCalled(bytes14 indexed seriesId, uint32 calledAt, uint64 settlementDeadline);
+
+    /// @notice The series' settlement window closed. Both are zero when every unit
+    ///         was realized in time.
+    event IntexSeriesExpired(bytes14 indexed seriesId, uint32 forfeitedUnits, uint256 returnedPromisMinor);
 }

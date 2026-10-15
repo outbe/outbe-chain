@@ -8,7 +8,9 @@ use thiserror::Error;
 #[non_exhaustive]
 pub enum CycleError {
     #[error("ProtocolCycle received invalid UTC day: active={active}, block={block}")]
-    InvalidUtcDay { active: u32, block: u32 },
+    InvalidActiveUtcDay { active: u32, block: u32 },
+    #[error("ProtocolCycle received invalid UTC day: active={active}, block={block}")]
+    InvalidBlockUtcDay { active: u32, block: u32 },
     #[error("ProtocolCycle active UTC day {active} is after block UTC day {block}")]
     ActiveUtcDayAfterBlock { active: u32, block: u32 },
     #[error("native validator budget overflow")]
@@ -34,12 +36,62 @@ pub enum CycleError {
 impl From<CycleError> for PrecompileError {
     fn from(err: CycleError) -> Self {
         match err {
-            CycleError::NativeValidatorBudgetOverflow
+            CycleError::InvalidActiveUtcDay { .. } => PrecompileError::Fatal(err.to_string()),
+            CycleError::InvalidBlockUtcDay { .. }
+            | CycleError::ActiveUtcDayAfterBlock { .. }
+            | CycleError::NativeValidatorBudgetOverflow
+            | CycleError::SettlementBeforeParticipationWindowsClose
+            | CycleError::DailySettledWithoutMetadosisReceipt
+            | CycleError::MetadosisReceiptWithoutDailySettled
             | CycleError::MetadosisTerminalOverflow
-            | CycleError::ValidatorRewardGemPlanExceedsAllocation => {
-                PrecompileError::Revert(err.to_string())
-            }
-            _ => PrecompileError::Fatal(err.to_string()),
+            | CycleError::ValidatorRewardGemPlanExceedsAllocation
+            | CycleError::AllocationWithoutMetadosisReceipt
+            | CycleError::AllocationDisagreesWithMetadosisReceipt
+            | CycleError::ActiveUtcDayNotInitialized => PrecompileError::Revert(err.to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_invalid_active_utc_day_is_fatal_and_all_other_cycle_errors_revert() {
+        let fatal = CycleError::InvalidActiveUtcDay {
+            active: 20_260_231,
+            block: 20_260_301,
+        };
+        let fatal_msg = fatal.to_string();
+        assert!(matches!(
+            PrecompileError::from(fatal),
+            PrecompileError::Fatal(msg) if msg == fatal_msg
+        ));
+
+        for err in [
+            CycleError::InvalidBlockUtcDay {
+                active: 20_260_228,
+                block: 20_260_231,
+            },
+            CycleError::ActiveUtcDayAfterBlock {
+                active: 20_260_820,
+                block: 20_260_819,
+            },
+            CycleError::NativeValidatorBudgetOverflow,
+            CycleError::SettlementBeforeParticipationWindowsClose,
+            CycleError::DailySettledWithoutMetadosisReceipt,
+            CycleError::MetadosisReceiptWithoutDailySettled,
+            CycleError::MetadosisTerminalOverflow,
+            CycleError::ValidatorRewardGemPlanExceedsAllocation,
+            CycleError::AllocationWithoutMetadosisReceipt,
+            CycleError::AllocationDisagreesWithMetadosisReceipt,
+            CycleError::ActiveUtcDayNotInitialized,
+        ] {
+            let msg = err.to_string();
+            assert!(matches!(
+                PrecompileError::from(err),
+                PrecompileError::Revert(m) if m == msg
+            ));
         }
     }
 }

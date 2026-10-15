@@ -138,7 +138,6 @@ fn dex_config(market: DexMarketConfig, endpoint: String) -> DexProviderConfig {
         log_chunk_blocks: 2_000,
         confirmations: 0,
         max_block_age_secs: 1800,
-        quote: market.quote.clone(),
         base_token: market.base_token,
         quote_token: market.quote_token,
         pool: market.pool.clone(),
@@ -583,6 +582,10 @@ async fn dex_ticker_flows_through_existing_feeder_as_coen_usd() {
         [[currency_pairs]]
         base = "COEN"
         quote = "840"
+        markets = [
+          { provider = "uniswap", quote = "USDC" },
+          { provider = "pancakeswap", quote = "USDT" },
+        ]
     "#,
     )
     .unwrap();

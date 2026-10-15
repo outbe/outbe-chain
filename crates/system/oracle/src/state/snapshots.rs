@@ -6,6 +6,7 @@ use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
 use outbe_primitives::math::reference_price::is_coen_iso_market;
 use outbe_primitives::storage::types::Mapping;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 use crate::constants::{
     zero_volume_weight, HOURLY_VWAP_CELLS, MAX_SNAPSHOT_RETENTION_SECONDS, VWAP_HOUR_SECONDS,
@@ -72,7 +73,7 @@ impl OracleContract<'_> {
         }
 
         let mut capacity = U256::MAX / rate;
-        let day = timestamp - (timestamp % 86_400);
+        let day = timestamp - (timestamp % SECONDS_PER_DAY);
 
         let daily_pv = self.daily_pv_sum.get_nested(&pair).read(&day)?;
         let daily_volume = self.daily_vol_sum.get_nested(&pair).read(&day)?;
@@ -80,7 +81,7 @@ impl OracleContract<'_> {
             .min((U256::MAX - daily_pv) / rate)
             .min(U256::MAX - daily_volume);
 
-        let seconds_since_midnight = timestamp % 86_400;
+        let seconds_since_midnight = timestamp % SECONDS_PER_DAY;
         if seconds_since_midnight >= WWD_SUFFIX_START_SECONDS {
             let suffix_pv = self.wwd_suffix_pv_sum.get_nested(&pair).read(&day)?;
             let suffix_volume = self.wwd_suffix_vol_sum.get_nested(&pair).read(&day)?;
@@ -198,8 +199,8 @@ impl OracleContract<'_> {
         rate: U256,
         volume: U256,
     ) -> Result<()> {
-        let utc_day_ts = timestamp - (timestamp % 86_400);
-        let seconds_since_midnight = timestamp % 86_400;
+        let utc_day_ts = timestamp - (timestamp % SECONDS_PER_DAY);
+        let seconds_since_midnight = timestamp % SECONDS_PER_DAY;
         let hour_start = timestamp - (timestamp % VWAP_HOUR_SECONDS);
         let vol = if volume.is_zero() {
             zero_volume_weight(pair)

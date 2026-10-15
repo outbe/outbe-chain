@@ -112,7 +112,7 @@ pub(crate) fn verify_present_admissions(
                 },
             )?;
             require(
-                !maximum_records.is_some_and(|maximum| u64::from(counts.present) >= maximum),
+                maximum_records.is_none_or(|maximum| u64::from(counts.present) < maximum),
                 Incomplete(format!(
                     "present admission walk stopped after {} records; plan has {} positions",
                     counts.present, counts.expected
@@ -216,7 +216,7 @@ pub(crate) fn verify_local_result(
     let finalized = job
         .finalized
         .as_ref()
-        .ok_or(SnapshotOcompError::LocalResultComparisonRequiresFinality)?;
+        .ok_or(SnapshotOcompError::LocalResultLacksFinality)?;
     let limits = poc_schema_limits();
     let reader = LocalLysisResultReader::open_existing(root, limits)?;
     let Some(loaded) = reader.load(finalized.job_id)? else {

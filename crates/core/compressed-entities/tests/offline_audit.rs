@@ -84,7 +84,6 @@ fn bodies() -> Vec<Body> {
         nominal_amount_minor: U256::from(11),
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: false,
     };
     let item = NodItemBodyV1 {
         is_settled: false,

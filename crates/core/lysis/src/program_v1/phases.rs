@@ -55,7 +55,6 @@ pub struct AmountRecordV1 {
     pub entry_price_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
-    pub exclude_from_intex_issuance: bool,
 }
 
 struct AmountMathV1 {
@@ -63,7 +62,6 @@ struct AmountMathV1 {
     nominal_amount_minor: U256,
     gratis_load_minor: U256,
     settlement_cost_minor: U256,
-    eligible: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -73,7 +71,6 @@ pub struct AmountRunV1 {
     pub ordered_records: Vec<AmountRecordV1>,
     pub checked_segment_gratis_total: U256,
     pub checked_segment_nominal_total: U256,
-    pub checked_segment_eligible_nominal_total: U256,
     pub checked_segment_settlement_cost_total: U256,
 }
 
@@ -90,7 +87,6 @@ pub struct FinalizedOutputRunV1 {
     pub ordered_records: Vec<FinalizedOutputRecordV1>,
     pub checked_tribute_nominal_total: U256,
     pub checked_segment_gratis_total: U256,
-    pub checked_eligible_nominal_total: U256,
     pub checked_settlement_cost_total: U256,
 }
 
@@ -373,6 +369,7 @@ pub fn amount_map(
     observed: &[ObservedTributeV1],
     fidelity_observations: &[FidelityObservationV1],
     fractions: &[LeagueFractionV1],
+    nod_gratis_load_max: U256,
 ) -> Result<AmountRunV1, ProgramErrorV1> {
     if observed.is_empty()
         || observed.len() != fidelity_observations.len()
@@ -387,7 +384,6 @@ pub fn amount_map(
     let mut ordered_records = Vec::with_capacity(observed.len());
     let mut checked_segment_gratis_total = U256::ZERO;
     let mut checked_segment_nominal_total = U256::ZERO;
-    let mut checked_segment_eligible_nominal_total = U256::ZERO;
     let mut checked_segment_settlement_cost_total = U256::ZERO;
     for (local_ordinal, (item, fidelity)) in observed.iter().zip(fidelity_observations).enumerate()
     {
@@ -396,7 +392,13 @@ pub fn amount_map(
                 u32::try_from(local_ordinal).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
             )
             .ok_or(ProgramErrorV1::OutputCountMismatch)?;
-        let math = amount_record(raw_ordinal, item, fidelity, &fraction_by_league)?;
+        let math = amount_record(
+            raw_ordinal,
+            item,
+            fidelity,
+            &fraction_by_league,
+            nod_gratis_load_max,
+        )?;
         checked_segment_gratis_total = checked_add_amount(
             checked_segment_gratis_total,
             math.gratis_load_minor,
@@ -415,14 +417,6 @@ pub fn amount_map(
             raw_ordinal,
             "settlement cost total overflow",
         )?;
-        if math.eligible {
-            checked_segment_eligible_nominal_total = checked_add_amount(
-                checked_segment_eligible_nominal_total,
-                math.nominal_amount_minor,
-                raw_ordinal,
-                "eligible nominal total overflow",
-            )?;
-        }
         ordered_records.push(math.record);
     }
     let count =
@@ -435,7 +429,6 @@ pub fn amount_map(
         ordered_records,
         checked_segment_gratis_total,
         checked_segment_nominal_total,
-        checked_segment_eligible_nominal_total,
         checked_segment_settlement_cost_total,
     })
 }
@@ -473,6 +466,7 @@ fn amount_record(
     item: &ObservedTributeV1,
     fidelity: &FidelityObservationV1,
     fraction_by_league: &BTreeMap<u16, U256>,
+    nod_gratis_load_max: U256,
 ) -> Result<AmountMathV1, ProgramErrorV1> {
     if fidelity.raw_ordinal != raw_ordinal
         || fidelity.tribute_id != item.tribute.tribute_id
@@ -512,6 +506,7 @@ fn amount_record(
     let gratis_load_minor = calculate_gratis_load(
         item.tribute.nominal_amount_minor,
         fraction,
+        nod_gratis_load_max,
         raw_ordinal as usize,
     )?;
     let entry_price_minor =
@@ -544,12 +539,10 @@ fn amount_record(
             entry_price_minor,
             issuance_currency: item.tribute.issuance_currency,
             reference_currency: item.tribute.reference_currency,
-            exclude_from_intex_issuance: item.tribute.exclude_from_intex_issuance,
         },
         nominal_amount_minor: item.tribute.nominal_amount_minor,
         gratis_load_minor,
         settlement_cost_minor,
-        eligible: !item.tribute.exclude_from_intex_issuance,
     })
 }
 
@@ -742,7 +735,6 @@ pub fn output_finalize(
         ordered_records,
         checked_tribute_nominal_total: amounts.checked_segment_nominal_total,
         checked_segment_gratis_total: amounts.checked_segment_gratis_total,
-        checked_eligible_nominal_total: amounts.checked_segment_eligible_nominal_total,
         checked_settlement_cost_total: amounts.checked_segment_settlement_cost_total,
     })
 }

@@ -33,8 +33,8 @@ use proptest::prelude::*;
 
 const CHAIN_ID: u64 = 1;
 const HOUR: u64 = 3_600;
-const DAY: u64 = 86_400;
-const WEEK: u64 = 604_800;
+use outbe_primitives::time::SECONDS_PER_DAY as DAY;
+const WEEK: u64 = 7 * DAY;
 const MONTH: u64 = 30 * DAY;
 
 fn gated_spec(period_seconds: u64) -> TriggerSpec {
@@ -45,7 +45,7 @@ fn gated_spec(period_seconds: u64) -> TriggerSpec {
         start_offset_seconds: 0,
         requires_accounting_window: true,
         coalesces_backlog: false,
-        handler: TriggerHandler::IntexDaily,
+        handler: TriggerHandler::IntexCallDaily,
     }
 }
 
@@ -57,7 +57,7 @@ fn ungated_spec(period_seconds: u64) -> TriggerSpec {
         start_offset_seconds: 0,
         requires_accounting_window: false,
         coalesces_backlog: false,
-        handler: TriggerHandler::IntexDaily,
+        handler: TriggerHandler::IntexCallDaily,
     }
 }
 
@@ -262,7 +262,7 @@ proptest! {
             start_offset_seconds: offset,
             requires_accounting_window: true,
             coalesces_backlog: false,
-            handler: TriggerHandler::IntexDaily,
+            handler: TriggerHandler::IntexCallDaily,
         };
         let block = block_ctx(block_number, block_ts);
 

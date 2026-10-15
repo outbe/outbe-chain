@@ -104,8 +104,22 @@ def artifact_build_plan(build_spec: dict[str, Any]) -> list[list[str]]:
     return list(cohorts.values())
 
 
+def artifact_check_plan(build_spec: dict[str, Any]) -> list[list[str]]:
+    """Return Cargo check invocations for the exact production ELF matrix."""
+
+    return [
+        [command[0], "check", *command[2:]]
+        for command in artifact_build_plan(build_spec)
+    ]
+
+
 def execute_artifact_build_plan(build_spec: dict[str, Any]) -> None:
     for command in artifact_build_plan(build_spec):
+        subprocess.run(command, check=True)
+
+
+def execute_artifact_check_plan(build_spec: dict[str, Any]) -> None:
+    for command in artifact_check_plan(build_spec):
         subprocess.run(command, check=True)
 
 
@@ -171,13 +185,22 @@ def main() -> None:
     parser.add_argument("--repo-root", required=True, type=Path)
     parser.add_argument("--release-tag")
     parser.add_argument("--execute-artifact-build-plan", action="store_true")
+    parser.add_argument("--execute-artifact-check-plan", action="store_true")
     args = parser.parse_args()
 
     build_spec = load_and_validate_build_spec(args.build_spec, repo_root=args.repo_root)
-    if args.execute_artifact_build_plan:
+    execution_modes = sum(
+        (args.execute_artifact_build_plan, args.execute_artifact_check_plan)
+    )
+    if execution_modes > 1:
+        parser.error("choose only one artifact execution plan")
+    if execution_modes:
         if args.release_tag is not None:
-            parser.error("--release-tag cannot be used with --execute-artifact-build-plan")
-        execute_artifact_build_plan(build_spec)
+            parser.error("--release-tag cannot be used with an artifact execution plan")
+        if args.execute_artifact_build_plan:
+            execute_artifact_build_plan(build_spec)
+        else:
+            execute_artifact_check_plan(build_spec)
         return
     identity = resolve_release_identity(args.repo_root, args.release_tag)
     for value in resolved_values(build_spec, identity):

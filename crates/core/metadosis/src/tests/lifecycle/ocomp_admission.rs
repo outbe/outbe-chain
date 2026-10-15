@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 fn seed_positive_ocomp_admission_fixture(
     provider: &mut HashMapStorageProvider,
@@ -46,7 +47,7 @@ fn a_late_processing_block_prices_the_day_from_its_schedule() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0819);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let (scope, parent, scheduled) = seed_positive_ocomp_admission_fixture(&mut provider, wwd);
-    let late = scheduled + 2 * 86_400;
+    let late = scheduled + 2 * SECONDS_PER_DAY;
     StorageHandle::enter(&mut provider, |storage| {
         let oracle = OracleContract::new(storage.clone());
         let index = oracle
@@ -192,7 +193,7 @@ fn absent_profile_rejects_the_offering_edge_before_any_effect() {
     .unwrap_err();
     assert!(matches!(
         error,
-        outbe_primitives::error::PrecompileError::Fatal(_)
+        outbe_primitives::error::PrecompileError::Revert(_)
     ));
     assert_eq!(provider.storage, storage_before);
     assert_eq!(provider.events, events_before);
@@ -248,7 +249,7 @@ fn absent_profile_rejects_populated_ready_before_failed_state_or_lysis_effects()
     .unwrap_err();
     assert!(matches!(
         error,
-        outbe_primitives::error::PrecompileError::Fatal(_)
+        outbe_primitives::error::PrecompileError::Revert(_)
     ));
     assert_eq!(provider.storage, storage_before);
     assert_eq!(provider.events, events_before);

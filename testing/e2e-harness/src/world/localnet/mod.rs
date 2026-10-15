@@ -102,7 +102,7 @@ impl StartOpts {
         now_secs: u64,
         boundary_lead_secs: u64,
     ) -> Self {
-        const SECONDS_PER_DAY: u64 = 86_400;
+        use outbe_primitives::time::SECONDS_PER_DAY;
         let next_day = now_secs - (now_secs % SECONDS_PER_DAY) + SECONDS_PER_DAY;
         let target = next_day.saturating_sub(boundary_lead_secs);
         Self {
@@ -257,6 +257,7 @@ pub struct Localnet {
     /// The options the last committee `start` ran with, replayed by `restart`.
     start_opts: StartOpts,
     scenario_deadline: Option<std::time::Instant>,
+    byzantine_preannounce: bool,
 }
 
 impl Localnet {
@@ -278,11 +279,17 @@ impl Localnet {
             validator_recovery_original_argv: HashMap::new(),
             start_opts: StartOpts::default(),
             scenario_deadline: None,
+            byzantine_preannounce: false,
         }
     }
 
     pub(crate) fn set_scenario_deadline(&mut self, deadline: std::time::Instant) {
         self.scenario_deadline = Some(deadline);
+    }
+
+    /// Enable forged pre-announces only for nodes in this scenario.
+    pub(crate) fn arm_byzantine_preannounces(&mut self) {
+        self.byzantine_preannounce = true;
     }
 
     fn enclave_startup_deadline(&self, nonhardware_seconds: u64) -> std::time::Instant {
@@ -571,6 +578,11 @@ impl Localnet {
             .collect::<Vec<_>>();
         ensure_manual_tee_lease_node_args(&node_args)?;
         extend_real_sgx_process_environment(self.cfg.tee_mode, &mut cmd);
+        if self.byzantine_preannounce {
+            cmd.env("OUTBE_TEST_BYZANTINE_PREANNOUNCE", "1");
+        } else {
+            cmd.env_remove("OUTBE_TEST_BYZANTINE_PREANNOUNCE");
+        }
         crate::world::projection::configure_node_command(&self.cfg, index, &mut cmd)?;
         if self.cfg.debug {
             let prog = cmd.get_program().to_string_lossy().into_owned();
@@ -1541,7 +1553,7 @@ mod tests {
     fn custom_day_boundary_lead_is_reflected_exactly_in_the_node_clock_offset() {
         const NOW: u64 = 1_700_000_000;
         const LEAD: u64 = 240;
-        const SECONDS_PER_DAY: u64 = 86_400;
+        use outbe_primitives::time::SECONDS_PER_DAY;
 
         let opts = StartOpts::near_next_utc_day_with_lead(6, NOW, LEAD);
         let next_day = NOW - (NOW % SECONDS_PER_DAY) + SECONDS_PER_DAY;

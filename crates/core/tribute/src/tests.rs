@@ -155,7 +155,6 @@ fn sample_tribute() -> TributeData {
         issuance_currency: 840,
         nominal_amount_minor: U256::from(500_000u64),
         reference_currency: 840,
-        exclude_from_intex_issuance: false,
         tribute_price_minor: U256::from(2_000_000u64),
     }
 }
@@ -716,7 +715,6 @@ fn test_token_uri_returns_metadata_json() {
         assert!(token_uri.contains("worldwide_day"));
         assert!(token_uri.contains("issuance_amount_minor"));
         assert!(token_uri.contains("\"trait_type\":\"reference_currency\""));
-        assert!(token_uri.contains("\"trait_type\":\"exclude_from_intex_issuance\""));
     });
 }
 
@@ -1113,7 +1111,6 @@ fn encrypted_retirement_preserves_frozen_nominal_after_live_total_is_zero() {
             issuance_currency: plain.issuance_currency,
             reference_currency: plain.reference_currency,
             tribute_price_minor: plain.tribute_price_minor,
-            exclude_from_intex_issuance: false,
             offer_input_hash: B256::repeat_byte(0x78),
         };
         let encrypted = outbe_tee_enclave::tribute_encryption::encrypt_tribute(

@@ -1,3 +1,5 @@
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
+
 /// ERC-721 metadata surface values.
 pub const TOKEN_NAME: &str = "Nod";
 pub const TOKEN_SYMBOL: &str = "NOD";
@@ -21,10 +23,6 @@ pub const CALL_RATE_PCT: u16 = 256;
 /// Floor markup percent: `floor = entry x (100 + FLOOR_RATE_PCT) / 100`, the rate gem and intex use.
 pub const FLOOR_RATE_PCT: u16 = 8;
 
-/// Seconds in a day. The call terms a bucket seals are second-encoded, the way
-/// gem's record stores them. The daily scan divides them back into day counts.
-pub const SECS_PER_DAY: u32 = 24 * 3600;
-
 /// Trailing window the daily call scan inspects, in whole UTC days.
 pub const CALL_LOOKBACK_DAYS: u32 = 28;
 
@@ -34,15 +32,15 @@ pub const CALL_LOOKBACK_DAYS: u32 = 28;
 /// `CALL_LOOKBACK_DAYS - CALL_THRESHOLD_DAYS` of either.
 pub const CALL_THRESHOLD_DAYS: u32 = 21;
 
-/// [`CALL_LOOKBACK_DAYS`] in seconds - the encoding `callable_bucket_call_window_seconds`
+/// [`CALL_LOOKBACK_DAYS`] in seconds - the encoding `bucket_call_window_seconds`
 /// seals at issuance, matching `GemData::call_window_seconds`.
-pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECS_PER_DAY;
+pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECONDS_PER_DAY_U32;
 
 /// [`CALL_THRESHOLD_DAYS`] in seconds - the encoding
-/// `callable_bucket_call_threshold_seconds` seals at issuance, matching
+/// `bucket_call_threshold_seconds` seals at issuance, matching
 /// `GemData::call_threshold_seconds`.
-pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECS_PER_DAY;
+pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECONDS_PER_DAY_U32;
 
 /// Seconds after `called_at` within which the owner must settle. Once the
 /// period elapses, the CycleTick forfeit sweep burns the bucket's remaining Nods.
-pub const CALL_NOTICE_PERIOD: u32 = 7 * SECS_PER_DAY;
+pub const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;

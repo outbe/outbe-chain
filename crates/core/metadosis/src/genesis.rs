@@ -310,7 +310,7 @@ mod tests {
         });
         assert!(matches!(
             error,
-            outbe_primitives::error::PrecompileError::Fatal(_)
+            outbe_primitives::error::PrecompileError::Revert(_)
         ));
         assert!(post_launch.storage.is_empty());
 
@@ -325,7 +325,7 @@ mod tests {
         });
         assert!(matches!(
             error,
-            outbe_primitives::error::PrecompileError::Fatal(_)
+            outbe_primitives::error::PrecompileError::Revert(_)
         ));
         assert!(provider.storage.is_empty());
     }
@@ -348,7 +348,7 @@ mod tests {
                 .unwrap_err();
             assert!(matches!(
                 error,
-                outbe_primitives::error::PrecompileError::Fatal(_)
+                outbe_primitives::error::PrecompileError::Revert(_)
             ));
             assert_eq!(api::worldwide_days(storage).unwrap().len(), 1);
         });

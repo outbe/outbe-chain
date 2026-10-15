@@ -73,8 +73,10 @@ impl HyperlaneControllerContract<'_> {
     /// The controller must have funds first, because each dispatch pays the
     /// IGP quote.
     ///
-    /// Only the current owner of the local ISM (the deployer that staged
-    /// `transferOwnership` to this precompile) may call it.
+    /// Only the genesis-seeded bootstrap admin may call it. The admin must
+    /// also be the current owner of the local ISM (the deployer that staged
+    /// `transferOwnership` to this precompile). The ISM address comes from
+    /// calldata, so the ISM owner check alone does not restrict the caller.
     pub fn initialize(
         &mut self,
         caller: Address,
@@ -82,6 +84,11 @@ impl HyperlaneControllerContract<'_> {
     ) -> Result<()> {
         if self.is_initialized()? {
             return Err(HyperlaneControllerError::AlreadyInitialized.into());
+        }
+        // Check the caller before any sub-call to a calldata address.
+        let admin = self.bootstrap_admin.read()?;
+        if admin == Address::ZERO || caller != admin {
+            return Err(HyperlaneControllerError::NotBootstrapAdmin { caller, admin }.into());
         }
         bootstrap.check_shape()?;
         let local = self.local_domain()?;

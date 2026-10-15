@@ -1,5 +1,6 @@
 //! Release real-SGX/no-DCAP evidence for the recurring manual TEE lease.
 
+use outbe_primitives::time::SECONDS_PER_DAY;
 use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::Path;
@@ -23,8 +24,8 @@ const MISSED_VALIDATOR: usize = 3;
 const STATUS_PENDING: u8 = 1;
 const STATUS_ACTIVE: u8 = 2;
 const STATUS_JAILED: u8 = 6;
-const WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
-const LEASE_SECONDS: u64 = 14 * 24 * 60 * 60;
+const WINDOW_SECONDS: u64 = 7 * SECONDS_PER_DAY;
+const LEASE_SECONDS: u64 = 14 * SECONDS_PER_DAY;
 const FINALIZED_CLOCK_STALL_TIMEOUT: Duration = Duration::from_secs(180);
 const VALIDATOR_RECOVERY_CATCH_UP_TIMEOUT: Duration = Duration::from_secs(240);
 const FOLLOWER_ENGINE_STARTED_MARKER: &str = "follower engine started; syncing from upstream";

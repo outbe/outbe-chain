@@ -6,6 +6,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 use super::common::*;
 
@@ -135,7 +136,7 @@ fn init_from_genesis_imports_every_custom_config_collection() {
             slash_window: 200,
             min_valid_per_window: U256::from(100_000_000_000_000_000u128), // 0.10
             slash_fraction: U256::from(1_000_000_000_000_000u128),         // 0.001
-            lookback_duration: 172_800,                                    // 2 days
+            lookback_duration: 2 * SECONDS_PER_DAY,                        // 2 days
             pairs: vec![(COEN, usd()), (usd(), ETH), (BTC, USDT)],
             initial_rates: vec![(COEN, usd(), coen_iso(1)), (usd(), ETH, fixed18(2000))],
             feeder_delegations: vec![
@@ -169,7 +170,10 @@ fn init_from_genesis_imports_every_custom_config_collection() {
             oracle.config_slash_fraction.read().unwrap(),
             U256::from(1_000_000_000_000_000u128)
         );
-        assert_eq!(oracle.config_lookback_duration.read().unwrap(), 172_800);
+        assert_eq!(
+            oracle.config_lookback_duration.read().unwrap(),
+            2 * SECONDS_PER_DAY
+        );
         assert!(oracle.config_enabled.read().unwrap());
         assert!(oracle.config_is_initialized.read().unwrap());
 
@@ -630,13 +634,13 @@ fn genesis_imports_one_chain_per_pair() {
                 crate::genesis::GenesisScurveEntry {
                     base: COEN,
                     quote: usd(),
-                    peak_day: 86400,
+                    peak_day: SECONDS_PER_DAY,
                     peak_price: coen_iso(500),
                 },
                 crate::genesis::GenesisScurveEntry {
                     base: COEN,
                     quote: usd(),
-                    peak_day: 86400 * 10,
+                    peak_day: 10 * SECONDS_PER_DAY,
                     peak_price: coen_iso(600),
                 },
             ],
@@ -648,7 +652,10 @@ fn genesis_imports_one_chain_per_pair() {
 
         assert_eq!(oracle.scurve_count.read().unwrap(), 1);
         assert_eq!(oracle.pair_at(1).unwrap(), pair_key(COEN, usd()));
-        assert_eq!(oracle.scurve_peak_day.read(&0u32).unwrap(), 86400 * 10);
+        assert_eq!(
+            oracle.scurve_peak_day.read(&0u32).unwrap(),
+            10 * SECONDS_PER_DAY
+        );
         assert_eq!(oracle.scurve_peak_price.read(&0u32).unwrap(), coen_iso(600));
     });
 }
@@ -763,7 +770,7 @@ fn assert_exported_scurve_entry(exported: &crate::genesis::OracleGenesisConfig) 
     assert_eq!(exported.scurve_entries.len(), 1);
     assert_eq!(exported.scurve_entries[0].base, COEN);
     assert_eq!(exported.scurve_entries[0].quote, usd());
-    assert_eq!(exported.scurve_entries[0].peak_day, 86400);
+    assert_eq!(exported.scurve_entries[0].peak_day, SECONDS_PER_DAY);
 }
 
 #[test]
@@ -800,7 +807,7 @@ fn export_genesis_round_trips_the_full_oracle_state() {
         scurve_entries: vec![crate::genesis::GenesisScurveEntry {
             base: COEN,
             quote: usd(),
-            peak_day: 86400,
+            peak_day: SECONDS_PER_DAY,
             peak_price: coen_iso(100),
         }],
         protected_validators: vec![v1],
@@ -809,7 +816,7 @@ fn export_genesis_round_trips_the_full_oracle_state() {
         slash_window: 96,
         min_valid_per_window: U256::from(50_000_000_000_000_000u128),
         slash_fraction: U256::ZERO,
-        lookback_duration: 86400,
+        lookback_duration: SECONDS_PER_DAY,
     };
 
     let exported = {
@@ -1057,12 +1064,12 @@ fn explicit_long_vwap_uses_daily_interiors_and_exact_raw_edges() {
     with_bare_coen840_oracle(|oracle, pair| {
         let day = 1_780_012_800u64;
         let start = day + 11 * 60 * 60;
-        let end = day + 2 * 86_400 + 60 * 60;
+        let end = day + 2 * SECONDS_PER_DAY + 60 * 60;
 
         for (timestamp, price, volume) in [
             (start - 1, 900, 1),
             (start, 10, 1),
-            (day + 86_400 + 12 * 60 * 60, 20, 2),
+            (day + SECONDS_PER_DAY + 12 * 60 * 60, 20, 2),
             (end - 1, 30, 3),
             (end, 900, 1),
         ] {
@@ -1085,7 +1092,7 @@ fn explicit_long_vwap_rejects_an_evicted_partial_edge_instead_of_approximating()
     with_bare_coen840_oracle(|oracle, pair| {
         let day = 1_780_012_800u64;
         let start = day + 11 * 60 * 60 + 600;
-        let end = day + 86_400 + 12 * 60 * 60;
+        let end = day + SECONDS_PER_DAY + 12 * 60 * 60;
         oracle
             .write_snapshot(start, &[(pair, coen_iso(10), coen_iso(1))])
             .unwrap();
@@ -1111,7 +1118,9 @@ fn range_vwap_rejects_a_window_wider_than_the_lookback_duration() {
             .unwrap();
 
         assert_eq!(
-            oracle.calculate_vwap(pair, day, day + 86_400).unwrap(),
+            oracle
+                .calculate_vwap(pair, day, day + SECONDS_PER_DAY)
+                .unwrap(),
             coen_iso(10)
         );
         let error = oracle.calculate_vwap(pair, day, day + 86_401).unwrap_err();

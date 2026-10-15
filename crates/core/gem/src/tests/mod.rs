@@ -1,5 +1,6 @@
 //! Shared harness: a block-scoped compressed-entity world over an in-memory body
-//! store, plus the gem, oracle and sweep helpers the test groups build on.
+//! store, plus the gem and oracle helpers the read tests build on. GemFactory decides
+//! issuance, calls and settlement; these helpers write the records it would.
 
 use std::sync::Arc;
 
@@ -10,20 +11,17 @@ use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::address_pair::AddressPair;
-use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::{first_full_day, previous_date_key, timestamp_to_date_key};
 
 use crate::api;
 use crate::precompile::{dispatch, IGem};
-use crate::schema::{GemAddParams, GemContract, GemItemState, GemView};
+use crate::schema::{CallTerms, GemAddParams, GemContract, GemItemState, GemView};
 use crate::GemRepositoryReader;
 
-mod call_sweep;
-mod expiry;
-mod lifecycle;
 mod qualification;
 mod views;
 
@@ -34,7 +32,7 @@ pub(crate) const USD: u16 = 840;
 pub(crate) const EUR: u16 = 978;
 
 /// Two days after the sample gems were issued: the day before it they held in full.
-pub(crate) const QUALIFY_TS: u64 = T_NOW + 2 * 86_400;
+pub(crate) const QUALIFY_TS: u64 = T_NOW + 2 * SECONDS_PER_DAY;
 
 /// One block's worth of compressed-entity authority: the executor scope and the
 /// finalized parent bodies. Tests never cross a block, so the overlay is the truth.
@@ -82,10 +80,25 @@ pub(crate) fn sample_params(owner: Address) -> GemAddParams {
         issuance_currency: USD,
         reference_currency: USD,
         issued_at: T_NOW,
+        call_terms: None,
     }
 }
 
-pub(crate) fn add(storage: &StorageHandle, world: &World, params: GemAddParams) -> U256 {
+/// Records a gem whose bucket seals the live profile's call terms.
+pub(crate) fn add(storage: &StorageHandle, world: &World, mut params: GemAddParams) -> U256 {
+    let profile = crate::config::read(storage).unwrap();
+    params.call_terms = Some(CallTerms {
+        call_price_minor: outbe_primitives::markup::marked_up(
+            params.entry_price_minor,
+            profile.call_rate,
+        )
+        .unwrap(),
+        reference_currency: params.reference_currency,
+        call_rate: profile.call_rate,
+        call_window_seconds: profile.call_window_seconds,
+        call_threshold_seconds: profile.call_threshold_seconds,
+        call_notice_period_seconds: profile.call_notice_period_seconds,
+    });
     api::add_gem(storage, &world.scope, &world.parent, params).unwrap()
 }
 
@@ -99,47 +112,28 @@ pub(crate) fn view(storage: &StorageHandle, world: &World, gem_id: U256) -> GemV
         .unwrap()
 }
 
-/// Lifecycle state as the view derives it at the block's timestamp.
-pub(crate) fn gem_state(storage: &StorageHandle, world: &World, gem_id: U256) -> u8 {
-    let now = storage.timestamp().unwrap().to::<u64>();
-    view(storage, world, gem_id).effective_state(now)
-}
-
 pub(crate) fn bucket_of(storage: &StorageHandle, world: &World, gem_id: U256) -> B256 {
     item(storage, world, gem_id).unwrap().bucket_key
-}
-
-pub(crate) fn owned(storage: &StorageHandle, world: &World, owner: Address) -> Vec<U256> {
-    api::list_by_owner(storage, &world.scope, &world.parent, owner)
-        .unwrap()
-        .into_iter()
-        .map(|item| item.gem_id.to_u256())
-        .collect()
-}
-
-pub(crate) fn alice_gems(storage: &StorageHandle, world: &World, loads: &[u64]) -> Vec<U256> {
-    loads
-        .iter()
-        .map(|load| {
-            let mut params = sample_params(ALICE);
-            params.promis_load_minor = U256::from(*load);
-            add(storage, world, params)
-        })
-        .collect()
 }
 
 /// Calls the gem's whole bucket at `at`.
 pub(crate) fn call_gem(storage: &StorageHandle, world: &World, gem_id: U256, at: u64) {
     let bucket = bucket_of(storage, world, gem_id);
     let mut gem = GemContract::new(storage.clone());
-    let terms = gem.read_call_terms(bucket).unwrap();
-    gem.mark_bucket_called(bucket, &terms, at).unwrap();
+    let notice = gem
+        .read_call_terms(bucket)
+        .unwrap()
+        .call_notice_period_seconds;
+    gem.record_bucket_called(bucket, at, at + u64::from(notice))
+        .unwrap();
 }
 
-/// Settles a gem the way the factory does once payment is accepted: a called gem
-/// before its deadline, or a qualified one.
+/// Records a gem settled, as GemFactory does once payment is accepted.
 pub(crate) fn settle(storage: &StorageHandle, world: &World, gem_id: U256) {
-    api::settle_gem(storage, &world.scope, &world.parent, gem_id).unwrap();
+    let (item, bucket) = api::load_pair(storage, &world.scope, &world.parent, gem_id)
+        .unwrap()
+        .unwrap();
+    api::record_settled(storage, &world.scope, item, bucket).unwrap();
 }
 
 /// Qualifies then settles an uncalled gem.
@@ -155,18 +149,15 @@ pub(crate) fn qualify_and_settle(storage: &StorageHandle, world: &World, gem_id:
 }
 
 pub(crate) fn burn_settled(storage: &StorageHandle, world: &World, gem_id: U256) {
-    api::burn_settled(storage, &world.scope, &world.parent, gem_id).unwrap();
+    let (item, bucket) = api::load_pair(storage, &world.scope, &world.parent, gem_id)
+        .unwrap()
+        .unwrap();
+    api::remove_gem(storage, &world.scope, item, bucket).unwrap();
 }
 
 /// Whether the gem has qualified, as settlement and the view read it.
 pub(crate) fn is_qualified(storage: &StorageHandle, world: &World, gem_id: U256) -> bool {
     api::is_qualified(storage, &item(storage, world, gem_id).unwrap()).unwrap()
-}
-
-pub(crate) fn unallocated(storage: &StorageHandle) -> U256 {
-    outbe_promislimit::PromisLimitContract::new(storage.clone())
-        .get_total_unallocated()
-        .unwrap()
 }
 
 pub(crate) fn set_profile(storage: &StorageHandle, profile: u8) {
@@ -234,93 +225,6 @@ pub(crate) fn seed_currency(storage: &StorageHandle, iso_code: u16, rate: Option
     index
 }
 
-/// Prices the call window back from `latest` at `vwap` and finalizes through it.
-pub(crate) fn priced_window(storage: &StorageHandle, pair: u32, latest: u32, vwap: U256) {
-    let oracle = OracleContract::new(storage.clone());
-    let mut day = latest;
-    for _ in 0..(crate::constants::CALL_WINDOW / 86_400) {
-        oracle.record_utc_day_vwap(day, pair, vwap).unwrap();
-        day = previous_date_key(day);
-    }
-    if oracle.utc_day_vwap_last_finalized.read().unwrap() < latest {
-        oracle.utc_day_vwap_last_finalized.write(latest).unwrap();
-    }
-}
-
-/// Build a full-window (newest-first) list with `breach_days` entries above the
-/// gem's call threshold, the rest at zero.
-pub(crate) fn breach_window(
-    now: u64,
-    breach: U256,
-    breach_days: usize,
-) -> outbe_oracle::call_window::CallWindow {
-    let window_days = (crate::constants::CALL_WINDOW / 86_400) as usize;
-    let mut window = Vec::with_capacity(window_days);
-    let mut day = timestamp_to_date_key(now);
-    for i in 0..window_days {
-        let v = if i < breach_days { breach } else { U256::ZERO };
-        window.push((day, Some(v)));
-        day = previous_date_key(day);
-    }
-    outbe_oracle::call_window::CallWindow::from_vwaps(
-        window,
-        crate::constants::CALL_THRESHOLD / 86_400,
-    )
-}
-
-// --- Sweeps ------------------------------------------------------------------------
-
-pub(crate) fn block_ctx_at<'s>(
-    storage: &StorageHandle<'s>,
-    timestamp: u64,
-) -> BlockRuntimeContext<'s> {
-    BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(1, timestamp, 1),
-        storage.clone(),
-    )
-}
-
-pub(crate) fn block_ctx<'s>(storage: &StorageHandle<'s>) -> BlockRuntimeContext<'s> {
-    block_ctx_at(storage, storage.timestamp().unwrap().to::<u64>())
-}
-
-/// One block of the Gem sweeps as CycleTick runs them: what fell due, then a slice.
-pub(crate) fn continue_sweeps(ctx: &BlockRuntimeContext, world: &World) -> Result<()> {
-    crate::hooks::sweep_forfeits(ctx, &world.scope, &world.parent)?;
-    crate::called::run_call_slice(ctx).map(drop)
-}
-
-pub(crate) fn begin_block_at(storage: &StorageHandle, world: &World, ts: u64) {
-    continue_sweeps(&block_ctx_at(storage, ts), world).unwrap();
-}
-
-/// A mature gem on the PROD call terms, issued well before the window so no day is
-/// skipped as pre-issuance.
-pub(crate) fn mature_gem(storage: &StorageHandle, world: &World) -> U256 {
-    set_profile(storage, crate::config::PROFILE_PROD);
-    let mut p = sample_params(ALICE);
-    p.issued_at = T_NOW - 100 * 86_400;
-    add(storage, world, p)
-}
-
-/// A gem of `iso` issued at `issued_at` whose own entry price opens its own bucket;
-/// `nonce` keeps the ids and the buckets apart.
-pub(crate) fn callable_gem_of(
-    storage: &StorageHandle,
-    world: &World,
-    iso: u16,
-    nonce: u64,
-    issued_at: u64,
-    entry_price: U256,
-) -> U256 {
-    let mut p = sample_params(ALICE);
-    p.promis_load_minor = U256::from(1_000_000 + u64::from(iso) * 1_000 + nonce);
-    p.reference_currency = iso;
-    p.issued_at = issued_at;
-    p.entry_price_minor = entry_price + U256::from(nonce);
-    add(storage, world, p)
-}
-
 // --- Precompile -----------------------------------------------------------------
 
 pub(crate) fn call(
@@ -341,8 +245,8 @@ pub(crate) fn status(storage: &StorageHandle, world: &World, gem_id: U256) -> IG
     let out = call(
         storage,
         world,
-        IGem::getGemStatusCall { gemId: gem_id }.abi_encode(),
+        IGem::getGemCall { gemId: gem_id }.abi_encode(),
     )
     .unwrap();
-    IGem::getGemStatusCall::abi_decode_returns(&out).unwrap()
+    IGem::getGemCall::abi_decode_returns(&out).unwrap()
 }

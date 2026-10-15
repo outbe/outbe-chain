@@ -622,7 +622,7 @@ fn critical_cycle_tick_revert_fails_block() {
 #[test]
 fn stale_oracle_cycle_stages_reward_batch_and_allows_later_feeder_vote() {
     const GENESIS_TS: u64 = 1_704_067_200;
-    const SECONDS_PER_DAY: u64 = 86_400;
+    use outbe_primitives::time::SECONDS_PER_DAY;
     const PREVIOUS_DAY: u32 = 20_240_101;
 
     #[derive(Debug, Eq, PartialEq)]

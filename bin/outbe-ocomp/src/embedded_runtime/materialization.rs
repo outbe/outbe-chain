@@ -142,6 +142,8 @@ impl MaterializationJob {
                     .map_err(|error| stage("encode NOD generation authority", error))?,
                 subtree_height: batch_subtree_height,
                 sealed_tribute_root: audit.manifest().sealed_tribute_collection_root,
+                nod_gratis_load_max: audit.plan().lysis_limit_minor
+                    / alloy_primitives::U256::from(1024),
             },
             (head, &built),
             sources,

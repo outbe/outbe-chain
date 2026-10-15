@@ -33,7 +33,6 @@ fn fixture() -> Fixture {
         issuance_currency: 840,
         reference_currency: 978,
         tribute_price_minor: U256::from(2_000_000),
-        exclude_from_intex_issuance: false,
         offer_input_hash: B256::repeat_byte(0x44),
     };
     let amounts = TributeAmountsV2 {
@@ -104,7 +103,6 @@ fn ciphertext_and_metadata_cannot_be_substituted_between_tributes() {
         |c| c.issuance_currency = 392,
         |c| c.reference_currency = 826,
         |c| c.tribute_price_minor += U256::from(1),
-        |c| c.exclude_from_intex_issuance = true,
         |c| c.offer_input_hash = B256::repeat_byte(0x77),
     ];
     for change in changes {
@@ -202,7 +200,6 @@ fn offer_creator_owns_the_tribute_while_proof_binding_uses_the_transaction_calle
         worldwide_day: f.encrypted.context.worldwide_day,
         tribute_currency: 840,
         reference_currency: 978,
-        exclude_from_intex_issuance: false,
         issuance_wwd_vwap_minor: U256::from(2_000_000),
         reference_wwd_vwap_minor: U256::from(2_000_000),
         reference_scurve_minor: U256::ZERO,

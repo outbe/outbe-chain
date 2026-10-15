@@ -7,12 +7,14 @@
 
 use alloy_primitives::{Address, U256};
 
-use outbe_credis::constants::{CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS, SECS_PER_DAY};
+use outbe_credis::constants::{CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS};
 use outbe_credis::{CallBins, CredisContract, CredisState};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::previous_date_key;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
-use crate::tests::common::*;
+use crate::rules;
+use crate::tests::*;
 
 /// Enough headroom before `CREATED_AT` that a full lookback window never reaches
 /// back past a Credis's origination day.
@@ -59,9 +61,9 @@ fn reterm(
 ) {
     let credis = CredisContract::new(storage.clone());
     let mut record = credis.get_credis(credis_id).unwrap();
-    record.call_window_seconds = window_days * SECS_PER_DAY;
-    record.call_threshold_seconds = threshold_days * SECS_PER_DAY;
-    record.call_notice_period_seconds = notice_days * SECS_PER_DAY;
+    record.call_window_seconds = window_days * SECONDS_PER_DAY_U32;
+    record.call_threshold_seconds = threshold_days * SECONDS_PER_DAY_U32;
+    record.call_notice_period_seconds = notice_days * SECONDS_PER_DAY_U32;
     credis.records.update(&record).unwrap();
     outbe_primitives::call_breach::widen_scan_terms(
         &credis.max_call_window_seconds,
@@ -834,7 +836,7 @@ fn a_pinned_day_the_oracle_has_not_finalized_holds_the_sweep() {
 fn call_by_hand(storage: &StorageHandle<'_>, ids: &[U256], called_at: u64) {
     let mut credis = CredisContract::new(storage.clone());
     for id in ids {
-        assert!(credis.mark_called(*id, called_at).unwrap());
+        assert!(rules::mark_called(&mut credis, *id, called_at).unwrap());
     }
 }
 

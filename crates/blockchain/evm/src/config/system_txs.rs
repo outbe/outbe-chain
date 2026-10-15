@@ -20,7 +20,7 @@ use outbe_primitives::{
 
 use reth_ethereum::TransactionSigned;
 
-use reth_evm::execute::BlockExecutionError;
+use reth_evm::execute::{BlockExecutionError, BlockValidationError};
 
 use reth_primitives_traits::{
     AlloyBlockHeader as _, Recovered, SealedBlock, SignedTransaction as _,
@@ -149,8 +149,8 @@ impl OutbeEvmConfig {
             ));
         }
 
-        let artifacts =
-            decode_outbe_block_artifacts(extra_data.as_ref()).map_err(BlockExecutionError::msg)?;
+        let artifacts = decode_outbe_block_artifacts(extra_data.as_ref())
+            .map_err(|err| -> BlockExecutionError { BlockValidationError::msg(err).into() })?;
         let mut inputs = Vec::new();
         if block_number >= 2 {
             let metadata = parent_consensus_metadata.ok_or_else(|| {

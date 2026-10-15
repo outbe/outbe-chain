@@ -42,13 +42,6 @@ pub enum StakingError {
 
 impl From<StakingError> for PrecompileError {
     fn from(err: StakingError) -> Self {
-        match err {
-            StakingError::MissingValidatorHistory
-            | StakingError::OcompBondedSlashExceedsTotalStaked
-            | StakingError::ActiveOcompRecoveryValidatorNotJailed
-            | StakingError::ValidatorRegistryExceedsConsensusBound { .. }
-            | StakingError::SweepCountOverflow(_) => PrecompileError::Fatal(err.to_string()),
-            _ => PrecompileError::Revert(err.to_string()),
-        }
+        PrecompileError::Revert(err.to_string())
     }
 }

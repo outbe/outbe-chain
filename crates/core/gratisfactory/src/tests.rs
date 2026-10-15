@@ -10,6 +10,7 @@ use outbe_gratis::enclave_client::test_enclave;
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::units::checked_protocol_to_native;
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_tee_enclave::gratis::{decrypt_balance, decrypt_pledged, derive_view_key};
@@ -54,7 +55,7 @@ fn view_balance(s: &StorageHandle<'_>, a: Address) -> U256 {
 /// Give `account` a positive Fidelity index so `pledge_gratis` clears the
 /// eligibility gate.
 fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
-    const ONE_YEAR_SECS: u64 = 365 * 86_400;
+    const ONE_YEAR_SECS: u64 = 365 * SECONDS_PER_DAY;
     outbe_fidelity::api::cohort_in(
         storage,
         account,
@@ -82,7 +83,7 @@ fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
 
 #[test]
 fn mine_mints_gratis_and_records_fidelity_cohort() {
-    const ONE_YEAR_SECS: u64 = 365 * 86_400;
+    const ONE_YEAR_SECS: u64 = 365 * SECONDS_PER_DAY;
     with_env(|storage| {
         let amount = U256::from(1_000u64);
         let later = CREATED_AT + ONE_YEAR_SECS;
@@ -126,7 +127,7 @@ fn mine_rejects_zero_amount() {
 
 #[test]
 fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
-    const ONE_YEAR_SECS: u64 = 365 * 86_400;
+    const ONE_YEAR_SECS: u64 = 365 * SECONDS_PER_DAY;
     with_env(|storage| {
         let amount = U256::from(1_000u64);
         outbe_gratis::api::mint(

@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_validatorset::test_support::StorageOverrides;
 
 #[test]
@@ -208,10 +209,10 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
         oracle.reference_currencies.push(840).unwrap();
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
 
-        let day_1 = crate::scurve::DAY_SECONDS;
-        let day_2 = 2 * crate::scurve::DAY_SECONDS;
-        let day_3 = 3 * crate::scurve::DAY_SECONDS;
-        let day_4 = 4 * crate::scurve::DAY_SECONDS;
+        let day_1 = SECONDS_PER_DAY;
+        let day_2 = 2 * SECONDS_PER_DAY;
+        let day_3 = 3 * SECONDS_PER_DAY;
+        let day_4 = 4 * SECONDS_PER_DAY;
         // Three fully-closed days forming a peak at day_2: 100 < 150 > 120.
         oracle
             .write_snapshot(
@@ -258,7 +259,7 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
         // The begin-block owner must keep the same chain alive after the first
         // 128-day coefficient period. No expiry/eviction or successor row is
         // required for continuation.
-        let day_130 = day_2 + 128 * crate::scurve::DAY_SECONDS;
+        let day_130 = day_2 + 128 * SECONDS_PER_DAY;
         let runtime_ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(130, day_130 + 120, 1),
             storage,
@@ -289,10 +290,10 @@ fn begin_block_scurve_hook_processes_only_registered_reference_pairs() {
         oracle.register_pair(cad_pair).unwrap();
         oracle.register_pair(generic_pair).unwrap();
 
-        let day_1 = crate::scurve::DAY_SECONDS;
-        let day_2 = 2 * crate::scurve::DAY_SECONDS;
-        let day_3 = 3 * crate::scurve::DAY_SECONDS;
-        let day_4 = 4 * crate::scurve::DAY_SECONDS;
+        let day_1 = SECONDS_PER_DAY;
+        let day_2 = 2 * SECONDS_PER_DAY;
+        let day_3 = 3 * SECONDS_PER_DAY;
+        let day_4 = 4 * SECONDS_PER_DAY;
         for (timestamp, usd_price, eur_price, cad_price, generic_price) in [
             (
                 day_1 + 60,

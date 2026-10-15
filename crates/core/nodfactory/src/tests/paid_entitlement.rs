@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 /// Settlement at the deadline remains valid. The paid Nod can then be mined.
 #[test]
@@ -122,7 +123,7 @@ fn settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline()
         world.settle(nod_id, input.owner).is_err(),
         "duplicate settlement"
     );
-    world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD) + 365 * 86_400);
+    world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD) + 365 * SECONDS_PER_DAY);
     assert_eq!(public_nod_data(&mut world, nod_id).effectiveState, 3);
     let nonce = world.pow_nonce(nod_id);
     for (caller, candidate, auth) in [
@@ -354,8 +355,7 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
     let error = settle(&mut world, stranger, foreign).unwrap_err();
     assert_eq!(
         error.to_string(),
-        PrecompileError::from(NodFactoryError::SettlementCurrencyMismatch { iso_code: 978 })
-            .to_string()
+        PrecompileError::from(SettlementError::CurrencyMismatch { iso_code: 978 }).to_string()
     );
     assert!(
         !world
@@ -377,7 +377,7 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
         .provider
         .get_ordered_events()
         .iter()
-        .filter_map(|event| INodFactory::NodPaid::decode_log_data(&event.data).ok())
+        .filter_map(|event| INodFactory::NodSettled::decode_log_data(&event.data).ok())
         .last()
         .unwrap();
     assert_eq!(paid.owner, input.owner);
@@ -431,10 +431,13 @@ fn erc20_settlement_uses_the_existing_inclusive_deadline() {
     let foreign = Address::repeat_byte(0x94);
     world.register_settlement_asset(foreign, 978);
     for (timestamp, expected) in [
-        (deadline + 1, NodFactoryError::CallDeadlineExpired),
+        (
+            deadline + 1,
+            PrecompileError::from(NodFactoryError::CallDeadlineExpired),
+        ),
         (
             deadline,
-            NodFactoryError::SettlementCurrencyMismatch { iso_code: 978 },
+            PrecompileError::from(SettlementError::CurrencyMismatch { iso_code: 978 }),
         ),
     ] {
         world.set_timestamp(timestamp);
@@ -453,10 +456,7 @@ fn erc20_settlement_uses_the_existing_inclusive_deadline() {
                 )
             })
             .unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            PrecompileError::from(expected).to_string()
-        );
+        assert_eq!(error.to_string(), expected.to_string());
     }
 }
 

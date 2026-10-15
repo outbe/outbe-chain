@@ -10,12 +10,13 @@ use outbe_primitives::time::WorldwideDay;
 
 use crate::errors::TributeError;
 use crate::precompile::ITribute;
-use crate::schema::{TributeContract, TributeData};
-use crate::state::{record_from_verified, tribute_from_verified};
+use crate::record::TributeRecord;
+use crate::schema::TributeContract;
+use crate::state::record_from_verified;
 
 /// A semantic Tribute paired with the exact generic mutation capability that verified it.
 pub struct LoadedTribute {
-    body: TributeData,
+    record: TributeRecord,
     current: VerifiedBody,
 }
 
@@ -35,13 +36,13 @@ pub struct TributeForfeitureReceipt {
 impl LoadedTribute {
     /// Converts an authenticated generic Tribute body into the domain capability.
     pub fn from_verified(current: VerifiedBody) -> Result<Self> {
-        let body = tribute_from_verified(&current)?;
-        Ok(Self { body, current })
+        let record = record_from_verified(&current)?;
+        Ok(Self { record, current })
     }
 
     #[must_use]
-    pub const fn body(&self) -> &TributeData {
-        &self.body
+    pub const fn record(&self) -> &TributeRecord {
+        &self.record
     }
 }
 
@@ -95,11 +96,13 @@ impl TributeContract<'_> {
         scope: &ExecutionScope,
         day: WorldwideDay,
     ) -> Result<RetirementOutcome> {
-        if self.ocomp_profile_ready.read()? {
-            let admission = self.pre_admission_projection(day)?;
-            if admission.is_sealed && admission.tribute_count != 0 {
-                return Err(TributeError::PopulatedOcompInputRequiresCertifiedRetirement.into());
-            }
+        if self.ocomp_profile_ready.read()?
+            && self
+                .day_pre_admission
+                .get(day)?
+                .is_some_and(|admission| admission.is_sealed && admission.sealed_tribute_count != 0)
+        {
+            return Err(TributeError::PopulatedOcompInputRequiresCertifiedRetirement.into());
         }
         let storage = self.storage_handle();
         storage.with_checkpoint(|| self.retire_completed_partition_inner(scope, day))
@@ -210,10 +213,8 @@ impl TributeContract<'_> {
     }
 
     fn burn_loaded_inner(&mut self, scope: &ExecutionScope, loaded: LoadedTribute) -> Result<()> {
-        let LoadedTribute { body, current } = loaded;
-        let tribute = body;
-        self.ensure_day_accepts_tributes(tribute.worldwide_day)?;
-        let record = record_from_verified(&current)?;
+        let LoadedTribute { record, current } = loaded;
+        self.ensure_day_accepts_tributes(record.worldwide_day)?;
         self.bump_day_bucket_record(&record, false)?;
         self.update_pre_admission_for_tribute(&record, false)?;
 
@@ -226,9 +227,9 @@ impl TributeContract<'_> {
 
         delete(self.storage_handle(), scope, current)?;
         self.emit(ITribute::TributeBurned {
-            tributeId: tribute.tribute_id.to_u256(),
-            owner: tribute.owner,
-            worldwideDay: tribute.worldwide_day.into(),
+            tributeId: record.tribute_id.to_u256(),
+            owner: record.owner,
+            worldwideDay: record.worldwide_day.into(),
         })?;
 
         Ok(())
@@ -258,10 +259,7 @@ impl TributeContract<'_> {
     }
 
     pub fn seal_day(&mut self, day: WorldwideDay) -> Result<()> {
-        let mut totals = self.get_day_totals(day)?;
-        totals.initialized = true;
-        totals.is_sealed = true;
-        self.store_day_totals(&totals)?;
+        self.set_day_sealed(day, true)?;
         self.emit(ITribute::TributeWorldwideDaySealed {
             worldwideDay: day.into(),
             isSealed: true,
@@ -270,13 +268,14 @@ impl TributeContract<'_> {
     }
 
     pub fn unseal_day(&mut self, day: WorldwideDay) -> Result<()> {
-        if self.pre_admission_projection(day)?.is_sealed {
+        if self
+            .day_pre_admission
+            .get(day)?
+            .is_some_and(|admission| admission.is_sealed)
+        {
             return Err(TributeError::PreAdmissionSealed.into());
         }
-        let mut totals = self.get_day_totals(day)?;
-        totals.initialized = true;
-        totals.is_sealed = false;
-        self.store_day_totals(&totals)?;
+        self.set_day_sealed(day, false)?;
         self.emit(ITribute::TributeWorldwideDaySealed {
             worldwideDay: day.into(),
             isSealed: false,

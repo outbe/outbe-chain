@@ -245,7 +245,6 @@ pub(super) fn result(
     };
     let conservation = ConservationTotalsV1 {
         tribute_nominal_total: U256::from(1_000),
-        eligible_nominal_total: U256::from(600),
         day_limit: U256::from(100),
         gratis_demand: U256::from(60),
         day_gratis_limit_minor: U256::from(60),
@@ -338,7 +337,6 @@ pub fn lysis_result_for_intent(
     };
     let conservation = ConservationTotalsV1 {
         tribute_nominal_total: intent.authenticated_day_nominal,
-        eligible_nominal_total: U256::ZERO,
         day_limit: frozen.day_limit,
         gratis_demand: frozen.gratis_demand,
         day_gratis_limit_minor: frozen.day_gratis_limit_minor,

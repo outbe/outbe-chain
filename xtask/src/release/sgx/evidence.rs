@@ -429,23 +429,26 @@ pub(super) fn verify_processor_dcap_archive(
         .wrap_err("read Processor DCAP evidence archive")?
     {
         let mut item = item.wrap_err("read Processor DCAP evidence archive entry")?;
+        let is_root_entry = {
+            let path = item.header().path_bytes();
+            path.as_ref() == b"." || path.as_ref() == b"./"
+        };
+        if is_root_entry {
+            if !item.header().entry_type().is_dir() {
+                bail!("Processor DCAP archive root entry is not a directory");
+            }
+            continue;
+        }
         let raw_path = item
             .path()
             .wrap_err("read Processor DCAP evidence archive path")?
             .to_string_lossy()
             .into_owned();
-        let path = if raw_path == "." {
-            if !item.header().entry_type().is_dir() {
-                bail!("Processor DCAP archive root entry is not a directory");
-            }
-            continue;
-        } else {
-            raw_path
-                .strip_prefix("./")
-                .unwrap_or(&raw_path)
-                .trim_end_matches('/')
-                .to_owned()
-        };
+        let path = raw_path
+            .strip_prefix("./")
+            .unwrap_or(&raw_path)
+            .trim_end_matches('/')
+            .to_owned();
         validate_archive_member_path(&path)?;
         if previous.as_ref().is_some_and(|value| value >= &path) {
             bail!("Processor DCAP archive members are not in canonical order");

@@ -23,12 +23,6 @@ pub enum RadicleRegistryError {
 
 impl From<RadicleRegistryError> for PrecompileError {
     fn from(error: RadicleRegistryError) -> Self {
-        match error {
-            RadicleRegistryError::NonZeroStorageKeyTail
-            | RadicleRegistryError::InconsistentRepositoryIndex { .. } => {
-                Self::Fatal(error.to_string())
-            }
-            _ => Self::Revert(error.to_string()),
-        }
+        Self::Revert(error.to_string())
     }
 }

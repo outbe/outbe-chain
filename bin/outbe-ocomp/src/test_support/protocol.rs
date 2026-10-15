@@ -15,7 +15,8 @@ pub fn protocol_bundle_fixture() -> ProtocolBundleV1 {
         activation_codec_id: B256::repeat_byte(6),
         evidence_codec_id: B256::repeat_byte(7),
         request_semantics_version: 1,
-        lysis_program_semantics_hash: B256::repeat_byte(8),
+        lysis_program_semantics_hash:
+            outbe_ocomp_protocol::profile::supported_lysis_v1_semantics_hash().unwrap(),
         planner_spec_version: 1,
         reducer_spec_version: 1,
         activation_apply_semantics_hash: B256::repeat_byte(9),

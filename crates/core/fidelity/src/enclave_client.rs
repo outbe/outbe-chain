@@ -218,6 +218,7 @@ impl AttestedAnswer for LeagueSnapshot {
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_enclave {
     use super::*;
+    use crate::errors::FidelityError;
     use alloy_primitives::B256;
     use std::cell::RefCell;
 
@@ -294,7 +295,8 @@ pub mod test_enclave {
         STATE_KEY.with(|k| {
             k.borrow().map(|key| {
                 outbe_tee_enclave::fidelity::query_index(&key, dev_chain(), req).map_err(|e| {
-                    FidelityFatalError::enclave_op_error("QueryFidelityIndex", e).into()
+                    FidelityError::QueryFailed(format!("enclave QueryFidelityIndex error: {e}"))
+                        .into()
                 })
             })
         })

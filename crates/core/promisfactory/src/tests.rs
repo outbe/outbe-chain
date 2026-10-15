@@ -9,6 +9,7 @@ use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::units::{ONE_COEN, SCALE_1E6_U64};
 use outbe_promis::api::{self as promis_api, ModifyAuth};
 use outbe_promis::enclave_client::test_enclave;
@@ -242,7 +243,7 @@ fn mine_gratis_call(amount: U256, promis: &ModifyAuth, gratis: &ModifyAuth) -> B
 
 #[test]
 fn mine_gratis_burns_promis_mints_gratis_creating_fidelity_cohort() {
-    const ONE_YEAR_SECS: u64 = 365 * 86_400;
+    const ONE_YEAR_SECS: u64 = 365 * SECONDS_PER_DAY;
     with_gratis_env(|storage| {
         let amount = U256::from(1_000u64);
 

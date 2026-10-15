@@ -7,14 +7,21 @@ use alloy_primitives::{aliases::U1024, U256, U512};
 use eyre::Result;
 use outbe_primitives::units::SCALE_1E18;
 
-/// Filters prices that deviate more than `threshold` standard deviations from
-/// the median. Prices, threshold, mean, variance and square root are all
-/// deterministic integers. The threshold is dimensionless FP18.
+/// A price this close to the median always stays, in thousandths (0.5%).
+/// Sources disagree by this much in normal trading: Chainlink moves only past
+/// its own deviation threshold, so it lags a live feed.
+const MIN_DEVIATION_PER_MILLE: u64 = 5;
+
+/// Filters prices that deviate more than `threshold` standard deviations
+/// and more than [`MIN_DEVIATION_PER_MILLE`] from the median. Prices,
+/// threshold, mean, variance and square root are all deterministic integers.
+/// The threshold is dimensionless FP18. Two prices both stay: neither can be
+/// told apart as the outlier.
 pub(super) fn filter_deviations(
     prices: &[(FixedValue, FixedValue)],
     threshold: FixedValue,
 ) -> Result<Vec<(FixedValue, FixedValue)>> {
-    if prices.len() <= 1 {
+    if prices.len() <= 2 {
         return Ok(prices.to_vec());
     }
 
@@ -40,7 +47,9 @@ pub(super) fn filter_deviations(
         return Ok(prices.to_vec());
     }
 
-    let allowed = U512::from(threshold.raw()) * U512::from(std_dev) / U512::from(SCALE_1E18);
+    let sigma_bound = U512::from(threshold.raw()) * U512::from(std_dev) / U512::from(SCALE_1E18);
+    let floor = U512::from(median) * U512::from(MIN_DEVIATION_PER_MILLE) / U512::from(1_000u64);
+    let allowed = sigma_bound.max(floor);
 
     Ok(prices
         .iter()
@@ -134,5 +143,46 @@ mod tests {
         assert!(!filtered
             .iter()
             .any(|(price, _)| price.raw() == U256::from(99u64)));
+    }
+
+    /// Two prices are always exactly 2 sigma from the upper one. With an odd
+    /// difference the rounded-down square root moved the lower price outside
+    /// the bound. Two prices cannot tell which one is the outlier: both stay.
+    #[test]
+    fn two_sources_are_both_kept() {
+        let one = fp("1");
+        for difference in [2u64, 3] {
+            let prices = vec![
+                (fp("0.1494"), one),
+                (
+                    FixedValue::from_raw(fp("0.1494").raw() + U256::from(difference)),
+                    one,
+                ),
+            ];
+            assert_eq!(filter_deviations(&prices, fp("2")).unwrap(), prices);
+        }
+    }
+
+    /// Three FX feeds 0.02% apart: two nearly equal prices shrink sigma, but
+    /// the third stays inside the 0.5% floor. A price 1% off is dropped.
+    #[test]
+    fn a_price_within_half_a_percent_of_the_median_stays() {
+        let one = fp("1");
+        let eur = vec![
+            (fp("1.112120"), one),
+            (fp("1.112140"), one),
+            (fp("1.112370"), one),
+        ];
+        assert_eq!(filter_deviations(&eur, fp("2")).unwrap(), eur);
+
+        let one_percent_off = vec![
+            (fp("1.112120"), one),
+            (fp("1.112140"), one),
+            (fp("1.123260"), one),
+        ];
+        assert_eq!(
+            filter_deviations(&one_percent_off, fp("2")).unwrap().len(),
+            2
+        );
     }
 }

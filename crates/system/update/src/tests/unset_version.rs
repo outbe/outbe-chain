@@ -86,7 +86,7 @@ fn exact_state_resolver_rejects_noncanonical_width() {
 
         assert!(matches!(
             resolve_active_version(storage),
-            Err(outbe_primitives::error::PrecompileError::Fatal(message))
+            Err(outbe_primitives::error::PrecompileError::Revert(message))
                 if message.contains("canonical u32 codec")
         ));
     });

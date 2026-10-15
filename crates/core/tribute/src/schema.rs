@@ -32,9 +32,6 @@ pub struct TributeData {
 
     #[attribute(order = 6)]
     pub tribute_price_minor: U256,
-
-    #[attribute(order = 7, default = false)]
-    pub exclude_from_intex_issuance: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -18,7 +18,6 @@ fn encrypted_body() -> EncryptedTributeV2 {
             issuance_currency: 840,
             reference_currency: 978,
             tribute_price_minor: U256::from(2_000_000),
-            exclude_from_intex_issuance: false,
             offer_input_hash: B256::repeat_byte(0x44),
         },
         encrypted_creator_public_key: immutable_blob(56),

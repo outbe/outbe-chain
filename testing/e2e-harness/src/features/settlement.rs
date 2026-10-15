@@ -19,6 +19,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, SolEvent as _};
 use cucumber::{given, then, when};
 use outbe_primitives::storage::types::StorageKey as _;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::units::checked_protocol_to_native;
 use outbe_tee::protocol::{GratisOp, Ledger, PromisOp};
 
@@ -122,7 +123,7 @@ fn cross_worldwide_day_without_price_feeder(world: &mut World) {
         .rpc
         .latest_block_timestamp(port)
         .expect("latest timestamp before stale daily boundary");
-    let started_day = started_at / 86_400;
+    let started_day = started_at / SECONDS_PER_DAY;
     world.state.reward_gem_balance_before_delivery =
         Some(validator_reward_gem_balance(world, port));
 
@@ -132,7 +133,7 @@ fn cross_worldwide_day_without_price_feeder(world: &mut World) {
             .rpc
             .latest_block_timestamp(port)
             .expect("latest timestamp while awaiting stale daily boundary");
-        if timestamp / 86_400 > started_day {
+        if timestamp / SECONDS_PER_DAY > started_day {
             let head = world
                 .rpc
                 .head(port)
@@ -508,7 +509,9 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         .block_timestamp(port, checkpoint.height)
         .expect("Nod qualification checkpoint timestamp");
     let previous_day = outbe_primitives::time::timestamp_to_date_key(
-        timestamp.checked_sub(86_400).expect("previous UTC day"),
+        timestamp
+            .checked_sub(SECONDS_PER_DAY)
+            .expect("previous UTC day"),
     );
     let mut expected_vwap = None;
     let mut qualified_body = None;
@@ -517,7 +520,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         let body = eth::read_call_at_result(
             &peer_url,
             addresses::NOD_ADDR,
-            &eth::INod::nodDataCall {
+            &eth::INod::getNodCall {
                 nodId: U256::from_be_slice(&nod_id),
             },
             checkpoint.height,
@@ -862,7 +865,7 @@ fn wait_for_validator_reward_gem(world: &World) -> (Address, U256, eth::IGem::Ge
                 let gem = eth::read_call(
                     &url,
                     addresses::GEM_ADDR,
-                    &eth::IGem::getGemStatusCall { gemId: gem_id },
+                    &eth::IGem::getGemCall { gemId: gem_id },
                 )
                 .expect("validator reward Gem data");
                 return (owner, gem_id, gem);

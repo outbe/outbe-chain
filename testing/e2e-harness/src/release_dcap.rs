@@ -23,6 +23,7 @@ use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
     DcapEvidenceV1, NodeIdV1, RegistrationIntentV1,
 };
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_tee::dcap_protocol::{DcapPckCaV1, DcapPlatformTcbStatusV1, DcapVerificationOutcomeV1};
 use outbe_tee::node_host::{
     connect_or_initialize_node_host_enclave, load_committed_enclave_manifest_v1, NodeHostIdentityV1,
@@ -262,7 +263,7 @@ fn run(cli: Cli) -> Result<()> {
 
     let binding_id = random_nonzero_b256()?;
     let requested_valid_until = run_started_at
-        .checked_add(86_400)
+        .checked_add(SECONDS_PER_DAY)
         .ok_or_else(|| eyre!("requested validity overflow"))?;
     let intent = RegistrationIntentV1 {
         chain_id: manifest.chain_id,

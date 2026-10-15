@@ -31,7 +31,6 @@ pub struct OfferTributeInput {
     pub worldwide_day: WorldwideDay,
     pub tribute_currency: u16,
     pub reference_currency: u16,
-    pub exclude_from_intex_issuance: bool,
     pub zk_proof: Bytes,
     pub l2_chain_id: u32,
     pub circuit_version: String,
@@ -155,9 +154,13 @@ impl TributeFactoryContract<'_> {
             tribute.issue(
                 scope,
                 parent,
-                &record
-                    .calculation_view()
-                    .map_err(TributeFactoryError::fatal)?,
+                &record.calculation_view().map_err(|error| {
+                    if error.is_node_local() {
+                        TributeFactoryError::sidecar_unavailable(error)
+                    } else {
+                        TributeFactoryError::fatal(error)
+                    }
+                })?,
             )?;
             #[cfg(not(any(test, feature = "bench-utils")))]
             return Err(TributeFactoryError::EncryptedOfferReturnedLegacyBody.into());

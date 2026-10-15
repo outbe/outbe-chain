@@ -95,7 +95,6 @@ fn tribute_v1_uses_one_strict_canonical_protobuf_representation() {
         nominal_amount_minor: U256::from(2),
         reference_currency: 978,
         tribute_price_minor: U256::from(3),
-        exclude_from_intex_issuance: true,
     };
     let expected = hex::decode(concat!(
         "0a2000000001",
@@ -107,8 +106,7 @@ fn tribute_v1_uses_one_strict_canonical_protobuf_representation() {
         "28c806",
         "32200000000000000000000000000000000000000000000000000000000000000002",
         "38d207",
-        "42200000000000000000000000000000000000000000000000000000000000000003",
-        "4801"
+        "42200000000000000000000000000000000000000000000000000000000000000003"
     ))
     .unwrap();
 
@@ -441,7 +439,6 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
         nominal_amount_minor: U256::from(2),
         reference_currency: 978,
         tribute_price_minor: U256::from(3),
-        exclude_from_intex_issuance: true,
     };
     let canonical_tribute = encode_tribute_v1(&tribute).unwrap();
 

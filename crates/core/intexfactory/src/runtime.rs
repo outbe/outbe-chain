@@ -3,26 +3,22 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
-use outbe_common::settlement::{floor_to_asset_units, OBLIGATION_DECIMALS};
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
-use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
-use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
+use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::error::{Result, SweepFailure};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::units::SCALE_1E6_U256;
 
-use outbe_intex::{IntexState, SeriesRecord};
-use outbe_vaultrouter::api::IVaultRouter;
+use outbe_intex::{IntexContract, IntexState, SeriesRecord};
+use outbe_vaultrouter::settlement;
 
-use crate::config;
 use crate::constants::{
     INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
-    ORIGIN_ROUTER_ADDRESS, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS, SETTLED_TAG,
+    ORIGIN_ROUTER_ADDRESS, PROCEEDS_FANIN_TIMEOUT_SECS, SETTLED_TAG,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
-use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IReferenceCurrency, IERC1155, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IERC1155};
 use IOriginRouter::IssuanceInstructionsParams;
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
@@ -33,7 +29,10 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 /// Record the series identity and call-price bin, then arm the day's proceeds fan-in.
 /// Return issuance legs for the caller to broadcast through `send_issuance`.
 /// The broadcast creates IntexNFT1155 series on each target chain, including the origin.
-pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<IssuanceLeg>> {
+pub fn issue_intex(
+    storage: &StorageHandle<'_>,
+    params: IssuanceParams,
+) -> Result<Vec<IssuanceLeg>> {
     if params.issued_units == 0 {
         // Whether the day distributes is the caller's decision: one empty group
         // must not touch the state its siblings armed.
@@ -44,8 +43,8 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
     let issued_at = u32::try_from(storage.timestamp()?.to::<u64>())
         .map_err(|_| IntexFactoryError::BlockTimestampExceedsU32)?;
 
-    let mut factory = IntexFactoryContract::new(storage.clone());
-    let cfg = config::read_from(&factory, storage.chain_id()?)?;
+    let mut intex = IntexContract::new(storage.clone());
+    let cfg = outbe_intex::config::read(storage)?;
 
     let floor_price_minor = marked_up(params.entry_price_minor, cfg.floor_rate)?;
     let call_price_minor = marked_up(params.entry_price_minor, cfg.call_rate)?;
@@ -72,7 +71,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         reference_currency: params.reference_currency,
     };
     outbe_intex::api::create_series(storage, record)?;
-    factory.widen_call_terms(
+    intex.widen_call_terms(
         params.reference_currency,
         cfg.call_window_seconds,
         cfg.call_threshold_seconds,
@@ -105,7 +104,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         .collect();
 
     // Enroll into the call-price bin index the daily Called scan walks.
-    factory.insert_call_bin(
+    intex.insert_call_bin(
         params.series_id,
         params.reference_currency,
         call_price_minor,
@@ -126,7 +125,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
 
     emit_event(
         storage,
-        crate::precompile::IIntexFactory::SeriesIssued {
+        crate::precompile::IIntexFactory::IntexSeriesIssued {
             seriesId: params.series_id.into(),
             issuedUnits: params.issued_units,
             entryPriceMinor: params.entry_price_minor,
@@ -265,33 +264,15 @@ pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, 
         .collect()
 }
 
-/// Narrows a six-decimal COEN/ISO price to the wire's existing `u64` shape.
-pub fn to_wire_price(price_minor: U256) -> Result<u64> {
-    u64::try_from(price_minor).map_err(|_| IntexFactoryError::PriceExceedsWireType.into())
-}
-
-/// Applies a markup rate in percentage points: `entry * (100 + rate) / 100`.
+/// `entry x (100 + rate) / 100`, the markup a series seals its floor and call prices at.
 pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
-    entry_price
-        .checked_mul(U256::from(PRICE_RATE_DEN + rate))
-        .map(|v| v / U256::from(PRICE_RATE_DEN))
+    outbe_primitives::markup::marked_up(entry_price, rate)
         .ok_or_else(|| IntexFactoryError::MarkedUpPriceOverflow.into())
 }
 
-/// Disjoint unit counts of a series, for a reader that must not redo the arithmetic.
-pub(crate) fn series_unit_counts(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-) -> Result<crate::precompile::IIntexFactory::UnitCounts> {
-    let counts = outbe_intex::api::unit_counts(storage, series_id)?;
-    Ok(crate::precompile::IIntexFactory::UnitCounts {
-        issuedUnits: counts.issued,
-        activeUnits: counts.active,
-        settledUnits: counts.settled,
-        exercisedUnits: counts.exercised,
-        gemFactoryUnits: counts.gem_factory,
-        forfeitedUnits: counts.forfeited,
-    })
+/// Narrows a six-decimal COEN/ISO price to the wire's existing `u64` shape.
+pub fn to_wire_price(price_minor: U256) -> Result<u64> {
+    u64::try_from(price_minor).map_err(|_| IntexFactoryError::PriceExceedsWireType.into())
 }
 
 /// One owner's units of `series_id`: its current balances, Issued ones only until the
@@ -360,9 +341,13 @@ pub fn settle_intex(
         return Err(IntexFactoryError::UnitsExceedBalance.into());
     }
 
-    let currency = accept_payment_asset(storage, asset, &series)?;
-    let (cost, snapshot) = cost_in_asset(storage, &series, asset, currency, units)?;
-    require_snapshot(snapshot, snapshot_id)?;
+    let quote = settlement::quote(
+        storage,
+        asset,
+        pricing::currencies(&series),
+        &pricing::obligation(&series, units),
+    )?;
+    quote.require_snapshot(snapshot_id)?;
     storage.clone().with_checkpoint(|| {
         // The units move before payment so a token callback cannot settle them
         // twice. A failed payment rolls the move back.
@@ -382,11 +367,17 @@ pub fn settle_intex(
             u32::try_from(units).map_err(|_| IntexFactoryError::SettledUnitsExceedU32)?;
         outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;
 
-        deposit_payment(storage, settler, asset, cost)?;
+        settlement::collect(
+            storage,
+            INTEX_FACTORY_ADDRESS,
+            settler,
+            asset,
+            quote.payment_minor,
+        )?;
 
         emit_event(
             storage,
-            crate::precompile::IIntexFactory::Settled {
+            crate::precompile::IIntexFactory::IntexSettled {
                 seriesId: series_id.into(),
                 owner,
                 units,
@@ -407,105 +398,9 @@ fn require_settleable(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Res
             }
             Ok(())
         }
-        IntexState::Issued if is_qualified(storage, series)? => Ok(()),
+        IntexState::Issued if outbe_intex::api::is_qualified(storage, series)? => Ok(()),
         _ => Err(IntexFactoryError::NotSettleable(series.state).into()),
     }
-}
-
-/// Rejects an issuance-rail payment authorized for any snapshot but the required one.
-fn require_snapshot(required: Option<VwapSnapshotId>, authorized: U256) -> Result<()> {
-    match required.map(VwapSnapshotId::to_u256) {
-        Some(required) if required != authorized => Err(IntexFactoryError::VwapSnapshotMismatch {
-            authorized,
-            required,
-        }
-        .into()),
-        _ => Ok(()),
-    }
-}
-
-/// Pulls exactly `cost` of `asset` from `payer` and deposits it into the reserve
-/// vault through the router, leaving the factory's own balance untouched.
-fn deposit_payment(
-    storage: &StorageHandle<'_>,
-    payer: Address,
-    asset: Address,
-    cost: U256,
-) -> Result<()> {
-    if cost.is_zero() {
-        return Ok(());
-    }
-    let before = token_balance(storage, asset)?;
-    pull_exact(storage, payer, asset, cost, before)?;
-    forward_to_reserve(storage, asset, cost, before)
-}
-
-fn pull_exact(
-    storage: &StorageHandle<'_>,
-    payer: Address,
-    asset: Address,
-    cost: U256,
-    before: U256,
-) -> Result<()> {
-    checked_token_call(
-        storage,
-        asset,
-        IERC20::transferFromCall {
-            from: payer,
-            to: INTEX_FACTORY_ADDRESS,
-            amount: cost,
-        },
-    )?;
-    if token_balance(storage, asset)?.checked_sub(before) != Some(cost) {
-        return Err(IntexFactoryError::SettlementAmountMismatch.into());
-    }
-    Ok(())
-}
-
-fn forward_to_reserve(
-    storage: &StorageHandle<'_>,
-    asset: Address,
-    cost: U256,
-    before: U256,
-) -> Result<()> {
-    checked_token_call(
-        storage,
-        asset,
-        IERC20::approveCall {
-            spender: VAULT_ROUTER_ADDRESS,
-            amount: cost,
-        },
-    )?;
-    outbe_vaultrouter::api::deposit(storage, asset, cost)?;
-    if token_balance(storage, asset)? != before {
-        return Err(IntexFactoryError::SettlementAmountMismatch.into());
-    }
-    Ok(())
-}
-
-fn checked_token_call(
-    storage: &StorageHandle<'_>,
-    asset: Address,
-    call: impl SolCall,
-) -> Result<()> {
-    let ret = storage.call(asset, U256::ZERO, call.abi_encode().into())?;
-    if !ret.is_empty() && ret.as_ref() != U256::ONE.to_be_bytes::<32>() {
-        return Err(IntexFactoryError::TokenOperationFailed.into());
-    }
-    Ok(())
-}
-
-fn token_balance(storage: &StorageHandle<'_>, asset: Address) -> Result<U256> {
-    let ret = storage.staticcall(
-        asset,
-        IERC20::balanceOfCall {
-            account: INTEX_FACTORY_ADDRESS,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    IERC20::balanceOfCall::abi_decode_returns(&ret)
-        .map_err(|_| IntexFactoryError::TokenOperationFailed.into())
 }
 
 // --- storage.call helpers (localnet-exercised) ---
@@ -532,9 +427,8 @@ mod proceeds;
 pub(crate) use mining::compute_pow_hash;
 pub(crate) use mining::{issued_token_id, settled_token_id, validate_pow};
 pub use mining::{mine_promis, MiningProof};
+pub use pricing::quote_settlement;
 #[cfg(test)]
 pub(crate) use pricing::settlement_units;
-use pricing::{accept_payment_asset, cost_in_asset};
-pub use pricing::{is_qualified, is_series_qualified, quote_settlement};
 pub use proceeds::distribute;
 pub(crate) use proceeds::sweep_proceeds_deadlines;

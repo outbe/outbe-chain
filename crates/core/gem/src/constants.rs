@@ -1,3 +1,5 @@
+use outbe_primitives::time::{SECONDS_PER_DAY, SECONDS_PER_DAY_U32};
+
 pub const TOKEN_NAME: &str = "Gem";
 pub const TOKEN_SYMBOL: &str = "GEM";
 pub const TOKEN_DESCRIPTION: &str = concat!(
@@ -9,24 +11,28 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
 
 /// Call-trigger evaluation window in seconds (28 days): span scanned for
 /// breaches of a gem's Call Threshold. The daily scan divides by 86400.
-pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
+pub const CALL_WINDOW: u32 = 28 * SECONDS_PER_DAY_U32;
 
 /// Breach threshold in seconds (21 days): a gem force-calls when the coen VWAP
 /// breaches its Call Price on 21 of the window's 28 days. The daily scan
 /// divides by 86400 to get the day count.
-pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
+pub const CALL_THRESHOLD: u32 = 21 * SECONDS_PER_DAY_U32;
 
 /// Call Notice Period in seconds (7 days): time after `called_at` within which
 /// the owner must settle. Once elapsed the gem is forfeit-burned.
-pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;
+pub const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 
 /// GemPosition validity period: an Intex in the Gem Factory expires this long after
 /// `issued_at`. No new gems may be issued afterward. 1 year.
-pub const POSITION_VALIDITY_SECONDS: u64 = 365 * 24 * 3600;
+pub const POSITION_VALIDITY_SECONDS: u64 = 365 * SECONDS_PER_DAY;
 
-/// Floor-price markup rate: floor = `entry x (100 + FLOOR_RATE) / 100`.
-pub const FLOOR_RATE: u16 = 8;
+/// Floor-price markup rate: floor = `entry x (100 + FLOOR_RATE_PCT) / 100`.
+pub const FLOOR_RATE_PCT: u16 = 8;
 
-/// Call-price markup rate: call price = `entry x (100 + CALL_RATE) / 100`.
+/// Call-price markup rate: call price = `entry x (100 + CALL_RATE_PCT) / 100`.
 /// Its breach arms a Call Event.
-pub const CALL_RATE: u16 = 128;
+pub const CALL_RATE_PCT: u16 = 128;
+
+/// SRA cost rate (share of the full agent cost): cost = `full x SRA_RATE / 100`
+/// (64 => 0.64x).
+pub const SRA_RATE: u64 = 64;

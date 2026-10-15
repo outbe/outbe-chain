@@ -19,25 +19,6 @@
   },
   {
     "type": "function",
-    "name": "isSeriesQualified",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "maxUtcDayVwapSince",
     "inputs": [
       {
@@ -209,57 +190,6 @@
   },
   {
     "type": "function",
-    "name": "seriesUnitCounts",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct IIntexFactory.UnitCounts",
-        "components": [
-          {
-            "name": "issuedUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "activeUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "settledUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "exercisedUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "gemFactoryUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "forfeitedUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "settleIntex",
     "inputs": [
       {
@@ -356,6 +286,87 @@
   },
   {
     "type": "event",
+    "name": "IntexExercised",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "units",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "promisMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexSeriesIssued",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
+      },
+      {
+        "name": "issuedUnits",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "entryPriceMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexSettled",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "units",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "LateProceedsBurned",
     "inputs": [
       {
@@ -410,137 +421,6 @@
       },
       {
         "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PromisMined",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "indexed": true,
-        "internalType": "bytes14"
-      },
-      {
-        "name": "owner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "units",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "promisMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SeriesCalled",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "indexed": true,
-        "internalType": "bytes14"
-      },
-      {
-        "name": "calledAt",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "settlementDeadline",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SeriesExpired",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "indexed": true,
-        "internalType": "bytes14"
-      },
-      {
-        "name": "forfeitedUnits",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "returnedPromisMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SeriesIssued",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "indexed": true,
-        "internalType": "bytes14"
-      },
-      {
-        "name": "issuedUnits",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "entryPriceMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "Settled",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "indexed": true,
-        "internalType": "bytes14"
-      },
-      {
-        "name": "owner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "units",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

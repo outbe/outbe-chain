@@ -3,21 +3,18 @@
 //! `config_profile` selector byte seeded from genesis. An unset byte resolves by
 //! network, so only mainnet runs PROD.
 
-use outbe_primitives::chain::is_mainnet;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 use crate::constants::{
-    CALL_NOTICE_PERIOD, CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE,
+    CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE_PCT,
     POSITION_VALIDITY_SECONDS,
 };
 use crate::errors::GemError;
 use crate::schema::GemContract;
 
-/// Resolve by network: PROD on mainnet, DEV everywhere else.
-pub const PROFILE_AUTO: u8 = 0;
-pub const PROFILE_DEV: u8 = 1;
-pub const PROFILE_PROD: u8 = 2;
+pub use outbe_primitives::profile::{PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
 
 /// Resolved Gem protocol parameters. All periods are in seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,44 +35,31 @@ impl GemParams {
         call_window_seconds: CALL_WINDOW,
         call_threshold_seconds: CALL_THRESHOLD,
         call_notice_period_seconds: CALL_NOTICE_PERIOD,
-        call_rate: CALL_RATE,
-        floor_rate: FLOOR_RATE,
+        call_rate: CALL_RATE_PCT,
+        floor_rate: FLOOR_RATE_PCT,
         position_validity: POSITION_VALIDITY_SECONDS,
     };
 
     /// Short timings for dev/test. `called` is day-granular, so window and
     /// threshold stay whole days. The notice and validity are real waits.
     pub const DEV: Self = Self {
-        call_window_seconds: 3 * 24 * 3600,
-        call_threshold_seconds: 2 * 24 * 3600,
+        call_window_seconds: 3 * SECONDS_PER_DAY_U32,
+        call_threshold_seconds: 2 * SECONDS_PER_DAY_U32,
         #[cfg(not(feature = "e2e-test"))]
-        call_notice_period_seconds: 3 * 24 * 3600,
+        call_notice_period_seconds: 3 * SECONDS_PER_DAY_U32,
         #[cfg(feature = "e2e-test")]
         call_notice_period_seconds: 600,
         call_rate: 10,
         floor_rate: 5,
         #[cfg(not(feature = "e2e-test"))]
-        position_validity: 7 * 24 * 3600,
+        position_validity: 7 * outbe_primitives::time::SECONDS_PER_DAY,
         #[cfg(feature = "e2e-test")]
         position_validity: 900,
     };
 
-    /// The profile a chain runs when genesis left the selector unset.
-    pub const fn for_chain_id(chain_id: u64) -> Self {
-        if is_mainnet(chain_id) {
-            Self::PROD
-        } else {
-            Self::DEV
-        }
-    }
-
     pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {
-        match selector {
-            PROFILE_AUTO => Ok(Self::for_chain_id(chain_id)),
-            PROFILE_DEV => Ok(Self::DEV),
-            PROFILE_PROD => Ok(Self::PROD),
-            other => Err(GemError::UnknownProfileSelector(other).into()),
-        }
+        outbe_primitives::profile::select(selector, chain_id, Self::PROD, Self::DEV)
+            .ok_or_else(|| GemError::UnknownProfileSelector(selector).into())
     }
 }
 

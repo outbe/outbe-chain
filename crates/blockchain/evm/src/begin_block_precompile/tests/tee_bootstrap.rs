@@ -2,6 +2,7 @@ use super::*;
 
 // ---- Phase 3b: TeeBootstrap handler verification ----
 
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     tee_attestation_v1::{
         AttestationMode, AttestationOperationV1, DcapCollateralComponentV1, DcapCollateralKind,
@@ -126,7 +127,7 @@ fn tee_policy_v1() -> TeePolicyV1 {
         accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
         accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
         minimum_lease: 3_600,
-        maximum_lease: 604_800,
+        maximum_lease: 7 * SECONDS_PER_DAY,
         collateral_margin: 3_600,
         resource_schedule_hash: ResourceScheduleV1::normative()
             .unwrap()

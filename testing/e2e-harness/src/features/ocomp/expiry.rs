@@ -1,4 +1,5 @@
 use crate::features::ocomp::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 #[when("validator 2 prepares one valid vote without broadcasting it")]
 fn validator_two_prepares_held_vote(world: &mut World) {
@@ -1357,7 +1358,7 @@ fn submit_independent_next_day_tribute_after_recovery(world: &mut World) {
     let followup_wwd = WorldwideDay::from_timestamp(
         original_wwd
             .start_timestamp()
-            .checked_add(86_400)
+            .checked_add(SECONDS_PER_DAY)
             .expect("next WorldwideDay timestamp"),
     )
     .value();

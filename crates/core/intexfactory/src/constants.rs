@@ -1,10 +1,10 @@
-//! Module-local constants: external contract addresses called via
-//! `storage.call`, plus protocol constants.
+//! IntexFactory constants: external contract addresses called via `storage.call`, and
+//! the caps and timings of the cross-chain sends. The series terms live in Intex.
 
 use alloy_primitives::U256;
 #[cfg(feature = "e2e-test")]
 use alloy_primitives::{address, Address};
-use outbe_primitives::units::SCALE_1E18_U128;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 pub use outbe_primitives::addresses::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS};
 
@@ -16,7 +16,7 @@ pub const PROCEEDS_TEST_SENDER: Address = address!("0xf39Fd6e51aad88F6F4ce6aB882
 /// Proceeds fan-in window. A ready pot burns once every winning chain has
 /// routed its proceeds, or this long after issuance, whichever comes first.
 /// A full day absorbs legitimate escrow-finalize retries.
-pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
+pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = SECONDS_PER_DAY;
 
 /// Router calls a Called notice gets before it is dropped.
 pub const MAX_CALLED_NOTICE_ATTEMPTS: u8 = 12;
@@ -44,26 +44,6 @@ pub const MAX_VWAP_DAYS_PER_FIRING: u32 = 8;
 
 /// Rows one DAILY_VWAP message may carry. Mirrors the codec's `MAX_REFERENCE_PRICES`.
 pub const MAX_VWAP_ROWS: usize = 6;
-
-/// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
-pub const PRICE_RATE_DEN: u16 = 100;
-
-/// Floor price = entry * 1.08.
-pub const FLOOR_RATE: u16 = 8;
-/// Call price = entry * 2.28; its breach arms a Call Event.
-pub const CALL_RATE: u16 = 128;
-
-/// Notice an owner gets to settle after a series is Called.
-pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;
-
-/// Call-trigger evaluation window: the most recent stretch scanned for breaches.
-pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
-/// Call-trigger threshold: how much of the window must be in breach to force-call.
-pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
-
-/// Commit-entry bond on the target-chain auction: 100M WCOEN in native
-/// 18-decimal payment-token units.
-pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * SCALE_1E18_U128;
 
 /// Series one ISSUANCE_INSTRUCTIONS message may carry. Mirrors `MAX_SERIES_PER_ISSUANCE`.
 pub const MAX_SERIES_PER_MESSAGE: usize = 8;

@@ -66,8 +66,8 @@ fn envelope(records: &[(u8, &[u8])]) -> Vec<u8> {
 
 fn assert_fatal(bytes: &[u8], expected: &str) {
     match decode_outbe_block_artifacts(bytes).unwrap_err() {
-        PrecompileError::Fatal { 0: message } => assert_eq!(message, expected),
-        other => panic!("expected fatal codec error, got {other:?}"),
+        PrecompileError::Revert { 0: message } => assert_eq!(message, expected),
+        other => panic!("expected revert codec error, got {other:?}"),
     }
 }
 

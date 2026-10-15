@@ -99,7 +99,6 @@ fn validate_record_context(
         offer.worldwide_day,
         offer.tribute_currency,
         offer.reference_currency,
-        offer.exclude_from_intex_issuance,
         offer
             .reference_wwd_vwap_minor
             .max(offer.reference_scurve_minor),
@@ -110,7 +109,6 @@ fn validate_record_context(
         context.worldwide_day,
         context.issuance_currency,
         context.reference_currency,
-        context.exclude_from_intex_issuance,
         context.tribute_price_minor,
         context.offer_input_hash,
     );
@@ -147,7 +145,6 @@ mod tests {
                 worldwide_day: day,
                 tribute_currency: 840,
                 reference_currency: 978,
-                exclude_from_intex_issuance: false,
                 issuance_wwd_vwap_minor: U256::from(100),
                 reference_wwd_vwap_minor: U256::from(200),
                 reference_scurve_minor: U256::from(300),
@@ -167,7 +164,6 @@ mod tests {
                     issuance_currency: 840,
                     reference_currency: 978,
                     tribute_price_minor: U256::from(300),
-                    exclude_from_intex_issuance: false,
                     offer_input_hash: tribute_v2::encrypted_offer_inputs_hash(
                         1,
                         std::slice::from_ref(&offer),
@@ -240,7 +236,6 @@ mod tests {
             |body| body.context.issuance_currency = 978,
             |body| body.context.reference_currency = 840,
             |body| body.context.tribute_price_minor += U256::ONE,
-            |body| body.context.exclude_from_intex_issuance = true,
             |body| body.context.offer_input_hash = B256::ZERO,
             |body| {
                 body.encrypted_amounts.pop();

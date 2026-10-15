@@ -7,9 +7,9 @@
 use alloy_primitives::U256;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use core::fmt::Write;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 const DECIMALS: u32 = 6;
-const SECONDS_PER_DAY: u64 = 86_400;
 
 /// Fraction digits shown for a price, enough to resolve sub-cent COEN rates.
 pub const PRICE_PRECISION: u32 = 6;

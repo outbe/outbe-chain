@@ -160,7 +160,6 @@ fn root_leaf_artifact_with_count(
         nod_count: tribute_count,
         bucket_count: tribute_count,
         tribute_nominal_total: U256::from(tribute_count) * U256::from(6),
-        eligible_nominal_total: U256::from(tribute_count) * U256::from(6),
         lysis_allocation_minor: U256::from(tribute_count) * U256::from(3),
         nod_cost_total: U256::from(tribute_count) * U256::from(5),
         first_error_ordinal: None,

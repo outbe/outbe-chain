@@ -3,20 +3,24 @@
 use outbe_offchain_data::runtime_body_readers;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
-    error::PrecompileError, projection::ExecutionReadCancelled, storage::SubCallError,
+    error::PrecompileError,
+    projection::{ExecutionReadCancelled, NodeLocalExecutionAbort},
+    storage::SubCallError,
 };
 use parking_lot::Mutex;
 use revm::context_interface::result::{AnyError, EVMError};
 use std::sync::Arc;
 
-#[derive(Clone, Default)]
-pub(crate) struct ExecutionAbortBridge {
-    terminal: Arc<Mutex<Option<ExecutionAbort>>>,
+#[derive(Clone, Debug)]
+enum AbortTerminal {
+    ReadCancelled(ExecutionReadCancelled),
+    NodeLocal(NodeLocalExecutionAbort),
+    CryptoBackendUnavailable(String),
 }
 
-enum ExecutionAbort {
-    ReadCancelled(ExecutionReadCancelled),
-    CryptoBackendUnavailable(String),
+#[derive(Clone, Default)]
+pub(crate) struct ExecutionAbortBridge {
+    terminal: Arc<Mutex<Option<AbortTerminal>>>,
 }
 
 impl ExecutionAbortBridge {
@@ -29,7 +33,7 @@ impl ExecutionAbortBridge {
         // revert or success by catching a child error. Clear only at call end.
         if matches!(
             *self.terminal.lock(),
-            Some(ExecutionAbort::CryptoBackendUnavailable(_))
+            Some(AbortTerminal::CryptoBackendUnavailable(_))
         ) {
             return;
         }
@@ -37,11 +41,20 @@ impl ExecutionAbortBridge {
             PrecompileError::BodyReadRequestDeadline => {
                 *self.terminal.lock() = readers
                     .and_then(RuntimeBodyReaders::cancelled_read_budget)
-                    .map(|budget| ExecutionAbort::ReadCancelled(ExecutionReadCancelled { budget }));
+                    .map(|budget| AbortTerminal::ReadCancelled(ExecutionReadCancelled { budget }));
             }
             PrecompileError::CryptoBackendUnavailable(message) => {
                 *self.terminal.lock() =
-                    Some(ExecutionAbort::CryptoBackendUnavailable(message.clone()));
+                    Some(AbortTerminal::CryptoBackendUnavailable(message.clone()));
+            }
+            PrecompileError::EnclaveUnavailable(reason)
+            | PrecompileError::BodyReadUnavailable(reason)
+            | PrecompileError::TreeUnavailable(reason)
+            | PrecompileError::Storage(reason)
+            | PrecompileError::SubCall(SubCallError::DatabaseError(reason)) => {
+                *self.terminal.lock() = Some(AbortTerminal::NodeLocal(NodeLocalExecutionAbort {
+                    reason: reason.clone(),
+                }));
             }
             // A child fatal is propagated by this provider into its caller.
             PrecompileError::SubCall(SubCallError::Fatal(_)) => {}
@@ -72,16 +85,21 @@ pub(crate) struct ExecutionCall {
 
 impl ExecutionCall {
     pub(crate) fn finish<T, D>(self, result: Result<T, EVMError<D>>) -> Result<T, EVMError<D>> {
-        let abort = self.bridge.terminal.lock().take();
-        match (result, abort) {
-            (Err(EVMError::Custom(_)), Some(abort)) | (Ok(_), Some(abort)) => {
-                let error = match abort {
-                    ExecutionAbort::ReadCancelled(cancelled) => AnyError::new(cancelled),
-                    ExecutionAbort::CryptoBackendUnavailable(message) => {
-                        AnyError::new(PrecompileError::CryptoBackendUnavailable(message))
-                    }
-                };
-                Err(EVMError::CustomAny(error))
+        let terminal = self.bridge.terminal.lock().take();
+        match (result, terminal) {
+            (Err(EVMError::Custom(_)), Some(AbortTerminal::ReadCancelled(cancelled)))
+            | (Ok(_), Some(AbortTerminal::ReadCancelled(cancelled))) => {
+                Err(EVMError::CustomAny(AnyError::new(cancelled)))
+            }
+            (Err(EVMError::Custom(_)), Some(AbortTerminal::NodeLocal(abort)))
+            | (Ok(_), Some(AbortTerminal::NodeLocal(abort))) => {
+                Err(EVMError::CustomAny(AnyError::new(abort)))
+            }
+            (Err(EVMError::Custom(_)), Some(AbortTerminal::CryptoBackendUnavailable(message)))
+            | (Ok(_), Some(AbortTerminal::CryptoBackendUnavailable(message))) => {
+                Err(EVMError::CustomAny(AnyError::new(
+                    PrecompileError::CryptoBackendUnavailable(message),
+                )))
             }
             (result, _) => result,
         }

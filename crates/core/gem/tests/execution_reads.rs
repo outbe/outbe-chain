@@ -28,6 +28,7 @@ fn params(owner: Address) -> GemAddParams {
         issuance_currency: 840,
         reference_currency: 840,
         issued_at: ISSUED_AT,
+        call_terms: None,
     }
 }
 

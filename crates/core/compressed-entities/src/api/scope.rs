@@ -51,8 +51,8 @@ impl ExecutionScope {
             .map_err(|_| fatal_scope("authenticated parent tree lock poisoned"))?;
         if let Some(opened) = tree.as_ref() {
             if opened.parent_root() != evm_root {
-                return Err(fatal_scope(
-                    "opened parent tree root does not match EVM slot 1",
+                return Err(outbe_primitives::error::PrecompileError::TreeUnavailable(
+                    "opened parent tree root does not match EVM slot 1".into(),
                 ));
             }
             return Ok(());
@@ -79,8 +79,8 @@ impl ExecutionScope {
             root: evm_root,
         })?;
         if opened.parent_block_hash() != block_hash || opened.parent_root() != evm_root {
-            return Err(fatal_scope(
-                "exact-parent factory returned a tree with the wrong block hash or root",
+            return Err(outbe_primitives::error::PrecompileError::TreeUnavailable(
+                "exact-parent factory returned a tree with the wrong block hash or root".into(),
             ));
         }
         *tree = Some(opened);
@@ -110,8 +110,8 @@ impl ExecutionScope {
         }
         let parent_tree = self.opened_parent_tree()?;
         if parent_tree.parent_root() != expected_parent_root {
-            return Err(fatal_scope(
-                "authenticated parent tree root does not match EVM slot 1",
+            return Err(outbe_primitives::error::PrecompileError::TreeUnavailable(
+                "authenticated parent tree root does not match EVM slot 1".into(),
             ));
         }
         parent_tree.read_leaf_verified(entity, expected_parent_root)

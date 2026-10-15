@@ -2,9 +2,12 @@
 //! product's own error: paying early or on wrong terms, mining unpaid or twice, moving.
 
 use alloy_primitives::{Address, FixedBytes, B256, U256};
+use alloy_sol_types::SolCall;
 use outbe_gemfactory::errors::GemFactoryError;
 use outbe_intexfactory::errors::IntexFactoryError;
 use outbe_nodfactory::errors::NodFactoryError;
+use outbe_vaultrouter::settlement::SettlementError;
+use std::fmt::Display;
 
 use super::entity::{Item, Target};
 use super::markets::{currency, EUR_ISO, MYR_ISO};
@@ -47,126 +50,89 @@ pub(crate) fn assert_unqualified_refused(world: &World, target: &Target) {
 
 /// A qualified holding refuses a stale pricing snapshot and an asset in a third currency.
 pub(crate) fn assert_payment_guards(world: &World, target: &Target) {
-    let payer = third_party(world);
-    let myr = currency(world, MYR_ISO).asset;
-    let eur = currency(world, EUR_ISO).asset;
-    let required = quote(world, target, myr).snapshot;
+    let required = quote(world, target, currency(world, MYR_ISO).asset).snapshot;
     assert!(
         !required.is_zero(),
         "an issuance-currency quote names its pricing snapshot"
     );
     match &target.item {
-        Item::Gem(id) => {
-            assert_refused(
-                world,
-                payer,
-                factory(target),
-                &erc20_gem(*id, myr, U256::ZERO),
-                GemFactoryError::VwapSnapshotMismatch {
-                    authorized: U256::ZERO,
-                    required,
-                },
-            );
-            assert_refused(
-                world,
-                payer,
-                factory(target),
-                &erc20_gem(*id, eur, U256::ZERO),
-                GemFactoryError::SettlementCurrencyMismatch { iso_code: EUR_ISO },
-            );
-        }
-        Item::Series { id, units } => {
-            assert_refused(
-                world,
-                payer,
-                factory(target),
-                &erc20_series(target, *id, *units, myr, U256::ZERO),
-                IntexFactoryError::VwapSnapshotMismatch {
-                    authorized: U256::ZERO,
-                    required,
-                },
-            );
-            assert_refused(
-                world,
-                payer,
-                factory(target),
-                &erc20_series(target, *id, *units, eur, U256::ZERO),
-                IntexFactoryError::SettlementCurrencyMismatch(EUR_ISO),
-            );
-        }
-        Item::Nod(id) => {
-            assert_refused(
-                world,
-                payer,
-                factory(target),
-                &erc20_nod(*id, myr, U256::ZERO),
-                NodFactoryError::VwapSnapshotMismatch {
-                    authorized: U256::ZERO,
-                    required,
-                },
-            );
-            assert_refused(
-                world,
-                payer,
-                factory(target),
-                &erc20_nod(*id, eur, U256::ZERO),
-                NodFactoryError::SettlementCurrencyMismatch { iso_code: EUR_ISO },
-            );
-        }
+        Item::Gem(id) => refuse_wrong_terms(world, target, required, |asset| {
+            erc20_gem(*id, asset, U256::ZERO)
+        }),
+        Item::Series { id, units } => refuse_wrong_terms(world, target, required, |asset| {
+            erc20_series(target, *id, *units, asset, U256::ZERO)
+        }),
+        Item::Nod(id) => refuse_wrong_terms(world, target, required, |asset| {
+            erc20_nod(*id, asset, U256::ZERO)
+        }),
     }
+}
+
+/// Pays with snapshot zero in MYR, which names the wrong snapshot, and in EUR, which the
+/// holding does not accept.
+fn refuse_wrong_terms<C: SolCall>(
+    world: &World,
+    target: &Target,
+    required: U256,
+    payment: impl Fn(Address) -> C,
+) {
+    let payer = third_party(world);
+    assert_refused(
+        world,
+        payer,
+        factory(target),
+        &payment(currency(world, MYR_ISO).asset),
+        SettlementError::SnapshotMismatch {
+            authorized: U256::ZERO,
+            required,
+        },
+    );
+    assert_refused(
+        world,
+        payer,
+        factory(target),
+        &payment(currency(world, EUR_ISO).asset),
+        SettlementError::CurrencyMismatch { iso_code: EUR_ISO },
+    );
 }
 
 /// A holding nobody paid for cannot be mined.
 pub(crate) fn assert_unpaid_unminable(world: &World, target: &Target) {
-    match &target.item {
-        Item::Gem(id) => assert_refused(
-            world,
-            target.owner,
-            factory(target),
-            &mine_gem(*id),
-            GemFactoryError::InvalidState,
-        ),
-        Item::Series { id, units } => assert_refused(
-            world,
-            target.owner,
-            factory(target),
-            &mine_series(target, *id, *units),
-            IntexFactoryError::InsufficientSettled,
-        ),
-        Item::Nod(id) => assert_refused(
-            world,
-            target.owner,
-            factory(target),
-            &mine_nod(*id),
-            NodFactoryError::NodNotSettled,
-        ),
-    }
+    refuse_mining(
+        world,
+        target,
+        &GemFactoryError::InvalidState,
+        &IntexFactoryError::InsufficientSettled,
+        &NodFactoryError::NodNotSettled,
+    );
 }
 
 /// A holding mined once is gone, so mining it again finds nothing.
 pub(crate) fn assert_mined_unminable(world: &World, target: &Target) {
+    refuse_mining(
+        world,
+        target,
+        &GemFactoryError::GemNotFound,
+        &IntexFactoryError::InsufficientSettled,
+        &NodFactoryError::NodNotFound,
+    );
+}
+
+/// The owner mines the holding and reads the refusal its product names.
+fn refuse_mining(
+    world: &World,
+    target: &Target,
+    gem: &dyn Display,
+    series: &dyn Display,
+    nod: &dyn Display,
+) {
+    let (owner, to) = (target.owner, factory(target));
     match &target.item {
-        Item::Gem(id) => assert_refused(
-            world,
-            target.owner,
-            factory(target),
-            &mine_gem(*id),
-            GemFactoryError::GemNotFound,
-        ),
-        Item::Series { id, units } => assert_refused(
-            world,
-            target.owner,
-            factory(target),
-            &mine_series(target, *id, *units),
-            IntexFactoryError::InsufficientSettled,
-        ),
-        Item::Nod(id) => assert_refused(
-            world,
-            target.owner,
-            factory(target),
-            &mine_nod(*id),
-            NodFactoryError::NodNotFound,
-        ),
+        Item::Gem(id) => assert_refused(world, owner, to, &mine_gem(*id), gem),
+        Item::Series { id, units } => {
+            assert_refused(world, owner, to, &mine_series(target, *id, *units), series)
+        }
+        Item::Nod(id) => assert_refused(world, owner, to, &mine_nod(*id), nod),
     }
 }
 

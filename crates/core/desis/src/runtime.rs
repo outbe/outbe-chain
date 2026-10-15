@@ -238,7 +238,7 @@ fn fold_profile(
     storage: &StorageHandle<'_>,
     contract: &DesisContract<'_>,
     config: &mut AuctionConfig,
-) -> Result<outbe_intexfactory::IntexParams> {
+) -> Result<outbe_intex::IntexParams> {
     // minBidQty = 4% of the prior clearing's issued count, restated at today's
     // load. The same PROMIS splits into ten times more Intexes one decade down
     // the ladder, so a floor left at yesterday's scale could sit above the whole
@@ -264,7 +264,7 @@ fn fold_profile(
             derived.min(u128::from(u16::MAX)) as u16
         }
     };
-    let iparams = outbe_intexfactory::read_params(storage)?;
+    let iparams = outbe_intex::config::read(storage)?;
     config.min_intex_bid_quantity = min_bid_qty;
     config.call_trigger = crate::schema::IntexCallTrigger {
         call_window_seconds: iparams.call_window_seconds,
@@ -280,7 +280,7 @@ fn fold_profile(
 struct StageStart<'a> {
     worldwide_day: WorldwideDay,
     config: &'a AuctionConfig,
-    iparams: &'a outbe_intexfactory::IntexParams,
+    iparams: &'a outbe_intex::IntexParams,
     commit_end: u32,
     reveal_end: u32,
     issuance_end: u32,

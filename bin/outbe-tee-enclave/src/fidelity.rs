@@ -393,7 +393,7 @@ mod tests {
     use outbe_fidelity_math::{MAX_LEAGUE, MIN_LEAGUE};
 
     const CHAIN: B256 = B256::repeat_byte(0xC2);
-    const DAY: u64 = 86_400;
+    use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 
     fn state_key() -> [u8; 32] {
         derive_fidelity_state_key(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN, 0)

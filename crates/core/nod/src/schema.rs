@@ -139,6 +139,7 @@ pub struct NodCertifiedGenerationProjection {
     pub bucket_count: u32,
     pub nod_amount_total: U256,
     pub lysis_allocation_minor: U256,
+    pub nod_gratis_load_max: U256,
     pub issued_at: u64,
     pub next_nod_ordinal: u32,
     pub last_progress_height: u64,
@@ -271,11 +272,11 @@ pub struct NodContract {
     /// `entry_price_minor * (100 + call_rate) / 100`, using the genesis-selected profile.
     /// Issuance pins this price so the daily scan need not read a bucket body to decide.
     #[attribute(order = 40)]
-    pub callable_bucket_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub bucket_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     /// Snapshotted with the call price. Selects the `COEN/<iso>` VWAP series.
     #[attribute(order = 41)]
-    pub callable_bucket_currency: Mapping<B256, u16>,
+    pub bucket_currency: Mapping<B256, u16>,
 
     /// Block timestamp the bucket was force-called; `0` until called.
     #[attribute(order = 42)]
@@ -291,21 +292,21 @@ pub struct NodContract {
     // --- Call terms sealed at issuance. The daily scan and the settlement-time
     // deadline check read a bucket's own copy. Thus a retuned constant leaves
     // every already-issued bucket on the terms it was issued with.
-    /// Markup percent [`Self::callable_bucket_call_price_minor`] was derived at.
+    /// Markup percent [`Self::bucket_call_price_minor`] was derived at.
     #[attribute(order = 45)]
-    pub callable_bucket_call_rate: Mapping<B256, u16>,
+    pub bucket_call_rate: Mapping<B256, u16>,
 
     /// Trailing span the daily scan reads for breaches, in seconds.
     #[attribute(order = 46)]
-    pub callable_bucket_call_window_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub bucket_call_window_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// Breach seconds within that span which arm the call.
     #[attribute(order = 47)]
-    pub callable_bucket_call_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub bucket_call_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// Seconds after `bucket_called_at` in which the owner must settle.
     #[attribute(order = 48)]
-    pub callable_bucket_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub bucket_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     /// Widest `call_window_seconds` ever issued in a reference currency, in seconds. It
     /// only grows, so the trailing span the daily scan collects always covers a
@@ -327,7 +328,7 @@ pub struct NodContract {
     /// First member's `issued_at`, sealed at bucket creation. VWAP history counts from its
     /// `first_full_day`. Later members inherit it, like the call terms.
     #[attribute(order = 54)]
-    pub callable_bucket_issued_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub bucket_issued_at: outbe_primitives::storage::dsl::Map<B256, u64>,
 
     // Frozen-day call sweep: 0 = idle. At most one day waits behind the in-flight one.
     /// UTC day an unfinished call sweep is pinned to.
@@ -399,6 +400,10 @@ pub struct NodContract {
     /// day's pass passes it by.
     #[attribute(order = 82)]
     pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    /// Per-Nod Gratis cap derived from the certified request's frozen Lysis Limit.
+    #[attribute(order = 83)]
+    pub ocomp_nod_gratis_load_max: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 }
 
 impl<'storage> NodContract<'storage> {
@@ -434,6 +439,7 @@ impl<'storage> NodContract<'storage> {
         let metadata = self.ocomp_generation_metadata.read(&worldwide_day)?;
         let nod_amount_total = self.ocomp_nod_amount_total.read(&worldwide_day)?;
         let lysis_allocation_minor = self.ocomp_lysis_allocation_minor.read(&worldwide_day)?;
+        let nod_gratis_load_max = self.ocomp_nod_gratis_load_max.read(&worldwide_day)?;
         let job_id = self.ocomp_materialization_job_id.read(&worldwide_day)?;
         let protocol_bundle_hash = self
             .ocomp_materialization_protocol_bundle_hash
@@ -458,9 +464,14 @@ impl<'storage> NodContract<'storage> {
         ];
         if generation == 0 {
             let words_clear = roots_and_binding.iter().all(B256::is_zero)
-                && [metadata, nod_amount_total, lysis_allocation_minor]
-                    .iter()
-                    .all(U256::is_zero);
+                && [
+                    metadata,
+                    nod_amount_total,
+                    lysis_allocation_minor,
+                    nod_gratis_load_max,
+                ]
+                .iter()
+                .all(U256::is_zero);
             if !words_clear || next_nod_ordinal != 0 || last_progress_height != 0 {
                 return Err(crate::errors::NodError::AbsentOcompGenerationHasResidualState.into());
             }
@@ -497,6 +508,7 @@ impl<'storage> NodContract<'storage> {
             bucket_count,
             nod_amount_total,
             lysis_allocation_minor,
+            nod_gratis_load_max,
             issued_at,
             next_nod_ordinal,
             last_progress_height,
@@ -520,6 +532,8 @@ impl<'storage> NodContract<'storage> {
         self.ocomp_nod_amount_total
             .write(&worldwide_day, U256::ZERO)?;
         self.ocomp_lysis_allocation_minor
+            .write(&worldwide_day, U256::ZERO)?;
+        self.ocomp_nod_gratis_load_max
             .write(&worldwide_day, U256::ZERO)?;
         self.ocomp_materialization_job_id
             .write(&worldwide_day, B256::ZERO)?;

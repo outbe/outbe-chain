@@ -87,8 +87,7 @@ impl TributeContract<'_> {
             {"trait_type":"issuance_currency", "value": tribute.issuance_currency.to_string()},
             {"trait_type":"issuance_amount_minor", "value": issuance},
             {"trait_type":"nominal_amount_minor", "value": nominal},
-            {"trait_type":"reference_currency", "value": tribute.reference_currency.to_string()},
-            {"trait_type":"exclude_from_intex_issuance", "value": tribute.exclude_from_intex_issuance}
+            {"trait_type":"reference_currency", "value": tribute.reference_currency.to_string()}
         ]);
         let metadata = serde_json::json!({
             "name": format!("Tribute 0x{}", tribute.tribute_id),
@@ -152,7 +151,6 @@ impl TributeContract<'_> {
         &self,
         day: WorldwideDay,
     ) -> Result<TributePreAdmissionProjection> {
-        let totals = self.get_day_totals(day)?;
         let admission = self.read_day_pre_admission(day)?;
         let (tribute_count, tribute_nominal_total_minor) = if admission.is_sealed {
             (
@@ -160,6 +158,7 @@ impl TributeContract<'_> {
                 admission.sealed_tribute_nominal_total_minor,
             )
         } else {
+            let totals = self.get_day_totals(day)?;
             (totals.tribute_count, totals.tribute_nominal_total_minor)
         };
         Ok(TributePreAdmissionProjection {
@@ -220,15 +219,22 @@ impl TributeContract<'_> {
     }
 
     pub(crate) fn store_day_pre_admission(&mut self, admission: &DayPreAdmission) -> Result<()> {
-        if admission.is_sealed
-            && self
+        if admission.is_sealed {
+            if self
                 .day_amount_record(admission.worldwide_day, true)?
                 .is_none()
-        {
-            self.freeze_day_nominal(admission)?;
-        }
-        if admission.sealed_tribute_nominal_total_minor
-            != self.day_nominal_amount(admission.worldwide_day, true)?
+            {
+                self.freeze_day_nominal(admission)?;
+            }
+            if admission.sealed_tribute_nominal_total_minor
+                != self.day_nominal_amount(admission.worldwide_day, true)?
+            {
+                return Err(TributeError::SealedDayMetadataDiffersFromEncryptedAmount.into());
+            }
+        } else if !admission.sealed_tribute_nominal_total_minor.is_zero()
+            || self
+                .day_amount_record(admission.worldwide_day, true)?
+                .is_some()
         {
             return Err(TributeError::SealedDayMetadataDiffersFromEncryptedAmount.into());
         }
@@ -353,6 +359,15 @@ impl TributeContract<'_> {
         self.read_all(scope, parent, QueryRef::TributeByDay(day))
     }
 
+    pub fn read_records_by_day(
+        &self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        day: WorldwideDay,
+    ) -> Result<Vec<TributeRecord>> {
+        self.read_records(scope, parent, QueryRef::TributeByDay(day))
+    }
+
     fn read_all(
         &self,
         scope: &ExecutionScope,
@@ -418,10 +433,6 @@ pub(crate) fn record_from_verified(body: &VerifiedBody) -> Result<TributeRecord>
     Ok(crate::record::from_legacy(
         crate::repository::from_canonical_body(payload.clone()),
     ))
-}
-
-pub(crate) fn tribute_from_verified(body: &VerifiedBody) -> Result<TributeData> {
-    calculation_view(&record_from_verified(body)?)
 }
 
 fn calculation_view(record: &TributeRecord) -> Result<TributeData> {

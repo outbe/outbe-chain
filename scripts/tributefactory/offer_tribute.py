@@ -260,11 +260,6 @@ def main() -> None:
         help="Explicit gas limit; estimateGas cannot simulate enclave decryption",
     )
     parser.add_argument(
-        "--exclude-from-intex-issuance",
-        action="store_true",
-        help="Exclude the issued Tribute from Intex issuance",
-    )
-    parser.add_argument(
         "--no-send",
         action="store_true",
         help="Encrypt + print the full ABI calldata, but do not submit (for cast call/send by hand)",
@@ -330,7 +325,6 @@ def main() -> None:
         print(f"WORLDWIDE_DAY={int(args.wwd)}")
         print(f"TRIBUTE_CURRENCY={int(args.currency)}")
         print(f"REFERENCE_CURRENCY={int(args.currency)}")
-        print(f"EXCLUDE_FROM_INTEX_ISSUANCE={str(args.exclude_from_intex_issuance).lower()}")
         print(f"ZK_PROOF=0x{args.zk_proof.hex()}")
         print(f"L2_CHAIN_ID={args.chain_id}")
         print(f"CIRCUIT_VERSION={args.version}")
@@ -342,14 +336,13 @@ def main() -> None:
     result = run_cast(
         "send",
         FACTORY,
-        "offerTribute(bytes,bytes,uint256,uint32,uint16,uint16,bool,bytes,uint32,string,bytes,bytes,bytes)(uint256)",
+        "offerTribute(bytes,bytes,uint256,uint32,uint16,uint16,bytes,uint32,string,bytes,bytes,bytes)(uint256)",
         cipher_text,
         nonce,
         ephemeral_pubkey,
         str(args.wwd),
         str(args.currency),
         str(args.currency),
-        str(args.exclude_from_intex_issuance).lower(),
         "0x" + args.zk_proof.hex(),
         str(args.chain_id),
         args.version,

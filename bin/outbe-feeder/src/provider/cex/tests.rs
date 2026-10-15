@@ -278,7 +278,6 @@ async fn reconnects_resubscribes_answers_ping_and_replaces_cached_ticker() {
 
     let endpoint = ApiProviderConfig {
         name: "binance".to_owned(),
-        markets: vec![],
         rest: String::new(),
         websocket: format!("ws://{address}"),
         api_key: String::new(),

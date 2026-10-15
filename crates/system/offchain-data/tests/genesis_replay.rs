@@ -299,7 +299,6 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         nominal_amount_minor: U256::from(11),
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: false,
     };
     let nod_owner = Address::repeat_byte(0x42);
     let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
@@ -343,7 +342,17 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         let mut contract = TributeContract::new(storage.clone());
         contract.unseal_day(day).unwrap();
         contract.issue(&scope, &parent, &tribute).unwrap();
-        outbe_nod::api::add_nod(&storage, &scope, &parent, &nod, U256::from(16)).unwrap();
+        outbe_nod::api::add_nod(
+            &storage,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
+            &nod,
+            U256::from(16),
+            outbe_nod::test_support::sealed_terms(&storage, &nod, U256::from(16)),
+        )
+        .unwrap();
         end_block(storage, &scope).unwrap()
     });
     let block1 = finalized_block(&mut execution, 1);

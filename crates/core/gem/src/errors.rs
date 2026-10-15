@@ -18,35 +18,14 @@ pub enum GemError {
     #[error("invalid state transition")]
     InvalidState,
 
-    #[error("floor price not met")]
-    FloorPriceNotMet,
-
-    #[error("oracle nominal unavailable")]
-    OracleUnavailable,
-
     #[error("index out of bounds")]
     IndexOutOfBounds,
-
-    #[error("invalid owner")]
-    InvalidOwner,
 
     #[error("gem already exists")]
     AlreadyExists,
 
-    #[error("only a genesis gem is issued without a floor")]
-    ZeroFloorPrice,
-
     #[error("unknown gem profile selector: {0}")]
     UnknownProfileSelector(u8),
-
-    #[error("gem bucket {bucket_key} has an empty member slot during forfeit")]
-    EmptyMemberSlotDuringForfeit { bucket_key: B256 },
-
-    #[error("gem bucket {bucket_key} member {gem_id} has no body during forfeit")]
-    MissingMemberBodyDuringForfeit { bucket_key: B256, gem_id: U256 },
-
-    #[error("gem bucket {bucket_key} indexes an ineligible member {gem_id}")]
-    IneligibleBucketMember { bucket_key: B256, gem_id: U256 },
 
     #[error("gem bucket {bucket_id} existence disagrees with member count {member_count}")]
     BucketExistenceMismatch {
@@ -97,9 +76,6 @@ pub enum GemFatalError {
 
     #[error("entity route received a metadata call")]
     EntityRouteMetadataCall,
-
-    #[error("gem call price overflow")]
-    CallPriceOverflow,
 
     #[error("gem bucket {bucket} member index overflow")]
     BucketMemberIndexOverflow { bucket: B256 },
@@ -189,6 +165,6 @@ impl From<GemError> for PrecompileError {
 
 impl From<GemFatalError> for PrecompileError {
     fn from(value: GemFatalError) -> Self {
-        PrecompileError::Fatal(value.to_string())
+        PrecompileError::Revert(value.to_string())
     }
 }

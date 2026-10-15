@@ -106,7 +106,6 @@ TRIBUTE_FACTORY_ABI = json.loads(
          {"type":"uint32","name":"worldwideDay"},
          {"type":"uint16","name":"tributeCurrency"},
          {"type":"uint16","name":"referenceCurrency"},
-         {"type":"bool","name":"excludeFromIntexIssuance"},
          {"type":"bytes","name":"zkProof"},
          {"type":"uint32","name":"chainId"},
          {"type":"string","name":"version"},
@@ -219,8 +218,6 @@ def main() -> None:
         help="six-decimal remainder in [0,999999]; must match the proof's draft",
     )
     ap.add_argument("--currency", type=int, default=840, help="ISO 4217 code (840=USD)")
-    ap.add_argument("--exclude-from-intex-issuance", action="store_true",
-                    help="set the excludeFromIntexIssuance flag")
     ap.add_argument("--zk-proof", required=True, type=hex_bytes_arg,
                     help="combined Tribute proof bytes (0x-hex): 4-byte public-input word "
                          "count, public inputs, proof; 0x is a deliberate negative "
@@ -292,7 +289,6 @@ def main() -> None:
         int(day),
         int(args.currency),
         int(args.currency),
-        args.exclude_from_intex_issuance,
         args.zk_proof,
         args.chain_id,
         args.version,

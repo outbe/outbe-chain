@@ -188,7 +188,7 @@ impl From<PolicyRegistryError> for PrecompileError {
             | PolicyRegistryError::NextIdCorrupt
             | PolicyRegistryError::NextIdCollision
             | PolicyRegistryError::MembershipChangedDuringMutation) => {
-                return PrecompileError::Fatal(fatal.to_string());
+                return PrecompileError::Revert(fatal.to_string());
             }
         };
         PrecompileError::RevertBytes(Bytes::from(encoded))

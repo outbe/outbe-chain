@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 #[cfg(feature = "ocomp-integration")]
 #[test]
@@ -313,14 +314,15 @@ fn public_measurement_schedule_seeds_consistent_green_day_and_oracle_vwaps() {
         assert_eq!(issuance, U256::from(2_000_000));
         let nominal = issuance * scale / day.current_vwap;
         for (population, expected_fraction, expected_load, expected_cost) in [
-            (10_u64, 50_u64, 50_000_000_u64, 100_u64),
-            (257_u64, 1_u64, 1_000_000_u64, 2_u64),
+            (10_u64, 50_u64, 488_281_u64, 1_u64),
+            (257_u64, 1_u64, 488_281_u64, 1_u64),
         ] {
             let total_nominal = nominal * U256::from(population);
             let allocation =
                 (total_nominal * U256::from(32) / U256::from(100)).min(day.metadosis_limit_minor);
             let fraction = allocation * scale / total_nominal;
-            let gratis_load_minor = nominal * fraction / scale;
+            let nod_gratis_load_max = allocation / U256::from(1024);
+            let gratis_load_minor = (nominal * fraction / scale).min(nod_gratis_load_max);
             assert_eq!(
                 fraction,
                 U256::from(expected_fraction),
@@ -332,7 +334,7 @@ fn public_measurement_schedule_seeds_consistent_green_day_and_oracle_vwaps() {
                 "the {population}-Tribute fixture must preserve its exact per-Tribute Gratis load"
             );
             assert_eq!(
-                day.current_vwap * gratis_load_minor / scale,
+                (day.current_vwap * gratis_load_minor / scale).max(U256::from(1)),
                 U256::from(expected_cost),
                 "the {population}-Tribute fixture must produce a paid Nod under the canonical WWD-VWAP Lysis price"
             );
@@ -358,7 +360,7 @@ fn public_recovery_fixture_seeds_two_empty_ordered_days() {
     let second_worldwide_day = WorldwideDay::from_timestamp(
         first_worldwide_day
             .start_timestamp()
-            .checked_add(86_400)
+            .checked_add(SECONDS_PER_DAY)
             .unwrap(),
     );
 
@@ -523,9 +525,9 @@ fn dynamic_membership_fixture_schedules_two_distinct_public_jobs() {
         .and_then(|timestamp| u64::try_from(timestamp).ok())
         .expect("dynamic fixture genesis timestamp");
     let expected_controlled_daily_cycle = genesis_timestamp
-        .checked_div(86_400)
+        .checked_div(SECONDS_PER_DAY)
         .and_then(|day| day.checked_add(2))
-        .and_then(|day| day.checked_mul(86_400))
+        .and_then(|day| day.checked_mul(SECONDS_PER_DAY))
         .and_then(|midnight| midnight.checked_add(1))
         .expect("controlled dynamic Job B daily-cycle boundary");
     assert_eq!(

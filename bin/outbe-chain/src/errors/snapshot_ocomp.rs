@@ -404,12 +404,6 @@ pub(crate) enum SnapshotOcompError {
     /// A materialization reference job differs from the certified generation.
     #[error("materialization reference job differs from canonical certified generation")]
     MaterializationRefJobCertifiedMismatch,
-    /// Result allocation calculation overflowed.
-    #[error("result allocation overflow")]
-    ResultAllocationOverflow,
-    /// Result NOD cost calculation overflowed.
-    #[error("result NOD cost overflow")]
-    ResultNodCostOverflow,
     /// The native result catalog did not reach the complete step.
     #[error("native result catalog did not reach Complete")]
     ResultCatalogNotComplete,

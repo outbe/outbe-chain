@@ -212,6 +212,7 @@ fn seed_nod_generation(
         bucket_count: 1,
         nod_amount_total: U256::from(99),
         lysis_allocation_minor: U256::from(77),
+        nod_gratis_load_max: U256::from(33),
         issued_at: 1_000,
         next_nod_ordinal: 1,
         last_progress_height: 90,
@@ -237,6 +238,9 @@ fn seed_nod_generation(
         .unwrap();
     nod.ocomp_lysis_allocation_minor
         .write(&day, generation.lysis_allocation_minor)
+        .unwrap();
+    nod.ocomp_nod_gratis_load_max
+        .write(&day, generation.nod_gratis_load_max)
         .unwrap();
     nod.ocomp_materialization_job_id
         .write(&day, generation.job_id)
@@ -346,10 +350,13 @@ fn absent_owner_generations_remain_optional() {
         assert_eq!(state.nod_materialization_bounds().unwrap(), (1, 1));
         assert!(state.nod_materialization_head().unwrap().is_none());
         assert!(state.nod_certified_generation(DAY).unwrap().is_none());
-        assert!(state
-            .metadosis_active_lysis_generation(DAY)
-            .unwrap()
-            .is_none());
+        let absent = state.with_storage(|storage| {
+            outbe_metadosis::api::get_active_lysis_generation(storage, DAY)
+        });
+        assert!(absent
+            .unwrap_err()
+            .to_string()
+            .contains("ActiveGenerationV1 not found"));
     });
 }
 
@@ -853,14 +860,21 @@ fn active_generation_decodes_present_record_and_rejects_malformed_bytes() {
                     .unwrap();
             });
             with_owner_storage(version, owner, |state, _| {
-                let actual = state.metadosis_active_lysis_generation(DAY);
+                let actual = state
+                    .with_storage(|storage| {
+                        outbe_metadosis::api::get_active_lysis_generation(storage, DAY)
+                    })
+                    .and_then(|bytes| {
+                        ActiveGenerationV1::decode_canonical(&bytes, &poc_schema_limits())
+                            .map_err(eyre::Error::from)
+                    });
                 if malformed {
                     assert!(
                         actual.is_err(),
                         "present malformed bytes must not become absent"
                     );
                 } else {
-                    assert_eq!(actual.unwrap(), Some(expected.clone()));
+                    assert_eq!(actual.unwrap(), expected);
                 }
             });
         }

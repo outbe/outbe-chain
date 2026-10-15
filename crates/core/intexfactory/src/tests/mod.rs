@@ -9,21 +9,20 @@ use outbe_primitives::math::constants::REAL_ID_SHIFT;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use crate::called;
-use crate::constants::{
-    CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE, MAX_RECIPIENTS_PER_ISSUANCE,
-    MAX_SERIES_PER_MESSAGE,
-};
+use crate::constants::{MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE};
 use crate::precompile::{self, IIntexFactory};
 use crate::runtime;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
-use crate::state::Group;
+use outbe_intex::constants::{CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE_PCT};
+use outbe_intex::{Group, IntexContract};
 
 /// ISO code every fixture prices in.
 const REFERENCE_ISO: u16 = 840;
-const DAY: u64 = 24 * 60 * 60;
+use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 
 fn owner() -> Address {
     address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
@@ -36,7 +35,7 @@ fn payment_token() -> Address {
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
-const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 60 * 60;
+const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 
 // COEN clearing price and the floor/trigger derived from it at issuance.
 const ENTRY_PRICE: u64 = 1_000_000;
@@ -70,13 +69,20 @@ fn factory_provider() -> HashMapStorageProvider {
 /// These cases assert the PROD terms. An unset profile resolves by chain id, and
 /// the test chain is not mainnet.
 fn select_prod_profile(storage: &StorageHandle<'_>) {
-    crate::schema::IntexFactoryContract::new(storage.clone())
+    outbe_intex::IntexContract::new(storage.clone())
         .config_profile
-        .write(crate::config::PROFILE_PROD)
+        .write(outbe_intex::config::PROFILE_PROD)
         .unwrap();
 }
 
 /// Test ids carry a fixed USD/U pair. Only the day varies.
+fn is_series_qualified(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+) -> outbe_primitives::error::Result<bool> {
+    outbe_intex::api::is_qualified(storage, &outbe_intex::api::read_series(storage, series_id)?)
+}
+
 fn sid(worldwide_day: u32) -> SeriesId {
     SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
 }
@@ -84,12 +90,12 @@ fn sid(worldwide_day: u32) -> SeriesId {
 /// Force-call one group against the protocol call window. Returns how many series moved.
 fn call_group<'s>(
     s: &StorageHandle<'s>,
-    f: &mut IntexFactoryContract<'s>,
+    f: &mut IntexContract<'s>,
     group: &Group,
     last_closed_day: u32,
     now_ts: u64,
 ) -> u32 {
-    let secs_per_day = DAY as u32;
+    let secs_per_day = SECONDS_PER_DAY_U32;
     let window = outbe_oracle::call_window::CallWindow::load(
         s,
         group.iso_code,
@@ -103,11 +109,13 @@ fn call_group<'s>(
     if window.ceiling().is_none() {
         return 0;
     }
+    let factory = IntexFactoryContract::new(s.clone());
     let call = called::GroupCall {
         storage: s,
-        factory: f,
+        intex: f,
+        factory: &factory,
     };
-    called::try_call_group(call, group, &window, now_ts).unwrap()
+    called::call_if_breached(call, group, &window, now_ts).unwrap()
 }
 
 fn sample(worldwide_day: u32) -> IssuanceParams {
@@ -138,7 +146,7 @@ trait SeedCalledGroup {
     ) -> outbe_primitives::error::Result<()>;
 }
 
-impl SeedCalledGroup for IntexFactoryContract<'_> {
+impl SeedCalledGroup for IntexContract<'_> {
     fn seed_called_group(
         &mut self,
         iso: u16,
@@ -147,15 +155,15 @@ impl SeedCalledGroup for IntexFactoryContract<'_> {
         members: &[SeriesId],
     ) -> outbe_primitives::error::Result<()> {
         use outbe_primitives::storage::types::Storable as _;
-        let key = IntexFactoryContract::scoped(iso, day.value());
+        let key = IntexContract::scoped(iso, day.value());
         for (index, series_id) in members.iter().enumerate() {
             self.call_group_members.write(
-                &IntexFactoryContract::group_member_key(iso, day, index as u32),
+                &IntexContract::group_member_key(iso, day, index as u32),
                 series_id.to_word(),
             )?;
         }
         self.call_group_count.write(&key, members.len() as u32)?;
-        self.push_called_group(iso, day, deadline)
+        self.push_called(iso, day, deadline)
     }
 }
 

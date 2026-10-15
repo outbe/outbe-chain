@@ -35,7 +35,7 @@ mod model;
 pub(super) const CHAIN_ID: u64 = 1;
 /// Genesis at midnight UTC of 2024-01-01.
 pub(super) const GENESIS_TS: u64 = 1_704_067_200;
-pub(super) const SECONDS_PER_DAY: u64 = 86_400;
+pub(super) use outbe_primitives::time::SECONDS_PER_DAY;
 pub(super) const EMISSION_LIMIT_1_ID: u32 = TriggerId::ProtocolCycle.as_u32();
 
 pub(super) fn retained_days_before(

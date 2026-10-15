@@ -214,6 +214,39 @@ where
     Ok((block_hash, admission))
 }
 
+fn read_current_finalized_tee_admission<P>(
+    provider: &P,
+    chain_id: u64,
+    genesis_hash: alloy_primitives::B256,
+    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    context: &'static str,
+) -> eyre::Result<
+    Option<(
+        alloy_eips::BlockNumHash,
+        alloy_primitives::B256,
+        outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+    )>,
+>
+where
+    P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
+{
+    let Some(finalized) = provider
+        .finalized_block_num_hash()
+        .wrap_err(context)?
+        .filter(|finalized| finalized.number != 0)
+    else {
+        return Ok(None);
+    };
+    let (header_hash, admission) = read_local_tee_admission_at_height(
+        provider,
+        chain_id,
+        genesis_hash,
+        identity,
+        finalized.number,
+    )?;
+    Ok(Some((finalized, header_hash, admission)))
+}
+
 fn read_finalized_local_tee_admission<P>(
     provider: &P,
     chain_id: u64,
@@ -223,30 +256,40 @@ fn read_finalized_local_tee_admission<P>(
 where
     P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
-    let Some(finalized) = provider
-        .finalized_block_num_hash()
-        .wrap_err("read finalized head for TEE lease admission")?
-    else {
-        return Ok(None);
-    };
-    if finalized.number == 0 {
-        return Ok(None);
-    }
-    let (header_hash, admission) = read_local_tee_admission_at_height(
+    let Some((finalized, header_hash, admission)) = read_current_finalized_tee_admission(
         provider,
         chain_id,
         genesis_hash,
         identity,
-        finalized.number,
-    )?;
-    if header_hash != finalized.hash {
-        return Err(LaunchError::FinalizedTeeLeaseHeaderHashMismatch {
-            marker: finalized.hash,
-            header: header_hash,
-        }
-        .into());
+        "read finalized head for TEE lease admission",
+    )?
+    else {
+        return Ok(None);
+    };
+    if header_hash == finalized.hash {
+        return Ok(Some(admission));
     }
-    Ok(Some(admission))
+    // Reread once to rule out a transient multi-call provider race before
+    // declaring a canonical finalized-header conflict.
+    let Some((refreshed, retry_hash, retry_admission)) = read_current_finalized_tee_admission(
+        provider,
+        chain_id,
+        genesis_hash,
+        identity,
+        "reread finalized head for TEE lease admission",
+    )?
+    else {
+        return Ok(None);
+    };
+    (retry_hash == refreshed.hash)
+        .then_some(Some(retry_admission))
+        .ok_or_else(|| {
+            LaunchError::FinalizedTeeLeaseHeaderHashMismatch {
+                marker: refreshed.hash,
+                header: retry_hash,
+            }
+            .into()
+        })
 }
 
 pub(crate) fn read_gated_finalized_local_tee_admission<P>(
@@ -276,13 +319,22 @@ where
         };
     };
 
-    let (anchor_hash, anchor_admission) = read_local_tee_admission_at_height(
+    let (mut anchor_hash, mut anchor_admission) = read_local_tee_admission_at_height(
         provider,
         chain_id,
         genesis_hash,
         identity,
         anchor.finalized_height,
     )?;
+    if anchor_hash != anchor.finalized_hash {
+        (anchor_hash, anchor_admission) = read_local_tee_admission_at_height(
+            provider,
+            chain_id,
+            genesis_hash,
+            identity,
+            anchor.finalized_height,
+        )?;
+    }
     gate.validate_and_arm(anchor_hash, anchor_admission)?;
     info!(
         anchor_height = anchor.finalized_height,

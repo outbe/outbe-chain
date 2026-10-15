@@ -232,7 +232,13 @@ pub(crate) fn body_locator(
     collection: Collection,
     entity_id: WwdEntityId,
 ) -> outbe_primitives::error::Result<B256> {
-    let identity = crate::identity_field(entity_id).map_err(crate::errors::commitment_error)?;
+    let identity = crate::identity_field(entity_id).map_err(|error| {
+        if error.is_infrastructure() {
+            crate::errors::commitment_error(error)
+        } else {
+            crate::errors::revert_error(error)
+        }
+    })?;
     let mut preimage = Vec::with_capacity(BODY_LOCATOR_PREFIX.len() + 1 + 32);
     preimage.extend_from_slice(BODY_LOCATOR_PREFIX);
     preimage.push(collection.id());

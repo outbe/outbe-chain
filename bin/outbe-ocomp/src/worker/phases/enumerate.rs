@@ -56,14 +56,12 @@ pub(in super::super) fn execute_enumerate_unit(
         .map_err(|_| WorkerError::UnitBindingMismatch)?;
     for record in &chunk.canonical_records_or_openings {
         require_lease_active(cancelled)?;
-        let tribute = outbe_tribute::record::decode_canonical(&record.0)?.calculation_view()?;
+        let tribute = outbe_tribute::record::decode_canonical(&record.0)?.public_body_v1();
         let id = *tribute.tribute_id;
         if id < range.start || range.end.is_some_and(|end| id >= end) {
             return Err(WorkerError::UnitBindingMismatch);
         }
-        tributes.push(TributeInputV1::from(&outbe_tribute::canonical_body(
-            &tribute,
-        )));
+        tributes.push(TributeInputV1::from(&tribute));
     }
     if tributes
         .first()

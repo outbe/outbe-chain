@@ -343,9 +343,9 @@ fn resolve_ocomp_members(
     Ok(ocomp_members)
 }
 
-/// Accepts a replayed snapshot write only when the stored snapshot, its OCOMP
-/// extension and every stored member equal the new ones. The member reads stop
-/// at the first mismatch.
+/// Accepts a replayed snapshot write only when the stored consensus snapshot
+/// equals `snapshot`. If only the validator's current OCOMP registration changed
+/// during the epoch, the existing stored snapshot and OCOMP extension are preserved.
 fn ensure_snapshot_replay_matches(
     storage: StorageHandle,
     key: B256,
@@ -355,6 +355,9 @@ fn ensure_snapshot_replay_matches(
 ) -> Result<()> {
     let stored_snapshot = read_committee_snapshot(storage.clone(), key)?
         .ok_or_else(|| PrecompileError::from(ValidatorSetError::SnapshotExistsFlagWithoutRecord))?;
+    if stored_snapshot != *snapshot {
+        return Err(ValidatorSetError::CommitteeSnapshotReplayMismatch { key }.into());
+    }
     let stored_extension = read_ocomp_snapshot_extension(storage.clone(), key)?;
     let mut members_match = stored_extension.as_ref() == Some(expected_extension);
     if members_match {
@@ -368,8 +371,11 @@ fn ensure_snapshot_replay_matches(
             }
         }
     }
-    if stored_snapshot != *snapshot || !members_match {
-        return Err(ValidatorSetError::CommitteeSnapshotReplayMismatch { key }.into());
+    if !members_match {
+        // The consensus snapshot under (epoch, hash) is identical, and only the
+        // validator's current OCOMP registration changed during the epoch;
+        // preserve the existing stored snapshot and OCOMP extension.
+        return Ok(());
     }
     Ok(())
 }

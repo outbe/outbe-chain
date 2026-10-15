@@ -16,8 +16,20 @@ pub enum QuoteParseError {
 }
 
 impl PartialEq<&str> for QuoteParseError {
+    #[allow(clippy::cmp_owned)]
     fn eq(&self, other: &&str) -> bool {
-        self.to_string() == *other
+        let mut rest = Remaining(other);
+        std::fmt::Write::write_fmt(&mut rest, format_args!("{self}")).is_ok() && rest.0.is_empty()
+    }
+}
+
+/// Consumes the expected text as the error is formatted, without allocating.
+struct Remaining<'a>(&'a str);
+
+impl std::fmt::Write for Remaining<'_> {
+    fn write_str(&mut self, piece: &str) -> std::fmt::Result {
+        self.0 = self.0.strip_prefix(piece).ok_or(std::fmt::Error)?;
+        Ok(())
     }
 }
 

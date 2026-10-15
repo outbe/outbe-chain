@@ -193,7 +193,7 @@ mod tests {
         ] {
             assert!(matches!(
                 classify_domain_error(err),
-                Err(PrecompileError::Fatal(_))
+                Err(PrecompileError::Revert(_))
             ));
         }
     }

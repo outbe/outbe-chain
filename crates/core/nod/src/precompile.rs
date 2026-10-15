@@ -31,30 +31,6 @@ sol!(
     "../../../contracts/precompiles/src/INod.sol"
 );
 
-// The forfeit sweep opens a bucket only once its hour has closed, so a throwaway
-// build moves a lapsed deadline into an hour the sweep opens on the next block.
-#[cfg(feature = "e2e-test")]
-sol! {
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface INodTestArming {
-        function closeCallNoticeForTest(bytes32 bucketKey, uint64 deadline) external;
-    }
-}
-
-#[cfg(feature = "e2e-test")]
-fn requeue_called_bucket(
-    storage: outbe_primitives::storage::StorageHandle,
-    bucket_key: alloy_primitives::B256,
-    deadline: u64,
-) -> Result<()> {
-    let mut nod = NodContract::new(storage);
-    if nod.called_deadline.read(&bucket_key)? == 0 {
-        return Err(NodError::BucketNotQueuedForTest.into());
-    }
-    nod.remove_called_bucket(bucket_key)?;
-    nod.push_called_bucket(bucket_key, deadline)
-}
-
 /// Dispatches Nod calls through the block-scoped compressed-body lifecycle.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
@@ -64,14 +40,6 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
-    #[cfg(feature = "e2e-test")]
-    if let Ok(call) =
-        <INodTestArming::closeCallNoticeForTestCall as alloy_sol_types::SolCall>::abi_decode(data)
-    {
-        outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
-        requeue_called_bucket(storage.clone(), call.bucketKey, call.deadline)?;
-        return Ok(Bytes::new());
-    }
     dispatch_call(data, INod::INodCalls::abi_decode, |call| {
         let nod = NodContract::new(storage.clone());
         use INod::INodCalls::*;
@@ -91,7 +59,7 @@ pub fn dispatch(
             | tokenURI(_)
             | tokenByIndex(_)
             | tokenOfOwnerByIndex(_)
-            | nodData(_)
+            | getNod(_)
             | certifiedGeneration(_)) => dispatch_entity(storage, readers, &nod, call),
         }
     })
@@ -151,7 +119,7 @@ fn dispatch_entity(
                 .map(|item| item.nod_id.to_u256())
                 .ok_or_else(|| NodError::IndexOutOfBounds.into())
         }),
-        nodData(c) => view(c, |c| {
+        getNod(c) => view(c, |c| {
             let nod_id = WwdEntityId::from(c.nodId);
             let item =
                 api::get_item(&storage, scope, parent, nod_id)?.ok_or(NodError::NodNotFound)?;

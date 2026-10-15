@@ -77,7 +77,7 @@ Feature: Off-chain computation and Metadosis
     And every validator independently verifies the V1 Nod commitment encoding
     And the one-league Nod fields and root match the public input arithmetic on every validator
     And the certified generation is materialized through at least two bounded transactions
-    And every capacity owner enumerates one ordinary NOD with matching nodData
+    And every capacity owner enumerates one ordinary NOD with matching getNod
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed materialization cursor and ordinary NOD set remain unchanged
 
@@ -93,7 +93,7 @@ Feature: Off-chain computation and Metadosis
     Then three matching validator domains atomically apply Lysis and create the Nod
     And the certified generation contains exactly 257 Tribute and Nod records
     And the certified generation is materialized through at least two bounded transactions
-    And five deterministic capacity owners enumerate ordinary NODs with matching nodData
+    And five deterministic capacity owners enumerate ordinary NODs with matching getNod
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed materialization cursor and ordinary NOD set remain unchanged
     And validator 0 reconstructs that certified generation from canonical history
@@ -266,7 +266,7 @@ Feature: Off-chain computation and Metadosis
     When the signed files start fresh FullNode placements with and without offline validation
     Then the snapshot FullNode preserves the copied Lysis result and canonical state
     And the certified generation is materialized through at least two bounded transactions
-    And five deterministic capacity owners enumerate ordinary NODs with matching nodData
+    And five deterministic capacity owners enumerate ordinary NODs with matching getNod
     And the snapshot FullNode observes the same completed public actions without submitting them
     When the snapshot FullNode executes a fresh next-day OCOMP job and restarts at current progress
     Then the offline snapshot workflow evidence is complete

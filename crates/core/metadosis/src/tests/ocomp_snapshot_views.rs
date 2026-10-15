@@ -456,7 +456,7 @@ fn response_bytes_above_active_capacity_reach_the_native_decoder() {
     let mut provider = ReadOnlyStorageProvider::new(reader);
     let result = StorageHandle::enter(&mut provider, read_live_ocomp_jobs);
     assert!(
-        matches!(result, Err(outbe_primitives::error::PrecompileError::Fatal(message))
+        matches!(result, Err(outbe_primitives::error::PrecompileError::Revert(message))
         if message.contains("response index magic/version mismatch"))
     );
     assert!(reads.borrow().contains(&payload_slot));

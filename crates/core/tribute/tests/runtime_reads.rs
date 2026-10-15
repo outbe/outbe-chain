@@ -32,7 +32,6 @@ fn tribute(owner: Address, day: u32) -> TributeData {
         nominal_amount_minor: U256::from(100),
         reference_currency: 840,
         tribute_price_minor: U256::from(2),
-        exclude_from_intex_issuance: false,
     }
 }
 
@@ -46,7 +45,6 @@ fn copy_tribute(body: &TributeData) -> TributeData {
         nominal_amount_minor: body.nominal_amount_minor,
         reference_currency: body.reference_currency,
         tribute_price_minor: body.tribute_price_minor,
-        exclude_from_intex_issuance: body.exclude_from_intex_issuance,
     }
 }
 
@@ -477,9 +475,6 @@ fn every_tribute_body_input_schema_envelope_and_evm_leaf_is_authenticated() {
     let mut changed = copy_tribute(&original);
     changed.tribute_price_minor += U256::from(1);
     mutations.push(("tribute_price_minor", changed));
-    let mut changed = copy_tribute(&original);
-    changed.exclude_from_intex_issuance = !changed.exclude_from_intex_issuance;
-    mutations.push(("exclude_from_intex_issuance", changed));
 
     for (field, changed) in mutations {
         let payload = match outbe_compressed_entities::encode_tribute_v1(
@@ -581,7 +576,6 @@ fn encrypted_body() -> outbe_primitives::tribute_encryption::EncryptedTributeV2 
             issuance_currency: plain.issuance_currency,
             reference_currency: plain.reference_currency,
             tribute_price_minor: plain.tribute_price_minor,
-            exclude_from_intex_issuance: false,
             offer_input_hash: B256::repeat_byte(0x74),
         },
         &TributeAmountsV2 {
@@ -603,9 +597,9 @@ fn encrypted_issue_preserves_ciphertext_events_and_public_reads_without_enclave(
     let scope = activate(&mut provider, &tree);
     StorageHandle::enter(&mut provider, |storage| {
         let mut contract = TributeContract::new(storage.clone());
+        contract.unseal_day(body.context.worldwide_day).unwrap();
         {
             let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
-            contract.unseal_day(body.context.worldwide_day).unwrap();
             contract.issue_encrypted(&scope, &reader, &body).unwrap();
             assert_eq!(
                 contract
@@ -620,6 +614,20 @@ fn encrypted_issue_preserves_ciphertext_events_and_public_reads_without_enclave(
             .unwrap()
             .unwrap();
         assert_eq!(record.encrypted(), Some(&body));
+        assert_eq!(
+            contract
+                .read_records_by_day(&scope, &reader, record.worldwide_day)
+                .unwrap(),
+            vec![record.clone()]
+        );
+        assert_eq!(
+            contract
+                .load_tribute(&scope, &reader, record.tribute_id)
+                .unwrap()
+                .unwrap()
+                .record(),
+            &record
+        );
         assert_eq!(
             contract
                 .owner_of(&scope, &reader, record.tribute_id)
@@ -648,6 +656,9 @@ fn encrypted_issue_preserves_ciphertext_events_and_public_reads_without_enclave(
             alloy_primitives::Bytes::from(body.encrypted_amounts.clone()).to_string()
         );
         assert!(record.calculation_view().is_err());
+        assert!(contract.get_day_totals(record.worldwide_day).is_err());
+        contract.seal_day(record.worldwide_day).unwrap();
+        assert!(contract.is_day_sealed(record.worldwide_day).unwrap());
         let call = ITribute::getDayTotalsCall {
             worldwideDay: record.worldwide_day.value(),
         };

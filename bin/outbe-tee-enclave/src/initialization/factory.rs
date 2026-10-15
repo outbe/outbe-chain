@@ -16,10 +16,7 @@ pub fn production(
     let trusted_network_descriptor = match &attestation {
         crate::gramine::AttestationType::Dcap => Some(load_trusted_network_descriptor_v1()?),
         other => {
-            return Err(InitError::ProdDcapReleaseRefusesAttestation {
-                label: other.label(),
-            }
-            .into());
+            return Err(InitError::ProdDcapReleaseRefusesAttestation(other.label()).into());
         }
     };
     #[cfg(all(not(feature = "mock"), not(feature = "production-dcap-release")))]

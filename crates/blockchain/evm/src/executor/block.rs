@@ -238,10 +238,11 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     where
         Evm: reth_ethereum::evm::primitives::Evm,
     {
-        let seal = self
-            .compressed_entities_seal_output
-            .as_ref()
-            .ok_or_else(|| BlockExecutionError::msg("missing compressed-entities SealOutput"))?;
+        let seal = self.compressed_entities_seal_output.as_ref().ok_or_else(
+            || -> BlockExecutionError {
+                BlockValidationError::msg("missing compressed-entities SealOutput").into()
+            },
+        )?;
         self.final_extra_data = crate::builder::encode_final_header_artifacts(
             self.final_extra_data.as_ref(),
             self.current_execution_summary(),
@@ -290,9 +291,10 @@ where
     ) -> Result<Self::Result, BlockExecutionError> {
         let (tx_env, recovered) = tx.into_parts();
         if is_reserved_system_tx(recovered.tx()) {
-            return Err(BlockExecutionError::msg(
+            return Err(BlockValidationError::msg(
                 "reserved system transaction cannot execute without commit",
-            ));
+            )
+            .into());
         }
         self.inner
             .execute_transaction_without_commit(WithTxEnv {
@@ -309,9 +311,10 @@ where
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
         let (tx_env, recovered) = tx.into_parts();
         if self.ocomp_terminal_request_consumed {
-            return Err(BlockExecutionError::msg(
+            return Err(BlockValidationError::msg(
                 "transaction follows the terminal OCOMP system transaction",
-            ));
+            )
+            .into());
         }
         let is_ocomp_terminal_request = is_reserved_system_tx(recovered.tx())
             && matches!(
@@ -377,9 +380,10 @@ where
     fn finish(mut self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
         if self.ocomp_lifecycle_active {
             if !self.ocomp_terminal_request_consumed {
-                return Err(BlockExecutionError::msg(
+                return Err(BlockValidationError::msg(
                     "active OCOMP block is missing its terminal system transaction",
-                ));
+                )
+                .into());
             }
         } else {
             self.finalize_compressed_entities()?;
@@ -397,10 +401,11 @@ where
         if !self.ocomp_lifecycle_active {
             self.apply_outbe_ethereum_post_execution()?;
         }
-        let requests = self
-            .ethereum_post_execution_requests
-            .take()
-            .ok_or_else(|| BlockExecutionError::msg("missing Outbe post-execution output"))?;
+        let requests = self.ethereum_post_execution_requests.take().ok_or_else(
+            || -> BlockExecutionError {
+                BlockValidationError::msg("missing Outbe post-execution output").into()
+            },
+        )?;
         let gas_used = if self.inner.evm.cfg_env().enable_amsterdam_eip8037 {
             self.inner.max_block_gas_used()
         } else {
@@ -449,11 +454,13 @@ where
 }
 
 /// The upstream EVM variant stores its boxed cause without exposing it as source.
-/// Unwrap only a proven cancellation so the engine's internal-error path retains it.
+/// Unwrap only a proven cancellation or node-local abort so the engine's internal-error path retains it.
 fn preserve_cancelled_execution(error: BlockExecutionError) -> BlockExecutionError {
     match error {
         BlockExecutionError::Internal(InternalBlockExecutionError::EVM { hash, error }) => {
             if outbe_primitives::projection::ExecutionReadCancelled::find(error.as_ref()).is_some()
+                || outbe_primitives::projection::NodeLocalExecutionAbort::find(error.as_ref())
+                    .is_some()
             {
                 BlockExecutionError::Internal(InternalBlockExecutionError::Other(error))
             } else {
@@ -467,7 +474,9 @@ fn preserve_cancelled_execution(error: BlockExecutionError) -> BlockExecutionErr
 #[cfg(test)]
 mod cancellation_tests {
     use super::*;
-    use outbe_primitives::projection::{ExecutionReadBudget, ExecutionReadCancelled};
+    use outbe_primitives::projection::{
+        ExecutionReadBudget, ExecutionReadCancelled, NodeLocalExecutionAbort,
+    };
     use revm::context_interface::result::{AnyError, EVMError};
 
     #[test]
@@ -486,5 +495,21 @@ mod cancellation_tests {
         assert!(matches!(error, BlockExecutionError::Internal(_)));
         let cancelled = ExecutionReadCancelled::find(&error).unwrap();
         assert!(cancelled.budget.same_request(&budget));
+    }
+
+    #[test]
+    fn node_local_execution_abort_is_preserved_across_evm_error() {
+        let evm_error: EVMError<std::convert::Infallible> =
+            EVMError::CustomAny(AnyError::new(NodeLocalExecutionAbort {
+                reason: "TEE sidecar down".into(),
+            }));
+        let error = BlockExecutionError::Internal(InternalBlockExecutionError::EVM {
+            hash: B256::ZERO,
+            error: Box::new(evm_error),
+        });
+        let error = preserve_cancelled_execution(error);
+        assert!(matches!(error, BlockExecutionError::Internal(_)));
+        let abort = NodeLocalExecutionAbort::find(&error).unwrap();
+        assert_eq!(abort.reason, "TEE sidecar down");
     }
 }
