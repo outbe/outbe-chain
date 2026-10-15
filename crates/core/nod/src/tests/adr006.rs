@@ -413,27 +413,22 @@ fn nod_contract_slot_layout_is_pinned() {
             U256::from(28)
         );
         assert_eq!(nod.max_call_window_seconds.base_slot(), U256::from(29));
-        assert_eq!(nod.entry_prices_frozen.base_slot(), U256::from(30));
-        assert_eq!(nod.entry_price_currency_count.base_slot(), U256::from(31));
-        assert_eq!(nod.entry_price_currency.base_slot(), U256::from(32));
-        assert_eq!(nod.entry_price_minor.base_slot(), U256::from(33));
-        assert_eq!(nod.bucket_issued_at.base_slot(), U256::from(34));
-        assert_eq!(nod.call_sweep_day.slot(), U256::from(35));
-        assert_eq!(nod.call_pending_day.slot(), U256::from(36));
-        assert_eq!(nod.call_bin_tree_root.base_slot(), U256::from(37));
-        assert_eq!(nod.call_bin_tree_mid.base_slot(), U256::from(38));
-        assert_eq!(nod.call_bin_tree_leaf.base_slot(), U256::from(39));
-        assert_eq!(nod.call_bin_count.base_slot(), U256::from(40));
-        assert_eq!(nod.call_bin_buckets.base_slot(), U256::from(41));
-        assert_eq!(nod.call_bucket_slot.base_slot(), U256::from(42));
-        assert_eq!(nod.expiry_tree_root.slot(), U256::from(43));
-        assert_eq!(nod.expiry_tree_leaf.base_slot(), U256::from(45));
-        assert_eq!(nod.call_currency_cursor.slot(), U256::from(46));
-        assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(47));
-        assert_eq!(nod.entry_price_source_day.base_slot(), U256::from(48));
-        assert_eq!(nod.config_profile.slot(), U256::from(49));
-        assert_eq!(nod.expiry_bucket_len.base_slot(), U256::from(50));
-        assert_eq!(nod.expiry_cursor.slot(), U256::from(56));
+        assert_eq!(nod.bucket_issued_at.base_slot(), U256::from(30));
+        assert_eq!(nod.call_sweep_day.slot(), U256::from(31));
+        assert_eq!(nod.call_pending_day.slot(), U256::from(32));
+        assert_eq!(nod.call_bin_tree_root.base_slot(), U256::from(33));
+        assert_eq!(nod.call_bin_tree_mid.base_slot(), U256::from(34));
+        assert_eq!(nod.call_bin_tree_leaf.base_slot(), U256::from(35));
+        assert_eq!(nod.call_bin_count.base_slot(), U256::from(36));
+        assert_eq!(nod.call_bin_buckets.base_slot(), U256::from(37));
+        assert_eq!(nod.call_bucket_slot.base_slot(), U256::from(38));
+        assert_eq!(nod.expiry_tree_root.slot(), U256::from(39));
+        assert_eq!(nod.expiry_tree_leaf.base_slot(), U256::from(41));
+        assert_eq!(nod.call_currency_cursor.slot(), U256::from(42));
+        assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(43));
+        assert_eq!(nod.config_profile.slot(), U256::from(44));
+        assert_eq!(nod.expiry_bucket_len.base_slot(), U256::from(45));
+        assert_eq!(nod.expiry_cursor.slot(), U256::from(51));
     });
 }
 

@@ -313,17 +313,6 @@ pub struct NodContract {
     #[attribute(order = 49)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    /// Complete entry-price snapshot captured before issuance, once per day.
-    #[attribute(order = 50)]
-    pub entry_prices_frozen: Mapping<WorldwideDay, bool>,
-    #[attribute(order = 51)]
-    pub entry_price_currency_count: Mapping<WorldwideDay, u32>,
-    #[attribute(order = 52)]
-    pub entry_price_currency: Mapping<WorldwideDay, Mapping<u32, u16>>,
-    /// Six-decimal entry price by reference ISO, independent of Oracle indices.
-    #[attribute(order = 53)]
-    pub entry_price_minor: Mapping<WorldwideDay, Mapping<u16, U256>>,
-
     /// First member's `issued_at`, sealed at bucket creation. VWAP history counts from its
     /// `first_full_day`. Later members inherit it, like the call terms.
     #[attribute(order = 54)]
@@ -365,11 +354,6 @@ pub struct NodContract {
     /// `(bin << 32) | entries left`. 0 left walks the bin from the top.
     #[attribute(order = 71)]
     pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
-
-    /// UTC day the entry-price snapshot was read from. Appended here, not beside the
-    /// snapshot slots, because the OCOMP opening plan pins their dense indices.
-    #[attribute(order = 72)]
-    pub entry_price_source_day: Mapping<WorldwideDay, u32>,
 
     /// Call-term profile selector seeded from genesis. See `crate::config`.
     #[attribute(order = 73)]

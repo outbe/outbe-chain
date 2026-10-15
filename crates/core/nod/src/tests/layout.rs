@@ -9,7 +9,7 @@ fn config_profile_slot_matches_seeder_layout() {
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
             NodContract::new(storage).config_profile.slot(),
-            U256::from(49)
+            U256::from(44)
         );
     });
 }

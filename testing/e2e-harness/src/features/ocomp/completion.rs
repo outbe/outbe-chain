@@ -444,7 +444,7 @@ fn lysis_and_ocomp_use_previous_day_entry_price(world: &mut World) {
     );
     assert_eq!(
         action.entry_price_minor, expected,
-        "Lysis/Nod must carry the independently recomputed frozen entry price"
+        "Lysis/Nod must carry the independently recomputed entry price"
     );
 }
 

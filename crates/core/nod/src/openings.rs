@@ -29,7 +29,7 @@ pub fn pair_index_slots(isos: &[u16]) -> Result<Vec<B256>> {
         || !isos.contains(&840)
         || isos.windows(2).any(|pair| pair[0] >= pair[1])
     {
-        return Err(NodError::InvalidEntryPriceSnapshot.into());
+        return Err(NodError::InvalidEntryPriceOpening.into());
     }
     let base = U256::from(PAIR_TO_INDEX_SLOT);
     Ok(isos
@@ -42,7 +42,7 @@ pub fn pair_index_slots(isos: &[u16]) -> Result<Vec<B256>> {
 pub fn entry_price_slots(day: u32, isos: &[u16], pair_indices: &[u32]) -> Result<Vec<B256>> {
     let mut slots = pair_index_slots(isos)?;
     if pair_indices.len() != isos.len() {
-        return Err(NodError::InvalidEntryPriceSnapshot.into());
+        return Err(NodError::InvalidEntryPriceOpening.into());
     }
     let day_base = day.mapping_slot(U256::from(UTC_DAY_VWAP_SLOT));
     slots.extend(
@@ -64,13 +64,13 @@ pub fn evaluate_entry_prices(
     let pair_indices = ordered_slots
         .iter()
         .take(isos.len())
-        .map(|(_, value)| u32::try_from(*value).map_err(|_| NodError::InvalidEntryPriceSnapshot))
+        .map(|(_, value)| u32::try_from(*value).map_err(|_| NodError::InvalidEntryPriceOpening))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let slots = entry_price_slots(day, isos, &pair_indices)?;
     if ordered_slots.len() != slots.len()
         || ordered_slots.iter().map(|(slot, _)| slot).ne(slots.iter())
     {
-        return Err(NodError::InvalidEntryPriceSnapshot.into());
+        return Err(NodError::InvalidEntryPriceOpening.into());
     }
     let mut vwaps = ordered_slots[isos.len()..].iter().map(|(_, vwap)| *vwap);
     Ok(isos
