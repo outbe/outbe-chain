@@ -8224,10 +8224,18 @@ dependencies = [
 name = "outbe-ccaregistry"
 version = "0.1.0"
 dependencies = [
+ "alloy-evm",
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-agentreward",
+ "outbe-evm",
+ "outbe-gem",
+ "outbe-gemfactory",
  "outbe-macros",
+ "outbe-oracle",
  "outbe-primitives",
+ "reth-ethereum",
+ "revm",
  "thiserror 2.0.18",
 ]
 
