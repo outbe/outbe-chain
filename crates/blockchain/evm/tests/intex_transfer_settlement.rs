@@ -5,29 +5,17 @@ use std::sync::Arc;
 
 use alloy_primitives::{keccak256, Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
-use outbe_compressed_entities::ExecutionScope;
+use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::{INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS},
-    block::BlockContext,
-    chain::CHAIN_ID,
-    storage::{direct::DirectStorageProvider, StorageHandle, SubCallOutput, SubCallStatus},
+    storage::{SubCallOutput, SubCallStatus},
     time::WorldwideDay,
 };
 use outbe_vaultrouter::{api::IVaultRouter, VaultRouterContract};
-use revm::{
-    context_interface::JournalTr,
-    database::{CacheDB, EmptyDB},
-    handler::MainContext as _,
-    state::{AccountInfo, Bytecode},
-    Context,
-};
-
-#[path = "support/intex_sub_call.rs"]
-mod intex_sub_call;
+use revm::database::{CacheDB, EmptyDB};
 
 sol!("../../../contracts/intex/src/shared/interfaces/IIntexNFT1155.sol");
 
@@ -62,13 +50,6 @@ const ISSUED_UNITS: u64 = 10;
 const TRANSFERRED_UNITS: u64 = 4;
 const SETTLED_UNITS: u64 = 3;
 
-type EvmCtx = revm::Context<
-    revm::context::BlockEnv,
-    revm::context::TxEnv,
-    revm::context::CfgEnv,
-    CacheDB<EmptyDB>,
->;
-
 fn issued_id() -> U256 {
     U256::from_be_slice(&SERIES)
 }
@@ -77,16 +58,8 @@ fn settled_id() -> U256 {
     issued_id() | (U256::ONE << 112)
 }
 
-fn runtime_code(hex: &str) -> Bytecode {
-    Bytecode::new_raw(Bytes::from(
-        alloy_primitives::hex::decode(hex.trim()).unwrap(),
-    ))
-}
-
 struct World {
-    ctx: EvmCtx,
-    scope: Arc<ExecutionScope>,
-    readers: RuntimeBodyReaders,
+    evm: EvmWorld,
     cost: U256,
 }
 
@@ -97,14 +70,7 @@ impl World {
         let mut db = CacheDB::new(EmptyDB::default());
         let counterparty = runtime_code(include_str!("fixtures/FactorySettlement.hex"));
         for addr in [ASSET, VAULT] {
-            db.insert_account_info(
-                addr,
-                AccountInfo {
-                    code_hash: counterparty.hash_slow(),
-                    code: Some(counterparty.clone()),
-                    ..Default::default()
-                },
-            );
+            install_code(&mut db, addr, &counterparty);
         }
         for (addr, hex) in [
             (
@@ -113,21 +79,9 @@ impl World {
             ),
             (METADATA_LIB, include_str!("fixtures/IntexMetadata.hex")),
         ] {
-            let code = runtime_code(hex);
-            db.insert_account_info(
-                addr,
-                AccountInfo {
-                    code_hash: code.hash_slow(),
-                    code: Some(code),
-                    ..Default::default()
-                },
-            );
+            install_code(&mut db, addr, &runtime_code(hex));
         }
-        let readers = runtime_body_readers(Arc::new(MemoryStorage::new()));
-        let scope = Arc::new(ExecutionScope::default());
-        let block = BlockContext::new(1, TIMESTAMP, CHAIN_ID, ALICE, vec![ALICE]);
-        let mut provider = DirectStorageProvider::new(&mut db, block);
-        StorageHandle::enter(&mut provider, |storage| {
+        seed_storage(&mut db, TIMESTAMP, ALICE, |storage| {
             let router = VaultRouterContract::new(storage.clone());
             router.assets.insert(ASSET).unwrap();
             router.asset_vault_set(ASSET).insert(VAULT).unwrap();
@@ -183,15 +137,10 @@ impl World {
             )
             .unwrap();
         });
-        provider.flush().unwrap();
-        let ctx = Context::mainnet()
-            .with_db(db)
-            .modify_cfg_chained(|cfg| cfg.chain_id = CHAIN_ID)
-            .modify_block_chained(|block| block.timestamp = U256::from(TIMESTAMP));
         let mut world = Self {
-            ctx,
-            scope,
-            readers,
+            evm: EvmWorld::new(db)
+                .at(TIMESTAMP)
+                .with_readers(runtime_body_readers(Arc::new(MemoryStorage::new()))),
             cost: U256::ZERO,
         };
         world.install_nft();
@@ -288,32 +237,15 @@ impl World {
         calldata: Bytes,
         is_static: bool,
     ) -> SubCallOutput {
-        intex_sub_call::IntexSubCall {
-            ctx: &mut self.ctx,
-            scope: &self.scope,
-            readers: &self.readers,
-        }
-        .call(caller, target, calldata, is_static)
+        self.evm.call(caller, target, calldata, is_static)
     }
 
     fn ok<C: SolCall>(&mut self, caller: Address, target: Address, call: C) -> C::Return {
-        let out = self.call(caller, target, call.abi_encode().into(), false);
-        assert!(
-            matches!(out.status, SubCallStatus::Success),
-            "{:?}",
-            out.status
-        );
-        C::abi_decode_returns(&out.returndata).unwrap()
+        self.evm.ok(caller, target, call)
     }
 
     fn view<C: SolCall>(&mut self, target: Address, call: C) -> C::Return {
-        let out = self.call(ALICE, target, call.abi_encode().into(), true);
-        assert!(
-            matches!(out.status, SubCallStatus::Success),
-            "{:?}",
-            out.status
-        );
-        C::abi_decode_returns(&out.returndata).unwrap()
+        self.evm.view(ALICE, target, call)
     }
 
     fn quote(&mut self, units: u64) -> U256 {
@@ -386,8 +318,7 @@ impl World {
     }
 
     fn settled_events(&self) -> Vec<(Address, u64)> {
-        self.ctx
-            .journaled_state
+        self.evm
             .logs()
             .iter()
             .filter_map(|log| IIntexFactory::IntexSettled::decode_log_data(&log.data).ok())
@@ -434,7 +365,7 @@ fn transferred_unsettled_intex_units_settle_to_their_new_owner_and_never_to_the_
     // Neither party can reach across the transfer: Bob holds one unit and Alice six.
     let holdings = world.holdings();
     let supplies = world.supplies();
-    let logs = world.ctx.journaled_state.logs().to_vec();
+    let logs = world.evm.logs().to_vec();
     let payer_after = world.asset_balance(PAYER);
     for (owner, units) in [(BOB, 2), (ALICE, 7), (ALICE, ISSUED_UNITS)] {
         let out = world.settle_for(owner, units);
@@ -445,7 +376,7 @@ fn transferred_unsettled_intex_units_settle_to_their_new_owner_and_never_to_the_
         );
         assert_eq!(world.holdings(), holdings, "{owner:?} x{units}");
         assert_eq!(world.supplies(), supplies, "{owner:?} x{units}");
-        assert_eq!(world.ctx.journaled_state.logs(), logs, "{owner:?} x{units}");
+        assert_eq!(world.evm.logs(), logs, "{owner:?} x{units}");
         assert_eq!(
             world.asset_balance(PAYER),
             payer_after,

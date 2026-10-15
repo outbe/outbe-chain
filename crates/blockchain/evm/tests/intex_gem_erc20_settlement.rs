@@ -4,34 +4,22 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
-use outbe_compressed_entities::ExecutionScope;
+use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_gem::{precompile::IGem, GemAddParams};
 use outbe_gemfactory::precompile::IGemFactory;
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::{
         GEM_ADDRESS, GEM_FACTORY_ADDRESS, INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS,
         VAULT_ROUTER_ADDRESS,
     },
-    block::BlockContext,
-    chain::CHAIN_ID,
-    storage::{direct::DirectStorageProvider, StorageHandle, SubCallOutput, SubCallStatus},
+    storage::{StorageHandle, SubCallOutput, SubCallStatus},
     time::WorldwideDay,
 };
 use outbe_vaultrouter::{api::IVaultRouter, VaultRouterContract};
-use revm::{
-    context_interface::JournalTr,
-    database::{CacheDB, EmptyDB},
-    handler::MainContext as _,
-    state::{AccountInfo, Bytecode},
-    Context,
-};
-
-#[path = "support/intex_sub_call.rs"]
-mod intex_sub_call;
+use revm::database::{CacheDB, EmptyDB};
 
 sol! {
     interface IEurFixture {
@@ -55,12 +43,6 @@ const VAULT: Address = Address::new([0x55; 20]);
 const TIMESTAMP: u64 = 1_700_000_000;
 const SERIES: [u8; 14] = *b"20241220-USD-U";
 const UNITS: u64 = 2;
-type EvmCtx = revm::Context<
-    revm::context::BlockEnv,
-    revm::context::TxEnv,
-    revm::context::CfgEnv,
-    CacheDB<EmptyDB>,
->;
 
 #[derive(Clone, Copy, Debug)]
 enum Factory {
@@ -105,9 +87,7 @@ impl Factory {
 }
 
 struct World {
-    ctx: EvmCtx,
-    scope: Arc<ExecutionScope>,
-    readers: RuntimeBodyReaders,
+    evm: EvmWorld,
     factory: Factory,
     payer: Address,
     cost: U256,
@@ -140,38 +120,23 @@ impl World {
         issuance_currency: u16,
     ) -> (Self, u64) {
         let mut db = CacheDB::new(EmptyDB::default());
-        let code = Bytecode::new_raw(Bytes::from(
-            alloy_primitives::hex::decode(include_str!("fixtures/FactorySettlement.hex").trim())
-                .unwrap(),
-        ));
-        let eur_code = Bytecode::new_raw(Bytes::from(
-            alloy_primitives::hex::decode(include_str!("fixtures/CredisIssuance.hex").trim())
-                .unwrap(),
-        ));
+        let code = runtime_code(include_str!("fixtures/FactorySettlement.hex"));
+        let eur_code = runtime_code(include_str!("fixtures/CredisIssuance.hex"));
         for addr in [ASSET, VAULT, INTEX_NFT1155_ADDRESS] {
             // The 1155 stays the factory fixture; the token and vault switch
             // to the one that can answer ISO 978.
             let code = if issuance_currency != 840 && addr != INTEX_NFT1155_ADDRESS {
-                eur_code.clone()
+                &eur_code
             } else {
-                code.clone()
+                &code
             };
-            db.insert_account_info(
-                addr,
-                AccountInfo {
-                    code_hash: code.hash_slow(),
-                    code: Some(code),
-                    ..Default::default()
-                },
-            );
+            install_code(&mut db, addr, code);
         }
         let adapter = Arc::new(MemoryStorage::new());
         let readers = runtime_body_readers(adapter.clone());
         let gem_parent = outbe_gem::gem_reader(adapter);
-        let scope = Arc::new(ExecutionScope::default());
-        let block = BlockContext::new(1, TIMESTAMP, CHAIN_ID, OWNER, vec![OWNER]);
-        let mut provider = DirectStorageProvider::new(&mut db, block);
-        let (gem_id, deadline) = StorageHandle::enter(&mut provider, |storage| {
+        let scope = Arc::new(outbe_compressed_entities::ExecutionScope::default());
+        let (gem_id, deadline) = seed_storage(&mut db, TIMESTAMP, OWNER, |storage| {
             // Gems are compressed bodies: open the block's scope before any mint.
             outbe_compressed_entities::test_support::seed_compressed_entities_genesis(&storage)
                 .unwrap();
@@ -290,15 +255,11 @@ impl World {
                 }
             }
         });
-        provider.flush().unwrap();
-        let ctx = Context::mainnet()
-            .with_db(db)
-            .modify_cfg_chained(|cfg| cfg.chain_id = CHAIN_ID)
-            .modify_block_chained(|block| block.timestamp = U256::from(TIMESTAMP));
         let mut world = Self {
-            ctx,
-            scope,
-            readers,
+            evm: EvmWorld::new(db)
+                .at(TIMESTAMP)
+                .with_scope(scope)
+                .with_readers(readers),
             factory,
             payer,
             cost: U256::ZERO,
@@ -371,32 +332,15 @@ impl World {
         calldata: Bytes,
         is_static: bool,
     ) -> SubCallOutput {
-        intex_sub_call::IntexSubCall {
-            ctx: &mut self.ctx,
-            scope: &self.scope,
-            readers: &self.readers,
-        }
-        .call(caller, target, calldata, is_static)
+        self.evm.call(caller, target, calldata, is_static)
     }
 
     fn ok<C: SolCall>(&mut self, caller: Address, target: Address, call: C) -> C::Return {
-        let out = self.call(caller, target, call.abi_encode().into(), false);
-        assert!(
-            matches!(out.status, SubCallStatus::Success),
-            "{:?}",
-            out.status
-        );
-        C::abi_decode_returns(&out.returndata).unwrap()
+        self.evm.ok(caller, target, call)
     }
 
     fn view<C: SolCall>(&mut self, target: Address, call: C) -> C::Return {
-        let out = self.call(OWNER, target, call.abi_encode().into(), true);
-        assert!(
-            matches!(out.status, SubCallStatus::Success),
-            "{:?}",
-            out.status
-        );
-        C::abi_decode_returns(&out.returndata).unwrap()
+        self.evm.view(OWNER, target, call)
     }
 
     /// `(settlementCurrency, paymentMinor, snapshotId)` of the quote.
@@ -494,7 +438,7 @@ impl World {
     }
 
     fn assert_settled(&self) {
-        let logs = self.ctx.journaled_state.logs();
+        let logs = self.evm.logs();
         match self.factory {
             Factory::Intex => {
                 let settled: Vec<_> = logs
@@ -641,18 +585,14 @@ fn payment_failures_restore_balances_allowances_and_logs() {
             world.configure(target, mode);
             let balances = world.balances();
             let allowances = world.allowances();
-            let logs = world.ctx.journaled_state.logs().to_vec();
+            let logs = world.evm.logs().to_vec();
             assert!(
                 !matches!(world.settle().status, SubCallStatus::Success),
                 "{factory:?} mode {mode}"
             );
             assert_eq!(world.balances(), balances, "{factory:?} mode {mode}");
             assert_eq!(world.allowances(), allowances, "{factory:?} mode {mode}");
-            assert_eq!(
-                world.ctx.journaled_state.logs(),
-                logs,
-                "{factory:?} mode {mode}"
-            );
+            assert_eq!(world.evm.logs(), logs, "{factory:?} mode {mode}");
 
             // The rollback left the entity settleable.
             world.configure(target, 0);

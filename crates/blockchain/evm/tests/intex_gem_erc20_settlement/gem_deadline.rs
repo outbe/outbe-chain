@@ -18,7 +18,7 @@ fn gem_state(world: &mut World) -> u8 {
 fn a_called_gem_settles_at_its_deadline_and_is_refused_a_second_later() {
     // At the deadline the payment goes through exactly as quoted.
     let (mut world, deadline) = World::build(Factory::Gem, OWNER, true, Some(TIMESTAMP), 840);
-    world.ctx.block.timestamp = U256::from(deadline);
+    world.evm.ctx.block.timestamp = U256::from(deadline);
     assert_eq!(gem_state(&mut world), outbe_gem::GemState::Called as u8);
     let out = world.settle();
     assert!(
@@ -32,10 +32,10 @@ fn a_called_gem_settles_at_its_deadline_and_is_refused_a_second_later() {
 
     // One second later the same payment is refused and nothing moves.
     let (mut world, deadline) = World::build(Factory::Gem, OWNER, true, Some(TIMESTAMP), 840);
-    world.ctx.block.timestamp = U256::from(deadline + 1);
+    world.evm.ctx.block.timestamp = U256::from(deadline + 1);
     let balances = world.balances();
     let allowances = world.allowances();
-    let logs = world.ctx.journaled_state.logs().to_vec();
+    let logs = world.evm.logs().to_vec();
     let out = world.settle();
     assert!(
         matches!(out.status, SubCallStatus::Revert(_)),
@@ -44,7 +44,7 @@ fn a_called_gem_settles_at_its_deadline_and_is_refused_a_second_later() {
     );
     assert_eq!(world.balances(), balances);
     assert_eq!(world.allowances(), allowances);
-    assert_eq!(world.ctx.journaled_state.logs(), logs);
+    assert_eq!(world.evm.logs(), logs);
     let gem = world.view(
         GEM_ADDRESS,
         IGem::getGemCall {

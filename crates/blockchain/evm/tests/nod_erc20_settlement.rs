@@ -6,37 +6,26 @@ use qualify_fixture::qualify;
 
 use std::sync::Arc;
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
-use outbe_evm::sub_call;
+use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_nod::{precompile::INod, NodIssueParams};
 use outbe_nodfactory::precompile::INodFactory;
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::{
         COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS,
     },
-    block::BlockContext,
     chain::CHAIN_ID,
-    storage::{
-        direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallOutput, SubCallStatus,
-    },
+    storage::{StorageHandle, SubCallOutput, SubCallStatus},
     time::WorldwideDay,
 };
 use outbe_tee::protocol::GratisOp;
 use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
 use outbe_vaultrouter::{api::IVaultRouter, VaultRouterContract};
-use revm::{
-    context_interface::JournalTr,
-    database::{CacheDB, EmptyDB},
-    handler::MainContext as _,
-    primitives::hardfork::SpecId,
-    state::{AccountInfo, Bytecode},
-    Context,
-};
+use revm::database::{CacheDB, EmptyDB};
 
 sol! {
     interface IEurFixture {
@@ -59,17 +48,8 @@ const VAULT: Address = Address::new([0x55; 20]);
 const GRATIS_LOAD: u64 = 1_000;
 const TIMESTAMP: u64 = 1_700_000_000;
 
-type EvmCtx = revm::Context<
-    revm::context::BlockEnv,
-    revm::context::TxEnv,
-    revm::context::CfgEnv,
-    CacheDB<EmptyDB>,
->;
-
 struct World {
-    ctx: EvmCtx,
-    scope: Arc<ExecutionScope>,
-    readers: RuntimeBodyReaders,
+    evm: EvmWorld,
     owner: Address,
     nod: WwdEntityId,
     cost: U256,
@@ -119,26 +99,15 @@ impl World {
     ) -> Self {
         test_enclave::install();
         let mut db = CacheDB::new(EmptyDB::default());
-        let code = Bytecode::new_raw(Bytes::from(
-            alloy_primitives::hex::decode(code_hex.trim()).unwrap(),
-        ));
+        let code = runtime_code(code_hex);
         for addr in [ASSET, VAULT] {
-            db.insert_account_info(
-                addr,
-                AccountInfo {
-                    code_hash: code.hash_slow(),
-                    code: Some(code.clone()),
-                    ..Default::default()
-                },
-            );
+            install_code(&mut db, addr, &code);
         }
         let adapter = Arc::new(MemoryStorage::new());
         let readers = runtime_body_readers(adapter.clone());
         let parent = outbe_nod::nod_reader(adapter);
         let scope = Arc::new(ExecutionScope::default());
-        let block = BlockContext::new(1, TIMESTAMP, CHAIN_ID, OWNER, vec![OWNER]);
-        let mut provider = DirectStorageProvider::new(&mut db, block);
-        let nod = StorageHandle::enter(&mut provider, |storage| {
+        let nod = seed_storage(&mut db, TIMESTAMP, OWNER, |storage| {
             seed_settlement_nod(
                 &storage,
                 &scope,
@@ -151,15 +120,11 @@ impl World {
                 },
             )
         });
-        provider.flush().unwrap();
-        let ctx = Context::mainnet()
-            .with_db(db)
-            .modify_cfg_chained(|cfg| cfg.chain_id = CHAIN_ID)
-            .modify_block_chained(|block| block.timestamp = U256::from(TIMESTAMP));
         Self {
-            ctx,
-            scope,
-            readers,
+            evm: EvmWorld::new(db)
+                .at(TIMESTAMP)
+                .with_scope(scope)
+                .with_readers(readers),
             owner,
             nod,
             cost,
@@ -222,44 +187,16 @@ impl World {
         call: impl SolCall,
         is_static: bool,
     ) -> SubCallOutput {
-        sub_call::run(
-            &mut self.ctx,
-            sub_call::SubCallEnvironment {
-                self_address: caller,
-                outer_is_static: false,
-                spec: SpecId::PRAGUE,
-                runtime_body_readers: Some(self.readers.clone()),
-                execution_scope: self.scope.clone(),
-            },
-            SubCallInput {
-                target,
-                value: U256::ZERO,
-                calldata: call.abi_encode().into(),
-                gas_limit: 5_000_000,
-                is_static,
-            },
-        )
-        .unwrap()
+        self.evm
+            .call(caller, target, call.abi_encode().into(), is_static)
     }
 
     fn ok<C: SolCall>(&mut self, caller: Address, target: Address, call: C) -> C::Return {
-        let out = self.call(caller, target, call, false);
-        assert!(
-            matches!(out.status, SubCallStatus::Success),
-            "{:?}",
-            out.status
-        );
-        C::abi_decode_returns(&out.returndata).unwrap()
+        self.evm.ok(caller, target, call)
     }
 
     fn view<C: SolCall>(&mut self, target: Address, call: C) -> C::Return {
-        let out = self.call(self.owner, target, call, true);
-        assert!(
-            matches!(out.status, SubCallStatus::Success),
-            "{:?}",
-            out.status
-        );
-        C::abi_decode_returns(&out.returndata).unwrap()
+        self.evm.view(self.owner, target, call)
     }
 
     fn settle(&mut self) -> SubCallOutput {
@@ -334,8 +271,7 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
         [cost, U256::from(17), U256::ZERO, cost, cost]
     );
     let paid: Vec<_> = world
-        .ctx
-        .journaled_state
+        .evm
         .logs()
         .iter()
         .filter_map(|log| INodFactory::NodSettled::decode_log_data(&log.data).ok())
@@ -440,8 +376,7 @@ fn an_issuance_currency_payment_moves_the_converted_cost_at_the_quoted_snapshot(
         [cost - paid, U256::ZERO, U256::ZERO, paid, paid]
     );
     let events: Vec<_> = world
-        .ctx
-        .journaled_state
+        .evm
         .logs()
         .iter()
         .filter_map(|log| INodFactory::NodSettled::decode_log_data(&log.data).ok())
@@ -502,8 +437,7 @@ fn a_third_party_pays_and_the_nod_stays_with_the_owner() {
     assert!(data.isSettled);
     assert_eq!(data.owner, OWNER);
     let events: Vec<_> = world
-        .ctx
-        .journaled_state
+        .evm
         .logs()
         .iter()
         .filter_map(|log| INodFactory::NodSettled::decode_log_data(&log.data).ok())
@@ -531,7 +465,7 @@ fn payment_failures_restore_balances_allowances_nod_and_logs() {
         world.configure(target, mode);
         let balances = world.balances();
         let allowances = world.allowances();
-        let logs = world.ctx.journaled_state.logs().to_vec();
+        let logs = world.evm.logs().to_vec();
         assert!(
             !matches!(world.settle().status, SubCallStatus::Success),
             "mode {mode}"
@@ -539,7 +473,7 @@ fn payment_failures_restore_balances_allowances_nod_and_logs() {
         assert_eq!(world.balances(), balances, "mode {mode}");
         assert_eq!(world.allowances(), allowances, "mode {mode}");
         world.assert_unpaid();
-        assert_eq!(world.ctx.journaled_state.logs(), logs);
+        assert_eq!(world.evm.logs(), logs);
     }
 }
 

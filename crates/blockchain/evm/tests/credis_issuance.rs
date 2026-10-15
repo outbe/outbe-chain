@@ -1,8 +1,8 @@
 //! Real issuance against a direct Gratis pledge with stateful ERC-20/vault calls.
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_credisfactory::precompile::ICredisFactory;
+use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratis::precompile::IGratis;
 use outbe_gratisfactory::precompile::IGratisFactory;
@@ -12,9 +12,8 @@ use outbe_primitives::{
         CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS,
         VAULT_ROUTER_ADDRESS,
     },
-    block::BlockContext,
     chain::CHAIN_ID,
-    storage::{direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallStatus},
+    storage::{StorageHandle, SubCallInput, SubCallStatus},
     time::{previous_date_key, timestamp_to_date_key},
 };
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
@@ -25,12 +24,8 @@ use outbe_vaultrouter::{api::IVaultRouter, LiquidityReservation, VaultRouterCont
 use revm::{
     context_interface::JournalTr,
     database::{CacheDB, EmptyDB},
-    handler::MainContext as _,
-    primitives::hardfork::SpecId,
-    state::{AccountInfo, Bytecode},
-    Context,
+    state::AccountInfo,
 };
-use std::sync::Arc;
 
 sol! {
     interface IFixture {
@@ -51,15 +46,8 @@ const NOW: u64 = 1_700_000_000;
 macro_rules! call {
     ($evm:expr, $caller:expr, $target:expr, $value:expr, $call:expr) => {{
         $evm.ctx.journaled_state.load_account($caller)?;
-        outbe_evm::sub_call::run(
-            &mut $evm.ctx,
-            outbe_evm::sub_call::SubCallEnvironment {
-                self_address: $caller,
-                outer_is_static: false,
-                spec: SpecId::PRAGUE,
-                runtime_body_readers: None,
-                execution_scope: $evm.scope.clone(),
-            },
+        $evm.run(
+            $caller,
             SubCallInput {
                 target: $target,
                 value: $value,
@@ -71,10 +59,6 @@ macro_rules! call {
     }};
 }
 
-struct IssuanceEvm {
-    ctx: alloy_evm::eth::EthEvmContext<CacheDB<EmptyDB>>,
-    scope: Arc<ExecutionScope>,
-}
 struct PaymentObservation {
     credis_id: U256,
     credis_call: outbe_credis::precompile::ICredis::getCredisCall,
@@ -88,25 +72,13 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
         test_enclave::install();
         let key = derive_modify_key(&test_enclave::state_key(), OWNER).unwrap();
         let (mut db, stake) = issuance_database().expect("issuance database fixture succeeds");
-        let mut provider = DirectStorageProvider::new(
-            &mut db,
-            BlockContext::new(1, NOW, CHAIN_ID, OWNER, vec![OWNER]),
-        );
-        StorageHandle::enter(&mut provider, |storage| {
+        seed_storage(&mut db, NOW, OWNER, |storage| {
             seed_issuance_liquidity(storage.clone())
                 .expect("seed issuance liquidity fixture succeeds");
             seed_issuance_oracle(storage.clone()).expect("seed issuance oracle fixture succeeds");
             mint_source_gratis(storage, &key).expect("mint source gratis fixture succeeds");
         });
-        provider.flush().unwrap();
-        let ctx = Context::mainnet()
-            .with_db(db)
-            .modify_cfg_chained(|cfg| cfg.chain_id = CHAIN_ID)
-            .modify_block_chained(|block| block.timestamp = U256::from(NOW));
-        let mut evm = IssuanceEvm {
-            ctx,
-            scope: Arc::new(ExecutionScope::default()),
-        };
+        let mut evm = EvmWorld::new(db).at(NOW);
         prepare_issuance_counterparties(&mut evm, failure)
             .expect("prepare issuance counterparties fixture succeeds");
         if failure != 5 {
@@ -128,18 +100,9 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
 
 fn issuance_database() -> eyre::Result<(CacheDB<EmptyDB>, U256)> {
     let mut db = CacheDB::new(EmptyDB::default());
-    let code = Bytecode::new_raw(Bytes::from(alloy_primitives::hex::decode(
-        include_str!("fixtures/CredisIssuance.hex").trim(),
-    )?));
+    let code = runtime_code(include_str!("fixtures/CredisIssuance.hex"));
     for addr in [ASSET, VAULT] {
-        db.insert_account_info(
-            addr,
-            AccountInfo {
-                code_hash: code.hash_slow(),
-                code: Some(code.clone()),
-                ..Default::default()
-            },
-        );
+        install_code(&mut db, addr, &code);
     }
     let stake = U256::from(10).pow(U256::from(18));
     db.insert_account_info(
@@ -254,7 +217,7 @@ fn mint_source_gratis(storage: StorageHandle<'_>, key: &[u8; 32]) -> eyre::Resul
     Ok(())
 }
 
-fn pledge_reservation(evm: &mut IssuanceEvm, key: &[u8; 32]) -> eyre::Result<()> {
+fn pledge_reservation(evm: &mut EvmWorld, key: &[u8; 32]) -> eyre::Result<()> {
     let auth = source_auth(key, GratisOp::Pledge, 1);
     let pledge = IGratisFactory::pledgeGratisCall {
         reservationId: U256::ONE,
@@ -277,7 +240,7 @@ fn pledge_reservation(evm: &mut IssuanceEvm, key: &[u8; 32]) -> eyre::Result<()>
     Ok(())
 }
 
-fn pledged_blob(evm: &mut IssuanceEvm) -> eyre::Result<Bytes> {
+fn pledged_blob(evm: &mut EvmWorld) -> eyre::Result<Bytes> {
     Ok(call!(
         evm,
         OWNER,
@@ -289,7 +252,7 @@ fn pledged_blob(evm: &mut IssuanceEvm) -> eyre::Result<Bytes> {
 }
 
 /// The source's decrypted liquid and pledged Gratis.
-fn source_gratis(evm: &mut IssuanceEvm) -> eyre::Result<(U256, U256)> {
+fn source_gratis(evm: &mut EvmWorld) -> eyre::Result<(U256, U256)> {
     let view_key = derive_view_key(&test_enclave::state_key(), OWNER)?;
     let liquid = call!(
         evm,
@@ -310,7 +273,7 @@ fn source_gratis(evm: &mut IssuanceEvm) -> eyre::Result<(U256, U256)> {
     ))
 }
 
-fn prepare_issuance_counterparties(evm: &mut IssuanceEvm, failure: u64) -> eyre::Result<()> {
+fn prepare_issuance_counterparties(evm: &mut EvmWorld, failure: u64) -> eyre::Result<()> {
     for (account, amount) in [(ACCOUNT, 2_000_000), (VAULT_ROUTER_ADDRESS, 2_000_000)] {
         assert!(matches!(
             call!(
@@ -362,7 +325,7 @@ fn prepare_issuance_counterparties(evm: &mut IssuanceEvm, failure: u64) -> eyre:
 }
 
 fn issue_cca_payout(
-    evm: &mut IssuanceEvm,
+    evm: &mut EvmWorld,
     failure: u64,
     stake: U256,
 ) -> eyre::Result<(
@@ -394,7 +357,7 @@ fn issue_cca_payout(
     Ok((issue, out))
 }
 
-fn assert_issuance_state(evm: &mut IssuanceEvm, failure: u64, stake: U256) -> eyre::Result<()> {
+fn assert_issuance_state(evm: &mut EvmWorld, failure: u64, stake: U256) -> eyre::Result<()> {
     assert_issuance_native_balances(evm, failure, stake)?;
     for (account, expected) in [
         (ACCOUNT, 2_000_000),
@@ -439,7 +402,7 @@ fn assert_issuance_state(evm: &mut IssuanceEvm, failure: u64, stake: U256) -> ey
 }
 
 fn retry_issuance_and_cancel_expired(
-    evm: &mut IssuanceEvm,
+    evm: &mut EvmWorld,
     failure: u64,
     stake: U256,
     issue: ICredisFactory::issueCredisCall,
@@ -510,7 +473,7 @@ fn retry_issuance_and_cancel_expired(
 }
 
 fn assert_payment_rollback(
-    evm: &mut IssuanceEvm,
+    evm: &mut EvmWorld,
     mode: u64,
     observation: &PaymentObservation,
 ) -> eyre::Result<()> {
@@ -562,7 +525,7 @@ fn assert_payment_rollback(
 }
 
 fn settle_successful_issuance(
-    evm: &mut IssuanceEvm,
+    evm: &mut EvmWorld,
     out: &outbe_primitives::storage::SubCallOutput,
 ) -> eyre::Result<()> {
     use outbe_credis::precompile::ICredis;
@@ -621,7 +584,7 @@ fn settle_successful_issuance(
 }
 
 fn assert_issuance_native_balances(
-    evm: &mut IssuanceEvm,
+    evm: &mut EvmWorld,
     failure: u64,
     stake: U256,
 ) -> eyre::Result<()> {
@@ -651,7 +614,7 @@ fn assert_issuance_native_balances(
     Ok(())
 }
 
-fn assert_issuance_payout_events(evm: &IssuanceEvm, failure: u64) -> eyre::Result<()> {
+fn assert_issuance_payout_events(evm: &EvmWorld, failure: u64) -> eyre::Result<()> {
     let payouts: Vec<_> = evm
         .ctx
         .journaled_state
@@ -669,7 +632,7 @@ fn assert_issuance_payout_events(evm: &IssuanceEvm, failure: u64) -> eyre::Resul
 }
 
 fn assert_payment_credis_and_pledge_unchanged(
-    evm: &mut IssuanceEvm,
+    evm: &mut EvmWorld,
     observation: &PaymentObservation,
 ) -> eyre::Result<()> {
     use outbe_primitives::addresses::CREDIS_ADDRESS;
@@ -689,7 +652,7 @@ fn assert_payment_credis_and_pledge_unchanged(
     Ok(())
 }
 
-fn assert_payment_token_balances(evm: &mut IssuanceEvm) -> eyre::Result<()> {
+fn assert_payment_token_balances(evm: &mut EvmWorld) -> eyre::Result<()> {
     for (account, expected) in [
         (CCA, 2_000_000),
         (VAULT, 0),

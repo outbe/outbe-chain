@@ -91,6 +91,7 @@ tracing.workspace = true
 parking_lot.workspace = true
 
 [dev-dependencies]
+outbe-evm = { path = ".", features = ["test-utils"] }
 outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-chain-constants.workspace = true
 outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
@@ -133,6 +134,7 @@ rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 
 [features]
+test-utils = []
 # Point the precompiles at a throwaway contract set an e2e run can deploy itself.
 e2e-test = [
     "outbe-desis/e2e-test",

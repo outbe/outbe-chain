@@ -3,25 +3,13 @@
 use outbe_offchain_data::runtime_body_readers;
 use std::sync::Arc;
 
-use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolCall};
-use outbe_compressed_entities::ExecutionScope;
-use outbe_evm::sub_call;
+use alloy_primitives::{Address, U256};
+use alloy_sol_types::sol;
+use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
-use outbe_primitives::{
-    addresses::INTEX_FACTORY_ADDRESS,
-    block::BlockContext,
-    chain::CHAIN_ID,
-    storage::{direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallStatus},
-};
-use revm::{
-    database::{CacheDB, EmptyDB},
-    handler::MainContext as _,
-    primitives::hardfork::SpecId,
-    state::{AccountInfo, Bytecode},
-    Context,
-};
+use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
+use revm::database::{CacheDB, EmptyDB};
 
 sol! {
     interface IVwapSourceReader {
@@ -37,21 +25,12 @@ const TIMESTAMP: u64 = 1_700_000_000;
 #[test]
 fn a_solidity_view_reads_the_factory_as_its_vwap_source() {
     let mut db = CacheDB::new(EmptyDB::default());
-    let code = Bytecode::new_raw(Bytes::from(
-        alloy_primitives::hex::decode(include_str!("fixtures/VwapSourceReader.hex").trim())
-            .unwrap(),
-    ));
-    db.insert_account_info(
+    install_code(
+        &mut db,
         READER,
-        AccountInfo {
-            code_hash: code.hash_slow(),
-            code: Some(code),
-            ..Default::default()
-        },
+        &runtime_code(include_str!("fixtures/VwapSourceReader.hex")),
     );
-    let block = BlockContext::new(1, TIMESTAMP, CHAIN_ID, CALLER, vec![CALLER]);
-    let mut provider = DirectStorageProvider::new(&mut db, block);
-    StorageHandle::enter(&mut provider, |storage| {
+    seed_storage(&mut db, TIMESTAMP, CALLER, |storage| {
         let oracle = OracleContract::new(storage.clone());
         let index =
             outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(840))
@@ -66,45 +45,20 @@ fn a_solidity_view_reads_the_factory_as_its_vwap_source() {
             .write(20_231_111)
             .unwrap();
     });
-    provider.flush().unwrap();
 
-    let mut ctx = Context::mainnet()
-        .with_db(db)
-        .modify_cfg_chained(|cfg| cfg.chain_id = CHAIN_ID)
-        .modify_block_chained(|block| block.timestamp = U256::from(TIMESTAMP));
-    let readers = runtime_body_readers(Arc::new(MemoryStorage::new()));
-    let scope = Arc::new(ExecutionScope::default());
+    let mut world = EvmWorld::new(db)
+        .at(TIMESTAMP)
+        .with_readers(runtime_body_readers(Arc::new(MemoryStorage::new())));
     let mut read = |iso_code: u16, from_utc_day: u32| {
-        let out = sub_call::run(
-            &mut ctx,
-            sub_call::SubCallEnvironment {
-                self_address: CALLER,
-                outer_is_static: false,
-                spec: SpecId::PRAGUE,
-                runtime_body_readers: Some(readers.clone()),
-                execution_scope: scope.clone(),
+        let read = world.view(
+            CALLER,
+            READER,
+            IVwapSourceReader::readCall {
+                source: INTEX_FACTORY_ADDRESS,
+                isoCode: iso_code,
+                fromUtcDay: from_utc_day,
             },
-            SubCallInput {
-                target: READER,
-                value: U256::ZERO,
-                calldata: IVwapSourceReader::readCall {
-                    source: INTEX_FACTORY_ADDRESS,
-                    isoCode: iso_code,
-                    fromUtcDay: from_utc_day,
-                }
-                .abi_encode()
-                .into(),
-                gas_limit: 5_000_000,
-                is_static: true,
-            },
-        )
-        .unwrap();
-        assert!(
-            matches!(out.status, SubCallStatus::Success),
-            "{:?}",
-            out.status
         );
-        let read = IVwapSourceReader::readCall::abi_decode_returns(&out.returndata).unwrap();
         (read.ok, read.vwap)
     };
 

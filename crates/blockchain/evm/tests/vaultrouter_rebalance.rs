@@ -21,24 +21,16 @@
 //!     has not approved) propagates all the way back as the outer call's
 //!     failure, not a silently swallowed error.
 
-mod sub_call_support;
-
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
-use outbe_evm::sub_call;
+use outbe_evm::test_support::{seed_storage, EvmWorld};
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
-use outbe_primitives::{
-    block::BlockContext,
-    storage::{direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallStatus},
-};
+use outbe_primitives::storage::{SubCallOutput, SubCallStatus};
 use outbe_vaultrouter::api::IVaultRouter;
 use outbe_vaultrouter::VaultRouterContract;
 use revm::{
     database::{CacheDB, EmptyDB},
-    handler::MainContext as _,
-    primitives::hardfork::SpecId,
     state::{AccountInfo, Bytecode},
-    Context,
 };
 
 /// The bonded CCA caller.
@@ -83,10 +75,6 @@ fn vault_account(asset: Address) -> AccountInfo {
     code_account(&code)
 }
 
-fn block() -> BlockContext {
-    BlockContext::new(1, 1, outbe_primitives::chain::CHAIN_ID, CCA, vec![CCA])
-}
-
 /// A database with both vaults sharing `ASSET`. The function registers
 /// `VAULT_FROM`/`VAULT_TO` with the router as production `addVault` would
 /// leave them, unless `register_from`/`register_to` say otherwise. `asset_reverts`
@@ -103,8 +91,7 @@ fn seeded_db(register_from: bool, register_to: bool, asset_reverts: bool) -> Cac
     database.insert_account_info(VAULT_FROM, vault_account(ASSET));
     database.insert_account_info(VAULT_TO, vault_account(ASSET));
 
-    let mut provider = DirectStorageProvider::new(&mut database, block());
-    StorageHandle::enter(&mut provider, |storage| {
+    seed_storage(&mut database, 1, CCA, |storage| {
         storage
             .increase_balance(
                 outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
@@ -126,7 +113,6 @@ fn seeded_db(register_from: bool, register_to: bool, asset_reverts: bool) -> Cac
             router.asset_vault_set(ASSET).insert(VAULT_TO).unwrap();
         }
     });
-    provider.flush().unwrap();
     database
 }
 
@@ -142,45 +128,18 @@ fn rebalance_calldata(amount: U256, max_amount_to: U256) -> Bytes {
     )
 }
 
-fn evm_ctx(
-    db: CacheDB<EmptyDB>,
-) -> revm::Context<
-    revm::context::BlockEnv,
-    revm::context::TxEnv,
-    revm::context::CfgEnv,
-    CacheDB<EmptyDB>,
-> {
-    Context::mainnet()
-        .with_db(db)
-        .modify_cfg_chained(|cfg| cfg.chain_id = outbe_primitives::chain::CHAIN_ID)
-}
-
-macro_rules! run_call {
-    ($ctx:expr, $target:expr, $calldata:expr) => {
-        sub_call::run(
-            $ctx,
-            sub_call_support::fresh_environment(CCA, SpecId::PRAGUE),
-            SubCallInput {
-                target: $target,
-                value: U256::ZERO,
-                calldata: $calldata,
-                gas_limit: 5_000_000,
-                is_static: false,
-            },
-        )
-        .expect("sub-call must not fail fatally")
-    };
+fn rebalance(world: &mut EvmWorld) -> SubCallOutput {
+    world.call(
+        CCA,
+        VAULT_ROUTER_ADDRESS,
+        rebalance_calldata(U256::from(AMOUNT), U256::MAX),
+        false,
+    )
 }
 
 #[test]
 fn rebalance_moves_liquidity_between_two_vaults_through_real_frames() {
-    let mut ctx = evm_ctx(seeded_db(true, true, false));
-
-    let result = run_call!(
-        &mut ctx,
-        VAULT_ROUTER_ADDRESS,
-        rebalance_calldata(U256::from(AMOUNT), U256::MAX)
-    );
+    let result = rebalance(&mut EvmWorld::new(seeded_db(true, true, false)));
     assert!(
         matches!(result.status, SubCallStatus::Success),
         "rebalance must succeed, got {:?} returndata 0x{}",
@@ -195,13 +154,7 @@ fn rebalance_moves_liquidity_between_two_vaults_through_real_frames() {
 
 #[test]
 fn rebalance_reverts_atomically_when_the_caller_has_not_approved() {
-    let mut ctx = evm_ctx(seeded_db(true, true, true));
-
-    let result = run_call!(
-        &mut ctx,
-        VAULT_ROUTER_ADDRESS,
-        rebalance_calldata(U256::from(AMOUNT), U256::MAX)
-    );
+    let result = rebalance(&mut EvmWorld::new(seeded_db(true, true, true)));
     assert!(
         !matches!(result.status, SubCallStatus::Success),
         "a reverting transferFrom must fail the whole rebalance, got {:?}",
@@ -211,13 +164,7 @@ fn rebalance_reverts_atomically_when_the_caller_has_not_approved() {
 
 #[test]
 fn rebalance_reverts_when_the_destination_vault_is_not_registered() {
-    let mut ctx = evm_ctx(seeded_db(true, false, false));
-
-    let result = run_call!(
-        &mut ctx,
-        VAULT_ROUTER_ADDRESS,
-        rebalance_calldata(U256::from(AMOUNT), U256::MAX)
-    );
+    let result = rebalance(&mut EvmWorld::new(seeded_db(true, false, false)));
     assert!(
         !matches!(result.status, SubCallStatus::Success),
         "an unregistered destination vault must not accept liquidity, got {:?}",

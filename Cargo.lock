@@ -8720,6 +8720,7 @@ dependencies = [
  "outbe-credisfactory",
  "outbe-cycle",
  "outbe-desis",
+ "outbe-evm",
  "outbe-fidelity",
  "outbe-gem",
  "outbe-gemfactory",
