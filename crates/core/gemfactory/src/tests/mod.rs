@@ -166,8 +166,8 @@ fn err_msg<T>(r: outbe_primitives::error::Result<T>) -> String {
 }
 
 /// Brute-force the lowest nonce that satisfies `validate_pow(gem_id, owner, _)`
-/// for the current `POW_DIFFICULTY`. With difficulty=1 the expected loop length
-/// is ~256 iterations.
+/// for the current `POW_DIFFICULTY`. With difficulty=2 the expected loop length
+/// is ~65536 iterations.
 fn find_valid_nonce(gem_id: U256, owner: Address) -> u64 {
     for nonce in 0u64..u64::MAX {
         if runtime::validate_pow(gem_id, owner, nonce).is_ok() {

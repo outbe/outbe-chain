@@ -172,7 +172,7 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
     assert_eq!(world.balances(), balances);
 
     let nod = WwdEntityId::from(world.id);
-    let nonce = (0..100_000)
+    let nonce = (0..1_000_000)
         .find(|n| outbe_nodfactory::runtime::validate_pow(nod, OWNER, *n).is_ok())
         .unwrap();
     let key = derive_modify_key(&test_enclave::state_key(), OWNER).unwrap();
