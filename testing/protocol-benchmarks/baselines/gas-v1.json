@@ -9761,7 +9761,7 @@
         "fidelity": "full"
       },
       "gas_totals": {
-        "system_visible": 550500
+        "system_visible": 557000
       },
       "gas_components": [
         {
@@ -9781,15 +9781,15 @@
         {
           "ledger": "system_visible",
           "key": "storage.nod.read",
-          "gas": 4400,
-          "operations": 44,
+          "gas": 5900,
+          "operations": 59,
           "module": "nod"
         },
         {
           "ledger": "system_visible",
           "key": "storage.nod.write",
-          "gas": 180000,
-          "operations": 36,
+          "gas": 185000,
+          "operations": 37,
           "module": "nod"
         },
         {
@@ -10355,8 +10355,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x1deee950b7c127b3aeda48c4937e6c880a4968d5e9d3629e7655a3fecf88950e",
           "operation": "read",
-          "count": 2,
-          "gas": 200
+          "count": 3,
+          "gas": 300
         },
         {
           "module": "nod",
@@ -10419,8 +10419,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x2ea5a1bd123b3270eb47a1cccc33f9429852eb9b13afb44dfef7dd1be12b4985",
           "operation": "read",
-          "count": 2,
-          "gas": 200
+          "count": 3,
+          "gas": 300
         },
         {
           "module": "nod",
@@ -10435,8 +10435,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x38931c53a8d8368ce55f36a2578e2818907288d6d3670037443d11f80eba3906",
           "operation": "read",
-          "count": 2,
-          "gas": 200
+          "count": 3,
+          "gas": 300
         },
         {
           "module": "nod",
@@ -10507,8 +10507,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x7fc0b25ffd5bad1f0cb0c0f91be6ba6c8d66ca0d359f1cf23dea5a4fd586dea4",
           "operation": "read",
-          "count": 2,
-          "gas": 200
+          "count": 3,
+          "gas": 300
         },
         {
           "module": "nod",
@@ -10523,8 +10523,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x86b4cd5824bf0eaee06dc60f80d3d6296494aeab41cd8e391e90eee04ec0609e",
           "operation": "read",
-          "count": 2,
-          "gas": 200
+          "count": 3,
+          "gas": 300
         },
         {
           "module": "nod",
@@ -10539,8 +10539,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x8b0a312592ac0e94ae96882599c647fb29cc2664b257e5a7e773ad99b3b22154",
           "operation": "read",
-          "count": 2,
-          "gas": 200
+          "count": 3,
+          "gas": 300
         },
         {
           "module": "nod",
@@ -10555,8 +10555,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x976fecb6d3538c58ea41efe78cb19c374b4144cdb8b0dc2109052b2a8f7a090b",
           "operation": "read",
-          "count": 2,
-          "gas": 200
+          "count": 3,
+          "gas": 300
         },
         {
           "module": "nod",
@@ -10587,8 +10587,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xadd72c4c1ba1bf9295b7aadb0de46e6ecec2f004e14168a2cfd0b771b0794542",
           "operation": "read",
-          "count": 2,
-          "gas": 200
+          "count": 3,
+          "gas": 300
         },
         {
           "module": "nod",
@@ -10603,8 +10603,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xafb0fef42c54ffb8064e7e9a7fb8873adf8b14e1309bd585de6d850a345c3f00",
           "operation": "read",
-          "count": 2,
-          "gas": 200
+          "count": 3,
+          "gas": 300
         },
         {
           "module": "nod",
@@ -10618,6 +10618,22 @@
           "module": "nod",
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xafcd5e2b7eae8b4794045a982e7b0f450b26f4441367d2e71b89a9452b0a246c",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "nod",
+          "address": "0x0000000000000000000000000000000000001006",
+          "slot": "0xb06429911b46977e8c6fafa2966f2cecc5724a71ad6f0bb82c7735cb17cc54fc",
+          "operation": "read",
+          "count": 3,
+          "gas": 300
+        },
+        {
+          "module": "nod",
+          "address": "0x0000000000000000000000000000000000001006",
+          "slot": "0xb06429911b46977e8c6fafa2966f2cecc5724a71ad6f0bb82c7735cb17cc54fc",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -10715,8 +10731,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xf39c9716406d68ca6c8009d674a12af165974499202948e1736fb033ccdbbe4e",
           "operation": "read",
-          "count": 2,
-          "gas": 200
+          "count": 3,
+          "gas": 300
         },
         {
           "module": "nod",
@@ -10731,8 +10747,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xf9024ff0e35d2f0bedcfaf731114fbf2a508ec59b713eff76b77bc832189737",
           "operation": "read",
-          "count": 2,
-          "gas": 200
+          "count": 3,
+          "gas": 300
         },
         {
           "module": "nod",
@@ -10747,8 +10763,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xfa0a664e0265c9685c3b4699ac957e86ebcdc218632f8b8ba27b9e9ecea9faa1",
           "operation": "read",
-          "count": 2,
-          "gas": 200
+          "count": 3,
+          "gas": 300
         },
         {
           "module": "nod",
@@ -11102,7 +11118,7 @@
         "fidelity": "full"
       },
       "gas_totals": {
-        "system_visible": 3022060
+        "system_visible": 3030060
       },
       "gas_components": [
         {
@@ -11122,15 +11138,15 @@
         {
           "ledger": "system_visible",
           "key": "storage.nod.read",
-          "gas": 10900,
-          "operations": 109,
+          "gas": 13900,
+          "operations": 139,
           "module": "nod"
         },
         {
           "ledger": "system_visible",
           "key": "storage.nod.write",
-          "gas": 380000,
-          "operations": 76,
+          "gas": 385000,
+          "operations": 77,
           "module": "nod"
         },
         {
@@ -14048,8 +14064,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x1deee950b7c127b3aeda48c4937e6c880a4968d5e9d3629e7655a3fecf88950e",
           "operation": "read",
-          "count": 4,
-          "gas": 400
+          "count": 6,
+          "gas": 600
         },
         {
           "module": "nod",
@@ -14112,8 +14128,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x2ea5a1bd123b3270eb47a1cccc33f9429852eb9b13afb44dfef7dd1be12b4985",
           "operation": "read",
-          "count": 4,
-          "gas": 400
+          "count": 6,
+          "gas": 600
         },
         {
           "module": "nod",
@@ -14128,8 +14144,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x38931c53a8d8368ce55f36a2578e2818907288d6d3670037443d11f80eba3906",
           "operation": "read",
-          "count": 4,
-          "gas": 400
+          "count": 6,
+          "gas": 600
         },
         {
           "module": "nod",
@@ -14248,8 +14264,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x7fc0b25ffd5bad1f0cb0c0f91be6ba6c8d66ca0d359f1cf23dea5a4fd586dea4",
           "operation": "read",
-          "count": 4,
-          "gas": 400
+          "count": 6,
+          "gas": 600
         },
         {
           "module": "nod",
@@ -14264,8 +14280,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x86b4cd5824bf0eaee06dc60f80d3d6296494aeab41cd8e391e90eee04ec0609e",
           "operation": "read",
-          "count": 4,
-          "gas": 400
+          "count": 6,
+          "gas": 600
         },
         {
           "module": "nod",
@@ -14280,8 +14296,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x8b0a312592ac0e94ae96882599c647fb29cc2664b257e5a7e773ad99b3b22154",
           "operation": "read",
-          "count": 4,
-          "gas": 400
+          "count": 6,
+          "gas": 600
         },
         {
           "module": "nod",
@@ -14296,8 +14312,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x976fecb6d3538c58ea41efe78cb19c374b4144cdb8b0dc2109052b2a8f7a090b",
           "operation": "read",
-          "count": 4,
-          "gas": 400
+          "count": 6,
+          "gas": 600
         },
         {
           "module": "nod",
@@ -14344,8 +14360,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xadd72c4c1ba1bf9295b7aadb0de46e6ecec2f004e14168a2cfd0b771b0794542",
           "operation": "read",
-          "count": 4,
-          "gas": 400
+          "count": 6,
+          "gas": 600
         },
         {
           "module": "nod",
@@ -14360,8 +14376,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xafb0fef42c54ffb8064e7e9a7fb8873adf8b14e1309bd585de6d850a345c3f00",
           "operation": "read",
-          "count": 4,
-          "gas": 400
+          "count": 6,
+          "gas": 600
         },
         {
           "module": "nod",
@@ -14375,6 +14391,22 @@
           "module": "nod",
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xafcd5e2b7eae8b4794045a982e7b0f450b26f4441367d2e71b89a9452b0a246c",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "nod",
+          "address": "0x0000000000000000000000000000000000001006",
+          "slot": "0xb06429911b46977e8c6fafa2966f2cecc5724a71ad6f0bb82c7735cb17cc54fc",
+          "operation": "read",
+          "count": 6,
+          "gas": 600
+        },
+        {
+          "module": "nod",
+          "address": "0x0000000000000000000000000000000000001006",
+          "slot": "0xb06429911b46977e8c6fafa2966f2cecc5724a71ad6f0bb82c7735cb17cc54fc",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -14528,8 +14560,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xf39c9716406d68ca6c8009d674a12af165974499202948e1736fb033ccdbbe4e",
           "operation": "read",
-          "count": 4,
-          "gas": 400
+          "count": 6,
+          "gas": 600
         },
         {
           "module": "nod",
@@ -14552,8 +14584,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xf9024ff0e35d2f0bedcfaf731114fbf2a508ec59b713eff76b77bc832189737",
           "operation": "read",
-          "count": 4,
-          "gas": 400
+          "count": 6,
+          "gas": 600
         },
         {
           "module": "nod",
@@ -14568,8 +14600,8 @@
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xfa0a664e0265c9685c3b4699ac957e86ebcdc218632f8b8ba27b9e9ecea9faa1",
           "operation": "read",
-          "count": 4,
-          "gas": 400
+          "count": 6,
+          "gas": 600
         },
         {
           "module": "nod",
