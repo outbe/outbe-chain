@@ -68,13 +68,15 @@ impl Localnet {
                 )?;
                 let measurement = proc::inspect_test_sgx_measurement(
                     &self.cfg.repo,
-                    &self.real_enclave_bin()?,
-                    &signing_key,
-                    network_descriptor
-                        .as_deref()
-                        .expect("real SGX creates a measured network descriptor"),
                     &image_id,
                     self.cfg.sudo,
+                    proc::MeasurementMounts {
+                        enclave_bin: &self.real_enclave_bin()?,
+                        signing_key: &signing_key,
+                        network_descriptor: network_descriptor
+                            .as_deref()
+                            .expect("real SGX creates a measured network descriptor"),
+                    },
                 )?;
                 command
                     .arg("dcap-required")

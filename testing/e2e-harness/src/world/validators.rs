@@ -73,6 +73,21 @@ pub struct RegistrationIdentity {
     reth_p2p_secret: String,
 }
 
+/// The node's own key material inside one registration identity.
+pub(crate) struct RegistrationKeys {
+    pub(crate) evm_private_key: String,
+    pub(crate) bls_private_key: String,
+    pub(crate) bls_public_key: Bytes,
+    pub(crate) reth_p2p_secret: String,
+}
+
+/// The Radicle node identity a registration signs over.
+pub(crate) struct RadicleKeys {
+    pub(crate) node_id: B256,
+    pub(crate) secret_key: String,
+    pub(crate) public_key: String,
+}
+
 impl fmt::Debug for RegistrationIdentity {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -90,28 +105,22 @@ impl fmt::Debug for RegistrationIdentity {
 }
 
 impl RegistrationIdentity {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         address: Address,
-        evm_private_key: String,
-        bls_private_key: String,
-        bls_public_key: Bytes,
-        radicle_node_id: B256,
-        radicle_secret_key: String,
-        radicle_public_key: String,
+        keys: RegistrationKeys,
+        radicle: RadicleKeys,
         registration_signature: Bytes,
-        reth_p2p_secret: String,
     ) -> Self {
         Self {
             address,
-            evm_private_key,
-            bls_private_key,
-            bls_public_key,
-            radicle_node_id,
-            radicle_secret_key,
-            radicle_public_key,
+            evm_private_key: keys.evm_private_key,
+            bls_private_key: keys.bls_private_key,
+            bls_public_key: keys.bls_public_key,
+            radicle_node_id: radicle.node_id,
+            radicle_secret_key: radicle.secret_key,
+            radicle_public_key: radicle.public_key,
             registration_signature,
-            reth_p2p_secret,
+            reth_p2p_secret: keys.reth_p2p_secret,
         }
     }
 
@@ -339,14 +348,18 @@ mod tests {
     fn identity_debug_redacts_secret_material() {
         let identity = RegistrationIdentity::new(
             Address::ZERO,
-            "0xevm-secret".into(),
-            "bls-secret".into(),
-            Bytes::from_static(&[1; 48]),
-            B256::repeat_byte(3),
-            "radicle-secret".into(),
-            "radicle-public".into(),
+            RegistrationKeys {
+                evm_private_key: "0xevm-secret".into(),
+                bls_private_key: "bls-secret".into(),
+                bls_public_key: Bytes::from_static(&[1; 48]),
+                reth_p2p_secret: "p2p-secret".into(),
+            },
+            RadicleKeys {
+                node_id: B256::repeat_byte(3),
+                secret_key: "radicle-secret".into(),
+                public_key: "radicle-public".into(),
+            },
             Bytes::from_static(&[2; 96]),
-            "p2p-secret".into(),
         );
         let debug = format!("{identity:?}");
         assert!(debug.contains("<redacted>"));
