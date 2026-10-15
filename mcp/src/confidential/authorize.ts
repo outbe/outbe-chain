@@ -45,7 +45,7 @@ async function opNonceOf(network: Network, ledger: Ledger, account: Hex): Promis
   return await network.client.readContract({ address, abi, functionName: "opNonceOf", args: [account] });
 }
 
-function signer(ctx: Ctx) {
+export function signer(ctx: Ctx) {
   if (!ctx.account) throw new Error("signing requires a key - set OUTBE_PRIVATE_KEY in the MCP server env");
   return ctx.account;
 }

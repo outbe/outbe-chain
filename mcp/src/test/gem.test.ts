@@ -1,13 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { type AbiEvent, type AbiFunction, type AbiParameter, type Hex, encodeAbiParameters, encodeEventTopics } from "viem";
+import { x25519 } from "@noble/curves/ed25519";
+import {
+  type AbiEvent,
+  type AbiFunction,
+  type AbiParameter,
+  type Hex,
+  bytesToBigInt,
+  bytesToHex,
+  concat,
+  encodeAbiParameters,
+  encodeEventTopics,
+  numberToBytes,
+} from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { OP, chainIdWord, modifyMac } from "../confidential/mac.js";
+import { type EncryptedNod, nodAmountCipher } from "../confidential/nod.js";
+import { creatorKey } from "../tribute/creator-key.js";
 import { grindMiningNonce } from "../pow.js";
 import { ERC20_ABI, FACTORY_ABI, intexAddress } from "../intex/registry.js";
 import { CONTRACTS } from "../registry.js";
 import { type FakeChain, sample } from "./fake-chain.js";
 import { MODIFY_KEY, fakeEnclave } from "./fake-enclave.js";
-import { SIGNER, startHarness } from "./harness.js";
+import { SIGNER, SIGNER_KEY, startHarness } from "./harness.js";
 
 const ASSET = "0x2222222222222222222222222222222222222222";
 
@@ -61,6 +76,72 @@ test("gem_promis_mine refuses another owner's Gem and an unsettled one", async (
     chain.reply("getGem", struct("gem", "getGem", { owner: SIGNER, state: 0 })),
   );
   assert.match(issued.text, /gem 9 is not Settled/);
+  assert.equal(other.sent.length + issued.sent.length, 0);
+});
+
+/** A Settled Nod of the signer whose Gratis amount is sealed to its creator key, and the network key. */
+async function settledNod(amount: bigint) {
+  const networkSecret = new Uint8Array(32).fill(0x21);
+  const networkPublicKey = x25519.getPublicKey(networkSecret);
+  const { secret } = await creatorKey(privateKeyToAccount(SIGNER_KEY), 54_322_345);
+  const version = numberToBytes(1n, { size: 8 });
+  const nod: EncryptedNod = {
+    nodId: 4n,
+    owner: SIGNER,
+    worldwideDay: 20261009,
+    leagueId: 2,
+    entryPriceMinor: 2_000_000n,
+    issuanceCurrency: 840,
+    referenceCurrency: 978,
+    chainId: 54_322_345n,
+    encryptionBinding: `0x${"69".repeat(32)}`,
+    encryptedCreatorPublicKey: bytesToHex(concat([version, new Uint8Array(48).fill(7)])),
+    encryptedGratisAmount: "0x",
+  };
+  const sealed = nodAmountCipher(secret, networkPublicKey, nod).encrypt(numberToBytes(amount, { size: 32 }));
+  nod.encryptedGratisAmount = bytesToHex(concat([version, sealed]));
+  return { record: struct("nod", "getNod", { ...nod, isSettled: true }), networkKey: bytesToBigInt(networkPublicKey) };
+}
+
+test("nod_gratis_mine opens the signer's Nod amount and sends its Gratis Mint authorization", async () => {
+  const { record, networkKey } = await settledNod(4_500_000n);
+  const { text, isError, sent } = await run("nod_gratis_mine", { nod_id: "4" }, (chain) => {
+    chain.reply("getNod", record);
+    chain.reply("tributeOfferPublicKey", networkKey);
+    chain.reply("opNonceOf", 3n, CONTRACTS.gratis.address);
+  });
+  assert(!isError, text);
+  const mac = modifyMac(MODIFY_KEY, {
+    ledger: "Gratis",
+    account: SIGNER,
+    op: OP.Gratis.Mint,
+    amount: 4_500_000n,
+    opNonce: 3n,
+    chainId: chainIdWord(54_322_345),
+  });
+  assert.deepEqual(sent.at(-1)?.args, [4n, grindMiningNonce("Nod", 4n, SIGNER, 1), mac, 3n]);
+  assert.equal(JSON.parse(text).gratisMinor, "4500000");
+});
+
+test("nod_get shows the Gratis amount of the signer's own Nod", async () => {
+  const { record, networkKey } = await settledNod(4_500_000n);
+  const { text, isError } = await run("nod_get", { id: "4" }, (chain) => {
+    chain.reply("getNod", record);
+    chain.reply("tributeOfferPublicKey", networkKey);
+  });
+  assert(!isError, text);
+  assert.deepEqual(JSON.parse(text).gratisAmount, { raw: "4500000", value: "4.5" });
+});
+
+test("nod_gratis_mine refuses another owner's Nod and an unsettled one", async () => {
+  const other = await run("nod_gratis_mine", { nod_id: "4" }, (chain) =>
+    chain.reply("getNod", struct("nod", "getNod", { owner: ASSET, isSettled: true })),
+  );
+  assert.match(other.text, /nod 4 belongs to 0x2222222222222222222222222222222222222222, not the signer/);
+  const issued = await run("nod_gratis_mine", { nod_id: "4" }, (chain) =>
+    chain.reply("getNod", struct("nod", "getNod", { owner: SIGNER, isSettled: false })),
+  );
+  assert.match(issued.text, /nod 4 is not Settled/);
   assert.equal(other.sent.length + issued.sent.length, 0);
 });
 

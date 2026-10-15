@@ -19,7 +19,7 @@ import { submit } from "./submit.js";
 const GEM_SETTLED = 3;
 
 /** The proof-of-work difficulty every right mines at, read from the chain. */
-async function powDifficulty(ctx: Ctx): Promise<number> {
+export async function powDifficulty(ctx: Ctx): Promise<number> {
   const network = contextNetwork(ctx);
   return await network.client.readContract({
     address: intexAddress(network, "factory"),

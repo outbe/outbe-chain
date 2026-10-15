@@ -11,6 +11,7 @@ import { MODIFY_KEY, fakeEnclave, promisBlob } from "../test/fake-enclave.js";
 import { OUTBE_RPC, SIGNER, SIGNER_KEY, startHarness } from "../test/harness.js";
 import { withAuthorization } from "./authorize.js";
 import { openGratis, openPromis } from "./balances.js";
+import { openNodAmount } from "./nod.js";
 import { deriveKeysMessage, unsealKeys } from "./keys.js";
 import { type Ledger, OP, chainIdWord, modifyMac } from "./mac.js";
 
@@ -137,4 +138,24 @@ test("the signer's balance is shown decrypted, another account's stays ciphertex
   } finally {
     await harness.close();
   }
+});
+
+test("a Nod's Gratis amount opens with the creator key, as the enclave encrypted it", () => {
+  const v = vectors.nod;
+  const nod = {
+    nodId: BigInt(v.nodId),
+    owner: v.owner,
+    worldwideDay: v.worldwideDay,
+    leagueId: v.leagueId,
+    entryPriceMinor: BigInt(v.entryPriceMinor),
+    issuanceCurrency: v.issuanceCurrency,
+    referenceCurrency: v.referenceCurrency,
+    chainId: BigInt(v.chainId),
+    encryptionBinding: v.encryptionBinding,
+    encryptedCreatorPublicKey: v.encryptedCreatorPublicKey,
+    encryptedGratisAmount: v.encryptedGratisAmount,
+  };
+  const amount = openNodAmount(hexToBytes(v.creatorSecret), hexToBytes(v.networkPublicKey), nod);
+  assert.equal(amount, BigInt(v.gratisAmount));
+  assert.throws(() => openNodAmount(new Uint8Array(32).fill(0x32), hexToBytes(v.networkPublicKey), nod));
 });

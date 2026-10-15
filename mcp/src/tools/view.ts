@@ -1,12 +1,13 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { Address, Hex } from "viem";
-import { FIELD, openGratis, openPromis, signerAmounts } from "../confidential/balances.js";
+import { type Address, type Hex, getAddress } from "viem";
+import { FIELD, openGratis, openPromis, plain, signerAmounts } from "../confidential/balances.js";
+import { type EncryptedNod, signerNodAmount } from "../confidential/nod.js";
 import { contextNetwork } from "../net/resolver.js";
 import { address } from "./schemas.js";
 import { listProposals } from "../governance.js";
 import { pairTable } from "../oracle/pairs.js";
-import type { Ctx } from "../chain.js";
+import { type Ctx, readView } from "../chain.js";
 import { CONTRACTS, OFFERING_STATUS, PROPOSAL_STATUS } from "../registry.js";
 import { ownedTokenIds } from "../read.js";
 import { handler, ok, view } from "./util.js";
@@ -72,14 +73,16 @@ function registerEntityViews(server: McpServer, ctx: Ctx): void {
   // --- Nod -------------------------------------------------------------------
   server.tool(
     "nod_get",
-    "Nod NFT data by token id (decoded) plus parsed tokenURI metadata.",
+    "Nod NFT data by token id (decoded) plus parsed tokenURI metadata; for the signer's own Nod also its " +
+      "Gratis amount, opened with the creator key.",
     { id: z.string().describe("Nod token id as a uint256 (decimal or 0x hex)") },
     handler(async ({ id }) => {
-      const [data, metadata] = await Promise.all([
+      const [data, metadata, gratisAmount] = await Promise.all([
         view(ctx, "nod", "getNod", [id]),
         view(ctx, "nod", "tokenURI", [id]),
+        signerNodGratis(ctx, BigInt(id)),
       ]);
-      return ok({ nodId: id, data, metadata });
+      return ok({ nodId: id, data, metadata, ...(gratisAmount && { gratisAmount }) });
     }),
   );
 
@@ -94,6 +97,16 @@ function registerEntityViews(server: McpServer, ctx: Ctx): void {
     }),
   );
 
+}
+
+/** The Gratis amount of the signer's own Nod; undefined for another owner or a non-Outbe network. */
+async function signerNodGratis(ctx: Ctx, nodId: bigint): Promise<Record<string, unknown> | undefined> {
+  const network = contextNetwork(ctx);
+  if (!ctx.account || !network.isOutbe) return undefined;
+  const { result } = await readView(ctx, CONTRACTS.nod, "getNod", [nodId]);
+  const nod = result as EncryptedNod;
+  if (getAddress(nod.owner) !== ctx.account.address) return undefined;
+  return signerNodAmount(ctx, network, nod).then(plain, (error: Error) => ({ decryptError: error.message }));
 }
 
 function registerPositionViews(server: McpServer, ctx: Ctx): void {
