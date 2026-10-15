@@ -36,6 +36,14 @@ impl FinalizedPublicationReceipt {
     }
 }
 
+/// Only this node's current finalized state may supply an accepted receipt.
+pub trait RepositoryReceiptReader: Send + Sync + 'static {
+    fn read_current_publication_receipt(
+        &self,
+        sequence: u64,
+    ) -> Result<Option<FinalizedPublicationReceipt>, ManagerError>;
+}
+
 /// All fields come from one current local finalized state used for a signing request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinalizedPatchSigningState {

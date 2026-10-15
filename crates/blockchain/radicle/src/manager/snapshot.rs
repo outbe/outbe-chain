@@ -55,6 +55,17 @@ impl<P: StateProviderFactory + Send + Sync> super::RepositoryAuthorityReader
     }
 }
 
+impl<P: StateProviderFactory + Send + Sync + 'static> super::RepositoryReceiptReader
+    for RethSnapshotReader<P>
+{
+    fn read_current_publication_receipt(
+        &self,
+        sequence: u64,
+    ) -> Result<Option<FinalizedPublicationReceipt>, ManagerError> {
+        self.read_publication_receipt(self.current_finalized_block()?, sequence)
+    }
+}
+
 impl<P: StateProviderFactory> RethSnapshotReader<P> {
     fn current_finalized_block(&self) -> Result<FinalizedBlock, ManagerError> {
         let head = self

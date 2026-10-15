@@ -14,5 +14,6 @@ pub use types::{
     FinalizedFeed, FinalizedPatchApproval, FinalizedPatchSigningState, FinalizedPublicationReceipt,
     FinalizedRepositoryAuthority, FinalizedSnapshot, FinalizedValidator, HeartwoodControl,
     ManagerConfig, ManagerDependencies, ManagerError, ManagerPhase, ManagerStatus, PhaseError,
-    RepositoryAuthorityReader, RepositoryStatus, RetryPolicy, SessionDirection, SnapshotReader,
+    RepositoryAuthorityReader, RepositoryReceiptReader, RepositoryStatus, RetryPolicy,
+    SessionDirection, SnapshotReader,
 };

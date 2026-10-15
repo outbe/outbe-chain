@@ -252,6 +252,38 @@ fn publication_receipt_reader_rejects_unfinalized_noncanonical_missing_history_w
     assert_eq!(*reader.provider.reads.lock().unwrap(), [block(3).hash]);
 }
 
+#[test]
+fn local_receipt_reader_samples_own_current_finality_without_archived_fallback() {
+    use crate::manager::RepositoryReceiptReader as _;
+    let mut reader = publication_receipt_fixture();
+    let receipt = reader.read_current_publication_receipt(1).unwrap().unwrap();
+    assert_eq!(receipt.block(), block(3));
+    assert_eq!(*reader.provider.reads.lock().unwrap(), [block(3).hash]);
+    reader.provider.finalized = Some(BlockNumHash::new(4, block(4).hash));
+    assert!(matches!(
+        reader.read_current_publication_receipt(1),
+        Err(ManagerError::Snapshot(_))
+    ));
+    assert_eq!(
+        *reader.provider.reads.lock().unwrap(),
+        [block(3).hash, block(4).hash]
+    );
+    reader.provider.states.remove(&block(4).hash);
+    assert!(matches!(
+        reader.read_current_publication_receipt(1),
+        Err(ManagerError::Provider(_))
+    ));
+    reader.provider.finalized = None;
+    assert!(matches!(
+        reader.read_current_publication_receipt(1),
+        Err(ManagerError::Finality(_))
+    ));
+    assert_eq!(
+        *reader.provider.reads.lock().unwrap(),
+        [block(3).hash, block(4).hash, block(4).hash]
+    );
+}
+
 fn repository_authority_storage() -> (
     HashMapStorageProvider,
     outbe_validatorset::state::CommitteeSnapshot,

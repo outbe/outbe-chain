@@ -9622,6 +9622,7 @@ dependencies = [
  "reth-chainspec",
  "reth-provider",
  "reth-storage-api",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
