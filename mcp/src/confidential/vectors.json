@@ -77,5 +77,30 @@
       "modifyKey": "0x6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b",
       "mac": "0x7b3938033a1bb7b1ef93540f3fb86d01122bc8772b2ef4a8d1f6d3377ee1e02d"
     }
-  ]
+  ],
+  "balances": {
+    "viewKey": "0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+    "account": "0x1111111111111111111111111111111111111111",
+    "promis": {
+      "previousVersion": "4",
+      "amount": "123456789",
+      "blob": "0x0000000000000005cdde759b05cf8c77c3258161ccdc4ebbed3265d3f40fae76bc0bf64964ef7bb1e2919f3e36f27bd77e63c6a1596c5169"
+    },
+    "gratis": [
+      {
+        "field": 0,
+        "previousVersion": "2",
+        "inputHash": "0x0404040404040404040404040404040404040404040404040404040404040404",
+        "amount": "2500000",
+        "blob": "0x000000000000000347524132bdd4691da65390638406af421d6e89f2ce3a4d71e5b5f2f3fc767ca2ab18e06a690188274592e8e970304a3ee88ff9283e3cef1444b0b2816f4a2629d84fc51bdccef2c8c0b2af2901404c556259922a"
+      },
+      {
+        "field": 1,
+        "previousVersion": "6",
+        "inputHash": "0x0505050505050505050505050505050505050505050505050505050505050505",
+        "amount": "900000",
+        "blob": "0x000000000000000747524132278f700859eac2c84eda4d4b77fe2a09881f54030247d3c8e4b4e4cd7752664ec69d725721dba1c36af0eed950af5a1501cb8cf53aaaea3715f73b03a829b4b921f8aa7ab7c368f9bef2adfb82787207"
+      }
+    ]
+  }
 }

@@ -1,5 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import type { Address, Hex } from "viem";
+import { FIELD, openGratis, openPromis, signerAmounts } from "../confidential/balances.js";
+import { contextNetwork } from "../net/resolver.js";
 import { address } from "./schemas.js";
 import { listProposals } from "../governance.js";
 import { pairTable } from "../oracle/pairs.js";
@@ -165,20 +168,31 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
   // --- Balances --------------------------------------------------------------
   server.tool(
     "gratis_balance",
-    "Encrypted Gratis liquid and pledged balances; decrypt both locally with the account view key.",
+    "Encrypted Gratis liquid and pledged balances. For the signer's own account both are also shown " +
+      "decrypted with its Gratis view key.",
     { account: address },
     handler(async ({ account }) => {
       const balance = await view(ctx, "gratis", "balanceOf", [account]);
       const pledged = await view(ctx, "gratis", "pledgedOf", [account]);
-      return ok({ account, balance, pledged });
+      const decrypted = await signerAmounts(ctx, contextNetwork(ctx), "Gratis", account as Address, (key) => ({
+        balance: openGratis(key, account as Address, FIELD.balance, balance as Hex),
+        pledged: openGratis(key, account as Address, FIELD.pledged, pledged as Hex),
+      }));
+      return ok({ account, balance, pledged, ...(decrypted && { decrypted }) });
     }),
   );
 
   server.tool(
     "promis_balance",
-    "Encrypted Promis balance; decrypt it locally with the account's Promis view key.",
+    "Encrypted Promis balance. For the signer's own account it is also shown decrypted with its Promis view key.",
     { account: address },
-    handler(async ({ account }) => ok({ account, balance: await view(ctx, "promis", "balanceOf", [account]) })),
+    handler(async ({ account }) => {
+      const balance = await view(ctx, "promis", "balanceOf", [account]);
+      const decrypted = await signerAmounts(ctx, contextNetwork(ctx), "Promis", account as Address, (key) => ({
+        balance: openPromis(key, account as Address, balance as Hex),
+      }));
+      return ok({ account, balance, ...(decrypted && { decrypted }) });
+    }),
   );
 
   // Per-account fidelity index is now encrypted and owner-signature-gated, so a

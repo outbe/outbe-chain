@@ -12,6 +12,7 @@ import { grindNonce } from "../../intex/pow.js";
 import { addr, exerciseCount, quoteSettlement, settlementTokens } from "../../intex/reads.js";
 import { withAuthorization } from "../../confidential/authorize.js";
 import { OP } from "../../confidential/mac.js";
+import { openPromis, signerAmounts } from "../../confidential/balances.js";
 import { accountArg, seriesArg, unitsArg } from "./args.js";
 import type { IntexDeps } from "./deps.js";
 
@@ -166,7 +167,8 @@ export function registerSettlementTools(server: McpServer, deps: IntexDeps): voi
 
   server.tool(
     "intex_promis_balance",
-    "Encrypted Promis balance for an address on outbe; decrypt it locally with the account's Promis view key.",
+    "Encrypted Promis balance for an address on outbe. For the signer's own account it is also shown " +
+      "decrypted with its Promis view key.",
     { account: accountArg, network: networkName.optional() },
     handler(async ({ account, network }) => {
       const n = await resolveNetwork(network ?? OUTBE_NETWORK);
@@ -177,7 +179,8 @@ export function registerSettlementTools(server: McpServer, deps: IntexDeps): voi
         functionName: "balanceOf",
         args: [who],
       });
-      return ok({ network: n.name, account: who, balance });
+      const decrypted = await signerAmounts(ctx, n, "Promis", who, (key) => ({ balance: openPromis(key, who, balance) }));
+      return ok({ network: n.name, account: who, balance, ...(decrypted && { decrypted }) });
     }),
   );
 }

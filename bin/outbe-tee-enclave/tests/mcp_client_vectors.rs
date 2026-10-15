@@ -101,3 +101,44 @@ fn mcp_modify_macs_match_the_enclave() {
         assert_eq!(mac.to_vec(), bytes(&v["mac"]), "{v}");
     }
 }
+
+#[test]
+fn mcp_opens_the_balances_the_enclave_writes() {
+    use outbe_tee_enclave::confidential::{FIELD_BALANCE, PROMIS};
+    use outbe_tee_enclave::gratis_cipher::{read_amount, write_amount, BalanceTransition};
+
+    let all = vectors();
+    let v = &all["balances"];
+    let view = word(&v["viewKey"]);
+    let account: Address = v["account"].as_str().unwrap().parse().unwrap();
+    let decimal = |value: &Value| U256::from_str_radix(value.as_str().unwrap(), 10).unwrap();
+    let version = |value: &Value| value.as_str().unwrap().parse::<u64>().unwrap();
+
+    let promis = &v["promis"];
+    let slot = PROMIS.cipher.slot(&view, account, FIELD_BALANCE);
+    let blob = slot
+        .write_amount(version(&promis["previousVersion"]), decimal(&promis["amount"]))
+        .unwrap();
+    assert_eq!(blob, bytes(&promis["blob"]));
+    assert_eq!(slot.read_amount(&blob).unwrap().1, decimal(&promis["amount"]));
+
+    for gratis in v["gratis"].as_array().unwrap() {
+        let field = gratis["field"].as_u64().unwrap() as u8;
+        let blob = write_amount(
+            &view,
+            BalanceTransition {
+                account,
+                field,
+                previous_version: version(&gratis["previousVersion"]),
+                amount: decimal(&gratis["amount"]),
+                input_hash: B256::from(word(&gratis["inputHash"])),
+            },
+        )
+        .unwrap();
+        assert_eq!(blob, bytes(&gratis["blob"]));
+        assert_eq!(
+            read_amount(&view, account, field, &blob).unwrap().1,
+            decimal(&gratis["amount"])
+        );
+    }
+}

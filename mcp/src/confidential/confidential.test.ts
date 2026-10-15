@@ -1,15 +1,19 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { type Address, bytesToHex, hexToBytes } from "viem";
+import { chacha20poly1305 } from "@noble/ciphers/chacha";
+import { hkdf } from "@noble/hashes/hkdf";
+import { sha256 } from "@noble/hashes/sha256";
+import { type Address, bytesToHex, concat, hexToBytes, numberToBytes } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { createCtx } from "../chain.js";
 import { contextNetwork } from "../net/resolver.js";
 import { CONTRACTS } from "../registry.js";
 import { FakeChain } from "../test/fake-chain.js";
-import { MODIFY_KEY, fakeEnclave } from "../test/fake-enclave.js";
-import { OUTBE_RPC, SIGNER, SIGNER_KEY } from "../test/harness.js";
+import { MODIFY_KEY, VIEW_KEY, fakeEnclave } from "../test/fake-enclave.js";
+import { OUTBE_RPC, SIGNER, SIGNER_KEY, startHarness } from "../test/harness.js";
 import { withAuthorization } from "./authorize.js";
+import { openGratis, openPromis } from "./balances.js";
 import { deriveKeysMessage, unsealKeys } from "./keys.js";
 import { type Ledger, OP, chainIdWord, modifyMac } from "./mac.js";
 
@@ -111,5 +115,35 @@ test("a rejected MAC re-derives the keys and sends once more", async () => {
     assert.deepEqual(calls, ["Promis", "Promis"]);
   } finally {
     restore();
+  }
+});
+
+test("balance blobs open to the amounts of the shared vectors", () => {
+  const v = vectors.balances;
+  const view = hexToBytes(v.viewKey);
+  assert.equal(openPromis(view, v.account, v.promis.blob), BigInt(v.promis.amount));
+  for (const g of v.gratis) assert.equal(openGratis(view, v.account, g.field, g.blob), BigInt(g.amount));
+  assert.equal(openPromis(view, v.account, "0x"), 0n);
+});
+
+test("the signer's balance is shown decrypted, another account's stays ciphertext", async () => {
+  const promisBlob = (account: Address, amount: bigint) => {
+    const version = numberToBytes(1n, { size: 8 });
+    const ikm = concat([hexToBytes(account), new Uint8Array([0]), version]);
+    const nonce = hkdf(sha256, ikm, VIEW_KEY, new TextEncoder().encode("outbe/promis/nonce/v1"), 32).slice(0, 12);
+    return bytesToHex(concat([version, chacha20poly1305(VIEW_KEY, nonce).encrypt(numberToBytes(amount, { size: 32 }))]));
+  };
+  const harness = await startHarness((chain) => {
+    for (const entry of Object.values(CONTRACTS)) chain.register(entry.abi, entry.address);
+    fakeEnclave(chain);
+    chain.reply("balanceOf", (args: readonly unknown[]) => promisBlob(args[0] as Address, 2_500_000n), CONTRACTS.promis.address);
+  });
+  try {
+    const own = JSON.parse((await harness.call("promis_balance", { account: SIGNER })).text);
+    assert.deepEqual(own.decrypted, { balance: { raw: "2500000", value: "2.5" } });
+    const other = JSON.parse((await harness.call("promis_balance", { account: `0x${"22".repeat(20)}` })).text);
+    assert.equal(other.decrypted, undefined);
+  } finally {
+    await harness.close();
   }
 });
