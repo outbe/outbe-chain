@@ -12,14 +12,12 @@ outbe-macros.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-primitives.workspace = true
 outbe-oracle = { path = "../../system/oracle" }
-outbe-promislimit.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-sol-types.workspace = true
 outbe-offchain-storage.workspace = true
 outbe-ocomp-protocol.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 
 outbe-tee-enclave = { workspace = true, optional = true }
 x25519-dalek = { workspace = true, optional = true }

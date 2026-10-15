@@ -28,60 +28,14 @@ pub struct IssuanceParams {
     pub snapshot_chains: Vec<u32>,
 }
 
-/// EVM storage layout: settlement bookkeeping (mine_seq), the
-/// lifecycle bin indexes and the queue of called groups awaiting their deadline.
+/// EVM storage layout: settlement bookkeeping (mine_seq), the Called-notice outbox and
+/// the cursors of the cross-chain sends. The series lifecycle lives in Intex.
 #[storage_schema]
 #[contract(addr = INTEX_FACTORY_ADDRESS)]
 pub struct IntexFactoryContract {
     /// `keccak256(series_id ++ owner)` -> monotonic minePromis sequence.
     #[attribute(order = 1)]
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
-
-    // Call-price bin index the daily Called scan walks. A series enters it at issuance.
-    #[attribute(order = 6)]
-    pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
-    #[attribute(order = 7)]
-    pub call_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
-    #[attribute(order = 8)]
-    pub call_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
-    /// `scoped(iso, bin_id)` -> count of groups in the bin.
-    #[attribute(order = 9)]
-    pub call_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-
-    // Genesis parameter-profile selector (0 = auto, 1 = dev, 2 = prod). See crate::config.
-    #[attribute(order = 10)]
-    pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
-
-    // ISO 4217 code where the call scan resumes. This cursor prevents a currency
-    // that exhausts the shared budget from starving later currencies.
-    #[attribute(order = 13)]
-    pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
-
-    // `(bin << 32) | groups of that bin still to visit` where each currency's call scan
-    // resumes. 0 = fresh sweep.
-    #[attribute(order = 14)]
-    pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
-
-    // Group members, keyed by `scoped(iso, day)`: a decision reads only fields the
-    // whole (reference currency, worldwide day) pair shares. A called group keeps them
-    // until each member expires.
-    #[attribute(order = 18)]
-    pub call_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-    /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
-    #[attribute(order = 19)]
-    pub call_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
-    /// `scoped(iso, worldwide_day)` -> `(bin << 32) | (index + 1)` of the group in its bin.
-    #[attribute(order = 20)]
-    pub call_group_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
-
-    // UTC day an unfinished call sweep is pinned to, so its later slices decide
-    // against the prices it opened with. 0 = none in flight. A date key is never 0.
-    #[attribute(order = 21)]
-    pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
-
-    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> `scoped(iso, worldwide_day)`.
-    #[attribute(order = 23)]
-    pub call_bin_groups: outbe_primitives::storage::dsl::Map<B256, u64>,
 
     // Called notices waiting to be sent after the call slice, in order. Head and tail
     // reset to 0 whenever the queue drains empty.
@@ -93,42 +47,6 @@ pub struct IntexFactoryContract {
     /// it was refused, and the time it may go out again.
     #[attribute(order = 26)]
     pub notify_at: outbe_primitives::storage::dsl::Map<u32, U256>,
-
-    // Called groups awaiting their settlement window, bucketed by the hour it closes in.
-    #[attribute(order = 28)]
-    pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
-    #[attribute(order = 29)]
-    pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
-    #[attribute(order = 30)]
-    pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// `scoped(iso, day)` -> when the group's settlement window closes. Stored so
-    /// the head check costs no record load.
-    #[attribute(order = 31)]
-    pub called_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
-    // Widest terms ever issued in a currency. Both only move outwards, so the range
-    // they define covers series the live profile no longer names.
-    #[attribute(order = 34)]
-    pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
-    #[attribute(order = 35)]
-    pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
-
-    /// Slots ever used in a bucket. Retired slots are zeroed in place, not compacted.
-    #[attribute(order = 36)]
-    pub expiry_bucket_len: outbe_primitives::storage::dsl::Map<u32, u32>,
-    #[attribute(order = 37)]
-    pub expiry_bucket_live: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// `keccak256(bucket_be32 ++ slot_be32)` -> `scoped(iso, worldwide_day)`.
-    #[attribute(order = 38)]
-    pub expiry_bucket_at: outbe_primitives::storage::dsl::Map<B256, u64>,
-    /// `scoped(iso, day)` -> `(bucket << 32) | slot`. 0 = not queued.
-    #[attribute(order = 39)]
-    pub called_group_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
-    #[attribute(order = 40)]
-    pub expiry_sweep_hour: outbe_primitives::storage::dsl::Value<u32>,
-    #[attribute(order = 41)]
-    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
-    #[attribute(order = 42)]
-    pub call_pending_day: outbe_primitives::storage::dsl::Value<u32>,
     /// Where the parked-message sweep resumes: every index below it is sent or empty.
     #[attribute(order = 45)]
     pub parked_message_cursor: outbe_primitives::storage::dsl::Value<u64>,
@@ -139,27 +57,9 @@ pub struct IntexFactoryContract {
     /// send.
     #[attribute(order = 47)]
     pub vwap_sent_day: outbe_primitives::storage::dsl::Value<u32>,
-
-    /// UTC day the call sweep could not price a reference currency on. The rest of that
-    /// day's pass passes it by.
-    #[attribute(order = 48)]
-    pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl IntexFactoryContract<'_> {
-    /// Namespace a bin-index column by the reference currency its prices are in.
-    pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
-        outbe_primitives::call_bins::scoped(reference_currency, key)
-    }
-
-    /// Inverse of [`Self::scoped`] for a key that is a worldwide day.
-    pub(crate) const fn unscoped(scoped: u64) -> (u16, WorldwideDay) {
-        (
-            (scoped >> 32) as u16,
-            WorldwideDay::new((scoped & 0xffff_ffff) as u32),
-        )
-    }
-
     /// Composite key for `mine_seq`: `keccak256(series_id ++ owner)`.
     pub fn mine_seq_key(series_id: SeriesId, owner: Address) -> B256 {
         let mut buf = [0u8; SERIES_ID_LEN + 20];

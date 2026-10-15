@@ -252,25 +252,25 @@ fn assert_paid_event(
         }
         // The series' record names the units; their cost shows only in the vault.
         Item::Series { id, units } => {
-            let settled = eth::receipt_event::<eth::IIntexFactory::Settled>(
+            let settled = eth::receipt_event::<eth::IIntexFactory::IntexSettled>(
                 receipt,
                 addresses::INTEX_FACTORY_ADDR,
             );
             assert_eq!(
                 (settled.seriesId, settled.owner, settled.units),
                 (*id, target.owner, U256::from(*units)),
-                "Settled does not record this payment"
+                "IntexSettled does not record this payment"
             );
         }
         Item::Nod(id) => {
-            let paid = eth::receipt_event::<eth::INodFactory::NodPaid>(
+            let paid = eth::receipt_event::<eth::INodFactory::NodSettled>(
                 receipt,
                 addresses::NOD_FACTORY_ADDR,
             );
             assert_eq!(
                 (paid.owner, paid.nodId, paid.asset, paid.paymentMinor),
                 (target.owner, *id, asset, payable),
-                "NodPaid does not record this payment"
+                "NodSettled does not record this payment"
             );
         }
     }

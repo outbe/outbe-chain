@@ -114,7 +114,7 @@ fn settle_rejects_wrong_settlement_currency() {
                 snapshot_id: U256::ZERO,
             },
         );
-        assert!(err_msg(res).contains("does not match the gem"));
+        assert!(err_msg(res).contains("does not match the right"));
     });
 }
 

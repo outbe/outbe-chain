@@ -1,8 +1,8 @@
 use std::fmt::Display;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::B256;
 use outbe_common::pow::PowError;
-use outbe_common::settlement::RoundingError;
+use outbe_compressed_entities::WwdEntityId;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -31,29 +31,8 @@ pub enum NodFactoryError {
     #[error("nod is not settled")]
     NodNotSettled,
 
-    #[error("settlement asset {asset} has no registered vault")]
-    SettlementAssetNotRegistered { asset: Address },
-
-    #[error("settlement asset currency {iso_code} does not match the nod")]
-    SettlementCurrencyMismatch { iso_code: u16 },
-
-    #[error("ERC20 operation failed or returned malformed data")]
-    TokenOperationFailed,
-
-    #[error("ERC20 payment did not move the exact Nod cost")]
-    SettlementAmountMismatch,
-
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
-
-    #[error("{0}")]
-    Rounding(RoundingError),
-
-    #[error("oracle nominal unavailable")]
-    OracleUnavailable,
-
-    #[error("VWAP snapshot {authorized:#x} does not match the required {required:#x}")]
-    VwapSnapshotMismatch { authorized: U256, required: U256 },
 
     #[error("caller is not an active OCOMP materializer")]
     UnauthorizedMaterializer,
@@ -106,18 +85,6 @@ pub enum NodFactoryError {
     #[error("certified Nod generation count mismatch")]
     CertifiedGenerationCountMismatch,
 
-    #[error("assetVaultsCount undecodable")]
-    AssetVaultsCountUndecodable,
-
-    #[error("nod cost overflow")]
-    NodCostOverflow,
-
-    #[error("settlement asset decimals undecodable")]
-    SettlementAssetDecimalsUndecodable,
-
-    #[error("isoCode undecodable")]
-    IsoCodeUndecodable,
-
     #[error("{0}")]
     RevertMessage(String),
 
@@ -165,6 +132,30 @@ pub enum NodFactoryError {
 
     #[error("Nod materialization bypassed its bounded dispatcher")]
     MaterializationBypassedDispatcher,
+
+    #[error("Nod bucket {bucket_key} has an empty member slot during forfeit")]
+    EmptyBucketMemberSlotDuringForfeit { bucket_key: B256 },
+
+    #[error("Nod bucket {bucket_key} member {nod_id} has no body during forfeit")]
+    MissingBucketMemberBodyDuringForfeit {
+        bucket_key: B256,
+        nod_id: WwdEntityId,
+    },
+
+    #[error("Nod bucket {bucket_key} indexes an ineligible member {nod_id}")]
+    IneligibleBucketMember {
+        bucket_key: B256,
+        nod_id: WwdEntityId,
+    },
+
+    #[error("Nod bucket {bucket_key} has no body during forfeit")]
+    MissingBucketBodyDuringForfeit { bucket_key: B256 },
+
+    #[error("closeCallNoticeForTest: bucket not queued")]
+    BucketNotQueuedForTest,
+
+    #[error("Nod call price overflow")]
+    CallPriceOverflow,
 }
 
 impl NodFactoryError {
@@ -192,12 +183,6 @@ impl From<NodFactoryError> for PrecompileError {
             }
             other => PrecompileError::Revert(other.to_string()),
         }
-    }
-}
-
-impl From<RoundingError> for NodFactoryError {
-    fn from(value: RoundingError) -> Self {
-        Self::Rounding(value)
     }
 }
 

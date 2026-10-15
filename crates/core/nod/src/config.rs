@@ -3,7 +3,6 @@
 //! network, so only mainnet runs PROD. The floor rate stays a constant: every floor
 //! derives from its entry price.
 
-use outbe_primitives::chain::is_mainnet;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -12,10 +11,7 @@ use crate::constants::{
 };
 use crate::schema::NodContract;
 
-/// Resolve by network: PROD on mainnet, DEV everywhere else.
-pub const PROFILE_AUTO: u8 = 0;
-pub const PROFILE_DEV: u8 = 1;
-pub const PROFILE_PROD: u8 = 2;
+pub use outbe_primitives::profile::{PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
 
 /// Resolved Nod call terms. All periods are in seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,24 +44,9 @@ impl NodParams {
         call_notice_period_seconds: 600,
     };
 
-    /// The profile a chain runs when genesis left the selector unset.
-    pub const fn for_chain_id(chain_id: u64) -> Self {
-        if is_mainnet(chain_id) {
-            Self::PROD
-        } else {
-            Self::DEV
-        }
-    }
-
     pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {
-        match selector {
-            PROFILE_AUTO => Ok(Self::for_chain_id(chain_id)),
-            PROFILE_DEV => Ok(Self::DEV),
-            PROFILE_PROD => Ok(Self::PROD),
-            other => {
-                Err(crate::errors::NodError::UnknownProfileSelector { selector: other }.into())
-            }
-        }
+        outbe_primitives::profile::select(selector, chain_id, Self::PROD, Self::DEV)
+            .ok_or_else(|| crate::errors::NodError::UnknownProfileSelector { selector }.into())
     }
 }
 

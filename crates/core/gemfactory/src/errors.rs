@@ -1,7 +1,7 @@
 //! Error types for the GemFactory precompile.
 
+use alloy_primitives::{B256, U256};
 use outbe_common::pow::PowError;
-use outbe_common::settlement::RoundingError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -45,35 +45,20 @@ pub enum GemFactoryError {
     #[error("position expired")]
     PositionExpired,
 
-    #[error("invalid asset")]
-    InvalidAsset,
-
-    #[error("settlement asset {asset} has no registered vault")]
-    SettlementAssetNotRegistered { asset: alloy_primitives::Address },
-
-    #[error("settlement asset currency {iso_code} does not match the gem")]
-    SettlementCurrencyMismatch { iso_code: u16 },
-
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 
     #[error("{currency} is not an ISO 4217 currency code")]
     InvalidCurrency { currency: u16 },
 
-    #[error("{0}")]
-    Rounding(RoundingError),
-
     #[error("oracle nominal unavailable")]
     OracleUnavailable,
 
-    #[error("VWAP snapshot {authorized:#x} does not match the required {required:#x}")]
-    VwapSnapshotMismatch {
-        authorized: alloy_primitives::U256,
-        required: alloy_primitives::U256,
-    },
-
     #[error("invalid owner")]
     InvalidOwner,
+
+    #[error("only a genesis gem is issued without a floor")]
+    ZeroFloorPrice,
 
     #[error("overflow")]
     Overflow,
@@ -81,25 +66,25 @@ pub enum GemFactoryError {
     #[error("promis load must be positive")]
     ZeroPromisLoad,
 
-    #[error("settlement token call failed")]
-    TokenOperationFailed,
-
-    #[error("settlement token moved an unexpected amount")]
-    SettlementAmountMismatch,
-
     #[error("{0} undecodable")]
     UndecodableReturn(&'static str),
+
+    #[error("gem bucket {bucket_key} has an empty member slot during forfeit")]
+    EmptyMemberSlotDuringForfeit { bucket_key: B256 },
+
+    #[error("gem bucket {bucket_key} member {gem_id} has no body during forfeit")]
+    MissingMemberBodyDuringForfeit { bucket_key: B256, gem_id: U256 },
+
+    #[error("gem bucket {bucket_key} indexes an ineligible member {gem_id}")]
+    IneligibleBucketMember { bucket_key: B256, gem_id: U256 },
+
+    #[error("gem call price overflow")]
+    CallPriceOverflow,
 }
 
 impl From<GemFactoryError> for PrecompileError {
     fn from(value: GemFactoryError) -> Self {
         PrecompileError::Revert(value.to_string())
-    }
-}
-
-impl From<RoundingError> for GemFactoryError {
-    fn from(value: RoundingError) -> Self {
-        Self::Rounding(value)
     }
 }
 

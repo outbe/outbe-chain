@@ -27,8 +27,8 @@ use std::process::Command;
 use alloy_primitives::{Address, U256};
 use outbe_evm::system_tx::{expected_begin_block_kinds, SystemTxKind};
 use outbe_gem::GemContract;
-use outbe_intexfactory::IntexFactoryContract;
-use outbe_primitives::addresses::{GEM_ADDRESS, INTEX_FACTORY_ADDRESS};
+use outbe_intex::IntexContract;
+use outbe_primitives::addresses::{GEM_ADDRESS, INTEX_ADDRESS};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_validatorset::contract::ValidatorSet;
@@ -569,28 +569,41 @@ fn load_seeded_storage(provider: &mut HashMapStorageProvider, genesis: &Value, a
 #[test]
 fn seeded_profiles_and_gems_read_back_through_their_schemas() {
     const SEED: &str = r#"{
-      "intex_factory": { "profile": "dev" },
+      "intex_profile": { "profile": "dev" },
       "gem_profile": { "profile": "prod" },
-      "nod_profile": { "profile": "prod" }
+      "nod_profile": { "profile": "prod" },
+      "credis_profile": { "profile": "dev" }
     }"#;
     let (_tmp, genesis, _raw) =
         run_seed_genesis(FIXTURE_GENESIS, SEED, FIXTURE_VALIDATORS_4_PUBLIC_ONLY);
     let mut provider = HashMapStorageProvider::new(512_215);
     load_seeded_storage(&mut provider, &genesis, GEM_ADDRESS);
-    load_seeded_storage(&mut provider, &genesis, INTEX_FACTORY_ADDRESS);
+    load_seeded_storage(&mut provider, &genesis, INTEX_ADDRESS);
     load_seeded_storage(
         &mut provider,
         &genesis,
         outbe_primitives::addresses::NOD_ADDRESS,
     );
+    load_seeded_storage(
+        &mut provider,
+        &genesis,
+        outbe_primitives::addresses::CREDIS_ADDRESS,
+    );
 
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
-            IntexFactoryContract::new(storage.clone())
+            outbe_credis::CredisContract::new(storage.clone())
                 .config_profile
                 .read()
                 .unwrap(),
-            outbe_intexfactory::config::PROFILE_DEV
+            outbe_credis::config::PROFILE_DEV
+        );
+        assert_eq!(
+            IntexContract::new(storage.clone())
+                .config_profile
+                .read()
+                .unwrap(),
+            outbe_intex::config::PROFILE_DEV
         );
         assert_eq!(
             outbe_nod::NodContract::new(storage.clone())

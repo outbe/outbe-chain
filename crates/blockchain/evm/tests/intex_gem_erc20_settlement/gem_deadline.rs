@@ -7,7 +7,7 @@ fn gem_state(world: &mut World) -> u8 {
     world
         .view(
             GEM_ADDRESS,
-            IGem::getGemStatusCall {
+            IGem::getGemCall {
                 gemId: world.gem_id,
             },
         )
@@ -47,7 +47,7 @@ fn a_called_gem_settles_at_its_deadline_and_is_refused_a_second_later() {
     assert_eq!(world.ctx.journaled_state.logs(), logs);
     let gem = world.view(
         GEM_ADDRESS,
-        IGem::getGemStatusCall {
+        IGem::getGemCall {
             gemId: world.gem_id,
         },
     );

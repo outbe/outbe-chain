@@ -82,9 +82,10 @@ SEED_SECTIONS = (
     "metadosis",
     "oracle",
     "tributes",
-    "intex_factory",
+    "intex_profile",
     "gem_profile",
     "nod_profile",
+    "credis_profile",
     "vault_router",
     "contracts",
     "tee_policy",
@@ -156,6 +157,8 @@ def deep_merge(base: Any, override: Any) -> Any:
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    if "intex_factory" in config:
+        raise ValueError("intex_factory was renamed to intex_profile")
     unknown = sorted(set(config) - TOP_LEVEL_KEYS)
     if unknown:
         raise ValueError(

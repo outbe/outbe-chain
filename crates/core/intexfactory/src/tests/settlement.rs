@@ -182,7 +182,7 @@ fn with_payment_token<R>(
     );
 
     StorageHandle::enter(&mut storage, |s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         f(s)
     })
 }
@@ -280,7 +280,7 @@ fn with_erc20_series<R>(
     storage.stub_sub_call_at_selector(payment_token(), IERC20::balanceOfCall::SELECTOR, word(0));
 
     StorageHandle::enter(&mut storage, |s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         seed_qualifying_day(&s);
         f(s)
     })
@@ -389,7 +389,7 @@ fn settle_rejects_missing_series() {
 #[test]
 fn settle_rejects_an_unqualified_series() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         // The only closed day ends at the floor, which does not qualify.
         write_day_vwap(
             &OracleContract::new(s.clone()),
@@ -430,9 +430,9 @@ fn settle_rejects_expired_deadline() {
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, |s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         // deadline = ISSUED_AT + CALL_NOTICE_PERIOD < now
-        outbe_intex::api::mark_called(&s, sid(7), ISSUED_AT).unwrap();
+        outbe_intex::api::record_called(&s, sid(7), ISSUED_AT).unwrap();
         let err = runtime::settle_intex(
             &s,
             sid(7),
@@ -453,16 +453,16 @@ fn settle_rejects_expired_deadline() {
 fn a_qualified_series_called_past_its_deadline_stays_closed() {
     let mut storage = factory_provider();
     StorageHandle::enter(&mut storage, |s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         seed_qualifying_day(&s);
-        outbe_intex::api::mark_called(&s, sid(7), ISSUED_AT).unwrap();
+        outbe_intex::api::record_called(&s, sid(7), ISSUED_AT).unwrap();
     });
     storage.set_timestamp(U256::from(
         (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + 1_000,
     ));
     StorageHandle::enter(&mut storage, |s| {
         let series = outbe_intex::api::read_series(&s, sid(7)).unwrap();
-        assert!(runtime::is_qualified(&s, &series).unwrap());
+        assert!(outbe_intex::api::is_qualified(&s, &series).unwrap());
         let err = runtime::settle_intex(
             &s,
             sid(7),
@@ -648,7 +648,7 @@ fn a_mining_that_fails_after_any_write_changes_nothing() {
         );
         let nonce = StorageHandle::enter(&mut storage, |s| {
             select_prod_profile(&s);
-            runtime::issue(&s, sample(7)).unwrap();
+            runtime::issue_intex(&s, sample(7)).unwrap();
             let promis_amount = outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
                 .promis_load_minor;
@@ -697,15 +697,15 @@ fn a_mining_that_fails_after_any_write_changes_nothing() {
 #[test]
 fn the_unit_counts_view_reports_the_disjoint_classes() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         outbe_intex::api::record_settled_units(&s, sid(7), 40).unwrap();
         outbe_intex::api::record_gem_factory_units(&s, sid(7), owner(), 10).unwrap();
         outbe_intex::api::record_exercised_units(&s, sid(7), owner(), 15).unwrap();
 
         // Through dispatch, so the selector and the struct encoding are covered too.
-        let out = precompile::dispatch(
+        let out = outbe_intex::precompile::dispatch(
             s.clone(),
-            &IIntexFactory::seriesUnitCountsCall {
+            &outbe_intex::precompile::IIntex::seriesUnitCountsCall {
                 seriesId: sid(7).into(),
             }
             .abi_encode(),
@@ -713,7 +713,9 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
             U256::ZERO,
         )
         .unwrap();
-        let counts = IIntexFactory::seriesUnitCountsCall::abi_decode_returns(&out).unwrap();
+        let counts =
+            outbe_intex::precompile::IIntex::seriesUnitCountsCall::abi_decode_returns(&out)
+                .unwrap();
         assert_eq!(counts.issuedUnits, 100);
         assert_eq!(counts.activeUnits, 50);
         assert_eq!(counts.settledUnits, 25);
@@ -750,11 +752,11 @@ fn the_owner_balances_view_reports_live_units_and_owner_history() {
     );
     let deadline = StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         outbe_intex::api::record_settled_units(&s, sid(7), 40).unwrap();
         outbe_intex::api::record_gem_factory_units(&s, sid(7), owner(), 10).unwrap();
         outbe_intex::api::record_exercised_units(&s, sid(7), owner(), 15).unwrap();
-        outbe_intex::api::mark_called(&s, sid(7), ISSUED_AT).unwrap();
+        outbe_intex::api::record_called(&s, sid(7), ISSUED_AT).unwrap();
 
         let live = read(&s);
         assert_eq!((live.issuedUnits, live.settledUnits), (3, 3));

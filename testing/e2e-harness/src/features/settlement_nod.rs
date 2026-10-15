@@ -513,7 +513,7 @@ fn nod_snapshot(world: &World, owner: Address, id: WwdEntityId, minimum: u64) ->
                 let body = eth::read_call_result(
                     &url,
                     addresses::NOD_ADDR,
-                    &eth::INod::nodDataCall {
+                    &eth::INod::getNodCall {
                         nodId: id.to_u256(),
                     },
                 )?;

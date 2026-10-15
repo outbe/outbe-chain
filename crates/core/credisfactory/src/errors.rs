@@ -17,10 +17,32 @@ pub enum CredisFactoryError {
     ReservationExpired,
     #[error("reservation cca mismatch")]
     ReservationCcaMismatch,
-    #[error("previous closed UTC-day VWAP is unavailable")]
-    PreviousDayVwapUnavailable,
+    #[error("amount must be positive")]
+    ZeroIssueTerm,
+    #[error("pledge source is zero")]
+    InvalidSource,
+    #[error("Credis owner is zero")]
+    InvalidOwner,
+    #[error("Credis already exists")]
+    CredisAlreadyExists,
+    #[error("Credis is closed")]
+    CredisClosed,
+    #[error("payment is below the interest accrued since the last settlement")]
+    PaymentBelowAccruedInterest,
+    #[error("Credis is not called")]
+    NotCalled,
+    #[error("settlement deadline has not passed")]
+    SettlementDeadlineNotPassed,
+    #[error("settlement deadline has passed")]
+    SettlementDeadlinePassed,
+    #[error("Credis has no outstanding principal")]
+    NothingOutstanding,
+    #[error("only the Credis owner can forfeit it")]
+    NotCredisOwner,
     #[error("timestamp exceeds u64")]
     TimestampOverflow,
+    #[error("payoff overflow")]
+    PayoffOverflow,
     #[error("asset decimals undecodable")]
     AssetDecimalsUndecodable,
     #[error("asset currency undecodable")]

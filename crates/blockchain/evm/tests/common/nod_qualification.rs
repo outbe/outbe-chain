@@ -11,7 +11,7 @@ pub(super) fn qualify(
     iso: u16,
 ) -> outbe_primitives::error::Result<()> {
     let issued_at = NodContract::new(storage.clone())
-        .callable_bucket_issued_at
+        .bucket_issued_at
         .read(&bucket_key)?;
     let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());

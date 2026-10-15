@@ -3,13 +3,15 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, VerifiedBody, WwdEntityId};
+use outbe_compressed_entities::{
+    ExecutionReaders, ExecutionScope, ParentBodySource, VerifiedBody, WwdEntityId,
+};
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
 use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
-use crate::schema::{EffectiveState, NodBucketState, NodContract, NodItemState};
+use crate::schema::{CallTerms, EffectiveState, NodBucketState, NodContract, NodItemState};
 
 /// Derives the current entitlement state without waiting for sweep cleanup.
 /// Paid entitlements survive expiry; the settlement deadline is inclusive.
@@ -36,7 +38,7 @@ pub fn effective_state(
 
 pub fn is_qualified(storage: &StorageHandle<'_>, bucket: &NodBucketState) -> Result<bool> {
     let issued_at = NodContract::new(storage.clone())
-        .callable_bucket_issued_at
+        .bucket_issued_at
         .read(&bucket.bucket_key)?;
     outbe_oracle::api::closed_above_floor(
         storage.clone(),
@@ -97,9 +99,7 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, bucket_key: B256) -> Res
     if called_at == 0 {
         return Ok(0);
     }
-    let notice = nod
-        .callable_bucket_call_notice_period_seconds
-        .read(&bucket_key)?;
+    let notice = nod.bucket_call_notice_period_seconds.read(&bucket_key)?;
     Ok(settlement_deadline_of(called_at, notice))
 }
 
@@ -146,17 +146,18 @@ impl LoadedNodBucket {
 }
 
 /// Inserts a Nod item, increments membership and creates its bucket if absent atomically.
+/// A new bucket seals `call_terms`; NodFactory derives them from the live profile.
 pub fn add_nod(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
+    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     item: &NodItemState,
     entry_price_minor: U256,
+    call_terms: Option<CallTerms>,
 ) -> Result<()> {
     let mut nod = NodContract::new(storage.clone());
     storage
         .clone()
-        .with_checkpoint(|| nod.record_nod_issued(scope, parent, item, entry_price_minor))
+        .with_checkpoint(|| nod.record_nod_issued(readers, item, entry_price_minor, call_terms))
 }
 
 /// Removes a loaded Nod item and decrements membership, deleting the bucket only if empty.
@@ -246,7 +247,7 @@ pub fn list_by_owner(
 }
 
 /// Records payment without consuming the entitlement or changing live supply.
-pub fn settle_nod(
+pub fn record_settled(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     item: LoadedNodItem,
@@ -262,48 +263,4 @@ pub fn settle_nod(
 pub fn calculation_amount(item: &NodItemState) -> Result<U256> {
     crate::enclave_client::read_amount(&item.encrypted)
         .map_err(crate::errors::map_amount_read_error)
-}
-
-#[cfg(test)]
-mod cost_tests {
-    use super::settlement_cost_minor;
-    use alloy_primitives::U256;
-
-    #[test]
-    fn positive_dust_cost_has_a_one_minor_unit_minimum() {
-        // Actual Rudis AmountMap failures and the smallest positive inputs.
-        for (price, load) in [(19_u64, 25_629_u64), (19, 1_882), (19, 2_529), (1, 1)] {
-            assert_eq!(
-                settlement_cost_minor(U256::from(price), U256::from(load)).unwrap(),
-                U256::from(1)
-            );
-        }
-    }
-
-    #[test]
-    fn non_dust_cost_keeps_floor_rounding() {
-        for (price, load, expected) in [
-            (19_u64, 52_631_u64, 1_u64),
-            (19, 52_632, 1),
-            (19, 105_263, 1),
-            (19, 105_264, 2),
-            (2_000_000, 5_000_000, 10_000_000),
-        ] {
-            assert_eq!(
-                settlement_cost_minor(U256::from(price), U256::from(load)).unwrap(),
-                U256::from(expected)
-            );
-        }
-    }
-
-    #[test]
-    fn minimum_does_not_mask_zero_inputs_or_overflow() {
-        for (price, load) in [(0_u64, 1_u64), (1, 0), (0, 0)] {
-            assert_eq!(
-                settlement_cost_minor(U256::from(price), U256::from(load)).unwrap(),
-                U256::ZERO
-            );
-        }
-        assert!(settlement_cost_minor(U256::MAX, U256::from(2)).is_err());
-    }
 }

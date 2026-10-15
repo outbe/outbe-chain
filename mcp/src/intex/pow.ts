@@ -10,7 +10,7 @@ import { type Address, type Hex, concat, sha256, toBytes, toHex } from "viem";
  *   hash     = SHA256(preimage ++ nonce_be8)
  *   valid    = first `difficulty` bytes of hash are zero
  * `seq` is the per-(series, holder) mine counter. Read it as the count of past
- * PromisMined(series, holder) events. promisMinor = series.promisLoadMinor * units.
+ * IntexExercised(series, holder) events. promisMinor = series.promisLoadMinor * units.
  */
 
 /** The raw preimage bytes, matching the Rust concatenation. */

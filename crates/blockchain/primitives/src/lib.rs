@@ -25,10 +25,12 @@ pub mod hook_events;
 mod journal_writer;
 #[cfg(unix)]
 pub mod local_record;
+pub mod markup;
 pub mod math;
 pub mod nod_encryption;
 pub mod participation;
 pub mod payload;
+pub mod profile;
 pub mod projection;
 pub mod protocol_schedule;
 pub mod reshare_artifact;

@@ -1,48 +1,6 @@
 use super::*;
 
 #[test]
-fn settlement_minimum_precedes_asset_and_currency_conversion() {
-    let price = U256::from(19);
-    let load = U256::from(25_629);
-    for (decimals, rate, expected) in [
-        (6, None, 1_u64),
-        (18, None, 1_000_000_000_000),
-        (6, Some((2, 1)), 2),
-        (18, Some((1, 2)), 500_000_000_000),
-    ] {
-        let rate = rate.map(|(to, from)| (U256::from(to), U256::from(from)));
-        assert_eq!(
-            crate::runtime::settlement_units(price, load, rate, decimals).unwrap(),
-            U256::from(expected)
-        );
-    }
-    // The existing conversion guard still rejects a positive payment that the
-    // asset cannot represent, including after a currency conversion.
-    for (decimals, rate) in [(0, None), (6, Some((U256::ONE, U256::from(2))))] {
-        let error = crate::runtime::settlement_units(price, load, rate, decimals).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            PrecompileError::Revert("settlement cost rounds to zero".into()).to_string()
-        );
-    }
-    // Non-dust obligations retain sub-minor-unit precision in wider assets.
-    assert_eq!(
-        crate::runtime::settlement_units(U256::from(1_500_001), U256::ONE, None, 18).unwrap(),
-        U256::from(1_500_001_000_000_u64)
-    );
-    for (price, load) in [(U256::ZERO, U256::ONE), (U256::ONE, U256::ZERO)] {
-        assert_eq!(
-            crate::runtime::settlement_units(price, load, None, 6).unwrap(),
-            U256::ZERO
-        );
-    }
-    assert!(crate::runtime::settlement_units(U256::MAX, U256::from(2), None, 6).is_err());
-    assert!(
-        crate::runtime::settlement_units(price, load, Some((U256::ONE, U256::ZERO)), 6).is_err()
-    );
-}
-
-#[test]
 fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
     let mut world = World::new();
     let mut input = params(Address::repeat_byte(0x61));
@@ -90,7 +48,7 @@ fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        PrecompileError::from(NodFactoryError::SettlementAmountMismatch).to_string()
+        PrecompileError::from(SettlementError::AmountMismatch).to_string()
     );
     assert!(!is_settled(&mut world, nod_id));
 }

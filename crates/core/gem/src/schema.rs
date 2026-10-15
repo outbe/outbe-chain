@@ -31,6 +31,9 @@ pub struct GemAddParams {
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub issued_at: u64,
+    /// The terms the gem's bucket seals if this gem opens it. `None` leaves the bucket
+    /// out of the call index.
+    pub call_terms: Option<CallTerms>,
 }
 
 /// Runtime view of one canonical gem body. The entry price and the call terms are
@@ -138,7 +141,9 @@ impl GemView {
     pub fn settlement_deadline(&self) -> u64 {
         match self.called_at() {
             0 => 0,
-            called_at => called_at.saturating_add(u64::from(self.terms.call_notice_period_seconds)),
+            called_at => {
+                crate::api::settlement_deadline_of(called_at, self.terms.call_notice_period_seconds)
+            }
         }
     }
 

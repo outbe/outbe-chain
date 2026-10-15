@@ -16,9 +16,9 @@ use alloy_sol_types::SolEvent;
 
 use outbe_credis::config::CredisParams;
 use outbe_credis::{CallBins, Credis, CredisContract, CredisState};
-use outbe_oracle::api::get_all_reference_currencies;
+
 use outbe_oracle::call_sweep::{self, CallSweep, CALL_SWEEP};
-use outbe_oracle::call_window::{CallWindow, CallWindows};
+use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
     addresses::CREDIS_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
@@ -27,11 +27,11 @@ use outbe_primitives::{
     daily_sweep::PinnedDay,
     error::Result,
     storage::{dsl::Value, StorageHandle},
-    sweep_budget::SweepBudget,
     time::first_full_day,
 };
 
 use crate::precompile::ICredisFactory::{CallScanSkipped, SweepDaySkipped};
+use crate::rules;
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
@@ -99,20 +99,18 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
     }
 
     fn slice(&mut self, ctx: &BlockRuntimeContext, pinned_day: u32) -> Result<(u32, bool)> {
-        let currencies = get_all_reference_currencies(ctx)?;
         let live = outbe_credis::config::read(&ctx.storage)?;
-        let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
-        let mut budget = SweepBudget::per_block();
         let mut caller = CredisContract::new(ctx.storage.clone());
         let mut called: u32 = 0;
         let index = &self.credis;
-        let finished = call_bins::walk_currencies(
-            &currencies,
-            &self.credis.call_currency_cursor,
-            &mut budget,
-            |iso_code, budget| {
-                let bins = CallBins(index, iso_code);
-                let skipped = || {
+        let finished = call_sweep::walk_day(
+            ctx,
+            pinned_day,
+            call_sweep::CallIndex {
+                currency_cursor: &index.call_currency_cursor,
+                bins: |iso_code| CallBins(index, iso_code),
+                scan_terms: |iso_code| scan_terms(index, iso_code, &live),
+                skipped: |iso_code| {
                     emit(
                         &ctx.storage,
                         &CallScanSkipped {
@@ -120,36 +118,34 @@ impl<'storage> CallSweep<'storage> for CredisCallSweep<'storage> {
                             utcDay: pinned_day,
                         },
                     )
-                };
-                let Some((window, ceiling)) = call_sweep::currency_ceiling(
-                    &bins,
-                    &mut windows,
-                    || scan_terms(index, iso_code, &live),
-                    skipped,
-                )?
-                else {
-                    return Ok(true);
-                };
-                call_bins::walk(&bins, ceiling, budget, |credis_id, budget| {
-                    call_sweep::call_entry::<Self>(&ctx.storage, budget, credis_id, || {
-                        let record = caller.get_credis(credis_id)?;
-                        let calls = u32::from(call_if_breached(
-                            &mut caller,
-                            window,
-                            &record,
-                            ctx.block.timestamp,
-                        )?);
-                        called += calls;
-                        Ok(calls)
-                    })
-                })
+                },
+            },
+            |iso_code, window, ceiling, budget| {
+                call_bins::walk(
+                    &CallBins(index, iso_code),
+                    ceiling,
+                    budget,
+                    |credis_id, budget| {
+                        call_sweep::call_entry::<Self>(&ctx.storage, budget, credis_id, || {
+                            let record = caller.get_credis(credis_id)?;
+                            let calls = u32::from(call_if_breached(
+                                &mut caller,
+                                window,
+                                &record,
+                                ctx.block.timestamp,
+                            )?);
+                            called += calls;
+                            Ok(calls)
+                        })
+                    },
+                )
             },
         )?;
         Ok((called, finished))
     }
 }
 
-fn emit(storage: &StorageHandle<'_>, event: &impl SolEvent) -> Result<()> {
+pub(crate) fn emit(storage: &StorageHandle<'_>, event: &impl SolEvent) -> Result<()> {
     storage.emit_event(CREDIS_FACTORY_ADDRESS, SolEvent::encode_log_data(event))
 }
 
@@ -167,7 +163,7 @@ fn call_if_breached(
             threshold_seconds: record.call_threshold_seconds,
             start_day: first_full_day(record.issued_at),
         })
-        && credis.mark_called(record.credis_id, now)?)
+        && rules::mark_called(credis, record.credis_id, now)?)
 }
 
 /// The live profile is the terms the next Credis is issued with.

@@ -44,7 +44,7 @@ const GEM_LOAD_MINOR: u128 = 100_003;
 const REFERENCE_BYTE: u8 = b'U';
 /// `GemTypes::Merchant`.
 const MERCHANT_GEM_TYPE: u8 = 5;
-/// `getGemStatus` states: Issued, Qualified, Called, Settled, Forfeited. Qualified and
+/// `getGem` states: Issued, Qualified, Called, Settled, Forfeited. Qualified and
 /// Forfeited are derived on read.
 const ISSUED: u8 = 0;
 const QUALIFIED: u8 = 1;
@@ -248,9 +248,9 @@ fn issue_five_gems(world: &mut World) {
         // behind every day the scenario seeds.
         let backdated = eth::send_call_outcome(
             &url,
-            addresses::GEM_ADDR,
+            addresses::GEM_FACTORY_ADDR,
             DEPLOYER_KEY,
-            &IGemTestArming::backdateGemForTestCall {
+            &IGemFactoryTestArming::backdateGemForTestCall {
                 gemId: gem_id,
                 issuedAt: head_time(world)
                     .saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * 86_400),
@@ -438,7 +438,7 @@ impl Lifecycle for GemLifecycle {
         match eth::read_call(
             &url,
             addresses::GEM_ADDR,
-            &eth::IGem::getGemStatusCall { gemId: id },
+            &eth::IGem::getGemCall { gemId: id },
         ) {
             Some(lapsed) => assert_eq!(
                 lapsed.state, FORFEITED_STATE,
@@ -451,9 +451,9 @@ impl Lifecycle for GemLifecycle {
         }
         let closed = eth::send_call_outcome(
             &url,
-            addresses::GEM_ADDR,
+            addresses::GEM_FACTORY_ADDR,
             DEPLOYER_KEY,
-            &IGemTestArming::closeCallNoticeForTestCall {
+            &IGemFactoryTestArming::closeCallNoticeForTestCall {
                 gemId: id,
                 deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
             },
@@ -475,7 +475,7 @@ impl Lifecycle for GemLifecycle {
             eth::read_call(
                 &url,
                 addresses::GEM_ADDR,
-                &eth::IGem::getGemStatusCall { gemId: id }
+                &eth::IGem::getGemCall { gemId: id }
             )
             .is_none(),
             "a forfeited gem must not be readable"
@@ -616,7 +616,7 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
         addresses::GEM_ADDR,
         from,
         height,
-        eth::IGem::GemExpired {
+        eth::IGem::GemForfeited {
             gemId: gem(world, FORFEITED),
             owner: owner_address(FORFEITED),
             promisLoadMinor: U256::from(GEM_LOAD_MINOR),
@@ -652,7 +652,7 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
 }
 
 alloy_sol_types::sol! {
-    interface IGemTestArming {
+    interface IGemFactoryTestArming {
         function backdateGemForTest(uint256 gemId, uint64 issuedAt) external;
         function closeCallNoticeForTest(uint256 gemId, uint64 deadline) external;
     }
@@ -788,7 +788,7 @@ fn gem_count(url: &str, owner: Address) -> U256 {
 fn read_gem(world: &World, gem_id: U256) -> eth::IGem::GemData {
     read_gem_view(
         &world_url(world),
-        &eth::IGem::getGemStatusCall { gemId: gem_id },
+        &eth::IGem::getGemCall { gemId: gem_id },
         &format!("gem {gem_id} does not read back"),
     )
 }

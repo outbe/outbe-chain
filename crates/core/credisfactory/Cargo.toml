@@ -27,6 +27,13 @@ outbe-gratis = { workspace = true, features = ["test-enclave"] }
 outbe-fidelity = { workspace = true, features = ["test-enclave"] }
 outbe-tee.workspace = true
 outbe-tee-enclave.workspace = true
+outbe-common.workspace = true
+base64.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+# Short notice period and the test hooks, so an e2e run can watch a Credis lapse.
+e2e-test = ["outbe-credis/e2e-test"]

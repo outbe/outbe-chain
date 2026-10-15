@@ -236,6 +236,8 @@ impl World {
                     (U256::ZERO, 0)
                 }
                 Factory::Gem => {
+                    let profile = outbe_gem::config::read(&storage).unwrap();
+                    let entry_price = U256::from(2_000_000);
                     let gem_id = outbe_gem::api::add_gem(
                         &storage,
                         &scope,
@@ -244,11 +246,23 @@ impl World {
                             owner: OWNER,
                             gem_type: outbe_gemfactory::schema::GemTypes::Wallet as u8,
                             promis_load_minor: U256::from(1_500_000),
-                            entry_price_minor: U256::from(2_000_000),
+                            entry_price_minor: entry_price,
                             floor_price_minor: U256::from(2_160_000),
                             issuance_currency,
                             reference_currency: 840,
                             issued_at: TIMESTAMP,
+                            call_terms: Some(outbe_gem::CallTerms {
+                                call_price_minor: outbe_primitives::markup::marked_up(
+                                    entry_price,
+                                    profile.call_rate,
+                                )
+                                .unwrap(),
+                                reference_currency: 840,
+                                call_rate: profile.call_rate,
+                                call_window_seconds: profile.call_window_seconds,
+                                call_threshold_seconds: profile.call_threshold_seconds,
+                                call_notice_period_seconds: profile.call_notice_period_seconds,
+                            }),
                         },
                     )
                     .unwrap();
@@ -485,7 +499,7 @@ impl World {
             Factory::Intex => {
                 let settled: Vec<_> = logs
                     .iter()
-                    .filter_map(|log| IIntexFactory::Settled::decode_log_data(&log.data).ok())
+                    .filter_map(|log| IIntexFactory::IntexSettled::decode_log_data(&log.data).ok())
                     .collect();
                 assert_eq!(settled.len(), 1);
                 assert_eq!(settled[0].owner, OWNER);
@@ -597,7 +611,7 @@ fn a_third_party_pays_and_the_units_stay_with_the_owner() {
             Factory::Gem => {
                 let gem = world.view(
                     GEM_ADDRESS,
-                    IGem::getGemStatusCall {
+                    IGem::getGemCall {
                         gemId: world.gem_id,
                     },
                 );

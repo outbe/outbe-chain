@@ -26,7 +26,7 @@ import {
 } from "./registry.js";
 import { ymdRange } from "./dates.js";
 
-export const PROMIS_MINED_EVENT = getAbiItem({ abi: FACTORY_ABI, name: "PromisMined" }) as AbiEvent;
+export const INTEX_EXERCISED_EVENT = getAbiItem({ abi: FACTORY_ABI, name: "IntexExercised" }) as AbiEvent;
 const TRANSFER_SINGLE_EVENT = getAbiItem({ abi: NFT_ABI, name: "TransferSingle" }) as AbiEvent;
 const TRANSFER_BATCH_EVENT = getAbiItem({ abi: NFT_ABI, name: "TransferBatch" }) as AbiEvent;
 
@@ -44,12 +44,12 @@ export function addr(n: Network, key: keyof IntexAddresses): Address {
   return intexAddress(n, key);
 }
 
-/** Whether the series has qualified. The outbe factory derives it from finalized daily VWAPs. */
+/** Whether the series has qualified. Intex derives it from finalized daily VWAPs. */
 export async function seriesQualified(n: Network, series: Hex): Promise<boolean> {
   return await n.client.readContract({
-    address: addr(n, "factory"),
-    abi: FACTORY_ABI,
-    functionName: "isSeriesQualified",
+    address: addr(n, "intex"),
+    abi: INTEX_ABI,
+    functionName: "isQualified",
     args: [series],
   });
 }
@@ -128,7 +128,7 @@ export async function settlementTokens(n: Network, series: Hex): Promise<`0x${st
   const d = await n.client.readContract({
     address: addr(n, "intex"),
     abi: INTEX_ABI,
-    functionName: "seriesData",
+    functionName: "getIntexSeries",
     args: [series],
   });
   const currencies = [d.referenceCurrency];

@@ -259,9 +259,9 @@ fn with_targets<R>(chains: &[u32], f: impl FnOnce(StorageHandle) -> R) -> R {
     StorageHandle::enter(&mut storage, |handle| {
         // These cases assert the PROD intex terms. An unset profile resolves by
         // chain id, and the test chain is not mainnet.
-        outbe_intexfactory::schema::IntexFactoryContract::new(handle.clone())
+        outbe_intex::IntexContract::new(handle.clone())
             .config_profile
-            .write(outbe_intexfactory::config::PROFILE_PROD)
+            .write(outbe_intex::config::PROFILE_PROD)
             .unwrap();
         // A day is priced when its auction starts, so every day a start can land on
         // needs a price here. A day briefed later reads a later one.
