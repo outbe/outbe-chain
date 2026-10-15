@@ -104,15 +104,12 @@ fn replay_inventory_record(
         &canonical,
     )
     .map_err(|error| stage("commit replay Tribute", error))?;
-    let amounts = body
-        .calculation_view()
-        .map_err(|error| stage("read replay Tribute amounts", error))?;
     Ok(TributeInventoryRecordV1 {
         tribute_id: body.tribute_id,
         commitment,
         owner: body.owner,
         reference_iso: body.reference_currency,
-        nominal_amount_minor: amounts.nominal_amount_minor,
+        nominal_amount_minor: alloy_primitives::U256::ZERO,
         canonical_body: canonical,
     })
 }

@@ -336,24 +336,13 @@ impl ResultFixture<'_> {
             result_chunk_hash: chunk_hash,
             result_chunk_ref: chunk_ref.clone(),
         };
-        let mut summary = fixture_support::root_summary_fixture(
+        let summary = fixture_support::root_summary_fixture(
             plan_hash,
             &chunk,
             &tributes[start..end],
             &entry,
             &limits,
         );
-        if index == 1 {
-            match result_fault {
-                ResultCatalogFault::EligibleTotal => {
-                    summary.eligible_nominal_total -= U256::from(1);
-                }
-                ResultCatalogFault::None
-                | ResultCatalogFault::HeaderCoverage
-                | ResultCatalogFault::NodBoundary
-                | ResultCatalogFault::AlternateResultChunk => {}
-            }
-        }
         let coverage_root = summary.result_chunk_hashes.tree_root;
         let output_coverage_root =
             if result_fault == ResultCatalogFault::HeaderCoverage && index == 1 {

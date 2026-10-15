@@ -146,6 +146,21 @@ impl TributeRecord {
         }
     }
 
+    #[must_use]
+    pub fn public_body_v1(&self) -> outbe_compressed_entities::TributeBodyV1 {
+        outbe_compressed_entities::TributeBodyV1 {
+            tribute_id: self.tribute_id,
+            owner: self.owner,
+            worldwide_day: self.worldwide_day,
+            issuance_amount_minor: U256::ZERO,
+            issuance_currency: self.issuance_currency,
+            nominal_amount_minor: U256::ZERO,
+            reference_currency: self.reference_currency,
+            tribute_price_minor: self.tribute_price_minor,
+            exclude_from_intex_issuance: self.exclude_from_intex_issuance,
+        }
+    }
+
     /// Use only after authenticating the original encrypted canonical body.
     pub fn calculation_view(&self) -> Result<TributeData, outbe_tee::TransportError> {
         let body = match &self.body {

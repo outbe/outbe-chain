@@ -158,6 +158,7 @@ fn dust_cost_matches_between_worker_sequential_lysis_and_nod_settlement() {
     let fractions = finalize_fi_fraction_table(&fidelity.aggregate, budget).unwrap();
     let amount = amount_map(0, &tributes, &fidelity.observations, &fractions).unwrap();
     let limits = poc_schema_limits();
+    assert_eq!(amount.checked_segment_nominal_total, budget);
     let amount = decode_amount_run(&encode_amount_run(&amount, &limits).unwrap(), &limits).unwrap();
     let prefix = finalize_gratis_leaf(
         Some(budget),
@@ -184,7 +185,7 @@ fn dust_cost_matches_between_worker_sequential_lysis_and_nod_settlement() {
     for action in &actions {
         assert_eq!(action.entry_price_minor, entry_price);
     }
-    assert_eq!(amount.checked_segment_nominal_total, budget);
+    assert_eq!(amount.checked_segment_nominal_total, U256::ZERO);
     assert_eq!(
         amount.checked_segment_settlement_cost_total,
         U256::from(u64::try_from(amount.ordered_records.len()).unwrap())
@@ -259,7 +260,11 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     let encoded_amount = encode_amount_run(&amount_right, &limits).unwrap();
     assert_eq!(
         decode_amount_run(&encoded_amount, &limits).unwrap(),
-        amount_right
+        AmountRunV1 {
+            checked_segment_nominal_total: U256::ZERO,
+            checked_segment_eligible_nominal_total: U256::ZERO,
+            ..amount_right.clone()
+        }
     );
     let mut trailing_amount = encoded_amount;
     trailing_amount.push(0);
@@ -315,9 +320,12 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
         total_nominal
     );
     let encoded_finalized = encode_finalized_output_run(&finalized_right, &limits).unwrap();
+    let mut expected_finalized = finalized_right.clone();
+    expected_finalized.checked_tribute_nominal_total = U256::ZERO;
+    expected_finalized.checked_eligible_nominal_total = U256::ZERO;
     assert_eq!(
         decode_finalized_output_run(&encoded_finalized, &limits).unwrap(),
-        finalized_right
+        expected_finalized
     );
     let mut trailing_finalized = encoded_finalized;
     trailing_finalized.push(0);
@@ -480,8 +488,11 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
     assert_eq!(finalized.checked_eligible_nominal_total, U256::ZERO);
     let limits = poc_schema_limits();
     let encoded = encode_finalized_output_run(&finalized, &limits).unwrap();
+    let mut expected_finalized = finalized;
+    expected_finalized.checked_tribute_nominal_total = U256::ZERO;
+    expected_finalized.checked_eligible_nominal_total = U256::ZERO;
     assert_eq!(
         decode_finalized_output_run(&encoded, &limits).unwrap(),
-        finalized
+        expected_finalized
     );
 }

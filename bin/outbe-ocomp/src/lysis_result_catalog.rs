@@ -5,7 +5,7 @@
 //! CAS object. The yielded items and `Complete` are evidence inputs for a future
 //! finalizer. Neither is a result, signature, or finalization capability.
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::B256;
 use outbe_lysis::program_v1::{
     artifacts::LysisArtifactErrorV1,
     planner::{
@@ -179,8 +179,6 @@ pub struct ExactLysisResultCatalogCursorV1<'a> {
     next_admission_ordinal: u32,
     pending: Option<PendingRootReduceLeafV1>,
     admission_catalog: Option<AdmissionDirectoryCursorV1<'a>>,
-    summary_eligible_nominal_total: U256,
-    chunk_eligible_nominal_total: U256,
     previous_nod_tribute_id: Option<B256>,
     observed_result_entries: Option<StreamingOrderedListRoot>,
     reloaded_result_entries: Option<StreamingOrderedListRoot>,
@@ -197,8 +195,6 @@ impl<'a> ExactLysisResultCatalogCursorV1<'a> {
             next_admission_ordinal: 0,
             pending: None,
             admission_catalog: None,
-            summary_eligible_nominal_total: U256::ZERO,
-            chunk_eligible_nominal_total: U256::ZERO,
             previous_nod_tribute_id: None,
             observed_result_entries: Some(StreamingOrderedListRoot::new(
                 ListKind::CompleteOutputManifest,
@@ -231,11 +227,6 @@ impl<'a> ExactLysisResultCatalogCursorV1<'a> {
     ) -> Result<LysisResultCatalogStepV1, LysisResultCatalogError> {
         let chunk_ordinal = self.next_chunk_ordinal;
         if chunk_ordinal >= self.audit.plan().primary_work_unit_count {
-            if self.summary_eligible_nominal_total != self.chunk_eligible_nominal_total {
-                return Err(
-                    ProtocolError::InvalidInvariant("global eligible nominal total").into(),
-                );
-            }
             self.stage = LysisResultCatalogStageV1::AdmissionRecords;
             return self.advance_admission_record();
         }
@@ -321,24 +312,12 @@ impl<'a> ExactLysisResultCatalogCursorV1<'a> {
             );
         }
         self.require_global_order(&chunk)?;
-        let chunk_eligible_nominal_total = require_chunk_summary(
+        require_chunk_summary(
             &chunk,
             &pending.summary,
             entry.chunk_ordinal,
             self.audit.limits(),
         )?;
-        self.summary_eligible_nominal_total = self
-            .summary_eligible_nominal_total
-            .checked_add(pending.summary.eligible_nominal_total)
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "ROOT_REDUCE eligible nominal total",
-            })?;
-        self.chunk_eligible_nominal_total = self
-            .chunk_eligible_nominal_total
-            .checked_add(chunk_eligible_nominal_total)
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "result chunk eligible nominal total",
-            })?;
 
         self.next_chunk_ordinal =
             self.next_chunk_ordinal
@@ -578,7 +557,7 @@ fn require_chunk_summary(
     summary: &RootReduceSummaryV1,
     chunk_ordinal: u32,
     limits: &outbe_ocomp_protocol::SchemaLimits,
-) -> Result<U256, LysisResultCatalogError> {
+) -> Result<(), LysisResultCatalogError> {
     let nod_records = chunk
         .ordered_nod_actions
         .iter()
@@ -595,7 +574,7 @@ fn require_chunk_summary(
             ProtocolError::InvalidInvariant("result chunk ROOT_REDUCE carrier binding").into(),
         );
     }
-    Ok(summary.eligible_nominal_total)
+    Ok(())
 }
 
 #[derive(Debug, Error)]
