@@ -37,6 +37,7 @@ env:
   SOURCE_REF_INPUT: ${{ inputs.source_ref }}
   PREFLIGHT_NAME: outbe-release-preflight-${{ github.run_id }}-${{ github.run_attempt }}
   PREFLIGHT_IMAGE: outbe-release-preflight:${{ inputs.network }}-${{ github.run_id }}-${{ github.run_attempt }}
+  PREFLIGHT_TOOLCHAIN_IMAGE: outbe-release-toolchain:${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
   preflight:
@@ -54,12 +55,22 @@ jobs:
         id: source
         run: |
           set -euo pipefail
-          [[ "${GITHUB_REF}" == "refs/heads/main" ]] || {
-            echo "dispatch the protected preflight workflow from main" >&2
-            exit 2
-          }
           source_sha="$(git rev-parse --verify HEAD^{commit})"
           [[ "${source_sha}" =~ ^[0-9a-f]{40}$ ]]
+          case "${GITHUB_REF}" in
+            refs/heads/main)
+              ;;
+            refs/heads/*)
+              [[ "${source_sha}" == "${GITHUB_SHA}" ]] || {
+                echo "a branch preflight may only validate its own dispatch commit" >&2
+                exit 2
+              }
+              ;;
+            *)
+              echo "dispatch the preflight workflow from main or a source branch" >&2
+              exit 2
+              ;;
+          esac
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           PREFLIGHT_ROOT="${RUNNER_TEMP}/${PREFLIGHT_NAME}"
           CARGO_TARGET_DIR="${PREFLIGHT_ROOT}/cargo-target"
@@ -127,20 +138,44 @@ jobs:
           echo "GENESIS_PATH=${genesis_path}" >> "${GITHUB_ENV}"
 
       - name: Deny warnings in every release-compiled Rust entrypoint
-        env:
-          OUTBE_NATIVE_DCAP: require
-          RUSTFLAGS: -D warnings
         run: |
           set -euo pipefail
-          python3 scripts/release/reproducible_build_inputs.py \
-            --build-spec release/reproducible-elf-build-v1.json \
-            --repo-root . \
-            --execute-artifact-check-plan
-          cargo check --locked --release --package xtask --bin xtask
-          cargo check --locked --release --package outbe-e2e-harness \
-            --features release-sgx-e2e --bin outbe-release-sgx-e2e
-          cargo check --locked --release --package outbe-e2e-harness \
-            --bin outbe-release-dcap-evidence
+          # Native DCAP is a property of the pinned production builder, not of
+          # whichever self-hosted runner happens to accept this job.
+          docker buildx build --load \
+            --platform linux/amd64 \
+            --file Dockerfile.project-toolchain \
+            --target toolchain \
+            --tag "${PREFLIGHT_TOOLCHAIN_IMAGE}" \
+            .
+          mkdir -p \
+            "${PREFLIGHT_ROOT}/warning-cargo-home" \
+            "${PREFLIGHT_ROOT}/warning-target"
+          docker run --rm \
+            --platform linux/amd64 \
+            --user "$(id -u):$(id -g)" \
+            --env CARGO_HOME=/cargo-home \
+            --env CARGO_TARGET_DIR=/target \
+            --env HOME=/cargo-home \
+            --env OUTBE_NATIVE_DCAP=require \
+            --env 'RUSTFLAGS=-D warnings' \
+            --volume "${PWD}:/workspace:ro" \
+            --volume "${PREFLIGHT_ROOT}/warning-cargo-home:/cargo-home" \
+            --volume "${PREFLIGHT_ROOT}/warning-target:/target" \
+            --workdir /workspace \
+            "${PREFLIGHT_TOOLCHAIN_IMAGE}" \
+            bash -c '
+              set -euo pipefail
+              python3 scripts/release/reproducible_build_inputs.py \
+                --build-spec release/reproducible-elf-build-v1.json \
+                --repo-root . \
+                --execute-artifact-check-plan
+              cargo check --locked --release --package xtask --bin xtask
+              cargo check --locked --release --package outbe-e2e-harness \
+                --features release-sgx-e2e --bin outbe-release-sgx-e2e
+              cargo check --locked --release --package outbe-e2e-harness \
+                --bin outbe-release-dcap-evidence
+            '
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
       - name: Build the exact production ELF matrix twice without cache
@@ -251,6 +286,9 @@ jobs:
         run: |
           if [[ -n "${PREFLIGHT_IMAGE:-}" ]]; then
             docker image rm --force "${PREFLIGHT_IMAGE}" >/dev/null 2>&1 || true
+          fi
+          if [[ -n "${PREFLIGHT_TOOLCHAIN_IMAGE:-}" ]]; then
+            docker image rm --force "${PREFLIGHT_TOOLCHAIN_IMAGE}" >/dev/null 2>&1 || true
           fi
           root="${PREFLIGHT_ROOT:-${RUNNER_TEMP}/${PREFLIGHT_NAME}}"
           rm -rf "${root}"
