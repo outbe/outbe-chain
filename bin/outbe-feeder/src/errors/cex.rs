@@ -8,7 +8,7 @@ use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 #[derive(Debug, Error)]
 pub(crate) enum CexError {
     /// An exchange market quote uses a numeric ISO 4217 code instead of an exchange symbol.
-    #[error("exchange '{exchange}' market quote '{quote}' is an ISO code; write the exchange's market, such as USDT, USDC or USD")]
+    #[error("exchange '{exchange}' market quote '{quote}' is an ISO code. Use the exchange's own quote, such as USDT, USDC or USD")]
     IsoMarketQuote {
         /// The exchange name.
         exchange: String,

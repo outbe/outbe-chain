@@ -115,11 +115,51 @@ pub async fn fetch_and_aggregate(
     // into exactly one wire tuple for the configured Oracle pair.
     let mut results = Vec::new();
     for pair_config in &config.currency_pairs {
-        if let Some(price) = aggregate_pair(pair_config, config, &all_tickers, &all_candles)? {
-            results.push(price);
-        }
+        let Some((price, volume)) = pair_value(pair_config, config, &all_tickers, &all_candles)?
+        else {
+            continue;
+        };
+        let (base, quote) = pair_config.oracle_pair()?;
+        let Some((price, volume)) =
+            finalize_pair_value(is_coen_iso_pair(base, quote), price, volume)
+        else {
+            continue;
+        };
+        tracing::debug!(pair = %format!("{}/{}", pair_config.base, pair_config.quote), "aggregated Oracle pair");
+        results.push(AggregatedPrice {
+            base,
+            quote,
+            price,
+            volume,
+        });
     }
     Ok(results)
+}
+
+/// FP18 price and volume of one pair. A cross pair divides its direct
+/// `<base>/<cross>` leg by the currency rate its markets give. Nothing trades
+/// at that price, so its volume is zero.
+fn pair_value(
+    pair_config: &CurrencyPairConfig,
+    config: &FeederConfig,
+    all_tickers: &ProviderTickers,
+    all_candles: &ProviderCandles,
+) -> Result<Option<(U256, U256)>> {
+    let Some((price, volume)) = aggregate_sources(pair_config, config, all_tickers, all_candles)?
+    else {
+        return Ok(None);
+    };
+    let Some(leg) = config.cross_leg(pair_config) else {
+        return Ok(Some((price, volume)));
+    };
+    let Some((leg_price, _)) = aggregate_sources(leg, config, all_tickers, all_candles)? else {
+        return Ok(None);
+    };
+    let cross_price = narrow_u512(
+        U512::from(leg_price) * U512::from(SCALE_1E18) / U512::from(price),
+        "cross price",
+    )?;
+    Ok(Some((cross_price, U256::ZERO)))
 }
 
 /// Asks every provider for the tickers and candles of the markets configured
@@ -182,18 +222,15 @@ async fn fetch_market_data(
     (all_tickers, all_candles)
 }
 
-/// One Oracle pair: filter its source observations, weight them by volume
-/// and convert to the pair's wire scale. `None` when nothing usable remains.
-fn aggregate_pair(
+/// One pair's markets: filter their observations by deviation and weight
+/// them by volume. FP18 price and volume, `None` when nothing usable remains.
+fn aggregate_sources(
     pair_config: &CurrencyPairConfig,
     config: &FeederConfig,
     all_tickers: &ProviderTickers,
     all_candles: &ProviderCandles,
-) -> Result<Option<AggregatedPrice>> {
-    let key = format!("{}/{}", pair_config.base, pair_config.quote);
-    let threshold = config.deviation_for(&pair_config.base);
-    let (base, quote) = pair_config.oracle_pair()?;
-    let is_coen_iso = is_coen_iso_pair(base, quote);
+) -> Result<Option<(U256, U256)>> {
+    let threshold = config.deviation_for(pair_config.market_base());
     let mut observations = Vec::new();
     for source in &pair_config.sources {
         if let Some(observation) = source_observation(source, all_tickers, all_candles)? {
@@ -207,21 +244,7 @@ fn aggregate_pair(
     if filtered.is_empty() {
         return Ok(None);
     }
-    let Some((vwap, total_volume)) = compute_weighted(&filtered)?
-        .and_then(|(price, volume)| finalize_pair_value(is_coen_iso, price, volume))
-    else {
-        return Ok(None);
-    };
-    if vwap.is_zero() {
-        return Ok(None);
-    }
-    tracing::debug!(pair = %key, sources = filtered.len(), "aggregated Oracle pair");
-    Ok(Some(AggregatedPrice {
-        base,
-        quote,
-        price: vwap,
-        volume: total_volume,
-    }))
+    Ok(compute_weighted(&filtered)?.filter(|(price, _)| !price.is_zero()))
 }
 
 fn source_observation(
@@ -371,6 +394,7 @@ mod tests {
         let config = test_config(vec![CurrencyPairConfig {
             base: "COEN".into(),
             quote: quote.into(),
+            cross: None,
             sources: vec![source("coen_ticker", "COEN", quote)],
         }]);
         fetch_and_aggregate(&providers, &config).await.unwrap()
@@ -457,6 +481,7 @@ mod tests {
         let config = test_config(vec![CurrencyPairConfig {
             base: ETH_TOKEN.into(),
             quote: "840".into(),
+            cross: None,
             sources: vec![source("mock", "ETH", "840")],
         }]);
 
@@ -516,6 +541,7 @@ mod tests {
         let config = test_config(vec![CurrencyPairConfig {
             base: ETH_TOKEN.into(),
             quote: "840".into(),
+            cross: None,
             sources: vec![source("ticker_only", "ETH", "840")],
         }]);
 
@@ -571,6 +597,7 @@ mod tests {
         let config = test_config(vec![CurrencyPairConfig {
             base: "COEN".into(),
             quote: "840".into(),
+            cross: None,
             sources: vec![
                 source("binance", "COEN", "USDT"),
                 source("binance", "COEN", "USDC"),
@@ -611,6 +638,7 @@ mod tests {
         let config = test_config(vec![CurrencyPairConfig {
             base: "COEN".into(),
             quote: "840".into(),
+            cross: None,
             sources: vec![
                 source("binance", "COEN", "USDT"),
                 source("binance", "COEN", "USDC"),
@@ -678,11 +706,13 @@ mod tests {
             CurrencyPairConfig {
                 base: "COEN".into(),
                 quote: "840".into(),
+                cross: None,
                 sources: vec![source("provider_a", "COEN", "840")],
             },
             CurrencyPairConfig {
                 base: ETH_TOKEN.into(),
                 quote: "840".into(),
+                cross: None,
                 sources: vec![source("provider_b", "ETH", "840")],
             },
         ]);
@@ -704,6 +734,56 @@ mod tests {
         );
         assert_eq!(eth.price, U256::from(2_500u64) * SCALE_1E18);
         assert_eq!(eth.volume, U256::from(1_000u64) * SCALE_1E18);
+    }
+
+    #[tokio::test]
+    async fn cross_pair_divides_the_coen_leg_by_the_currency_rate() {
+        let ticker = |price: &str, volume: &str| TickerPrice {
+            price: fp(price),
+            volume: fp(volume),
+        };
+        let providers: Vec<Box<dyn Provider>> = vec![
+            Box::new(MarketDataProvider {
+                name: "exchange",
+                tickers: HashMap::from([("COEN/840".to_owned(), ticker("2.5", "1000"))]),
+                candles: HashMap::new(),
+            }),
+            Box::new(MarketDataProvider {
+                name: "fx",
+                tickers: HashMap::from([("978/840".to_owned(), ticker("1.25", "0"))]),
+                candles: HashMap::new(),
+            }),
+        ];
+        let config = test_config(vec![
+            CurrencyPairConfig {
+                base: "COEN".into(),
+                quote: "840".into(),
+                cross: None,
+                sources: vec![source("exchange", "COEN", "840")],
+            },
+            CurrencyPairConfig {
+                base: "COEN".into(),
+                quote: "978".into(),
+                cross: Some("840".into()),
+                sources: vec![source("fx", "978", "840")],
+            },
+        ]);
+
+        let results = fetch_and_aggregate(&providers, &config).await.unwrap();
+        assert_eq!(results.len(), 2);
+        let eur: Address = outbe_primitives::asset_type::AssetType::IsoCurrency(978).into();
+        let coen_eur = results.iter().find(|p| p.quote == eur).unwrap();
+        // 2.5 dollars per COEN / 1.25 dollars per euro = 2 euros per COEN.
+        assert_eq!(
+            coen_eur.price,
+            U256::from(2u64) * U256::from(COEN_ISO_SCALE)
+        );
+        assert_eq!(coen_eur.volume, U256::ZERO);
+
+        // No currency rate: the cross pair drops, the leg still votes.
+        let results = fetch_and_aggregate(&providers[..1], &config).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_ne!(results[0].quote, eur);
     }
 
     #[tokio::test]

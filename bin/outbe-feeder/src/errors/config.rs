@@ -5,41 +5,62 @@ use thiserror::Error;
 /// Errors that occur when the feeder resolves or validates its configuration.
 #[derive(Debug, Error)]
 pub(crate) enum ConfigError {
-    /// A provider market references a currency pair that does not exist.
-    #[error("provider {provider} names unknown pair {named}")]
-    UnknownNamedPair {
+    /// The top-level `pairs` key is not a string.
+    #[error("`pairs` must be a file path")]
+    PairsPathNotString,
+    /// A top-level key appears in both the main config and the pairs file.
+    #[error("`{key}` is set in both {main} and {pairs}")]
+    SectionInBothFiles {
+        /// The duplicated top-level key.
+        key: String,
+        /// The main config path.
+        main: String,
+        /// The pairs file path.
+        pairs: String,
+    },
+    /// A cross pair does not have a COEN or token base, an ISO quote and an ISO cross.
+    #[error("cross pair {base}/{quote} with cross '{cross}' needs a COEN or token base, an ISO quote and an ISO cross")]
+    InvalidCrossPair {
+        /// The base asset symbol.
+        base: String,
+        /// The quote asset symbol.
+        quote: String,
+        /// The cross currency.
+        cross: String,
+    },
+    /// A cross pair has no direct `<base>/<cross>` pair to divide.
+    #[error("cross pair {base}/{quote} needs a direct {base}/{cross} pair")]
+    MissingCrossLeg {
+        /// The base asset symbol.
+        base: String,
+        /// The quote asset symbol.
+        quote: String,
+        /// The cross currency.
+        cross: String,
+    },
+    /// An exchange or a DEX pool feeds a currency rate.
+    #[error("provider '{provider}' cannot feed {base}/{quote}: exchanges and DEX pools are not for cross-currency rates")]
+    CurrencyRateFromMarket {
         /// The provider name.
         provider: String,
-        /// The pair name from the market entry.
-        named: String,
+        /// The pair base symbol.
+        base: String,
+        /// The pair quote symbol.
+        quote: String,
     },
-    /// A provider market quote does not map to any Oracle quote currency.
-    #[error("provider {provider} market quote '{quote}' names no Oracle pair")]
-    MarketQuoteNamesNoPair {
+    /// A market is priced in another currency than its pair.
+    #[error(
+        "provider '{provider}' market quote '{quote}' does not price pair {base}/{pair_quote}"
+    )]
+    MarketQuoteMismatch {
         /// The provider name.
         provider: String,
         /// The market quote symbol.
         quote: String,
-    },
-    /// No currency pair uses the Oracle quote that the provider market maps to.
-    #[error("provider {provider} market {quote} needs a currency pair quoted in {oracle_quote}")]
-    MissingPairForQuote {
-        /// The provider name.
-        provider: String,
-        /// The market quote symbol.
-        quote: String,
-        /// The resolved Oracle quote symbol.
-        oracle_quote: String,
-    },
-    /// Multiple currency pairs share the same Oracle quote without an explicit pair name.
-    #[error("several pairs are quoted in {oracle_quote}: give provider {provider} market {quote} a pair")]
-    AmbiguousPairForQuote {
-        /// The resolved Oracle quote symbol.
-        oracle_quote: String,
-        /// The provider name.
-        provider: String,
-        /// The market quote symbol.
-        quote: String,
+        /// The pair base symbol.
+        base: String,
+        /// The pair quote symbol.
+        pair_quote: String,
     },
     /// The configured `oracle.vote_period` is zero.
     #[error("oracle.vote_period must be > 0, got 0 (would cause division by zero)")]
@@ -116,7 +137,7 @@ pub(crate) enum ConfigError {
     /// Two `api_providers` entries share the same name.
     #[error("duplicate api provider '{0}'")]
     DuplicateApiProvider(String),
-    /// A provider other than `redstone` sets `api_key`.
+    /// A provider other than `redstone` or `pyth` sets `api_key`.
     #[error("provider '{0}' takes no api_key")]
     UnexpectedApiKey(String),
     /// A non-streaming provider sets a WebSocket endpoint override.

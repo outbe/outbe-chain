@@ -129,12 +129,6 @@ pub(crate) enum OnchainFeedError {
 /// Errors that occur in the `redstone` provider.
 #[derive(Debug, Error)]
 pub(crate) enum RedstoneError {
-    /// The `redstone` provider configuration has an empty `api_key`.
-    #[error("api provider redstone needs an api_key")]
-    MissingApiKey,
-    /// The `redstone` source has no matching entry in `[[api_providers]]`.
-    #[error("provider redstone requires a [[api_providers]] entry")]
-    MissingApiProviderEntry,
     /// The gateway returned an empty package list for the feed.
     #[error("no packages")]
     NoPackages,
@@ -161,4 +155,22 @@ pub(crate) enum RedstoneError {
     /// The gateway response map does not contain the requested feed ID.
     #[error("feed missing from response")]
     FeedMissingFromResponse,
+}
+
+/// Errors that occur in the `pyth` provider.
+#[derive(Debug, Error)]
+pub(crate) enum PythError {
+    /// The `pyth` provider configuration has no `api_key`.
+    #[error("api provider pyth needs an api_key")]
+    MissingApiKey,
+    /// Hermes returned a non-success status code.
+    #[error("pyth {path} returned status {status}: {body}")]
+    Status {
+        /// The request path without the query.
+        path: String,
+        /// The HTTP status code.
+        status: StatusCode,
+        /// The first 200 characters of the response body.
+        body: String,
+    },
 }

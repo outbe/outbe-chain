@@ -1,0 +1,8 @@
+[[currency_pairs]]
+base = "COEN"
+quote = "840"
+markets = [{ provider = "mock_http", quote = "840" }]
+
+[[deviation_thresholds]]
+base = "COEN"
+threshold = "2.0"

@@ -72,8 +72,11 @@ from pathlib import Path
 
 template, output, private_key, validator, rpc_url, chain_id, health_bind, price_rest = sys.argv[1:]
 text = Path(template).read_text()
+# The runtime copy lives elsewhere: point `pairs` at the template's file.
+pairs = Path(template).resolve().parent / "pairs.toml"
 
 replacements = {
+    r'(?m)^pairs = ".*"$': f'pairs = "{pairs}"',
     r'(?m)^rpc_endpoint = ".*"$': f'rpc_endpoint = "{rpc_url}"',
     r'(?m)^chain_id = \d+$': f'chain_id = {chain_id}',
     r'(?m)^private_key = ".*"$': f'private_key = "{private_key}"',
