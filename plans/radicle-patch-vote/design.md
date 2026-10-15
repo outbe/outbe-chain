@@ -2,7 +2,7 @@
 
 Статус: candidate для трёх независимых P0 reviews. Реализация P1–P8 ещё отсутствует.
 База исследования: `42d08693a06a7fdc088cf452b582c2d18596ed9a`.
-Source anchors S01–S40/C01–C06 разрешаются в `evidence/outbe-chain-pjz.1/source-audit.json`:
+Source anchors S01–S45/C01–C06 разрешаются в `evidence/outbe-chain-pjz.1/source-audit.json`:
 там exact paths, строки и SHA-256. `investigation.md` сохраняет первоначальные вопросы;
 решения ниже заменяют его открытые варианты, но не объявляют production реализацию.
 
@@ -254,7 +254,7 @@ Objects включают ровно созданные blobs/trees/commits nativ
 Key sorting recursive canonical serializer; array ordering выше; duplicate JSON keys,
 invalid refname, repeated OID/name/ordinal и size limit нарушают canonical format.
 
-Body принимается в chain **по одной bounded identity attestation за раз**. Verified
+Body принимается в chain **bounded batch до 32 identity attestations за block**. Verified
 distinct current MinPk signatures учитываются по `(repo, epoch, material_version,
 material_hash, sequence, body_hash)`; один participant не аттестует два body одной
 sequence **в одной current material generation**. Ровно q действительных участников
@@ -264,15 +264,24 @@ sequence **в одной current material generation**. Ровно q дейст�
 Неуспешная/stale попытка не потребляет approval и не меняет refs.
 
 Carrier — новый opt-in record tag `0x09` в `OutbeBlockArtifacts` (OART V0x0C для
-включённой feature), **наряду с** existing consensus/DKG record, максимум одна attestation
-за block. Tag 0x04 навсегда retired и не используется. Сохраняется общий 64 KiB budget,
+включённой feature), **наряду с** existing consensus/DKG record, максимум один batch
+за block. Payload = OPB1 body[477] || count:u8 (1..32) || count entries,
+entry = participant_index:u32be || MinPk signature[96]. Indices строго возрастают;
+duplicates, count0/>32, trailing/short input запрещены. Body один для всех entries.
+Максимум payload 3678 bytes, framed record 3681 bytes. Все signatures/freshness/CAS
+проверяются **до** state effects; bad last entry откатывает весь batch. После записи
+entries tally/receipt выполняются один раз, включая случай q достигнут внутри batch.
+Это batch individual current-identity endorsements, не aggregate native owner signature.
+Tag 0x04 навсегда retired и не используется. Сохраняется общий 64 KiB budget,
 reservations CE root/late-finalize и реальные codec/size-budget checks. Если attestation
 не помещается, она остаётся в mailbox; DKG/mandatory artifacts не выкидываются. Для
-стабильного committee конечный DKG заканчивается, после чего эти slots доступны.
+стабильного committee требуется publication window ниже; одно лишь окончание DKG
+не доказывает progress до следующей смены material.
 Fair bounded очередь обрабатывает уже Approved jobs; bootstrap имеет приоритет.
 V0x0B/legacy режим сохраняется при выключенной feature.
 Это не требует operator EVM owner key или fee-wallet для automatic bootstrap. Любой
-proposer берёт уже подписанные frames из bounded nonblocking mailbox; он не собирает
+proposer берёт до 32 уже подписанных frames одного body из bounded nonblocking mailbox;
+при меньшем свободном budget берёт максимально помещающийся prefix. Он не собирает
 threshold, не ждёт sidecar и не выполняет Git I/O. Absence поля всегда допустимо.
 DKG и Radicle не заменяют один и тот же enum slot: это два независимых optional record.
 Begin-zone Radicle application идёт после committee boundary activation и Vote hooks,
@@ -294,9 +303,9 @@ Receipt hash = SHA256(`OPB1` || exact fixed PublicationBody bytes). Attestation 
 те же bytes, включая magic. Group key compressed bytes и players commitment — часть
 body, поэтому нельзя подменить material при неизменном manifest.
 
-Boundedness: n не больше существующего consensus bound 256. Одна attestation содержит
-fixed body, index и одну MinPk signature; проверка constant crypto + bounded state read.
-Нет q pairing loop внутри одного block/precompile call. Pending state — фиксированные
+Boundedness: n не больше существующего consensus bound 256. В одном block максимум
+32 MinPk verifications независимо от n/q, один body/freshness check и bounded state reads.
+Нет q-sized verification loop; protocol batch cap32 фиксирован. Pending state — фиксированные
 slots по participant index (максимум 256), каждый содержит epoch/material generation/
 sequence/body hash. Смена material аннулирует pending slots даже внутри одного epoch;
 новая generation может использовать незавершённую sequence заново.
@@ -347,8 +356,45 @@ receipt hash остаётся precondition chain execution, а не требов
   всех закреплённых author objects и q shares/attestations; неподтверждённый candidate
   не меняет metadata/parents job. Contention approvals сериализуются по §6.
 - Требуется eventual stable committee и доставка q attestations для liveness. При
-  постоянной churn/partition repo может ждать; consensus после bootstrap продолжает
-  работу. Чудесной гарантии progress без q online участников нет.
+  periodic resharing одного стабильного состава material всё равно меняется; правило
+  следующего раздела учитывает это явно. При churn/partition или отсутствии pinned
+  objects repo может ждать; consensus после bootstrap продолжает работу.
+
+### Publication window и periodic reshare
+
+Для feature-enabled genesis/startup проверяется **effective** DKG cadence:
+`epochLengthBlocks - min(dkgPrepareWindowBlocks, epochLengthBlocks) >= 64`.
+Unsupported short windows отклоняются до запуска managed bootstrap; feature-disabled
+chains сохраняют existing допустимые timings. Если эти параметры когда-либо получают
+runtime update API, тот же guard обязателен перед принятием update. Current source
+`DkgRotationParams::freeze_height` начинает новую ceremony в конце этого gap; обычный
+same-membership reshare НЕ отключается и current epoch/material checks НЕ ослабляются.
+
+Первые 64 blocks после activation образуют окно до следующего DKG freeze. После
+activation block (который может иметь большой boundary artifact) в нём нет новых
+dealer-log/preannounce artifacts следующей ceremony. Small mandatory summary/timestamp/
+late-finalize(K=3)/CE root сохраняются; full32 batch требует менее4KiB. P3 должен доказать
+это actual codec/assembly test, включая max other mandatory artifacts, а не менять
+64KiB cap или выбрасывать mandatory data. Вне окна batch может использовать любой
+оставшийся budget. Honest proposer выбирает ready head-of-queue prefix максимально
+до32; threshold/attestation collection остаётся в sidecars.
+
+При n256/q171 каждый checkpoint требует ceil(171/32)=6 доступных batch slots, а
+BindMaterial→Review→Merge —18 вместо513. FIFO продолжает старейший approval после
+binding; если Review уже finalized в прошлой generation, продолжается Merge, не второй
+Review. Bootstrap одновременно binds initial material. Incomplete current-generation
+jobs отменяются/переподготавливаются как прежде; old pending slots не переносятся.
+
+Условие progress теперь точное: eventual stable membership, q responsive sidecars с
+доступными pinned objects, timely preparation/finality/delivery и fair honest inclusion,
+позволяющие получить необходимые18 slots с последовательно ready jobs в64-block window.
+Это capacity guarantee при stated readiness, не обещание progress при произвольной
+задержке fetch или вечно занятом channel. schedule_check.py проверяет recurrent same-set
+material transitions, max n, default/short accepted cadences, bounded delays/omitted
+blocks и rejection неподдерживаемых timings. P3/P6/P8 обязаны подтвердить readiness и
+assembly assumptions production scenarios; NOT RUN/неподтверждённый budget оставляет
+соответствующий этап открытым. Window miss сохраняет approval и явный WaitingForWindow;
+он не задерживает epoch/consensus и не продлевает права старых участников.
 
 ## 5. Genesis / initial identity / RID
 

@@ -4,14 +4,15 @@ Task: `outbe-chain-pjz.1`. Source base: `42d08693a`; предыдущий invest
 `c965901802e735f402ba3e5e438baa66cdf9f90a`.
 Первый candidate 2fa7187 получил три FAIL; отчёты в reviews/R1.md–R3.md сохранены.
 Round2 получил два PASS и один FAIL по descriptor preimage; оба PASS аннулированы,
-review children переоткрыты. Round3 exact SHA/spec/artifact hashes — `review-candidate-r3.json`.
+review children переоткрыты. Round3 оставил cadence blocker: два PASS снова аннулированы.
+Round4 exact SHA/spec/artifact hashes — `review-candidate-r4.json`.
 Ни один P0 review PASS здесь заранее не объявлен. P1–P8 не реализованы.
 
 ## Acceptance matrix
 
 | AC | Source и решение | Проверяемое evidence |
 | --- | --- | --- |
-| AC1 | design.md §§1–7: выбран native BLS + external finalized publication policy; static key, exact current membership, authenticated material, genesis и lifecycle определены | source-audit.json: S01–S40/C01–C06; decision model; source-backed ограничения и assumptions прямо указаны |
+| AC1 | design.md §§1–7: выбран native BLS + external finalized publication policy; static key, exact current membership, authenticated material, genesis и lifecycle определены | source-audit.json: S01–S45/C01–C06; decision model; source-backed ограничения и assumptions прямо указаны |
 | AC2 | design.md §2: отдельно identity blob OID, COB tree OID и canonical refs bytes; RDB1 framing/meta/policy context; §6 dependency order без self-reference | S05–S10/S16/S28; primitive namespace/subject negative checks. native.rs + verify_vectors.py и design-check.log дают все три exact RDB1/OPJ1/native Git object/wire/envelope vectors; production parser ещё задача P2 |
 | AC3 | design.md §§3–5: existing canonical DKG material + узкий fixed-domain signer; q current identity endorsements для initial material/descriptor→RID, CAS binding, no operator owner key | S05/S19–S24/S26/S33, C01–C06; настоящие 3-of-4 primitive vectors; отдельная схема bootstrap/material checkpoints. Anonymous fixture не называется distributed DKG |
 | AC4 | design.md §4: raw old-key signature не даёт новое canonical write; обязательный current quorum + immutable chain checkpoint; history и Promote различаются | design-check.log, publication.rs: actual MinPk signatures и reduced state model для retired identity/epoch race/t-1/duplicate/tamper/exact history. Production fetch gate не объявляется существующим |
@@ -26,6 +27,7 @@ python3 plans/radicle-patch-vote/p0-check/audit_sources.py
 CARGO_TARGET_DIR=/private/tmp/outbe-radicle-p0-target cargo run --offline --locked --quiet --manifest-path plans/radicle-patch-vote/p0-check/Cargo.toml
 python3 plans/radicle-patch-vote/p0-check/verify_vectors.py
 python3 plans/radicle-patch-vote/p0-check/descriptor_check.py
+python3 plans/radicle-patch-vote/p0-check/schedule_check.py
 rustfmt --edition 2021 --check plans/radicle-patch-vote/p0-check/src/main.rs plans/radicle-patch-vote/p0-check/src/publication.rs plans/radicle-patch-vote/p0-check/src/native.rs
 bd --readonly dep cycles --json
 ```
@@ -34,7 +36,7 @@ Standalone Cargo.lock закрепляет dependency resolution. Commonware sou
 же, что в root Cargo.lock; target directory находится вне основного checkout. Private
 shares и secret keys не выводятся. Вывод — public keys/signature и PASS выбранных checks.
 
-`audit_sources.py` по умолчанию read-only: сверяет 46 anchors/141 candidate hashes;
+`audit_sources.py` по умолчанию read-only: сверяет 51 anchors/141 candidate hashes;
 явный --write только регенерирует inventory. Это не source-string regression test поведения.
 `publication.rs` — reduced executable **проектная модель** с настоящими identity signatures,
 не будущий handler/finality verifier. Она не проверяет omitted fields полного PublicationBody,
@@ -51,7 +53,7 @@ gas, pipeline wiring или реальную finality. Эти проверки �
 | Дубликаты участников | Один slot/index на sequence; q только distinct | Primitive recover и модель duplicate/t-1 |
 | RPC/peer объявляет свой group key/current set | Trust root — own validating node state и current identity quorum, не self-signature | Source contract; production test P3/P4/P6 |
 | Collector умер после threshold или partial publication | Durable package до checkpoint; replay exact committed package; CAS/quarantine | Design §6; реальные crash tests обязательны P6/P7 |
-| Максимальная committee/budget | ≤256, одна identity verification/block, fixed attestation и bounded slots, общий 64KiB artifact limit | Static source S29–S31; реальные gas/size tests обязательны P3 |
+| Максимальная committee/budget | ≤256, до32 identity verifications/block, fixed attestation и bounded slots, общий 64KiB artifact limit | Static source S29–S31; реальные gas/size tests обязательны P3 |
 
 Существенные assumptions: unforgeability BLS/MinPk и используемых hashes, корректная
 local finality, не более f Byzantine current participants. Это не обещание безопасности
@@ -95,3 +97,17 @@ hash появляется после seeding; subsequent OPB1 связывает
 `descriptor_check.py` + `descriptor-check.log` дают fixed OGD1 bytes/hash и full 477-byte
 OPB1 framing fixture для двух разных later genesis hashes. Fixture не вызывает production
 genesis builder, DKG или publication verifier; реальные проверки остаются P4/P8.
+
+Round3 R3-R3-F1: one-attestation carrier заменён на fixed batch≤32, payload3678/framed3681
+bytes, с atomic all-entry validation и одним tally. Feature-enabled effective cadence
+требует epochLengthBlocks-min(prepare,epochLengthBlocks)≥64. Так первая до-freeze часть
+generation имеет capacity для q171 checkpoints: Bind/Review/Merge требуют18 slots.
+Гарантия progress явно условна на readiness/finality/delivery и fair inclusion; модель
+не выдаёт arbitrary-delay guarantee. Unsupported timings отклоняются только при новой
+feature. Mandatory artifacts/64KiB и current generation checks сохраняются. Это новый
+обязательный P3/P4/P6/P8 контракт; tests map включает actual max-budget coexistence,
+32-signature gas/work, periodic reshares и short-window rejection.
+`p0-check/schedule_check.py`/`schedule-check.log`: count/window model с five periodic
+materials, n256, default300/30,300/200 и shortest65/1, explicit delays/omissions. Это
+не production DKG timing/codec/gas/finality execution. S41–S45 привязывают решение к
+actual periodic lifecycle и genesis timing inputs.

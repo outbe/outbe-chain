@@ -1,5 +1,5 @@
 {
-  "base_sha": "6c04f9ce7f0ee2ec41dfed1b52483e8e5cdbd770",
+  "base_sha": "af5f083c823325693697f790eb17a13ee3a65259",
   "commonware_revision": "d476a2361ce6840d2b9d0aa6fb30a924429046d4",
   "anchors": [
     {
@@ -417,6 +417,53 @@
         100
       ],
       "sha256": "7322db87f4483065aa0044368e91bb8ac05264f578f5c4c725d2add9b8025491"
+    },
+    {
+      "id": "S41",
+      "path": "crates/blockchain/engine/src/stack/dkg/handoff.rs",
+      "anchor": "fn freeze_height",
+      "lines": [
+        34
+      ],
+      "sha256": "8707df7f750adc988ec072f6b1e7d9768d5019392372b3a7c62445f9ba61f3d2"
+    },
+    {
+      "id": "S42",
+      "path": "crates/blockchain/engine/src/stack/epoch/ceremony/freeze.rs",
+      "anchor": "let is_validator_set_change =",
+      "lines": [
+        48,
+        146
+      ],
+      "sha256": "a27c777f7cd357c51aec9a8329f2da67804d761fd6a27dc938ce90ca22d59a72"
+    },
+    {
+      "id": "S43",
+      "path": "crates/blockchain/engine/src/stack/dkg/persistence.rs",
+      "anchor": "let next_epoch = next_consensus_epoch_after_dkg_activation",
+      "lines": [
+        259,
+        290
+      ],
+      "sha256": "05af68c61742ded7d9803be6087db8063aee353556e2fefc9347ca8433cab9fc"
+    },
+    {
+      "id": "S44",
+      "path": "crates/blockchain/engine/src/stack/epoch/activation.rs",
+      "anchor": "invariant:",
+      "lines": [
+        117
+      ],
+      "sha256": "5e2ffafeb7aa0c1135c103f85f3467b7fee910d308c9b6e250c8aea9597f83d3"
+    },
+    {
+      "id": "S45",
+      "path": "scripts/genesis_stages.py",
+      "anchor": "\"dkgPrepareWindowBlocks\": int(",
+      "lines": [
+        72
+      ],
+      "sha256": "547cf84fa944d1f58bd41e005666601d250234a20019afb81a0013a8187fb58b"
     }
   ],
   "coupling_inventory_note": "Search candidates, not a claim every file must change. Transport stays Ed25519; classify before edits.",

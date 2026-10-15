@@ -17,14 +17,16 @@
       "crates/blockchain/consensus/src/{hybrid.rs,hybrid/vrf_material.rs,dkg_manager.rs}; crates/blockchain/engine/src/stack/dkg/ (исследование)",
       "crates/system/vote/src/{runtime.rs,state.rs,handlers.rs}; crates/system/radicleregistry/src/; scripts/genesis_seed_alloc.py; crates/blockchain/radicle/src/manager/snapshot.rs (исследование)",
       "plans/radicle-patch-vote/p0-check/{src/main.rs,src/publication.rs,src/native.rs,vectors/,audit_sources.py,verify_vectors.py}; plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/ (finite design proofs, not production source)",
-      "plans/radicle-patch-vote/p0-check/descriptor_check.py и plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/descriptor-check.log (OGD1/OPB1 finite framing proof)"
+      "plans/radicle-patch-vote/p0-check/descriptor_check.py и plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/descriptor-check.log (OGD1/OPB1 finite framing proof)",
+      "plans/radicle-patch-vote/p0-check/schedule_check.py и plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/schedule-check.log; engine stack DKG/epoch cadence sources (design evidence)"
     ],
     "tests": [
       "Проверка каждого design claim по live source с path:line и существующими тестами; таблица всех blockers с выбранным решением и обоснованием.",
       "Минимальный executable crypto/serialization self-check только если источник/документация не закрывают конкретную осуществимость; результат не является production implementation.",
       "Threat scenarios для old shares, wrong epoch/domain/network, race committee transition и self-asserted group key; доказать, какое правило их отклоняет.",
       "Native byte vectors: actual Git doc blob/COB tree/commit OIDs; all three RDB1 messages and Commonware framing, OPJ1 contexts, 269-byte envelope/header/key wire roundtrip, metadata/cross-kind/length/tamper negatives. Reduced convergence model: different valid q-subsets, staggered 2+2 delivery and different local finalized tips yield one checkpoint without all n.",
-      "Cycle-free DescriptorV1 exact OGD1 bytes/hash: only known pre-genesis inputs (chain_id/timestamp/name/branch/description/tree/content/policy/key-source), excludes genesis_hash/RID/group key/self hash. Roundtrip/negative vector plus later full OPB1 chain/genesis/RID/key binding; no production genesis/DKG claim."
+      "Cycle-free DescriptorV1 exact OGD1 bytes/hash: only known pre-genesis inputs (chain_id/timestamp/name/branch/description/tree/content/policy/key-source), excludes genesis_hash/RID/group key/self hash. Roundtrip/negative vector plus later full OPB1 chain/genesis/RID/key binding; no production genesis/DKG claim.",
+      "Periodic same-membership reshare capacity at n256/q171: batch≤32 gives6 slots/checkpoint and18 for BindMaterial/Review/Merge. Effective epochLengthBlocks-min(dkgPrepareWindowBlocks,epochLengthBlocks)≥64; test default300/30,300/200, shortest65/1 and unsupported short windows. Readiness/delivery/budget assumptions explicit; not a production timing claim."
     ],
     "ac": [
       "На все перечисленные design blockers есть конкретное реализуемое решение и source evidence; нет TBD, отложенного решения или скрытой смены требований.",
@@ -121,14 +123,16 @@
       "Согласовать transitions finalized membership/DKG promotion и authority rotation: old material не разрешает новые действия; исторические объекты продолжают проверяться.",
       "На admission, signing, recovery и перед публикацией повторно проверять freshness. При смене набора снять незавершённые jobs и подготовить их заново под новой authority без подмены patch approval.",
       "Generic Heartwood проверяет BLS/identity; Vote/finality policy и authenticated material provisioning остаются в Outbe. Несовпадающие current-set/material snapshots fail closed.",
-      "Реализовать narrow fixed-domain repository signer поверх authenticated existing DKG material с доказанной namespace isolation; secret share не экспортировать. Current identity attestation/checkpoint — дополнительный publication guard, не замена native threshold signatures. Добавить ancillary Radicle artifact, bounded по одной attestation за block и совместимый с DKG/root/late-finalize budget."
+      "Реализовать narrow fixed-domain repository signer поверх authenticated existing DKG material с доказанной namespace isolation; secret share не экспортировать. Current identity attestation/checkpoint — дополнительный publication guard, не замена native threshold signatures. Добавить ancillary Radicle artifact, bounded batch до32 current identity attestations одного body за block и совместимый с DKG/root/late-finalize budget.",
+      "Carrier tag09/V0x0C: one body[477]+count:u8(1..32)+sorted(index:u32be,MinPk sig96), maximum3678 payload/3681 framed bytes. Verify all entries/current context before atomic state effects, one tally even if q crossed within batch; cap32 independent of n, no q-sized per-block verification. Preserve64KiB/root/late-finalize/DKG rules."
     ],
     "files": [
       "crates/blockchain/radicle/src/integration/ (новый signing/authority module по P0); crates/blockchain/radicle/src/manager/{types.rs,snapshot.rs}",
       "crates/blockchain/consensus/src/{hybrid.rs,hybrid/vrf_material.rs,dkg_manager.rs,committee_provider.rs}; crates/blockchain/engine/src/stack/dkg/ (только доказанно нужный interface)",
       "bin/outbe-chain/src/launch/node/radicle.rs; crates/system/radicle/src/; vendor/heartwood/crates/radicle/src/identity/ (wiring rotation по P0)",
       "crates/blockchain/radicle/tests/; crates/blockchain/engine/src/stack/tests/ и crypto vectors",
-      "crates/blockchain/primitives/src/reshare_artifact.rs и codec modules; crates/blockchain/node/src/payload_builder/ и artifact size budget; crates/blockchain/primitives/src/system_tx/{kind.rs,input.rs,layout.rs,phase.rs,binding.rs,gas.rs,tests/}; crates/blockchain/evm/src/{config/system_txs.rs,begin_block_precompile/,executor/}; crates/system/radicleregistry/src/ (checkpoint schema/runtime append-only)"
+      "crates/blockchain/primitives/src/reshare_artifact.rs и codec modules; crates/blockchain/node/src/payload_builder/ и artifact size budget; crates/blockchain/primitives/src/system_tx/{kind.rs,input.rs,layout.rs,phase.rs,binding.rs,gas.rs,tests/}; crates/blockchain/evm/src/{config/system_txs.rs,begin_block_precompile/,executor/}; crates/system/radicleregistry/src/ (checkpoint schema/runtime append-only)",
+      "crates/blockchain/engine/src/stack/dkg/handoff.rs; crates/blockchain/engine/src/stack/epoch/{ceremony/freeze.rs,activation.rs}; typed startup validation/errors for feature-enabled effective publication window"
     ],
     "tests": [
       "Реальные 4 participant threshold fixtures: достаточный t и разные subsets дают одну валидную signature; t-1, bad partial, wrong index, duplicate и outsider не дают результата.",
@@ -136,7 +140,8 @@
       "Committee сменяется до sign, между partials и перед publish; старые shares и смешанные generations отвергаются на production verification path, а историческая valid signature читается.",
       "Signer key access не экспортирует secret; consensus/VRF regression если затронуты shared material interfaces.",
       "Проверить namespace/VRF isolation, current DKG mapping, guarded receipt authorization и maximum n=256 per-block crypto/state budget; old group signature без current checkpoint отвергается receiver policy.",
-      "Ancillary carrier V0x0C activation/begin layout/phase/binding/gas tests in primitives/src/system_tx/tests plus EVM wiring; tag4 retired, mandatory artifacts preserved. One-slot attestations converge for deterministic body with separate verified witnesses and pinned job anchor; wrong body cannot consume honest slot."
+      "Ancillary carrier V0x0C activation/begin layout/phase/binding/gas tests in primitives/src/system_tx/tests plus EVM wiring; tag4 retired, mandatory artifacts preserved. One-slot attestations converge for deterministic body with separate verified witnesses and pinned job anchor; wrong body cannot consume honest slot.",
+      "Max32 all-valid/last-invalid/duplicate/out-of-range/truncated/trailing batch and q crossed mid-batch: actual state atomicity. n256 same-set periodic material resets and first64 pre-freeze blocks: max mandatory non-DKG artifacts + full32 batch fit existing64KiB with actual codec/assembly; bounded32-signature gas/work measured. No consensus waiting for sidecar; unsupported cadence rejected before startup when feature enabled."
     ],
     "ac": [
       "Membership, индекс, threshold и group public key получены из одного аутентифицированного finalized context, не из peer-supplied claims.",
@@ -159,14 +164,16 @@
       "Если RID появляется после genesis, закрепить его через предусмотренный P0 проверяемый chain transition/registration с проверкой descriptor/material; не менять chain state из sidecar и не доверять первому произвольному register.",
       "Обеспечить restart/replay, join нового узла и обнаружение несовпадающих descriptor/RID/authority. Текущий repository manager видит repo штатно.",
       "Bootstrap descriptor -> canonical BLS doc -> RID после initial DKG -> current quorum checkpoint -> registry managed binding. Резервировать capacity; ранняя ordinary регистрация того же RID не даёт полномочий и не блокирует authenticated bootstrap; до binding repo не входит в pre-consensus availability barrier.",
-      "Implement exact OGD1 DescriptorV1 preimage from design.md §5. Seeded descriptor/hash excludes future genesis_hash/RID/DKG group key; after actual genesis hashing and DKG, authenticated OPB1 binds full genesis identity + descriptor + key + RID without rewriting descriptor."
+      "Implement exact OGD1 DescriptorV1 preimage from design.md §5. Seeded descriptor/hash excludes future genesis_hash/RID/DKG group key; after actual genesis hashing and DKG, authenticated OPB1 binds full genesis identity + descriptor + key + RID without rewriting descriptor.",
+      "Feature-enabled genesis validates effective epochLengthBlocks-min(dkgPrepareWindowBlocks,epochLengthBlocks)≥64 for pre-freeze publication capacity; feature-disabled existing valid short cadences remain unchanged. No implicit disabling periodic resharing."
     ],
     "files": [
       "scripts/{seed_genesis.py,genesis_inputs.py,genesis_network.py,genesis_seed_codec.py,genesis_seed_system.py,genesis_seed_alloc.py}; scripts/{test_create_genesis.py,test_seed_genesis_protocol_constants.py} и новые descriptor fixture tests",
       "crates/system/radicleregistry/src/{schema.rs,runtime.rs,precompile.rs,tests.rs}; при необходимости новый descriptor/bootstrap module и ABI по P0",
       "crates/blockchain/radicle/src/{manager/snapshot.rs,integration/}; crates/system/radicle/src/; bin/outbe-chain/src/launch/node/radicle.rs",
       "crates/blockchain/evm/tests/genesis.rs; crates/blockchain/evm/src/executor/tests/boundary/genesis_validation.rs; testing/e2e-harness/src/world/localnet/radicle.rs; Cargo/ABI fixtures при изменении schema",
-      "crates/system/radicleregistry/src/{schema.rs,runtime.rs}; genesis seeding и node bootstrap wiring"
+      "crates/system/radicleregistry/src/{schema.rs,runtime.rs}; genesis seeding и node bootstrap wiring",
+      "scripts/genesis_stages.py and effective DKG timing/genesis descriptor validation fixtures (actual epochLengthBlocks/dkgPrepareWindowBlocks inputs)"
     ],
     "tests": [
       "Два независимых bootstrap на одинаковом genesis/DKG дают одинаковые RID, identity и initial head без rad init.",
@@ -174,7 +181,8 @@
       "DKG ещё не готов, mismatch genesis/descriptor/content/group key/RID и посторонняя регистрация отвергаются или остаются в явном ожидающем состоянии.",
       "Genesis seeding tests, registry storage-layout/replay tests и existing ordinary repo registration compatibility.",
       "Проверить empty genesis/DKG startup без циклической зависимости на доступность ещё не созданного repo; раннюю ordinary регистрацию; capacity reserve; identical two-node RID и replay.",
-      "Use fixed OGD1 vector from P0; compare pre-genesis descriptor hash with seeded storage. Same chain_id/descriptor with different actual genesis_hash cannot replay OPJ1/OPB1 bootstrap; changed DKG key/RID requires current quorum binding. No self-referential genesis/hash input."
+      "Use fixed OGD1 vector from P0; compare pre-genesis descriptor hash with seeded storage. Same chain_id/descriptor with different actual genesis_hash cannot replay OPJ1/OPB1 bootstrap; changed DKG key/RID requires current quorum binding. No self-referential genesis/hash input.",
+      "Enabled/disabled descriptor cadence boundaries64/63 gap, default300/30,300/200 and min65/1; script and node startup use identical effective values. Actual bootstrap fits supported first window with current material and preserved mandatory artifacts."
     ],
     "ac": [
       "Полный автоматический production bootstrap с initial DKG доказан, без вручную подготовленного operator signing key.",
@@ -237,7 +245,8 @@
       "Любой collector может собрать один результат; duplicate/out-of-order/replayed frames не увеличивают threshold. Отделить job identity от content-addressed signing bytes; повторная подготовка после restart детерминирована.",
       "При membership/material change прекратить старый job; проверить fresh authority и approval перед publish. Консенсус после bootstrap продолжает работу при отказе collector.",
       "Собирать реальные native BLS partials, затем manifest с contribution proofs и current identity attestations. Публиковать только после finalized checkpoint; generic fetch/local gate получает authenticated ticket от validating node по защищённому local interface.",
-      "Manifest commits deterministic native objects/envelopes and owner refs, excludes interchangeable DKG/partial witness bundles. q witnesses are still fully validated. Anchor is job-derived, not local tip; COB tips/resource/related/metadata derive only from pinned revision + accepted receipts, never latest local graph. Two honest collectors reconstruct identical body independent of q-subset/local author updates."
+      "Manifest commits deterministic native objects/envelopes and owner refs, excludes interchangeable DKG/partial witness bundles. q witnesses are still fully validated. Anchor is job-derived, not local tip; COB tips/resource/related/metadata derive only from pinned revision + accepted receipts, never latest local graph. Two honest collectors reconstruct identical body independent of q-subset/local author updates.",
+      "Batch up to32 ready attestations of the same body from bounded mailbox, greatest fitting prefix; FIFO resumes oldest approval after per-generation BindMaterial and resumes Merge if Review already checkpointed. Window misses retain approval/WaitingForWindow, reprepare only unsealed old-generation jobs; no epoch extension or stale-key permission."
     ],
     "files": [
       "crates/system/radicle/src/ (новые collector, journal и publication modules; lib.rs wiring); crates/system/radicle/tests/",
@@ -252,7 +261,8 @@
       "Crash/restart до и после journal write/recover/Review publish/sigrefs publish; duplicate delivery; bounded queues и malicious sender flood.",
       "Committee changes на receive/recover/publish, collector offline, proposer offline, threshold-1 и задержки; chain finality не ожидает collector.",
       "Проверить пустой receiver, raw old owner forgery, altered package, stale context, race до/после checkpoint, изоляцию policy cache и отказ при missing/untrusted ticket.",
-      "Two collectors with different valid subsets 012/123, staggered 2+2 deliveries, different finality tips and extra unapproved author tips converge to identical native bytes/body/checkpoint with q online (not all n). Invalid witness rejected despite unchanged manifest; author pre-Vote admission plus owner-entry laundering negative via each fetch/cache/direct path."
+      "Two collectors with different valid subsets 012/123, staggered 2+2 deliveries, different finality tips and extra unapproved author tips converge to identical native bytes/body/checkpoint with q online (not all n). Invalid witness rejected despite unchanged manifest; author pre-Vote admission plus owner-entry laundering negative via each fetch/cache/direct path.",
+      "Real two collectors across periodic unchanged-membership material transitions, current batch32 and first64 pre-freeze capacity; q-ready jobs fit timely window without n participants. Budget pressure/deferred prefix, missed-window restart/resume, old slots rejected, consensus unaffected by sidecar outage."
     ],
     "ac": [
       "Review появляется только из finalized Approved точной revision, подписан native BLS authority и проверяется независимым узлом.",
@@ -326,7 +336,8 @@
       "cargo fmt --all -- --check; affected workspace build/clippy/tests и Heartwood standalone suites в требуемой pinned среде; full relevant CI jobs должны реально завершиться.",
       "Независимо проверить evidence chain и отсутствие незавершённых требований на одном финальном SHA; три task reviews проверяют P8, отдельные feature reviews запускаются после закрытия P0–P8 и не являются prerequisite закрытия P8.",
       "Реальный current-set transition + late historical exact replay + fresh receiver rejecting uncheckpointed old-key object; доказать consensus liveness без sidecar и без ожидания collector в proposer.",
-      "Real pre-Vote Ed25519 author patch replication and receiver lookup, owner-entry laundering rejection, two collectors with different valid q-subsets and latest tips, stable committee progress without fourth validator; V0x0C carrier/begin-zone activation and bounded budget evidence."
+      "Real pre-Vote Ed25519 author patch replication and receiver lookup, owner-entry laundering rejection, two collectors with different valid q-subsets and latest tips, stable committee progress without fourth validator; V0x0C carrier/begin-zone activation and bounded budget evidence.",
+      "Cadence E2E: repeated unchanged-membership reshares with BindMaterial→Review→Merge, actual supported short/default windows, maxcommittee codec/gas evidence from P3, real q-sidecar readiness/finality/delivery within tested window. Runbook states exact liveness assumptions and WaitingForWindow; no arbitrary-delay guarantee or waiving unsupported epoch configs."
     ],
     "ac": [
       "End-to-end scenario реализован и выполнен без ручного rad init, operator owner secret или fake BLS verification.",

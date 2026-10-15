@@ -58,6 +58,11 @@ anchors=[
 ('S38','vendor/heartwood/crates/radicle-protocol/src/wire/frame.rs','pub const PROTOCOL_VERSION_STRING'),
 ('S39','vendor/heartwood/crates/radicle/src/node/features.rs','pub const SEED'),
 ('S40','vendor/heartwood/crates/radicle-cob/src/object/collaboration/update.rs','tips: object.history.tips()'),
+('S41','crates/blockchain/engine/src/stack/dkg/handoff.rs','fn freeze_height'),
+('S42','crates/blockchain/engine/src/stack/epoch/ceremony/freeze.rs','let is_validator_set_change ='),
+('S43','crates/blockchain/engine/src/stack/dkg/persistence.rs','let next_epoch = next_consensus_epoch_after_dkg_activation'),
+('S44','crates/blockchain/engine/src/stack/epoch/activation.rs','invariant:'),
+('S45','scripts/genesis_stages.py','"dkgPrepareWindowBlocks": int('),
 ]
 rows=[]
 for key,path,needle in anchors:

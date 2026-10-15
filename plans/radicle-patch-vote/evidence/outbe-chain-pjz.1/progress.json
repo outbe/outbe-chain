@@ -1,32 +1,33 @@
 {
   "task_id": "outbe-chain-pjz.1",
-  "status": "candidate_round3_awaiting_independent_reviews",
+  "status": "candidate_round4_awaiting_independent_reviews",
   "source_base": "42d08693a06a7fdc088cf452b582c2d18596ed9a",
-  "timestamp_utc": "2026-10-15T10:21:43.747477+00:00",
-  "previous_candidate": "6a18b42844755b835b416275f83a0ab30bf07a84",
+  "timestamp_utc": "2026-10-15T10:42:32.870923+00:00",
+  "previous_candidate": "65e2a7429f9b3c18ac7aa870629e0b16caedc483",
   "previous_review_verdicts": {
     "R1": "PASS superseded",
     "R2": "PASS superseded",
-    "R3": "FAIL cycle-free descriptor preimage"
+    "R3": "FAIL periodic material capacity"
   },
   "independent_reviews": {
-    "R1": "pending round3",
-    "R2": "pending round3",
-    "R3": "pending round3"
+    "R1": "pending round4",
+    "R2": "pending round4",
+    "R3": "pending round4"
   },
   "production_implementation": "not_started",
   "claimed_ac_coverage": "README.md acceptance/correction matrix; design.md selected contract",
-  "spec_hash": "2e9b5f035a3170736b9a312833e8e56d0fff54580431d7e710fdddb2293e8bfa",
+  "spec_hash": "a0e36f17d4d4f8410f8e6c67668bab71857306569df154b8237b49bf6b172232",
   "spec_hash_algorithm": "SHA256(Beads parent description UTF-8 bytes), no added newline/title/JSON",
   "artifacts": {
-    "design.md": "11892110b7d4f88d1f32f0f2f7562a703107d62d9360c51d697500ffdbc16b4f",
-    "task-specs.json": "587fc62d0091abd1104f0d3d7126c81efb09caea195d071ce5232df5083823f4",
-    "evidence/outbe-chain-pjz.1/README.md": "6b55be009f25bf4e2cde30dd26b103e2b7cc38e1a4fe81fbc153c39ff71ab2a9",
-    "evidence/outbe-chain-pjz.1/source-audit.json": "6346b28056916996887ede2a9604733ce282a3bf91372b20455eb1a8658145f7",
+    "design.md": "cb9e375ded4782bae2af80a5ddf72ed85b21bfec4e60f424868196639d71676c",
+    "task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+    "evidence/outbe-chain-pjz.1/README.md": "1ac7bb685d27f3024602c53ca83e1297a4c3a5fcd6857e9035ce371de32fec58",
+    "evidence/outbe-chain-pjz.1/source-audit.json": "e520b3c2c62a01141ae99fd9dd874256fbb84cd96ed6732bfdcce3d4134acd97",
     "evidence/outbe-chain-pjz.1/design-check.log": "493fa160f280d0662f4bf6cdc6fbb18834d23ab40d860930d2a5c28d78dd044b",
     "evidence/outbe-chain-pjz.1/descriptor-check.log": "7868d0e940c62a46ffad8bacdb33edafe65d6357819d50aa43dfbf0947a0ce0b",
-    "evidence/outbe-chain-pjz.1/check-environment.json": "8be47f8996d8de8743606347d72f5eadc142c911fd0f5922a099375b737367ab"
+    "evidence/outbe-chain-pjz.1/schedule-check.log": "66a22e6c06664edf7e936bbb18bcf3dd92f98acc273cf579162fbf0f7954e069",
+    "evidence/outbe-chain-pjz.1/check-environment.json": "ace188dbd09b3ed95f0b3a8f357c98773b175f0cdc5fbf202b2363c4dde9b356"
   },
   "commands": "check-environment.json; beads-lint.log; dependency-cycles.json",
-  "scope": "real BLS primitive + finite native/descriptor vectors + reduced publication/convergence design model; not production P1–P8"
+  "scope": "real BLS primitive + finite native/descriptor vectors + reduced publication/convergence/capacity models; not production P1–P8"
 }
