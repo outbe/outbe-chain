@@ -37,14 +37,14 @@ Feature: Off-chain computation and Metadosis
     Then three matching validator domains atomically apply Lysis and create the Nod
     And every validator independently verifies the V1 Nod commitment encoding
     And the one-league Nod fields and root match the public input arithmetic on every validator
-    And Lysis and OCOMP use the independently frozen previous-day entry price
+    And Lysis and OCOMP use the independent previous-day entry price
     And the keyless FullNode verifies the same finalized Nod body through its local proof path
     And all four OCOMP domains run their node-facing production roles
     And each OCOMP domain retains isolated deterministic worker artifacts for that JobIntent
     And all four OCOMP domains use the production basedir contract
     And the fresh OCOMP domains retain their authenticated workers across the time changes
     When the feeder publishes a Nod qualification quote before the next UTC day
-    Then the original Nod entry-price snapshot survives Oracle updates and restart
+    Then the original Nod entry price survives Oracle updates and restart
     When a fresh post-activation Tribute completes through the V2 worker lane
     Then the released V1 authority retires after its retention deadline
     When the completed full-result vote is retried and then mutated through public RPC
@@ -52,7 +52,7 @@ Feature: Off-chain computation and Metadosis
     When validator 0 SnapshotExporter restarts with its committed export intact
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed generation and exact vote replay remain identical
-    And the original Nod entry-price snapshot survives Oracle updates and restart
+    And the original Nod entry price survives Oracle updates and restart
     When a late follower replays the finalized OCOMP request and quorum blocks
     Then runtime traces prove proposal import and historical replay without on-chain calculation
     And the public Tribute owner settles its Nod and redeems its exact Gratis into COEN

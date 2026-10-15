@@ -9059,7 +9059,6 @@ dependencies = [
  "outbe-compressed-entities",
  "outbe-nod",
  "outbe-ocomp-protocol",
- "outbe-oracle",
  "outbe-primitives",
  "serde",
  "serde_json",
