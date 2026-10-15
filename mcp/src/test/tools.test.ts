@@ -254,6 +254,11 @@ const SCENARIOS: Case[] = [
     chain.reply("destinationOrderStatus", stringToHex("FILLED", { size: 32 }));
   }],
   ["gratis_pledge", { reservation_id: "1" }],
+  ["gem_position_issue", { series: SERIES, units: "2" }],
+  ["gem_issue", { position_id: "3", owner: OTHER, promis_load: "1000000" }],
+  ["gem_settle", { gem_id: "3", asset: OTHER }],
+  ["gem_promis_mine", { gem_id: "3" }],
+  ["gem_positions_by_owner", { owner: OTHER }],
 ];
 
 /** Replaces both randomness sources the offer encryption draws from with a counter. */

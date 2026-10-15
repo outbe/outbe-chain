@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { type Address, type Hex, type TransactionReceipt, getAddress, parseEventLogs, zeroAddress } from "viem";
+import { type Address, type Hex, getAddress, zeroAddress } from "viem";
 import { z } from "zod";
 import { type Ctx, parseNativeAmount, readView } from "../../chain.js";
 import { type Authorization, withAuthorization } from "../../confidential/authorize.js";
@@ -9,24 +9,10 @@ import { ensureAllowance } from "../../net/erc20.js";
 import { contextNetwork } from "../../net/resolver.js";
 import { requireAccount } from "../../net/tx.js";
 import { resolveContract } from "../../registry.js";
-import { HEX32, address, coenAmount, waitFlag } from "../schemas.js";
+import { HEX32, address, coenAmount, rawAmount, waitFlag } from "../schemas.js";
 import { handler } from "../util.js";
+import { eventArgs } from "./events.js";
 import { submit } from "./submit.js";
-
-const rawAmount = z
-  .string()
-  .regex(/^(0|[1-9][0-9]*)$/)
-  .refine((value) => BigInt(value) < 1n << 256n, "amount exceeds uint256")
-  .describe("Amount in raw token units");
-
-/** The first `event` emitted by `contract` in `receipt`, or undefined. */
-function eventArgs(receipt: TransactionReceipt, contract: string, event: string): Record<string, unknown> | undefined {
-  const entry = resolveContract(contract);
-  const [log] = parseEventLogs({ abi: entry.abi, logs: receipt.logs, eventName: event }).filter(
-    (l) => l.address.toLowerCase() === entry.address.toLowerCase(),
-  );
-  return log?.args as Record<string, unknown> | undefined;
-}
 
 /** The native COEN stake `issueCredis` requires: the reserved Gratis collateral, one for one by value. */
 async function issueStake(ctx: Ctx, reservationId: bigint): Promise<bigint> {

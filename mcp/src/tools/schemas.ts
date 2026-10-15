@@ -9,6 +9,12 @@ export const networkName = z
 
 export const waitFlag = z.boolean().optional().describe("wait for the receipt (default true)");
 
+export const rawAmount = z
+  .string()
+  .regex(/^(0|[1-9][0-9]*)$/)
+  .refine((value) => BigInt(value) < 1n << 256n, "amount exceeds uint256")
+  .describe("Amount in raw token units");
+
 export const coenAmount = z.string().describe('amount in whole COEN, e.g. "100" or "1.5"');
 
 /** `0x`-hex of exactly 32 bytes - the enclave parses these fields as fixed-width. */
