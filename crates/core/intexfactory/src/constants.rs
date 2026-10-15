@@ -2,21 +2,8 @@
 //! the caps and timings of the cross-chain sends. The series terms live in Intex.
 
 use alloy_primitives::U256;
-#[cfg(feature = "e2e-test")]
-use alloy_primitives::{address, Address};
-use outbe_primitives::time::SECONDS_PER_DAY;
 
 pub use outbe_primitives::addresses::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS};
-
-/// A proceeds e2e credits proceeds without deploying the router, so a throwaway
-/// build also accepts Hardhat account #0 as their source.
-#[cfg(feature = "e2e-test")]
-pub const PROCEEDS_TEST_SENDER: Address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-
-/// Proceeds fan-in window. A ready pot burns once every winning chain has
-/// routed its proceeds, or this long after issuance, whichever comes first.
-/// A full day absorbs legitimate escrow-finalize retries.
-pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = SECONDS_PER_DAY;
 
 /// Router calls a Called notice gets before it is dropped.
 pub const MAX_CALLED_NOTICE_ATTEMPTS: u8 = 12;

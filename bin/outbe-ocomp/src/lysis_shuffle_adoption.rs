@@ -140,8 +140,7 @@ fn matches_shuffle_root_binding(
     let matches_job = root.protocol_bundle_hash == spec.protocol_bundle_hash
         && root.job_id == spec.job_id
         && root.attempt == spec.attempt;
-    let matches_unit = root.unit_id == artifact.unit_id
-        && root.kind == outbe_ocomp_protocol::shuffle::ShuffleRunKindV1::Bucket;
+    let matches_unit = root.unit_id == artifact.unit_id;
     let matches_coverage = root.source_coverage_root == header.source_coverage_root
         && root.source_coverage_count == header.source_coverage_count
         && root.ordered_record_root == header.output_coverage_root

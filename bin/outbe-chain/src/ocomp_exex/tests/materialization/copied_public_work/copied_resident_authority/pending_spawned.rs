@@ -326,7 +326,6 @@ fn assert_no_submission_files(public: &Path) {
     }
     for relative in [
         "supervisor-v1/materialization-submissions",
-        "supervisor-v1/payout-submissions",
         "supervisor-v1/vote-submissions",
     ] {
         walk(&public.join(relative));

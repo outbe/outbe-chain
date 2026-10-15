@@ -208,7 +208,7 @@ impl MetadosisMutationFrameState {
                 crate::errors::CtxStorageError::MetadosisMutationPurposeNotEntitled {
                     purpose,
                     binding,
-                    remaining: self.entitlements,
+                    remaining: Box::new(self.entitlements),
                 }
                 .into(),
             );

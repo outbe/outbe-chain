@@ -1,26 +1,6 @@
 //! frames obligations for the offline OCOMP audit.
 use super::*;
 
-/// Native SeriesId::worldwide_day is intentionally permissive. Validate its
-/// stored spelling and date before using it to discover canonical obligations.
-pub(crate) fn verify_series_day(id: SeriesId) -> eyre::Result<WorldwideDay> {
-    let bytes = id.as_bytes();
-    require(
-        bytes[..8].iter().all(u8::is_ascii_digit) && bytes[8] == b'-' && bytes[12] == b'-',
-        SnapshotOcompError::NoncanonicalSeriesIdentity,
-    )?;
-    let day = id.worldwide_day();
-    require(
-        day.value() != 0 && day.is_valid(),
-        SnapshotOcompError::InvalidSeriesWorldwideDay,
-    )?;
-    let issuance = [bytes[9], bytes[10], bytes[11]];
-    require(
-        SeriesId::pack(day, issuance, bytes[13])? == id,
-        SnapshotOcompError::NoncanonicalSeriesCodes,
-    )?;
-    Ok(day)
-}
 #[derive(Debug, Default)]
 pub(crate) struct FrameAvailability {
     pub blocks: u64,

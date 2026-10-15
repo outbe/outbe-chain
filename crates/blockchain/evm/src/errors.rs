@@ -790,7 +790,7 @@ pub enum CtxStorageError {
     MetadosisMutationPurposeNotEntitled {
         purpose: MetadosisMutationPurposeTag,
         binding: B256,
-        remaining: MetadosisMutationEntitlements,
+        remaining: Box<MetadosisMutationEntitlements>,
     },
     #[error("Metadosis mutation frame is not active")]
     MetadosisMutationFrameNotActive,

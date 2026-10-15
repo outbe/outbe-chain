@@ -218,7 +218,7 @@ impl VerifiedPlanSchedule<'_> {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 self.planner
-                    .shuffle_unit_at(phase, phase_ordinal, &exact, self.limits)
+                    .shuffle_unit_at(phase_ordinal, &exact, self.limits)
                     .map_err(Into::into)
             }
             UnitPhase::RootReduce => self

@@ -319,7 +319,6 @@ fn add_portability_records(fixture: &StoppedFixture) -> Vec<String> {
         ocomp.join("supervisor-v1/sign-once/signed"),
         ocomp.join("supervisor-v1/vote-submissions/signed"),
         ocomp.join("supervisor-v1/materialization-submissions/signed"),
-        ocomp.join("supervisor-v1/payout-submissions/signed"),
     ] {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, b"donor authority must not transfer").unwrap();
@@ -392,7 +391,6 @@ fn provision_recipient(roots: &RecipientRoots) -> BTreeMap<PathBuf, (Vec<u8>, u3
         roots
             .ocomp
             .join("supervisor-v1/materialization-submissions/signed"),
-        roots.ocomp.join("supervisor-v1/payout-submissions/signed"),
         roots.ocomp.join("node-v1/fatal-evidence/sticky-fatal-v1"),
     ] {
         fs::create_dir_all(path.parent().unwrap()).unwrap();

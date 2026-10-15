@@ -5,7 +5,7 @@ use alloy_sol_types::{SolCall, SolEvent};
 
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
-use outbe_primitives::error::{Result, SweepFailure};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 
@@ -14,7 +14,7 @@ use outbe_vaultrouter::settlement;
 
 use crate::constants::{
     INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
-    ORIGIN_ROUTER_ADDRESS, PROCEEDS_FANIN_TIMEOUT_SECS, SETTLED_TAG,
+    ORIGIN_ROUTER_ADDRESS, SETTLED_TAG,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -26,7 +26,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
     storage.emit_event(INTEX_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// Record the series identity and call-price bin, then arm the day's proceeds fan-in.
+/// Record the series identity and call-price bin.
 /// Return issuance legs for the caller to broadcast through `send_issuance`.
 /// The broadcast creates IntexNFT1155 series on each target chain, including the origin.
 pub fn issue_intex(
@@ -34,8 +34,6 @@ pub fn issue_intex(
     params: IssuanceParams,
 ) -> Result<Vec<IssuanceLeg>> {
     if params.issued_units == 0 {
-        // Whether the day distributes is the caller's decision: one empty group
-        // must not touch the state its siblings armed.
         return Ok(Vec::new());
     }
 
@@ -108,19 +106,6 @@ pub fn issue_intex(
         params.series_id,
         params.reference_currency,
         call_price_minor,
-    )?;
-
-    // Arm the day's proceeds fan-in. A ready pot burns once every winning chain
-    // has routed its proceeds, or once the deadline passes.
-    let deadline = storage
-        .timestamp()?
-        .to::<u64>()
-        .saturating_add(PROCEEDS_FANIN_TIMEOUT_SECS);
-    outbe_intex::api::arm_proceeds(
-        storage,
-        params.worldwide_day,
-        &params.recipient_chains,
-        deadline,
     )?;
 
     emit_event(
@@ -431,4 +416,3 @@ pub use pricing::quote_settlement;
 #[cfg(test)]
 pub(crate) use pricing::settlement_units;
 pub use proceeds::distribute;
-pub(crate) use proceeds::sweep_proceeds_deadlines;

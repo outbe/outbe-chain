@@ -1,5 +1,5 @@
-//! Hooks only a throwaway e2e build answers. A proceeds scenario runs no auction, so it
-//! seeds the day VWAPs, issues its series and arms the fan-in straight. The forfeit sweep
+//! Hooks only a throwaway e2e build answers. A scenario that runs no auction seeds the
+//! day VWAPs and issues its series straight. The forfeit sweep
 //! opens a bucket only once its hour has closed, so `closeCallNoticeForTest` moves a
 //! lapsed deadline into an hour the sweep opens on the next block.
 
@@ -12,7 +12,6 @@ use outbe_primitives::storage::StorageHandle;
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IIntexFactoryTestArming {
-        function armProceedsForTest(uint32 worldwideDay, uint32[] chains, uint64 deadline) external;
         function seedDayVwapsForTest(uint16 isoCode, uint32 days, uint256 value) external;
         function issueForTest(
             bytes14[] seriesIds,
@@ -66,18 +65,6 @@ pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Resul
     if let Ok(call) = closeCallNoticeForTestCall::abi_decode(data) {
         return Some(guarded(storage, || {
             requeue_called(storage, call.isoCode, call.worldwideDay, call.deadline)
-        }));
-    }
-    if let Ok(call) = armProceedsForTestCall::abi_decode(data) {
-        // Arming the proceeds fan-in is production work of the issuance leg, which a
-        // proceeds e2e never reaches: it runs no auction, so it issues nothing.
-        return Some(guarded(storage, || {
-            outbe_intex::api::arm_proceeds(
-                storage,
-                call.worldwideDay.into(),
-                &call.chains,
-                call.deadline,
-            )
         }));
     }
     None

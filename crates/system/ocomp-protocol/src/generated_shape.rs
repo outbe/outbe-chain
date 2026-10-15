@@ -13,9 +13,9 @@ pub const OCOMP_CAPACITY_PROFILE_ID_HEX: &str =
 pub const OCOMP_SHAPE_GENERATOR_SOURCE_SHA256: &str =
     "ba5ab090ad67cecff7d40e978ee9ee333656e973eba9669ba6bba24d36b89089";
 pub const OCOMP_SHAPE_INPUT_SET_SHA256: &str =
-    "4a67b53e11d5ed6509ab0508200e97359b0497ea88e2584299366dab7d69d47f";
+    "96a3331612a36a3f540888c5268ca2f9c4324a3b15699211466cf31e80b53454";
 pub const OCOMP_CANDIDATE_LIMITS_SHA256: &str =
-    "a3c6ad4cf52140a9ebfc48eef7aafb8af80af59104f0070d09959cd042b13150";
+    "141d63839c8ac17765f80af2aa79dc39a14b998e83cb25002e4a3470554a38a2";
 pub const OCOMP_MINIMUM_MACHINE_SHA256: &str =
     "a54ca8d53824f9dcf439267cbd93a939d3f09823703d1678540acb9a588720b7";
 pub const OCOMP_HEADROOM_POLICY_SHA256: &str =
@@ -45,7 +45,6 @@ pub struct OcompPocCandidateLimitsV1 {
     pub max_active_scurve_entries: u64,
     pub max_opening_bytes: u64,
     pub max_nod_actions_per_result_chunk: u64,
-    pub max_contributor_actions_per_result_chunk: u64,
     pub max_bucket_records_per_result_chunk: u64,
     pub max_protocol_collection_items: u64,
     pub max_activation_storage_reads: u64,
@@ -85,12 +84,11 @@ pub const OCOMP_POC_CANDIDATE_LIMITS_V1: OcompPocCandidateLimitsV1 = OcompPocCan
     max_active_scurve_entries: 256,
     max_opening_bytes: 262144,
     max_nod_actions_per_result_chunk: 256,
-    max_contributor_actions_per_result_chunk: 256,
     max_bucket_records_per_result_chunk: 256,
     max_protocol_collection_items: 4096,
     max_activation_storage_reads: 64,
     max_activation_storage_writes: 32,
-    max_activation_root_transitions: 4,
+    max_activation_root_transitions: 3,
     max_signature_verifications: 3,
     activation_base_gas: 100000,
     activation_per_input_byte_gas: 16,

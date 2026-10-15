@@ -165,15 +165,6 @@ pub(crate) enum SnapshotOcompError {
     /// Discovery spool count calculation overflowed.
     #[error("discovery spool count overflow")]
     DiscoverySpoolCountOverflow,
-    /// A series identifier has noncanonical format.
-    #[error("noncanonical series identity")]
-    NoncanonicalSeriesIdentity,
-    /// A series worldwide day is invalid.
-    #[error("invalid series worldwide day")]
-    InvalidSeriesWorldwideDay,
-    /// A series identifier has noncanonical codes.
-    #[error("noncanonical series codes")]
-    NoncanonicalSeriesCodes,
     /// A closure checkpoint differs from the canonical header.
     #[error("closure {name} differs from canonical header at {number}")]
     ClosureHeaderMismatch {
@@ -278,12 +269,6 @@ pub(crate) enum SnapshotOcompError {
     /// A duplicate NOD FIFO day or job was found.
     #[error("duplicate NOD FIFO day/job")]
     DuplicateNodFifoDayOrJob,
-    /// An Intex series record differs from the permanent index.
-    #[error("Intex series record identity/day differs from permanent index")]
-    IntexSeriesRecordMismatch,
-    /// A duplicate Intex series identity was found.
-    #[error("duplicate Intex series identity")]
-    DuplicateIntexSeriesIdentity,
     /// Canonical NOD program semantics differ from the protocol bundle.
     #[error("canonical NOD program semantics differ from protocol bundle")]
     NodProgramSemanticsMismatch,

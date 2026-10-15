@@ -8256,7 +8256,6 @@ dependencies = [
  "outbe-engine",
  "outbe-evm",
  "outbe-gem",
- "outbe-intex",
  "outbe-lysis",
  "outbe-metadosis",
  "outbe-nod",
@@ -8979,7 +8978,6 @@ dependencies = [
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
- "revm",
  "thiserror 2.0.18",
 ]
 
