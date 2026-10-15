@@ -2,10 +2,10 @@
   "feature": "outbe-chain-pjz",
   "goal_status": "active",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-15T20:02:55Z",
-  "next_periodic_report_due_utc": "2026-10-15T20:32:55Z",
+  "last_periodic_report_utc": "2026-10-15T20:33:20Z",
+  "next_periodic_report_due_utc": "2026-10-15T21:03:20Z",
   "period_minutes": 30,
-  "stage": "P3 atomic current-identity checkpoint runtime and optional OSP2 begin-zone phase implemented and verified; validating-node finality/ancestry admission and production actor/output/sidecar wiring incomplete",
+  "stage": "P3 current-set checkpoint/system phase and finalized consensus archive anchor admission verified; production collector/material/sidecar wiring incomplete",
   "decision_gate": {
     "id": "D1",
     "status": "historical_approval_request_withdrawn; no active user approval question",
@@ -20,11 +20,11 @@
   },
   "acceptance": "P0/P1/P5 closed; P2/P3 in_progress and incomplete; P4/P6/P7/P8 open; P4 descriptor prerequisite implemented under P3 activation only",
   "last_periodic_report": {
-    "completed": "Committed source5a7bd5153/evidencec2af75c0f: carrier/proposer/genesis prerequisite. New uncommitted atomic registry checkpoint runtime: current committee/MinPk identity verification, fixed pending index slots, generation reset, exact Approved subject/stage, immutable receipts and reserved/bootstrap RID binding. Added optional OSP2 phase after HookEvents; wiring validation in progress.",
-    "proof": "Frozen prior source1647 full lib tests/8 consumers/scopedClippy PASS. Dirty runtime7 scenarios PASS incl n256/q171 in6 batches, max32 identity checks per batch,34 mutation sites before+after rollback, real Vote separate Review/Merge and accepted-history preservation; new negative matrix and system phase not yet fully tested.",
-    "tasks": "P0/P1/P5 closed; P2/P3 in_progress; P4/P6/P7/P8 open. No new closure or independent acceptance PASS.",
-    "limitations": "New runtime/phase not frozen or production E2E. Node finalized-anchor admission, collector transport/journal/output provisioning, native bootstrap/refs/Merge and manager receipt policy still incomplete. No git.rs gate/D2; no approval question.",
-    "next": "Finish publication system phase/caller compilation and actual EVM dispatch tests, then exact-source evidence and remaining P3/P4/P6 production wiring."
+    "completed": "Committed source259df4bec and evidence87c33bbd2: atomic current-validator publication checkpoint and optional OSP2 system phase. New finalized-anchor admission remains uncommitted and incomplete.",
+    "proof": "Frozen source259df4bec:1699 full lib tests plus37 integration tests,8 consumer checks,scopedClippy and rustfmt PASS. New anchor checks failed compilation (OutbeHeader.inner.extra_data access); no passing claim for WIP.",
+    "tasks": "P0/P1/P5 closed; P2/P3 in_progress; P4/P6/P7/P8 open. No new acceptance review or closure.",
+    "limitations": "No active approval question. Full collector/output/sidecar/bootstrap/merge/E2E wiring remains incomplete. No git.rs gate or D2 work.",
+    "next": "Correct mechanical header-field access, verify finalized-anchor admission, then continue remaining approved production wiring."
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
@@ -37,7 +37,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "259df4bec745acdcbd656a08e49d782b1e889e94",
+  "source_sha": "fe0411748f7146cd1b2e0d418be8d68c0947c63c",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -82,10 +82,10 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "259df4bec745acdcbd656a08e49d782b1e889e94",
-    "checks": "1699 full lib tests across7 packages +23 EVM integration +14 node integration;0 ignored;8 consumers all-target check;scoped7-package Clippy -D warnings/rustfmt PASS",
-    "acceptance": "intermediate only; P3 incomplete; no independent full-AC acceptance reviews",
-    "boundedness": "n256/q171 in6 batches<=32 signatures;max12245 reads/64 writes/1544500 storage gas per valid batch;34 mutation sites before+after atomic rollback"
+    "source_sha": "fe0411748f7146cd1b2e0d418be8d68c0947c63c",
+    "checks": "512 full consensus lib tests;consensus/engine/node/chain all-target checks;consensus lib+tests Clippy -D warnings and scoped rustfmt PASS",
+    "acceptance": "Intermediate only; no independent full-AC PASS or task closure; no production collector/E2E claim"
   },
-  "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase"
+  "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
+  "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor"
 }
