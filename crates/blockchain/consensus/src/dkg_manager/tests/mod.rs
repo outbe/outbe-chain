@@ -311,6 +311,91 @@ fn run_round(
     (info, output.unwrap(), shares, logs, signed_logs)
 }
 
+#[test]
+fn repository_signing_uses_reshared_polynomial_and_preserves_historical_signature() {
+    use crate::hybrid::{RepositorySigningError, VrfMaterialProvider};
+    use commonware_utils::Participant;
+    use radicle_crypto::{BlsEnvelope, BlsPublicKey, RepositorySubject};
+
+    let mut keys: Vec<_> = (1..=4).map(bls12381::PrivateKey::from_seed).collect();
+    keys.sort_by_key(|key| key.public_key().encode());
+    let participants: Set<_> = keys
+        .iter()
+        .map(|key| key.public_key())
+        .try_collect()
+        .unwrap();
+    let (_, initial, old_shares, _, _) = run_round(&keys, participants.clone(), None, None, 0);
+    let (_, reshared, new_shares, _, _) = run_round(
+        &keys,
+        participants,
+        Some(initial.clone()),
+        Some(&old_shares),
+        1,
+    );
+    let group = *initial.public().public();
+    assert_eq!(reshared.public().public(), &group);
+    assert_ne!(initial.public(), reshared.public());
+    let providers: Vec<_> = old_shares
+        .iter()
+        .map(|share| VrfMaterialProvider::new(7, initial.public().clone(), Some(share.clone())))
+        .collect();
+    let message = RepositorySubject::cob([1; 20], [3; 32], [4; 20], b"native Review Accept bytes");
+    let old_partials: Vec<_> = providers
+        .iter()
+        .enumerate()
+        .take(3)
+        .map(|(index, provider)| {
+            provider
+                .sign_repository(7, Participant::from_usize(index), &group, &message)
+                .unwrap()
+        })
+        .collect();
+    let historical = providers[0]
+        .recover_repository(7, &group, &message, &old_partials)
+        .unwrap();
+    let owner = BlsPublicKey::from_bytes(group.encode().to_vec().try_into().unwrap()).unwrap();
+    let historical = BlsEnvelope::attach(
+        message.clone(),
+        owner,
+        historical.encode().to_vec().try_into().unwrap(),
+    )
+    .unwrap();
+    for (provider, share) in providers.iter().zip(new_shares) {
+        provider.activate(8, reshared.public().clone(), Some(share));
+    }
+    assert!(matches!(
+        providers[0].recover_repository(8, &group, &message, &old_partials),
+        Err(RepositorySigningError::InvalidPartial)
+    ));
+    let current: Vec<_> = providers
+        .iter()
+        .enumerate()
+        .take(3)
+        .map(|(index, provider)| {
+            provider
+                .sign_repository(8, Participant::from_usize(index), &group, &message)
+                .unwrap()
+        })
+        .collect();
+    let mut mixed = current.clone();
+    mixed[1] = old_partials[1].clone();
+    assert!(matches!(
+        providers[0].recover_repository(8, &group, &message, &mixed),
+        Err(RepositorySigningError::InvalidPartial)
+    ));
+    let recovered = providers[0]
+        .recover_repository(8, &group, &message, &current)
+        .unwrap();
+    let recovered = BlsEnvelope::attach(
+        message.clone(),
+        owner,
+        recovered.encode().to_vec().try_into().unwrap(),
+    )
+    .unwrap();
+    recovered.verify(&message, owner.into()).unwrap();
+    historical.verify(&message, owner.into()).unwrap();
+}
+
 fn legacy_group_key_only_outcome(
     epoch: Epoch,
     output: &Output<MinSig, bls12381::PublicKey>,

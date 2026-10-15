@@ -16,7 +16,8 @@ use sha2::{Digest as _, Sha256};
 
 use crate::PublicKey;
 
-const DOMAIN: &[u8] = b"radicle.repository.bls.v1";
+/// Fixed signing domain for native repository BLS subjects.
+pub const DOMAIN: &[u8] = b"radicle.repository.bls.v1";
 const DST: &[u8] = b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";
 const MESSAGE_LENGTH: usize = 125;
 pub const ENVELOPE_LENGTH: usize = 269;

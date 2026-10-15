@@ -1,6 +1,7 @@
 mod lifecycle;
 mod metrics;
 mod network;
+pub mod review;
 mod sidecar;
 mod status;
 

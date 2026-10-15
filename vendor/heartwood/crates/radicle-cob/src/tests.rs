@@ -54,6 +54,34 @@ mod git {
             .expect("BUG: cob was missing");
 
         assert_eq!(cob, expected);
+        let pinned = crate::object::Storage::objects(&storage, &typename, cob.id()).unwrap();
+        let updated = update::<NonEmpty<Entry>, _>(
+            &storage,
+            &signer,
+            Some(proj.project.content_id),
+            vec![],
+            signer.public_key(),
+            Update {
+                object_id: *cob.id(),
+                type_name: typename.clone(),
+                message: "later local update".into(),
+                embeds: vec![],
+                changes: nonempty!(b"later action".to_vec()),
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.object.history.len(), 2);
+        let historical =
+            crate::get_at::<NonEmpty<Entry>, _>(&storage, &typename, cob.id(), &pinned)
+                .unwrap()
+                .unwrap();
+        assert_eq!(historical, cob);
+        assert_eq!(
+            get::<NonEmpty<Entry>, _>(&storage, &typename, cob.id())
+                .unwrap()
+                .unwrap(),
+            updated.object
+        );
     }
 
     #[test]

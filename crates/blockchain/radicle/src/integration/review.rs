@@ -1,0 +1,231 @@
+//! Native Review preparation for an exact finalized Vote decision.
+
+use commonware_cryptography::{Hasher as _, Sha256};
+use outbe_radicleregistry::payload::PatchVotePayloadV1;
+use radicle::storage::refs::{
+    Refs, SIGREFS_PARENT,
+    sigrefs::{git::Committer, write::PreparedSignedRefs},
+};
+use radicle::{
+    cob::{self, object, patch, store::Transaction},
+    crypto::{BlsEnvelope, RepositoryKey, RepositorySubject},
+    git,
+    storage::{ReadRepository, WriteRepository, git::Repository},
+};
+use radicle_git_metadata::{
+    author::{Author, Time},
+    commit::bls::UnsignedCommit,
+};
+
+use crate::manager::FinalizedPatchApproval;
+
+#[cfg(test)]
+mod tests;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("invalid finalized patch approval")]
+    Approval,
+    #[error("repository must have the sole network BLS owner and default branch main")]
+    Authority,
+    #[error("approved revision is absent from the pinned patch graph")]
+    Revision,
+    #[error("patch does not target main")]
+    Target,
+    #[error(transparent)]
+    Identity(#[from] radicle::identity::doc::DocError),
+    #[error(transparent)]
+    Graph(#[from] cob::error::Retrieve),
+    #[error(transparent)]
+    Git(#[from] git::raw::Error),
+    #[error(transparent)]
+    Transaction(#[from] cob::store::Error),
+    #[error(transparent)]
+    Signature(#[from] radicle::crypto::repository::Error),
+    #[error(transparent)]
+    Attach(#[from] cob::GitLoadError),
+    #[error(transparent)]
+    SignedRefs(#[from] radicle::storage::refs::sigrefs::write::error::Native),
+    #[error("owner refs differ from the accepted preparation snapshot")]
+    Snapshot,
+}
+
+pub struct PreparedPatchReview {
+    pub patch: patch::PatchId,
+    pub revision: patch::RevisionId,
+    pub owner: RepositoryKey,
+    pub commit: UnsignedCommit,
+    pub subject: RepositorySubject,
+    pub signed_refs_context: [u8; 32],
+    context: [u8; 32],
+    metadata: Author,
+    previous_owner_tip: Option<git::Oid>,
+}
+
+impl PreparedPatchReview {
+    /// Store the signed Review and prepare its exact owner refs. No refs are promoted here.
+    pub fn attach(
+        self,
+        repo: &Repository,
+        signature: &BlsEnvelope,
+        mut accepted_refs: Refs,
+        previous_sigrefs: git::Oid,
+    ) -> Result<(cob::Entry, PreparedSignedRefs), Error> {
+        let name = git::refs::storage::cob(&self.owner, &patch::TYPENAME, &self.patch)
+            .strip_namespace_recursive();
+        if accepted_refs.get(&name) != self.previous_owner_tip {
+            return Err(Error::Snapshot);
+        }
+        signature.verify(&self.subject, self.owner)?;
+        let entry = cob::attach_native(
+            repo.raw(),
+            self.commit,
+            repo.id().into_sha1().ok_or(Error::Approval)?,
+            self.context,
+            signature,
+        )?;
+        accepted_refs.insert(name.to_ref_string(), entry.id);
+        accepted_refs.insert(SIGREFS_PARENT.to_ref_string(), git::Oid::ZERO_SHA1);
+        let refs = PreparedSignedRefs::new(
+            accepted_refs,
+            repo.id(),
+            self.owner,
+            self.signed_refs_context,
+            Some(previous_sigrefs),
+            Committer::new(self.metadata),
+            "Update signed refs\n".into(),
+        )?;
+        Ok((entry, refs))
+    }
+}
+
+/// Authenticated network/material inputs from the current finalized signing view.
+#[derive(Clone, Debug)]
+pub struct ReviewSigningContext {
+    pub chain_id: u64,
+    pub genesis_hash: [u8; 32],
+    pub epoch: u64,
+    pub material_version: u64,
+    pub material_hash: [u8; 32],
+    pub previous_receipt_hash: [u8; 32],
+}
+
+impl ReviewSigningContext {
+    fn policy_context(
+        &self,
+        decision: &PatchVotePayloadV1,
+        approval: &FinalizedPatchApproval,
+        ordinal: u8,
+    ) -> [u8; 32] {
+        Sha256::hash(&[
+            b"OPJ1",
+            &self.chain_id.to_be_bytes(),
+            &self.genesis_hash,
+            decision.repo_id.as_slice(),
+            &approval.approval.proposal_id.to_be_bytes::<32>(),
+            decision.patch_id.as_slice(),
+            decision.revision_id.as_slice(),
+            decision.expected_target_head.as_slice(),
+            &[2],
+            &[ordinal],
+            &self.epoch.to_be_bytes(),
+            &self.material_version.to_be_bytes(),
+            &self.material_hash,
+            &self.previous_receipt_hash,
+        ])
+        .0
+    }
+}
+
+/// `identity` and `previous_owner_tip` come from the previous accepted network snapshot.
+/// The approval must come from the exact finalized-state reader, never a peer request.
+pub fn prepare_patch_review(
+    repo: &Repository,
+    approval: &FinalizedPatchApproval,
+    identity: git::Oid,
+    previous_owner_tip: Option<git::Oid>,
+    context: &ReviewSigningContext,
+) -> Result<PreparedPatchReview, Error> {
+    let decision = PatchVotePayloadV1::decode(approval.approval.payload.as_bytes())
+        .map_err(|_| Error::Approval)?;
+    if approval.approval.approved_height == 0
+        || approval.approval.approved_height > approval.block.number
+        || repo.id().into_sha1() != Some(decision.repo_id.0)
+    {
+        return Err(Error::Approval);
+    }
+    let timestamp =
+        i64::try_from(approval.approval.approved_timestamp).map_err(|_| Error::Approval)?;
+    let doc = repo.identity_doc_at(identity)?;
+    let owner = *doc.delegates().first().as_key();
+    if doc.delegates().len() != 1
+        || owner.as_ed25519().is_some()
+        || doc.threshold() != 1
+        || doc.default_branch().map_err(|_| Error::Authority)?.as_str() != "refs/heads/main"
+    {
+        return Err(Error::Authority);
+    }
+    let patch: patch::PatchId = git::Oid::from_sha1(decision.patch_id.0).into();
+    let revision: patch::RevisionId = git::Oid::from_sha1(decision.revision_id.0).into();
+    let mut tips = vec![*revision];
+    tips.extend(previous_owner_tip);
+    tips.sort_unstable();
+    tips.dedup();
+    let name = git::refs::storage::cob(&owner, &patch::TYPENAME, &patch);
+    let pinned = object::Objects::from(
+        tips.iter()
+            .map(|id| object::Reference {
+                name: name.to_ref_string(),
+                target: object::Commit { id: *id },
+            })
+            .collect::<Vec<_>>(),
+    );
+    let object = cob::get_at::<patch::Patch, _>(repo, &patch::TYPENAME, &patch, &pinned)?
+        .ok_or(Error::Revision)?;
+    // The evaluator can prune invalid branches; every pinned tip must survive evaluation.
+    if tips.iter().any(|tip| !object.history.graph().contains(tip))
+        || object.object.revision(&revision).is_none()
+    {
+        return Err(Error::Revision);
+    }
+    match object.object.target() {
+        patch::MergeTarget::Delegates => (),
+        patch::MergeTarget::Branch(branch) if branch.as_str() == "refs/heads/main" => (),
+        _ => return Err(Error::Target),
+    }
+    let revision_state = object.object.revision(&revision).ok_or(Error::Revision)?;
+    repo.raw().find_commit((*revision_state.base()).into())?;
+    repo.raw().find_commit(revision_state.head().into())?;
+    repo.raw()
+        .find_commit(git::Oid::from_sha1(decision.expected_target_head.0).into())?;
+    let mut transaction = Transaction::<patch::Patch, Repository>::default();
+    transaction.review(revision, Some(patch::Verdict::Accept), None, vec![])?;
+    let metadata = Author {
+        name: "Outbe Network".into(),
+        email: "network@outbe.invalid".into(),
+        time: Time::new(timestamp, 0),
+    };
+    let commit = transaction.prepare_native(
+        repo,
+        Some(identity),
+        tips,
+        "Accept patch\n".into(),
+        metadata.clone(),
+    )?;
+    Ok(PreparedPatchReview {
+        patch,
+        revision,
+        owner,
+        subject: RepositorySubject::cob(
+            decision.repo_id.0,
+            context.policy_context(&decision, approval, 0),
+            commit.tree(),
+            commit.as_bytes(),
+        ),
+        signed_refs_context: context.policy_context(&decision, approval, 1),
+        context: context.policy_context(&decision, approval, 0),
+        metadata,
+        previous_owner_tip,
+        commit,
+    })
+}
