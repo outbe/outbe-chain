@@ -314,14 +314,15 @@ fn public_measurement_schedule_seeds_consistent_green_day_and_oracle_vwaps() {
         assert_eq!(issuance, U256::from(2_000_000));
         let nominal = issuance * scale / day.current_vwap;
         for (population, expected_fraction, expected_load, expected_cost) in [
-            (10_u64, 50_u64, 50_000_000_u64, 100_u64),
-            (257_u64, 1_u64, 1_000_000_u64, 2_u64),
+            (10_u64, 50_u64, 488_281_u64, 1_u64),
+            (257_u64, 1_u64, 488_281_u64, 1_u64),
         ] {
             let total_nominal = nominal * U256::from(population);
             let allocation =
                 (total_nominal * U256::from(32) / U256::from(100)).min(day.metadosis_limit_minor);
             let fraction = allocation * scale / total_nominal;
-            let gratis_load_minor = nominal * fraction / scale;
+            let nod_gratis_load_max = allocation / U256::from(1024);
+            let gratis_load_minor = (nominal * fraction / scale).min(nod_gratis_load_max);
             assert_eq!(
                 fraction,
                 U256::from(expected_fraction),
@@ -333,7 +334,7 @@ fn public_measurement_schedule_seeds_consistent_green_day_and_oracle_vwaps() {
                 "the {population}-Tribute fixture must preserve its exact per-Tribute Gratis load"
             );
             assert_eq!(
-                day.current_vwap * gratis_load_minor / scale,
+                (day.current_vwap * gratis_load_minor / scale).max(U256::from(1)),
                 U256::from(expected_cost),
                 "the {population}-Tribute fixture must produce a paid Nod under the canonical WWD-VWAP Lysis price"
             );

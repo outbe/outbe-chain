@@ -1,5 +1,6 @@
 domain	payload_grammar
 OUTBE_OCOMP_PROTOCOL_BUNDLE_V1	canonical(ProtocolBundleV1)
+OUTBE_OCOMP_LYSIS_PROGRAM_SEMANTICS_V1	utf8(lysis_program_semantics_hash_descriptor)
 OUTBE_OCOMP_PRE_ADMISSION_V1	canonical(PreAdmissionEnvelopeV1)
 OUTBE_OCOMP_ACTIVATION_PRECONDITIONS_V1	canonical(ActivationPreconditionsV1)
 OUTBE_OCOMP_INTENT_V1	canonical(JobIntentV1)

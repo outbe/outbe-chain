@@ -38,6 +38,8 @@ use outbe_ocomp_protocol::SchemaLimits;
 
 use std::collections::BTreeMap;
 
+type LeagueNominalGroups = BTreeMap<u16, (u32, U256)>;
+
 struct FixedReduceInputV1 {
     value: FidelityReduceValueV1,
     coverage: RawCoverageCarrierV1,
@@ -164,12 +166,10 @@ fn populate_root_aggregate_nominals(
     })
 }
 
-type LeagueNominals = (BTreeMap<u16, (u32, U256)>, U256, u32);
-
 fn accumulate_league_nominals(
     authority: &UnitExecutionAuthority<'_>,
     leagues: &BTreeMap<alloy_primitives::Address, u16>,
-) -> Result<LeagueNominals, WorkerError> {
+) -> Result<(LeagueNominalGroups, U256, u32), WorkerError> {
     let tribute_chunk_count = authority
         .input_chunks
         .iter()
@@ -182,7 +182,7 @@ fn accumulate_league_nominals(
     if tribute_chunk_count != expected_shards {
         return Err(WorkerError::UnitBindingMismatch);
     }
-    let mut groups = BTreeMap::<u16, (u32, U256)>::new();
+    let mut groups = LeagueNominalGroups::new();
     let mut checked_total_nominal = U256::ZERO;
     let mut total_count = 0_u32;
     for shard_ordinal in 0..authority.plan.primary_work_unit_count {
