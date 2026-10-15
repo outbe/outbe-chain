@@ -2,10 +2,10 @@
   "feature": "outbe-chain-pjz",
   "goal_status": "active",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-15T20:33:20Z",
-  "next_periodic_report_due_utc": "2026-10-15T21:03:20Z",
+  "last_periodic_report_utc": "2026-10-15T20:59:28Z",
+  "next_periodic_report_due_utc": "2026-10-15T21:29:28Z",
   "period_minutes": 30,
-  "stage": "P3 native Review COB and sealed derived signed-refs authenticated threshold signing verified; finalized consensus archive anchor admission verified separately; production collector/material/sidecar wiring incomplete",
+  "stage": "P3 engine canonical public Output provisioning and fresh finalized-authority local bridge verified; native Review/refs threshold APIs verified earlier; protected sidecar signer/collector/journal/bootstrap/Merge wiring incomplete",
   "decision_gate": {
     "id": "D1",
     "status": "historical_approval_request_withdrawn; no active user approval question",
@@ -20,11 +20,11 @@
   },
   "acceptance": "P0/P1/P5 closed; P2/P3 in_progress and incomplete; P4/P6/P7/P8 open; P4 descriptor prerequisite implemented under P3 activation only",
   "last_periodic_report": {
-    "completed": "Committed source259df4bec and evidence87c33bbd2: atomic current-validator publication checkpoint and optional OSP2 system phase. New finalized-anchor admission remains uncommitted and incomplete.",
-    "proof": "Frozen source259df4bec:1699 full lib tests plus37 integration tests,8 consumer checks,scopedClippy and rustfmt PASS. New anchor checks failed compilation (OutbeHeader.inner.extra_data access); no passing claim for WIP.",
+    "completed": "fe0411748 finalized consensus archive anchor admission;479f8fa02 sealed native Review refs threshold signer;a3f0c81e7 canonical public DKG Output engine lifecycle + fresh Reth authority bounded local bridge. No private key reconstruction/share transport.",
+    "proof": "Latesta3f0c81e7:267 engine+40 Radicle full lib tests,7 consumer all-target checks,engine/Radicle lib+tests and node bin Clippy -D warnings/scoped fmt PASS. Earlierfe0411748:512 full consensus tests and consumers/Clippy PASS;479f8fa02:38 Radicle tests/consumers/Clippy PASS. Exact-SHA/spec/log hashes in respective evidence bundles.",
     "tasks": "P0/P1/P5 closed; P2/P3 in_progress; P4/P6/P7/P8 open. No new acceptance review or closure.",
-    "limitations": "No active approval question. Full collector/output/sidecar/bootstrap/merge/E2E wiring remains incomplete. No git.rs gate or D2 work.",
-    "next": "Correct mechanical header-field access, verify finalized-anchor admission, then continue remaining approved production wiring."
+    "limitations": "No active approval question. Protected local signing interface, collector/journal, complete native bootstrap/receipt policy/Merge/E2E incomplete. No git.rs gate/D2.",
+    "next": "Connect protected local typed signing jobs to fresh node authority/current provider and distributed collector per approved P3/P6; preserve exact approved revision and ordinary native synchronization."
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
@@ -37,7 +37,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "479f8fa02ceb1bd20610ee07f91bfc061bc9a5ba",
+  "source_sha": "a3f0c81e7590afce6a91545edf68c95090a22094",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -56,7 +56,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "479f8fa02: sealed PreparedReviewRefs derived only from attached native Review; authenticated current-material sign/verify/recover of exact signed-refs subject; shared private contribution/recovery logic. Earlierfe0411748 finalized-only publication anchor admission. No git.rs gate/D2 changes.",
+  "current_source_changes": "a3f0c81e7: unique public Output publisher from authenticated engine startup/activation/demotion/recovery/verifier-refresh; fresh Reth finalized-authority reader on each bounded local bridge request; strict chain/genesis/epoch/version/full-polynomial/players binding; withdrawal/drop fail closed. Public Output only, no Share/provider/private identity in channel. Earlierfe0411748 finalized anchor admission;479f8fa02 sealed native Review refs threshold signer. No Heartwood/git.rs/D2 changes.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -82,12 +82,13 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "479f8fa02ceb1bd20610ee07f91bfc061bc9a5ba",
-    "checks": "38 full outbe-radicle lib tests;7 selected consumer packages all-target check;outbe-radicle lib+tests Clippy -D warnings and scoped rustfmt PASS",
-    "acceptance": "Intermediate only; P3/P6 incomplete, no independent full-AC PASS or task closure; no production collector/E2E claim",
-    "scenarios": "COB/refs cross-use,wrong sender,q-1,duplicate rejected;012/123 identical native refs envelopes;no ref promotion on attachment;old material sign/verify/recover rejected, historical envelope valid"
+    "source_sha": "a3f0c81e7590afce6a91545edf68c95090a22094",
+    "checks": "267 full engine +40 full outbe-radicle lib tests (307 total),0 ignored;7 consumer all-target checks;engine/radicle lib+tests and actual outbe-chain bin Clippy -D warnings;scoped rustfmt PASS",
+    "acceptance": "Intermediate only; P3/P6 incomplete; no independent full-AC PASS, task closure, live production rotation/quorum publication or E2E claim",
+    "scenarios": "Real service typed mailbox: repeated fresh authority reads, no output/fault/drop/closed/full mailbox; chain/genesis/generation/order/polynomial mismatches; matching metadata/canonical Output/hash. Publisher retains only one current public Output."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
-  "review_refs_evidence": "evidence/outbe-chain-pjz.4/review-refs"
+  "review_refs_evidence": "evidence/outbe-chain-pjz.4/review-refs",
+  "public_output_evidence": "evidence/outbe-chain-pjz.4/public-output"
 }
