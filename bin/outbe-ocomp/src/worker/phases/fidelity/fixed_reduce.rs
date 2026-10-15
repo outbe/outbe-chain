@@ -3,7 +3,7 @@ use super::super::super::require_lease_active;
 use super::super::super::UnitExecutionAuthority;
 use super::super::super::WorkerError;
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 
 use outbe_lysis::program_v1::artifacts::decode_fidelity_map_output;
 use outbe_lysis::program_v1::artifacts::decode_fixed_reduce_output;
@@ -13,6 +13,8 @@ use outbe_lysis::program_v1::artifacts::LysisArtifactErrorV1;
 use outbe_lysis::program_v1::artifacts::RawCoverageCarrierV1;
 use outbe_lysis::program_v1::phases::fidelity_reduce_pair;
 use outbe_lysis::program_v1::phases::finalize_fi_fraction_table;
+use outbe_lysis::program_v1::phases::FidelityAggregateV1;
+use outbe_lysis::program_v1::phases::FidelityLeaguePartialV1;
 use outbe_lysis::program_v1::phases::FidelityReduceValueV1;
 use outbe_lysis::program_v1::planner::LysisPlanTopologyV1;
 use outbe_lysis::program_v1::planner::PlannedProducerV1;
@@ -20,6 +22,7 @@ use outbe_lysis::program_v1::planner::PlannedUnitPositionV1;
 use outbe_lysis::program_v1::planner::PRIMARY_WORK_SHARD_SIZE;
 
 use outbe_ocomp_protocol::common::BoundedBytes;
+use outbe_ocomp_protocol::input::InputChunkKind;
 use outbe_ocomp_protocol::unit::BinaryReducerNode;
 use outbe_ocomp_protocol::unit::CanonicalInputRefV1;
 use outbe_ocomp_protocol::unit::FidelityIndexHalfOpenRange;
@@ -32,6 +35,8 @@ use outbe_ocomp_protocol::unit::UnitPhase;
 use outbe_ocomp_protocol::unit::UnitSpecV1;
 use outbe_ocomp_protocol::unit::WorkOutputHeaderV1;
 use outbe_ocomp_protocol::SchemaLimits;
+
+use std::collections::BTreeMap;
 
 struct FixedReduceInputV1 {
     value: FidelityReduceValueV1,
@@ -52,29 +57,30 @@ pub(in super::super::super) fn execute_fixed_reduce_unit(
         ..
     } = authority;
     require_lease_active(cancelled)?;
-    if !input_chunks.is_empty() {
-        return Err(WorkerError::UnitBindingMismatch);
-    }
     let planner = planner_from_authority(plan, manifest, bundle, limits)?;
     let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)?;
     let (phase_ordinal, position, level, index) =
         resolve_fixed_reduce_position(&authority, &topology)?;
+    let is_root = level == topology.tree().height() && index == 0;
+    if !is_root && !input_chunks.is_empty() {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
     let reducer_inputs = validate_fixed_reduce_spec(spec, &planner, phase_ordinal, limits)?;
     let [left, right] =
         decode_fixed_reduce_inputs(spec, &authority, &topology, position, reducer_inputs)?;
     let (value, coverage) =
         reduce_fixed_pair(plan.primary_work_unit_count, (level, index), left, right)?;
-    let is_root = level == topology.tree().height() && index == 0;
     let aggregate = match value {
         FidelityReduceValueV1::Empty => None,
         FidelityReduceValueV1::Aggregate(aggregate) => Some(aggregate),
     };
     let ordered_fractions = if is_root {
-        finalize_fi_fraction_table(
+        let root_aggregate = populate_root_aggregate_nominals(
             aggregate.as_ref().ok_or(WorkerError::UnitBindingMismatch)?,
-            plan.lysis_limit_minor,
-        )
-        .map_err(LysisArtifactErrorV1::from)?
+            &authority,
+        )?;
+        finalize_fi_fraction_table(&root_aggregate, plan.lysis_limit_minor)
+            .map_err(LysisArtifactErrorV1::from)?
     } else {
         Vec::new()
     };
@@ -103,6 +109,125 @@ pub(in super::super::super) fn execute_fixed_reduce_unit(
         limits,
     )
     .map_err(WorkerError::from)
+}
+
+fn populate_root_aggregate_nominals(
+    aggregate: &FidelityAggregateV1,
+    authority: &UnitExecutionAuthority<'_>,
+) -> Result<FidelityAggregateV1, WorkerError> {
+    let (leagues, fidelity_opening_count, _) = super::collect_fidelity_leagues_from_chunks(
+        authority.manifest,
+        authority.input_chunks,
+        (authority.bundle, authority.limits, authority.cancelled),
+    )?;
+    let (groups, checked_total_nominal, total_count) =
+        accumulate_league_nominals(authority, &leagues)?;
+    let actual_totals = (
+        fidelity_opening_count > 0,
+        total_count,
+        total_count,
+        checked_total_nominal,
+        groups.len(),
+    );
+    let expected_totals = (
+        true,
+        aggregate.tribute_count,
+        authority.plan.tribute_count,
+        authority.manifest.tribute_nominal_total,
+        aggregate.ordered_league_partials.len(),
+    );
+    if actual_totals != expected_totals {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let ordered_league_partials = aggregate
+        .ordered_league_partials
+        .iter()
+        .map(|partial| {
+            let (count, nominal_amount_minor) = groups
+                .get(&partial.league_id)
+                .copied()
+                .filter(|(count, nominal)| *count == partial.count && !nominal.is_zero())
+                .ok_or(WorkerError::UnitBindingMismatch)?;
+            Ok(FidelityLeaguePartialV1 {
+                league_id: partial.league_id,
+                count,
+                nominal_amount_minor,
+            })
+        })
+        .collect::<Result<Vec<_>, WorkerError>>()?;
+    Ok(FidelityAggregateV1 {
+        start_ordinal: aggregate.start_ordinal,
+        end_ordinal: aggregate.end_ordinal,
+        tribute_count: aggregate.tribute_count,
+        checked_total_nominal,
+        ordered_league_partials,
+    })
+}
+
+fn accumulate_league_nominals(
+    authority: &UnitExecutionAuthority<'_>,
+    leagues: &BTreeMap<alloy_primitives::Address, u16>,
+) -> Result<(BTreeMap<u16, (u32, U256)>, U256, u32), WorkerError> {
+    let tribute_chunk_count = authority
+        .input_chunks
+        .iter()
+        .filter(|(reference, chunk)| {
+            reference.kind == InputChunkKind::Tribute && chunk.kind == InputChunkKind::Tribute
+        })
+        .count();
+    let expected_shards = usize::try_from(authority.plan.primary_work_unit_count)
+        .map_err(|_| WorkerError::UnitBindingMismatch)?;
+    if tribute_chunk_count != expected_shards {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let mut groups = BTreeMap::<u16, (u32, U256)>::new();
+    let mut checked_total_nominal = U256::ZERO;
+    let mut total_count = 0_u32;
+    for shard_ordinal in 0..authority.plan.primary_work_unit_count {
+        let chunk = find_tribute_shard_chunk(authority.input_chunks, shard_ordinal)?;
+        for encoded in &chunk.canonical_records_or_openings {
+            require_lease_active(authority.cancelled)?;
+            let tribute = outbe_tribute::record::decode_canonical(&encoded.0)?.calculation_view()?;
+            let league = leagues
+                .get(&tribute.owner)
+                .copied()
+                .ok_or(WorkerError::UnitBindingMismatch)?;
+            total_count = total_count
+                .checked_add(1)
+                .ok_or(WorkerError::UnitBindingMismatch)?;
+            checked_total_nominal = checked_total_nominal
+                .checked_add(tribute.nominal_amount_minor)
+                .ok_or(WorkerError::UnitBindingMismatch)?;
+            let entry = groups.entry(league).or_insert((0, U256::ZERO));
+            entry.0 = entry
+                .0
+                .checked_add(1)
+                .ok_or(WorkerError::UnitBindingMismatch)?;
+            entry.1 = entry
+                .1
+                .checked_add(tribute.nominal_amount_minor)
+                .ok_or(WorkerError::UnitBindingMismatch)?;
+        }
+    }
+    Ok((groups, checked_total_nominal, total_count))
+}
+
+fn find_tribute_shard_chunk(
+    input_chunks: &[(
+        outbe_ocomp_protocol::input::InputChunkRefV1,
+        outbe_ocomp_protocol::input::AuthenticatedInputChunkV1,
+    )],
+    shard_ordinal: u32,
+) -> Result<&outbe_ocomp_protocol::input::AuthenticatedInputChunkV1, WorkerError> {
+    let mut matched = input_chunks.iter().filter(|(reference, chunk)| {
+        reference.kind == InputChunkKind::Tribute
+            && chunk.kind == InputChunkKind::Tribute
+            && reference.ordinal == shard_ordinal
+    });
+    match (matched.next(), matched.next()) {
+        (Some((_, chunk)), None) => Ok(chunk),
+        _ => Err(WorkerError::UnitBindingMismatch),
+    }
 }
 
 fn resolve_fixed_reduce_position(
