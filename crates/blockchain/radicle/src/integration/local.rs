@@ -191,15 +191,11 @@ impl LocalReceiptServer {
 }
 
 fn probe(path: &Path) -> io::Result<()> {
-    use rustix::net::{
-        connect, socket_with, AddressFamily, SocketAddrUnix, SocketFlags, SocketType,
-    };
-    let socket = socket_with(
-        AddressFamily::UNIX,
-        SocketType::STREAM,
-        SocketFlags::NONBLOCK | SocketFlags::CLOEXEC,
-        None,
-    )?;
+    use rustix::net::{connect, socket, AddressFamily, SocketAddrUnix, SocketType};
+    let socket = socket(AddressFamily::UNIX, SocketType::STREAM, None)?;
+    let socket: std::os::unix::net::UnixStream = socket.into();
+    socket.set_nonblocking(true)?;
+    rustix::io::fcntl_setfd(&socket, rustix::io::FdFlags::CLOEXEC)?;
     connect(&socket, &SocketAddrUnix::new(path)?).map_err(Into::into)
 }
 
