@@ -147,7 +147,6 @@ wire_struct! {
     /// still produce.
     pub struct ConservationTotalsV1 {
         pub tribute_nominal_total: U256,
-        pub eligible_nominal_total: U256,
         pub day_limit: U256,
         pub gratis_demand: U256,
         pub day_gratis_limit_minor: U256,

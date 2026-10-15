@@ -703,7 +703,6 @@ mod tests {
         };
         let conservation = ConservationTotalsV1 {
             tribute_nominal_total: U256::ZERO,
-            eligible_nominal_total: U256::ZERO,
             day_limit: U256::ZERO,
             gratis_demand: U256::ZERO,
             day_gratis_limit_minor: U256::ZERO,

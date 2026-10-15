@@ -19,7 +19,6 @@ fn cold_restart_streams_exact_result_chunks_only_from_root_reduce_leaves() {
         .collect::<Vec<_>>();
     assert_eq!(first_chunks.len(), 2);
     let mut tribute_nominal_total = U256::ZERO;
-    let mut eligible_nominal_total = U256::ZERO;
     for (ordinal, item) in first_chunks.iter().enumerate() {
         let ordinal = u32::try_from(ordinal).unwrap();
         assert_eq!(item.output_manifest_entry().chunk_ordinal, ordinal);
@@ -29,20 +28,12 @@ fn cold_restart_streams_exact_result_chunks_only_from_root_reduce_leaves() {
             ResultChunkV1::decode_canonical(item.canonical_chunk_bytes(), &fixture.limits).unwrap(),
             *item.chunk()
         );
-        assert_eq!(
-            item.summary().eligible_nominal_total,
-            item.summary().tribute_nominal_total
-        );
         tribute_nominal_total = tribute_nominal_total
             .checked_add(item.summary().tribute_nominal_total)
-            .unwrap();
-        eligible_nominal_total = eligible_nominal_total
-            .checked_add(item.summary().eligible_nominal_total)
             .unwrap();
     }
     let manifest_nominal_total = fixture.with_audit(|audit| audit.manifest().tribute_nominal_total);
     assert_eq!(tribute_nominal_total, manifest_nominal_total);
-    assert_eq!(eligible_nominal_total, manifest_nominal_total);
 
     let restarted = fixture.result_catalog_steps();
     assert_eq!(restarted, first);

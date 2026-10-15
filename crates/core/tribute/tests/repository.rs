@@ -34,7 +34,6 @@ fn tribute(tribute_id: U256, owner: Address, day: u32) -> TributeData {
         nominal_amount_minor: U256::ZERO,
         reference_currency: 0,
         tribute_price_minor: U256::MAX,
-        exclude_from_intex_issuance: true,
     }
 }
 
@@ -74,7 +73,6 @@ fn canonical_payload_roundtrips_all_tribute_field_boundaries() {
             nominal_amount_minor: U256::ZERO,
             reference_currency: 0,
             tribute_price_minor: U256::ZERO,
-            exclude_from_intex_issuance: false,
         },
         TributeData {
             tribute_id: entity_id(U256::MAX, u32::MAX),
@@ -85,7 +83,6 @@ fn canonical_payload_roundtrips_all_tribute_field_boundaries() {
             nominal_amount_minor: U256::MAX,
             reference_currency: u16::MAX,
             tribute_price_minor: U256::MAX,
-            exclude_from_intex_issuance: true,
         },
     ] {
         let payload = encode_tribute_v1(&outbe_tribute::canonical_body(&body)).unwrap();
@@ -98,10 +95,6 @@ fn canonical_payload_roundtrips_all_tribute_field_boundaries() {
         assert_eq!(decoded.nominal_amount_minor, body.nominal_amount_minor);
         assert_eq!(decoded.reference_currency, body.reference_currency);
         assert_eq!(decoded.tribute_price_minor, body.tribute_price_minor);
-        assert_eq!(
-            decoded.exclude_from_intex_issuance,
-            body.exclude_from_intex_issuance
-        );
     }
 }
 
@@ -278,7 +271,6 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
         stored.calculation_view().unwrap().nominal_amount_minor,
         U256::ZERO
     );
-    assert!(stored.exclude_from_intex_issuance);
 
     let primary = reader
         .get(namespace("tributes"), &id_key(first_id))

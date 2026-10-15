@@ -231,7 +231,6 @@ fn ceiling_conservation(
     let lysis_limit_minor = lysis_allocation_minor;
     ConservationTotalsV1 {
         tribute_nominal_total: U256::from(tribute_nominal_total),
-        eligible_nominal_total: U256::from(tribute_nominal_total),
         day_limit: U256::from(lysis_limit_minor + desis_limit_minor),
         gratis_demand: U256::from(lysis_limit_minor),
         day_gratis_limit_minor: U256::from(lysis_limit_minor),

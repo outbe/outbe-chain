@@ -16,7 +16,8 @@ message TributeBody {
   bytes nominal_amount_minor = 6;
   uint32 reference_currency = 7;
   bytes tribute_price_minor = 8;
-  bool exclude_from_intex_issuance = 9;
+  reserved 9;
+  reserved "exclude_from_intex_issuance";
 }
 
 message NodItemBody {

@@ -122,7 +122,6 @@ pub(super) fn seed_waiting_capacity_victim(
             nominal_amount_minor: U256::from(1),
             reference_currency: 840,
             tribute_price_minor: U256::from(1),
-            exclude_from_intex_issuance: false,
         },
     )?;
     for boundary in [

@@ -219,7 +219,6 @@ mod tests {
             worldwide_day: WorldwideDay::new(20250115),
             tribute_currency: 840,
             reference_currency: 840,
-            exclude_from_intex_issuance: false,
             issuance_wwd_vwap_minor: U256::from(1_000u64),
             reference_wwd_vwap_minor: U256::from(2_000u64),
             reference_scurve_minor: U256::from(3_000u64),

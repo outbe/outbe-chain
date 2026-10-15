@@ -649,7 +649,6 @@ fn tributes(day: WorldwideDay) -> Vec<TributeBodyV1> {
                 nominal_amount_minor: U256::from(10_000),
                 reference_currency: 978,
                 tribute_price_minor: U256::from(1),
-                exclude_from_intex_issuance: index % 5 == 0,
             }
         })
         .collect::<Vec<_>>();

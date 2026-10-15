@@ -6,7 +6,7 @@ use super::super::validate_scan_artifact;
 use super::super::UnitExecutionAuthority;
 use super::super::WorkerError;
 use super::decode_shuffle_producer_root;
-use super::tribute_nominal::{shard_eligible_nominal_total, shard_tribute_nominals};
+use super::tribute_nominal::shard_tribute_nominals;
 
 use crate::inbox::WorkerInbox;
 
@@ -228,12 +228,12 @@ fn execute_root_reduce_leaf(
         (expected, resolved),
         limits,
     )?;
-    let (tribute_nominal_total, eligible_nominal_total) =
+    let tribute_nominal_total =
         compute_leaf_tribute_nominals(input_chunks, shard_ordinal, tribute_count)?;
     let (summary, output_manifest_entry) = build_root_reduce_leaf_summary(
         spec,
         (shard_ordinal, expected_start, tribute_count, plan_hash),
-        (tribute_nominal_total, eligible_nominal_total),
+        tribute_nominal_total,
         &finalized,
         (inbox, limits),
     )?;
@@ -327,33 +327,29 @@ fn compute_leaf_tribute_nominals(
     )],
     shard_ordinal: u32,
     tribute_count: u32,
-) -> Result<(U256, U256), WorkerError> {
+) -> Result<U256, WorkerError> {
     if input_chunks.iter().any(|(reference, chunk)| {
         reference.kind != InputChunkKind::Tribute || chunk.kind != InputChunkKind::Tribute
     }) {
         return Err(WorkerError::UnitBindingMismatch);
     }
     let nominals = shard_tribute_nominals(input_chunks, shard_ordinal)?;
-    let eligible_from_bodies = shard_eligible_nominal_total(input_chunks, shard_ordinal)?;
     let nominal_total = checked_sum(
         nominals.values().copied(),
         "root reducer tribute nominal total",
     )?;
     let expected_len =
         usize::try_from(tribute_count).map_err(|_| WorkerError::UnitBindingMismatch)?;
-    if nominals.len() != expected_len
-        || nominal_total.is_zero()
-        || eligible_from_bodies > nominal_total
-    {
+    if nominals.len() != expected_len || nominal_total.is_zero() {
         return Err(WorkerError::UnitBindingMismatch);
     }
-    Ok((nominal_total, eligible_from_bodies))
+    Ok(nominal_total)
 }
 
 fn build_root_reduce_leaf_summary(
     spec: &UnitSpecV1,
     (shard_ordinal, expected_start, tribute_count, plan_hash): (u32, u32, u32, B256),
-    (tribute_nominal_total, eligible_nominal_total): (U256, U256),
+    tribute_nominal_total: U256,
     finalized: &FinalizedOutputRunV1,
     (inbox, limits): (&WorkerInbox, &SchemaLimits),
 ) -> Result<(RootReduceSummaryV1, OutputManifestEntryV1), WorkerError> {
@@ -443,7 +439,6 @@ fn build_root_reduce_leaf_summary(
         nod_count: tribute_count,
         bucket_count: tribute_count,
         tribute_nominal_total,
-        eligible_nominal_total,
         lysis_allocation_minor: finalized.checked_segment_gratis_total,
         nod_cost_total: finalized.checked_settlement_cost_total,
         first_error_ordinal: None,
@@ -523,7 +518,6 @@ fn require_complete_root_summary(
         ),
         (
             summary.tribute_nominal_total,
-            summary.eligible_nominal_total,
             manifest.tribute_nominal_total,
         ),
     )
@@ -532,11 +526,7 @@ fn require_complete_root_summary(
 pub(in super::super) fn require_complete_root_values(
     (covered_primary_start, covered_primary_count, primary_work_unit_count): (u32, u32, u32),
     (summary_tribute_count, plan_tribute_count, manifest_tribute_count): (u32, u32, u32),
-    (
-        summary_tribute_nominal_total,
-        summary_eligible_nominal_total,
-        manifest_tribute_nominal_total,
-    ): (U256, U256, U256),
+    (summary_tribute_nominal_total, manifest_tribute_nominal_total): (U256, U256),
 ) -> Result<(), WorkerError> {
     let is_complete_root =
         covered_primary_start == 0 && covered_primary_count == primary_work_unit_count;
@@ -548,7 +538,7 @@ pub(in super::super) fn require_complete_root_values(
         plan_tribute_count,
         manifest_tribute_count,
         manifest_tribute_nominal_total,
-    ) && summary_eligible_nominal_total <= summary_tribute_nominal_total;
+    );
     if is_complete_root && !totals_match {
         return Err(WorkerError::UnitBindingMismatch);
     }
@@ -644,7 +634,6 @@ fn empty_root_reduce_leaf(
         nod_count: 0,
         bucket_count: 0,
         tribute_nominal_total: U256::ZERO,
-        eligible_nominal_total: U256::ZERO,
         lysis_allocation_minor: U256::ZERO,
         nod_cost_total: U256::ZERO,
         first_error_ordinal: None,

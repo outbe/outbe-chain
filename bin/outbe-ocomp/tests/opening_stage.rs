@@ -74,7 +74,6 @@ fn inventory(
                 nominal_amount_minor: U256::from(1),
                 reference_currency: 978,
                 tribute_price_minor: U256::from(1),
-                exclude_from_intex_issuance: false,
             };
             let canonical_body = encode_tribute_v1(&body).unwrap();
             let commitment = body_commitment(

@@ -193,7 +193,6 @@ fn fixture_tribute_retention_with_digest(
             nominal_amount_minor: U256::from(11),
             reference_currency: 978,
             tribute_price_minor: U256::from(12),
-            exclude_from_intex_issuance: false,
         })
         .expect("fixture current Tribute");
     let pin = RetainedTributePin {
@@ -411,7 +410,6 @@ fn ocm_pin_001_gc_pending_survives_mongo_failure_and_releases_without_export_ack
         nominal_amount_minor: U256::from(11),
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: false,
     };
     TributeRepositoryWriter::new(storage.clone(), storage.clone())
         .put(&tribute)
@@ -835,7 +833,6 @@ fn ocm_pin_001_shared_input_lease_is_collected_after_its_last_job_reference() {
         nominal_amount_minor: U256::from(11),
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: false,
     };
     let repository = TributeRepositoryWriter::new(storage.clone(), storage.clone());
     repository.put(&tribute).expect("fixture current Tribute");

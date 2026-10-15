@@ -113,7 +113,6 @@ fn encrypted_canary_offers(
         worldwide_day: WorldwideDay::new(CANARY_DAY),
         tribute_currency: 840,
         reference_currency: 840,
-        exclude_from_intex_issuance: false,
         issuance_wwd_vwap_minor: U256::from(CANARY_PRICE_MINOR),
         reference_wwd_vwap_minor: U256::from(CANARY_PRICE_MINOR),
         reference_scurve_minor: U256::ZERO,

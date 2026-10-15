@@ -20,7 +20,6 @@ pub struct TributeContextV2 {
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub tribute_price_minor: U256,
-    pub exclude_from_intex_issuance: bool,
     pub offer_input_hash: B256,
 }
 
@@ -35,7 +34,6 @@ impl TributeContextV2 {
         bytes.extend_from_slice(&self.issuance_currency.to_be_bytes());
         bytes.extend_from_slice(&self.reference_currency.to_be_bytes());
         bytes.extend_from_slice(&self.tribute_price_minor.to_be_bytes::<32>());
-        bytes.push(u8::from(self.exclude_from_intex_issuance));
         bytes.extend_from_slice(self.offer_input_hash.as_slice());
         keccak256(bytes)
     }

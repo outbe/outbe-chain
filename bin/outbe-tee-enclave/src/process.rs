@@ -2,9 +2,9 @@
 //! price -> compute the canonical public `TributeOfferResult` (incl. in-enclave
 //! Poseidon `token_id`) for each offer.
 //!
-//! The result carries only what is computed here. Day, currencies, exclusion flag
-//! and price are host-supplied request fields, so echoing them back would just be
-//! one more thing for the two sides to keep in agreement.
+//! The result carries only what is computed here. Day, currencies and price are
+//! host-supplied request fields, so echoing them back would just be one more
+//! thing for the two sides to keep in agreement.
 //!
 //! What the enclave does NOT do (stays on the host):
 //!   - worldwide-day calendar validity and OFFERING status. The node does one
@@ -172,7 +172,6 @@ mod tests {
             worldwide_day: DAY,
             tribute_currency: 840,
             reference_currency: 840,
-            exclude_from_intex_issuance: false,
             issuance_wwd_vwap_minor: SCALE_1E6_U256,
             reference_wwd_vwap_minor: SCALE_1E6_U256,
             reference_scurve_minor: U256::ZERO,
@@ -531,7 +530,6 @@ mod tests {
         for mutate in [
             (|o: &mut EncryptedTributeOffer| o.worldwide_day = NEXT_DAY) as fn(&mut _),
             |o: &mut EncryptedTributeOffer| o.tribute_currency = 978,
-            |o: &mut EncryptedTributeOffer| o.exclude_from_intex_issuance = true,
             |o: &mut EncryptedTributeOffer| o.issuance_wwd_vwap_minor = U256::from(2u64),
             |o: &mut EncryptedTributeOffer| o.reference_wwd_vwap_minor = U256::from(2u64),
             |o: &mut EncryptedTributeOffer| o.reference_scurve_minor = U256::from(2u64),
