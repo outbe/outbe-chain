@@ -569,19 +569,93 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
             .unwrap(),
         previous_sigrefs
     );
-    let refs_signature = sign(
-        &providers,
-        &dkg.polynomial,
-        match owner {
-            RepositoryKey::Bls12381G2(key) => key,
-            _ => unreachable!(),
-        },
-        prepared_refs.subject().unwrap(),
+    let refs_contributions: Vec<_> = identities
+        .iter()
+        .zip(&providers)
+        .enumerate()
+        .map(|(i, (key, provider))| {
+            let frame = material
+                .sign_review_refs(
+                    provider,
+                    &prepared_refs,
+                    alloy_primitives::Address::repeat_byte(i as u8 + 1),
+                    key,
+                )
+                .unwrap();
+            let frame = RepositoryPartial::from_bytes(&frame.to_bytes()).unwrap();
+            material
+                .verify_review_refs_partial(
+                    &providers[0],
+                    &prepared_refs,
+                    &key.public_key(),
+                    &frame,
+                )
+                .unwrap();
+            (key.public_key(), frame)
+        })
+        .collect();
+    assert!(material
+        .verify_review_refs_partial(
+            &providers[0],
+            &prepared_refs,
+            &contributions[0].0,
+            &contributions[0].1
+        )
+        .is_err());
+    assert!(material
+        .verify_partial(
+            &providers[0],
+            &again,
+            &refs_contributions[0].0,
+            &refs_contributions[0].1
+        )
+        .is_err());
+    assert!(material
+        .verify_review_refs_partial(
+            &providers[0],
+            &prepared_refs,
+            &refs_contributions[1].0,
+            &refs_contributions[0].1
+        )
+        .is_err());
+    assert!(material
+        .recover_review_refs(&providers[0], &prepared_refs, &refs_contributions[..2])
+        .is_err());
+    assert!(material
+        .recover_review_refs(
+            &providers[0],
+            &prepared_refs,
+            &[
+                refs_contributions[0].clone(),
+                refs_contributions[1].clone(),
+                refs_contributions[0].clone(),
+            ]
+        )
+        .is_err());
+    let refs_signature = material
+        .recover_review_refs(&providers[0], &prepared_refs, &refs_contributions[..3])
+        .unwrap();
+    let alternate_refs_signature = material
+        .recover_review_refs(&providers[0], &prepared_refs, &refs_contributions[1..])
+        .unwrap();
+    assert_eq!(
+        refs_signature.to_bytes(),
+        alternate_refs_signature.to_bytes()
     );
+    let (_, stale_refs) = prepare_patch_review(&repo, &approval, identity, None, &signing)
+        .unwrap()
+        .attach(&repo, &signature, accepted_refs.clone(), previous_sigrefs)
+        .unwrap();
+    assert_eq!(stale_refs.subject(), prepared_refs.subject());
     let signed_refs = prepared_refs
-        .attach(repo.raw(), refs_signature)
+        .attach(repo.raw(), refs_signature.clone())
         .unwrap()
         .oid();
+    assert_eq!(
+        repo.reference_oid(&owner, &git::refs::storage::SIGREFS_BRANCH)
+            .unwrap(),
+        previous_sigrefs
+    );
     receipts.accept(review.id, SubjectKind::Cob, context);
     receipts.accept(signed_refs, SubjectKind::SignedRefs, refs_context);
     assert_eq!(*review.author(), owner);
@@ -660,6 +734,26 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         Err(Error::Approval)
     ));
     providers[0].activate(8, dkg.polynomial.clone(), Some(dkg.shares[0].clone()));
+    assert!(material
+        .sign_review_refs(
+            &providers[0],
+            &stale_refs,
+            alloy_primitives::Address::repeat_byte(1),
+            &identities[0]
+        )
+        .is_err());
+    assert!(material
+        .verify_review_refs_partial(
+            &providers[0],
+            &stale_refs,
+            &refs_contributions[0].0,
+            &refs_contributions[0].1
+        )
+        .is_err());
+    assert!(material
+        .recover_review_refs(&providers[0], &stale_refs, &refs_contributions[..3])
+        .is_err());
+    refs_signature.verify(stale_refs.subject(), owner).unwrap();
     assert!(material
         .verify_partial(
             &providers[0],

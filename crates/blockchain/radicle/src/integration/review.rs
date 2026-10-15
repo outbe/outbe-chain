@@ -83,7 +83,7 @@ impl PreparedPatchReview {
         signature: &BlsEnvelope,
         mut accepted_refs: Refs,
         previous_sigrefs: git::Oid,
-    ) -> Result<(cob::Entry, PreparedSignedRefs), Error> {
+    ) -> Result<(cob::Entry, PreparedReviewRefs), Error> {
         let name = git::refs::storage::cob(&self.owner, &patch::TYPENAME, &self.patch)
             .strip_namespace_recursive();
         if accepted_refs.get(&name) != self.previous_owner_tip {
@@ -108,7 +108,44 @@ impl PreparedPatchReview {
             Committer::new(self.metadata),
             "Update signed refs\n".into(),
         )?;
-        Ok((entry, refs))
+        let subject = refs.subject()?;
+        Ok((
+            entry,
+            PreparedReviewRefs {
+                refs,
+                subject,
+                owner: self.owner,
+                signing: self.signing,
+            },
+        ))
+    }
+}
+
+/// Exact owner refs derived from an attached, authorized native Review.
+pub struct PreparedReviewRefs {
+    refs: PreparedSignedRefs,
+    subject: RepositorySubject,
+    owner: RepositoryKey,
+    signing: ReviewSigningContext,
+}
+
+impl PreparedReviewRefs {
+    pub fn subject(&self) -> &RepositorySubject {
+        &self.subject
+    }
+    pub(crate) fn owner(&self) -> RepositoryKey {
+        self.owner
+    }
+    pub(crate) fn signing_context(&self) -> &ReviewSigningContext {
+        &self.signing
+    }
+    /// Store verified refs objects without promoting any reference.
+    pub fn attach(
+        self,
+        repo: &git::raw::Repository,
+        signature: BlsEnvelope,
+    ) -> Result<radicle::storage::refs::sigrefs::VerifiedCommit, Error> {
+        Ok(self.refs.attach(repo, signature)?)
     }
 }
 

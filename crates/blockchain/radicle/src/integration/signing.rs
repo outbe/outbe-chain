@@ -12,9 +12,9 @@ use commonware_cryptography::{
 };
 use commonware_utils::{ordered::Quorum as _, Participant};
 use outbe_consensus::hybrid::{RepositorySigningError, VrfMaterialProvider};
-use radicle::crypto::{BlsEnvelope, BlsPublicKey, RepositoryKey};
+use radicle::crypto::{BlsEnvelope, BlsPublicKey, RepositoryKey, RepositorySubject};
 
-use super::review::{PreparedPatchReview, ReviewSigningContext};
+use super::review::{PreparedPatchReview, PreparedReviewRefs, ReviewSigningContext};
 use crate::manager::FinalizedRepositoryAuthority;
 
 const PARTIAL_NAMESPACE: &[u8] = b"outbe.radicle.partial.v1";
@@ -23,7 +23,7 @@ const PARTIAL_NAMESPACE: &[u8] = b"outbe.radicle.partial.v1";
 pub enum Error {
     #[error("DKG output differs from the current finalized committee or network owner")]
     Material,
-    #[error("native Review is not prepared for the current signing context")]
+    #[error("native Review or its signed refs are not prepared for the current signing context")]
     Context,
     #[error("partial sender is not the current DKG participant")]
     Participant,
@@ -115,10 +115,13 @@ impl RepositorySigningMaterial {
         }
     }
 
-    fn check_review(&self, review: &PreparedPatchReview) -> Result<(), Error> {
-        let actual = review.signing_context();
+    fn check_context(
+        &self,
+        owner: RepositoryKey,
+        actual: &ReviewSigningContext,
+    ) -> Result<(), Error> {
         let expected = self.review_context(actual.previous_receipt_hash);
-        if review.owner() != RepositoryKey::from(self.owner)
+        if owner != RepositoryKey::from(self.owner)
             || actual.chain_id != expected.chain_id
             || actual.genesis_hash != expected.genesis_hash
             || actual.epoch != expected.epoch
@@ -137,7 +140,28 @@ impl RepositorySigningMaterial {
         validator: Address,
         identity: &bls12381::PrivateKey,
     ) -> Result<RepositoryPartial, Error> {
-        self.check_review(review)?;
+        self.check_context(review.owner(), review.signing_context())?;
+        self.sign_subject(provider, review.subject(), validator, identity)
+    }
+
+    pub fn sign_review_refs(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        refs: &PreparedReviewRefs,
+        validator: Address,
+        identity: &bls12381::PrivateKey,
+    ) -> Result<RepositoryPartial, Error> {
+        self.check_context(refs.owner(), refs.signing_context())?;
+        self.sign_subject(provider, refs.subject(), validator, identity)
+    }
+
+    fn sign_subject(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        subject: &RepositorySubject,
+        validator: Address,
+        identity: &bls12381::PrivateKey,
+    ) -> Result<RepositoryPartial, Error> {
         let key = identity.public_key();
         let index = self
             .output
@@ -151,7 +175,7 @@ impl RepositorySigningMaterial {
             self.authority.committee().vrf_material_version,
             index,
             self.output.public(),
-            review.subject(),
+            subject,
         )?;
         let body = PartialBody {
             chain_id: self.authority.chain_id(),
@@ -159,7 +183,7 @@ impl RepositorySigningMaterial {
             epoch: self.authority.epoch(),
             material_version: self.authority.committee().vrf_material_version,
             material_hash: self.material_hash,
-            message_hash: Sha256::hash(&[review.subject().as_bytes()]).0,
+            message_hash: Sha256::hash(&[subject.as_bytes()]).0,
             partial,
         };
         let signature = identity.sign(PARTIAL_NAMESPACE, &body.to_bytes());
@@ -174,13 +198,34 @@ impl RepositorySigningMaterial {
         sender: &bls12381::PublicKey,
         frame: &RepositoryPartial,
     ) -> Result<PartialSignature<MinSig>, Error> {
-        self.check_review(review)?;
+        self.check_context(review.owner(), review.signing_context())?;
+        self.verify_subject_partial(provider, review.subject(), sender, frame)
+    }
+
+    pub fn verify_review_refs_partial(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        refs: &PreparedReviewRefs,
+        sender: &bls12381::PublicKey,
+        frame: &RepositoryPartial,
+    ) -> Result<PartialSignature<MinSig>, Error> {
+        self.check_context(refs.owner(), refs.signing_context())?;
+        self.verify_subject_partial(provider, refs.subject(), sender, frame)
+    }
+
+    fn verify_subject_partial(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        subject: &RepositorySubject,
+        sender: &bls12381::PublicKey,
+        frame: &RepositoryPartial,
+    ) -> Result<PartialSignature<MinSig>, Error> {
         if frame.body.chain_id != self.authority.chain_id()
             || frame.body.genesis_hash != self.authority.genesis_hash().0
             || frame.body.epoch != self.authority.epoch()
             || frame.body.material_version != self.authority.committee().vrf_material_version
             || frame.body.material_hash != self.material_hash
-            || frame.body.message_hash != Sha256::hash(&[review.subject().as_bytes()]).0
+            || frame.body.message_hash != Sha256::hash(&[subject.as_bytes()]).0
         {
             return Err(Error::Context);
         }
@@ -193,7 +238,7 @@ impl RepositorySigningMaterial {
         provider.verify_repository_partial(
             self.authority.committee().vrf_material_version,
             self.output.public(),
-            review.subject(),
+            subject,
             &frame.body.partial,
         )?;
         Ok(frame.body.partial.clone())
@@ -205,22 +250,41 @@ impl RepositorySigningMaterial {
         review: &PreparedPatchReview,
         contributions: &[(bls12381::PublicKey, RepositoryPartial)],
     ) -> Result<BlsEnvelope, Error> {
-        self.check_review(review)?;
+        self.check_context(review.owner(), review.signing_context())?;
+        self.recover_subject(provider, review.subject(), contributions)
+    }
+
+    pub fn recover_review_refs(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        refs: &PreparedReviewRefs,
+        contributions: &[(bls12381::PublicKey, RepositoryPartial)],
+    ) -> Result<BlsEnvelope, Error> {
+        self.check_context(refs.owner(), refs.signing_context())?;
+        self.recover_subject(provider, refs.subject(), contributions)
+    }
+
+    fn recover_subject(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        subject: &RepositorySubject,
+        contributions: &[(bls12381::PublicKey, RepositoryPartial)],
+    ) -> Result<BlsEnvelope, Error> {
         if contributions.len() > self.authority.committee().committee.len() {
             return Err(Error::Partial);
         }
         let partials = contributions
             .iter()
-            .map(|(sender, frame)| self.verify_partial(provider, review, sender, frame))
+            .map(|(sender, frame)| self.verify_subject_partial(provider, subject, sender, frame))
             .collect::<Result<Vec<_>, _>>()?;
         let signature = provider.recover_repository(
             self.authority.committee().vrf_material_version,
             self.output.public(),
-            review.subject(),
+            subject,
             &partials,
         )?;
         Ok(BlsEnvelope::attach(
-            review.subject().clone(),
+            subject.clone(),
             self.owner,
             signature
                 .encode()
