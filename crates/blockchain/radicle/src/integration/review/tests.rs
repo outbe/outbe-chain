@@ -1851,6 +1851,133 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
             .is_err()
         );
     }
+
+    let accepted_policy = Arc::new(
+        crate::integration::publication::policy::AcceptedRepositoryPolicy::new(
+            &accepted_predecessor,
+        )
+        .unwrap(),
+    );
+    let policy_storage = radicle::Storage::open(
+        temp.path().join("accepted-policy-receiver"),
+        git::UserInfo {
+            alias: radicle::node::Alias::new("PolicyVerifier"),
+            key: *SigningKey::from_seed(Seed::new([44; 32])).public_key(),
+        },
+    )
+    .unwrap();
+    policy_storage
+        .manage_repository(rid, owner, accepted_policy.clone())
+        .unwrap();
+    let policy_repo = policy_storage.create(rid).unwrap();
+    let policy_odb = policy_repo.raw().odb().unwrap();
+    source_odb
+        .foreach(|oid| {
+            let object = source_odb.read(*oid).unwrap();
+            policy_odb.write(object.kind(), object.data()).unwrap();
+            true
+        })
+        .unwrap();
+    let review_request = EntryRequest {
+        repository: rid,
+        authority: owner,
+        entry: review.id,
+        kind: SubjectKind::Cob,
+    };
+    assert!(accepted_policy.authorize_entry(&review_request).is_err());
+    assert!(cob::change::Storage::load(&policy_repo, revision.into_inner()).is_ok());
+    assert!(cob::change::Storage::load(&policy_repo, review.id).is_err());
+    assert!(radicle::storage::refs::SignedRefs::load_at(signed_refs, owner, &policy_repo).is_err());
+    for encoded in &bundles {
+        let witness = RepositoryWitnessBundle::from_bytes(encoded).unwrap();
+        let historical =
+            crate::integration::publication::review::verify_accepted_review_publication(
+                &receiver,
+                current_state.approval(),
+                &accepted_predecessor,
+                &accepted_verifier,
+                &witness,
+            )
+            .unwrap();
+        accepted_policy.accept_review(&historical).unwrap();
+        accepted_policy.accept_review(&historical).unwrap();
+        let authorization = accepted_policy.authorize_entry(&review_request).unwrap();
+        assert_eq!(authorization.context(), context);
+        assert_eq!(
+            authorization.receipt(),
+            Some(historical.receipt().receipt().receipt_hash.0)
+        );
+        assert_eq!(
+            cob::change::Storage::load(&policy_repo, review.id)
+                .unwrap()
+                .id,
+            review.id
+        );
+        let native_refs =
+            radicle::storage::refs::SignedRefs::load_at(signed_refs, owner, &policy_repo)
+                .unwrap()
+                .unwrap();
+        assert_eq!(native_refs.refs(), &desired_refs);
+        let mut wrong = review_request.clone();
+        wrong.kind = SubjectKind::Identity;
+        assert!(accepted_policy.authorize_entry(&wrong).is_err());
+        wrong.kind = SubjectKind::SignedRefs;
+        assert!(accepted_policy.authorize_entry(&wrong).is_err());
+        wrong = review_request.clone();
+        wrong.entry = identity;
+        assert!(accepted_policy.authorize_entry(&wrong).is_err());
+        wrong = review_request.clone();
+        wrong.repository = git::Oid::from_sha1([99; 20]).into();
+        assert!(accepted_policy.authorize_entry(&wrong).is_err());
+        wrong = review_request.clone();
+        wrong.authority = (*author.public_key()).into();
+        assert!(accepted_policy.authorize_entry(&wrong).is_err());
+
+        for block_conflict in [true, false] {
+            let mut conflicting = accepted_verifier.receipt().clone();
+            if block_conflict {
+                conflicting.block.hash = B256::from([99; 32]);
+            } else {
+                conflicting.receipt.body.finalized_anchor_hash = B256::from([99; 32]);
+                conflicting.receipt.receipt_hash = conflicting.receipt.body.receipt_hash();
+            }
+            let conflicting_verifier =
+                crate::integration::signing::accepted::AcceptedPublicationVerifier::from_receipt(
+                    conflicting,
+                    review_manifest.clone(),
+                    &material.canonical_output(),
+                )
+                .unwrap();
+            let conflicting =
+                crate::integration::publication::review::verify_accepted_review_publication(
+                    &receiver,
+                    current_state.approval(),
+                    &accepted_predecessor,
+                    &conflicting_verifier,
+                    &witness,
+                )
+                .unwrap();
+            assert!(accepted_policy.accept_review(&conflicting).is_err());
+        }
+        let mut other_checkpoint = accepted_predecessor.checkpoint().clone();
+        other_checkpoint.receipt.body.descriptor_hash = B256::from([99; 32]);
+        other_checkpoint.receipt.receipt_hash = other_checkpoint.receipt.body.receipt_hash();
+        let other_snapshot =
+            CheckpointOwnerSnapshot::bootstrap(other_checkpoint, &manifest).unwrap();
+        let other_policy =
+            crate::integration::publication::policy::AcceptedRepositoryPolicy::new(&other_snapshot)
+                .unwrap();
+        assert!(other_policy.accept_review(&historical).is_err());
+        assert!(other_policy.authorize_entry(&review_request).is_err());
+        assert_eq!(
+            accepted_policy
+                .authorize_entry(&review_request)
+                .unwrap()
+                .receipt(),
+            authorization.receipt()
+        );
+    }
+    assert!(policy_repo.raw().references().unwrap().next().is_none());
 }
 
 #[test]
