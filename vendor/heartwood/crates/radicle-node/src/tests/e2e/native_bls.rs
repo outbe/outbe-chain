@@ -435,7 +435,6 @@ fn fetch_native_repository(managed: bool) {
     source_receipts.accept(at, SubjectKind::SignedRefs);
     alice.handle.announce_refs_for(rid, [owner]).unwrap();
     if managed {
-        receiver_receipts.accept(at, SubjectKind::SignedRefs);
         let denied = bob
             .handle
             .fetch(rid, alice.id, time::Duration::from_secs(10), None)

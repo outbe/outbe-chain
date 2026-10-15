@@ -841,13 +841,6 @@ where
                 has_sigrefs = true;
                 continue;
             }
-            if let Some(failure) =
-                self.handle
-                    .repository()
-                    .validate_native_cob(remote.id(), &refname, oid)
-            {
-                validations.push(failure);
-            }
             if let Some(signed_oid) = signed.remove(&refname) {
                 if oid != signed_oid {
                     validations.push(Validation::MismatchedRef {

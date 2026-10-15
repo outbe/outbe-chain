@@ -48,7 +48,7 @@ pub enum UpdateError {
     Identity(#[from] DocError),
 }
 
-pub(super) fn verify_update<R: ReadRepository>(
+fn verify_update<R: ReadRepository>(
     repo: &R,
     raw: &git::raw::Repository,
     id: Oid,
