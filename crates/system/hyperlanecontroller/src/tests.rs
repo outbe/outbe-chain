@@ -63,6 +63,12 @@ fn provider() -> HashMapStorageProvider {
 /// The router quotes a zero fee so `initialize` can dispatch the remote
 /// `acceptOwnership()` calls without a balance.
 fn stub_pre_initialize(p: &mut HashMapStorageProvider) {
+    StorageHandle::enter(p, |storage| {
+        HyperlaneControllerContract::new(storage)
+            .bootstrap_admin
+            .write(deployer())
+            .unwrap();
+    });
     p.stub_sub_call_at_selector(
         ica_router(),
         IInterchainAccountRouter::quoteGasPaymentCall::SELECTOR,
@@ -202,11 +208,41 @@ fn initialize_accepts_ism_ownership_and_stores_table() {
 
 #[test]
 fn initialize_is_gated_and_one_shot() {
-    // Wrong caller.
+    // Not the bootstrap admin, even when it owns the ISM from calldata.
+    let mut p = provider();
+    stub_pre_initialize(&mut p);
+    p.stub_sub_call_at_selector(
+        local_ism(),
+        IOwnable::ownerCall::SELECTOR,
+        word_addr(stranger()),
+    );
+    StorageHandle::enter(&mut p, |storage| {
+        let err = dispatch(storage, &initialize_call(), stranger(), U256::ZERO).unwrap_err();
+        assert!(revert_reason(err).contains("is not the bootstrap admin"));
+    });
+
+    // No admin seeded: nobody can initialize.
     let mut p = provider();
     stub_pre_initialize(&mut p);
     StorageHandle::enter(&mut p, |storage| {
-        let err = dispatch(storage, &initialize_call(), stranger(), U256::ZERO).unwrap_err();
+        HyperlaneControllerContract::new(storage.clone())
+            .bootstrap_admin
+            .write(Address::ZERO)
+            .unwrap();
+        let err = dispatch(storage, &initialize_call(), Address::ZERO, U256::ZERO).unwrap_err();
+        assert!(revert_reason(err).contains("is not the bootstrap admin"));
+    });
+
+    // Admin, but not the local ISM owner.
+    let mut p = provider();
+    stub_pre_initialize(&mut p);
+    p.stub_sub_call_at_selector(
+        local_ism(),
+        IOwnable::ownerCall::SELECTOR,
+        word_addr(stranger()),
+    );
+    StorageHandle::enter(&mut p, |storage| {
+        let err = dispatch(storage, &initialize_call(), deployer(), U256::ZERO).unwrap_err();
         assert!(revert_reason(err).contains("is not the current owner"));
     });
 

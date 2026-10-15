@@ -527,6 +527,7 @@ mod tests {
                 head: head.encode_canonical(&poc_schema_limits()).unwrap(),
                 subtree_height: 3,
                 sealed_tribute_root: B256::repeat_byte(1),
+                nod_gratis_load_max: alloy_primitives::U256::ONE,
             },
             (
                 &head,

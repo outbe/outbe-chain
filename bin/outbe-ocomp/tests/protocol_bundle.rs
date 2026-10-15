@@ -39,3 +39,21 @@ fn canonical_bundle_bytes_resolve_only_to_the_expected_supported_bundle() {
         ProtocolError::InvalidInvariant("unsupported Lysis V1 input codec bundle")
     );
 }
+
+#[test]
+fn old_execution_semantics_are_rejected_even_with_a_matching_bundle_hash() {
+    let limits = poc_schema_limits();
+    let mut bundle = support::protocol_bundle();
+    bundle.lysis_program_semantics_hash = B256::repeat_byte(8);
+    let canonical = bundle.encode_canonical(&limits).unwrap();
+    let hash = bundle.protocol_bundle_hash(&limits).unwrap();
+    let expected = ProtocolError::InvalidInvariant("unsupported Lysis V1 execution semantics");
+    assert_eq!(
+        PinnedProtocolBundle::decode(&canonical, hash, &limits).unwrap_err(),
+        expected
+    );
+    assert_eq!(
+        PinnedProtocolBundle::decode_canonical(&canonical, &limits).unwrap_err(),
+        expected
+    );
+}

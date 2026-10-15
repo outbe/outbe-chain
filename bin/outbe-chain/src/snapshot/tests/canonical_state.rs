@@ -212,6 +212,7 @@ fn seed_nod_generation(
         bucket_count: 1,
         nod_amount_total: U256::from(99),
         lysis_allocation_minor: U256::from(77),
+        nod_gratis_load_max: U256::from(33),
         issued_at: 1_000,
         next_nod_ordinal: 1,
         last_progress_height: 90,
@@ -237,6 +238,9 @@ fn seed_nod_generation(
         .unwrap();
     nod.ocomp_lysis_allocation_minor
         .write(&day, generation.lysis_allocation_minor)
+        .unwrap();
+    nod.ocomp_nod_gratis_load_max
+        .write(&day, generation.nod_gratis_load_max)
         .unwrap();
     nod.ocomp_materialization_job_id
         .write(&day, generation.job_id)
