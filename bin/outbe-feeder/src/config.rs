@@ -4,12 +4,14 @@ use alloy_primitives::{Address, U256};
 use eyre::{Context, Result};
 use outbe_primitives::stablecoin::{iso_4217_alpha, ISO_4217_NUMERIC_CODES};
 use serde::Deserialize;
-use std::path::Path;
 
 use crate::errors::ConfigError;
 use crate::fixed::FixedValue;
 use outbe_primitives::asset_type::AssetType;
 use outbe_primitives::units::SCALE_1E18;
+
+mod cross;
+mod pairs_file;
 
 /// Top-level feeder configuration.
 #[derive(Debug, Deserialize)]
@@ -175,24 +177,7 @@ impl FeederConfig {
     /// Loads configuration from a TOML file. A top-level `pairs` key names a
     /// second file, relative to this one, whose sections join the config.
     pub fn load(path: &str) -> Result<Self> {
-        let mut table = read_table(Path::new(path))?;
-        if let Some(pairs) = table.remove("pairs") {
-            let pairs = pairs.as_str().ok_or(ConfigError::PairsPathNotString)?;
-            let pairs_path = Path::new(path)
-                .parent()
-                .unwrap_or(Path::new(""))
-                .join(pairs);
-            for (key, value) in read_table(&pairs_path)? {
-                if table.insert(key.clone(), value).is_some() {
-                    return Err(ConfigError::SectionInBothFiles {
-                        key,
-                        main: path.to_owned(),
-                        pairs: pairs_path.display().to_string(),
-                    }
-                    .into());
-                }
-            }
-        }
+        let table = pairs_file::read_with_pairs(path)?;
         let mut config: Self = table
             .try_into()
             .with_context(|| "failed to parse feeder config")?;
@@ -298,43 +283,6 @@ impl FeederConfig {
             self.validate_pair_sources(pair)?;
         }
         Ok(())
-    }
-
-    /// A cross pair is `<asset>/<ISO>` over another ISO code whose
-    /// `<asset>/<cross>` pair is configured directly, not as a cross itself.
-    fn validate_cross(&self, pair: &CurrencyPairConfig) -> Result<()> {
-        let Some(cross) = &pair.cross else {
-            return Ok(());
-        };
-        let iso = |code: &str| code.parse::<u16>().is_ok_and(|c| (1..=999).contains(&c));
-        if iso(&pair.base) || !iso(&pair.quote) || !iso(cross) {
-            return Err(ConfigError::InvalidCrossPair {
-                base: pair.base.clone(),
-                quote: pair.quote.clone(),
-                cross: cross.clone(),
-            }
-            .into());
-        }
-        if self.cross_leg(pair).is_none() {
-            return Err(ConfigError::MissingCrossLeg {
-                base: pair.base.clone(),
-                quote: pair.quote.clone(),
-                cross: cross.clone(),
-            }
-            .into());
-        }
-        Ok(())
-    }
-
-    /// The direct `<base>/<cross>` pair a cross pair divides.
-    pub(crate) fn cross_leg(&self, pair: &CurrencyPairConfig) -> Option<&CurrencyPairConfig> {
-        let cross = pair.cross.as_deref()?;
-        let base = parse_oracle_asset(&pair.base).ok()?;
-        self.currency_pairs.iter().find(|leg| {
-            leg.cross.is_none()
-                && leg.quote == cross
-                && parse_oracle_asset(&leg.base).is_ok_and(|leg_base| leg_base == base)
-        })
     }
 
     /// A pair names at least one source; each source is well-formed, uses a
@@ -460,27 +408,6 @@ impl CurrencyPairConfig {
             parse_oracle_asset(&self.quote)?,
         ))
     }
-
-    /// The asset the markets price: the quote currency for a cross pair.
-    pub(crate) fn market_base(&self) -> &str {
-        if self.cross.is_some() {
-            &self.quote
-        } else {
-            &self.base
-        }
-    }
-
-    /// The currency the markets price in: the cross currency for a cross pair.
-    pub(crate) fn market_quote(&self) -> &str {
-        self.cross.as_deref().unwrap_or(&self.quote)
-    }
-}
-
-fn read_table(path: &Path) -> Result<toml::Table> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read config file: {}", path.display()))?;
-    toml::from_str(&content)
-        .with_context(|| format!("failed to parse config file: {}", path.display()))
 }
 
 fn parse_oracle_asset(symbol: &str) -> Result<Address> {

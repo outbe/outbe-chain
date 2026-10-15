@@ -156,26 +156,49 @@ impl Provider for PythProvider {
         &self,
         pairs: &[(String, String)],
     ) -> Result<HashMap<String, TickerPrice>> {
-        let feeds = self.feeds().await?;
-        // Feed id -> (market key, inverted).
-        let mut wanted: HashMap<&str, Vec<(String, bool)>> = HashMap::new();
-        for (base, quote) in pairs {
-            let key = format!("{base}/{quote}");
-            let found = candidates(base, quote)
-                .into_iter()
-                .find_map(|(symbol, inverted)| feeds.get(&symbol).map(|id| (id, inverted)));
-            match found {
-                Some((id, inverted)) => wanted.entry(id).or_default().push((key, inverted)),
-                None => tracing::warn!(market = %key, "pyth has no feed for market"),
-            }
-        }
+        let wanted = wanted_feeds(self.feeds().await?, pairs);
         let mut result = HashMap::new();
         if wanted.is_empty() {
             return Ok(result);
         }
-        // One request per feed: a feed the key is not entitled to (403) drops
-        // alone instead of failing every market.
-        let responses = futures::future::join_all(wanted.keys().map(|id| async move {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        for parsed in self.latest_prices(wanted.keys().copied()).await {
+            if let Some(markets) = wanted.get(parsed.id.as_str()) {
+                record_price(&parsed, markets, now, &mut result);
+            }
+        }
+        Ok(result)
+    }
+}
+
+/// Feed id to the markets it prices, each with whether to invert the price.
+type WantedFeeds<'a> = HashMap<&'a str, Vec<(String, bool)>>;
+
+/// The first Pyth feed of each market's candidates. A market with no feed is
+/// logged and left out.
+fn wanted_feeds<'a>(
+    feeds: &'a HashMap<String, String>,
+    pairs: &[(String, String)],
+) -> WantedFeeds<'a> {
+    let mut wanted = WantedFeeds::new();
+    for (base, quote) in pairs {
+        let key = format!("{base}/{quote}");
+        let found = candidates(base, quote)
+            .into_iter()
+            .find_map(|(symbol, inverted)| feeds.get(&symbol).map(|id| (id, inverted)));
+        match found {
+            Some((id, inverted)) => wanted.entry(id).or_default().push((key, inverted)),
+            None => tracing::warn!(market = %key, "pyth has no feed for market"),
+        }
+    }
+    wanted
+}
+
+impl PythProvider {
+    /// One request per feed: a feed the key is not entitled to (403) drops
+    /// alone instead of failing every market.
+    async fn latest_prices<'a>(&self, ids: impl Iterator<Item = &'a str>) -> Vec<PythParsedPrice> {
+        let responses = futures::future::join_all(ids.map(|id| async move {
             let response = self
                 .get::<PythPriceResponse>(&format!(
                     "/v2/updates/price/latest?ids[]={id}&parsed=true"
@@ -187,29 +210,37 @@ impl Provider for PythProvider {
             response
         }))
         .await;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        for parsed in responses.into_iter().flatten().flat_map(|data| data.parsed) {
-            let Some(markets) = wanted.get(parsed.id.as_str()) else {
-                continue;
-            };
-            let age = now.saturating_sub(parsed.price.publish_time);
-            if age > MAX_FEED_AGE_SECS {
-                tracing::warn!(feed = %parsed.id, age, "pyth price is stale");
-                continue;
-            }
-            let price = FixedValue::parse(&format!("{}e{}", parsed.price.price, parsed.price.expo));
-            for (key, inverted) in markets {
-                let price = if *inverted {
-                    price.and_then(inverse)
-                } else {
-                    price
-                };
-                if let Some(ticker) = checked_ticker("pyth", key, price, VolumeInput::Unavailable) {
-                    result.insert(key.clone(), ticker);
-                }
-            }
+        responses
+            .into_iter()
+            .flatten()
+            .flat_map(|data| data.parsed)
+            .collect()
+    }
+}
+
+/// Writes a fresh feed price into every market it prices. A stale price is
+/// logged and left out.
+fn record_price(
+    parsed: &PythParsedPrice,
+    markets: &[(String, bool)],
+    now: u64,
+    result: &mut HashMap<String, TickerPrice>,
+) {
+    let age = now.saturating_sub(parsed.price.publish_time);
+    if age > MAX_FEED_AGE_SECS {
+        tracing::warn!(feed = %parsed.id, age, "pyth price is stale");
+        return;
+    }
+    let price = FixedValue::parse(&format!("{}e{}", parsed.price.price, parsed.price.expo));
+    for (key, inverted) in markets {
+        let price = if *inverted {
+            price.and_then(inverse)
+        } else {
+            price
+        };
+        if let Some(ticker) = checked_ticker("pyth", key, price, VolumeInput::Unavailable) {
+            result.insert(key.clone(), ticker);
         }
-        Ok(result)
     }
 }
 
