@@ -55,12 +55,22 @@ jobs:
         id: source
         run: |
           set -euo pipefail
-          [[ "${GITHUB_REF}" == "refs/heads/main" ]] || {
-            echo "dispatch the protected preflight workflow from main" >&2
-            exit 2
-          }
           source_sha="$(git rev-parse --verify HEAD^{commit})"
           [[ "${source_sha}" =~ ^[0-9a-f]{40}$ ]]
+          case "${GITHUB_REF}" in
+            refs/heads/main)
+              ;;
+            refs/heads/*)
+              [[ "${source_sha}" == "${GITHUB_SHA}" ]] || {
+                echo "a branch preflight may only validate its own dispatch commit" >&2
+                exit 2
+              }
+              ;;
+            *)
+              echo "dispatch the preflight workflow from main or a source branch" >&2
+              exit 2
+              ;;
+          esac
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           PREFLIGHT_ROOT="${RUNNER_TEMP}/${PREFLIGHT_NAME}"
           CARGO_TARGET_DIR="${PREFLIGHT_ROOT}/cargo-target"
