@@ -5,7 +5,7 @@
   "last_periodic_report_utc": "2026-10-15T20:33:20Z",
   "next_periodic_report_due_utc": "2026-10-15T21:03:20Z",
   "period_minutes": 30,
-  "stage": "P3 current-set checkpoint/system phase and finalized consensus archive anchor admission verified; production collector/material/sidecar wiring incomplete",
+  "stage": "P3 native Review COB and sealed derived signed-refs authenticated threshold signing verified; finalized consensus archive anchor admission verified separately; production collector/material/sidecar wiring incomplete",
   "decision_gate": {
     "id": "D1",
     "status": "historical_approval_request_withdrawn; no active user approval question",
@@ -37,7 +37,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "fe0411748f7146cd1b2e0d418be8d68c0947c63c",
+  "source_sha": "479f8fa02ceb1bd20610ee07f91bfc061bc9a5ba",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -56,7 +56,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "Source259df4bec: atomic current-set MinPk attestation admission, fixed pending slots/generation reset, exact Approved subject and separate Review/Merge stages, immutable receipts, reserved/bootstrap managed RID binding, OSP2 phase/header-body parity/actual proposer and verifier cursor/dispatch wiring. Shared OPL1 helper. No git.rs gate/D2 changes.",
+  "current_source_changes": "479f8fa02: sealed PreparedReviewRefs derived only from attached native Review; authenticated current-material sign/verify/recover of exact signed-refs subject; shared private contribution/recovery logic. Earlierfe0411748 finalized-only publication anchor admission. No git.rs gate/D2 changes.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -82,10 +82,12 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "fe0411748f7146cd1b2e0d418be8d68c0947c63c",
-    "checks": "512 full consensus lib tests;consensus/engine/node/chain all-target checks;consensus lib+tests Clippy -D warnings and scoped rustfmt PASS",
-    "acceptance": "Intermediate only; no independent full-AC PASS or task closure; no production collector/E2E claim"
+    "source_sha": "479f8fa02ceb1bd20610ee07f91bfc061bc9a5ba",
+    "checks": "38 full outbe-radicle lib tests;7 selected consumer packages all-target check;outbe-radicle lib+tests Clippy -D warnings and scoped rustfmt PASS",
+    "acceptance": "Intermediate only; P3/P6 incomplete, no independent full-AC PASS or task closure; no production collector/E2E claim",
+    "scenarios": "COB/refs cross-use,wrong sender,q-1,duplicate rejected;012/123 identical native refs envelopes;no ref promotion on attachment;old material sign/verify/recover rejected, historical envelope valid"
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
-  "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor"
+  "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
+  "review_refs_evidence": "evidence/outbe-chain-pjz.4/review-refs"
 }
