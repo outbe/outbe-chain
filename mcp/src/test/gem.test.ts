@@ -123,6 +123,16 @@ test("nod_gratis_mine opens the signer's Nod amount and sends its Gratis Mint au
   assert.equal(JSON.parse(text).gratisMinor, "4500000");
 });
 
+test("nod_gratis_mine explains a Nod amount its creator key cannot open", async () => {
+  const { record } = await settledNod(4_500_000n);
+  const { text, sent } = await run("nod_gratis_mine", { nod_id: "4" }, (chain) => {
+    chain.reply("getNod", record);
+    chain.reply("tributeOfferPublicKey", 7n);
+  });
+  assert.match(text, /does not open with your creator key.*pass gratis_amount/);
+  assert.equal(sent.length, 0);
+});
+
 test("nod_get shows the Gratis amount of the signer's own Nod", async () => {
   const { record, networkKey } = await settledNod(4_500_000n);
   const { text, isError } = await run("nod_get", { id: "4" }, (chain) => {

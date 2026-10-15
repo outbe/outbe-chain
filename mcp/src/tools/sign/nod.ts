@@ -55,7 +55,12 @@ export function registerNodTools(server: McpServer, ctx: Ctx): void {
       const nod = result as EncryptedNod & { isSettled: boolean };
       if (getAddress(nod.owner) !== owner) throw new Error(`nod ${nodId} belongs to ${nod.owner}, not the signer ${owner}`);
       if (!nod.isSettled) throw new Error(`nod ${nodId} is not Settled; settle it with nod_settle first`);
-      const amount = gratis_amount === undefined ? await signerNodAmount(ctx, network, nod) : BigInt(gratis_amount);
+      const amount =
+        gratis_amount === undefined
+          ? await signerNodAmount(ctx, network, nod).catch((error: Error) => {
+              throw new Error(`${error.message}; pass gratis_amount if you know it`);
+            })
+          : BigInt(gratis_amount);
       const nonce = grindMiningNonce("Nod", nodId, owner, await powDifficulty(ctx));
       const write = { ledger: "Gratis" as const, op: OP.Gratis.Mint, amount };
       return withAuthorization(ctx, network, [write], ([auth]) =>

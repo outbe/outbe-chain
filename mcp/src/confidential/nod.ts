@@ -77,5 +77,12 @@ export async function signerNodAmount(ctx: Ctx, network: Network, nod: Encrypted
     functionName: "tributeOfferPublicKey",
   });
   const { secret } = await creatorKey(account, network.chainId);
-  return openNodAmount(secret, numberToBytes(networkKey as bigint, { size: 32 }), nod);
+  try {
+    return openNodAmount(secret, numberToBytes(networkKey as bigint, { size: 32 }), nod);
+  } catch {
+    throw new Error(
+      `nod ${nod.nodId}'s Gratis amount does not open with your creator key and the current network key: ` +
+        "its Tribute was offered under another key or the network key has rotated since",
+    );
+  }
 }

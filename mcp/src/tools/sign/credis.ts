@@ -72,12 +72,13 @@ export function registerCredisTools(server: McpServer, ctx: Ctx): void {
     },
     handler(async ({ reservation_id, mac, op_nonce, wait }) => {
       const reservationId = BigInt(reservation_id);
-      const pledge = (auth: Authorization, waitForReceipt: boolean | undefined) =>
+      const pledge = (auth: Authorization, waitForReceipt: boolean | undefined, simulate = false) =>
         submit(ctx, {
           contract: "gratisfactory",
           method: "pledgeGratis",
           args: [reservationId, { mac: auth.mac, opNonce: auth.opNonce }],
           wait: waitForReceipt,
+          simulate,
         });
       if (mac !== undefined || op_nonce !== undefined) {
         if (mac === undefined || op_nonce === undefined) throw new Error("pass mac and op_nonce together, or neither");
@@ -92,7 +93,7 @@ export function registerCredisTools(server: McpServer, ctx: Ctx): void {
       const now = (await ctx.publicClient.getBlock()).timestamp;
       if (now > BigInt(reservation.expiresAt)) throw new Error(`reservation ${reservationId} has expired`);
       const write = { ledger: "Gratis" as const, op: OP.Gratis.Pledge, amount: reservation.gratisMinor };
-      return withAuthorization(ctx, contextNetwork(ctx), [write], ([auth]) => pledge(auth, true));
+      return withAuthorization(ctx, contextNetwork(ctx), [write], ([auth]) => pledge(auth, true, true));
     }),
   );
   server.tool(
