@@ -295,6 +295,20 @@ fn direct_managed_identity_read_requires_both_current_entry_receipts() {
         Doc::load_at(entry.id, &repo).is_err(),
         "no receipt must fail closed"
     );
+    let object_id = entry.id.into();
+    let owner_ref = git::refs::storage::cob(&owner, &TYPENAME, &object_id);
+    let publish = |tip| {
+        <storage::Repository as radicle_cob::object::Storage>::update(
+            &repo, &owner, &TYPENAME, &object_id, &tip,
+        )
+    };
+    let drafts = storage::git::cob::DraftStore::new(&repo, owner);
+    let draft_ref = git::refs::storage::draft::cob(&owner, &TYPENAME, &object_id);
+    let publish_draft =
+        |tip| radicle_cob::object::Storage::update(&drafts, &owner, &TYPENAME, &object_id, &tip);
+    assert!(publish(entry.id).is_err(), "local write requires a receipt");
+    assert!(publish_draft(entry.id).is_err());
+    assert!(repo.raw().references().unwrap().next().is_none());
     receipts.entry.set(entry.id).unwrap();
     assert!(
         <storage::Repository as radicle_cob::change::Storage>::load(&repo, entry.id).is_ok(),
@@ -309,11 +323,23 @@ fn direct_managed_identity_read_requires_both_current_entry_receipts() {
         ),
         "a COB receipt cannot replace a document receipt"
     );
+    assert!(
+        publish(entry.id).is_err(),
+        "identity publication also requires the document receipt"
+    );
+    assert!(publish_draft(entry.id).is_err());
+    assert!(repo.raw().references().unwrap().next().is_none());
     receipts.document.store(true, Ordering::SeqCst);
     let accepted = Doc::load_at(entry.id, &repo).unwrap();
     assert_eq!(accepted.doc, doc);
     assert_eq!(accepted.commit, entry.id);
     assert_eq!(Doc::load_at(entry.id, &repo).unwrap(), accepted);
+    publish(entry.id).unwrap();
+    publish_draft(entry.id).unwrap();
+    assert_eq!(
+        repo.raw().refname_to_id(owner_ref.as_str()).unwrap(),
+        entry.id.into()
+    );
     let author_key = crate::crypto::SigningKey::mock(75);
     use crate::crypto::Signer as _;
     let author_doc = Doc::initial(
@@ -370,5 +396,14 @@ fn direct_managed_identity_read_requires_both_current_entry_receipts() {
         "Ed author identity cannot replace the configured BLS owner identity"
     );
     assert_eq!(Doc::load_at(entry.id, &repo).unwrap(), accepted);
-    assert!(repo.raw().references().unwrap().next().is_none());
+    assert!(publish(author_entry.id).is_err());
+    assert!(publish_draft(author_entry.id).is_err());
+    assert_eq!(
+        repo.raw().refname_to_id(owner_ref.as_str()).unwrap(),
+        entry.id.into()
+    );
+    assert_eq!(
+        repo.raw().refname_to_id(draft_ref.as_str()).unwrap(),
+        entry.id.into()
+    );
 }

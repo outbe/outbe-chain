@@ -38,6 +38,35 @@ pub enum LoadError {
     Publication(#[from] storage::publication::Error),
 }
 
+#[derive(Error, Debug)]
+pub enum UpdateError {
+    #[error(transparent)]
+    Git(#[from] git::raw::Error),
+    #[error(transparent)]
+    Entry(#[from] LoadError),
+    #[error(transparent)]
+    Identity(#[from] DocError),
+}
+
+fn verify_update<R: ReadRepository>(
+    repo: &R,
+    raw: &git::raw::Repository,
+    id: Oid,
+) -> Result<(), UpdateError> {
+    let entry = load_entry(repo, raw, id)?;
+    if entry.manifest.type_name == *crate::cob::identity::TYPENAME {
+        let op = crate::cob::identity::Op::try_from(&entry).map_err(DocError::from)?;
+        if op
+            .actions
+            .iter()
+            .any(|action| matches!(action, crate::cob::identity::Action::Revision { .. }))
+        {
+            crate::identity::Doc::load_at(id, repo)?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn load_entry<R: ReadRepository>(
     repo: &R,
     raw: &git::raw::Repository,
@@ -124,7 +153,7 @@ impl change::Storage for Repository {
 impl cob::object::Storage for Repository {
     type ObjectsError = ObjectsError;
     type TypesError = TypesError;
-    type UpdateError = git::raw::Error;
+    type UpdateError = UpdateError;
     type RemoveError = git::raw::Error;
 
     type Namespace = RepositoryKey;
@@ -188,6 +217,7 @@ impl cob::object::Storage for Repository {
         object_id: &cob::ObjectId,
         entry: &cob::EntryId,
     ) -> Result<(), Self::UpdateError> {
+        verify_update(self, &self.backend, *entry)?;
         self.backend.reference(
             git::refs::storage::cob(namespace, typename, object_id).as_str(),
             (*entry).into(),
@@ -424,7 +454,7 @@ impl<R: storage::ReadRepository> ReadRepository for DraftStore<'_, R> {
 impl<R: storage::WriteRepository> cob::object::Storage for DraftStore<'_, R> {
     type ObjectsError = ObjectsError;
     type TypesError = git::raw::Error;
-    type UpdateError = git::raw::Error;
+    type UpdateError = UpdateError;
     type RemoveError = git::raw::Error;
 
     type Namespace = RepositoryKey;
@@ -478,6 +508,7 @@ impl<R: storage::WriteRepository> cob::object::Storage for DraftStore<'_, R> {
         object_id: &cob::ObjectId,
         entry: &cob::history::EntryId,
     ) -> Result<(), Self::UpdateError> {
+        verify_update(self, self.repo.raw(), *entry)?;
         self.repo.raw().reference(
             git::refs::storage::draft::cob(namespace, typename, object_id).as_str(),
             (*entry).into(),

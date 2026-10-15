@@ -217,14 +217,14 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
     let entry = attach(&repo, tx, None, vec![], &key);
     let identity = entry.id;
     let identity_ref = git::refs::storage::cob(&owner, &identity::TYPENAME, &identity.into());
-    repo.raw()
-        .reference(
-            identity_ref.as_str(),
-            identity.into(),
-            false,
-            "static BLS identity",
-        )
-        .unwrap();
+    cob::object::Storage::update(
+        &repo,
+        &owner,
+        &identity::TYPENAME,
+        &identity.into(),
+        &identity,
+    )
+    .unwrap();
     repo.raw()
         .reference_symbolic(
             git::refs::storage::id(&owner).as_str(),
@@ -305,15 +305,7 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
     tx.review(revision, Some(Verdict::Accept), None, vec![])
         .unwrap();
     let review = attach(&repo, tx, Some(identity), vec![*revision], &key);
-    let review_ref = git::refs::storage::cob(&owner, &patch::TYPENAME, &patch_id);
-    repo.raw()
-        .reference(
-            review_ref.as_str(),
-            review.id.into(),
-            true,
-            "static BLS review",
-        )
-        .unwrap();
+    cob::object::Storage::update(&repo, &owner, &patch::TYPENAME, &patch_id, &review.id).unwrap();
     let at = signed_refs(&repo, owner, &key, Some(first_refs));
     alice.handle.announce_refs_for(rid, [owner]).unwrap();
     let result = bob
