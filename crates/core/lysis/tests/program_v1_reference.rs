@@ -259,13 +259,6 @@ fn failure_json(error: ProgramErrorV1) -> Value {
     json!({"status": "FAILURE", "error": fields})
 }
 
-fn without_contributor_publication(mut expected: Value) -> Value {
-    if let Some(object) = expected.as_object_mut() {
-        object.remove("contributors");
-    }
-    expected
-}
-
 fn execute_json(input: &CorpusInput) -> Value {
     match execute(program_input(input)) {
         Ok(result) => success_json(input, result),
@@ -285,7 +278,7 @@ fn independent_reference_corpus_and_native_program_match() {
         );
         assert_eq!(
             execute_json(&case.input),
-            without_contributor_publication(case.expected),
+            case.expected,
             "native/reference mismatch for {}",
             case.case_id
         );
