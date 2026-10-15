@@ -8,6 +8,7 @@ use radicle::cob::stream::CobStream as _;
 use radicle::crypto::{BlsEnvelope, BlsPublicKey, RepositoryKey, RepositorySubject};
 use radicle::identity::{Doc, Project, RepoId, Visibility};
 use radicle::storage::git::Repository;
+use radicle::storage::publication::{self, EntryAuthorization, EntryRequest, PublicationPolicy};
 use radicle::storage::refs::SIGREFS_BRANCH;
 use radicle::storage::refs::sigrefs::{git::Committer, write::PreparedSignedRefs};
 
@@ -181,9 +182,23 @@ fn assert_cached_patch(
 
 #[test_log::test]
 fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
+    #[derive(Debug)]
+    struct MissingReceipts;
+    impl PublicationPolicy for MissingReceipts {
+        fn id(&self) -> &str {
+            "test.missing-receipts"
+        }
+        fn authorize_entry(
+            &self,
+            _request: &EntryRequest,
+        ) -> Result<EntryAuthorization, publication::Error> {
+            Err(publication::Error::Denied)
+        }
+    }
     let tmp = tempfile::tempdir().unwrap();
     let mut alice = Node::init(tmp.path(), config::relay("bls-source"), 13);
     let bob = Node::init(tmp.path(), config::relay("bls-receiver"), 37);
+    let guarded = Node::init(tmp.path(), config::relay("managed-receiver"), 57);
     let key = min_sig::SecretKey::key_gen(&[73; 32], &[]).unwrap();
     let owner = RepositoryKey::from(BlsPublicKey::from_bytes(key.sk_to_pk().to_bytes()).unwrap());
     let doc = Doc::initial(
@@ -198,6 +213,11 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
     );
     let (blob, bytes) = doc.encode().unwrap();
     let rid: RepoId = blob.into();
+    guarded
+        .storage
+        .manage_repository(rid, owner, std::sync::Arc::new(MissingReceipts))
+        .unwrap();
+    assert!(!guarded.storage.contains(&rid).unwrap());
     let repo = alice.storage.create(rid).unwrap();
     let signature = sign(
         &key,
@@ -273,6 +293,25 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
     alice.policies.seed(&rid, Scope::All).unwrap();
     let mut alice = alice.spawn();
     let mut bob = bob.spawn();
+    // Runtime reopens storage; the managed marker must still require its provider.
+    let mut guarded = guarded.spawn();
+    guarded.connect(&alice);
+    guarded.handle.seed(rid, Scope::All).unwrap();
+    let denied = guarded
+        .handle
+        .fetch(rid, alice.id, time::Duration::from_secs(10), None)
+        .unwrap();
+    assert!(
+        !denied.is_success(),
+        "missing managed policy accepted: {denied:?}"
+    );
+    assert!(matches!(
+        &denied,
+        FetchResult::Failed { reason } if reason.contains("verification of rad/id")
+    ));
+    assert!(!guarded.storage.path_of(&rid).exists());
+    assert!(!guarded.storage.contains(&rid).unwrap());
+    println!("managed_receiver_without_policy={denied:?} canonical_repository_absent=true");
     bob.connect(&alice);
     bob.handle.seed(rid, Scope::All).unwrap();
     let result = bob
