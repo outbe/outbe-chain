@@ -69,14 +69,14 @@ impl RepositorySigningMaterial {
         {
             return Err(Error::Material);
         }
-        let mut players = b"OPL1".to_vec();
-        players.extend_from_slice(&(n as u16).to_be_bytes());
-        for (index, member) in committee.committee.iter().enumerate() {
-            players.extend_from_slice(&(index as u32).to_be_bytes());
-            players.extend_from_slice(member.address.as_slice());
-            players.extend_from_slice(&member.consensus_pubkey);
-        }
-        let players_commitment = Sha256::hash(&[&players]).0;
+        let players_commitment = outbe_primitives::radicle_publication::players_commitment(
+            committee
+                .committee
+                .iter()
+                .map(|member| (member.address, &member.consensus_pubkey)),
+        )
+        .map_err(|_| Error::Material)?
+        .0;
         let encoded = output.encode();
         let length = u32::try_from(encoded.len()).map_err(|_| Error::Material)?;
         let material_hash = Sha256::hash(&[

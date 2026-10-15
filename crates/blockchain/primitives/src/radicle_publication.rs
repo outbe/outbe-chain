@@ -1,6 +1,6 @@
 //! Fixed publication checkpoint bytes shared by signing, block carrier and execution.
 
-use alloy_primitives::{FixedBytes, B256, U256};
+use alloy_primitives::{Address, FixedBytes, B256, U256};
 use commonware_cryptography::{Hasher as _, Sha256};
 use std::sync::{Arc, Mutex};
 
@@ -12,6 +12,21 @@ pub const PUBLICATION_ATTESTATION_LEN: usize = 100;
 pub const MAX_PUBLICATION_BATCH_LEN: usize =
     PUBLICATION_BODY_LEN + 1 + MAX_PUBLICATION_ATTESTATIONS * PUBLICATION_ATTESTATION_LEN;
 pub const PUBLICATION_NAMESPACE: &[u8] = b"outbe.radicle.publication.v1";
+
+pub fn players_commitment<'a>(
+    players: impl ExactSizeIterator<Item = (Address, &'a [u8; 48])>,
+) -> Result<B256> {
+    let length = u16::try_from(players.len())
+        .map_err(|_| PrecompileError::revert("repository player count exceeds OPL1 encoding"))?;
+    let mut bytes = b"OPL1".to_vec();
+    bytes.extend_from_slice(&length.to_be_bytes());
+    for (index, (address, key)) in players.enumerate() {
+        bytes.extend_from_slice(&(index as u32).to_be_bytes());
+        bytes.extend_from_slice(address.as_slice());
+        bytes.extend_from_slice(key);
+    }
+    Ok(Sha256::hash(&[&bytes]).0.into())
+}
 
 /// One carrier-sized ready batch. The collector replaces it from finalized state;
 /// proposal reads never consume it, so abandoned candidates cannot lose signatures.

@@ -27,6 +27,8 @@ pub enum RadicleRegistryError {
     ApprovalProposalMismatch,
     #[error("Radicle patch approval is immutable")]
     ImmutableApproval,
+    #[error("invalid Radicle publication: {0}")]
+    InvalidPublication(&'static str),
 }
 
 impl From<RadicleRegistryError> for PrecompileError {

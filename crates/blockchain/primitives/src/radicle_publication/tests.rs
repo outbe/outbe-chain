@@ -1,4 +1,7 @@
 use super::*;
+pub(crate) use crate::test_utils::{
+    sample_radicle_publication_batch as batch, sample_radicle_publication_body as body,
+};
 
 #[test]
 fn mailbox_is_bounded_nonblocking_and_preserves_proposal_retries() {
@@ -22,42 +25,6 @@ fn mailbox_is_bounded_nonblocking_and_preserves_proposal_retries() {
     assert_eq!(mailbox.ready_prefix(usize::MAX), Some(ready));
     mailbox.set_ready(None).unwrap();
     assert!(mailbox.ready_prefix(usize::MAX).is_none());
-}
-
-pub(crate) fn body() -> PublicationBody {
-    PublicationBody {
-        chain_id: 0x0102030405060708,
-        genesis_hash: B256::repeat_byte(1),
-        repo_id: FixedBytes::repeat_byte(2),
-        descriptor_hash: B256::repeat_byte(3),
-        owner_bls_public: FixedBytes::repeat_byte(4),
-        players_commitment: B256::repeat_byte(5),
-        epoch: 0x1112131415161718,
-        material_version: 0x2122232425262728,
-        material_hash: B256::repeat_byte(6),
-        finalized_anchor_height: 0x3132333435363738,
-        finalized_anchor_hash: B256::repeat_byte(7),
-        sequence: 0x4142434445464748,
-        previous_receipt_hash: B256::repeat_byte(8),
-        action: PublicationAction::Review,
-        proposal_id: U256::from_be_bytes([12; 32]),
-        patch_id: FixedBytes::repeat_byte(13),
-        revision_id: FixedBytes::repeat_byte(14),
-        expected_target_head: FixedBytes::repeat_byte(15),
-        package_manifest_hash: B256::repeat_byte(16),
-    }
-}
-
-pub(crate) fn batch(count: usize) -> PublicationBatch {
-    PublicationBatch {
-        body: body(),
-        attestations: (0..count)
-            .map(|index| PublicationAttestation {
-                participant_index: index as u32,
-                signature: FixedBytes::repeat_byte(index as u8 + 1),
-            })
-            .collect(),
-    }
 }
 
 #[test]

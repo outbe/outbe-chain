@@ -182,6 +182,9 @@ pub(super) fn input_for(kind: SystemTxKind) -> SystemTxInputV2 {
         },
         SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
         SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
+        SystemTxKind::RadiclePublication => SystemTxInputV2::RadiclePublication {
+            batch: crate::radicle_publication::tests::batch(1),
+        },
         SystemTxKind::OcompTerminalRequest => SystemTxInputV2::OcompTerminalRequest,
     }
 }

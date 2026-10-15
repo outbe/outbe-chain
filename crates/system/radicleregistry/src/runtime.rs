@@ -97,7 +97,10 @@ impl RadicleRegistry<'_> {
 
         let count = self.repository_count.read()?;
         let maximum = self.config_max_repositories.read()?;
-        if count >= maximum {
+        let reserved = !self.config_descriptor_hash.read()?.is_zero()
+            && self.network_repository.read()?.is_zero();
+        let available = maximum.saturating_sub(u32::from(reserved));
+        if count >= available {
             return Err(RadicleRegistryError::CapacityReached { maximum }.into());
         }
         let next_count = count + 1;

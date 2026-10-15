@@ -5,6 +5,21 @@ use outbe_primitives::storage::types::StorageBytes;
 
 /// Approved decision awaits its separate offchain execution.
 pub const PATCH_EXECUTION_PENDING: u8 = 1;
+pub const PATCH_EXECUTION_REVIEWED: u8 = 2;
+pub const PATCH_EXECUTION_MERGED: u8 = 3;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[storage_record(exists_field = accepted_height)]
+pub struct PublicationReceiptRecord {
+    #[key]
+    pub sequence: u64,
+    #[attribute(order = 0)]
+    pub body: Vec<u8>,
+    #[attribute(order = 1)]
+    pub accepted_height: u64,
+    #[attribute(order = 2)]
+    pub receipt_hash: B256,
+}
 
 /// Immutable decision. Execution and merge progress are stored separately.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,6 +48,10 @@ pub struct PatchApprovalRecord {
 /// - 9 patch_execution_stage (separate from immutable approval)
 /// - 10 config_descriptor_hash (immutable genesis commitment)
 /// - 11 config_descriptor_bytes (immutable Solidity bytes OGD1 artifact)
+/// - 12 network_repository (immutable RID binding)
+/// - 13..=15 publication sequence, previous receipt hash, material receipt sequence
+/// - 16..=18 immutable publication receipts
+/// - 19..=20 fixed pending slots keyed only by participant index
 #[storage_schema]
 #[contract(addr = RADICLE_REGISTRY_ADDRESS)]
 pub struct RadicleRegistry {
@@ -56,4 +75,18 @@ pub struct RadicleRegistry {
     pub config_descriptor_hash: outbe_primitives::storage::dsl::Value<B256>,
     #[attribute(order = 9)]
     pub config_descriptor_bytes: StorageBytes,
+    #[attribute(order = 10)]
+    pub network_repository: outbe_primitives::storage::dsl::Value<B256>,
+    #[attribute(order = 11)]
+    pub publication_sequence: outbe_primitives::storage::dsl::Value<u64>,
+    #[attribute(order = 12)]
+    pub publication_receipt_hash: outbe_primitives::storage::dsl::Value<B256>,
+    #[attribute(order = 13)]
+    pub publication_material_sequence: outbe_primitives::storage::dsl::Value<u64>,
+    #[attribute(order = 14)]
+    pub publication_receipts: outbe_primitives::storage::dsl::Map<u64, PublicationReceiptRecord>,
+    #[attribute(order = 15)]
+    pub publication_pending_generation: outbe_primitives::storage::dsl::Map<u32, B256>,
+    #[attribute(order = 16)]
+    pub publication_pending_body_hash: outbe_primitives::storage::dsl::Map<u32, B256>,
 }

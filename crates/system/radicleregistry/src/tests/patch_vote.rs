@@ -52,7 +52,7 @@ fn subject() -> String {
     .unwrap()
 }
 
-fn create(provider: &mut HashMapStorageProvider, payload: String) -> Result<U256> {
+pub(super) fn create(provider: &mut HashMapStorageProvider, payload: String) -> Result<U256> {
     let call = IVote::createProposalWithVotingWindowCall {
         targetModule: RADICLE_REGISTRY_ADDRESS,
         payload,
@@ -64,7 +64,12 @@ fn create(provider: &mut HashMapStorageProvider, payload: String) -> Result<U256
     Ok(IVote::createProposalWithVotingWindowCall::abi_decode_returns(&output).unwrap())
 }
 
-fn cast(provider: &mut HashMapStorageProvider, id: U256, voter: Address, yes: bool) -> Result<()> {
+pub(super) fn cast(
+    provider: &mut HashMapStorageProvider,
+    id: U256,
+    voter: Address,
+    yes: bool,
+) -> Result<()> {
     provider.set_block_number(11);
     let call = IVote::castVoteCall {
         proposalId: id,
@@ -77,11 +82,12 @@ fn cast(provider: &mut HashMapStorageProvider, id: U256, voter: Address, yes: bo
         .map(|_| ())
 }
 
-fn finalize(provider: &mut HashMapStorageProvider, height: u64) -> Result<()> {
+pub(super) fn finalize(provider: &mut HashMapStorageProvider, height: u64) -> Result<()> {
     provider.set_block_number(height);
+    let chain_id = provider.chain_id();
     provider.enter(|storage| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(height, 1_700_000_000 + height, CHAIN_ID),
+            BlockContext::empty_for_tests(height, 1_700_000_000 + height, chain_id),
             storage.clone(),
         );
         Vote::new(storage).process_begin_block(&ctx, &REGISTRY)

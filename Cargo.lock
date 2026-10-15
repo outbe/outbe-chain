@@ -9659,6 +9659,10 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-utils",
+ "outbe-consensus",
  "outbe-macros",
  "outbe-primitives",
  "outbe-validatorset",

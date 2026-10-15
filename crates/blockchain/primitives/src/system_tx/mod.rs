@@ -21,6 +21,7 @@
 //! 8. [`SystemTxKind::OracleSlashWindow`] for block `>= 1`.
 //! 9. [`SystemTxKind::HookEvents`] for block `>= 1` (receipt container for
 //!    whitelisted pre-exec hook logs, with no lifecycle re-execution).
+//! 10. [`SystemTxKind::RadiclePublication`] iff the header carries a publication batch.
 //!
 //! Once active, [`SystemTxKind::OcompTerminalRequest`] is the sole end-zone
 //! transaction. It follows every user transaction and the compressed-entity
@@ -69,8 +70,9 @@ pub use phase::SystemTxPhase;
 
 pub use layout::{
     expected_begin_block_kinds, expected_begin_block_kinds_for_activation,
-    expected_end_block_kinds, split_system_layout, validate_active_system_tx_set,
-    validate_system_tx_set_for_activation, SystemTxLayout,
+    expected_begin_block_kinds_for_publication, expected_end_block_kinds, split_system_layout,
+    validate_active_system_tx_set, validate_system_tx_set_for_activation,
+    validate_system_tx_set_for_publication, SystemTxLayout,
 };
 
 pub use gas::{system_tx_intrinsic_gas, system_tx_visible_gas_limit, SystemTxVisibleGasPlan};
@@ -112,6 +114,7 @@ pub const OCOMP_LIFECYCLE_BEGIN_SELECTOR: [u8; 4] = *b"OSE2";
 pub const OCOMP_TERMINAL_REQUEST_SELECTOR: [u8; 4] = *b"OSR2";
 /// Selector for [`SystemTxKind::HookEvents`] (V2 OSH2).
 pub const HOOK_EVENTS_SELECTOR: [u8; 4] = *b"OSH2";
+pub const RADICLE_PUBLICATION_SELECTOR: [u8; 4] = *b"OSP2";
 
 /// Hard cap on system transactions emitted in a block.
 pub const MAX_SYSTEM_TXS_PER_BLOCK: u8 = 16;

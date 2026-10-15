@@ -22,6 +22,7 @@ struct ReservedSystemReceiptContext {
     compressed_entities_gas: u64,
     has_boundary_outcome: bool,
     has_tee_bootstrap: bool,
+    has_publication: bool,
 }
 
 #[allow(private_bounds)]
@@ -151,6 +152,7 @@ where
             compressed_entities_gas,
             has_boundary_outcome,
             has_tee_bootstrap,
+            has_publication: block_artifacts.radicle_publication.is_some(),
         };
         if !result.result.is_success() {
             return self.commit_reserved_failure_receipt(tx, &result.result, receipt_context);
@@ -179,11 +181,13 @@ where
             .push_hook_events_receipt(tx.tx_type(), logs, visible_base_gas)
             .map(Some);
         if commit_outcome.is_ok() {
-            self.system_tx_phase_cursor =
-                self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
+            self.system_tx_phase_cursor = self
+                .system_tx_phase_cursor
+                .advance_after_commit_with_publication(
                     has_boundary_outcome,
                     has_tee_bootstrap,
                     self.ocomp_lifecycle_active,
+                    block_artifacts.radicle_publication.is_some(),
                 );
         }
         commit_outcome
@@ -204,6 +208,7 @@ where
             visible_gas_limit,
             has_boundary_outcome,
             has_tee_bootstrap,
+            has_publication,
             ..
         } = context;
         if !f(&output).should_commit() {
@@ -220,11 +225,13 @@ where
             )
             .map(Some);
         if commit_outcome.is_ok() {
-            self.system_tx_phase_cursor =
-                self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
+            self.system_tx_phase_cursor = self
+                .system_tx_phase_cursor
+                .advance_after_commit_with_publication(
                     has_boundary_outcome,
                     has_tee_bootstrap,
                     self.ocomp_lifecycle_active,
+                    has_publication,
                 );
         }
         commit_outcome
@@ -246,6 +253,7 @@ where
             compressed_entities_gas,
             has_boundary_outcome,
             has_tee_bootstrap,
+            has_publication,
         } = context;
         tracing::error!(
             target: "outbe::executor",
@@ -306,11 +314,14 @@ where
             signed_gas_limit: visible_gas_limit,
             internal_gas_used: result.tx_gas_used(),
         })?;
-        self.system_tx_phase_cursor = self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
-            has_boundary_outcome,
-            has_tee_bootstrap,
-            self.ocomp_lifecycle_active,
-        );
+        self.system_tx_phase_cursor = self
+            .system_tx_phase_cursor
+            .advance_after_commit_with_publication(
+                has_boundary_outcome,
+                has_tee_bootstrap,
+                self.ocomp_lifecycle_active,
+                has_publication,
+            );
         Ok(Some(gas_output))
     }
 
@@ -339,11 +350,13 @@ where
                     Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
                 );
                 let has_tee_bootstrap = self.block_has_tee_bootstrap();
-                self.system_tx_phase_cursor =
-                    self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
+                self.system_tx_phase_cursor = self
+                    .system_tx_phase_cursor
+                    .advance_after_commit_with_publication(
                         has_boundary_outcome,
                         has_tee_bootstrap,
                         self.ocomp_lifecycle_active,
+                        block_artifacts.radicle_publication.is_some(),
                     );
                 // Returning true makes the caller skip a further commit: pre-exec
                 // already pushed receipt[0] and committed state. The block

@@ -3,6 +3,7 @@
 pub mod errors;
 pub mod payload;
 pub mod precompile;
+pub mod publication;
 pub mod schema;
 pub mod vote_target;
 

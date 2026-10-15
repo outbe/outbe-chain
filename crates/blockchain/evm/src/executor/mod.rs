@@ -55,8 +55,7 @@ use crate::{
     factory::OutbeEvm,
     signer::SharedOutbeEvmSigner,
     system_tx::{
-        build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit,
-        expected_begin_block_kinds_for_activation, is_reserved_system_tx,
+        build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, is_reserved_system_tx,
         validate_phase1_witness_against, OcompLifecycleActivation, SystemTxInputV2, SystemTxKind,
         SystemTxVisibleGasPlan,
     },

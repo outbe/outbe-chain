@@ -19,7 +19,7 @@ use outbe_evm::system_tx::{SystemTxKind, SystemTxPhase, GENESIS_BOOTSTRAP_BLOCK_
 use proptest::prelude::*;
 
 /// The full set of `SystemTxPhase` variants must equal the V2 contract:
-/// 10 variants, no more, no fewer. A drift here is a protocol incompatibility.
+/// 11 variants, including the opt-in publication phase.
 #[test]
 fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
     // Construct one of each variant. If someone adds a new variant without
@@ -39,6 +39,7 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
         SystemTxPhase::TeeBootstrapOptional { body_index: 0 },
         SystemTxPhase::OracleSlashWindow { body_index: 0 },
         SystemTxPhase::HookEvents { body_index: 0 },
+        SystemTxPhase::RadiclePublication { body_index: 0 },
         SystemTxPhase::UserTxs,
     ];
     for variant in &variants {
@@ -54,10 +55,11 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
             SystemTxPhase::TeeBootstrapOptional { .. } => {}
             SystemTxPhase::OracleSlashWindow { .. } => {}
             SystemTxPhase::HookEvents { .. } => {}
+            SystemTxPhase::RadiclePublication { .. } => {}
             SystemTxPhase::UserTxs => {}
         }
     }
-    assert_eq!(variants.len(), 10, "V2 SystemTxPhase contract: 10 variants");
+    assert_eq!(variants.len(), 11, "V2 SystemTxPhase contract: 11 variants");
 }
 
 /// Block 0 is the genesis block: no begin-zone system txs. The cursor must
