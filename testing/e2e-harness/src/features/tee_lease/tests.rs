@@ -226,7 +226,7 @@ fn lease_activation_requires_order_exact_target_version_and_private_state() {
             share,
             super::MaterialVersions {
                 previous: 7,
-                primary: primary,
+                primary,
                 restarted: local
             },
             baseline

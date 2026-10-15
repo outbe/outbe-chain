@@ -193,13 +193,15 @@ fn verify_scenario_lane(
     Ok(())
 }
 
+type Scenarios = BTreeMap<String, (String, Value)>;
+
 struct ScenarioLane {
     lane: &'static str,
     run_prefix: &'static str,
     label: &'static str,
     required: &'static [(&'static str, &'static str, &'static str)],
     validate: fn(&str, &Value) -> Result<()>,
-    check_unused: fn(&BTreeMap<String, (String, Value)>, &BTreeSet<&str>) -> Result<()>,
+    check_unused: fn(&Scenarios, &BTreeSet<&str>) -> Result<()>,
 }
 
 const PUBLIC_LANE: ScenarioLane = ScenarioLane {
@@ -221,7 +223,7 @@ const E2E_LANE: ScenarioLane = ScenarioLane {
 };
 
 fn public_auxiliary_scenarios_passed(
-    scenarios: &BTreeMap<String, (String, Value)>,
+    scenarios: &Scenarios,
     used_scenarios: &BTreeSet<&str>,
 ) -> Result<()> {
     ensure!(
@@ -236,7 +238,7 @@ fn public_auxiliary_scenarios_passed(
 }
 
 fn no_unexpected_e2e_scenarios(
-    scenarios: &BTreeMap<String, (String, Value)>,
+    scenarios: &Scenarios,
     used_scenarios: &BTreeSet<&str>,
 ) -> Result<()> {
     ensure!(
@@ -420,9 +422,7 @@ fn validate_launch_identity(launch: &Value, scenario_name: &str) -> Result<()> {
     Ok(())
 }
 
-fn scenario_run_identity(
-    scenarios: &BTreeMap<String, (String, Value)>,
-) -> Result<ScenarioRunIdentity> {
+fn scenario_run_identity(scenarios: &Scenarios) -> Result<ScenarioRunIdentity> {
     let mut exact_binaries = None;
     let mut scenario_launch_identities = BTreeMap::new();
     let mut gramine_image_id = None;
@@ -566,7 +566,7 @@ fn scenario_sections(
         .collect()
 }
 
-fn load_scenarios(evidence_dir: &Path) -> Result<BTreeMap<String, (String, Value)>> {
+fn load_scenarios(evidence_dir: &Path) -> Result<Scenarios> {
     let mut scenarios = BTreeMap::new();
     for entry in std::fs::read_dir(evidence_dir)
         .wrap_err_with(|| format!("read evidence directory {}", evidence_dir.display()))?
@@ -591,10 +591,7 @@ fn load_scenarios(evidence_dir: &Path) -> Result<BTreeMap<String, (String, Value
     Ok(scenarios)
 }
 
-fn scenario_members(
-    evidence_dir: &Path,
-    scenarios: &BTreeMap<String, (String, Value)>,
-) -> Result<Vec<MemberDigestV1>> {
+fn scenario_members(evidence_dir: &Path, scenarios: &Scenarios) -> Result<Vec<MemberDigestV1>> {
     scenarios
         .values()
         .map(|(relative, _)| {
