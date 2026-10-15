@@ -25,6 +25,8 @@
 pub mod constants;
 mod envelope;
 pub mod errors;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod fixtures;
 #[cfg(test)]
 mod hook_registry_tests;
 pub mod hooks;

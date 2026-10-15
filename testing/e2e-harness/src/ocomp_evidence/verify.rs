@@ -7,7 +7,7 @@ use eyre::{bail, ensure, Result, WrapErr};
 use walkdir::WalkDir;
 
 use super::discovery::{discover, validate_discovery};
-use super::io::capture_source_identity;
+use super::io::{capture_source_identity, read_assertions};
 use super::ledger::PlanningLedger;
 use super::schema::{
     AssertionRecordV1, AssertionStatus, ClosureReportV1, EvidenceMode, MemberDigestV1,
@@ -73,7 +73,7 @@ pub fn verify_manifest(
     );
     validate_discovery(&actual_discovery)?;
 
-    let assertions = read_assertions(bundle_root, &manifest)?;
+    let assertions = read_bundle_assertions(bundle_root, &manifest)?;
     validate_assertions(ledger, &manifest, &assertions)?;
     Ok(compute_report(ledger, &manifest, &assertions))
 }
@@ -288,23 +288,13 @@ fn validate_members(
     Ok(())
 }
 
-fn read_assertions(bundle_root: &Path, manifest: &RunManifestV1) -> Result<Vec<AssertionRecordV1>> {
-    let path = bundle_root.join(&manifest.assertions_path);
-    let text = std::fs::read_to_string(&path)
-        .wrap_err_with(|| format!("read assertions {}", path.display()))?;
-    ensure!(!text.trim().is_empty(), "assertions JSONL is empty");
-    text.lines()
-        .enumerate()
-        .map(|(index, line)| {
-            ensure!(
-                !line.trim().is_empty(),
-                "blank assertion line {}",
-                index + 1
-            );
-            serde_json::from_str::<AssertionRecordV1>(line)
-                .wrap_err_with(|| format!("decode assertion line {}", index + 1))
-        })
-        .collect()
+fn read_bundle_assertions(
+    bundle_root: &Path,
+    manifest: &RunManifestV1,
+) -> Result<Vec<AssertionRecordV1>> {
+    let assertions = read_assertions(bundle_root, manifest)?;
+    ensure!(!assertions.is_empty(), "assertions JSONL is empty");
+    Ok(assertions)
 }
 
 fn validate_assertions(
@@ -384,56 +374,143 @@ fn validate_assertions(
     Ok(())
 }
 
-fn partition_by_status(assertions: &[AssertionRecordV1]) -> (BTreeSet<String>, BTreeSet<String>) {
-    let mut by_test = BTreeMap::<String, Vec<AssertionStatus>>::new();
-    for assertion in assertions {
-        by_test
-            .entry(assertion.test_id.clone())
-            .or_default()
-            .push(assertion.status);
+fn compute_report(
+    ledger: &PlanningLedger,
+    manifest: &RunManifestV1,
+    assertions: &[AssertionRecordV1],
+) -> ClosureReportV1 {
+    let tally = StatusTally::of(assertions);
+    let missing = missing_tests(ledger, manifest, &tally.passed);
+    let requirement_gaps = requirement_gaps(ledger, &manifest.mode, &tally.passed);
+    let mut errors = Vec::new();
+    let mode_ok = match &manifest.mode {
+        EvidenceMode::PocClosure => {
+            closure_verdict(ledger, &tally.passed, &requirement_gaps, &mut errors)
+        }
+        EvidenceMode::TaskProgress { task_id } => {
+            task_verdict(ledger, manifest, task_id, &tally.passed, &mut errors)
+        }
+        EvidenceMode::Lane { lane } => lane_verdict(ledger, lane, &tally, &mut errors),
+    };
+    if !tally.non_pass.is_empty() {
+        errors.push("bundle contains non-PASS stable tests".to_owned());
     }
-    let passed = by_test
-        .iter()
-        .filter(|(_, statuses)| {
+    let passed_ok = mode_ok && tally.non_pass.is_empty();
+
+    ClosureReportV1 {
+        schema_version: RUNTIME_SCHEMA_VERSION,
+        mode: mode_name(&manifest.mode).to_owned(),
+        task_id: match &manifest.mode {
+            EvidenceMode::TaskProgress { task_id } => Some(task_id.clone()),
+            EvidenceMode::Lane { .. } | EvidenceMode::PocClosure => None,
+        },
+        source_sha: Some(manifest.source.sha.clone()),
+        status: if passed_ok { "PASS" } else { "FAIL" }.to_owned(),
+        passed_test_ids: tally.passed.into_iter().collect(),
+        missing_test_ids: missing.into_iter().collect(),
+        non_pass_test_ids: tally.non_pass.into_iter().collect(),
+        requirement_gaps,
+        deferred_requirement_ids: ledger.deferred.keys().cloned().collect(),
+        errors,
+    }
+}
+
+/// Stable tests whose every assertion passed, and those with any non-PASS assertion.
+struct StatusTally {
+    passed: BTreeSet<String>,
+    non_pass: BTreeSet<String>,
+}
+
+impl StatusTally {
+    fn of(assertions: &[AssertionRecordV1]) -> Self {
+        let mut by_test = BTreeMap::<String, Vec<AssertionStatus>>::new();
+        for assertion in assertions {
+            by_test
+                .entry(assertion.test_id.clone())
+                .or_default()
+                .push(assertion.status);
+        }
+        let all_pass = |statuses: &Vec<AssertionStatus>| {
             !statuses.is_empty()
                 && statuses
                     .iter()
                     .all(|status| *status == AssertionStatus::Pass)
-        })
-        .map(|(id, _)| id.clone())
-        .collect::<BTreeSet<_>>();
-    let non_pass = by_test
-        .iter()
-        .filter(|(_, statuses)| {
-            statuses
-                .iter()
-                .any(|status| *status != AssertionStatus::Pass)
-        })
-        .map(|(id, _)| id.clone())
-        .collect::<BTreeSet<_>>();
-    (passed, non_pass)
+        };
+        let passed = by_test
+            .iter()
+            .filter(|(_, statuses)| all_pass(statuses))
+            .map(|(id, _)| id.clone())
+            .collect();
+        let non_pass = by_test
+            .iter()
+            .filter(|(_, statuses)| {
+                statuses
+                    .iter()
+                    .any(|status| *status != AssertionStatus::Pass)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        Self { passed, non_pass }
+    }
+}
+
+fn discovered_tests(manifest: &RunManifestV1) -> BTreeSet<String> {
+    manifest.discovery.discovered.iter().cloned().collect()
+}
+
+/// Tests in the report's scope that did not pass or were not discovered.
+fn missing_tests(
+    ledger: &PlanningLedger,
+    manifest: &RunManifestV1,
+    passed: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let scope = match &manifest.mode {
+        EvidenceMode::Lane { lane } => ledger.lane_test_ids(lane),
+        EvidenceMode::TaskProgress { .. } | EvidenceMode::PocClosure => ledger.test_ids(),
+    };
+    let discovered = discovered_tests(manifest);
+    let mut missing = scope.difference(passed).cloned().collect::<BTreeSet<_>>();
+    missing.extend(scope.difference(&discovered).cloned());
+    missing
+}
+
+fn requirement_gaps(
+    ledger: &PlanningLedger,
+    mode: &EvidenceMode,
+    passed: &BTreeSet<String>,
+) -> Vec<String> {
+    if matches!(mode, EvidenceMode::Lane { .. }) {
+        return Vec::new();
+    }
+    ledger
+        .required_coverage()
+        .into_iter()
+        .filter(|(_, tests)| tests.iter().any(|test| !passed.contains(test)))
+        .map(|(id, _)| id)
+        .collect()
 }
 
 fn closure_verdict(
+    ledger: &PlanningLedger,
     passed: &BTreeSet<String>,
-    all_tests: &BTreeSet<String>,
     requirement_gaps: &[String],
     errors: &mut Vec<String>,
 ) -> bool {
-    if passed != all_tests {
+    let all_passed = *passed == ledger.test_ids();
+    if !all_passed {
         errors.push("not every stable test passed on this artifact set".to_owned());
     }
     if !requirement_gaps.is_empty() {
         errors.push("normative coverage is incomplete".to_owned());
     }
-    passed == all_tests && requirement_gaps.is_empty()
+    all_passed && requirement_gaps.is_empty()
 }
 
 fn task_verdict(
     ledger: &PlanningLedger,
+    manifest: &RunManifestV1,
     task_id: &str,
     passed: &BTreeSet<String>,
-    discovered: &BTreeSet<String>,
     errors: &mut Vec<String>,
 ) -> bool {
     let owned = ledger
@@ -443,7 +520,7 @@ fn task_verdict(
         .cloned()
         .collect::<BTreeSet<_>>();
     let owned_ok = owned.is_subset(passed);
-    let discovered_ok = discovered.is_subset(passed);
+    let discovered_ok = discovered_tests(manifest).is_subset(passed);
     if !owned_ok {
         errors.push(format!("task {task_id} owned tests did not all pass"));
     }
@@ -456,97 +533,21 @@ fn task_verdict(
 fn lane_verdict(
     ledger: &PlanningLedger,
     lane: &str,
-    passed: &BTreeSet<String>,
-    non_pass: &BTreeSet<String>,
+    tally: &StatusTally,
     errors: &mut Vec<String>,
 ) -> bool {
-    let lane_tests = ledger
-        .lane_test_ids(lane)
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-    let lane_passed = passed
+    let lane_tests = ledger.lane_test_ids(lane);
+    let lane_passed = tally
+        .passed
         .intersection(&lane_tests)
         .cloned()
         .collect::<BTreeSet<_>>();
-    let lane_non_pass = non_pass
-        .intersection(&lane_tests)
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    let lane_ok = lane_passed == lane_tests && lane_non_pass.is_empty();
+    let lane_non_pass_empty = tally.non_pass.intersection(&lane_tests).next().is_none();
+    let lane_ok = lane_passed == lane_tests && lane_non_pass_empty;
     if !lane_ok {
         errors.push(format!("lane {lane} did not pass every registered test"));
     }
     lane_ok
-}
-
-fn compute_report(
-    ledger: &PlanningLedger,
-    manifest: &RunManifestV1,
-    assertions: &[AssertionRecordV1],
-) -> ClosureReportV1 {
-    let (passed, non_pass) = partition_by_status(assertions);
-    let all_tests = ledger.test_ids();
-    let report_test_scope = match &manifest.mode {
-        EvidenceMode::Lane { lane } => ledger
-            .lane_test_ids(lane)
-            .into_iter()
-            .collect::<BTreeSet<_>>(),
-        EvidenceMode::TaskProgress { .. } | EvidenceMode::PocClosure => all_tests.clone(),
-    };
-    let discovered = manifest
-        .discovery
-        .discovered
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    let mut missing = report_test_scope
-        .difference(&passed)
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    missing.extend(report_test_scope.difference(&discovered).cloned());
-
-    let requirement_gaps = if matches!(manifest.mode, EvidenceMode::Lane { .. }) {
-        Vec::new()
-    } else {
-        ledger
-            .required_coverage()
-            .into_iter()
-            .filter(|(_, tests)| tests.iter().any(|test| !passed.contains(test)))
-            .map(|(id, _)| id)
-            .collect::<Vec<_>>()
-    };
-
-    let mut errors = Vec::new();
-    let mode_ok = match &manifest.mode {
-        EvidenceMode::PocClosure => {
-            closure_verdict(&passed, &all_tests, &requirement_gaps, &mut errors)
-        }
-        EvidenceMode::TaskProgress { task_id } => {
-            task_verdict(ledger, task_id, &passed, &discovered, &mut errors)
-        }
-        EvidenceMode::Lane { lane } => lane_verdict(ledger, lane, &passed, &non_pass, &mut errors),
-    };
-    if !non_pass.is_empty() {
-        errors.push("bundle contains non-PASS stable tests".to_owned());
-    }
-    let passed_ok = mode_ok && non_pass.is_empty();
-
-    ClosureReportV1 {
-        schema_version: RUNTIME_SCHEMA_VERSION,
-        mode: mode_name(&manifest.mode).to_owned(),
-        task_id: match &manifest.mode {
-            EvidenceMode::TaskProgress { task_id } => Some(task_id.clone()),
-            EvidenceMode::Lane { .. } | EvidenceMode::PocClosure => None,
-        },
-        source_sha: Some(manifest.source.sha.clone()),
-        status: if passed_ok { "PASS" } else { "FAIL" }.to_owned(),
-        passed_test_ids: passed.into_iter().collect(),
-        missing_test_ids: missing.into_iter().collect(),
-        non_pass_test_ids: non_pass.into_iter().collect(),
-        requirement_gaps,
-        deferred_requirement_ids: ledger.deferred.keys().cloned().collect(),
-        errors,
-    }
 }
 
 fn validate_member_path(path: &str) -> Result<()> {

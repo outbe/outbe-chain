@@ -21,10 +21,14 @@ alloy-sol-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+outbe-zerofee = { path = ".", features = ["test-utils"] }
 proptest.workspace = true
 revm.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+
+[features]
+test-utils = []
 
 [lints]
 workspace = true

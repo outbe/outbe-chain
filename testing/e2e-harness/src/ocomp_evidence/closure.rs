@@ -17,6 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use eyre::{ensure, Result, WrapErr};
 use serde_json::{json, Value};
 
+use super::io::read_assertions;
 use super::{
     capture_source_identity, discover, publish_assertions, publish_manifest, publish_member,
     verify_lane_semantics, verify_manifest, AssertionRecordV1, EvidenceMode, MemberDigestV1,
@@ -196,15 +197,17 @@ pub fn assemble_closure(
         .ok_or_else(|| eyre::eyre!("closure has no Gramine Docker image identity"))?;
     let sections = closure_sections(
         ledger,
-        &source,
-        &discovery,
-        ClosureIdentity {
-            exact_binaries: &exact_binary_identity,
-            launch: &launch_identity,
-            gramine_image: &gramine_image_identity,
-            lane_manifests: &lane_index,
+        &ClosureSectionInputs {
+            source: &source,
+            discovery: &discovery,
+            identity: ClosureIdentity {
+                exact_binaries: &exact_binary_identity,
+                launch: &launch_identity,
+                gramine_image: &gramine_image_identity,
+            },
+            lane_index: &lane_index,
+            members: &members,
         },
-        &members,
     );
     let finished_at = unix_millis().max(finished_at);
     publish_manifest(
@@ -351,15 +354,17 @@ pub fn verify_closure_semantics(
         .ok_or_else(|| eyre::eyre!("retained closure has no Gramine Docker image identity"))?;
     let expected_sections = closure_sections(
         ledger,
-        &source,
-        &manifest.discovery,
-        ClosureIdentity {
-            exact_binaries: &exact_binary_identity,
-            launch: &launch_identity,
-            gramine_image: &gramine_image_identity,
-            lane_manifests: &lane_index,
+        &ClosureSectionInputs {
+            source: &source,
+            discovery: &manifest.discovery,
+            identity: ClosureIdentity {
+                exact_binaries: &exact_binary_identity,
+                launch: &launch_identity,
+                gramine_image: &gramine_image_identity,
+            },
+            lane_index: &lane_index,
+            members: &manifest.members,
         },
-        &manifest.members,
     );
     ensure!(
         manifest.sections == expected_sections,
@@ -425,20 +430,7 @@ fn decode_assertions(
     let root = manifest_path
         .parent()
         .ok_or_else(|| eyre::eyre!("lane manifest has no parent directory"))?;
-    let text = std::fs::read_to_string(root.join(&manifest.assertions_path))
-        .wrap_err("read lane assertions")?;
-    text.lines()
-        .enumerate()
-        .map(|(index, line)| {
-            ensure!(
-                !line.trim().is_empty(),
-                "blank lane assertion line {}",
-                index + 1
-            );
-            serde_json::from_str(line)
-                .wrap_err_with(|| format!("decode lane assertion line {}", index + 1))
-        })
-        .collect()
+    read_assertions(root, manifest)
 }
 
 fn copy_member(source: &Path, output_dir: &Path, relative: &str) -> Result<MemberDigestV1> {
@@ -537,17 +529,28 @@ struct ClosureIdentity<'a> {
     exact_binaries: &'a Value,
     launch: &'a Value,
     gramine_image: &'a Value,
-    lane_manifests: &'a BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Copy)]
+struct ClosureSectionInputs<'a> {
+    source: &'a super::SourceIdentityV1,
+    discovery: &'a super::TestDiscoveryV1,
+    identity: ClosureIdentity<'a>,
+    lane_index: &'a BTreeMap<String, Value>,
+    members: &'a [MemberDigestV1],
 }
 
 fn closure_sections(
     ledger: &PlanningLedger,
-    source: &super::SourceIdentityV1,
-    discovery: &super::TestDiscoveryV1,
-    identity: ClosureIdentity<'_>,
-    members: &[MemberDigestV1],
+    inputs: &ClosureSectionInputs<'_>,
 ) -> BTreeMap<String, Value> {
-    let lane_index = identity.lane_manifests;
+    let ClosureSectionInputs {
+        source,
+        discovery,
+        identity,
+        lane_index,
+        members,
+    } = *inputs;
     ledger
         .runtime_evidence
         .required_sections

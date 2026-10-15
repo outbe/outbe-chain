@@ -14,6 +14,28 @@ use super::schema::{
 
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+/// The manifest's JSONL assertions under `root`, one record per non-blank line.
+pub(super) fn read_assertions(
+    root: &Path,
+    manifest: &RunManifestV1,
+) -> Result<Vec<AssertionRecordV1>> {
+    let path = root.join(&manifest.assertions_path);
+    let text = fs::read_to_string(&path)
+        .wrap_err_with(|| format!("read assertions {}", path.display()))?;
+    text.lines()
+        .enumerate()
+        .map(|(index, line)| {
+            ensure!(
+                !line.trim().is_empty(),
+                "blank assertion line {}",
+                index + 1
+            );
+            serde_json::from_str(line)
+                .wrap_err_with(|| format!("decode assertion line {}", index + 1))
+        })
+        .collect()
+}
+
 /// Capture clean/dirty state and exact Rust dependency inputs.
 pub fn capture_source_identity(repo: &Path) -> Result<SourceIdentityV1> {
     crate::verification_ledger::capture_source_identity(repo)
@@ -217,27 +239,6 @@ fn list_or_none(values: &[String]) -> String {
     } else {
         values.join(", ")
     }
-}
-
-pub(super) fn read_manifest_assertions(
-    evidence_dir: &Path,
-    manifest: &RunManifestV1,
-    label: &str,
-) -> Result<Vec<AssertionRecordV1>> {
-    let text = std::fs::read_to_string(evidence_dir.join(&manifest.assertions_path))
-        .wrap_err_with(|| format!("read {label} lane assertions"))?;
-    text.lines()
-        .enumerate()
-        .map(|(index, line)| {
-            ensure!(
-                !line.trim().is_empty(),
-                "blank {label} assertion line {}",
-                index + 1
-            );
-            serde_json::from_str(line)
-                .wrap_err_with(|| format!("decode {label} assertion line {}", index + 1))
-        })
-        .collect()
 }
 
 #[cfg(test)]

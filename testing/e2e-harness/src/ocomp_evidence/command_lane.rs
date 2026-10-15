@@ -15,7 +15,7 @@ use eyre::{bail, ensure, Result, WrapErr};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::io::read_manifest_assertions;
+use super::io::read_assertions;
 use super::{
     capture_source_identity, discover, hash_file, publish_assertions, publish_manifest,
     publish_member, AssertionRecordV1, AssertionStatus, EvidenceMode, MemberDigestV1,
@@ -288,7 +288,6 @@ pub(crate) fn verify_command_lane_evidence(
     lane: &str,
     evidence_dir: &Path,
 ) -> Result<(SourceIdentityV1, CommandLaneRunV1)> {
-    let plan = command_plan(lane)?;
     let source = capture_source_identity(repo)?;
     let run_path = evidence_dir.join(COMMAND_RUN_FILE);
     let run: CommandLaneRunV1 = serde_json::from_slice(
@@ -296,16 +295,7 @@ pub(crate) fn verify_command_lane_evidence(
             .wrap_err_with(|| format!("read command lane receipt {}", run_path.display()))?,
     )
     .wrap_err("decode command lane receipt")?;
-    validate_command_run(
-        ledger,
-        lane,
-        plan,
-        &CommandReceipt {
-            source: &source,
-            run: &run,
-            evidence_dir,
-        },
-    )?;
+    validate_command_run(ledger, lane, &source, &run, evidence_dir)?;
     Ok((source, run))
 }
 
@@ -322,7 +312,7 @@ pub(crate) fn verify_command_lane_manifest_semantics(
             && manifest.sections.get("exact_binary_hashes") == Some(&json!(&run.artifact_set)),
         "command lane manifest identity differs from its independently verified receipt"
     );
-    let assertions = read_manifest_assertions(evidence_dir, manifest, "command")?;
+    let assertions = read_assertions(evidence_dir, manifest)?;
     let mut by_test = BTreeMap::new();
     for assertion in assertions {
         ensure!(
@@ -357,23 +347,14 @@ pub(crate) fn verify_command_lane_manifest_semantics(
     Ok(())
 }
 
-struct CommandReceipt<'a> {
-    source: &'a SourceIdentityV1,
-    run: &'a CommandLaneRunV1,
-    evidence_dir: &'a Path,
-}
-
 fn validate_command_run(
     ledger: &PlanningLedger,
     lane: &str,
-    plan: &[CommandBatchV1],
-    receipt: &CommandReceipt<'_>,
+    source: &SourceIdentityV1,
+    run: &CommandLaneRunV1,
+    evidence_dir: &Path,
 ) -> Result<()> {
-    let CommandReceipt {
-        source,
-        run,
-        evidence_dir,
-    } = *receipt;
+    let plan = command_plan(lane)?;
     ensure!(
         run.schema_version == RUNTIME_SCHEMA_VERSION
             && run.lane == lane
@@ -602,12 +583,12 @@ const FAST_PLAN: &[CommandBatchV1] = &[
 
 const INT_PLAN: &[CommandBatchV1] = &[
     CommandBatchV1 {
-        command_id: "int-evm",
+        command_id: "int-node-request-lifecycle",
         arguments: &[
             "test",
             "--locked",
             "-p",
-            "outbe-evm",
+            "outbe-node",
             "--test",
             "ocomp_request_lifecycle",
         ],

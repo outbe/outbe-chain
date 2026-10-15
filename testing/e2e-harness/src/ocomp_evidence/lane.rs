@@ -13,7 +13,7 @@ use eyre::{ensure, Result, WrapErr};
 use serde_json::{json, Value};
 
 use super::command_lane::verify_command_lane_manifest_semantics;
-use super::io::read_manifest_assertions;
+use super::io::read_assertions;
 use super::{
     assemble_command_lane, capture_source_identity, discover, hash_file, publish_assertions,
     publish_manifest, publish_member, AssertionRecordV1, AssertionStatus, EvidenceMode,
@@ -137,7 +137,7 @@ fn verify_scenario_lane(
     let identity = scenario_run_identity(&scenarios)?;
     validate_scenario_manifest_identity(&manifest.sections, &identity)?;
 
-    let mut assertions = read_manifest_assertions(evidence_dir, manifest, "retained")?
+    let mut assertions = read_assertions(evidence_dir, manifest)?
         .into_iter()
         .map(|assertion| (assertion.test_id.clone(), assertion))
         .collect::<BTreeMap<_, _>>();
@@ -193,43 +193,42 @@ fn verify_scenario_lane(
     Ok(())
 }
 
+/// Retained scenarios by name: their member path and decoded record.
 type Scenarios = BTreeMap<String, (String, Value)>;
 
-struct ScenarioLane {
+/// One scenario lane: its stable-test table and how its scenarios are checked.
+struct ScenarioLaneSpec {
     lane: &'static str,
     run_prefix: &'static str,
     label: &'static str,
-    required: &'static [(&'static str, &'static str, &'static str)],
+    scenarios: &'static [(&'static str, &'static str, &'static str)],
     validate: fn(&str, &Value) -> Result<()>,
-    check_unused: fn(&Scenarios, &BTreeSet<&str>) -> Result<()>,
+    check_leftovers: fn(&Scenarios, &BTreeSet<&str>) -> Result<()>,
 }
 
-const PUBLIC_LANE: ScenarioLane = ScenarioLane {
+const PUBLIC_LANE: ScenarioLaneSpec = ScenarioLaneSpec {
     lane: "OCM-PUBLIC",
     run_prefix: "ocomp-public",
     label: "public",
-    required: &PUBLIC_SCENARIOS,
+    scenarios: &PUBLIC_SCENARIOS,
     validate: validate_public_scenario,
-    check_unused: public_auxiliary_scenarios_passed,
+    check_leftovers: auxiliary_scenarios_passed,
 };
 
-const E2E_LANE: ScenarioLane = ScenarioLane {
+const E2E_LANE: ScenarioLaneSpec = ScenarioLaneSpec {
     lane: "OCM-E2E",
     run_prefix: "ocomp-e2e",
     label: "E2E",
-    required: &E2E_SCENARIOS,
+    scenarios: &E2E_SCENARIOS,
     validate: validate_e2e_scenario,
-    check_unused: no_unexpected_e2e_scenarios,
+    check_leftovers: no_unexpected_scenarios,
 };
 
-fn public_auxiliary_scenarios_passed(
-    scenarios: &Scenarios,
-    used_scenarios: &BTreeSet<&str>,
-) -> Result<()> {
+fn auxiliary_scenarios_passed(scenarios: &Scenarios, used: &BTreeSet<&str>) -> Result<()> {
     ensure!(
         scenarios
             .iter()
-            .filter(|(name, _)| !used_scenarios.contains(name.as_str()))
+            .filter(|(name, _)| !used.contains(name.as_str()))
             .map(|(_, value)| value)
             .all(|(_, scenario)| scenario.get("result").and_then(Value::as_str) == Some("passed")),
         "the public run contains a non-PASS auxiliary scenario"
@@ -237,48 +236,43 @@ fn public_auxiliary_scenarios_passed(
     Ok(())
 }
 
-fn no_unexpected_e2e_scenarios(
-    scenarios: &Scenarios,
-    used_scenarios: &BTreeSet<&str>,
-) -> Result<()> {
+fn no_unexpected_scenarios(scenarios: &Scenarios, used: &BTreeSet<&str>) -> Result<()> {
     ensure!(
-        used_scenarios.len() == scenarios.len(),
+        used.len() == scenarios.len(),
         "the E2E evidence directory contains unexpected scenarios: {:?}",
         scenarios
             .keys()
-            .filter(|name| !used_scenarios.contains(name.as_str()))
+            .filter(|name| !used.contains(name.as_str()))
             .collect::<Vec<_>>()
     );
     Ok(())
 }
 
-fn assemble_scenario_lane(
-    repo: &Path,
-    ledger: &PlanningLedger,
-    evidence_dir: &Path,
-    spec: &ScenarioLane,
-) -> Result<PathBuf> {
-    let lane = spec.lane;
-    ensure!(
-        !evidence_dir.join("run-manifest.json").exists(),
-        "lane manifest already exists in {}",
-        evidence_dir.display()
-    );
-    let source = capture_source_identity(repo)?;
-    let scenarios = load_scenarios(evidence_dir)?;
-    let scenario_identity = scenario_run_identity(&scenarios)?;
-    let mut members = scenario_members(evidence_dir, &scenarios)?;
-    let mut assertions = Vec::with_capacity(spec.required.len());
-    let mut observed_times = Vec::with_capacity(spec.required.len());
-    let run_id = format!("{}-{}", spec.run_prefix, unix_millis());
+/// The PASS assertions a lane publishes, with the scenario times they observed.
+struct ScenarioAssertions {
+    assertions: Vec<AssertionRecordV1>,
+    observed_times: Vec<u64>,
+}
 
+fn record_scenario_assertions(
+    spec: &ScenarioLaneSpec,
+    evidence_dir: &Path,
+    run: (&str, &str),
+    scenarios: &Scenarios,
+    members: &mut Vec<MemberDigestV1>,
+) -> Result<ScenarioAssertions> {
+    let (run_id, source_sha) = run;
+    let mut recorded = ScenarioAssertions {
+        assertions: Vec::with_capacity(spec.scenarios.len()),
+        observed_times: Vec::with_capacity(spec.scenarios.len()),
+    };
     let mut used_scenarios = BTreeSet::new();
-    for &(test_id, scenario_name, oracle) in spec.required {
-        let (path, scenario) = scenarios.get(scenario_name).ok_or_else(|| {
+    for (test_id, scenario_name, oracle) in spec.scenarios {
+        let (path, scenario) = scenarios.get(*scenario_name).ok_or_else(|| {
             eyre::eyre!("missing required {} scenario {scenario_name}", spec.label)
         })?;
-        used_scenarios.insert(scenario_name);
-        validate_common_scenario(scenario, &source.sha)?;
+        used_scenarios.insert(*scenario_name);
+        validate_common_scenario(scenario, source_sha)?;
         (spec.validate)(test_id, scenario)?;
 
         let expected_path = format!("expected/{test_id}.json");
@@ -291,21 +285,50 @@ fn assemble_scenario_lane(
         }))?;
         members.push(publish_member(evidence_dir, &expected_path, &expected)?);
         let observed_at = u64_field(scenario, "recorded_at_unix_ms")?;
-        observed_times.push(observed_at);
-        assertions.push(AssertionRecordV1 {
+        recorded.observed_times.push(observed_at);
+        recorded.assertions.push(AssertionRecordV1 {
             assertion_id: format!("{run_id}-{test_id}"),
-            test_id: test_id.to_owned(),
+            test_id: (*test_id).to_owned(),
             status: AssertionStatus::Pass,
-            oracle: oracle.to_owned(),
+            oracle: (*oracle).to_owned(),
             expected_artifact_refs: vec![expected_path],
             actual_artifact_refs: vec![path.clone()],
             observed_at,
-            run_id: run_id.clone(),
-            source_sha: source.sha.clone(),
+            run_id: run_id.to_owned(),
+            source_sha: source_sha.to_owned(),
             attempt: 1,
         });
     }
-    (spec.check_unused)(&scenarios, &used_scenarios)?;
+    (spec.check_leftovers)(scenarios, &used_scenarios)?;
+    Ok(recorded)
+}
+
+fn assemble_scenario_lane(
+    repo: &Path,
+    ledger: &PlanningLedger,
+    evidence_dir: &Path,
+    spec: &ScenarioLaneSpec,
+) -> Result<PathBuf> {
+    ensure!(
+        !evidence_dir.join("run-manifest.json").exists(),
+        "lane manifest already exists in {}",
+        evidence_dir.display()
+    );
+    let source = capture_source_identity(repo)?;
+    let scenarios = load_scenarios(evidence_dir)?;
+    let scenario_identity = scenario_run_identity(&scenarios)?;
+    let mut members = scenario_members(evidence_dir, &scenarios)?;
+    let run_id = format!("{}-{}", spec.run_prefix, unix_millis());
+    let ScenarioAssertions {
+        assertions,
+        observed_times,
+    } = record_scenario_assertions(
+        spec,
+        evidence_dir,
+        (&run_id, &source.sha),
+        &scenarios,
+        &mut members,
+    )?;
 
     let assertions_path = "assertions.jsonl";
     members.push(publish_assertions(
@@ -321,19 +344,13 @@ fn assemble_scenario_lane(
         .min()
         .unwrap_or_else(unix_millis);
     let finished_at = unix_millis().max(observed_times.iter().copied().max().unwrap_or(started_at));
-    let scenario_paths = members
-        .iter()
-        .filter(|member| member.path.starts_with("scenario-"))
-        .map(|member| member.path.clone())
-        .collect::<Vec<_>>();
     let sections = scenario_sections(
         ledger,
-        &LaneSectionInputs {
-            lane,
+        &ScenarioSectionInputs {
+            lane: spec.lane,
             source: &source,
             discovery: &discovery,
             identity: &scenario_identity,
-            scenario_paths: &scenario_paths,
             assertion_count: assertions.len(),
             members: &members,
         },
@@ -344,7 +361,7 @@ fn assemble_scenario_lane(
             schema_version: RUNTIME_SCHEMA_VERSION,
             run_id,
             mode: EvidenceMode::Lane {
-                lane: lane.to_owned(),
+                lane: spec.lane.to_owned(),
             },
             started_at,
             finished_at,
@@ -422,7 +439,9 @@ fn validate_launch_identity(launch: &Value, scenario_name: &str) -> Result<()> {
     Ok(())
 }
 
-fn scenario_run_identity(scenarios: &Scenarios) -> Result<ScenarioRunIdentity> {
+fn scenario_run_identity(
+    scenarios: &BTreeMap<String, (String, Value)>,
+) -> Result<ScenarioRunIdentity> {
     let mut exact_binaries = None;
     let mut scenario_launch_identities = BTreeMap::new();
     let mut gramine_image_id = None;
@@ -499,29 +518,34 @@ fn scenario_run_identity(scenarios: &Scenarios) -> Result<ScenarioRunIdentity> {
     })
 }
 
-struct LaneSectionInputs<'a> {
+#[allow(clippy::too_many_arguments)]
+#[derive(Clone, Copy)]
+struct ScenarioSectionInputs<'a> {
     lane: &'a str,
     source: &'a super::SourceIdentityV1,
     discovery: &'a super::TestDiscoveryV1,
     identity: &'a ScenarioRunIdentity,
-    scenario_paths: &'a [String],
     assertion_count: usize,
     members: &'a [MemberDigestV1],
 }
 
 fn scenario_sections(
     ledger: &PlanningLedger,
-    inputs: &LaneSectionInputs<'_>,
+    inputs: &ScenarioSectionInputs<'_>,
 ) -> BTreeMap<String, Value> {
-    let LaneSectionInputs {
+    let ScenarioSectionInputs {
         lane,
         source,
         discovery,
         identity,
-        scenario_paths,
         assertion_count,
         members,
     } = *inputs;
+    let scenario_paths = members
+        .iter()
+        .filter(|member| member.path.starts_with("scenario-"))
+        .map(|member| member.path.clone())
+        .collect::<Vec<_>>();
     ledger
         .runtime_evidence
         .required_sections
@@ -566,7 +590,7 @@ fn scenario_sections(
         .collect()
 }
 
-fn load_scenarios(evidence_dir: &Path) -> Result<Scenarios> {
+fn load_scenarios(evidence_dir: &Path) -> Result<BTreeMap<String, (String, Value)>> {
     let mut scenarios = BTreeMap::new();
     for entry in std::fs::read_dir(evidence_dir)
         .wrap_err_with(|| format!("read evidence directory {}", evidence_dir.display()))?
@@ -591,7 +615,10 @@ fn load_scenarios(evidence_dir: &Path) -> Result<Scenarios> {
     Ok(scenarios)
 }
 
-fn scenario_members(evidence_dir: &Path, scenarios: &Scenarios) -> Result<Vec<MemberDigestV1>> {
+fn scenario_members(
+    evidence_dir: &Path,
+    scenarios: &BTreeMap<String, (String, Value)>,
+) -> Result<Vec<MemberDigestV1>> {
     scenarios
         .values()
         .map(|(relative, _)| {

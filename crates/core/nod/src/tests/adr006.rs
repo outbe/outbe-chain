@@ -213,30 +213,82 @@ fn materialization_fifo_slots_match_the_genesis_seeder() {
     });
 }
 
-/// `openings` and the oracle-opening codec both name the snapshot slots; both must be the schema's.
+/// `openings` and the oracle-opening codec both name the Oracle's slots; both must be the schema's.
 #[test]
-fn entry_price_openings_follow_the_schema() {
-    use outbe_primitives::storage::types::StorageKey;
+fn entry_price_openings_follow_the_oracle_schema() {
+    use outbe_primitives::addresses::ORACLE_ADDRESS;
 
+    let day = 20_260_725;
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
-        let nod = NodContract::new(storage);
-        let frozen = nod.entry_prices_frozen.base_slot();
-        let price = nod.entry_price_minor.base_slot();
-        let day = WorldwideDay::new(20_260_726);
+        // GBP is registered without a VWAP for the day; EUR is not registered at all.
+        let gbp = outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(826))
+            .unwrap();
+        let usd = outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(840))
+            .unwrap();
+        outbe_oracle::schema::OracleContract::new(storage.clone())
+            .record_utc_day_vwap(day, usd, U256::from(320_000))
+            .unwrap();
+        let isos = [826, 840, 978];
+        let pair_slots = crate::openings::pair_index_slots(&isos).unwrap();
+        let indices = pair_slots
+            .iter()
+            .map(|slot| {
+                storage
+                    .sload(ORACLE_ADDRESS, U256::from_be_bytes(slot.0))
+                    .unwrap()
+                    .to::<u32>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(indices, vec![gbp, usd, 0]);
+        let opened = crate::openings::entry_price_slots(day, &isos, &indices)
+            .unwrap()
+            .into_iter()
+            .map(|slot| {
+                let value = storage
+                    .sload(ORACLE_ADDRESS, U256::from_be_bytes(slot.0))
+                    .unwrap();
+                (slot, value)
+            })
+            .collect::<Vec<_>>();
+        let prices = crate::openings::evaluate_entry_prices(day, &isos, &opened).unwrap();
         assert_eq!(
-            crate::openings::entry_price_slots(day, &[840]).unwrap(),
-            vec![
-                B256::from(day.mapping_slot(frozen).to_be_bytes()),
-                B256::from(840u16.mapping_slot(day.mapping_slot(price)).to_be_bytes()),
-            ]
+            prices,
+            std::collections::BTreeMap::from([(840, U256::from(320_000))])
         );
-        let plan = format!("nod_entry_price_slots_v1(frozen={frozen},price={price},");
+        for iso in isos {
+            assert_eq!(
+                prices.get(&iso).copied(),
+                outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), day, iso).unwrap(),
+                "the opening prices {iso} like the runtime Oracle read"
+            );
+        }
+        assert!(crate::openings::evaluate_entry_prices(day + 1, &isos, &opened).is_err());
+        let mut reordered = opened.clone();
+        reordered.swap(0, 1);
+        assert!(crate::openings::evaluate_entry_prices(day, &isos, &reordered).is_err());
+        let mut forged_index = opened.clone();
+        forged_index[2].1 = U256::from(usd);
+        assert!(crate::openings::evaluate_entry_prices(day, &isos, &forged_index).is_err());
+        let mut wide_index = opened.clone();
+        wide_index[0].1 = U256::from(u64::from(u32::MAX) + 1);
+        assert!(crate::openings::evaluate_entry_prices(day, &isos, &wide_index).is_err());
+        assert!(crate::openings::evaluate_entry_prices(day, &isos, &opened[..3]).is_err());
+        assert!(crate::openings::pair_index_slots(&[978]).is_err());
+        assert!(crate::openings::pair_index_slots(&[840, 840]).is_err());
+        assert!(crate::openings::pair_index_slots(&[0, 840]).is_err());
         assert!(
-            outbe_ocomp_protocol::registry::ORACLE_OPENING_CODEC_DESCRIPTOR.contains(&plan),
-            "{plan}"
+            outbe_ocomp_protocol::registry::ORACLE_OPENING_CODEC_DESCRIPTOR
+                .contains("oracle_utc_day_vwap_slots_v1(pair_index=10,vwap=58,")
         );
     });
+}
+
+#[test]
+fn entry_price_day_is_the_last_closed_utc_day() {
+    let new_year = date_key_to_utc_timestamp(20_260_101);
+    assert_eq!(crate::openings::entry_price_day(new_year), 20_251_231);
+    assert_eq!(crate::openings::entry_price_day(new_year - 1), 20_251_230);
 }
 
 #[test]
@@ -372,27 +424,22 @@ fn nod_contract_slot_layout_is_pinned() {
             U256::from(28)
         );
         assert_eq!(nod.max_call_window_seconds.base_slot(), U256::from(29));
-        assert_eq!(nod.entry_prices_frozen.base_slot(), U256::from(30));
-        assert_eq!(nod.entry_price_currency_count.base_slot(), U256::from(31));
-        assert_eq!(nod.entry_price_currency.base_slot(), U256::from(32));
-        assert_eq!(nod.entry_price_minor.base_slot(), U256::from(33));
-        assert_eq!(nod.bucket_issued_at.base_slot(), U256::from(34));
-        assert_eq!(nod.call_sweep_day.slot(), U256::from(35));
-        assert_eq!(nod.call_pending_day.slot(), U256::from(36));
-        assert_eq!(nod.call_bin_tree_root.base_slot(), U256::from(37));
-        assert_eq!(nod.call_bin_tree_mid.base_slot(), U256::from(38));
-        assert_eq!(nod.call_bin_tree_leaf.base_slot(), U256::from(39));
-        assert_eq!(nod.call_bin_count.base_slot(), U256::from(40));
-        assert_eq!(nod.call_bin_buckets.base_slot(), U256::from(41));
-        assert_eq!(nod.call_bucket_slot.base_slot(), U256::from(42));
-        assert_eq!(nod.expiry_tree_root.slot(), U256::from(43));
-        assert_eq!(nod.expiry_tree_leaf.base_slot(), U256::from(45));
-        assert_eq!(nod.call_currency_cursor.slot(), U256::from(46));
-        assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(47));
-        assert_eq!(nod.entry_price_source_day.base_slot(), U256::from(48));
-        assert_eq!(nod.config_profile.slot(), U256::from(49));
-        assert_eq!(nod.expiry_bucket_len.base_slot(), U256::from(50));
-        assert_eq!(nod.expiry_cursor.slot(), U256::from(56));
+        assert_eq!(nod.bucket_issued_at.base_slot(), U256::from(30));
+        assert_eq!(nod.call_sweep_day.slot(), U256::from(31));
+        assert_eq!(nod.call_pending_day.slot(), U256::from(32));
+        assert_eq!(nod.call_bin_tree_root.base_slot(), U256::from(33));
+        assert_eq!(nod.call_bin_tree_mid.base_slot(), U256::from(34));
+        assert_eq!(nod.call_bin_tree_leaf.base_slot(), U256::from(35));
+        assert_eq!(nod.call_bin_count.base_slot(), U256::from(36));
+        assert_eq!(nod.call_bin_buckets.base_slot(), U256::from(37));
+        assert_eq!(nod.call_bucket_slot.base_slot(), U256::from(38));
+        assert_eq!(nod.expiry_tree_root.slot(), U256::from(39));
+        assert_eq!(nod.expiry_tree_leaf.base_slot(), U256::from(41));
+        assert_eq!(nod.call_currency_cursor.slot(), U256::from(42));
+        assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(43));
+        assert_eq!(nod.config_profile.slot(), U256::from(44));
+        assert_eq!(nod.expiry_bucket_len.base_slot(), U256::from(45));
+        assert_eq!(nod.expiry_cursor.slot(), U256::from(51));
     });
 }
 

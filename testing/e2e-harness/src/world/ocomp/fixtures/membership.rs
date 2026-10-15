@@ -158,10 +158,10 @@ fn schedule_dynamic_membership_days(
     seed_followup_public_day(
         genesis,
         chain_id,
-        &FollowupDays {
-            first: first_worldwide_day,
+        FollowupDays {
+            first_worldwide_day,
             first_processing_time: Some(first_processing_time),
-            second: second_worldwide_day,
+            second_worldwide_day,
             second_processing_time,
         },
     )?;
@@ -193,28 +193,24 @@ pub(in crate::world::ocomp) fn schedule_public_recovery_day(
     seed_followup_public_day(
         genesis,
         chain_id,
-        &FollowupDays {
-            first: first_worldwide_day,
+        FollowupDays {
+            first_worldwide_day,
             first_processing_time: None,
-            second: second_worldwide_day,
+            second_worldwide_day,
             second_processing_time,
         },
     )?;
     Ok(second_worldwide_day)
 }
 
-/// The first public job's day and the follow-up day seeded after it.
+/// The already scheduled first public day and the follow-up day seeded after it.
 #[cfg(feature = "ocomp-integration")]
+#[derive(Clone, Copy)]
 struct FollowupDays {
-    first: WorldwideDay,
+    first_worldwide_day: WorldwideDay,
     first_processing_time: Option<u64>,
-    second: WorldwideDay,
+    second_worldwide_day: WorldwideDay,
     second_processing_time: u64,
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn fatal(message: &str) -> outbe_primitives::error::PrecompileError {
-    outbe_primitives::error::PrecompileError::Fatal(message.into())
 }
 
 /// Seed only the chain-state prerequisites for a later independent public job.
@@ -225,22 +221,25 @@ fn fatal(message: &str) -> outbe_primitives::error::PrecompileError {
 fn seed_followup_public_day(
     genesis: &mut serde_json::Value,
     chain_id: u64,
-    days: &FollowupDays,
+    days: FollowupDays,
 ) -> Result<()> {
-    let mut provider = followup_storage_provider(genesis, chain_id)?;
-    StorageHandle::enter(&mut provider, |storage| seed_followup_state(storage, days))?;
-    write_followup_storage(genesis, &provider)
+    let mut provider = followup_genesis_storage(genesis, chain_id)?;
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_followup_worldwide_day(&storage, days)?;
+        seed_followup_oracle(&storage, days)
+    })?;
+    write_followup_genesis_storage(genesis, &provider)
 }
 
 #[cfg(feature = "ocomp-integration")]
-const FOLLOWUP_ACCOUNTS: [(Address, &str); 3] = [
+const FOLLOWUP_GENESIS_ACCOUNTS: [(Address, &str); 3] = [
     (METADOSIS_ADDRESS, "Metadosis"),
     (ORACLE_ADDRESS, "Oracle"),
     (TRIBUTE_ADDRESS, "Tribute"),
 ];
 
 #[cfg(feature = "ocomp-integration")]
-fn followup_storage_provider(
+fn followup_genesis_storage(
     genesis: &serde_json::Value,
     chain_id: u64,
 ) -> Result<HashMapStorageProvider> {
@@ -249,7 +248,7 @@ fn followup_storage_provider(
         .get("alloc")
         .and_then(serde_json::Value::as_object)
         .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
-    for (address, label) in FOLLOWUP_ACCOUNTS {
+    for (address, label) in FOLLOWUP_GENESIS_ACCOUNTS {
         let Some(account_key) = find_alloc_address_key(alloc, address)? else {
             if address == TRIBUTE_ADDRESS {
                 continue;
@@ -271,30 +270,37 @@ fn followup_storage_provider(
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn seed_followup_state(
-    storage: StorageHandle<'_>,
-    days: &FollowupDays,
-) -> std::result::Result<(), outbe_primitives::error::PrecompileError> {
-    let first = outbe_metadosis::api::worldwide_day(storage.clone(), days.first)?
-        .ok_or_else(|| fatal("follow-up OCOMP genesis is missing its first WorldwideDay"))?;
+fn followup_fatal(message: &str) -> outbe_primitives::error::PrecompileError {
+    outbe_primitives::error::PrecompileError::Fatal(message.into())
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn seed_followup_worldwide_day(
+    storage: &StorageHandle<'_>,
+    days: FollowupDays,
+) -> outbe_primitives::error::Result<()> {
+    let first = outbe_metadosis::api::worldwide_day(storage.clone(), days.first_worldwide_day)?
+        .ok_or_else(|| {
+            followup_fatal("follow-up OCOMP genesis is missing its first WorldwideDay")
+        })?;
     if first.status != WwdStatus::Offering {
-        return Err(fatal(
+        return Err(followup_fatal(
             "follow-up OCOMP genesis requires an OFFERING first WorldwideDay",
         ));
     }
     if days.second_processing_time <= first.scheduled_process_time {
-        return Err(fatal(
+        return Err(followup_fatal(
             "follow-up OCOMP processing time must follow the first job",
         ));
     }
 
     let mut builder = FreshDevnetGenesisBuilder::new();
     if let Some(processing_time) = days.first_processing_time {
-        builder = builder.retime_offering_day(days.first, processing_time);
+        builder = builder.retime_offering_day(days.first_worldwide_day, processing_time);
     }
     builder
         .seed_active_worldwide_day(GenesisWorldwideDay {
-            worldwide_day: days.second,
+            worldwide_day: days.second_worldwide_day,
             status: WwdStatus::Offering,
             day_type: first.day_type,
             forming_start: first.forming_start,
@@ -307,66 +313,82 @@ fn seed_followup_state(
             current_vwap: first.current_vwap,
         })
         .apply(storage.clone())?;
-    outbe_tribute::TributeContract::new(storage.clone()).unseal_day(days.second)?;
-    seed_followup_oracle(storage, days)
+    outbe_tribute::TributeContract::new(storage.clone()).unseal_day(days.second_worldwide_day)
 }
 
 #[cfg(feature = "ocomp-integration")]
 fn seed_followup_oracle(
-    storage: StorageHandle<'_>,
-    days: &FollowupDays,
-) -> std::result::Result<(), outbe_primitives::error::PrecompileError> {
-    let pair = outbe_oracle::api::DAY_TYPE_PAIR;
-    let price = outbe_oracle::api::day_type_pair_vwap(storage.clone(), days.first)?
+    storage: &StorageHandle<'_>,
+    days: FollowupDays,
+) -> outbe_primitives::error::Result<()> {
+    let second_worldwide_day = days.second_worldwide_day;
+    let price = outbe_oracle::api::day_type_pair_vwap(storage.clone(), days.first_worldwide_day)?
         .filter(|price| !price.is_zero())
-        .ok_or_else(|| fatal("follow-up OCOMP genesis is missing its first Oracle VWAP"))?;
-    let snapshot_time = days.second.start_timestamp();
+        .ok_or_else(|| {
+            followup_fatal("follow-up OCOMP genesis is missing its first Oracle VWAP")
+        })?;
+    let snapshot_time = second_worldwide_day.start_timestamp();
     let snapshot_end = snapshot_time
         .checked_add(outbe_chain_constants::DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS)
-        .ok_or_else(|| fatal("follow-up OCOMP Oracle window overflow"))?;
+        .ok_or_else(|| followup_fatal("follow-up OCOMP Oracle window overflow"))?;
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
     oracle
         .config_vote_period
         .write(E2E_ORACLE_VOTE_PERIOD_BLOCKS)?;
-    let pair_index = oracle.pair_index_of(pair)?;
+    let pair_index = oracle.pair_index_of(outbe_oracle::api::DAY_TYPE_PAIR)?;
     if pair_index == 0 {
-        return Err(fatal("follow-up OCOMP Oracle pair is not registered"));
+        return Err(followup_fatal(
+            "follow-up OCOMP Oracle pair is not registered",
+        ));
     }
-    // Job A freezes its entry price from the previous UTC day. The
-    // WorldwideDay VWAP below is a separate Oracle value.
     if let Some(first_processing_time) = days.first_processing_time {
-        let entry_price_day = outbe_primitives::time::previous_date_key(
-            outbe_primitives::time::timestamp_to_date_key(first_processing_time),
-        );
-        oracle.record_utc_day_vwap(entry_price_day, pair_index, price)?;
-        let last_finalized = oracle.utc_day_vwap_last_finalized.read()?;
-        oracle
-            .utc_day_vwap_last_finalized
-            .write(last_finalized.max(entry_price_day))?;
-        if outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), entry_price_day, 840)?
-            != Some(price)
-        {
-            return Err(fatal(
-                "dynamic OCOMP genesis is missing its finalized entry price",
-            ));
-        }
+        seed_first_entry_price(storage, &oracle, first_processing_time, pair_index, price)?;
     }
-    oracle.worldwide_day_vwap_exists.write(&days.second, true)?;
+    oracle
+        .worldwide_day_vwap_exists
+        .write(&second_worldwide_day, true)?;
     oracle
         .worldwide_day_vwap_start
-        .write(&days.second, snapshot_time)?;
+        .write(&second_worldwide_day, snapshot_time)?;
     oracle
         .worldwide_day_vwap_end
-        .write(&days.second, snapshot_end)?;
+        .write(&second_worldwide_day, snapshot_end)?;
     oracle
         .worldwide_day_vwap_value
-        .get_nested(&days.second)
-        .write(&pair_index, price)?;
+        .get_nested(&second_worldwide_day)
+        .write(&pair_index, price)
+}
+
+/// Job A requests on its processing day and prices from the UTC day before it. The
+/// WorldwideDay VWAP is a separate Oracle value.
+#[cfg(feature = "ocomp-integration")]
+fn seed_first_entry_price(
+    storage: &StorageHandle<'_>,
+    oracle: &outbe_oracle::schema::OracleContract<'_>,
+    first_processing_time: u64,
+    pair_index: u32,
+    price: U256,
+) -> outbe_primitives::error::Result<()> {
+    let entry_price_day = outbe_primitives::time::previous_date_key(
+        outbe_primitives::time::timestamp_to_date_key(first_processing_time),
+    );
+    oracle.record_utc_day_vwap(entry_price_day, pair_index, price)?;
+    let last_finalized = oracle.utc_day_vwap_last_finalized.read()?;
+    oracle
+        .utc_day_vwap_last_finalized
+        .write(last_finalized.max(entry_price_day))?;
+    if outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), entry_price_day, 840)?
+        != Some(price)
+    {
+        return Err(followup_fatal(
+            "dynamic OCOMP genesis is missing its finalized entry price",
+        ));
+    }
     Ok(())
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn write_followup_storage(
+fn write_followup_genesis_storage(
     genesis: &mut serde_json::Value,
     provider: &HashMapStorageProvider,
 ) -> Result<()> {
@@ -374,7 +396,7 @@ fn write_followup_storage(
         .get_mut("alloc")
         .and_then(serde_json::Value::as_object_mut)
         .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
-    for (address, label) in FOLLOWUP_ACCOUNTS {
+    for (address, label) in FOLLOWUP_GENESIS_ACCOUNTS {
         let account_key = match find_alloc_address_key(alloc, address)? {
             Some(account_key) => account_key,
             None if address == TRIBUTE_ADDRESS => {
