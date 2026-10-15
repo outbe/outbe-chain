@@ -72,8 +72,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0708);
     let block_number = 19;
     let block_time = wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
-    let prepare_time = block_time - SECONDS_PER_DAY;
-    let price_day = previous_date_key(timestamp_to_date_key(prepare_time));
+    let price_day = previous_date_key(timestamp_to_date_key(block_time));
     let owner = address!("7100000000000000000000000000000000000071");
     let nominal = U256::from(1_000);
     let day_limit = U256::from(100);

@@ -15,7 +15,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 hex.workspace = true
-outbe-oracle.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

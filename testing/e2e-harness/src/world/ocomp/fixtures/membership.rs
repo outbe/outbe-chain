@@ -307,7 +307,7 @@ fn seed_followup_public_day(
                 "follow-up OCOMP Oracle pair is not registered".into(),
             ));
         }
-        // Job A freezes its entry price from the previous UTC day. The
+        // Job A requests on its processing day and prices from the UTC day before it. The
         // WorldwideDay VWAP below is a separate Oracle value.
         if let Some(first_processing_time) = first_processing_time {
             let entry_price_day = outbe_primitives::time::previous_date_key(
