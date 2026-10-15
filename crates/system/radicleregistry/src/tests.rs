@@ -13,6 +13,7 @@ use crate::{
 
 const CHAIN_ID: u64 = 1;
 
+mod genesis;
 mod patch_vote;
 
 fn repo(byte: u8) -> FixedBytes<20> {
@@ -129,6 +130,11 @@ fn storage_layout_slots_zero_through_five_are_stable() {
         assert_eq!(registry.config_max_repositories.slot(), U256::from(5));
         assert_eq!(registry.patch_approvals.base_slot(), U256::from(6));
         assert_eq!(registry.patch_execution_stage.base_slot(), U256::from(9));
+        assert_eq!(
+            registry.config_descriptor_hash.slot(),
+            U256::from(outbe_primitives::radicle_genesis::GOVERNMENTS_DESCRIPTOR_HASH_SLOT)
+        );
+        assert_eq!(registry.config_descriptor_bytes.len().unwrap(), 0);
     });
 }
 

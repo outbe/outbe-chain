@@ -12,6 +12,8 @@ mod late_finalize;
 mod records;
 
 #[cfg(test)]
+mod publication_tests;
+#[cfg(test)]
 mod regression;
 
 const MAGIC: &[u8; 4] = b"OART";
@@ -51,6 +53,8 @@ const MAGIC: &[u8; 4] = b"OART";
 /// Pre-genesis hard fork. Nodes built before this change will reject
 /// blocks carrying earlier artifact versions.
 const VERSION: u8 = 0x0B;
+const PUBLICATION_VERSION: u8 = 0x0C;
+const RADICLE_PUBLICATION_TAG: u8 = 0x09;
 const TEE_EXPIRED_TARGET_EXCLUSIONS_DOMAIN: &[u8] = b"outbe/tee-expired-target-exclusions/v1";
 const EXECUTION_SUMMARY_TAG: u8 = 0x01;
 const BOUNDARY_TAG: u8 = 0x02;
@@ -93,6 +97,9 @@ const PER_BLOCK_CREDIT_FIXED_LEN: usize = 8 + 32 + 8 + 8 + 8 + 32;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OutbeBlockArtifacts {
+    /// OART v0x0C is opt-in; execution/consensus bind this flag to genesis configuration.
+    pub radicle_publication_enabled: bool,
+    pub radicle_publication: Option<crate::radicle_publication::PublicationBatch>,
     pub execution_summary: Option<ExecutionSummaryArtifact>,
     pub consensus_header_artifact: Option<ConsensusHeaderArtifact>,
     /// Sub-second part of the consensus block timestamp (0..1000).
@@ -231,8 +238,16 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
     if let Some(root) = artifacts.compressed_entities_root {
         records.push((COMPRESSED_ENTITIES_ROOT_TAG, fields::encode_root(root)));
     }
+    if let Some(batch) = &artifacts.radicle_publication {
+        if !artifacts.radicle_publication_enabled {
+            return Err(PrecompileError::revert(
+                "repository publication requires OART v0x0C",
+            ));
+        }
+        records.push((RADICLE_PUBLICATION_TAG, batch.to_bytes()?));
+    }
 
-    if records.is_empty() {
+    if records.is_empty() && !artifacts.radicle_publication_enabled {
         return Ok(Bytes::new());
     }
 
@@ -254,7 +269,11 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
 
     let mut buf = Vec::with_capacity(total_len);
     buf.extend_from_slice(MAGIC);
-    buf.push(VERSION);
+    buf.push(if artifacts.radicle_publication_enabled {
+        PUBLICATION_VERSION
+    } else {
+        VERSION
+    });
     buf.push(records.len() as u8);
     for (tag, payload) in records {
         buf.push(tag);
@@ -272,7 +291,10 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
 
     let record_count = decode_block_artifact_record_count(extra_data)?;
     let mut offset = 6usize;
-    let mut artifacts = OutbeBlockArtifacts::default();
+    let mut artifacts = OutbeBlockArtifacts {
+        radicle_publication_enabled: extra_data[4] == PUBLICATION_VERSION,
+        ..Default::default()
+    };
 
     for _ in 0..record_count {
         if offset + 3 > extra_data.len() {
@@ -326,8 +348,35 @@ pub fn sanitize_prefinal_outbe_block_artifacts(extra_data: &[u8]) -> Result<Byte
     Ok(encoded)
 }
 
+/// Adds only ready publication attestations after reserving every final execution field.
+pub fn encode_proposal_block_artifacts(
+    mut artifacts: OutbeBlockArtifacts,
+    mailbox: &crate::radicle_publication::RepositoryPublicationMailbox,
+) -> Result<Bytes> {
+    if artifacts.radicle_publication_enabled {
+        let mut reserved = artifacts.clone();
+        reserved.radicle_publication = None;
+        reserved.execution_summary = Some(ExecutionSummaryArtifact {
+            validator_fee_sum: alloy_primitives::U256::MAX,
+        });
+        reserved.timestamp_millis_part = 999;
+        reserved.compressed_entities_root = Some(CompressedEntitiesRootArtifact {
+            commitment_scheme_version: 2,
+            r_sealed: B256::ZERO,
+        });
+        let reserved_length = encode_outbe_block_artifacts(&reserved)?.len();
+        let payload_budget = OUTBE_MAX_EXTRA_DATA_SIZE
+            .saturating_sub(reserved_length)
+            .saturating_sub(3); // OART record tag and u16 length.
+        artifacts.radicle_publication = mailbox.ready_prefix(payload_budget);
+    }
+    encode_outbe_block_artifacts(&artifacts)
+}
+
 pub fn encode_consensus_header_artifact(artifact: &ConsensusHeaderArtifact) -> Result<Bytes> {
     let encoded = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
         execution_summary: None,
         consensus_header_artifact: Some(artifact.clone()),
         timestamp_millis_part: 0,
@@ -419,6 +468,22 @@ pub fn decode_late_finalize_credits_artifact(
     Ok(decode_outbe_block_artifacts(extra_data)?.late_finalize_credits)
 }
 
+pub fn encode_radicle_publication_artifact(
+    batch: &crate::radicle_publication::PublicationBatch,
+) -> Result<Bytes> {
+    encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        radicle_publication_enabled: true,
+        radicle_publication: Some(batch.clone()),
+        ..Default::default()
+    })
+}
+
+pub fn decode_radicle_publication_artifact(
+    extra_data: &[u8],
+) -> Result<Option<crate::radicle_publication::PublicationBatch>> {
+    Ok(decode_outbe_block_artifacts(extra_data)?.radicle_publication)
+}
+
 fn ensure_count_fits_u16(name: &str, count: usize) -> Result<()> {
     if count > u16::MAX as usize {
         return Err(PrecompileError::revert(format!(
@@ -457,7 +522,7 @@ fn decode_block_artifact_record_count(extra_data: &[u8]) -> Result<usize> {
         ));
     }
 
-    if extra_data[4] != VERSION {
+    if extra_data[4] != VERSION && extra_data[4] != PUBLICATION_VERSION {
         return Err(PrecompileError::revert(format!(
             "unsupported block artifact version: {}",
             extra_data[4]
@@ -564,7 +629,7 @@ mod tests {
         assert!(decode_boundary_artifact(&encoded).is_err());
     }
 
-    fn roundtrip_boundary_fixture() -> DkgBoundaryArtifact {
+    pub(super) fn roundtrip_boundary_fixture() -> DkgBoundaryArtifact {
         DkgBoundaryArtifact {
             epoch: 7,
             dkg_cycle: 1,
@@ -599,6 +664,8 @@ mod tests {
         };
 
         let encoded = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+            radicle_publication_enabled: false,
+            radicle_publication: None,
             execution_summary: Some(summary),
             consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(
                 boundary.clone(),
@@ -859,6 +926,8 @@ mod tests {
                 for &ts in &timestamps {
                     for root in roots {
                         assert_roundtrip(&OutbeBlockArtifacts {
+                            radicle_publication_enabled: false,
+                            radicle_publication: None,
                             execution_summary: *summary,
                             consensus_header_artifact: header.clone(),
                             timestamp_millis_part: ts,
@@ -905,6 +974,8 @@ mod tests {
             };
 
             let artifacts = OutbeBlockArtifacts {
+                radicle_publication_enabled: false,
+                radicle_publication: None,
                 execution_summary,
                 consensus_header_artifact,
                 timestamp_millis_part,
@@ -947,6 +1018,8 @@ mod tests {
         );
         let oversize_outcome_len = oversize_payload_len - FIXED_PREFIX; // validator_count=0, vrf_bytes=0
         let oversize = OutbeBlockArtifacts {
+            radicle_publication_enabled: false,
+            radicle_publication: None,
             execution_summary: None,
             consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(
                 make_boundary(0, oversize_outcome_len, 0, false, false),
@@ -970,6 +1043,8 @@ mod tests {
         let under_total = ENVELOPE + RECORD_HEADER + FIXED_PREFIX + under_outcome_len;
         assert_eq!(under_total, OUTBE_MAX_EXTRA_DATA_SIZE);
         let at_limit = OutbeBlockArtifacts {
+            radicle_publication_enabled: false,
+            radicle_publication: None,
             execution_summary: None,
             consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(
                 make_boundary(0, under_outcome_len, 0, false, false),
@@ -1010,6 +1085,8 @@ mod tests {
         // Sanity positives: a valid 0x02 (BoundaryOutcome) and 0x03 (DealerLog)
         // record decode Ok, proving the rejection is specific to 0x04.
         let boundary_encoded = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+            radicle_publication_enabled: false,
+            radicle_publication: None,
             execution_summary: None,
             consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(
                 make_boundary(2, 4, 4, true, false),
@@ -1024,6 +1101,8 @@ mod tests {
         assert!(decode_outbe_block_artifacts(&boundary_encoded).is_ok());
 
         let dealer_encoded = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+            radicle_publication_enabled: false,
+            radicle_publication: None,
             execution_summary: None,
             consensus_header_artifact: Some(ConsensusHeaderArtifact::DealerLog(
                 Bytes::from_static(b"dealer-log"),
@@ -1069,6 +1148,8 @@ mod tests {
     #[test]
     fn late_credits_coexist_with_execution_summary_and_timestamp() {
         let original = OutbeBlockArtifacts {
+            radicle_publication_enabled: false,
+            radicle_publication: None,
             execution_summary: Some(ExecutionSummaryArtifact {
                 validator_fee_sum: U256::from(99u64),
             }),

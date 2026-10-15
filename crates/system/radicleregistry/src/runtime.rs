@@ -26,6 +26,39 @@ pub fn repo_id_from_storage_key(key: B256) -> Result<RepoId> {
 }
 
 impl RadicleRegistry<'_> {
+    pub fn governments_descriptor(
+        &self,
+    ) -> Result<Option<outbe_primitives::radicle_genesis::GovernmentsDescriptor>> {
+        use outbe_primitives::radicle_genesis::{
+            GovernmentsDescriptor, MAX_GOVERNMENTS_DESCRIPTOR_BYTES,
+            MIN_GOVERNMENTS_DESCRIPTOR_BYTES,
+        };
+        let hash = self.config_descriptor_hash.read()?;
+        let raw_length = self.storage.sload(
+            outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS,
+            U256::from(outbe_primitives::radicle_genesis::GOVERNMENTS_DESCRIPTOR_BYTES_SLOT),
+        )?;
+        if hash.is_zero() && raw_length.is_zero() {
+            return Ok(None);
+        }
+        if hash.is_zero()
+            || raw_length < U256::from(MIN_GOVERNMENTS_DESCRIPTOR_BYTES * 2 + 1)
+            || raw_length > U256::from(MAX_GOVERNMENTS_DESCRIPTOR_BYTES * 2 + 1)
+            || (raw_length & U256::from(1)).is_zero()
+        {
+            return Err(outbe_primitives::error::PrecompileError::revert(
+                "noncanonical governments storage bytes",
+            ));
+        }
+        let descriptor = GovernmentsDescriptor::from_bytes(&self.config_descriptor_bytes.read()?)?;
+        if descriptor.chain_id != self.storage.chain_id()? || descriptor.hash()? != hash {
+            return Err(outbe_primitives::error::PrecompileError::revert(
+                "governments descriptor commitment mismatch",
+            ));
+        }
+        Ok(Some(descriptor))
+    }
+
     /// Only a terminal Approved Vote exposes an immutable network permission.
     /// Consumers must obtain this record from their exact finalized snapshot.
     pub fn patch_approval(&self, proposal_id: U256) -> Result<Option<crate::PatchApprovalRecord>> {

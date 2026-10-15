@@ -1,29 +1,27 @@
 """Seed governance and system precompile state."""
 
 from __future__ import annotations
+
 import os
-from genesis_seed_alloc import seed_radicle_registry
+
+from genesis_keccak import keccak256
+from genesis_seed_alloc import seed_governments_descriptor, seed_radicle_registry
 from genesis_seed_codec import (
     ACCOUNTING_PROGRESS_ADDRESS,
     COMPRESSED_ENTITIES_ADDRESS,
-    GOVERNANCE_ADDRESS,
-    RADICLE_REGISTRY_ADDRESS,
-    StorageBuilder,
-    ZEROFEE_ADDRESS,
-)
-
-
-from genesis_seed_codec import (
     COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT,
     COMPRESSED_ENTITIES_SCHEMA_VERSION,
+    GOVERNANCE_ADDRESS,
     MARKER_CODE,
+    RADICLE_REGISTRY_ADDRESS,
     TEE_REGISTRY_ADDRESS,
+    ZEROFEE_ADDRESS,
+    StorageBuilder,
     compute_tee_policy_hash,
     parse_int,
     u64_bytes,
     write_storage_bytes,
 )
-from genesis_keccak import keccak256
 
 
 def seed_tee_policy(genesis: dict, alloc: dict, seed: dict):
@@ -137,6 +135,7 @@ def seed_governance(storage: StorageBuilder, canon_dir: str | None):
 
     Returns `(meta_seeded, canon_seeded)`.
     """
+
     def _seed_text(
         text_slot: int,
         version_slot: int,
@@ -211,6 +210,9 @@ def _seed_system_state(genesis, seed, alloc, canon_dir):
     if "radicle_registry" in seed:
         radicle_registry_storage = StorageBuilder()
         seed_radicle_registry(radicle_registry_storage, seed["radicle_registry"])
+        seed_governments_descriptor(
+            genesis, radicle_registry_storage, seed["radicle_registry"]
+        )
         alloc[RADICLE_REGISTRY_ADDRESS].setdefault("storage", {}).update(
             radicle_registry_storage.entries
         )

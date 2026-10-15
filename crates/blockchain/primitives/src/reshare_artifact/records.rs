@@ -2,7 +2,8 @@
 use super::{
     consensus, fields, late_finalize, Bytes, ConsensusHeaderArtifact, OutbeBlockArtifacts,
     PrecompileError, Result, BOUNDARY_TAG, COMMITTEE_PREANNOUNCE_TAG, COMPRESSED_ENTITIES_ROOT_TAG,
-    DEALER_LOG_TAG, EXECUTION_SUMMARY_TAG, LATE_FINALIZE_CREDITS_TAG, TIMESTAMP_MILLIS_PART_TAG,
+    DEALER_LOG_TAG, EXECUTION_SUMMARY_TAG, LATE_FINALIZE_CREDITS_TAG, RADICLE_PUBLICATION_TAG,
+    TIMESTAMP_MILLIS_PART_TAG,
 };
 
 pub(super) fn decode_into(
@@ -11,6 +12,18 @@ pub(super) fn decode_into(
     payload: &[u8],
 ) -> Result<()> {
     match tag {
+        RADICLE_PUBLICATION_TAG => {
+            if !artifacts.radicle_publication_enabled {
+                return Err(PrecompileError::revert(
+                    "repository publication requires OART v0x0C",
+                ));
+            }
+            decode_unique_slot(
+                &mut artifacts.radicle_publication,
+                "duplicate repository publication batch",
+                || crate::radicle_publication::PublicationBatch::from_bytes(payload),
+            )?;
+        }
         EXECUTION_SUMMARY_TAG => {
             decode_unique_slot(
                 &mut artifacts.execution_summary,

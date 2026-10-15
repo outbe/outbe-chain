@@ -240,10 +240,10 @@ impl ApplicationShared {
         };
 
         let header_extra_data =
-            if consensus_header_artifact.is_none() && late_finalize_credits.is_none() {
-                Bytes::new()
-            } else {
-                encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+            outbe_primitives::reshare_artifact::encode_proposal_block_artifacts(
+                OutbeBlockArtifacts {
+                    radicle_publication_enabled: self.repository_publication_enabled,
+                    radicle_publication: None,
                     execution_summary: None,
                     consensus_header_artifact,
                     // The payload builder recomputes the sub-second timestamp
@@ -253,8 +253,9 @@ impl ApplicationShared {
                     timestamp_millis_part: 0,
                     late_finalize_credits,
                     compressed_entities_root: None,
-                })?
-            };
+                },
+                &self.repository_publication,
+            )?;
 
         Ok(header_extra_data)
     }

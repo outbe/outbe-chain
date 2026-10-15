@@ -116,6 +116,8 @@ fn boundary_activation_allows_registered_next_epoch_proposer() {
     );
     let tee_bootstrap = activation_bootstrap(boundary.committee_set_hash, old_active_secret);
     let extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
         execution_summary: None,
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)),
         timestamp_millis_part: 0,
@@ -201,6 +203,8 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
         ],
     );
     let extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
         execution_summary: None,
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)),
         timestamp_millis_part: 0,
@@ -366,6 +370,8 @@ fn oracle_slash_window_runs_after_boundary_activation() {
     );
     let tee_bootstrap = activation_bootstrap(boundary.committee_set_hash, old_active_secret);
     let extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
         execution_summary: None,
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)),
         timestamp_millis_part: 0,

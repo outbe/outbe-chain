@@ -32,8 +32,6 @@ use outbe_primitives::addresses::REWARDS_ADDRESS;
 use outbe_primitives::projection::ExecutionReadBudget;
 use outbe_primitives::projection::ProjectionCheckpoint;
 
-use outbe_primitives::reshare_artifact::encode_outbe_block_artifacts;
-
 use outbe_primitives::reshare_artifact::OutbeBlockArtifacts;
 
 use outbe_primitives::OutbeExecutionData;

@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS;
+use outbe_primitives::storage::types::StorageBytes;
 
 /// Approved decision awaits its separate offchain execution.
 pub const PATCH_EXECUTION_PENDING: u8 = 1;
@@ -30,6 +31,8 @@ pub struct PatchApprovalRecord {
 /// - 5 config_max_repositories
 /// - 6..=8 patch_approvals (immutable canonical payload, height, timestamp)
 /// - 9 patch_execution_stage (separate from immutable approval)
+/// - 10 config_descriptor_hash (immutable genesis commitment)
+/// - 11 config_descriptor_bytes (immutable Solidity bytes OGD1 artifact)
 #[storage_schema]
 #[contract(addr = RADICLE_REGISTRY_ADDRESS)]
 pub struct RadicleRegistry {
@@ -49,4 +52,8 @@ pub struct RadicleRegistry {
     pub patch_approvals: outbe_primitives::storage::dsl::Map<U256, PatchApprovalRecord>,
     #[attribute(order = 7)]
     pub patch_execution_stage: outbe_primitives::storage::dsl::Map<U256, u8>,
+    #[attribute(order = 8)]
+    pub config_descriptor_hash: outbe_primitives::storage::dsl::Value<B256>,
+    #[attribute(order = 9)]
+    pub config_descriptor_bytes: StorageBytes,
 }
