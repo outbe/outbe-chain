@@ -73,35 +73,34 @@ fn the_bridge_caps_match_the_contracts() {
 
 // --- PROMIS load ladder ---
 
-/// The launch decade: 1 000 000 PROMIS at COEN/USD = 0.001.
+/// The launch rung: 1 000 000 PROMIS.
+#[cfg(not(feature = "e2e-test"))]
 const LAUNCH_EXPONENT: u32 = 12;
-
-/// The anchor a 0.001 launch captures. Every deadband fixture below runs on it.
-const ANCHOR_DIGITS: u32 = LAUNCH_EXPONENT + 4;
-
-fn ladder(current: Option<u32>, rate_minor: u128) -> u32 {
-    runtime::promis_load_exponent(ANCHOR_DIGITS, current, U256::from(rate_minor))
-}
-
-fn ladder_load(current: Option<u32>, rate_minor: u128) -> u128 {
-    runtime::promis_load_minor(ladder(current, rate_minor))
-}
 
 #[test]
 #[cfg(not(feature = "e2e-test"))]
-fn the_first_priced_start_captures_the_launch_anchor() {
+fn the_first_priced_start_captures_its_currency_at_the_launch_rung() {
     with_storage(|s| {
         brief(&s, true);
         runtime::schedule_tick(&s, NOW).unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.promis_load_anchor_digits.read().unwrap(),
-            LAUNCH_EXPONENT + 7,
-            "the anchor is the launch rung plus the digits of the day's rate"
+            contract.promis_load_exponent.read().unwrap(),
+            LAUNCH_EXPONENT
         );
         assert_eq!(
-            contract.promis_load_exponent.read().unwrap(),
+            contract
+                .promis_load_reference_minor
+                .read(&REFERENCE_ISO)
+                .unwrap(),
+            U256::from(ENTRY_PRICE)
+        );
+        assert_eq!(
+            contract
+                .promis_load_reference_exponent
+                .read(&REFERENCE_ISO)
+                .unwrap(),
             LAUNCH_EXPONENT
         );
         assert_eq!(
@@ -112,13 +111,6 @@ fn the_first_priced_start_captures_the_launch_anchor() {
             U256::from(LOAD_MINOR),
         );
     });
-}
-
-#[test]
-fn a_launch_anchor_below_the_stored_exponent_cannot_underflow_the_decade() {
-    // Independent cells: a corrupt pair must resolve to a rung, not index past the table.
-    runtime::promis_load_exponent(LAUNCH_EXPONENT, Some(14), U256::from(5u8));
-    runtime::promis_load_exponent(27, Some(0), U256::from(1u8));
 }
 
 /// The override is an e2e affordance. A production build must run the ladder.
@@ -146,94 +138,8 @@ fn the_fixture_load_is_the_one_the_ladder_picks() {
 }
 
 #[test]
-fn the_anchor_holds_its_launch_product_across_the_decades() {
-    let launch_product = runtime::promis_load_minor(LAUNCH_EXPONENT) * 1_000 / 1_000_000;
-    for (rate_minor, expected) in [
-        (100u128, 10_000_000_000_000u128),
-        (1_000, 1_000_000_000_000),
-        (10_000, 100_000_000_000),
-        (100_000, 10_000_000_000),
-        (1_000_000, 1_000_000_000),
-    ] {
-        let load = ladder_load(None, rate_minor);
-        assert_eq!(load, expected, "load at rate {rate_minor}");
-        assert_eq!(
-            load * rate_minor / 1_000_000,
-            launch_product,
-            "product at rate {rate_minor}"
-        );
-    }
-}
-
-#[test]
-fn an_anchored_chain_takes_the_anchors_answer() {
-    assert_eq!(ladder(None, 1_000), LAUNCH_EXPONENT);
-    assert_eq!(ladder(None, 10_000), LAUNCH_EXPONENT - 1);
-}
-
-#[test]
-fn the_load_steps_down_only_past_the_widened_upper_edge() {
-    // The 0.01 boundary sits at 10_000. The band pushes the step to 10_200.
-    assert_eq!(ladder(Some(LAUNCH_EXPONENT), 10_000), LAUNCH_EXPONENT);
-    assert_eq!(ladder(Some(LAUNCH_EXPONENT), 10_199), LAUNCH_EXPONENT);
-    assert_eq!(ladder(Some(LAUNCH_EXPONENT), 10_200), LAUNCH_EXPONENT - 1);
-}
-
-#[test]
-fn the_load_steps_up_only_below_the_widened_lower_edge() {
-    // Coming from the decade above, the same boundary releases at 9_800.
-    assert_eq!(
-        ladder(Some(LAUNCH_EXPONENT - 1), 10_000),
-        LAUNCH_EXPONENT - 1
-    );
-    assert_eq!(
-        ladder(Some(LAUNCH_EXPONENT - 1), 9_800),
-        LAUNCH_EXPONENT - 1
-    );
-    assert_eq!(ladder(Some(LAUNCH_EXPONENT - 1), 9_799), LAUNCH_EXPONENT);
-}
-
-#[test]
-fn the_deadband_is_held_from_whichever_side_the_chain_arrived() {
-    for rate_minor in [9_800u128, 10_000, 10_199] {
-        assert_eq!(ladder(Some(LAUNCH_EXPONENT), rate_minor), LAUNCH_EXPONENT);
-        assert_eq!(
-            ladder(Some(LAUNCH_EXPONENT - 1), rate_minor),
-            LAUNCH_EXPONENT - 1
-        );
-    }
-}
-
-#[test]
-fn a_rate_that_gaps_several_decades_lands_where_the_anchor_says() {
-    assert_eq!(
-        ladder(Some(LAUNCH_EXPONENT), 1_000_000),
-        LAUNCH_EXPONENT - 3
-    );
-    assert_eq!(ladder(Some(LAUNCH_EXPONENT), 1), LAUNCH_EXPONENT + 3);
-}
-
-#[test]
-fn the_band_survives_integer_division_in_the_narrowest_decade() {
-    // A 2% band on a boundary of 10 rounds to nothing if the edges are divided down.
-    assert_eq!(ladder(Some(15), 10), 15);
-    assert_eq!(ladder(Some(15), 11), 14);
-}
-
-#[test]
-fn an_absurd_rate_saturates_instead_of_underflowing() {
-    assert_eq!(ladder_load(None, 0), 10_000_000_000_000_000);
-    assert_eq!(ladder_load(None, u128::MAX), 1);
-}
-
-#[test]
 fn native_escrow_conversion_saturates_instead_of_wrapping() {
     assert_eq!(runtime::rate_lock(u64::MAX, u128::MAX, u32::MAX), u128::MAX);
-}
-
-#[test]
-fn a_corrupt_stored_exponent_cannot_index_past_the_table() {
-    assert_eq!(ladder(Some(u32::MAX), 1_000), LAUNCH_EXPONENT);
 }
 
 fn bidder(n: u8) -> Address {
@@ -1417,8 +1323,7 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
         relay_bids(&s, SRC_CHAIN, 100, 200);
         assert_eq!(clear(&s).issued_units, 100);
 
-        // Ten times the rate of the fixture, which is past the deadband. The day
-        // is briefed a day later so its start reads a different closed UTC day.
+        // Ten times the rate of the fixture. The day is briefed a day later so its start reads a different closed UTC day.
         // That is the only way the two days can be quoted differently at all.
         brief_at_rate_from(
             &s,
@@ -1458,9 +1363,12 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
             "the floor follows the tirage instead of staying at yesterday's scale"
         );
         assert_eq!(
-            contract.promis_load_anchor_digits.read().unwrap(),
-            LAUNCH_EXPONENT + 7,
-            "the anchor is captured once and does not move when the rung does"
+            contract
+                .promis_load_reference_minor
+                .read(&REFERENCE_ISO)
+                .unwrap(),
+            U256::from(10 * ENTRY_PRICE),
+            "the step re-captures the currency at the rate it stepped on"
         );
     });
 }
@@ -2772,16 +2680,12 @@ fn rate_lock_matches_the_escrow_vectors() {
 
 // --- Days the oracle could not price ---
 
-/// A day with no price at all is cancelled, so the ladder only meets this when the
-/// oracle priced some currency but not the strike one.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
-fn a_day_without_a_strike_price_carries_the_launch_load_and_anchors_nothing() {
+fn a_day_nobody_priced_carries_the_launch_load_and_captures_nothing() {
     with_storage(|s| {
         brief_at(&s, WORLDWIDE_DAY, 10 * LOAD_MINOR, true);
-        // The day closes with a price in EUR and none in the anchor currency.
         unprice_day(&s, NOW);
-        seed_price(&s, NOW, 978, OTHER_PAIR_ID, ENTRY_PRICE);
         runtime::schedule_tick(&s, NOW).unwrap();
 
         let contract = s.contract::<DesisContract>();
@@ -2794,7 +2698,11 @@ fn a_day_without_a_strike_price_carries_the_launch_load_and_anchors_nothing() {
             "the day carries the launch rung, not the widest one"
         );
         assert_eq!(contract.promis_load_exponent.read().unwrap(), 0);
-        assert_eq!(contract.promis_load_anchor_digits.read().unwrap(), 0);
+        assert!(contract
+            .promis_load_reference_minor
+            .read(&REFERENCE_ISO)
+            .unwrap()
+            .is_zero());
     });
 }
 
@@ -3114,3 +3022,6 @@ fn a_clearing_round_is_sized_from_the_chains_recent_days() {
 
 #[cfg(not(feature = "e2e-test"))]
 mod capacity_conservation;
+
+#[cfg(not(feature = "e2e-test"))]
+mod promis_load;
