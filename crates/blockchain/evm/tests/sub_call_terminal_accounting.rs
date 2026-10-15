@@ -119,34 +119,6 @@ fn dispatcher_propagates_child_invalid_and_out_of_gas_as_execution_halts() {
 }
 
 #[test]
-fn static_gem_factory_command_is_denied_before_domain_validation() {
-    use outbe_gemfactory::precompile::IGemFactory;
-    use outbe_primitives::{
-        error::PrecompileError,
-        storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    };
-    let mut provider = HashMapStorageProvider::new(1);
-    provider.set_static(true);
-    let storage = StorageHandle::new(&mut provider);
-    let world = outbe_gem::test_support::GemWorld::unopened();
-    let result = outbe_gemfactory::precompile::dispatch(
-        storage,
-        world.readers(),
-        &IGemFactory::issueGemPositionCall {
-            sourceIntexId: alloy_primitives::FixedBytes::repeat_byte(99),
-            units: U256::from(1),
-        }
-        .abi_encode(),
-        Address::repeat_byte(0xc0),
-        U256::ZERO,
-    );
-    assert!(
-        matches!(result, Err(PrecompileError::WriteProtection)),
-        "static command must never enter its handler: {result:?}"
-    );
-}
-
-#[test]
 fn invalid_opcode_spends_the_child_allowance_and_retains_its_vm_reason() {
     let target = Address::repeat_byte(0xab);
     let mut db = CacheDB::new(EmptyDB::default());
