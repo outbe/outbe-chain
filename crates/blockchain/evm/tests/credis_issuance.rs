@@ -107,7 +107,9 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
 
 fn issuance_database() -> eyre::Result<(CacheDB<EmptyDB>, U256)> {
     let mut db = CacheDB::new(EmptyDB::default());
-    let code = runtime_code(include_str!("fixtures/CredisIssuance.hex"));
+    let code = runtime_code(include_str!(
+        "../../../../testing/fixtures/evm/CredisIssuance.hex"
+    ));
     for addr in [ASSET, VAULT] {
         install_code(&mut db, addr, &code);
     }

@@ -1,291 +1,179 @@
-//! Real NOD/router execution with stateful ERC20 and reserve-vault counterparties.
-use outbe_offchain_data::runtime_body_readers;
-#[path = "common/nod_qualification.rs"]
-mod qualify_fixture;
-use qualify_fixture::qualify;
+//! Nod settlement on the ERC-20 rail through real factory, router, token and vault frames.
+#[path = "../../../../testing/support/factory_erc20_settlement.rs"]
+mod settlement;
 
 use std::sync::Arc;
 
-use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::{sol, SolCall, SolEvent};
-use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
-use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
+use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_sol_types::{SolCall, SolEvent};
+use outbe_compressed_entities::{ExecutionScope, WwdEntityId};
 use outbe_gratis::enclave_client::test_enclave;
-use outbe_nod::{precompile::INod, NodIssueParams};
+use outbe_nod::{precompile::INod, NodContract, NodIssueParams};
 use outbe_nodfactory::precompile::INodFactory;
 use outbe_offchain_storage::MemoryStorage;
+use outbe_oracle::test_support::record_finalized_day_vwap;
 use outbe_primitives::{
-    addresses::{
-        COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS,
-    },
+    addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     chain::CHAIN_ID,
-    storage::{StorageHandle, SubCallOutput, SubCallStatus},
-    time::WorldwideDay,
+    storage::{StorageHandle, SubCallStatus},
+    time::{first_full_day, WorldwideDay},
 };
 use outbe_tee::protocol::GratisOp;
 use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
-use outbe_vaultrouter::{api::IVaultRouter, VaultRouterContract};
-use revm::database::{CacheDB, EmptyDB};
+use outbe_vaultrouter::api::IVaultRouter::StablesSource;
+use settlement::{Quote, Rail, World, ASSET, FACTORY_FLOAT, OWNER, THIRD_PARTY};
 
-sol! {
-    interface IEurFixture {
-        function configure(uint256 mode) external;
-    }
-
-    interface IFixture {
-        function mint(address account, uint256 amount) external;
-        function approve(address spender, uint256 amount) external returns (bool);
-        function balanceOf(address account) external view returns (uint256);
-        function allowance(address owner, address spender) external view returns (uint256);
-        function configure(uint256 mode, uint256 nodId) external;
-        function callbackRejected() external view returns (bool);
-    }
-}
-
-const OWNER: Address = Address::new([0x11; 20]);
-const ASSET: Address = Address::new([0x33; 20]);
-const VAULT: Address = Address::new([0x55; 20]);
 const GRATIS_LOAD: u64 = 1_000;
-const TIMESTAMP: u64 = 1_700_000_000;
 
-struct World {
-    evm: EvmWorld,
-    owner: Address,
-    nod: WwdEntityId,
+#[derive(Clone, Copy, Debug)]
+struct Nod {
     cost: U256,
 }
 
-impl World {
-    fn new(owner: Address, cost: U256, registered: bool) -> Self {
-        let mut world = Self::build(
-            owner,
-            cost,
-            registered,
-            include_str!("fixtures/NodSettlement.hex"),
-            840,
-        );
-        world.fund_settlement();
-        world
-    }
+const NOD: Nod = Nod {
+    cost: U256::from_limbs([500, 0, 0, 0]),
+};
 
-    /// The issuance rail: the Nod is issued in EUR (978) against a USD entry
-    /// price. The Credis fixture token answers ISO 978 in mode 6, and the
-    /// trailing window prices COEN at 2 USD and 1 EUR, so the Nod costs half as
-    /// many EUR units as USD units.
-    fn issuance_rail(owner: Address, cost: U256) -> Self {
-        let mut world = Self::build(
-            owner,
-            cost,
-            true,
-            include_str!("fixtures/CredisIssuance.hex"),
-            978,
-        );
-        world.ok(
-            owner,
-            ASSET,
-            IEurFixture::configureCall {
-                mode: U256::from(6),
-            },
-        );
-        world
-    }
+impl Rail for Nod {
+    const FACTORY: Address = NOD_FACTORY_ADDRESS;
+    const SOURCE: StablesSource = StablesSource::NodCostAmount;
 
-    fn build(
-        owner: Address,
-        cost: U256,
-        registered: bool,
-        code_hex: &str,
+    fn seed(
+        self,
+        storage: &StorageHandle<'_>,
+        scope: &ExecutionScope,
+        store: &Arc<MemoryStorage>,
         issuance_currency: u16,
-    ) -> Self {
+    ) -> (U256, u64) {
         test_enclave::install();
-        let mut db = CacheDB::new(EmptyDB::default());
-        let code = runtime_code(code_hex);
-        for addr in [ASSET, VAULT] {
-            install_code(&mut db, addr, &code);
-        }
-        let adapter = Arc::new(MemoryStorage::new());
-        let readers = runtime_body_readers(adapter.clone());
-        let parent = outbe_nod::nod_reader(adapter);
-        let scope = Arc::new(ExecutionScope::default());
-        let nod = seed_storage(&mut db, TIMESTAMP, OWNER, |storage| {
-            seed_settlement_nod(
-                &storage,
-                &scope,
-                &parent,
-                NodSettlementSeed {
-                    owner,
-                    cost,
-                    registered,
-                    issuance_currency,
-                },
-            )
-        });
-        Self {
-            evm: EvmWorld::new(db)
-                .at(TIMESTAMP)
-                .with_scope(scope)
-                .with_readers(readers),
-            owner,
-            nod,
-            cost,
-        }
+        let params = NodIssueParams {
+            owner: OWNER,
+            gratis_load_minor: U256::from(GRATIS_LOAD),
+            worldwide_day: WorldwideDay::new(20_241_220),
+            league_id: 1,
+            entry_price_minor: self.cost * U256::from(1_000),
+            issuance_currency,
+            reference_currency: 840,
+        };
+        let nod = outbe_nodfactory::api::issue_nod(
+            storage,
+            scope,
+            &outbe_nod::nod_reader(store.clone()),
+            &outbe_nod::test_support::encrypted_fixture(&params, CHAIN_ID),
+        )
+        .unwrap();
+        // A finalized day above the floor qualifies the Nod's bucket.
+        let floor = outbe_nod::pricing::floor_price_minor(params.entry_price_minor).unwrap();
+        let bucket =
+            outbe_nod::identity::bucket_key(params.worldwide_day, params.entry_price_minor, 840);
+        let issued_at = NodContract::new(storage.clone())
+            .bucket_issued_at
+            .read(&bucket)
+            .unwrap();
+        record_finalized_day_vwap(storage, 840, first_full_day(issued_at), floor + U256::ONE)
+            .unwrap();
+        (nod.to_u256(), 0)
     }
 
-    fn fund_settlement(&mut self) {
-        let owner = self.owner;
-        let nod = self.nod;
-        let cost = self.cost;
-        let quote = self.view(
+    fn quote(self, world: &mut World<Self>) -> Quote {
+        let quote = world.view(
             NOD_FACTORY_ADDRESS,
             INodFactory::quoteSettlementCall {
-                nodId: nod.to_u256(),
+                nodId: world.id,
                 asset: ASSET,
             },
         );
-        assert_eq!(quote.settlementCurrency, 840);
-        assert_eq!(quote.paymentMinor, cost);
-        assert_eq!(quote.snapshotId, U256::ZERO);
-        self.ok(
-            owner,
-            ASSET,
-            IFixture::mintCall {
-                account: owner,
-                amount: cost * U256::from(2),
-            },
-        );
-        // Existing factory funds must never subsidize a failed or partial payment.
-        self.ok(
-            owner,
-            ASSET,
-            IFixture::mintCall {
-                account: NOD_FACTORY_ADDRESS,
-                amount: U256::from(17),
-            },
-        );
-        self.ok(
-            owner,
-            ASSET,
-            IFixture::approveCall {
-                spender: NOD_FACTORY_ADDRESS,
-                amount: cost,
-            },
-        );
-        self.ok(
-            VAULT_ROUTER_ADDRESS,
-            ASSET,
-            IFixture::approveCall {
-                spender: VAULT,
-                amount: U256::MAX,
-            },
-        );
+        Quote {
+            currency: quote.settlementCurrency,
+            cost: quote.paymentMinor,
+            snapshot_id: quote.snapshotId,
+        }
     }
 
-    fn call(
-        &mut self,
-        caller: Address,
-        target: Address,
-        call: impl SolCall,
-        is_static: bool,
-    ) -> SubCallOutput {
-        self.evm
-            .call(caller, target, call.abi_encode().into(), is_static)
+    fn settle_call(self, id: U256, snapshot_id: U256) -> Bytes {
+        INodFactory::settleNodCall {
+            nodId: id,
+            asset: ASSET,
+            snapshotId: snapshot_id,
+        }
+        .abi_encode()
+        .into()
     }
 
-    fn ok<C: SolCall>(&mut self, caller: Address, target: Address, call: C) -> C::Return {
-        self.evm.ok(caller, target, call)
+    fn assert_settled(self, world: &World<Self>) {
+        let settled: Vec<_> = world
+            .evm
+            .logs()
+            .iter()
+            .filter_map(|log| INodFactory::NodSettled::decode_log_data(&log.data).ok())
+            .collect();
+        assert_eq!(settled.len(), 1);
+        assert_eq!(settled[0].owner, OWNER);
+        assert_eq!(settled[0].asset, ASSET);
+        assert_eq!(settled[0].paymentMinor, world.cost);
     }
 
-    fn view<C: SolCall>(&mut self, target: Address, call: C) -> C::Return {
-        self.evm.view(self.owner, target, call)
+    fn assert_kept_by_owner(self, world: &mut World<Self>) {
+        let nod = world.view(NOD_ADDRESS, INod::getNodCall { nodId: world.id });
+        assert!(nod.isSettled);
+        assert_eq!(nod.owner, OWNER);
     }
+}
 
-    fn settle(&mut self) -> SubCallOutput {
-        self.settle_with(U256::ZERO)
-    }
+fn assert_unsettled(world: &mut World<Nod>) {
+    let nod = world.view(NOD_ADDRESS, INod::getNodCall { nodId: world.id });
+    assert!(!nod.isSettled);
+}
 
-    fn settle_with(&mut self, snapshot_id: U256) -> SubCallOutput {
-        self.call(
-            self.owner,
-            NOD_FACTORY_ADDRESS,
-            INodFactory::settleNodCall {
-                nodId: self.nod.to_u256(),
-                asset: ASSET,
-                snapshotId: snapshot_id,
-            },
-            false,
-        )
-    }
+#[test]
+fn an_issuance_currency_payment_moves_the_converted_cost_at_the_quoted_snapshot() {
+    settlement::issuance_currency_payment_moves_the_converted_cost(NOD);
+}
 
-    fn configure(&mut self, target: Address, mode: u64) {
-        self.ok(
-            self.owner,
-            target,
-            IFixture::configureCall {
-                mode: U256::from(mode),
-                nodId: self.nod.to_u256(),
-            },
-        );
-    }
+#[test]
+fn erc20_settlement_moves_exactly_the_quoted_cost_into_the_reserve() {
+    settlement::quoted_cost_moves_into_the_reserve_once(NOD);
+}
 
-    fn balances(&mut self) -> [U256; 5] {
-        let [owner, factory, router, vault] =
-            [self.owner, NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS, VAULT]
-                .map(|account| self.view(ASSET, IFixture::balanceOfCall { account }));
-        let shares = self.view(
-            VAULT,
-            IFixture::balanceOfCall {
-                account: VAULT_ROUTER_ADDRESS,
-            },
-        );
-        [owner, factory, router, vault, shares]
-    }
+#[test]
+fn a_third_party_pays_and_the_nod_stays_with_the_owner() {
+    settlement::third_party_pays_and_the_entity_stays_with_the_owner(NOD);
+}
 
-    fn allowances(&mut self) -> [U256; 3] {
-        [
-            (self.owner, NOD_FACTORY_ADDRESS),
-            (NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS),
-            (VAULT_ROUTER_ADDRESS, VAULT),
-        ]
-        .map(|(owner, spender)| self.view(ASSET, IFixture::allowanceCall { owner, spender }))
-    }
+#[test]
+fn payment_failures_restore_balances_allowances_and_logs() {
+    settlement::payment_failures_restore_balances_allowances_and_logs(NOD);
+}
 
-    fn assert_unpaid(&mut self) {
-        let data = self.view(
-            NOD_ADDRESS,
-            INod::getNodCall {
-                nodId: self.nod.to_u256(),
-            },
-        );
-        assert!(!data.isSettled);
-    }
+#[test]
+fn optional_empty_token_returns_are_accepted() {
+    settlement::optional_empty_token_returns_are_accepted(NOD);
+}
+
+#[test]
+fn the_payer_cannot_reenter_settlement_during_transfer() {
+    settlement::the_payer_cannot_reenter_settlement_during_transfer(NOD);
 }
 
 #[test]
 fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
     // Above u128, yet inside the price ladder the call index bins by.
-    let cost = (U256::ONE << 129) + U256::from(500);
-    let mut world = World::new(OWNER, cost, true);
-    assert!(matches!(world.settle().status, SubCallStatus::Success));
-    assert_eq!(
-        world.balances(),
-        [cost, U256::from(17), U256::ZERO, cost, cost]
-    );
-    let paid: Vec<_> = world
-        .evm
-        .logs()
-        .iter()
-        .filter_map(|log| INodFactory::NodSettled::decode_log_data(&log.data).ok())
-        .collect();
-    assert_eq!(paid.len(), 1);
-    assert_eq!(paid[0].owner, OWNER);
-    assert_eq!(paid[0].asset, ASSET);
-    assert_eq!(paid[0].paymentMinor, cost);
+    let rail = Nod {
+        cost: (U256::ONE << 129) + U256::from(500),
+    };
+    let mut world = World::new(rail, OWNER, true);
+    assert_eq!(world.cost, rail.cost);
+    let out = world.settle();
+    world.succeeds(out);
+    assert_eq!(world.balances(), world.paid_balances());
+    rail.assert_settled(&world);
     let balances = world.balances();
     assert!(!matches!(world.settle().status, SubCallStatus::Success));
     assert_eq!(world.balances(), balances);
 
+    let nod = WwdEntityId::from(world.id);
     let nonce = (0..100_000)
-        .find(|n| outbe_nodfactory::runtime::validate_pow(world.nod, world.owner, *n).is_ok())
+        .find(|n| outbe_nodfactory::runtime::validate_pow(nod, OWNER, *n).is_ok())
         .unwrap();
     let key = derive_modify_key(&test_enclave::state_key(), OWNER).unwrap();
     let mac = modify_mac(
@@ -302,7 +190,7 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
         OWNER,
         NOD_FACTORY_ADDRESS,
         INodFactory::mineGratisCall {
-            nodId: world.nod.to_u256(),
+            nodId: world.id,
             nonce,
             mac: B256::from(mac),
             opNonce: 0,
@@ -316,201 +204,35 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
     );
 }
 
-/// A payment in the issuance currency, end to end: the quote names the trailing
-/// snapshot, a payment that names another snapshot moves nothing, and the one
-/// that names it moves exactly the converted cost into the vault.
-#[test]
-fn an_issuance_currency_payment_moves_the_converted_cost_at_the_quoted_snapshot() {
-    let cost = U256::from(100_000_000u64);
-    let mut world = World::issuance_rail(OWNER, cost);
-    let quote = world.view(
-        NOD_FACTORY_ADDRESS,
-        INodFactory::quoteSettlementCall {
-            nodId: world.nod.to_u256(),
-            asset: ASSET,
-        },
-    );
-    assert_eq!(quote.settlementCurrency, 978);
-    assert_eq!(quote.paymentMinor, cost / U256::from(2));
-    assert_ne!(quote.snapshotId, U256::ZERO);
-    let paid = quote.paymentMinor;
-    world.ok(
-        OWNER,
-        ASSET,
-        IFixture::mintCall {
-            account: OWNER,
-            amount: cost,
-        },
-    );
-    world.ok(
-        OWNER,
-        ASSET,
-        IFixture::approveCall {
-            spender: NOD_FACTORY_ADDRESS,
-            amount: paid,
-        },
-    );
-    world.ok(
-        VAULT_ROUTER_ADDRESS,
-        ASSET,
-        IFixture::approveCall {
-            spender: VAULT,
-            amount: U256::MAX,
-        },
-    );
-
-    let stale = world.settle_with(U256::ZERO);
-    assert!(!matches!(stale.status, SubCallStatus::Success));
-    assert_eq!(
-        world.balances(),
-        [cost, U256::ZERO, U256::ZERO, U256::ZERO, U256::ZERO]
-    );
-    world.assert_unpaid();
-
-    assert!(matches!(
-        world.settle_with(quote.snapshotId).status,
-        SubCallStatus::Success
-    ));
-    assert_eq!(
-        world.balances(),
-        [cost - paid, U256::ZERO, U256::ZERO, paid, paid]
-    );
-    let events: Vec<_> = world
-        .evm
-        .logs()
-        .iter()
-        .filter_map(|log| INodFactory::NodSettled::decode_log_data(&log.data).ok())
-        .collect();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].asset, ASSET);
-    assert_eq!(events[0].paymentMinor, paid);
-}
-
-#[test]
-fn a_third_party_pays_and_the_nod_stays_with_the_owner() {
-    let payer = Address::new([0x77; 20]);
-    let mut world = World::new(OWNER, U256::from(500), true);
-    let cost = world.cost;
-    world.ok(
-        OWNER,
-        ASSET,
-        IFixture::mintCall {
-            account: payer,
-            amount: cost,
-        },
-    );
-    world.ok(
-        payer,
-        ASSET,
-        IFixture::approveCall {
-            spender: NOD_FACTORY_ADDRESS,
-            amount: cost,
-        },
-    );
-    let paid = world.call(
-        payer,
-        NOD_FACTORY_ADDRESS,
-        INodFactory::settleNodCall {
-            nodId: world.nod.to_u256(),
-            asset: ASSET,
-            snapshotId: U256::ZERO,
-        },
-        false,
-    );
-    assert!(matches!(paid.status, SubCallStatus::Success));
-
-    assert_eq!(
-        world.view(ASSET, IFixture::balanceOfCall { account: payer }),
-        U256::ZERO
-    );
-    assert_eq!(
-        world.balances(),
-        [cost * U256::from(2), U256::from(17), U256::ZERO, cost, cost],
-        "the owner's own funds are untouched"
-    );
-    let data = world.view(
-        NOD_ADDRESS,
-        INod::getNodCall {
-            nodId: world.nod.to_u256(),
-        },
-    );
-    assert!(data.isSettled);
-    assert_eq!(data.owner, OWNER);
-    let events: Vec<_> = world
-        .evm
-        .logs()
-        .iter()
-        .filter_map(|log| INodFactory::NodSettled::decode_log_data(&log.data).ok())
-        .collect();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].owner, OWNER);
-    assert_eq!(events[0].paymentMinor, cost);
-}
-
-#[test]
-fn payment_failures_restore_balances_allowances_nod_and_logs() {
-    // False transfer/approve/router transfer, vault revert, malformed bool,
-    // success without movement, fee-on-transfer, and missing router authorization.
-    for (target, mode, registered) in [
-        (ASSET, 1, true),
-        (ASSET, 2, true),
-        (ASSET, 3, true),
-        (VAULT, 4, true),
-        (ASSET, 6, true),
-        (ASSET, 8, true),
-        (ASSET, 9, true),
-        (ASSET, 0, false),
-    ] {
-        let mut world = World::new(OWNER, U256::from(500), registered);
-        world.configure(target, mode);
-        let balances = world.balances();
-        let allowances = world.allowances();
-        let logs = world.evm.logs().to_vec();
-        assert!(
-            !matches!(world.settle().status, SubCallStatus::Success),
-            "mode {mode}"
-        );
-        assert_eq!(world.balances(), balances, "mode {mode}");
-        assert_eq!(world.allowances(), allowances, "mode {mode}");
-        world.assert_unpaid();
-        assert_eq!(world.evm.logs(), logs);
-    }
-}
-
 #[test]
 fn insufficient_allowance_and_balance_revert_without_payment() {
-    for (allowance, cost) in [(U256::ZERO, U256::from(500)), (U256::MAX, U256::from(500))] {
-        let mut world = World::new(OWNER, cost, true);
-        let payer = if allowance.is_zero() {
-            OWNER
-        } else {
-            Address::new([0x77; 20])
-        };
+    for (allowance, payer) in [(U256::ZERO, OWNER), (U256::MAX, THIRD_PARTY)] {
+        let mut world = World::new(NOD, payer, true);
+        let funded = world.cost * U256::from(2);
         if payer != OWNER {
-            // Empty the owner through an authorized transfer before attempting settlement.
-            sol! { function transferFrom(address from, address to, uint256 amount) external returns (bool); }
-            world.ok(
-                OWNER,
-                ASSET,
-                IFixture::approveCall {
-                    spender: payer,
-                    amount: cost * U256::from(2),
-                },
-            );
+            // Empty the payer through an authorized transfer before attempting settlement.
             world.ok(
                 payer,
                 ASSET,
-                transferFromCall {
-                    from: OWNER,
-                    to: payer,
-                    amount: cost * U256::from(2),
+                settlement::IFixture::approveCall {
+                    spender: OWNER,
+                    amount: funded,
+                },
+            );
+            world.ok(
+                OWNER,
+                ASSET,
+                settlement::IFixture::transferFromCall {
+                    from: payer,
+                    to: OWNER,
+                    amount: funded,
                 },
             );
         }
         world.ok(
-            OWNER,
+            payer,
             ASSET,
-            IFixture::approveCall {
+            settlement::IFixture::approveCall {
                 spender: NOD_FACTORY_ADDRESS,
                 amount: allowance,
             },
@@ -518,148 +240,7 @@ fn insufficient_allowance_and_balance_revert_without_payment() {
         let balances = world.balances();
         assert!(!matches!(world.settle().status, SubCallStatus::Success));
         assert_eq!(world.balances(), balances);
-        world.assert_unpaid();
-    }
-}
-
-#[test]
-fn optional_empty_token_returns_are_accepted() {
-    let mut world = World::new(OWNER, U256::from(500), true);
-    world.configure(ASSET, 7);
-    assert!(matches!(world.settle().status, SubCallStatus::Success));
-    assert_eq!(
-        world.balances(),
-        [
-            world.cost,
-            U256::from(17),
-            U256::ZERO,
-            world.cost,
-            world.cost
-        ]
-    );
-}
-
-#[test]
-fn token_owner_cannot_reenter_settlement_during_transfer() {
-    let mut world = World::new(ASSET, U256::from(500), true);
-    world.configure(ASSET, 5);
-    assert!(matches!(world.settle().status, SubCallStatus::Success));
-    assert!(world.view(ASSET, IFixture::callbackRejectedCall {}));
-    assert_eq!(
-        world.balances(),
-        [
-            world.cost,
-            U256::from(17),
-            U256::ZERO,
-            world.cost,
-            world.cost
-        ]
-    );
-}
-
-struct NodSettlementSeed {
-    owner: Address,
-    cost: U256,
-    registered: bool,
-    issuance_currency: u16,
-}
-fn seed_settlement_nod(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl outbe_compressed_entities::ParentBodySource,
-    seed: NodSettlementSeed,
-) -> WwdEntityId {
-    let NodSettlementSeed {
-        owner,
-        cost,
-        registered,
-        issuance_currency,
-    } = seed;
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-        .unwrap();
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::ONE,
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
-                    .unwrap()
-                    .as_slice(),
-            ),
-        )
-        .unwrap();
-    begin_block(storage.clone(), scope).unwrap();
-    seed_settlement_router(storage, registered, issuance_currency);
-    let params = NodIssueParams {
-        owner,
-        gratis_load_minor: U256::from(GRATIS_LOAD),
-        worldwide_day: WorldwideDay::new(20_241_220),
-        league_id: 1,
-        entry_price_minor: cost * U256::from(1_000),
-        issuance_currency,
-        reference_currency: 840,
-    };
-    let nod = outbe_nodfactory::api::issue_nod(
-        storage,
-        scope,
-        parent,
-        &outbe_nod::test_support::encrypted_fixture(&params, CHAIN_ID),
-    )
-    .unwrap();
-    let floor_price_minor =
-        outbe_nod::pricing::floor_price_minor(params.entry_price_minor).unwrap();
-    let bucket =
-        outbe_nod::identity::bucket_key(params.worldwide_day, params.entry_price_minor, 840);
-    qualify(storage, bucket, floor_price_minor, 840).expect("bucket qualifies");
-    if issuance_currency != 840 {
-        seed_settlement_window(storage, issuance_currency);
-    }
-    nod
-}
-
-/// One observation in the trailing window settlement converts at: COEN at
-/// 2 USD and at 1 unit of `iso_code`.
-fn seed_settlement_window(storage: &StorageHandle<'_>, iso_code: u16) {
-    let usd = outbe_oracle::api::AddressPair::new_coen_to(840);
-    let other = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
-    outbe_oracle::api::register_pair(storage.clone(), other).unwrap();
-    let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
-    let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    oracle
-        .write_snapshot(
-            snapshot.cutoff() - 1,
-            &[
-                (usd, U256::from(2_000_000), U256::from(1_000_000)),
-                (other, U256::from(1_000_000), U256::from(1_000_000)),
-            ],
-        )
-        .unwrap();
-}
-/// Registers `ASSET` with `VAULT` under `iso_code`.
-fn seed_settlement_router(storage: &StorageHandle<'_>, registered: bool, iso_code: u16) {
-    let router = VaultRouterContract::new(storage.clone());
-    router.assets.insert(ASSET).unwrap();
-    router.asset_vault_set(ASSET).insert(VAULT).unwrap();
-    router
-        .reference_currency_vault_set(iso_code)
-        .insert(VAULT)
-        .unwrap();
-    router
-        .vault_reference_currencies
-        .write(&VAULT, iso_code)
-        .unwrap();
-    if registered {
-        router
-            .liquidity_sources
-            .insert(NOD_FACTORY_ADDRESS)
-            .unwrap();
-        router
-            .liquidity_source_types
-            .write(
-                &NOD_FACTORY_ADDRESS,
-                IVaultRouter::StablesSource::NodCostAmount as u8,
-            )
-            .unwrap();
+        assert_eq!(balances[1], U256::from(FACTORY_FLOAT));
+        assert_unsettled(&mut world);
     }
 }

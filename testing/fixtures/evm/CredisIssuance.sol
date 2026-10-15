@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// Stateful token/vault counterparty for credis_issuance.rs; compile with solc 0.8.33,
+/// Stateful token/vault counterparty for Credis issuance and the EUR settlement rail; compile with solc 0.8.33,
 /// optimizer 200, via-ir, Prague, metadata hash none, CBOR disabled.
 contract CredisIssuance {
     address constant ASSET = 0x3333333333333333333333333333333333333333;

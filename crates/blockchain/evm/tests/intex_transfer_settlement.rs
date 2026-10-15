@@ -72,7 +72,9 @@ impl World {
     /// mirrors the contract, and a finalized day above the floor qualifies it.
     fn new() -> Self {
         let mut db = CacheDB::new(EmptyDB::default());
-        let counterparty = runtime_code(include_str!("fixtures/FactorySettlement.hex"));
+        let counterparty = runtime_code(include_str!(
+            "../../../../testing/fixtures/evm/FactorySettlement.hex"
+        ));
         for addr in [ASSET, VAULT] {
             install_code(&mut db, addr, &counterparty);
         }
