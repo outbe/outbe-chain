@@ -116,6 +116,11 @@ export function registerSettlementTools(server: McpServer, deps: IntexDeps): voi
     }),
   );
 
+}
+
+/** Promis mined from Settled Intex, and the signer's Promis balance. */
+export function registerPromisTools(server: McpServer, deps: IntexDeps): void {
+  const { ctx, resolveNetwork, whoever, submit } = deps;
   server.tool(
     "intex_promis_mine",
     "Settlement step 2: burn your Settled Intexes and mine Promis to your own wallet (run intex_settle " +

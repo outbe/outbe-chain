@@ -193,6 +193,9 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
     }),
   );
 
+}
+
+function registerAccountViews(server: McpServer, ctx: Ctx): void {
   // --- Balances --------------------------------------------------------------
   server.tool(
     "gratis_balance",
@@ -447,6 +450,7 @@ function registerGovernanceViews(server: McpServer, ctx: Ctx): void {
 export function registerViewTools(server: McpServer, ctx: Ctx): void {
   registerEntityViews(server, ctx);
   registerPositionViews(server, ctx);
+  registerAccountViews(server, ctx);
   registerMarketViews(server, ctx);
   registerValidatorViews(server, ctx);
   registerGovernanceViews(server, ctx);

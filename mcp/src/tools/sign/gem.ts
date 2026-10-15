@@ -67,7 +67,7 @@ export function registerGemTools(server: McpServer, ctx: Ctx): void {
     "Pay a Gem's settlement cost in `asset`: quotes it, approves GemFactory for that amount if the allowance " +
       "is short, and settles at the quoted snapshot. Anyone may pay; the Gem stays with its owner.",
     { gem_id: rawAmount, asset: address, wait: waitFlag },
-    handler(async ({ gem_id, asset, wait }) => settleRight(ctx, "gemfactory", "settleGem", BigInt(gem_id), asset as Address, wait)),
+    handler(async ({ gem_id, asset, wait }) => settleRight(ctx, { factory: "gemfactory", method: "settleGem", id: BigInt(gem_id) }, asset as Address, wait)),
   );
 
   server.tool(

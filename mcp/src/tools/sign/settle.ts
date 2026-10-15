@@ -12,8 +12,15 @@ export async function quoteRightSettlement(ctx: Ctx, factory: string, id: bigint
   return { settlementCurrency, paymentMinor, snapshotId };
 }
 
+/** A right to settle: its factory, that factory's settle method, and the right's id. */
+export interface Right {
+  factory: string;
+  method: string;
+  id: bigint;
+}
+
 /** Quotes a right, approves its factory for the cost if the allowance is short, and settles at the quoted snapshot. */
-export async function settleRight(ctx: Ctx, factory: string, method: string, id: bigint, asset: Address, wait?: boolean) {
+export async function settleRight(ctx: Ctx, { factory, method, id }: Right, asset: Address, wait?: boolean) {
   const token = getAddress(asset);
   const spender = resolveContract(factory).address;
   const { settlementCurrency, paymentMinor, snapshotId } = await quoteRightSettlement(ctx, factory, id, token);

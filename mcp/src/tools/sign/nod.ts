@@ -38,7 +38,7 @@ export function registerNodTools(server: McpServer, ctx: Ctx): void {
     "Pay a Nod's settlement cost in `asset`: quotes it, approves NodFactory for that amount if the allowance " +
       "is short, and settles at the quoted snapshot. Anyone may pay; the Nod stays with its owner.",
     { nod_id: rawAmount, asset: address, wait: waitFlag },
-    handler(async ({ nod_id, asset, wait }) => settleRight(ctx, "nodfactory", "settleNod", BigInt(nod_id), asset as Address, wait)),
+    handler(async ({ nod_id, asset, wait }) => settleRight(ctx, { factory: "nodfactory", method: "settleNod", id: BigInt(nod_id) }, asset as Address, wait)),
   );
 
   server.tool(
