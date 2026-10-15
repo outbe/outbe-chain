@@ -17,6 +17,7 @@ use radicle_git_metadata::{
     commit::bls::UnsignedCommit,
 };
 
+use super::publication::CheckpointOwnerSnapshot;
 use crate::manager::FinalizedPatchApproval;
 
 #[cfg(test)]
@@ -61,6 +62,75 @@ pub struct PreparedPatchReview {
     metadata: Author,
     previous_owner_tip: Option<git::Oid>,
     signing: ReviewSigningContext,
+}
+
+/// Review with its complete preparation snapshot pinned to an accepted checkpoint.
+pub struct CheckpointPreparedReview {
+    review: PreparedPatchReview,
+    snapshot: CheckpointOwnerSnapshot,
+}
+
+impl std::ops::Deref for CheckpointPreparedReview {
+    type Target = PreparedPatchReview;
+    fn deref(&self) -> &Self::Target {
+        &self.review
+    }
+}
+
+impl CheckpointPreparedReview {
+    pub fn attach(
+        self,
+        repo: &Repository,
+        signature: &BlsEnvelope,
+    ) -> Result<(cob::Entry, PreparedReviewRefs), Error> {
+        self.review.attach(
+            repo,
+            signature,
+            self.snapshot.owner_refs().clone(),
+            self.snapshot.sigrefs(),
+        )
+    }
+}
+
+/// The actor separately rechecks current finalized permission/material before signing/publishing.
+pub fn prepare_patch_review_from_checkpoint(
+    repo: &Repository,
+    approval: &FinalizedPatchApproval,
+    snapshot: &CheckpointOwnerSnapshot,
+    context: &ReviewSigningContext,
+) -> Result<CheckpointPreparedReview, Error> {
+    let receipt = snapshot.checkpoint().receipt();
+    let body = &receipt.body;
+    if context.chain_id != body.chain_id
+        || context.genesis_hash != body.genesis_hash.0
+        || context.epoch != body.epoch
+        || context.material_version != body.material_version
+        || context.material_hash != body.material_hash.0
+        || context.previous_receipt_hash != receipt.receipt_hash.0
+        || repo.id().into_sha1() != Some(body.repo_id.0)
+    {
+        return Err(Error::Snapshot);
+    }
+    let identity = snapshot
+        .owner_refs()
+        .get(&radicle::storage::refs::IDENTITY_ROOT)
+        .ok_or(Error::Snapshot)?;
+    let owner: RepositoryKey =
+        radicle::crypto::BlsPublicKey::from_bytes(body.owner_bls_public.0)?.into();
+    let decision = PatchVotePayloadV1::decode(approval.approval.payload.as_bytes())
+        .map_err(|_| Error::Approval)?;
+    let patch: patch::PatchId = git::Oid::from_sha1(decision.patch_id.0).into();
+    let name =
+        git::refs::storage::cob(&owner, &patch::TYPENAME, &patch).strip_namespace_recursive();
+    let previous = snapshot.owner_refs().get(&name);
+    let review = prepare_patch_review(repo, approval, identity, previous, context)?;
+    if review.owner() != owner {
+        return Err(Error::Authority);
+    }
+    Ok(CheckpointPreparedReview {
+        review,
+        snapshot: snapshot.clone(),
+    })
 }
 
 impl PreparedPatchReview {

@@ -11,8 +11,8 @@ pub use outbe_radicleregistry::RepoId;
 pub use snapshot::{RethFinalizedFeed, RethSnapshotReader};
 pub use types::{
     BoxFuture, ControlSession, DisconnectDisposition, EndpointResolver, FinalizedBlock,
-    FinalizedFeed, FinalizedPatchApproval, FinalizedRepositoryAuthority, FinalizedSnapshot,
-    FinalizedValidator, HeartwoodControl, ManagerConfig, ManagerDependencies, ManagerError,
-    ManagerPhase, ManagerStatus, PhaseError, RepositoryAuthorityReader, RepositoryStatus,
-    RetryPolicy, SessionDirection, SnapshotReader,
+    FinalizedFeed, FinalizedPatchApproval, FinalizedPublicationReceipt,
+    FinalizedRepositoryAuthority, FinalizedSnapshot, FinalizedValidator, HeartwoodControl,
+    ManagerConfig, ManagerDependencies, ManagerError, ManagerPhase, ManagerStatus, PhaseError,
+    RepositoryAuthorityReader, RepositoryStatus, RetryPolicy, SessionDirection, SnapshotReader,
 };

@@ -2,6 +2,7 @@ mod lifecycle;
 mod material;
 mod metrics;
 mod network;
+pub mod publication;
 pub mod review;
 mod sidecar;
 pub mod signing;

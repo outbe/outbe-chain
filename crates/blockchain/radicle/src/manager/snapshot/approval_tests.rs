@@ -119,6 +119,139 @@ fn snapshot(provider: &HashMapStorageProvider) -> MockEthProvider {
     result
 }
 
+fn publication_receipt_fixture() -> RethSnapshotReader<ApprovalProvider> {
+    use outbe_primitives::storage::types::StorageKey as _;
+    use outbe_radicleregistry::schema::{
+        PublicationReceiptRecord, PublicationReceiptRecordEntryExt,
+    };
+    let (mut body, manifest) = crate::integration::publication::tests::bootstrap_fixture();
+    body.package_manifest_hash = manifest.hash().unwrap();
+    let hash = body.receipt_hash();
+    let mut storage = HashMapStorageProvider::new_with_chain_identity(2026, B256::repeat_byte(7));
+    storage.enter(|s| {
+        let registry = RadicleRegistry::new(s);
+        registry.publication_sequence.write(1).unwrap();
+        registry.publication_receipt_hash.write(hash).unwrap();
+        registry
+            .publication_receipts
+            .create(&PublicationReceiptRecord {
+                sequence: 1,
+                body: body.to_bytes().to_vec(),
+                accepted_height: 1,
+                receipt_hash: hash,
+            })
+            .unwrap();
+    });
+    let accepted = snapshot(&storage);
+    storage.enter(|s| {
+        RadicleRegistry::new(s)
+            .publication_receipt_hash
+            .write(B256::ZERO)
+            .unwrap()
+    });
+    let bad_hash = snapshot(&storage);
+    storage.enter(|s| {
+        let registry = RadicleRegistry::new(s);
+        registry.publication_receipt_hash.write(hash).unwrap();
+        registry
+            .publication_receipts
+            .entry(1)
+            .accepted_height()
+            .write(6)
+            .unwrap();
+    });
+    let future = snapshot(&storage);
+    storage.enter(|s| {
+        let registry = RadicleRegistry::new(s.clone());
+        registry
+            .publication_receipts
+            .entry(1)
+            .accepted_height()
+            .write(1)
+            .unwrap();
+        let slot = 1u64.mapping_slot(registry.publication_receipts.base_slot());
+        s.sstore(RADICLE_REGISTRY_ADDRESS, slot, U256::MAX).unwrap();
+    });
+    let bad_length = snapshot(&storage);
+    RethSnapshotReader::new(
+        ApprovalProvider {
+            states: [
+                (block(3).hash, accepted),
+                (block(4).hash, bad_hash),
+                (block(5).hash, future),
+                (block(6).hash, bad_length),
+            ]
+            .into(),
+            canonical: (3..=6).map(|n| (n, block(n).hash)).collect(),
+            finalized: Some(BlockNumHash::new(3, block(3).hash)),
+            reads: Mutex::new(vec![]),
+        },
+        2026,
+        B256::repeat_byte(7),
+    )
+}
+
+#[test]
+fn publication_receipt_reader_pins_history_and_rejects_corrupt_or_future_records() {
+    let mut reader = publication_receipt_fixture();
+    let receipt = reader
+        .read_publication_receipt(block(3), 1)
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.block(), block(3));
+    assert_eq!(receipt.receipt().body.sequence, 1);
+    assert!(reader
+        .read_publication_receipt(block(3), 0)
+        .unwrap()
+        .is_none());
+    assert!(reader
+        .read_publication_receipt(block(3), 2)
+        .unwrap()
+        .is_none());
+    assert_eq!(*reader.provider.reads.lock().unwrap(), [block(3).hash; 3]);
+    reader.provider.finalized = Some(BlockNumHash::new(6, block(6).hash));
+    for n in 4..=6 {
+        assert!(matches!(
+            reader.read_publication_receipt(block(n), 1),
+            Err(ManagerError::Snapshot(_))
+        ));
+    }
+    assert_eq!(
+        reader
+            .read_publication_receipt(block(3), 1)
+            .unwrap()
+            .unwrap(),
+        receipt
+    );
+}
+
+#[test]
+fn publication_receipt_reader_rejects_unfinalized_noncanonical_missing_history_without_fallback() {
+    let mut reader = publication_receipt_fixture();
+    assert!(matches!(
+        reader.read_publication_receipt(block(4), 1),
+        Err(ManagerError::Finality(_))
+    ));
+    assert!(reader.provider.reads.lock().unwrap().is_empty());
+    reader.provider.finalized = None;
+    assert!(matches!(
+        reader.read_publication_receipt(block(3), 1),
+        Err(ManagerError::Finality(_))
+    ));
+    reader.provider.finalized = Some(BlockNumHash::new(3, B256::repeat_byte(99)));
+    assert!(matches!(
+        reader.read_publication_receipt(block(3), 1),
+        Err(ManagerError::Finality(_))
+    ));
+    reader.provider.finalized = Some(BlockNumHash::new(3, block(3).hash));
+    reader.provider.states.remove(&block(3).hash);
+    assert!(matches!(
+        reader.read_publication_receipt(block(3), 1),
+        Err(ManagerError::Provider(_))
+    ));
+    assert_eq!(*reader.provider.reads.lock().unwrap(), [block(3).hash]);
+}
+
 fn repository_authority_fixture() -> (
     RethSnapshotReader<ApprovalProvider>,
     outbe_validatorset::state::CommitteeSnapshot,

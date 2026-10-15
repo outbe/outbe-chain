@@ -1,4 +1,8 @@
 use super::*;
+use crate::integration::publication::{
+    native_policy_context, CheckpointOwnerSnapshot, NativeSubject, ObjectCommitment, ObjectKind,
+    OwnerRef, PublicationManifest, RefUpdate,
+};
 use crate::integration::signing::{RepositoryPartial, RepositorySigningMaterial};
 use crate::manager::FinalizedBlock;
 use alloy_primitives::{B256, U256};
@@ -112,6 +116,43 @@ fn code(repo: &Repository, parent: Option<git::Oid>, contents: &[u8]) -> git::Oi
         .into()
 }
 
+fn native_object_commitments(repo: &Repository, roots: &[git::Oid]) -> Vec<ObjectCommitment> {
+    let mut queue = roots.to_vec();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut objects = vec![];
+    let odb = repo.raw().odb().unwrap();
+    while let Some(id) = queue.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let object = odb.read(id.into()).unwrap();
+        let kind = match object.kind() {
+            git::raw::ObjectType::Commit => {
+                queue.push(repo.raw().find_commit(id.into()).unwrap().tree_id().into());
+                ObjectKind::Commit
+            }
+            git::raw::ObjectType::Tree => {
+                queue.extend(
+                    repo.raw()
+                        .find_tree(id.into())
+                        .unwrap()
+                        .iter()
+                        .map(|e| git::Oid::from(e.id())),
+                );
+                ObjectKind::Tree
+            }
+            git::raw::ObjectType::Blob => ObjectKind::Blob,
+            _ => unreachable!(),
+        };
+        objects.push(ObjectCommitment {
+            kind,
+            oid: id.to_string(),
+            sha256: hex::encode(Sha256::hash(&[object.data()]).0),
+        });
+    }
+    objects
+}
+
 #[test]
 fn review_context_matches_frozen_p0_native_vectors() {
     let decision = PatchVotePayloadV1::accept(
@@ -179,6 +220,32 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         .iter()
         .map(|share| VrfMaterialProvider::new(7, dkg.polynomial.clone(), Some(share.clone())))
         .collect();
+    let authority = crate::manager::FinalizedRepositoryAuthority {
+        block: FinalizedBlock {
+            number: 12,
+            hash: B256::repeat_byte(12),
+        },
+        chain_id: 2026,
+        genesis_hash: B256::repeat_byte(7),
+        epoch: 2,
+        committee: outbe_validatorset::state::CommitteeSnapshot {
+            committee: identities
+                .iter()
+                .enumerate()
+                .map(|(i, key)| outbe_validatorset::state::CommitteeEntry {
+                    address: alloy_primitives::Address::repeat_byte(i as u8 + 1),
+                    consensus_pubkey: key.public_key().encode().as_ref().try_into().unwrap(),
+                })
+                .collect(),
+            vrf_material_version: 7,
+            vrf_group_public_key_bytes: dkg.polynomial.public().encode().to_vec(),
+            vrf_public_polynomial_hash: outbe_consensus::dkg_manager::public_polynomial_hash(
+                &dkg.polynomial,
+            ),
+        },
+    };
+    let bootstrap_material =
+        RepositorySigningMaterial::new(authority.clone(), dkg.output.clone(), owner).unwrap();
     let doc = Doc::initial(
         Project::new(
             "governments".parse().unwrap(),
@@ -191,6 +258,30 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     );
     let (blob, bytes) = doc.encode().unwrap();
     let rid: RepoId = blob.into();
+    let mut bootstrap_body = outbe_primitives::radicle_publication::PublicationBody {
+        chain_id: 2026,
+        genesis_hash: B256::repeat_byte(7),
+        repo_id: rid.into_sha1().unwrap().into(),
+        descriptor_hash: B256::repeat_byte(4),
+        owner_bls_public: (*owner.as_bytes()).into(),
+        players_commitment: bootstrap_material.players_commitment().into(),
+        epoch: 2,
+        material_version: 7,
+        material_hash: bootstrap_material.material_hash().into(),
+        finalized_anchor_height: 0,
+        finalized_anchor_hash: B256::repeat_byte(7),
+        sequence: 1,
+        previous_receipt_hash: B256::ZERO,
+        action: outbe_primitives::radicle_publication::PublicationAction::Bootstrap,
+        proposal_id: U256::ZERO,
+        patch_id: Default::default(),
+        revision_id: Default::default(),
+        expected_target_head: Default::default(),
+        package_manifest_hash: B256::ZERO,
+    };
+    let document_context = native_policy_context(&bootstrap_body, 0);
+    let identity_context = native_policy_context(&bootstrap_body, 1);
+    let initial_refs_context = native_policy_context(&bootstrap_body, 2);
     let author = SigningKey::from_seed(Seed::new([41; 32]));
     let storage = radicle::Storage::open(
         temp.path().join("storage"),
@@ -209,7 +300,11 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         &providers,
         &dkg.polynomial,
         owner,
-        RepositorySubject::identity(rid.into_sha1().unwrap(), [1; 32], blob.into_sha1().unwrap()),
+        RepositorySubject::identity(
+            rid.into_sha1().unwrap(),
+            document_context,
+            blob.into_sha1().unwrap(),
+        ),
     );
     let tx = Transaction::<Identity, Repository>::new(
         identity::TYPENAME.clone(),
@@ -218,7 +313,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
             description: String::new(),
             blob,
             parent: None,
-            signature: document_signature.into(),
+            signature: document_signature.clone().into(),
         }],
         vec![cob::Embed::<cob::Uri>::store("radicle.json", &bytes, repo.raw()).unwrap()],
     );
@@ -239,7 +334,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         owner,
         RepositorySubject::cob(
             rid.into_sha1().unwrap(),
-            [2; 32],
+            identity_context,
             unsigned.tree(),
             unsigned.as_bytes(),
         ),
@@ -248,13 +343,13 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         repo.raw(),
         unsigned,
         rid.into_sha1().unwrap(),
-        [2; 32],
+        identity_context,
         &signature,
     )
     .unwrap()
     .id;
-    receipts.accept(identity, SubjectKind::Cob, [2; 32]);
-    receipts.accept(identity, SubjectKind::Identity, [1; 32]);
+    receipts.accept(identity, SubjectKind::Cob, identity_context);
+    receipts.accept(identity, SubjectKind::Identity, document_context);
     let owner = RepositoryKey::from(owner);
     object::Storage::update(
         &repo,
@@ -294,7 +389,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         accepted_refs.clone(),
         rid,
         owner,
-        [3; 32],
+        initial_refs_context,
         None,
         Committer::new(
             "Outbe Network <network@outbe.invalid> 1700000000 +0000"
@@ -314,10 +409,14 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         initial_refs.subject().unwrap(),
     );
     let previous_sigrefs = initial_refs
-        .attach(repo.raw(), initial_signature)
+        .attach(repo.raw(), initial_signature.clone())
         .unwrap()
         .oid();
-    receipts.accept(previous_sigrefs, SubjectKind::SignedRefs, [3; 32]);
+    receipts.accept(
+        previous_sigrefs,
+        SubjectKind::SignedRefs,
+        initial_refs_context,
+    );
     repo.raw()
         .reference(
             git::refs::storage::sigrefs(&owner).as_str(),
@@ -363,27 +462,6 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
             approved_timestamp: 1700000010,
         },
     };
-    let authority = crate::manager::FinalizedRepositoryAuthority {
-        block: approval.block,
-        chain_id: 2026,
-        genesis_hash: B256::repeat_byte(7),
-        epoch: 2,
-        committee: outbe_validatorset::state::CommitteeSnapshot {
-            committee: identities
-                .iter()
-                .enumerate()
-                .map(|(i, key)| outbe_validatorset::state::CommitteeEntry {
-                    address: alloy_primitives::Address::repeat_byte(i as u8 + 1),
-                    consensus_pubkey: key.public_key().encode().to_vec().try_into().unwrap(),
-                })
-                .collect(),
-            vrf_material_version: 7,
-            vrf_group_public_key_bytes: dkg.polynomial.public().encode().to_vec(),
-            vrf_public_polynomial_hash: outbe_consensus::dkg_manager::public_polynomial_hash(
-                &dkg.polynomial,
-            ),
-        },
-    };
     let owner_key = match owner {
         RepositoryKey::Bls12381G2(key) => key,
         _ => unreachable!(),
@@ -405,8 +483,77 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         },
     )
     .unwrap();
-    let signing = material.review_context([17; 32]);
-    let prepared = prepare_patch_review(&repo, &approval, identity, None, &signing).unwrap();
+    let owner_snapshot: Vec<_> = accepted_refs
+        .iter()
+        .map(|(name, id)| OwnerRef {
+            name: name.to_string(),
+            oid: id.to_string(),
+        })
+        .collect();
+    let mut updates: Vec<_> = owner_snapshot
+        .iter()
+        .map(|r| RefUpdate {
+            name: r.name.clone(),
+            old: git::Oid::ZERO_SHA1.to_string(),
+            new: r.oid.clone(),
+        })
+        .collect();
+    updates.push(RefUpdate {
+        name: radicle::storage::refs::SIGREFS_BRANCH.to_string(),
+        old: git::Oid::ZERO_SHA1.to_string(),
+        new: previous_sigrefs.to_string(),
+    });
+    let manifest = PublicationManifest::new(
+        native_object_commitments(&repo, &[identity, previous_sigrefs, base]),
+        updates,
+        vec![
+            NativeSubject {
+                ordinal: 0,
+                envelope: document_signature.to_hex(),
+            },
+            NativeSubject {
+                ordinal: 1,
+                envelope: signature.to_hex(),
+            },
+            NativeSubject {
+                ordinal: 2,
+                envelope: initial_signature.to_hex(),
+            },
+        ],
+        owner_snapshot,
+    )
+    .unwrap();
+    bootstrap_body.package_manifest_hash = manifest.hash().unwrap();
+    let checkpoint = crate::manager::FinalizedPublicationReceipt {
+        block: FinalizedBlock {
+            number: 8,
+            hash: B256::repeat_byte(8),
+        },
+        receipt: outbe_radicleregistry::publication::PublicationReceipt {
+            accepted_height: 8,
+            receipt_hash: bootstrap_body.receipt_hash(),
+            body: bootstrap_body,
+        },
+    };
+    let mut snapshot = CheckpointOwnerSnapshot::bootstrap(checkpoint, &manifest).unwrap();
+    let signing = material.review_context(snapshot.checkpoint().receipt().receipt_hash.0);
+    for field in 0..6 {
+        let mut stale = signing.clone();
+        match field {
+            0 => stale.chain_id += 1,
+            1 => stale.genesis_hash[0] ^= 1,
+            2 => stale.epoch += 1,
+            3 => stale.material_version += 1,
+            4 => stale.material_hash[0] ^= 1,
+            _ => stale.previous_receipt_hash[0] ^= 1,
+        }
+        assert!(matches!(
+            prepare_patch_review_from_checkpoint(&repo, &approval, &snapshot, &stale),
+            Err(Error::Snapshot)
+        ));
+    }
+    let prepared =
+        prepare_patch_review_from_checkpoint(&repo, &approval, &snapshot, &signing).unwrap();
     let later_head = code(&repo, Some(head), b"later revision");
     let later_revision = patch
         .update("Later local author update", base, later_head)
@@ -561,9 +708,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     other_approval.approval.proposal_id += U256::from(1);
     let replay = prepare_patch_review(&repo, &other_approval, identity, None, &signing).unwrap();
     assert!(signature.verify(&replay.subject, owner).is_err());
-    let (review, prepared_refs) = prepared
-        .attach(&repo, &signature, accepted_refs.clone(), previous_sigrefs)
-        .unwrap();
+    let (review, prepared_refs) = prepared.attach(&repo, &signature).unwrap();
     assert_eq!(
         repo.reference_oid(&owner, &git::refs::storage::SIGREFS_BRANCH)
             .unwrap(),
@@ -651,11 +796,137 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         .attach(repo.raw(), refs_signature.clone())
         .unwrap()
         .oid();
+    let (alternate_entry, alternate_prepared_refs) =
+        prepare_patch_review_from_checkpoint(&repo, &approval, &snapshot, &signing)
+            .unwrap()
+            .attach(&repo, &alternate)
+            .unwrap();
+    let alternate_sigrefs = alternate_prepared_refs
+        .attach(repo.raw(), alternate_refs_signature.clone())
+        .unwrap()
+        .oid();
+    assert_eq!(alternate_entry.id, review.id);
+    assert_eq!(alternate_sigrefs, signed_refs);
     assert_eq!(
         repo.reference_oid(&owner, &git::refs::storage::SIGREFS_BRANCH)
             .unwrap(),
         previous_sigrefs
     );
+    let patch_ref_name =
+        git::refs::storage::cob(&owner, &patch::TYPENAME, &patch_id).strip_namespace_recursive();
+    let mut desired_refs = accepted_refs.clone();
+    desired_refs.insert(patch_ref_name.to_ref_string(), review.id);
+    let pinned: std::collections::BTreeSet<_> =
+        native_object_commitments(&repo, &[identity, previous_sigrefs, base, *revision])
+            .into_iter()
+            .map(|object| object.oid)
+            .collect();
+    let new_objects = native_object_commitments(&repo, &[review.id, signed_refs])
+        .into_iter()
+        .filter(|object| !pinned.contains(&object.oid))
+        .collect();
+    let review_manifest = PublicationManifest::new(
+        new_objects,
+        vec![
+            RefUpdate {
+                name: patch_ref_name.to_string(),
+                old: git::Oid::ZERO_SHA1.to_string(),
+                new: review.id.to_string(),
+            },
+            RefUpdate {
+                name: radicle::storage::refs::SIGREFS_BRANCH.to_string(),
+                old: previous_sigrefs.to_string(),
+                new: signed_refs.to_string(),
+            },
+        ],
+        vec![
+            NativeSubject {
+                ordinal: 0,
+                envelope: signature.to_hex(),
+            },
+            NativeSubject {
+                ordinal: 1,
+                envelope: refs_signature.to_hex(),
+            },
+        ],
+        desired_refs
+            .iter()
+            .map(|(name, id)| OwnerRef {
+                name: name.to_string(),
+                oid: id.to_string(),
+            })
+            .collect(),
+    )
+    .unwrap();
+    let alternate_manifest = PublicationManifest::new(
+        review_manifest.objects().to_vec(),
+        review_manifest.refs().to_vec(),
+        vec![
+            NativeSubject {
+                ordinal: 0,
+                envelope: alternate.to_hex(),
+            },
+            NativeSubject {
+                ordinal: 1,
+                envelope: alternate_refs_signature.to_hex(),
+            },
+        ],
+        review_manifest.owner_snapshot().to_vec(),
+    )
+    .unwrap();
+    assert_eq!(
+        review_manifest.to_bytes().unwrap(),
+        alternate_manifest.to_bytes().unwrap()
+    );
+    let decision = PatchVotePayloadV1::decode(approval.approval.payload.as_bytes()).unwrap();
+    let mut review_body = snapshot.checkpoint().receipt().body.clone();
+    review_body.sequence += 1;
+    review_body.previous_receipt_hash = snapshot.checkpoint().receipt().receipt_hash;
+    review_body.action = outbe_primitives::radicle_publication::PublicationAction::Review;
+    review_body.proposal_id = approval.approval.proposal_id;
+    review_body.patch_id = decision.patch_id;
+    review_body.revision_id = decision.revision_id;
+    review_body.expected_target_head = decision.expected_target_head;
+    review_body.finalized_anchor_height = approval.approval.approved_height;
+    review_body.finalized_anchor_hash = B256::repeat_byte(10);
+    review_body.package_manifest_hash = review_manifest.hash().unwrap();
+    let checkpoint = crate::manager::FinalizedPublicationReceipt {
+        block: approval.block,
+        receipt: outbe_radicleregistry::publication::PublicationReceipt {
+            accepted_height: 12,
+            receipt_hash: review_body.receipt_hash(),
+            body: review_body,
+        },
+    };
+    let mut wrong_updates = review_manifest.refs().to_vec();
+    wrong_updates
+        .iter_mut()
+        .find(|update| update.name == radicle::storage::refs::SIGREFS_BRANCH.as_str())
+        .unwrap()
+        .old = git::Oid::ZERO_SHA1.to_string();
+    let wrong_manifest = PublicationManifest::new(
+        review_manifest.objects().to_vec(),
+        wrong_updates,
+        review_manifest.subjects().to_vec(),
+        review_manifest.owner_snapshot().to_vec(),
+    )
+    .unwrap();
+    let mut wrong_checkpoint = checkpoint.clone();
+    wrong_checkpoint.receipt.body.package_manifest_hash = wrong_manifest.hash().unwrap();
+    wrong_checkpoint.receipt.receipt_hash = wrong_checkpoint.receipt.body.receipt_hash();
+    let prior_checkpoint = snapshot.checkpoint().clone();
+    let prior_refs = snapshot.owner_refs().clone();
+    assert!(snapshot.advance(wrong_checkpoint, &wrong_manifest).is_err());
+    assert_eq!(snapshot.checkpoint(), &prior_checkpoint);
+    assert_eq!(snapshot.owner_refs(), &prior_refs);
+    assert_eq!(snapshot.sigrefs(), previous_sigrefs);
+    snapshot.advance(checkpoint, &review_manifest).unwrap();
+    assert_eq!(snapshot.sigrefs(), signed_refs);
+    assert_eq!(snapshot.owner_refs(), &desired_refs);
+    assert!(matches!(
+        prepare_patch_review_from_checkpoint(&repo, &approval, &snapshot, &signing),
+        Err(Error::Snapshot)
+    ));
     receipts.accept(review.id, SubjectKind::Cob, context);
     receipts.accept(signed_refs, SubjectKind::SignedRefs, refs_context);
     assert_eq!(*review.author(), owner);

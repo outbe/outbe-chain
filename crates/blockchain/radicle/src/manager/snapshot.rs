@@ -1,6 +1,7 @@
 use super::types::{
-    BoxFuture, FinalizedBlock, FinalizedFeed, FinalizedPatchApproval, FinalizedRepositoryAuthority,
-    FinalizedSnapshot, FinalizedValidator, ManagerError, SnapshotReader,
+    BoxFuture, FinalizedBlock, FinalizedFeed, FinalizedPatchApproval, FinalizedPublicationReceipt,
+    FinalizedRepositoryAuthority, FinalizedSnapshot, FinalizedValidator, ManagerError,
+    SnapshotReader,
 };
 use crate::endpoint::PeerId;
 use alloy_primitives::{Address, B256, U256};
@@ -49,6 +50,74 @@ impl<P: StateProviderFactory + Send + Sync> super::RepositoryAuthorityReader
 }
 
 impl<P: StateProviderFactory> RethSnapshotReader<P> {
+    /// Replay immutable receipts from an exact local canonical finalized snapshot.
+    pub fn read_publication_receipt(
+        &self,
+        block: FinalizedBlock,
+        sequence: u64,
+    ) -> Result<Option<FinalizedPublicationReceipt>, ManagerError> {
+        let finalized = self
+            .provider
+            .finalized_block_num_hash()
+            .map_err(ManagerError::provider)?
+            .ok_or_else(|| ManagerError::Finality("no finalized block".into()))?;
+        if block.number > finalized.number
+            || self
+                .provider
+                .block_hash(block.number)
+                .map_err(ManagerError::provider)?
+                != Some(block.hash)
+            || self
+                .provider
+                .block_hash(finalized.number)
+                .map_err(ManagerError::provider)?
+                != Some(finalized.hash)
+        {
+            return Err(ManagerError::Finality(
+                "publication receipt requires a canonical finalized block".into(),
+            ));
+        }
+        let state = self
+            .provider
+            .state_by_block_hash(block.hash)
+            .map_err(ManagerError::provider)?;
+        let mut storage = ReadOnlyStorageProvider::new_with_chain_identity(
+            RethStateReader {
+                state: state.as_ref(),
+            },
+            self.chain_id,
+            self.genesis_hash,
+        );
+        let handle = StorageHandle::new(&mut storage);
+        let registry = RadicleRegistry::new(handle);
+        let latest_sequence = registry
+            .publication_sequence
+            .read()
+            .map_err(snapshot_error)?;
+        let latest_hash = registry
+            .publication_receipt_hash
+            .read()
+            .map_err(snapshot_error)?;
+        if sequence == 0 || sequence > latest_sequence {
+            return Ok(None);
+        }
+        let receipt = registry
+            .publication_receipt(sequence)
+            .map_err(snapshot_error)?
+            .ok_or_else(|| ManagerError::Snapshot("publication receipt missing".into()))?;
+        if receipt.accepted_height == 0
+            || receipt.accepted_height > block.number
+            || receipt.body.chain_id != self.chain_id
+            || receipt.body.genesis_hash != self.genesis_hash
+            || (sequence == latest_sequence && receipt.receipt_hash != latest_hash)
+        {
+            return Err(ManagerError::Snapshot(
+                "invalid finalized publication receipt".into(),
+            ));
+        }
+        Ok(Some(FinalizedPublicationReceipt { block, receipt }))
+    }
+
     /// Sample the local finalized head; callers cannot select an archived signing set.
     pub fn read_current_repository_authority(
         &self,

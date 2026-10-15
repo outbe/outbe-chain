@@ -20,6 +20,22 @@ pub struct FinalizedPatchApproval {
     pub approval: outbe_radicleregistry::PatchApprovalRecord,
 }
 
+/// A receipt read from an exact local canonical finalized state, not a peer certificate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedPublicationReceipt {
+    pub(crate) block: FinalizedBlock,
+    pub(crate) receipt: outbe_radicleregistry::publication::PublicationReceipt,
+}
+
+impl FinalizedPublicationReceipt {
+    pub fn block(&self) -> FinalizedBlock {
+        self.block
+    }
+    pub fn receipt(&self) -> &outbe_radicleregistry::publication::PublicationReceipt {
+        &self.receipt
+    }
+}
+
 /// Constructed from this node's current canonical finalized state, not peer metadata.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinalizedRepositoryAuthority {

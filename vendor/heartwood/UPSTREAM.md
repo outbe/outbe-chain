@@ -56,6 +56,10 @@ codec. Repository namespace announcements negotiate V2 on the authenticated V1
 control stream and retain their signed encoding through relay/database reopen.
 Migration 10 adds the announcement encoding version; existing rows keep V1.
 
+`radicle::canonical::formatter::CanonicalFormatter` is public so Outbe publication
+manifests reuse the same canonical JSON implementation as native identity docs.
+Heartwood does not interpret Outbe Vote or checkpoint data.
+
 Native identity/COB/sigrefs attachment and verification, generic publication-policy
 integration and full two-node BLS acceptance are still pending. These changes do
 not yet establish complete P2 support or any Outbe Vote integration.
