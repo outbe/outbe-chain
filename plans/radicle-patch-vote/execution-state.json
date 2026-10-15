@@ -5,7 +5,7 @@
   "last_periodic_report_utc": "2026-10-15T21:50:25Z",
   "next_periodic_report_due_utc": "2026-10-15T22:20:25Z",
   "period_minutes": 30,
-  "stage": "P3 current finalized permission gate and bounded same-process native Review/refs signing bridge verified; protected UDS, complete native object/q-witness verifier, collector/bootstrap/Merge/E2E incomplete",
+  "stage": "P3 current finalized gate/local actor signing and independent public-material q-witness verification verified; whole witness codec, complete native package verification, protected UDS/collector/bootstrap/Merge/E2E incomplete",
   "decision_gate": {
     "id": "D1",
     "status": "historical_approval_request_withdrawn; no active user approval question",
@@ -37,7 +37,7 @@
     "user_confirmation": "\u0434\u0430 \u0432\u0441\u0435 \u0432\u0441\u0435\u0440\u043d\u043e, goal \u043c\u043e\u0436\u043d\u043e \u0441\u043d\u0438\u043c\u0430\u0442\u044c \u0441 \u043f\u0430\u0443\u0437\u044b ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "289d3a51e839ce6c10a6af5cdd71fb3e915096f8",
+  "source_sha": "83f6690b9d399028548fbe61af2b47861df16572",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -56,7 +56,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "289d3a51e: one exact current finalized state for committee/terminal approval/execution stage/latest receipt/material; sealed checkpoint-derived Review/refs jobs; engine local Arc provider capability and bounded actor partial signing without Share export. No Git storage/fetch-gate/D2 changes.",
+  "current_source_changes": "83f6690b9: bounded canonical public Output decoder against local finalized authority; independent sorted q-partial verification and exact envelope recovery with share=None provider. Previous289d3a51e current permission gate/local actor bridge retained. No Git storage/fetch-gate/D2.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -82,15 +82,16 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "289d3a51e839ce6c10a6af5cdd71fb3e915096f8",
-    "checks": "267 full engine +49 full adapter lib tests(316/0 ignored);7 consumers all-target check;adapter/engine scopedClippy -D warnings;scoped rootfmt PASS",
-    "acceptance": "Intermediate only; no full P3/P6 acceptance/closure/reviewer PASS; protected UDS, independent complete native object/q-witness verification and live protocol remain incomplete",
-    "scenarios": "One exact Reth finalized state with real Vote/registry state; pending/expired/corrupt/future rejection; actual local actor signing of COB/refs by4SDKproviders; fresh state read on every request; changed approval/stage/checkpoint/material/unavailable state fail closed. Fixture checkpoints; no live rotation/quorum publication/UDS."
+    "source_sha": "83f6690b9d399028548fbe61af2b47861df16572",
+    "checks": "49 full adapter lib tests/0 ignored;7 consumer all-target checks;adapter scopedClippy -D warnings;scopedfmt PASS",
+    "acceptance": "Intermediate only; no full-AC acceptance/closure/reviewer PASS. Complete actual object/package verification, whole witness-bundle codec and production live protocol incomplete.",
+    "scenarios": "Actual native COB/refs q-subsets012/123/all4 verify from public Output without Share; valid owner signature with insufficient/duplicate/unsorted/outsider/oversized/bad-last-after-q/forged-identity/reendorsed-invalid-partial/wrong-namespace/subject/envelope witnesses rejects. Empty/truncated/trailing/oversized public Output rejects."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
   "review_refs_evidence": "evidence/outbe-chain-pjz.4/review-refs",
   "public_output_evidence": "evidence/outbe-chain-pjz.4/public-output",
   "checkpoint_preparation_evidence": "evidence/outbe-chain-pjz.4/checkpoint-preparation",
-  "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing"
+  "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing",
+  "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness"
 }
