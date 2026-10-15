@@ -7,6 +7,8 @@ from genesis_seed_codec import (
     DEFAULT_EPOCH_LENGTH_BLOCKS,
     DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS,
     DEFAULT_UNBONDING_PERIOD,
+    HYPERLANE_CONTROLLER_ADDRESS,
+    HYPERLANE_CONTROLLER_BOOTSTRAP_ADMIN_SLOT,
     MIN_STAKE,
     REWARDS_ADDRESS,
     STAKING_ADDRESS,
@@ -227,6 +229,21 @@ def _seed_founders(genesis, seed, validators, alloc):
         vault_router_storage.entries
     )
     print(f"  VaultRouter: owner={vault_owner}, slot 0 seeded")
+
+    # HyperlaneController bootstrap admin: the only caller of the one-shot
+    # `initialize`. Validator0 by default (overridable via
+    # seed["hyperlane_controller"]["admin"]).
+    hyperlane_admin = seed.get("hyperlane_controller", {}).get(
+        "admin", validators[0]["address"]
+    )
+    hyperlane_storage = StorageBuilder()
+    hyperlane_storage.set_slot(
+        HYPERLANE_CONTROLLER_BOOTSTRAP_ADMIN_SLOT, address_as_u256(hyperlane_admin)
+    )
+    alloc[HYPERLANE_CONTROLLER_ADDRESS].setdefault("storage", {}).update(
+        hyperlane_storage.entries
+    )
+    print(f"  HyperlaneController: bootstrap admin={hyperlane_admin}")
 
     staking_storage = StorageBuilder()
     total_staked = seed_staking(
