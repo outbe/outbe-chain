@@ -14,6 +14,8 @@ pub mod precompiles;
 pub mod storage;
 pub mod sub_call;
 pub mod tee_attestation_activation;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_support;
 pub mod zk;
 #[cfg(test)]
 mod zk_tests;

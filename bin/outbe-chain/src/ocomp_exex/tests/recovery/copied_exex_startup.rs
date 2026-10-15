@@ -213,7 +213,6 @@ fn assert_no_submissions(root: &Path) {
     assert!(!root.join("ocomp/ocomp-key-v1.hex").exists());
     for relative in [
         "supervisor-v1/vote-submissions",
-        "supervisor-v1/payout-submissions",
         "supervisor-v1/materialization-submissions",
         "supervisor-v1/sign-once",
     ] {
@@ -786,7 +785,7 @@ fn copied_fullnode_quiet_h_and_next_frame_reach_k_without_validator_submission()
         .iter()
         .all(|point| point.number == K && point.hash == k.block_hash));
     assert_no_submissions(recipient.path());
-    // This test has no pending NOD/payout obligation. It establishes actual
+    // This test has no pending NOD obligation. It establishes actual
     // quiet/next-frame control flow and FullNode non-submission, not all of
     // Task08 Tests-first7 or completed-Lysis/pending-action acceptance.
 }

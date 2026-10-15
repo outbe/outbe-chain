@@ -5,8 +5,8 @@
 Classification: `measurement_only`. Armable: `false`.
 
 - Generator source SHA-256: `ba5ab090ad67cecff7d40e978ee9ee333656e973eba9669ba6bba24d36b89089`
-- Input-set SHA-256: `4a67b53e11d5ed6509ab0508200e97359b0497ea88e2584299366dab7d69d47f`
-- Candidate-limit SHA-256: `a3c6ad4cf52140a9ebfc48eef7aafb8af80af59104f0070d09959cd042b13150`
+- Input-set SHA-256: `96a3331612a36a3f540888c5268ca2f9c4324a3b15699211466cf31e80b53454`
+- Candidate-limit SHA-256: `141d63839c8ac17765f80af2aa79dc39a14b998e83cb25002e4a3470554a38a2`
 - Object kinds: `35`
 
 ## Candidate compile ceilings
@@ -35,12 +35,11 @@ Classification: `measurement_only`. Armable: `false`.
 | `max_active_scurve_entries` | 256 |
 | `max_opening_bytes` | 262144 |
 | `max_nod_actions_per_result_chunk` | 256 |
-| `max_contributor_actions_per_result_chunk` | 256 |
 | `max_bucket_records_per_result_chunk` | 256 |
 | `max_protocol_collection_items` | 4096 |
 | `max_activation_storage_reads` | 64 |
 | `max_activation_storage_writes` | 32 |
-| `max_activation_root_transitions` | 4 |
+| `max_activation_root_transitions` | 3 |
 | `max_signature_verifications` | 3 |
 | `activation_base_gas` | 100000 |
 | `activation_per_input_byte_gas` | 16 |

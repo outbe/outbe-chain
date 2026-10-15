@@ -108,7 +108,7 @@ interface IOriginRouter {
 
     /// @notice Emitted when the proceeds route (token bridge + WCOEN) is set.
     event ProceedsRouteSet(address tokenBridge, address wcoen);
-    /// @notice Emitted when inbound auction proceeds are handed to the factory for creator payout.
+    /// @notice Emitted when inbound auction proceeds are handed to the factory to be burned.
     event ProceedsDistributed(uint32 indexed worldwideDay, uint256 amount);
     /// @notice Emitted when distribution failed and the proceeds were parked for retry.
     event ProceedsParked(uint256 indexed idx, uint32 indexed worldwideDay, uint256 amount);

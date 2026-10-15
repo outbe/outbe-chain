@@ -303,7 +303,7 @@ interface IEscrowAdapter {
     /// @param clearingRate The day's clearing rate.
     /// @param basis The day's escrow basis.
     /// @param completesDay Whether this is the day's last chunk.
-    /// @return totalPaid Proceeds transferred to the caller for cross-chain routing into the day's pot.
+    /// @return totalPaid Proceeds transferred to the caller for cross-chain routing to the origin.
     function finalizeAuction(
         uint32 worldwideDay,
         bytes32 receiveId,

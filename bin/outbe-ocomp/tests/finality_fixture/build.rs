@@ -9,7 +9,7 @@ use outbe_ocomp_protocol::{
     opening::OpeningSubjectsV1,
     SchemaLimits,
 };
-use outbe_primitives::addresses::{METADOSIS_ADDRESS, NOD_ADDRESS, VALIDATOR_SET_ADDRESS};
+use outbe_primitives::addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS, VALIDATOR_SET_ADDRESS};
 use outbe_primitives::time::WorldwideDay;
 use reth_primitives_traits::Account;
 use reth_trie::{AccountProof, StorageProof};
@@ -59,8 +59,11 @@ pub fn finalized_lysis_input_fixture(
             .collect(),
         reference_isos: reference_isos.into_iter().collect(),
     };
-    let (fidelity_league_slots, oracle_contract) =
-        lysis_contracts(WorldwideDay::new(intent.wwd), &subjects);
+    let (fidelity_league_slots, oracle_contract) = lysis_contracts(
+        WorldwideDay::new(intent.wwd),
+        outbe_nod::openings::entry_price_day(intent.logical_evaluation_time),
+        &subjects,
+    );
     let (finalized, opening_provider) = build_finalized_intent_proof_fixture(
         intent,
         limits,
@@ -107,7 +110,7 @@ fn build_finalized_intent_proof_fixture(
         extra_metadosis_slots: &fidelity_slot_words,
         extra_state_account: oracle_contract
             .as_ref()
-            .map(|oracle_contract| (NOD_ADDRESS, oracle_contract.account)),
+            .map(|oracle_contract| (ORACLE_ADDRESS, oracle_contract.account)),
         signer_indices: &SIGNER_INDICES,
         coordinates: FinalizationCoordinates {
             epoch: FINALIZED_EPOCH,

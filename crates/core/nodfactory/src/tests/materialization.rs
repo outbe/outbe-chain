@@ -378,47 +378,6 @@ fn corrupt_fifo_bounds_or_missing_head_projection_are_fatal() {
     ));
 }
 
-/// Materialization carries the proven batch's price. It does not read a snapshot that says
-/// otherwise.
-#[test]
-fn a_materialized_nod_keeps_the_batch_entry_price() {
-    let mut world = World::new();
-    let population = population(10);
-    seed_generation(&mut world, &population);
-    world
-        .enter(|storage, _, _| {
-            outbe_nod::api::store_entry_price_snapshot(
-                storage,
-                WorldwideDay::new(MATERIALIZATION_WWD),
-                20_260_714,
-                &std::collections::BTreeMap::from([(840, U256::from(999_999u64))]),
-            )
-        })
-        .unwrap();
-
-    apply(&mut world, &batch(&population, 0, 8)).unwrap();
-
-    let action = action_for(MATERIALIZATION_WWD, 0);
-    let worldwide_day = WorldwideDay::new(MATERIALIZATION_WWD);
-    let bucket_id = WwdEntityId::from_day_and_digest(
-        worldwide_day,
-        outbe_nod::identity::bucket_key(
-            worldwide_day,
-            action.entry_price_minor,
-            action.reference_currency,
-        )
-        .0,
-    );
-    let bucket = world
-        .enter(|storage, scope, parent| nod_api::get_bucket(&storage, scope, parent, bucket_id))
-        .unwrap()
-        .expect("materialization seals the bucket");
-    assert_eq!(
-        bucket.entry_price_minor, action.entry_price_minor,
-        "the oracle snapshot must not reprice a materialized Nod"
-    );
-}
-
 #[test]
 fn multiple_batches_create_ordinary_nods_and_advance_fifo_atomically() {
     let mut world = World::new();

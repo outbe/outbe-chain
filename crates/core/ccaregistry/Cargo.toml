@@ -12,5 +12,15 @@ outbe-primitives = { workspace = true, features = ["test-utils"] }
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 
+[dev-dependencies]
+outbe-evm = { workspace = true, features = ["test-utils"] }
+outbe-agentreward.workspace = true
+outbe-gem = { workspace = true, features = ["test-utils"] }
+outbe-gemfactory.workspace = true
+outbe-oracle = { workspace = true, features = ["test-utils"] }
+alloy-evm.workspace = true
+reth-ethereum.workspace = true
+revm.workspace = true
+
 [lints]
 workspace = true

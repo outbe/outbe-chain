@@ -14,8 +14,6 @@
 //! f3         RETURN          ; return
 //! ```
 
-mod sub_call_support;
-
 use alloy_primitives::{Address, Bytes, U256};
 use outbe_evm::sub_call;
 use outbe_primitives::storage::{SubCallInput, SubCallStatus};
@@ -55,7 +53,7 @@ fn sub_call_propagates_caller_as_msg_sender() {
 
     let result = sub_call::run(
         &mut ctx,
-        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
+        outbe_evm::test_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: TARGET,
             value: U256::ZERO,

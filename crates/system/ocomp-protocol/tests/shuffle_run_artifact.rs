@@ -7,7 +7,7 @@ use outbe_ocomp_protocol::{
     registry::ObjectKind,
     shuffle::{
         build_bucket_shuffle_run, ShuffleBucketRecordV1, ShufflePageSpanV1, ShuffleRunArtifactV1,
-        ShuffleRunBuildContextV1, ShuffleRunKindV1, ShuffleRunPayloadV1, ShuffleSourceCoverageV1,
+        ShuffleRunBuildContextV1, ShuffleRunPayloadV1, ShuffleSourceCoverageV1,
         MAX_SHUFFLE_LEAF_RECORDS,
     },
     unit::CanonicalRunSpan,
@@ -174,7 +174,6 @@ fn bucket_leaf_rejects_duplicate_or_reordered_raw_records() {
         job_id: hash(2),
         attempt: 1,
         unit_id: hash(3),
-        kind: ShuffleRunKindV1::Bucket,
         run_span: CanonicalRunSpan {
             start_run: 0,
             end_run: 1,

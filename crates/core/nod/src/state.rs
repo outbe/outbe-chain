@@ -7,7 +7,7 @@ use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
 use outbe_primitives::time::WorldwideDay;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use crate::{
     api::{LoadedNodBucket, LoadedNodItem},
@@ -28,69 +28,6 @@ impl NodContract<'_> {
             })?;
         }
         Ok(())
-    }
-
-    pub fn entry_price_snapshot(&self, day: WorldwideDay) -> Result<Option<BTreeMap<u16, U256>>> {
-        if !self.entry_prices_frozen.read(&day)? {
-            return Ok(None);
-        }
-        let count = self.entry_price_currency_count.read(&day)?;
-        if count > crate::openings::MAX_ENTRY_PRICE_CURRENCIES {
-            return Err(NodError::InvalidEntryPriceSnapshot.into());
-        }
-        let currencies = self.entry_price_currency.get_nested(&day);
-        let values = self.entry_price_minor.get_nested(&day);
-        let mut prices = BTreeMap::new();
-        let mut previous = 0;
-        for index in 0..count {
-            let iso = currencies.read(&index)?;
-            let price = values.read(&iso)?;
-            if iso <= previous || price.is_zero() {
-                return Err(NodError::InvalidEntryPriceSnapshot.into());
-            }
-            prices.insert(iso, price);
-            previous = iso;
-        }
-        Ok(Some(prices))
-    }
-
-    pub fn entry_price_source_day(&self, day: WorldwideDay) -> Result<Option<u32>> {
-        if !self.entry_prices_frozen.read(&day)? {
-            return Ok(None);
-        }
-        Ok(Some(self.entry_price_source_day.read(&day)?))
-    }
-
-    pub fn store_entry_price_snapshot(
-        &self,
-        day: WorldwideDay,
-        source_day: u32,
-        prices: &BTreeMap<u16, U256>,
-    ) -> Result<()> {
-        let count = u32::try_from(prices.len()).map_err(|_| NodError::InvalidEntryPriceSnapshot)?;
-        if !day.is_valid()
-            || source_day == 0
-            || count > crate::openings::MAX_ENTRY_PRICE_CURRENCIES
-            || prices
-                .iter()
-                .any(|(iso, price)| *iso == 0 || price.is_zero())
-        {
-            return Err(NodError::InvalidEntryPriceSnapshot.into());
-        }
-        self.storage.clone().with_checkpoint(|| {
-            if self.entry_prices_frozen.read(&day)? {
-                return Err(NodError::EntryPricesAlreadyFrozen.into());
-            }
-            let currencies = self.entry_price_currency.get_nested(&day);
-            let values = self.entry_price_minor.get_nested(&day);
-            for (index, (iso, price)) in (0..count).zip(prices) {
-                currencies.write(&index, *iso)?;
-                values.write(iso, *price)?;
-            }
-            self.entry_price_currency_count.write(&day, count)?;
-            self.entry_price_source_day.write(&day, source_day)?;
-            self.entry_prices_frozen.write(&day, true)
-        })
     }
 
     // --- ID helpers ---

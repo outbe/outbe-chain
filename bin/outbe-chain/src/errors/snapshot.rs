@@ -464,9 +464,6 @@ pub(crate) enum CanonicalStatePrecompileError {
         /// Error details.
         details: String,
     },
-    /// An Intex series index slot has noncanonical padding.
-    #[error("Intex series index has noncanonical padding")]
-    IntexSeriesIndexNoncanonicalPadding,
     /// Decoding an active generation record failed.
     #[error("{0}")]
     ActiveGenerationDecode(#[from] outbe_ocomp_protocol::ProtocolError),

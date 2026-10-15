@@ -113,8 +113,8 @@ contract DeployTarget is BaseScript {
                 .setRemoteMessenger(cid, InteroperableAddress.formatEvmV1(cid, bridgePeer));
         }
 
-        // Proceeds route (creator-reward): the escrow hands finalized proceeds to the router, which
-        // bridges them to the OriginRouter for creator payout. The script skips this step when
+        // Proceeds route: the escrow hands finalized proceeds to the router, which bridges them
+        // to the OriginRouter to be burned. The script skips this step when
         // WCOEN_BRIDGE is unset.
         address wcoenBridge = vm.envOr("WCOEN_BRIDGE", address(0));
         if (wcoenBridge != address(0)) {

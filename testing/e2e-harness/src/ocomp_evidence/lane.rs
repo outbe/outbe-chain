@@ -13,6 +13,7 @@ use eyre::{ensure, Result, WrapErr};
 use serde_json::{json, Value};
 
 use super::command_lane::verify_command_lane_manifest_semantics;
+use super::io::read_assertions;
 use super::{
     assemble_command_lane, capture_source_identity, discover, hash_file, publish_assertions,
     publish_manifest, publish_member, AssertionRecordV1, AssertionStatus, EvidenceMode,
@@ -80,8 +81,8 @@ pub fn assemble_lane(
 ) -> Result<PathBuf> {
     match lane {
         "OCM-FAST" | "OCM-INT" => assemble_command_lane(repo, ledger, lane, evidence_dir),
-        "OCM-PUBLIC" => assemble_public_lane(repo, ledger, evidence_dir),
-        "OCM-E2E" => assemble_e2e_lane(repo, ledger, evidence_dir),
+        "OCM-PUBLIC" => assemble_scenario_lane(repo, ledger, evidence_dir, &PUBLIC_LANE),
+        "OCM-E2E" => assemble_scenario_lane(repo, ledger, evidence_dir, &E2E_LANE),
         _ => {
             eyre::bail!("lane assembly is not implemented for {lane}");
         }
@@ -136,7 +137,7 @@ fn verify_scenario_lane(
     let identity = scenario_run_identity(&scenarios)?;
     validate_scenario_manifest_identity(&manifest.sections, &identity)?;
 
-    let mut assertions = read_lane_assertions(evidence_dir, manifest)?
+    let mut assertions = read_assertions(evidence_dir, manifest)?
         .into_iter()
         .map(|assertion| (assertion.test_id.clone(), assertion))
         .collect::<BTreeMap<_, _>>();
@@ -192,156 +193,87 @@ fn verify_scenario_lane(
     Ok(())
 }
 
-fn read_lane_assertions(
-    evidence_dir: &Path,
-    manifest: &RunManifestV1,
-) -> Result<Vec<AssertionRecordV1>> {
-    let text = std::fs::read_to_string(evidence_dir.join(&manifest.assertions_path))
-        .wrap_err("read retained lane assertions")?;
-    text.lines()
-        .enumerate()
-        .map(|(index, line)| {
-            ensure!(
-                !line.trim().is_empty(),
-                "blank retained assertion line {}",
-                index + 1
-            );
-            serde_json::from_str(line)
-                .wrap_err_with(|| format!("decode retained assertion line {}", index + 1))
-        })
-        .collect()
+/// Retained scenarios by name: their member path and decoded record.
+type Scenarios = BTreeMap<String, (String, Value)>;
+
+/// One scenario lane: its stable-test table and how its scenarios are checked.
+struct ScenarioLaneSpec {
+    lane: &'static str,
+    run_prefix: &'static str,
+    label: &'static str,
+    scenarios: &'static [(&'static str, &'static str, &'static str)],
+    validate: fn(&str, &Value) -> Result<()>,
+    check_leftovers: fn(&Scenarios, &BTreeSet<&str>) -> Result<()>,
 }
 
-fn assemble_public_lane(
-    repo: &Path,
-    ledger: &PlanningLedger,
-    evidence_dir: &Path,
-) -> Result<PathBuf> {
-    let lane = "OCM-PUBLIC";
-    ensure!(
-        !evidence_dir.join("run-manifest.json").exists(),
-        "lane manifest already exists in {}",
-        evidence_dir.display()
-    );
-    let source = capture_source_identity(repo)?;
-    let scenarios = load_scenarios(evidence_dir)?;
-    let scenario_identity = scenario_run_identity(&scenarios)?;
-    let mut members = scenario_members(evidence_dir, &scenarios)?;
-    let mut assertions = Vec::with_capacity(PUBLIC_SCENARIOS.len());
-    let mut observed_times = Vec::with_capacity(PUBLIC_SCENARIOS.len());
+const PUBLIC_LANE: ScenarioLaneSpec = ScenarioLaneSpec {
+    lane: "OCM-PUBLIC",
+    run_prefix: "ocomp-public",
+    label: "public",
+    scenarios: &PUBLIC_SCENARIOS,
+    validate: validate_public_scenario,
+    check_leftovers: auxiliary_scenarios_passed,
+};
 
-    let run_id = format!("ocomp-public-{}", unix_millis());
-    let mut used_scenarios = BTreeSet::new();
-    for (test_id, scenario_name, oracle) in PUBLIC_SCENARIOS {
-        let (path, scenario) = scenarios
-            .get(scenario_name)
-            .ok_or_else(|| eyre::eyre!("missing required public scenario {scenario_name}"))?;
-        used_scenarios.insert(scenario_name);
-        validate_common_scenario(scenario, &source.sha)?;
-        validate_public_scenario(test_id, scenario)?;
+const E2E_LANE: ScenarioLaneSpec = ScenarioLaneSpec {
+    lane: "OCM-E2E",
+    run_prefix: "ocomp-e2e",
+    label: "E2E",
+    scenarios: &E2E_SCENARIOS,
+    validate: validate_e2e_scenario,
+    check_leftovers: no_unexpected_scenarios,
+};
 
-        let expected_path = format!("expected/{test_id}.json");
-        let expected = serde_json::to_vec_pretty(&json!({
-            "schema_version": 1,
-            "test_id": test_id,
-            "scenario": scenario_name,
-            "oracle": oracle,
-            "required_result": "passed",
-        }))?;
-        members.push(publish_member(evidence_dir, &expected_path, &expected)?);
-        let observed_at = u64_field(scenario, "recorded_at_unix_ms")?;
-        observed_times.push(observed_at);
-        assertions.push(AssertionRecordV1 {
-            assertion_id: format!("{run_id}-{test_id}"),
-            test_id: test_id.to_owned(),
-            status: AssertionStatus::Pass,
-            oracle: oracle.to_owned(),
-            expected_artifact_refs: vec![expected_path],
-            actual_artifact_refs: vec![path.clone()],
-            observed_at,
-            run_id: run_id.clone(),
-            source_sha: source.sha.clone(),
-            attempt: 1,
-        });
-    }
+fn auxiliary_scenarios_passed(scenarios: &Scenarios, used: &BTreeSet<&str>) -> Result<()> {
     ensure!(
         scenarios
             .iter()
-            .filter(|(name, _)| !used_scenarios.contains(name.as_str()))
+            .filter(|(name, _)| !used.contains(name.as_str()))
             .map(|(_, value)| value)
             .all(|(_, scenario)| scenario.get("result").and_then(Value::as_str) == Some("passed")),
         "the public run contains a non-PASS auxiliary scenario"
     );
-
-    let assertions_path = "assertions.jsonl";
-    members.push(publish_assertions(
-        evidence_dir,
-        assertions_path,
-        &assertions,
-    )?);
-    members.sort_by(|left, right| left.path.cmp(&right.path));
-    let discovery = discover(repo, ledger)?;
-    let started_at = observed_times
-        .iter()
-        .copied()
-        .min()
-        .unwrap_or_else(unix_millis);
-    let finished_at = unix_millis().max(observed_times.iter().copied().max().unwrap_or(started_at));
-    let scenario_paths = members
-        .iter()
-        .filter(|member| member.path.starts_with("scenario-"))
-        .map(|member| member.path.clone())
-        .collect::<Vec<_>>();
-    let sections = scenario_sections(
-        ledger,
-        lane,
-        &source,
-        &discovery,
-        &scenario_identity,
-        &scenario_paths,
-        assertions.len(),
-        &members,
-    );
-    let manifest = RunManifestV1 {
-        schema_version: RUNTIME_SCHEMA_VERSION,
-        run_id,
-        mode: EvidenceMode::Lane {
-            lane: lane.to_owned(),
-        },
-        started_at,
-        finished_at,
-        source,
-        discovery,
-        assertions_path: assertions_path.to_owned(),
-        members,
-        sections,
-    };
-    publish_manifest(evidence_dir, &manifest)
+    Ok(())
 }
 
-fn assemble_e2e_lane(repo: &Path, ledger: &PlanningLedger, evidence_dir: &Path) -> Result<PathBuf> {
-    let lane = "OCM-E2E";
+fn no_unexpected_scenarios(scenarios: &Scenarios, used: &BTreeSet<&str>) -> Result<()> {
     ensure!(
-        !evidence_dir.join("run-manifest.json").exists(),
-        "lane manifest already exists in {}",
-        evidence_dir.display()
+        used.len() == scenarios.len(),
+        "the E2E evidence directory contains unexpected scenarios: {:?}",
+        scenarios
+            .keys()
+            .filter(|name| !used.contains(name.as_str()))
+            .collect::<Vec<_>>()
     );
-    let source = capture_source_identity(repo)?;
-    let scenarios = load_scenarios(evidence_dir)?;
-    let scenario_identity = scenario_run_identity(&scenarios)?;
-    let mut members = scenario_members(evidence_dir, &scenarios)?;
-    let mut assertions = Vec::with_capacity(E2E_SCENARIOS.len());
-    let mut observed_times = Vec::with_capacity(E2E_SCENARIOS.len());
-    let run_id = format!("ocomp-e2e-{}", unix_millis());
+    Ok(())
+}
 
+/// The PASS assertions a lane publishes, with the scenario times they observed.
+struct ScenarioAssertions {
+    assertions: Vec<AssertionRecordV1>,
+    observed_times: Vec<u64>,
+}
+
+fn record_scenario_assertions(
+    spec: &ScenarioLaneSpec,
+    evidence_dir: &Path,
+    run: (&str, &str),
+    scenarios: &Scenarios,
+    members: &mut Vec<MemberDigestV1>,
+) -> Result<ScenarioAssertions> {
+    let (run_id, source_sha) = run;
+    let mut recorded = ScenarioAssertions {
+        assertions: Vec::with_capacity(spec.scenarios.len()),
+        observed_times: Vec::with_capacity(spec.scenarios.len()),
+    };
     let mut used_scenarios = BTreeSet::new();
-    for (test_id, scenario_name, oracle) in E2E_SCENARIOS {
-        let (path, scenario) = scenarios
-            .get(scenario_name)
-            .ok_or_else(|| eyre::eyre!("missing required E2E scenario {scenario_name}"))?;
-        used_scenarios.insert(scenario_name);
-        validate_common_scenario(scenario, &source.sha)?;
-        validate_e2e_scenario(test_id, scenario)?;
+    for (test_id, scenario_name, oracle) in spec.scenarios {
+        let (path, scenario) = scenarios.get(*scenario_name).ok_or_else(|| {
+            eyre::eyre!("missing required {} scenario {scenario_name}", spec.label)
+        })?;
+        used_scenarios.insert(*scenario_name);
+        validate_common_scenario(scenario, source_sha)?;
+        (spec.validate)(test_id, scenario)?;
 
         let expected_path = format!("expected/{test_id}.json");
         let expected = serde_json::to_vec_pretty(&json!({
@@ -353,28 +285,50 @@ fn assemble_e2e_lane(repo: &Path, ledger: &PlanningLedger, evidence_dir: &Path) 
         }))?;
         members.push(publish_member(evidence_dir, &expected_path, &expected)?);
         let observed_at = u64_field(scenario, "recorded_at_unix_ms")?;
-        observed_times.push(observed_at);
-        assertions.push(AssertionRecordV1 {
+        recorded.observed_times.push(observed_at);
+        recorded.assertions.push(AssertionRecordV1 {
             assertion_id: format!("{run_id}-{test_id}"),
-            test_id: test_id.to_owned(),
+            test_id: (*test_id).to_owned(),
             status: AssertionStatus::Pass,
-            oracle: oracle.to_owned(),
+            oracle: (*oracle).to_owned(),
             expected_artifact_refs: vec![expected_path],
             actual_artifact_refs: vec![path.clone()],
             observed_at,
-            run_id: run_id.clone(),
-            source_sha: source.sha.clone(),
+            run_id: run_id.to_owned(),
+            source_sha: source_sha.to_owned(),
             attempt: 1,
         });
     }
+    (spec.check_leftovers)(scenarios, &used_scenarios)?;
+    Ok(recorded)
+}
+
+fn assemble_scenario_lane(
+    repo: &Path,
+    ledger: &PlanningLedger,
+    evidence_dir: &Path,
+    spec: &ScenarioLaneSpec,
+) -> Result<PathBuf> {
     ensure!(
-        used_scenarios.len() == scenarios.len(),
-        "the E2E evidence directory contains unexpected scenarios: {:?}",
-        scenarios
-            .keys()
-            .filter(|name| !used_scenarios.contains(name.as_str()))
-            .collect::<Vec<_>>()
+        !evidence_dir.join("run-manifest.json").exists(),
+        "lane manifest already exists in {}",
+        evidence_dir.display()
     );
+    let source = capture_source_identity(repo)?;
+    let scenarios = load_scenarios(evidence_dir)?;
+    let scenario_identity = scenario_run_identity(&scenarios)?;
+    let mut members = scenario_members(evidence_dir, &scenarios)?;
+    let run_id = format!("{}-{}", spec.run_prefix, unix_millis());
+    let ScenarioAssertions {
+        assertions,
+        observed_times,
+    } = record_scenario_assertions(
+        spec,
+        evidence_dir,
+        (&run_id, &source.sha),
+        &scenarios,
+        &mut members,
+    )?;
 
     let assertions_path = "assertions.jsonl";
     members.push(publish_assertions(
@@ -390,20 +344,16 @@ fn assemble_e2e_lane(repo: &Path, ledger: &PlanningLedger, evidence_dir: &Path) 
         .min()
         .unwrap_or_else(unix_millis);
     let finished_at = unix_millis().max(observed_times.iter().copied().max().unwrap_or(started_at));
-    let scenario_paths = members
-        .iter()
-        .filter(|member| member.path.starts_with("scenario-"))
-        .map(|member| member.path.clone())
-        .collect::<Vec<_>>();
     let sections = scenario_sections(
         ledger,
-        lane,
-        &source,
-        &discovery,
-        &scenario_identity,
-        &scenario_paths,
-        assertions.len(),
-        &members,
+        &ScenarioSectionInputs {
+            lane: spec.lane,
+            source: &source,
+            discovery: &discovery,
+            identity: &scenario_identity,
+            assertion_count: assertions.len(),
+            members: &members,
+        },
     );
     publish_manifest(
         evidence_dir,
@@ -411,7 +361,7 @@ fn assemble_e2e_lane(repo: &Path, ledger: &PlanningLedger, evidence_dir: &Path) 
             schema_version: RUNTIME_SCHEMA_VERSION,
             run_id,
             mode: EvidenceMode::Lane {
-                lane: lane.to_owned(),
+                lane: spec.lane.to_owned(),
             },
             started_at,
             finished_at,
@@ -569,16 +519,33 @@ fn scenario_run_identity(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[derive(Clone, Copy)]
+struct ScenarioSectionInputs<'a> {
+    lane: &'a str,
+    source: &'a super::SourceIdentityV1,
+    discovery: &'a super::TestDiscoveryV1,
+    identity: &'a ScenarioRunIdentity,
+    assertion_count: usize,
+    members: &'a [MemberDigestV1],
+}
+
 fn scenario_sections(
     ledger: &PlanningLedger,
-    lane: &str,
-    source: &super::SourceIdentityV1,
-    discovery: &super::TestDiscoveryV1,
-    identity: &ScenarioRunIdentity,
-    scenario_paths: &[String],
-    assertion_count: usize,
-    members: &[MemberDigestV1],
+    inputs: &ScenarioSectionInputs<'_>,
 ) -> BTreeMap<String, Value> {
+    let ScenarioSectionInputs {
+        lane,
+        source,
+        discovery,
+        identity,
+        assertion_count,
+        members,
+    } = *inputs;
+    let scenario_paths = members
+        .iter()
+        .filter(|member| member.path.starts_with("scenario-"))
+        .map(|member| member.path.clone())
+        .collect::<Vec<_>>();
     ledger
         .runtime_evidence
         .required_sections

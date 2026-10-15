@@ -377,7 +377,7 @@ fn ocm_cap_001_internal_work_uses_the_frozen_checked_q_forming_formula() {
     let vote_cap = usize::try_from(limits.max_result_vote_bytes).unwrap();
     let expected = limits.activation_base_gas
         + limits.activation_per_input_byte_gas * limits.max_result_vote_bytes
-        + limits.activation_per_root_transition_gas * 4
+        + limits.activation_per_root_transition_gas * 3
         + limits.activation_per_signature_gas;
     assert_eq!(result_vote_internal_work(vote_cap).unwrap(), expected);
     assert!(expected <= limits.max_activation_internal_work);

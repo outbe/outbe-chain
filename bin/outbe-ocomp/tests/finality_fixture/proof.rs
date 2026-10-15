@@ -15,7 +15,7 @@ use alloy_trie::{TrieAccount, KECCAK_EMPTY};
 use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
 use outbe_nod::openings::entry_price_slots;
 use outbe_ocomp_protocol::{league_snapshot::league_snapshot_slot, opening::OpeningSubjectsV1};
-use outbe_primitives::{addresses::NOD_ADDRESS, time::WorldwideDay};
+use outbe_primitives::{addresses::ORACLE_ADDRESS, time::WorldwideDay};
 
 pub(crate) struct OpeningContractFixture {
     pub(crate) address: Address,
@@ -44,6 +44,7 @@ pub fn fixture_league(owner_index: usize) -> u16 {
 /// into the storage trie of the intent account.
 pub(crate) fn lysis_contracts(
     day: WorldwideDay,
+    priced_day: u32,
     subjects: &OpeningSubjectsV1,
 ) -> (Vec<(B256, U256)>, OpeningContractFixture) {
     // Owner order (subjects.owners is strictly ordered) matches the node's
@@ -60,16 +61,26 @@ pub(crate) fn lysis_contracts(
         })
         .collect();
 
-    let oracle_values = entry_price_slots(day, &subjects.reference_isos)
-        .expect("canonical Nod price subjects")
+    // Every subject pair is registered at its 1-based position and priced.
+    let isos = &subjects.reference_isos;
+    let pair_indices = (1..=isos.len())
+        .map(|index| u32::try_from(index).expect("bounded subject ISOs"))
+        .collect::<Vec<_>>();
+    let oracle_values = entry_price_slots(priced_day, isos, &pair_indices)
+        .expect("canonical Oracle price subjects")
         .into_iter()
-        .enumerate()
-        .map(|(index, slot)| (slot, U256::from(index + 1)))
+        .zip(
+            pair_indices.iter().map(|index| U256::from(*index)).chain(
+                pair_indices
+                    .iter()
+                    .map(|index| U256::from(*index) * U256::from(1_000_000)),
+            ),
+        )
         .collect::<BTreeMap<_, _>>();
 
     (
         fidelity_league_slots,
-        opening_contract(NOD_ADDRESS, oracle_values.into_iter().collect()),
+        opening_contract(ORACLE_ADDRESS, oracle_values.into_iter().collect()),
     )
 }
 

@@ -16,7 +16,6 @@ use outbe_ocomp_protocol::{
 };
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
 use outbe_promislimit::certified::{credit_certified_carry_over, CertifiedCarryOverCreditV1};
 use outbe_tribute::{
     certified::{
@@ -31,7 +30,7 @@ use crate::{
         activation_rejection as reject, activation_rejection_code::*, storage_corruption_message,
     },
     reducer::OuterWwdTransition,
-    schema::{MetadosisContract, WorldwideDayEntryExt},
+    schema::MetadosisContract,
 };
 
 use super::profile::OcompRequestProfile;
@@ -279,7 +278,6 @@ fn verify_quorum_structure(
     let activation_payload = result
         .activation_payload(limits)
         .map_err(|error| protocol_reject(error, RESULT_STRUCTURE_INVALID))?;
-    let nod_issued_at = lysis_freeze_instant(context.storage, record.intent.wwd)?;
     let plan = activation_v1::verify_result(activation_v1::LysisResultInputsV1 {
         intent_id,
         expected_job_id: finalized.job_id,
@@ -287,27 +285,11 @@ fn verify_quorum_structure(
         activation_payload: &activation_payload,
         result,
         limits,
-        nod_issued_at,
+        nod_issued_at: record.intent.logical_evaluation_time,
     })
     .map_err(|error| protocol_reject(error, RESULT_STRUCTURE_INVALID))?;
 
     Ok((plan, result_evidence_hash))
-}
-
-/// The Worldwide Day's `scheduled_process_time`. Lysis freezes the UTC day before it as the
-/// entry price.
-fn lysis_freeze_instant(storage: &StorageHandle<'_>, wwd: u32) -> PrecompileResult<u64> {
-    let instant = MetadosisContract::new(storage.clone())
-        .worldwide_days
-        .entry(WorldwideDay::new(wwd))
-        .scheduled_process_time()
-        .read()?;
-    if instant == 0 {
-        return Err(storage_corruption_message(
-            "Nod issuance instant is missing from the Lysis freeze",
-        ));
-    }
-    Ok(instant)
 }
 
 fn target_preconditions_changed(

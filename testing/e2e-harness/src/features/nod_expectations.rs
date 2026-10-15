@@ -195,7 +195,7 @@ fn nod_fields_match_public_inputs(world: &mut World) {
             "JobIntent froze the independently recomputed WWD VWAP"
         );
     }
-    let entry_price = super::oracle_expectations::frozen_entry_price(world);
+    let entry_price = super::oracle_expectations::entry_price(world);
     let expected = nod_reference::single_league_actions(
         inputs,
         expected_league.expect("input league"),

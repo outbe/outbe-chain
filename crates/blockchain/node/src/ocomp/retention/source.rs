@@ -378,10 +378,12 @@ where
         candidate: CandidatePinV1,
         subjects: OpeningSubjectsV1,
     ) -> Result<LysisOpeningsProofV1, RetentionError> {
+        let record = self.record_at_hash(candidate.block_hash, candidate.intent_id)?;
         crate::ocomp::openings::build_lysis_openings(
             &self.provider,
             &self.limits,
             candidate,
+            record.intent.logical_evaluation_time,
             subjects,
         )
     }

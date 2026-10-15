@@ -1063,63 +1063,6 @@ pub(crate) fn build_verified_raw_contract_opening(
     Ok(opening)
 }
 
-/// Converts a standard `eth_getProof` response into the canonical OCOMP raw
-/// opening and verifies it against the finalized block state root.
-///
-/// The RPC server is only a proof transport. This function checks the account
-/// path, every storage path, the exact contract address, and the ordered slot
-/// set locally before it returns the opening.
-pub fn build_verified_raw_contract_opening_from_public_proof(
-    proof: &PublicAccountProofV1,
-    state_root: B256,
-    contract_address: Address,
-    ordered_slots: &[B256],
-    limits: &SchemaLimits,
-) -> Result<RawContractOpeningProofV1, PublicFinalizedIntentProofBuildError> {
-    if ordered_slots.is_empty() || ordered_slots.len() > limits.max_collection_items {
-        return Err(PublicFinalizedIntentProofBuildError::ProofSlotSet);
-    }
-    verify_public_account_proof(proof, contract_address, ordered_slots, state_root)?;
-    let expected_slots = ordered_slots
-        .iter()
-        .copied()
-        .map(|slot| {
-            proof
-                .storage_value(slot)
-                .map(|value| (U256::from_be_bytes(slot.0), value))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let reth_proof = proof.to_reth_proof();
-    let opening = RawContractOpeningProofV1 {
-        contract_address,
-        state_root,
-        ordered_slots: expected_slots
-            .iter()
-            .map(|(slot, value)| RawStorageSlotV1 {
-                slot: B256::new(slot.to_be_bytes()),
-                value: *value,
-            })
-            .collect(),
-        account_proof: ProofBytes(
-            encode_account_witness(&reth_proof, contract_address)
-                .map_err(PublicFinalizedIntentProofBuildError::witness)?,
-        ),
-        storage_proof: ProofBytes(
-            encode_storage_witness(&reth_proof, &expected_slots)
-                .map_err(PublicFinalizedIntentProofBuildError::witness)?,
-        ),
-    };
-    verify_raw_contract_opening(
-        &opening,
-        contract_address,
-        state_root,
-        ordered_slots,
-        limits,
-    )
-    .map_err(PublicFinalizedIntentProofBuildError::witness)?;
-    Ok(opening)
-}
-
 pub fn verify_raw_contract_opening(
     opening: &RawContractOpeningProofV1,
     expected_address: Address,
