@@ -413,7 +413,19 @@ fn entry_price_survives_updates(world: &mut World) {
         .rpc
         .checkpoint_at(ports[0], height)
         .expect("snapshot checkpoint");
-    for &port in &ports {
+    let job_id = world
+        .state
+        .ocomp_certified_generation
+        .as_ref()
+        .expect("certified Nod set")
+        .job_id;
+    for (index, &port) in ports.iter().enumerate() {
+        assert!(
+            super::ocomp::result_nod_actions_on(world, index, job_id)
+                .iter()
+                .all(|action| action.entry_price_minor == expected),
+            "the original Nod keeps the closed-day entry price on {port}"
+        );
         assert_eq!(
             oracle_usd_price_at(world, port, day, height),
             expected,
@@ -483,9 +495,9 @@ mod tests {
             quote(172_799, 200_000_000, 3),
             quote(172_800, 999_000_000, 100),
         ];
-        for prepared_at in [172_800, 200_000, 259_199] {
+        for requested_at in [172_800, 200_000, 259_199] {
             assert_eq!(
-                previous_day_entry_price(&quotes, prepared_at),
+                previous_day_entry_price(&quotes, requested_at),
                 U256::from(175_000_000)
             );
         }
