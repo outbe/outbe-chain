@@ -36,9 +36,7 @@ pub(super) fn decode_into(
         }
         TIMESTAMP_MILLIS_PART_TAG => {
             if artifacts.timestamp_millis_part != 0 {
-                return Err(PrecompileError::Fatal(
-                    "duplicate timestamp_millis_part".into(),
-                ));
+                return Err(PrecompileError::revert("duplicate timestamp_millis_part"));
             }
             artifacts.timestamp_millis_part = fields::decode_timestamp(payload)?;
         }
@@ -57,7 +55,7 @@ pub(super) fn decode_into(
             )?;
         }
         _ => {
-            return Err(PrecompileError::Fatal(format!(
+            return Err(PrecompileError::revert(format!(
                 "unsupported block artifact tag: {tag}"
             )))
         }
@@ -71,7 +69,7 @@ fn decode_unique_slot<T>(
     decode: impl FnOnce() -> Result<T>,
 ) -> Result<()> {
     if slot.is_some() {
-        return Err(PrecompileError::Fatal(duplicate.into()));
+        return Err(PrecompileError::revert(duplicate));
     }
     *slot = Some(decode()?);
     Ok(())

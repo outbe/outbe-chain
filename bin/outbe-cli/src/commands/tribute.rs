@@ -11,6 +11,7 @@ use serde_json::Value;
 use crate::abi::{
     ITeeRegistry, ITribute, ITributeFactory, TEE_REGISTRY_ADDR, TRIBUTE_ADDR, TRIBUTE_FACTORY_ADDR,
 };
+use crate::errors::TributeError;
 use crate::rpc::Rpc;
 
 const TOKEN_URI_JSON_PREFIX: &str = "data:application/json;utf8,";
@@ -18,22 +19,22 @@ const TOKEN_URI_JSON_PREFIX: &str = "data:application/json;utf8,";
 type DayTotalsReturn = <ITribute::getDayTotalsCall as SolCall>::Return;
 type TokenIdsReturn = <ITribute::getTributesByOwnerCall as SolCall>::Return;
 
-fn canonical_amount_base(value: &str) -> std::result::Result<String, String> {
+fn canonical_amount_base(value: &str) -> std::result::Result<String, TributeError> {
     let parsed = value
         .parse::<u64>()
-        .map_err(|_| "amount must be a canonical unsigned u64".to_owned())?;
+        .map_err(|_| TributeError::InvalidAmountBase)?;
     if parsed.to_string() != value {
-        return Err("amount must be a canonical unsigned u64".to_owned());
+        return Err(TributeError::InvalidAmountBase);
     }
     Ok(value.to_owned())
 }
 
-fn canonical_amount_micro(value: &str) -> std::result::Result<String, String> {
+fn canonical_amount_micro(value: &str) -> std::result::Result<String, TributeError> {
     let parsed = value
         .parse::<u64>()
-        .map_err(|_| "amount_micro must be a canonical unsigned u64 below 1000000".to_owned())?;
+        .map_err(|_| TributeError::InvalidAmountMicro)?;
     if parsed.to_string() != value || parsed >= 1_000_000 {
-        return Err("amount_micro must be a canonical unsigned u64 below 1000000".to_owned());
+        return Err(TributeError::InvalidAmountMicro);
     }
     Ok(value.to_owned())
 }
@@ -306,9 +307,7 @@ async fn offer(
         ITeeRegistry::isBootstrappedCall::abi_decode_returns(&r)?
     };
     if !bootstrapped {
-        return Err(eyre::eyre!(
-            "TeeRegistry is not bootstrapped yet - no offer key to encrypt to"
-        ));
+        return Err(TributeError::TeeRegistryNotBootstrapped.into());
     }
     let offer_pub_u256 = {
         let r = client
@@ -345,7 +344,7 @@ async fn offer(
     //    decrypt path and the node's canary probe.
     let (cipher_text, nonce, eph_pub) =
         outbe_tee::offer_encrypt::encrypt_tribute_offer(&offer_pub, &plaintext)
-            .map_err(|e| eyre::eyre!("offer encryption failed: {e}"))?;
+            .map_err(TributeError::OfferEncryptionFailed)?;
 
     // 4. Build + send `offerTribute` (msg.value MUST be 0).
     let call = ITributeFactory::offerTributeCall {
@@ -393,13 +392,18 @@ fn decode_hex_bytes(value: &str, flag: &str) -> Result<Bytes> {
     if stripped.is_empty() {
         return Ok(Bytes::new());
     }
-    let bytes = hex::decode(stripped).map_err(|e| eyre::eyre!("{flag} is not valid hex: {e}"))?;
+    let bytes = hex::decode(stripped).map_err(|source| TributeError::InvalidHexFlag {
+        flag: flag.to_owned(),
+        source,
+    })?;
     Ok(Bytes::from(bytes))
 }
 
 fn parse_zk_proof(value: &str) -> Result<Bytes> {
     let proof = decode_hex_bytes(value, "--zk-proof")?;
-    eyre::ensure!(!proof.is_empty(), "--zk-proof must not be empty");
+    if proof.is_empty() {
+        return Err(TributeError::EmptyZkProof.into());
+    }
     Ok(proof)
 }
 
@@ -436,10 +440,11 @@ fn circuit_version_defaults() -> impl Iterator<
 fn offer_hex32(value: &str, flag: &str) -> Result<String> {
     let bytes = decode_hex_bytes(value, flag)?;
     if bytes.len() != 32 {
-        return Err(eyre::eyre!(
-            "{flag} must contain exactly 32 bytes, got {}",
-            bytes.len()
-        ));
+        return Err(TributeError::InvalidHex32Length {
+            flag: flag.to_owned(),
+            actual: bytes.len(),
+        }
+        .into());
     }
     Ok(format!("0x{}", hex::encode(bytes)))
 }

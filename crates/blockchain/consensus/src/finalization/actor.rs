@@ -127,9 +127,7 @@ impl FinalizationActor {
                             %error,
                             "fatal finalization error; FinalizationActor shutting down"
                         );
-                        return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
-                            "FinalizationActor fatal: {error}"
-                        )));
+                        return Err(crate::errors::FinalizationError::ActorFatal(error).into());
                     }
                 }
                 // Durable certified-notarization persistence. This work moved off
@@ -210,12 +208,12 @@ impl FinalizationActor {
                 finalized_hash = %finalized_hash,
                 "fatal same-round finalization inconsistency; stopping FinalizationActor"
             );
-            return Err(eyre::eyre!(
-                "same-round finalization inconsistency at {:?}: \
-                 new digest {digest} conflicts with finalized hash {}",
+            return Err(crate::errors::FinalizationError::SameRoundInconsistency {
                 round,
-                finalized_hash
-            ));
+                digest,
+                finalized_hash,
+            }
+            .into());
         }
 
         let proof_key = crate::finalization::parent_cert_store::CertifiedParentProofKey::new(
@@ -270,9 +268,7 @@ impl FinalizationActor {
         // Resolve via marshal with bounded retries and a per-attempt timeout.
         // `retry_with_backoff` lives in `finalization::util`.
         let Some(marshal) = self.deps.marshal_mailbox.clone() else {
-            return Err(eyre::eyre!(
-                "marshal mailbox required to resolve finalized block {digest} not in local cache"
-            ));
+            return Err(crate::errors::FinalizationError::MarshalMailboxRequired(digest).into());
         };
 
         // A finalized block is fetchable from any honest peer. Thus an exhausted
@@ -403,11 +399,12 @@ impl FinalizationActor {
                     finalized_hash = %view.forkchoice.finalized_block_hash,
                     "fatal same-height finalization inconsistency; stopping FinalizationActor"
                 );
-                return Err(eyre::eyre!(
-                    "same-height finalization inconsistency at block {block_number}: \
-                     new digest {digest} conflicts with finalized hash {}",
-                    view.forkchoice.finalized_block_hash
-                ));
+                return Err(crate::errors::FinalizationError::SameHeightInconsistency {
+                    block_number,
+                    digest,
+                    finalized_hash: view.forkchoice.finalized_block_hash,
+                }
+                .into());
             }
             ReplayClassification::New => {}
         }
@@ -532,10 +529,10 @@ impl FinalizationActor {
                 // inside the helper.
                 let prelude = build_committee_prelude(&scheme, &ordered_committee, finalized_epoch)
                     .map_err(|e| {
-                        eyre::eyre!(
-                            "finalization committee snapshot build failed at epoch \
-                                 {finalized_epoch}: {e}"
-                        )
+                        crate::errors::FinalizationError::CommitteeSnapshotBuildFailed {
+                            finalized_epoch,
+                            reason: format!("{e}"),
+                        }
                     })?;
                 (
                     prelude.committee_set_hash,
@@ -577,7 +574,9 @@ impl FinalizationActor {
         self.deps
             .parent_cert_store
             .put_finalization(snap)
-            .map_err(|error| eyre::eyre!("persist finalization parent proof record: {error}"))?;
+            .map_err(|error| {
+                crate::errors::FinalizationError::PersistParentProofRecord(format!("{error}"))
+            })?;
         Ok((committee_set_hash, committee_size))
     }
 
@@ -608,7 +607,7 @@ impl FinalizationActor {
             .parent_cert_store
             .prune_below_height(block_number.saturating_sub(PARENT_CERT_KEEP_DEPTH))
             .map_err(|error| {
-                eyre::eyre!("prune finalization parent certificate records: {error}")
+                crate::errors::FinalizationError::PruneParentCertRecords(format!("{error}"))
             })?;
         // Match marshal: retain temporary certificates behind the previously processed round.
         let keep_views = u64::from(crate::config::ACTIVITY_TIMEOUT)
@@ -624,7 +623,9 @@ impl FinalizationActor {
                 .deps
                 .parent_cert_store
                 .prune_certified_notarizations_below_round(round_floor)
-                .map_err(|error| eyre::eyre!("prune temporary parent certificates: {error}"))?;
+                .map_err(|error| {
+                    crate::errors::FinalizationError::PruneTemporaryParentCerts(format!("{error}"))
+                })?;
         crate::metrics::record_parent_cert_store_size(self.deps.parent_cert_store.len());
         crate::metrics::record_parent_cert_record_pruned(pruned);
         if let Some(oldest) = self.deps.parent_cert_store.oldest_stored_height() {

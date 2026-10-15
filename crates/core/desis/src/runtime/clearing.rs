@@ -88,7 +88,7 @@ pub(super) fn fetch_targets(
         .into(),
     )?;
     IOriginRouter::targetsOfCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("targetsOf undecodable".into()))
+        .map_err(|_| DesisError::TargetsOfUndecodable.into())
 }
 
 /// Split the snapshot into chains whose intake finalized and chains still missing.
@@ -218,7 +218,7 @@ fn clear_inner(
     } else {
         let mut legs = Vec::new();
         for group in issuance_groups(&result, &config, worldwide_day, snapshot)? {
-            legs.extend(outbe_intexfactory::api::issue(&storage, group)?);
+            legs.extend(outbe_intexfactory::api::issue_intex(&storage, group)?);
         }
 
         outbe_intexfactory::api::send_issuance(&storage, legs)?;

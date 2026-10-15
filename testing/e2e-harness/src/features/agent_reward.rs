@@ -250,7 +250,7 @@ fn observe_agent_rewards(world: &mut World) {
     };
     assert_eq!(
         balances.waa, expected_waa,
-        "WAA differs from independent capped daily pool"
+        "WAA differs from independent full daily pool"
     );
     assert_eq!(
         balances.sra, expected_sra,

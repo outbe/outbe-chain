@@ -35,10 +35,10 @@ impl MdbxAuthenticatedTree {
                     continue;
                 };
                 let new_collection_root = collection_batch.new_collection_root;
-                let catalog_key = TreeKey::from_be_bytes(*collection_key.as_bytes())
-                    .map_err(|error| tree_corruption(error.to_string()))?;
-                let catalog_leaf = TreeLeaf::from_be_bytes(new_collection_root.0)
-                    .map_err(|error| tree_corruption(error.to_string()))?;
+                let catalog_key =
+                    TreeKey::from_be_bytes(*collection_key.as_bytes()).map_err(tree_corruption)?;
+                let catalog_leaf =
+                    TreeLeaf::from_be_bytes(new_collection_root.0).map_err(tree_corruption)?;
                 catalog_updates.push((catalog_key, catalog_leaf));
                 changed_collections.insert(
                     collection_key,
@@ -81,8 +81,7 @@ impl MdbxAuthenticatedTree {
         keyed.sort_by_key(|(_, key, _)| *key);
         let mut by_shard: BTreeMap<ShardIndex, Vec<(TreeKey, TreeLeaf)>> = BTreeMap::new();
         for (_, key, leaf) in keyed {
-            let shard = shard_index(key, domain.shard_count())
-                .map_err(|error| tree_corruption(error.to_string()))?;
+            let shard = shard_index(key, domain.shard_count()).map_err(tree_corruption)?;
             by_shard.entry(shard).or_default().push((key, leaf));
         }
         let trees = session
@@ -109,12 +108,11 @@ impl MdbxAuthenticatedTree {
         if changed_shards.is_empty() {
             return Ok(None);
         }
-        let parent_top = aggregate_b256_shard_roots(&session.parent_shard_roots)
-            .map_err(|error| tree_corruption(error.to_string()))?;
-        let new_top = aggregate_b256_shard_roots(&new_roots)
-            .map_err(|error| tree_corruption(error.to_string()))?;
-        let new_collection_root = collection_root(domain, collection_key, new_top)
-            .map_err(|error| tree_corruption(error.to_string()))?;
+        let parent_top =
+            aggregate_b256_shard_roots(&session.parent_shard_roots).map_err(tree_corruption)?;
+        let new_top = aggregate_b256_shard_roots(&new_roots).map_err(tree_corruption)?;
+        let new_collection_root =
+            collection_root(domain, collection_key, new_top).map_err(tree_corruption)?;
         let shard_set = ProvisionalShardSetBatch::new(
             domain.shard_count(),
             crate::staging::RootTransition {
@@ -125,7 +123,7 @@ impl MdbxAuthenticatedTree {
             new_roots,
             changed_shards,
         )
-        .map_err(|error| tree_corruption(error.to_string()))?;
+        .map_err(tree_corruption)?;
         let collection_batch = CollectionBatch::new(
             domain,
             collection_key,
@@ -133,7 +131,7 @@ impl MdbxAuthenticatedTree {
             new_collection_root,
             shard_set,
         )
-        .map_err(|error| tree_corruption(error.to_string()))?;
+        .map_err(tree_corruption)?;
         Ok(Some(collection_batch))
     }
     fn prepare_retirements(
@@ -145,8 +143,8 @@ impl MdbxAuthenticatedTree {
     ) -> Result<()> {
         let mut unique_retirements = BTreeSet::new();
         for partition in retirements {
-            let (domain, collection_key) = crate::partition_collection_key(*partition)
-                .map_err(|error| tree_corruption(error.to_string()))?;
+            let (domain, collection_key) =
+                crate::partition_collection_key(*partition).map_err(tree_corruption)?;
             if !unique_retirements.insert(collection_key) {
                 return Err(tree_corruption("duplicate collection retirement at seal"));
             }
@@ -169,9 +167,9 @@ impl MdbxAuthenticatedTree {
                 parent_collection_root,
                 session.parent_shard_roots.clone(),
             )
-            .map_err(|error| tree_corruption(error.to_string()))?;
-            let catalog_key = TreeKey::from_be_bytes(*collection_key.as_bytes())
-                .map_err(|error| tree_corruption(error.to_string()))?;
+            .map_err(tree_corruption)?;
+            let catalog_key =
+                TreeKey::from_be_bytes(*collection_key.as_bytes()).map_err(tree_corruption)?;
             catalog_updates.push((catalog_key, TreeLeaf::ZERO));
             changed_collections.insert(
                 collection_key,
@@ -204,41 +202,36 @@ impl MdbxAuthenticatedTree {
                     catalog_tree
                         .get(*key)
                         .map(|leaf| (*key, leaf))
-                        .map_err(|error| tree_corruption(error.to_string()))
+                        .map_err(tree_corruption)
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let proof = catalog_tree
-                .prove(keys)
-                .map_err(|error| tree_corruption(error.to_string()))?;
+            let proof = catalog_tree.prove(keys).map_err(tree_corruption)?;
             catalog_tree
                 .verify(
-                    TreeRoot::from_be_bytes(self.view.catalog_root().0)
-                        .map_err(|error| tree_corruption(error.to_string()))?,
+                    TreeRoot::from_be_bytes(self.view.catalog_root().0).map_err(tree_corruption)?,
                     &proof,
                     parents,
                 )
-                .map_err(|error| tree_corruption(error.to_string()))?;
+                .map_err(tree_corruption)?;
             B256::from(
                 catalog_tree
                     .update_all(catalog_updates)
-                    .map_err(|error| tree_corruption(error.to_string()))?
+                    .map_err(tree_corruption)?
                     .as_bytes(),
             )
         };
         let catalog_batch = catalog_tree
             .into_store()
             .freeze_shard(new_catalog_root)
-            .map_err(|error| tree_corruption(error.to_string()))?
+            .map_err(tree_corruption)?
             .map(|batch| ProvisionalCatalogBatch {
                 parent_catalog_root: batch.parent_shard_root,
                 new_catalog_root: batch.new_shard_root,
                 branch_changes: batch.branch_changes,
                 leaf_changes: batch.leaf_changes,
             });
-        let parent_r_sealed = sealed_root(self.view.catalog_root())
-            .map_err(|error| tree_corruption(error.to_string()))?;
-        let new_r_sealed =
-            sealed_root(new_catalog_root).map_err(|error| tree_corruption(error.to_string()))?;
+        let parent_r_sealed = sealed_root(self.view.catalog_root()).map_err(tree_corruption)?;
+        let new_r_sealed = sealed_root(new_catalog_root).map_err(tree_corruption)?;
         ProvisionalTreeBatch::new(
             block_number,
             self.identity.block_hash,
@@ -255,7 +248,7 @@ impl MdbxAuthenticatedTree {
             changed_collections,
             catalog_batch,
         )
-        .map_err(|error| tree_corruption(error.to_string()))
+        .map_err(tree_corruption)
     }
 }
 fn group_mutations(mutations: &[FinalLeafMutation]) -> Result<GroupedCollectionMutations> {
@@ -269,8 +262,7 @@ fn group_mutations(mutations: &[FinalLeafMutation]) -> Result<GroupedCollectionM
             ));
         }
         let (domain, _, id) = entity_parts(mutation.entity);
-        let collection =
-            collection_key(domain, id).map_err(|error| tree_corruption(error.to_string()))?;
+        let collection = collection_key(domain, id).map_err(tree_corruption)?;
         let key = entity_tree_key(mutation.entity)?;
         if let Some(other) = unique_keys.insert((collection, key), mutation.entity) {
             if other != mutation.entity {
@@ -280,8 +272,7 @@ fn group_mutations(mutations: &[FinalLeafMutation]) -> Result<GroupedCollectionM
         let leaf = mutation
             .final_leaf
             .map_or(Ok(TreeLeaf::ZERO), |commitment| {
-                TreeLeaf::from_be_bytes(*commitment.as_bytes())
-                    .map_err(|error| tree_corruption(error.to_string()))
+                TreeLeaf::from_be_bytes(*commitment.as_bytes()).map_err(tree_corruption)
             })?;
         grouped
             .entry(collection)
@@ -303,19 +294,16 @@ fn prepare_shard(
         .map(|key| {
             tree.get(*key)
                 .map(|leaf| (*key, leaf))
-                .map_err(|error| tree_corruption(error.to_string()))
+                .map_err(tree_corruption)
         })
         .collect::<Result<Vec<_>>>()?;
-    let proof = tree
-        .prove(keys)
-        .map_err(|error| tree_corruption(error.to_string()))?;
+    let proof = tree.prove(keys).map_err(tree_corruption)?;
     tree.verify(
-        TreeRoot::from_be_bytes(parent_root.0)
-            .map_err(|error| tree_corruption(error.to_string()))?,
+        TreeRoot::from_be_bytes(parent_root.0).map_err(tree_corruption)?,
         &proof,
         parents.clone(),
     )
-    .map_err(|error| tree_corruption(error.to_string()))?;
+    .map_err(tree_corruption)?;
     let effective = updates
         .into_iter()
         .zip(parents)
@@ -324,17 +312,12 @@ fn prepare_shard(
         })
         .collect::<Vec<_>>();
     if !effective.is_empty() {
-        tree.update_all(effective)
-            .map_err(|error| tree_corruption(error.to_string()))?;
+        tree.update_all(effective).map_err(tree_corruption)?;
     }
-    let new_root = B256::from(
-        tree.root()
-            .map_err(|error| tree_corruption(error.to_string()))?
-            .as_bytes(),
-    );
+    let new_root = B256::from(tree.root().map_err(tree_corruption)?.as_bytes());
     let batch = tree
         .into_store()
         .freeze_shard(new_root)
-        .map_err(|error| tree_corruption(error.to_string()))?;
+        .map_err(tree_corruption)?;
     Ok((new_root, batch))
 }

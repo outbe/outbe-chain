@@ -18,7 +18,6 @@ from genesis_seed_codec import (
     COMPRESSED_ENTITIES_SCHEMA_VERSION,
     MARKER_CODE,
     TEE_REGISTRY_ADDRESS,
-    address_bytes,
     compute_tee_policy_hash,
     parse_int,
     u64_bytes,
@@ -108,7 +107,7 @@ def seed_compressed_entities(storage: StorageBuilder):
     storage.set_slot(1, COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT)
 
 
-def seed_governance(storage: StorageBuilder, validators: list, canon_dir: str | None):
+def seed_governance(storage: StorageBuilder, canon_dir: str | None):
     """
     Governance storage layout. Each seeded field occupies one slot before the
     two record maps in the schema. Their slot indices stay stable as the Oip/Gip
@@ -126,23 +125,18 @@ def seed_governance(storage: StorageBuilder, validators: list, canon_dir: str | 
       slot 7:  canon_revisions        Map<u64, B256>
       slot 8:  next_oip_id            (u64, default 0 - not seeded)
       slot 9:  next_gip_id            (u64, default 0 - not seeded)
-      slot 10: authorities            Map<Address, bool>  (PoC write-gate)
+      slot 10: reserved (former genesis authorities copy, never written)
       slot 11: oips                   Map<U256, Oip>   (not seeded, empty)
       slot 17: gips                   Map<U256, Gip>   (not seeded, empty)
 
-    Genesis includes every validator address in the authorities set.
-    An empty authorities set would prevent all canon writes, so this is mandatory.
+    Write access is not seeded: the precompile checks the caller against the
+    live ValidatorSet (ACTIVE status) at call time.
     Genesis uses the canon / meta-canon texts from `canon_dir/{metacanon.md,canon.md}`
-    at version 1 when present. When absent, the texts stay empty and any authority
-    performs the first `updateCanon` post-genesis (version 0 -> 1).
+    at version 1 when present. When absent, the texts stay empty and any ACTIVE
+    validator performs the first `updateCanon` post-genesis (version 0 -> 1).
 
-    Returns `(n_authorities, meta_seeded, canon_seeded)`.
+    Returns `(meta_seeded, canon_seeded)`.
     """
-    n_auth = 0
-    for v in validators:
-        storage.set_mapping(10, address_bytes(v["address"]), 1)  # bool true
-        n_auth += 1
-
     def _seed_text(
         text_slot: int,
         version_slot: int,
@@ -170,27 +164,23 @@ def seed_governance(storage: StorageBuilder, validators: list, canon_dir: str | 
                 _seed_text(4, 5, 6, 7, f.read())
             canon_seeded = True
 
-    return n_auth, meta_seeded, canon_seeded
+    return meta_seeded, canon_seeded
 
 
-def _seed_system_state(genesis, seed, validators, alloc, canon_dir):
-    # Governance: seed the authorities write-gate (validator addresses) and the
-    # canon / meta-canon texts. Authorities are mandatory. An empty set means no
-    # address can ever write the canon. Canon texts default to <script-dir>/canon.
+def _seed_system_state(genesis, seed, alloc, canon_dir):
+    # Governance: seed the canon / meta-canon texts. Write access comes from the
+    # live ValidatorSet, not from genesis. Canon texts default to <script-dir>/canon.
     canon_dir = canon_dir or os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "canon"
     )
     governance_storage = StorageBuilder()
-    n_auth, meta_seeded, canon_seeded = seed_governance(
-        governance_storage, validators, canon_dir
-    )
+    meta_seeded, canon_seeded = seed_governance(governance_storage, canon_dir)
     if governance_storage.entries:
         alloc[GOVERNANCE_ADDRESS].setdefault("storage", {}).update(
             governance_storage.entries
         )
     print(
-        f"  Governance: {n_auth} authorities, "
-        f"meta-canon={'seeded' if meta_seeded else 'empty'}, "
+        f"  Governance: meta-canon={'seeded' if meta_seeded else 'empty'}, "
         f"canon={'seeded' if canon_seeded else 'empty'}, "
         f"{len(governance_storage.entries)} storage entries"
     )

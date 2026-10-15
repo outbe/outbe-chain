@@ -1,3 +1,4 @@
+use crate::errors::LaunchError;
 use crate::*;
 
 pub(crate) fn handle_consensus_thread_join(
@@ -32,8 +33,8 @@ pub(crate) async fn await_radicle_drain(
     };
     tokio::time::timeout(deadline, completion)
         .await
-        .map_err(|_| eyre::eyre!("Radicle drain deadline exceeded before transport shutdown"))?
-        .map_err(|_| eyre::eyre!("Radicle observer exited without completing its drain"))
+        .map_err(|_| LaunchError::RadicleDrainDeadlineExceeded)?
+        .map_err(|_| LaunchError::RadicleObserverExitedWithoutDrain.into())
 }
 
 pub(crate) async fn abort_and_wait_supervised<T>(
@@ -58,11 +59,11 @@ pub(crate) async fn await_consensus_stack_shutdown(
     deadline: Duration,
 ) -> eyre::Result<()> {
     match tokio::time::timeout(deadline, &mut *handle).await {
-        Ok(result) => result.map_err(|error| {
-            eyre::eyre!("consensus stack task failed during shutdown: {error:?}")
+        Ok(result) => result.map_err(|error| LaunchError::ConsensusStackFailedDuringShutdown {
+            details: format!("{error:?}"),
         })?,
         Err(_) => {
-            let timeout = eyre::eyre!("consensus stack result deadline exceeded after global stop");
+            let timeout = eyre::Report::new(LaunchError::ConsensusStackResultDeadlineExceeded);
             match abort_and_wait_supervised(handle).await {
                 Ok(Some(Err(error))) => Err(error.wrap_err(format!("{timeout:#}"))),
                 Err(error) => Err(timeout.wrap_err(format!(
@@ -80,7 +81,9 @@ pub(crate) fn consensus_shutdown_result(
     stack: eyre::Result<()>,
 ) -> eyre::Result<()> {
     let stop = stop.map_err(|error| {
-        eyre::eyre!("consensus graceful shutdown did not complete within 5 seconds: {error}")
+        eyre::Report::new(LaunchError::ConsensusGracefulShutdownTimeout {
+            details: crate::errors::display_error(error),
+        })
     });
     match (stop, stack) {
         (Err(stop), Err(stack)) => Err(stack.wrap_err(format!("{stop:#}"))),
@@ -173,15 +176,15 @@ pub(crate) fn record_ocomp_exit(
             failure = %exit.failure.message,
             "embedded OCOMP requested node shutdown"
         );
-        shutdown.record_failure(eyre::eyre!(
-            "embedded OCOMP failure ({:?}): {}",
-            exit.failure.class,
-            exit.failure.message
-        ));
+        shutdown.record_failure(
+            LaunchError::EmbeddedOcompFailure {
+                class: exit.failure.class,
+                message: exit.failure.message,
+            }
+            .into(),
+        );
     } else {
-        shutdown.record_failure(eyre::eyre!(
-            "embedded OCOMP exit channel closed without a verdict"
-        ));
+        shutdown.record_failure(LaunchError::EmbeddedOcompExitChannelClosed.into());
     }
 }
 
@@ -229,7 +232,7 @@ pub(crate) async fn wait_for_launcher_exit(
         }
         signal = tokio::signal::ctrl_c() => {
             if let Err(error) = signal {
-                shutdown.record_failure(eyre::eyre!(error).wrap_err("shutdown signal listener failed"));
+                shutdown.record_failure(eyre::Report::new(error).wrap_err("shutdown signal listener failed"));
             }
             info!("received shutdown signal");
             LauncherExitCause::CtrlC
@@ -270,7 +273,13 @@ async fn abort_and_record(
         Ok(()) => {}
         Err(error) if error.is_cancelled() => {}
         Err(error) => {
-            shutdown.record_failure(eyre::eyre!("{label} panicked: {error}"));
+            shutdown.record_failure(
+                LaunchError::TaskPanicked {
+                    label: label.to_owned(),
+                    details: error.to_string(),
+                }
+                .into(),
+            );
         }
     }
 }
@@ -282,18 +291,18 @@ async fn drain_radicle_observer(
     match tokio::time::timeout(RADICLE_DRAIN_DEADLINE, &mut handle).await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
-            shutdown.record_failure(eyre::eyre!(error).wrap_err("Radicle observer panicked"))
+            shutdown.record_failure(eyre::Report::new(error).wrap_err("Radicle observer panicked"))
         }
         Err(error) => {
             tracing::warn!("Radicle observer join deadline exceeded");
             shutdown.record_failure(
-                eyre::eyre!(error).wrap_err("Radicle observer join deadline exceeded"),
+                eyre::Report::new(error).wrap_err("Radicle observer join deadline exceeded"),
             );
             handle.abort();
             if let Err(error) = handle.await {
                 if !error.is_cancelled() {
                     shutdown.record_failure(
-                        eyre::eyre!(error).wrap_err("Radicle observer failed while reaping"),
+                        eyre::Report::new(error).wrap_err("Radicle observer failed while reaping"),
                     );
                 }
             }
@@ -308,7 +317,7 @@ pub(crate) async fn drain_launcher_tasks(
 ) {
     shutdown_token.cancel();
     if let Err(error) = tasks.tee_lease_guard_handle.await {
-        shutdown.record_failure(eyre::eyre!(error).wrap_err("TEE lease guard panicked"));
+        shutdown.record_failure(eyre::Report::new(error).wrap_err("TEE lease guard panicked"));
     }
     if let Some(handle) = tasks.radicle_observer {
         drain_radicle_observer(handle, shutdown).await;
@@ -316,7 +325,8 @@ pub(crate) async fn drain_launcher_tasks(
     if let Some(handle) = tasks.tee_canary_handle {
         tracing::debug!("waiting for TEE canary worker shutdown");
         if let Err(error) = handle.await {
-            shutdown.record_failure(eyre::eyre!(error).wrap_err("TEE canary worker panicked"));
+            shutdown
+                .record_failure(eyre::Report::new(error).wrap_err("TEE canary worker panicked"));
         }
         tracing::debug!("TEE canary worker shutdown completed");
     }

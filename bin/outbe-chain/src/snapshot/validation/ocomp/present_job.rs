@@ -123,11 +123,11 @@ fn verify_ack_matches_receipt(
             manifest_hash: receipt.manifest_hash(),
         },
     )?;
-    ensure!(
-        ack.reference.export_receipt_digest == receipt.receipt_ref().transport_digest
-            && ack.committed == receipt.committed(),
-        "surviving discovery ACK differs from receipt commitment"
-    );
+    if ack.reference.export_receipt_digest != receipt.receipt_ref().transport_digest
+        || ack.committed != receipt.committed()
+    {
+        return Err(SnapshotOcompError::SurvivingAckReceiptCommitmentMismatch.into());
+    }
     Ok(())
 }
 
@@ -277,11 +277,8 @@ fn load_and_verify_present_binding(
         )?;
         binding.require_exact_node_replay(&ack.committed)?;
     }
-    if let Some(receipt_manifest) = receipt_manifest {
-        ensure!(
-            binding.manifest() == receipt_manifest,
-            "present receipt/binding manifest mismatch"
-        );
+    if receipt_manifest.is_some_and(|expected| binding.manifest() != expected) {
+        return Err(SnapshotOcompError::PresentReceiptBindingManifestMismatch.into());
     }
     if let Some(receipt_reader) = readers
         .receipt_reader
@@ -289,26 +286,24 @@ fn load_and_verify_present_binding(
         .filter(|_| readers.receipt_present)
     {
         let receipt = receipt_reader.load_exact(cas)?;
-        ensure!(
-            binding.commit_replay_request() == receipt.commit_replay_request(),
-            "present receipt/binding export authority mismatch"
-        );
+        if binding.commit_replay_request() != receipt.commit_replay_request() {
+            return Err(SnapshotOcompError::PresentReceiptBindingExportMismatch.into());
+        }
         binding.require_exact_node_replay(&receipt.committed())?;
     }
     if let Some(expected) = context.work.export(id)? {
         let request = binding.commit_replay_request();
-        ensure!(
-            (
-                request.pin_generation,
-                request.lease_generation,
-                request.manifest_hash
-            ) == (
-                expected.source_generation,
-                expected.lease_generation,
-                expected.manifest_hash
-            ),
-            "present binding differs from saved pin export"
-        );
+        if (
+            request.pin_generation,
+            request.lease_generation,
+            request.manifest_hash,
+        ) != (
+            expected.source_generation,
+            expected.lease_generation,
+            expected.manifest_hash,
+        ) {
+            return Err(SnapshotOcompError::PresentBindingSavedPinMismatch.into());
+        }
     }
     Ok(binding.manifest().clone())
 }

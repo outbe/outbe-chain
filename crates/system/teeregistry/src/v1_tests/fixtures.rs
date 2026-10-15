@@ -1196,8 +1196,5 @@ pub(super) fn synthetic_dcap_evidence(
 }
 
 pub(super) fn revert_message(error: PrecompileError) -> String {
-    match error {
-        PrecompileError::Revert(message) => message,
-        other => panic!("expected deterministic revert, got {other:?}"),
-    }
+    crate::errors::extract_revert_message(error)
 }

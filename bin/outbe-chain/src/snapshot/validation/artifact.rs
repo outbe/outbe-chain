@@ -21,6 +21,7 @@ use super::{
     report::ProvenanceObservation,
     run::ValidationInputs,
 };
+use crate::errors::{require, SnapshotError};
 
 /// Component evidence only: an archive result does not verify installed native files.
 pub(crate) struct ArtifactAudit {
@@ -48,13 +49,13 @@ impl ArtifactSource {
             .unwrap_or_else(|| Path::new("."));
         let member = path
             .file_name()
-            .ok_or_else(|| eyre::eyre!("artifact path has no filename"))?;
+            .ok_or(SnapshotError::ArtifactPathHasNoFilename)?;
         let root = SourceRoot::open(parent).map_err(artifact_io)?;
         let entry = root.open_entry(Path::new(member)).map_err(artifact_io)?;
-        eyre::ensure!(
+        require(
             !entry.identity.is_directory,
-            "artifact is not a regular file"
-        );
+            SnapshotError::ArtifactNotRegularFile,
+        )?;
         Ok(Self {
             root,
             member: member.into(),
@@ -85,7 +86,10 @@ pub(super) fn artifact_error(error: &eyre::Report) -> eyre::Report {
     if error.downcast_ref::<super::Incomplete>().is_some() {
         super::Incomplete(format!("{error:#}")).into()
     } else {
-        eyre::eyre!("{error:#}")
+        SnapshotError::ErrorReport {
+            message: format!("{error:#}"),
+        }
+        .into()
     }
 }
 
@@ -95,18 +99,18 @@ pub(super) fn missing_artifact(name: &str) -> eyre::Report {
 
 fn read_sidecar(path: &Path, limit: u64) -> eyre::Result<Vec<u8>> {
     let mut source = ArtifactSource::open(path)?;
-    eyre::ensure!(
+    require(
         source.entry.identity.size <= limit,
-        "artifact metadata exceeds size limit"
-    );
+        SnapshotError::ArtifactMetadataExceedsLimit,
+    )?;
     let mut bytes = Vec::new();
     (&mut source.entry.file)
         .take(limit + 1)
         .read_to_end(&mut bytes)?;
-    eyre::ensure!(
+    require(
         bytes.len() as u64 <= limit,
-        "artifact metadata exceeds size limit"
-    );
+        SnapshotError::ArtifactMetadataExceedsLimit,
+    )?;
     source.verify_unchanged()?;
     Ok(bytes)
 }
@@ -125,12 +129,14 @@ fn archive_prefix(source: &mut ArtifactSource) -> (eyre::Result<Vec<u8>>, eyre::
     };
     let mut metadata = |name: &str, limit| -> eyre::Result<Vec<u8>> {
         let mut entry = entries.next().ok_or_else(|| missing_artifact(name))??;
-        eyre::ensure!(
+        require(
             entry.path()?.as_ref() == Path::new(name)
                 && entry.header().entry_type().is_file()
                 && entry.size() <= limit,
-            "invalid {name} archive member"
-        );
+            SnapshotError::InvalidArchiveMember {
+                name: name.to_owned(),
+            },
+        )?;
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes)?;
         Ok(bytes)
@@ -156,10 +162,7 @@ fn check_detached_manifest_agreement(
     };
     let supplied = supplied.as_ref().map_err(artifact_error)?;
     let raw = raw.as_ref().map_err(artifact_error)?;
-    eyre::ensure!(
-        supplied == raw,
-        "detached manifest differs from exact archive manifest bytes"
-    );
+    require(supplied == raw, SnapshotError::DetachedManifestMismatch)?;
     Ok(())
 }
 
@@ -180,18 +183,18 @@ fn verify_artifact_provenance(
         if let Some(supplied) = side_signature {
             let supplied = supplied.as_ref().map_err(artifact_error)?;
             let other = SignatureEnvelope::from_bytes(supplied)?.verify(raw, None)?;
-            eyre::ensure!(
+            require(
                 other == signer,
-                "detached signature has a different authenticated creator"
-            );
+                SnapshotError::DetachedSignatureCreatorMismatch,
+            )?;
         }
     }
     if let Some(expected) = inputs.expected_signer {
         provenance.expected_signer_match = Some(expected == signer);
-        eyre::ensure!(
+        require(
             expected == signer,
-            "snapshot creator does not match expected public key"
-        );
+            SnapshotError::SnapshotCreatorKeyMismatch,
+        )?;
     }
     Ok(())
 }
@@ -212,10 +215,10 @@ fn verify_archive_payload_pass(
     signature.as_ref().map_err(artifact_error)?;
     source.entry.file.seek(SeekFrom::Start(0))?;
     let index = outbe_snapshot::archive::read_archive_index(&mut source.entry.file, None)?;
-    eyre::ensure!(
+    require(
         &index.raw_manifest == raw,
-        "archive manifest changed between metadata and payload passes"
-    );
+        SnapshotError::ArchiveManifestChangedBetweenPasses,
+    )?;
     Ok(())
 }
 
@@ -291,17 +294,11 @@ fn match_declared_domains<'a>(
             .position(|native| {
                 native.kind == domain.kind && native.native_root == domain.native_root
             })
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "manifest domain has no matching native population: {:?}",
-                    domain.kind
-                )
-            })?;
-        eyre::ensure!(
+            .ok_or(SnapshotError::ManifestDomainNoMatchingPopulation { kind: domain.kind })?;
+        require(
             declared[index].is_none(),
-            "duplicate native population in manifest: {:?}",
-            domain.kind
-        );
+            SnapshotError::DuplicatePopulationInManifest { kind: domain.kind },
+        )?;
         declared[index] = Some(domain);
     }
     Ok(declared)
@@ -313,14 +310,16 @@ fn verify_regular_file_member(
     name: &str,
     (files, bytes): &mut (u64, u64),
 ) -> eyre::Result<()> {
-    eyre::ensure!(
+    require(
         entry.identity.size == expected.size,
-        "native member size differs: {name}"
-    );
+        SnapshotError::MemberSizeDiffers {
+            name: name.to_owned(),
+        },
+    )?;
     let limit = expected
         .size
         .checked_add(1)
-        .ok_or_else(|| eyre::eyre!("native file size overflow"))?;
+        .ok_or(SnapshotError::FileSizeOverflow)?;
     let mut reader = (&mut entry.file).take(limit);
     let mut hash = Sha256::new();
     let mut length = 0_u64;
@@ -332,23 +331,27 @@ fn verify_regular_file_member(
         }
         length = length
             .checked_add(count as u64)
-            .ok_or_else(|| eyre::eyre!("native file length overflow"))?;
+            .ok_or(SnapshotError::FileLengthOverflow)?;
         hash.update(&buffer[..count]);
     }
-    eyre::ensure!(
+    require(
         length == expected.size,
-        "native member length changed: {name}"
-    );
-    eyre::ensure!(
+        SnapshotError::MemberLengthChanged {
+            name: name.to_owned(),
+        },
+    )?;
+    require(
         expected.sha256.as_deref() == Some(hex::encode(hash.finalize()).as_str()),
-        "native member checksum differs: {name}"
-    );
+        SnapshotError::MemberChecksumDiffers {
+            name: name.to_owned(),
+        },
+    )?;
     *files = files
         .checked_add(1)
-        .ok_or_else(|| eyre::eyre!("native file count overflow"))?;
+        .ok_or(SnapshotError::FileCountOverflow)?;
     *bytes = bytes
         .checked_add(length)
-        .ok_or_else(|| eyre::eyre!("native byte count overflow"))?;
+        .ok_or(SnapshotError::ByteCountOverflow)?;
     Ok(())
 }
 
@@ -368,42 +371,46 @@ fn verify_domain_members<'a>(
         .members
         .iter()
         .map(|path| {
-            path.to_str()
-                .ok_or_else(|| eyre::eyre!("native member path is not UTF-8: {}", path.display()))
+            path.to_str().ok_or_else(|| {
+                SnapshotError::MemberPathNotUtf8 {
+                    path: path.display().to_string(),
+                }
+                .into()
+            })
         })
         .collect::<eyre::Result<BTreeSet<_>>>()?;
-    eyre::ensure!(
+    require(
         names == wanted.keys().copied().collect(),
-        "native member inventory differs for {:?}",
-        native.kind
-    );
+        SnapshotError::MemberInventoryDiffers { kind: native.kind },
+    )?;
     // The writer does not observe roots or modes of empty optional populations.
     if native.members.is_empty() {
         return Ok(None);
     }
     let root = SourceRoot::open(&native.root)?;
-    eyre::ensure!(
+    require(
         root.open_entry(Path::new(""))?.identity.mode & 0o7777 == domain.mode,
-        "native root mode differs for {:?}",
-        native.kind
-    );
+        SnapshotError::RootModeDiffers { kind: native.kind },
+    )?;
     let mut observed = Vec::new();
     for member in &native.members {
         let name = member
             .to_str()
-            .ok_or_else(|| eyre::eyre!("native member path is not UTF-8"))?;
-        let expected = wanted
-            .get(name)
-            .ok_or_else(|| eyre::eyre!("native member is not declared"))?;
+            .ok_or(SnapshotError::MemberPathNotUtf8Plain)?;
+        let expected = wanted.get(name).ok_or(SnapshotError::MemberNotDeclared)?;
         let mut entry = root.open_entry(member)?;
-        eyre::ensure!(
+        require(
             entry.identity.mode & 0o7777 == expected.mode,
-            "native member mode differs: {name}"
-        );
-        eyre::ensure!(
+            SnapshotError::MemberModeDiffers {
+                name: name.to_owned(),
+            },
+        )?;
+        require(
             entry.identity.is_directory == (expected.kind == EntryKind::Directory),
-            "native member kind differs: {name}"
-        );
+            SnapshotError::MemberKindDiffers {
+                name: name.to_owned(),
+            },
+        )?;
         if !entry.identity.is_directory {
             verify_regular_file_member(&mut entry, expected, name, totals)?;
         }
@@ -419,22 +426,22 @@ fn verify_inventory_unchanged(
     opened: Vec<(SourceRoot, Vec<(&PathBuf, FileIdentity)>)>,
 ) -> eyre::Result<()> {
     let after = enumerate_native_files(layout)?;
-    eyre::ensure!(
+    require(
         after.domains.len() == inventory.domains.len(),
-        "native domains changed during verification"
-    );
+        SnapshotError::DomainsChangedDuringVerification,
+    )?;
     for before in &inventory.domains {
         let current = after
             .domains
             .iter()
             .find(|domain| domain.kind == before.kind && domain.native_root == before.native_root)
-            .ok_or_else(|| eyre::eyre!("native domain disappeared during verification"))?;
-        eyre::ensure!(
+            .ok_or(SnapshotError::DomainDisappearedDuringVerification)?;
+        require(
             current.root == before.root
                 && current.members.iter().collect::<BTreeSet<_>>()
                     == before.members.iter().collect::<BTreeSet<_>>(),
-            "native member inventory changed during verification"
-        );
+            SnapshotError::MemberInventoryChangedDuringVerification,
+        )?;
     }
     for (root, observed) in opened {
         root.verify_unchanged()?;
@@ -460,20 +467,19 @@ pub(crate) fn verify_native_files(
     let mut totals = (0_u64, 0_u64);
     for (native, declared) in inventory.domains.iter().zip(declared) {
         let Some(domain) = declared else {
-            eyre::ensure!(
+            require(
                 native.members.is_empty(),
-                "manifest omits nonempty native population: {:?}",
-                native.kind
-            );
+                SnapshotError::ManifestOmitsNonemptyPopulation { kind: native.kind },
+            )?;
             continue;
         };
         if let Some(domain_opened) = verify_domain_members(native, domain, &mut totals)? {
             opened.push(domain_opened);
         }
     }
-    eyre::ensure!(
+    require(
         totals == (manifest.file_count, manifest.total_bytes),
-        "native file inventory totals differ"
-    );
+        SnapshotError::FileInventoryTotalsDiffer,
+    )?;
     verify_inventory_unchanged(layout, &inventory, opened)
 }

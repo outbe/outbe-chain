@@ -22,15 +22,15 @@ impl WorkerApiState {
         }
         let body = request
             .encode_body(&self.limits)
-            .map_err(|error| WorkerApiErrorV1::Protocol(error.to_string()))?;
+            .map_err(WorkerApiErrorV1::protocol)?;
         let spec = outbe_ocomp_protocol::unit::UnitSpecV1::decode_canonical(
             &request.canonical_unit_spec.0,
             &self.limits,
         )
-        .map_err(|error| WorkerApiErrorV1::Protocol(error.to_string()))?;
+        .map_err(WorkerApiErrorV1::protocol)?;
         let unit_id = spec
             .unit_id(&self.limits)
-            .map_err(|error| WorkerApiErrorV1::Protocol(error.to_string()))?;
+            .map_err(WorkerApiErrorV1::protocol)?;
         let mut registry = self.wait_for_connected_worker(cancelled)?;
         let queue_id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (completion_tx, completion_rx) = mpsc::sync_channel(1);

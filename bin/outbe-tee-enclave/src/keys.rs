@@ -22,7 +22,7 @@ use outbe_tee::protocol::EnclaveResponse;
 
 use crate::crypto::{hkdf_sha256, x25519_public};
 use crate::dkg::PrivKey;
-use crate::errors::TeeError;
+use crate::errors::{EnclaveResult, GramineError, TeeError};
 use crate::gramine::{self, AttestationType};
 use crate::process::TributeOfferKeyMaterial;
 
@@ -40,7 +40,7 @@ pub const DKG_ENC_BIND_NAMESPACE: &[u8] = b"outbe/tee/dkg-participant-announce/v
 /// migration. The known-answer test below pins seed-to-public-key continuity.
 const TEE_BLS_IDENTITY_V1_DST: &[u8] = b"OUTBE_TEE_BLS_IDENTITY_V1_XMD:SHA-256";
 
-fn derive_tee_bls_identity_v1(seed: &[u8; 32]) -> Result<PrivKey, String> {
+fn derive_tee_bls_identity_v1(seed: &[u8; 32]) -> EnclaveResult<PrivKey> {
     // Scalar::map is an explicit RFC 9380 expand_message_xmd + field reduction,
     // rather than an RNG implementation detail. The counter handles the
     // negligible zero-scalar case deterministically for every possible seed.
@@ -53,7 +53,7 @@ fn derive_tee_bls_identity_v1(seed: &[u8; 32]) -> Result<PrivKey, String> {
             return Ok(PrivKey::from(BlsPrivate::new(scalar)));
         }
     }
-    Err("TEE-BLS identity v1 mapping produced only zero scalars".to_string())
+    Err(GramineError::ZeroTeeBlsScalar.into())
 }
 
 /// Signature type produced by the TEE-BLS identity key.
@@ -119,7 +119,7 @@ impl EnclaveKeys {
     /// Initialization seals the seed later, with the signed network binding.
     /// Mock and direct tests pass an explicit seed. `seed` is only the fallback when
     /// no persistent seed is available and is never a production authority.
-    pub fn new(seed: [u8; 32], identity_seed_override: Option<[u8; 32]>) -> Result<Self, String> {
+    pub fn new(seed: [u8; 32], identity_seed_override: Option<[u8; 32]>) -> EnclaveResult<Self> {
         Self::new_with_identity_seed(seed, identity_seed_override.map(Zeroizing::new), None)
     }
 
@@ -129,42 +129,39 @@ impl EnclaveKeys {
         mut seed: [u8; 32],
         identity_seed_override: Option<Zeroizing<[u8; 32]>>,
         sealed_network_binding: Option<NetworkBindingV1>,
-    ) -> Result<Self, String> {
+    ) -> EnclaveResult<Self> {
         let identity_seed = identity_seed_override.unwrap_or_else(|| Zeroizing::new(seed));
         seed.zeroize();
-        let noise_private = Zeroizing::new(
-            hkdf_sha256(identity_seed.as_ref(), b"", b"outbe/tee/noise-static/v1")
-                .map_err(|error| error.to_string())?,
-        );
+        let noise_private = Zeroizing::new(hkdf_sha256(
+            identity_seed.as_ref(),
+            b"",
+            b"outbe/tee/noise-static/v1",
+        )?);
         let noise_public = x25519_public(&noise_private);
-        let tribute_offer_secret = Zeroizing::new(
-            hkdf_sha256(
-                identity_seed.as_ref(),
-                b"",
-                b"outbe/tee/recipient-x25519/v1",
-            )
-            .map_err(|error| error.to_string())?,
-        );
+        let tribute_offer_secret = Zeroizing::new(hkdf_sha256(
+            identity_seed.as_ref(),
+            b"",
+            b"outbe/tee/recipient-x25519/v1",
+        )?);
         let tribute_offer_public = x25519_public(&tribute_offer_secret);
-        let attestation_secret = Zeroizing::new(
-            hkdf_sha256(
-                identity_seed.as_ref(),
-                b"",
-                b"outbe/tee/attestation-ed25519/v1",
-            )
-            .map_err(|error| error.to_string())?,
-        );
+        let attestation_secret = Zeroizing::new(hkdf_sha256(
+            identity_seed.as_ref(),
+            b"",
+            b"outbe/tee/attestation-ed25519/v1",
+        )?);
         let attestation_signing = ed25519_dalek::SigningKey::from_bytes(&attestation_secret);
         let attestation_pub = attestation_signing.verifying_key().to_bytes();
 
-        let dkg_enc_secret = Zeroizing::new(
-            hkdf_sha256(identity_seed.as_ref(), b"", b"outbe/tee/dkg-enc/v1")
-                .map_err(|e| e.to_string())?,
-        );
-        let bls_seed = Zeroizing::new(
-            hkdf_sha256(identity_seed.as_ref(), b"", b"outbe/tee/dkg-bls-seed/v1")
-                .map_err(|e| e.to_string())?,
-        );
+        let dkg_enc_secret = Zeroizing::new(hkdf_sha256(
+            identity_seed.as_ref(),
+            b"",
+            b"outbe/tee/dkg-enc/v1",
+        )?);
+        let bls_seed = Zeroizing::new(hkdf_sha256(
+            identity_seed.as_ref(),
+            b"",
+            b"outbe/tee/dkg-bls-seed/v1",
+        )?);
         let tee_bls_key = derive_tee_bls_identity_v1(&bls_seed)?;
 
         // Read local measurements without producing an unauthenticated quote.
@@ -274,7 +271,7 @@ impl EnclaveKeys {
             participant_set_hash,
             &self.dkg_enc_public(),
         )
-        .map_err(|error| TeeError::Dkg(format!("invalid DKG announcement context: {error}")))?;
+        .map_err(|error| TeeError::dkg_context("invalid DKG announcement context", error))?;
         Ok(self
             .tee_bls_key
             .sign(DKG_ENC_BIND_NAMESPACE, digest.as_slice())

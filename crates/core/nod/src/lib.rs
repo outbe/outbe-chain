@@ -36,7 +36,4 @@ pub use schema::{
 };
 
 #[cfg(test)]
-mod adr006_tests;
-
-#[cfg(test)]
 mod tests;

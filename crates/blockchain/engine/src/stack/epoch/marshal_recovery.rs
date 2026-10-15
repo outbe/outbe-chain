@@ -55,7 +55,7 @@ where
     )?);
     let view_retention_timeout = u64::from(config::ACTIVITY_TIMEOUT)
         .checked_mul(config::VIEW_RETENTION_MULTIPLIER)
-        .ok_or_else(|| eyre::eyre!("view retention timeout overflow"))?;
+        .ok_or(crate::errors::StackEpochError::ViewRetentionTimeoutOverflow)?;
 
     let marshal_genesis_anchor = genesis_consensus_block(node)?;
     let (marshal_actor, marshal_mailbox, last_consensus_finalized_opt) =

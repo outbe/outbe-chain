@@ -17,10 +17,12 @@ use outbe_emissionlimit::{
 };
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
+    error::Result,
     time::{date_key_to_utc_timestamp, next_date_key, timestamp_to_date_key},
     units::{checked_protocol_to_native, native_to_protocol_floor},
 };
+
+use crate::errors::CycleError;
 
 /// Calendar work owned by one hourly ProtocolCycle execution.
 ///
@@ -40,15 +42,26 @@ pub enum ProtocolDayAction {
 /// more than one calendar day, every completed day in that gap is deliberately
 /// forfeited: no economic state is synthesized after the halt.
 pub fn protocol_day_action(active_utc_day: u32, block_utc_day: u32) -> Result<ProtocolDayAction> {
-    if !is_valid_utc_day(active_utc_day) || !is_valid_utc_day(block_utc_day) {
-        return Err(PrecompileError::Fatal(format!(
-            "ProtocolCycle received invalid UTC day: active={active_utc_day}, block={block_utc_day}"
-        )));
+    if !is_valid_utc_day(active_utc_day) {
+        return Err(CycleError::InvalidActiveUtcDay {
+            active: active_utc_day,
+            block: block_utc_day,
+        }
+        .into());
+    }
+    if !is_valid_utc_day(block_utc_day) {
+        return Err(CycleError::InvalidBlockUtcDay {
+            active: active_utc_day,
+            block: block_utc_day,
+        }
+        .into());
     }
     if active_utc_day > block_utc_day {
-        return Err(PrecompileError::Fatal(format!(
-            "ProtocolCycle active UTC day {active_utc_day} is after block UTC day {block_utc_day}"
-        )));
+        return Err(CycleError::ActiveUtcDayAfterBlock {
+            active: active_utc_day,
+            block: block_utc_day,
+        }
+        .into());
     }
 
     if active_utc_day == block_utc_day {
@@ -85,7 +98,7 @@ fn gas(ctx: &BlockRuntimeContext) -> u64 {
 /// then floors only the remaining native amount back to Gem-load precision.
 fn validator_gem_topup_protocol(validator_amount: U256, fees_native: U256) -> Result<U256> {
     let native_budget = checked_protocol_to_native(validator_amount)
-        .ok_or_else(|| PrecompileError::Revert("native validator budget overflow".into()))?;
+        .ok_or(CycleError::NativeValidatorBudgetOverflow)?;
     Ok(native_to_protocol_floor(
         native_budget.saturating_sub(fees_native),
     ))
@@ -176,9 +189,7 @@ enum DaySettlement {
 /// `daily_settled` marker and the Metadosis day-limit receipt must agree.
 fn day_settlement(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<DaySettlement> {
     if !outbe_rewards::api::day_participation_complete(ctx, prev_day)? {
-        return Err(PrecompileError::Fatal(
-            "Cycle settlement before reward participation windows close".into(),
-        ));
+        return Err(CycleError::SettlementBeforeParticipationWindowsClose.into());
     }
 
     // Idempotency guard. This handler mints the CCA agent pool and sends
@@ -195,12 +206,8 @@ fn day_settlement(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<DaySettlem
     let existing_formation =
         outbe_metadosis::api::day_limit_formation_receipt(ctx.storage.clone(), prev_day.into())?;
     match (settled, existing_formation.is_some()) {
-        (true, false) => Err(PrecompileError::Fatal(
-            "Cycle daily_settled marker has no Metadosis day-limit semantic receipt".into(),
-        )),
-        (false, true) => Err(PrecompileError::Fatal(
-            "Metadosis day-limit semantic receipt has no Cycle daily_settled marker".into(),
-        )),
+        (true, false) => Err(CycleError::DailySettledWithoutMetadosisReceipt.into()),
+        (false, true) => Err(CycleError::MetadosisReceiptWithoutDailySettled.into()),
         (true, true) => {
             tracing::debug!(
                 target: "outbe::cycle",
@@ -278,7 +285,7 @@ impl EmissionShares {
         self.metadosis
             .checked_add(validator_excess)
             .and_then(|v| v.checked_add(agent_excess))
-            .ok_or_else(|| PrecompileError::Revert("metadosis terminal overflow".into()))
+            .ok_or_else(|| CycleError::MetadosisTerminalOverflow.into())
     }
 }
 
@@ -334,9 +341,7 @@ fn prepare_validator_pool(
     };
     let excess = validator_amount
         .checked_sub(planned_promis_load_amount)
-        .ok_or_else(|| {
-            PrecompileError::Revert("validator reward Gem plan exceeds allocation".into())
-        })?;
+        .ok_or(CycleError::ValidatorRewardGemPlanExceedsAllocation)?;
     Ok(ValidatorPool {
         excess,
         voter_count: voters.len(),
@@ -379,20 +384,16 @@ fn dispatch_terminal_remainder(
     )?;
     let formation =
         outbe_metadosis::api::day_limit_formation_receipt(ctx.storage.clone(), prev_day.into())?
-            .ok_or_else(|| {
-                PrecompileError::Fatal(
-                    "Cycle allocation committed without a Metadosis day-limit receipt".into(),
-                )
-            })?;
+            .ok_or(CycleError::AllocationWithoutMetadosisReceipt)?;
     match formation {
         outbe_metadosis::DayLimitFormationReceipt::Formed(formed)
             if formed.worldwide_day.value() == prev_day && formed.base_limit == metadosis_total =>
         {
             Ok(())
         }
-        outbe_metadosis::DayLimitFormationReceipt::Formed(_) => Err(PrecompileError::Fatal(
-            "Cycle allocation disagrees with the Metadosis day-limit receipt".into(),
-        )),
+        outbe_metadosis::DayLimitFormationReceipt::Formed(_) => {
+            Err(CycleError::AllocationDisagreesWithMetadosisReceipt.into())
+        }
     }
 }
 
@@ -414,9 +415,7 @@ pub fn run_protocol_cycle(
     let cycle: crate::schema::Cycle<'_> = ctx.storage.contract::<crate::schema::Cycle<'_>>();
     let active_utc_day = cycle.active_utc_day.read()?;
     if active_utc_day == 0 {
-        return Err(PrecompileError::Fatal(
-            "ProtocolCycle active UTC day is not initialized in genesis".into(),
-        ));
+        return Err(CycleError::ActiveUtcDayNotInitialized.into());
     }
 
     let day_action = protocol_day_action(active_utc_day, block_utc_day)?;

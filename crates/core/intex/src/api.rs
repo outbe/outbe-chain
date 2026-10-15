@@ -9,7 +9,7 @@
 //! parameters) belongs to the caller (IntexFactory).
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{first_full_day, WorldwideDay};
 
@@ -79,19 +79,11 @@ pub struct Forfeited {
     pub promis_load_minor: U256,
 }
 
-/// The units a called series forfeits and their load, for the caller to return to the pool.
-/// This function writes nothing, so the caller must return that load exactly once.
-pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<Forfeited> {
+/// The units a series would forfeit now and their load: everything issued and not yet
+/// settled, exercised or sent to the Gem Factory. Writes nothing.
+pub fn forfeitable_units(storage: &StorageHandle<'_>, record: &SeriesRecord) -> Result<Forfeited> {
     let registry = IntexContract::new(storage.clone());
-    let record = registry.load_series(series_id)?;
-    if record.lifecycle_state()? != IntexState::Called {
-        return Err(IntexError::InvalidState {
-            expected: IntexState::Called as u8,
-            actual: record.state,
-        }
-        .into());
-    }
-
+    let series_id = record.series_id;
     let settled = registry.settled_units.read(&series_id)?;
     let exercised = registry.exercised_units.read(&series_id)?;
     let gem_factory = registry.gem_factory_units.read(&series_id)?;
@@ -376,9 +368,7 @@ pub fn arm_proceeds(
     deadline: u64,
 ) -> Result<()> {
     if deadline == u64::MAX {
-        return Err(PrecompileError::Revert(
-            "proceeds deadline cannot be the finalized marker".into(),
-        ));
+        return Err(IntexError::ProceedsDeadlineFinalizedMarker.into());
     }
     let mut registry = IntexContract::new(storage.clone());
     if registry.proceeds_deadline.read(&worldwide_day)? == u64::MAX {

@@ -1,3 +1,4 @@
+use crate::errors::LaunchError;
 use crate::*;
 use outbe_node::tee_remote_session::{
     inspect_local_finalized_successor_status_v1, RegistryChainIdentity,
@@ -46,26 +47,27 @@ impl TeeLeaseGuardGateV1 {
         let Some(anchor) = self.pending_anchor else {
             return Ok(());
         };
-        eyre::ensure!(
-            observed_hash == anchor.finalized_hash,
-            "TEE admission anchor hash mismatch at height {}: expected {}, local {}",
-            anchor.finalized_height,
-            anchor.finalized_hash,
-            observed_hash
-        );
+        if observed_hash != anchor.finalized_hash {
+            return Err(LaunchError::TeeAdmissionAnchorHashMismatch {
+                height: anchor.finalized_height,
+                expected: anchor.finalized_hash,
+                local: observed_hash,
+            }
+            .into());
+        }
         match admission {
             outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. } => {
                 self.pending_anchor = None;
                 Ok(())
             }
             outbe_engine::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending => {
-                eyre::bail!("TEE admission anchor unexpectedly has bootstrap-pending TEE state");
+                Err(LaunchError::TeeAdmissionAnchorBootstrapPending.into())
             }
             outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Rejected(reason) => {
-                eyre::bail!(
-                    "TEE admission anchor rejected the local identity: {}",
-                    local_tee_rejection_message(reason)
-                );
+                Err(LaunchError::TeeAdmissionAnchorRejected {
+                    reason: local_tee_rejection_message(reason),
+                }
+                .into())
             }
         }
     }
@@ -83,12 +85,12 @@ pub(crate) fn require_validator_tee_recovery_complete_v1(
     let Some(anchor) = gate.pending_anchor else {
         return Ok(());
     };
-    eyre::bail!(
-        "validator recovery requires certified follower catch-up before authority startup: local finalized state has not reached the durable TEE join anchor at height {} ({}) in {}. Stop this process; start the same outbe-chain binary with this same datadir and the same network/TEE options, omit --validator and every validator signing/Radicle authority flag, and add --upstream <healthy-certified-rpc> (do not use --upstream.nocertify). Wait for `local TEE lease guard armed at authenticated catch-up anchor`, stop the follower, then restart the original validator command. Submit readiness only after the validator is caught up; signing authority returns only after a fresh DKG installs current private material",
-        anchor.finalized_height,
-        anchor.finalized_hash,
-        node_data_dir.display(),
-    );
+    Err(LaunchError::ValidatorRecoveryCatchUpRequired {
+        height: anchor.finalized_height,
+        hash: anchor.finalized_hash,
+        datadir: node_data_dir.display().to_string(),
+    }
+    .into())
 }
 
 pub(crate) fn validator_admission_anchor_from_durable_v1(
@@ -103,23 +105,21 @@ pub(crate) fn validator_admission_anchor_from_durable_v1(
         reth_p2p_public: identity.reth_p2p_public,
     }
     .node_id_hash()
-    .map_err(|error| eyre::eyre!("derive local NodeHost identity: {error}"))?;
-    eyre::ensure!(
-        durable.chain_id == alloy_primitives::U256::from(chain_id).to_be_bytes(),
-        "finalized join admission anchor chain id mismatch"
-    );
-    eyre::ensure!(
-        durable.genesis_hash == genesis_hash,
-        "finalized join admission anchor genesis mismatch"
-    );
-    eyre::ensure!(
-        durable.node_id_hash == node_id_hash,
-        "finalized join admission anchor NodeHost identity mismatch"
-    );
-    eyre::ensure!(
-        identity.expected_enclave_id == Some(durable.enclave_id),
-        "finalized join admission anchor enclave identity mismatch"
-    );
+    .map_err(|error| LaunchError::DeriveLocalNodeHostIdentity {
+        details: crate::errors::display_error(error),
+    })?;
+    if durable.chain_id != alloy_primitives::U256::from(chain_id).to_be_bytes() {
+        return Err(LaunchError::JoinAdmissionAnchorChainIdMismatch.into());
+    }
+    if durable.genesis_hash != genesis_hash {
+        return Err(LaunchError::JoinAdmissionAnchorGenesisMismatch.into());
+    }
+    if durable.node_id_hash != node_id_hash {
+        return Err(LaunchError::JoinAdmissionAnchorNodeHostMismatch.into());
+    }
+    if identity.expected_enclave_id != Some(durable.enclave_id) {
+        return Err(LaunchError::JoinAdmissionAnchorEnclaveMismatch.into());
+    }
     Ok(LocalTeeAdmissionAnchorV1 {
         finalized_height: durable.finalized_height,
         finalized_hash: durable.finalized_hash,
@@ -196,7 +196,7 @@ where
     let header = provider
         .sealed_header(block_number)
         .wrap_err("read exact header for TEE lease admission")?
-        .ok_or_else(|| eyre::eyre!("exact TEE lease admission header is unavailable"))?;
+        .ok_or(LaunchError::TeeAdmissionHeaderUnavailable)?;
     let block_hash = header.hash();
     let state = provider
         .state_by_block_hash(block_hash)
@@ -214,6 +214,39 @@ where
     Ok((block_hash, admission))
 }
 
+fn read_current_finalized_tee_admission<P>(
+    provider: &P,
+    chain_id: u64,
+    genesis_hash: alloy_primitives::B256,
+    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    context: &'static str,
+) -> eyre::Result<
+    Option<(
+        alloy_eips::BlockNumHash,
+        alloy_primitives::B256,
+        outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+    )>,
+>
+where
+    P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
+{
+    let Some(finalized) = provider
+        .finalized_block_num_hash()
+        .wrap_err(context)?
+        .filter(|finalized| finalized.number != 0)
+    else {
+        return Ok(None);
+    };
+    let (header_hash, admission) = read_local_tee_admission_at_height(
+        provider,
+        chain_id,
+        genesis_hash,
+        identity,
+        finalized.number,
+    )?;
+    Ok(Some((finalized, header_hash, admission)))
+}
+
 fn read_finalized_local_tee_admission<P>(
     provider: &P,
     chain_id: u64,
@@ -223,29 +256,40 @@ fn read_finalized_local_tee_admission<P>(
 where
     P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
-    let Some(finalized) = provider
-        .finalized_block_num_hash()
-        .wrap_err("read finalized head for TEE lease admission")?
-    else {
-        return Ok(None);
-    };
-    if finalized.number == 0 {
-        return Ok(None);
-    }
-    let (header_hash, admission) = read_local_tee_admission_at_height(
+    let Some((finalized, header_hash, admission)) = read_current_finalized_tee_admission(
         provider,
         chain_id,
         genesis_hash,
         identity,
-        finalized.number,
-    )?;
-    eyre::ensure!(
-        header_hash == finalized.hash,
-        "finalized TEE lease header hash mismatch: marker {}, header {}",
-        finalized.hash,
-        header_hash
-    );
-    Ok(Some(admission))
+        "read finalized head for TEE lease admission",
+    )?
+    else {
+        return Ok(None);
+    };
+    if header_hash == finalized.hash {
+        return Ok(Some(admission));
+    }
+    // Reread once to rule out a transient multi-call provider race before
+    // declaring a canonical finalized-header conflict.
+    let Some((refreshed, retry_hash, retry_admission)) = read_current_finalized_tee_admission(
+        provider,
+        chain_id,
+        genesis_hash,
+        identity,
+        "reread finalized head for TEE lease admission",
+    )?
+    else {
+        return Ok(None);
+    };
+    (retry_hash == refreshed.hash)
+        .then_some(Some(retry_admission))
+        .ok_or_else(|| {
+            LaunchError::FinalizedTeeLeaseHeaderHashMismatch {
+                marker: refreshed.hash,
+                header: retry_hash,
+            }
+            .into()
+        })
 }
 
 pub(crate) fn read_gated_finalized_local_tee_admission<P>(
@@ -275,13 +319,22 @@ where
         };
     };
 
-    let (anchor_hash, anchor_admission) = read_local_tee_admission_at_height(
+    let (mut anchor_hash, mut anchor_admission) = read_local_tee_admission_at_height(
         provider,
         chain_id,
         genesis_hash,
         identity,
         anchor.finalized_height,
     )?;
+    if anchor_hash != anchor.finalized_hash {
+        (anchor_hash, anchor_admission) = read_local_tee_admission_at_height(
+            provider,
+            chain_id,
+            genesis_hash,
+            identity,
+            anchor.finalized_height,
+        )?;
+    }
     gate.validate_and_arm(anchor_hash, anchor_admission)?;
     info!(
         anchor_height = anchor.finalized_height,
@@ -306,22 +359,18 @@ pub(crate) async fn require_upstream_fullnode_tee_admission(
     )
     .await
     .wrap_err("read upstream finalized FullNode TEE admission")?;
-    let binding = view.binding.ok_or_else(|| {
-        eyre::eyre!("finalized Registry has no binding for this FullNode; run tee join first")
-    })?;
+    let binding = view.binding.ok_or(LaunchError::FullNodeMissingBinding)?;
     if identity
         .expected_enclave_id
         .is_some_and(|expected| expected != binding.enclave_id)
     {
-        eyre::bail!(
-            "finalized FullNode binding does not match the committed local enclave; run tee join"
-        );
+        return Err(LaunchError::FullNodeBindingEnclaveMismatch.into());
     }
     if binding.valid_until <= view.schedule.finalized_timestamp {
-        eyre::bail!(
-            "finalized FullNode TEE lease expired at {}; run tee join before startup",
-            binding.valid_until
-        );
+        return Err(LaunchError::FullNodeTeeLeaseExpired {
+            valid_until: binding.valid_until,
+        }
+        .into());
     }
     Ok(LocalTeeAdmissionAnchorV1 {
         finalized_height: view.view.block_number,
@@ -380,12 +429,10 @@ where
                         },
                     )
                 })
-                .ok_or_else(|| {
-                    eyre::eyre!("TEE client unavailable during remote session retirement")
-                })??;
+                .ok_or(LaunchError::TeeClientUnavailableDuringRetirement)??;
                 if !matches!(response, outbe_tee::protocol::EnclaveResponse::RemoteSessionsRetiredV1 { activation_height: echoed } if echoed == activation_height)
                 {
-                    eyre::bail!("enclave did not acknowledge remote session retirement");
+                    return Err(LaunchError::EnclaveDidNotAckSessionRetirement.into());
                 }
                 retired_at = activation_height;
             }
@@ -416,7 +463,7 @@ pub(crate) fn tee_lease_exit_reason(
     verdict: Option<eyre::Result<String>>,
     shutdown: &outbe_node::shutdown::NodeShutdown,
 ) -> String {
-    match verdict.unwrap_or_else(|| Err(eyre::eyre!("TEE lease guard stopped without a verdict"))) {
+    match verdict.unwrap_or_else(|| Err(LaunchError::TeeLeaseGuardStoppedWithoutVerdict.into())) {
         Ok(reason) => reason,
         Err(error) => {
             let reason = format!("{error:#}");

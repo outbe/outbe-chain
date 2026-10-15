@@ -22,7 +22,7 @@ pub mod test_support;
 
 pub use api::{LoadedGem, LoadedGemBucket};
 pub use config::GemParams;
-pub use errors::{GemError, GemRepositoryError};
+pub use errors::{GemError, GemFatalError, GemRepositoryError};
 pub use repository::{
     canonical_bucket, canonical_bucket_id, canonical_item, from_canonical_bucket,
     from_canonical_item, gem_reader, gem_writer, GemPage, GemPageRequest, GemRepositoryReader,

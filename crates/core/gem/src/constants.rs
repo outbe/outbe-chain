@@ -26,12 +26,12 @@ pub const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 /// `issued_at`. No new gems may be issued afterward. 1 year.
 pub const POSITION_VALIDITY_SECONDS: u64 = 365 * SECONDS_PER_DAY;
 
-/// Floor-price markup rate: floor = `entry x (100 + FLOOR_RATE) / 100`.
-pub const FLOOR_RATE: u16 = 8;
+/// Floor-price markup rate: floor = `entry x (100 + FLOOR_RATE_PCT) / 100`.
+pub const FLOOR_RATE_PCT: u16 = 8;
 
-/// Call-price markup rate: call price = `entry x (100 + CALL_RATE) / 100`.
+/// Call-price markup rate: call price = `entry x (100 + CALL_RATE_PCT) / 100`.
 /// Its breach arms a Call Event.
-pub const CALL_RATE: u16 = 128;
+pub const CALL_RATE_PCT: u16 = 128;
 
 /// SRA cost rate (share of the full agent cost): cost = `full x SRA_RATE / 100`
 /// (64 => 0.64x).

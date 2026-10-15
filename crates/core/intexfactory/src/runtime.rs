@@ -5,8 +5,7 @@ use alloy_sol_types::{SolCall, SolEvent};
 
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result, SweepFailure};
-use outbe_primitives::markup::marked_up;
+use outbe_primitives::error::{Result, SweepFailure};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 
@@ -30,7 +29,10 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 /// Record the series identity and call-price bin, then arm the day's proceeds fan-in.
 /// Return issuance legs for the caller to broadcast through `send_issuance`.
 /// The broadcast creates IntexNFT1155 series on each target chain, including the origin.
-pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<IssuanceLeg>> {
+pub fn issue_intex(
+    storage: &StorageHandle<'_>,
+    params: IssuanceParams,
+) -> Result<Vec<IssuanceLeg>> {
     if params.issued_units == 0 {
         // Whether the day distributes is the caller's decision: one empty group
         // must not touch the state its siblings armed.
@@ -39,15 +41,13 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
 
     // u32 timestamp. It is bounded until 2106.
     let issued_at = u32::try_from(storage.timestamp()?.to::<u64>())
-        .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
+        .map_err(|_| IntexFactoryError::BlockTimestampExceedsU32)?;
 
     let mut intex = IntexContract::new(storage.clone());
     let cfg = outbe_intex::config::read(storage)?;
 
-    let floor_price_minor = marked_up(params.entry_price_minor, cfg.floor_rate)
-        .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))?;
-    let call_price_minor = marked_up(params.entry_price_minor, cfg.call_rate)
-        .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))?;
+    let floor_price_minor = marked_up(params.entry_price_minor, cfg.floor_rate)?;
+    let call_price_minor = marked_up(params.entry_price_minor, cfg.call_rate)?;
 
     let entry_price_minor_u64 = to_wire_price(params.entry_price_minor)?;
     let floor_price_minor_u64 = to_wire_price(floor_price_minor)?;
@@ -180,7 +180,7 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Res
         chunk_issuance_messages(pack_issuance_messages(legs))
     {
         let total_chunks = u16::try_from(messages.len())
-            .map_err(|_| PrecompileError::Revert("issuance chunk count exceeds u16".into()))?;
+            .map_err(|_| IntexFactoryError::IssuanceChunkCountExceedsU16)?;
         for (chunk_index, series) in messages.into_iter().enumerate() {
             storage.call(
                 ORIGIN_ROUTER_ADDRESS,
@@ -264,10 +264,15 @@ pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, 
         .collect()
 }
 
+/// `entry x (100 + rate) / 100`, the markup a series seals its floor and call prices at.
+pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
+    outbe_primitives::markup::marked_up(entry_price, rate)
+        .ok_or_else(|| IntexFactoryError::MarkedUpPriceOverflow.into())
+}
+
 /// Narrows a six-decimal COEN/ISO price to the wire's existing `u64` shape.
 pub fn to_wire_price(price_minor: U256) -> Result<u64> {
-    u64::try_from(price_minor)
-        .map_err(|_| PrecompileError::Revert("price exceeds the wire type".into()))
+    u64::try_from(price_minor).map_err(|_| IntexFactoryError::PriceExceedsWireType.into())
 }
 
 /// One owner's units of `series_id`: its current balances, Issued ones only until the
@@ -292,7 +297,7 @@ pub(crate) fn owner_balances(
         gemFactoryUnits: outbe_intex::api::owner_gem_factory_units(storage, series_id, owner)?,
         ownerUnits: issued
             .checked_add(settled)
-            .ok_or_else(|| PrecompileError::Revert("owner units exceed u32".into()))?,
+            .ok_or(IntexFactoryError::OwnerUnitsExceedU32)?,
     })
 }
 
@@ -358,8 +363,8 @@ pub fn settle_intex(
             .into(),
         )?;
 
-        let settled_units = u32::try_from(units)
-            .map_err(|_| PrecompileError::Revert("settled units exceed u32".into()))?;
+        let settled_units =
+            u32::try_from(units).map_err(|_| IntexFactoryError::SettledUnitsExceedU32)?;
         outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;
 
         settlement::collect(
@@ -393,7 +398,7 @@ fn require_settleable(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Res
             }
             Ok(())
         }
-        IntexState::Issued if is_qualified(storage, series)? => Ok(()),
+        IntexState::Issued if outbe_intex::api::is_qualified(storage, series)? => Ok(()),
         _ => Err(IntexFactoryError::NotSettleable(series.state).into()),
     }
 }
@@ -402,7 +407,7 @@ fn require_settleable(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Res
 
 fn nft_units_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Result<u32> {
     u32::try_from(nft_balance_of(storage, account, id)?)
-        .map_err(|_| PrecompileError::Revert("NFT balance exceeds u32".into()))
+        .map_err(|_| IntexFactoryError::NftBalanceExceedsU32.into())
 }
 
 fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Result<U256> {
@@ -411,7 +416,7 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
         IERC1155::balanceOfCall { account, id }.abi_encode().into(),
     )?;
     IERC1155::balanceOfCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("NFT balanceOf undecodable".into()))
+        .map_err(|_| IntexFactoryError::NftBalanceOfUndecodable.into())
 }
 
 mod mining;
@@ -422,9 +427,8 @@ mod proceeds;
 pub(crate) use mining::compute_pow_hash;
 pub(crate) use mining::{issued_token_id, settled_token_id, validate_pow};
 pub use mining::{mine_promis, MiningProof};
-#[cfg(test)]
+pub use pricing::quote_settlement;
 #[cfg(test)]
 pub(crate) use pricing::settlement_units;
-pub use pricing::{is_qualified, quote_settlement};
 pub use proceeds::distribute;
 pub(crate) use proceeds::sweep_proceeds_deadlines;

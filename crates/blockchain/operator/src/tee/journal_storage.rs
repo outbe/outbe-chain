@@ -8,6 +8,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::errors::JournalStorageError;
+
 pub(super) struct JournalCommit<'a> {
     pub root: &'a Path,
     pub scratch: &'a Path,
@@ -24,7 +26,7 @@ impl JournalCommit<'_> {
         let encoded = serde_json::to_vec(snapshot)
             .wrap_err_with(|| format!("encode {} journal", self.label))?;
         if encoded.len() as u64 > max_bytes {
-            eyre::bail!("{} journal exceeds its size cap", self.label);
+            return Err(JournalStorageError::SizeCapExceeded(self.label).into());
         }
         let mut next = options
             .open(self.scratch)

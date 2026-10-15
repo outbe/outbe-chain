@@ -193,7 +193,7 @@ fn absent_profile_rejects_the_offering_edge_before_any_effect() {
     .unwrap_err();
     assert!(matches!(
         error,
-        outbe_primitives::error::PrecompileError::Fatal(_)
+        outbe_primitives::error::PrecompileError::Revert(_)
     ));
     assert_eq!(provider.storage, storage_before);
     assert_eq!(provider.events, events_before);
@@ -249,7 +249,7 @@ fn absent_profile_rejects_populated_ready_before_failed_state_or_lysis_effects()
     .unwrap_err();
     assert!(matches!(
         error,
-        outbe_primitives::error::PrecompileError::Fatal(_)
+        outbe_primitives::error::PrecompileError::Revert(_)
     ));
     assert_eq!(provider.storage, storage_before);
     assert_eq!(provider.events, events_before);

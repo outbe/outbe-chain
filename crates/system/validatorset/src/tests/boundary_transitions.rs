@@ -74,10 +74,11 @@ fn jail_retained(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
     vs.jail_validator(validator)
 }
 
-/// The exact text of a boundary result: `Fatal: <message>` for a fatal
+/// The exact text of a boundary result: `Revert: <message>` or `Fatal: <message>` for a
 /// rejection, else the debug form of the result.
 fn outcome_text(result: Result<()>) -> String {
     match result {
+        Err(PrecompileError::Revert(message)) => format!("Revert: {message}"),
         Err(PrecompileError::Fatal(message)) => format!("Fatal: {message}"),
         other => format!("{other:?}"),
     }
@@ -94,7 +95,7 @@ fn assert_rejected_before_writes(
     setup?;
     storage.clear_mutation_failure();
     let result = storage.enter(|storage| call(&mut ValidatorSet::new(storage)));
-    assert_eq!(outcome_text(result), format!("Fatal: {expected}"));
+    assert_eq!(outcome_text(result), format!("Revert: {expected}"));
     assert_eq!(
         storage.clear_mutation_failure(),
         0,

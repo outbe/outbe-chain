@@ -17,10 +17,11 @@ use outbe_ocomp_protocol::{
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::NOD_FACTORY_ADDRESS,
-    error::{PrecompileError, Result},
+    error::Result,
     storage::{CertifiedLysisActivation, StorageHandle},
 };
 
+use crate::errors::NodFactoryError;
 use crate::precompile::INodFactory;
 
 /// Closed, constant-size Nod owner input derived from a verified Lysis apply
@@ -57,7 +58,7 @@ pub fn install_certified_generation(
         .precondition
         .target_generation
         .checked_add(1)
-        .ok_or_else(|| revert("certified Nod generation overflow"))?;
+        .ok_or(NodFactoryError::CertifiedGenerationOverflow)?;
     let state_projection = NodStateEventProjectionV1 {
         wwd: input.precondition.wwd,
         target_generation: input.precondition.target_generation,
@@ -69,7 +70,7 @@ pub fn install_certified_generation(
         issued_at: input.issued_at,
     };
     let state_event_digest = nod_state_event_digest(&input.binding, &state_projection, limits)
-        .map_err(protocol_error)?;
+        .map_err(NodFactoryError::InvalidCertifiedProtocolValue)?;
     let receipt = NodBatchReceiptV1 {
         binding: input.binding.clone(),
         nod_target_precondition: input.precondition.clone(),
@@ -82,22 +83,22 @@ pub fn install_certified_generation(
     };
     receipt
         .validate_projection(&state_projection, limits)
-        .map_err(protocol_error)?;
-    receipt.receipt_hash(limits).map_err(protocol_error)?;
+        .map_err(NodFactoryError::InvalidCertifiedProtocolValue)?;
+    receipt
+        .receipt_hash(limits)
+        .map_err(NodFactoryError::InvalidCertifiedProtocolValue)?;
 
     if let Some(existing) = nod.ocomp_certified_generation(worldwide_day)? {
         if generation_matches(&existing, input, next_generation) {
             capability.authorize_nod_installation()?;
             return Ok(receipt);
         }
-        return Err(revert(
-            "a different certified Nod generation already exists for this WWD",
-        ));
+        return Err(NodFactoryError::DifferentCertifiedGenerationExists.into());
     }
     if input.precondition.target_generation != 0
         || !input.precondition.namespace_root_before.is_zero()
     {
-        return Err(revert("certified Nod target precondition changed"));
+        return Err(NodFactoryError::CertifiedTargetPreconditionChanged.into());
     }
 
     let raw_head = nod.ocomp_materialization_head_sequence.read()?;
@@ -109,21 +110,15 @@ pub fn install_certified_generation(
             }
             tail
         }
-        _ => {
-            return Err(PrecompileError::Fatal(
-                "Nod materialization FIFO bounds are malformed".into(),
-            ))
-        }
+        _ => return Err(NodFactoryError::MaterializationFifoBoundsMalformed.into()),
     };
     let queued_wwd = nod.ocomp_materialization_queue_wwd.read(&tail_sequence)?;
     if queued_wwd.value() != 0 {
-        return Err(PrecompileError::Fatal(
-            "Nod materialization FIFO tail entry is occupied".into(),
-        ));
+        return Err(NodFactoryError::MaterializationFifoTailOccupied.into());
     }
     let next_tail = tail_sequence
         .checked_add(1)
-        .ok_or_else(|| PrecompileError::Fatal("Nod materialization FIFO tail overflow".into()))?;
+        .ok_or(NodFactoryError::MaterializationFifoTailOverflow)?;
     let activation_height = storage.block_number()?;
 
     let installed = NodCertifiedGenerationProjection {
@@ -257,40 +252,29 @@ fn validate_input(
     input: &CertifiedNodGenerationV1,
 ) -> Result<()> {
     if capability.activation_call_id() != input.binding.activation_call_id {
-        return Err(revert("certified Nod activation binding mismatch"));
+        return Err(NodFactoryError::CertifiedActivationBindingMismatch.into());
     }
     if input.issued_at == 0 {
-        return Err(revert("certified Nod logical issuance time is zero"));
+        return Err(NodFactoryError::CertifiedLogicalIssuanceTimeZero.into());
     }
     if input.binding.job_id.is_zero()
         || input.binding.protocol_bundle_hash.is_zero()
         || input.program_semantics_hash.is_zero()
     {
-        return Err(revert("certified Nod materialization binding is zero"));
+        return Err(NodFactoryError::CertifiedMaterializationBindingZero.into());
     }
     if input.roots.nod_root.is_zero()
         || input.roots.bucket_root.is_zero()
         || input.roots.output_manifest_root.is_zero()
     {
-        return Err(revert("certified Nod generation contains a zero root"));
+        return Err(NodFactoryError::CertifiedGenerationZeroRoot.into());
     }
     if input.counts.tribute_count == 0
         || input.counts.nod_count != input.counts.tribute_count
         || input.counts.nod_count != input.precondition.max_nod_count
         || input.counts.bucket_count > input.counts.nod_count
     {
-        return Err(revert("certified Nod generation count mismatch"));
+        return Err(NodFactoryError::CertifiedGenerationCountMismatch.into());
     }
     Ok(())
 }
-
-fn protocol_error(error: outbe_ocomp_protocol::ProtocolError) -> PrecompileError {
-    PrecompileError::Fatal(format!("invalid certified Nod protocol value: {error}"))
-}
-
-fn revert(reason: &'static str) -> PrecompileError {
-    PrecompileError::Revert(reason.into())
-}
-
-#[cfg(test)]
-mod tests;

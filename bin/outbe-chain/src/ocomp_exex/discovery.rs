@@ -2,12 +2,12 @@ use super::request_projection_is_closed;
 use super::same_locator;
 use super::EmbeddedOcompExExV1;
 use super::RequestLocatorV1;
+use crate::errors::OcompExExError;
 
 use alloy_primitives::Address;
 use alloy_primitives::B256;
 use alloy_primitives::U256;
 
-use eyre::bail;
 use eyre::Context as _;
 
 use metrics::counter;
@@ -68,7 +68,7 @@ pub(super) fn discovery_record(
     let finalized = record
         .finalized
         .as_ref()
-        .ok_or_else(|| eyre::eyre!("OCOMP job is not finalized"))?;
+        .ok_or(OcompExExError::JobNotFinalized)?;
     let spec = FinalizedJobSpecV1 {
         summary: FinalizedJobSummaryV1 {
             cursor: locator.block_number,
@@ -148,7 +148,7 @@ where
         match self.requests.get(&locator.intent_id) {
             Some(existing) if same_locator(*existing, locator) => {}
             Some(_) => {
-                bail!("conflicting OCOMP request locator replay");
+                return Err(OcompExExError::ConflictingRequestLocatorReplay.into());
             }
             None => {
                 self.requests.insert(locator.intent_id, locator);
@@ -186,7 +186,7 @@ where
             activation_hash,
         );
         if actual != expected {
-            bail!("OCOMP request locator disagrees with exact typed state");
+            return Err(OcompExExError::RequestLocatorDisagreesWithState.into());
         }
         Ok(())
     }
@@ -200,9 +200,9 @@ where
         let expected_number = self
             .scanned_height
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("unified OCOMP scan height overflow"))?;
+            .ok_or(OcompExExError::UnifiedScanHeightOverflow)?;
         if checkpoint.block_number != expected_number || frame.parent_hash() != self.scanned_hash {
-            bail!("unified OCOMP frame scan is not contiguous");
+            return Err(OcompExExError::UnifiedFrameScanNotContiguous.into());
         }
         self.scanned_height = identity.number;
         self.scanned_hash = identity.hash;
@@ -249,13 +249,15 @@ where
             let Some(job_id) = self.intent_jobs.get(intent_id) else {
                 continue;
             };
-            let job = self.jobs.get(job_id).ok_or_else(|| {
-                eyre::eyre!("closed OCOMP job disappeared before spool retirement")
-            })?;
+            let job = self
+                .jobs
+                .get(job_id)
+                .ok_or(OcompExExError::ClosedJobDisappearedBeforeSpoolRetirement)?;
             let bundle_hash = job.record.spec.summary.protocol_bundle_hash;
-            let spool = self.discovery_spools.get(&bundle_hash).ok_or_else(|| {
-                eyre::eyre!("closed OCOMP job references an unknown discovery spool")
-            })?;
+            let spool = self
+                .discovery_spools
+                .get(&bundle_hash)
+                .ok_or(OcompExExError::ClosedJobUnknownDiscoverySpool)?;
             let reference = DiscoveryOfferRefV1::from_spec(
                 self.chain_id,
                 self.genesis_hash,
@@ -325,7 +327,7 @@ where
             || (closed.block_number == target.block_number
                 && closed.block_hash != target.block_hash)
         {
-            bail!("OCOMP closure checkpoint is ahead of or conflicts with finalized target");
+            return Err(OcompExExError::ClosureCheckpointConflictsWithTarget.into());
         }
         let ready_height = self
             .state
@@ -333,7 +335,7 @@ where
         let ready_hash = self
             .provider
             .block_hash(ready_height)?
-            .ok_or_else(|| eyre::eyre!("OCOMP readiness checkpoint is unavailable"))?;
+            .ok_or(OcompExExError::ReadinessCheckpointUnavailable)?;
         let checkpoint = ProjectionCheckpoint {
             block_number: ready_height,
             block_hash: ready_hash,

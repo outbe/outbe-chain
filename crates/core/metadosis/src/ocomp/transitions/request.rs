@@ -48,7 +48,7 @@ impl MetadosisContract<'_> {
             if existing_receipt.is_none() {
                 self.ocomp_request_limit_receipts.get_bytes(&wwd).write(
                     &receipt.encode_canonical(schema_limits).map_err(|error| {
-                        storage_corruption_message(format!("encode request receipt: {error}"))
+                        crate::errors::storage_corruption_context("encode request receipt", error)
                     })?,
                 )?;
             }
@@ -96,9 +96,9 @@ impl MetadosisContract<'_> {
                 "immutable OCOMP request receipt changed",
             ));
         }
-        let intent_id = intent
-            .intent_id(schema_limits)
-            .map_err(|error| storage_corruption_message(format!("hash OCOMP intent: {error}")))?;
+        let intent_id = intent.intent_id(schema_limits).map_err(|error| {
+            crate::errors::storage_corruption_context("hash OCOMP intent", error)
+        })?;
         let awaiting_finality_deadline = intent
             .logical_evaluation_height
             .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
@@ -106,7 +106,7 @@ impl MetadosisContract<'_> {
                 storage_corruption_message("OCOMP awaiting-finality deadline overflow")
             })?;
         let storage_key = intent_storage_key(intent_id).map_err(|error| {
-            storage_corruption_message(format!("derive OCOMP intent storage key: {error}"))
+            crate::errors::storage_corruption_context("derive OCOMP intent storage key", error)
         })?;
         if !self.ocomp_job_records.get_bytes(&storage_key).is_empty()? {
             return Err(storage_corruption_message(
@@ -121,7 +121,7 @@ impl MetadosisContract<'_> {
                 lysis_limit_minor: intent.frozen_metadosis_values.lysis_limit_minor,
                 request_limit_receipt_hash: receipt_hash,
             })
-            .map_err(|error| storage_corruption_message(error.to_string()))?;
+            .map_err(storage_corruption_message)?;
 
         Ok(PreparedRequest {
             wwd,
@@ -150,10 +150,10 @@ impl MetadosisContract<'_> {
             ));
         }
         intent.validate_semantics().map_err(|error| {
-            storage_corruption_message(format!("invalid OCOMP intent: {error}"))
+            crate::errors::storage_corruption_context("invalid OCOMP intent", error)
         })?;
         receipt.validate_semantics().map_err(|error| {
-            storage_corruption_message(format!("invalid OCOMP request receipt: {error}"))
+            crate::errors::storage_corruption_context("invalid OCOMP request receipt", error)
         })?;
         let wwd = WorldwideDay::new(intent.wwd);
         if WwdStatus::try_from(self.worldwide_days.entry(wwd).status().read()?)? != WwdStatus::Ready
@@ -179,7 +179,7 @@ fn validate_request_binding(
     schema_limits: &SchemaLimits,
 ) -> Result<B256> {
     let receipt_hash = receipt.receipt_hash(schema_limits).map_err(|error| {
-        storage_corruption_message(format!("hash OCOMP request receipt: {error}"))
+        crate::errors::storage_corruption_context("hash OCOMP request receipt", error)
     })?;
     let identity_matches =
         receipt.wwd == intent.wwd && receipt.pending_nonce <= intent.pending_nonce;

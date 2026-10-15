@@ -112,7 +112,7 @@ fn retire_overdue(
 
 /// u32 wire timestamp (bounded until 2106).
 fn ts32(ts: u64) -> Result<u32> {
-    u32::try_from(ts).map_err(|_| PrecompileError::Revert("schedule timestamp exceeds u32".into()))
+    u32::try_from(ts).map_err(|_| DesisError::ScheduleTimestampExceedsU32.into())
 }
 
 /// The ends of a day's commit, reveal and issuance windows.

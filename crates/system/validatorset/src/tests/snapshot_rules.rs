@@ -14,10 +14,11 @@ const FIRST: Address = address!("0x00000000000000000000000000000000000000A7");
 const SECOND: Address = address!("0x00000000000000000000000000000000000000A8");
 const EPOCH: u64 = 9;
 
-/// The exact text of a result: `Fatal: <message>` for a fatal rejection, else
-/// the debug form of the result.
+/// The exact text of a result: `Revert: <message>` or `Fatal: <message>` for a
+/// rejection, else the debug form of the result.
 fn outcome_text<T: std::fmt::Debug>(result: Result<T>) -> String {
     match result {
+        Err(PrecompileError::Revert(message)) => format!("Revert: {message}"),
         Err(PrecompileError::Fatal(message)) => format!("Fatal: {message}"),
         other => format!("{other:?}"),
     }
@@ -86,7 +87,7 @@ fn snapshot_write_requires_bound_ocomp_material_for_each_member_in_order() -> Re
     assert_fatal_without_writes(
         &mut storage,
         |storage| write_committee_snapshot(storage, EPOCH, &snapshot),
-        &format!("Fatal: active validator {FIRST} has no admitted OCOMP registration"),
+        &format!("Revert: active validator {FIRST} has no admitted OCOMP registration"),
     );
 
     let mut storage = snapshot_storage(both_admitted)?;
@@ -95,15 +96,39 @@ fn snapshot_write_requires_bound_ocomp_material_for_each_member_in_order() -> Re
     assert_fatal_without_writes(
         &mut storage,
         |storage| write_committee_snapshot(storage, EPOCH, &rekeyed),
-        &format!("Fatal: active validator {SECOND} has stale or invalid OCOMP registration"),
+        &format!("Revert: active validator {SECOND} has stale or invalid OCOMP registration"),
     );
     Ok(())
 }
 
 #[test]
-fn snapshot_replay_compares_extension_then_members() -> Result<()> {
+fn snapshot_replay_rejects_consensus_collision_and_preserves_ocomp_extension_on_rekey() -> Result<()>
+{
     let snapshot = snapshot_of(&[FIRST, SECOND], 96);
-    let corruptions: [fn(&ValidatorSet<'_>, B256) -> Result<()>; 2] = [
+    let mut storage = snapshot_storage(both_admitted)?;
+    let (_, key) = storage.enter(|storage| write_committee_snapshot(storage, EPOCH, &snapshot))?;
+    assert_eq!(
+        outcome_text(storage.enter(|storage| write_committee_snapshot(storage, EPOCH, &snapshot))),
+        format!("Ok(({:?}, {key:?}))", committee_set_hash_of(&snapshot)),
+        "an exact replay is accepted",
+    );
+
+    // A consensus snapshot collision under the same key is Fatal.
+    storage.enter(|storage| {
+        ValidatorSet::new(storage)
+            .committee_snapshot_vrf_material_version
+            .write(&key, snapshot.vrf_material_version + 1)
+    })?;
+    assert_fatal_without_writes(
+        &mut storage,
+        |storage| write_committee_snapshot(storage, EPOCH, &snapshot),
+        &format!("Fatal: committee snapshot replay mismatch for key {key}"),
+    );
+
+    // When the consensus snapshot matches and only OCOMP extension/member differs
+    // (e.g. validator OCOMP registration changed during the epoch), replay
+    // preserves the existing stored snapshot and OCOMP extension without Fatal.
+    let ocomp_mutations: [fn(&ValidatorSet<'_>, B256) -> Result<()>; 2] = [
         |vs, key| {
             vs.committee_snapshot_ocomp_binding_hash
                 .write(&key, B256::repeat_byte(0x01))
@@ -114,23 +139,42 @@ fn snapshot_replay_compares_extension_then_members() -> Result<()> {
                 .write(&1, B256::repeat_byte(0x01))
         },
     ];
-    for corrupt in corruptions {
+    for mutate in ocomp_mutations {
         let mut storage = snapshot_storage(both_admitted)?;
         let (_, key) =
             storage.enter(|storage| write_committee_snapshot(storage, EPOCH, &snapshot))?;
+        storage.enter(|storage| mutate(&ValidatorSet::new(storage), key))?;
+        let preserved_binding = storage.enter(|storage| {
+            ValidatorSet::new(storage)
+                .committee_snapshot_ocomp_binding_hash
+                .read(&key)
+        })?;
+        let preserved_key_lo = storage.enter(|storage| {
+            ValidatorSet::new(storage)
+                .committee_snapshot_ocomp_key_lo_at
+                .get_nested(&key)
+                .read(&1)
+        })?;
         assert_eq!(
             outcome_text(
                 storage.enter(|storage| write_committee_snapshot(storage, EPOCH, &snapshot))
             ),
             format!("Ok(({:?}, {key:?}))", committee_set_hash_of(&snapshot)),
-            "an exact replay is accepted",
+            "same-epoch replay with identical consensus snapshot must not be Fatal",
         );
-        storage.enter(|storage| corrupt(&ValidatorSet::new(storage), key))?;
-        assert_fatal_without_writes(
-            &mut storage,
-            |storage| write_committee_snapshot(storage, EPOCH, &snapshot),
-            &format!("Fatal: committee snapshot replay mismatch for key {key}"),
-        );
+        let after_binding = storage.enter(|storage| {
+            ValidatorSet::new(storage)
+                .committee_snapshot_ocomp_binding_hash
+                .read(&key)
+        })?;
+        let after_key_lo = storage.enter(|storage| {
+            ValidatorSet::new(storage)
+                .committee_snapshot_ocomp_key_lo_at
+                .get_nested(&key)
+                .read(&1)
+        })?;
+        assert_eq!(after_binding, preserved_binding);
+        assert_eq!(after_key_lo, preserved_key_lo);
     }
     Ok(())
 }
@@ -267,7 +311,7 @@ fn stored_ocomp_key_padding_must_be_zero() -> Result<()> {
     });
     assert_eq!(
         outcome_text(result),
-        "Fatal: stored OCOMP snapshot public-key padding is non-zero"
+        "Revert: stored OCOMP snapshot public-key padding is non-zero"
     );
     Ok(())
 }

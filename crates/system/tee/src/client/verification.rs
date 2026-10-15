@@ -192,15 +192,12 @@ fn validate_transition_key_ready_proof(
     let transition_key_ready_proof = if encoded.is_empty() {
         None
     } else {
-        Some(
-            TransitionKeyReadyProofV1::decode_canonical(encoded)
-                .map_err(|error| TransportError::Codec(error.to_string()))?,
-        )
+        Some(TransitionKeyReadyProofV1::decode_canonical(encoded).map_err(TransportError::codec)?)
     };
     match (intent.operation, transition_key_ready_proof.as_ref()) {
         (AttestationOperationV1::TransitionEnclaveMeasurement, Some(proof)) => proof
             .verify_for_transition(intent, proof.resident_offer_public)
-            .map_err(|error| TransportError::Attestation(error.to_string()))?,
+            .map_err(TransportError::attestation)?,
         (AttestationOperationV1::TransitionEnclaveMeasurement, None) => {
             return Err(TransportError::Attestation(
                 "transition quote response is missing its key-ready proof".into(),
@@ -269,7 +266,7 @@ pub fn verify_peer_quote(quote: &EnclaveResponse) -> Result<AttestedPeerKeys, Tr
     // fields. Signature and TCB verification belongs to the native QVL path.
     if !quote_body.is_empty() {
         let m = crate::quote::parse_quote_measurements(quote_body)
-            .map_err(|e| TransportError::Attestation(format!("quote parse: {e}")))?;
+            .map_err(TransportError::quote_parse)?;
         if B256::from(m.mrenclave) != *mrenclave
             || B256::from(m.mrsigner) != *mrsigner
             || m.isv_svn != *isv_svn

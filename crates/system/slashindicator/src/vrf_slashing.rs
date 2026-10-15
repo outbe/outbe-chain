@@ -15,6 +15,7 @@ use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::state::{committee_snapshot_key, read_committee_snapshot};
 use tracing::warn;
 
+use crate::errors::SlashIndicatorError;
 use crate::precompile::ISlashIndicator;
 use crate::runtime::{classify_vrf_failure, registered_validator};
 use crate::schema::SlashIndicator;
@@ -120,7 +121,7 @@ impl SlashIndicator<'_> {
         let phase1_tx_hash = keccak256(&ev.phase1_tx_bytes);
         let evidence_hash = invalid_vrf_evidence_hash_v2(ev.child_block_hash, phase1_tx_hash);
         if self.invalid_vrf_evidence_processed.read(&evidence_hash)? {
-            return Err(PrecompileError::Revert("evidence already processed".into()));
+            return Err(SlashIndicatorError::EvidenceAlreadyProcessed.into());
         }
 
         // (8) Cryptographic proposer attribution.
@@ -167,10 +168,12 @@ impl SlashIndicator<'_> {
             .child_block_number
             .saturating_add(schedule.invalid_vrf_evidence_max_age_blocks);
         if current_block > max_acceptable_block {
-            return Err(PrecompileError::Revert(format!(
-                "evidence stale: current_block {} > child_block {} + max_age {}",
-                current_block, ev.child_block_number, schedule.invalid_vrf_evidence_max_age_blocks,
-            )));
+            return Err(SlashIndicatorError::EvidenceStale {
+                current_block,
+                child_block: ev.child_block_number,
+                max_age: schedule.invalid_vrf_evidence_max_age_blocks,
+            }
+            .into());
         }
 
         // Epoch-lag admissibility. Read the canonical on-chain epoch counter
@@ -191,26 +194,32 @@ impl SlashIndicator<'_> {
     fn require_canonical_vrf_blocks(&self, ev: &InvalidVrfProofEvidence) -> Result<()> {
         self.require_canonical_block("child", ev.child_block_number, ev.child_block_hash)?;
         if ev.parent_block_number.saturating_add(1) != ev.child_block_number {
-            return Err(PrecompileError::Revert(format!(
-                "evidence parent/child number mismatch: parent={} child={}",
-                ev.parent_block_number, ev.child_block_number,
-            )));
+            return Err(SlashIndicatorError::EvidenceParentChildNumberMismatch {
+                parent: ev.parent_block_number,
+                child: ev.child_block_number,
+            }
+            .into());
         }
         self.require_canonical_block("parent", ev.parent_block_number, ev.parent_block_hash)
     }
 
     /// Requires that `hash` is the canonical hash at `number`. `role` names
     /// the block in the revert reason.
-    fn require_canonical_block(&self, role: &str, number: u64, hash: B256) -> Result<()> {
+    fn require_canonical_block(&self, role: &'static str, number: u64, hash: B256) -> Result<()> {
         let canonical = self.storage.canonical_block_hash(number)?.ok_or_else(|| {
-            PrecompileError::Revert(format!(
-                "evidence {role} block {number} not in canonical-history window",
-            ))
+            PrecompileError::from(SlashIndicatorError::EvidenceBlockNotInCanonicalWindow {
+                role,
+                number,
+            })
         })?;
         if canonical != hash {
-            return Err(PrecompileError::Revert(format!(
-                "evidence {role} hash {hash} is not canonical at block {number} (canonical: {canonical})",
-            )));
+            return Err(SlashIndicatorError::EvidenceHashNotCanonical {
+                role,
+                hash,
+                number,
+                canonical,
+            }
+            .into());
         }
         Ok(())
     }
@@ -225,16 +234,18 @@ impl SlashIndicator<'_> {
         let chain_id = self.storage.chain_id()?;
         let (proposer, calldata) =
             recover_phase1_proposer(&ev.phase1_tx_bytes, chain_id, ev.child_block_number)
-                .map_err(|err| PrecompileError::Revert(format!("phase1_tx invalid: {err}")))?;
-        let metadata = match SystemTxInputV2::decode(calldata.as_ref()).map_err(|err| {
-            PrecompileError::Revert(format!("phase1 calldata decode failed: {err}"))
-        })? {
+                .map_err(SlashIndicatorError::phase1_tx_invalid)?;
+        let metadata = match SystemTxInputV2::decode(calldata.as_ref())
+            .map_err(SlashIndicatorError::phase1_calldata_decode_failed)?
+        {
             SystemTxInputV2::CertifiedParentAccounting { metadata } => metadata,
             other => {
-                return Err(PrecompileError::Revert(format!(
-                    "phase1 calldata is not CertifiedParentAccounting: {:?}",
-                    other.kind(),
-                )));
+                return Err(
+                    SlashIndicatorError::Phase1CalldataNotCertifiedParentAccounting {
+                        kind: format!("{:?}", other.kind()),
+                    }
+                    .into(),
+                );
             }
         };
         require_metadata_binding(ev, &metadata)?;
@@ -257,20 +268,23 @@ impl SlashIndicator<'_> {
             committee_snapshot_key(metadata.finalized_epoch, metadata.committee_set_hash);
         let snapshot =
             read_committee_snapshot(self.storage.clone(), snapshot_key)?.ok_or_else(|| {
-                PrecompileError::Revert(format!(
-                    "no committee snapshot for finalized_epoch={} committee_set_hash={}",
-                    metadata.finalized_epoch, metadata.committee_set_hash,
-                ))
+                PrecompileError::from(
+                    SlashIndicatorError::MissingCommitteeSnapshotForFinalizedEpoch {
+                        finalized_epoch: metadata.finalized_epoch,
+                        committee_set_hash: metadata.committee_set_hash,
+                    },
+                )
             })?;
         if !snapshot
             .committee
             .iter()
             .any(|entry| entry.address == proposer)
         {
-            return Err(PrecompileError::Revert(format!(
-                "phase1_tx proposer {proposer} not in committee for epoch {}",
-                metadata.finalized_epoch,
-            )));
+            return Err(SlashIndicatorError::Phase1ProposerNotInCommittee {
+                proposer,
+                epoch: metadata.finalized_epoch,
+            }
+            .into());
         }
         Ok(snapshot)
     }
@@ -346,9 +360,7 @@ impl SlashIndicator<'_> {
 
         // (3) Equivocation requires two DIFFERENT partials.
         if ev.partial_1 == ev.partial_2 {
-            return Err(PrecompileError::Revert(
-                "not equivocation: the two partials are identical".into(),
-            ));
+            return Err(SlashIndicatorError::IdenticalSeedPartials.into());
         }
 
         // (4) Both partials must carry a valid identity signature from the SAME
@@ -357,10 +369,7 @@ impl SlashIndicator<'_> {
         let ok1 = identity_signed(&ev, &ev.partial_1, &ev.identity_sig_1);
         let ok2 = identity_signed(&ev, &ev.partial_2, &ev.identity_sig_2);
         if !(ok1 && ok2) {
-            return Err(PrecompileError::Revert(
-                "both partials must carry a valid identity signature from the accused signer"
-                    .into(),
-            ));
+            return Err(SlashIndicatorError::InvalidSeedPartialIdentitySignatures.into());
         }
 
         // (5) Epoch-lag admissibility: bound how old the offense round can be
@@ -372,7 +381,7 @@ impl SlashIndicator<'_> {
         // (7) Dedup BEFORE effects (order-independent in the two partials).
         let dedup = ev.dedup_hash();
         if self.seed_partial_equivocation_processed.read(&dedup)? {
-            return Err(PrecompileError::Revert("evidence already processed".into()));
+            return Err(SlashIndicatorError::EvidenceAlreadyProcessed.into());
         }
         self.seed_partial_equivocation_processed
             .write(&dedup, true)?;
@@ -436,9 +445,7 @@ impl SlashIndicator<'_> {
         let snapshot_key = committee_snapshot_key(ev.round_epoch, ev.committee_set_hash);
         let snapshot =
             read_committee_snapshot(self.storage.clone(), snapshot_key)?.ok_or_else(|| {
-                PrecompileError::Revert(
-                    "no committee snapshot for (round_epoch, committee_set_hash)".into(),
-                )
+                PrecompileError::from(SlashIndicatorError::MissingCommitteeSnapshotForRound)
             })?;
 
         // (7)-(9) Signer index, material version and polynomial commitment
@@ -452,7 +459,7 @@ impl SlashIndicator<'_> {
         // (12) Dedup before effects.
         let dedup = ev.dedup_hash();
         if self.invalid_seed_partial_processed.read(&dedup)? {
-            return Err(PrecompileError::Revert("evidence already processed".into()));
+            return Err(SlashIndicatorError::EvidenceAlreadyProcessed.into());
         }
         self.invalid_seed_partial_processed.write(&dedup, true)?;
 
@@ -490,11 +497,11 @@ impl SlashIndicator<'_> {
 /// Bounds the work the precompile body does on attacker-controlled input.
 fn require_evidence_size(evidence_bytes: &[u8], schedule: &OutbeProtocolSchedule) -> Result<()> {
     if evidence_bytes.len() > schedule.invalid_vrf_evidence_max_bytes {
-        return Err(PrecompileError::Revert(format!(
-            "evidence too large: {} > {} bytes",
-            evidence_bytes.len(),
-            schedule.invalid_vrf_evidence_max_bytes,
-        )));
+        return Err(SlashIndicatorError::EvidenceTooLarge {
+            actual: evidence_bytes.len(),
+            max_bytes: schedule.invalid_vrf_evidence_max_bytes,
+        }
+        .into());
     }
     Ok(())
 }
@@ -503,15 +510,19 @@ fn require_evidence_size(evidence_bytes: &[u8], schedule: &OutbeProtocolSchedule
 /// names the evidence epoch in the revert reason.
 fn require_epoch_within_lag(
     current_epoch: u64,
-    label: &str,
+    label: &'static str,
     evidence_epoch: u64,
     schedule: &OutbeProtocolSchedule,
 ) -> Result<()> {
     let max_lag = schedule.invalid_vrf_evidence_max_epoch_lag;
     if current_epoch > evidence_epoch.saturating_add(max_lag) {
-        return Err(PrecompileError::Revert(format!(
-            "evidence epoch-stale: current_epoch {current_epoch} > {label} {evidence_epoch} + max_lag {max_lag}",
-        )));
+        return Err(SlashIndicatorError::EvidenceEpochStale {
+            current_epoch,
+            label,
+            evidence_epoch,
+            max_lag,
+        }
+        .into());
     }
     Ok(())
 }
@@ -525,19 +536,20 @@ fn require_metadata_binding(
     if metadata.finalized_block_number != ev.parent_block_number
         || metadata.finalized_block_hash != ev.parent_block_hash
     {
-        return Err(PrecompileError::Revert(format!(
-            "metadata parent binding mismatch: evidence=({}, {}), metadata=({}, {})",
-            ev.parent_block_number,
-            ev.parent_block_hash,
-            metadata.finalized_block_number,
-            metadata.finalized_block_hash,
-        )));
+        return Err(SlashIndicatorError::MetadataParentBindingMismatch {
+            ev_parent_num: ev.parent_block_number,
+            ev_parent_hash: ev.parent_block_hash,
+            meta_num: metadata.finalized_block_number,
+            meta_hash: metadata.finalized_block_hash,
+        }
+        .into());
     }
     if metadata.finalized_epoch != ev.child_epoch {
-        return Err(PrecompileError::Revert(format!(
-            "metadata epoch {} does not match evidence child_epoch {}",
-            metadata.finalized_epoch, ev.child_epoch,
-        )));
+        return Err(SlashIndicatorError::MetadataEpochMismatch {
+            finalized_epoch: metadata.finalized_epoch,
+            child_epoch: ev.child_epoch,
+        }
+        .into());
     }
     Ok(())
 }
@@ -555,14 +567,10 @@ fn vrf_failure_class(
         metadata.proof.as_ref(),
         parent_block_hash,
     ) else {
-        return Err(PrecompileError::Revert(
-            "evidence shows a VALID proof; nothing to slash".into(),
-        ));
+        return Err(SlashIndicatorError::ValidVrfProofNotSlashable.into());
     };
     classify_vrf_failure(&verify_err).ok_or_else(|| {
-        PrecompileError::Revert(format!(
-            "verify_v2_proof rejected with non-VRF class ({verify_err}); not slashable here",
-        ))
+        PrecompileError::from(SlashIndicatorError::NonVrfVerifyRejection { err: verify_err })
     })
 }
 
@@ -600,26 +608,18 @@ fn require_snapshot_commitment(
     let entry = snapshot
         .committee
         .get(idx)
-        .ok_or_else(|| PrecompileError::Revert("signer index out of committee range".into()))?;
+        .ok_or_else(|| PrecompileError::from(SlashIndicatorError::SignerIndexOutOfRange))?;
     if entry.consensus_pubkey != ev.signer_pubkey {
-        return Err(PrecompileError::Revert(
-            "signer pubkey does not match committee entry at index".into(),
-        ));
+        return Err(SlashIndicatorError::SignerPubkeyMismatchAtIndex.into());
     }
     if snapshot.vrf_material_version != ev.vrf_version {
-        return Err(PrecompileError::Revert(
-            "vrf material version does not match committee snapshot".into(),
-        ));
+        return Err(SlashIndicatorError::VrfMaterialVersionMismatch.into());
     }
     if snapshot.vrf_public_polynomial_hash.is_zero() {
-        return Err(PrecompileError::Revert(
-            "committee snapshot has no polynomial commitment".into(),
-        ));
+        return Err(SlashIndicatorError::MissingSnapshotPolynomialCommitment.into());
     }
     if keccak256(&ev.commitment) != snapshot.vrf_public_polynomial_hash {
-        return Err(PrecompileError::Revert(
-            "commitment does not match committee snapshot polynomial hash".into(),
-        ));
+        return Err(SlashIndicatorError::CommitmentPolynomialHashMismatch.into());
     }
     Ok(())
 }
@@ -638,9 +638,7 @@ fn require_invalid_signed_partial(ev: &InvalidSeedPartialEvidence) -> Result<()>
         },
         &ev.identity_sig,
     ) {
-        return Err(PrecompileError::Revert(
-            "partial is not identity-signed by the accused signer".into(),
-        ));
+        return Err(SlashIndicatorError::PartialNotIdentitySigned.into());
     }
     match verify_seed_partial_against_commitment(
         &ev.commitment,
@@ -649,12 +647,8 @@ fn require_invalid_signed_partial(ev: &InvalidSeedPartialEvidence) -> Result<()>
         ev.round_view,
         &ev.partial,
     ) {
-        None => Err(PrecompileError::Revert(
-            "malformed commitment or partial".into(),
-        )),
-        Some(true) => Err(PrecompileError::Revert(
-            "seed partial is valid; nothing to slash".into(),
-        )),
+        None => Err(SlashIndicatorError::MalformedCommitmentOrPartial.into()),
+        Some(true) => Err(SlashIndicatorError::ValidSeedPartialNotSlashable.into()),
         Some(false) => Ok(()),
     }
 }

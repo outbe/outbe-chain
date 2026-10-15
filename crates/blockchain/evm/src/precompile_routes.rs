@@ -10,7 +10,7 @@ use outbe_compressed_entities::ExecutionScope;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
     addresses::*,
-    error::{PrecompileError, Result},
+    error::Result,
     storage::{gas::PRECOMPILE_BASE_GAS, StorageHandle},
 };
 
@@ -181,9 +181,9 @@ impl ExactRoute {
                 caller,
                 value,
             ),
-            (DispatchAdapter::ReadersRequired(_), None) => Err(PrecompileError::Fatal(
-                "execution body read authority was not supplied".into(),
-            )),
+            (DispatchAdapter::ReadersRequired(_), None) => {
+                Err(crate::errors::PrecompileRouteError::MissingBodyReadAuthority.into())
+            }
             (
                 DispatchAdapter::ReadersOptional {
                     without_readers, ..
@@ -239,9 +239,7 @@ fn stablecoin_class_dispatch(storage: StorageHandle, call: RouteCall<'_>) -> Res
         if plain_native_transfer {
             return Ok(Bytes::new());
         }
-        return Err(PrecompileError::Revert(
-            "unregistered stablecoin address".into(),
-        ));
+        return Err(crate::errors::PrecompileRouteError::UnregisteredStablecoinAddress.into());
     };
 
     // A Factory-derived token address has no key and no selector that moves
@@ -249,9 +247,7 @@ fn stablecoin_class_dispatch(storage: StorageHandle, call: RouteCall<'_>) -> Res
     // permanently. Refuse it instead, and let the frame's checkpoint return the
     // funds to the sender.
     if plain_native_transfer {
-        return Err(PrecompileError::Revert(
-            "stablecoin token cannot receive native value".into(),
-        ));
+        return Err(crate::errors::PrecompileRouteError::StablecoinCannotReceiveNativeValue.into());
     }
 
     authenticate_registered_stablecoin(&storage, token, factory_token_id)?;
@@ -266,9 +262,9 @@ fn read_stablecoin_registration(
 ) -> Result<Option<B256>> {
     match outbe_stablecoinfactory::StablecoinFactoryApi::token_id_of(storage.clone(), token) {
         Ok(registered) => Ok(registered),
-        Err(_) if plain_native_transfer => Err(PrecompileError::Revert(
-            "stablecoin registry unavailable".into(),
-        )),
+        Err(_) if plain_native_transfer => {
+            Err(crate::errors::PrecompileRouteError::StablecoinRegistryUnavailable.into())
+        }
         Err(error) => Err(error),
     }
 }
@@ -283,9 +279,9 @@ fn authenticate_registered_stablecoin(
         STABLECOIN_ADDRESS_PREFIX,
     );
     if expected_address != token {
-        return Err(PrecompileError::Fatal(format!(
-            "stablecoin Factory reverse id does not derive callee {token}"
-        )));
+        return Err(
+            crate::errors::PrecompileRouteError::StablecoinReverseIdMismatch { token }.into(),
+        );
     }
 
     storage.with_account_info(token, |info| {
@@ -295,29 +291,28 @@ fn authenticate_registered_stablecoin(
             .map(revm::state::Bytecode::original_bytes)
             .unwrap_or_default();
         if marker.as_ref() != STABLECOIN_MARKER_CODE {
-            return Err(PrecompileError::Fatal(format!(
-                "stablecoin {token} marker code mismatch"
-            )));
+            return Err(
+                crate::errors::PrecompileRouteError::StablecoinMarkerCodeMismatch { token }.into(),
+            );
         }
         Ok(())
     })?;
 
     if let Err(error) = outbe_stablecoin::api::schema_version(storage.clone(), token) {
-        return match error {
-            PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
-                Err(PrecompileError::Fatal(format!(
-                    "stablecoin {token} schema is not initialized for V1"
-                )))
-            }
-            other => Err(other),
-        };
+        if crate::errors::is_revert_error(&error) {
+            return Err(
+                crate::errors::PrecompileRouteError::StablecoinSchemaNotInitialized { token }
+                    .into(),
+            );
+        }
+        return Err(error);
     }
 
     let identity = outbe_stablecoin::api::identity(storage.clone(), token)?;
     if identity.token_id != factory_token_id {
-        return Err(PrecompileError::Fatal(format!(
-            "stablecoin {token} identity does not match Factory registration"
-        )));
+        return Err(
+            crate::errors::PrecompileRouteError::StablecoinIdentityMismatch { token }.into(),
+        );
     }
 
     Ok(())
@@ -500,6 +495,7 @@ mod tests {
     use super::*;
     use alloy_primitives::b256;
     use alloy_sol_types::{sol, SolCall};
+    use outbe_primitives::error::PrecompileError;
     use outbe_primitives::stablecoin::StablecoinCreatePayload;
     use outbe_stablecoin::{FactoryTokenInitialization, StablecoinFactoryApi as TokenFactoryApi};
     use outbe_stablecoinfactory::{
@@ -557,7 +553,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             error,
-            PrecompileError::Fatal(message)
+            PrecompileError::BodyReadUnavailable(message)
                 if message == "execution body read authority was not supplied"
         ));
     }
@@ -837,7 +833,7 @@ mod tests {
                 None,
                 class_call(token, &[]),
             ),
-            Err(PrecompileError::Fatal(message)) if message.contains("marker code mismatch")
+            Err(PrecompileError::Revert(message)) if message.contains("marker code mismatch")
         ));
 
         storage
@@ -853,7 +849,7 @@ mod tests {
                 None,
                 class_call(token, &[]),
             ),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     }
 
@@ -888,7 +884,7 @@ mod tests {
                 None,
                 class_call(token, &call.abi_encode()),
             ),
-            Err(PrecompileError::Fatal(message)) if message.contains("identity does not match")
+            Err(PrecompileError::Revert(message)) if message.contains("identity does not match")
         ));
     }
 }

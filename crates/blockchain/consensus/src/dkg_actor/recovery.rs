@@ -18,6 +18,7 @@ use commonware_utils::N3f1;
 use eyre::Result;
 
 use super::wire::DkgCeremonyId;
+use crate::errors::DkgError;
 
 pub(crate) const DKG_DEALER_RETRY_FILE: &str = "dkg_dealer_retry.hex";
 pub(crate) const DKG_PLAYER_RETRY_FILE: &str = "dkg_player_retry.hex";
@@ -138,7 +139,7 @@ impl DkgRetryStore {
             return Ok(None);
         }
         let bytes = crate::bls::load_raw(&self.dealer_path, &self.backend)
-            .map_err(|error| eyre::eyre!("failed to load DKG dealer retry snapshot: {error}"))?;
+            .map_err(DkgError::load_dealer_retry_snapshot)?;
         let snapshot = decode_dealer_retry_snapshot(&bytes)?;
         Ok((snapshot.ceremony_id == ceremony_id).then_some(snapshot))
     }
@@ -161,15 +162,16 @@ impl DkgRetryStore {
             return Ok(None);
         }
         let stored_len = std::fs::metadata(&self.player_path)
-            .map_err(|error| eyre::eyre!("failed to stat DKG player retry snapshot: {error}"))?
+            .map_err(DkgError::stat_player_retry_snapshot)?
             .len();
         if stored_len > MAX_DKG_PLAYER_RETRY_STORED_BYTES {
-            return Err(eyre::eyre!(
-                "stored DKG player retry snapshot exceeds {MAX_DKG_PLAYER_RETRY_STORED_BYTES} bytes"
-            ));
+            return Err(DkgError::StoredPlayerRetrySnapshotTooLarge {
+                max_bytes: MAX_DKG_PLAYER_RETRY_STORED_BYTES,
+            }
+            .into());
         }
         let bytes = crate::bls::load_raw(&self.player_path, &self.backend)
-            .map_err(|error| eyre::eyre!("failed to load DKG player retry snapshot: {error}"))?;
+            .map_err(DkgError::load_player_retry_snapshot)?;
         let snapshot = decode_player_retry_snapshot(&bytes, max_players)?;
         Ok((snapshot.ceremony_id == ceremony_id).then_some(snapshot))
     }
@@ -187,9 +189,9 @@ impl DkgRetryStore {
     /// durably promoted at its canonical activation boundary.
     pub fn clear(&self) -> Result<()> {
         crate::bls::remove_raw(&self.dealer_path, &self.backend)
-            .map_err(|error| eyre::eyre!("failed to clear DKG dealer retry snapshot: {error}"))?;
+            .map_err(DkgError::clear_dealer_retry_snapshot)?;
         crate::bls::remove_raw(&self.player_path, &self.backend)
-            .map_err(|error| eyre::eyre!("failed to clear DKG player retry snapshot: {error}"))
+            .map_err(DkgError::clear_player_retry_snapshot)
     }
 }
 
@@ -201,7 +203,7 @@ pub(super) fn restore_player(
     retry_store: Option<&DkgRetryStore>,
 ) -> Result<(Player<MinSig, bls12381::PrivateKey>, DkgPlayerRetrySnapshot)> {
     let mut player = Player::<MinSig, bls12381::PrivateKey>::new(info, signing_key)
-        .map_err(|error| eyre::eyre!("failed to create player: {error:?}"))?;
+        .map_err(DkgError::create_player)?;
     let snapshot = match retry_store {
         Some(store) => store
             .load_player(ceremony_id, max_players)?
@@ -216,18 +218,10 @@ pub(super) fn restore_player(
                 accepted.pub_msg.clone(),
                 accepted.priv_msg.clone(),
             )
-            .map_err(|error| {
-                eyre::eyre!(
-                    "persisted DKG player dealing is invalid during restart replay: {error:?}"
-                )
-            })?
-            .ok_or_else(|| {
-                eyre::eyre!("persisted DKG player dealing produced no ACK during restart replay")
-            })?;
+            .map_err(DkgError::invalid_persisted_player_dealing)?
+            .ok_or(DkgError::PersistedPlayerDealingProducedNoAck)?;
         if replayed_ack.encode() != accepted.ack.encode() {
-            return Err(eyre::eyre!(
-                "persisted DKG player dealing produced a different ACK during restart replay"
-            ));
+            return Err(DkgError::PersistedPlayerDealingDifferentAck.into());
         }
     }
 
@@ -301,15 +295,11 @@ fn save_snapshot(
     role: &str,
 ) -> Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| {
-            eyre::eyre!(
-                "failed to create DKG {role} retry directory {}: {error}",
-                parent.display()
-            )
-        })?;
+        std::fs::create_dir_all(parent)
+            .map_err(|error| DkgError::create_retry_dir(role, parent, error))?;
     }
     crate::bls::save_raw(path, bytes, backend)
-        .map_err(|error| eyre::eyre!("failed to persist DKG {role} retry snapshot: {error}"))
+        .map_err(|error| DkgError::persist_retry_snapshot(role, error))
 }
 
 pub(super) fn encode_dealer_retry_snapshot(snapshot: &DkgDealerRetrySnapshot) -> Result<Vec<u8>> {
@@ -317,7 +307,7 @@ pub(super) fn encode_dealer_retry_snapshot(snapshot: &DkgDealerRetrySnapshot) ->
         .accepted_acks
         .len()
         .try_into()
-        .map_err(|_| eyre::eyre!("too many DKG dealer retry ACKs"))?;
+        .map_err(|_| DkgError::TooManyDealerRetryAcks)?;
     let mut bytes = Vec::with_capacity(DKG_DEALER_RETRY_HEADER_LEN);
     bytes.extend_from_slice(DKG_DEALER_RETRY_MAGIC);
     bytes.extend_from_slice(&snapshot.ceremony_id.round.to_be_bytes());
@@ -333,13 +323,14 @@ pub(super) fn encode_dealer_retry_snapshot(snapshot: &DkgDealerRetrySnapshot) ->
 
 pub(super) fn decode_dealer_retry_snapshot(bytes: &[u8]) -> Result<DkgDealerRetrySnapshot> {
     if bytes.len() < DKG_DEALER_RETRY_HEADER_LEN {
-        return Err(eyre::eyre!(
-            "invalid DKG dealer retry snapshot length: expected at least {DKG_DEALER_RETRY_HEADER_LEN}, got {}",
-            bytes.len()
-        ));
+        return Err(DkgError::InvalidDealerRetrySnapshotLength {
+            expected_min: DKG_DEALER_RETRY_HEADER_LEN,
+            actual: bytes.len(),
+        }
+        .into());
     }
     if &bytes[..DKG_DEALER_RETRY_MAGIC.len()] != DKG_DEALER_RETRY_MAGIC {
-        return Err(eyre::eyre!("invalid DKG dealer retry snapshot magic"));
+        return Err(DkgError::InvalidDealerRetrySnapshotMagic.into());
     }
     let round = u64::from_be_bytes(bytes[8..16].try_into()?);
     let info_hash = B256::from(<[u8; 32]>::try_from(&bytes[16..48])?);
@@ -360,7 +351,7 @@ pub(super) fn decode_dealer_retry_snapshot(bytes: &[u8]) -> Result<DkgDealerRetr
             "ACK",
         )?;
         if accepted_acks.insert(player, ack).is_some() {
-            return Err(eyre::eyre!("duplicate player in DKG retry snapshot"));
+            return Err(DkgError::DuplicatePlayerInRetrySnapshot.into());
         }
     }
     ensure_exact_end(bytes, cursor, "dealer")?;
@@ -376,7 +367,7 @@ fn encode_player_retry_snapshot(snapshot: &DkgPlayerRetrySnapshot) -> Result<Vec
         .accepted_dealings
         .len()
         .try_into()
-        .map_err(|_| eyre::eyre!("too many DKG player retry dealings"))?;
+        .map_err(|_| DkgError::TooManyPlayerRetryDealings)?;
     let mut bytes = Vec::with_capacity(DKG_PLAYER_RETRY_HEADER_LEN);
     bytes.extend_from_slice(DKG_PLAYER_RETRY_MAGIC);
     bytes.extend_from_slice(&snapshot.ceremony_id.round.to_be_bytes());
@@ -389,10 +380,10 @@ fn encode_player_retry_snapshot(snapshot: &DkgPlayerRetrySnapshot) -> Result<Vec
         push_retry_snapshot_field(&mut bytes, &accepted.ack.encode())?;
     }
     if bytes.len() > MAX_DKG_PLAYER_RETRY_BYTES {
-        return Err(eyre::eyre!(
-            "DKG player retry snapshot exceeds {} bytes",
-            MAX_DKG_PLAYER_RETRY_BYTES
-        ));
+        return Err(DkgError::PlayerRetrySnapshotTooLarge {
+            max_bytes: MAX_DKG_PLAYER_RETRY_BYTES,
+        }
+        .into());
     }
     Ok(bytes)
 }
@@ -402,13 +393,13 @@ fn decode_player_retry_snapshot(
     max_players: NonZeroU32,
 ) -> Result<DkgPlayerRetrySnapshot> {
     if bytes.len() < DKG_PLAYER_RETRY_HEADER_LEN || bytes.len() > MAX_DKG_PLAYER_RETRY_BYTES {
-        return Err(eyre::eyre!(
-            "invalid DKG player retry snapshot length: {}",
-            bytes.len()
-        ));
+        return Err(DkgError::InvalidPlayerRetrySnapshotLength {
+            actual: bytes.len(),
+        }
+        .into());
     }
     if &bytes[..DKG_PLAYER_RETRY_MAGIC.len()] != DKG_PLAYER_RETRY_MAGIC {
-        return Err(eyre::eyre!("invalid DKG player retry snapshot magic"));
+        return Err(DkgError::InvalidPlayerRetrySnapshotMagic.into());
     }
     let round = u64::from_be_bytes(bytes[8..16].try_into()?);
     let info_hash = B256::from(<[u8; 32]>::try_from(&bytes[16..48])?);
@@ -448,7 +439,7 @@ fn decode_player_retry_snapshot(
             )
             .is_some()
         {
-            return Err(eyre::eyre!("duplicate dealer in DKG player retry snapshot"));
+            return Err(DkgError::DuplicateDealerInPlayerRetrySnapshot.into());
         }
     }
     ensure_exact_end(bytes, cursor, "player")?;
@@ -462,7 +453,7 @@ fn push_retry_snapshot_field(bytes: &mut Vec<u8>, field: &[u8]) -> Result<()> {
     let len: u32 = field
         .len()
         .try_into()
-        .map_err(|_| eyre::eyre!("DKG retry field exceeds u32 length"))?;
+        .map_err(|_| DkgError::RetryFieldExceedsU32)?;
     bytes.extend_from_slice(&len.to_be_bytes());
     bytes.extend_from_slice(field);
     Ok(())
@@ -475,17 +466,27 @@ fn take_retry_snapshot_field<'a>(
 ) -> Result<&'a [u8]> {
     let len_end = cursor
         .checked_add(4)
-        .ok_or_else(|| eyre::eyre!("DKG retry {field} length overflow"))?;
-    let len_bytes = bytes
-        .get(*cursor..len_end)
-        .ok_or_else(|| eyre::eyre!("truncated DKG retry {field} length"))?;
+        .ok_or_else(|| DkgError::RetryFieldLengthOverflow {
+            field: field.to_owned(),
+        })?;
+    let len_bytes =
+        bytes
+            .get(*cursor..len_end)
+            .ok_or_else(|| DkgError::TruncatedRetryFieldLength {
+                field: field.to_owned(),
+            })?;
     let len = u32::from_be_bytes(len_bytes.try_into()?) as usize;
     let value_end = len_end
         .checked_add(len)
-        .ok_or_else(|| eyre::eyre!("DKG retry {field} value overflow"))?;
-    let value = bytes
-        .get(len_end..value_end)
-        .ok_or_else(|| eyre::eyre!("truncated DKG retry {field} value"))?;
+        .ok_or_else(|| DkgError::RetryFieldValueOverflow {
+            field: field.to_owned(),
+        })?;
+    let value =
+        bytes
+            .get(len_end..value_end)
+            .ok_or_else(|| DkgError::TruncatedRetryFieldValue {
+                field: field.to_owned(),
+            })?;
     *cursor = value_end;
     Ok(value)
 }
@@ -499,26 +500,33 @@ where
     E: std::fmt::Display,
 {
     let mut reader = bytes;
-    let value =
-        decode(&mut reader).map_err(|error| eyre::eyre!("invalid DKG retry {field}: {error}"))?;
+    let value = decode(&mut reader).map_err(|error| DkgError::invalid_retry_field(field, error))?;
     if !reader.is_empty() {
-        return Err(eyre::eyre!("trailing bytes in DKG retry {field}"));
+        return Err(DkgError::TrailingRetryFieldBytes {
+            field: field.to_owned(),
+        }
+        .into());
     }
     Ok(value)
 }
 
 fn ensure_entry_count(count: u32, kind: &str) -> Result<()> {
     if count > crate::bls::MAX_VALIDATORS {
-        return Err(eyre::eyre!(
-            "DKG retry {kind} count {count} exceeds validator limit"
-        ));
+        return Err(DkgError::RetryEntryCountExceedsValidatorLimit {
+            kind: kind.to_owned(),
+            count,
+        }
+        .into());
     }
     Ok(())
 }
 
 fn ensure_exact_end(bytes: &[u8], cursor: usize, role: &str) -> Result<()> {
     if cursor != bytes.len() {
-        return Err(eyre::eyre!("trailing bytes in DKG {role} retry snapshot"));
+        return Err(DkgError::TrailingRetrySnapshotBytes {
+            role: role.to_owned(),
+        }
+        .into());
     }
     Ok(())
 }

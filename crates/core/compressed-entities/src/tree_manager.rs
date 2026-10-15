@@ -673,7 +673,7 @@ impl AuthenticatedParentTreeFactory for CompressedTreeService {
     ) -> outbe_primitives::error::Result<Arc<dyn AuthenticatedParentTree>> {
         CompressedTreeService::open_parent(self, identity).map_err(|error| match error {
             TreeServiceError::ParentView(error) => error,
-            other => PrecompileError::Fatal(other.to_string()),
+            other => outbe_primitives::error::PrecompileError::TreeUnavailable(other.to_string()),
         })
     }
 }

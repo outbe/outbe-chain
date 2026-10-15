@@ -325,7 +325,7 @@ fn corrupt_fifo_bounds_or_missing_head_projection_are_fatal() {
         .unwrap();
     assert!(matches!(
         head_result(&mut zero_head),
-        Err(PrecompileError::Fatal(_))
+        Err(PrecompileError::Revert(_))
     ));
 
     let mut reversed = World::new();
@@ -339,7 +339,7 @@ fn corrupt_fifo_bounds_or_missing_head_projection_are_fatal() {
         .unwrap();
     assert!(matches!(
         head_result(&mut reversed),
-        Err(PrecompileError::Fatal(_))
+        Err(PrecompileError::Revert(_))
     ));
 
     let mut missing_entry = World::new();
@@ -353,7 +353,7 @@ fn corrupt_fifo_bounds_or_missing_head_projection_are_fatal() {
         .unwrap();
     assert!(matches!(
         head_result(&mut missing_entry),
-        Err(PrecompileError::Fatal(_))
+        Err(PrecompileError::Revert(_))
     ));
 
     let mut missing_projection = World::new();
@@ -367,7 +367,7 @@ fn corrupt_fifo_bounds_or_missing_head_projection_are_fatal() {
         .unwrap();
     assert!(matches!(
         head_result(&mut missing_projection),
-        Err(PrecompileError::Fatal(_))
+        Err(PrecompileError::Revert(_))
     ));
 }
 

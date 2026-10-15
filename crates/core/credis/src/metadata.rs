@@ -72,7 +72,7 @@ pub(crate) fn token_uri(record: &Credis, now: u64) -> Result<String> {
         Trait::text("CCA", record.cca.to_string()),
         Trait::date("Issued At", record.issued_at),
     ];
-    if matches!(effective, CredisState::Called | CredisState::Forfeited) {
+    if record.called_at != 0 && matches!(effective, CredisState::Called | CredisState::Forfeited) {
         let deadline = settlement_deadline(record);
         rows.push(("Settlement Deadline", nft_card::timestamp_utc(deadline)));
         traits.push(Trait::date("Called At", record.called_at));

@@ -141,7 +141,9 @@ impl GemView {
     pub fn settlement_deadline(&self) -> u64 {
         match self.called_at() {
             0 => 0,
-            called_at => called_at.saturating_add(u64::from(self.terms.call_notice_period_seconds)),
+            called_at => {
+                crate::api::settlement_deadline_of(called_at, self.terms.call_notice_period_seconds)
+            }
         }
     }
 

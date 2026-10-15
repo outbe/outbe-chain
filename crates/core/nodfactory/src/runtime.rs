@@ -8,7 +8,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::NOD_FACTORY_ADDRESS;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use outbe_common::pow;
@@ -166,7 +166,7 @@ pub fn settle_nod(
     storage.clone().with_checkpoint(|| {
         // Publish the transition before external payment calls so callbacks cannot
         // settle the same Nod twice. A failed payment rolls the transition back.
-        nod_api::settle_nod(storage, scope, item, bucket)?;
+        nod_api::record_settled(storage, scope, item, bucket)?;
         settlement::collect(
             storage,
             NOD_FACTORY_ADDRESS,
@@ -194,12 +194,7 @@ pub(crate) fn settlement_units(
     rate: Option<(U256, U256)>,
     asset_decimals: u8,
 ) -> Result<U256> {
-    let obligation = Obligation {
-        entry_price_minor,
-        load_minor: gratis_load_minor,
-        units: U256::ONE,
-        cost_rate_pct: 100,
-    };
+    let obligation = nod_obligation(entry_price_minor, gratis_load_minor);
     outbe_common::settlement::obligation_units(&obligation, rate, asset_decimals)
         .map_err(|e| settlement::SettlementError::Rounding(e).into())
 }
@@ -213,12 +208,20 @@ fn currencies(item: &NodItemState) -> Currencies {
 
 /// One Nod: its bucket's entry price times its Gratis load.
 fn obligation(item: &NodItemState, bucket: &NodBucketState) -> Result<Obligation> {
-    Ok(Obligation {
-        entry_price_minor: bucket.entry_price_minor,
-        load_minor: nod_api::calculation_amount(item)?,
+    Ok(nod_obligation(
+        bucket.entry_price_minor,
+        nod_api::calculation_amount(item)?,
+    ))
+}
+
+/// One Nod at its entry price and Gratis load, at cost.
+fn nod_obligation(entry_price_minor: U256, gratis_load_minor: U256) -> Obligation {
+    Obligation {
+        entry_price_minor,
+        load_minor: gratis_load_minor,
         units: U256::ONE,
         cost_rate_pct: 100,
-    })
+    }
 }
 
 /// The call terms a bucket opened at `entry_price_minor` seals: the entry marked up by
@@ -236,7 +239,7 @@ pub fn call_terms(
     }
     let params = outbe_nod::config::read(storage)?;
     let call_price = outbe_primitives::markup::marked_up(entry_price_minor, params.call_rate)
-        .ok_or_else(|| PrecompileError::Fatal("Nod call price overflow".into()))?;
+        .ok_or(crate::errors::NodFactoryError::CallPriceOverflow)?;
     Ok(Some(CallTerms {
         call_price_minor: call_price,
         reference_currency,

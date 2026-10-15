@@ -1,0 +1,21 @@
+[package]
+name = "outbe-radicle-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+lexopt = "0.3.0"
+log.workspace = true
+radicle.workspace = true
+radicle-node.workspace = true
+radicle-signals.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+radicle = { workspace = true, features = ["test"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

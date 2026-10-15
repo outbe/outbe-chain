@@ -1,6 +1,4 @@
-//! Nod call and forfeit sweep entry points.
-//!
-//! Qualification is derived when read (`api::is_qualified`).
+//! Per-block entry points of the Nod sweeps, run from CycleTick.
 
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};

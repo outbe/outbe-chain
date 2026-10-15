@@ -2,9 +2,10 @@
 use commonware_actor::Feedback;
 use commonware_p2p::{Address, AddressableManager, AddressableTrackedPeers};
 use commonware_utils::ordered::Map;
-use eyre::{ensure, eyre, Result};
+use eyre::Result;
 
 use super::ingress::PublicKey;
+use crate::errors::PeerManagerError;
 
 type Peers = AddressableTrackedPeers<PublicKey>;
 
@@ -34,15 +35,16 @@ impl<O: AddressableManager<PublicKey = PublicKey>> PeerAdmission<O> {
     fn next_index(&self) -> Result<u64> {
         self.index
             .checked_add(1)
-            .ok_or_else(|| eyre!("peer-set index exhausted"))
+            .ok_or_else(|| PeerManagerError::PeerSetIndexExhausted.into())
     }
 
     fn publish(&mut self, index: u64, peers: Peers) -> Result<()> {
-        ensure!(index > self.index, "non-increasing P2P peer-set index");
-        ensure!(
-            self.oracle.track(index, peers.clone()) == Feedback::Ok,
-            "P2P oracle closed"
-        );
+        if index <= self.index {
+            return Err(PeerManagerError::NonIncreasingPeerSetIndex.into());
+        }
+        if self.oracle.track(index, peers.clone()) != Feedback::Ok {
+            return Err(PeerManagerError::P2pOracleClosed.into());
+        }
         self.index = index;
         self.published = Some(peers);
         Ok(())
@@ -59,13 +61,11 @@ impl<O: AddressableManager<PublicKey = PublicKey>> PeerAdmission<O> {
                 if last.primary.keys() == peers.primary.keys()
                     && last.secondary.keys() == peers.secondary.keys() =>
             {
-                if last.primary.values() != peers.primary.values()
-                    || last.secondary.values() != peers.secondary.values()
+                if (last.primary.values() != peers.primary.values()
+                    || last.secondary.values() != peers.secondary.values())
+                    && self.oracle.overwrite(combine(&peers)) != Feedback::Ok
                 {
-                    ensure!(
-                        self.oracle.overwrite(combine(&peers)) == Feedback::Ok,
-                        "P2P oracle closed"
-                    );
+                    return Err(PeerManagerError::P2pOracleClosed.into());
                 }
             }
             _ => self.publish(self.next_index()?, peers.clone())?,
@@ -108,10 +108,9 @@ impl<O: AddressableManager<PublicKey = PublicKey>> PeerAdmission<O> {
     }
 
     pub(super) fn overwrite(&mut self, peers: Map<PublicKey, Address>) -> Result<()> {
-        ensure!(
-            self.oracle.overwrite(peers) == Feedback::Ok,
-            "P2P oracle closed"
-        );
+        if self.oracle.overwrite(peers) != Feedback::Ok {
+            return Err(PeerManagerError::P2pOracleClosed.into());
+        }
         // Recovery may supply addresses different from the cached snapshot. The
         // next canonical refresh must reconcile them rather than report Unchanged.
         self.published = None;

@@ -10,15 +10,15 @@ interface ICredis {
     // are never emitted.
     event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
-    /// ERC-4906: emitted when a Credis is called, on every settlement, and when the forfeit
-    ///         sweep forfeits it. A lapsed Credis reads Forfeited before that event.
+    /// ERC-4906: emitted when a Credis is called, on every settlement, and when it is
+    ///         forfeited. A lapsed Credis reads Forfeited before the sweep reaches it.
     event MetadataUpdate(uint256 _tokenId);
     /// ERC-4906, declared for the standard's shape only: never emitted.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
     event CredisCalled(uint256 indexed credisId, uint64 calledAt, uint64 settlementDeadline);
 
-    /// @notice Forfeiture of a called Credis. Records the principal written off.
+    /// @notice Forfeiture after a lapsed call or by the owner. Records the principal written off.
     ///         Unpaid interest is left out of this event and out of `interestPaidMinor`.
     event CredisForfeited(
         uint256 indexed credisId, address indexed cca, uint256 gratisBurnedMinor, uint256 principalWrittenOffMinor
@@ -52,7 +52,7 @@ interface ICredis {
     }
 
     /// Where the principal and the pledged Gratis went, cumulative. Per-payment
-    /// deltas are in the events.
+    /// deltas are in `ICredisFactory.SettlementApplied`.
     struct Outcome {
         uint256 principalPaidMinor;
         /// Principal left unpaid at forfeiture.
@@ -97,7 +97,7 @@ interface ICredis {
         /// Forfeited, with its outcome, before the forfeit sweep reaches it.
         uint8 state;
         /// Lifetime interest collected, in asset minor units. The sum of successful
-        /// `SettlementApplied.interestPaidMinor` payments. Current-period accrual is
+        /// `ICredisFactory.SettlementApplied.interestPaidMinor` payments. Current-period accrual is
         /// {interestAccruedMinor}.
         uint256 interestPaidMinor;
         CallTerms call;
@@ -139,7 +139,7 @@ interface ICredis {
     function interestAccruedMinor(uint256 credisId) external view returns (uint256);
 
     /// @notice Lifetime interest collected on this Credis, in asset minor units.
-    ///         Equals the sum of `SettlementApplied.interestPaidMinor` over successful
+    ///         Equals the sum of `ICredisFactory.SettlementApplied.interestPaidMinor` over successful
     ///         settlements. Forfeiture does not add unpaid interest.
     function interestPaidMinor(uint256 credisId) external view returns (uint256);
 

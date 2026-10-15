@@ -82,9 +82,7 @@ where
     let epoch_length = epoch_length_blocks_from_genesis(&node)?;
 
     if args.upstream_nocertify {
-        return Err(eyre::eyre!(
-            "--upstream.nocertify (uncertified dev sync) is not yet implemented"
-        ));
+        return Err(crate::errors::FollowerStackError::UpstreamNocertifyNotImplemented.into());
     }
 
     // Trust anchor: the genesis validator committee (the MinPk consensus key
@@ -102,7 +100,7 @@ where
             .cloned()
             .try_collect()
             .map_err(|e| {
-                eyre::eyre!("genesis validator set is not a valid participant set: {e:?}")
+                crate::errors::FollowerStackError::InvalidGenesisParticipantSet(format!("{e:?}"))
             })?;
 
     // Defence in depth for callers that construct the engine stack outside the
@@ -114,16 +112,14 @@ where
         .tribute_offer_public_key()
         .await
         .wrap_err("failed to probe the upstream for TEE-chain status (follower prerequisites)")?;
-    ensure!(
-        !tee_offer_public.is_zero(),
-        "selected upstream has no mandatory OST3 offer key"
-    );
+    if tee_offer_public.is_zero() {
+        return Err(crate::errors::FollowerStackError::UpstreamMissingOst3OfferKey.into());
+    }
     let resident_offer = outbe_tee::resident_offer_public_key_v1()
         .wrap_err("failed to read the mandatory local enclave offer key")?;
-    ensure!(
-        resident_offer == tee_offer_public,
-        "local enclave does not hold the selected chain's exact offer key; refusing certified sync (no recovery or fallback)"
-    );
+    if resident_offer != tee_offer_public {
+        return Err(crate::errors::FollowerStackError::LocalEnclaveOfferKeyMismatch.into());
+    }
 
     info!(
         %upstream,
@@ -135,7 +131,7 @@ where
     let ocomp_storage_root = args
         .storage_dir
         .clone()
-        .ok_or_else(|| eyre::eyre!("consensus storage_dir must be set before follower startup"))?;
+        .ok_or(crate::errors::FollowerStackError::MissingStorageDirBeforeStartup)?;
 
     startup::run_certified_follow_stack(
         ctx,
@@ -170,12 +166,16 @@ pub(in crate::stack) fn build_certified_follower_parent_record(
     scheme: &HybridScheme<MinSig>,
 ) -> Result<outbe_consensus::finalization::parent_cert_store::CertifiedParentProofRecord> {
     let finalized_hash = finalization.proposal.payload.0;
-    ensure!(
-        finalized_hash == block.block_hash(),
-        "certified follower finalization payload {finalized_hash} differs from executed block {} at height {}",
-        block.block_hash(),
-        block.number(),
-    );
+    if finalized_hash != block.block_hash() {
+        return Err(
+            crate::errors::FollowerStackError::FinalizationPayloadDiffersFromExecuted {
+                finalized_hash,
+                block_hash: block.block_hash(),
+                height: block.number(),
+            }
+            .into(),
+        );
+    }
 
     let finalized_epoch = finalization.proposal.round.epoch().get();
     let ordered_addresses: Vec<EthAddress> = historical_snapshot
@@ -196,12 +196,16 @@ pub(in crate::stack) fn build_certified_follower_parent_record(
         },
     )?;
     let historical_hash = historical_snapshot.committee_set_hash_v2(finalized_epoch);
-    ensure!(
-        record.committee_set_hash == historical_hash,
-        "certified follower verifier committee {} differs from historical committee snapshot {} at epoch {finalized_epoch}",
-        record.committee_set_hash,
-        historical_hash,
-    );
+    if record.committee_set_hash != historical_hash {
+        return Err(
+            crate::errors::FollowerStackError::VerifierCommitteeDiffersFromHistorical {
+                verifier_hash: record.committee_set_hash,
+                historical_hash,
+                finalized_epoch,
+            }
+            .into(),
+        );
+    }
     Ok(record)
 }
 
@@ -220,24 +224,28 @@ impl FollowerProofPersistence<'_> {
         let finalization = marshal_mailbox
             .get_finalization(Height::new(height))
             .await
-            .ok_or_else(|| {
-                eyre::eyre!("marshal has no certified finalization at follower height {height}")
-            })?;
+            .ok_or(
+                crate::errors::FollowerStackError::MarshalMissingCertifiedFinalization(height),
+            )?;
         let block = marshal_mailbox
             .get_block(&finalization.proposal.payload)
             .await
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "marshal has no finalized block {} at follower height {height}",
-                    finalization.proposal.payload.0
-                )
-            })?;
-        ensure!(
-            block.number() == height,
-            "marshal finalized block {} reports height {}, expected {height}",
-            block.block_hash(),
-            block.number(),
-        );
+            .ok_or(
+                crate::errors::FollowerStackError::MarshalMissingFinalizedBlock {
+                    payload: finalization.proposal.payload.0,
+                    height,
+                },
+            )?;
+        if block.number() != height {
+            return Err(
+                crate::errors::FollowerStackError::MarshalFinalizedBlockHeightMismatch {
+                    block_hash: block.block_hash(),
+                    actual: block.number(),
+                    expected: height,
+                }
+                .into(),
+            );
+        }
 
         self.reconcile_record(&finalization, &block)?;
         Ok(block)
@@ -257,25 +265,44 @@ impl FollowerProofPersistence<'_> {
 
         let epoch = finalization.proposal.round.epoch();
         let scheme = certificate_scheme_provider.scoped(epoch).ok_or_else(|| {
-            eyre::eyre!(
-                "certified follower has no verifier scheme for finalized epoch {}",
-                epoch.get()
-            )
+            crate::errors::FollowerStackError::MissingVerifierSchemeForFinalizedEpoch(epoch.get())
         })?;
         let snapshot = validators::read_committee_snapshot_at_latest(&node.provider, epoch.get())?
             .ok_or_else(|| {
-                eyre::eyre!(
-                    "certified follower has no historical committee snapshot for epoch {}",
-                    epoch.get()
-                )
+                crate::errors::FollowerStackError::MissingHistoricalCommitteeSnapshot(epoch.get())
             })?;
         let height = block.number();
-        let record = build_certified_follower_parent_record(
+        let record = match build_certified_follower_parent_record(
             finalization,
             block,
             &snapshot,
             scheme.as_ref(),
-        )?;
+        ) {
+            Ok(record) => record,
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<crate::errors::FollowerStackError>(),
+                    Some(
+                        crate::errors::FollowerStackError::VerifierCommitteeDiffersFromHistorical { .. }
+                    )
+                ) =>
+            {
+                let refreshed =
+                    validators::read_committee_snapshot_at_latest(&node.provider, epoch.get())?
+                        .ok_or_else(|| {
+                            crate::errors::FollowerStackError::MissingHistoricalCommitteeSnapshot(
+                                epoch.get(),
+                            )
+                        })?;
+                build_certified_follower_parent_record(
+                    finalization,
+                    block,
+                    &refreshed,
+                    scheme.as_ref(),
+                )?
+            }
+            Err(error) => return Err(error),
+        };
         parent_cert_store
             .put_finalization(record)
             .wrap_err_with(|| {

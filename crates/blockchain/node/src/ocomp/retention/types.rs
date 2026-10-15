@@ -187,6 +187,8 @@ pub enum RetentionError {
     RetentionCoordinatorNotInstalled,
     #[error("OCOMP retention coordinator is already installed")]
     RetentionCoordinatorAlreadyInstalled,
+    #[error("multiple input retention identities exist for one WWD")]
+    MultipleInputRetentionIdentities,
 }
 
 pub(in crate::ocomp::retention) fn retention_status_error(

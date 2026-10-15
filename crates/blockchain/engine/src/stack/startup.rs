@@ -5,22 +5,19 @@ use super::*;
 pub(in crate::stack) fn epoch_length_blocks_from_genesis(node: &OutbeFullNode) -> Result<u32> {
     let extra = &node.chain_spec().genesis.config.extra_fields;
     if extra.get("epochDuration").is_some() {
-        return Err(eyre::eyre!(
-            "genesis config uses deprecated epochDuration; use epochLengthBlocks"
-        ));
+        return Err(crate::errors::StackStartupError::DeprecatedEpochDuration.into());
     }
     if extra.get("dkgRotationIntervalBlocks").is_some() {
-        return Err(eyre::eyre!(
-            "genesis config uses deprecated dkgRotationIntervalBlocks; use epochLengthBlocks"
-        ));
+        return Err(crate::errors::StackStartupError::DeprecatedDkgRotationIntervalBlocks.into());
     }
 
     match extra.get_deserialized::<u32>("epochLengthBlocks") {
-        Some(Ok(0)) => Err(eyre::eyre!("genesis config epochLengthBlocks must be > 0")),
+        Some(Ok(0)) => Err(crate::errors::StackStartupError::EpochLengthBlocksZero.into()),
         Some(Ok(value)) => Ok(value),
-        Some(Err(error)) => Err(eyre::eyre!(
-            "invalid genesis config epochLengthBlocks: {error}"
-        )),
+        Some(Err(error)) => Err(crate::errors::StackStartupError::InvalidEpochLengthBlocks(
+            error.to_string(),
+        )
+        .into()),
         None => Ok(config::DEFAULT_EPOCH_LENGTH_BLOCKS),
     }
 }
@@ -36,7 +33,13 @@ pub(in crate::stack) fn read_ms<E: std::fmt::Display>(
 ) -> Result<u64> {
     match parsed {
         Some(Ok(value)) => Ok(value),
-        Some(Err(error)) => Err(eyre::eyre!("invalid genesis config {key}: {error}")),
+        Some(Err(error)) => Err(
+            crate::errors::StackStartupError::InvalidGenesisTimingConfig {
+                key: key.to_string(),
+                error: error.to_string(),
+            }
+            .into(),
+        ),
         None => Ok(default),
     }
 }
@@ -46,27 +49,31 @@ pub(in crate::stack) fn read_ms<E: std::fmt::Display>(
 /// of `0`. The proposer floor cannot be disabled.
 pub(in crate::stack) fn validate_timing(min_ms: u64, leader_ms: u64, cert_ms: u64) -> Result<()> {
     if min_ms == 0 {
-        return Err(eyre::eyre!(
-            "genesis config minBlockTimeMs must be > 0 (the floor cannot be disabled)"
-        ));
+        return Err(crate::errors::StackStartupError::MinBlockTimeMsZero.into());
     }
     if leader_ms == 0 {
-        return Err(eyre::eyre!("genesis config leaderTimeoutMs must be > 0"));
+        return Err(crate::errors::StackStartupError::LeaderTimeoutMsZero.into());
     }
     if cert_ms == 0 {
-        return Err(eyre::eyre!(
-            "genesis config certificationTimeoutMs must be > 0"
-        ));
+        return Err(crate::errors::StackStartupError::CertificationTimeoutMsZero.into());
     }
     if min_ms >= leader_ms {
-        return Err(eyre::eyre!(
-            "genesis config minBlockTimeMs ({min_ms}) must be < leaderTimeoutMs ({leader_ms})"
-        ));
+        return Err(
+            crate::errors::StackStartupError::MinBlockTimeExceedsLeaderTimeout {
+                min_ms,
+                leader_ms,
+            }
+            .into(),
+        );
     }
     if leader_ms > cert_ms {
-        return Err(eyre::eyre!(
-            "genesis config leaderTimeoutMs ({leader_ms}) must be <= certificationTimeoutMs ({cert_ms})"
-        ));
+        return Err(
+            crate::errors::StackStartupError::LeaderTimeoutExceedsCertificationTimeout {
+                leader_ms,
+                cert_ms,
+            }
+            .into(),
+        );
     }
     Ok(())
 }
@@ -114,12 +121,12 @@ pub(in crate::stack) fn genesis_hash(node: &OutbeFullNode) -> Result<B256> {
     let hash = node
         .provider
         .block_hash(0)
-        .map_err(|e| eyre::eyre!("failed to get genesis hash: {e}"))?;
+        .map_err(|e| crate::errors::StackStartupError::GetGenesisHash(format!("{e}")))?;
     require_genesis_hash(hash)
 }
 
 pub(in crate::stack) fn require_genesis_hash(hash: Option<B256>) -> Result<B256> {
-    hash.ok_or_else(|| eyre::eyre!("missing genesis block hash from provider"))
+    hash.ok_or_else(|| crate::errors::StackStartupError::MissingGenesisBlockHash.into())
 }
 
 /// Read the canonical height-0 genesis block from the provider and wrap it as a
@@ -137,23 +144,29 @@ pub(in crate::stack) fn genesis_consensus_block(
     let recovered = node
         .provider
         .recovered_block(0u64.into(), TransactionVariant::NoHash)
-        .map_err(|e| eyre::eyre!("failed to read genesis block from provider: {e}"))?
-        .ok_or_else(|| eyre::eyre!("missing genesis block (height 0) from provider"))?;
+        .map_err(|e| crate::errors::StackStartupError::ReadGenesisBlock(format!("{e}")))?
+        .ok_or(crate::errors::StackStartupError::MissingGenesisBlock)?;
     Ok(outbe_consensus::block::ConsensusBlock::from_sealed(
         recovered.into_sealed_block(),
     ))
 }
 
 pub(in crate::stack) fn nonzero_u16(value: u16, name: &str) -> Result<NonZeroU16> {
-    NonZeroU16::new(value).ok_or_else(|| eyre::eyre!("{name} must be > 0"))
+    NonZeroU16::new(value).ok_or_else(|| {
+        crate::errors::StackStartupError::ValueMustBePositive(name.to_string()).into()
+    })
 }
 
 pub(in crate::stack) fn nonzero_usize(value: usize, name: &str) -> Result<NonZeroUsize> {
-    NonZeroUsize::new(value).ok_or_else(|| eyre::eyre!("{name} must be > 0"))
+    NonZeroUsize::new(value).ok_or_else(|| {
+        crate::errors::StackStartupError::ValueMustBePositive(name.to_string()).into()
+    })
 }
 
 pub(in crate::stack) fn nonzero_u64(value: u64, name: &str) -> Result<NonZeroU64> {
-    NonZeroU64::new(value).ok_or_else(|| eyre::eyre!("{name} must be > 0"))
+    NonZeroU64::new(value).ok_or_else(|| {
+        crate::errors::StackStartupError::ValueMustBePositive(name.to_string()).into()
+    })
 }
 
 /// Map `marshal::core::Actor::init`'s `Option<Height>` to the executor/startup
@@ -176,24 +189,40 @@ pub(in crate::stack) fn parse_consensus_peers(
     let mut peers = BTreeMap::new();
     for entry in entries {
         let (pk_hex, addr_str) = entry.split_once('@').ok_or_else(|| {
-            eyre::eyre!("invalid consensus peer {entry:?}: expected <hex_bls_pubkey>@<host:port>")
+            crate::errors::StackStartupError::ConsensusPeerMissingAtSign {
+                entry: entry.clone(),
+            }
         })?;
 
-        ensure!(
-            !pk_hex.is_empty(),
-            "invalid consensus peer {entry:?}: public key is empty"
-        );
+        if pk_hex.is_empty() {
+            return Err(
+                crate::errors::StackStartupError::ConsensusPeerEmptyPublicKey {
+                    entry: entry.clone(),
+                }
+                .into(),
+            );
+        }
 
         let pk_bytes = hex::decode(pk_hex).map_err(|e| {
-            eyre::eyre!("invalid consensus peer {entry:?}: public key is not hex: {e}")
+            crate::errors::StackStartupError::ConsensusPeerPublicKeyNotHex {
+                entry: entry.clone(),
+                error: format!("{e}"),
+            }
         })?;
-        ensure!(
-            !pk_bytes.is_empty(),
-            "invalid consensus peer {entry:?}: decoded public key is empty"
-        );
+        if pk_bytes.is_empty() {
+            return Err(
+                crate::errors::StackStartupError::ConsensusPeerDecodedPublicKeyEmpty {
+                    entry: entry.clone(),
+                }
+                .into(),
+            );
+        }
 
         let addr = addr_str.parse::<SocketAddr>().map_err(|e| {
-            eyre::eyre!("invalid consensus peer {entry:?}: invalid socket address: {e}")
+            crate::errors::StackStartupError::ConsensusPeerInvalidSocketAddr {
+                entry: entry.clone(),
+                error: format!("{e}"),
+            }
         })?;
         peers.insert(pk_bytes, addr);
     }
@@ -208,14 +237,14 @@ pub(in crate::stack) fn validate_testnet_only_flags(
     let is_explicit_test_network = outbe_primitives::chain::is_devnet(chain_id)
         || outbe_primitives::chain::is_testnet(chain_id);
     if trust_el_head && !is_explicit_test_network {
-        return Err(eyre::eyre!(
-            "--testnet.trust-el-head is not allowed on non-test networks (chain_id {chain_id})"
-        ));
+        return Err(
+            crate::errors::StackStartupError::TrustElHeadNotAllowedOnChain(chain_id).into(),
+        );
     }
     if unix_time_offset_secs.is_some() && !is_explicit_test_network {
-        return Err(eyre::eyre!(
-            "--testnet.unix-time-offset-secs is not allowed on non-test networks (chain_id {chain_id})"
-        ));
+        return Err(
+            crate::errors::StackStartupError::UnixTimeOffsetNotAllowedOnChain(chain_id).into(),
+        );
     }
     Ok(())
 }

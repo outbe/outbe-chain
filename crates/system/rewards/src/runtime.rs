@@ -12,10 +12,11 @@ use outbe_consensus::proof::canonical_signer_set_hash;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     consensus_metadata::CertifiedParentAccountingMetadata,
-    error::{PrecompileError, Result},
-    time::{day_number_between, timestamp_to_date_key, TimeError},
+    error::Result,
+    time::{day_number_between, timestamp_to_date_key},
 };
 
+use crate::errors::RewardsError;
 use crate::schema::Rewards;
 
 /// Outcome of [`check_and_record_metadata_fingerprint`]. The caller MUST
@@ -91,11 +92,7 @@ pub fn genesis_utc_day(ctx: &BlockRuntimeContext) -> Result<u32> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     let day = rewards.genesis_utc_day.read()?;
     if day == 0 {
-        return Err(PrecompileError::Revert(
-            "Rewards.genesis_utc_day not initialized - \
-             RewardsLifecycle::begin_block did not run on block 0"
-                .into(),
-        ));
+        return Err(RewardsError::GenesisUtcDayNotInitialized.into());
     }
     Ok(day)
 }
@@ -108,18 +105,7 @@ pub fn genesis_utc_day(ctx: &BlockRuntimeContext) -> Result<u32> {
 ///   that predates genesis is a protocol violation.
 pub fn day_number_since_genesis(ctx: &BlockRuntimeContext, utc_day: u32) -> Result<u32> {
     let genesis = genesis_utc_day(ctx)?;
-    day_number_between(genesis, utc_day).map_err(|e| match e {
-        TimeError::PreGenesis {
-            utc_day,
-            genesis_utc_day,
-        } => PrecompileError::Revert(format!(
-            "finalized block predates genesis: utc_day={utc_day}, \
-             genesis_utc_day={genesis_utc_day}"
-        )),
-        // TimeError is #[non_exhaustive]. Unknown variants return `Revert`
-        // so a future variant does not pass silently.
-        _ => PrecompileError::Revert(format!("time helper error: {e}")),
-    })
+    day_number_between(genesis, utc_day).map_err(|e| RewardsError::from(e).into())
 }
 
 /// V3 fingerprint guard. Computes the canonical V3 metadata
@@ -185,10 +171,12 @@ pub fn check_and_record_metadata_fingerprint(
     // Same fb_hash, different fingerprint: contradictory metadata.
     // The error is `Revert`. CertifiedParentAccounting rejects the block
     // because that phase fails the block on revert.
-    Err(PrecompileError::Revert(format!(
-        "contradictory consensus metadata for fb_hash={fb_hash}: \
-         stored fingerprint={prev}, new fingerprint={fp}"
-    )))
+    Err(RewardsError::ContradictoryConsensusMetadata {
+        fb_hash,
+        stored: prev,
+        new: fp,
+    }
+    .into())
 }
 
 /// compute the V3 fingerprint. See

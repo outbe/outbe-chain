@@ -3,13 +3,14 @@
 use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolCall;
 use clap::{Subcommand, ValueEnum};
-use eyre::{ensure, Result, WrapErr as _};
+use eyre::{Result, WrapErr as _};
 use outbe_primitives::consensus_p2p::{
     decode_versioned, encode_v1, P2pAddress, P2pIngress, P2P_ADDRESS_VERSION_V1,
 };
 use std::{net::SocketAddr, path::PathBuf};
 
 use crate::abi::{self, IValidatorSet};
+use crate::errors::ValidatorError;
 use crate::rpc::Rpc;
 
 #[derive(Subcommand)]
@@ -369,7 +370,9 @@ async fn confirm_ready(
                 registration_path.display()
             )
         })?;
-        ensure!(!registration.is_empty(), "OCOMP registration file is empty");
+        if registration.is_empty() {
+            return Err(ValidatorError::EmptyOcompRegistration.into());
+        }
         Ok(IValidatorSet::confirmValidatorReadyCall {
             registration: registration.into(),
         }
@@ -483,34 +486,36 @@ fn build_p2p_address(
     egress: Option<SocketAddr>,
 ) -> Result<P2pAddress> {
     if let Some(socket) = symmetric {
-        ensure!(
-            ingress_socket.is_none()
-                && ingress_dns_host.is_none()
-                && ingress_dns_port.is_none()
-                && egress.is_none(),
-            "--symmetric cannot be combined with asymmetric ingress/egress options"
-        );
+        if ingress_socket.is_some()
+            || ingress_dns_host.is_some()
+            || ingress_dns_port.is_some()
+            || egress.is_some()
+        {
+            return Err(ValidatorError::SymmetricWithAsymmetricOptions.into());
+        }
         return Ok(P2pAddress::Symmetric(socket));
     }
 
-    let egress = egress.ok_or_else(|| eyre::eyre!("--egress is required for asymmetric p2p"))?;
+    let egress = egress.ok_or(ValidatorError::MissingAsymmetricEgress)?;
     let ingress = match (ingress_socket, ingress_dns_host, ingress_dns_port) {
         (Some(socket), None, None) => P2pIngress::Socket(socket),
         (None, Some(host), Some(port)) => P2pIngress::Dns { host, port },
         (None, Some(_), None) => {
-            return Err(eyre::eyre!(
-                "--ingress-dns-port is required with --ingress-dns-host"
-            ));
+            return Err(ValidatorError::MissingIngressDnsCompanion {
+                missing: "--ingress-dns-port",
+                given: "--ingress-dns-host",
+            }
+            .into());
         }
         (None, None, Some(_)) => {
-            return Err(eyre::eyre!(
-                "--ingress-dns-host is required with --ingress-dns-port"
-            ));
+            return Err(ValidatorError::MissingIngressDnsCompanion {
+                missing: "--ingress-dns-host",
+                given: "--ingress-dns-port",
+            }
+            .into());
         }
         _ => {
-            return Err(eyre::eyre!(
-                "set exactly one asymmetric ingress: --ingress-socket or --ingress-dns-host/--ingress-dns-port"
-            ));
+            return Err(ValidatorError::InvalidAsymmetricIngressSelection.into());
         }
     };
     Ok(P2pAddress::Asymmetric { ingress, egress })

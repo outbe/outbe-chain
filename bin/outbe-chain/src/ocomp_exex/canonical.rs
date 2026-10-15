@@ -1,7 +1,6 @@
 use super::LocalVoteEligibilityV1;
 use super::RequestLocatorV1;
-
-use eyre::bail;
+use crate::errors::OcompExExError;
 
 use outbe_ocomp::embedded::EmbeddedJobGenerationV1;
 use outbe_ocomp::embedded::EmbeddedJobStateV1;
@@ -30,7 +29,7 @@ pub(super) fn advance_vote_eligibility(
             Ok(LocalVoteEligibilityV1::Pending)
         }
         outbe_node::ocomp::retention::OcompSnapshotEligibilityV1::Corrupt { detail } => {
-            bail!("pinned OCOMP vote membership is corrupt: {detail}");
+            Err(OcompExExError::PinnedVoteMembershipCorrupt(detail).into())
         }
     }
 }
@@ -62,11 +61,9 @@ pub(super) fn classify_async_outcome_projection(
             Ok(AsyncOutcomeProjectionV1::Active)
         }
         (None, None) => Ok(AsyncOutcomeProjectionV1::CheckpointPruned),
-        (Some(_), Some(_)) => {
-            bail!("OCOMP runtime and reducer generations disagree");
-        }
+        (Some(_), Some(_)) => Err(OcompExExError::RuntimeReducerGenerationsDisagree.into()),
         (Some(_), None) | (None, Some(_)) => {
-            bail!("OCOMP runtime and reducer projections disagree");
+            Err(OcompExExError::RuntimeReducerProjectionsDisagree.into())
         }
     }
 }
@@ -124,7 +121,7 @@ pub(super) fn classify_canonical_job(
             has_finalized_job,
         },
         OcompJobStatus::VotingOpen | OcompJobStatus::Completed => {
-            bail!("OCOMP canonical status/finalized payload shape is invalid");
+            return Err(OcompExExError::InvalidCanonicalStatusPayloadShape.into());
         }
     })
 }
@@ -157,7 +154,7 @@ pub(super) fn released_export_authority_for_status(
     export: Option<outbe_node::ocomp::retention::ExportAuthorityV1>,
 ) -> eyre::Result<Option<outbe_node::ocomp::retention::ExportAuthorityV1>> {
     if export.is_none() && status != OcompJobStatus::Expired {
-        bail!("closed non-expired OCOMP job has no released export authority");
+        return Err(OcompExExError::ClosedNonExpiredJobMissingExportAuthority.into());
     }
     Ok(export)
 }

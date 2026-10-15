@@ -1,11 +1,10 @@
 use outbe_intex::precompile::IIntex;
-use outbe_intex::{Group, IntexContract, IntexError, IntexState, SeriesId};
+use outbe_intex::{Group, IntexContract, IntexState, SeriesId};
+
+use crate::errors::IntexFactoryError;
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
-    call_breach::BreachTerms,
-    error::{PrecompileError, Result},
-    storage::StorageHandle,
-    time::first_full_day,
+    call_breach::BreachTerms, error::Result, storage::StorageHandle, time::first_full_day,
 };
 
 use crate::schema::IntexFactoryContract;
@@ -19,7 +18,7 @@ pub(crate) struct GroupCall<'a, 'storage> {
 
 /// Force-call a whole group: its series share trigger, issue time and call
 /// parameters, so one read decides them all. Returns how many were called.
-pub(crate) fn try_call_group(
+pub(crate) fn call_if_breached(
     call: GroupCall<'_, '_>,
     group: &Group,
     window: &CallWindow,
@@ -48,8 +47,8 @@ pub(crate) fn try_call_group(
     }
 
     // u32 timestamp. It is bounded until 2106 (matches issued_at).
-    let called_at = u32::try_from(now_ts)
-        .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
+    let called_at =
+        u32::try_from(now_ts).map_err(|_| IntexFactoryError::BlockTimestampExceedsU32)?;
     for &series_id in &group.members {
         mark_called(storage, series_id, called_at)?;
     }
@@ -84,7 +83,7 @@ pub(crate) fn mark_called(
 ) -> Result<()> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
     if series.lifecycle_state()? != IntexState::Issued {
-        return Err(IntexError::InvalidState {
+        return Err(IntexFactoryError::InvalidState {
             expected: IntexState::Issued as u8,
             actual: series.state,
         }

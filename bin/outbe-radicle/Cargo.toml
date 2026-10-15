@@ -10,10 +10,11 @@ name = "outbe-radicle"
 path = "src/main.rs"
 
 [dependencies]
-heartwood-outbe-radicle.workspace = true
+outbe-radicle-runtime.workspace = true
 log.workspace = true
 radicle-log.workspace = true
 radicle-signals.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

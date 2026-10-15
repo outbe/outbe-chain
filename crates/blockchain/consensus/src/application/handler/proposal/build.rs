@@ -38,7 +38,7 @@ impl ApplicationShared {
             .executor_mailbox
             .canonicalize_and_build(parent_height, parent_digest, attrs)
             .await
-            .map_err(|e| eyre::eyre!("canonicalize_and_build failed: {e}"))?;
+            .map_err(ApplicationError::CanonicalizeAndBuild)?;
         request.payload_trace.record(payload_id);
 
         debug!(%payload_id, "payload building started via FCU");
@@ -90,8 +90,8 @@ impl ApplicationShared {
                 reth_payload_builder::PayloadKind::WaitForPending,
             )
             .await
-            .ok_or_else(|| eyre::eyre!("payload resolution returned None"))?
-            .map_err(|e| eyre::eyre!("payload resolution failed: {e}"))?;
+            .ok_or(ApplicationError::PayloadResolutionNone)?
+            .map_err(|e| ApplicationError::PayloadResolutionFailed(format!("{e}")))?;
 
         let sealed_block = payload.block().clone();
 

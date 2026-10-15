@@ -12,12 +12,13 @@ use outbe_gem::{api as gem_api, ExpiryHours, GemContract};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
 
+use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::ExpiryDeferred;
 use crate::runtime::emit_event;
 
 /// Forfeit-burn the unpaid gems of the called buckets whose notice period closed.
 /// Returns the gems burned.
-pub fn sweep_expired(
+pub(crate) fn sweep_expired(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
@@ -36,7 +37,7 @@ pub fn sweep_expired(
 }
 
 /// One block's burns across the due hours.
-struct GemExpiry<'a, 's, P> {
+pub(crate) struct GemExpiry<'a, 's, P> {
     bodies: Bodies<'a, 's, P>,
     gem: GemContract<'s>,
     burned: u32,
@@ -94,7 +95,11 @@ impl<P: ParentBodySource> ExpiryHandler<B256> for GemExpiry<'_, '_, P> {
 }
 
 impl<'a, 's, P: ParentBodySource> GemExpiry<'a, 's, P> {
-    fn new(ctx: &'a BlockRuntimeContext<'s>, scope: &'a ExecutionScope, parent: &'a P) -> Self {
+    pub(crate) fn new(
+        ctx: &'a BlockRuntimeContext<'s>,
+        scope: &'a ExecutionScope,
+        parent: &'a P,
+    ) -> Self {
         Self {
             bodies: Bodies {
                 storage: &ctx.storage,
@@ -130,19 +135,12 @@ fn forfeit_member(
         parent,
     } = *bodies;
     if gem_id.is_zero() {
-        return Err(PrecompileError::Revert(format!(
-            "gem bucket {bucket_key} has an empty member slot during forfeit"
-        )));
+        return Err(GemFactoryError::EmptyMemberSlotDuringForfeit { bucket_key }.into());
     }
-    let (item, bucket) = gem_api::load_pair(storage, scope, parent, gem_id)?.ok_or_else(|| {
-        PrecompileError::Revert(format!(
-            "gem bucket {bucket_key} member {gem_id} has no body during forfeit"
-        ))
-    })?;
+    let (item, bucket) = gem_api::load_pair(storage, scope, parent, gem_id)?
+        .ok_or(GemFactoryError::MissingMemberBodyDuringForfeit { bucket_key, gem_id })?;
     if item.body().is_settled() || item.body().bucket_key != bucket_key {
-        return Err(PrecompileError::Revert(format!(
-            "gem bucket {bucket_key} indexes an ineligible member {gem_id}"
-        )));
+        return Err(GemFactoryError::IneligibleBucketMember { bucket_key, gem_id }.into());
     }
     let owner = item.body().owner;
     let promis_load_minor = item.body().promis_load_minor;

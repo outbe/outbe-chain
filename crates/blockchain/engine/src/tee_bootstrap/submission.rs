@@ -9,29 +9,30 @@ pub fn build_local_tee_bootstrap_submission_v2(
     client: &mut RuntimeEnclaveClient,
     request: LocalRegistrationRequest<'_>,
     evm_signer: &OutbeEvmSigner,
-    sign_node_hash: impl Fn(B256) -> Result<[u8; 65], String>,
+    sign_node_hash: impl Fn(B256) -> Result<[u8; 65], crate::errors::TeeBootstrapError>,
 ) -> eyre::Result<TeeBootstrapParticipantSubmissionV2> {
     let policy = request.policy;
     let policy_hash = policy
         .policy_hash()
-        .map_err(|error| eyre::eyre!("invalid OST3 policy: {error}"))?;
+        .map_err(|error| crate::errors::TeeBootstrapError::InvalidPolicy(format!("{error}")))?;
 
     let identity = request.resolve_identity(client)?;
     let (intent, node_id_hash) = request.into_intent(identity, policy_hash)?;
-    let intent_hash = intent
-        .intent_hash()
-        .map_err(|error| eyre::eyre!("invalid OST3 registration intent: {error}"))?;
-    let node_signature = sign_node_hash(intent_hash)
-        .map_err(|error| eyre::eyre!("cannot sign OST3 registration intent: {error}"))?;
+    let intent_hash = intent.intent_hash().map_err(|error| {
+        crate::errors::TeeBootstrapError::InvalidRegistrationIntent(format!("{error}"))
+    })?;
+    let node_signature = sign_node_hash(intent_hash).map_err(|error| {
+        crate::errors::TeeBootstrapError::SignRegistrationIntentFailed(format!("{error}"))
+    })?;
     let SignedValidatorBinding {
         validator_binding,
         validator_signature,
         node_binding_signature,
     } = sign_validator_binding(policy, node_id_hash, evm_signer, &sign_node_hash)?;
     let (evidence, enclave_signature) = create_evidence(client, policy.attestation_mode, intent)?;
-    evidence
-        .encode_canonical()
-        .map_err(|error| eyre::eyre!("local OST3 evidence is not canonical: {error}"))?;
+    evidence.encode_canonical().map_err(|error| {
+        crate::errors::TeeBootstrapError::LocalEvidenceNotCanonical(format!("{error}"))
+    })?;
     Ok(TeeBootstrapParticipantSubmissionV2 {
         evidence,
         validator_binding,
@@ -73,7 +74,7 @@ impl LocalRegistrationRequest<'_> {
                 development_identity(dev.quote(), &self.node_id, self.policy)
             }
             (AttestationMode::DcapRequired, RuntimeEnclaveClient::Development(_)) => Err(
-                eyre::eyre!("DcapRequired genesis policy cannot use a development enclave session"),
+                crate::errors::TeeBootstrapError::DcapRequiredCannotUseDevelopmentSession.into(),
             ),
         }
     }
@@ -90,10 +91,9 @@ impl LocalRegistrationRequest<'_> {
             enclave_id,
             node_host_authorization_hash,
         } = identity;
-        let node_id_hash = self
-            .node_id
-            .node_id_hash()
-            .map_err(|error| eyre::eyre!("invalid OST3 node identity: {error}"))?;
+        let node_id_hash = self.node_id.node_id_hash().map_err(|error| {
+            crate::errors::TeeBootstrapError::InvalidNodeIdentity(format!("{error}"))
+        })?;
         let binding_id = {
             let mut preimage = Vec::with_capacity(OST3_BINDING_ID_DOMAIN.len() + 96);
             preimage.extend_from_slice(OST3_BINDING_ID_DOMAIN);
@@ -131,25 +131,25 @@ fn production_identity(
     policy: &TeePolicyV1,
 ) -> eyre::Result<LocalEnclaveIdentity> {
     let manifest = production_manifest
-        .ok_or_else(|| eyre::eyre!("production OST3 requires one committed NodeHost manifest"))?;
+        .ok_or(crate::errors::TeeBootstrapError::ProductionRequiresCommittedManifest)?;
     if manifest.chain_id != policy.chain_id
         || manifest.genesis_hash != policy.genesis_hash
         || &manifest.node_id != node_id
     {
-        return Err(eyre::eyre!(
-            "committed NodeHost manifest does not match OST3 chain or persistent P2P identity"
-        ));
+        return Err(crate::errors::TeeBootstrapError::CommittedManifestMismatch.into());
     }
     Ok(LocalEnclaveIdentity {
         recipient_x25519: manifest.recipient_x25519,
         attestation_ed25519: manifest.attestation_ed25519,
         noise_responder_x25519: manifest.noise_responder_x25519,
-        enclave_id: manifest
-            .enclave_id()
-            .map_err(|error| eyre::eyre!("invalid committed enclave identity: {error}"))?,
-        node_host_authorization_hash: manifest
-            .node_host_authorization_hash()
-            .map_err(|error| eyre::eyre!("invalid committed NodeHost authorization: {error}"))?,
+        enclave_id: manifest.enclave_id().map_err(|error| {
+            crate::errors::TeeBootstrapError::InvalidCommittedEnclaveIdentity(format!("{error}"))
+        })?,
+        node_host_authorization_hash: manifest.node_host_authorization_hash().map_err(|error| {
+            crate::errors::TeeBootstrapError::InvalidCommittedNodeHostAuthorization(format!(
+                "{error}"
+            ))
+        })?,
     })
 }
 
@@ -165,9 +165,7 @@ fn development_identity(
         ..
     } = quote
     else {
-        return Err(eyre::eyre!(
-            "GramineDirectDev session did not retain its enclave identity quote"
-        ));
+        return Err(crate::errors::TeeBootstrapError::DevSessionMissingIdentityQuote.into());
     };
     let mut enclave_keys = [0_u8; 96];
     enclave_keys[..32].copy_from_slice(recipient_x25519_pub);
@@ -179,9 +177,9 @@ fn development_identity(
         preimage.extend_from_slice(&enclave_keys);
         keccak256(preimage)
     };
-    let node_id_hash = node_id
-        .node_id_hash()
-        .map_err(|error| eyre::eyre!("invalid OST3 node identity: {error}"))?;
+    let node_id_hash = node_id.node_id_hash().map_err(|error| {
+        crate::errors::TeeBootstrapError::InvalidNodeIdentity(format!("{error}"))
+    })?;
     let node_host_authorization_hash = {
         let mut preimage =
             Vec::with_capacity(OST3_DEV_NODE_HOST_DOMAIN.len() + 32 + 32 + 32 + enclave_keys.len());
@@ -211,7 +209,7 @@ fn sign_validator_binding(
     policy: &TeePolicyV1,
     node_id_hash: B256,
     evm_signer: &OutbeEvmSigner,
-    sign_node_hash: &impl Fn(B256) -> Result<[u8; 65], String>,
+    sign_node_hash: &impl Fn(B256) -> Result<[u8; 65], crate::errors::TeeBootstrapError>,
 ) -> eyre::Result<SignedValidatorBinding> {
     let validator_binding = ValidatorNodeBindingV1 {
         chain_id: policy.chain_id,
@@ -219,14 +217,15 @@ fn sign_validator_binding(
         validator: evm_signer.address().into_array(),
         node_id_hash,
     };
-    let binding_hash = validator_binding
-        .binding_hash()
-        .map_err(|error| eyre::eyre!("invalid validator NodeHost binding: {error}"))?;
-    let validator_signature = evm_signer
-        .sign_hash(&binding_hash)
-        .map_err(|error| eyre::eyre!("cannot sign validator NodeHost binding: {error}"))?;
-    let node_binding_signature = sign_node_hash(binding_hash)
-        .map_err(|error| eyre::eyre!("cannot sign NodeHost validator binding: {error}"))?;
+    let binding_hash = validator_binding.binding_hash().map_err(|error| {
+        crate::errors::TeeBootstrapError::InvalidValidatorNodeHostBinding(format!("{error}"))
+    })?;
+    let validator_signature = evm_signer.sign_hash(&binding_hash).map_err(|error| {
+        crate::errors::TeeBootstrapError::SignValidatorNodeHostBindingFailed(format!("{error}"))
+    })?;
+    let node_binding_signature = sign_node_hash(binding_hash).map_err(|error| {
+        crate::errors::TeeBootstrapError::SignNodeHostValidatorBindingFailed(format!("{error}"))
+    })?;
     Ok(SignedValidatorBinding {
         validator_binding,
         validator_signature,
@@ -246,12 +245,16 @@ fn create_evidence(
     )?;
     let (evidence, enclave_signature) = match (evidence_kind, client) {
         (BootstrapEvidenceKind::Dcap, RuntimeEnclaveClient::Production(production)) => {
-            let generated = production
-                .generate_dcap_quote(&intent)
-                .map_err(|error| eyre::eyre!("production OST3 quote generation failed: {error}"))?;
+            let generated = production.generate_dcap_quote(&intent).map_err(|error| {
+                crate::errors::TeeBootstrapError::ProductionQuoteGenerationFailed(format!(
+                    "{error}"
+                ))
+            })?;
             let components =
                 acquire_dcap_collateral_v1(&generated.quote_body).map_err(|error| {
-                    eyre::eyre!("production OST3 collateral acquisition failed: {error}")
+                    crate::errors::TeeBootstrapError::ProductionCollateralAcquisitionFailed(
+                        format!("{error}"),
+                    )
                 })?;
             let enclave_signature = generated.enclave_signature;
             (
@@ -265,9 +268,9 @@ fn create_evidence(
             )
         }
         (BootstrapEvidenceKind::Dcap, RuntimeEnclaveClient::Development(_)) => {
-            return Err(eyre::eyre!(
-                "DcapRequired genesis policy cannot use a development enclave session"
-            ));
+            return Err(
+                crate::errors::TeeBootstrapError::DcapRequiredCannotUseDevelopmentSession.into(),
+            );
         }
         (BootstrapEvidenceKind::GramineDirectDev, client) => {
             let enclave_signature = sign_dev_intent(client, &intent)?;
@@ -293,10 +296,16 @@ fn sign_dev_intent(
         RuntimeEnclaveClient::Production(production) => production
             .sign_registration_intent_dev_v1(intent)
             .map_err(|error| {
-                eyre::eyre!("production SGX-no-attest OST3 intent signing failed: {error}")
+                crate::errors::TeeBootstrapError::ProductionDevIntentSigningFailed(format!(
+                    "{error}"
+                ))
+                .into()
             }),
         RuntimeEnclaveClient::Development(development) => development
             .sign_registration_intent_dev_v1(intent)
-            .map_err(|error| eyre::eyre!("development OST3 intent signing failed: {error}")),
+            .map_err(|error| {
+                crate::errors::TeeBootstrapError::DevelopmentIntentSigningFailed(format!("{error}"))
+                    .into()
+            }),
     }
 }

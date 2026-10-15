@@ -70,6 +70,15 @@ pub enum MetadosisError {
     InvalidTransitionToFailed { wwd: WorldwideDay },
 }
 
+impl MetadosisError {
+    /// Creates an invalid OCOMP pre-admission envelope error from a reason.
+    pub(crate) fn invalid_ocomp_pre_admission_envelope(reason: impl std::fmt::Display) -> Self {
+        Self::InvalidOcompPreAdmissionEnvelope {
+            reason: reason.to_string(),
+        }
+    }
+}
+
 impl From<MetadosisError> for PrecompileError {
     fn from(value: MetadosisError) -> Self {
         let message = value.to_string();
@@ -95,14 +104,20 @@ impl From<MetadosisError> for PrecompileError {
 
 pub type MetadosisResult<T> = std::result::Result<T, MetadosisError>;
 
-/// Report fatal storage corruption. Callers must use this helper only
-/// when authenticated persisted state cannot satisfy its storage invariants.
-pub(crate) fn storage_corruption(message: String) -> PrecompileError {
-    PrecompileError::Fatal(message)
+/// Reports storage corruption when persisted state violates an invariant.
+pub(crate) fn storage_corruption(message: impl std::fmt::Display) -> PrecompileError {
+    PrecompileError::Revert(message.to_string())
 }
 
-pub(crate) fn storage_corruption_message(message: impl Into<String>) -> PrecompileError {
-    storage_corruption(message.into())
+pub(crate) fn storage_corruption_message(message: impl std::fmt::Display) -> PrecompileError {
+    storage_corruption(message)
+}
+
+pub(crate) fn storage_corruption_context(
+    context: &'static str,
+    error: impl std::fmt::Display,
+) -> PrecompileError {
+    storage_corruption(format!("{context}: {error}"))
 }
 
 pub(crate) fn caller_rejection(message: impl Into<String>) -> PrecompileError {
@@ -117,13 +132,101 @@ pub(crate) fn is_business_failure(error: &PrecompileError) -> bool {
     matches!(error, PrecompileError::Revert(message) if message.starts_with("Metadosis business failure: "))
 }
 
+pub(crate) fn is_vwap_overflow(error: &PrecompileError) -> bool {
+    matches!(error, PrecompileError::Revert(message) if message.starts_with("VWAP overflow:"))
+}
+
+pub(crate) fn owner_apply_error(error: PrecompileError) -> PrecompileError {
+    match error {
+        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
+            business_failure(format!("Lysis owner apply rejected: {error}"))
+        }
+        other => other,
+    }
+}
+
+pub(crate) fn map_vote_transition_error(error: PrecompileError) -> PrecompileError {
+    if is_business_failure(&error) {
+        return error;
+    }
+    if is_deadline_passed_result_vote_revert(&error) {
+        return error;
+    }
+    match error {
+        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
+            result_vote_rejection(vote_rejection_code::PROTOCOL_VOTE)
+        }
+        other => other,
+    }
+}
+
+/// Checks whether a precompile error encodes a deadline-passed result-vote revert.
+#[must_use]
+pub fn is_deadline_passed_result_vote_revert(error: &PrecompileError) -> bool {
+    matches!(error, PrecompileError::RevertBytes(data) if is_deadline_passed_result_vote_revert_data(data))
+}
+
+/// Checks whether revert bytes match the deadline-passed result-vote rejection payload.
+#[must_use]
+pub fn is_deadline_passed_result_vote_revert_data(data: &[u8]) -> bool {
+    data == deadline_passed_result_vote_revert_data().as_ref()
+}
+
+/// Returns the canonical revert payload for a deadline-passed result vote.
+#[must_use]
+pub fn deadline_passed_result_vote_revert_data() -> Bytes {
+    let PrecompileError::RevertBytes(expected) =
+        result_vote_rejection(vote_rejection_code::DEADLINE_PASSED)
+    else {
+        unreachable!("vote_reject always returns RevertBytes");
+    };
+    expected
+}
+
+pub(crate) fn is_state_unavailable(error: &PrecompileError) -> bool {
+    matches!(
+        error,
+        PrecompileError::Storage(_)
+            | PrecompileError::BodyReadUnavailable(_)
+            | PrecompileError::BodyReadRequestDeadline
+            | PrecompileError::TreeUnavailable(_)
+    )
+}
+
+pub(crate) fn malformed_result_vote_reason(error: impl std::fmt::Display) -> String {
+    format!("malformed canonical result vote: {error}")
+}
+
+pub(crate) fn record_active_miss_error(
+    participant_index: u16,
+    error: PrecompileError,
+) -> PrecompileError {
+    match error {
+        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => storage_corruption_message(
+            format!("record ACTIVE missing OCOMP validator {participant_index}: {error}"),
+        ),
+        other => other,
+    }
+}
+
+pub(crate) fn resolve_due_ocomp_recovery_error(
+    participant_index: u16,
+    error: PrecompileError,
+) -> PrecompileError {
+    match error {
+        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => storage_corruption_message(
+            format!("resolve due OCOMP recovery for participant {participant_index}: {error}"),
+        ),
+        other => other,
+    }
+}
+
 pub(crate) fn activation_rejection(code: u16) -> PrecompileError {
     encoded_rejection(OCOMP_ACTIVATION_REJECTED_SELECTOR, code)
 }
 
 /// Rejects an EVM call mode that cannot execute a result-vote command.
-/// The adapter uses this before opening a mutation frame, preserving the same
-/// domain error encoding as the command's own defensive validation.
+/// The adapter uses this before it opens a mutation frame.
 pub fn result_vote_call_mode_rejection() -> PrecompileError {
     result_vote_rejection(vote_rejection_code::CALL_MODE)
 }
@@ -163,7 +266,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn durable_invariant_errors_are_fatal() {
+    fn durable_invariant_errors_are_revert() {
         let wwd = WorldwideDay::new(2026_0731);
         let errors = [
             MetadosisError::OcompLimitReceiptMismatch,
@@ -178,7 +281,7 @@ mod tests {
 
         for error in errors {
             let error: PrecompileError = error.into();
-            assert!(matches!(error, PrecompileError::Fatal(_)));
+            assert!(matches!(error, PrecompileError::Revert(_)));
         }
     }
 

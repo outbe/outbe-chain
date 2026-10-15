@@ -55,16 +55,10 @@ where
             .fork_choice_updated(self.state.forkchoice, None)
             .await
         {
-            Ok(response) if response.is_invalid() => {
+            Ok(response) if response.is_invalid() || response.is_syncing() => {
                 warn!(
                     ?response,
-                    "forkchoice-update heartbeat returned invalid status"
-                );
-            }
-            Ok(response) if response.is_syncing() => {
-                warn!(
-                    ?response,
-                    "forkchoice-update heartbeat returned syncing status"
+                    "forkchoice-update heartbeat returned non-valid status"
                 );
             }
             Ok(response) => {
@@ -109,20 +103,17 @@ where
             "sending forkchoice-update",
         );
 
-        let fcu_response = match self
+        let fcu_result = self
             .engine
             .fork_choice_updated(new_state.forkchoice, maybe_build.attributes().cloned())
-            .await
-        {
-            Err(e) => {
-                self.reset_fcu_heartbeat_deadline();
-                warn!(%e, "failed to send forkchoice update");
-                maybe_build.send_error(eyre::eyre!("FCU failed: {e}"));
-                return;
-            }
-            Ok(response) => response,
-        };
+            .await;
         self.reset_fcu_heartbeat_deadline();
+        let Ok(fcu_response) = fcu_result else {
+            let e = fcu_result.expect_err("checked Err");
+            warn!(%e, "failed to send forkchoice update");
+            maybe_build.send_error(crate::errors::ExecutorError::FcuFailed(format!("{e}")).into());
+            return;
+        };
 
         if fcu_response.is_syncing() {
             warn!(
@@ -143,14 +134,21 @@ where
                 finalized_height = %new_state.finalized_height,
                 "forkchoice update returned valid status"
             );
-        }
-
-        if fcu_response.is_invalid() {
-            warn!(?fcu_response, "forkchoice update returned invalid status");
-            maybe_build.send_error(eyre::eyre!(
-                "FCU returned invalid: {:?}",
-                fcu_response.payload_status
-            ));
+        } else if fcu_response.is_invalid() {
+            error!(
+                ?head_or_finalized,
+                ?fcu_response,
+                finalized_block_hash = %new_state.forkchoice.finalized_block_hash,
+                finalized_height = %new_state.finalized_height,
+                "forkchoice update returned invalid status"
+            );
+            maybe_build.send_error(
+                crate::errors::ExecutorError::FcuInvalid(format!(
+                    "{:?}",
+                    fcu_response.payload_status
+                ))
+                .into(),
+            );
             return;
         }
 
@@ -160,25 +158,23 @@ where
                 let _ = response.send(Ok(()));
             }
             MaybeBuild::AlsoBuild { response, .. } => {
-                match fcu_response.payload_id {
-                    Some(id) => {
-                        let _ = response.send(Ok(id));
+                let Some(id) = fcu_response.payload_id else {
+                    let _ = response.send(Err(crate::errors::ExecutorError::FcuMissingPayloadId {
+                        payload_status: format!("{:?}", fcu_response.payload_status),
+                        latest_valid_hash: format!(
+                            "{:?}",
+                            fcu_response.payload_status.latest_valid_hash
+                        ),
+                        head: new_state.forkchoice.head_block_hash,
+                        safe: new_state.forkchoice.safe_block_hash,
+                        finalized: new_state.forkchoice.finalized_block_hash,
+                        head_height: new_state.head_height,
+                        finalized_height: new_state.finalized_height,
                     }
-                    None => {
-                        let _ = response.send(Err(eyre::eyre!(
-                            "FCU did not return payload_id: payload_status={:?} latest_valid_hash={:?} head={} safe={} finalized={} head_height={} finalized_height={}",
-                            fcu_response.payload_status,
-                            fcu_response.payload_status.latest_valid_hash,
-                            new_state.forkchoice.head_block_hash,
-                            new_state.forkchoice.safe_block_hash,
-                            new_state.forkchoice.finalized_block_hash,
-                            new_state.head_height,
-                            new_state.finalized_height,
-                        )));
-                        // Don't commit state if we didn't get a payload_id.
-                        return;
-                    }
-                }
+                    .into()));
+                    return;
+                };
+                let _ = response.send(Ok(id));
             }
         }
         self.state = new_state;
@@ -193,13 +189,14 @@ where
             commonware_consensus::marshal::Update::Block(block, ack) => {
                 let height = Height::new(block.number());
                 let digest = Digest(block.block_hash());
-                if height == self.state.finalized_height
-                    && digest.0 == self.state.forkchoice.finalized_block_hash
+                if (height == self.state.finalized_height
+                    && digest.0 == self.state.forkchoice.finalized_block_hash)
+                    || (height == Height::zero() && digest.0 == self.genesis_hash)
                 {
                     info!(
                         %height,
                         %digest,
-                        "marshal-delivered block already canonical after recovery; acknowledging without reexecution"
+                        "marshal-delivered block already canonical; acknowledging without reexecution"
                     );
                     ack.acknowledge();
                     self.notify_finalized_subscribers(height);
@@ -207,65 +204,44 @@ where
                     return Ok(());
                 }
                 if height == Height::zero() {
-                    let expected = self.state.forkchoice.finalized_block_hash;
-                    return Err(eyre::eyre!(
-                        "marshal delivered unexpected genesis anchor: digest {digest}, \
-                         canonical finalized height {}, canonical hash {expected}",
-                        self.state.finalized_height
-                    ));
+                    return Err(crate::errors::ExecutorError::UnexpectedGenesisAnchor {
+                        digest,
+                        finalized_height: self.state.finalized_height,
+                        expected: self.genesis_hash,
+                    }
+                    .into());
                 }
                 info!(
                     %height,
                     %digest,
                     "marshal-delivered block: handle_finalize_inner start"
                 );
-                match self
+                if let Err(error) = self
                     .handle_finalize_inner(height, digest, (*block).clone())
                     .await
                 {
-                    Ok(()) => {
-                        info!(%height, %digest, "marshal-delivered block finalized and acked");
-                        // Acknowledge ONLY after the block is durably applied. The
-                        // marshal `Exact` waiter resolves once every cloned ack is
-                        // acknowledged.
-                        ack.acknowledge();
-                        self.notify_finalized_subscribers(height);
-                        self.notify_execution_finalized(height);
-                        Ok(())
+                    // A finalized block (already agreed by consensus) that we
+                    // cannot apply locally means our state diverged from the
+                    // finalized chain. This is unrecoverable. Fail fast
+                    // deterministically with the structured cause. We deliberately
+                    // do NOT acknowledge: we did not process the block.
+                    error!(
+                        %height, %digest, %error,
+                        "finalized block failed local execution; \
+                         finalized state diverged - failing fast"
+                    );
+                    return Err(crate::errors::ExecutorError::ApplyFinalizedBlockFailed {
+                        height,
+                        digest,
+                        reason: error,
                     }
-                    Err(error) => {
-                        // A finalized block (already agreed by consensus) that we
-                        // cannot apply locally means our state diverged from the
-                        // finalized chain. This is unrecoverable. Fail fast
-                        // deterministically with the structured cause. We deliberately
-                        // do NOT acknowledge: we did not process the block. An ack
-                        // would lie to the marshal's progress tracking (letting it prune
-                        // a block we still need).
-                        //
-                        // Note: the unacknowledged `ack` still cancels on drop, and
-                        // upstream marshal `handle_ack` treats a canceled ack as fatal
-                        // (`panic!("application did not acknowledge...")`). The
-                        // runtime's `catch_panics` CATCHES that panic (it does not
-                        // abort the process). So it is NOT the shutdown driver and does
-                        // NOT pre-empt this path. The authoritative shutdown driver is
-                        // the structured `Err` returned here:
-                        // - it propagates out of run_live_loop/run.
-                        // - the supervisor select treats the executor exit as fatal.
-                        // - the node shuts down with the cause below.
-                        // The marshal panic may still appear in logs (a caught,
-                        // less-informative secondary symptom). This `error!` precedes
-                        // it with the real reason.
-                        error!(
-                            %height, %digest, %error,
-                            "finalized block failed local execution; \
-                             finalized state diverged - failing fast"
-                        );
-                        Err(eyre::eyre!(
-                            "executor cannot apply finalized block at \
-                             height {height} digest {digest}: {error}"
-                        ))
-                    }
+                    .into());
                 }
+                info!(%height, %digest, "marshal-delivered block finalized and acked");
+                ack.acknowledge();
+                self.notify_finalized_subscribers(height);
+                self.notify_execution_finalized(height);
+                Ok(())
             }
             commonware_consensus::marshal::Update::Tip(round, height, digest) => {
                 self.verification.get_mut().finalized(round, height, digest);
@@ -290,27 +266,16 @@ where
         digest: crate::digest::Digest,
         block: crate::block::ConsensusBlock,
     ) -> eyre::Result<()> {
-        let parent_height = height.get().checked_sub(1).ok_or_else(|| {
-            eyre::eyre!(
-                "cannot execute finalized genesis block through successor path: digest {digest}"
-            )
-        })?;
-        wait_for_finalized_parent(
-            self.projection_readiness.clone(),
-            ProjectionCheckpoint {
-                block_number: parent_height,
-                block_hash: block.parent_hash(),
-            },
-        )
-        .await?;
-        wait_for_optional_ocomp_parent(
-            self.ocomp_readiness.clone(),
-            ProjectionCheckpoint {
-                block_number: parent_height,
-                block_hash: block.parent_hash(),
-            },
-        )
-        .await?;
+        let parent_height = height
+            .get()
+            .checked_sub(1)
+            .ok_or(crate::errors::ExecutorError::ExecuteGenesisThroughSuccessor(digest))?;
+        let parent_checkpoint = ProjectionCheckpoint {
+            block_number: parent_height,
+            block_hash: block.parent_hash(),
+        };
+        wait_for_finalized_parent(self.projection_readiness.clone(), parent_checkpoint).await?;
+        wait_for_optional_ocomp_parent(self.ocomp_readiness.clone(), parent_checkpoint).await?;
 
         let execution_data =
             OutbeExecutionData::new(std::sync::Arc::new(block.clone().into_inner()));
@@ -322,36 +287,39 @@ where
                 "test-marshal-drop: skipping finalized new_payload before FCU"
             );
         } else {
-            match self.engine.new_payload(execution_data).await {
-                Ok(status) => {
-                    if status.is_valid() {
-                        info!(
-                            height = %height,
-                            digest = %digest,
-                            ?status,
-                            "finalized block accepted by execution layer"
-                        );
-                    } else if status.is_syncing() {
-                        warn!(
-                            height = %height,
-                            digest = %digest,
-                            ?status,
-                            "execution layer syncing on finalized block"
-                        );
-                    }
-                    if !status.is_valid() && !status.is_syncing() {
-                        return Err(eyre::eyre!(
-                            "finalized block rejected by execution layer at \
-                             height {height} digest {digest}: status={status:?}"
-                        ));
-                    }
+            let status = self.engine.new_payload(execution_data).await.map_err(|e| {
+                crate::errors::ExecutorError::SendFinalizedBlockFailed {
+                    height,
+                    digest,
+                    reason: format!("{e}"),
                 }
-                Err(e) => {
-                    return Err(eyre::eyre!(
-                        "failed to send finalized block to execution layer at \
-                         height {height} digest {digest}: {e}"
-                    ));
+            })?;
+            if status.is_valid() {
+                info!(
+                    height = %height,
+                    digest = %digest,
+                    ?status,
+                    "finalized block accepted by execution layer"
+                );
+            } else if status.is_syncing()
+                || matches!(
+                    status.status,
+                    alloy_rpc_types_engine::PayloadStatusEnum::Accepted
+                )
+            {
+                warn!(
+                    height = %height,
+                    digest = %digest,
+                    ?status,
+                    "execution layer syncing/accepted on finalized block"
+                );
+            } else {
+                return Err(crate::errors::ExecutorError::FinalizedBlockRejected {
+                    height,
+                    digest,
+                    status: format!("{status:?}"),
                 }
+                .into());
             }
         }
 
@@ -366,28 +334,26 @@ where
             },
         )
         .await;
-        match response_rx.await {
-            Ok(Ok(())) => {
-                if let Some(committer) = &self.finalized_ce_committer {
-                    committer
-                        .commit_finalized(FinalizedCeBlock {
-                            height: height.get(),
-                            block_hash: block.block_hash(),
-                            parent_block_hash: block.parent_hash(),
-                        })
-                        .await?;
-                }
-                Ok(())
+        let canonicalize_result = response_rx.await.map_err(|_| {
+            crate::errors::ExecutorError::CanonicalizeResponseDropped { height, digest }
+        })?;
+        canonicalize_result.map_err(|error| {
+            crate::errors::ExecutorError::CanonicalizeFinalizedFailed {
+                height,
+                digest,
+                reason: error,
             }
-            Ok(Err(error)) => Err(eyre::eyre!(
-                "failed to canonicalize finalized block at \
-                 height {height} digest {digest}: {error}"
-            )),
-            Err(_) => Err(eyre::eyre!(
-                "executor canonicalize response dropped for finalized block at \
-                 height {height} digest {digest}"
-            )),
+        })?;
+        if let Some(committer) = &self.finalized_ce_committer {
+            committer
+                .commit_finalized(FinalizedCeBlock {
+                    height: height.get(),
+                    block_hash: block.block_hash(),
+                    parent_block_hash: block.parent_hash(),
+                })
+                .await?;
         }
+        Ok(())
     }
 
     pub(super) fn notify_execution_finalized(&self, height: Height) {

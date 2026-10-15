@@ -1,9 +1,7 @@
-//! Error type for the vaultrouter precompile.
+//! Error types for the vaultrouter precompile.
 //!
-//! Mirrors the custom errors of the Solidity vault-router interfaces plus
-//! the `ErrorsLib` reverts the original contract used (`ZeroAddress`,
-//! `Unauthorized`). Following the repo convention, precompile reverts carry a
-//! string reason rather than an ABI-encoded custom-error selector.
+//! These variants match the custom errors from the Solidity interfaces and `ErrorsLib`.
+//! Precompile reverts return a string message instead of an ABI selector.
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::PrecompileError;
@@ -64,10 +62,63 @@ pub enum VaultRouterError {
     ReservationInsufficient { available: U256, required: U256 },
     #[error("block timestamp does not fit unix seconds")]
     TimestampOverflow,
+    #[error("{0} undecodable")]
+    RouterCallUndecodable(&'static str),
+    #[error("index out of bounds")]
+    IndexOutOfBounds,
+    #[error("invalid asset")]
+    InvalidAsset,
+    #[error("invalid asset decimals")]
+    InvalidAssetDecimals,
+    #[error("unsupported asset decimals")]
+    UnsupportedAssetDecimalsSimple,
+    #[error("invalid asset currency")]
+    InvalidAssetCurrency,
+    #[error("pledge price unavailable")]
+    PledgePriceUnavailable,
+    #[error("timestamp exceeds u64")]
+    TimestampExceedsU64,
+    #[error("previous day VWAP unavailable")]
+    PreviousDayVwapUnavailable,
+    #[error("reference pair unavailable")]
+    ReferencePairUnavailable,
 }
 
 impl From<VaultRouterError> for PrecompileError {
     fn from(err: VaultRouterError) -> Self {
         PrecompileError::Revert(err.to_string())
+    }
+}
+
+/// Why a right's settlement quote or payment failed: asset acceptance, conversion,
+/// or the token transfer into the reserve vault.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum SettlementError {
+    #[error("assetVaultsCount undecodable")]
+    AssetVaultsCount,
+    #[error("settlement asset {asset} has no registered vault")]
+    AssetNotRegistered { asset: Address },
+    #[error("settlement asset currency {iso_code} does not match the right")]
+    CurrencyMismatch { iso_code: u16 },
+    #[error("settlement asset decimals undecodable")]
+    AssetDecimals,
+    #[error("settlement asset isoCode undecodable")]
+    AssetIsoCode,
+    #[error("{0}")]
+    Rounding(#[source] outbe_common::settlement::RoundingError),
+    #[error("oracle nominal unavailable")]
+    OracleUnavailable,
+    #[error("VWAP snapshot {authorized:#x} does not match the required {required:#x}")]
+    SnapshotMismatch { authorized: U256, required: U256 },
+    #[error("settlement token call failed")]
+    TokenOperationFailed,
+    #[error("settlement token moved an unexpected amount")]
+    AmountMismatch,
+}
+
+impl From<SettlementError> for PrecompileError {
+    fn from(error: SettlementError) -> Self {
+        PrecompileError::Revert(error.to_string())
     }
 }

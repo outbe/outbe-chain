@@ -1,5 +1,5 @@
 //! Direct-pledge issuance plus atomic repayment/forfeiture tests.
-use crate::{runtime, tests::common::*};
+use crate::{runtime, tests::*};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_credis::{CredisContract, CredisState};
@@ -187,7 +187,7 @@ fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing(
             .unwrap();
         let interest = CredisContract::accrued_interest(&record, CREATED_AT + DAY).unwrap();
         assert!(!interest.is_zero());
-        runtime::settle(storage.clone(), bob(), credis_id, interest).unwrap();
+        runtime::settle_credis(storage.clone(), bob(), credis_id, interest).unwrap();
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
 
@@ -238,7 +238,7 @@ fn false_token_return_rolls_back_credis_and_pledged_collateral() {
         let record = credis.get_credis(id).unwrap();
         let pledged = outbe_gratis::api::pledged_ct(storage.clone(), alice()).unwrap();
         let liquid = outbe_gratis::api::balance_ct(storage.clone(), alice()).unwrap();
-        assert!(runtime::settle(storage.clone(), bob(), id, pledge_stables()).is_err());
+        assert!(runtime::settle_credis(storage.clone(), bob(), id, pledge_stables()).is_err());
         assert_eq!(credis.get_credis(id).unwrap(), record);
         assert_eq!(
             outbe_gratis::api::pledged_ct(storage.clone(), alice()).unwrap(),

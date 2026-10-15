@@ -192,6 +192,17 @@ class ReproducibleBuildInputsTests(unittest.TestCase):
             self.assertNotIn("--all-features", command)
             self.assertNotIn("--all-targets", command)
 
+    def test_artifact_check_plan_reuses_the_exact_production_matrix(self) -> None:
+        loaded = build_inputs.load_and_validate_build_spec(BUILD_SPEC_PATH)
+
+        build_plan = build_inputs.artifact_build_plan(loaded)
+        check_plan = build_inputs.artifact_check_plan(loaded)
+
+        self.assertEqual(len(check_plan), len(build_plan))
+        for build, check in zip(build_plan, check_plan, strict=True):
+            self.assertEqual(check[:2], ["cargo", "check"])
+            self.assertEqual(check[2:], build[2:])
+
 
 if __name__ == "__main__":
     unittest.main()

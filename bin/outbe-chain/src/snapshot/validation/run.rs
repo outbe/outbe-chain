@@ -31,7 +31,12 @@ impl CheckSelection {
                     "ce" => Ce,
                     "bodies" => Bodies,
                     "ocomp" => Ocomp,
-                    _ => eyre::bail!("unknown snapshot check {name:?}"),
+                    _ => {
+                        return Err(crate::errors::SnapshotError::UnknownSnapshotCheck {
+                            name: name.to_owned(),
+                        }
+                        .into())
+                    }
                 });
             }
         }
@@ -264,8 +269,8 @@ pub(crate) fn validate_snapshot_with_node(
         &mut report,
     );
     if let Some(scratch) = scratch {
-        if let Err(error) = scratch.close() {
-            let error = eyre::eyre!("remove validation scratch: {error}");
+        if let Err(source) = scratch.close() {
+            let error = crate::errors::SnapshotError::RemoveValidationScratch { source }.into();
             fail_selected(&mut report, &[Evm, Ce, Bodies, Ocomp], &error);
         }
     }

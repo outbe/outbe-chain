@@ -211,8 +211,8 @@ pub trait PrecompileStorageProvider {
         _chain_id: u64,
         _block_number: u64,
     ) -> Result<()> {
-        Err(crate::error::PrecompileError::Fatal(
-            "Metadosis mutation frame is not available".into(),
+        Err(crate::error::PrecompileError::revert(
+            "Metadosis mutation frame is not available",
         ))
     }
 
@@ -223,8 +223,8 @@ pub trait PrecompileStorageProvider {
         _binding: B256,
         _completed: bool,
     ) -> Result<()> {
-        Err(crate::error::PrecompileError::Fatal(
-            "Metadosis mutation frame is not available".into(),
+        Err(crate::error::PrecompileError::revert(
+            "Metadosis mutation frame is not available",
         ))
     }
 
@@ -233,8 +233,8 @@ pub trait PrecompileStorageProvider {
     /// Providers deny this by default. The production EVM execution context
     /// grants the lease only from the fork-pinned activation dispatch.
     fn begin_lysis_activation_frame(&mut self, _activation_call_id: B256) -> Result<()> {
-        Err(crate::error::PrecompileError::Fatal(
-            "certified Lysis activation frame is not available".into(),
+        Err(crate::error::PrecompileError::revert(
+            "certified Lysis activation frame is not available",
         ))
     }
 
@@ -247,8 +247,8 @@ pub trait PrecompileStorageProvider {
         _activation_call_id: B256,
         _completed: bool,
     ) -> Result<()> {
-        Err(crate::error::PrecompileError::Fatal(
-            "certified Lysis activation frame is not available".into(),
+        Err(crate::error::PrecompileError::revert(
+            "certified Lysis activation frame is not available",
         ))
     }
 

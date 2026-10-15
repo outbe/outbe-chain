@@ -44,8 +44,8 @@ impl<'storage, T: Storable, const N: usize> StorageArray<'storage, T, N> {
 
     pub fn set(&self, index: usize, value: T) -> Result<()> {
         if index >= N {
-            return Err(crate::error::PrecompileError::Fatal(
-                "array index out of bounds".into(),
+            return Err(crate::error::PrecompileError::revert(
+                "array index out of bounds",
             ));
         }
         self.storage
@@ -93,18 +93,19 @@ mod tests {
     use crate::storage::StorageHandle;
     use alloy_primitives::address;
 
-    fn with_storage<F: FnOnce(StorageHandle)>(f: F) {
+    fn with_array<const N: usize>(f: impl FnOnce(StorageArray<u64, N>)) {
         let mut provider = HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        f(storage);
+        let addr = address!("0x0000000000000000000000000000000000001003");
+        f(StorageArray::new(
+            U256::ZERO,
+            addr,
+            StorageHandle::new(&mut provider),
+        ));
     }
-
-    const ADDR: Address = address!("0x0000000000000000000000000000000000001003");
 
     #[test]
     fn test_get_set() {
-        with_storage(|storage| {
-            let a: StorageArray<u64, 3> = StorageArray::new(U256::ZERO, ADDR, storage);
+        with_array::<3>(|a| {
             a.set(0, 100).unwrap();
             a.set(1, 200).unwrap();
             a.set(2, 300).unwrap();
@@ -118,8 +119,7 @@ mod tests {
 
     #[test]
     fn test_read_write_all() {
-        with_storage(|storage| {
-            let a: StorageArray<u64, 3> = StorageArray::new(U256::ZERO, ADDR, storage);
+        with_array::<3>(|a| {
             a.write_all(&[11, 22, 33]).unwrap();
             assert_eq!(a.read_all().unwrap(), vec![11, 22, 33]);
         });
@@ -127,8 +127,7 @@ mod tests {
 
     #[test]
     fn test_clear() {
-        with_storage(|storage| {
-            let a: StorageArray<u64, 3> = StorageArray::new(U256::ZERO, ADDR, storage);
+        with_array::<3>(|a| {
             a.write_all(&[1, 2, 3]).unwrap();
             a.clear().unwrap();
             assert_eq!(a.read_all().unwrap(), vec![0, 0, 0]);

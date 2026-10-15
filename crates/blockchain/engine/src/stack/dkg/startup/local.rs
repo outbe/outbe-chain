@@ -162,9 +162,7 @@ fn validate_local_fallback(
     if startup_dkg_context.has_chain_finalized_dkg_boundary()
         && !startup_dkg_context.recovered_boundary_finalized
     {
-        return Err(eyre::eyre!(
-            "pending DKG boundary snapshot was recovered but matching DKG material is unavailable"
-        ));
+        return Err(crate::errors::StackDkgError::PendingBoundarySnapshotMissingMaterial.into());
     }
 
     if startup_dkg_context.has_chain_finalized_dkg_boundary()

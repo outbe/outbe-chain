@@ -8,7 +8,7 @@ use std::{
 
 use alloy_primitives::{Address, B256};
 use clap::{Parser, Subcommand};
-use eyre::{ensure, WrapErr as _};
+use eyre::WrapErr as _;
 use outbe_metadosis::{
     config::{OcompForkInstallClassification, OcompForkInstallV1, OcompRequestProfile},
     proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH,
@@ -24,6 +24,8 @@ use outbe_primitives::OutbeHeader;
 use reth_chainspec::ChainSpec;
 use reth_ethereum::chainspec::EthChainSpec as _;
 use serde::Serialize;
+
+use crate::errors::OcompGenesisError;
 
 const ACTIVATION_HEIGHT: u64 = outbe_node::ocomp::fork::GENESIS_ACTIVE_OCOMP_HEIGHT;
 const OCOMP_FIELD: &str = outbe_node::ocomp::fork::OCOMP_FORK_INSTALL_GENESIS_KEY;
@@ -129,17 +131,18 @@ pub(crate) fn run(arguments: &[String]) -> eyre::Result<()> {
 }
 
 fn generate_successor(args: &OcompSuccessorArgs) -> eyre::Result<()> {
-    ensure!(
+    crate::errors::require(
         args.activation_height > 1,
-        "successor activation height must be above genesis"
-    );
+        OcompGenesisError::SuccessorActivationHeightBelowGenesis,
+    )?;
     require_new_output(&args.successor_output, "OCOMP successor")?;
     require_new_output(&args.proposal_output, "Update proposal")?;
-    ensure!(
+    crate::errors::require(
         args.bundle_catalog_dir.is_dir(),
-        "OCOMP bundle catalog directory does not exist: {}",
-        args.bundle_catalog_dir.display()
-    );
+        OcompGenesisError::BundleCatalogDirNotFound {
+            path: args.bundle_catalog_dir.display().to_string(),
+        },
+    )?;
 
     let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
     let chain_spec: ChainSpec<OutbeHeader> = reth_ethereum::cli::chainspec::chain_value_parser(
@@ -163,21 +166,20 @@ fn generate_successor(args: &OcompSuccessorArgs) -> eyre::Result<()> {
     })?;
     let predecessor = ProtocolBundleV1::decode_canonical(&predecessor_bytes, &limits)?;
     let successor_bundle = ProtocolBundleV1::decode_canonical(&successor_bytes, &limits)?;
-    ensure!(
+    crate::errors::require(
         predecessor.encode_canonical(&limits)? == predecessor_bytes,
-        "predecessor OCOMP bundle is not canonical"
-    );
-    ensure!(
+        OcompGenesisError::NonCanonicalPredecessorBundle,
+    )?;
+    crate::errors::require(
         successor_bundle.encode_canonical(&limits)? == successor_bytes,
-        "successor OCOMP bundle is not canonical"
-    );
+        OcompGenesisError::NonCanonicalSuccessorBundle,
+    )?;
     let predecessor_hash = predecessor.protocol_bundle_hash(&limits)?;
-    if predecessor.protocol_version == 1 {
-        ensure!(
-            predecessor_hash == install.request_profile.protocol_bundle_hash,
-            "version-1 predecessor does not match the genesis OCOMP authority"
-        );
-    }
+    crate::errors::require(
+        predecessor.protocol_version != 1
+            || predecessor_hash == install.request_profile.protocol_bundle_hash,
+        OcompGenesisError::Version1PredecessorMismatch,
+    )?;
     let successor_hash = successor_bundle.protocol_bundle_hash(&limits)?;
     let base_profile = outbe_ocompregistry::OcompRequestProfile::decode_canonical(
         &install.request_profile.encode_canonical(&limits)?,
@@ -208,14 +210,18 @@ fn generate_successor(args: &OcompSuccessorArgs) -> eyre::Result<()> {
     successor.validate_against(&predecessor_authority, args.activation_height - 1, &limits)?;
     let successor_canonical = successor.encode_canonical(&limits)?;
     let update_version = outbe_update::version::try_parse_protocol_version(&args.update_version)
-        .map_err(|error| eyre::eyre!("invalid Update protocol version: {error}"))?;
+        .map_err(|error| OcompGenesisError::InvalidUpdateProtocolVersion {
+            details: crate::errors::display_error(error),
+        })?;
     let payload = outbe_update::ScheduleUpdatePayload::new(
         update_version,
         args.activation_height,
         args.info.clone(),
     )
     .with_ocomp_successor(&successor)
-    .map_err(|error| eyre::eyre!("build Update payload: {error}"))?;
+    .map_err(|error| OcompGenesisError::BuildUpdatePayload {
+        details: crate::errors::display_error(error),
+    })?;
     let catalog_path = args
         .bundle_catalog_dir
         .join(format!("{}.ocb1", hex::encode(successor_hash.as_slice())));
@@ -277,10 +283,9 @@ fn write_bindings(args: &OcompBindingsArgs) -> eyre::Result<()> {
 }
 
 fn generate_genesis(args: &OcompGenesisArgs) -> eyre::Result<()> {
-    ensure!(
-        args.input != args.output,
-        "--input and --output must differ"
-    );
+    if args.input == args.output {
+        return Err(OcompGenesisError::IdenticalInputAndOutput.into());
+    }
     require_new_output(&args.output, "OCOMP genesis")?;
     require_new_output(&args.protocol_bundle_output, "OCOMP protocol bundle")?;
 
@@ -332,11 +337,10 @@ fn generate_genesis(args: &OcompGenesisArgs) -> eyre::Result<()> {
     let config = genesis
         .get_mut("config")
         .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| eyre::eyre!("input genesis config must be a JSON object"))?;
-    ensure!(
-        !config.contains_key(OCOMP_FIELD) && !config.contains_key(LAYOUT_FIELD),
-        "input genesis already contains an OCOMP or Metadosis layout extension"
-    );
+        .ok_or(OcompGenesisError::InputGenesisConfigNotObject)?;
+    if config.contains_key(OCOMP_FIELD) || config.contains_key(LAYOUT_FIELD) {
+        return Err(OcompGenesisError::InputGenesisAlreadyHasExtension.into());
+    }
     config.insert(
         OCOMP_FIELD.to_owned(),
         serde_json::json!({
@@ -375,10 +379,9 @@ fn parse_base_identity(path: &Path) -> eyre::Result<(u64, B256)> {
     let spec = reth_ethereum::cli::chainspec::chain_value_parser(path)
         .wrap_err_with(|| format!("parse input genesis {path}"))?;
     let extra = &spec.genesis.config.extra_fields;
-    ensure!(
-        !extra.contains_key(OCOMP_FIELD) && !extra.contains_key(LAYOUT_FIELD),
-        "input genesis must not already contain OCOMP extensions"
-    );
+    if extra.contains_key(OCOMP_FIELD) || extra.contains_key(LAYOUT_FIELD) {
+        return Err(OcompGenesisError::BaseIdentityAlreadyHasOcompExtensions.into());
+    }
     Ok((spec.chain().id(), spec.genesis_hash()))
 }
 
@@ -389,37 +392,34 @@ fn validator_identities(path: &Path) -> eyre::Result<Vec<B256>> {
     .wrap_err("decode validators JSON")?;
     let validators = validators
         .as_array()
-        .ok_or_else(|| eyre::eyre!("validators manifest must be a JSON array"))?;
+        .ok_or(OcompGenesisError::ValidatorsManifestNotArray)?;
     let max_validators = usize::try_from(outbe_consensus::bls::MAX_VALIDATORS)
-        .map_err(|_| eyre::eyre!("consensus validator bound does not fit usize"))?;
-    ensure!(
-        !validators.is_empty(),
-        "validators manifest must not be empty"
-    );
-    ensure!(
-        validators.len() <= max_validators,
-        "validators manifest contains {} entries, above consensus bound {max_validators}",
-        validators.len()
-    );
+        .map_err(|_| OcompGenesisError::ConsensusValidatorBoundOverflow)?;
+    if validators.is_empty() {
+        return Err(OcompGenesisError::ValidatorsManifestEmpty.into());
+    }
+    if validators.len() > max_validators {
+        return Err(OcompGenesisError::ValidatorsManifestExceedsBound {
+            count: validators.len(),
+            max: max_validators,
+        }
+        .into());
+    }
     let mut identities = Vec::with_capacity(validators.len());
     for (index, validator) in validators.iter().enumerate() {
         let address = validator
             .get("address")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| eyre::eyre!("validator-{index} has no address"))
+            .ok_or_else(|| eyre::Report::new(OcompGenesisError::ValidatorMissingAddress { index }))
             .and_then(|value| Address::from_str(value).map_err(Into::into))?;
         let public_key = validator
             .get("public_key")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| eyre::eyre!("validator-{index} has no public_key"))?;
+            .ok_or(OcompGenesisError::ValidatorMissingPublicKey { index })?;
         let public_key = hex::decode(public_key.strip_prefix("0x").unwrap_or(public_key))?;
-        ensure!(
-            public_key.len() == 48,
-            "validator-{index} public key must be 48 bytes"
-        );
         let public_key: [u8; 48] = public_key
             .try_into()
-            .map_err(|_| eyre::eyre!("validator-{index} public key must be 48 bytes"))?;
+            .map_err(|_| OcompGenesisError::ValidatorInvalidPublicKeyLength { index })?;
         identities.push(validator_identity_hash_v1(address, &public_key)?);
     }
     Ok(identities)
@@ -434,24 +434,23 @@ fn load_registrations(directory: &Path, count: usize) -> eyre::Result<Vec<OcompK
         let name = entry
             .file_name()
             .into_string()
-            .map_err(|_| eyre::eyre!("OCOMP registration directory entry is not UTF-8"))?;
+            .map_err(|_| OcompGenesisError::RegistrationEntryNotUtf8)?;
         let Some(index) = name.strip_prefix("validator-") else {
             continue;
         };
         let index = index
             .parse::<usize>()
             .wrap_err_with(|| format!("invalid OCOMP registration directory {name}"))?;
-        ensure!(
-            index < count,
-            "extra OCOMP registration directory {name} for {count} validators"
-        );
-        ensure!(
-            entry
-                .file_type()
-                .wrap_err_with(|| format!("inspect OCOMP registration directory {name}"))?
-                .is_dir(),
-            "OCOMP registration entry {name} is not a directory"
-        );
+        if index >= count {
+            return Err(OcompGenesisError::ExtraRegistrationDir { name, count }.into());
+        }
+        if !entry
+            .file_type()
+            .wrap_err_with(|| format!("inspect OCOMP registration directory {name}"))?
+            .is_dir()
+        {
+            return Err(OcompGenesisError::RegistrationEntryNotDir { name }.into());
+        }
     }
     let mut registrations = Vec::with_capacity(count);
     for index in 0..count {
@@ -476,12 +475,13 @@ fn validate_founder_registrations(
     validator_identity_hashes: &[B256],
     registrations: &[OcompKeyRegistrationV1],
 ) -> eyre::Result<()> {
-    ensure!(
-        registrations.len() == validator_identity_hashes.len(),
-        "founder registration count {} does not match validator count {}",
-        registrations.len(),
-        validator_identity_hashes.len()
-    );
+    if registrations.len() != validator_identity_hashes.len() {
+        return Err(OcompGenesisError::FounderRegistrationCountMismatch {
+            registrations: registrations.len(),
+            validators: validator_identity_hashes.len(),
+        }
+        .into());
+    }
     let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
     let mut keys = BTreeSet::new();
     for (index, (identity, registration)) in validator_identity_hashes
@@ -489,21 +489,28 @@ fn validate_founder_registrations(
         .zip(registrations)
         .enumerate()
     {
-        ensure!(
-            registration.core.chain_id == chain_id
-                && registration.core.genesis_hash == genesis_hash
-                && registration.core.validator_identity_hash == *identity
-                && registration.core.key_epoch == POC_KEY_EPOCH
-                && registration.core.allowed_purpose_bitmap == RESULT_SIGNATURE_PURPOSE_BITMAP,
-            "validator-{index} OCOMP registration does not match this genesis"
-        );
+        crate::errors::require(
+            (
+                registration.core.chain_id,
+                registration.core.genesis_hash,
+                registration.core.validator_identity_hash,
+                registration.core.key_epoch,
+                registration.core.allowed_purpose_bitmap,
+            ) == (
+                chain_id,
+                genesis_hash,
+                *identity,
+                POC_KEY_EPOCH,
+                RESULT_SIGNATURE_PURPOSE_BITMAP,
+            ),
+            OcompGenesisError::ValidatorRegistrationGenesisMismatch { index },
+        )?;
         registration
             .validate_proof_of_possession(&limits)
             .wrap_err_with(|| format!("verify validator-{index} OCOMP registration"))?;
-        ensure!(
-            keys.insert(registration.core.ocomp_public_key_sec1),
-            "validator-{index} reuses an OCOMP public key"
-        );
+        if !keys.insert(registration.core.ocomp_public_key_sec1) {
+            return Err(OcompGenesisError::ValidatorDuplicatePublicKey { index }.into());
+        }
     }
     Ok(())
 }
@@ -519,19 +526,16 @@ fn validate_output(
             .as_ref()
             .clone()
             .map_header(OutbeHeader::new);
-    ensure!(
-        parsed.chain().id() == expected_chain_id,
-        "generated genesis changed chain ID"
-    );
-    ensure!(
-        parsed.genesis_hash() == expected_genesis_hash,
-        "OCOMP extension changed genesis hash"
-    );
+    if parsed.chain().id() != expected_chain_id {
+        return Err(OcompGenesisError::GeneratedGenesisChangedChainId.into());
+    }
+    if parsed.genesis_hash() != expected_genesis_hash {
+        return Err(OcompGenesisError::OcompExtensionChangedGenesisHash.into());
+    }
     let loaded = outbe_node::ocomp::fork::require_startup_ocomp_fork_install(&parsed)?;
-    ensure!(
-        loaded.as_ref() == expected_install,
-        "node parser returned a different OCOMP install"
-    );
+    if loaded.as_ref() != expected_install {
+        return Err(OcompGenesisError::NodeParserInstallMismatch.into());
+    }
     Ok(())
 }
 
@@ -560,7 +564,7 @@ fn selected_protocol_parameters(
     let config = genesis
         .get("config")
         .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| eyre::eyre!("input genesis config must be a JSON object"))?;
+        .ok_or(OcompGenesisError::InputGenesisConfigNotObject)?;
     outbe_chain_constants::GenesisProtocolParametersV1::select_for_build(
         config.get(outbe_chain_constants::GENESIS_CONFIG_KEY),
     )
@@ -568,16 +572,20 @@ fn selected_protocol_parameters(
 }
 
 fn require_new_output(path: &Path, description: &str) -> eyre::Result<()> {
-    ensure!(
-        !path.exists(),
-        "refusing to overwrite existing {description}: {}",
-        path.display()
-    );
-    ensure!(
-        path.parent().is_some_and(Path::exists),
-        "{description} parent does not exist: {}",
-        path.display()
-    );
+    if path.exists() {
+        return Err(OcompGenesisError::OverwriteExistingOutput {
+            description: description.to_owned(),
+            path: path.display().to_string(),
+        }
+        .into());
+    }
+    if !path.parent().is_some_and(Path::exists) {
+        return Err(OcompGenesisError::OutputParentNotFound {
+            description: description.to_owned(),
+            path: path.display().to_string(),
+        }
+        .into());
+    }
     Ok(())
 }
 
@@ -600,8 +608,13 @@ fn pretty_json(value: &impl Serialize) -> eyre::Result<Vec<u8>> {
 }
 
 fn utf8_path<'a>(path: &'a Path, description: &str) -> eyre::Result<&'a str> {
-    path.to_str()
-        .ok_or_else(|| eyre::eyre!("{description} path is not UTF-8: {}", path.display()))
+    path.to_str().ok_or_else(|| {
+        OcompGenesisError::PathNotUtf8 {
+            description: description.to_owned(),
+            path: path.display().to_string(),
+        }
+        .into()
+    })
 }
 
 #[cfg(test)]

@@ -148,10 +148,10 @@ pub fn load_pair(
     };
     let bucket =
         load_bucket(storage, scope, parent, item.body().bucket_id())?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Fatal(format!(
-                "gem {gem_id} has no bucket body {}",
-                item.body().bucket_id()
-            ))
+            crate::errors::GemFatalError::MissingBucketBody {
+                gem_id,
+                bucket_id: item.body().bucket_id(),
+            }
         })?;
     Ok(Some((item, bucket)))
 }
@@ -235,7 +235,12 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, bucket_key: B256) -> Res
         return Ok(0);
     }
     let notice = gem.bucket_call_notice_period_seconds.read(&bucket_key)?;
-    Ok(called_at.saturating_add(u64::from(notice)))
+    Ok(settlement_deadline_of(called_at, notice))
+}
+
+/// The deadline a call at `called_at` sets under `notice_period`.
+pub fn settlement_deadline_of(called_at: u64, notice_period: u32) -> u64 {
+    called_at.saturating_add(u64::from(notice_period))
 }
 
 /// Records a loaded gem paid for. GemFactory decides the settlement and takes the payment.

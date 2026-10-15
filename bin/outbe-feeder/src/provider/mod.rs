@@ -11,10 +11,11 @@ pub mod redstone;
 #[cfg(test)]
 pub(crate) mod test_server;
 
-use eyre::{eyre, Result};
+use eyre::Result;
 use std::collections::HashMap;
 
 use crate::config::{ApiProviderConfig, FeederConfig};
+use crate::errors::ProviderError;
 use crate::fixed::FixedValue;
 
 /// Whether an upstream endpoint supplied a volume field.
@@ -189,16 +190,16 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
         let fallback: Box<dyn Provider> = match name.as_str() {
             "mock" => Box::new(mock::MockProvider::new()),
             "mock_http" => {
-                let endpoint = endpoints.get("mock_http").ok_or_else(|| {
-                    eyre!("provider mock_http requires a [[api_providers]] entry")
-                })?;
+                let endpoint = endpoints
+                    .get("mock_http")
+                    .ok_or(ProviderError::MissingApiProviderEntry("mock_http"))?;
                 Box::new(mock_http::MockHttpProvider::new(endpoint)?)
             }
             "pyth" => Box::new(pyth::PythProvider::new()?),
             "redstone" => {
                 let endpoint = endpoints
                     .get("redstone")
-                    .ok_or_else(|| eyre!("provider redstone requires a [[api_providers]] entry"))?;
+                    .ok_or(ProviderError::MissingApiProviderEntry("redstone"))?;
                 Box::new(redstone::RedstoneProvider::new(endpoint)?)
             }
             "binance" => Box::new(cex::binance::BinanceProvider::new()?),
@@ -213,7 +214,7 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
                     .dex_providers
                     .iter()
                     .find(|dex| dex.name == *name)
-                    .ok_or_else(|| eyre!("provider {name} requires a [[dex_providers]] entry"))?,
+                    .ok_or_else(|| ProviderError::MissingDexProviderEntry(name.clone()))?,
             )?),
             other => {
                 let Some(entry) = config

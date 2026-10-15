@@ -303,11 +303,9 @@ impl MetadosisContract<'_> {
                 return Err(MetadosisError::OcompPreAdmissionAlreadySealed { wwd }.into());
             }
 
-            let envelope_hash = envelope.envelope_hash(limits).map_err(|error| {
-                MetadosisError::InvalidOcompPreAdmissionEnvelope {
-                    reason: error.to_string(),
-                }
-            })?;
+            let envelope_hash = envelope
+                .envelope_hash(limits)
+                .map_err(MetadosisError::invalid_ocomp_pre_admission_envelope)?;
             if envelope_hash.is_zero() {
                 return Err(MetadosisError::InvalidOcompPreAdmissionEnvelopeHash.into());
             }

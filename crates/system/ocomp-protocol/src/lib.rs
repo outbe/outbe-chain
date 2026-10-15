@@ -12,6 +12,7 @@ pub mod committee;
 pub mod common;
 pub mod control;
 pub mod error;
+pub mod errors;
 pub mod generated_shape;
 pub mod hash;
 pub mod input;

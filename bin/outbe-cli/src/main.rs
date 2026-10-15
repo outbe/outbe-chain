@@ -8,6 +8,7 @@ use eyre::Result;
 
 mod abi;
 mod commands;
+pub(crate) mod errors;
 mod rpc;
 mod tx;
 

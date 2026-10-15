@@ -5,7 +5,7 @@ use std::str::FromStr;
 use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::L2_REGISTRY_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_vote::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
 use serde::Deserialize;
 
@@ -145,14 +145,7 @@ impl VoteTarget for L2RegistryVoteTarget {
             }
         };
         let mut registry = L2RegistryContract::new(ctx.storage.clone());
-        match decoded.apply(&mut registry) {
-            Ok(()) => Ok(TargetExecutionOutcome::Applied),
-            Err(PrecompileError::Revert(reason)) => Ok(TargetExecutionOutcome::Error { reason }),
-            Err(PrecompileError::RevertBytes(reason)) => Ok(TargetExecutionOutcome::Error {
-                reason: format!("0x{}", hex::encode(reason)),
-            }),
-            Err(error) => Err(error),
-        }
+        L2RegistryError::into_execution_outcome(decoded.apply(&mut registry))
     }
 }
 

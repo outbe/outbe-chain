@@ -16,9 +16,10 @@ pub(crate) fn verify_export_inputs(
     use outbe_ocomp_protocol::input::CheckpointIdentityV1;
     let check = || -> eyre::Result<ExportInputsAudit> {
         let limits = poc_schema_limits();
-        let finalized = job.finalized.as_ref().ok_or_else(|| {
-            eyre::eyre!("complete export lacks canonical finalized job authority")
-        })?;
+        let finalized = job
+            .finalized
+            .as_ref()
+            .ok_or(SnapshotOcompError::CompleteExportLacksFinality)?;
         let spec = canonical_job_spec(job)?;
         let job_hex = hex::encode(finalized.job_id);
         let cas = FilesystemCasReader::open(ocomp_root.join("cas-v1"), cas_limits)?;
@@ -52,22 +53,19 @@ pub(crate) fn verify_export_inputs(
                 outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
             )?,
         };
-        ensure!(
-            receipt.checkpoint() == &checkpoint && binding.manifest().checkpoint == checkpoint,
-            "export checkpoint differs from canonical request or CE schema"
-        );
-        ensure!(
-            binding.commit_replay_request() == receipt.commit_replay_request(),
-            "receipt and binding describe different export authorities"
-        );
+        if receipt.checkpoint() != &checkpoint || binding.manifest().checkpoint != checkpoint {
+            return Err(SnapshotOcompError::ExportCheckpointMismatch.into());
+        }
+        if binding.commit_replay_request() != receipt.commit_replay_request() {
+            return Err(SnapshotOcompError::ReceiptAndBindingAuthorityMismatch.into());
+        }
         binding.require_exact_node_replay(&receipt.committed())?;
-        if let Some(expected) = expected_export {
-            ensure!(
-                expected.source_generation == receipt.source_pin_generation()
-                    && expected.lease_generation == receipt.lease_generation()
-                    && expected.manifest_hash == receipt.manifest_hash(),
-                "saved pin export differs from receipt authority"
-            );
+        if expected_export.is_some_and(|expected| {
+            expected.source_generation != receipt.source_pin_generation()
+                || expected.lease_generation != receipt.lease_generation()
+                || expected.manifest_hash != receipt.manifest_hash()
+        }) {
+            return Err(SnapshotOcompError::SavedPinExportDiffersFromReceipt.into());
         }
         // load_exact already consumes the native exact verified input cursor.
         let input_chunks = u64::from(binding.manifest().input_chunk_count);
@@ -98,7 +96,7 @@ pub(super) fn canonical_job_spec(
     let finalized = job
         .finalized
         .as_ref()
-        .ok_or_else(|| eyre::eyre!("job spec lacks canonical finality"))?;
+        .ok_or(SnapshotOcompError::JobSpecLacksFinality)?;
     let limits = poc_schema_limits();
     let spec = FinalizedJobSpecV1 {
         summary: FinalizedJobSummaryV1 {
@@ -160,7 +158,7 @@ pub(crate) fn verify_present_discovery(
         }
         let name = name
             .to_str()
-            .ok_or_else(|| eyre::eyre!("invalid discovery bundle locator"))?;
+            .ok_or(SnapshotOcompError::InvalidDiscoveryBundleLocator)?;
         let mut bytes = [0_u8; 32];
         hex::decode_to_slice(name, &mut bytes)?;
         let bundle = B256::from(bytes);
@@ -173,33 +171,33 @@ pub(crate) fn verify_present_discovery(
         let mut callback_error = None;
         let result = reader.visit_records(&mut |record| {
             let inspect = || -> eyre::Result<()> {
-                if maximum_records.is_some_and(|maximum| counts.records >= maximum) {
-                    return Err(Incomplete(format!(
+                require(
+                    maximum_records.is_none_or(|maximum| counts.records < maximum),
+                    Incomplete(format!(
                         "discovery walk stopped after {} records",
                         counts.records
-                    ))
-                    .into());
-                }
+                    )),
+                )?;
                 let authority = if let DiscoverySpoolRecordV1::Offer(offer) = &record {
                     let intent =
                         JobIntentV1::decode_canonical(&offer.spec.canonical_job_intent.0, &limits)?;
-                    ensure!(
+                    require(
                         intent.protocol_bundle_hash == bundle,
-                        "discovery offer differs from bundle locator"
-                    );
+                        SnapshotOcompError::DiscoveryOfferBundleMismatch,
+                    )?;
                     let job = state.metadosis_job(
                         offer.spec.summary.intent_id,
                         WorldwideDay::new(intent.wwd),
                         Some(offer.spec.summary.job_id),
                     )?;
-                    ensure!(
+                    require(
                         offer.spec == canonical_job_spec(&job)?,
-                        "discovery offer differs from canonical job spec"
-                    );
+                        SnapshotOcompError::DiscoveryOfferJobSpecMismatch,
+                    )?;
                     counts.offers = counts
                         .offers
                         .checked_add(1)
-                        .ok_or_else(|| eyre::eyre!("discovery offer count overflow"))?;
+                        .ok_or(SnapshotOcompError::DiscoveryOfferCountOverflow)?;
                     Some(job)
                 } else {
                     None
@@ -208,7 +206,7 @@ pub(crate) fn verify_present_discovery(
                 counts.records = counts
                     .records
                     .checked_add(1)
-                    .ok_or_else(|| eyre::eyre!("discovery record count overflow"))?;
+                    .ok_or(SnapshotOcompError::DiscoveryRecordCountOverflow)?;
                 Ok(())
             };
             inspect().map_err(|error| {
@@ -223,7 +221,7 @@ pub(crate) fn verify_present_discovery(
         counts.spools = counts
             .spools
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("discovery spool count overflow"))?;
+            .ok_or(SnapshotOcompError::DiscoverySpoolCountOverflow)?;
     }
     Ok(counts)
 }

@@ -533,14 +533,7 @@ pub(crate) fn conserved_lysis_limit(
     Ok(request_lysis_limit_minor)
 }
 
-fn owner_apply_error(error: PrecompileError) -> PrecompileError {
-    match error {
-        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
-            crate::errors::business_failure(format!("Lysis owner apply rejected: {error}"))
-        }
-        other => other,
-    }
-}
+use crate::errors::owner_apply_error;
 
 fn protocol_reject(error: ProtocolError, fallback: u16) -> PrecompileError {
     match error {

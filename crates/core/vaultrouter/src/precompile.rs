@@ -4,7 +4,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
 
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::types::StorageSet;
 use outbe_primitives::storage::StorageHandle;
 
@@ -185,7 +185,7 @@ pub fn dispatch(
 /// `index` is out of bounds.
 fn set_at(set: &StorageSet<'_, Address>, index: U256) -> Result<Address> {
     let idx =
-        u32::try_from(index).map_err(|_| PrecompileError::Revert("index out of bounds".into()))?;
+        u32::try_from(index).map_err(|_| crate::errors::VaultRouterError::IndexOutOfBounds)?;
     set.at(idx)?
-        .ok_or_else(|| PrecompileError::Revert("index out of bounds".into()))
+        .ok_or_else(|| crate::errors::VaultRouterError::IndexOutOfBounds.into())
 }

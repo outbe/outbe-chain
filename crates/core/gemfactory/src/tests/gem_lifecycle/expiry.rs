@@ -429,3 +429,18 @@ fn config_dev_profile_terms_a_new_bucket() {
         assert!(terms.call_window_seconds < GemParams::PROD.call_window_seconds);
     });
 }
+
+/// A corrupt gem body is this node's store: the forfeit sweep fails the block.
+#[test]
+fn a_corrupt_body_fails_the_forfeit_sweep() {
+    use outbe_primitives::error::{PrecompileError, SweepFailure};
+    use outbe_primitives::expiry_queue::ExpiryHandler;
+    with_storage(|storage, world| {
+        let ctx = block_ctx(storage);
+        let expiry = crate::expired::GemExpiry::new(&ctx, &world.scope, &world.parent);
+        assert_eq!(
+            expiry.classify(&PrecompileError::BodyReadCorruption("x".into())),
+            SweepFailure::Propagate
+        );
+    });
+}

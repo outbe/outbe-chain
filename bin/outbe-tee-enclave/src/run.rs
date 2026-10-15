@@ -16,6 +16,7 @@ use alloy_primitives::B256;
 use rand_core::RngCore as _;
 use zeroize::Zeroizing;
 
+use crate::errors::{EnclaveResult, RunError};
 use crate::keys::EnclaveKeys;
 use crate::seal::EnclaveBootConfig;
 use crate::transport::{serve, serve_tcp, ServerContext};
@@ -352,26 +353,24 @@ fn resolve_development_network_binding(
     args: &[String],
     mock: bool,
     chain_id: B256,
-) -> Result<Option<NetworkBindingV1>, String> {
+) -> EnclaveResult<Option<NetworkBindingV1>> {
     let encoded = arg_value(args, "--dev-network-binding");
     if !mock {
         return encoded
             .is_none()
             .then_some(None)
-            .ok_or_else(|| "--dev-network-binding is accepted only by the mock binary".to_owned());
+            .ok_or_else(|| RunError::DevNetworkBindingMockOnly.into());
     }
-    let encoded = encoded.ok_or_else(|| {
-        "mock binary requires --dev-network-binding <canonical NetworkBindingV1 hex>".to_owned()
-    })?;
+    let encoded = encoded.ok_or(RunError::MockRequiresDevNetworkBinding)?;
     let bytes = hex::decode(encoded.strip_prefix("0x").unwrap_or(&encoded))
-        .map_err(|error| format!("decode --dev-network-binding hex: {error}"))?;
+        .map_err(RunError::decode_dev_network_binding_hex)?;
     let binding = NetworkBindingV1::decode_canonical(&bytes)
-        .map_err(|error| format!("decode canonical NetworkBindingV1: {error}"))?;
+        .map_err(RunError::decode_canonical_network_binding)?;
     if binding.attestation_mode != AttestationMode::GramineDirectDev {
-        return Err("development network binding must use GramineDirectDev mode".to_owned());
+        return Err(RunError::DevNetworkBindingRequiresDirectDev.into());
     }
     if B256::from(binding.chain_id) != chain_id {
-        return Err("development network binding chain id does not match --chain-id".to_owned());
+        return Err(RunError::DevNetworkBindingChainIdMismatch.into());
     }
     Ok(Some(binding))
 }
@@ -404,7 +403,7 @@ fn resolve_enclave_identity_seed(
     args: &[String],
     cli_seed: Option<[u8; 32]>,
     development: bool,
-) -> Result<EnclaveIdentitySeedResolution, String> {
+) -> EnclaveResult<EnclaveIdentitySeedResolution> {
     #[cfg(feature = "mock")]
     if development {
         return Ok(EnclaveIdentitySeedResolution {
@@ -420,23 +419,23 @@ fn resolve_enclave_identity_seed(
     #[cfg(not(feature = "mock"))]
     let _ = development;
     if cli_seed.is_some() {
-        return Err("--dkg-seed and TEE_DEV_DKG_SEED are development-only".to_string());
+        return Err(RunError::DkgSeedDevOnly.into());
     }
 
     let tee_dir = arg_value(args, "--tee-dir")
         .map(std::path::PathBuf::from)
-        .ok_or_else(|| "production requires --tee-dir for sealed identity".to_string())?;
-    let (sealing_key, key_policy) = crate::transport::sealing_key()
-        .ok_or_else(|| "production identity requires an SGX sealing key".to_string())?;
+        .ok_or(RunError::ProdRequiresTeeDir)?;
+    let (sealing_key, key_policy) =
+        crate::transport::sealing_key().ok_or(RunError::ProdIdentityRequiresSgxSealingKey)?;
 
     // Running SGX SVN for the anti-rollback floor, read from the local report.
     let isv_svn = crate::gramine::local_report_measurements(&[0u8; 64])
         .map(|m| m.isv_svn)
         .unwrap_or(0);
     std::fs::create_dir_all(&tee_dir)
-        .map_err(|error| format!("create identity directory {}: {error}", tee_dir.display()))?;
+        .map_err(|error| RunError::create_identity_dir(tee_dir.display(), error))?;
     std::fs::set_permissions(&tee_dir, std::fs::Permissions::from_mode(0o700))
-        .map_err(|error| format!("chmod identity directory {}: {error}", tee_dir.display()))?;
+        .map_err(|error| RunError::chmod_identity_dir(tee_dir.display(), error))?;
     let path = tee_dir.join("sealed_identity.bin");
 
     if let Some(restored) = try_restore_sealed_identity(&path, isv_svn)? {
@@ -459,23 +458,19 @@ fn resolve_enclave_identity_seed(
 fn try_restore_sealed_identity(
     path: &std::path::Path,
     isv_svn: u16,
-) -> Result<Option<EnclaveIdentitySeedResolution>, String> {
+) -> EnclaveResult<Option<EnclaveIdentitySeedResolution>> {
     let blob = match std::fs::read(path) {
         Ok(blob) => blob,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("read sealed identity {}: {error}", path.display())),
+        Err(error) => return Err(RunError::read_sealed_identity(path.display(), error)),
     };
-    let unsealed = crate::sgx_sealing::unseal_payload(&blob, isv_svn).map_err(|error| {
-        format!(
-            "sealed identity at {} is unusable and will not be replaced: {error}",
-            path.display()
-        )
-    })?;
+    let unsealed = crate::sgx_sealing::unseal_payload(&blob, isv_svn)
+        .map_err(|error| RunError::unusable_sealed_identity(path.display(), error))?;
     if !unsealed.group_sig.is_empty() {
-        return Err(format!(
-            "sealed identity at {} contains unexpected group-signature bytes",
-            path.display()
-        ));
+        return Err(RunError::SealedIdentityUnexpectedGroupSig {
+            path: path.display().to_string(),
+        }
+        .into());
     }
     Ok(Some(EnclaveIdentitySeedResolution {
         seed: Some(unsealed.tribute_offer_secret),
@@ -484,17 +479,17 @@ fn try_restore_sealed_identity(
     }))
 }
 
-fn ensure_no_orphaned_authorization(tee_dir: &std::path::Path) -> Result<(), String> {
+fn ensure_no_orphaned_authorization(tee_dir: &std::path::Path) -> EnclaveResult<()> {
     let authorization_path = tee_dir.join("sealed_node_authorization_v1.bin");
     match std::fs::symlink_metadata(&authorization_path) {
-        Ok(_) => Err(format!(
-            "sealed identity is missing while node authorization exists at {}; old identity cannot be recovered",
-            authorization_path.display()
-        )),
+        Ok(_) => Err(RunError::OrphanedNodeAuthorization {
+            path: authorization_path.display().to_string(),
+        }
+        .into()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!(
-            "inspect sealed node authorization {}: {error}",
-            authorization_path.display()
+        Err(error) => Err(RunError::inspect_sealed_node_auth(
+            authorization_path.display(),
+            error,
         )),
     }
 }

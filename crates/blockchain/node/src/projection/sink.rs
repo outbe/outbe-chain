@@ -6,10 +6,11 @@ use super::ProjectionRuntime;
 use super::ProjectionRuntimeRecoveryHandle;
 use super::ReadyOffchainDataProjection;
 use super::PROJECTION_RECOVERY_DEADLINE;
+use crate::errors::NodeProjectionError;
 use crate::finalized_frame::FinalizedFrame;
+use crate::ocomp::retention::RetentionError;
 use alloy_consensus::transaction::TxHashRef;
 use alloy_primitives::B256;
-use eyre::bail;
 use eyre::Context;
 use outbe_offchain_data::FinalizedBlock;
 use outbe_offchain_data::FinalizedLog;
@@ -54,13 +55,13 @@ impl ProjectionRetentionFence {
     pub(super) fn projection_guard(&self) -> eyre::Result<RwLockReadGuard<'_, ()>> {
         self.gate
             .read()
-            .map_err(|_| eyre::eyre!("OCOMP projection/GC fence is poisoned"))
+            .map_err(|_| NodeProjectionError::RetentionFencePoisoned.into())
     }
 
-    pub(crate) fn gc_claim_guard(&self) -> Result<RwLockWriteGuard<'_, ()>, &'static str> {
+    pub(crate) fn gc_claim_guard(&self) -> Result<RwLockWriteGuard<'_, ()>, RetentionError> {
         self.gate
             .write()
-            .map_err(|_| "OCOMP projection/GC fence is poisoned")
+            .map_err(|_| RetentionError::InvalidTransition("OCOMP projection/GC fence is poisoned"))
     }
 }
 
@@ -99,12 +100,12 @@ where
 {
     let transactions = block.body().transactions();
     if transactions.len() != receipts.len() {
-        bail!(
-            "canonical block {} has {} transactions but {} receipts",
+        return Err(NodeProjectionError::CanonicalBlockReceiptMismatch {
             block_number,
-            transactions.len(),
-            receipts.len()
-        );
+            transactions: transactions.len(),
+            receipts: receipts.len(),
+        }
+        .into());
     }
 
     let mut normalized_receipts = Vec::with_capacity(receipts.len());
@@ -112,7 +113,7 @@ where
     for (transaction_index, (transaction, receipt)) in transactions.iter().zip(receipts).enumerate()
     {
         let transaction_index = u64::try_from(transaction_index)
-            .map_err(|_| eyre::eyre!("transaction index does not fit u64"))?;
+            .map_err(|_| NodeProjectionError::TransactionIndexOverflow)?;
         let mut logs = Vec::with_capacity(receipt.logs().len());
         for log in receipt.logs() {
             logs.push(FinalizedLog {
@@ -122,7 +123,7 @@ where
             });
             next_log_index = next_log_index
                 .checked_add(1)
-                .ok_or_else(|| eyre::eyre!("block-global log index overflow"))?;
+                .ok_or(NodeProjectionError::LogIndexOverflow)?;
         }
         normalized_receipts.push(FinalizedReceipt {
             tx_hash: *transaction.tx_hash(),
@@ -160,7 +161,7 @@ impl FinalizedProjectionSink {
             .runtime_failure_receiver
             .as_ref()
             .cloned()
-            .ok_or_else(|| eyre::eyre!("projection body-read failure receiver is unavailable"))
+            .ok_or_else(|| NodeProjectionError::FailureReceiverUnavailable.into())
     }
 
     pub fn runtime_recovery_handle(&self) -> eyre::Result<ProjectionRuntimeRecoveryHandle> {
@@ -171,9 +172,7 @@ impl FinalizedProjectionSink {
                 .runtime_failure_sender
                 .as_ref()
                 .cloned()
-                .ok_or_else(|| {
-                    eyre::eyre!("projection body-read recovery sender is unavailable")
-                })?,
+                .ok_or(NodeProjectionError::RecoverySenderUnavailable)?,
         })
     }
 
@@ -245,7 +244,7 @@ impl FinalizedProjectionSink {
             || (durable.block_number == target.block_number
                 && durable.block_hash != target.block_hash)
         {
-            bail!("durable projection checkpoint is ahead of or conflicts with finalized target");
+            return Err(NodeProjectionError::DurableCheckpointConflict.into());
         }
         self.runtime
             .readiness_publisher
@@ -285,12 +284,12 @@ impl FinalizedProjectionSink {
             }
             if identity.number == checkpoint.block_number {
                 if identity.hash != checkpoint.block_hash {
-                    bail!(
-                        "finalized frame hash {} conflicts with durable projection hash {} at height {}",
-                        identity.hash,
-                        checkpoint.block_hash,
-                        identity.number
-                    );
+                    return Err(NodeProjectionError::FinalizedFrameHashConflict {
+                        frame_hash: identity.hash,
+                        durable_hash: checkpoint.block_hash,
+                        height: identity.number,
+                    }
+                    .into());
                 }
                 return Ok(checkpoint);
             }
@@ -307,9 +306,11 @@ impl FinalizedProjectionSink {
             frame.block(),
             frame.receipts(),
         )?;
-        let overlay = self.runtime.overlay.clone().ok_or_else(|| {
-            eyre::eyre!("offchain projection overlay is required before a durable write")
-        })?;
+        let overlay = self
+            .runtime
+            .overlay
+            .clone()
+            .ok_or(NodeProjectionError::OverlayRequired)?;
         let prepared = self
             .runtime
             .projector
@@ -321,21 +322,21 @@ impl FinalizedProjectionSink {
         let projected = match projected {
             ProjectionOutcome::Applied { checkpoint, .. } => checkpoint,
             ProjectionOutcome::AlreadyApplied(checkpoint) => {
-                bail!(
-                    "logical projection checkpoint {} ({}) is ahead of durable frame-sink authority",
-                    checkpoint.block_number,
-                    checkpoint.block_hash
-                );
+                return Err(NodeProjectionError::LogicalCheckpointAhead {
+                    block_number: checkpoint.block_number,
+                    block_hash: checkpoint.block_hash,
+                }
+                .into());
             }
         };
         if projected.block_number != identity.number || projected.block_hash != identity.hash {
-            bail!(
-                "projector returned checkpoint {} ({}) after projecting shared frame {} ({})",
-                projected.block_number,
-                projected.block_hash,
-                identity.number,
-                identity.hash
-            );
+            return Err(NodeProjectionError::ProjectedCheckpointMismatch {
+                projected_number: projected.block_number,
+                projected_hash: projected.block_hash,
+                frame_number: identity.number,
+                frame_hash: identity.hash,
+            }
+            .into());
         }
         apply_durable_projection_write_before(&self.runtime.writer, &durable_write, deadline)?;
         self.durable_checkpoint = Some(projected);

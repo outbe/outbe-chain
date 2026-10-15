@@ -9,6 +9,7 @@ use alloy_signer_local::PrivateKeySigner;
 use eyre::{Context, Result};
 
 use crate::config::AccountConfig;
+use crate::errors::AttesterError;
 
 pub fn create_wallet(account: &AccountConfig) -> Result<EthereumWallet> {
     let signer: PrivateKeySigner = account
@@ -70,6 +71,6 @@ pub async fn send_tx(sender: &TxSender<'_>, to: Address, calldata: &[u8]) -> Res
     let pending = provider
         .send_transaction(tx)
         .await
-        .map_err(|e| eyre::eyre!("transaction failed: {e:#}"))?;
+        .map_err(|e| AttesterError::TransactionFailed(format!("{e:#}")))?;
     Ok(*pending.tx_hash())
 }

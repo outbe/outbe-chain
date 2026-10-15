@@ -1,6 +1,6 @@
-//! IntexFactory: Intex issuance, settlement (settle / minePromis), and the
-//! autonomous call lifecycle over the data Intex keeps. Qualification is derived from
-//! daily VWAPs and is never stored.
+//! IntexFactory: Intex issuance, settlement (settle / minePromis), the auction proceeds
+//! fan-in, the target-chain notices and VWAP push, and the call and expiry sweeps over
+//! the data Intex keeps. Qualification is derived from daily VWAPs and is never stored.
 
 pub mod api;
 pub mod called;
@@ -15,12 +15,14 @@ pub(crate) mod runtime;
 pub mod schema;
 pub(crate) mod sol_ext;
 pub(crate) mod state;
+#[cfg(feature = "e2e-test")]
+mod test_arming_e2e;
 pub mod vwap_push;
 
-pub use api::issue;
+pub use api::issue_intex;
 pub use errors::IntexFactoryError;
 pub use outbe_intex::SeriesId;
-pub use runtime::to_wire_price;
+pub use runtime::{marked_up, to_wire_price};
 pub use schema::{IntexFactoryContract, IssuanceParams};
 
 /// Narrow benchmark-only access to the already-public issuance hand-off type.

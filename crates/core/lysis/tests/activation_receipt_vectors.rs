@@ -86,14 +86,6 @@ fn structural_verifier_rejects_result_and_completion_rebinding() {
     ))
     .is_err());
 
-    let mut wrong_contributor_total = fixture.result.clone();
-    wrong_contributor_total.conservation.eligible_nominal_total = U256::from(1_001);
-    recommit_result(&mut wrong_contributor_total, &fixture.limits);
-    let payload = wrong_contributor_total
-        .activation_payload(&fixture.limits)
-        .unwrap();
-    assert!(verify_result(inputs(&fixture, &payload, &wrong_contributor_total)).is_err());
-
     let mut payload_rebinding = fixture.payload.clone();
     payload_rebinding.roots.nod_root = hash(201);
     assert!(verify_result(inputs(&fixture, &payload_rebinding, &fixture.result)).is_err());

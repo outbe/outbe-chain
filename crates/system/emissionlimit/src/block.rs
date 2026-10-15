@@ -15,10 +15,9 @@
 //! becoming an OCOMP base-limit producer.
 
 use alloy_primitives::U256;
-use outbe_primitives::{
-    block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
-};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result};
+
+use crate::errors::EmissionLimitError;
 
 /// Sends the daily Cycle terminal allocation to the Metadosis sink, anchored at
 /// `timestamp`.
@@ -40,9 +39,7 @@ pub fn dispatch_terminal_remainder_at(
     let terminal_ctx = BlockRuntimeContext::new(terminal_block, ctx.storage.clone());
     let unused = outbe_metadosis::commands::apply_cycle_day_limit(&terminal_ctx, amount)?;
     if !unused.is_zero() {
-        return Err(PrecompileError::Revert(
-            "terminal emission sink returned unused amount".into(),
-        ));
+        return Err(EmissionLimitError::TerminalSinkReturnedUnusedAmount.into());
     }
     Ok(())
 }
@@ -67,9 +64,7 @@ pub fn dispatch_late_settlement_residue_at(
     let terminal_ctx = BlockRuntimeContext::new(terminal_block, ctx.storage.clone());
     let unused = outbe_metadosis::commands::apply_late_settlement_headroom(&terminal_ctx, amount)?;
     if !unused.is_zero() {
-        return Err(PrecompileError::Revert(
-            "late-settlement terminal sink returned unused amount".into(),
-        ));
+        return Err(EmissionLimitError::LateSettlementSinkReturnedUnusedAmount.into());
     }
     Ok(())
 }

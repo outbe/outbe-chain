@@ -1,12 +1,12 @@
+use crate::errors::{EnclaveResult, TransportDispatchError};
+
 #[cfg(feature = "mock")]
-pub(in crate::transport) fn synthetic_dcap_quote(
-    report_data: &[u8; 64],
-) -> Result<Vec<u8>, String> {
+pub(in crate::transport) fn synthetic_dcap_quote(report_data: &[u8; 64]) -> EnclaveResult<Vec<u8>> {
     let mut quote = vec![0_u8; outbe_tee::quote::MIN_QUOTE_LEN];
     let report_data_offset = quote
         .len()
         .checked_sub(report_data.len())
-        .ok_or_else(|| "synthetic quote REPORT_DATA offset underflow".to_string())?;
+        .ok_or(TransportDispatchError::SyntheticQuoteOffsetUnderflow)?;
     quote[report_data_offset..].copy_from_slice(report_data);
     Ok(quote)
 }
@@ -17,10 +17,11 @@ pub(in crate::transport) fn synthetic_dcap_quote(
 pub(in crate::transport) fn validate_generated_quote_binding(
     expected_report_data: [u8; 64],
     quote: Vec<u8>,
-) -> Result<Vec<u8>, String> {
-    let parsed = outbe_tee::quote::parse_quote_measurements(&quote)?;
+) -> EnclaveResult<Vec<u8>> {
+    let parsed = outbe_tee::quote::parse_quote_measurements(&quote)
+        .map_err(TransportDispatchError::detail)?;
     if parsed.report_data != expected_report_data {
-        return Err("generated DCAP quote REPORT_DATA does not match requested intent".to_string());
+        return Err(TransportDispatchError::GeneratedQuoteReportDataMismatch.into());
     }
     Ok(quote)
 }

@@ -200,7 +200,7 @@ fn partial_pre_admission_state_is_fatal() {
 
         assert!(matches!(
             metadosis.initialize_ocomp_pre_admission(wwd),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     });
 }
@@ -226,7 +226,7 @@ fn pre_admission_state_version_overflow_is_fatal() {
 
         assert!(matches!(
             metadosis.seal_pre_admission_envelope(wwd, &envelope, &SCHEMA_LIMITS),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     });
 }

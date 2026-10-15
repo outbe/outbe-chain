@@ -38,9 +38,11 @@ impl crate::ParentBodySource for EmptyParentBodies {
     }
 }
 
+pub use crate::errors::BenchSupportError;
+
 /// Returns the protocol-derived shard for a real typed entity. This keeps the
 /// ADR-009 benchmark dataset on the production key-derivation path.
-pub fn derived_shard(entity: EntityRef, shard_count: u32) -> Result<u32, String> {
+pub fn derived_shard(entity: EntityRef, shard_count: u32) -> Result<u32, BenchSupportError> {
     let (collection, identity) = match entity {
         EntityRef::Tribute(identity) => (Collection::Tribute, identity),
         EntityRef::NodItem(identity) => (Collection::NodItem, identity),
@@ -49,8 +51,8 @@ pub fn derived_shard(entity: EntityRef, shard_count: u32) -> Result<u32, String>
         EntityRef::GemBucket(identity) => (Collection::GemBucket, identity),
     };
     let key =
-        crate::smt::derive_tree_key(collection, identity).map_err(|error| error.to_string())?;
-    shard_index(key, shard_count).map_err(|error| error.to_string())
+        crate::smt::derive_tree_key(collection, identity).map_err(BenchSupportError::message)?;
+    shard_index(key, shard_count).map_err(BenchSupportError::message)
 }
 
 /// Stable checksum of the canonical candidate accounting bytes used by reports.
@@ -77,8 +79,8 @@ pub fn candidate_shard_roots(batch: &ProvisionalTreeBatch) -> Vec<B256> {
 }
 
 /// Recomputes the production shard-top aggregation for phase benchmarks.
-pub fn aggregate_shard_roots(roots: &[B256]) -> Result<B256, String> {
-    aggregate_b256_shard_roots(roots).map_err(|error| error.to_string())
+pub fn aggregate_shard_roots(roots: &[B256]) -> Result<B256, BenchSupportError> {
+    aggregate_b256_shard_roots(roots).map_err(BenchSupportError::message)
 }
 
 pub struct Adr008SmtHarness {
@@ -95,39 +97,42 @@ impl Adr008SmtHarness {
         }
     }
 
-    pub fn root(&self) -> Result<[u8; 32], String> {
+    pub fn root(&self) -> Result<[u8; 32], BenchSupportError> {
         self.tree
             .root()
             .map(|root| root.as_bytes())
-            .map_err(|error| error.to_string())
+            .map_err(BenchSupportError::message)
     }
 
-    pub fn update_all(&mut self, updates: &[([u8; 32], [u8; 32])]) -> Result<[u8; 32], String> {
+    pub fn update_all(
+        &mut self,
+        updates: &[([u8; 32], [u8; 32])],
+    ) -> Result<[u8; 32], BenchSupportError> {
         let updates = updates
             .iter()
-            .map(|(key, leaf)| -> Result<_, String> {
+            .map(|(key, leaf)| -> Result<_, BenchSupportError> {
                 Ok((
-                    TreeKey::from_be_bytes(*key).map_err(|error| error.to_string())?,
-                    TreeLeaf::from_be_bytes(*leaf).map_err(|error| error.to_string())?,
+                    TreeKey::from_be_bytes(*key).map_err(BenchSupportError::message)?,
+                    TreeLeaf::from_be_bytes(*leaf).map_err(BenchSupportError::message)?,
                 ))
             })
             .collect::<Result<Vec<_>, _>>()?;
         self.tree
             .update_all(updates)
             .map(|root| root.as_bytes())
-            .map_err(|error| error.to_string())
+            .map_err(BenchSupportError::message)
     }
 
-    pub fn proof(&self, keys: &[[u8; 32]]) -> Result<Adr008Proof, String> {
+    pub fn proof(&self, keys: &[[u8; 32]]) -> Result<Adr008Proof, BenchSupportError> {
         let keys = keys
             .iter()
             .copied()
-            .map(|key| TreeKey::from_be_bytes(key).map_err(|error| error.to_string()))
+            .map(|key| TreeKey::from_be_bytes(key).map_err(BenchSupportError::message))
             .collect::<Result<Vec<_>, _>>()?;
         self.tree
             .prove(keys)
             .map(Adr008Proof)
-            .map_err(|error| error.to_string())
+            .map_err(BenchSupportError::message)
     }
 
     pub fn verify(
@@ -135,20 +140,20 @@ impl Adr008SmtHarness {
         root: [u8; 32],
         proof: &Adr008Proof,
         leaves: &[([u8; 32], [u8; 32])],
-    ) -> Result<(), String> {
-        let root = TreeRoot::from_be_bytes(root).map_err(|error| error.to_string())?;
+    ) -> Result<(), BenchSupportError> {
+        let root = TreeRoot::from_be_bytes(root).map_err(BenchSupportError::message)?;
         let leaves = leaves
             .iter()
-            .map(|(key, leaf)| -> Result<_, String> {
+            .map(|(key, leaf)| -> Result<_, BenchSupportError> {
                 Ok((
-                    TreeKey::from_be_bytes(*key).map_err(|error| error.to_string())?,
-                    TreeLeaf::from_be_bytes(*leaf).map_err(|error| error.to_string())?,
+                    TreeKey::from_be_bytes(*key).map_err(BenchSupportError::message)?,
+                    TreeLeaf::from_be_bytes(*leaf).map_err(BenchSupportError::message)?,
                 ))
             })
             .collect::<Result<Vec<_>, _>>()?;
         self.tree
             .verify(root, &proof.0, leaves)
-            .map_err(|error| error.to_string())
+            .map_err(BenchSupportError::message)
     }
 }
 
@@ -171,40 +176,41 @@ pub fn staged_batch(
     identity: StagedBatchIdentity,
     roots: StagedBatchRoots,
     record_count: usize,
-) -> Result<StagedTreeBatch, String> {
+) -> Result<StagedTreeBatch, BenchSupportError> {
     let mut branches = BTreeMap::new();
     let mut leaves = BTreeMap::new();
     let mut key_candidate = 1_u64;
     for index in 0..record_count {
         let ordinal = u64::try_from(index)
-            .map_err(|_| "benchmark record count is not representable as u64".to_owned())?
+            .map_err(|_| BenchSupportError::RecordCountOverflow)?
             .saturating_add(1);
         let key_word = loop {
             let word = field_b256(key_candidate);
             key_candidate = key_candidate
                 .checked_add(1)
-                .ok_or_else(|| "benchmark key search overflowed".to_owned())?;
-            let smt_key = TreeKey::from_be_bytes(word.0).map_err(|error| error.to_string())?;
-            if shard_index(smt_key, crate::K_PROVISIONAL).map_err(|error| error.to_string())? == 0 {
+                .ok_or(BenchSupportError::KeySearchOverflow)?;
+            let smt_key = TreeKey::from_be_bytes(word.0).map_err(BenchSupportError::message)?;
+            if shard_index(smt_key, crate::K_PROVISIONAL).map_err(BenchSupportError::message)? == 0
+            {
                 break word;
             }
         };
         let value_word = field_b256(identity.block_number.wrapping_add(ordinal).max(1));
-        let field = FieldValue::try_from(value_word).map_err(|error| error.to_string())?;
+        let field = FieldValue::try_from(value_word).map_err(BenchSupportError::message)?;
         let branch_key =
-            BranchKey::new(index as u8, key_word).map_err(|error| error.to_string())?;
+            BranchKey::new(index as u8, key_word).map_err(BenchSupportError::message)?;
         branches.insert(
             branch_key,
             TreeChange::Set(BranchNode {
                 left: MergeValue::Value(field),
                 right: MergeValue::Value(
-                    FieldValue::try_from(B256::ZERO).map_err(|error| error.to_string())?,
+                    FieldValue::try_from(B256::ZERO).map_err(BenchSupportError::message)?,
                 ),
             }),
         );
         leaves.insert(
-            PersistedTreeKey::try_from(key_word).map_err(|error| error.to_string())?,
-            TreeChange::Set(LeafValue::try_from(value_word).map_err(|error| error.to_string())?),
+            PersistedTreeKey::try_from(key_word).map_err(BenchSupportError::message)?,
+            TreeChange::Set(LeafValue::try_from(value_word).map_err(BenchSupportError::message)?),
         );
     }
     ProvisionalTreeBatch::new_fixture_single_collection(
@@ -215,7 +221,7 @@ pub fn staged_batch(
         leaves,
     )
     .map(|batch| batch.freeze(identity.block_hash))
-    .map_err(|error| error.to_string())
+    .map_err(BenchSupportError::message)
 }
 
 #[must_use]

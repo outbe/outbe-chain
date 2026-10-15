@@ -44,7 +44,8 @@ impl NodParams {
     };
 
     pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {
-        outbe_primitives::profile::select(selector, chain_id, "nod", Self::PROD, Self::DEV)
+        outbe_primitives::profile::select(selector, chain_id, Self::PROD, Self::DEV)
+            .ok_or_else(|| crate::errors::NodError::UnknownProfileSelector { selector }.into())
     }
 }
 

@@ -31,7 +31,7 @@ where
         let proof = self.assemble_proof(request, committee, intent)?;
         proof
             .encode_canonical(&self.limits)
-            .map_err(|error| PublicFinalizedIntentProofBuildError::Intent(error.to_string()))?;
+            .map_err(PublicFinalizedIntentProofBuildError::intent)?;
         let verified = proof.verify(
             expected,
             &FinalizedIntentVerifier::new(TrieHistoricalCommitteeAuthority),
@@ -171,7 +171,7 @@ impl<S: PublicExactBlockProofSourceV1> PublicFinalizedIntentProofBuilderV1<'_, S
             &public_bytes.block_bytes,
             outbe_consensus::bls::MAX_COMMITTEE_MEMBERS,
         )
-        .map_err(|error| PublicFinalizedIntentProofBuildError::Finalization(error.to_string()))?;
+        .map_err(PublicFinalizedIntentProofBuildError::finalization)?;
         let block_hash = finalized.block.block_hash();
         let header = finalized.block.header();
         let block_view = self
@@ -320,12 +320,12 @@ impl<S: PublicExactBlockProofSourceV1> PublicFinalizedIntentProofBuilderV1<'_, S
             return Err(PublicFinalizedIntentProofBuildError::JobRecordTooLarge);
         }
         let record = OcompJobRecordV1::decode_canonical(&canonical_record, &self.limits)
-            .map_err(|error| PublicFinalizedIntentProofBuildError::Intent(error.to_string()))?;
+            .map_err(PublicFinalizedIntentProofBuildError::intent)?;
         if record.status != OcompJobStatus::AwaitingFinality
             || record
                 .intent
                 .intent_id(&self.limits)
-                .map_err(|error| PublicFinalizedIntentProofBuildError::Intent(error.to_string()))?
+                .map_err(PublicFinalizedIntentProofBuildError::intent)?
                 != intent_id
         {
             return Err(PublicFinalizedIntentProofBuildError::Intent(
@@ -333,7 +333,7 @@ impl<S: PublicExactBlockProofSourceV1> PublicFinalizedIntentProofBuilderV1<'_, S
             ));
         }
         let logical_key = outbe_ocomp_protocol::intent::intent_storage_key(intent_id)
-            .map_err(|error| PublicFinalizedIntentProofBuildError::Intent(error.to_string()))?;
+            .map_err(PublicFinalizedIntentProofBuildError::intent)?;
         let intent_slots = storage_bytes_slots(logical_key, &canonical_record);
         let intent_slot_keys = slot_keys(&intent_slots);
         let public_intent_proof = self
@@ -382,27 +382,21 @@ impl<S: PublicExactBlockProofSourceV1> PublicFinalizedIntentProofBuilderV1<'_, S
                     &committee_account_proof,
                     &committee_slots,
                 )
-                .map_err(|error| {
-                    PublicFinalizedIntentProofBuildError::Witness(error.to_string())
-                })?,
+                .map_err(PublicFinalizedIntentProofBuildError::witness)?,
             ),
             canonical_job_intent: BoundedBytes(
                 record
                     .intent
                     .encode_canonical(&self.limits)
-                    .map_err(|error| {
-                        PublicFinalizedIntentProofBuildError::Intent(error.to_string())
-                    })?,
+                    .map_err(PublicFinalizedIntentProofBuildError::intent)?,
             ),
             intent_account_proof: ProofBytes(
-                encode_account_witness(&intent_account_proof, METADOSIS_ADDRESS).map_err(
-                    |error| PublicFinalizedIntentProofBuildError::Witness(error.to_string()),
-                )?,
+                encode_account_witness(&intent_account_proof, METADOSIS_ADDRESS)
+                    .map_err(PublicFinalizedIntentProofBuildError::witness)?,
             ),
             intent_storage_proof: ProofBytes(
-                encode_storage_witness(&intent_account_proof, intent_slots).map_err(|error| {
-                    PublicFinalizedIntentProofBuildError::Witness(error.to_string())
-                })?,
+                encode_storage_witness(&intent_account_proof, intent_slots)
+                    .map_err(PublicFinalizedIntentProofBuildError::witness)?,
             ),
         })
     }

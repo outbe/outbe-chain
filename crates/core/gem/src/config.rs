@@ -8,9 +8,10 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 use crate::constants::{
-    CALL_NOTICE_PERIOD, CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE,
+    CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE_PCT,
     POSITION_VALIDITY_SECONDS,
 };
+use crate::errors::GemError;
 use crate::schema::GemContract;
 
 pub use outbe_primitives::profile::{PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
@@ -34,8 +35,8 @@ impl GemParams {
         call_window_seconds: CALL_WINDOW,
         call_threshold_seconds: CALL_THRESHOLD,
         call_notice_period_seconds: CALL_NOTICE_PERIOD,
-        call_rate: CALL_RATE,
-        floor_rate: FLOOR_RATE,
+        call_rate: CALL_RATE_PCT,
+        floor_rate: FLOOR_RATE_PCT,
         position_validity: POSITION_VALIDITY_SECONDS,
     };
 
@@ -57,7 +58,8 @@ impl GemParams {
     };
 
     pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {
-        outbe_primitives::profile::select(selector, chain_id, "gem", Self::PROD, Self::DEV)
+        outbe_primitives::profile::select(selector, chain_id, Self::PROD, Self::DEV)
+            .ok_or_else(|| GemError::UnknownProfileSelector(selector).into())
     }
 }
 

@@ -103,6 +103,48 @@ fn batch(
 }
 
 #[test]
+fn single_action_with_empty_root_path_roundtrips_and_rejects_truncation() {
+    let limits = poc_schema_limits();
+    let (actions, root, proofs) = population(1);
+    let batch = batch(&actions, &proofs, BatchFixtureSpec::new(0..1, 0));
+    assert!(batch.root_path.is_empty());
+    let encoded = batch.encode_canonical(&limits).unwrap();
+    assert_eq!(encoded.len(), 162);
+    let decoded = NodMaterializationBatchV1::decode_canonical(&encoded, &limits).unwrap();
+    assert_eq!(decoded, batch);
+    assert_eq!(
+        verify_nod_materialization_batch(&decoded, &head(root, 1, 0), 0, &limits)
+            .unwrap()
+            .actions(),
+        actions
+    );
+    for retained_bytes in [encoded.len() - 5, encoded.len() - 1] {
+        assert!(
+            NodMaterializationBatchV1::decode_canonical(&encoded[..retained_bytes], &limits)
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn full_batch_and_single_action_remainder_roundtrip() {
+    let limits = poc_schema_limits();
+    let (actions, root, proofs) = population(257);
+    for (start, end, height) in [(0, 256, 8), (256, 257, 0)] {
+        let batch = batch(&actions, &proofs, BatchFixtureSpec::new(start..end, height));
+        let encoded = batch.encode_canonical(&limits).unwrap();
+        let decoded = NodMaterializationBatchV1::decode_canonical(&encoded, &limits).unwrap();
+        assert_eq!(decoded, batch);
+        assert_eq!(
+            verify_nod_materialization_batch(&decoded, &head(root, 257, start), 8, &limits)
+                .unwrap()
+                .actions(),
+            &actions[start as usize..end as usize]
+        );
+    }
+}
+
+#[test]
 fn canonical_batch_and_head_roundtrip_without_redundant_authority_fields() {
     let limits = poc_schema_limits();
     let (actions, root, proofs) = population(10);

@@ -12,6 +12,7 @@ use crate::constants::{
     CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, COMMIT_BOND_MINOR,
     FLOOR_RATE_PCT,
 };
+use crate::errors::IntexError;
 use crate::schema::IntexContract;
 
 pub use outbe_primitives::profile::{PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
@@ -56,7 +57,8 @@ impl IntexParams {
     };
 
     pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {
-        outbe_primitives::profile::select(selector, chain_id, "intex", Self::PROD, Self::DEV)
+        outbe_primitives::profile::select(selector, chain_id, Self::PROD, Self::DEV)
+            .ok_or_else(|| IntexError::UnknownProfileSelector(selector).into())
     }
 }
 

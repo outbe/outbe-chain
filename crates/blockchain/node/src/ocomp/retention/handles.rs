@@ -171,11 +171,11 @@ impl TributeRetentionSelector for OcompRetentionCoordinator {
         worldwide_day: WorldwideDay,
     ) -> Result<Option<RetainedTributePin>, String> {
         if self.retained_tributes.is_none() {
-            return Err(RetentionError::RetainedTributeStorageUnavailable.to_string());
+            return Err(RetentionError::RetainedTributeStorageUnavailable.into_selector_error());
         }
-        let inner = self.lock().map_err(|error| error.to_string())?;
+        let inner = self.lock().map_err(RetentionError::into_selector_error)?;
         if let Some(error) = retention_status_error(&inner.status) {
-            return Err(error.to_string());
+            return Err(error.into_selector_error());
         }
         let mut selected = BTreeSet::new();
         for record in inner
@@ -207,7 +207,7 @@ impl TributeRetentionSelector for OcompRetentionCoordinator {
                 input_lease_id: *selected.first().expect("one selected retention key"),
                 worldwide_day,
             })),
-            _ => Err("multiple input retention identities exist for one WWD".to_owned()),
+            _ => Err(RetentionError::MultipleInputRetentionIdentities.into_selector_error()),
         }
     }
 }
@@ -219,7 +219,7 @@ impl TributeRetentionSelector for SharedOcompRetentionSelector {
     ) -> Result<Option<RetainedTributePin>, String> {
         self.coordinator
             .get()
-            .ok_or_else(|| RetentionError::RetentionCoordinatorNotInstalled.to_string())?
+            .ok_or_else(|| RetentionError::RetentionCoordinatorNotInstalled.into_selector_error())?
             .active_pin_for(worldwide_day)
     }
 }

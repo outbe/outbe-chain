@@ -371,7 +371,7 @@ fn malformed_missed_offering_receipt_is_fatal() {
 
         assert!(matches!(
             metadosis.read_missed_offering_receipt(wwd),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
     });
 }
@@ -398,11 +398,11 @@ fn missed_receipt_value_drift_is_fatal_in_reader_and_aggregate() {
 
         assert!(matches!(
             metadosis.read_missed_offering_receipt(wwd),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
         assert!(matches!(
             crate::aggregate::ValidatedWwdAggregate::load_and_validate(storage),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
     });
 }
@@ -425,11 +425,11 @@ fn missed_receipt_with_trailing_capacity_payload_is_fatal_in_reader_and_aggregat
 
         assert!(matches!(
             metadosis.read_missed_offering_receipt(wwd),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
         assert!(matches!(
             crate::aggregate::ValidatedWwdAggregate::load_and_validate(storage),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
     });
 }
@@ -451,11 +451,11 @@ fn missed_receipt_status_drift_is_fatal_in_reader_and_aggregate() {
 
         assert!(matches!(
             metadosis.read_missed_offering_receipt(wwd),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
         assert!(matches!(
             crate::aggregate::ValidatedWwdAggregate::load_and_validate(storage),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
     });
 }
@@ -475,11 +475,11 @@ fn missed_receipt_membership_drift_is_fatal_in_reader_and_aggregate() {
 
         assert!(matches!(
             metadosis.read_missed_offering_receipt(wwd),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
         assert!(matches!(
             crate::aggregate::ValidatedWwdAggregate::load_and_validate(storage),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
     });
 }
@@ -499,11 +499,11 @@ fn duplicate_closed_membership_is_fatal_in_reader_and_aggregate() {
 
         assert!(matches!(
             metadosis.read_missed_offering_receipt(wwd),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
         assert!(matches!(
             crate::aggregate::ValidatedWwdAggregate::load_and_validate(storage),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::Revert(_))
         ));
     });
 }

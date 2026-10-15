@@ -78,7 +78,7 @@ impl EndpointNetworkState {
             },
             signer,
         )
-        .map_err(|error| ManagerError::Endpoint(error.to_string()))?;
+        .map_err(ManagerError::endpoint)?;
         let _ = send(
             sender,
             peer,

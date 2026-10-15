@@ -253,12 +253,15 @@ pub(in crate::stack) fn startup_pending_dkg_epoch_plan(
         exact_carrier_height,
     } = handoff;
     let expected_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
-    ensure!(
-        pending_epoch == expected_epoch,
-        "recovered pending DKG epoch {} does not follow active epoch {}",
-        pending_epoch,
-        current_epoch
-    );
+    if pending_epoch != expected_epoch {
+        return Err(
+            crate::errors::StackDkgError::PendingEpochDoesNotFollowActive {
+                pending: pending_epoch,
+                active: current_epoch,
+            }
+            .into(),
+        );
+    }
     match pending_dkg_handoff_decision(
         finalized_height,
         planned_activation_height,
@@ -276,12 +279,14 @@ pub(in crate::stack) fn startup_pending_dkg_epoch_plan(
                 activation_anchor,
             })
         }
-        PendingDkgHandoffDecision::Expired { deadline } => Err(eyre::eyre!(
-            "recovered pending DKG epoch {} missed activation deadline {} at finalized height {}",
-            pending_epoch,
-            deadline,
-            finalized_height
-        )),
+        PendingDkgHandoffDecision::Expired { deadline } => Err(
+            crate::errors::StackDkgError::PendingEpochMissedActivationDeadline {
+                pending: pending_epoch,
+                deadline,
+                finalized_height,
+            }
+            .into(),
+        ),
     }
 }
 
@@ -319,40 +324,66 @@ pub(in crate::stack) fn find_exact_finalized_preannounce_carrier(
 
     let mut height = pending.freeze_height;
     loop {
-        let canonical_hash = provider
+        let mut canonical_hash = provider
             .block_hash(height)
-            .map_err(|error| {
-                eyre::eyre!("failed to read canonical hash at height {height}: {error}")
-            })?
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "canonical finalized preannounce scan is missing block hash at height {height}"
-                )
-            })?;
-        let header = provider
+            .map_err(
+                |error| crate::errors::StackDkgError::ReadCanonicalHashAtHeight {
+                    height,
+                    reason: format!("{error}"),
+                },
+            )?
+            .ok_or(crate::errors::StackDkgError::MissingPreannounceBlockHash { height })?;
+        let mut header = provider
             .sealed_header(height)
-            .map_err(|error| eyre::eyre!("failed to read finalized header {height}: {error}"))?
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "canonical finalized preannounce scan is missing header at height {height}"
-                )
-            })?;
-        ensure!(
-            header.hash() == canonical_hash,
-            "canonical finalized preannounce header hash mismatch at height {height}: index {canonical_hash}, header {}",
-            header.hash()
-        );
-        ensure!(
-            header.header().inner.number == height,
-            "canonical finalized preannounce header number mismatch: expected {height}, got {}",
-            header.header().inner.number
-        );
+            .map_err(|error| crate::errors::StackDkgError::ReadFinalizedHeader {
+                height,
+                reason: format!("{error}"),
+            })?
+            .ok_or(crate::errors::StackDkgError::MissingPreannounceHeader { height })?;
+        if header.hash() != canonical_hash {
+            canonical_hash = provider
+                .block_hash(height)
+                .map_err(
+                    |error| crate::errors::StackDkgError::ReadCanonicalHashAtHeight {
+                        height,
+                        reason: format!("{error}"),
+                    },
+                )?
+                .ok_or(crate::errors::StackDkgError::MissingPreannounceBlockHash { height })?;
+            header = provider
+                .sealed_header(height)
+                .map_err(|error| crate::errors::StackDkgError::ReadFinalizedHeader {
+                    height,
+                    reason: format!("{error}"),
+                })?
+                .ok_or(crate::errors::StackDkgError::MissingPreannounceHeader { height })?;
+        }
+        if header.hash() != canonical_hash {
+            return Err(
+                crate::errors::StackDkgError::PreannounceHeaderHashMismatch {
+                    height,
+                    index_hash: canonical_hash,
+                    header_hash: header.hash(),
+                }
+                .into(),
+            );
+        }
+        if header.header().inner.number != height {
+            return Err(
+                crate::errors::StackDkgError::PreannounceHeaderNumberMismatch {
+                    expected: height,
+                    actual: header.header().inner.number,
+                }
+                .into(),
+            );
+        }
         let artifacts = decode_outbe_block_artifacts(header.header().inner.extra_data.as_ref())
-            .map_err(|error| {
-                eyre::eyre!(
-                    "failed to decode finalized header artifacts at height {height}: {error}"
-                )
-            })?;
+            .map_err(
+                |error| crate::errors::StackDkgError::DecodeFinalizedHeaderArtifacts {
+                    height,
+                    reason: format!("{error}"),
+                },
+            )?;
         if artifacts
             .consensus_header_artifact
             .as_ref()
@@ -392,19 +423,22 @@ pub(in crate::stack) fn ordered_validator_addresses(
     participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
     validator_set: &validators::ValidatorSet,
 ) -> Result<Vec<alloy_primitives::Address>> {
-    ensure!(
-        validator_set.public_keys.len() == validator_set.addresses.len(),
-        "validator set has mismatched public key/address lengths: {} public keys, {} addresses",
-        validator_set.public_keys.len(),
-        validator_set.addresses.len(),
-    );
+    if validator_set.public_keys.len() != validator_set.addresses.len() {
+        return Err(
+            crate::errors::StackDkgError::ValidatorSetPublicKeyAddressLengthMismatch {
+                public_keys: validator_set.public_keys.len(),
+                addresses: validator_set.addresses.len(),
+            }
+            .into(),
+        );
+    }
 
     let mut ordered = Vec::with_capacity(participants.len());
     for pk in participants.iter() {
         let Some(idx) = validator_set.public_keys.iter().position(|p| p == pk) else {
-            return Err(eyre::eyre!(
-                "participant public key is missing from validator set"
-            ));
+            return Err(
+                crate::errors::StackDkgError::ParticipantPublicKeyMissingFromValidatorSet.into(),
+            );
         };
         ordered.push(validator_set.addresses[idx]);
     }
@@ -476,10 +510,14 @@ pub(in crate::stack) fn startup_live_join_scan_height(
 ) -> Result<u64> {
     if consensus_finalized_height == 0 {
         if !trust_el_head {
-            ensure!(
-                execution_height == 0,
-                "startup live join found execution history at height {execution_height} but no durable consensus-finalized height; refusing to recover DKG artifacts from unfinalized execution head. Wait for consensus finalization evidence or use --testnet.trust-el-head for testnet consensus-archive recovery; it cannot bypass the permanent offer-key gate."
-            );
+            if execution_height != 0 {
+                return Err(
+                    crate::errors::StackDkgError::LiveJoinExecutionHistoryWithoutFinalizedHeight {
+                        execution_height,
+                    }
+                    .into(),
+                );
+            }
         } else if execution_height > 0 {
             warn!(
                 execution_height,
@@ -511,15 +549,18 @@ pub(in crate::stack) fn restart_dkg_manager_from_finalized_history(
 ) -> Result<()> {
     let replay_guard = dkg_manager.lock_finalized_replay();
     let verified_consensus_tip = verified_consensus_tip();
-    ensure!(
-        provider_matches_consensus_tip(
-            provider,
-            verified_consensus_tip,
-            verified_consensus_tip.height.get(),
-        )?,
-        "execution provider does not contain the verified consensus tip at height {}",
+    if !provider_matches_consensus_tip(
+        provider,
+        verified_consensus_tip,
         verified_consensus_tip.height.get(),
-    );
+    )? {
+        return Err(
+            crate::errors::StackDkgError::ExecutionProviderMissingConsensusTip {
+                height: verified_consensus_tip.height.get(),
+            }
+            .into(),
+        );
+    }
     let finalized_logs = collect_finalized_dealer_logs(
         provider,
         spec.freeze_height,
@@ -546,12 +587,18 @@ fn collect_finalized_dealer_logs(
     for height in start_height..=end_height {
         let header = provider
             .sealed_header(height)
-            .map_err(|error| eyre::eyre!("failed to read finalized header {height}: {error}"))?
-            .ok_or_else(|| eyre::eyre!("missing finalized header at height {height}"))?;
+            .map_err(|error| crate::errors::StackDkgError::ReadFinalizedHeader {
+                height,
+                reason: format!("{error}"),
+            })?
+            .ok_or(crate::errors::StackDkgError::MissingFinalizedHeaderAtHeight { height })?;
         let artifacts = decode_outbe_block_artifacts(header.header().inner.extra_data.as_ref())
-            .map_err(|error| {
-                eyre::eyre!("failed to decode header artifacts at {height}: {error}")
-            })?;
+            .map_err(
+                |error| crate::errors::StackDkgError::DecodeHeaderArtifactsAtHeight {
+                    height,
+                    reason: format!("{error}"),
+                },
+            )?;
         if let Some(ConsensusHeaderArtifact::DealerLog(bytes)) = artifacts.consensus_header_artifact
         {
             finalized_logs.push((height, header.hash(), bytes));
@@ -569,7 +616,10 @@ pub(in crate::stack) fn refresh_validator_set_at_height(
     freeze_height: u64,
 ) -> Result<FrozenValidatorSetRefresh> {
     let Some(block_hash) = node.provider.block_hash(freeze_height).map_err(|e| {
-        eyre::eyre!("failed to get block hash at freeze height {freeze_height}: {e}")
+        crate::errors::StackDkgError::GetBlockHashAtFreezeHeight {
+            freeze_height,
+            reason: format!("{e}"),
+        }
     })?
     else {
         return Ok(FrozenValidatorSetRefresh::PendingBlockHash);
@@ -577,27 +627,37 @@ pub(in crate::stack) fn refresh_validator_set_at_height(
     let Some(header) = node
         .provider
         .sealed_header(freeze_height)
-        .map_err(|error| {
-            eyre::eyre!("failed to get canonical header at freeze height {freeze_height}: {error}")
-        })?
+        .map_err(
+            |error| crate::errors::StackDkgError::GetCanonicalHeaderAtFreezeHeight {
+                freeze_height,
+                reason: format!("{error}"),
+            },
+        )?
     else {
         return Ok(FrozenValidatorSetRefresh::PendingBlockHash);
     };
-    ensure!(
-        header.hash() == block_hash,
-        "canonical freeze header hash mismatch at height {freeze_height}: block-hash index {block_hash}, header {}",
-        header.hash()
-    );
-    ensure!(
-        header.header().inner.number == freeze_height,
-        "canonical freeze header number mismatch: expected {freeze_height}, got {}",
-        header.header().inner.number
-    );
+    if header.hash() != block_hash {
+        return Err(crate::errors::StackDkgError::FreezeHeaderHashMismatch {
+            freeze_height,
+            block_hash,
+            header_hash: header.hash(),
+        }
+        .into());
+    }
+    if header.header().inner.number != freeze_height {
+        return Err(crate::errors::StackDkgError::FreezeHeaderNumberMismatch {
+            expected: freeze_height,
+            actual: header.header().inner.number,
+        }
+        .into());
+    }
 
-    let state = node
-        .provider
-        .state_by_block_hash(block_hash)
-        .map_err(|e| eyre::eyre!("failed to get state at freeze height {freeze_height}: {e}"))?;
+    let state = node.provider.state_by_block_hash(block_hash).map_err(|e| {
+        crate::errors::StackDkgError::GetStateAtFreezeHeight {
+            freeze_height,
+            reason: format!("{e}"),
+        }
+    })?;
     // CycleTick has already moved every overdue ACTIVE validator into the jailed
     // lifecycle before this exact freeze state. The ordinary reshare target is
     // therefore authoritative. Legacy boundary expiry fields remain empty.
@@ -610,7 +670,11 @@ pub(in crate::stack) fn refresh_validator_set_at_height(
         .clone()
         .into_iter()
         .try_collect()
-        .map_err(|e| eyre::eyre!("invalid participant set after refresh: {e}"))?;
+        .map_err(
+            |e| crate::errors::StackDkgError::InvalidParticipantSetAfterRefresh {
+                reason: format!("{e}"),
+            },
+        )?;
 
     Ok(FrozenValidatorSetRefresh::Ready {
         validator_set: new_set,

@@ -4,6 +4,7 @@
 //! The complete request is HKDF-bound to the AEAD key. Restarts use its original
 //! CPU/ISV/CONFIG SVN values, so a platform TCB update does not lose sealed state.
 //! No raw key ever crosses the enclave interface.
+use crate::errors::{EnclaveResult, SgxSealingError};
 use crate::seal::{self, KeyPolicy, SealHeader, UnsealedTributeOfferAndGroupSig};
 use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
 #[cfg(target_arch = "x86_64")]
@@ -35,34 +36,36 @@ fn parameters(cpu_svn: [u8; 16], isv_svn: u16, config_svn: u16) -> KeyRequest {
     r
 }
 
-fn decode_parameters(bytes: &[u8]) -> Result<KeyRequest, String> {
+fn decode_parameters(bytes: &[u8]) -> EnclaveResult<KeyRequest> {
     if bytes.len() != REQUEST_LEN {
-        return Err("invalid SGX key request length".into());
+        return Err(SgxSealingError::InvalidKeyRequestLen.into());
     }
-    let cpu = bytes[8..24].try_into().map_err(|_| "invalid CPU SVN")?;
+    let cpu = bytes[8..24]
+        .try_into()
+        .map_err(|_| SgxSealingError::InvalidCpuSvn)?;
     let isv = u16::from_le_bytes([bytes[4], bytes[5]]);
     let config = u16::from_le_bytes([bytes[76], bytes[77]]);
     let expected = parameters(cpu, isv, config);
     if bytes != expected.0 {
-        return Err("non-canonical combined SGX sealing request".into());
+        return Err(SgxSealingError::NonCanonicalCombinedRequest.into());
     }
     Ok(expected)
 }
 
-fn current_parameters(expected_svn: u16) -> Result<KeyRequest, String> {
-    let report = std::fs::read("/dev/attestation/report")
-        .map_err(|e| format!("read SGX sealing report: {e}"))?;
+fn current_parameters(expected_svn: u16) -> EnclaveResult<KeyRequest> {
+    let report =
+        std::fs::read("/dev/attestation/report").map_err(SgxSealingError::read_sealing_report)?;
     if report.len() != 432 {
-        return Err("invalid local SGX report length".into());
+        return Err(SgxSealingError::InvalidLocalReportLen.into());
     }
     let isv = u16::from_le_bytes([report[258], report[259]]);
     if isv != expected_svn {
-        return Err("sealing SVN differs from local SGX report".into());
+        return Err(SgxSealingError::SealingSvnMismatch.into());
     }
     Ok(parameters(
         report[..16]
             .try_into()
-            .map_err(|_| "invalid local CPU SVN")?,
+            .map_err(|_| SgxSealingError::InvalidLocalCpuSvn)?,
         isv,
         u16::from_le_bytes([report[260], report[261]]),
     ))
@@ -70,11 +73,11 @@ fn current_parameters(expected_svn: u16) -> Result<KeyRequest, String> {
 
 #[cfg(target_arch = "x86_64")]
 #[allow(unsafe_code)] // EGETKEY has no safe Rust/Gramine API for the combined policy.
-fn hardware_key(request: &KeyRequest) -> Result<Zeroizing<[u8; 32]>, String> {
+fn hardware_key(request: &KeyRequest) -> EnclaveResult<Zeroizing<[u8; 32]>> {
     // This capability probe prevents executing ENCLU in normal host/unit-test
     // processes. Attestation mode "none" on real SGX remains supported.
-    let probe = crate::gramine::sealing_key_raw(true)
-        .map_err(|e| format!("SGX sealing is unavailable: {e}"))?;
+    let probe =
+        crate::gramine::sealing_key_raw(true).map_err(SgxSealingError::sgx_sealing_unavailable)?;
     let mut probe = Zeroizing::new(probe);
     probe.zeroize();
     let mut raw = HardwareKey([0; 16]);
@@ -96,18 +99,18 @@ fn hardware_key(request: &KeyRequest) -> Result<Zeroizing<[u8; 32]>, String> {
     }
     if status != 0 {
         raw.0.zeroize();
-        return Err(format!("combined SGX EGETKEY failed: {status:#x}"));
+        return Err(SgxSealingError::CombinedEgetkeyFailed(status).into());
     }
     let result = crate::crypto::hkdf_sha256(&request.0, &raw.0, b"outbe/tee/seal-key/both/v1")
         .map(Zeroizing::new)
-        .map_err(|e| e.to_string());
+        .map_err(Into::into);
     raw.0.zeroize();
     result
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-fn hardware_key(_: &KeyRequest) -> Result<Zeroizing<[u8; 32]>, String> {
-    Err("combined SGX sealing requires x86_64".into())
+fn hardware_key(_: &KeyRequest) -> EnclaveResult<Zeroizing<[u8; 32]>> {
+    Err(SgxSealingError::RequiresX86_64.into())
 }
 
 pub(crate) fn seal_payload(
@@ -115,7 +118,7 @@ pub(crate) fn seal_payload(
     extra: &[u8],
     binding: NetworkBindingV1,
     header: &SealHeader,
-) -> Result<Vec<u8>, String> {
+) -> EnclaveResult<Vec<u8>> {
     #[cfg(feature = "local-e2e")]
     if crate::local_e2e::configured() {
         return crate::local_e2e::seal(secret, extra, binding, header);
@@ -131,14 +134,13 @@ pub(crate) fn seal_payload(
             binding,
             &header,
         )
-        .map_err(|e| e.to_string());
+        .map_err(Into::into);
     }
     let request = current_parameters(header.isv_svn)?;
     let key = hardware_key(&request)?;
     let mut header = *header;
     header.key_policy = KeyPolicy::MrEnclaveAndSigner;
-    let payload = seal::seal_tribute_offer_and_group_sig(secret, extra, &key, binding, &header)
-        .map_err(|e| e.to_string())?;
+    let payload = seal::seal_tribute_offer_and_group_sig(secret, extra, &key, binding, &header)?;
     let mut blob = Vec::with_capacity(MAGIC.len() + REQUEST_LEN + payload.len());
     blob.extend_from_slice(MAGIC);
     blob.extend_from_slice(&request.0);
@@ -149,14 +151,14 @@ pub(crate) fn seal_payload(
 pub(crate) fn unseal_payload(
     blob: &[u8],
     running_svn: u16,
-) -> Result<UnsealedTributeOfferAndGroupSig, String> {
+) -> EnclaveResult<UnsealedTributeOfferAndGroupSig> {
     #[cfg(feature = "local-e2e")]
     if crate::local_e2e::configured() {
         return crate::local_e2e::unseal(blob, running_svn);
     }
     if blob.starts_with(MAGIC) {
         if blob.len() < MAGIC.len() + REQUEST_LEN {
-            return Err("truncated combined SGX seal".into());
+            return Err(SgxSealingError::TruncatedCombinedSeal.into());
         }
         let request = decode_parameters(&blob[MAGIC.len()..MAGIC.len() + REQUEST_LEN])?;
         let key = hardware_key(&request)?;
@@ -164,24 +166,22 @@ pub(crate) fn unseal_payload(
             &blob[MAGIC.len() + REQUEST_LEN..],
             &key,
             running_svn,
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
         if value.header.key_policy != KeyPolicy::MrEnclaveAndSigner
             || value.header.isv_svn != u16::from_le_bytes([request.0[4], request.0[5]])
         {
-            return Err("combined seal metadata mismatch".into());
+            return Err(SgxSealingError::CombinedSealMetadataMismatch.into());
         }
         return Ok(value);
     }
     // Read-only compatibility for old operator state. New production writes
     // always use combined sealing. Corruption never falls back to fresh state.
     let (key, policy) =
-        crate::transport::sealing_key().ok_or_else(|| "SGX sealing key unavailable".to_string())?;
+        crate::transport::sealing_key().ok_or(SgxSealingError::SealingKeyUnavailable)?;
     let key = Zeroizing::new(key);
-    let value =
-        seal::unseal_network_bound_payload(blob, &key, running_svn).map_err(|e| e.to_string())?;
+    let value = seal::unseal_network_bound_payload(blob, &key, running_svn)?;
     if value.header.key_policy != policy {
-        return Err("legacy seal policy mismatch".into());
+        return Err(SgxSealingError::LegacySealPolicyMismatch.into());
     }
     Ok(value)
 }
@@ -190,10 +190,10 @@ pub(crate) fn unseal_bound(
     blob: &[u8],
     binding: NetworkBindingV1,
     svn: u16,
-) -> Result<UnsealedTributeOfferAndGroupSig, String> {
+) -> EnclaveResult<UnsealedTributeOfferAndGroupSig> {
     let value = unseal_payload(blob, svn)?;
     if value.network_binding != binding {
-        return Err("sealed blob network mismatch".into());
+        return Err(SgxSealingError::SealedBlobNetworkMismatch.into());
     }
     Ok(value)
 }
@@ -226,7 +226,7 @@ mod tests {
 
 /// Hardware-only probe of the exact production implementation, using public test data.
 #[cfg(feature = "sgx-sealing-probe")]
-pub fn hardware_probe(action: &str, path: &std::path::Path) -> Result<(), String> {
+pub fn hardware_probe(action: &str, path: &std::path::Path) -> EnclaveResult<()> {
     use alloy_primitives::{B256, U256};
     use outbe_primitives::tee_attestation_v1::AttestationMode;
     let binding = NetworkBindingV1 {
@@ -234,9 +234,9 @@ pub fn hardware_probe(action: &str, path: &std::path::Path) -> Result<(), String
         genesis_hash: B256::repeat_byte(0x71),
         attestation_mode: AttestationMode::GramineDirectDev,
     };
-    let report = std::fs::read("/dev/attestation/report").map_err(|e| e.to_string())?;
+    let report = std::fs::read("/dev/attestation/report").map_err(SgxSealingError::other)?;
     if report.len() != 432 {
-        return Err("invalid hardware report".into());
+        return Err(SgxSealingError::InvalidHardwareReport.into());
     }
     let svn = u16::from_le_bytes([report[258], report[259]]);
     match action {
@@ -251,20 +251,20 @@ pub fn hardware_probe(action: &str, path: &std::path::Path) -> Result<(), String
             };
             let blob = seal_payload(&[0x55; 32], b"public hardware test data", binding, &header)?;
             if !blob.starts_with(MAGIC) {
-                return Err("probe did not use hardware sealing".into());
+                return Err(SgxSealingError::ProbeDidNotUseHardwareSealing.into());
             }
-            std::fs::write(path, blob).map_err(|e| e.to_string())?;
+            std::fs::write(path, blob).map_err(SgxSealingError::other)?;
         }
         "unseal" => {
-            let blob = std::fs::read(path).map_err(|e| e.to_string())?;
+            let blob = std::fs::read(path).map_err(SgxSealingError::other)?;
             let value = unseal_bound(&blob, binding, svn)?;
             if *value.tribute_offer_secret != [0x55; 32]
                 || value.group_sig.as_slice() != b"public hardware test data"
             {
-                return Err("probe payload differs".into());
+                return Err(SgxSealingError::ProbePayloadDiffers.into());
             }
         }
-        _ => return Err("expected seal or unseal".into()),
+        _ => return Err(SgxSealingError::ExpectedSealOrUnseal.into()),
     }
     Ok(())
 }

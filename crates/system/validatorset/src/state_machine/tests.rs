@@ -660,7 +660,7 @@ fn error_text<T: std::fmt::Debug>(result: outbe_primitives::error::Result<T>) ->
 }
 
 fn corrupt(detail: &str) -> String {
-    format!("Fatal: corrupt validator state for {ADDRESS}: {detail}")
+    format!("Revert: corrupt validator state for {ADDRESS}: {detail}")
 }
 
 /// A retained column: its field name and the write that retains it in an
@@ -726,7 +726,7 @@ fn raw_column_checks_keep_their_precedence() {
                 consensus_pubkey: [0; 48],
                 ..RawColumns::active()
             },
-            "Fatal: unknown validator status 9".to_string(),
+            "Revert: unknown validator status 9".to_string(),
         ),
         (
             "zero key before jail height",
@@ -919,7 +919,7 @@ fn history_updates_keep_exact_errors_and_precedence() {
             "zero sentinel before absence",
             ValidatorLifecycle::Absent,
             deactivated(Some(0)),
-            "Fatal: deactivation height must not use the zero sentinel",
+            "Revert: deactivation height must not use the zero sentinel",
         ),
         (
             "absent",
@@ -931,43 +931,43 @@ fn history_updates_keep_exact_errors_and_precedence() {
             "active",
             lifecycle(ACTIVE, true, false, 0),
             deactivated(Some(5)),
-            "Fatal: active history must not contain a deactivation height",
+            "Revert: active history must not contain a deactivation height",
         ),
         (
             "retained jail",
             lifecycle(JAILED, true, false, 55),
             deactivated(Some(54)),
-            "Fatal: retained jail history must match the jail height",
+            "Revert: retained jail history must match the jail height",
         ),
         (
             "excluded jail",
             lifecycle(JAILED, false, false, 55),
             deactivated(Some(54)),
-            "Fatal: jail history must match the jail height",
+            "Revert: jail history must match the jail height",
         ),
         (
             "exiting",
             lifecycle(EXITING, true, false, 0),
             deactivated(None),
-            "Fatal: exiting history requires a deactivation height",
+            "Revert: exiting history requires a deactivation height",
         ),
         (
             "unbonding",
             lifecycle(UNBONDING, false, false, 0),
             deactivated(None),
-            "Fatal: unbonding history requires a deactivation height",
+            "Revert: unbonding history requires a deactivation height",
         ),
         (
             "inactive",
             lifecycle(INACTIVE, false, false, 0),
             deactivated(None),
-            "Fatal: inactive history requires a deactivation height",
+            "Revert: inactive history requires a deactivation height",
         ),
         (
             "zero sentinel before the active rule",
             lifecycle(ACTIVE, true, false, 0),
             deactivated(Some(0)),
-            "Fatal: deactivation height must not use the zero sentinel",
+            "Revert: deactivation height must not use the zero sentinel",
         ),
     ];
     for (name, lifecycle, history, expected) in cases {
@@ -1003,7 +1003,7 @@ fn stake_and_p2p_updates_keep_exact_errors_and_precedence() {
             ValidatorLifecycle::Absent,
             StakeProjection::new(U256::from(1), Some(0))
         )),
-        "Fatal: unbonding-end hint must not use the zero sentinel"
+        "Revert: unbonding-end hint must not use the zero sentinel"
     );
     assert_eq!(
         error_text(with_stake(ValidatorLifecycle::Absent, stake)),
@@ -1032,7 +1032,7 @@ fn demoted_joiner_exit_requires_a_nonzero_height() {
     };
     assert_eq!(
         error_text(exit_waiting_for_stake_at_boundary(waiting.clone(), 0)),
-        "Fatal: validator deactivation height must be non-zero"
+        "Revert: validator deactivation height must be non-zero"
     );
     let exiting = exit_waiting_for_stake_at_boundary(waiting.clone(), 77).unwrap();
     assert_eq!(exiting.history.last_deactivated_at_height, Some(77));

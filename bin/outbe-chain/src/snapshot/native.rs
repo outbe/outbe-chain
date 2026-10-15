@@ -1,7 +1,7 @@
 //! Read durable native progress without executing or repairing the stopped dataset.
 
 use alloy_consensus::Sealable;
-use eyre::{ensure, WrapErr};
+use eyre::WrapErr;
 use outbe_primitives::{OutbeHeader, OutbePrimitives};
 use outbe_snapshot::manifest::{BlockIdentity, UnwindProgress};
 use reth_ethereum::provider::db::{
@@ -18,6 +18,7 @@ use reth_provider::{
 };
 
 use super::config::NativeLayout;
+use crate::errors::SnapshotError;
 
 #[derive(Debug)]
 pub(crate) struct RethProgress {
@@ -44,7 +45,9 @@ fn open_existing_static_files(
     path: &std::path::Path,
 ) -> eyre::Result<StaticFileProvider<OutbePrimitives>> {
     // Reth's read-only index initialization otherwise creates a missing directory.
-    ensure!(path.is_dir(), "missing static-file directory");
+    if !path.is_dir() {
+        return Err(SnapshotError::MissingStaticFileDir.into());
+    }
     Ok(StaticFileProvider::read_only(path)?)
 }
 
@@ -60,16 +63,15 @@ fn read_progress(
             Some(header) => Some(header),
             None => static_files.header_by_number(number)?,
         }
-        .ok_or_else(|| eyre::eyre!("missing retained header {number}"))?;
+        .ok_or(SnapshotError::MissingRetainedHeader { number })?;
         let hash = match tx.get::<tables::CanonicalHeaders>(number)? {
             Some(hash) => Some(hash),
             None => static_files.block_hash(number)?,
         }
-        .ok_or_else(|| eyre::eyre!("missing canonical hash {number}"))?;
-        ensure!(
-            header.inner.number == number && header.hash_slow() == hash,
-            "stored header does not match canonical identity at {number}"
-        );
+        .ok_or(SnapshotError::MissingCanonicalHash { number })?;
+        if header.inner.number != number || header.hash_slow() != hash {
+            return Err(SnapshotError::StoredHeaderIdentityMismatch { number }.into());
+        }
         Ok(BlockIdentity {
             number,
             hash: hex::encode(hash),
@@ -80,20 +82,19 @@ fn read_progress(
         || static_files.header_by_number(0)?.is_some()
     {
         let genesis = read_identity(0)?;
-        ensure!(
-            genesis.hash == hex::encode(chain.genesis_hash()),
-            "execution database belongs to a different genesis"
-        );
+        if genesis.hash != hex::encode(chain.genesis_hash()) {
+            return Err(SnapshotError::DifferentGenesis.into());
+        }
     }
     let finalized_number = tx
         .get::<tables::ChainState>(ChainStateKey::LastFinalizedBlock)?
-        .ok_or_else(|| eyre::eyre!("missing durable LastFinalizedBlock"))?;
+        .ok_or(SnapshotError::MissingLastFinalizedBlock)?;
     let execution = tx.get::<tables::StageCheckpoints>("Execution".into())?;
     let finish = tx.get::<tables::StageCheckpoints>("Finish".into())?;
     let execution_number = execution
         .as_ref()
         .map(|stage| stage.block_number)
-        .ok_or_else(|| eyre::eyre!("missing execution stage checkpoint"))?;
+        .ok_or(SnapshotError::MissingExecutionCheckpoint)?;
     let storage_version = match tx.get::<tables::Metadata>("storage_settings".into())? {
         Some(bytes) => {
             let settings: StorageSettings = serde_json::from_slice(&bytes)
@@ -288,7 +289,7 @@ pub(crate) fn inspect_stopped_stores(
         )),
     )?
     .and_then(|state| state.checkpoint)
-    .ok_or_else(|| eyre::eyre!("missing initialized offchain projection checkpoint"))?;
+    .ok_or(SnapshotError::MissingOffchainProjectionCheckpoint)?;
     let closure = inspect_closure_checkpoint(
         layout
             .ocomp_root

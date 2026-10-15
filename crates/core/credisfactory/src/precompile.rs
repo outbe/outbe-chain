@@ -1,4 +1,5 @@
-//! Credis factory ABI: issue against a reservation's pledge and settle repayments.
+//! Credis factory ABI: issue against a reservation's pledge, settle repayments and
+//! let the owner forfeit.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
@@ -29,7 +30,7 @@ pub fn dispatch(
     // before dispatch. Refuse it for every selector except the published one.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     #[cfg(feature = "e2e-test")]
-    if let Some(result) = crate::test_arming::dispatch(&storage, data) {
+    if let Some(result) = crate::test_arming_e2e::dispatch(&storage, data) {
         return result;
     }
     dispatch_call(
@@ -57,13 +58,20 @@ pub fn dispatch(
                 ),
                 settleCredis(c) => mutate(&storage, c, caller, |sender, c| {
                     let (principal, interest) =
-                        runtime::settle(storage.clone(), sender, c.credisId, c.amountMinor)?;
+                        runtime::settle_credis(storage.clone(), sender, c.credisId, c.amountMinor)?;
                     Ok(ICredisFactory::settleCredisReturn {
                         principalPaidMinor: principal,
                         interestPaidMinor: interest,
                     })
                 }),
                 quoteSettlement(c) => view(c, |c| runtime::quote_settlement(&storage, c.credisId)),
+                forfeitCredis(c) => mutate(&storage, c, caller, |sender, c| {
+                    let forfeit = runtime::forfeit_by_owner(storage.clone(), sender, c.credisId)?;
+                    Ok(ICredisFactory::forfeitCredisReturn {
+                        gratisBurnedMinor: forfeit.gratis_burned_minor,
+                        principalWrittenOffMinor: forfeit.principal_written_off,
+                    })
+                }),
                 supportsInterface(c) => view(c, |c| {
                     let id: [u8; 4] = c.interfaceId.0;
                     Ok(id == ERC165_INTERFACE_ID)

@@ -34,10 +34,9 @@ where
         committee,
         evm_signer,
     } = request;
-    let policy_hash = authority
-        .policy
-        .policy_hash()
-        .map_err(|error| eyre::eyre!("invalid OST3 startup policy: {error}"))?;
+    let policy_hash = authority.policy.policy_hash().map_err(|error| {
+        crate::errors::TeeBootstrapError::InvalidStartupPolicy(format!("{error}"))
+    })?;
     let mut scope = Vec::with_capacity(OST3_SCOPE_DOMAIN.len() + 32 * 4 + 8);
     scope.extend_from_slice(OST3_SCOPE_DOMAIN);
     scope.extend_from_slice(&authority.policy.chain_id);
@@ -99,10 +98,17 @@ where
     } = request;
     let my_bls = match client
         .request(&EnclaveRequest::GetPublicKeys)
-        .map_err(|e| eyre::eyre!("TEE DKG GetPublicKeys failed: {e}"))?
+        .map_err(|e| crate::errors::TeeBootstrapError::DkgGetPublicKeysFailed(format!("{e}")))?
     {
         EnclaveResponse::PublicKeys { tee_bls_pub, .. } => tee_bls_pub,
-        other => return Err(eyre::eyre!("unexpected GetPublicKeys response: {other:?}")),
+        other => {
+            return Err(
+                crate::errors::TeeBootstrapError::UnexpectedGetPublicKeysResponse(format!(
+                    "{other:?}"
+                ))
+                .into(),
+            )
+        }
     };
 
     let chain_id = B256::from(network_binding.chain_id);
@@ -138,7 +144,7 @@ where
         },
     )
     .await
-    .map_err(|e| eyre::eyre!("TEE DKG ceremony failed: {e}"))?;
+    .map_err(|e| crate::errors::TeeBootstrapError::DkgCeremonyFailed(format!("{e}")))?;
 
     Ok((
         outcome.tribute_offer_public,
@@ -155,7 +161,7 @@ where
 {
     match client
         .request(&EnclaveRequest::GetPublicKeys)
-        .map_err(|e| eyre::eyre!("TEE GetPublicKeys failed: {e}"))?
+        .map_err(|e| crate::errors::TeeBootstrapError::GetPublicKeysFailed(format!("{e}")))?
     {
         EnclaveResponse::PublicKeys {
             offer_key_ready,
@@ -163,19 +169,18 @@ where
             ..
         } => {
             if !offer_key_ready {
-                return Err(eyre::eyre!(
-                    "local enclave permanent offer key is not ready; no recovery or fallback exists"
-                ));
+                return Err(crate::errors::TeeBootstrapError::PermanentOfferKeyNotReady.into());
             }
             let public = B256::from(recipient_x25519_pub);
             if public.is_zero() {
-                return Err(eyre::eyre!(
-                    "local enclave reports a ready but zero permanent offer key"
-                ));
+                return Err(crate::errors::TeeBootstrapError::PermanentOfferKeyZero.into());
             }
             Ok(public)
         }
-        other => Err(eyre::eyre!("unexpected GetPublicKeys response: {other:?}")),
+        other => Err(
+            crate::errors::TeeBootstrapError::UnexpectedGetPublicKeysResponse(format!("{other:?}"))
+                .into(),
+        ),
     }
 }
 
@@ -224,13 +229,17 @@ where
         .collect::<Vec<_>>();
     let participant_set_hash =
         outbe_primitives::tee_attestation_v1::dkg_participant_set_hash_v1(&participant_bls)
-            .map_err(|error| eyre::eyre!("invalid TEE DKG participant set: {error}"))?;
+            .map_err(|error| {
+                crate::errors::TeeBootstrapError::InvalidDkgParticipantSet(format!("{error}"))
+            })?;
     let ceremony_id = outbe_primitives::tee_attestation_v1::dkg_ceremony_id_v1(
         request.network_binding,
         0,
         participant_set_hash,
     )
-    .map_err(|error| eyre::eyre!("invalid TEE DKG ceremony binding: {error}"))?;
+    .map_err(|error| {
+        crate::errors::TeeBootstrapError::InvalidDkgCeremonyBinding(format!("{error}"))
+    })?;
     let my_announcement = request_signed_announcement(client, ceremony_id, participant_bls)?;
     let identities = gossip
         .exchange_identities(IdentityExchange {
@@ -265,13 +274,17 @@ fn request_signed_announcement<E: outbe_tee::tee_dkg::EnclaveChannel>(
                 round: 0,
                 participant_bls,
             })
-            .map_err(|error| eyre::eyre!("TEE DKG announcement failed: {error}"))?
-        {
+            .map_err(|error| {
+                crate::errors::TeeBootstrapError::DkgAnnouncementFailed(format!("{error}"))
+            })? {
             EnclaveResponse::DkgParticipantAnnounceV1 { participant } => participant,
             other => {
-                return Err(eyre::eyre!(
-                    "unexpected DKG announcement response: {other:?}"
-                ))
+                return Err(
+                    crate::errors::TeeBootstrapError::UnexpectedDkgAnnouncementResponse(format!(
+                        "{other:?}"
+                    ))
+                    .into(),
+                )
             }
         },
     )

@@ -1,8 +1,9 @@
 //! Chain-owned canonical ZK verifier precompile.
 
+use crate::errors::ZkPrecompileError;
 use alloy_primitives::{Address, Bytes, U256};
 use outbe_primitives::dispatch::reject_value;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_zk::wire::decode_verify_call;
 use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};
@@ -31,8 +32,7 @@ pub fn groth16_base_gas(_input: &[u8]) -> u64 {
 }
 
 pub(crate) fn zk_verify(input: &[u8]) -> Result<[u8; 32]> {
-    let call =
-        decode_verify_call(input).map_err(|error| PrecompileError::Revert(error.to_string()))?;
+    let call = decode_verify_call(input).map_err(ZkPrecompileError::decode_verify_call)?;
     let Some(descriptor) = outbe_zk::circuit_by_hash(&call.circuit_hash) else {
         trace!(circuit_hash = ?call.circuit_hash, "zk_verify: unknown circuit_hash");
         return Ok([0u8; 32]);
@@ -40,9 +40,7 @@ pub(crate) fn zk_verify(input: &[u8]) -> Result<[u8; 32]> {
 
     let verified = Barretenberg::default()
         .verify_combined(descriptor.vk_bytes, call.combined_proof)
-        .map_err(|error| {
-            PrecompileError::Revert(format!("zk verification backend failed: {error}"))
-        })?;
+        .map_err(ZkPrecompileError::backend_failed)?;
     trace!(circuit = descriptor.label, verified, "zk_verify");
 
     let mut output = [0u8; 32];

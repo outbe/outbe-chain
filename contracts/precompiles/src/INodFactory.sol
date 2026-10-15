@@ -29,7 +29,7 @@ interface INodFactory {
 
     error NodMaterializationRejected(uint8 code);
 
-    /// @notice Emitted when a Nod is paid.
+    /// @notice Emitted when a Nod is settled.
     event NodSettled(address indexed owner, uint256 nodId, address asset, uint256 paymentMinor);
 
     /// @notice The daily call sweep (`sweep` = 1) fell two days behind. `skippedDay`

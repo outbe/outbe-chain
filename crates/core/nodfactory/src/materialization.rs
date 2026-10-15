@@ -83,7 +83,7 @@ pub fn is_soft_materialization_revert_data(data: &[u8]) -> bool {
 
 /// Maps the public handler's stable string errors onto typed ABI reverts.
 pub(crate) fn typed_materialization_error(error: PrecompileError) -> PrecompileError {
-    let PrecompileError::Revert(reason) = error else {
+    let Some(reason) = NodFactoryError::revert_reason(&error) else {
         return error;
     };
     let rejection = if reason == NodFactoryError::UnauthorizedMaterializer.to_string() {
@@ -101,7 +101,7 @@ pub(crate) fn typed_materialization_error(error: PrecompileError) -> PrecompileE
     } else if reason == NodFactoryError::DuplicateMaterializedNod.to_string() {
         NodMaterializationRejectionV1::DuplicateNod
     } else {
-        return PrecompileError::Revert(reason);
+        return error;
     };
     PrecompileError::RevertBytes(materialization_revert_data(rejection))
 }
@@ -127,9 +127,9 @@ pub fn consume_materialization_attempt(
     let stored_height = nod.ocomp_materialization_attempt_height.read()?;
     let stored_count = nod.ocomp_materialization_attempt_count.read()?;
     let next_count = if stored_height == block_height {
-        stored_count.checked_add(1).ok_or_else(|| {
-            PrecompileError::Fatal("Nod materialization attempt counter overflow".into())
-        })?
+        stored_count
+            .checked_add(1)
+            .ok_or(NodFactoryError::MaterializationAttemptCounterOverflow)?
     } else {
         1
     };
@@ -194,16 +194,12 @@ pub(crate) fn materialize_after_attempt(
     // Read before the last batch clears it: every Nod carries the certified Lysis freeze instant.
     let issued_at = nod
         .ocomp_certified_generation(worldwide_day)?
-        .ok_or_else(|| {
-            PrecompileError::Fatal("Nod materialization head projection is missing".into())
-        })?
+        .ok_or(NodFactoryError::MaterializationHeadProjectionMissing)?
         .issued_at;
     require_derived_nod_ids(verified.actions(), worldwide_day)?;
 
     if loads.len() != verified.actions().len() || loads.iter().any(|load| load.is_zero()) {
-        return Err(PrecompileError::Fatal(
-            "Nod materialization test load does not match the batch".into(),
-        ));
+        return Err(NodFactoryError::MaterializationTestLoadMismatch.into());
     }
     for (action, load) in verified.actions().iter().zip(loads) {
         let params = NodIssueParams {
@@ -248,9 +244,7 @@ pub(crate) fn materialize_protected_after_attempt(
     validate_encrypted_materialization(&encrypted, carrier, &authority, head.worldwide_day)?;
     let issued_at = nod
         .ocomp_certified_generation(WorldwideDay::new(head.worldwide_day))?
-        .ok_or_else(|| {
-            PrecompileError::Fatal("Nod materialization head projection is missing".into())
-        })?
+        .ok_or(NodFactoryError::MaterializationHeadProjectionMissing)?
         .issued_at;
     for body in &encrypted {
         runtime::issue_nod_at(storage, scope, parent, body, issued_at)
@@ -299,7 +293,7 @@ fn materialization_enclave_error(error: outbe_tee::TransportError) -> Precompile
         outbe_tee::TransportError::NodMaterializationRejected(_) => {
             NodFactoryError::InvalidMaterializationProof.into()
         }
-        other => PrecompileError::Fatal(format!("Nod materialization enclave: {other}")),
+        other => NodFactoryError::materialization_enclave(other).into(),
     }
 }
 
@@ -330,17 +324,14 @@ fn finish_materialization(
 ) -> Result<NodMaterializationOutcomeV1> {
     let nod = NodContract::new(storage.clone());
     let worldwide_day = WorldwideDay::new(head.worldwide_day);
-    let action_count = u32::try_from(count).map_err(|_| {
-        PrecompileError::Fatal("Nod materialization action count does not fit u32".into())
-    })?;
+    let action_count =
+        u32::try_from(count).map_err(|_| NodFactoryError::MaterializationActionCountOverflow)?;
     let next_nod_ordinal = head
         .next_nod_ordinal
         .checked_add(action_count)
-        .ok_or_else(|| PrecompileError::Fatal("Nod materialization cursor overflow".into()))?;
+        .ok_or(NodFactoryError::MaterializationCursorOverflow)?;
     if next_nod_ordinal > head.nod_count {
-        return Err(PrecompileError::Fatal(
-            "Nod materialization cursor exceeds certified count".into(),
-        ));
+        return Err(NodFactoryError::MaterializationCursorExceedsCount.into());
     }
     let block_number = storage.block_number()?;
     let completed = next_nod_ordinal == head.nod_count;
@@ -348,13 +339,11 @@ fn finish_materialization(
         let stored_head = nod.ocomp_materialization_head_sequence.read()?;
         let stored_tail = nod.ocomp_materialization_tail_sequence.read()?;
         if stored_head != head.queue_sequence || stored_head >= stored_tail {
-            return Err(PrecompileError::Fatal(
-                "Nod materialization FIFO changed during execution".into(),
-            ));
+            return Err(NodFactoryError::MaterializationFifoChanged.into());
         }
-        let next_head = stored_head.checked_add(1).ok_or_else(|| {
-            PrecompileError::Fatal("Nod materialization FIFO head overflow".into())
-        })?;
+        let next_head = stored_head
+            .checked_add(1)
+            .ok_or(NodFactoryError::MaterializationFifoHeadOverflow)?;
         nod.ocomp_materialization_queue_wwd
             .write(&stored_head, WorldwideDay::new(0))?;
         nod.ocomp_materialization_head_sequence.write(next_head)?;
@@ -405,11 +394,9 @@ fn require_derived_nod_ids(actions: &[NodActionV1], worldwide_day: WorldwideDay)
 }
 
 fn duplicate_materialized_nod(error: PrecompileError) -> PrecompileError {
-    if matches!(
-        &error,
-        PrecompileError::Revert(reason)
-            if reason == &NodFactoryError::NodAlreadyExists.to_string()
-    ) {
+    if NodFactoryError::revert_reason(&error)
+        .is_some_and(|reason| reason == NodFactoryError::NodAlreadyExists.to_string())
+    {
         NodFactoryError::DuplicateMaterializedNod.into()
     } else {
         error
@@ -425,9 +412,7 @@ pub fn encode_materialization_head(
         Some(head) => head
             .encode_canonical(limits)
             .map(|bytes| (true, bytes.into()))
-            .map_err(|error| {
-                PrecompileError::Fatal(format!("encode Nod materialization head: {error}"))
-            }),
+            .map_err(|error| NodFactoryError::EncodeMaterializationHead(error).into()),
         None => Ok((false, Bytes::new())),
     }
 }

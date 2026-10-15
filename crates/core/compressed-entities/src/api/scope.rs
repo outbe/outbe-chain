@@ -51,7 +51,7 @@ impl ExecutionScope {
             .map_err(|_| fatal_scope("authenticated parent tree lock poisoned"))?;
         if let Some(opened) = tree.as_ref() {
             if opened.parent_root() != evm_root {
-                return Err(outbe_primitives::error::PrecompileError::Fatal(
+                return Err(outbe_primitives::error::PrecompileError::TreeUnavailable(
                     "opened parent tree root does not match EVM slot 1".into(),
                 ));
             }
@@ -79,8 +79,8 @@ impl ExecutionScope {
             root: evm_root,
         })?;
         if opened.parent_block_hash() != block_hash || opened.parent_root() != evm_root {
-            return Err(fatal_scope(
-                "exact-parent factory returned a tree with the wrong block hash or root",
+            return Err(outbe_primitives::error::PrecompileError::TreeUnavailable(
+                "exact-parent factory returned a tree with the wrong block hash or root".into(),
             ));
         }
         *tree = Some(opened);
@@ -110,7 +110,7 @@ impl ExecutionScope {
         }
         let parent_tree = self.opened_parent_tree()?;
         if parent_tree.parent_root() != expected_parent_root {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
+            return Err(outbe_primitives::error::PrecompileError::TreeUnavailable(
                 "authenticated parent tree root does not match EVM slot 1".into(),
             ));
         }
@@ -248,8 +248,7 @@ impl ExecutionScope {
     ) -> Result<SealedCollectionRoot> {
         self.validate_seal_output(output)?;
         let parent = self.opened_parent_tree()?;
-        let (_, key) = crate::partition_collection_key(partition)
-            .map_err(|error| fatal_scope(error.to_string()))?;
+        let (_, key) = crate::partition_collection_key(partition).map_err(fatal_scope)?;
         let root = match output.staged_tree_batch.changed_collections.get(&key) {
             Some(crate::CollectionOperation::Mutate(batch)) => Some(batch.new_collection_root),
             Some(crate::CollectionOperation::Retire(_)) => None,
@@ -433,11 +432,7 @@ impl ExecutionScope {
         self.require_active()?;
         self.explicit_gas_window_active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| {
-                outbe_primitives::error::PrecompileError::Fatal(
-                    "compressed-entity explicit gas window is already active".into(),
-                )
-            })?;
+            .map_err(|_| fatal_scope("compressed-entity explicit gas window is already active"))?;
         let start = self.explicit_gas_checkpoint();
         self.explicit_gas_window_start
             .store(start.0, Ordering::Release);
@@ -461,11 +456,7 @@ impl ExecutionScope {
         self.explicit_gas_charged
             .load(Ordering::Acquire)
             .checked_sub(checkpoint.0)
-            .ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::Fatal(
-                    "compressed-entity gas checkpoint exceeds current counter".into(),
-                )
-            })
+            .ok_or_else(|| fatal_scope("compressed-entity gas checkpoint exceeds current counter"))
     }
 
     pub(crate) fn deduct_explicit_gas(&self, storage: &StorageHandle<'_>, gas: u64) -> Result<()> {
@@ -475,9 +466,7 @@ impl ExecutionScope {
             let start = self.explicit_gas_window_start.load(Ordering::Acquire);
             let limit = self.explicit_gas_window_limit.load(Ordering::Acquire);
             let used = charged.checked_sub(start).ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::Fatal(
-                    "compressed-entity explicit gas window starts after current counter".into(),
-                )
+                fatal_scope("compressed-entity explicit gas window starts after current counter")
             })?;
             if used.checked_add(gas).is_none_or(|next| next > limit) {
                 return Err(outbe_primitives::error::PrecompileError::OutOfGas);
@@ -489,19 +478,15 @@ impl ExecutionScope {
                 charged.checked_add(gas)
             })
             .map(|_| ())
-            .map_err(|_| {
-                outbe_primitives::error::PrecompileError::Fatal(
-                    "compressed-entity explicit gas counter overflow".into(),
-                )
-            })
+            .map_err(|_| fatal_scope("compressed-entity explicit gas counter overflow"))
     }
 
     pub(crate) fn require_active(&self) -> Result<()> {
         if self.phase.load(Ordering::Acquire) == PHASE_ACTIVE {
             return Ok(());
         }
-        Err(outbe_primitives::error::PrecompileError::Fatal(
-            "compressed-entity execution attempted outside active block lifecycle".into(),
+        Err(fatal_scope(
+            "compressed-entity execution attempted outside active block lifecycle",
         ))
     }
 
@@ -511,8 +496,8 @@ impl ExecutionScope {
         {
             return Ok(());
         }
-        Err(outbe_primitives::error::PrecompileError::Fatal(
-            "compressed-entity execution attempted outside active block lifecycle".into(),
+        Err(fatal_scope(
+            "compressed-entity execution attempted outside active block lifecycle",
         ))
     }
 
@@ -530,11 +515,7 @@ impl ExecutionScope {
                 Ordering::Acquire,
             )
             .map(|_| ())
-            .map_err(|_| {
-                outbe_primitives::error::PrecompileError::Fatal(
-                    "compressed-entity begin_block called more than once".into(),
-                )
-            })?;
+            .map_err(|_| fatal_scope("compressed-entity begin_block called more than once"))?;
         let mut work = self
             .ce_work
             .lock()
@@ -560,11 +541,7 @@ impl ExecutionScope {
                 Ordering::Acquire,
             )
             .map(|_| ())
-            .map_err(|_| {
-                outbe_primitives::error::PrecompileError::Fatal(
-                    "compressed-entity end_block called outside active lifecycle".into(),
-                )
-            })
+            .map_err(|_| fatal_scope("compressed-entity end_block called outside active lifecycle"))
     }
 
     pub(crate) fn finish_with_seal(&self, output: &crate::SealOutput) -> Result<()> {

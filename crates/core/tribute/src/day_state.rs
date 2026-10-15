@@ -2,9 +2,7 @@
 
 use alloy_primitives::{keccak256, B256, U256};
 use outbe_primitives::{
-    error::{PrecompileError, Result},
-    time::WorldwideDay,
-    tribute_day_encryption::EncryptedTributeDayAmountV2,
+    error::Result, time::WorldwideDay, tribute_day_encryption::EncryptedTributeDayAmountV2,
 };
 use outbe_tee::tribute_day::{TributeDayOpRequestV2, TributeDayOperationV2};
 
@@ -46,13 +44,14 @@ impl TributeContract<'_> {
         if bytes.is_empty() {
             return Ok(None);
         }
-        let record: EncryptedTributeDayAmountV2 = postcard::from_bytes(&bytes).map_err(corrupt)?;
+        let record: EncryptedTributeDayAmountV2 =
+            postcard::from_bytes(&bytes).map_err(crate::errors::body_read_corruption)?;
         if record.worldwide_day != day
             || record.frozen != frozen
             || record.chain_id != self.storage_handle().chain_id()?
             || record.version().is_none()
         {
-            return Err(corrupt("invalid encrypted Tribute day identity"));
+            return Err(crate::errors::TributeError::InvalidEncryptedDayIdentity.into());
         }
         Ok(Some(record))
     }
@@ -60,7 +59,8 @@ impl TributeContract<'_> {
     pub(crate) fn day_nominal_amount(&self, day: WorldwideDay, frozen: bool) -> Result<U256> {
         match self.day_amount_record(day, frozen)? {
             None => Ok(U256::ZERO),
-            Some(record) => crate::enclave_client::read_day_amount(&record).map_err(enclave_error),
+            Some(record) => crate::enclave_client::read_day_amount(&record)
+                .map_err(crate::errors::day_enclave_error),
         }
     }
 
@@ -78,11 +78,12 @@ impl TributeContract<'_> {
             operation,
             public_state_hash,
         };
-        let record = crate::enclave_client::apply_day_operation(request).map_err(enclave_error)?;
+        let record = crate::enclave_client::apply_day_operation(request)
+            .map_err(crate::errors::day_enclave_error)?;
         if record.frozen != frozen {
-            return Err(enclave_error("Tribute day response scope mismatch"));
+            return Err(crate::errors::TributeError::DayResponseScopeMismatch.into());
         }
-        let bytes = postcard::to_allocvec(&record).map_err(corrupt)?;
+        let bytes = postcard::to_allocvec(&record).map_err(crate::errors::body_read_corruption)?;
         if frozen {
             self.frozen_day_nominal_ct.get_bytes(&day).write(&bytes)
         } else {
@@ -114,12 +115,30 @@ impl TributeContract<'_> {
         view.is_sealed = stored.is_sealed;
         view.sealed_collection_root = stored.sealed_collection_root;
         view.sealed_tribute_count = stored.sealed_tribute_count;
-        view.sealed_tribute_nominal_total_minor = self.day_nominal_amount(day, true)?;
+        view.sealed_tribute_nominal_total_minor = if stored.is_sealed {
+            self.day_nominal_amount(day, true)?
+        } else {
+            U256::ZERO
+        };
         view.canonical_body_bytes = stored.canonical_body_bytes;
         view.distinct_owner_count = stored.distinct_owner_count;
         view.distinct_reference_currency_count = stored.distinct_reference_currency_count;
         view.source_generation = stored.source_generation;
         Ok(view)
+    }
+
+    pub(crate) fn set_day_sealed(&mut self, day: WorldwideDay, is_sealed: bool) -> Result<()> {
+        let mut stored = self
+            .day_totals
+            .get(day)?
+            .unwrap_or_else(|| StoredDayTotals::with_key(day));
+        stored.initialized = true;
+        stored.is_sealed = is_sealed;
+        if self.day_totals.exists(day)? {
+            self.day_totals.update(&stored)
+        } else {
+            self.day_totals.create(&stored)
+        }
     }
 
     pub(crate) fn store_day_metadata(&mut self, totals: &DayTotals) -> Result<()> {
@@ -150,11 +169,4 @@ impl TributeContract<'_> {
             self.day_pre_admission.create(&stored)
         }
     }
-}
-
-fn corrupt(error: impl std::fmt::Display) -> PrecompileError {
-    PrecompileError::BodyReadCorruption(error.to_string())
-}
-fn enclave_error(error: impl std::fmt::Display) -> PrecompileError {
-    PrecompileError::Fatal(format!("Tribute day enclave: {error}"))
 }

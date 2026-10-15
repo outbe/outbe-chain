@@ -283,7 +283,7 @@ fn post_freeze_exit_is_retained_then_excluded_at_a_later_boundary() {
             .unwrap_err();
         assert!(matches!(
             err,
-            PrecompileError::Fatal(message)
+            PrecompileError::Revert(message)
                 if message.contains("retained validator")
                     && message.contains("exited at 11 before freeze 11")
         ));
@@ -350,7 +350,7 @@ fn post_freeze_jail_is_retained_then_excluded_at_a_later_boundary() {
             .unwrap_err();
         assert!(matches!(
             err,
-            PrecompileError::Fatal(message)
+            PrecompileError::Revert(message)
                 if message.contains("retained validator")
                     && message.contains("jailed at 11 before freeze 11")
         ));
@@ -418,7 +418,7 @@ fn assert_demoted_joiner_retained_then_excluded(
         .unwrap_err();
     assert!(matches!(
         err,
-        PrecompileError::Fatal(message)
+        PrecompileError::Revert(message)
             if message.contains("retained validator")
                 && message.contains("exited at 11 before freeze 11")
     ));
@@ -498,7 +498,7 @@ fn included_waiting_for_stake_at_or_before_freeze_still_fatals() {
             .unwrap_err();
         assert!(matches!(
             err,
-            PrecompileError::Fatal(message) if message.contains("included ineligible validator")
+            PrecompileError::Revert(message) if message.contains("included ineligible validator")
         ));
         assert_eq!(vs.validator_lifecycle(survivor).unwrap(), survivor_before);
         assert_eq!(vs.validator_lifecycle(joiner).unwrap(), joiner_before);
@@ -592,7 +592,7 @@ fn test_boundary_rejects_missed_active_validator_atomically() {
         // ACTIVE participant. The planner rejects it before writing anything.
         assert!(matches!(
             vs.activate_reshared_set(&[val1, val2], group_key2),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
 
         // The complete prior committee, hash, and repair signal are unchanged.

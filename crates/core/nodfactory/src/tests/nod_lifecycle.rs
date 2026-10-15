@@ -350,7 +350,7 @@ fn arm_lapsed(
     let id = WwdEntityId::from_day_and_digest(items[0].worldwide_day, bucket_key);
     for (item, &(_, _, paid)) in items.iter().zip(specs) {
         if paid {
-            api::settle_nod(
+            api::record_settled(
                 storage,
                 scope,
                 api::load_item(storage, scope, parent, item.nod_id)
@@ -1041,7 +1041,7 @@ fn a_bucket_is_callable_from_issuance_and_settles_once_called() {
         let bucket = api::load_bucket(storage, scope, parent, id)
             .unwrap()
             .unwrap();
-        api::settle_nod(
+        api::record_settled(
             storage,
             scope,
             api::load_item(storage, scope, parent, item.nod_id)
@@ -1511,7 +1511,7 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
         let nod = NodContract::new(storage.clone());
         qualify(storage, &items[0], entry_price());
         // Settle the middle member, exercising swap-remove of the unpaid tail.
-        api::settle_nod(
+        api::record_settled(
             storage,
             scope,
             api::load_item(storage, scope, parent, items[1].nod_id)
@@ -1522,7 +1522,7 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
                 .unwrap(),
         )
         .unwrap();
-        api::settle_nod(
+        api::record_settled(
             storage,
             scope,
             api::load_item(storage, scope, parent, items[3].nod_id)
@@ -1619,7 +1619,7 @@ fn a_fully_paid_bucket_is_not_called_and_corrupt_paid_membership_is_not_forfeite
     harness(|storage, scope, parent| {
         let item = issue_qualified(storage, scope, parent, Address::repeat_byte(0x94), ISO);
         let id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
-        api::settle_nod(
+        api::record_settled(
             storage,
             scope,
             api::load_item(storage, scope, parent, item.nod_id)
@@ -2407,7 +2407,7 @@ fn token_uri_turns_forfeited_past_the_settlement_deadline() {
 #[test]
 fn static_test_command_is_rejected_before_bucket_validation() {
     use crate::precompile::dispatch;
-    use crate::test_arming::INodFactoryTestArming;
+    use crate::test_arming_e2e::INodFactoryTestArming;
     use alloy_sol_types::SolCall;
     use outbe_primitives::error::PrecompileError;
     let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);

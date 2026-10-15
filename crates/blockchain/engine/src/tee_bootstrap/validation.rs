@@ -19,9 +19,9 @@ pub(super) fn bootstrap_evidence_kind(
 ) -> eyre::Result<BootstrapEvidenceKind> {
     match (policy, production_session) {
         (AttestationMode::DcapRequired, true) => Ok(BootstrapEvidenceKind::Dcap),
-        (AttestationMode::DcapRequired, false) => Err(eyre::eyre!(
-            "DcapRequired genesis policy cannot use a development enclave session"
-        )),
+        (AttestationMode::DcapRequired, false) => {
+            Err(crate::errors::TeeBootstrapError::DcapRequiredCannotUseDevelopmentSession.into())
+        }
         (AttestationMode::GramineDirectDev, _) => Ok(BootstrapEvidenceKind::GramineDirectDev),
     }
 }
@@ -69,11 +69,9 @@ impl SubmissionValidation<'_> {
         Ok(binding.chain_id == self.policy.chain_id
             && binding.genesis_hash == self.policy.genesis_hash
             && binding.node_id_hash
-                == self
-                    .intent
-                    .node_id
-                    .node_id_hash()
-                    .map_err(|error| eyre::eyre!("invalid OST3 NodeHost identity: {error}"))?)
+                == self.intent.node_id.node_id_hash().map_err(|error| {
+                    crate::errors::TeeBootstrapError::InvalidNodeHostIdentity(format!("{error}"))
+                })?)
     }
 
     fn binding_signatures_match(&self) -> bool {
@@ -106,7 +104,7 @@ pub(super) fn validate_submission(
     let validator = Address::from(submission.validator_binding.validator);
     let policy_hash = policy
         .policy_hash()
-        .map_err(|error| eyre::eyre!("invalid OST3 policy: {error}"))?;
+        .map_err(|error| crate::errors::TeeBootstrapError::InvalidPolicy(format!("{error}")))?;
     let validation = SubmissionValidation {
         submission,
         intent,
@@ -116,17 +114,15 @@ pub(super) fn validate_submission(
         policy_hash,
     };
     if !validation.canonical_registration_matches()? {
-        return Err(eyre::eyre!(
-            "OST3 submission does not prove one canonical committee registration"
-        ));
+        return Err(
+            crate::errors::TeeBootstrapError::SubmissionNotCanonicalCommitteeRegistration.into(),
+        );
     }
     if let AttestationEvidenceV1::GramineDirectDev(dev) = &submission.evidence {
         if dev.dev_attestation_public != intent.attestation_ed25519
             || dev.dev_signature != submission.enclave_signature
         {
-            return Err(eyre::eyre!(
-                "OST3 GramineDirectDev evidence does not match the outer enclave proof"
-            ));
+            return Err(crate::errors::TeeBootstrapError::DevEvidenceMismatchOuterProof.into());
         }
     }
     Ok(validator)

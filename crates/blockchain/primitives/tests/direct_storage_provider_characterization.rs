@@ -142,7 +142,7 @@ fn flush_preserves_account_code_nonce_and_exposes_complete_change_set() {
 }
 
 #[test]
-fn transfer_underflow_and_destination_overflow_are_fatal_without_partial_mutation() {
+fn transfer_underflow_and_destination_overflow_revert_without_partial_mutation() {
     let mut underflow_db = CacheDB::new(EmptyDB::default());
     underflow_db.insert_account_info(FROM, account(U256::from(5), 0, Bytecode::default()));
     underflow_db.insert_account_info(TO, AccountInfo::default());
@@ -150,7 +150,7 @@ fn transfer_underflow_and_destination_overflow_are_fatal_without_partial_mutatio
     let error = underflow
         .transfer_balance(FROM, TO, U256::from(6))
         .unwrap_err();
-    assert!(matches!(error, PrecompileError::Fatal(_)));
+    assert!(matches!(error, PrecompileError::Revert(_)));
     assert_eq!(underflow.account_info(FROM).unwrap().balance, U256::from(5));
     assert_eq!(underflow.account_info(TO).unwrap().balance, U256::ZERO);
 
@@ -159,19 +159,19 @@ fn transfer_underflow_and_destination_overflow_are_fatal_without_partial_mutatio
     overflow_db.insert_account_info(TO, account(U256::MAX, 0, Bytecode::default()));
     let mut overflow = DirectStorageProvider::new(&mut overflow_db, block_context());
     let error = overflow.transfer_balance(FROM, TO, U256::ONE).unwrap_err();
-    assert!(matches!(error, PrecompileError::Fatal(_)));
+    assert!(matches!(error, PrecompileError::Revert(_)));
     assert_eq!(overflow.account_info(FROM).unwrap().balance, U256::ONE);
     assert_eq!(overflow.account_info(TO).unwrap().balance, U256::MAX);
 }
 
 #[test]
-fn increase_balance_overflow_is_fatal_without_partial_mutation() {
+fn increase_balance_overflow_reverts_without_partial_mutation() {
     let mut db = CacheDB::new(EmptyDB::default());
     db.insert_account_info(FROM, account(U256::MAX, 0, Bytecode::default()));
     let mut provider = DirectStorageProvider::new(&mut db, block_context());
 
     let error = provider.increase_balance(FROM, U256::ONE).unwrap_err();
-    assert!(matches!(error, PrecompileError::Fatal(_)));
+    assert!(matches!(error, PrecompileError::Revert(_)));
     assert_eq!(provider.account_info(FROM).unwrap().balance, U256::MAX);
     provider.flush().unwrap();
     assert!(provider.take_committed_changes().is_empty());

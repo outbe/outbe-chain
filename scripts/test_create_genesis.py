@@ -529,6 +529,24 @@ class SeedStageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "renamed to intex_profile"):
             CG.validate_config(config)
 
+    def test_a_seed_carrying_the_old_intex_key_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = minimal_config(tmp)
+            validators = self.fake_validators()
+            base_genesis = CG.build_base_genesis(config)
+            CG.prefund_validators(base_genesis, config, validators)
+            seed = CG.build_seed(config) | {"intex_factory": {"profile": "dev"}}
+            with self.assertRaisesRegex(ValueError, "renamed to intex_profile"):
+                CG.run_seed_stage(
+                    module=SEED_GENESIS,
+                    work_dir=pathlib.Path(tmp),
+                    config=config,
+                    quiet=True,
+                    inputs=CG.SeedInputs(
+                        base_genesis=base_genesis, seed=seed, validators=validators
+                    ),
+                )
+
     def test_production_seed_stage_preserves_oracle_orientation_and_wire_scales(self):
         token = "0x1111111111111111111111111111111111111111"
         pairs = [

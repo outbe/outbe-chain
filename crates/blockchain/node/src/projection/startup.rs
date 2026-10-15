@@ -4,7 +4,7 @@ use super::OffchainDataProjectionConfig;
 use super::PrepareProjectionError;
 use super::PreparedOffchainDataProjection;
 use super::ReadyOffchainDataProjection;
-use eyre::bail;
+use crate::errors::NodeProjectionError;
 use eyre::Context;
 use metrics::gauge;
 use outbe_offchain_data::OffchainDataProjection;
@@ -144,19 +144,19 @@ where
         {
             Some(canonical_hash) if canonical_hash == checkpoint.block_hash => {}
             Some(canonical_hash) => {
-                return Err(eyre::eyre!(
-                "offchain-data checkpoint identity mismatch at block {}: stored {}, canonical {}",
-                checkpoint.block_number,
-                checkpoint.block_hash,
-                canonical_hash
-            ))
+                return Err(NodeProjectionError::CheckpointIdentityMismatch {
+                    block_number: checkpoint.block_number,
+                    stored: checkpoint.block_hash,
+                    canonical: canonical_hash,
+                }
+                .into());
             }
             None => {
-                return Err(eyre::eyre!(
-                    "canonical block {} for offchain storage checkpoint {} is unavailable locally",
-                    checkpoint.block_number,
-                    checkpoint.block_hash
-                ))
+                return Err(NodeProjectionError::CanonicalCheckpointBlockUnavailable {
+                    block_number: checkpoint.block_number,
+                    block_hash: checkpoint.block_hash,
+                }
+                .into());
             }
         }
         if reconciled.is_some_and(|target| checkpoint.block_number == target.number) {
@@ -222,13 +222,13 @@ pub(super) fn require_finalized_checkpoint(
     if checkpoint.block_number == local_finalized.number
         && checkpoint.block_hash != local_finalized.hash
     {
-        bail!(
-            "offchain-data checkpoint {} ({}) does not match local Reth finalized {} ({})",
-            checkpoint.block_number,
-            checkpoint.block_hash,
-            local_finalized.number,
-            local_finalized.hash
-        );
+        return Err(NodeProjectionError::CheckpointFinalizedMismatch {
+            checkpoint_number: checkpoint.block_number,
+            checkpoint_hash: checkpoint.block_hash,
+            finalized_number: local_finalized.number,
+            finalized_hash: local_finalized.hash,
+        }
+        .into());
     }
     Ok(Some(local_finalized))
 }

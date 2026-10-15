@@ -1,5 +1,7 @@
 use alloy_primitives::U256;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
+
+use crate::errors::EmissionLimitError;
 
 /// Emission sink allocation percentages (integer, denominator = 100).
 ///
@@ -95,17 +97,18 @@ pub fn allocate_emission_with_specs(
     for spec in specs {
         let amount = match spec.pct {
             Some(pct) => {
-                let amount = total.checked_mul(U256::from(pct)).ok_or_else(|| {
-                    PrecompileError::Revert("emission fixed-share multiplication overflow".into())
-                })? / hundred;
-                fixed_total = fixed_total.checked_add(amount).ok_or_else(|| {
-                    PrecompileError::Revert("emission fixed allocation total overflow".into())
-                })?;
+                let amount = total
+                    .checked_mul(U256::from(pct))
+                    .ok_or(EmissionLimitError::FixedShareMultiplicationOverflow)?
+                    / hundred;
+                fixed_total = fixed_total
+                    .checked_add(amount)
+                    .ok_or(EmissionLimitError::FixedAllocationTotalOverflow)?;
                 amount
             }
-            None => total.checked_sub(fixed_total).ok_or_else(|| {
-                PrecompileError::Revert("emission terminal allocation underflow".into())
-            })?,
+            None => total
+                .checked_sub(fixed_total)
+                .ok_or(EmissionLimitError::TerminalAllocationUnderflow)?,
         };
 
         allocations.push(EmissionAllocation {
@@ -127,26 +130,20 @@ fn validate_sink_specs(specs: &[EmissionSinkSpec]) -> Result<()> {
 
     for (idx, spec) in specs.iter().enumerate() {
         if let Some(pct) = spec.pct {
-            fixed_pct_sum = fixed_pct_sum.checked_add(pct).ok_or_else(|| {
-                PrecompileError::Revert("emission fixed percentage overflow".into())
-            })?;
+            fixed_pct_sum = fixed_pct_sum
+                .checked_add(pct)
+                .ok_or(EmissionLimitError::FixedPercentageOverflow)?;
         } else if terminal_index.replace(idx).is_some() {
-            return Err(PrecompileError::Revert(
-                "emission sink table must have one terminal sink".into(),
-            ));
+            return Err(EmissionLimitError::MultipleTerminalSinks.into());
         }
     }
 
     if terminal_index != Some(specs.len() - 1) {
-        return Err(PrecompileError::Revert(
-            "emission terminal sink must be the final sink".into(),
-        ));
+        return Err(EmissionLimitError::TerminalSinkNotFinal.into());
     }
 
     if fixed_pct_sum > PERCENT_DENOMINATOR {
-        return Err(PrecompileError::Revert(
-            "emission fixed percentages exceed 100".into(),
-        ));
+        return Err(EmissionLimitError::FixedPercentagesExceed100.into());
     }
 
     Ok(())
@@ -155,6 +152,7 @@ fn validate_sink_specs(specs: &[EmissionSinkSpec]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use outbe_primitives::error::PrecompileError;
 
     #[test]
     fn test_allocation_invariant() {

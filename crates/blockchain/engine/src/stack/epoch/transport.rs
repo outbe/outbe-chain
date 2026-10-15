@@ -166,10 +166,9 @@ where
         build_peer_map(&admitted_set, &bootnode_map),
     );
     let resolved_count = initial_peers.primary.len();
-    eyre::ensure!(
-        oracle.track(0, initial_peers.clone()) == commonware_actor::Feedback::Ok,
-        "P2P oracle closed during startup admission"
-    );
+    if oracle.track(0, initial_peers.clone()) != commonware_actor::Feedback::Ok {
+        return Err(crate::errors::StackEpochError::P2pOracleClosedDuringStartupAdmission.into());
+    }
     info!(
         total = validator_set.public_keys.len(),
         resolved = resolved_count,
@@ -254,7 +253,7 @@ where
         Some(m) => Some(
             m.register(0)
                 .await
-                .map_err(|e| eyre::eyre!("failed to pre-register TEE DKG round 0: {e}"))?,
+                .map_err(crate::errors::StackEpochError::pre_register_tee_dkg_round0)?,
         ),
         None => None,
     };
@@ -262,7 +261,7 @@ where
         Some(m) => Some(
             m.register(0)
                 .await
-                .map_err(|e| eyre::eyre!("failed to pre-register TEE bootstrap round 0: {e}"))?,
+                .map_err(crate::errors::StackEpochError::pre_register_tee_bootstrap_round0)?,
         ),
         None => None,
     };
