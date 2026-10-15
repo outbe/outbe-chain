@@ -633,7 +633,7 @@ mod tests {
                 .enter(|storage| {
                     assert!(matches!(
                         ValidatedWwdAggregate::load_and_validate(storage),
-                        Err(outbe_primitives::error::PrecompileError::Fatal(_))
+                        Err(outbe_primitives::error::PrecompileError::Revert(_))
                     ));
                     Ok::<_, outbe_primitives::error::PrecompileError>(())
                 })

@@ -16,6 +16,7 @@ pub enum QuoteParseError {
 }
 
 impl PartialEq<&str> for QuoteParseError {
+    #[allow(clippy::cmp_owned)]
     fn eq(&self, other: &&str) -> bool {
         let mut rest = Remaining(other);
         std::fmt::Write::write_fmt(&mut rest, format_args!("{self}")).is_ok() && rest.0.is_empty()

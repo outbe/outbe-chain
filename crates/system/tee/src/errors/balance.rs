@@ -90,15 +90,15 @@ impl From<BalanceClientError> for PrecompileError {
         match error {
             BalanceClientError::SidecarUnavailable
             | BalanceClientError::SidecarRequestUnavailable(_)
-            | BalanceClientError::EnclaveOperationError { .. } => {
-                Self::EnclaveUnavailable(error.to_string())
-            }
-            BalanceClientError::NotConfidentialBalanceOperation
+            | BalanceClientError::EnclaveOperationError { .. }
             | BalanceClientError::RequestFailed(_)
             | BalanceClientError::GratisAttestationInvalid(_)
             | BalanceClientError::PromisAttestationInvalid(_)
             | BalanceClientError::UnexpectedResponse(_)
-            | BalanceClientError::EnclaveNondeterminism => Self::Fatal(error.to_string()),
+            | BalanceClientError::EnclaveNondeterminism => {
+                Self::EnclaveUnavailable(error.to_string())
+            }
+            BalanceClientError::NotConfidentialBalanceOperation => Self::Revert(error.to_string()),
         }
     }
 }

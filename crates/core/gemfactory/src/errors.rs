@@ -84,10 +84,7 @@ pub enum GemFactoryError {
 
 impl From<GemFactoryError> for PrecompileError {
     fn from(value: GemFactoryError) -> Self {
-        match value {
-            fatal @ GemFactoryError::CallPriceOverflow => PrecompileError::Fatal(fatal.to_string()),
-            other => PrecompileError::Revert(other.to_string()),
-        }
+        PrecompileError::Revert(value.to_string())
     }
 }
 

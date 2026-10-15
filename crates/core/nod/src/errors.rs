@@ -150,7 +150,7 @@ pub enum NodError {
 }
 
 impl NodError {
-    /// Converts an entity-ID derivation failure into a fatal precompile error.
+    /// Converts an entity-ID derivation failure into a precompile error.
     pub(crate) fn entity_id_derivation(error: impl std::fmt::Display) -> PrecompileError {
         Self::EntityIdDerivation(error.to_string()).into()
     }
@@ -158,49 +158,7 @@ impl NodError {
 
 impl From<NodError> for PrecompileError {
     fn from(value: NodError) -> Self {
-        let message = value.to_string();
-        match value {
-            NodError::EntityIdDerivation(_)
-            | NodError::CanonicalIdentityMismatch { .. }
-            | NodError::BucketIdentityMismatch { .. }
-            | NodError::AbsentOcompGenerationHasResidualState
-            | NodError::MalformedOcompGeneration { .. }
-            | NodError::MalformedMaterializationFifoBounds
-            | NodError::MissingMaterializationFifoHeadEntry
-            | NodError::MissingMaterializationFifoHeadProjection
-            | NodError::CompletedMaterializationFifoHead
-            | NodError::MalformedOcompGenerationMetadata
-            | NodError::BucketMemberIndexOverflow { .. }
-            | NodError::NonNodItemPayload
-            | NodError::NonNodBucketPayload => PrecompileError::Fatal(message),
-            NodError::InvalidNodIdLength
-            | NodError::InvalidNodIdHex
-            | NodError::NodNotFound
-            | NodError::BucketNotFound
-            | NodError::IndexOutOfBounds
-            | NodError::QueryLimitExceeded
-            | NodError::ZeroReferenceCurrency
-            | NodError::FloorPriceOverflow
-            | NodError::EntryPricesAlreadyFrozen
-            | NodError::InvalidEntryPriceSnapshot
-            | NodError::NonTransferable
-            | NodError::UnknownProfileSelector { .. }
-            | NodError::EncryptedTermsMismatch
-            | NodError::CannotIssueSettledNod
-            | NodError::NodAlreadyExists
-            | NodError::BucketExistenceDisagreesWithMemberCount { .. }
-            | NodError::TotalSupplyOverflowDuringIssuance
-            | NodError::TotalSupplyUnderflowDuringRemoval
-            | NodError::BucketSettledCountUnderflow { .. }
-            | NodError::AlreadySettled
-            | NodError::SettledCountOverflow
-            | NodError::LoadedBucketMismatch { .. }
-            | NodError::BucketMemberCountUnderflowDuringRemoval { .. }
-            | NodError::NodNotIndexedInBucket { .. }
-            | NodError::EmptyBucketMemberSlotDuringRemoval { .. } => {
-                PrecompileError::Revert(message)
-            }
-        }
+        PrecompileError::Revert(value.to_string())
     }
 }
 
@@ -210,7 +168,7 @@ pub(crate) fn map_amount_read_error(error: outbe_tee::TransportError) -> Precomp
     if error.is_node_local() {
         PrecompileError::EnclaveUnavailable(message)
     } else {
-        PrecompileError::Fatal(message)
+        PrecompileError::Revert(message)
     }
 }
 

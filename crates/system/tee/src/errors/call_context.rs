@@ -78,6 +78,11 @@ impl From<CallContextError> for String {
 
 impl From<CallContextError> for PrecompileError {
     fn from(error: CallContextError) -> Self {
-        Self::Fatal(error.as_str().into())
+        match error {
+            CallContextError::IntegerOverflow => Self::Revert(error.as_str().into()),
+            CallContextError::SnapshotLockPoisoned | CallContextError::ProviderAlreadyInstalled => {
+                Self::Fatal(error.as_str().into())
+            }
+        }
     }
 }

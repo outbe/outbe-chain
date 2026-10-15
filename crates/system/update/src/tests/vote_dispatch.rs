@@ -812,7 +812,7 @@ fn handle_approved_fails_fatally_without_mutation_for_malformed_payload() {
             )
         });
         assert!(
-            matches!(&outcome, Err(PrecompileError::Fatal(reason)) if reason == expected),
+            matches!(&outcome, Err(PrecompileError::Revert(reason)) if reason == expected),
             "{payload:?}: {outcome:?}"
         );
         assert_eq!(

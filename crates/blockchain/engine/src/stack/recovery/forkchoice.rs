@@ -179,12 +179,12 @@ pub(in crate::stack) async fn wait_for_recovered_projection(
         .map_err(|failure| {
             failure.into_error(
                 || {
-                    crate::errors::StackRecoveryError::ProjectionReadinessExpired(format!("{name}"))
+                    crate::errors::StackRecoveryError::ProjectionReadinessExpired(name.to_string())
                         .into()
                 },
                 || {
                     crate::errors::StackRecoveryError::ProjectionAheadOfRecoveryAnchor {
-                        name: format!("{name}"),
+                        name: name.to_string(),
                         block_number: anchor.block_number,
                         block_hash: anchor.block_hash,
                     }
@@ -192,7 +192,7 @@ pub(in crate::stack) async fn wait_for_recovered_projection(
                 },
                 |failure| {
                     crate::errors::StackRecoveryError::ProjectionReadinessFailed {
-                        name: format!("{name}"),
+                        name: name.to_string(),
                         class: format!("{:?}", failure.class),
                         message: failure.message,
                     }

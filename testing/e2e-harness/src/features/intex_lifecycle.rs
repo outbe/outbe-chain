@@ -324,7 +324,7 @@ fn wait_for_chain_time(world: &World, port: u16, target: u64) {
     let deadline = Instant::now() + Duration::from_secs(CATCH_UP_TIMEOUT_SECS);
     let first = world.rpc.latest_block_timestamp(port);
     let mut now = first;
-    while !now.is_some_and(|now| now >= target) {
+    while now.is_none_or(|now| now < target) {
         assert!(
             Instant::now() < deadline,
             "the committee never reached logical time {target}: started at {first:?}, \

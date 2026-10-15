@@ -72,7 +72,7 @@ fn founder_key_bootstrap_imports_exact_active_order_and_replays_idempotently() {
         reordered.swap(0, 1);
         assert!(matches!(
             vs.initialize_founder_ocomp_registrations(&reordered),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     });
 }
@@ -420,7 +420,7 @@ fn certified_activation_rejects_registered_and_keyless_pending_members() {
         let error = vs
             .activate_reshared_set(&[registered], B256::repeat_byte(0xA1))
             .unwrap_err();
-        assert!(matches!(error, PrecompileError::Fatal(_)));
+        assert!(matches!(error, PrecompileError::Revert(_)));
         assert_eq!(vs.val_status.read(&registered).unwrap(), status::REGISTERED);
     });
 
@@ -432,7 +432,7 @@ fn certified_activation_rejects_registered_and_keyless_pending_members() {
         let error = vs
             .activate_reshared_set(&[pending], B256::repeat_byte(0xA2))
             .unwrap_err();
-        assert!(matches!(error, PrecompileError::Fatal(_)));
+        assert!(matches!(error, PrecompileError::Revert(_)));
         assert_eq!(vs.val_status.read(&pending).unwrap(), status::PENDING);
         assert!(!vs.val_has_bls_share.read(&pending).unwrap());
     });

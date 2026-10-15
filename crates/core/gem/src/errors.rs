@@ -165,6 +165,6 @@ impl From<GemError> for PrecompileError {
 
 impl From<GemFatalError> for PrecompileError {
     fn from(value: GemFatalError) -> Self {
-        PrecompileError::Fatal(value.to_string())
+        PrecompileError::Revert(value.to_string())
     }
 }

@@ -46,7 +46,7 @@ fn closed_wwd_tags_cover_every_byte_and_reject_unknown_storage() {
             .unwrap();
         assert!(matches!(
             metadosis.get_wwd_status(status_wwd),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
 
         let day_type_wwd = WwdKey::new(20270102);
@@ -55,7 +55,7 @@ fn closed_wwd_tags_cover_every_byte_and_reject_unknown_storage() {
             .unwrap();
         assert!(matches!(
             metadosis.get_wwd_day_type(day_type_wwd),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     });
 }
@@ -115,7 +115,7 @@ fn unknown_abi_status_reverts_and_corrupt_get_day_is_fatal() {
         let get_day = IMetadosis::getWorldwideDayCall { wwd: wwd.value() };
         assert!(matches!(
             metadosis_dispatch(storage, &get_day.abi_encode(), Address::ZERO, U256::ZERO,),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     });
 }

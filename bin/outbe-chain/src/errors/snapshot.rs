@@ -8,6 +8,9 @@ use thiserror::Error;
 /// Errors that occur during snapshot creation and core validation.
 #[derive(Debug, Error)]
 pub(crate) enum SnapshotError {
+    #[cfg(all(test, feature = "snapshot-integration"))]
+    #[error("Lysis terminal receipt intent or job binding differs")]
+    LysisTerminalReceiptMismatch,
     /// Projection configuration is missing.
     #[error("missing required projection configuration")]
     MissingProjectionConfig,

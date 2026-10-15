@@ -400,7 +400,7 @@ fn insufficient_escrow_rolls_back_target_status_index_accounting_and_events() {
 
         assert!(matches!(
             tally_after_window_with(&mut vote, 10, &PUBLIC_BONDED_REGISTRY),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
         assert_eq!(proposal_status(&vote, proposal_id), ProposalStatus::Pending);
         assert_eq!(vote.list_pending_proposal_ids().unwrap(), vec![proposal_id]);

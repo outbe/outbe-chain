@@ -897,7 +897,7 @@ mod tests {
             let result = provider
                 .enter(|storage| dispatch(storage, &input, Address::repeat_byte(0xA1), U256::ZERO));
             assert!(
-                matches!(result, Err(PrecompileError::Fatal(_))),
+                matches!(result, Err(PrecompileError::EnclaveUnavailable(_))),
                 "unexpected pre-verifier result for {kind:?}: {result:?}"
             );
             let reads = assert_metered_writes(

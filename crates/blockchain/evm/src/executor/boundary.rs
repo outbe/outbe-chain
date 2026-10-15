@@ -305,8 +305,8 @@ where
                     .map(|tx| Address::from(*tx.signer()))
             })
             .ok_or_else(|| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    "missing proposer EVM address for begin-zone system txs".into(),
+                BlockExecutionError::from(BlockValidationError::msg(
+                    "missing proposer EVM address for begin-zone system txs",
                 ))
             })
             .map(Some)
@@ -333,27 +333,29 @@ where
         let storage = StorageHandle::new(&mut provider);
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
         if vs.is_consensus_participant(proposer).map_err(|error| {
-            BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                format!("validate proposer identity: {error}").into(),
-            ))
+            if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
+                BlockExecutionError::other(error)
+            } else {
+                BlockValidationError::msg(format!("validate proposer identity: {error}")).into()
+            }
         })? {
             return Ok(());
         }
         if allow_boundary_proposer
             && vs.is_validator(proposer).map_err(|error| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!("validate boundary proposer identity: {error}").into(),
-                ))
+                if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
+                    BlockExecutionError::other(error)
+                } else {
+                    BlockValidationError::msg(format!("validate proposer identity: {error}")).into()
+                }
             })?
         {
             return Ok(());
         }
-        Err(BlockExecutionError::Internal(
-            InternalBlockExecutionError::Other(
-                format!("proposer EVM address is not an active consensus participant: {proposer}")
-                    .into(),
-            ),
+        Err(BlockValidationError::msg(format!(
+            "proposer EVM address is not an active consensus participant: {proposer}"
         ))
+        .into())
     }
 
     pub(in crate::executor) fn boundary_allows_proposer(

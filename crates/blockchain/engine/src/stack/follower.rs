@@ -272,12 +272,37 @@ impl FollowerProofPersistence<'_> {
                 crate::errors::FollowerStackError::MissingHistoricalCommitteeSnapshot(epoch.get())
             })?;
         let height = block.number();
-        let record = build_certified_follower_parent_record(
+        let record = match build_certified_follower_parent_record(
             finalization,
             block,
             &snapshot,
             scheme.as_ref(),
-        )?;
+        ) {
+            Ok(record) => record,
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<crate::errors::FollowerStackError>(),
+                    Some(
+                        crate::errors::FollowerStackError::VerifierCommitteeDiffersFromHistorical { .. }
+                    )
+                ) =>
+            {
+                let refreshed =
+                    validators::read_committee_snapshot_at_latest(&node.provider, epoch.get())?
+                        .ok_or_else(|| {
+                            crate::errors::FollowerStackError::MissingHistoricalCommitteeSnapshot(
+                                epoch.get(),
+                            )
+                        })?;
+                build_certified_follower_parent_record(
+                    finalization,
+                    block,
+                    &refreshed,
+                    scheme.as_ref(),
+                )?
+            }
+            Err(error) => return Err(error),
+        };
         parent_cert_store
             .put_finalization(record)
             .wrap_err_with(|| {

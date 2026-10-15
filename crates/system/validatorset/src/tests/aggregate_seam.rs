@@ -49,12 +49,12 @@ fn active_with_bonded(bonded: u64) -> HashMapStorageProvider {
 #[test]
 fn hydrate_rejects_inconsistent_registry_bindings_in_order() {
     let pubkey_hash = ValidatorSet::consensus_pubkey_hash(&dummy_consensus_pubkey(0xE1));
-    let count = format!("Fatal: validator {VALIDATOR} registry index 1 exceeds validator_count 0");
+    let count = format!("Revert: validator {VALIDATOR} registry index 1 exceeds validator_count 0");
     let forward = format!(
-        "Fatal: validator registry forward index mismatch at 1: expected {VALIDATOR}, got {OTHER}"
+        "Revert: validator registry forward index mismatch at 1: expected {VALIDATOR}, got {OTHER}"
     );
     let reverse = format!(
-        "Fatal: validator consensus pubkey reverse mapping mismatch for {VALIDATOR}: got {OTHER}"
+        "Revert: validator consensus pubkey reverse mapping mismatch for {VALIDATOR}: got {OTHER}"
     );
     // Each case corrupts its binding and every binding checked after it.
     let cases: [(&str, [bool; 3], String); 3] = [
@@ -95,7 +95,7 @@ fn persistence_rejects_a_registry_identity_change_before_any_write() {
     });
     assert_eq!(
         error,
-        "Fatal: validator lifecycle transition attempted to change registry identity"
+        "Revert: validator lifecycle transition attempted to change registry identity"
     );
     assert_eq!(storage.clear_mutation_failure(), 0);
 }

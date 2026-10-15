@@ -7,12 +7,13 @@ use thiserror::Error;
 /// Errors that the Tribute factory precompile returns.
 #[derive(Debug, Error)]
 #[non_exhaustive]
+#[allow(clippy::large_enum_variant)]
 pub enum TributeFactoryError {
     #[error("TEE not configured")]
     TeeNotConfigured,
 
     /// Unused error variant. Offer decryption rejections use `EnclaveRejected`.
-    /// Transport faults return `PrecompileError::Fatal` because healthy validators can execute the transaction.
+    /// Transport faults return `PrecompileError::EnclaveUnavailable` because healthy validators can execute the transaction.
     #[error("decryption failed: {0}")]
     DecryptionFailed(String),
 
@@ -191,26 +192,28 @@ impl TributeFactoryError {
 impl From<TributeFactoryError> for PrecompileError {
     fn from(value: TributeFactoryError) -> Self {
         match value {
-            fatal @ (TributeFactoryError::TeeSidecarUnavailable
+            enclave @ (TributeFactoryError::TeeSidecarUnavailable
             | TributeFactoryError::TeeSidecarUnavailableWithReason(_)
             | TributeFactoryError::EnclaveBatchError(_)
+            | TributeFactoryError::EncryptedOfferEnclaveError(_)
             | TributeFactoryError::UnexpectedEnclaveResponse(_)
+            | TributeFactoryError::UnexpectedEncryptedOfferResponse
             | TributeFactoryError::InputsCanonicalHashMismatch
             | TributeFactoryError::OfferAttestationInvalid(_)
             | TributeFactoryError::ResultCountMismatch { .. }
             | TributeFactoryError::EffectiveReferencePriceMismatch
-            | TributeFactoryError::EncryptedOfferEnclaveError(_)
-            | TributeFactoryError::UnexpectedEncryptedOfferResponse
             | TributeFactoryError::EncryptedOfferInputOrCountMismatch
+            | TributeFactoryError::EncryptedTributeContextMismatch) => {
+                PrecompileError::EnclaveUnavailable(enclave.to_string())
+            }
+            TributeFactoryError::ZkVerifierUnavailable(_)
+            | TributeFactoryError::TimestampExceedsU64
             | TributeFactoryError::RejectedEncryptedOfferCarriesTribute
             | TributeFactoryError::CreatedEncryptedOfferMissingTribute
-            | TributeFactoryError::EncryptedTributeContextMismatch
             | TributeFactoryError::EmptyTributeOfferResult
             | TributeFactoryError::CreatedTributeMissingBody
             | TributeFactoryError::EncryptedOfferReturnedLegacyBody
-            | TributeFactoryError::TimestampExceedsU64
-            | TributeFactoryError::ZkVerifierUnavailable(_)
-            | TributeFactoryError::FatalMessage(_)) => PrecompileError::Fatal(fatal.to_string()),
+            | TributeFactoryError::FatalMessage(_) => PrecompileError::Revert(value.to_string()),
             other => PrecompileError::Revert(other.to_string()),
         }
     }

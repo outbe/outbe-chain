@@ -297,14 +297,14 @@ mod tests {
             expected_parent_root: B256,
         ) -> Result<bool> {
             if expected_parent_root != self.snapshot.root || partition != self.snapshot.partition {
-                return Err(PrecompileError::Fatal(
+                return Err(PrecompileError::Revert(
                     "test parent partition binding mismatch".into(),
                 ));
             }
             match self.snapshot.mode {
                 ParentMode::Present => Ok(true),
                 ParentMode::Absent => Ok(false),
-                ParentMode::Failure => Err(PrecompileError::Fatal(
+                ParentMode::Failure => Err(PrecompileError::Revert(
                     "injected authenticated CE retirement failure".into(),
                 )),
             }
@@ -316,7 +316,7 @@ mod tests {
             _mutations: &[FinalLeafMutation],
             _retirements: &[PartitionRef],
         ) -> Result<ProvisionalTreeBatch> {
-            Err(PrecompileError::Fatal(self.snapshot.seal_error.into()))
+            Err(PrecompileError::Revert(self.snapshot.seal_error.into()))
         }
     }
 
@@ -363,7 +363,7 @@ mod tests {
                 .replace(activation_call_id)
                 .is_some()
             {
-                return Err(PrecompileError::Fatal(
+                return Err(PrecompileError::Revert(
                     "test activation lease is already active".into(),
                 ));
             }
@@ -376,7 +376,7 @@ mod tests {
             _completed: bool,
         ) -> Result<()> {
             if self.authority.active_call.take() != Some(activation_call_id) {
-                return Err(PrecompileError::Fatal(
+                return Err(PrecompileError::Revert(
                     "test activation lease identity mismatch".into(),
                 ));
             }

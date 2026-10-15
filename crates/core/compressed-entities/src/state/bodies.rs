@@ -122,14 +122,14 @@ impl<'storage> State<'storage> {
             Collection::Gem => CeDomain::Gem,
             Collection::GemBucket => CeDomain::GemBucket,
         };
-        let collection_key = collection_key(domain, entity_id).map_err(fatal)?;
+        let collection_key = collection_key(domain, entity_id).map_err(revert)?;
         if !self
             .schema()
             .pending_retirement
             .read(&B256::from(*collection_key.as_bytes()))?
             .is_zero()
         {
-            return Err(fatal(
+            return Err(revert(
                 "compressed-entity mutation conflicts with pending collection retirement",
             ));
         }

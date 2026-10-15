@@ -21,9 +21,11 @@ where
         Ok(validators)
     })()
     .map_err(|e| {
-        BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-            format!("block context: {e}").into(),
-        ))
+        if e.is_node_local() || matches!(e, PrecompileError::Fatal(_)) {
+            BlockExecutionError::other(e)
+        } else {
+            BlockValidationError::msg(format!("block context: {e}")).into()
+        }
     })?;
 
     context.validators = validators;
