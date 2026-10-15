@@ -3,14 +3,14 @@
 use commonware_cryptography::{Hasher as _, Sha256};
 use outbe_radicleregistry::payload::PatchVotePayloadV1;
 use radicle::storage::refs::{
-    Refs, SIGREFS_PARENT,
     sigrefs::{git::Committer, write::PreparedSignedRefs},
+    Refs, SIGREFS_PARENT,
 };
 use radicle::{
     cob::{self, object, patch, store::Transaction},
     crypto::{BlsEnvelope, RepositoryKey, RepositorySubject},
     git,
-    storage::{ReadRepository, WriteRepository, git::Repository},
+    storage::{git::Repository, ReadRepository, WriteRepository},
 };
 use radicle_git_metadata::{
     author::{Author, Time},
@@ -51,18 +51,31 @@ pub enum Error {
 }
 
 pub struct PreparedPatchReview {
-    pub patch: patch::PatchId,
-    pub revision: patch::RevisionId,
-    pub owner: RepositoryKey,
-    pub commit: UnsignedCommit,
-    pub subject: RepositorySubject,
-    pub signed_refs_context: [u8; 32],
+    patch: patch::PatchId,
+    revision: patch::RevisionId,
+    owner: RepositoryKey,
+    commit: UnsignedCommit,
+    subject: RepositorySubject,
+    signed_refs_context: [u8; 32],
     context: [u8; 32],
     metadata: Author,
     previous_owner_tip: Option<git::Oid>,
+    signing: ReviewSigningContext,
 }
 
 impl PreparedPatchReview {
+    pub fn revision(&self) -> patch::RevisionId {
+        self.revision
+    }
+    pub fn owner(&self) -> RepositoryKey {
+        self.owner
+    }
+    pub fn subject(&self) -> &RepositorySubject {
+        &self.subject
+    }
+    pub(crate) fn signing_context(&self) -> &ReviewSigningContext {
+        &self.signing
+    }
     /// Store the signed Review and prepare its exact owner refs. No refs are promoted here.
     pub fn attach(
         self,
@@ -226,6 +239,7 @@ pub fn prepare_patch_review(
         context: context.policy_context(&decision, approval, 0),
         metadata,
         previous_owner_tip,
+        signing: context.clone(),
         commit,
     })
 }

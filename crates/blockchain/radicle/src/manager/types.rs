@@ -20,6 +20,34 @@ pub struct FinalizedPatchApproval {
     pub approval: outbe_radicleregistry::PatchApprovalRecord,
 }
 
+/// Constructed from this node's current canonical finalized state, not peer metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedRepositoryAuthority {
+    pub(crate) block: FinalizedBlock,
+    pub(crate) chain_id: u64,
+    pub(crate) genesis_hash: B256,
+    pub(crate) epoch: u64,
+    pub(crate) committee: outbe_validatorset::state::CommitteeSnapshot,
+}
+
+impl FinalizedRepositoryAuthority {
+    pub fn block(&self) -> FinalizedBlock {
+        self.block
+    }
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+    pub fn genesis_hash(&self) -> B256 {
+        self.genesis_hash
+    }
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+    pub fn committee(&self) -> &outbe_validatorset::state::CommitteeSnapshot {
+        &self.committee
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinalizedValidator {
     pub address: Address,

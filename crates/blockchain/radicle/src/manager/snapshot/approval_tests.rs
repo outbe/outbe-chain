@@ -119,6 +119,131 @@ fn snapshot(provider: &HashMapStorageProvider) -> MockEthProvider {
     result
 }
 
+fn repository_authority_fixture() -> (
+    RethSnapshotReader<ApprovalProvider>,
+    outbe_validatorset::state::CommitteeSnapshot,
+) {
+    use commonware_codec::Encode as _;
+    use commonware_cryptography::Signer as _;
+    use commonware_utils::TryCollect as _;
+    use outbe_consensus::{
+        bls::bootstrap_dkg_for_participants, dkg_manager::public_polynomial_hash,
+    };
+    use outbe_validatorset::state::{write_committee_snapshot, CommitteeEntry, CommitteeSnapshot};
+    let mut keys: Vec<_> = (101..105).map(bls12381::PrivateKey::from_seed).collect();
+    keys.sort_by_key(|key| key.public_key().encode());
+    let players = keys
+        .iter()
+        .map(|key| key.public_key())
+        .try_collect()
+        .unwrap();
+    let dkg = bootstrap_dkg_for_participants(players).unwrap();
+    let committee = CommitteeSnapshot {
+        committee: keys
+            .iter()
+            .enumerate()
+            .map(|(i, key)| CommitteeEntry {
+                address: Address::repeat_byte(i as u8 + 1),
+                consensus_pubkey: key.public_key().encode().to_vec().try_into().unwrap(),
+            })
+            .collect(),
+        vrf_material_version: 7,
+        vrf_group_public_key_bytes: dkg.polynomial.public().encode().to_vec(),
+        vrf_public_polynomial_hash: public_polynomial_hash(&dkg.polynomial),
+    };
+    let mut storage = HashMapStorageProvider::new_with_chain_identity(2026, B256::repeat_byte(7));
+    storage.set_block_number(1);
+    storage.enter(|s| {
+        let mut validators = ValidatorSet::new(s.clone());
+        validators
+            .config_owner
+            .write(Address::repeat_byte(99))
+            .unwrap();
+        validators.set_config_max_validators(4).unwrap();
+        for member in &committee.committee {
+            validators
+                .test_register_validator_without_pop(member.address, &member.consensus_pubkey)
+                .unwrap();
+            validators
+                .activate_validator_via_boundary_for_test(member.address)
+                .unwrap();
+        }
+        validators.advance_epoch(1001, 1).unwrap();
+        validators.advance_epoch(1002, 2).unwrap();
+        write_committee_snapshot(s, 2, &committee).unwrap();
+    });
+    let accepted = snapshot(&storage);
+    let mut wrong_committee = committee.clone();
+    wrong_committee.committee.pop();
+    storage.enter(|s| write_committee_snapshot(s, 2, &wrong_committee).unwrap());
+    let mismatched = snapshot(&storage);
+    storage.enter(|s| ValidatorSet::new(s).advance_epoch(1003, 3).unwrap());
+    let missing = snapshot(&storage);
+    let provider = ApprovalProvider {
+        states: [
+            (block(3).hash, accepted),
+            (block(4).hash, mismatched),
+            (block(5).hash, missing),
+        ]
+        .into(),
+        canonical: [(3, block(3).hash), (4, block(4).hash), (5, block(5).hash)].into(),
+        finalized: Some(BlockNumHash::new(3, block(3).hash)),
+        reads: Mutex::new(vec![]),
+    };
+    (
+        RethSnapshotReader::new(provider, 2026, B256::repeat_byte(7)),
+        committee,
+    )
+}
+
+#[test]
+fn repository_authority_uses_current_finalized_committee_and_rejects_effective_set_mismatch() {
+    let (mut reader, committee) = repository_authority_fixture();
+    let authority = reader.read_current_repository_authority().unwrap();
+    assert_eq!(authority.block(), block(3));
+    assert_eq!(authority.chain_id(), 2026);
+    assert_eq!(authority.genesis_hash(), B256::repeat_byte(7));
+    assert_eq!(authority.epoch(), 2);
+    assert_eq!(authority.committee(), &committee);
+    reader.provider.finalized = Some(BlockNumHash::new(4, block(4).hash));
+    assert!(matches!(
+        reader.read_current_repository_authority(),
+        Err(ManagerError::Snapshot(_))
+    ));
+    reader.provider.finalized = Some(BlockNumHash::new(5, block(5).hash));
+    assert!(matches!(
+        reader.read_current_repository_authority(),
+        Err(ManagerError::Snapshot(_))
+    ));
+    assert_eq!(
+        *reader.provider.reads.lock().unwrap(),
+        [block(3).hash, block(4).hash, block(5).hash]
+    );
+}
+
+#[test]
+fn repository_authority_rejects_missing_finality_noncanonical_and_unavailable_exact_state() {
+    let (mut reader, _) = repository_authority_fixture();
+    reader.provider.finalized = None;
+    assert!(matches!(
+        reader.read_current_repository_authority(),
+        Err(ManagerError::Finality(_))
+    ));
+    reader.provider.finalized = Some(BlockNumHash::new(3, B256::repeat_byte(99)));
+    assert!(matches!(
+        reader.read_current_repository_authority(),
+        Err(ManagerError::Finality(_))
+    ));
+    assert!(reader.provider.reads.lock().unwrap().is_empty());
+    reader.provider.finalized = Some(BlockNumHash::new(3, block(3).hash));
+    reader.provider.states.remove(&block(3).hash);
+    assert!(matches!(
+        reader.read_current_repository_authority(),
+        Err(ManagerError::Provider(_))
+    ));
+    assert_eq!(*reader.provider.reads.lock().unwrap(), [block(3).hash]);
+}
+
 fn block(number: u64) -> FinalizedBlock {
     FinalizedBlock {
         number,

@@ -1,6 +1,6 @@
 use super::types::{
-    BoxFuture, FinalizedBlock, FinalizedFeed, FinalizedPatchApproval, FinalizedSnapshot,
-    FinalizedValidator, ManagerError, SnapshotReader,
+    BoxFuture, FinalizedBlock, FinalizedFeed, FinalizedPatchApproval, FinalizedRepositoryAuthority,
+    FinalizedSnapshot, FinalizedValidator, ManagerError, SnapshotReader,
 };
 use crate::endpoint::PeerId;
 use alloy_primitives::{Address, B256, U256};
@@ -39,6 +39,42 @@ impl<P> RethSnapshotReader<P> {
 }
 
 impl<P: StateProviderFactory> RethSnapshotReader<P> {
+    /// Sample the local finalized head; callers cannot select an archived signing set.
+    pub fn read_current_repository_authority(
+        &self,
+    ) -> Result<FinalizedRepositoryAuthority, ManagerError> {
+        let head = self
+            .provider
+            .finalized_block_num_hash()
+            .map_err(ManagerError::provider)?
+            .ok_or_else(|| ManagerError::Finality("no finalized block".into()))?;
+        if self
+            .provider
+            .block_hash(head.number)
+            .map_err(ManagerError::provider)?
+            != Some(head.hash)
+        {
+            return Err(ManagerError::Finality(
+                "repository authority requires a canonical finalized block".into(),
+            ));
+        }
+        let state = self
+            .provider
+            .state_by_block_hash(head.hash)
+            .map_err(ManagerError::provider)?;
+        read_repository_authority_from_storage(
+            RethStateReader {
+                state: state.as_ref(),
+            },
+            self.chain_id,
+            self.genesis_hash,
+            FinalizedBlock {
+                number: head.number,
+                hash: head.hash,
+            },
+        )
+    }
+
     /// Reads an exact canonical finalized snapshot, never latest or pending state.
     pub fn read_patch_approval(
         &self,
@@ -80,6 +116,53 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             proposal_id,
         )
     }
+}
+
+fn read_repository_authority_from_storage(
+    reader: impl StorageReader,
+    chain_id: u64,
+    genesis_hash: B256,
+    block: FinalizedBlock,
+) -> Result<FinalizedRepositoryAuthority, ManagerError> {
+    let mut storage =
+        ReadOnlyStorageProvider::new_with_chain_identity(reader, chain_id, genesis_hash);
+    let handle = StorageHandle::new(&mut storage);
+    let validators = ValidatorSet::new(handle.clone());
+    let epoch = validators.current_epoch_u64().map_err(snapshot_error)?;
+    let effective = validators
+        .get_active_consensus_set()
+        .map_err(snapshot_error)?;
+    let committee = outbe_validatorset::state::read_committee_snapshot_for_epoch(handle, epoch)
+        .map_err(snapshot_error)?
+        .ok_or_else(|| {
+            ManagerError::Snapshot("current repository signing committee is unavailable".into())
+        })?;
+    let addresses: std::collections::BTreeSet<_> = committee
+        .committee
+        .iter()
+        .map(|entry| entry.address)
+        .collect();
+    if effective.is_empty()
+        || committee.committee.len() != effective.len()
+        || addresses.len() != effective.len()
+        || committee.committee.iter().any(|entry| {
+            !effective.iter().any(|validator| {
+                validator.validator_address == entry.address
+                    && validator.consensus_pubkey.as_slice() == entry.consensus_pubkey
+            })
+        })
+    {
+        return Err(ManagerError::Snapshot(
+            "effective validator set differs from the repository signing committee".into(),
+        ));
+    }
+    Ok(FinalizedRepositoryAuthority {
+        block,
+        chain_id,
+        genesis_hash,
+        epoch,
+        committee,
+    })
 }
 
 fn read_patch_approval_from_storage(

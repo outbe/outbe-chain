@@ -1,10 +1,14 @@
 use super::*;
+use crate::integration::signing::{RepositoryPartial, RepositorySigningMaterial};
 use crate::manager::FinalizedBlock;
 use alloy_primitives::{B256, U256};
 use commonware_codec::Encode as _;
-use commonware_cryptography::bls12381::primitives::variant::MinSig;
-use commonware_utils::Participant;
-use outbe_consensus::{bls::bootstrap_dkg, hybrid::VrfMaterialProvider};
+use commonware_cryptography::{
+    bls12381::{self, primitives::variant::MinSig},
+    Signer as _,
+};
+use commonware_utils::{Participant, TryCollect as _};
+use outbe_consensus::{bls::bootstrap_dkg_for_participants, hybrid::VrfMaterialProvider};
 use outbe_radicleregistry::PatchApprovalRecord;
 use radicle::{
     cob::{
@@ -17,8 +21,8 @@ use radicle::{
     },
     identity::{Doc, Project, RepoId, Visibility},
     storage::{
-        WriteStorage as _,
         publication::{self, EntryAuthorization, EntryRequest, PublicationPolicy},
+        WriteStorage as _,
     },
 };
 use std::sync::{Arc, Mutex};
@@ -55,24 +59,22 @@ impl PublicationPolicy for Receipts {
 
 fn sign(
     providers: &[VrfMaterialProvider<MinSig>],
+    polynomial: &commonware_cryptography::bls12381::primitives::sharing::Sharing<MinSig>,
     owner: BlsPublicKey,
     subject: RepositorySubject,
 ) -> BlsEnvelope {
-    use commonware_codec::DecodeExt as _;
-    use commonware_cryptography::bls12381::primitives::variant::Variant;
-    let group = <MinSig as Variant>::Public::decode(owner.as_bytes().as_slice()).unwrap();
     let partials: Vec<_> = providers
         .iter()
         .enumerate()
         .take(3)
         .map(|(index, provider)| {
             provider
-                .sign_repository(7, Participant::from_usize(index), &group, &subject)
+                .sign_repository(7, Participant::from_usize(index), polynomial, &subject)
                 .unwrap()
         })
         .collect();
     let signature = providers[0]
-        .recover_repository(7, &group, &subject, &partials)
+        .recover_repository(7, polynomial, &subject, &partials)
         .unwrap();
     BlsEnvelope::attach(
         subject,
@@ -155,7 +157,14 @@ fn review_context_matches_frozen_p0_native_vectors() {
 #[test]
 fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_accepts() {
     let temp = tempfile::tempdir().unwrap();
-    let dkg = bootstrap_dkg(4).unwrap();
+    let mut identities: Vec<_> = (101..105).map(bls12381::PrivateKey::from_seed).collect();
+    identities.sort_by_key(|key| key.public_key().encode());
+    let players = identities
+        .iter()
+        .map(|key| key.public_key())
+        .try_collect()
+        .unwrap();
+    let dkg = bootstrap_dkg_for_participants(players).unwrap();
     let owner = BlsPublicKey::from_bytes(
         dkg.polynomial
             .public()
@@ -198,6 +207,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     let repo = storage.create(rid).unwrap();
     let document_signature = sign(
         &providers,
+        &dkg.polynomial,
         owner,
         RepositorySubject::identity(rid.into_sha1().unwrap(), [1; 32], blob.into_sha1().unwrap()),
     );
@@ -225,6 +235,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         .unwrap();
     let signature = sign(
         &providers,
+        &dkg.polynomial,
         owner,
         RepositorySubject::cob(
             rid.into_sha1().unwrap(),
@@ -295,6 +306,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     .unwrap();
     let initial_signature = sign(
         &providers,
+        &dkg.polynomial,
         match owner {
             RepositoryKey::Bls12381G2(key) => key,
             _ => unreachable!(),
@@ -351,14 +363,49 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
             approved_timestamp: 1700000010,
         },
     };
-    let signing = ReviewSigningContext {
+    let authority = crate::manager::FinalizedRepositoryAuthority {
+        block: approval.block,
         chain_id: 2026,
-        genesis_hash: [7; 32],
+        genesis_hash: B256::repeat_byte(7),
         epoch: 2,
-        material_version: 7,
-        material_hash: [9; 32],
-        previous_receipt_hash: [17; 32],
+        committee: outbe_validatorset::state::CommitteeSnapshot {
+            committee: identities
+                .iter()
+                .enumerate()
+                .map(|(i, key)| outbe_validatorset::state::CommitteeEntry {
+                    address: alloy_primitives::Address::repeat_byte(i as u8 + 1),
+                    consensus_pubkey: key.public_key().encode().to_vec().try_into().unwrap(),
+                })
+                .collect(),
+            vrf_material_version: 7,
+            vrf_group_public_key_bytes: dkg.polynomial.public().encode().to_vec(),
+            vrf_public_polynomial_hash: outbe_consensus::dkg_manager::public_polynomial_hash(
+                &dkg.polynomial,
+            ),
+        },
     };
+    let owner_key = match owner {
+        RepositoryKey::Bls12381G2(key) => key,
+        _ => unreachable!(),
+    };
+    let mut missing_polynomial = authority.clone();
+    missing_polynomial.committee.vrf_public_polynomial_hash = B256::ZERO;
+    assert!(
+        RepositorySigningMaterial::new(missing_polynomial, dkg.output.clone(), owner_key).is_err()
+    );
+    let mut wrong_order = authority.clone();
+    wrong_order.committee.committee.reverse();
+    assert!(RepositorySigningMaterial::new(wrong_order, dkg.output.clone(), owner_key).is_err());
+    let material = RepositorySigningMaterial::new(
+        authority,
+        dkg.output.clone(),
+        match owner {
+            RepositoryKey::Bls12381G2(key) => key,
+            _ => unreachable!(),
+        },
+    )
+    .unwrap();
+    let signing = material.review_context([17; 32]);
     let prepared = prepare_patch_review(&repo, &approval, identity, None, &signing).unwrap();
     let later_head = code(&repo, Some(head), b"later revision");
     let later_revision = patch
@@ -371,18 +418,141 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     assert_eq!(prepared.subject, again.subject);
     let context = prepared.context;
     let refs_context = prepared.signed_refs_context;
-    let signature = sign(
-        &providers,
-        match owner {
-            RepositoryKey::Bls12381G2(key) => key,
-            _ => unreachable!(),
-        },
-        prepared.subject.clone(),
-    );
+    let contributions: Vec<_> = identities
+        .iter()
+        .zip(&providers)
+        .enumerate()
+        .map(|(i, (key, provider))| {
+            let frame = material
+                .sign_review(
+                    provider,
+                    &prepared,
+                    alloy_primitives::Address::repeat_byte(i as u8 + 1),
+                    key,
+                )
+                .unwrap();
+            let bytes = frame.to_bytes();
+            assert_eq!(bytes.len(), 268);
+            let frame = RepositoryPartial::from_bytes(&bytes).unwrap();
+            material
+                .verify_partial(&providers[0], &prepared, &key.public_key(), &frame)
+                .unwrap();
+            (key.public_key(), frame)
+        })
+        .collect();
+    assert!(material
+        .verify_partial(
+            &providers[0],
+            &prepared,
+            &contributions[1].0,
+            &contributions[0].1
+        )
+        .is_err());
+    let bytes = contributions[0].1.to_bytes();
+    assert!(RepositoryPartial::from_bytes(&bytes[..267]).is_err());
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(RepositoryPartial::from_bytes(&trailing).is_err());
+    for offset in [0, 32, 40, 72, 80, 88, 120, 124, 172] {
+        let mut forged = bytes.clone();
+        forged[offset] ^= 1;
+        if let Ok(frame) = RepositoryPartial::from_bytes(&forged) {
+            assert!(material
+                .verify_partial(&providers[0], &prepared, &contributions[0].0, &frame)
+                .is_err());
+        }
+    }
+    let mut forged = bytes.clone();
+    let wrong_identity = identities[1]
+        .sign(b"outbe.radicle.partial.v1", &forged[..172])
+        .encode();
+    forged[172..].copy_from_slice(wrong_identity.as_ref());
+    let forged = RepositoryPartial::from_bytes(&forged).unwrap();
+    assert!(material
+        .verify_partial(&providers[0], &prepared, &contributions[0].0, &forged)
+        .is_err());
+    let mut wrong_partial = bytes.clone();
+    wrong_partial[124..172].copy_from_slice(&contributions[1].1.to_bytes()[124..172]);
+    let endorsement = identities[0]
+        .sign(b"outbe.radicle.partial.v1", &wrong_partial[..172])
+        .encode();
+    wrong_partial[172..].copy_from_slice(endorsement.as_ref());
+    let wrong_partial = RepositoryPartial::from_bytes(&wrong_partial).unwrap();
+    assert!(material
+        .verify_partial(
+            &providers[0],
+            &prepared,
+            &contributions[0].0,
+            &wrong_partial
+        )
+        .is_err());
+    let mut wrong_domain = bytes.clone();
+    let endorsement = identities[0]
+        .sign(b"outbe.radicle.publication.v1", &wrong_domain[..172])
+        .encode();
+    wrong_domain[172..].copy_from_slice(endorsement.as_ref());
+    let wrong_domain = RepositoryPartial::from_bytes(&wrong_domain).unwrap();
+    assert!(material
+        .verify_partial(&providers[0], &prepared, &contributions[0].0, &wrong_domain)
+        .is_err());
+    assert!(material
+        .sign_review(
+            &providers[0],
+            &prepared,
+            alloy_primitives::Address::repeat_byte(2),
+            &identities[0]
+        )
+        .is_err());
+    assert!(material
+        .sign_review(
+            &providers[0],
+            &prepared,
+            alloy_primitives::Address::repeat_byte(1),
+            &bls12381::PrivateKey::from_seed(999)
+        )
+        .is_err());
+    assert!(material
+        .sign_review(
+            &providers[1],
+            &prepared,
+            alloy_primitives::Address::repeat_byte(1),
+            &identities[0]
+        )
+        .is_err());
+    assert!(material
+        .recover_review(&providers[0], &prepared, &contributions[..2])
+        .is_err());
+    let duplicate = [
+        contributions[0].clone(),
+        contributions[1].clone(),
+        contributions[2].clone(),
+        contributions[0].clone(),
+    ];
+    assert!(material
+        .recover_review(&providers[0], &prepared, &duplicate)
+        .is_err());
+    let signature = material
+        .recover_review(&providers[0], &prepared, &contributions[..3])
+        .unwrap();
+    let alternate = material
+        .recover_review(&providers[0], &prepared, &contributions[1..])
+        .unwrap();
+    assert_eq!(signature.to_bytes(), alternate.to_bytes());
     let mut other_material = signing.clone();
     other_material.material_version += 1;
     let stale = prepare_patch_review(&repo, &approval, identity, None, &other_material).unwrap();
     assert!(signature.verify(&stale.subject, owner).is_err());
+    assert!(material
+        .sign_review(
+            &providers[0],
+            &stale,
+            alloy_primitives::Address::repeat_byte(1),
+            &identities[0]
+        )
+        .is_err());
+    assert!(material
+        .recover_review(&providers[0], &stale, &contributions[..3])
+        .is_err());
     let mut other_network = signing.clone();
     other_network.genesis_hash = [8; 32];
     let replay = prepare_patch_review(&repo, &approval, identity, None, &other_network).unwrap();
@@ -401,6 +571,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     );
     let refs_signature = sign(
         &providers,
+        &dkg.polynomial,
         match owner {
             RepositoryKey::Bls12381G2(key) => key,
             _ => unreachable!(),
@@ -444,13 +615,11 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
             .verdict(),
         Some(patch::Verdict::Accept)
     );
-    assert!(
-        accepted
-            .revision(&later_revision)
-            .unwrap()
-            .review_by(&owner)
-            .is_none()
-    );
+    assert!(accepted
+        .revision(&later_revision)
+        .unwrap()
+        .review_by(&owner)
+        .is_none());
     assert!(accepted.is_open());
     let after_review =
         prepare_patch_review(&repo, &approval, identity, Some(review.id), &signing).unwrap();
@@ -490,4 +659,25 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         prepare_patch_review(&repo, &approval, identity, None, &signing),
         Err(Error::Approval)
     ));
+    providers[0].activate(8, dkg.polynomial.clone(), Some(dkg.shares[0].clone()));
+    assert!(material
+        .verify_partial(
+            &providers[0],
+            &again,
+            &contributions[0].0,
+            &contributions[0].1
+        )
+        .is_err());
+    assert!(material
+        .sign_review(
+            &providers[0],
+            &again,
+            alloy_primitives::Address::repeat_byte(1),
+            &identities[0]
+        )
+        .is_err());
+    assert!(material
+        .recover_review(&providers[0], &again, &contributions[..3])
+        .is_err());
+    signature.verify(&again.subject, owner).unwrap();
 }

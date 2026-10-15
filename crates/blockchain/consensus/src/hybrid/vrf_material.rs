@@ -57,6 +57,8 @@ pub enum RepositorySigningError {
     InactiveMaterial,
     #[error("repository group key differs from the authenticated authority")]
     GroupKeyMismatch,
+    #[error("repository polynomial differs from the authenticated current material")]
+    PolynomialMismatch,
     #[error("local repository signing share is unavailable")]
     MissingShare,
     #[error("local share index differs from the authenticated participant")]
@@ -72,25 +74,57 @@ pub enum RepositorySigningError {
 }
 
 impl VrfMaterialProvider<MinSig> {
+    fn current_repository_material<'a>(
+        state: &'a VrfMaterialState<MinSig>,
+        version: u64,
+        polynomial: &Sharing<MinSig>,
+    ) -> Result<&'a VrfMaterial<MinSig>, RepositorySigningError> {
+        if state.active_version != version {
+            return Err(RepositorySigningError::InactiveMaterial);
+        }
+        let material = state
+            .materials
+            .get(&version)
+            .ok_or(RepositorySigningError::InactiveMaterial)?;
+        if material.polynomial.public() != polynomial.public() {
+            return Err(RepositorySigningError::GroupKeyMismatch);
+        }
+        if material.polynomial != *polynomial {
+            return Err(RepositorySigningError::PolynomialMismatch);
+        }
+        Ok(material)
+    }
+
+    /// Verify a contribution against the still-current authenticated polynomial before storing it.
+    pub fn verify_repository_partial(
+        &self,
+        version: u64,
+        polynomial: &Sharing<MinSig>,
+        subject: &radicle_crypto::RepositorySubject,
+        partial: &PartialSignature<MinSig>,
+    ) -> Result<(), RepositorySigningError> {
+        self.with_state(|state| {
+            let material = Self::current_repository_material(state, version, polynomial)?;
+            threshold::verify_message::<MinSig>(
+                &material.polynomial,
+                radicle_crypto::repository::DOMAIN,
+                subject.as_bytes(),
+                partial,
+            )
+            .map_err(|_| RepositorySigningError::InvalidPartial)
+        })
+    }
+
     /// Verify each indexed partial before interpolation under the current polynomial.
     pub fn recover_repository(
         &self,
         version: u64,
-        group_public: &<MinSig as Variant>::Public,
+        polynomial: &Sharing<MinSig>,
         subject: &radicle_crypto::RepositorySubject,
         partials: &[PartialSignature<MinSig>],
     ) -> Result<<MinSig as Variant>::Signature, RepositorySigningError> {
         self.with_state(|state| {
-            if state.active_version != version {
-                return Err(RepositorySigningError::InactiveMaterial);
-            }
-            let material = state
-                .materials
-                .get(&version)
-                .ok_or(RepositorySigningError::InactiveMaterial)?;
-            if material.polynomial.public() != group_public {
-                return Err(RepositorySigningError::GroupKeyMismatch);
-            }
+            let material = Self::current_repository_material(state, version, polynomial)?;
             let mut participants = std::collections::BTreeSet::new();
             for partial in partials {
                 if !participants.insert(partial.index) {
@@ -111,7 +145,7 @@ impl VrfMaterialProvider<MinSig> {
             )
             .map_err(|_| RepositorySigningError::InsufficientPartials)?;
             ops::verify_message::<MinSig>(
-                group_public,
+                polynomial.public(),
                 radicle_crypto::repository::DOMAIN,
                 subject.as_bytes(),
                 &recovered,
@@ -127,20 +161,11 @@ impl VrfMaterialProvider<MinSig> {
         &self,
         version: u64,
         participant: Participant,
-        group_public: &<MinSig as Variant>::Public,
+        polynomial: &Sharing<MinSig>,
         subject: &radicle_crypto::RepositorySubject,
     ) -> Result<PartialSignature<MinSig>, RepositorySigningError> {
         self.with_state(|state| {
-            if state.active_version != version {
-                return Err(RepositorySigningError::InactiveMaterial);
-            }
-            let material = state
-                .materials
-                .get(&version)
-                .ok_or(RepositorySigningError::InactiveMaterial)?;
-            if material.polynomial.public() != group_public {
-                return Err(RepositorySigningError::GroupKeyMismatch);
-            }
+            let material = Self::current_repository_material(state, version, polynomial)?;
             let share = material
                 .share
                 .as_ref()
@@ -350,7 +375,7 @@ mod repository_tests {
             .enumerate()
             .map(|(index, provider)| {
                 let partial = provider
-                    .sign_repository(7, Participant::from_usize(index), &group, &message)
+                    .sign_repository(7, Participant::from_usize(index), &dkg.polynomial, &message)
                     .unwrap();
                 threshold::verify_message::<MinSig>(
                     &dkg.polynomial,
@@ -363,10 +388,10 @@ mod repository_tests {
             })
             .collect();
         let first = providers[0]
-            .recover_repository(7, &group, &message, &partials[..3])
+            .recover_repository(7, &dkg.polynomial, &message, &partials[..3])
             .unwrap();
         let second = providers[0]
-            .recover_repository(7, &group, &message, &partials[1..])
+            .recover_repository(7, &dkg.polynomial, &message, &partials[1..])
             .unwrap();
         assert_eq!(first, second);
         let owner = BlsPublicKey::from_bytes(group.encode().to_vec().try_into().unwrap()).unwrap();
@@ -378,13 +403,13 @@ mod repository_tests {
         .unwrap();
         envelope.verify(&message, owner.into()).unwrap();
         assert!(matches!(
-            providers[0].recover_repository(7, &group, &message, &partials[..2]),
+            providers[0].recover_repository(7, &dkg.polynomial, &message, &partials[..2]),
             Err(RepositorySigningError::InsufficientPartials)
         ));
         assert!(matches!(
             providers[0].recover_repository(
                 7,
-                &group,
+                &dkg.polynomial,
                 &message,
                 &[
                     partials[0].clone(),
@@ -397,7 +422,7 @@ mod repository_tests {
         let mut wrong_index = partials[..3].to_vec();
         wrong_index[0].index = Participant::new(4);
         assert!(matches!(
-            providers[0].recover_repository(7, &group, &message, &wrong_index),
+            providers[0].recover_repository(7, &dkg.polynomial, &message, &wrong_index),
             Err(RepositorySigningError::InvalidPartial)
         ));
 
@@ -407,19 +432,17 @@ mod repository_tests {
             RepositorySubject::cob([1; 20], [3; 32], [4; 20], b"another native operation"),
         ] {
             assert!(matches!(
-                providers[0].recover_repository(7, &group, &changed, &partials[..3]),
+                providers[0].recover_repository(7, &dkg.polynomial, &changed, &partials[..3]),
                 Err(RepositorySigningError::InvalidPartial)
             ));
             assert!(envelope.verify(&changed, owner.into()).is_err());
-            assert!(
-                threshold::verify_message::<MinSig>(
-                    &dkg.polynomial,
-                    radicle_crypto::repository::DOMAIN,
-                    changed.as_bytes(),
-                    &partials[0]
-                )
-                .is_err()
-            );
+            assert!(threshold::verify_message::<MinSig>(
+                &dkg.polynomial,
+                radicle_crypto::repository::DOMAIN,
+                changed.as_bytes(),
+                &partials[0]
+            )
+            .is_err());
         }
         let seed_namespace = crate::proof::hybrid_seed_namespace();
         assert!(
@@ -433,75 +456,75 @@ mod repository_tests {
             index: Participant::new(0),
             value: seed,
         };
-        assert!(
-            threshold::verify_message::<MinSig>(
-                &dkg.polynomial,
-                radicle_crypto::repository::DOMAIN,
-                message.as_bytes(),
-                &seed_partial
-            )
-            .is_err()
-        );
+        assert!(threshold::verify_message::<MinSig>(
+            &dkg.polynomial,
+            radicle_crypto::repository::DOMAIN,
+            message.as_bytes(),
+            &seed_partial
+        )
+        .is_err());
     }
 
     #[test]
     fn repository_signing_rejects_old_material_wrong_participant_and_invalid_local_share() {
         let dkg = bootstrap_dkg(4).unwrap();
         let other = bootstrap_dkg(4).unwrap();
-        let group = *dkg.polynomial.public();
         let message = subject();
         let participant = dkg.shares[0].index;
         let provider =
             VrfMaterialProvider::new(7, dkg.polynomial.clone(), Some(dkg.shares[0].clone()));
         assert!(matches!(
-            provider.sign_repository(6, participant, &group, &message),
+            provider.sign_repository(6, participant, &dkg.polynomial, &message),
             Err(RepositorySigningError::InactiveMaterial)
         ));
         assert!(matches!(
-            provider.sign_repository(7, Participant::new(4), &group, &message),
+            provider.sign_repository(7, Participant::new(4), &dkg.polynomial, &message),
             Err(RepositorySigningError::ParticipantMismatch)
         ));
         assert!(matches!(
-            provider.sign_repository(7, participant, other.polynomial.public(), &message),
+            provider.sign_repository(7, participant, &other.polynomial, &message),
             Err(RepositorySigningError::GroupKeyMismatch)
         ));
         let verifier = VrfMaterialProvider::new(7, dkg.polynomial.clone(), None);
         assert!(matches!(
-            verifier.sign_repository(7, participant, &group, &message),
+            verifier.sign_repository(7, participant, &dkg.polynomial, &message),
             Err(RepositorySigningError::MissingShare)
         ));
         let invalid =
             VrfMaterialProvider::new(7, dkg.polynomial.clone(), Some(other.shares[0].clone()));
         assert!(matches!(
-            invalid.sign_repository(7, participant, &group, &message),
+            invalid.sign_repository(7, participant, &dkg.polynomial, &message),
             Err(RepositorySigningError::InvalidShare)
         ));
 
         let historical = provider
-            .sign_repository(7, participant, &group, &message)
+            .sign_repository(7, participant, &dkg.polynomial, &message)
             .unwrap();
         assert!(matches!(
-            verifier.recover_repository(6, &group, &message, &[]),
+            verifier.recover_repository(6, &dkg.polynomial, &message, &[]),
             Err(RepositorySigningError::InactiveMaterial)
         ));
         assert!(matches!(
-            verifier.recover_repository(7, other.polynomial.public(), &message, &[]),
+            verifier.recover_repository(7, &other.polynomial, &message, &[]),
             Err(RepositorySigningError::GroupKeyMismatch)
         ));
         provider.activate(8, dkg.polynomial.clone(), Some(dkg.shares[0].clone()));
         assert!(matches!(
-            provider.recover_repository(7, &group, &message, std::slice::from_ref(&historical)),
+            provider.recover_repository(
+                7,
+                &dkg.polynomial,
+                &message,
+                std::slice::from_ref(&historical)
+            ),
             Err(RepositorySigningError::InactiveMaterial)
         ));
         assert!(matches!(
-            provider.sign_repository(7, participant, &group, &message),
+            provider.sign_repository(7, participant, &dkg.polynomial, &message),
             Err(RepositorySigningError::InactiveMaterial)
         ));
-        assert!(
-            provider
-                .sign_repository(8, participant, &group, &message)
-                .is_ok()
-        );
+        assert!(provider
+            .sign_repository(8, participant, &dkg.polynomial, &message)
+            .is_ok());
         threshold::verify_message::<MinSig>(
             &dkg.polynomial,
             radicle_crypto::repository::DOMAIN,

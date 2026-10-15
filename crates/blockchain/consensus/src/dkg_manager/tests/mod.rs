@@ -346,12 +346,17 @@ fn repository_signing_uses_reshared_polynomial_and_preserves_historical_signatur
         .take(3)
         .map(|(index, provider)| {
             provider
-                .sign_repository(7, Participant::from_usize(index), &group, &message)
+                .sign_repository(
+                    7,
+                    Participant::from_usize(index),
+                    initial.public(),
+                    &message,
+                )
                 .unwrap()
         })
         .collect();
     let historical = providers[0]
-        .recover_repository(7, &group, &message, &old_partials)
+        .recover_repository(7, initial.public(), &message, &old_partials)
         .unwrap();
     let owner = BlsPublicKey::from_bytes(group.encode().to_vec().try_into().unwrap()).unwrap();
     let historical = BlsEnvelope::attach(
@@ -364,7 +369,19 @@ fn repository_signing_uses_reshared_polynomial_and_preserves_historical_signatur
         provider.activate(8, reshared.public().clone(), Some(share));
     }
     assert!(matches!(
-        providers[0].recover_repository(8, &group, &message, &old_partials),
+        providers[0].sign_repository(8, old_partials[0].index, initial.public(), &message),
+        Err(RepositorySigningError::PolynomialMismatch)
+    ));
+    assert!(matches!(
+        providers[0].verify_repository_partial(8, initial.public(), &message, &old_partials[0]),
+        Err(RepositorySigningError::PolynomialMismatch)
+    ));
+    assert!(matches!(
+        providers[0].recover_repository(8, initial.public(), &message, &old_partials),
+        Err(RepositorySigningError::PolynomialMismatch)
+    ));
+    assert!(matches!(
+        providers[0].recover_repository(8, reshared.public(), &message, &old_partials),
         Err(RepositorySigningError::InvalidPartial)
     ));
     let current: Vec<_> = providers
@@ -373,18 +390,23 @@ fn repository_signing_uses_reshared_polynomial_and_preserves_historical_signatur
         .take(3)
         .map(|(index, provider)| {
             provider
-                .sign_repository(8, Participant::from_usize(index), &group, &message)
+                .sign_repository(
+                    8,
+                    Participant::from_usize(index),
+                    reshared.public(),
+                    &message,
+                )
                 .unwrap()
         })
         .collect();
     let mut mixed = current.clone();
     mixed[1] = old_partials[1].clone();
     assert!(matches!(
-        providers[0].recover_repository(8, &group, &message, &mixed),
+        providers[0].recover_repository(8, reshared.public(), &message, &mixed),
         Err(RepositorySigningError::InvalidPartial)
     ));
     let recovered = providers[0]
-        .recover_repository(8, &group, &message, &current)
+        .recover_repository(8, reshared.public(), &message, &current)
         .unwrap();
     let recovered = BlsEnvelope::attach(
         message.clone(),
