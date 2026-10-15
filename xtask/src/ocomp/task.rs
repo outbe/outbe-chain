@@ -574,32 +574,19 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 &["test", "--locked", "-p", "outbe-node", "ocm_pin_001"],
             )?;
             cargo(repository_root, &["test", "--locked", "-p", "outbe-engine"])?;
-            cargo(
+            clippy_packages(
                 repository_root,
                 &[
-                    "clippy",
-                    "--locked",
-                    "-p",
                     "outbe-compressed-entities",
-                    "-p",
                     "outbe-metadosis",
-                    "-p",
                     "outbe-evm",
-                    "-p",
                     "outbe-consensus",
-                    "-p",
                     "outbe-node",
-                    "-p",
                     "outbe-engine",
-                    "-p",
                     "outbe-ocomp-protocol",
-                    "-p",
                     "xtask",
-                    "--all-targets",
-                    "--",
-                    "-D",
-                    "warnings",
                 ],
+                &["--all-targets"],
             )?;
             task_progress(
                 repository_root,
@@ -1381,32 +1368,19 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "ocomp_request_lifecycle",
                 ],
             )?;
-            cargo(
+            clippy_packages(
                 repository_root,
                 &[
-                    "clippy",
-                    "--locked",
-                    "-p",
                     "outbe-promislimit",
-                    "-p",
                     "outbe-metadosis",
-                    "-p",
                     "outbe-emissionlimit",
-                    "-p",
                     "outbe-cycle",
-                    "-p",
                     "outbe-evm",
-                    "-p",
                     "outbe-node",
-                    "-p",
                     "outbe-ocomp-protocol",
-                    "-p",
                     "xtask",
-                    "--all-targets",
-                    "--",
-                    "-D",
-                    "warnings",
                 ],
+                &["--all-targets"],
             )?;
             full_task_progress(repository_root, task)?;
         }
