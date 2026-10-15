@@ -11,6 +11,7 @@ use crate::constants::{DAY_TYPE_ISO, DEFAULT_USD_CURRENCY_RATE};
 use crate::types::AssetType;
 use alloy_primitives::{Address, U256};
 use outbe_primitives::asset_type::COEN_ASSET;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 pub use export::export_genesis;
 pub use import::init_from_genesis;
@@ -105,7 +106,7 @@ impl OracleGenesisConfig {
             slash_window: 96,
             min_valid_per_window: U256::from(50_000_000_000_000_000u128), // 0.05
             slash_fraction: U256::ZERO,
-            lookback_duration: 86400,
+            lookback_duration: SECONDS_PER_DAY,
             pairs: vec![(COEN_ASSET, AssetType::IsoCurrency(DAY_TYPE_ISO).into())],
             initial_rates: vec![],
             feeder_delegations: vec![],

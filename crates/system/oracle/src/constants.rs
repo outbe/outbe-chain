@@ -3,6 +3,7 @@
 use alloy_primitives::U256;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::math::reference_price::is_coen_iso_market;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::units::{SCALE_1E18, SCALE_1E18_U128, SCALE_1E6_U128, SCALE_1E6_U256};
 
 /// Genesis seed for the USD (ISO 840) currency rate: the current SOFR
@@ -14,7 +15,7 @@ pub const DEFAULT_USD_CURRENCY_RATE: U256 = U256::from_limbs([36_300u64, 0, 0, 0
 pub const FX_RATE_MAX_AGE_SECONDS: u64 = 6 * 60 * 60;
 
 /// Raw snapshots older than this are no longer readable.
-pub(crate) const MAX_SNAPSHOT_RETENTION_SECONDS: u64 = 365 * 24 * 3600;
+pub(crate) const MAX_SNAPSHOT_RETENTION_SECONDS: u64 = 365 * SECONDS_PER_DAY;
 
 /// Width of one hourly VWAP aggregate cell.
 pub(crate) const VWAP_HOUR_SECONDS: u64 = 60 * 60;

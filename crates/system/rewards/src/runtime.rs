@@ -269,7 +269,10 @@ mod tests {
 
             // Re-call with a later-block context (same storage). Anchor stays.
             let ctx_later = BlockRuntimeContext::new(
-                block_ctx(100, GENESIS_TS_2024_01_01 + 86_400 * 30),
+                block_ctx(
+                    100,
+                    GENESIS_TS_2024_01_01 + 30 * outbe_primitives::time::SECONDS_PER_DAY,
+                ),
                 ctx0.storage.clone(),
             );
             let day = ensure_genesis_anchor(&ctx_later).unwrap();

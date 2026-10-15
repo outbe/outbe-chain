@@ -36,7 +36,6 @@ export async function offeringDay(ctx: Ctx): Promise<number> {
 export interface OfferTerms {
   worldwideDay: number;
   currency: number;
-  excludeFromIntex: boolean;
   zkProof: Hex;
   l2ChainId: number;
   circuitVersion: string;
@@ -53,7 +52,6 @@ export function offerTributeArgs(enc: EncryptedOffer, terms: OfferTerms): unknow
     terms.worldwideDay,
     terms.currency, // tributeCurrency
     terms.currency, // referenceCurrency - a separate axis, same value here
-    terms.excludeFromIntex,
     terms.zkProof,
     terms.l2ChainId, // chainId the proof verifies under
     terms.circuitVersion, // exact enabled circuit version for that chain

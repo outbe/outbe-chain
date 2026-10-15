@@ -68,7 +68,6 @@ pub(super) fn canonical_result() -> eyre::Result<(B256, LysisResultV1, Vec<u8>)>
 fn conservation_totals() -> ConservationTotalsV1 {
     ConservationTotalsV1 {
         tribute_nominal_total: U256::ZERO,
-        eligible_nominal_total: U256::ZERO,
         day_limit: U256::ZERO,
         gratis_demand: U256::ZERO,
         day_gratis_limit_minor: U256::ZERO,

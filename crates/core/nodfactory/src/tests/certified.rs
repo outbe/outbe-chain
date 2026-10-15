@@ -266,6 +266,7 @@ fn input(wwd: u32, call: u8) -> CertifiedNodGenerationV1 {
         },
         nod_amount_total: U256::from(700),
         lysis_allocation_minor: U256::from(500),
+        nod_gratis_load_max: U256::from(200),
         issued_at: 1_700_000_123,
     }
 }
@@ -293,6 +294,7 @@ fn valid_capability_installs_exact_generation_receipt_and_event() {
             bucket_count: input.counts.bucket_count,
             nod_amount_total: input.nod_amount_total,
             lysis_allocation_minor: input.lysis_allocation_minor,
+            nod_gratis_load_max: input.nod_gratis_load_max,
             issued_at: input.issued_at,
             next_nod_ordinal: 0,
             last_progress_height: 1,
@@ -377,6 +379,14 @@ fn exact_replay_is_idempotent_and_wrong_generation_is_side_effect_free() {
     assert_eq!(provider.run(&first).unwrap(), first_receipt);
     assert_eq!(provider.inner.storage, state_after_first);
     assert_eq!(provider.inner.get_ordered_events(), events_after_first);
+
+    for cap in [U256::from(199), U256::from(201)] {
+        let mut forged = first.clone();
+        forged.nod_gratis_load_max = cap;
+        assert!(provider.run(&forged).is_err());
+        assert_eq!(provider.inner.storage, state_after_first);
+        assert_eq!(provider.inner.get_ordered_events(), events_after_first);
+    }
 
     let mut wrong = input(20_260_727, 23);
     wrong.precondition.target_generation = 7;

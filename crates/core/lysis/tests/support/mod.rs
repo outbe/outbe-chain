@@ -171,7 +171,6 @@ fn result(day_type: DayType, job_id: B256, limits: &SchemaLimits) -> LysisResult
     };
     let conservation = ConservationTotalsV1 {
         tribute_nominal_total: U256::from(1_000),
-        eligible_nominal_total: U256::from(600),
         day_limit: U256::from(100),
         gratis_demand: U256::from(60),
         day_gratis_limit_minor: U256::from(60),

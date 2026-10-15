@@ -67,9 +67,16 @@ const NETWORK_MANIFEST_FILE: &str = "network-binding-v1.json";
 const SEMANTICS_MANIFEST_FILE: &str = "semantic-artifacts-v1.json";
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct FinalArtifactOverrides<'a> {
+pub struct FinalArtifactOptions<'a> {
     pub registrations_dir: Option<&'a Path>,
     pub release_artifacts_dir: Option<&'a Path>,
+    pub check: bool,
+}
+
+pub struct FinalArtifactSources<'a> {
+    pub capacity: &'a Path,
+    pub base_genesis: &'a Path,
+    pub validators: &'a Path,
 }
 
 struct LoadedReleaseArtifacts {
@@ -177,20 +184,17 @@ struct NetworkBindingDocumentV1 {
 
 pub fn run(
     repository_root: &Path,
-    capacity_path: &Path,
-    base_genesis_path: &Path,
-    validators_path: &Path,
-    overrides: FinalArtifactOverrides<'_>,
+    sources: FinalArtifactSources<'_>,
+    options: FinalArtifactOptions<'_>,
     output_dir: &Path,
-    check: bool,
 ) -> Result<()> {
-    let capacity_path = resolve(repository_root, capacity_path);
-    let base_genesis_path = resolve(repository_root, base_genesis_path);
-    let validators_path = resolve(repository_root, validators_path);
-    let registrations_dir = overrides
+    let capacity_path = resolve(repository_root, sources.capacity);
+    let base_genesis_path = resolve(repository_root, sources.base_genesis);
+    let validators_path = resolve(repository_root, sources.validators);
+    let registrations_dir = options
         .registrations_dir
         .map(|path| resolve(repository_root, path));
-    let release_artifacts_dir = overrides
+    let release_artifacts_dir = options
         .release_artifacts_dir
         .map(|path| resolve(repository_root, path));
     let output_dir = resolve(repository_root, output_dir);
@@ -381,7 +385,7 @@ pub fn run(
         (NETWORK_MANIFEST_FILE, network_bytes.as_slice()),
         (SEMANTICS_MANIFEST_FILE, semantic_bytes.as_slice()),
     ] {
-        update_or_check(&output_dir.join(name), bytes, check)?;
+        update_or_check(&output_dir.join(name), bytes, options.check)?;
     }
     Ok(())
 }
@@ -559,7 +563,14 @@ fn semantic_artifacts(
         let descriptor = descriptors
             .get(field)
             .ok_or_else(|| eyre::eyre!("missing semantic descriptor {field}"))?;
-        Ok(semantic_digest(field, descriptor, &[registry]))
+        if field == "lysis_program_semantics_hash" {
+            Ok(outbe_ocomp_protocol::hash::hash_framed(
+                outbe_ocomp_protocol::registry::HashDomain::LysisProgramSemantics,
+                descriptor.as_bytes(),
+            )?)
+        } else {
+            Ok(semantic_digest(field, descriptor, &[registry]))
+        }
     };
     let artifacts = SemanticArtifactsV1 {
         intent_codec_id: digest("intent_codec_id")?,
@@ -582,6 +593,11 @@ fn semantic_artifacts(
         release_placeholder_hash: digest("release_placeholder_hash")?,
         source_availability_policy_id: digest("source_availability_policy_id")?,
     };
+    ensure!(
+        artifacts.lysis_program_semantics_hash
+            == outbe_ocomp_protocol::profile::supported_lysis_v1_semantics_hash()?,
+        "generated Lysis semantics differ from the executable registry identity"
+    );
     ensure!(
         descriptors.len() == 19,
         "semantic descriptor registry has unexpected rows"
@@ -1020,6 +1036,23 @@ mod tests {
             .to_path_buf()
     }
 
+    #[test]
+    fn executable_lysis_semantics_match_the_final_artifact_identity() {
+        let root = repository_root();
+        let descriptors = semantic_descriptors(&root).unwrap();
+        let (_, generated) = semantic_artifacts(&root).unwrap();
+        let framed = outbe_ocomp_protocol::hash::hash_framed(
+            outbe_ocomp_protocol::registry::HashDomain::LysisProgramSemantics,
+            descriptors["lysis_program_semantics_hash"].as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            generated.lysis_program_semantics_hash,
+            outbe_ocomp_protocol::profile::supported_lysis_v1_semantics_hash().unwrap()
+        );
+        assert_eq!(generated.lysis_program_semantics_hash, framed);
+    }
+
     fn capacity_manifest() -> Vec<u8> {
         let limits = poc_schema_limits();
         let profile = CapacityProfileV1 {
@@ -1134,15 +1167,17 @@ mod tests {
 
         run(
             &repository_root,
-            &artifacts.join(GENERATED_CAPACITY_FILE),
-            &base_genesis,
-            &validators,
-            FinalArtifactOverrides {
+            FinalArtifactSources {
+                capacity: &artifacts.join(GENERATED_CAPACITY_FILE),
+                base_genesis: &base_genesis,
+                validators: &validators,
+            },
+            FinalArtifactOptions {
                 registrations_dir: Some(&registrations),
                 release_artifacts_dir: Some(&artifacts),
+                check: false,
             },
             &output,
-            false,
         )
         .unwrap();
         let generated_spec = parse_chain_spec(&output.join(CHAIN_MANIFEST_FILE)).unwrap();
@@ -1167,15 +1202,17 @@ mod tests {
         fs::write(path, rebound.encode_canonical(&limits).unwrap()).unwrap();
         let error = run(
             &repository_root,
-            &artifacts.join(GENERATED_CAPACITY_FILE),
-            &base_genesis,
-            &validators,
-            FinalArtifactOverrides {
+            FinalArtifactSources {
+                capacity: &artifacts.join(GENERATED_CAPACITY_FILE),
+                base_genesis: &base_genesis,
+                validators: &validators,
+            },
+            FinalArtifactOptions {
                 registrations_dir: Some(&registrations),
                 release_artifacts_dir: Some(&artifacts),
+                check: false,
             },
             &temporary.path().join("rebound"),
-            false,
         )
         .unwrap_err();
         assert!(
@@ -1199,22 +1236,27 @@ mod tests {
 
         run(
             &repository_root,
-            &capacity,
-            &base_genesis,
-            &validators,
-            FinalArtifactOverrides::default(),
+            FinalArtifactSources {
+                capacity: &capacity,
+                base_genesis: &base_genesis,
+                validators: &validators,
+            },
+            FinalArtifactOptions::default(),
             &output,
-            false,
         )
         .unwrap();
         run(
             &repository_root,
-            &capacity,
-            &base_genesis,
-            &validators,
-            FinalArtifactOverrides::default(),
+            FinalArtifactSources {
+                capacity: &capacity,
+                base_genesis: &base_genesis,
+                validators: &validators,
+            },
+            FinalArtifactOptions {
+                check: true,
+                ..Default::default()
+            },
             &output,
-            true,
         )
         .unwrap();
 
@@ -1261,12 +1303,16 @@ mod tests {
         assert!(
             run(
                 &repository_root,
-                &capacity,
-                &base_genesis,
-                &validators,
-                FinalArtifactOverrides::default(),
+                FinalArtifactSources {
+                    capacity: &capacity,
+                    base_genesis: &base_genesis,
+                    validators: &validators,
+                },
+                FinalArtifactOptions {
+                    check: true,
+                    ..Default::default()
+                },
                 &output,
-                true,
             )
             .is_err(),
             "check mode must reject a modified final artifact"

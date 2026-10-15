@@ -197,7 +197,6 @@ pub fn root_summary_fixture(
         nod_count: count,
         bucket_count: count,
         tribute_nominal_total: raw_nominal_total,
-        eligible_nominal_total: raw_nominal_total,
         lysis_allocation_minor: U256::from(count),
         nod_cost_total,
         first_error_ordinal: None,

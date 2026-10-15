@@ -102,7 +102,6 @@ pub struct VerifiedLysisFinalizationInputsV1<'a, U, C, B> {
     pub unit_artifacts: U,
     pub result_chunks: C,
     pub bucket_records: B,
-    pub eligible_nominal_total: U256,
 }
 
 pub fn finalize_v1<U, C, B>(
@@ -136,22 +135,11 @@ where
     )?;
     let bucket_root =
         stream_bucket_records(inputs.root_reduce_summary, inputs.bucket_records, limits)?;
-    if streamed.reduced_summary.eligible_nominal_total != inputs.eligible_nominal_total
-        || streamed.eligible_nominal_total != inputs.eligible_nominal_total
-    {
-        return Err(LysisFinalizationErrorV1::Authority(
-            "eligible nominal total",
-        ));
-    }
     if streamed.reduced_summary != *inputs.root_reduce_summary {
         return Err(LysisFinalizationErrorV1::Authority(
             "independently reduced ROOT_REDUCE summary",
         ));
     }
-    require_global_nominal_conservation(
-        streamed.eligible_nominal_total,
-        streamed.tribute_nominal_total,
-    )?;
 
     let frozen = &inputs.intent.frozen_metadosis_values;
     let unused_lysis_limit_minor = frozen
@@ -168,7 +156,6 @@ where
     };
     let conservation = ConservationTotalsV1 {
         tribute_nominal_total: streamed.tribute_nominal_total,
-        eligible_nominal_total: streamed.eligible_nominal_total,
         day_limit: frozen.day_limit,
         gratis_demand: frozen.gratis_demand,
         day_gratis_limit_minor: frozen.day_gratis_limit_minor,
@@ -545,7 +532,6 @@ struct StreamedResultV1 {
     nod_count: u32,
     bucket_count: u32,
     tribute_nominal_total: U256,
-    eligible_nominal_total: U256,
     lysis_allocation_minor: U256,
     nod_cost_total: U256,
 }
@@ -579,7 +565,6 @@ struct ResultChunkStreamV1<'a> {
     tribute_count: u32,
     nod_count: u32,
     tribute_nominal_total: U256,
-    eligible_nominal_total: U256,
 }
 
 type EncodedRecords = Vec<Vec<u8>>;
@@ -618,7 +603,6 @@ impl<'a> ResultChunkStreamV1<'a> {
             tribute_count: 0,
             nod_count: 0,
             tribute_nominal_total: U256::ZERO,
-            eligible_nominal_total: U256::ZERO,
         })
     }
 
@@ -634,12 +618,6 @@ impl<'a> ResultChunkStreamV1<'a> {
         self.require_chunk_descriptor(&item, &chunk)?;
         self.require_primary_coverage(&chunk)?;
         let (nod_records, bucket_record_bytes) = self.stream_nod_actions(&chunk)?;
-        let chunk_eligible = item.summary.eligible_nominal_total;
-        self.eligible_nominal_total = checked_add(
-            self.eligible_nominal_total,
-            chunk_eligible,
-            "global eligible nominal total",
-        )?;
 
         let manifest_record = item
             .output_manifest_entry
@@ -836,7 +814,6 @@ impl<'a> ResultChunkStreamV1<'a> {
             nod_count: self.nod_count,
             bucket_count: self.nod_count,
             tribute_nominal_total: self.tribute_nominal_total,
-            eligible_nominal_total: self.eligible_nominal_total,
             lysis_allocation_minor,
             nod_cost_total,
         })
@@ -889,7 +866,6 @@ fn require_leaf_summary(
         nod_count,
         bucket_count: u32::try_from(leaf.bucket_records.len()).unwrap_or(u32::MAX),
         tribute_nominal_total: summary.tribute_nominal_total,
-        eligible_nominal_total: summary.eligible_nominal_total,
         lysis_allocation_minor: summary.lysis_allocation_minor,
         nod_cost_total: summary.nod_cost_total,
         first_error_ordinal: None,
@@ -1045,7 +1021,6 @@ fn canonical_empty_summary(
         nod_count: 0,
         bucket_count: 0,
         tribute_nominal_total: U256::ZERO,
-        eligible_nominal_total: U256::ZERO,
         lysis_allocation_minor: U256::ZERO,
         nod_cost_total: U256::ZERO,
         first_error_ordinal: None,
@@ -1059,18 +1034,6 @@ fn checked_add(
 ) -> Result<U256, LysisFinalizationErrorV1> {
     left.checked_add(right)
         .ok_or(ProtocolError::IntegerOverflow { what }.into())
-}
-
-fn require_global_nominal_conservation(
-    eligible_nominal_total: U256,
-    tribute_nominal_total: U256,
-) -> Result<(), LysisFinalizationErrorV1> {
-    if eligible_nominal_total > tribute_nominal_total {
-        return Err(LysisFinalizationErrorV1::Authority(
-            "global eligible nominal within Tribute nominal",
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -118,13 +118,13 @@ const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
 /// Every right's call sweep schedules a closed day, daily in production. An e2e run
 /// seeds the days it reads instead of living through them, so it recurs sooner.
 #[cfg(not(feature = "e2e-test"))]
-const CALL_SWEEP_PERIOD_SECONDS: u64 = 86_400;
+const CALL_SWEEP_PERIOD_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
 #[cfg(feature = "e2e-test")]
 const CALL_SWEEP_PERIOD_SECONDS: u64 = 60;
 
 /// The gem position sweep is daily in production for the same reason.
 #[cfg(not(feature = "e2e-test"))]
-const GEM_POSITION_PERIOD_SECONDS: u64 = 86_400;
+const GEM_POSITION_PERIOD_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
 #[cfg(feature = "e2e-test")]
 const GEM_POSITION_PERIOD_SECONDS: u64 = 60;
 
@@ -315,6 +315,7 @@ pub fn last_fire_at(period: u64, offset: u64, block_ts: u64) -> u64 {
 #[cfg(test)]
 mod protocol_parameter_tests {
     use super::*;
+    use outbe_primitives::time::SECONDS_PER_DAY;
 
     #[test]
     fn protocol_cycle_uses_the_genesis_interval() {
@@ -322,12 +323,12 @@ mod protocol_parameter_tests {
         #[cfg(not(feature = "e2e-test"))]
         assert_eq!(
             (CALL_SWEEP_PERIOD_SECONDS, GEM_POSITION_PERIOD_SECONDS),
-            (86_400, 86_400)
+            (SECONDS_PER_DAY, SECONDS_PER_DAY)
         );
         let configured = active_triggers(10);
         assert_eq!(configured[0].period_seconds, 10);
         assert_eq!(configured[0].start_offset_seconds, 0);
-        assert_eq!(configured[1].period_seconds, 86_400);
+        assert_eq!(configured[1].period_seconds, SECONDS_PER_DAY);
         assert_eq!(configured[2].period_seconds, 3_600);
         assert_eq!(configured[2].start_offset_seconds, 0);
         assert_eq!(configured[3].period_seconds, CALL_SWEEP_PERIOD_SECONDS);
@@ -346,7 +347,7 @@ mod protocol_parameter_tests {
             configured[5].handler,
             TriggerHandler::CredisCallDaily
         ));
-        assert_eq!(configured[6].period_seconds, 86_400);
+        assert_eq!(configured[6].period_seconds, SECONDS_PER_DAY);
         assert_eq!(configured[6].start_offset_seconds, 0);
         assert!(matches!(
             configured[6].handler,

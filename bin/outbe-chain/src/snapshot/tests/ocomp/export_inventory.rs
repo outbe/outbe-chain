@@ -210,7 +210,6 @@ fn fixture(seed: u8, damage: Option<&str>) -> Fixture {
         nominal_amount_minor: U256::from(1),
         reference_currency: 978,
         tribute_price_minor: U256::from(1),
-        exclude_from_intex_issuance: false,
     };
     let chunk = AuthenticatedInputChunkV1 {
         protocol_bundle_hash: spec.summary.protocol_bundle_hash,

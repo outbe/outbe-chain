@@ -24,7 +24,6 @@ interface ITributeFactory {
         uint32 worldwideDay,
         uint16 tributeCurrency,
         uint16 referenceCurrency,
-        bool excludeFromIntexIssuance,
         bytes calldata zkProof,
         uint32 chainId,
         string calldata version,

@@ -16,12 +16,6 @@ fn seed_positive_ocomp_admission_fixture(
         let pair = outbe_oracle::api::DAY_TYPE_PAIR;
         let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
         oracle.reference_currencies.push(840).unwrap();
-        let previous_day = outbe_primitives::time::previous_date_key(
-            outbe_primitives::time::timestamp_to_date_key(scheduled),
-        );
-        oracle
-            .record_utc_day_vwap(previous_day, index, U256::from(250_000))
-            .unwrap();
         oracle
             .exchange_rate
             .write(&index, U256::from(900_000))

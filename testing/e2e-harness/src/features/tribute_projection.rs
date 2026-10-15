@@ -128,7 +128,6 @@ fn submit_one_cross_currency_offer(world: &mut World) {
                 wwd: &wwd,
                 amounts: ("0", "410000"),
                 currency: 949,
-                exclude_from_intex_issuance: false,
             },
             978,
         )
@@ -183,8 +182,8 @@ fn submit_duplicate_offer(world: &mut World) {
     wait_for_offering(world, &wwd);
     let tx_hash = world
         .rpc
-        // The first offer uses amount=100 and exclude=false. Change both
-        // fields here: the second transaction must still collide because the
+        // The first offer is TRY to EUR. Change the amount and both currencies
+        // here: the second transaction must still collide because the
         // canonical Tribute identity is `(owner, worldwide_day)`.
         .tribute_offer_with_params(
             &key,
@@ -192,7 +191,6 @@ fn submit_duplicate_offer(world: &mut World) {
                 wwd: &wwd,
                 amounts: ("777", "0"),
                 currency: 840,
-                exclude_from_intex_issuance: true,
             },
         )
         .expect("replayed offerTribute returned transaction hash");

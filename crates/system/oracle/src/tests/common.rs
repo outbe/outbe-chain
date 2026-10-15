@@ -6,6 +6,7 @@ use alloy_primitives::{address, Address, U256};
 use outbe_primitives::error::Result as PrecompileResult;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::units::checked_whole_coen_to_native;
 use outbe_validatorset::StakeProjection;
 
@@ -106,7 +107,7 @@ pub(super) fn seed_ocomp_oracle_with_snapshot(provider: &mut HashMapStorageProvi
     });
 }
 
-pub(super) const SCURVE_CURRENT_DAY: u64 = ATOMIC_DAY_START + 3 * crate::scurve::DAY_SECONDS;
+pub(super) const SCURVE_CURRENT_DAY: u64 = ATOMIC_DAY_START + 3 * SECONDS_PER_DAY;
 
 pub(super) fn seed_oracle_with_peak_history(
     provider: &mut HashMapStorageProvider,
@@ -119,9 +120,9 @@ pub(super) fn seed_oracle_with_peak_history(
             crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
         }
         for (day, price) in [
-            (SCURVE_CURRENT_DAY - 3 * crate::scurve::DAY_SECONDS, 100_u64),
-            (SCURVE_CURRENT_DAY - 2 * crate::scurve::DAY_SECONDS, 150_u64),
-            (SCURVE_CURRENT_DAY - crate::scurve::DAY_SECONDS, 120_u64),
+            (SCURVE_CURRENT_DAY - 3 * SECONDS_PER_DAY, 100_u64),
+            (SCURVE_CURRENT_DAY - 2 * SECONDS_PER_DAY, 150_u64),
+            (SCURVE_CURRENT_DAY - SECONDS_PER_DAY, 120_u64),
         ] {
             oracle
                 .write_snapshot(
@@ -285,7 +286,10 @@ pub(super) fn init_oracle(oracle: &mut OracleContract) {
         .write(U256::from(50_000_000_000_000_000u128))
         .unwrap(); // 0.05
     oracle.config_slash_fraction.write(U256::ZERO).unwrap();
-    oracle.config_lookback_duration.write(86400).unwrap();
+    oracle
+        .config_lookback_duration
+        .write(SECONDS_PER_DAY)
+        .unwrap();
     oracle.config_enabled.write(true).unwrap();
     oracle.config_is_initialized.write(true).unwrap();
 }
@@ -295,7 +299,10 @@ pub(super) fn with_bare_oracle(f: impl FnOnce(StorageHandle<'_>, &mut OracleCont
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         // The one setting a range VWAP read needs: the widest window it serves.
-        oracle.config_lookback_duration.write(86_400).unwrap();
+        oracle
+            .config_lookback_duration
+            .write(SECONDS_PER_DAY)
+            .unwrap();
         f(storage, &mut oracle);
     });
 }

@@ -3,6 +3,7 @@
 //! to the independent lifecycle suite.
 
 use cucumber::{then, when};
+use outbe_primitives::time::SECONDS_PER_DAY;
 use std::{thread::sleep, time::Duration};
 
 use crate::world::World;
@@ -316,7 +317,7 @@ fn enter_renewal_window(world: &mut World) {
         .valid_until;
     let renewal_timestamp = validator_deadline
         .max(full_node_deadline)
-        .checked_sub(7 * 24 * 60 * 60)
+        .checked_sub(7 * SECONDS_PER_DAY)
         .and_then(|timestamp| timestamp.checked_add(2))
         .expect("manual renewal window timestamp");
     world

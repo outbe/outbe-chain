@@ -449,6 +449,7 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
         bucket_count: 13,
         nod_amount_total: U256::from(50_000),
         lysis_allocation_minor: U256::from(7_000),
+        nod_gratis_load_max: U256::from(1_000),
         issued_at: 1_753_488_000,
         next_nod_ordinal: 129,
         last_progress_height: 4_096,
@@ -479,6 +480,9 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
             .unwrap();
         nod.ocomp_lysis_allocation_minor
             .write(&worldwide_day, generation.lysis_allocation_minor)
+            .unwrap();
+        nod.ocomp_nod_gratis_load_max
+            .write(&worldwide_day, generation.nod_gratis_load_max)
             .unwrap();
         nod.ocomp_materialization_job_id
             .write(&worldwide_day, generation.job_id)
@@ -972,6 +976,7 @@ fn the_certified_bundle_survives_a_read_and_leaves_nothing_behind_when_cleared()
             bucket_count: 2,
             nod_amount_total: U256::from(50_000),
             lysis_allocation_minor: U256::from(7_000),
+            nod_gratis_load_max: U256::from(1_000),
             issued_at: 1_753_488_000,
             next_nod_ordinal: 0,
             last_progress_height: 4_096,
@@ -985,6 +990,9 @@ fn the_certified_bundle_survives_a_read_and_leaves_nothing_behind_when_cleared()
         nod.ocomp_lysis_allocation_minor
             .write(&worldwide_day, shape.lysis_allocation_minor)
             .unwrap();
+        nod.ocomp_nod_gratis_load_max
+            .write(&worldwide_day, shape.nod_gratis_load_max)
+            .unwrap();
         nod.ocomp_materialization_last_progress_height
             .write(&worldwide_day, shape.last_progress_height)
             .unwrap();
@@ -997,6 +1005,7 @@ fn the_certified_bundle_survives_a_read_and_leaves_nothing_behind_when_cleared()
             read.protocol_bundle_hash, bundle,
             "materialization reads the bundle from the chain, so it has to come back"
         );
+        assert_eq!(read.nod_gratis_load_max, shape.nod_gratis_load_max);
 
         nod.clear_ocomp_certified_generation(worldwide_day).unwrap();
         assert!(

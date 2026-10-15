@@ -7,6 +7,7 @@ from genesis_seed_codec import (
     address_as_u256,
     address_bytes,
     data_slot,
+    SECONDS_PER_DAY,
     parse_int,
     u32_bytes,
     wwd_to_day_timestamp,
@@ -89,7 +90,7 @@ def _seed_oracle_config(storage, cfg, pairs):
     storage.set_slot(2, parse_int(cfg.get("slash_window", 96)))
     storage.set_slot(3, parse_int(min_valid_per_window))
     storage.set_slot(4, parse_int(slash_fraction))
-    storage.set_slot(5, parse_int(cfg.get("lookback_duration", 86400)))
+    storage.set_slot(5, parse_int(cfg.get("lookback_duration", SECONDS_PER_DAY)))
     storage.set_slot(6, 1 if cfg.get("enabled", True) else 0)
     storage.set_slot(7, 1 if cfg.get("initialized", True) else 0)
     storage.set_slot(8, len(pairs))

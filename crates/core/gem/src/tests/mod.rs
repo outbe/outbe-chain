@@ -14,6 +14,7 @@ use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::{first_full_day, previous_date_key, timestamp_to_date_key};
 
 use crate::api;
@@ -31,7 +32,7 @@ pub(crate) const USD: u16 = 840;
 pub(crate) const EUR: u16 = 978;
 
 /// Two days after the sample gems were issued: the day before it they held in full.
-pub(crate) const QUALIFY_TS: u64 = T_NOW + 2 * 86_400;
+pub(crate) const QUALIFY_TS: u64 = T_NOW + 2 * SECONDS_PER_DAY;
 
 /// One block's worth of compressed-entity authority: the executor scope and the
 /// finalized parent bodies. Tests never cross a block, so the overlay is the truth.

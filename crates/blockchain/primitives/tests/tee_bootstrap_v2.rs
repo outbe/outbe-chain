@@ -5,6 +5,7 @@ use alloy_eips::eip2718::Encodable2718 as _;
 use alloy_primitives::{Address, Bytes, Signature, B256};
 use k256::ecdsa::signature::hazmat::PrehashSigner as _;
 use outbe_primitives::tee_bootstrap_v2::{assembly, codec};
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, ReshareResult},
     system_tx::{
@@ -49,7 +50,7 @@ fn policy() -> TeePolicyV1 {
         accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
         accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
         minimum_lease: 3_600,
-        maximum_lease: 604_800,
+        maximum_lease: 7 * SECONDS_PER_DAY,
         collateral_margin: 3_600,
         resource_schedule_hash: ResourceScheduleV1::normative()
             .unwrap()

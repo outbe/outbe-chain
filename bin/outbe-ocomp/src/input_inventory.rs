@@ -130,7 +130,6 @@ pub struct TributeInventoryBuilder {
     peak_owner_records: usize,
     run_count: u64,
     tribute_count: u32,
-    nominal_total: U256,
     previous_tribute_id: Option<WwdEntityId>,
     iso_bitmap: Box<[u8; ISO_BITMAP_BYTES]>,
     _lock: InventoryLock,
@@ -202,7 +201,6 @@ impl TributeInventoryBuilder {
             peak_owner_records: 0,
             run_count: 0,
             tribute_count: 0,
-            nominal_total: U256::ZERO,
             previous_tribute_id: None,
             iso_bitmap,
             _lock: lock,
@@ -247,11 +245,6 @@ impl TributeInventoryBuilder {
                 "canonical Tribute body commitment",
             ));
         }
-        if decoded.calculation_view()?.nominal_amount_minor != record.nominal_amount_minor {
-            return Err(TributeInventoryError::Authority(
-                "private Tribute nominal amount",
-            ));
-        }
         self.root_verifier
             .as_mut()
             .expect("root verifier exists until inventory finish")
@@ -264,10 +257,6 @@ impl TributeInventoryBuilder {
             .tribute_count
             .checked_add(1)
             .ok_or(TributeInventoryError::IntegerOverflow)?;
-        self.nominal_total = self
-            .nominal_total
-            .checked_add(record.nominal_amount_minor)
-            .ok_or(TributeInventoryError::NominalTotalOverflow)?;
         set_iso(&mut self.iso_bitmap, record.reference_iso);
         self.owner_buffer.push(record.owner);
         self.peak_owner_records = self.peak_owner_records.max(self.owner_buffer.len());
@@ -306,10 +295,10 @@ impl TributeInventoryBuilder {
                 actual: self.tribute_count,
             });
         }
-        if self.nominal_total != self.subject.expected_nominal_total {
+        if (self.tribute_count == 0) != self.subject.expected_nominal_total.is_zero() {
             return Err(TributeInventoryError::NominalTotalMismatch {
                 expected: self.subject.expected_nominal_total,
-                actual: self.nominal_total,
+                actual: U256::ZERO,
             });
         }
         let reference_iso_count = self

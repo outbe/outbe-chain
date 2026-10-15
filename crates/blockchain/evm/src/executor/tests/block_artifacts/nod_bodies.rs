@@ -4,6 +4,7 @@
 use super::*;
 use outbe_offchain_data::runtime_body_readers;
 use outbe_primitives::projection::{ExecutionReadBudget, ExecutionReadCancelled};
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 type NodBlockObservation = (
     B256,
@@ -305,7 +306,6 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
         nominal_amount_minor: U256::from(11),
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: false,
     };
     let nod_fixture = || {
         outbe_nod::test_support::item(
@@ -564,7 +564,7 @@ fn seed_nod_daily_trigger(
         .last_executed_at
         .write(
             &outbe_cycle::triggers::TriggerId::NodCallDaily.as_u32(),
-            TEST_BLOCK_TIMESTAMP_BASE - 86_400,
+            TEST_BLOCK_TIMESTAMP_BASE - SECONDS_PER_DAY,
         )?;
 
     Ok(())

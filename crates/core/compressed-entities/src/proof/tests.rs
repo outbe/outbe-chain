@@ -193,7 +193,6 @@ fn frozen_collection_proof_binds_encrypted_creator_key_and_body() {
             issuance_currency: 840,
             reference_currency: 978,
             tribute_price_minor: U256::from(99),
-            exclude_from_intex_issuance: false,
             offer_input_hash: B256::repeat_byte(0x42),
         },
         encrypted_creator_public_key: blob,
@@ -570,7 +569,6 @@ fn pre_retirement_reader_finishes_and_next_request_proves_collection_absence() {
         nominal_amount_minor: U256::from(2),
         reference_currency: 978,
         tribute_price_minor: U256::from(3),
-        exclude_from_intex_issuance: false,
     };
     let (body, leaf) = stored_body(id, encode_tribute_v1(&tribute).unwrap());
     let (marker1, header1) = finalize_one(&service, genesis_hash, EntityRef::Tribute(id), leaf);

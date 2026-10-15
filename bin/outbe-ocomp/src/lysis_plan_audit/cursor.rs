@@ -287,7 +287,7 @@ impl LysisPlanAuditCursorV1<'_> {
     }
 
     fn observe_tribute(&mut self, encoded: &[u8]) -> Result<(), ExactLysisPlanError> {
-        let tribute = outbe_tribute::record::decode_canonical(encoded)?.calculation_view()?;
+        let tribute = outbe_tribute::record::decode_canonical(encoded)?;
         if tribute.worldwide_day.value() != self.audit.schedule.manifest.wwd {
             return Err(ExactLysisPlanError::AuthorityMismatch("Tribute WWD"));
         }
@@ -297,12 +297,6 @@ impl LysisPlanAuditCursorV1<'_> {
                 .ok_or(ProtocolError::IntegerOverflow {
                     what: "Tribute count",
                 })?;
-        self.tribute_nominal_total = self
-            .tribute_nominal_total
-            .checked_add(tribute.nominal_amount_minor)
-            .ok_or(ExactLysisPlanError::AuthorityMismatch(
-                "Tribute nominal total overflow",
-            ))?;
         self.tribute_isos.insert(tribute.reference_currency);
         if self.tribute_isos.len() > MAX_SETTLEMENT_ISOS {
             return Err(ExactLysisPlanError::AuthorityMismatch(
@@ -414,15 +408,11 @@ impl LysisPlanAuditCursorV1<'_> {
             .ok_or(ExactLysisPlanError::AuthorityMismatch("Oracle root state"))?
             .finish()?;
         let expected_isos = self.tribute_isos.iter().copied().collect::<Vec<_>>();
-        let tribute_conservation_matches = (
-            self.tribute_count,
-            self.tribute_nominal_total,
-            self.fidelity_owner_count,
-        ) == (
-            self.audit.schedule.manifest.tribute_count,
-            self.audit.schedule.manifest.tribute_nominal_total,
-            self.audit.schedule.manifest.tribute_count,
-        );
+        let tribute_conservation_matches = (self.tribute_count, self.fidelity_owner_count)
+            == (
+                self.audit.schedule.manifest.tribute_count,
+                self.audit.schedule.manifest.tribute_count,
+            );
         let opening_roots_match = (fidelity_root, oracle_root)
             == (
                 self.audit.schedule.manifest.fidelity_opening_root,

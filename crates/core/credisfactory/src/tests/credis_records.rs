@@ -17,7 +17,7 @@ use outbe_credis::state::CallBins;
 use outbe_primitives::call_bins;
 
 const CHAIN_ID: u64 = 1;
-const DAY: u64 = 86_400;
+use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 const ORIGINATED_AT: u64 = 1_700_000_000;
 
 // ---------------------------------------------------------------------------
@@ -2162,7 +2162,7 @@ fn the_outcome_identities_hold_through_partial_settlements_and_forfeit() {
             before_sweep.principal_written_off_minor,
             U256::from(PRINCIPAL / 2)
         );
-        let later = deadline + 10 * 86_400;
+        let later = deadline + 10 * DAY;
         assert!(
             CredisContract::accrued_interest(&credis.get_credis(id).unwrap(), later)
                 .unwrap()

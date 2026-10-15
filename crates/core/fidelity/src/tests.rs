@@ -19,7 +19,7 @@ use crate::{api, MAX_LEAGUE, MIN_LEAGUE};
 
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 const BOB: Address = address!("0x2222222222222222222222222222222222222222");
-const DAY: u64 = 86_400;
+use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 const T0: u64 = 1_000_000;
 
 /// Run `f` in a fresh storage scope on the test-enclave chain, with the

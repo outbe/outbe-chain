@@ -235,7 +235,6 @@ fn seed_preceding_tribute(
         nominal_amount_minor: U256::from(11),
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: false,
     };
     let payload = encode_tribute_v1(&canonical_body(&body)).unwrap();
     let commitment = body_commitment(

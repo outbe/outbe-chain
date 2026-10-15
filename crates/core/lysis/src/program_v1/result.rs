@@ -194,7 +194,6 @@ pub struct RootReduceSummaryV1 {
     pub nod_count: u32,
     pub bucket_count: u32,
     pub tribute_nominal_total: U256,
-    pub eligible_nominal_total: U256,
     pub lysis_allocation_minor: U256,
     pub nod_cost_total: U256,
     pub first_error_ordinal: Option<u32>,
@@ -266,10 +265,6 @@ impl RootReduceSummaryV1 {
             tribute_nominal_total: checked_add_summary_total(
                 self.tribute_nominal_total,
                 right.tribute_nominal_total,
-            )?,
-            eligible_nominal_total: checked_add_summary_total(
-                self.eligible_nominal_total,
-                right.eligible_nominal_total,
             )?,
             lysis_allocation_minor: checked_add_summary_total(
                 self.lysis_allocation_minor,
@@ -377,7 +372,6 @@ pub fn encode_root_reduce_summary(
     output.write_u32(summary.nod_count)?;
     output.write_u32(summary.bucket_count)?;
     output.write_u256(summary.tribute_nominal_total)?;
-    output.write_u256(summary.eligible_nominal_total)?;
     output.write_u256(summary.lysis_allocation_minor)?;
     output.write_u256(summary.nod_cost_total)?;
     output.write_option(summary.first_error_ordinal.as_ref(), |writer, ordinal| {
@@ -463,7 +457,6 @@ pub fn decode_root_reduce_summary(
         nod_count: input.read_u32()?,
         bucket_count: input.read_u32()?,
         tribute_nominal_total: input.read_u256()?,
-        eligible_nominal_total: input.read_u256()?,
         lysis_allocation_minor: input.read_u256()?,
         nod_cost_total: input.read_u256()?,
         first_error_ordinal: input.read_option(|reader| reader.read_u32())?,
@@ -599,7 +592,6 @@ fn validate_empty_root_summary(summary: &RootReduceSummaryV1) -> Result<(), Lysi
     .any(|count| count != 0);
     let has_total = [
         summary.tribute_nominal_total,
-        summary.eligible_nominal_total,
         summary.lysis_allocation_minor,
         summary.nod_cost_total,
     ]

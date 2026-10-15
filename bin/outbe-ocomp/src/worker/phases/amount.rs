@@ -7,6 +7,7 @@ use super::super::UnitExecutionAuthority;
 use super::super::WorkerError;
 
 use crate::input_artifacts::decode_oracle_subject_key;
+use alloy_primitives::U256;
 
 use outbe_lysis::program_v1::artifacts::decode_enumerated_run;
 use outbe_lysis::program_v1::artifacts::decode_fidelity_map_output;
@@ -83,6 +84,7 @@ pub(in super::super) fn execute_amount_map_unit(
         &observed,
         &fidelity.observations,
         &root_output.ordered_fractions,
+        authority.plan.lysis_limit_minor / U256::from(1024),
     )
     .map_err(LysisArtifactErrorV1::from)?;
     let output_coverage_root = amount.coverage_root()?;

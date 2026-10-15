@@ -187,6 +187,27 @@ impl ProtocolBundleV1 {
             "unsupported Lysis V1 input codec bundle",
         )
     }
+
+    /// Reject bundles whose execution semantics this binary does not implement.
+    pub fn validate_supported_lysis_v1_semantics(&self) -> Result<(), ProtocolError> {
+        crate::schema::require(
+            self.lysis_program_semantics_hash == supported_lysis_v1_semantics_hash()?,
+            "unsupported Lysis V1 execution semantics",
+        )
+    }
+}
+
+/// Execution identity of the registered Lysis semantics descriptor.
+pub fn supported_lysis_v1_semantics_hash() -> Result<B256, ProtocolError> {
+    let label = "lysis_program_semantics_hash";
+    let descriptor = include_str!("../registry/semantic-artifacts-v1.tsv")
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .find_map(|(field, descriptor)| (field == label).then_some(descriptor))
+        .ok_or(ProtocolError::InvalidInvariant(
+            "missing Lysis semantics descriptor",
+        ))?;
+    hash_framed(HashDomain::LysisProgramSemantics, descriptor.as_bytes())
 }
 
 /// Protocol bundle of the measurement-classification OCOMP fork install.

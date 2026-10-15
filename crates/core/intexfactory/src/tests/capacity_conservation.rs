@@ -8,6 +8,7 @@ use outbe_intex::{
     schema::{CreateSeriesParams, IntexCallTrigger},
     SeriesId,
 };
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::{
     addresses::INTEX_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
@@ -18,7 +19,7 @@ use outbe_primitives::{
 use outbe_promislimit::PromisLimitContract;
 
 const ISSUED: u32 = 1_704_067_200;
-const DAY: u64 = 86_400;
+use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 const DEADLINE: u64 = ISSUED as u64 + 7 * DAY;
 const LOAD: u128 = 1_000_003;
 const WWD: u32 = 20_240_101;
@@ -39,9 +40,9 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
                 floor_price_minor: U256::from(1_080_000),
                 call_price_minor: U256::from(2_280_000),
                 call_trigger: IntexCallTrigger {
-                    call_window_seconds: 28 * DAY as u32,
-                    call_threshold_seconds: 21 * DAY as u32,
-                    call_notice_period_seconds: 7 * DAY as u32,
+                    call_window_seconds: 28 * SECONDS_PER_DAY_U32,
+                    call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
+                    call_notice_period_seconds: 7 * SECONDS_PER_DAY_U32,
                 },
                 issued_at: ISSUED,
                 issuance_currency: 840,

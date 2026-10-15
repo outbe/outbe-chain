@@ -6,6 +6,7 @@ use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::sweep_budget::{SWEEP_BODY_WRITES_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use super::*;
@@ -25,7 +26,8 @@ fn expiry_waits_until_the_deadline_hour_has_closed() {
     with_storage(|storage, world| {
         let gem_id = mature_gem(storage, world);
         call_gem(storage, world, gem_id, T_NOW);
-        let hour_end = GemContract::hour_end(GemContract::deadline_hour(T_NOW + 7 * 86_400));
+        let hour_end =
+            GemContract::hour_end(GemContract::deadline_hour(T_NOW + 7 * SECONDS_PER_DAY));
 
         begin_block_at(storage, world, hour_end - 1);
         assert_eq!(gem_state(storage, world, gem_id), GemState::Called as u8);
@@ -46,7 +48,7 @@ fn forfeit_deletes_the_gem_body_and_returns_promis_load() {
         let load = item(&storage, &world, gem_id).unwrap().promis_load_minor;
         call_gem(&storage, &world, gem_id, T_NOW);
 
-        begin_block_at(&storage, &world, T_NOW + 6 * 86_400);
+        begin_block_at(&storage, &world, T_NOW + 6 * SECONDS_PER_DAY);
         assert!(
             item(&storage, &world, gem_id).is_some(),
             "inside the notice"
@@ -85,7 +87,7 @@ fn forfeiting_a_gem_returns_its_load_to_the_pool() {
         let load = item(storage, world, gem_id).unwrap().promis_load_minor;
         call_gem(storage, world, gem_id, T_NOW);
 
-        begin_block_at(storage, world, T_NOW + 6 * 86_400);
+        begin_block_at(storage, world, T_NOW + 6 * SECONDS_PER_DAY);
         assert_eq!(unallocated(storage), U256::ZERO);
 
         begin_block_at(storage, world, first_due_block(storage, world, gem_id));
@@ -125,7 +127,7 @@ fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_bucket() {
         let mut gem = GemContract::new(storage.clone());
         // A slot naming a bucket that is not there.
         let ghost = B256::repeat_byte(0xde);
-        let deadline = T_NOW + 7 * 86_400;
+        let deadline = T_NOW + 7 * SECONDS_PER_DAY;
         gem.push_called(ghost, deadline).unwrap();
         call_gem(storage, world, live, T_NOW);
         let day = GemContract::deadline_hour(deadline);
@@ -197,17 +199,17 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
         let gem_id = mature_gem(storage, world);
         let gem = GemContract::new(storage.clone());
         call_gem(storage, world, gem_id, T_NOW);
-        let deadline = T_NOW + 7 * 86_400;
+        let deadline = T_NOW + 7 * SECONDS_PER_DAY;
         let hour = GemContract::deadline_hour(deadline);
 
         let entry = bucket_of(storage, world, gem_id);
         gem.called_deadline
-            .write(&entry, deadline + 400 * 86_400)
+            .write(&entry, deadline + 400 * SECONDS_PER_DAY)
             .unwrap();
 
         begin_block_at(storage, world, GemContract::hour_end(hour));
 
-        let retry = GemContract::deadline_hour(deadline + 400 * 86_400);
+        let retry = GemContract::deadline_hour(deadline + 400 * SECONDS_PER_DAY);
         assert_eq!(
             gem.first_expiry_day().unwrap(),
             Some(retry),
@@ -230,7 +232,7 @@ fn forfeit_fails_once() -> (
         let gem_id = mature_gem(&storage, &world);
         let load = item(&storage, &world, gem_id).unwrap().promis_load_minor;
         call_gem(&storage, &world, gem_id, T_NOW);
-        let hour = GemContract::deadline_hour(T_NOW + 7 * 86_400);
+        let hour = GemContract::deadline_hour(T_NOW + 7 * SECONDS_PER_DAY);
         // The credit overflows, so the forfeit reverts as a whole.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
         limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
@@ -389,7 +391,7 @@ fn a_storage_fault_in_a_forfeit_fails_the_block() {
     let (gem_id, now) = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = mature_gem(&storage, &world);
         call_gem(&storage, &world, gem_id, T_NOW);
-        let now = GemContract::hour_end(GemContract::deadline_hour(T_NOW + 7 * 86_400));
+        let now = GemContract::hour_end(GemContract::deadline_hour(T_NOW + 7 * SECONDS_PER_DAY));
         (gem_id, now)
     });
 

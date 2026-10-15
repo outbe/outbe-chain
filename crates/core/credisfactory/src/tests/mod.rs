@@ -48,7 +48,7 @@ pub const ISSUANCE_ISO: u16 = 840;
 /// anchor is 2.0 and the call price is 3.28.
 pub const REFERENCE_ISO: u16 = 978;
 
-pub const DAY: u64 = 86_400;
+pub use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 
 /// Past any deadline by enough that the hour it falls in has closed.
 pub const HOUR: u64 = 3_600;
@@ -398,7 +398,7 @@ pub fn zero_word() -> Bytes {
 
 /// Positive Fidelity so `gratisfactory::pledge_gratis` clears the eligibility gate.
 pub fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
-    const ONE_YEAR_SECS: u64 = 365 * 86_400;
+    const ONE_YEAR_SECS: u64 = 365 * DAY;
     outbe_fidelity::api::cohort_in(
         storage,
         account,

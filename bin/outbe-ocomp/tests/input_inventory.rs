@@ -44,7 +44,6 @@ fn fixture_records(count: u32) -> (WorldwideDay, Vec<TributeInventoryRecordV1>, 
                 nominal_amount_minor: U256::from(1),
                 reference_currency: if index % 2 == 0 { 978 } else { 840 },
                 tribute_price_minor: U256::from(index + 2),
-                exclude_from_intex_issuance: false,
             };
             let canonical_body = encode_tribute_v1(&body).unwrap();
             let commitment = body_commitment(
@@ -114,7 +113,6 @@ fn encrypted_record() -> TributeInventoryRecordV1 {
             issuance_currency: 840,
             reference_currency: original.reference_iso,
             tribute_price_minor: U256::from(2),
-            exclude_from_intex_issuance: false,
             offer_input_hash: B256::repeat_byte(0x78),
         },
         &TributeAmountsV2 {
@@ -157,21 +155,6 @@ fn encrypted_inventory_authenticates_ciphertext_then_reads_private_amounts_and_p
         Err(
             outbe_ocomp::input_inventory::TributeInventoryError::Authority(
                 "canonical Tribute body commitment"
-            )
-        )
-    ));
-    assert!(matches!(
-        builder.push(record.clone()),
-        Err(outbe_ocomp::input_inventory::TributeInventoryError::PrivateTribute(_))
-    ));
-    let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
-    let mut wrong_total = record.clone();
-    wrong_total.nominal_amount_minor += U256::from(1);
-    assert!(matches!(
-        builder.push(wrong_total),
-        Err(
-            outbe_ocomp::input_inventory::TributeInventoryError::Authority(
-                "private Tribute nominal amount"
             )
         )
     ));

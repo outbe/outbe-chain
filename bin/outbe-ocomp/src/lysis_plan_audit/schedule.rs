@@ -88,8 +88,20 @@ impl VerifiedPlanSchedule<'_> {
                     self.push_primary_input_ref(index, &mut ordered_input_refs)?;
                 }
             }
-            UnitPhase::FixedReduce
-            | UnitPhase::GratisPrefix
+            UnitPhase::FixedReduce => {
+                if matches!(
+                    position,
+                    PlannedUnitPositionV1::TreeNode {
+                        level, index: 0, ..
+                    } if level == self.topology.tree().height()
+                ) {
+                    for ordinal in 0..self.plan.primary_work_unit_count {
+                        self.push_primary_input_ref(ordinal, &mut ordered_input_refs)?;
+                    }
+                    self.push_input_kind_refs(InputChunkKind::Fidelity, &mut ordered_input_refs)?;
+                }
+            }
+            UnitPhase::GratisPrefix
             | UnitPhase::GratisPrefixDown
             | UnitPhase::OutputFinalize
             | UnitPhase::BucketShuffle => {}

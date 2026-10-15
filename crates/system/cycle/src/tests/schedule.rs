@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn schedule_math_pinned_values() {
     // Daily, offset = 0 => first slot is `period_seconds`.
-    assert_eq!(next_fire_at(86_400, 0, 0), 86_400);
+    assert_eq!(next_fire_at(SECONDS_PER_DAY, 0, 0), SECONDS_PER_DAY);
     // Hourly @ :30 (offset = 1800), first slot at 1800.
     assert_eq!(next_fire_at(3_600, 1_800, 0), 1_800);
     // Hourly @ :30, last fired at 1800 => next at 5400.
@@ -19,15 +19,18 @@ fn schedule_math_pinned_values() {
     // 5-minute, offset = 0, last fired at 300 => next at 600.
     assert_eq!(next_fire_at(300, 0, 300), 600);
     // last well past first slot.
-    assert_eq!(next_fire_at(86_400, 0, 86_400 * 5), 86_400 * 6);
+    assert_eq!(
+        next_fire_at(SECONDS_PER_DAY, 0, 5 * SECONDS_PER_DAY),
+        6 * SECONDS_PER_DAY
+    );
 }
 
 #[test]
 fn schedule_math_aligned_property() {
     // (next - offset) % period == 0 for arbitrary inputs.
-    for &period in &[60u64, 300, 3_600, 86_400] {
+    for &period in &[60u64, 300, 3_600, SECONDS_PER_DAY] {
         for &offset in &[0u64, 1, 7, period - 1] {
-            for &last in &[0u64, 1, 100, 86_400, 86_400 * 365] {
+            for &last in &[0u64, 1, 100, SECONDS_PER_DAY, 365 * SECONDS_PER_DAY] {
                 let next = next_fire_at(period, offset, last);
                 assert!(next > last, "p={period} o={offset} l={last} n={next}");
                 assert!(next >= offset);

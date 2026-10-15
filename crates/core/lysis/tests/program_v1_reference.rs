@@ -41,7 +41,6 @@ struct CorpusTribute {
     nominal: String,
     reference_currency: u16,
     tribute_price: String,
-    excluded: bool,
     f1: Option<u16>,
     f2: Option<u16>,
     entry_price: Option<String>,
@@ -95,7 +94,6 @@ fn program_input(input: &CorpusInput) -> ProgramInputV1 {
                     nominal_amount_minor: u256(&tribute.nominal),
                     reference_currency: tribute.reference_currency,
                     tribute_price_minor: u256(&tribute.tribute_price),
-                    exclude_from_intex_issuance: tribute.excluded,
                 },
                 first_league: observed_value(tribute.f1),
                 second_league: observed_value(tribute.f2),
@@ -261,13 +259,6 @@ fn failure_json(error: ProgramErrorV1) -> Value {
     json!({"status": "FAILURE", "error": fields})
 }
 
-fn without_contributor_publication(mut expected: Value) -> Value {
-    if let Some(object) = expected.as_object_mut() {
-        object.remove("contributors");
-    }
-    expected
-}
-
 fn execute_json(input: &CorpusInput) -> Value {
     match execute(program_input(input)) {
         Ok(result) => success_json(input, result),
@@ -287,7 +278,7 @@ fn independent_reference_corpus_and_native_program_match() {
         );
         assert_eq!(
             execute_json(&case.input),
-            without_contributor_publication(case.expected),
+            case.expected,
             "native/reference mismatch for {}",
             case.case_id
         );
@@ -374,7 +365,6 @@ fn boundary_record_counts_keep_raw_id_order() {
                         nominal_amount_minor: U256::from(1_000_000_u64) * SCALE_1E6_U256,
                         reference_currency: 840,
                         tribute_price_minor: U256::ZERO,
-                        exclude_from_intex_issuance: false,
                     },
                     first_league: ObservationValueV1::Value((ordinal % 15 + 1) as u16),
                     second_league: ObservationValueV1::Value((ordinal % 15 + 1) as u16),

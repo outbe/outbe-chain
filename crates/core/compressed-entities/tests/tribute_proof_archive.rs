@@ -31,7 +31,6 @@ fn frozen_inventory_proofs_survive_reopen_and_reject_substituted_bodies() {
                     issuance_currency: 840,
                     reference_currency: 840,
                     tribute_price_minor: U256::from(1_000_000),
-                    exclude_from_intex_issuance: false,
                     offer_input_hash: B256::from(U256::from(index)),
                 },
                 encrypted_creator_public_key: immutable(56),

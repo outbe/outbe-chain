@@ -1,6 +1,8 @@
 //! What an Intex supplies to the shared lifecycle: four series of one day on two chains.
 //! Two are paid in two parts each, one runs out after a partial payment, one is untouched.
 
+use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -106,7 +108,11 @@ fn issue_four_series(world: &mut World) {
     // The day therefore has to be opened before anything can be issued into it.
     // Issued into a day already behind us. The call sweep counts breach days only
     // from the issuance day forward, and only closed days exist to count.
-    let day = chain_worldwide_day_offset(world, port, -(i64::from(CALL_LOOKBACK_DAYS) * 86_400));
+    let day = chain_worldwide_day_offset(
+        world,
+        port,
+        -i64::from(CALL_LOOKBACK_DAYS * SECONDS_PER_DAY_U32),
+    );
     let now = u32::try_from(head_time(world)).expect("timestamp fits a uint32");
     test_issuance::open_day(
         &url,
@@ -127,8 +133,10 @@ fn issue_four_series(world: &mut World) {
         DEPLOYER_KEY,
         day,
         // Issuance is stamped where the seeded days already lie behind it.
-        u32::try_from(head_time(world).saturating_sub(u64::from(CALL_LOOKBACK_DAYS) * 86_400))
-            .expect("backdated stamp fits a uint32"),
+        u32::try_from(
+            head_time(world).saturating_sub(u64::from(CALL_LOOKBACK_DAYS) * SECONDS_PER_DAY),
+        )
+        .expect("backdated stamp fits a uint32"),
         USD_ISO,
         REFERENCE_BYTE,
         U256::from(ENTRY_PRICE_MINOR),

@@ -41,7 +41,6 @@ fn materialization_binds_current_authority_and_exact_authenticated_source() {
         issuance_currency: 840,
         reference_currency: 978,
         tribute_price_minor: U256::ONE,
-        exclude_from_intex_issuance: false,
         offer_input_hash: B256::repeat_byte(5),
     };
     let amounts = TributeAmountsV2 {
@@ -96,6 +95,7 @@ fn materialization_binds_current_authority_and_exact_authenticated_source() {
         head: head.encode_canonical(&limits).unwrap(),
         subtree_height: 3,
         sealed_tribute_root: source_root,
+        nod_gratis_load_max: U256::from(100),
     };
     let request = PrepareEncryptedNodsRequestV2 {
         authority: authority.clone(),
@@ -112,7 +112,29 @@ fn materialization_binds_current_authority_and_exact_authenticated_source() {
     let carrier = prepare(&secret, &request).unwrap();
     assert_eq!(carrier, prepare(&secret, &request).unwrap());
     let nods = open(&secret, &authority, &carrier).unwrap();
-    assert_eq!(decrypt_nod(&secret, &nods[0]).unwrap(), U256::from(123));
+    assert_eq!(decrypt_nod(&secret, &nods[0]).unwrap(), U256::from(100));
+    for cap in [U256::from(99), U256::from(101)] {
+        let mut forged = request.clone();
+        forged.authority.nod_gratis_load_max = cap;
+        let forged_carrier = prepare(&secret, &forged).unwrap();
+        assert!(open(&secret, &authority, &forged_carrier).is_err());
+    }
+    for cap in [U256::from(123), U256::from(124)] {
+        let mut uncapped = request.clone();
+        uncapped.authority.nod_gratis_load_max = cap;
+        let carrier = prepare(&secret, &uncapped).unwrap();
+        let nods = open(&secret, &uncapped.authority, &carrier).unwrap();
+        assert_eq!(decrypt_nod(&secret, &nods[0]).unwrap(), U256::from(123));
+    }
+    let mut zero_cap = request.clone();
+    zero_cap.authority.nod_gratis_load_max = U256::ZERO;
+    assert!(prepare(&secret, &zero_cap).is_err());
+    let mut old_authority = serde_json::to_value(&authority).unwrap();
+    old_authority
+        .as_object_mut()
+        .unwrap()
+        .remove("nod_gratis_load_max");
+    assert!(serde_json::from_value::<NodMaterializationAuthorityV2>(old_authority).is_err());
     let mut stale = authority.clone();
     stale.sealed_tribute_root = B256::repeat_byte(99);
     assert!(open(&secret, &stale, &carrier).is_err());

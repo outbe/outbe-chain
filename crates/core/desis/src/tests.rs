@@ -6,6 +6,7 @@ use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::units::{NATIVE_UNITS_PER_PROTOCOL_UNIT, SCALE_1E6_U128};
 
@@ -32,7 +33,7 @@ const SRC_CHAIN: u32 = 1;
 /// Block timestamp the tests brief at: just after a midnight, so the brief
 /// anchors to that same midnight (the normal on-time case).
 const NOW: u64 = 1_699_920_000 + 5;
-const ANCHOR: u64 = NOW - NOW % 86_400;
+const ANCHOR: u64 = NOW - NOW % SECONDS_PER_DAY;
 const ENTRY_PRICE: u128 = 2_000_000; // 2.0 on the COEN/840 scale; escrow basis = promis_load
 /// The load any first priced brief picks, pinned by `the_fixture_load_is_the_one_the_ladder_picks`.
 const LOAD_MINOR: u128 = 100_000 * PROMIS_LOAD_MINOR;
@@ -266,7 +267,7 @@ fn with_targets<R>(chains: &[u32], f: impl FnOnce(StorageHandle) -> R) -> R {
         // A day is priced when its auction starts, so every day a start can land on
         // needs a price here. A day briefed later reads a later one.
         for day in 0..5 {
-            seed_rate(&handle, NOW + day * 86_400, ENTRY_PRICE);
+            seed_rate(&handle, NOW + day * SECONDS_PER_DAY, ENTRY_PRICE);
         }
         f(handle)
     })
@@ -369,19 +370,19 @@ fn brief(s: &StorageHandle, green: bool) {
 fn open_revealing(s: &StorageHandle) {
     brief(s, true);
     runtime::schedule_tick(s, NOW).unwrap();
-    runtime::schedule_tick(s, ANCHOR + 86_400).unwrap();
+    runtime::schedule_tick(s, ANCHOR + SECONDS_PER_DAY).unwrap();
 }
 
 /// The reveal-end tick: arms the clearing gate from the briefed Desis Limit.
 fn arm_clearing(s: &StorageHandle) {
-    runtime::schedule_tick(s, ANCHOR + 2 * 86_400).unwrap();
+    runtime::schedule_tick(s, ANCHOR + 2 * SECONDS_PER_DAY).unwrap();
 }
 
 /// Brief `units` whole Intex units and drive the schedule until the gate is armed.
 fn open_clearing(s: &StorageHandle, units: u128) {
     brief_at(s, WORLDWIDE_DAY, units * LOAD_MINOR, true);
     runtime::schedule_tick(s, NOW).unwrap();
-    runtime::schedule_tick(s, ANCHOR + 86_400).unwrap();
+    runtime::schedule_tick(s, ANCHOR + SECONDS_PER_DAY).unwrap();
     arm_clearing(s);
 }
 
@@ -485,7 +486,7 @@ fn dispatch_auction_brief_records_the_brief() {
         assert_eq!(contract.brief_green.read(&WORLDWIDE_DAY).unwrap(), 1);
         assert_eq!(
             u64::from(contract.auction_at.read(&WORLDWIDE_DAY).unwrap()),
-            NOW - NOW % 86_400
+            NOW - NOW % SECONDS_PER_DAY
         );
         assert_eq!(contract.sched_active_count.read().unwrap(), 1);
         assert_eq!(
@@ -1193,7 +1194,7 @@ fn a_late_ocomp_brief_cancels_its_day() {
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_brief_past_the_issuance_window_is_still_a_late_start() {
-    let outcome = start_at(ANCHOR + 3 * 86_400, true, ocomp_brief_at_now);
+    let outcome = start_at(ANCHOR + 3 * SECONDS_PER_DAY, true, ocomp_brief_at_now);
     assert_eq!(
         outcome,
         (AuctionStage::Cancelled, U256::from(10 * LOAD_MINOR), true)
@@ -1205,7 +1206,7 @@ fn a_brief_past_the_issuance_window_is_still_a_late_start() {
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_briefed_day_the_router_never_takes_is_retired_past_its_issuance_window() {
-    let outcome = start_at(ANCHOR + 3 * 86_400, false, ocomp_brief_at_now);
+    let outcome = start_at(ANCHOR + 3 * SECONDS_PER_DAY, false, ocomp_brief_at_now);
     assert_eq!(
         outcome,
         (AuctionStage::Cancelled, U256::from(10 * LOAD_MINOR), false)
@@ -1283,7 +1284,7 @@ fn schedule_flips_to_revealing_at_commit_end() {
     with_storage(|s| {
         brief(&s, true);
         runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
@@ -1298,8 +1299,8 @@ fn schedule_arms_the_clearing_gate_at_reveal_end() {
     with_storage(|s| {
         brief(&s, true);
         runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 2 * 86_400).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 2 * SECONDS_PER_DAY).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
@@ -1316,7 +1317,7 @@ fn schedule_arms_the_clearing_gate_at_reveal_end() {
         assert_eq!(contract.gate_active_count.read().unwrap(), 1);
         assert_eq!(
             contract.clearing_deadline.read(&WORLDWIDE_DAY).unwrap(),
-            ANCHOR + 2 * 86_400 + crate::constants::BIDS_FANIN_TIMEOUT_SECS
+            ANCHOR + 2 * SECONDS_PER_DAY + crate::constants::BIDS_FANIN_TIMEOUT_SECS
         );
     });
 }
@@ -1326,7 +1327,7 @@ fn schedule_catches_up_over_missed_ticks() {
     with_storage(|s| {
         brief(&s, true);
         runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 2 * 86_400 + 3600).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 2 * SECONDS_PER_DAY + 3600).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
@@ -1355,7 +1356,7 @@ fn schedule_cancels_a_missed_start() {
     use outbe_promislimit::PromisLimitContract;
     with_storage(|s| {
         brief(&s, true);
-        runtime::schedule_tick(&s, ANCHOR + 86_400 + 3600).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY + 3600).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
@@ -1388,7 +1389,7 @@ fn schedule_retires_an_overdue_day() {
         use outbe_promislimit::PromisLimitContract;
         brief(&s, true);
         runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 3 * 86_400).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 3 * SECONDS_PER_DAY).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(contract.sched_active_count.read().unwrap(), 0);
         assert_eq!(contract.gate_active_count.read().unwrap(), 0);
@@ -1425,11 +1426,11 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
             100 * LOAD_MINOR,
             10 * ENTRY_PRICE,
             true,
-            NOW + 86_400,
+            NOW + SECONDS_PER_DAY,
         );
-        runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 2 * 86_400).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 3 * 86_400).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 2 * SECONDS_PER_DAY).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 3 * SECONDS_PER_DAY).unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(
@@ -1925,7 +1926,7 @@ fn an_overdue_day_records_a_zero_desis_allocation() {
     StorageHandle::enter(&mut storage, |s| {
         brief(&s, true);
         runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 3 * 86_400).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 3 * SECONDS_PER_DAY).unwrap();
     });
 
     let records =
@@ -2193,7 +2194,7 @@ fn clearing_returns_the_unused_limit_and_dust_to_promis() {
     with_storage(|s| {
         brief_at(&s, WORLDWIDE_DAY, 3 * LOAD_MINOR + 7, true);
         runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         arm_clearing(&s);
         runtime::process_bids_batch(
             s.clone(),
@@ -2420,7 +2421,7 @@ fn force_clear_skips_missing_chain_after_deadline() {
         .unwrap();
         mark_done(&s, chain_a, 1, 1);
         // Past the deadline the gate clears without chain B.
-        let deadline = ANCHOR + 2 * 86_400 + crate::constants::BIDS_FANIN_TIMEOUT_SECS;
+        let deadline = ANCHOR + 2 * SECONDS_PER_DAY + crate::constants::BIDS_FANIN_TIMEOUT_SECS;
         let result = runtime::force_clear(s.clone(), WORLDWIDE_DAY, deadline + 1).unwrap();
         assert!(result.is_some());
         let result = result.unwrap();
@@ -2545,7 +2546,7 @@ fn open_clearing_priced(s: &StorageHandle, units: u128, references: &[u16]) {
         );
     }
     runtime::schedule_tick(s, NOW).unwrap();
-    runtime::schedule_tick(s, ANCHOR + 86_400).unwrap();
+    runtime::schedule_tick(s, ANCHOR + SECONDS_PER_DAY).unwrap();
     arm_clearing(s);
 }
 
@@ -2807,7 +2808,7 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
         unprice_day(&s, NOW);
 
         runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(

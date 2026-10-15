@@ -14,6 +14,8 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{first_full_day, previous_date_key, timestamp_to_date_key};
 
 use outbe_gem::api;
@@ -32,7 +34,7 @@ pub(crate) const USD: u16 = 840;
 pub(crate) const EUR: u16 = 978;
 
 /// Two days after the sample gems were issued: the day before it they held in full.
-pub(crate) const QUALIFY_TS: u64 = T_NOW + 2 * 86_400;
+pub(crate) const QUALIFY_TS: u64 = T_NOW + 2 * SECONDS_PER_DAY;
 
 /// One block's worth of compressed-entity authority: the executor scope and the
 /// finalized parent bodies. Tests never cross a block, so the overlay is the truth.
@@ -235,7 +237,7 @@ pub(crate) fn seed_currency(storage: &StorageHandle, iso_code: u16, rate: Option
 pub(crate) fn priced_window(storage: &StorageHandle, pair: u32, latest: u32, vwap: U256) {
     let oracle = OracleContract::new(storage.clone());
     let mut day = latest;
-    for _ in 0..(outbe_gem::constants::CALL_WINDOW / 86_400) {
+    for _ in 0..(outbe_gem::constants::CALL_WINDOW / SECONDS_PER_DAY_U32) {
         oracle.record_utc_day_vwap(day, pair, vwap).unwrap();
         day = previous_date_key(day);
     }
@@ -251,7 +253,7 @@ pub(crate) fn breach_window(
     breach: U256,
     breach_days: usize,
 ) -> outbe_oracle::call_window::CallWindow {
-    let window_days = (outbe_gem::constants::CALL_WINDOW / 86_400) as usize;
+    let window_days = (outbe_gem::constants::CALL_WINDOW / SECONDS_PER_DAY_U32) as usize;
     let mut window = Vec::with_capacity(window_days);
     let mut day = timestamp_to_date_key(now);
     for i in 0..window_days {
@@ -261,7 +263,7 @@ pub(crate) fn breach_window(
     }
     outbe_oracle::call_window::CallWindow::from_vwaps(
         window,
-        outbe_gem::constants::CALL_THRESHOLD / 86_400,
+        outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32,
     )
 }
 
@@ -296,7 +298,7 @@ pub(crate) fn begin_block_at(storage: &StorageHandle, world: &World, ts: u64) {
 pub(crate) fn mature_gem(storage: &StorageHandle, world: &World) -> U256 {
     set_profile(storage, outbe_gem::config::PROFILE_PROD);
     let mut p = sample_params(ALICE);
-    p.issued_at = T_NOW - 100 * 86_400;
+    p.issued_at = T_NOW - 100 * SECONDS_PER_DAY;
     add(storage, world, p)
 }
 

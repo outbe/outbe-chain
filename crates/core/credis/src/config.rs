@@ -5,8 +5,9 @@
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
-use crate::constants::{CALL_NOTICE_PERIOD, CALL_THRESHOLD, CALL_WINDOW, SECS_PER_DAY};
+use crate::constants::{CALL_NOTICE_PERIOD, CALL_THRESHOLD, CALL_WINDOW};
 use crate::errors::CredisError;
 use crate::schema::CredisContract;
 
@@ -30,10 +31,10 @@ impl CredisParams {
 
     /// Short terms for dev and test networks, as the other rights run them.
     pub const DEV: Self = Self {
-        call_window_seconds: 3 * SECS_PER_DAY,
-        call_threshold_seconds: 2 * SECS_PER_DAY,
+        call_window_seconds: 3 * SECONDS_PER_DAY_U32,
+        call_threshold_seconds: 2 * SECONDS_PER_DAY_U32,
         #[cfg(not(feature = "e2e-test"))]
-        call_notice_period_seconds: 3 * SECS_PER_DAY,
+        call_notice_period_seconds: 3 * SECONDS_PER_DAY_U32,
         #[cfg(feature = "e2e-test")]
         call_notice_period_seconds: 600,
     };

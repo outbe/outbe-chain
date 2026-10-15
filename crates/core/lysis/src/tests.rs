@@ -30,7 +30,10 @@ fn seed_entry_prices(storage: &StorageHandle<'_>, now: u64, iso: u16, vwap: U256
     {
         oracle.reference_currencies.push(iso).unwrap();
     }
-    oracle.config_lookback_duration.write(86_400).unwrap();
+    oracle
+        .config_lookback_duration
+        .write(SECONDS_PER_DAY)
+        .unwrap();
     oracle.exchange_rate.write(&index, current).unwrap();
     let previous_day = previous_date_key(timestamp_to_date_key(now));
     oracle
@@ -126,7 +129,10 @@ fn entry_price_map_prices_every_available_currency_from_the_closed_day() {
                     .unwrap();
             }
         }
-        oracle.config_lookback_duration.write(86_400).unwrap();
+        oracle
+            .config_lookback_duration
+            .write(SECONDS_PER_DAY)
+            .unwrap();
         for (time, usd_price, eur_price, volume) in [
             (start - 1, 900, 900, 10),
             (start, 100, 50, 1),
