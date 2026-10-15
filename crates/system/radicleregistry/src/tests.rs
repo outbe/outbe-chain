@@ -13,6 +13,8 @@ use crate::{
 
 const CHAIN_ID: u64 = 1;
 
+mod patch_vote;
+
 fn repo(byte: u8) -> FixedBytes<20> {
     FixedBytes::repeat_byte(byte)
 }
@@ -125,6 +127,8 @@ fn storage_layout_slots_zero_through_five_are_stable() {
         assert_eq!(registry.repository_registrant.base_slot(), U256::from(3));
         assert_eq!(registry.registry_generation.slot(), U256::from(4));
         assert_eq!(registry.config_max_repositories.slot(), U256::from(5));
+        assert_eq!(registry.patch_approvals.base_slot(), U256::from(6));
+        assert_eq!(registry.patch_execution_stage.base_slot(), U256::from(9));
     });
 }
 

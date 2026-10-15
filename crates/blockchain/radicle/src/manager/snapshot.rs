@@ -1,6 +1,6 @@
 use super::types::{
-    BoxFuture, FinalizedBlock, FinalizedFeed, FinalizedSnapshot, FinalizedValidator, ManagerError,
-    SnapshotReader,
+    BoxFuture, FinalizedBlock, FinalizedFeed, FinalizedPatchApproval, FinalizedSnapshot,
+    FinalizedValidator, ManagerError, SnapshotReader,
 };
 use crate::endpoint::PeerId;
 use alloy_primitives::{Address, B256, U256};
@@ -35,6 +35,71 @@ impl<P> RethSnapshotReader<P> {
             chain_id,
             genesis_hash,
         }
+    }
+}
+
+impl<P: StateProviderFactory> RethSnapshotReader<P> {
+    /// Reads an exact canonical finalized snapshot, never latest or pending state.
+    pub fn read_patch_approval(
+        &self,
+        block: FinalizedBlock,
+        proposal_id: U256,
+    ) -> Result<Option<FinalizedPatchApproval>, ManagerError> {
+        let finalized = self
+            .provider
+            .finalized_block_num_hash()
+            .map_err(ManagerError::provider)?
+            .ok_or_else(|| ManagerError::Finality("no finalized block".into()))?;
+        if block.number > finalized.number
+            || self
+                .provider
+                .block_hash(block.number)
+                .map_err(ManagerError::provider)?
+                != Some(block.hash)
+            || self
+                .provider
+                .block_hash(finalized.number)
+                .map_err(ManagerError::provider)?
+                != Some(finalized.hash)
+        {
+            return Err(ManagerError::Finality(
+                "patch approval requires a canonical finalized block".into(),
+            ));
+        }
+        let state = self
+            .provider
+            .state_by_block_hash(block.hash)
+            .map_err(ManagerError::provider)?;
+        read_patch_approval_from_storage(
+            RethStateReader {
+                state: state.as_ref(),
+            },
+            self.chain_id,
+            self.genesis_hash,
+            block,
+            proposal_id,
+        )
+    }
+}
+
+fn read_patch_approval_from_storage(
+    reader: impl StorageReader,
+    chain_id: u64,
+    genesis_hash: B256,
+    block: FinalizedBlock,
+    proposal_id: U256,
+) -> Result<Option<FinalizedPatchApproval>, ManagerError> {
+    let mut storage =
+        ReadOnlyStorageProvider::new_with_chain_identity(reader, chain_id, genesis_hash);
+    let approval = RadicleRegistry::new(StorageHandle::new(&mut storage))
+        .patch_approval(proposal_id)
+        .map_err(snapshot_error)?;
+    match approval {
+        Some(approval) if approval.approved_height > block.number => Err(ManagerError::Snapshot(
+            "approval is newer than its source snapshot".into(),
+        )),
+        Some(approval) => Ok(Some(FinalizedPatchApproval { block, approval })),
+        None => Ok(None),
     }
 }
 
@@ -140,6 +205,9 @@ impl StorageReader for RethStateReader<'_> {
 fn snapshot_error(error: impl std::fmt::Display) -> ManagerError {
     ManagerError::Snapshot(error.to_string())
 }
+
+#[cfg(test)]
+mod approval_tests;
 
 #[derive(Clone)]
 pub struct RethFinalizedFeed<P> {

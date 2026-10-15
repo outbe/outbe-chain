@@ -9591,6 +9591,7 @@ name = "outbe-radicle"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips",
  "alloy-primitives",
  "bytes",
  "commonware-actor",
@@ -9607,11 +9608,13 @@ dependencies = [
  "outbe-primitives",
  "outbe-radicleregistry",
  "outbe-validatorset",
+ "outbe-vote",
  "parking_lot",
  "proptest",
  "rand_core 0.6.4",
  "reqwest 0.12.28",
  "reth-chain-state",
+ "reth-chainspec",
  "reth-provider",
  "reth-storage-api",
  "serde",
@@ -9653,6 +9656,10 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-validatorset",
+ "outbe-vote",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 

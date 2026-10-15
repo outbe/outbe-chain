@@ -19,6 +19,14 @@ pub enum RadicleRegistryError {
     NonZeroStorageKeyTail,
     #[error("Radicle repository index {index} is inconsistent")]
     InconsistentRepositoryIndex { index: u32 },
+    #[error("invalid or noncanonical Radicle patch Vote payload")]
+    InvalidPatchPayload,
+    #[error("Radicle patch Vote repository is not registered")]
+    UnknownRepository,
+    #[error("Radicle patch approval does not match the stored Vote proposal")]
+    ApprovalProposalMismatch,
+    #[error("Radicle patch approval is immutable")]
+    ImmutableApproval,
 }
 
 impl From<RadicleRegistryError> for PrecompileError {

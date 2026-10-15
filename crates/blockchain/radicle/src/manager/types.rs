@@ -15,6 +15,12 @@ pub struct FinalizedBlock {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedPatchApproval {
+    pub block: FinalizedBlock,
+    pub approval: outbe_radicleregistry::PatchApprovalRecord,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinalizedValidator {
     pub address: Address,
     pub peer: PeerId,

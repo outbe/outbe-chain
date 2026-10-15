@@ -34,6 +34,10 @@ tokio.workspace = true
 metrics.workspace = true
 
 [dev-dependencies]
+outbe-vote.workspace = true
+alloy-eips.workspace = true
+reth-chainspec.workspace = true
+reth-provider = { workspace = true, features = ["test-utils"] }
 hex.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 proptest.workspace = true

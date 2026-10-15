@@ -177,6 +177,7 @@ impl Storable for VoteRecord {
 ///   10: proposal_bond_amount: mapping(proposalId => amount)
 ///   11: proposal_bond_settlement: mapping(proposalId => BondSettlement)
 ///   12: unsettled_bond_liabilities
+///   13: proposal_electorate: mapping(proposalId => TargetElectorate)
 #[storage_schema]
 #[contract(addr = VOTE_ADDRESS)]
 pub struct Vote {
@@ -214,4 +215,8 @@ pub struct Vote {
     /// Aggregate amount of all proposal bonds whose settlement is `Unsettled`.
     #[attribute(order = 7)]
     pub unsettled_bond_liabilities: outbe_primitives::storage::dsl::Value<U256>,
+
+    /// Immutable target policy; absent legacy values select ACTIVE-only voting.
+    #[attribute(order = 8)]
+    pub proposal_electorate: outbe_primitives::storage::dsl::Map<U256, u8>,
 }

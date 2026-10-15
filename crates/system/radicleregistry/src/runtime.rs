@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, FixedBytes, B256};
+use alloy_primitives::{Address, FixedBytes, B256, U256};
 use outbe_primitives::error::Result;
 
 use crate::{errors::RadicleRegistryError, precompile::IRadicleRegistry, schema::RadicleRegistry};
@@ -26,6 +26,29 @@ pub fn repo_id_from_storage_key(key: B256) -> Result<RepoId> {
 }
 
 impl RadicleRegistry<'_> {
+    /// Only a terminal Approved Vote exposes an immutable network permission.
+    /// Consumers must obtain this record from their exact finalized snapshot.
+    pub fn patch_approval(&self, proposal_id: U256) -> Result<Option<crate::PatchApprovalRecord>> {
+        let Some(approval) = self.patch_approvals.get(proposal_id)? else {
+            return Ok(None);
+        };
+        let proposal = outbe_vote::Vote::new(self.storage.clone())
+            .proposals
+            .get(proposal_id)?
+            .ok_or(RadicleRegistryError::ApprovalProposalMismatch)?;
+        if proposal.proposal_status()? != outbe_vote::ProposalStatus::Approved {
+            return Ok(None);
+        }
+        if proposal.target_module != outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS
+            || proposal.payload != approval.payload
+            || approval.approved_height <= proposal.voting_deadline_height
+        {
+            return Err(RadicleRegistryError::ApprovalProposalMismatch.into());
+        }
+        crate::payload::PatchVotePayloadV1::decode(approval.payload.as_bytes())?;
+        Ok(Some(approval))
+    }
+
     pub fn register_repository(
         &mut self,
         repo_id: RepoId,
