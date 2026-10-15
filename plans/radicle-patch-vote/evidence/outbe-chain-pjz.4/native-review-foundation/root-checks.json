@@ -1,0 +1,103 @@
+{
+  "source_sha": "1341e6de4c5cf42f7dcbfa575b2c0b8b82a9323d",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4"
+  },
+  "spec_sha256": {
+    "plans/radicle-patch-vote/design.md": "dc9fd94ad85704057e284b374e0da27d7e0398546790ab1a202b2a9270e86df8",
+    "plans/radicle-patch-vote/task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+    "plans/radicle-patch-vote/plan.md": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b"
+  },
+  "checks": [
+    {
+      "name": "review",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "integration::review::tests",
+        "--",
+        "--nocapture"
+      ],
+      "start_utc": "2026-10-15T18:37:34.634465+00:00",
+      "end_utc": "2026-10-15T18:37:43.666726+00:00",
+      "exit_code": 0,
+      "log": "review.log",
+      "sha256": "f0ea1c059bc715dd0a2bb5b2bf501e48b606cc2298cddb762024b7c388fb8938"
+    },
+    {
+      "name": "repository",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-consensus",
+        "--lib",
+        "repository_",
+        "--",
+        "--nocapture"
+      ],
+      "start_utc": "2026-10-15T18:37:43.667154+00:00",
+      "end_utc": "2026-10-15T18:38:08.807038+00:00",
+      "exit_code": 0,
+      "log": "repository.log",
+      "sha256": "8a5a68dadd5ac0b1487102242cae7261f4ad931628f049d4742159163d130f07"
+    },
+    {
+      "name": "hybrid",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-consensus",
+        "--lib",
+        "hybrid::",
+        "--",
+        "--nocapture"
+      ],
+      "start_utc": "2026-10-15T18:38:08.807503+00:00",
+      "end_utc": "2026-10-15T18:38:10.204956+00:00",
+      "exit_code": 0,
+      "log": "hybrid.log",
+      "sha256": "702fdb477b41797b6221b6d0f1d3494dcd1fc612000281cb2360f49ff842f528"
+    },
+    {
+      "name": "root-clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-consensus",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "start_utc": "2026-10-15T18:38:10.205270+00:00",
+      "end_utc": "2026-10-15T18:38:16.638413+00:00",
+      "exit_code": 0,
+      "log": "root-clippy.log",
+      "sha256": "0c150233ba7073c1c68a1be7540e322e617997538d261b04c9e56433c29137b7"
+    }
+  ]
+}

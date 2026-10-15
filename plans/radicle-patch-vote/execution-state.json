@@ -1,11 +1,11 @@
 {
   "feature": "outbe-chain-pjz",
-  "goal_status": "active",
+  "goal_status": "paused",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-15T17:18:14Z",
-  "next_periodic_report_due_utc": "2026-10-15T17:48:14Z",
+  "last_periodic_report_utc": "2026-10-15T18:37:35Z",
+  "next_periodic_report_due_utc": "2026-10-15T19:07:35Z",
   "period_minutes": 30,
-  "stage": "P2 current-entry local/draft publication verifier, static patch cache/reopen/rebuild and missing-policy receiver rejection verified; P2 incomplete",
+  "stage": "Threshold repository signer/recovery and exact finalized-approval Review/signed-refs preparation implemented; production post-finality collector/current-set wiring incomplete",
   "decision_gate": {
     "id": "D1",
     "status": "historical_approval_request_withdrawn; no active user approval question",
@@ -20,11 +20,11 @@
   },
   "acceptance": "P0/P1/P5 closed; P2 incomplete; P3/P4/P6/P7/P8 incomplete",
   "last_periodic_report": {
-    "completed": "P2 actual receiver static BLS patch cache write/reopen/rebuild before and after BLS Review and rejected forged refs; current-entry local/draft writer guard with existing native/document verifiers; fresh managed receiver persisted-marker missing-provider rejection; actual Ed current/legacy peers",
-    "proof": "0dbd83c40:670 native tests,full vendor workspace/all-target Clippy -D warnings/fmt and both actual Ed peers PASS. Same production source53f369ff5:670 native+2 CLI+10 sidecar,root consumers and vendor lint/fmt PASS. Initial3c9637afa test-path compile failure preserved FAIL. Intermediate evidence only.",
-    "tasks": "P0/P1/P5 closed verified in Beads; P2 in_progress; P3/P4/P6-P8 open",
-    "limitations": "P2 full managed promotion/closure/cache provenance incomplete; no P2 acceptance reviews, no P3/P4/P6-P8 completion; D2 excluded, no active approval question",
-    "next": "Continue only specified remaining managed admission/cache provenance paths before full P2 evidence/reviews"
+    "completed": "Reverted additional native COB fetch gate in 0f9e5fa495; source1341e6de4 adds current-version fixed-domain threshold sign/recovery, pinned native Review preparation, exact OPJ1 contexts and owner refs preparation. Real DKG resharing fixture rejects old/mixed polynomial partials while historic native signature verifies.",
+    "proof": "Development: 416 radicle/radicle-cob tests, 41 Hybrid/VRF tests, 3 threshold/reshare tests, native Review/sigrefs integration and P0 context vector tests, scoped Clippy/fmt passed. Frozen commit checks running in evidence/outbe-chain-pjz.4/native-review-foundation; not task acceptance.",
+    "tasks": "P0/P1/P5 closed; P2/P3/P4/P6/P7/P8 incomplete; no acceptance review or closure claimed for this slice",
+    "limitations": "Actual post-finality current-set authorization, bounded authenticated partial exchange, checkpoint publication/production collector, genesis bootstrap and final end-to-end feature remain incomplete; old-share revocation at receiver is not proved by low-level signer tests.",
+    "next": "Complete exact-source evidence, then connect authenticated current finalized DKG material and the post-finality signing/collector path within the approved plan."
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
@@ -37,7 +37,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "0dbd83c40ace71773a0e358809bd2f1876c18f37",
+  "source_sha": "1341e6de4c5cf42f7dcbfa575b2c0b8b82a9323d",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -56,7 +56,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "Tracked source clean at0dbd83c40; production current-entry writer gate3c9637afa corrected test53f369ff5; test-only receiver extension0dbd83c40; no D2 production changes",
+  "current_source_changes": "Committed1341e6de4 native Review/threshold foundation on rollback0f9e5fa495; git.rs/radicle-fetch state.rs/git/cob.rs retain the requested c11c37e2a rollback bytes. No additional fetch gate restored.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -72,7 +72,11 @@
   },
   "scope_control": {
     "D2": "excluded from implementation per explicit user correction; no D2 production changes; do not investigate or dispatch reviews",
-    "next": "P2 remaining specified managed admission and cache receipt provenance; no new goals or storage architecture",
-    "constraint": "No new architecture or deliverable outside approved P0-P8"
-  }
+    "next": "Only approved direct Vote -> BLS Review -> signed refs and normal announcement/synchronization; actual current-set authorization and collector per P3/P6. No D2 or additional git.rs fetch gate.",
+    "constraint": "No new architecture or deliverable outside approved P0-P8",
+    "user_correction": "Latest user accepted direct native Review flow after rollback/studying code. Do not replace ordinary Radicle synchronization or add a separate Git storage/fetch admission redesign."
+  },
+  "execution_authorization": "Direct user request: да все верно реализауй; continue the approved Vote -> threshold BLS Review -> native signed refs/announcement path. Goal API remains paused; no replacement goal.",
+  "foundation_evidence": "evidence/outbe-chain-pjz.4/native-review-foundation",
+  "foundation_checks": "All frozen1341e6de4 commands exit0:2 native Review/P0 vector,3 threshold/reshare,41 Hybrid,404+12 native lib tests; scoped root/native Clippy and vendor workspace fmt. Intermediate evidence only."
 }
