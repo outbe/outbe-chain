@@ -78,6 +78,7 @@ mod tests;
 pub use client::{IOracle, ITributeFactory, Rpc, TxOutcome};
 pub use compressed_entities::CompressedEntityAtHeader;
 pub use finality::{BlockCommitmentV1, FinalizedCheckpoint};
+pub use governance::StablecoinProposal;
 pub use materialization::NodMaterializationObservationV1;
 pub use metadosis::{
     MetadosisWorldwideDayStartedV1, MetadosisWorldwideDayStateV1,

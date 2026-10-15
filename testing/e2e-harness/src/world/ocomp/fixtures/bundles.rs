@@ -291,14 +291,17 @@ impl OcompTopology {
             false
         };
         let gas_envelope_changed = apply_measurement_gas_envelope(&mut genesis)?;
-        if capacity_accounts_changed
-            || capacity_registrations_changed
-            || public_day_changed
-            || recovery_day_changed
-            || seeded_metadosis_changed
-            || fresh_oracle_changed
-            || gas_envelope_changed
-        {
+        let genesis_changed = [
+            capacity_accounts_changed,
+            capacity_registrations_changed,
+            public_day_changed,
+            recovery_day_changed,
+            seeded_metadosis_changed,
+            fresh_oracle_changed,
+            gas_envelope_changed,
+        ]
+        .contains(&true);
+        if genesis_changed {
             replace_json_atomically(&genesis_path, &genesis)?;
         }
 
@@ -310,7 +313,6 @@ impl OcompTopology {
         let install = measurement_fork_install(
             chain_id,
             base_genesis_hash,
-            OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
             &self.cfg.dir.join("validators.json"),
             &limits,
             protocol_constants.ocomp_compute_vote_window_blocks,
@@ -608,7 +610,6 @@ impl OcompMeasurementForkV1 {
 fn measurement_fork_install(
     chain_id: u64,
     genesis_hash: B256,
-    activation_height: u64,
     validators_path: &Path,
     limits: &outbe_ocomp_protocol::SchemaLimits,
     result_deadline_blocks: u64,
@@ -620,7 +621,7 @@ fn measurement_fork_install(
     let capacity_profile = provisional_measurement_capacity_profile(result_deadline_blocks);
     Ok(OcompForkInstallV1 {
         classification: OcompForkInstallClassification::Measurement,
-        activation_height,
+        activation_height: OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
         request_profile: OcompRequestProfile {
             chain_id,
             genesis_hash,
