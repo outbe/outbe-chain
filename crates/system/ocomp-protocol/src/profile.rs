@@ -197,53 +197,8 @@ impl ProtocolBundleV1 {
     }
 }
 
-/// Execution identity derived from the same registry source set as `xtask ocomp final-artifacts`.
+/// Execution identity of the registered Lysis semantics descriptor.
 pub fn supported_lysis_v1_semantics_hash() -> Result<B256, ProtocolError> {
-    use sha2::{Digest as _, Sha256};
-    static HASH: std::sync::OnceLock<B256> = std::sync::OnceLock::new();
-    if let Some(hash) = HASH.get() {
-        return Ok(*hash);
-    }
-    let length = |value: usize| {
-        u32::try_from(value).map_err(|_| ProtocolError::IntegerOverflow {
-            what: "semantic descriptor length",
-        })
-    };
-    let mut registry = Sha256::new();
-    registry.update(b"OUTBE_OCOMP_SEMANTIC_SOURCE_SET_V1\0");
-    // Keep lexicographic path order, matching finalize::hash_source_set.
-    for (name, bytes) in [
-        (
-            "generated-shape-manifest.json",
-            include_bytes!("../registry/generated-shape-manifest.json").as_slice(),
-        ),
-        (
-            "input-codecs-v1.tsv",
-            include_bytes!("../registry/input-codecs-v1.tsv").as_slice(),
-        ),
-        (
-            "ocomp-v1.tsv",
-            include_bytes!("../registry/ocomp-v1.tsv").as_slice(),
-        ),
-        (
-            "preimages-v1.tsv",
-            include_bytes!("../registry/preimages-v1.tsv").as_slice(),
-        ),
-        (
-            "schema-v1.tsv",
-            include_bytes!("../registry/schema-v1.tsv").as_slice(),
-        ),
-        (
-            "semantic-artifacts-v1.tsv",
-            include_bytes!("../registry/semantic-artifacts-v1.tsv").as_slice(),
-        ),
-    ] {
-        let path = format!("crates/system/ocomp-protocol/registry/{name}");
-        registry.update(length(path.len())?.to_be_bytes());
-        registry.update(path.as_bytes());
-        registry.update(u64::from(length(bytes.len())?).to_be_bytes());
-        registry.update(bytes);
-    }
     let label = "lysis_program_semantics_hash";
     let descriptor = include_str!("../registry/semantic-artifacts-v1.tsv")
         .lines()
@@ -252,17 +207,7 @@ pub fn supported_lysis_v1_semantics_hash() -> Result<B256, ProtocolError> {
         .ok_or(ProtocolError::InvalidInvariant(
             "missing Lysis semantics descriptor",
         ))?;
-    let mut hash = Sha256::new();
-    hash.update(b"OUTBE_OCOMP_FINAL_ARTIFACT_V1\0");
-    hash.update(length(label.len())?.to_be_bytes());
-    hash.update(label.as_bytes());
-    hash.update(length(descriptor.len())?.to_be_bytes());
-    hash.update(descriptor.as_bytes());
-    hash.update(1u32.to_be_bytes());
-    hash.update(registry.finalize());
-    let hash = B256::from_slice(&hash.finalize());
-    let _ = HASH.set(hash);
-    Ok(hash)
+    hash_framed(HashDomain::LysisProgramSemantics, descriptor.as_bytes())
 }
 
 /// Protocol bundle of the measurement-classification OCOMP fork install.

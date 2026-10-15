@@ -237,9 +237,15 @@ fn totals_match(
     input: &CertifiedNodGenerationV1,
 ) -> bool {
     counts_match(existing, input)
-        && existing.nod_amount_total == input.nod_amount_total
-        && existing.lysis_allocation_minor == input.lysis_allocation_minor
-        && existing.nod_gratis_load_max == input.nod_gratis_load_max
+        && (
+            existing.nod_amount_total,
+            existing.lysis_allocation_minor,
+            existing.nod_gratis_load_max,
+        ) == (
+            input.nod_amount_total,
+            input.lysis_allocation_minor,
+            input.nod_gratis_load_max,
+        )
         && existing.issued_at == input.issued_at
 }
 
