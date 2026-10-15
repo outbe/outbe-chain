@@ -68,8 +68,8 @@ fn mcp_opens_the_keys_the_enclave_seals() {
     let client_secret = word(&all["deriveKeys"]["ephemeralSecret"]);
     let client_pub = PublicKey::from(&StaticSecret::from(client_secret)).to_bytes();
     let plaintext = [bytes(&v["view"]), bytes(&v["modify"])].concat();
-    let sealed = encrypt_share_deterministic(&word(&v["enclaveSecret"]), &client_pub, &plaintext)
-        .unwrap();
+    let sealed =
+        encrypt_share_deterministic(&word(&v["enclaveSecret"]), &client_pub, &plaintext).unwrap();
     assert_eq!(sealed.ephemeral_pub, word(&v["enclaveEphemeralPubkey"]));
     assert_eq!(sealed.nonce.to_vec(), bytes(&v["nonce"]));
     assert_eq!(sealed.ciphertext, bytes(&v["sealed"]));
@@ -136,10 +136,16 @@ fn mcp_opens_the_balances_the_enclave_writes() {
     let promis = &v["promis"];
     let slot = PROMIS.cipher.slot(&view, account, FIELD_BALANCE);
     let blob = slot
-        .write_amount(version(&promis["previousVersion"]), decimal(&promis["amount"]))
+        .write_amount(
+            version(&promis["previousVersion"]),
+            decimal(&promis["amount"]),
+        )
         .unwrap();
     assert_eq!(blob, bytes(&promis["blob"]));
-    assert_eq!(slot.read_amount(&blob).unwrap().1, decimal(&promis["amount"]));
+    assert_eq!(
+        slot.read_amount(&blob).unwrap().1,
+        decimal(&promis["amount"])
+    );
 
     for gratis in v["gratis"].as_array().unwrap() {
         let field = gratis["field"].as_u64().unwrap() as u8;
@@ -188,10 +194,25 @@ fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
         issuance_currency: v["issuanceCurrency"].as_u64().unwrap() as u16,
         reference_currency: v["referenceCurrency"].as_u64().unwrap() as u16,
     };
-    let nod = encrypt_nod(&network, &creator_public, terms, decimal(&v["gratisAmount"])).unwrap();
-    assert_eq!(nod.encryption_binding, B256::from(word(&v["encryptionBinding"])));
-    assert_eq!(nod.encrypted_creator_public_key, bytes(&v["encryptedCreatorPublicKey"]));
-    assert_eq!(nod.encrypted_gratis_amount, bytes(&v["encryptedGratisAmount"]));
+    let nod = encrypt_nod(
+        &network,
+        &creator_public,
+        terms,
+        decimal(&v["gratisAmount"]),
+    )
+    .unwrap();
+    assert_eq!(
+        nod.encryption_binding,
+        B256::from(word(&v["encryptionBinding"]))
+    );
+    assert_eq!(
+        nod.encrypted_creator_public_key,
+        bytes(&v["encryptedCreatorPublicKey"])
+    );
+    assert_eq!(
+        nod.encrypted_gratis_amount,
+        bytes(&v["encryptedGratisAmount"])
+    );
     assert_eq!(
         decrypt_nod_for_owner(&creator, &network_public, &nod).unwrap(),
         decimal(&v["gratisAmount"])
