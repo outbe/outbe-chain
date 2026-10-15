@@ -1,12 +1,202 @@
 use super::shutdown_tests::{NoSend, TestReceiver};
 use super::*;
+use crate::manager::FinalizedPatchSigningState;
 use crate::{integration::RadicleStatusChannel, manager::FinalizedRepositoryAuthority};
 use alloy_primitives::B256;
 use commonware_codec::Encode as _;
+use commonware_cryptography::bls12381::{
+    dkg::feldman_desmedt::Output, primitives::variant::MinSig,
+};
 use commonware_cryptography::Signer as _;
 use commonware_utils::TryCollect as _;
+use outbe_consensus::hybrid::VrfMaterialProvider;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+struct SigningReader {
+    current: Mutex<Option<FinalizedPatchSigningState>>,
+    reads: AtomicUsize,
+}
+
+impl RepositoryAuthorityReader for SigningReader {
+    fn read_current_repository_authority(
+        &self,
+    ) -> Result<FinalizedRepositoryAuthority, ManagerError> {
+        self.current
+            .lock()
+            .as_ref()
+            .map(|s| s.authority().clone())
+            .ok_or_else(|| ManagerError::Snapshot("fixture state unavailable".into()))
+    }
+    fn read_current_patch_signing_state(
+        &self,
+        proposal: alloy_primitives::U256,
+    ) -> Result<FinalizedPatchSigningState, ManagerError> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        self.current
+            .lock()
+            .as_ref()
+            .filter(|s| s.approval().approval.proposal_id == proposal)
+            .cloned()
+            .ok_or_else(|| ManagerError::Snapshot("fixture permission unavailable".into()))
+    }
+}
+
+pub(crate) async fn review_partials(
+    job: Arc<CheckpointPreparedReview>,
+    state: &FinalizedPatchSigningState,
+    output: &Output<MinSig, bls12381::PublicKey>,
+    providers: &[VrfMaterialProvider<MinSig>],
+    keys: &[bls12381::PrivateKey],
+) -> Vec<(bls12381::PublicKey, signing::RepositoryPartial)> {
+    signing_partials(
+        RepositoryReviewJob::Cob(job),
+        state,
+        output,
+        providers,
+        keys,
+    )
+    .await
+}
+
+pub(crate) async fn refs_partials(
+    job: Arc<CheckpointPreparedReviewRefs>,
+    state: &FinalizedPatchSigningState,
+    output: &Output<MinSig, bls12381::PublicKey>,
+    providers: &[VrfMaterialProvider<MinSig>],
+    keys: &[bls12381::PrivateKey],
+) -> Vec<(bls12381::PublicKey, signing::RepositoryPartial)> {
+    signing_partials(
+        RepositoryReviewJob::Refs(job),
+        state,
+        output,
+        providers,
+        keys,
+    )
+    .await
+}
+
+async fn request(
+    resolver: &EndpointNetworkResolver,
+    job: &RepositoryReviewJob,
+) -> Result<signing::RepositoryPartial, signing::Error> {
+    match job {
+        RepositoryReviewJob::Cob(job) => resolver.sign_review(job.clone()).await,
+        RepositoryReviewJob::Refs(job) => resolver.sign_review_refs(job.clone()).await,
+    }
+}
+
+async fn signing_partials(
+    job: RepositoryReviewJob,
+    state: &FinalizedPatchSigningState,
+    output: &Output<MinSig, bls12381::PublicKey>,
+    providers: &[VrfMaterialProvider<MinSig>],
+    keys: &[bls12381::PrivateKey],
+) -> Vec<(bls12381::PublicKey, signing::RepositoryPartial)> {
+    let mut contributions = vec![];
+    for (index, (provider, key)) in providers.iter().zip(keys).enumerate() {
+        let reader = Arc::new(SigningReader {
+            current: Mutex::new(Some(state.clone())),
+            reads: AtomicUsize::new(0),
+        });
+        let validator = state.authority().committee().committee[index].address;
+        let (_, status) = RadicleStatusChannel::enabled(validator, [1; 32]);
+        let (service, resolver, _) = EndpointNetwork::build(
+            ChainIdentity {
+                chain_id: state.authority().chain_id(),
+                genesis_hash: state.authority().genesis_hash(),
+            },
+            status,
+        );
+        let mut service = service.with_repository_authority_reader(reader.clone());
+        let publisher = service.take_repository_material_publisher().unwrap();
+        publisher.publish(
+            state.authority().epoch(),
+            state.authority().committee().vrf_material_version,
+            Some(output),
+        );
+        let (_, local) = LocalEndpointIdentityChannel::create(LocalEndpointIdentity {
+            validator,
+            node_id: [1; 32],
+            addresses: vec![EndpointAddress::dns("local.example", 8776).unwrap()],
+        });
+        let (_incoming, receiver) = mpsc::unbounded_channel();
+        let task = tokio::spawn(service.run(
+            EndpointTransport {
+                sender: NoSend,
+                receiver: TestReceiver(receiver),
+            },
+            EndpointSigningIdentity {
+                signer: key.clone(),
+                local,
+            },
+        ));
+        assert!(matches!(
+            request(&resolver, &job).await,
+            Err(signing::Error::Unavailable)
+        ));
+        publisher.install_local_signer(provider.clone());
+        let partial = request(&resolver, &job).await.unwrap();
+        let mut consumed = state.clone();
+        consumed.stage = outbe_radicleregistry::schema::PATCH_EXECUTION_REVIEWED;
+        *reader.current.lock() = Some(consumed);
+        assert!(matches!(
+            request(&resolver, &job).await,
+            Err(signing::Error::Context)
+        ));
+        let mut advanced = state.clone();
+        advanced.checkpoint.receipt.body.sequence += 1;
+        advanced.checkpoint.receipt.body.previous_receipt_hash =
+            state.checkpoint().receipt().receipt_hash;
+        advanced.checkpoint.receipt.receipt_hash = advanced.checkpoint.receipt.body.receipt_hash();
+        *reader.current.lock() = Some(advanced);
+        assert!(matches!(
+            request(&resolver, &job).await,
+            Err(signing::Error::Context)
+        ));
+        let mut substituted = state.clone();
+        substituted.approval.approval.approved_timestamp += 1;
+        *reader.current.lock() = Some(substituted);
+        assert!(matches!(
+            request(&resolver, &job).await,
+            Err(signing::Error::Context)
+        ));
+        *reader.current.lock() = None;
+        assert!(matches!(
+            request(&resolver, &job).await,
+            Err(signing::Error::Authority(_))
+        ));
+        *reader.current.lock() = Some(state.clone());
+        publisher.publish(
+            state.authority().epoch() + 1,
+            state.authority().committee().vrf_material_version + 1,
+            Some(output),
+        );
+        assert!(matches!(
+            request(&resolver, &job).await,
+            Err(signing::Error::Material)
+        ));
+        publisher.publish(
+            state.authority().epoch(),
+            state.authority().committee().vrf_material_version,
+            None,
+        );
+        assert!(matches!(
+            request(&resolver, &job).await,
+            Err(signing::Error::Unavailable)
+        ));
+        drop(publisher);
+        assert!(matches!(
+            request(&resolver, &job).await,
+            Err(signing::Error::Unavailable)
+        ));
+        assert_eq!(reader.reads.load(Ordering::SeqCst), 9);
+        resolver.shutdown().await.unwrap();
+        task.await.unwrap().unwrap();
+        contributions.push((key.public_key(), partial));
+    }
+    contributions
+}
 
 struct AuthorityReader {
     current: Mutex<Option<FinalizedRepositoryAuthority>>,
@@ -14,6 +204,12 @@ struct AuthorityReader {
 }
 
 impl RepositoryAuthorityReader for AuthorityReader {
+    fn read_current_patch_signing_state(
+        &self,
+        _: alloy_primitives::U256,
+    ) -> Result<crate::manager::FinalizedPatchSigningState, ManagerError> {
+        Err(ManagerError::Snapshot("material-only fixture".into()))
+    }
     fn read_current_repository_authority(
         &self,
     ) -> Result<FinalizedRepositoryAuthority, ManagerError> {

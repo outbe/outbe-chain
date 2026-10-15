@@ -14,7 +14,10 @@ use commonware_utils::{ordered::Quorum as _, Participant};
 use outbe_consensus::hybrid::{RepositorySigningError, VrfMaterialProvider};
 use radicle::crypto::{BlsEnvelope, BlsPublicKey, RepositoryKey, RepositorySubject};
 
+use super::publication::CheckpointOwnerSnapshot;
+use super::review::{CheckpointPreparedReview, CheckpointPreparedReviewRefs};
 use super::review::{PreparedPatchReview, PreparedReviewRefs, ReviewSigningContext};
+use crate::manager::FinalizedPatchSigningState;
 use crate::manager::FinalizedRepositoryAuthority;
 
 const PARTIAL_NAMESPACE: &[u8] = b"outbe.radicle.partial.v1";
@@ -48,6 +51,64 @@ pub struct RepositorySigningMaterial {
 }
 
 impl RepositorySigningMaterial {
+    fn authorize_current_review(
+        &self,
+        state: &FinalizedPatchSigningState,
+        approval: &outbe_radicleregistry::PatchApprovalRecord,
+        snapshot: &CheckpointOwnerSnapshot,
+        context: &ReviewSigningContext,
+        owner: RepositoryKey,
+    ) -> Result<(), Error> {
+        self.check_context(owner, context)?;
+        if state.authority() != &self.authority
+            || &state.approval().approval != approval
+            || state.stage() != outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING
+            || snapshot.checkpoint().receipt() != state.checkpoint().receipt()
+            || context.previous_receipt_hash != state.checkpoint().receipt().receipt_hash.0
+            || self.material_hash != state.material().receipt().body.material_hash.0
+            || self.players_commitment != state.material().receipt().body.players_commitment.0
+        {
+            return Err(Error::Context);
+        }
+        Ok(())
+    }
+
+    pub fn sign_current_review(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        job: &CheckpointPreparedReview,
+        state: &FinalizedPatchSigningState,
+        validator: Address,
+        identity: &bls12381::PrivateKey,
+    ) -> Result<RepositoryPartial, Error> {
+        self.authorize_current_review(
+            state,
+            job.approval(),
+            job.snapshot(),
+            job.signing_context(),
+            job.owner(),
+        )?;
+        self.sign_review(provider, job, validator, identity)
+    }
+
+    pub fn sign_current_review_refs(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        job: &CheckpointPreparedReviewRefs,
+        state: &FinalizedPatchSigningState,
+        validator: Address,
+        identity: &bls12381::PrivateKey,
+    ) -> Result<RepositoryPartial, Error> {
+        self.authorize_current_review(
+            state,
+            job.approval(),
+            job.snapshot(),
+            job.signing_context(),
+            job.owner(),
+        )?;
+        self.sign_review_refs(provider, job, validator, identity)
+    }
+
     /// `output` is the locally authenticated canonical DKG output, never a peer's transcript.
     pub fn new(
         authority: FinalizedRepositoryAuthority,

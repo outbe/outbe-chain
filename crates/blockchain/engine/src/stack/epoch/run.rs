@@ -292,6 +292,9 @@ where
         polynomial.clone(),
         signing_share.clone(),
     );
+    if let Some(publisher) = &repository_material_publisher {
+        publisher.install_local_signer(vrf_materials.clone());
+    }
     bridge.set_local_threshold_share_present(signing_share.is_some());
     // The active boundary tuple height is the ACTIVATION ANCHOR (the height the
     // live committee anchored its rotation schedule on). It is NOT the commit

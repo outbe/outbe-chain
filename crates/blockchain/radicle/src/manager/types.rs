@@ -36,6 +36,38 @@ impl FinalizedPublicationReceipt {
     }
 }
 
+/// All fields come from one current local finalized state used for a signing request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedPatchSigningState {
+    pub(crate) authority: FinalizedRepositoryAuthority,
+    pub(crate) approval: FinalizedPatchApproval,
+    pub(crate) checkpoint: FinalizedPublicationReceipt,
+    pub(crate) material: FinalizedPublicationReceipt,
+    pub(crate) stage: u8,
+    pub(crate) anchor: FinalizedBlock,
+}
+
+impl FinalizedPatchSigningState {
+    pub fn authority(&self) -> &FinalizedRepositoryAuthority {
+        &self.authority
+    }
+    pub fn approval(&self) -> &FinalizedPatchApproval {
+        &self.approval
+    }
+    pub fn checkpoint(&self) -> &FinalizedPublicationReceipt {
+        &self.checkpoint
+    }
+    pub fn material(&self) -> &FinalizedPublicationReceipt {
+        &self.material
+    }
+    pub fn stage(&self) -> u8 {
+        self.stage
+    }
+    pub fn anchor(&self) -> FinalizedBlock {
+        self.anchor
+    }
+}
+
 /// Constructed from this node's current canonical finalized state, not peer metadata.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinalizedRepositoryAuthority {
@@ -69,6 +101,10 @@ pub trait RepositoryAuthorityReader: Send + Sync {
     fn read_current_repository_authority(
         &self,
     ) -> Result<FinalizedRepositoryAuthority, ManagerError>;
+    fn read_current_patch_signing_state(
+        &self,
+        proposal_id: alloy_primitives::U256,
+    ) -> Result<FinalizedPatchSigningState, ManagerError>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

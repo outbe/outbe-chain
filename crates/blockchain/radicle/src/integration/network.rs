@@ -1,10 +1,11 @@
 mod evidence;
 #[cfg(test)]
-mod material_tests;
+pub(crate) mod material_tests;
 mod receive;
 
 pub use evidence::{EndpointEvidenceHandle, SignedEndpointEvidence};
 
+use super::review::{CheckpointPreparedReview, CheckpointPreparedReviewRefs};
 use super::{material, signing, RepositoryMaterialPublisher};
 use crate::integration::{RadicleStatusHandle, RadicleVotingGate};
 use crate::{
@@ -147,6 +148,10 @@ struct EndpointRefresh<'a> {
 }
 
 enum NetworkCommand {
+    RepositoryReviewPartial {
+        job: RepositoryReviewJob,
+        result: oneshot::Sender<Result<signing::RepositoryPartial, signing::Error>>,
+    },
     RepositoryMaterial {
         owner: radicle::crypto::BlsPublicKey,
         result: oneshot::Sender<Result<signing::RepositorySigningMaterial, signing::Error>>,
@@ -158,6 +163,11 @@ enum NetworkCommand {
     Shutdown {
         result: oneshot::Sender<Result<(), ManagerError>>,
     },
+}
+
+enum RepositoryReviewJob {
+    Cob(Arc<CheckpointPreparedReview>),
+    Refs(Arc<CheckpointPreparedReviewRefs>),
 }
 
 impl EndpointNetwork {
@@ -196,6 +206,32 @@ impl EndpointNetwork {
 }
 
 impl EndpointNetworkResolver {
+    pub async fn sign_review(
+        &self,
+        job: Arc<CheckpointPreparedReview>,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        self.review_partial(RepositoryReviewJob::Cob(job)).await
+    }
+    pub async fn sign_review_refs(
+        &self,
+        job: Arc<CheckpointPreparedReviewRefs>,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        self.review_partial(RepositoryReviewJob::Refs(job)).await
+    }
+    async fn review_partial(
+        &self,
+        job: RepositoryReviewJob,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::RepositoryReviewPartial { job, result })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
+
     /// A local bounded request; the service samples its own current finalized authority.
     pub async fn repository_signing_material(
         &self,
@@ -277,6 +313,44 @@ impl EndpointNetworkService {
 }
 
 impl EndpointNetworkState {
+    fn review_partial(
+        &self,
+        job: &RepositoryReviewJob,
+        signer: &bls12381::PrivateKey,
+        validator: Address,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        let (proposal, owner) = match job {
+            RepositoryReviewJob::Cob(job) => (job.approval().proposal_id, job.owner()),
+            RepositoryReviewJob::Refs(job) => (job.approval().proposal_id, job.owner()),
+        };
+        let owner = match owner {
+            radicle::crypto::RepositoryKey::Bls12381G2(key) => key,
+            _ => return Err(signing::Error::Context),
+        };
+        let state = self
+            .repository_authority
+            .as_ref()
+            .ok_or(signing::Error::Unavailable)?
+            .read_current_patch_signing_state(proposal)?;
+        if state.authority().chain_id() != self.chain.chain_id
+            || state.authority().genesis_hash() != self.chain.genesis_hash
+        {
+            return Err(signing::Error::Material);
+        }
+        let material = self
+            .repository_material
+            .current(state.authority().clone(), owner)?;
+        let provider = self.repository_material.local_signer()?;
+        match job {
+            RepositoryReviewJob::Cob(job) => {
+                material.sign_current_review(&provider, job, &state, validator, signer)
+            }
+            RepositoryReviewJob::Refs(job) => {
+                material.sign_current_review_refs(&provider, job, &state, validator, signer)
+            }
+        }
+    }
+
     fn current_repository_material(
         &self,
         owner: radicle::crypto::BlsPublicKey,
@@ -326,6 +400,9 @@ impl EndpointNetworkState {
                 }
                 command = self.commands.recv() => {
                     match command {
+                        Some(NetworkCommand::RepositoryReviewPartial {job,result})=>{
+                            let _=result.send(self.review_partial(&job,&signer,local.validator));
+                        }
                         Some(NetworkCommand::RepositoryMaterial { owner, result }) => {
                             let material = self.current_repository_material(owner);
                             let _ = result.send(material);

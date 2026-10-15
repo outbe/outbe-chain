@@ -252,8 +252,8 @@ fn publication_receipt_reader_rejects_unfinalized_noncanonical_missing_history_w
     assert_eq!(*reader.provider.reads.lock().unwrap(), [block(3).hash]);
 }
 
-fn repository_authority_fixture() -> (
-    RethSnapshotReader<ApprovalProvider>,
+fn repository_authority_storage() -> (
+    HashMapStorageProvider,
     outbe_validatorset::state::CommitteeSnapshot,
 ) {
     use commonware_codec::Encode as _;
@@ -305,6 +305,15 @@ fn repository_authority_fixture() -> (
         validators.advance_epoch(1002, 2).unwrap();
         write_committee_snapshot(s, 2, &committee).unwrap();
     });
+    (storage, committee)
+}
+
+fn repository_authority_fixture() -> (
+    RethSnapshotReader<ApprovalProvider>,
+    outbe_validatorset::state::CommitteeSnapshot,
+) {
+    use outbe_validatorset::state::write_committee_snapshot;
+    let (mut storage, committee) = repository_authority_storage();
     let accepted = snapshot(&storage);
     let mut wrong_committee = committee.clone();
     wrong_committee.committee.pop();
@@ -382,6 +391,253 @@ fn block(number: u64) -> FinalizedBlock {
         number,
         hash: B256::repeat_byte(number as u8),
     }
+}
+
+fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
+    use outbe_radicleregistry::schema::{
+        PatchApprovalRecordEntryExt, PublicationReceiptRecord, PublicationReceiptRecordEntryExt,
+    };
+    use outbe_vote::{
+        handlers::{VoteTarget, VoteTargetRegistry},
+        schema::ProposalRecordEntryExt,
+        ProposalStatus, ProposalSubmission, Vote,
+    };
+    static TARGET: RadiclePatchVoteTarget = RadiclePatchVoteTarget;
+    static HANDLERS: &[&dyn VoteTarget] = &[&TARGET];
+    let targets = VoteTargetRegistry::new(HANDLERS);
+    let (mut storage, committee) = repository_authority_storage();
+    let (mut body, _) = crate::integration::publication::tests::bootstrap_fixture();
+    body.owner_bls_public =
+        alloy_primitives::FixedBytes::<96>::from_slice(&committee.vrf_group_public_key_bytes);
+    body.players_commitment = outbe_primitives::radicle_publication::players_commitment(
+        committee
+            .committee
+            .iter()
+            .map(|m| (m.address, &m.consensus_pubkey)),
+    )
+    .unwrap();
+    body.package_manifest_hash = B256::repeat_byte(20);
+    let payload = String::from_utf8(
+        PatchVotePayloadV1::accept(body.repo_id, [6; 20].into(), [7; 20].into(), [8; 20].into())
+            .encode()
+            .unwrap(),
+    )
+    .unwrap();
+    let record = PublicationReceiptRecord {
+        sequence: 1,
+        body: body.to_bytes().to_vec(),
+        accepted_height: 2,
+        receipt_hash: body.receipt_hash(),
+    };
+    storage.set_block_number(2);
+    storage.enter(|s| {
+        let mut registry = RadicleRegistry::new(s.clone());
+        registry.config_max_repositories.write(4).unwrap();
+        registry
+            .register_repository(body.repo_id, Address::repeat_byte(99))
+            .unwrap();
+        registry
+            .config_descriptor_hash
+            .write(body.descriptor_hash)
+            .unwrap();
+        registry
+            .network_repository
+            .write(outbe_radicleregistry::repo_id_storage_key(body.repo_id))
+            .unwrap();
+        registry.publication_sequence.write(1).unwrap();
+        registry.publication_material_sequence.write(1).unwrap();
+        registry
+            .publication_receipt_hash
+            .write(record.receipt_hash)
+            .unwrap();
+        registry.publication_receipts.create(&record).unwrap();
+        let mut vote = Vote::new(s);
+        let id = vote
+            .create_proposal_with_voting_window(
+                ProposalSubmission::new(
+                    committee.committee[0].address,
+                    RADICLE_REGISTRY_ADDRESS,
+                    &payload,
+                    2,
+                ),
+                1,
+                &targets,
+            )
+            .unwrap();
+        assert_eq!(id, U256::ONE);
+        for member in &committee.committee[..3] {
+            vote.cast_vote_approve(id, member.address, true, 3).unwrap();
+        }
+    });
+    let pending = snapshot(&storage);
+    storage.set_block_number(4);
+    storage.enter(|s| {
+        let context =
+            BlockRuntimeContext::new(BlockContext::empty_for_tests(4, 1004, 2026), s.clone());
+        Vote::new(s)
+            .process_begin_block(&context, &targets)
+            .unwrap();
+    });
+    let approved = snapshot(&storage);
+    storage.enter(|s| {
+        Vote::new(s)
+            .proposals
+            .entry(U256::ONE)
+            .status()
+            .write(ProposalStatus::Expired.to_u8())
+            .unwrap()
+    });
+    let expired = snapshot(&storage);
+    storage.enter(|s| {
+        Vote::new(s.clone())
+            .proposals
+            .entry(U256::ONE)
+            .status()
+            .write(ProposalStatus::Approved.to_u8())
+            .unwrap();
+        RadicleRegistry::new(s)
+            .patch_execution_stage
+            .write(
+                &U256::ONE,
+                outbe_radicleregistry::schema::PATCH_EXECUTION_REVIEWED,
+            )
+            .unwrap();
+    });
+    let reviewed = snapshot(&storage);
+    storage.enter(|s| {
+        RadicleRegistry::new(s)
+            .patch_execution_stage
+            .write(&U256::ONE, 99)
+            .unwrap()
+    });
+    let unknown_stage = snapshot(&storage);
+    storage.enter(|s| {
+        let registry = RadicleRegistry::new(s);
+        registry.patch_execution_stage.write(&U256::ONE, 1).unwrap();
+        registry.publication_material_sequence.write(0).unwrap();
+    });
+    let unbound = snapshot(&storage);
+    storage.enter(|s| {
+        let registry = RadicleRegistry::new(s);
+        registry.publication_material_sequence.write(1).unwrap();
+        registry
+            .config_descriptor_hash
+            .write(B256::repeat_byte(99))
+            .unwrap();
+    });
+    let wrong_descriptor = snapshot(&storage);
+    storage.enter(|s| {
+        let registry = RadicleRegistry::new(s);
+        registry
+            .config_descriptor_hash
+            .write(body.descriptor_hash)
+            .unwrap();
+        registry.publication_sequence.write(2).unwrap();
+    });
+    let missing_receipt = snapshot(&storage);
+    storage.enter(|s| {
+        let registry = RadicleRegistry::new(s);
+        registry.publication_sequence.write(1).unwrap();
+        registry
+            .patch_approvals
+            .entry(U256::ONE)
+            .approved_height()
+            .write(12)
+            .unwrap();
+    });
+    let future_approval = snapshot(&storage);
+    storage.enter(|s| {
+        let registry = RadicleRegistry::new(s);
+        registry
+            .patch_approvals
+            .entry(U256::ONE)
+            .approved_height()
+            .write(4)
+            .unwrap();
+        registry
+            .publication_receipts
+            .entry(1)
+            .accepted_height()
+            .write(13)
+            .unwrap();
+    });
+    let future_receipt = snapshot(&storage);
+    RethSnapshotReader::new(
+        ApprovalProvider {
+            states: [
+                (block(3).hash, pending),
+                (block(4).hash, approved),
+                (block(5).hash, expired),
+                (block(6).hash, reviewed),
+                (block(7).hash, unknown_stage),
+                (block(8).hash, unbound),
+                (block(9).hash, wrong_descriptor),
+                (block(10).hash, missing_receipt),
+                (block(11).hash, future_approval),
+                (block(12).hash, future_receipt),
+            ]
+            .into(),
+            canonical: (2..=12).map(|n| (n, block(n).hash)).collect(),
+            finalized: Some(BlockNumHash::new(4, block(4).hash)),
+            reads: Mutex::new(vec![]),
+        },
+        2026,
+        B256::repeat_byte(7),
+    )
+}
+
+#[test]
+fn current_patch_signing_state_uses_one_exact_finalized_state_and_preserves_consumed_permission() {
+    let mut reader = signing_fixture();
+    let current = reader.read_current_patch_signing_state(U256::ONE).unwrap();
+    assert_eq!(current.authority().block(), block(4));
+    assert_eq!(current.approval().block, block(4));
+    assert_eq!(current.approval().approval.approved_height, 4);
+    assert_eq!(
+        current.stage(),
+        outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING
+    );
+    assert_eq!(current.anchor(), block(4));
+    assert_eq!(current.checkpoint().receipt().body.sequence, 1);
+    assert_eq!(*reader.provider.reads.lock().unwrap(), [block(4).hash]);
+    reader.provider.finalized = Some(BlockNumHash::new(6, block(6).hash));
+    let reviewed = reader.read_current_patch_signing_state(U256::ONE).unwrap();
+    assert_eq!(
+        reviewed.stage(),
+        outbe_radicleregistry::schema::PATCH_EXECUTION_REVIEWED
+    );
+    assert_eq!(reviewed.approval().approval, current.approval().approval);
+}
+
+#[test]
+fn current_patch_signing_state_rejects_pending_expired_bad_binding_and_future_records() {
+    let mut reader = signing_fixture();
+    for number in [3, 5, 7, 8, 9, 10, 11, 12] {
+        reader.provider.finalized = Some(BlockNumHash::new(number, block(number).hash));
+        assert!(
+            matches!(
+                reader.read_current_patch_signing_state(U256::ONE),
+                Err(ManagerError::Snapshot(_))
+            ),
+            "height {number}"
+        );
+    }
+    reader.provider.finalized = None;
+    assert!(matches!(
+        reader.read_current_patch_signing_state(U256::ONE),
+        Err(ManagerError::Finality(_))
+    ));
+    reader.provider.finalized = Some(BlockNumHash::new(4, B256::repeat_byte(99)));
+    assert!(matches!(
+        reader.read_current_patch_signing_state(U256::ONE),
+        Err(ManagerError::Finality(_))
+    ));
+    reader.provider.finalized = Some(BlockNumHash::new(4, block(4).hash));
+    reader.provider.states.remove(&block(4).hash);
+    assert!(matches!(
+        reader.read_current_patch_signing_state(U256::ONE),
+        Err(ManagerError::Provider(_))
+    ));
 }
 
 fn fixture() -> (RethSnapshotReader<ApprovalProvider>, String) {

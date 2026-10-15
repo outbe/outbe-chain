@@ -475,7 +475,7 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     wrong_order.committee.committee.reverse();
     assert!(RepositorySigningMaterial::new(wrong_order, dkg.output.clone(), owner_key).is_err());
     let material = RepositorySigningMaterial::new(
-        authority,
+        authority.clone(),
         dkg.output.clone(),
         match owner {
             RepositoryKey::Bls12381G2(key) => key,
@@ -552,8 +552,28 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
             Err(Error::Snapshot)
         ));
     }
-    let prepared =
-        prepare_patch_review_from_checkpoint(&repo, &approval, &snapshot, &signing).unwrap();
+    let prepared = Arc::new(
+        prepare_patch_review_from_checkpoint(&repo, &approval, &snapshot, &signing).unwrap(),
+    );
+    let current_checkpoint = crate::manager::FinalizedPublicationReceipt {
+        block: approval.block,
+        receipt: snapshot.checkpoint().receipt().clone(),
+    };
+    let current_state = crate::manager::FinalizedPatchSigningState {
+        authority: authority.clone(),
+        approval: approval.clone(),
+        checkpoint: current_checkpoint.clone(),
+        material: current_checkpoint,
+        stage: outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING,
+        anchor: FinalizedBlock {
+            number: 10,
+            hash: B256::repeat_byte(10),
+        },
+    };
+    let local_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     let later_head = code(&repo, Some(head), b"later revision");
     let later_revision = patch
         .update("Later local author update", base, later_head)
@@ -565,26 +585,25 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     assert_eq!(prepared.subject, again.subject);
     let context = prepared.context;
     let refs_context = prepared.signed_refs_context;
-    let contributions: Vec<_> = identities
-        .iter()
-        .zip(&providers)
-        .enumerate()
-        .map(|(i, (key, provider))| {
-            let frame = material
-                .sign_review(
-                    provider,
-                    &prepared,
-                    alloy_primitives::Address::repeat_byte(i as u8 + 1),
-                    key,
-                )
-                .unwrap();
+    let contributions: Vec<_> = local_runtime
+        .block_on(
+            crate::integration::network::material_tests::review_partials(
+                prepared.clone(),
+                &current_state,
+                &dkg.output,
+                &providers,
+                &identities,
+            ),
+        )
+        .into_iter()
+        .map(|(key, frame)| {
             let bytes = frame.to_bytes();
             assert_eq!(bytes.len(), 268);
             let frame = RepositoryPartial::from_bytes(&bytes).unwrap();
             material
-                .verify_partial(&providers[0], &prepared, &key.public_key(), &frame)
+                .verify_partial(&providers[0], &prepared, &key, &frame)
                 .unwrap();
-            (key.public_key(), frame)
+            (key, frame)
         })
         .collect();
     assert!(material
@@ -708,35 +727,31 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     other_approval.approval.proposal_id += U256::from(1);
     let replay = prepare_patch_review(&repo, &other_approval, identity, None, &signing).unwrap();
     assert!(signature.verify(&replay.subject, owner).is_err());
-    let (review, prepared_refs) = prepared.attach(&repo, &signature).unwrap();
+    let (review, prepared_refs) = Arc::into_inner(prepared)
+        .unwrap()
+        .attach(&repo, &signature)
+        .unwrap();
+    let prepared_refs = Arc::new(prepared_refs);
     assert_eq!(
         repo.reference_oid(&owner, &git::refs::storage::SIGREFS_BRANCH)
             .unwrap(),
         previous_sigrefs
     );
-    let refs_contributions: Vec<_> = identities
-        .iter()
-        .zip(&providers)
-        .enumerate()
-        .map(|(i, (key, provider))| {
-            let frame = material
-                .sign_review_refs(
-                    provider,
-                    &prepared_refs,
-                    alloy_primitives::Address::repeat_byte(i as u8 + 1),
-                    key,
-                )
-                .unwrap();
+    let refs_contributions: Vec<_> = local_runtime
+        .block_on(crate::integration::network::material_tests::refs_partials(
+            prepared_refs.clone(),
+            &current_state,
+            &dkg.output,
+            &providers,
+            &identities,
+        ))
+        .into_iter()
+        .map(|(key, frame)| {
             let frame = RepositoryPartial::from_bytes(&frame.to_bytes()).unwrap();
             material
-                .verify_review_refs_partial(
-                    &providers[0],
-                    &prepared_refs,
-                    &key.public_key(),
-                    &frame,
-                )
+                .verify_review_refs_partial(&providers[0], &prepared_refs, &key, &frame)
                 .unwrap();
-            (key.public_key(), frame)
+            (key, frame)
         })
         .collect();
     assert!(material
@@ -792,7 +807,8 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         .attach(&repo, &signature, accepted_refs.clone(), previous_sigrefs)
         .unwrap();
     assert_eq!(stale_refs.subject(), prepared_refs.subject());
-    let signed_refs = prepared_refs
+    let signed_refs = Arc::into_inner(prepared_refs)
+        .unwrap()
         .attach(repo.raw(), refs_signature.clone())
         .unwrap()
         .oid();

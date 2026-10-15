@@ -68,6 +68,7 @@ pub struct PreparedPatchReview {
 pub struct CheckpointPreparedReview {
     review: PreparedPatchReview,
     snapshot: CheckpointOwnerSnapshot,
+    approval: outbe_radicleregistry::PatchApprovalRecord,
 }
 
 impl std::ops::Deref for CheckpointPreparedReview {
@@ -78,17 +79,60 @@ impl std::ops::Deref for CheckpointPreparedReview {
 }
 
 impl CheckpointPreparedReview {
+    pub(crate) fn approval(&self) -> &outbe_radicleregistry::PatchApprovalRecord {
+        &self.approval
+    }
+    pub(crate) fn snapshot(&self) -> &CheckpointOwnerSnapshot {
+        &self.snapshot
+    }
     pub fn attach(
         self,
         repo: &Repository,
         signature: &BlsEnvelope,
-    ) -> Result<(cob::Entry, PreparedReviewRefs), Error> {
-        self.review.attach(
+    ) -> Result<(cob::Entry, CheckpointPreparedReviewRefs), Error> {
+        let (entry, refs) = self.review.attach(
             repo,
             signature,
             self.snapshot.owner_refs().clone(),
             self.snapshot.sigrefs(),
-        )
+        )?;
+        Ok((
+            entry,
+            CheckpointPreparedReviewRefs {
+                refs,
+                snapshot: self.snapshot,
+                approval: self.approval,
+            },
+        ))
+    }
+}
+
+pub struct CheckpointPreparedReviewRefs {
+    refs: PreparedReviewRefs,
+    snapshot: CheckpointOwnerSnapshot,
+    approval: outbe_radicleregistry::PatchApprovalRecord,
+}
+
+impl std::ops::Deref for CheckpointPreparedReviewRefs {
+    type Target = PreparedReviewRefs;
+    fn deref(&self) -> &Self::Target {
+        &self.refs
+    }
+}
+
+impl CheckpointPreparedReviewRefs {
+    pub(crate) fn approval(&self) -> &outbe_radicleregistry::PatchApprovalRecord {
+        &self.approval
+    }
+    pub(crate) fn snapshot(&self) -> &CheckpointOwnerSnapshot {
+        &self.snapshot
+    }
+    pub fn attach(
+        self,
+        repo: &git::raw::Repository,
+        signature: BlsEnvelope,
+    ) -> Result<radicle::storage::refs::sigrefs::VerifiedCommit, Error> {
+        self.refs.attach(repo, signature)
     }
 }
 
@@ -130,6 +174,7 @@ pub fn prepare_patch_review_from_checkpoint(
     Ok(CheckpointPreparedReview {
         review,
         snapshot: snapshot.clone(),
+        approval: approval.approval.clone(),
     })
 }
 

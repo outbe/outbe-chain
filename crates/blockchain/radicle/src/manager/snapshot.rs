@@ -1,7 +1,7 @@
 use super::types::{
-    BoxFuture, FinalizedBlock, FinalizedFeed, FinalizedPatchApproval, FinalizedPublicationReceipt,
-    FinalizedRepositoryAuthority, FinalizedSnapshot, FinalizedValidator, ManagerError,
-    SnapshotReader,
+    BoxFuture, FinalizedBlock, FinalizedFeed, FinalizedPatchApproval, FinalizedPatchSigningState,
+    FinalizedPublicationReceipt, FinalizedRepositoryAuthority, FinalizedSnapshot,
+    FinalizedValidator, ManagerError, SnapshotReader,
 };
 use crate::endpoint::PeerId;
 use alloy_primitives::{Address, B256, U256};
@@ -47,9 +47,214 @@ impl<P: StateProviderFactory + Send + Sync> super::RepositoryAuthorityReader
     ) -> Result<FinalizedRepositoryAuthority, ManagerError> {
         RethSnapshotReader::read_current_repository_authority(self)
     }
+    fn read_current_patch_signing_state(
+        &self,
+        proposal_id: U256,
+    ) -> Result<FinalizedPatchSigningState, ManagerError> {
+        RethSnapshotReader::read_current_patch_signing_state(self, proposal_id)
+    }
 }
 
 impl<P: StateProviderFactory> RethSnapshotReader<P> {
+    fn current_finalized_block(&self) -> Result<FinalizedBlock, ManagerError> {
+        let head = self
+            .provider
+            .finalized_block_num_hash()
+            .map_err(ManagerError::provider)?
+            .ok_or_else(|| ManagerError::Finality("no finalized block".into()))?;
+        if self
+            .provider
+            .block_hash(head.number)
+            .map_err(ManagerError::provider)?
+            != Some(head.hash)
+        {
+            return Err(ManagerError::Finality(
+                "repository authority requires a canonical finalized block".into(),
+            ));
+        }
+        Ok(FinalizedBlock {
+            number: head.number,
+            hash: head.hash,
+        })
+    }
+
+    /// One exact current state for committee, terminal permission, stage and checkpoint.
+    pub fn read_current_patch_signing_state(
+        &self,
+        proposal_id: U256,
+    ) -> Result<FinalizedPatchSigningState, ManagerError> {
+        use outbe_primitives::radicle_publication::{players_commitment, PublicationAction};
+        let block = self.current_finalized_block()?;
+        let state = self
+            .provider
+            .state_by_block_hash(block.hash)
+            .map_err(ManagerError::provider)?;
+        let authority = read_repository_authority_from_storage(
+            RethStateReader {
+                state: state.as_ref(),
+            },
+            self.chain_id,
+            self.genesis_hash,
+            block,
+        )?;
+        let mut storage = ReadOnlyStorageProvider::new_with_chain_identity(
+            RethStateReader {
+                state: state.as_ref(),
+            },
+            self.chain_id,
+            self.genesis_hash,
+        );
+        let registry = RadicleRegistry::new(StorageHandle::new(&mut storage));
+        let approval = registry
+            .patch_approval(proposal_id)
+            .map_err(snapshot_error)?
+            .ok_or_else(|| ManagerError::Snapshot("terminal Approved patch required".into()))?;
+        if approval.approved_height > block.number {
+            return Err(ManagerError::Snapshot(
+                "approval is newer than signing state".into(),
+            ));
+        }
+        let subject =
+            outbe_radicleregistry::payload::PatchVotePayloadV1::decode(approval.payload.as_bytes())
+                .map_err(snapshot_error)?;
+        let binding = outbe_radicleregistry::repo_id_from_storage_key(
+            registry.network_repository.read().map_err(snapshot_error)?,
+        )
+        .map_err(snapshot_error)?;
+        let sequence = registry
+            .publication_sequence
+            .read()
+            .map_err(snapshot_error)?;
+        let material_sequence = registry
+            .publication_material_sequence
+            .read()
+            .map_err(snapshot_error)?;
+        if binding.is_zero()
+            || subject.repo_id != binding
+            || sequence == 0
+            || material_sequence == 0
+            || material_sequence > sequence
+        {
+            return Err(ManagerError::Snapshot(
+                "network repository/current material is not bound".into(),
+            ));
+        }
+        let read_receipt = |sequence| -> Result<_, ManagerError> {
+            let receipt = registry
+                .publication_receipt(sequence)
+                .map_err(snapshot_error)?
+                .ok_or_else(|| ManagerError::Snapshot("signing checkpoint missing".into()))?;
+            if receipt.accepted_height > block.number {
+                return Err(ManagerError::Snapshot(
+                    "checkpoint is newer than signing state".into(),
+                ));
+            }
+            Ok(receipt)
+        };
+        let bootstrap = read_receipt(1)?;
+        let checkpoint = if sequence == 1 {
+            bootstrap.clone()
+        } else {
+            read_receipt(sequence)?
+        };
+        let material = if material_sequence == sequence {
+            checkpoint.clone()
+        } else if material_sequence == 1 {
+            bootstrap.clone()
+        } else {
+            read_receipt(material_sequence)?
+        };
+        let descriptor_hash = registry
+            .config_descriptor_hash
+            .read()
+            .map_err(snapshot_error)?;
+        let players = players_commitment(
+            authority
+                .committee()
+                .committee
+                .iter()
+                .map(|member| (member.address, &member.consensus_pubkey)),
+        )
+        .map_err(snapshot_error)?;
+        if bootstrap.body.action != PublicationAction::Bootstrap
+            || !bootstrap.body.previous_receipt_hash.is_zero()
+            || descriptor_hash.is_zero()
+            || checkpoint.receipt_hash
+                != registry
+                    .publication_receipt_hash
+                    .read()
+                    .map_err(snapshot_error)?
+            || !matches!(
+                material.body.action,
+                PublicationAction::Bootstrap | PublicationAction::BindMaterial
+            )
+            || [&bootstrap, &material, &checkpoint].iter().any(|r| {
+                r.body.chain_id != self.chain_id
+                    || r.body.genesis_hash != self.genesis_hash
+                    || r.body.repo_id != binding
+                    || r.body.owner_bls_public != bootstrap.body.owner_bls_public
+                    || r.body.descriptor_hash != descriptor_hash
+            })
+            || authority.committee().vrf_group_public_key_bytes.as_slice()
+                != bootstrap.body.owner_bls_public.as_slice()
+            || material.body.epoch != authority.epoch()
+            || material.body.material_version != authority.committee().vrf_material_version
+            || material.body.players_commitment != players
+            || material.body.material_hash.is_zero()
+            || checkpoint.body.epoch != material.body.epoch
+            || checkpoint.body.material_version != material.body.material_version
+            || checkpoint.body.material_hash != material.body.material_hash
+            || checkpoint.body.players_commitment != material.body.players_commitment
+        {
+            return Err(ManagerError::Snapshot(
+                "signing material/checkpoint binding mismatch".into(),
+            ));
+        }
+        let stage = registry
+            .patch_execution_stage
+            .read(&proposal_id)
+            .map_err(snapshot_error)?;
+        if !matches!(
+            stage,
+            outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING
+                | outbe_radicleregistry::schema::PATCH_EXECUTION_REVIEWED
+                | outbe_radicleregistry::schema::PATCH_EXECUTION_MERGED
+        ) {
+            return Err(ManagerError::Snapshot(
+                "unknown patch execution stage".into(),
+            ));
+        }
+        let anchor_height = approval
+            .approved_height
+            .max(material.accepted_height)
+            .max(checkpoint.accepted_height);
+        let anchor_hash = self
+            .provider
+            .block_hash(anchor_height)
+            .map_err(ManagerError::provider)?
+            .filter(|hash| !hash.is_zero())
+            .ok_or_else(|| {
+                ManagerError::Finality("signing anchor is locally unavailable".into())
+            })?;
+        Ok(FinalizedPatchSigningState {
+            authority,
+            approval: FinalizedPatchApproval { block, approval },
+            stage,
+            anchor: FinalizedBlock {
+                number: anchor_height,
+                hash: anchor_hash,
+            },
+            checkpoint: FinalizedPublicationReceipt {
+                block,
+                receipt: checkpoint,
+            },
+            material: FinalizedPublicationReceipt {
+                block,
+                receipt: material,
+            },
+        })
+    }
+
     /// Replay immutable receipts from an exact local canonical finalized snapshot.
     pub fn read_publication_receipt(
         &self,
@@ -122,21 +327,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
     pub fn read_current_repository_authority(
         &self,
     ) -> Result<FinalizedRepositoryAuthority, ManagerError> {
-        let head = self
-            .provider
-            .finalized_block_num_hash()
-            .map_err(ManagerError::provider)?
-            .ok_or_else(|| ManagerError::Finality("no finalized block".into()))?;
-        if self
-            .provider
-            .block_hash(head.number)
-            .map_err(ManagerError::provider)?
-            != Some(head.hash)
-        {
-            return Err(ManagerError::Finality(
-                "repository authority requires a canonical finalized block".into(),
-            ));
-        }
+        let head = self.current_finalized_block()?;
         let state = self
             .provider
             .state_by_block_hash(head.hash)
