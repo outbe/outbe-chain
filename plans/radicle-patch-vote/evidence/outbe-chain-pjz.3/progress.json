@@ -1,0 +1,22 @@
+{
+  "task_id": "outbe-chain-pjz.3",
+  "status": "in_progress_crypto_layer_only",
+  "production_native_integration": "not_started",
+  "implemented": [
+    "RepositoryKey Ed25519/BLS split without transport changes",
+    "validated compressed G2 keys and canonical textual/tagged formats",
+    "125byte native signing subjects,269byte detached envelopes and fixed Commonware-compatible MinSig POP namespace verification",
+    "real P0 threshold vectors and wrong-domain/valid-wrong-signature/subgroup/encoding/length negatives"
+  ],
+  "checks": "17 crypto tests, all-feature and default Clippy, alloc-only check passed on Darwin; not full P2 evidence or acceptance",
+  "remaining": [
+    "DID/delegate/COB/refs production integration",
+    "prepare/attach/apply native APIs",
+    "native unsigned Git metadata/header grammar",
+    "repository namespaces,wire negotiation and Ed transport compatibility",
+    "generic managed-owner publication policy through local/fetch/evaluator/cache/reopen/rebuild",
+    "two-node BLS repo with Ed author/Review/sigrefs and all P2 negative/regression requirements",
+    "frozen complete P2 evidence and three independent reviews"
+  ],
+  "review_state": "not_ready; all P2 review children remain blocked"
+}

@@ -31,6 +31,11 @@ pub mod ssh;
 mod seed;
 pub use seed::Seed;
 
+#[cfg(feature = "alloc")]
+pub mod repository;
+#[cfg(feature = "alloc")]
+pub use repository::{BlsEnvelope, BlsPublicKey, RepositoryKey, RepositorySubject, SubjectKind};
+
 /// Output of a Diffie-Hellman key exchange.
 pub type SharedSecret = [u8; 32];
 
@@ -142,7 +147,7 @@ impl PublicKey {
 
 impl<'a> From<&'a PublicKeyBytes> for &'a PublicKey {
     fn from(other: &'a PublicKeyBytes) -> Self {
-        let ptr = std::ptr::from_ref(other).cast::<PublicKey>();
+        let ptr = core::ptr::from_ref(other).cast::<PublicKey>();
         // SAFETY: `PublicKey` is `#[repr(transparent)]` over the same array type,
         // so the cast preserves layout and alignment, and every byte pattern is valid.
         unsafe { &*ptr }
