@@ -165,9 +165,9 @@ pub fn capture_report_data_from_intent(canonical_intent: &[u8]) -> EnclaveResult
     if intent.attestation_mode != AttestationMode::DcapRequired {
         return Err(GramineError::CaptureIntentNotDcap.into());
     }
-    intent
+    Ok(intent
         .report_data()
-        .map_err(GramineError::derive_intent_report_data)
+        .map_err(GramineError::derive_intent_report_data)?)
 }
 
 /// Capture a real DCAP quote for one canonical intent into a new output file.
@@ -197,7 +197,8 @@ pub fn capture_dcap_quote_to_file(intent_path: &str, quote_path: &str) -> Enclav
         .map_err(|error| GramineError::write_path(quote_path, error))?;
     output
         .sync_all()
-        .map_err(|error| GramineError::sync_path(quote_path, error))
+        .map_err(|error| GramineError::sync_path(quote_path, error))?;
+    Ok(())
 }
 
 /// Read this enclave's REAL measurements (MRENCLAVE/MRSIGNER/ISVSVN) from a LOCAL
