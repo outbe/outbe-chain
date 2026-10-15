@@ -6,7 +6,7 @@ use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::manifest::manifest_digest;
+use crate::{errors::ProvenanceError, manifest::manifest_digest};
 
 const SCHEME: &str = "secp256k1-recoverable-low-s-sha256";
 
@@ -51,10 +51,10 @@ impl SignatureEnvelope {
         expected_key: Option<&[u8; 33]>,
     ) -> io::Result<[u8; 33]> {
         if self.version != 1 || self.scheme != SCHEME {
-            return Err(invalid("unsupported snapshot signature format"));
+            return Err(ProvenanceError::UnsupportedSignatureFormat.into());
         }
         if decode::<32>(&self.bundle_id)? != manifest_digest(raw_manifest) {
-            return Err(invalid("signed manifest digest differs"));
+            return Err(ProvenanceError::SignedManifestDigestMismatch.into());
         }
         let declared = decode::<33>(&self.public_key)?;
         let recovered = recover(
@@ -62,14 +62,10 @@ impl SignatureEnvelope {
             &decode::<65>(&self.signature)?,
         )?;
         if declared != recovered {
-            return Err(invalid(
-                "snapshot signature does not match declared creator",
-            ));
+            return Err(ProvenanceError::CreatorSignatureMismatch.into());
         }
         if expected_key.is_some_and(|key| key != &recovered) {
-            return Err(invalid(
-                "snapshot creator does not match expected public key",
-            ));
+            return Err(ProvenanceError::ExpectedPublicKeyMismatch.into());
         }
         Ok(recovered)
     }
@@ -78,10 +74,9 @@ impl SignatureEnvelope {
 fn recover(digest: &[u8; 32], bytes: &[u8; 65]) -> io::Result<[u8; 33]> {
     let signature = Signature::from_slice(&bytes[..64]).map_err(invalid)?;
     if signature.normalize_s().is_some() {
-        return Err(invalid("snapshot signature must use low S"));
+        return Err(ProvenanceError::NonLowSSignature.into());
     }
-    let recovery = RecoveryId::from_byte(bytes[64])
-        .ok_or_else(|| invalid("invalid snapshot signature recovery ID"))?;
+    let recovery = RecoveryId::from_byte(bytes[64]).ok_or(ProvenanceError::InvalidRecoveryId)?;
     let key = VerifyingKey::recover_from_prehash(digest, &signature, recovery).map_err(invalid)?;
     key.to_encoded_point(true)
         .as_bytes()

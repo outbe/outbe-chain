@@ -13,6 +13,7 @@ outbe-consensus.workspace = true
 outbe-macros.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+thiserror.workspace = true
 
 [dev-dependencies]
 outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }

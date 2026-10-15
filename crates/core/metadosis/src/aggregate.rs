@@ -12,7 +12,7 @@ use outbe_primitives::{
 
 use crate::{
     constants::{MAX_ACTIVE_WWDS, MAX_RECORDS_KEPT, MAX_RETAINED_WWDS},
-    errors::storage_corruption_message,
+    errors::MetadosisStorageCorruptionError,
     schema::{day_type, status, MetadosisContract},
     terminal::{model::WwdTerminalReceipt, TerminalReceiptValidationContext},
 };
@@ -55,9 +55,7 @@ impl TryFrom<u8> for WwdStatus {
             status::COMPLETED => Ok(Self::Completed),
             status::FAILED => Ok(Self::Failed),
             status::OFFCHAIN_PENDING => Ok(Self::OffchainPending),
-            other => Err(storage_corruption_message(format!(
-                "Metadosis WWD has unknown status tag {other}"
-            ))),
+            other => Err(MetadosisStorageCorruptionError::WwdUnknownStatusTag { other }.into()),
         }
     }
 }
@@ -84,9 +82,7 @@ impl TryFrom<u8> for WwdDayType {
             day_type::UNKNOWN => Ok(Self::Unknown),
             day_type::GREEN => Ok(Self::Green),
             day_type::RED => Ok(Self::Red),
-            other => Err(storage_corruption_message(format!(
-                "Metadosis WWD has unknown day-type tag {other}"
-            ))),
+            other => Err(MetadosisStorageCorruptionError::WwdUnknownDayTypeTag { other }.into()),
         }
     }
 }
@@ -194,23 +190,27 @@ impl ValidatedWwdAggregate {
             matches!(record.status, WwdStatus::Ready | WwdStatus::OffchainPending)
                 && (record.scheduled_process_time, record.worldwide_day) > victim_key
         }) {
-            return Err(storage_corruption_message(
-                "CapacityForfeiture candidate is older than retained OCOMP work",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::CapacityForfeitureCandidateOlderThanRetainedOcompWork
+                    .into(),
+            );
         }
         Ok(())
     }
 
     pub(crate) fn ensure_can_insert_active(&self, wwd: WorldwideDay) -> Result<()> {
         if self.records.contains_key(&wwd) {
-            return Err(storage_corruption_message(format!(
-                "Metadosis WWD {wwd} already exists before active insertion"
-            )));
+            return Err(
+                MetadosisStorageCorruptionError::WwdAlreadyExistsBeforeActiveInsertion { wwd }
+                    .into(),
+            );
         }
         if self.active_order.len() >= MAX_ACTIVE_WWDS {
-            return Err(storage_corruption_message(format!(
-                "Metadosis active WWD cap {MAX_ACTIVE_WWDS} reached before inserting {wwd}"
-            )));
+            return Err(MetadosisStorageCorruptionError::ActiveWwdCapReached {
+                max_active_wwds: MAX_ACTIVE_WWDS,
+                wwd,
+            }
+            .into());
         }
         Ok(())
     }
@@ -227,9 +227,13 @@ impl ValidatedWwdAggregate {
         };
         let retained_count = aggregate.retained_count();
         if retained_count > MAX_RETAINED_WWDS {
-            return Err(storage_corruption_message(format!(
-                "Metadosis retained WWD population {retained_count} exceeds OCOMP cap {MAX_RETAINED_WWDS}"
-            )));
+            return Err(
+                MetadosisStorageCorruptionError::RetainedWwdPopulationExceedsOcompCap {
+                    retained_count,
+                    max_retained_wwds: MAX_RETAINED_WWDS,
+                }
+                .into(),
+            );
         }
         Ok(aggregate)
     }
@@ -241,21 +245,27 @@ fn load_index_membership(
     let active_set = collect_unique("active", contract.active_wwd.read_all()?)?;
     let closed_set = collect_unique("closed", contract.closed_wwd.read_all()?)?;
     if active_set.len() > MAX_ACTIVE_WWDS {
-        return Err(storage_corruption_message(format!(
-            "Metadosis active WWD population {} exceeds derived cap {MAX_ACTIVE_WWDS}",
-            active_set.len()
-        )));
+        return Err(
+            MetadosisStorageCorruptionError::ActiveWwdPopulationExceedsDerivedCap {
+                count: active_set.len(),
+                max_active_wwds: MAX_ACTIVE_WWDS,
+            }
+            .into(),
+        );
     }
     if closed_set.len() > MAX_RECORDS_KEPT {
-        return Err(storage_corruption_message(format!(
-            "Metadosis closed WWD population {} exceeds retention cap {MAX_RECORDS_KEPT}",
-            closed_set.len()
-        )));
+        return Err(
+            MetadosisStorageCorruptionError::ClosedWwdPopulationExceedsRetentionCap {
+                count: closed_set.len(),
+                max_records_kept: MAX_RECORDS_KEPT,
+            }
+            .into(),
+        );
     }
     if let Some(overlap) = active_set.intersection(&closed_set).next() {
-        return Err(storage_corruption_message(format!(
-            "Metadosis WWD {overlap} is both active and closed"
-        )));
+        return Err(
+            MetadosisStorageCorruptionError::WwdBothActiveAndClosed { overlap: *overlap }.into(),
+        );
     }
     Ok((active_set, closed_set))
 }
@@ -271,11 +281,12 @@ fn load_records(
         (WwdMembership::Closed, closed_set),
     ] {
         for wwd in indexed {
-            let record = contract.worldwide_days.get(*wwd)?.ok_or_else(|| {
-                storage_corruption_message(format!(
-                    "Metadosis {membership:?} index points to missing WWD {wwd}"
-                ))
-            })?;
+            let record = contract.worldwide_days.get(*wwd)?.ok_or(
+                MetadosisStorageCorruptionError::IndexPointsToMissingWwd {
+                    membership,
+                    wwd: *wwd,
+                },
+            )?;
             let status = WwdStatus::try_from(record.status)?;
             let day_type = WwdDayType::try_from(record.day_type)?;
             validate_record_shape(*wwd, status, membership, &record)?;
@@ -297,9 +308,7 @@ fn validate_record_shape(
     record: &crate::schema::WorldwideDay,
 ) -> Result<()> {
     if status.is_terminal() != matches!(membership, WwdMembership::Closed) {
-        return Err(storage_corruption_message(format!(
-            "Metadosis WWD {wwd} status/membership mismatch"
-        )));
+        return Err(MetadosisStorageCorruptionError::WwdStatusMembershipMismatch { wwd }.into());
     }
     if ![
         record.forming_start,
@@ -311,9 +320,7 @@ fn validate_record_shape(
     .windows(2)
     .all(|pair| pair[0] <= pair[1])
     {
-        return Err(storage_corruption_message(format!(
-            "Metadosis WWD {wwd} has non-monotonic phase boundaries"
-        )));
+        return Err(MetadosisStorageCorruptionError::WwdNonMonotonicPhaseBoundaries { wwd }.into());
     }
     Ok(())
 }
@@ -340,11 +347,7 @@ fn validate_terminal_state(
             usize::from(membership == WwdMembership::Closed),
             expected_value_routed,
         ))
-        .map_err(|_| {
-            storage_corruption_message(format!(
-                "Metadosis WWD {wwd} has an invalid terminal receipt"
-            ))
-        })
+        .map_err(|_| MetadosisStorageCorruptionError::WwdInvalidTerminalReceipt { wwd }.into())
 }
 
 fn validate_record_ocomp_presence(
@@ -355,14 +358,12 @@ fn validate_record_ocomp_presence(
 ) -> Result<()> {
     let has_ocomp_state = !contract.ocomp_fsm_states.get_bytes(&wwd).is_empty()?;
     if status == WwdStatus::OffchainPending && !has_ocomp_state {
-        return Err(storage_corruption_message(format!(
-            "Metadosis OFFCHAIN_PENDING WWD {wwd} has no OCOMP FSM"
-        )));
+        return Err(
+            MetadosisStorageCorruptionError::OffchainPendingWwdMissingOcompFsm { wwd }.into(),
+        );
     }
     if matches!(membership, WwdMembership::Closed) && has_ocomp_state {
-        return Err(storage_corruption_message(format!(
-            "Metadosis closed WWD {wwd} retains a live OCOMP FSM"
-        )));
+        return Err(MetadosisStorageCorruptionError::ClosedWwdRetainsLiveOcompFsm { wwd }.into());
     }
     Ok(())
 }
@@ -379,13 +380,18 @@ fn build_active_order(
     active_order
 }
 
-fn collect_unique(label: &str, values: Vec<WorldwideDay>) -> Result<BTreeSet<WorldwideDay>> {
+fn collect_unique(
+    label: &'static str,
+    values: Vec<WorldwideDay>,
+) -> Result<BTreeSet<WorldwideDay>> {
     let mut set = BTreeSet::new();
     for value in values {
         if !set.insert(value) {
-            return Err(storage_corruption_message(format!(
-                "Metadosis {label} WWD index contains duplicate {value}"
-            )));
+            return Err(MetadosisStorageCorruptionError::WwdIndexContainsDuplicate {
+                label,
+                value,
+            }
+            .into());
         }
     }
     Ok(set)

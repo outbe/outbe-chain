@@ -35,11 +35,10 @@ pub fn worldwide_day(
     let membership = match (active, closed) {
         (true, false) => WwdMembership::Active,
         (false, true) => WwdMembership::Closed,
-        _ => {
-            return Err(crate::errors::storage_corruption(
-                "Metadosis WWD membership is not exactly one of active/closed",
-            ))
-        }
+        _ => return Err(
+            crate::errors::MetadosisStorageCorruptionError::WwdMembershipNotExactlyActiveOrClosed
+                .into(),
+        ),
     };
     let status = WwdStatus::try_from(record.status)?;
     let day_type = record.day_type.try_into()?;
@@ -69,9 +68,10 @@ pub fn offering_worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<Worldwi
     let contract = MetadosisContract::new(storage);
     let mut result = Vec::new();
     for wwd in contract.active_wwd.read_all()? {
-        let record = contract.worldwide_days.get(wwd)?.ok_or_else(|| {
-            crate::errors::storage_corruption("Metadosis active index points to a missing WWD")
-        })?;
+        let record = contract
+            .worldwide_days
+            .get(wwd)?
+            .ok_or(crate::errors::MetadosisStorageCorruptionError::ActiveIndexPointsToMissingWwd)?;
         if WwdStatus::try_from(record.status)? == WwdStatus::Offering {
             result.push(wwd);
         }

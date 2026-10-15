@@ -5,7 +5,7 @@ use outbe_primitives::{error::Result, time::WorldwideDay};
 use super::TerminalReceiptValidationContext;
 use crate::{
     constants::MAX_RETAINED_WWDS,
-    errors::storage_corruption_message,
+    errors::MetadosisStorageCorruptionError,
     schema::{status, terminal_outcome},
 };
 
@@ -83,9 +83,7 @@ impl TerminalReceiptCommon {
         let conserved = self.value_routed == context.expected_value_routed
             && self.carry_over_before.checked_add(self.value_routed) == Some(self.carry_over_after);
         if !terminal_membership || !conserved || self.block_number == 0 {
-            return Err(storage_corruption_message(
-                "Metadosis WWD terminal receipt is invalid",
-            ));
+            return Err(MetadosisStorageCorruptionError::WwdTerminalReceiptInvalid.into());
         }
         Ok(())
     }
@@ -94,13 +92,14 @@ impl TerminalReceiptCommon {
 impl CapacityForfeitureDetail {
     fn validate(&self, retirement: RetirementOutcome) -> Result<()> {
         let max = u32::try_from(MAX_RETAINED_WWDS)
-            .map_err(|_| storage_corruption_message("retained cap exceeds u32"))?;
+            .map_err(|_| MetadosisStorageCorruptionError::RetainedCapExceedsU32)?;
         let capacity_policy = self.max_retained_wwds == max && self.retained_count_before == max;
         let generation_transition = self.source_generation == 0 && self.retired_generation == 1;
         if !capacity_policy || !generation_transition || !self.valid_retirement(retirement) {
-            return Err(storage_corruption_message(
-                "capacity-forfeiture detail differs from terminal receipt",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::CapacityForfeitureDetailDiffersFromTerminalReceipt
+                    .into(),
+            );
         }
         Ok(())
     }

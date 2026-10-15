@@ -91,7 +91,7 @@ impl BlockExecutorFactory for OutbeEvmConfig {
             parent_hash,
         ) {
             system_plan.system_layout_error.get_or_insert_with(|| {
-                format!("compressed-entity exact-parent scope configuration failed: {error}")
+                crate::errors::SystemTxExpectationError::configure_compressed_entities_scope(error)
             });
         }
         let execution_read_budget = ctx.execution_read_budget.clone();

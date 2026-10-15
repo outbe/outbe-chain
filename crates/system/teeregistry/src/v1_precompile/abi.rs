@@ -1,5 +1,5 @@
 //! Borrowed canonical ABI validation before policy reads or verifier execution.
-use crate::errors::TeeRegistryError;
+use crate::errors::{RegisterAbiError, TeeRegistryError};
 use alloy_sol_types::SolCall;
 use outbe_primitives::{
     error::{PrecompileError, Result},
@@ -56,15 +56,17 @@ fn mutator_head(data: &[u8]) -> Result<MutatorAbiHead<'_>> {
 
     let args = data
         .get(4..)
-        .ok_or_else(|| invalid_register_abi("missing function selector"))?;
+        .ok_or_else(|| invalid_register_abi(RegisterAbiError::MissingFunctionSelector))?;
     let head = args
         .get(..head_len)
-        .ok_or_else(|| invalid_register_abi("truncated argument head"))?;
+        .ok_or_else(|| invalid_register_abi(RegisterAbiError::TruncatedArgumentHead))?;
     let evidence_offset = abi_usize(&head[0..32])?;
     let node_signature_offset = abi_usize(&head[32..64])?;
     let enclave_signature_offset = abi_usize(&head[64..96])?;
     if evidence_offset != head_len {
-        return Err(invalid_register_abi("non-canonical evidence offset"));
+        return Err(invalid_register_abi(
+            RegisterAbiError::NonCanonicalEvidenceOffset,
+        ));
     }
 
     Ok(MutatorAbiHead {
@@ -93,7 +95,9 @@ fn common_signatures<'a>(head: &MutatorAbiHead<'a>) -> Result<(RegisterPreflight
         .into());
     }
     if node_signature_offset != next_offset {
-        return Err(invalid_register_abi("non-canonical node signature offset"));
+        return Err(invalid_register_abi(
+            RegisterAbiError::NonCanonicalNodeSignatureOffset,
+        ));
     }
     let (node_signature, next_offset) = dynamic_bytes(args, node_signature_offset)?;
     if node_signature.len() != 65 {
@@ -101,7 +105,7 @@ fn common_signatures<'a>(head: &MutatorAbiHead<'a>) -> Result<(RegisterPreflight
     }
     if enclave_signature_offset != next_offset {
         return Err(invalid_register_abi(
-            "non-canonical enclave signature offset",
+            RegisterAbiError::NonCanonicalEnclaveSignatureOffset,
         ));
     }
     let (enclave_signature, next_offset) = dynamic_bytes(args, enclave_signature_offset)?;
@@ -134,7 +138,7 @@ fn validator_binding<'a>(
     let (binding, next_offset) = validator_node_binding(args, binding_offset, next_offset)?;
     if validator_signature_offset != next_offset {
         return Err(invalid_register_abi(
-            "non-canonical validator signature offset",
+            RegisterAbiError::NonCanonicalValidatorSignatureOffset,
         ));
     }
     let (validator_signature, next_offset) = dynamic_bytes(args, validator_signature_offset)?;
@@ -143,7 +147,7 @@ fn validator_binding<'a>(
     }
     if node_binding_signature_offset != next_offset {
         return Err(invalid_register_abi(
-            "non-canonical NodeHost binding signature offset",
+            RegisterAbiError::NonCanonicalNodeHostBindingSignatureOffset,
         ));
     }
     let (node_binding_signature, final_offset) =
@@ -164,7 +168,7 @@ fn validator_node_binding(
 ) -> Result<(&[u8], usize)> {
     if binding_offset != next_offset {
         return Err(invalid_register_abi(
-            "non-canonical validator NodeHost binding offset",
+            RegisterAbiError::NonCanonicalValidatorNodeHostBindingOffset,
         ));
     }
     let (binding, next_offset) = dynamic_bytes(args, binding_offset)?;
@@ -184,12 +188,12 @@ fn validate_call_end(
     evidence_len: usize,
 ) -> Result<()> {
     if final_offset != args.len() {
-        return Err(invalid_register_abi("trailing ABI bytes"));
+        return Err(invalid_register_abi(RegisterAbiError::TrailingAbiBytes));
     }
     let framing_len = data
         .len()
         .checked_sub(evidence_len)
-        .ok_or_else(|| invalid_register_abi("evidence length exceeds calldata"))?;
+        .ok_or_else(|| invalid_register_abi(RegisterAbiError::EvidenceLengthExceedsCalldata))?;
     if framing_len > MAX_EVIDENCE_CALL_FRAMING_BYTES {
         return Err(TeeRegistryError::EvidenceCallFramingExceedsMaxBytes(
             MAX_EVIDENCE_CALL_FRAMING_BYTES,
@@ -217,29 +221,31 @@ impl RegisterPreflight<'_> {
 fn dynamic_bytes(args: &[u8], offset: usize) -> Result<(&[u8], usize)> {
     let length_word_end = offset
         .checked_add(32)
-        .ok_or_else(|| invalid_register_abi("dynamic offset overflow"))?;
+        .ok_or_else(|| invalid_register_abi(RegisterAbiError::DynamicOffsetOverflow))?;
     let length = abi_usize(
         args.get(offset..length_word_end)
-            .ok_or_else(|| invalid_register_abi("truncated dynamic length"))?,
+            .ok_or_else(|| invalid_register_abi(RegisterAbiError::TruncatedDynamicLength))?,
     )?;
     let value_end = length_word_end
         .checked_add(length)
-        .ok_or_else(|| invalid_register_abi("dynamic length overflow"))?;
+        .ok_or_else(|| invalid_register_abi(RegisterAbiError::DynamicLengthOverflow))?;
     let value = args
         .get(length_word_end..value_end)
-        .ok_or_else(|| invalid_register_abi("truncated dynamic value"))?;
+        .ok_or_else(|| invalid_register_abi(RegisterAbiError::TruncatedDynamicValue))?;
     let padded_length = length
         .checked_add(31)
         .map(|length| length / 32 * 32)
-        .ok_or_else(|| invalid_register_abi("dynamic padding overflow"))?;
+        .ok_or_else(|| invalid_register_abi(RegisterAbiError::DynamicPaddingOverflow))?;
     let padded_end = length_word_end
         .checked_add(padded_length)
-        .ok_or_else(|| invalid_register_abi("dynamic padding overflow"))?;
+        .ok_or_else(|| invalid_register_abi(RegisterAbiError::DynamicPaddingOverflow))?;
     let padding = args
         .get(value_end..padded_end)
-        .ok_or_else(|| invalid_register_abi("truncated dynamic padding"))?;
+        .ok_or_else(|| invalid_register_abi(RegisterAbiError::TruncatedDynamicPadding))?;
     if padding.iter().any(|byte| *byte != 0) {
-        return Err(invalid_register_abi("non-zero dynamic padding"));
+        return Err(invalid_register_abi(
+            RegisterAbiError::NonZeroDynamicPadding,
+        ));
     }
     Ok((value, padded_end))
 }
@@ -247,13 +253,15 @@ fn dynamic_bytes(args: &[u8], offset: usize) -> Result<(&[u8], usize)> {
 fn abi_usize(word: &[u8]) -> Result<usize> {
     let width = core::mem::size_of::<usize>();
     if word.len() != 32 || word[..32 - width].iter().any(|byte| *byte != 0) {
-        return Err(invalid_register_abi("ABI integer exceeds host usize"));
+        return Err(invalid_register_abi(
+            RegisterAbiError::AbiIntegerExceedsHostUsize,
+        ));
     }
     let mut value = [0_u8; core::mem::size_of::<usize>()];
     value.copy_from_slice(&word[32 - width..]);
     Ok(usize::from_be_bytes(value))
 }
 
-fn invalid_register_abi(reason: &'static str) -> PrecompileError {
+fn invalid_register_abi(reason: RegisterAbiError) -> PrecompileError {
     TeeRegistryError::InvalidCanonicalRegistrationAbi(reason).into()
 }

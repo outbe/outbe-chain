@@ -293,8 +293,7 @@ pub async fn read_finalized_registry_view_v1(
         .tee_renewal_schedule_v1()
         .await
         .wrap_err("read exact finalized TEE renewal schedule")?
-        .validate()
-        .map_err(eyre::Report::msg)?;
+        .validate()?;
     let finalized = rpc
         .finalized_block()
         .await
@@ -461,7 +460,7 @@ mod tests {
                     ITeeRegistryV1::tributeOfferPublicKeyCall::abi_encode_returns(&U256::from(7)),
                 );
             }
-            eyre::bail!("unexpected Registry call");
+            Err(RegistryError::UnexpectedRegistryCall.into())
         }
     }
 

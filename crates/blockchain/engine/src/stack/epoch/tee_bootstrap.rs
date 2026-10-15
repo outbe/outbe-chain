@@ -76,13 +76,9 @@ where
         .activation()
         .map_err(crate::errors::StackEpochError::invalid_tee_attestation_chain_spec)?;
     let tee_policy = tee_activation
-        .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
-        .map_err(eyre::Report::msg)?
+        .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)?
         .clone();
-    let tee_session = args
-        .tee_session_mode
-        .resolve(tee_policy.attestation_mode)
-        .map_err(eyre::Report::msg)?;
+    let tee_session = args.tee_session_mode.resolve(tee_policy.attestation_mode)?;
     {
         if coordinate_genesis_bootstrap {
             let my_validator = proposer_evm_address.ok_or(

@@ -148,7 +148,11 @@ pub fn upgrade_key_transfer_request_hash_v1(
     export: bool,
 ) -> Result<B256, FinalizedAdmissionCodecError> {
     let context = DcapOnboardingArtifactV1::decode_canonical(artifact)
-        .map_err(|_| FinalizedAdmissionCodecError::Malformed("upgrade artifact"))?
+        .map_err(|_| {
+            FinalizedAdmissionCodecError::malformed(
+                crate::errors::FinalizedAdmissionMalformedReason::UpgradeArtifact,
+            )
+        })?
         .context;
     let base = onboarding_artifact_ingest_request_hash_v1(FinalizedAdmissionBeginInputV1 {
         artifact,
@@ -211,6 +215,13 @@ pub enum FinalizedAdmissionCodecError {
     Malformed(&'static str),
 }
 
+impl FinalizedAdmissionCodecError {
+    #[must_use]
+    pub const fn malformed(reason: crate::errors::FinalizedAdmissionMalformedReason) -> Self {
+        Self::Malformed(reason.as_str())
+    }
+}
+
 impl CertifiedHeaderV1 {
     pub fn encode_canonical(&self) -> Result<Vec<u8>, FinalizedAdmissionCodecError> {
         let mut out = Vec::new();
@@ -232,7 +243,9 @@ impl CertifiedHeaderV1 {
         let mut decoder = Decoder::new(input);
         let version = decoder.cursor.u8()?;
         if version != 1 && version != 2 {
-            return Err(FinalizedAdmissionCodecError::Malformed("version"));
+            return Err(FinalizedAdmissionCodecError::malformed(
+                crate::errors::FinalizedAdmissionMalformedReason::Version,
+            ));
         }
         let mut value = decoder.certified_header()?;
         if version == 2 {
@@ -246,8 +259,8 @@ impl CertifiedHeaderV1 {
 impl FinalizedAdmissionWitnessV1 {
     pub fn encode_canonical(&self) -> Result<Vec<u8>, FinalizedAdmissionCodecError> {
         if self.registry_storage.len() != EXACT_REGISTRY_STORAGE_PROOFS {
-            return Err(FinalizedAdmissionCodecError::Malformed(
-                "registry proof count",
+            return Err(FinalizedAdmissionCodecError::malformed(
+                crate::errors::FinalizedAdmissionMalformedReason::RegistryProofCount,
             ));
         }
         let mut out = Vec::new();
@@ -280,7 +293,9 @@ impl FinalizedAdmissionWitnessV1 {
         let mut decoder = Decoder::new(input);
         let version = decoder.cursor.u8()?;
         if version != 1 && version != 2 {
-            return Err(FinalizedAdmissionCodecError::Malformed("version"));
+            return Err(FinalizedAdmissionCodecError::malformed(
+                crate::errors::FinalizedAdmissionMalformedReason::Version,
+            ));
         }
         let mut admission = decoder.certified_header()?;
         if version == 2 {
@@ -289,8 +304,8 @@ impl FinalizedAdmissionWitnessV1 {
         let registry_account = decoder.account()?;
         let storage_count = decoder.count(EXACT_REGISTRY_STORAGE_PROOFS)?;
         if storage_count != EXACT_REGISTRY_STORAGE_PROOFS {
-            return Err(FinalizedAdmissionCodecError::Malformed(
-                "registry proof count",
+            return Err(FinalizedAdmissionCodecError::malformed(
+                crate::errors::FinalizedAdmissionMalformedReason::RegistryProofCount,
             ));
         }
         let mut registry_storage = Vec::with_capacity(storage_count);
@@ -341,8 +356,8 @@ fn validate_certified_header_fields(
     header: &[u8],
 ) -> Result<(), FinalizedAdmissionCodecError> {
     if finalization.is_empty() || header.is_empty() {
-        return Err(FinalizedAdmissionCodecError::Malformed(
-            "empty certified header field",
+        return Err(FinalizedAdmissionCodecError::malformed(
+            crate::errors::FinalizedAdmissionMalformedReason::EmptyCertifiedHeaderField,
         ));
     }
     if finalization.len() > MAX_FINALIZATION_BYTES || header.len() > MAX_COMPACT_HEADER_BYTES {
@@ -417,7 +432,9 @@ impl<'a> Decoder<'a> {
     fn descendants(&mut self) -> Result<Vec<Vec<u8>>, FinalizedAdmissionCodecError> {
         let count = self.count(MAX_FINALITY_DESCENDANTS)?;
         if count == 0 {
-            return Err(FinalizedAdmissionCodecError::Malformed("empty V2 ancestry"));
+            return Err(FinalizedAdmissionCodecError::malformed(
+                crate::errors::FinalizedAdmissionMalformedReason::EmptyV2Ancestry,
+            ));
         }
         let mut headers = Vec::with_capacity(count);
         for _ in 0..count {
@@ -472,8 +489,12 @@ impl<'a> Decoder<'a> {
 const fn admission_cursor_error(error: CursorError) -> FinalizedAdmissionCodecError {
     match error {
         CursorError::Overflow => FinalizedAdmissionCodecError::TooLarge,
-        CursorError::Truncated => FinalizedAdmissionCodecError::Malformed("truncated field"),
-        CursorError::Trailing => FinalizedAdmissionCodecError::Malformed("trailing bytes"),
+        CursorError::Truncated => FinalizedAdmissionCodecError::malformed(
+            crate::errors::FinalizedAdmissionMalformedReason::TruncatedField,
+        ),
+        CursorError::Trailing => FinalizedAdmissionCodecError::malformed(
+            crate::errors::FinalizedAdmissionMalformedReason::TrailingBytes,
+        ),
     }
 }
 

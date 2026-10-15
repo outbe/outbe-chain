@@ -39,9 +39,10 @@ pub(super) fn collection_roots(
         .collection_root_count(collection)
         .map_err(PointReadServiceError::materialization)?;
     if count != domain.shard_count() as usize {
-        return Err(PointReadServiceError::Materialization(
-            "incomplete collection shard-root vector".into(),
-        ));
+        return Err(
+            crate::errors::PointReadMaterializationReason::IncompleteCollectionShardRootVector
+                .into(),
+        );
     }
     let mut roots = Vec::with_capacity(count);
     for shard in 0..domain.shard_count() {
@@ -49,7 +50,9 @@ pub(super) fn collection_roots(
             view.tree_root(TreeNamespace::CollectionShard(collection, shard))
                 .map_err(PointReadServiceError::materialization)?
                 .ok_or_else(|| {
-                    PointReadServiceError::Materialization("missing shard root".into())
+                    PointReadServiceError::from(
+                        crate::errors::PointReadMaterializationReason::MissingShardRoot,
+                    )
                 })?,
         );
     }
@@ -57,9 +60,9 @@ pub(super) fn collection_roots(
     let expected_collection =
         collection_root(domain, collection, top).map_err(PointReadServiceError::materialization)?;
     if expected_collection != B256::from(catalog_leaf.as_bytes()) {
-        return Err(PointReadServiceError::Materialization(
-            "catalog leaf does not match shard roots".into(),
-        ));
+        return Err(
+            crate::errors::PointReadMaterializationReason::CatalogLeafDoesNotMatchShardRoots.into(),
+        );
     }
     Ok(roots)
 }

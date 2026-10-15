@@ -17,6 +17,7 @@ pub use execute::execute;
 #[cfg(test)]
 pub(crate) use execute::{compute_fraction_hash_map, validate_required_gratis};
 pub use types::{
-    FidelityPhaseV1, LeagueFractionV1, NodActionV1, ObservationValueV1, ObservedTributeV1,
-    ProgramErrorV1, ProgramInputV1, ProgramResultV1, SemanticObservationV1, TributeInputV1,
+    FidelityPhaseV1, LeagueFractionV1, LysisArithmeticErrorV1, NodActionV1, ObservationValueV1,
+    ObservedTributeV1, ProgramErrorV1, ProgramInputV1, ProgramResultV1, SemanticObservationV1,
+    TributeInputV1,
 };

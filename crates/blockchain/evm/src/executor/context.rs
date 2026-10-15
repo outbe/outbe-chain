@@ -24,7 +24,7 @@ where
         if e.is_node_local() || matches!(e, PrecompileError::Fatal(_)) {
             BlockExecutionError::other(e)
         } else {
-            BlockValidationError::msg(format!("block context: {e}")).into()
+            crate::errors::ExecutorValidationError::block_context(e).into()
         }
     })?;
 

@@ -152,7 +152,7 @@ where
     let mut runtime_failures = runtime
         .runtime_failure_receiver
         .take()
-        .ok_or_else(|| eyre::eyre!("projection body-read failure receiver is unavailable"))?;
+        .ok_or(crate::errors::NodeProjectionError::FailureReceiverUnavailable)?;
     let projector = Arc::new(Mutex::new(runtime));
     let (logical_checkpoint_tx, mut logical_checkpoint_rx) = tokio::sync::mpsc::unbounded_channel();
     let (durable_checkpoint_tx, mut durable_checkpoint_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -599,7 +599,7 @@ where
     // keeps the mutable projector state available across retry attempts.
     let mut runtime = runtime
         .lock()
-        .map_err(|_| eyre::eyre!("offchain-data projector lock is poisoned"))?;
+        .map_err(|_| crate::errors::NodeProjectionError::ProjectorLockPoisoned)?;
     if runtime
         .runtime_failure_sender
         .as_ref()
@@ -615,9 +615,10 @@ where
             .verify_transaction_capability()
             .wrap_err("probe offchain storage before acknowledging runtime-body recovery")?;
     }
-    let overlay = runtime.overlay.clone().ok_or_else(|| {
-        eyre::eyre!("offchain projection overlay is required before a durable write")
-    })?;
+    let overlay = runtime
+        .overlay
+        .clone()
+        .ok_or(crate::errors::NodeProjectionError::OverlayRequired)?;
     let projector = &mut runtime.projector;
     let state = projector.state();
     let checkpoint = state.checkpoint;
@@ -626,39 +627,43 @@ where
     validate_restored_projection_checkpoint(&provider, checkpoint)?;
     recovery_ack_tx
         .send(())
-        .map_err(|_| eyre::eyre!("projection recovery acknowledgement receiver is closed"))?;
+        .map_err(|_| crate::errors::NodeProjectionError::RecoveryAckReceiverClosed)?;
 
     let first_block = match checkpoint {
         Some(checkpoint) if checkpoint.block_number > target.number => {
-            return Err(eyre::eyre!(
-                "projection checkpoint {} ({}) is ahead of finalized target {} ({})",
-                checkpoint.block_number,
-                checkpoint.block_hash,
-                target.number,
-                target.hash
-            ))
+            return Err(
+                crate::errors::NodeProjectionError::CheckpointAheadOfFinalizedTarget {
+                    checkpoint_number: checkpoint.block_number,
+                    checkpoint_hash: checkpoint.block_hash,
+                    target_number: target.number,
+                    target_hash: target.hash,
+                }
+                .into(),
+            )
         }
         Some(checkpoint)
             if checkpoint.block_number == target.number && checkpoint.block_hash != target.hash =>
         {
-            return Err(eyre::eyre!(
-                "projection checkpoint hash {} conflicts with finalized hash {} at height {}",
-                checkpoint.block_hash,
-                target.hash,
-                target.number
-            ));
+            return Err(
+                crate::errors::NodeProjectionError::CheckpointFinalizedHashConflict {
+                    checkpoint_hash: checkpoint.block_hash,
+                    target_hash: target.hash,
+                    height: target.number,
+                }
+                .into(),
+            );
         }
         Some(checkpoint) if checkpoint.block_number == target.number => {
             let checkpoint = FinalizedTarget::new(checkpoint.block_number, checkpoint.block_hash);
             logical_checkpoint_tx
                 .send(checkpoint)
-                .map_err(|_| eyre::eyre!("logical checkpoint receiver is closed"))?;
+                .map_err(|_| crate::errors::NodeProjectionError::LogicalCheckpointReceiverClosed)?;
             return Ok(Some(checkpoint));
         }
         Some(checkpoint) => checkpoint
             .block_number
             .checked_add(1)
-            .ok_or_else(|| eyre::eyre!("projection checkpoint height overflow"))?,
+            .ok_or(crate::errors::NodeProjectionError::CheckpointHeightOverflow)?,
         None => start_block,
     };
 
@@ -697,13 +702,13 @@ where
         ));
         durable_write_tx
             .send(durable_write)
-            .map_err(|_| eyre::eyre!("durable offchain storage writer queue is closed"))?;
+            .map_err(|_| crate::errors::NodeProjectionError::DurableWriterQueueClosed)?;
         logical_checkpoint_tx
             .send(FinalizedTarget::new(
                 projected.block_number,
                 projected.block_hash,
             ))
-            .map_err(|_| eyre::eyre!("logical checkpoint receiver is closed"))?;
+            .map_err(|_| crate::errors::NodeProjectionError::LogicalCheckpointReceiverClosed)?;
     }
 
     Ok(durable_checkpoint)
@@ -723,12 +728,11 @@ fn validate_restored_projection_checkpoint<P: BlockReader>(
                     checkpoint.block_number
                 )
             })?
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "canonical block {} for restored projection checkpoint is unavailable",
-                    checkpoint.block_number
-                )
-            })?;
+            .ok_or(
+                crate::errors::NodeProjectionError::RestoredCheckpointCanonicalBlockUnavailable {
+                    block_number: checkpoint.block_number,
+                },
+            )?;
         if canonical_hash != checkpoint.block_hash {
             bail!(
                 "projection checkpoint hash {} conflicts with canonical hash {} at height {}",

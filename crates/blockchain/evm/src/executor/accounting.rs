@@ -138,6 +138,8 @@ where
         &self,
         metadata: &CertifiedParentAccountingMetadata,
     ) -> Result<AccountedParentArtifact, BlockExecutionError> {
+        use crate::errors::{ExecutorStorageError, ExecutorValidationError};
+
         if let Some(provider) = self.accounted_parent_artifact_provider.as_ref() {
             match provider.execution_summary_by_hash(
                 metadata.finalized_block_number,
@@ -147,9 +149,7 @@ where
                 Ok(None) | Err(reth_evm::execute::ProviderError::HeaderNotFound(_)) => {}
                 Err(error) => {
                     return Err(BlockExecutionError::other(
-                        PrecompileError::BodyReadUnavailable(format!(
-                            "read accounted-parent artifact: {error}"
-                        )),
+                        ExecutorStorageError::read_accounted_parent_artifact(error),
                     ));
                 }
             }
@@ -168,18 +168,20 @@ where
             {
                 return Ok(*hint);
             }
-            return Err(BlockValidationError::msg(format!(
-                "parent_artifact_hint mismatch: metadata=({}, {}), actual parent=({parent_block_number}, {})",
-                metadata.finalized_block_number, metadata.finalized_block_hash, self.parent_hash,
-            ))
+            return Err(ExecutorValidationError::ParentArtifactHintMismatch {
+                metadata_number: metadata.finalized_block_number,
+                metadata_hash: metadata.finalized_block_hash,
+                parent_number: parent_block_number,
+                parent_hash: self.parent_hash,
+            }
             .into());
         }
 
         Err(BlockExecutionError::other(
-            PrecompileError::BodyReadUnavailable(format!(
-                "missing execution summary artifact for accounted-parent block {} ({})",
-                metadata.finalized_block_number, metadata.finalized_block_hash
-            )),
+            ExecutorStorageError::missing_accounted_parent_execution_summary(
+                metadata.finalized_block_number,
+                metadata.finalized_block_hash,
+            ),
         ))
     }
 
@@ -210,15 +212,13 @@ where
         block_number: u64,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<(), BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
         use outbe_consensus::proof::verify_v2_proof;
         use outbe_validatorset::state::{committee_snapshot_key, read_committee_snapshot};
 
         if block_number <= crate::system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER {
             if block_number > 0 && self.inner.evm.block().prevrandao() != Some(B256::ZERO) {
-                return Err(BlockValidationError::msg(
-                    "genesis child PREVRANDAO must be zero (no parent proof)",
-                )
-                .into());
+                return Err(ExecutorValidationError::GenesisChildPrevrandaoMustBeZero.into());
             }
             return Ok(());
         }
@@ -236,10 +236,10 @@ where
         // carries the V2 wire fields the verifier needs.
         let input = self.phase1_verification_input(block_number, block_artifacts)?;
         let SystemTxInputV2::CertifiedParentAccounting { metadata } = &input else {
-            return Err(BlockValidationError::msg(
-                "Phase 1 pre-exec verifier expected CertifiedParentAccounting input",
-            )
-            .into());
+            return Err(
+                ExecutorValidationError::Phase1VerifierExpectedCertifiedParentAccountingInput
+                    .into(),
+            );
         };
 
         // Resolve the active committee snapshot for the parent's epoch via
@@ -273,19 +273,18 @@ where
                 if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
                     BlockExecutionError::other(error)
                 } else {
-                    BlockValidationError::msg(format!(
-                        "Phase 1 pre-exec: read committee snapshot for epoch={} key={}: {error}",
-                        metadata_for_verify.finalized_epoch, snapshot_key
-                    ))
+                    ExecutorValidationError::phase1_read_committee_snapshot(
+                        metadata_for_verify.finalized_epoch,
+                        snapshot_key,
+                        error,
+                    )
                     .into()
                 }
             })?
         };
-        let snapshot = snapshot.ok_or_else(|| {
-            BlockExecutionError::from(BlockValidationError::msg(format!(
-                "Phase 1 pre-exec: missing committee snapshot for epoch={} key={}",
-                metadata_for_verify.finalized_epoch, snapshot_key
-            )))
+        let snapshot = snapshot.ok_or(ExecutorValidationError::Phase1MissingCommitteeSnapshot {
+            epoch: metadata_for_verify.finalized_epoch,
+            snapshot_key,
         })?;
 
         let verified = verify_v2_proof(
@@ -295,17 +294,18 @@ where
             parent_hash,
         )
         .map_err(|error| {
-            BlockExecutionError::from(BlockValidationError::msg(format!(
-                "Phase 1 pre-exec: verify_v2_proof rejected metadata for block {block_number}: {error}"
-            )))
+            BlockExecutionError::from(ExecutorValidationError::phase1_verify_proof_rejected(
+                block_number,
+                error,
+            ))
         })?;
 
         let actual = self.inner.evm.block().prevrandao();
         if actual != Some(verified.prev_randao) {
-            return Err(BlockValidationError::msg(format!(
-                "PREVRANDAO does not match verified parent proof: expected {}, got {actual:?}",
-                verified.prev_randao,
-            ))
+            return Err(ExecutorValidationError::PrevrandaoMismatch {
+                expected: verified.prev_randao,
+                actual,
+            }
             .into());
         }
 
@@ -350,6 +350,8 @@ where
         block_number: u64,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<(), BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         if block_number <= crate::system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER {
             return Ok(());
         }
@@ -360,22 +362,16 @@ where
 
         // Resolve canonical Phase 1 input + finalized summary for this block.
         let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
-        let (kind, input, finalized_summary) = system_txs.into_iter().next().ok_or_else(|| {
-            BlockExecutionError::from(BlockValidationError::msg(format!(
-                "Phase 1 commit pre-exec: missing Phase 1 system tx for block {block_number}"
-            )))
-        })?;
+        let (kind, input, finalized_summary) = system_txs
+            .into_iter()
+            .next()
+            .ok_or(ExecutorValidationError::Phase1CommitMissingSystemTx { block_number })?;
         if !matches!(kind, SystemTxKind::CertifiedParentAccounting) {
-            return Err(BlockValidationError::msg(format!(
-                "Phase 1 commit pre-exec: expected CertifiedParentAccounting, got {kind:?}"
-            ))
-            .into());
+            return Err(ExecutorValidationError::Phase1CommitUnexpectedKind { kind }.into());
         }
-        let calldata = input.encode().map_err(|error| {
-            BlockExecutionError::from(BlockValidationError::msg(format!(
-                "Phase 1 commit pre-exec: encode SystemTxInputV2: {error}"
-            )))
-        })?;
+        let calldata = input
+            .encode()
+            .map_err(ExecutorValidationError::phase1_commit_encode_input)?;
 
         // Resolve proposer first. `begin_zone_proposer` is `Option`-aware
         // and may consult `expected_begin_system_txs` or the configured EVM
@@ -422,10 +418,7 @@ where
                 if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
                     BlockExecutionError::other(error)
                 } else {
-                    BlockValidationError::msg(format!(
-                        "Phase 1 commit pre-exec: open CE gas window: {error}"
-                    ))
-                    .into()
+                    ExecutorValidationError::phase1_commit_open_ce_gas_window(error).into()
                 }
             })?;
         let transact_outcome = with_preloaded_system_tx_context(phase_context, || {
@@ -448,10 +441,7 @@ where
             if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
                 BlockExecutionError::other(error)
             } else {
-                BlockValidationError::msg(format!(
-                    "Phase 1 commit pre-exec: read CE gas window: {error}"
-                ))
-                .into()
+                ExecutorValidationError::phase1_commit_read_ce_gas_window(error).into()
             }
         })?;
         drop(gas_window);
@@ -461,13 +451,9 @@ where
             // therefore a hard block failure, not a soft-receipt skip. Its finalized-parent
             // accounting is one-shot and never retried. The revert is deterministic in
             // committed chain state, so every validator rejects the same block.
-            let reason = format!(
-                "critical system tx CertifiedParentAccounting did not succeed (revert/halt) in \
-                 Phase 1 pre-exec commit: {:?}",
-                result.result
-            );
-            tracing::error!(target: "outbe::executor", %reason, "critical begin-zone phase did not succeed; failing block");
-            return Err(BlockValidationError::msg(reason).into());
+            let err = ExecutorValidationError::phase1_commit_did_not_succeed(&result.result);
+            tracing::error!(target: "outbe::executor", %err, "critical begin-zone phase did not succeed; failing block");
+            return Err(err.into());
         }
         // Commit state + push receipt[0] + signal state-root task via the
         // standard EthBlockExecutor machinery. This holds because
@@ -501,18 +487,16 @@ where
         block_number: u64,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<SystemTxInputV2, BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
         let Some((kind, input, _summary)) = system_txs.into_iter().next() else {
-            return Err(BlockValidationError::msg(format!(
-                "missing Phase 1 system tx for block {block_number} in pre-exec verifier"
-            ))
-            .into());
+            return Err(
+                ExecutorValidationError::Phase1VerifierMissingSystemTx { block_number }.into(),
+            );
         };
         if !matches!(kind, SystemTxKind::CertifiedParentAccounting) {
-            return Err(BlockValidationError::msg(format!(
-                "Phase 1 pre-exec verifier expected CertifiedParentAccounting, got {kind:?}"
-            ))
-            .into());
+            return Err(ExecutorValidationError::Phase1VerifierUnexpectedKind { kind }.into());
         }
         Ok(input)
     }
@@ -523,13 +507,15 @@ where
         proposer: Address,
         block_number: u64,
     ) -> Result<Option<(B256, u64)>, BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         let chain_id = self.inner.evm.chain_id();
-        let validate_witness = |tx: &TransactionSigned, source: &str| {
+        let validate_witness = |tx: &TransactionSigned, source: &'static str| {
             validate_phase1_witness_against(tx, calldata.as_ref(), proposer, chain_id, block_number)
                 .map_err(|error| {
-                    BlockExecutionError::from(BlockValidationError::msg(format!(
-                        "Phase 1 commit pre-exec: invalid {source} witness: {error}"
-                    )))
+                    BlockExecutionError::from(
+                        ExecutorValidationError::phase1_commit_invalid_witness(source, error),
+                    )
                 })
         };
         let witness = if let Some(prebuilt) = &self.prebuilt_phase1_tx {
@@ -546,16 +532,10 @@ where
                 chain_id,
                 calldata.clone(),
             )
-            .map_err(|error| {
-                BlockExecutionError::from(BlockValidationError::msg(format!(
-                    "Phase 1 commit pre-exec: build unsigned witness: {error}"
-                )))
-            })?;
-            let signed = signer.sign_unsigned(unsigned).map_err(|error| {
-                BlockExecutionError::from(BlockValidationError::msg(format!(
-                    "Phase 1 commit pre-exec: sign witness: {error}"
-                )))
-            })?;
+            .map_err(ExecutorValidationError::phase1_commit_build_unsigned_witness)?;
+            let signed = signer
+                .sign_unsigned(unsigned)
+                .map_err(ExecutorValidationError::phase1_commit_sign_witness)?;
             let signed_gas_limit = signed.gas_limit();
             let tx_hash = validate_witness(&signed, "signed")?;
             (tx_hash, signed_gas_limit)

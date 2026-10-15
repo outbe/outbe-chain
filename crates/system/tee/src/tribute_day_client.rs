@@ -25,9 +25,7 @@ pub fn apply_day_operation(
         .previous
         .as_ref()
         .map_or(Some(1), |previous| previous.version()?.checked_add(1))
-        .ok_or_else(|| {
-            TransportError::EnclaveError("invalid Tribute day predecessor version".into())
-        })?;
+        .ok_or(crate::errors::TeeClientVerificationError::InvalidTributeDayPredecessorVersion)?;
     let (key, response) = request_local_enclave(EnclaveRequest::ApplyTributeDayOpV2 {
         request: Box::new(request),
     })?;

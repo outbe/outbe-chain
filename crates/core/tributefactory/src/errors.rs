@@ -12,11 +12,6 @@ pub enum TributeFactoryError {
     #[error("TEE not configured")]
     TeeNotConfigured,
 
-    /// Unused error variant. Offer decryption rejections use `EnclaveRejected`.
-    /// Transport faults return `PrecompileError::EnclaveUnavailable` because healthy validators can execute the transaction.
-    #[error("decryption failed: {0}")]
-    DecryptionFailed(String),
-
     /// The enclave processed the offer and returned `Rejected`.
     /// This deterministic result depends on offer content and reverts the call.
     #[error("enclave rejected the offer: {0}")]
@@ -163,11 +158,21 @@ pub enum TributeFactoryError {
     #[error("ZK verifier unavailable: zk verification backend failed: {0}")]
     ZkVerifierUnavailable(String),
 
+    #[error(transparent)]
+    EntityIdDerivation(#[from] outbe_compressed_entities::CommitmentError),
+
+    #[error(transparent)]
+    CalculationView(#[from] outbe_tee::TransportError),
+
     #[error("{0}")]
-    FatalMessage(String),
+    AttestationPreimageEncode(String),
 }
 
 impl TributeFactoryError {
+    pub fn attestation_preimage_encode(err: impl Display) -> Self {
+        Self::AttestationPreimageEncode(err.to_string())
+    }
+
     pub fn malformed_zk_proof(err: impl Display) -> Self {
         Self::MalformedZkProof(err.to_string())
     }
@@ -182,10 +187,6 @@ impl TributeFactoryError {
 
     pub fn zk_verifier_unavailable(err: impl Display) -> Self {
         Self::ZkVerifierUnavailable(err.to_string())
-    }
-
-    pub fn fatal(err: impl Display) -> Self {
-        Self::FatalMessage(err.to_string())
     }
 }
 
@@ -213,7 +214,8 @@ impl From<TributeFactoryError> for PrecompileError {
             | TributeFactoryError::EmptyTributeOfferResult
             | TributeFactoryError::CreatedTributeMissingBody
             | TributeFactoryError::EncryptedOfferReturnedLegacyBody
-            | TributeFactoryError::FatalMessage(_) => PrecompileError::Revert(value.to_string()),
+            | TributeFactoryError::EntityIdDerivation(_)
+            | TributeFactoryError::CalculationView(_) => PrecompileError::Revert(value.to_string()),
             other => PrecompileError::Revert(other.to_string()),
         }
     }

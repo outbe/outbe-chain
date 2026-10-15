@@ -169,7 +169,7 @@ impl TributeRetentionSelector for OcompRetentionCoordinator {
     fn active_pin_for(
         &self,
         worldwide_day: WorldwideDay,
-    ) -> Result<Option<RetainedTributePin>, String> {
+    ) -> Result<Option<RetainedTributePin>, outbe_offchain_data::RetentionSelectorError> {
         if self.retained_tributes.is_none() {
             return Err(RetentionError::RetainedTributeStorageUnavailable.into_selector_error());
         }
@@ -216,7 +216,7 @@ impl TributeRetentionSelector for SharedOcompRetentionSelector {
     fn active_pin_for(
         &self,
         worldwide_day: WorldwideDay,
-    ) -> Result<Option<RetainedTributePin>, String> {
+    ) -> Result<Option<RetainedTributePin>, outbe_offchain_data::RetentionSelectorError> {
         self.coordinator
             .get()
             .ok_or_else(|| RetentionError::RetentionCoordinatorNotInstalled.into_selector_error())?

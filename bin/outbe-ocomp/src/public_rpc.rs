@@ -14,7 +14,6 @@ use alloy_primitives::{Address, Bytes, LogData, B256};
 use alloy_sol_types::SolCall as _;
 use outbe_metadosis::precompile::IMetadosis;
 use serde_json::{json, Value};
-use thiserror::Error;
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -310,9 +309,10 @@ fn field<'a>(
     name: &str,
     method: &'static str,
 ) -> Result<&'a Value, PublicRpcError> {
-    value
-        .get(name)
-        .ok_or_else(|| malformed(method, &format!("missing {name}")))
+    value.get(name).ok_or_else(|| PublicRpcError::MissingField {
+        method,
+        field: name.to_owned(),
+    })
 }
 
 fn parse_hex_bytes(value: &Value, method: &'static str) -> Result<Vec<u8>, PublicRpcError> {
@@ -343,31 +343,7 @@ fn malformed(method: &'static str, detail: &str) -> PublicRpcError {
     PublicRpcError::malformed(method, detail)
 }
 
-#[derive(Debug, Error)]
-pub enum PublicRpcError {
-    #[error("public OCOMP RPC response limit must be non-zero")]
-    InvalidResponseLimit,
-    #[error("public OCOMP RPC transport failed: {0}")]
-    Transport(String),
-    #[error("public OCOMP RPC response exceeded the configured bound")]
-    ResponseTooLarge,
-    #[error("public OCOMP RPC response id mismatch")]
-    ResponseId,
-    #[error("public OCOMP RPC {method} returned an error: {detail}")]
-    Remote {
-        method: &'static str,
-        detail: String,
-    },
-    #[error("public OCOMP RPC {0} response has no result")]
-    MissingResult(&'static str),
-    #[error("public OCOMP RPC returned no block")]
-    MissingBlock,
-    #[error("public OCOMP RPC {method} response is malformed: {detail}")]
-    Malformed {
-        method: &'static str,
-        detail: String,
-    },
-}
+pub use crate::errors::PublicRpcError;
 
 #[cfg(test)]
 mod tests {

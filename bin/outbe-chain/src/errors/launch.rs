@@ -289,6 +289,34 @@ pub(crate) enum LaunchError {
         /// Rejection reason.
         reason: String,
     },
+    /// Indicates that follower drain also failed during consensus stack shutdown.
+    #[error("follower drain also failed: {details}")]
+    FollowerDrainAlsoFailed {
+        /// Follower drain error details.
+        details: String,
+    },
+    /// Indicates that the consensus stack task failed while being reaped after timeout.
+    #[error("consensus stack task failed while reaping: {details}")]
+    ConsensusStackFailedWhileReaping {
+        /// Task failure details.
+        details: String,
+    },
+}
+
+impl LaunchError {
+    /// Wraps a follower drain failure alongside a consensus stack failure.
+    pub(crate) fn follower_drain_also_failed(drain: &eyre::Report) -> Self {
+        Self::FollowerDrainAlsoFailed {
+            details: format!("{drain:#}"),
+        }
+    }
+
+    /// Wraps a consensus stack task reaping failure after shutdown timeout.
+    pub(crate) fn consensus_stack_failed_while_reaping(error: impl std::fmt::Debug) -> Self {
+        Self::ConsensusStackFailedWhileReaping {
+            details: format!("{error:?}"),
+        }
+    }
 }
 
 /// Represents errors when building OCOMP Lysis openings over RPC.

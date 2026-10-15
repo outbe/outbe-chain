@@ -13,7 +13,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_tee::protocol::{PromisOp, PromisOpRequest, PromisOpResult, PromisOpStatus};
 
 use crate::confidential::{FIELD_BALANCE, PROMIS};
-use crate::errors::Result;
+use crate::errors::{PromisRejectReason, Result};
 
 /// Derive the resident Promis state key from the DKG group signature. See
 /// [`crate::confidential::Domain::derive_state_key`].
@@ -72,10 +72,10 @@ fn base_result() -> PromisOpResult {
     }
 }
 
-fn reject(reason: impl Into<String>) -> PromisOpResult {
+fn rejected_promis_op(reason: PromisRejectReason) -> PromisOpResult {
     let mut r = base_result();
     r.status = PromisOpStatus::Rejected {
-        reason: reason.into(),
+        reason: reason.to_string(),
     };
     r
 }
@@ -88,7 +88,7 @@ pub fn apply_op(state_key: &[u8; 32], req: &PromisOpRequest) -> PromisOpResult {
     let inputs_canonical_hash = outbe_tee::protocol::promis_op_canonical_hash(req);
     let mut result = match apply_op_inner(state_key, req) {
         Ok(r) => r,
-        Err(e) => reject(e.to_string()),
+        Err(e) => rejected_promis_op(PromisRejectReason::from(e)),
     };
     result.inputs_canonical_hash = inputs_canonical_hash;
     result
@@ -97,10 +97,10 @@ pub fn apply_op(state_key: &[u8; 32], req: &PromisOpRequest) -> PromisOpResult {
 /// Mint/Burn - modify-key gated and keyed by `req.account`.
 fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisOpResult> {
     if req.amount.is_zero() {
-        return Ok(reject("amount must be positive"));
+        return Ok(rejected_promis_op(PromisRejectReason::AmountMustBePositive));
     }
     if req.account.is_zero() {
-        return Ok(reject("invalid address"));
+        return Ok(rejected_promis_op(PromisRejectReason::InvalidAddress));
     }
     let modify_key = PROMIS
         .account_keys
@@ -113,7 +113,9 @@ fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisO
         chain_id: req.chain_id,
     };
     if !verify_modify_auth(&modify_key, &operation, &req.modify_auth.mac) {
-        return Ok(reject("invalid modify authorization"));
+        return Ok(rejected_promis_op(
+            PromisRejectReason::InvalidModifyAuthorization,
+        ));
     }
 
     let view_key = PROMIS
@@ -132,7 +134,7 @@ fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisO
         PromisOp::Mint => {
             let new_balance = match balance.checked_add(req.amount) {
                 Some(v) => v,
-                None => return Ok(reject("promis balance overflow")),
+                None => return Ok(rejected_promis_op(PromisRejectReason::BalanceOverflow)),
             };
             r.new_balance = PROMIS
                 .cipher
@@ -141,7 +143,7 @@ fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisO
         }
         PromisOp::Burn => {
             if balance < req.amount {
-                return Ok(reject("insufficient balance"));
+                return Ok(rejected_promis_op(PromisRejectReason::InsufficientBalance));
             }
             r.new_balance = PROMIS
                 .cipher

@@ -35,9 +35,9 @@ where
     let state = provider
         .state_by_block_hash(candidate.block_hash)
         .map_err(|error| {
-            RetentionError::Source(format!(
-                "open exact block state for Lysis openings: {error}"
-            ))
+            RetentionError::from(
+                crate::errors::RetentionSourceError::open_block_state_for_lysis_openings(error),
+            )
         })?;
 
     let fidelity_slots =
@@ -68,7 +68,11 @@ where
         candidate.block_hash,
         candidate.state_root,
     )
-    .map_err(|error| RetentionError::Source(format!("derive opening JobId: {error}")))?;
+    .map_err(|error| {
+        RetentionError::from(crate::errors::RetentionSourceError::derive_opening_job_id(
+            error,
+        ))
+    })?;
 
     let openings = LysisOpeningsProofV1 {
         protocol_bundle_hash: candidate.protocol_bundle_hash,
@@ -185,11 +189,15 @@ fn oracle_entry_price_slots(
             let index = state
                 .storage(ORACLE_ADDRESS, slot)
                 .map_err(|error| {
-                    RetentionError::Source(format!("read Oracle pair index: {error}"))
+                    RetentionError::from(
+                        crate::errors::RetentionSourceError::read_oracle_pair_index(error),
+                    )
                 })?
                 .unwrap_or_default();
             u32::try_from(index).map_err(|_| {
-                RetentionError::Source("Oracle pair index does not fit u32".to_owned())
+                RetentionError::from(
+                    crate::errors::RetentionSourceError::OraclePairIndexDoesNotFitU32,
+                )
             })
         })
         .collect::<Result<Vec<_>, _>>()?;

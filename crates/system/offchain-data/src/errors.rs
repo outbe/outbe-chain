@@ -10,6 +10,29 @@ use thiserror::Error;
 
 use crate::state::{ProjectionConfig, ProjectionSource};
 
+/// Typed error returned by [`crate::TributeRetentionSelector::active_pin_for`].
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum RetentionSelectorError {
+    #[error("OCOMP retention coordinator is not installed")]
+    RetentionCoordinatorNotInstalled,
+    #[error("retained Tribute storage is not configured")]
+    RetainedTributeStorageUnavailable,
+    #[error("multiple input retention identities exist for one WWD")]
+    MultipleInputRetentionIdentities,
+    #[error("OCOMP pin journal mutex is poisoned")]
+    Poisoned,
+    #[error("OCOMP retention is quarantined: {0}")]
+    Quarantined(String),
+    #[error("OCOMP retention journal is unavailable after {operation} at {path}: {reason}")]
+    JournalUnavailable {
+        operation: &'static str,
+        path: std::path::PathBuf,
+        reason: String,
+    },
+    #[error("{0}")]
+    Failed(String),
+}
+
 /// Stable projector failures. No backend-specific type crosses this boundary.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -104,6 +127,46 @@ impl From<outbe_compressed_entities::CanonicalBodyError> for ProjectionError {
 impl From<outbe_compressed_entities::CommitmentError> for ProjectionError {
     fn from(error: outbe_compressed_entities::CommitmentError) -> Self {
         Self::CorruptProjectedBody(error.to_string())
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum DayApplyCorruptionError {
+    #[error("day key is shorter than the worldwide-day prefix")]
+    DayKeyTooShort,
+    #[error("Nod owner index key is shorter than an address")]
+    NodOwnerKeyTooShort,
+}
+
+impl From<DayApplyCorruptionError> for StorageError {
+    fn from(error: DayApplyCorruptionError) -> Self {
+        Self::Corruption(error.to_string())
+    }
+}
+
+impl From<DayApplyCorruptionError> for ProjectionError {
+    fn from(error: DayApplyCorruptionError) -> Self {
+        Self::Storage(error.into())
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum ProjectionMetadataError {
+    #[error("projection metadata must contain exactly seven fields")]
+    WrongFieldCount,
+    #[error("unknown projection metadata field {0}")]
+    UnknownField(String),
+    #[error("missing {0}")]
+    MissingField(&'static str),
+    #[error("invalid {0}")]
+    InvalidField(&'static str),
+    #[error("non-canonical {0}")]
+    NonCanonicalField(&'static str),
+}
+
+impl From<ProjectionMetadataError> for ProjectionError {
+    fn from(error: ProjectionMetadataError) -> Self {
+        Self::MalformedProjectionMetadata(error.to_string())
     }
 }
 

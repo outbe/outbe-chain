@@ -558,9 +558,7 @@ impl SignOnceStore {
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, StoreState>, SignOnceError> {
-        self.state
-            .lock()
-            .map_err(|_| SignOnceError::Disabled("sign-once state mutex is poisoned".to_owned()))
+        self.state.lock().map_err(|_| SignOnceError::MutexPoisoned)
     }
 
     fn io(&self, operation: &'static str, path: &Path, source: std::io::Error) -> SignOnceError {
@@ -716,49 +714,4 @@ fn path_exists(path: &Path) -> Result<bool, SignOnceError> {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum SignOnceError {
-    #[error(transparent)]
-    Protocol(#[from] ProtocolError),
-    #[error(
-        "OCOMP sign-once equivocation for job {job_id}, attempt {attempt}: \
-         recorded {recorded_digest}, requested {requested_digest}"
-    )]
-    Equivocation {
-        job_id: B256,
-        attempt: u32,
-        recorded_digest: B256,
-        requested_digest: B256,
-    },
-    #[error("OCOMP sign-once store is disabled: {0}")]
-    Disabled(String),
-    #[error("OCOMP result-digest signing failed: {0}")]
-    SigningFailed(String),
-    #[error("OCOMP sign-once store is unsafe at {path}: {reason}")]
-    UnsafeStore { path: PathBuf, reason: &'static str },
-    #[error("OCOMP sign-once state is uncertain at {path}: {reason}")]
-    UncertainState { path: PathBuf, reason: &'static str },
-    #[error("OCOMP sign-once record is corrupt at {path}: {reason}")]
-    CorruptRecord { path: PathBuf, reason: &'static str },
-    #[error("OCOMP sign-once {operation} failed at {path}: {source}")]
-    Io {
-        operation: &'static str,
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-}
-
-impl SignOnceError {
-    fn disables_store(&self) -> bool {
-        matches!(
-            self,
-            Self::Disabled(_)
-                | Self::UnsafeStore { .. }
-                | Self::UncertainState { .. }
-                | Self::CorruptRecord { .. }
-                | Self::SigningFailed(_)
-                | Self::Io { .. }
-        )
-    }
-}
+pub use crate::errors::SignOnceError;

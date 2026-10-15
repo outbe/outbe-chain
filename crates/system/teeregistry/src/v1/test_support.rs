@@ -154,11 +154,9 @@ impl TeeRegistry<'_> {
     ) -> Result<V1RegistrationOutcome> {
         let (_, policy) = self
             .staged_successor_policy_v1()?
-            .ok_or_else(|| PrecompileError::Revert("no successor V1 policy is staged".into()))?;
+            .ok_or(TeeRegistryError::NoSuccessorV1PolicyStaged)?;
         if self.storage.block_number()? >= policy.activation_height {
-            return Err(PrecompileError::Revert(
-                "measurement rollout closes at successor policy activation".into(),
-            ));
+            return Err(TeeRegistryError::MeasurementRolloutClosed.into());
         }
         self.apply_verified_mutation_v1(
             AttestationOperationV1::TransitionEnclaveMeasurement,

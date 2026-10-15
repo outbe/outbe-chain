@@ -44,9 +44,7 @@ impl<'storage, T: Storable, const N: usize> StorageArray<'storage, T, N> {
 
     pub fn set(&self, index: usize, value: T) -> Result<()> {
         if index >= N {
-            return Err(crate::error::PrecompileError::revert(
-                "array index out of bounds",
-            ));
+            return Err(crate::error::PrimitivesStorageError::ArrayIndexOutOfBounds.into());
         }
         self.storage
             .sstore(self.address, self.element_slot(index), value.to_word())

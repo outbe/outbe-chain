@@ -70,8 +70,9 @@ fn encode(batch: &PartitionedBatch) -> Result<Vec<u8>, StorageError> {
 }
 fn decode(bytes: &[u8]) -> Result<PartitionedBatch, StorageError> {
     let (operations, retired_scopes): (Vec<WireOperation>, Vec<StorageScope>) =
-        postcard::from_bytes(bytes)
-            .map_err(|_| StorageError::Corruption("malformed partition journal".into()))?;
+        postcard::from_bytes(bytes).map_err(|_| {
+            StorageError::from(crate::errors::StorageCorruptionError::MalformedPartitionJournal)
+        })?;
     if operations.len() > MAX_ATOMIC_BATCH_OPERATIONS {
         return Err(StorageError::Corruption(
             "partition journal operation bound".into(),
@@ -161,12 +162,12 @@ impl RocksPartitionDataSource {
         file.take((MAX_JOURNAL_BYTES + MAGIC.len() + 32 + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(StorageError::unavailable)?;
-        let bytes = bytes.strip_prefix(MAGIC).ok_or_else(|| {
-            StorageError::Corruption("unsupported partition journal version".into())
-        })?;
-        let (digest, payload) = bytes.split_at_checked(32).ok_or_else(|| {
-            StorageError::Corruption("truncated partition journal checksum".into())
-        })?;
+        let bytes = bytes
+            .strip_prefix(MAGIC)
+            .ok_or(crate::errors::StorageCorruptionError::UnsupportedPartitionJournalVersion)?;
+        let (digest, payload) = bytes
+            .split_at_checked(32)
+            .ok_or(crate::errors::StorageCorruptionError::TruncatedPartitionJournalChecksum)?;
         if Sha256::digest(payload).as_slice() != digest {
             return Err(StorageError::Corruption(
                 "partition journal checksum mismatch".into(),

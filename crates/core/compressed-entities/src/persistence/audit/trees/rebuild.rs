@@ -38,37 +38,33 @@ pub(super) fn rebuild(
         }
         let key = TreeKey::decode(&key[namespace_bytes.len()..])?;
         let value = LeafValue::decode(&value)?;
-        let smt_key = SmtKey::from_be_bytes(key.encode()).map_err(invalid)?;
+        let smt_key = SmtKey::from_be_bytes(key.encode())?;
         verify_leaf_namespace(source, source_path, namespace, (smt_key, key), shard_count)?;
         if buffer.capacity() == 0 {
             buffer
                 .try_reserve_exact(work.limits.records_per_run)
-                .map_err(|_| invalid("cannot reserve tree leaf buffer"))?;
+                .map_err(|_| CeAuditError::CannotReserveTreeLeafBuffer)?;
         }
-        buffer.push((
-            smt_key,
-            TreeLeaf::from_be_bytes(value.encode()).map_err(invalid)?,
-        ));
+        buffer.push((smt_key, TreeLeaf::from_be_bytes(value.encode())?));
         report.peak_buffered_leaves = report.peak_buffered_leaves.max(buffer.len());
         if buffer.len() == work.limits.records_per_run {
-            tree.update_all(std::mem::take(&mut buffer))
-                .map_err(invalid)?;
+            tree.update_all(std::mem::take(&mut buffer))?;
         }
         visitor.visit_leaf(namespace, key, value)?;
         report.leaves = report
             .leaves
             .checked_add(1)
-            .ok_or_else(|| invalid("leaf count overflow"))?;
+            .ok_or(CeAuditError::LeafCountOverflow)?;
         row = cursor.next()?;
     }
-    tree.update_all(buffer).map_err(invalid)?;
-    if B256::from(tree.root().map_err(invalid)?.as_bytes()) != expected_root {
-        return Err(invalid(format!("rebuilt root differs for {namespace:?}")));
+    tree.update_all(buffer)?;
+    if B256::from(tree.root()?.as_bytes()) != expected_root {
+        return Err(CeAuditError::RebuiltRootDiffers { namespace });
     }
     report.trees = report
         .trees
         .checked_add(1)
-        .ok_or_else(|| invalid("tree count overflow"))?;
+        .ok_or(CeAuditError::TreeCountOverflow)?;
     Ok(())
 }
 
@@ -81,12 +77,12 @@ fn verify_leaf_namespace(
 ) -> Result<(), CeAuditError> {
     let (smt_key, key) = keys;
     if let TreeNamespace::CollectionShard(_, shard) = namespace {
-        if shard_index(smt_key, shard_count).map_err(invalid)? != shard {
-            return Err(invalid("leaf is stored in the wrong native shard"));
+        if shard_index(smt_key, shard_count)? != shard {
+            return Err(CeAuditError::LeafInWrongNativeShard);
         }
     }
     if namespace == TreeNamespace::Catalog {
-        let collection = CollectionKey::try_from(key.into_inner()).map_err(invalid)?;
+        let collection = CollectionKey::try_from(key.into_inner())?;
         verify_collection(source, source_path, collection)?;
     }
     Ok(())

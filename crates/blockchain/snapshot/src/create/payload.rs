@@ -8,6 +8,7 @@ use std::{
 use super::inventory::DomainSource;
 use crate::{
     archive::{append_member, digest::DigestReader, payload_path, ArchiveMember},
+    errors::SnapshotCreateError,
     fs::{FileIdentity, SourceRoot},
     manifest::{DomainInventory, EntryKind, FileEntry, SnapshotManifestV1},
 };
@@ -61,10 +62,10 @@ fn write_member<W: Write>(
             &mut reader,
         )?;
         if member.sha256.as_deref() != Some(reader.finish().as_str()) {
-            return Err(io::Error::other(format!(
-                "snapshot source checksum changed: {}",
-                member.path
-            )));
+            return Err(SnapshotCreateError::SourceChecksumChanged {
+                path: member.path.clone(),
+            }
+            .into());
         }
     }
     entry.verify_unchanged()?;

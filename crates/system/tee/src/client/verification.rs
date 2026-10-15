@@ -21,34 +21,22 @@ pub(super) fn validate_dcap_verification_response(
         ));
     }
     let canonical = DcapVerificationOutcomeV1::decode_canonical(&outcome).map_err(|code| {
-        TransportError::DcapVerification(format!(
-            "enclave response outcome is non-canonical: {:#06x}",
-            code.code()
-        ))
+        crate::errors::TeeClientVerificationError::ResponseOutcomeNonCanonical { code: code.code() }
     })?;
     let preimage =
         dcap_verification_attestation_preimage(request_hash, &outcome).map_err(|code| {
-            TransportError::DcapVerification(format!(
-                "enclave response outcome is oversized: {:#06x}",
-                code.code()
-            ))
+            crate::errors::TeeClientVerificationError::ResponseOutcomeOversized {
+                code: code.code(),
+            }
         })?;
-    let verifying_key = VerifyingKey::from_bytes(&attestation_pub).map_err(|error| {
-        TransportError::DcapVerification(format!("invalid enclave attestation key: {error}"))
-    })?;
+    let verifying_key = VerifyingKey::from_bytes(&attestation_pub)
+        .map_err(crate::errors::TeeClientVerificationError::InvalidEnclaveAttestationKey)?;
     let signature_bytes: [u8; 64] = attestation_tag.try_into().map_err(|tag: Vec<u8>| {
-        TransportError::DcapVerification(format!(
-            "invalid enclave verification tag length {}",
-            tag.len()
-        ))
+        crate::errors::TeeClientVerificationError::InvalidVerificationTagLength(tag.len())
     })?;
     verifying_key
         .verify_strict(&preimage, &Signature::from_bytes(&signature_bytes))
-        .map_err(|error| {
-            TransportError::DcapVerification(format!(
-                "enclave verification tag is invalid: {error}"
-            ))
-        })?;
+        .map_err(crate::errors::TeeClientVerificationError::InvalidVerificationTag)?;
     Ok(canonical)
 }
 
@@ -77,25 +65,18 @@ pub(super) fn validate_dcap_onboarding_response(
     let preimage =
         dcap_onboarding_attestation_preimage(request_hash, &outcome, &onboarding_artifact)
             .map_err(|code| {
-                TransportError::DcapVerification(format!(
-                    "enclave onboarding response is oversized: {:#06x}",
-                    code.code()
-                ))
+                crate::errors::TeeClientVerificationError::OnboardingResponseOversized {
+                    code: code.code(),
+                }
             })?;
-    let verifying_key = VerifyingKey::from_bytes(&attestation_pub).map_err(|error| {
-        TransportError::DcapVerification(format!("invalid enclave attestation key: {error}"))
-    })?;
+    let verifying_key = VerifyingKey::from_bytes(&attestation_pub)
+        .map_err(crate::errors::TeeClientVerificationError::InvalidEnclaveAttestationKey)?;
     let signature_bytes: [u8; 64] = attestation_tag.try_into().map_err(|tag: Vec<u8>| {
-        TransportError::DcapVerification(format!(
-            "invalid enclave onboarding tag length {}",
-            tag.len()
-        ))
+        crate::errors::TeeClientVerificationError::InvalidOnboardingTagLength(tag.len())
     })?;
     verifying_key
         .verify_strict(&preimage, &Signature::from_bytes(&signature_bytes))
-        .map_err(|error| {
-            TransportError::DcapVerification(format!("enclave onboarding tag is invalid: {error}"))
-        })?;
+        .map_err(crate::errors::TeeClientVerificationError::InvalidOnboardingTag)?;
     Ok(verified)
 }
 
@@ -104,20 +85,18 @@ fn decode_onboarding_result(
     onboarding_artifact: &[u8],
 ) -> Result<DcapOnboardingVerificationResultV1, TransportError> {
     let canonical = DcapVerificationOutcomeV1::decode_canonical(outcome).map_err(|code| {
-        TransportError::DcapVerification(format!(
-            "enclave onboarding outcome is non-canonical: {:#06x}",
-            code.code()
-        ))
+        crate::errors::TeeClientVerificationError::OnboardingOutcomeNonCanonical {
+            code: code.code(),
+        }
     })?;
     let artifact = if onboarding_artifact.is_empty() {
         None
     } else {
         Some(
             DcapOnboardingArtifactV1::decode_canonical(onboarding_artifact).map_err(|code| {
-                TransportError::DcapVerification(format!(
-                    "enclave onboarding artifact is non-canonical: {:#06x}",
-                    code.code()
-                ))
+                crate::errors::TeeClientVerificationError::OnboardingArtifactNonCanonical {
+                    code: code.code(),
+                }
             })?,
         )
     };
@@ -306,14 +285,16 @@ fn verify_attestation_tag<P: AsRef<[u8]>>(
 ) -> Result<(), TransportError> {
     use ed25519_dalek::{Signature, VerifyingKey};
 
-    let vk = VerifyingKey::from_bytes(attestation_pub)
-        .map_err(|e| error(format!("bad attestation key: {e}")))?;
-    let sig_bytes: [u8; 64] = tag
-        .try_into()
-        .map_err(|_| error(format!("bad tag length {}", tag.len())))?;
+    let vk = VerifyingKey::from_bytes(attestation_pub).map_err(|e| {
+        error(crate::errors::TeeClientVerificationError::BadAttestationKey(e).to_string())
+    })?;
+    let sig_bytes: [u8; 64] = tag.try_into().map_err(|_| {
+        error(crate::errors::TeeClientVerificationError::BadTagLength(tag.len()).to_string())
+    })?;
     let sig = Signature::from_bytes(&sig_bytes);
-    vk.verify_strict(preimage().as_ref(), &sig)
-        .map_err(|e| error(format!("signature invalid: {e}")))
+    vk.verify_strict(preimage().as_ref(), &sig).map_err(|e| {
+        error(crate::errors::TeeClientVerificationError::SignatureInvalid(e).to_string())
+    })
 }
 
 /// Verify a per-offer attestation tag against the peer's session attestation

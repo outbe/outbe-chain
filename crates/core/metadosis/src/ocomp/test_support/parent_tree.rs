@@ -1,4 +1,5 @@
 use super::*;
+use crate::errors::MetadosisTestSupportError;
 
 #[derive(Debug)]
 struct TributePartitionTree {
@@ -30,9 +31,9 @@ impl AuthenticatedParentTree for TributePartitionTree {
         if expected_parent_root != self.parent_root
             || partition != PartitionRef::TributeWwd(TEST_WWD)
         {
-            return Err(PrecompileError::Fatal(
-                "activation fixture parent partition binding mismatch".into(),
-            ));
+            return Err(
+                MetadosisTestSupportError::ActivationFixtureParentPartitionBindingMismatch.into(),
+            );
         }
         Ok(true)
     }
@@ -45,9 +46,9 @@ impl AuthenticatedParentTree for TributePartitionTree {
         if expected_parent_root != self.parent_root
             || partition != PartitionRef::TributeWwd(TEST_WWD)
         {
-            return Err(PrecompileError::Fatal(
-                "activation fixture parent partition binding mismatch".into(),
-            ));
+            return Err(
+                MetadosisTestSupportError::ActivationFixtureParentPartitionBindingMismatch.into(),
+            );
         }
         Ok(Some(hash(31)))
     }
@@ -58,9 +59,7 @@ impl AuthenticatedParentTree for TributePartitionTree {
         _mutations: &[FinalLeafMutation],
         _retirements: &[PartitionRef],
     ) -> PrecompileResult<ProvisionalTreeBatch> {
-        Err(PrecompileError::Fatal(
-            "activation fixture does not seal its synthetic parent".into(),
-        ))
+        Err(MetadosisTestSupportError::ActivationFixtureDoesNotSealSyntheticParent.into())
     }
 }
 

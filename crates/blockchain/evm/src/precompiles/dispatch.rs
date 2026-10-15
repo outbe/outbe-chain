@@ -75,7 +75,7 @@ pub(super) fn outbe_ctx_dispatch<DB>(
     ctx: &mut EthEvmContext<DB>,
     inputs: &CallInputs,
     runtime: OutbeDispatchRuntime<'_>,
-) -> Result<Option<InterpreterResult>, String>
+) -> Result<Option<InterpreterResult>, crate::errors::OutbePrecompileFatalError>
 where
     DB: Database + Debug,
     DB::Error: Debug,

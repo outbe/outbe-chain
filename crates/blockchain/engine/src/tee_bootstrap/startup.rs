@@ -103,10 +103,7 @@ where
         EnclaveResponse::PublicKeys { tee_bls_pub, .. } => tee_bls_pub,
         other => {
             return Err(
-                crate::errors::TeeBootstrapError::UnexpectedGetPublicKeysResponse(format!(
-                    "{other:?}"
-                ))
-                .into(),
+                crate::errors::TeeBootstrapError::unexpected_get_public_keys_response(other).into(),
             )
         }
     };
@@ -144,7 +141,7 @@ where
         },
     )
     .await
-    .map_err(|e| crate::errors::TeeBootstrapError::DkgCeremonyFailed(format!("{e}")))?;
+    .map_err(|e| crate::errors::TeeBootstrapError::DkgCeremonyFailed(e.to_string()))?;
 
     Ok((
         outcome.tribute_offer_public,
@@ -161,7 +158,7 @@ where
 {
     match client
         .request(&EnclaveRequest::GetPublicKeys)
-        .map_err(|e| crate::errors::TeeBootstrapError::GetPublicKeysFailed(format!("{e}")))?
+        .map_err(|e| crate::errors::TeeBootstrapError::GetPublicKeysFailed(e.to_string()))?
     {
         EnclaveResponse::PublicKeys {
             offer_key_ready,
@@ -177,10 +174,9 @@ where
             }
             Ok(public)
         }
-        other => Err(
-            crate::errors::TeeBootstrapError::UnexpectedGetPublicKeysResponse(format!("{other:?}"))
-                .into(),
-        ),
+        other => {
+            Err(crate::errors::TeeBootstrapError::unexpected_get_public_keys_response(other).into())
+        }
     }
 }
 
@@ -230,7 +226,7 @@ where
     let participant_set_hash =
         outbe_primitives::tee_attestation_v1::dkg_participant_set_hash_v1(&participant_bls)
             .map_err(|error| {
-                crate::errors::TeeBootstrapError::InvalidDkgParticipantSet(format!("{error}"))
+                crate::errors::TeeBootstrapError::InvalidDkgParticipantSet(error.to_string())
             })?;
     let ceremony_id = outbe_primitives::tee_attestation_v1::dkg_ceremony_id_v1(
         request.network_binding,
@@ -238,7 +234,7 @@ where
         participant_set_hash,
     )
     .map_err(|error| {
-        crate::errors::TeeBootstrapError::InvalidDkgCeremonyBinding(format!("{error}"))
+        crate::errors::TeeBootstrapError::InvalidDkgCeremonyBinding(error.to_string())
     })?;
     let my_announcement = request_signed_announcement(client, ceremony_id, participant_bls)?;
     let identities = gossip
@@ -275,15 +271,13 @@ fn request_signed_announcement<E: outbe_tee::tee_dkg::EnclaveChannel>(
                 participant_bls,
             })
             .map_err(|error| {
-                crate::errors::TeeBootstrapError::DkgAnnouncementFailed(format!("{error}"))
+                crate::errors::TeeBootstrapError::DkgAnnouncementFailed(error.to_string())
             })? {
             EnclaveResponse::DkgParticipantAnnounceV1 { participant } => participant,
             other => {
                 return Err(
-                    crate::errors::TeeBootstrapError::UnexpectedDkgAnnouncementResponse(format!(
-                        "{other:?}"
-                    ))
-                    .into(),
+                    crate::errors::TeeBootstrapError::unexpected_dkg_announcement_response(other)
+                        .into(),
                 )
             }
         },

@@ -1,17 +1,18 @@
 //! Canonical per-finalized-block credit batches.
 use super::{
-    ensure_count_fits_u16, LateFinalizeCreditsArtifact, PerBlockCredit, PrecompileError, Result,
-    B256, LATE_FINALIZE_MAX_BATCHES, LATE_FINALIZE_MAX_BITMAP_LEN, LATE_FINALIZE_SIG_LEN,
+    ensure_count_fits_u16, LateFinalizeCreditsArtifact, PerBlockCredit, ReshareArtifactError,
+    Result, B256, LATE_FINALIZE_MAX_BATCHES, LATE_FINALIZE_MAX_BITMAP_LEN, LATE_FINALIZE_SIG_LEN,
     PER_BLOCK_CREDIT_FIXED_LEN,
 };
 
 pub(super) fn encode_payload(credits: &LateFinalizeCreditsArtifact) -> Result<Vec<u8>> {
     ensure_count_fits_u16("late finalize batches", credits.batches.len())?;
     if credits.batches.len() > LATE_FINALIZE_MAX_BATCHES {
-        return Err(PrecompileError::revert(format!(
-            "too many late finalize batches: {} > {LATE_FINALIZE_MAX_BATCHES}",
-            credits.batches.len()
-        )));
+        return Err(ReshareArtifactError::TooManyLateFinalizeBatches {
+            count: credits.batches.len(),
+            max_count: LATE_FINALIZE_MAX_BATCHES,
+        }
+        .into());
     }
     let mut payload = Vec::new();
     payload.extend_from_slice(&(credits.batches.len() as u16).to_be_bytes());
@@ -22,17 +23,16 @@ pub(super) fn encode_payload(credits: &LateFinalizeCreditsArtifact) -> Result<Ve
         let key = (credit.fb_number, credit.fb_hash);
         if let Some(prev_key) = prev {
             if key <= prev_key {
-                return Err(PrecompileError::revert(
-                    "late finalize batches not in strictly ascending canonical order",
-                ));
+                return Err(ReshareArtifactError::LateFinalizeBatchesNotCanonicalOrder.into());
             }
         }
         prev = Some(key);
         if credit.signer_bitmap.len() > LATE_FINALIZE_MAX_BITMAP_LEN {
-            return Err(PrecompileError::revert(format!(
-                "late finalize bitmap too long: {} > {LATE_FINALIZE_MAX_BITMAP_LEN}",
-                credit.signer_bitmap.len()
-            )));
+            return Err(ReshareArtifactError::LateFinalizeBitmapTooLong {
+                len: credit.signer_bitmap.len(),
+                max_len: LATE_FINALIZE_MAX_BITMAP_LEN,
+            }
+            .into());
         }
         payload.extend_from_slice(&credit.fb_number.to_be_bytes());
         payload.extend_from_slice(credit.fb_hash.as_slice());
@@ -49,15 +49,15 @@ pub(super) fn encode_payload(credits: &LateFinalizeCreditsArtifact) -> Result<Ve
 
 pub(super) fn decode_payload(payload: &[u8]) -> Result<LateFinalizeCreditsArtifact> {
     if payload.len() < 2 {
-        return Err(PrecompileError::revert(
-            "late finalize credits payload too short",
-        ));
+        return Err(ReshareArtifactError::LateFinalizePayloadTooShort.into());
     }
     let batch_count = u16::from_be_bytes([payload[0], payload[1]]) as usize;
     if batch_count > LATE_FINALIZE_MAX_BATCHES {
-        return Err(PrecompileError::revert(format!(
-            "too many late finalize batches: {batch_count} > {LATE_FINALIZE_MAX_BATCHES}"
-        )));
+        return Err(ReshareArtifactError::TooManyLateFinalizeBatches {
+            count: batch_count,
+            max_count: LATE_FINALIZE_MAX_BATCHES,
+        }
+        .into());
     }
     let mut offset = 2usize;
     let mut batches = Vec::with_capacity(batch_count);
@@ -70,9 +70,7 @@ pub(super) fn decode_payload(payload: &[u8]) -> Result<LateFinalizeCreditsArtifa
         let key = (credit.fb_number, credit.fb_hash);
         if let Some(prev_key) = prev {
             if key <= prev_key {
-                return Err(PrecompileError::revert(
-                    "late finalize batches not in strictly ascending canonical order",
-                ));
+                return Err(ReshareArtifactError::LateFinalizeBatchesNotCanonicalOrder.into());
             }
         }
         prev = Some(key);
@@ -81,9 +79,7 @@ pub(super) fn decode_payload(payload: &[u8]) -> Result<LateFinalizeCreditsArtifa
     }
 
     if offset != payload.len() {
-        return Err(PrecompileError::revert(
-            "trailing bytes in late finalize credits payload",
-        ));
+        return Err(ReshareArtifactError::TrailingBytesLateFinalizePayload.into());
     }
 
     Ok(LateFinalizeCreditsArtifact { batches })
@@ -98,9 +94,7 @@ fn decode_credit(payload: &[u8], offset: &mut usize) -> Result<PerBlockCredit> {
 
     // Fixed prefix + the 2-byte bitmap length must be present before reading.
     if *offset + PER_BLOCK_CREDIT_FIXED_LEN + 2 > payload.len() {
-        return Err(PrecompileError::revert(
-            "truncated late finalize credit prefix",
-        ));
+        return Err(ReshareArtifactError::TruncatedLateFinalizeCreditPrefix.into());
     }
     let fb_number = read_u64(&payload[*offset..*offset + 8]);
     *offset += 8;
@@ -117,18 +111,18 @@ fn decode_credit(payload: &[u8], offset: &mut usize) -> Result<PerBlockCredit> {
     let bitmap_len = u16::from_be_bytes([payload[*offset], payload[*offset + 1]]) as usize;
     *offset += 2;
     if bitmap_len > LATE_FINALIZE_MAX_BITMAP_LEN {
-        return Err(PrecompileError::revert(format!(
-            "late finalize bitmap too long: {bitmap_len} > {LATE_FINALIZE_MAX_BITMAP_LEN}"
-        )));
+        return Err(ReshareArtifactError::LateFinalizeBitmapTooLong {
+            len: bitmap_len,
+            max_len: LATE_FINALIZE_MAX_BITMAP_LEN,
+        }
+        .into());
     }
     let body_end = offset
         .checked_add(bitmap_len)
         .and_then(|o| o.checked_add(LATE_FINALIZE_SIG_LEN))
-        .ok_or_else(|| PrecompileError::revert("late finalize credit overflow"))?;
+        .ok_or(ReshareArtifactError::LateFinalizeCreditOverflow)?;
     if body_end > payload.len() {
-        return Err(PrecompileError::revert(
-            "truncated late finalize credit body",
-        ));
+        return Err(ReshareArtifactError::TruncatedLateFinalizeCreditBody.into());
     }
     let signer_bitmap = payload[*offset..*offset + bitmap_len].to_vec();
     *offset += bitmap_len;

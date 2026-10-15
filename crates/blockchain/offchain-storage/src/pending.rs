@@ -151,7 +151,7 @@ impl PendingCore {
         let generation = state
             .generation
             .checked_add(1)
-            .ok_or_else(|| StorageError::Corruption("pending generation overflow".to_owned()))?;
+            .ok_or(crate::errors::StorageCorruptionError::PendingGenerationOverflow)?;
         state.generation = generation;
         state.durable_order.push_back(generation);
         for scope in batch.retired_scopes() {

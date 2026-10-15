@@ -119,7 +119,9 @@ where
                 ocomp_lifecycle_active: self.ocomp_lifecycle_active,
                 ocomp_fork_install: None,
             },
-        )? {
+        )
+        .map_err(String::from)?
+        {
             return Ok(Some(result));
         }
         // Standard Ethereum precompiles `0x01..0x0a`. `Ok(None)` here lets the

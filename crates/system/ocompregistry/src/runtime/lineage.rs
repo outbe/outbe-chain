@@ -3,30 +3,30 @@ use outbe_ocomp_protocol::SchemaLimits;
 use outbe_primitives::error::Result;
 
 use super::{authority::decode_authority, OcompProtocolAuthorityV1};
-use crate::{errors::corruption, precompile::IOcompRegistry, schema::OcompRegistry};
+use crate::{errors::OcompRegistryError, precompile::IOcompRegistry, schema::OcompRegistry};
 
 impl OcompRegistry<'_> {
     /// Pins a fresh lineage to the current active bundle. Exact replay returns
     /// the existing pin and never silently follows a later active bundle.
     pub fn pin_lineage(&mut self, lineage: B256, limits: &SchemaLimits) -> Result<B256> {
         if lineage.is_zero() {
-            return Err(corruption("OCOMP lineage id must be non-zero"));
+            return Err(OcompRegistryError::LineageIdZero.into());
         }
         let existing = self.lineage_bundle.read(&lineage)?;
         if !existing.is_zero() {
             if self.authority_by_bundle_hash(existing, limits)?.is_none() {
-                return Err(corruption("OCOMP lineage references an unavailable bundle"));
+                return Err(OcompRegistryError::LineageBundleUnavailable.into());
             }
             return Ok(existing);
         }
         let active = self
             .active_authority(limits)?
-            .ok_or_else(|| corruption("OCOMP Registry is not initialized"))?;
+            .ok_or(OcompRegistryError::NotInitialized)?;
         let bundle_hash = active.request_profile.protocol_bundle_hash;
         let count = self.live_lineage_count.read(&bundle_hash)?;
         let next = count
             .checked_add(1)
-            .ok_or_else(|| corruption("OCOMP live lineage count overflow"))?;
+            .ok_or(OcompRegistryError::LiveLineageCountOverflow)?;
         let checkpoint = self.storage.checkpoint_guard();
         self.lineage_bundle.write(&lineage, bundle_hash)?;
         self.live_lineage_count.write(&bundle_hash, next)?;
@@ -44,28 +44,26 @@ impl OcompRegistry<'_> {
         limits: &SchemaLimits,
     ) -> Result<B256> {
         if lineage.is_zero() || predecessor_lineage.is_zero() || lineage == predecessor_lineage {
-            return Err(corruption("invalid OCOMP inherited lineage binding"));
+            return Err(OcompRegistryError::InvalidInheritedLineageBinding.into());
         }
         let inherited = self
             .resolve_lineage(predecessor_lineage)?
-            .ok_or_else(|| corruption("OCOMP predecessor lineage is not pinned"))?;
+            .ok_or(OcompRegistryError::PredecessorLineageNotPinned)?;
         if self.authority_by_bundle_hash(inherited, limits)?.is_none() {
-            return Err(corruption(
-                "OCOMP predecessor lineage authority is unavailable",
-            ));
+            return Err(OcompRegistryError::PredecessorLineageAuthorityUnavailable.into());
         }
         let existing = self.lineage_bundle.read(&lineage)?;
         if !existing.is_zero() {
             return if existing == inherited {
                 Ok(existing)
             } else {
-                Err(corruption("OCOMP inherited lineage binding changed"))
+                Err(OcompRegistryError::InheritedLineageBindingChanged.into())
             };
         }
         let count = self.live_lineage_count.read(&inherited)?;
         let next = count
             .checked_add(1)
-            .ok_or_else(|| corruption("OCOMP live lineage count overflow"))?;
+            .ok_or(OcompRegistryError::LiveLineageCountOverflow)?;
         let checkpoint = self.storage.checkpoint_guard();
         self.lineage_bundle.write(&lineage, inherited)?;
         self.live_lineage_count.write(&inherited, next)?;
@@ -90,7 +88,7 @@ impl OcompRegistry<'_> {
         let count = self.live_lineage_count.read(&bundle_hash)?;
         let next = count
             .checked_sub(1)
-            .ok_or_else(|| corruption("OCOMP live lineage count underflow"))?;
+            .ok_or(OcompRegistryError::LiveLineageCountUnderflow)?;
         let checkpoint = self.storage.checkpoint_guard();
         self.lineage_bundle.get(&lineage).delete()?;
         self.live_lineage_count.write(&bundle_hash, next)?;
@@ -120,9 +118,7 @@ impl OcompRegistry<'_> {
             return Ok(false);
         }
         if self.storage.block_number()? != current_height {
-            return Err(corruption(
-                "OCOMP retirement height does not match storage context",
-            ));
+            return Err(OcompRegistryError::RetirementHeightContextMismatch.into());
         }
         let authority = decode_authority(&bytes, limits)?;
         let bundle_hash = authority.request_profile.protocol_bundle_hash;
@@ -156,5 +152,5 @@ pub(super) fn retention_deadline(
                 .capacity_profile
                 .source_retention_after_terminal_blocks,
         )
-        .ok_or_else(|| corruption("OCOMP predecessor retention height overflow"))
+        .ok_or_else(|| OcompRegistryError::PredecessorRetentionHeightOverflow.into())
 }

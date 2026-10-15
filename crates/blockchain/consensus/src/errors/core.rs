@@ -301,6 +301,23 @@ impl From<HeaderArtifactDecodeError> for crate::dkg_manager::BoundaryRequirement
     }
 }
 
+/// Wire decoding error for `VrfProof`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum VrfProofCodecError {
+    #[error("missing material version")]
+    MissingMaterialVersion,
+}
+
+impl From<VrfProofCodecError> for commonware_codec::Error {
+    fn from(error: VrfProofCodecError) -> Self {
+        match error {
+            VrfProofCodecError::MissingMaterialVersion => {
+                Self::Invalid("VrfProof", "missing material version")
+            }
+        }
+    }
+}
+
 /// Error when the node prepares a locally built candidate payload.
 #[derive(Debug, Error)]
 pub enum BuiltCandidatePreparationError {
@@ -312,6 +329,11 @@ impl BuiltCandidatePreparationError {
     /// Build an execution error from any displayable error value.
     pub fn from_execution_error(error: impl std::fmt::Display) -> Self {
         Self::Execution(error.to_string())
+    }
+
+    /// Build an execution error from an invalid payload status.
+    pub fn from_invalid_status(status: impl std::fmt::Debug) -> Self {
+        Self::Execution(format!("{status:?}"))
     }
 }
 
@@ -500,6 +522,15 @@ pub enum ExecutorError {
     CancellationMismatch,
     #[error("unexpected cancellation of parent convergence execution")]
     UnexpectedParentConvergenceCancellation,
+    #[error("new_payload failed during executor verification: target={0}")]
+    VerificationNewPayloadFailed(Digest),
+}
+
+impl ExecutorError {
+    /// Construct an invalid FCU error from a debuggable payload status.
+    pub fn fcu_invalid(status: impl std::fmt::Debug) -> Self {
+        Self::FcuInvalid(format!("{status:?}"))
+    }
 }
 
 /// Errors from the finalization actor.

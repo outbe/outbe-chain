@@ -318,7 +318,7 @@ impl TeePolicyV1 {
             || !self.maximum_lease.is_multiple_of(2)
             || self.collateral_margin != 3_600
         {
-            return Err(CodecError::NonCanonical("invalid TEE lease policy"));
+            return Err(crate::error::TeeCodecNonCanonicalError::InvalidTeeLeasePolicy.into());
         }
         Ok(())
     }
@@ -404,7 +404,7 @@ impl TeePolicyScheduleV1 {
             entry_count,
         )?;
         if entry_count == 0 {
-            return Err(CodecError::NonCanonical("TEE policy schedule is empty"));
+            return Err(crate::error::TeeCodecNonCanonicalError::TeePolicyScheduleEmpty.into());
         }
         let mut entries = Vec::with_capacity(entry_count);
         for _ in 0..entry_count {
@@ -413,7 +413,9 @@ impl TeePolicyScheduleV1 {
             let policy = TeePolicyV1::decode_canonical(decoder.take(policy_len)?)?;
             let cached_hash = B256::from(decoder.array::<32>()?);
             if cached_hash != policy.policy_hash()? {
-                return Err(CodecError::NonCanonical("cached policy hash mismatch"));
+                return Err(
+                    crate::error::TeeCodecNonCanonicalError::CachedPolicyHashMismatch.into(),
+                );
             }
             entries.push(TeePolicyScheduleEntryV1 {
                 activation_height,
@@ -456,7 +458,7 @@ impl TeePolicyScheduleV1 {
             ));
         }
         if self.entries.is_empty() {
-            return Err(CodecError::NonCanonical("TEE policy schedule is empty"));
+            return Err(crate::error::TeeCodecNonCanonicalError::TeePolicyScheduleEmpty.into());
         }
         enforce_limit(
             "TEE policy schedule entries",
@@ -517,7 +519,9 @@ impl TeePolicyScheduleV1 {
             ));
         }
         if entry.policy.predecessor_policy_hash != previous_hash {
-            return Err(CodecError::NonCanonical("policy predecessor hash mismatch"));
+            return Err(
+                crate::error::TeeCodecNonCanonicalError::PolicyPredecessorHashMismatch.into(),
+            );
         }
         Ok(())
     }

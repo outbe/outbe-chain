@@ -17,14 +17,15 @@ pub(super) struct RewardGemBatchTerms<'a> {
     pub(super) recipients: &'a [(Address, U256)],
 }
 
-pub(super) fn reward_gem_retryable_error(message: impl Into<String>) -> PrecompileError {
-    let message = message.into();
+pub(super) fn reward_gem_retryable_error(
+    reason: crate::errors::RewardGemRetryableReason,
+) -> PrecompileError {
     tracing::error!(
         target: "outbe::rewards",
-        error = %message,
+        error = %reason,
         "validator reward Gem batch remains pending"
     );
-    crate::errors::RewardsError::RewardGemRetryable(message).into()
+    crate::errors::RewardsError::RewardGemRetryable(reason).into()
 }
 
 pub(super) fn require_reward_gem_queue_consistency(
@@ -32,23 +33,26 @@ pub(super) fn require_reward_gem_queue_consistency(
     head: u64,
     tail: u64,
 ) -> Result<u64> {
-    let span = tail
-        .checked_sub(head)
-        .ok_or_else(|| reward_gem_retryable_error("validator reward Gem FIFO head exceeds tail"))?;
+    let span = tail.checked_sub(head).ok_or_else(|| {
+        reward_gem_retryable_error(crate::errors::RewardGemRetryableReason::FifoHeadExceedsTail)
+    })?;
     let pending_batch_count = rewards.reward_gem_pending_batch_count.read()?;
     if pending_batch_count != span {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem pending batch count {pending_batch_count} disagrees with FIFO span {span}"
-        )));
+        return Err(reward_gem_retryable_error(
+            crate::errors::RewardGemRetryableReason::PendingBatchCountDisagreesWithSpan {
+                pending_batch_count,
+                span,
+            },
+        ));
     }
     Ok(pending_batch_count)
 }
 
 pub(super) fn require_reward_gem_currency(ctx: &BlockRuntimeContext, currency: u16) -> Result<()> {
     outbe_oracle::api::require_coen_pair(ctx.storage.clone(), currency).map_err(|error| {
-        reward_gem_retryable_error(format!(
-            "validator reward Gem currency is not registered: {error}"
-        ))
+        reward_gem_retryable_error(
+            crate::errors::RewardGemRetryableReason::CurrencyNotRegistered(error),
+        )
     })?;
     Ok(())
 }

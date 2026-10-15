@@ -42,19 +42,25 @@ struct ValidatedUpgradeProof<'a> {
 impl<'a> ValidatedUpgradeProof<'a> {
     fn new(proof: &'a UpgradeKeyProofV1) -> Result<Self, TransportError> {
         if !proof.has_valid_dimensions() {
-            return Err(invalid("upgrade proof dimensions exceed limits"));
+            return Err(invalid(
+                crate::errors::UpgradeTransferError::DimensionsExceedLimits,
+            ));
         }
         let mut total = proof.anchor_outcome.len() + proof.admission.len();
         for item in &proof.committee_transitions {
             if item.is_empty() || item.len() > MAX_COMMITTEE_TRANSITION_RECORD_BYTES {
-                return Err(invalid("invalid upgrade committee record size"));
+                return Err(invalid(
+                    crate::errors::UpgradeTransferError::InvalidCommitteeRecordSize,
+                ));
             }
             total = total
                 .checked_add(item.len())
-                .ok_or_else(|| invalid("proof size overflow"))?;
+                .ok_or_else(|| invalid(crate::errors::UpgradeTransferError::ProofSizeOverflow))?;
         }
         if total > MAX_UPGRADE_PROOF_BYTES {
-            return Err(invalid("upgrade proof exceeds aggregate limit"));
+            return Err(invalid(
+                crate::errors::UpgradeTransferError::ExceedsAggregateLimit,
+            ));
         }
         Ok(Self {
             anchor_outcome: &proof.anchor_outcome,
@@ -63,8 +69,8 @@ impl<'a> ValidatedUpgradeProof<'a> {
         })
     }
 }
-fn invalid(message: &str) -> TransportError {
-    TransportError::EnclaveError(message.into())
+fn invalid(reason: crate::errors::UpgradeTransferError) -> TransportError {
+    reason.into()
 }
 
 /// A placeholder is never decrypted. Its context commits the export recipient.
@@ -75,7 +81,7 @@ pub fn export_placeholder(context: DcapOnboardingContextV1) -> Result<Vec<u8>, T
         ciphertext: vec![0; 16],
     }
     .encode_canonical()
-    .map_err(|_| invalid("invalid upgrade context"))
+    .map_err(|_| invalid(crate::errors::UpgradeTransferError::InvalidUpgradeContext))
 }
 
 pub fn transfer(
@@ -179,9 +185,10 @@ impl StreamingTransfer<'_> {
         {
             for (i, bytes) in record.chunks(MAX_ONBOARDING_INGEST_CHUNK_BYTES).enumerate() {
                 let offset = u32::try_from(i * MAX_ONBOARDING_INGEST_CHUNK_BYTES)
-                    .map_err(|_| invalid("offset overflow"))?;
-                let next =
-                    offset + u32::try_from(bytes.len()).map_err(|_| invalid("chunk overflow"))?;
+                    .map_err(|_| invalid(crate::errors::UpgradeTransferError::OffsetOverflow))?;
+                let next = offset
+                    + u32::try_from(bytes.len())
+                        .map_err(|_| invalid(crate::errors::UpgradeTransferError::ChunkOverflow))?;
                 let response = request(&EnclaveRequest::DcapOnboardingArtifactChunkV1 {
                     request_hash: self.hash,
                     kind,
@@ -246,7 +253,7 @@ pub fn export_from_network_source(
     proof.validate()?;
     // Fork under the execution lock, release it before any network/proof work.
     let mut session = crate::try_with_enclave(|s| s.fork_connection())
-        .ok_or_else(|| invalid("source enclave is not configured"))?;
+        .ok_or_else(|| invalid(crate::errors::UpgradeTransferError::SourceEnclaveNotConfigured))?;
     let artifact = if legacy_direct_dev {
         session.prepare_gramine_direct_dev_onboarding_artifact_v1(context)?
     } else {
@@ -256,19 +263,21 @@ pub fn export_from_network_source(
             return Err(TransportError::UnexpectedResponse);
         };
         DcapOnboardingArtifactV1::decode_canonical(&artifact)
-            .map_err(|_| invalid("source artifact codec"))?
+            .map_err(|_| invalid(crate::errors::UpgradeTransferError::SourceArtifactCodec))?
     };
     if artifact.context != context {
-        return Err(invalid("source returned a different recipient context"));
+        return Err(invalid(
+            crate::errors::UpgradeTransferError::SourceRecipientContextMismatch,
+        ));
     }
     artifact
         .encode_canonical()
-        .map_err(|_| invalid("source artifact encoding"))
+        .map_err(|_| invalid(crate::errors::UpgradeTransferError::SourceArtifactEncoding))
 }
 
 pub fn artifact_context_hash(artifact: &[u8]) -> Result<B256, TransportError> {
     Ok(DcapOnboardingArtifactV1::decode_canonical(artifact)
-        .map_err(|_| invalid("artifact codec"))?
+        .map_err(|_| invalid(crate::errors::UpgradeTransferError::ArtifactCodec))?
         .context
         .context_hash())
 }

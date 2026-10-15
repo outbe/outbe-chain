@@ -7,6 +7,7 @@ use std::{
 
 use crate::{
     archive::digest::DigestReader,
+    errors::SnapshotCreateError,
     fs::{FileIdentity, SourceEntry, SourceRoot},
     manifest::{EntryKind, FileEntry, SnapshotManifestV1},
 };
@@ -40,11 +41,11 @@ pub(super) fn capture_inventory(
                 manifest.file_count = manifest
                     .file_count
                     .checked_add(1)
-                    .ok_or_else(|| io::Error::other("file count overflow"))?;
+                    .ok_or(SnapshotCreateError::FileCountOverflow)?;
                 manifest.total_bytes = manifest
                     .total_bytes
                     .checked_add(member.size)
-                    .ok_or_else(|| io::Error::other("snapshot byte count overflow"))?;
+                    .ok_or(SnapshotCreateError::ByteCountOverflow)?;
             }
             entry.verify_unchanged()?;
             observed.push(entry.identity);

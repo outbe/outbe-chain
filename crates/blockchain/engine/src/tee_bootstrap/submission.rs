@@ -143,12 +143,12 @@ fn production_identity(
         attestation_ed25519: manifest.attestation_ed25519,
         noise_responder_x25519: manifest.noise_responder_x25519,
         enclave_id: manifest.enclave_id().map_err(|error| {
-            crate::errors::TeeBootstrapError::InvalidCommittedEnclaveIdentity(format!("{error}"))
+            crate::errors::TeeBootstrapError::InvalidCommittedEnclaveIdentity(error.to_string())
         })?,
         node_host_authorization_hash: manifest.node_host_authorization_hash().map_err(|error| {
-            crate::errors::TeeBootstrapError::InvalidCommittedNodeHostAuthorization(format!(
-                "{error}"
-            ))
+            crate::errors::TeeBootstrapError::InvalidCommittedNodeHostAuthorization(
+                error.to_string(),
+            )
         })?,
     })
 }
@@ -178,7 +178,7 @@ fn development_identity(
         keccak256(preimage)
     };
     let node_id_hash = node_id.node_id_hash().map_err(|error| {
-        crate::errors::TeeBootstrapError::InvalidNodeIdentity(format!("{error}"))
+        crate::errors::TeeBootstrapError::InvalidNodeIdentity(error.to_string())
     })?;
     let node_host_authorization_hash = {
         let mut preimage =
@@ -218,13 +218,13 @@ fn sign_validator_binding(
         node_id_hash,
     };
     let binding_hash = validator_binding.binding_hash().map_err(|error| {
-        crate::errors::TeeBootstrapError::InvalidValidatorNodeHostBinding(format!("{error}"))
+        crate::errors::TeeBootstrapError::InvalidValidatorNodeHostBinding(error.to_string())
     })?;
     let validator_signature = evm_signer.sign_hash(&binding_hash).map_err(|error| {
-        crate::errors::TeeBootstrapError::SignValidatorNodeHostBindingFailed(format!("{error}"))
+        crate::errors::TeeBootstrapError::SignValidatorNodeHostBindingFailed(error.to_string())
     })?;
     let node_binding_signature = sign_node_hash(binding_hash).map_err(|error| {
-        crate::errors::TeeBootstrapError::SignNodeHostValidatorBindingFailed(format!("{error}"))
+        crate::errors::TeeBootstrapError::SignNodeHostValidatorBindingFailed(error.to_string())
     })?;
     Ok(SignedValidatorBinding {
         validator_binding,
@@ -246,14 +246,12 @@ fn create_evidence(
     let (evidence, enclave_signature) = match (evidence_kind, client) {
         (BootstrapEvidenceKind::Dcap, RuntimeEnclaveClient::Production(production)) => {
             let generated = production.generate_dcap_quote(&intent).map_err(|error| {
-                crate::errors::TeeBootstrapError::ProductionQuoteGenerationFailed(format!(
-                    "{error}"
-                ))
+                crate::errors::TeeBootstrapError::ProductionQuoteGenerationFailed(error.to_string())
             })?;
             let components =
                 acquire_dcap_collateral_v1(&generated.quote_body).map_err(|error| {
                     crate::errors::TeeBootstrapError::ProductionCollateralAcquisitionFailed(
-                        format!("{error}"),
+                        error.to_string(),
                     )
                 })?;
             let enclave_signature = generated.enclave_signature;
@@ -296,15 +294,15 @@ fn sign_dev_intent(
         RuntimeEnclaveClient::Production(production) => production
             .sign_registration_intent_dev_v1(intent)
             .map_err(|error| {
-                crate::errors::TeeBootstrapError::ProductionDevIntentSigningFailed(format!(
-                    "{error}"
-                ))
+                crate::errors::TeeBootstrapError::ProductionDevIntentSigningFailed(
+                    error.to_string(),
+                )
                 .into()
             }),
         RuntimeEnclaveClient::Development(development) => development
             .sign_registration_intent_dev_v1(intent)
             .map_err(|error| {
-                crate::errors::TeeBootstrapError::DevelopmentIntentSigningFailed(format!("{error}"))
+                crate::errors::TeeBootstrapError::DevelopmentIntentSigningFailed(error.to_string())
                     .into()
             }),
     }

@@ -8,7 +8,7 @@ use std::{collections::BTreeSet, fmt};
 
 use outbe_primitives::tee_attestation_v1::TeePolicyV1;
 use serde::{
-    de::{DeserializeSeed, Error as _, MapAccess, SeqAccess, Visitor},
+    de::{DeserializeSeed, MapAccess, SeqAccess, Visitor},
     Deserialize,
 };
 use serde_json::value::RawValue;
@@ -234,7 +234,7 @@ impl<'de> Visitor<'de> for RejectDuplicateJsonKeysVisitor {
         let mut keys = BTreeSet::new();
         while let Some(key) = map.next_key::<String>()? {
             if !keys.insert(key) {
-                return Err(A::Error::custom("duplicate JSON object key"));
+                return Err(serde::de::Error::custom("duplicate JSON object key"));
             }
             map.next_value_seed(RejectDuplicateJsonKeys)?;
         }

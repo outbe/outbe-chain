@@ -16,7 +16,6 @@ use outbe_ocomp_protocol::{
     input::InputChunkKind, intent::JobIntentV1, UnitFinishedStatus, UnitFinishedV1,
 };
 use outbe_ocomp_protocol::{RunUnitV1, SchemaLimits};
-use thiserror::Error;
 
 use crate::admission_catalog::{AdmissionCatalogError, VerifiedAdmissionCatalog};
 use crate::bundle::PinnedProtocolBundle;
@@ -348,9 +347,9 @@ impl SupervisorJobRunnerV1 {
             handles
                 .into_iter()
                 .map(|handle| {
-                    let result = handle.join().map_err(|_| {
-                        SupervisorJobRunnerErrorV1::Invariant("worker dispatch thread panicked")
-                    })?;
+                    let result = handle
+                        .join()
+                        .map_err(|_| SupervisorJobRunnerErrorV1::WorkerDispatchThreadPanicked)?;
                     retryable_stage(
                         "dispatch exact Lysis unit through Supervisor Worker transport",
                         result,
@@ -473,38 +472,7 @@ fn retryable_stage_error(
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SupervisorJobFailureClassV1 {
-    Retryable,
-    Unrecoverable,
-}
-
-#[derive(Debug, Error)]
-pub enum SupervisorJobRunnerErrorV1 {
-    #[error("supervisor Lysis job stage `{name}` failed: {detail}")]
-    Stage {
-        class: SupervisorJobFailureClassV1,
-        name: &'static str,
-        detail: String,
-    },
-    #[error("supervisor Lysis job invariant failed: {0}")]
-    Invariant(&'static str),
-    #[error("worker failed plan ordinal {plan_ordinal} ({unit_id})")]
-    WorkerFailed { plan_ordinal: u32, unit_id: B256 },
-    #[error("supervisor Lysis job was superseded by a newer finalized job")]
-    Cancelled,
-}
-
-impl SupervisorJobRunnerErrorV1 {
-    #[must_use]
-    pub const fn class(&self) -> SupervisorJobFailureClassV1 {
-        match self {
-            Self::Stage { class, .. } => *class,
-            Self::Invariant(_) => SupervisorJobFailureClassV1::Unrecoverable,
-            Self::WorkerFailed { .. } | Self::Cancelled => SupervisorJobFailureClassV1::Retryable,
-        }
-    }
-}
+pub use crate::errors::{SupervisorJobFailureClassV1, SupervisorJobRunnerErrorV1};
 
 #[cfg(test)]
 mod tests {

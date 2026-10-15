@@ -20,7 +20,7 @@ pub(crate) enum TeeJoinAdmissionError {
     #[error("finalized-admission connection fault ({fault}); authenticated recovery probe failed: {probe}")]
     RecoveryProbeFailed {
         fault: outbe_tee::TransportError,
-        probe: outbe_tee::TransportError,
+        probe: TeeJoinError,
     },
     /// The resident offer key after reconnect does not match the registry.
     #[error("resident permanent offer key does not match finalized TeeRegistry after reconnect")]
@@ -229,6 +229,9 @@ pub(crate) enum TeeJoinError {
     /// Enclave transport error during offer key classification.
     #[error("{0}")]
     Transport(#[from] outbe_tee::TransportError),
+    /// The enclave returned an unexpected response to `GetPublicKeys`.
+    #[error("expected enclave PublicKeys, got {0:?}")]
+    UnexpectedPublicKeysResponse(outbe_tee::protocol::EnclaveResponse),
     /// `DcapRequired` mode requires `--node-data-dir`.
     #[error("DcapRequired tee join requires --node-data-dir")]
     DcapRequiresNodeDataDir,

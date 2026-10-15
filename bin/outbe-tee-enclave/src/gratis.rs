@@ -1,6 +1,6 @@
 //! Stateless encrypted Gratis transitions over an account's liquid and pledged balances.
 use crate::confidential::{FIELD_BALANCE, GRATIS};
-use crate::errors::Result;
+use crate::errors::{GratisRejectReason, Result};
 use alloy_primitives::{Address, B256, U256};
 use outbe_tee::protocol::{GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus};
 
@@ -79,10 +79,10 @@ pub fn rejected_result(reason: String, inputs_canonical_hash: B256) -> GratisOpR
     r
 }
 
-fn reject(reason: impl Into<String>) -> GratisOpResult {
+fn rejected_gratis_op(reason: GratisRejectReason) -> GratisOpResult {
     let mut r = base_result();
     r.status = GratisOpStatus::Rejected {
-        reason: reason.into(),
+        reason: reason.to_string(),
     };
     r
 }
@@ -95,7 +95,7 @@ pub fn apply_op(state_key: &[u8; 32], req: &GratisOpRequest) -> GratisOpResult {
     let inputs_canonical_hash = outbe_tee::protocol::gratis_op_canonical_hash(req);
     let mut result = match apply_op_inner(state_key, req) {
         Ok(r) => r,
-        Err(e) => reject(e.to_string()),
+        Err(e) => rejected_gratis_op(GratisRejectReason::from(e)),
     };
     result.inputs_canonical_hash = inputs_canonical_hash;
     result
@@ -105,7 +105,7 @@ fn prepare_owner_result(
     state_key: &[u8; 32],
     req: &GratisOpRequest,
     r: &mut GratisOpResult,
-) -> Result<Option<&'static str>> {
+) -> Result<Option<GratisRejectReason>> {
     let modify_key = derive_modify_key(state_key, req.account)?;
     if !verify_modify_auth(
         &modify_key,
@@ -118,10 +118,10 @@ fn prepare_owner_result(
         },
         &req.modify_auth.mac,
     ) {
-        return Ok(Some("invalid modify authorization"));
+        return Ok(Some(GratisRejectReason::InvalidModifyAuthorization));
     }
     let Some(nonce) = req.modify_auth.op_nonce.checked_add(1) else {
-        return Ok(Some("modify nonce exhausted"));
+        return Ok(Some(GratisRejectReason::ModifyNonceExhausted));
     };
     r.next_op_nonce = nonce;
     Ok(None)
@@ -129,16 +129,20 @@ fn prepare_owner_result(
 
 fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
     if req.amount.is_zero() || req.account.is_zero() {
-        return Ok(reject("amount and account must be nonzero"));
+        return Ok(rejected_gratis_op(
+            GratisRejectReason::AmountAndAccountMustBeNonzero,
+        ));
     }
     let owner_op = matches!(req.op, GratisOp::Mint | GratisOp::Burn | GratisOp::Pledge);
     let mut r = base_result();
     if owner_op {
         if let Some(reason) = prepare_owner_result(state_key, req, &mut r)? {
-            return Ok(reject(reason));
+            return Ok(rejected_gratis_op(reason));
         }
     } else if req.fidelity.is_some() {
-        return Ok(reject("collateral must not change Fidelity"));
+        return Ok(rejected_gratis_op(
+            GratisRejectReason::CollateralMustNotChangeFidelity,
+        ));
     }
     let view = derive_view_key(state_key, req.account)?;
     // `Some(true)` credits the blob, `Some(false)` debits it, `None` leaves it unread.
@@ -163,7 +167,9 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
             current.checked_sub(req.amount)
         };
         let Some(next) = next else {
-            return Ok(reject("insufficient balance or balance overflow"));
+            return Ok(rejected_gratis_op(
+                GratisRejectReason::InsufficientBalanceOrOverflow,
+            ));
         };
         *out = crate::gratis_cipher::write_amount(
             &view,
