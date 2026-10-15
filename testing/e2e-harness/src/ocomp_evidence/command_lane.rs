@@ -604,12 +604,12 @@ const FAST_PLAN: &[CommandBatchV1] = &[
 
 const INT_PLAN: &[CommandBatchV1] = &[
     CommandBatchV1 {
-        command_id: "int-evm",
+        command_id: "int-node-request-lifecycle",
         arguments: &[
             "test",
             "--locked",
             "-p",
-            "outbe-evm",
+            "outbe-node",
             "--test",
             "ocomp_request_lifecycle",
         ],

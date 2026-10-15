@@ -386,23 +386,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 repository_root,
                 &["test", "--locked", "-p", "outbe-primitives"],
             )?;
-            for integration_test in [
-                "system_tx_layout",
-                "e2e_system_tx",
-                "phase1_safety_verification",
-            ] {
-                cargo(
-                    repository_root,
-                    &[
-                        "test",
-                        "--locked",
-                        "-p",
-                        "outbe-evm",
-                        "--test",
-                        integration_test,
-                    ],
-                )?;
-            }
             for test in [
                 "ethereum_post_execution_copy_matches_upstream_behavior_matrix",
                 "active_terminal_request_is_last_semantic_writer_and_rejects_later_transactions",
@@ -508,7 +491,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-evm",
+                    "outbe-node",
                     "--test",
                     "ocomp_request_lifecycle",
                 ],
@@ -577,7 +560,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-evm",
+                    "outbe-node",
                     "--test",
                     "ocomp_request_lifecycle",
                 ],
@@ -1486,7 +1469,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-evm",
+                    "outbe-node",
                     "--test",
                     "ocomp_request_lifecycle",
                 ],
@@ -1506,6 +1489,8 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "outbe-cycle",
                     "-p",
                     "outbe-evm",
+                    "-p",
+                    "outbe-node",
                     "-p",
                     "outbe-ocomp-protocol",
                     "-p",
