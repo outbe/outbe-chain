@@ -87,12 +87,13 @@ pub(super) fn start(
                 number: 0,
                 hash: genesis_hash,
             });
+        let repository_snapshots = Arc::new(outbe_radicle::manager::RethSnapshotReader::new(
+            node.provider.clone(),
+            proof_chain_id,
+            genesis_hash,
+        ));
         let raw_snapshots: Arc<dyn outbe_radicle::manager::SnapshotReader> =
-            Arc::new(outbe_radicle::manager::RethSnapshotReader::new(
-                node.provider.clone(),
-                proof_chain_id,
-                genesis_hash,
-            ));
+            repository_snapshots.clone();
         let observed_snapshots = Arc::new(outbe_radicle::integration::ObservedSnapshotReader::new(
             raw_snapshots,
             publisher.clone(),
@@ -122,6 +123,7 @@ pub(super) fn start(
             },
             radicle_status.clone(),
         );
+        let endpoint = endpoint.with_repository_authority_reader(repository_snapshots);
         let (local_endpoint_publisher, local_endpoint) =
             outbe_radicle::integration::LocalEndpointIdentityChannel::create(
                 outbe_radicle::integration::LocalEndpointIdentity {

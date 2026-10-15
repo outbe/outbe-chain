@@ -1,8 +1,11 @@
 mod evidence;
+#[cfg(test)]
+mod material_tests;
 mod receive;
 
 pub use evidence::{EndpointEvidenceHandle, SignedEndpointEvidence};
 
+use super::{material, signing, RepositoryMaterialPublisher};
 use crate::integration::{RadicleStatusHandle, RadicleVotingGate};
 use crate::{
     endpoint::{
@@ -11,7 +14,10 @@ use crate::{
         PeerId, ReceiveOutcome, SignedEndpointResponse, VerifiedEndpoint, HANDLE_DEADLINE,
         MAX_ADDRESSES, MAX_ENDPOINT_TTL_BLOCKS, UNKNOWN_ANCHOR_TIMEOUT_MS,
     },
-    manager::{BoxFuture, EndpointResolver, FinalizedSnapshot, ManagerError, RadicleManagerHandle},
+    manager::{
+        BoxFuture, EndpointResolver, FinalizedSnapshot, ManagerError, RadicleManagerHandle,
+        RepositoryAuthorityReader,
+    },
 };
 use alloy_primitives::Address;
 use commonware_cryptography::{bls12381, Signer as _};
@@ -20,6 +26,7 @@ use commonware_runtime::IoBuf;
 use std::{
     collections::BTreeMap,
     future::Future,
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -115,6 +122,7 @@ pub struct EndpointSigningIdentity {
 pub struct EndpointNetworkService {
     actor: EndpointActor<OsRequestIds>,
     state: EndpointNetworkState,
+    repository_material_publisher: Option<RepositoryMaterialPublisher>,
 }
 
 struct EndpointNetworkState {
@@ -123,6 +131,8 @@ struct EndpointNetworkState {
     commands: mpsc::Receiver<NetworkCommand>,
     evidence: EndpointEvidenceHandle,
     status: RadicleStatusHandle,
+    repository_material: material::RepositoryMaterialHandle,
+    repository_authority: Option<Arc<dyn RepositoryAuthorityReader>>,
 }
 
 #[derive(Clone)]
@@ -137,6 +147,10 @@ struct EndpointRefresh<'a> {
 }
 
 enum NetworkCommand {
+    RepositoryMaterial {
+        owner: radicle::crypto::BlsPublicKey,
+        result: oneshot::Sender<Result<signing::RepositorySigningMaterial, signing::Error>>,
+    },
     Refresh {
         snapshot: FinalizedSnapshot,
         result: oneshot::Sender<Result<Vec<VerifiedEndpoint>, ManagerError>>,
@@ -160,15 +174,19 @@ impl EndpointNetwork {
         let (actor, handle) = EndpointActor::new(protocol);
         let (commands, receiver) = mpsc::channel(256);
         let evidence = EndpointEvidenceHandle::default();
+        let (repository_material_publisher, repository_material) = material::channel();
         (
             EndpointNetworkService {
                 actor,
+                repository_material_publisher: Some(repository_material_publisher),
                 state: EndpointNetworkState {
                     chain,
                     handle,
                     commands: receiver,
                     evidence: evidence.clone(),
                     status,
+                    repository_material,
+                    repository_authority: None,
                 },
             },
             EndpointNetworkResolver { commands },
@@ -178,6 +196,21 @@ impl EndpointNetwork {
 }
 
 impl EndpointNetworkResolver {
+    /// A local bounded request; the service samples its own current finalized authority.
+    pub async fn repository_signing_material(
+        &self,
+        owner: radicle::crypto::BlsPublicKey,
+    ) -> Result<signing::RepositorySigningMaterial, signing::Error> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::RepositoryMaterial { owner, result })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
+
     pub async fn shutdown(&self) -> Result<(), ManagerError> {
         let (result, response) = oneshot::channel();
         tokio::time::timeout(HANDLE_DEADLINE, async {
@@ -216,6 +249,19 @@ impl EndpointResolver for EndpointNetworkResolver {
 }
 
 impl EndpointNetworkService {
+    pub fn with_repository_authority_reader(
+        mut self,
+        reader: Arc<dyn RepositoryAuthorityReader>,
+    ) -> Self {
+        self.state.repository_authority = Some(reader);
+        self
+    }
+
+    /// Transfer the single public-output publisher to the engine lifecycle owner.
+    pub fn take_repository_material_publisher(&mut self) -> Option<RepositoryMaterialPublisher> {
+        self.repository_material_publisher.take()
+    }
+
     pub async fn run<S, R>(
         self,
         transport: EndpointTransport<S, R>,
@@ -231,6 +277,23 @@ impl EndpointNetworkService {
 }
 
 impl EndpointNetworkState {
+    fn current_repository_material(
+        &self,
+        owner: radicle::crypto::BlsPublicKey,
+    ) -> Result<signing::RepositorySigningMaterial, signing::Error> {
+        let authority = self
+            .repository_authority
+            .as_ref()
+            .ok_or(signing::Error::Unavailable)?
+            .read_current_repository_authority()?;
+        if authority.chain_id() != self.chain.chain_id
+            || authority.genesis_hash() != self.chain.genesis_hash
+        {
+            return Err(signing::Error::Material);
+        }
+        self.repository_material.current(authority, owner)
+    }
+
     async fn run<S, R>(
         mut self,
         endpoint_actor: EndpointActor<OsRequestIds>,
@@ -263,6 +326,10 @@ impl EndpointNetworkState {
                 }
                 command = self.commands.recv() => {
                     match command {
+                        Some(NetworkCommand::RepositoryMaterial { owner, result }) => {
+                            let material = self.current_repository_material(owner);
+                            let _ = result.send(material);
+                        }
                         Some(NetworkCommand::Refresh { snapshot, result }) => {
                             let refreshed = self.refresh(
                                 &mut sender,
@@ -509,7 +576,7 @@ mod shutdown_tests {
     use commonware_runtime::IoBufs;
 
     #[derive(Clone)]
-    struct NoSend;
+    pub(super) struct NoSend;
 
     impl LimitedSender for NoSend {
         type PublicKey = bls12381::PublicKey;
@@ -536,7 +603,9 @@ mod shutdown_tests {
     }
 
     #[derive(Debug)]
-    struct TestReceiver(mpsc::UnboundedReceiver<(bls12381::PublicKey, IoBuf)>);
+    pub(super) struct TestReceiver(
+        pub(super) mpsc::UnboundedReceiver<(bls12381::PublicKey, IoBuf)>,
+    );
 
     impl Receiver for TestReceiver {
         type PublicKey = bls12381::PublicKey;

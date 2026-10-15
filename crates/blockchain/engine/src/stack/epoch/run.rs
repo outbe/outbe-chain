@@ -61,7 +61,7 @@ where
         finalized_ce_committer,
         ce_startup_recovery,
         radicle_status,
-        radicle_endpoint,
+        mut radicle_endpoint,
     } = services;
     let radicle_updates = radicle_status.subscribe();
 
@@ -71,6 +71,13 @@ where
     let chain_id = node.chain_spec().chain().id();
     let repository_publication_enabled =
         super::super::startup::repository_publication_enabled_from_genesis(&node)?;
+    let repository_material_publisher = if repository_publication_enabled {
+        radicle_endpoint
+            .as_mut()
+            .and_then(|(endpoint, _, _)| endpoint.take_repository_material_publisher())
+    } else {
+        None
+    };
     let epoch_length_blocks = epoch_length_blocks_from_genesis(&node)?;
     let dkg_rotation_params = DkgRotationParams::from_genesis(&node, epoch_length_blocks);
     if repository_publication_enabled {
@@ -892,6 +899,7 @@ where
         dkg_rotation_params,
         dkg_manager,
         vrf_materials,
+        repository_material_publisher,
         vrf_safety,
         application_epoch_fence,
         certificate_scheme_provider,

@@ -21,6 +21,10 @@ const PARTIAL_NAMESPACE: &[u8] = b"outbe.radicle.partial.v1";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("current authenticated repository DKG output is unavailable")]
+    Unavailable,
+    #[error(transparent)]
+    Authority(#[from] crate::manager::ManagerError),
     #[error("DKG output differs from the current finalized committee or network owner")]
     Material,
     #[error("native Review or its signed refs are not prepared for the current signing context")]
@@ -102,6 +106,11 @@ impl RepositorySigningMaterial {
     }
     pub fn material_hash(&self) -> [u8; 32] {
         self.material_hash
+    }
+
+    /// Canonical public DKG data only; no local share is part of `Output`.
+    pub fn canonical_output(&self) -> Vec<u8> {
+        self.output.encode().to_vec()
     }
 
     pub fn review_context(&self, previous_receipt_hash: [u8; 32]) -> ReviewSigningContext {

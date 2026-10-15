@@ -13,6 +13,6 @@ pub use types::{
     BoxFuture, ControlSession, DisconnectDisposition, EndpointResolver, FinalizedBlock,
     FinalizedFeed, FinalizedPatchApproval, FinalizedRepositoryAuthority, FinalizedSnapshot,
     FinalizedValidator, HeartwoodControl, ManagerConfig, ManagerDependencies, ManagerError,
-    ManagerPhase, ManagerStatus, PhaseError, RepositoryStatus, RetryPolicy, SessionDirection,
-    SnapshotReader,
+    ManagerPhase, ManagerStatus, PhaseError, RepositoryAuthorityReader, RepositoryStatus,
+    RetryPolicy, SessionDirection, SnapshotReader,
 };

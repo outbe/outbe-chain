@@ -1,12 +1,14 @@
 mod lifecycle;
+mod material;
 mod metrics;
 mod network;
 pub mod review;
-pub mod signing;
 mod sidecar;
+pub mod signing;
 mod status;
 
 pub use lifecycle::EndpointTaskOwner;
+pub use material::RepositoryMaterialPublisher;
 pub use metrics::RadicleMetrics;
 pub use network::{
     shutdown_bounded, EndpointEvidenceHandle, EndpointNetwork, EndpointNetworkService,

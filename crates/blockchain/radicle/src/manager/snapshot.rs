@@ -38,6 +38,16 @@ impl<P> RethSnapshotReader<P> {
     }
 }
 
+impl<P: StateProviderFactory + Send + Sync> super::RepositoryAuthorityReader
+    for RethSnapshotReader<P>
+{
+    fn read_current_repository_authority(
+        &self,
+    ) -> Result<FinalizedRepositoryAuthority, ManagerError> {
+        RethSnapshotReader::read_current_repository_authority(self)
+    }
+}
+
 impl<P: StateProviderFactory> RethSnapshotReader<P> {
     /// Sample the local finalized head; callers cannot select an archived signing set.
     pub fn read_current_repository_authority(

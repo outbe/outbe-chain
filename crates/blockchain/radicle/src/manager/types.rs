@@ -48,6 +48,13 @@ impl FinalizedRepositoryAuthority {
     }
 }
 
+/// Samples this node's current finalized authority; callers cannot choose a historic set.
+pub trait RepositoryAuthorityReader: Send + Sync {
+    fn read_current_repository_authority(
+        &self,
+    ) -> Result<FinalizedRepositoryAuthority, ManagerError>;
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinalizedValidator {
     pub address: Address,
