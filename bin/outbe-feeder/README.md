@@ -40,7 +40,7 @@ private_key = "0x..."
 validator_address = "0x1111111111111111111111111111111111111111"
 
 [oracle]
-vote_period = 8
+vote_period = 60
 poll_interval_secs = 2
 
 [health]

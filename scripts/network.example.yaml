@@ -154,9 +154,9 @@ tee:
 
 # oracle:
 #   config:
-#     vote_period: 8
+#     vote_period: 60
 #     reward_band: "20000000000000000"
-#     slash_window: 96
+#     slash_window: 300
 #     penalties_enabled: false
 #     min_valid_per_window: "0"
 #     slash_fraction: "0"

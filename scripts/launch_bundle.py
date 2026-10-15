@@ -478,7 +478,7 @@ private_key = "0x{signer_key}"
 validator_address = "{validator["address"]}"
 
 [oracle]
-vote_period = {int(oracle.get("vote_period", 8))}
+vote_period = {int(oracle.get("vote_period", 60))}
 poll_interval_secs = 2
 
 [health]
