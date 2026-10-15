@@ -3,7 +3,8 @@
 Task: `outbe-chain-pjz.1`. Source base: `42d08693a`; предыдущий investigation commit:
 `c965901802e735f402ba3e5e438baa66cdf9f90a`.
 Первый candidate 2fa7187 получил три FAIL; отчёты в reviews/R1.md–R3.md сохранены.
-Новый exact reviewed SHA/spec/artifact hashes передаются в `review-candidate-r2.json` после commit.
+Round2 получил два PASS и один FAIL по descriptor preimage; оба PASS аннулированы,
+review children переоткрыты. Round3 exact SHA/spec/artifact hashes — `review-candidate-r3.json`.
 Ни один P0 review PASS здесь заранее не объявлен. P1–P8 не реализованы.
 
 ## Acceptance matrix
@@ -24,6 +25,7 @@ Task: `outbe-chain-pjz.1`. Source base: `42d08693a`; предыдущий invest
 python3 plans/radicle-patch-vote/p0-check/audit_sources.py
 CARGO_TARGET_DIR=/private/tmp/outbe-radicle-p0-target cargo run --offline --locked --quiet --manifest-path plans/radicle-patch-vote/p0-check/Cargo.toml
 python3 plans/radicle-patch-vote/p0-check/verify_vectors.py
+python3 plans/radicle-patch-vote/p0-check/descriptor_check.py
 rustfmt --edition 2021 --check plans/radicle-patch-vote/p0-check/src/main.rs plans/radicle-patch-vote/p0-check/src/publication.rs plans/radicle-patch-vote/p0-check/src/native.rs
 bd --readonly dep cycles --json
 ```
@@ -86,3 +88,10 @@ OID; Rust подписывает RDB1 настоящими 3-of-4 MinSig shares 
 Python stdlib отдельно восстанавливает DID multicodec, OPJ1/RDB1/envelope framing,
 metadata/header и Git object hashes. Full native package production tests остаются P2+.
 `check-environment.json` сохраняет exact cwd/command/platform/toolchain и exit code.
+
+Round2 R3-R2-F1: §5 теперь задаёт exact OGD1 binary preimage. В seeded descriptor только
+известные pre-genesis inputs; genesis_hash/RID/DKG key/self hash исключены. Actual genesis
+hash появляется после seeding; subsequent OPB1 связывает его с descriptor/RID/owner key.
+`descriptor_check.py` + `descriptor-check.log` дают fixed OGD1 bytes/hash и full 477-byte
+OPB1 framing fixture для двух разных later genesis hashes. Fixture не вызывает production
+genesis builder, DKG или publication verifier; реальные проверки остаются P4/P8.

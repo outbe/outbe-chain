@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-10-15T10:08:07.519949+00:00",
+  "timestamp_utc": "2026-10-15T10:21:12.315903+00:00",
   "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
   "env": {
     "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p0-candidate2-target"
@@ -11,7 +11,7 @@
         "plans/radicle-patch-vote/p0-check/audit_sources.py"
       ],
       "exit_code": 0,
-      "stdout": "46 checked anchors; 141 coupling candidate files; live HEAD 6c04f9ce7f0ee2ec41dfed1b52483e8e5cdbd770; write=False\n",
+      "stdout": "46 checked anchors; 141 coupling candidate files; live HEAD cc654e9d37acce89b1010c98fcbb1c8e49cbce1a; write=False\n",
       "stderr": ""
     },
     {
@@ -49,6 +49,15 @@
       ],
       "exit_code": 0,
       "stdout": "PASS independent byte reconstruction: DID/key wire, canonical fixture doc, actual Git OIDs, all three OPJ1/RDB1/envelope/Commonware frames, COB metadata and signature header\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "python3",
+        "plans/radicle-patch-vote/p0-check/descriptor_check.py"
+      ],
+      "exit_code": 0,
+      "stdout": "descriptor-check.log",
       "stderr": ""
     },
     {

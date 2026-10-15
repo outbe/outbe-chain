@@ -16,13 +16,15 @@
       "vendor/heartwood/crates/radicle-crypto/src/{lib.rs,ssh.rs}; vendor/heartwood/crates/radicle/src/{identity,cob,storage,node}; vendor/heartwood/crates/radicle-cob/src/backend/git/change.rs (исследование)",
       "crates/blockchain/consensus/src/{hybrid.rs,hybrid/vrf_material.rs,dkg_manager.rs}; crates/blockchain/engine/src/stack/dkg/ (исследование)",
       "crates/system/vote/src/{runtime.rs,state.rs,handlers.rs}; crates/system/radicleregistry/src/; scripts/genesis_seed_alloc.py; crates/blockchain/radicle/src/manager/snapshot.rs (исследование)",
-      "plans/radicle-patch-vote/p0-check/{src/main.rs,src/publication.rs,src/native.rs,vectors/,audit_sources.py,verify_vectors.py}; plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/ (finite design proofs, not production source)"
+      "plans/radicle-patch-vote/p0-check/{src/main.rs,src/publication.rs,src/native.rs,vectors/,audit_sources.py,verify_vectors.py}; plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/ (finite design proofs, not production source)",
+      "plans/radicle-patch-vote/p0-check/descriptor_check.py и plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/descriptor-check.log (OGD1/OPB1 finite framing proof)"
     ],
     "tests": [
       "Проверка каждого design claim по live source с path:line и существующими тестами; таблица всех blockers с выбранным решением и обоснованием.",
       "Минимальный executable crypto/serialization self-check только если источник/документация не закрывают конкретную осуществимость; результат не является production implementation.",
       "Threat scenarios для old shares, wrong epoch/domain/network, race committee transition и self-asserted group key; доказать, какое правило их отклоняет.",
-      "Native byte vectors: actual Git doc blob/COB tree/commit OIDs; all three RDB1 messages and Commonware framing, OPJ1 contexts, 269-byte envelope/header/key wire roundtrip, metadata/cross-kind/length/tamper negatives. Reduced convergence model: different valid q-subsets, staggered 2+2 delivery and different local finalized tips yield one checkpoint without all n."
+      "Native byte vectors: actual Git doc blob/COB tree/commit OIDs; all three RDB1 messages and Commonware framing, OPJ1 contexts, 269-byte envelope/header/key wire roundtrip, metadata/cross-kind/length/tamper negatives. Reduced convergence model: different valid q-subsets, staggered 2+2 delivery and different local finalized tips yield one checkpoint without all n.",
+      "Cycle-free DescriptorV1 exact OGD1 bytes/hash: only known pre-genesis inputs (chain_id/timestamp/name/branch/description/tree/content/policy/key-source), excludes genesis_hash/RID/group key/self hash. Roundtrip/negative vector plus later full OPB1 chain/genesis/RID/key binding; no production genesis/DKG claim."
     ],
     "ac": [
       "На все перечисленные design blockers есть конкретное реализуемое решение и source evidence; нет TBD, отложенного решения или скрытой смены требований.",
@@ -156,7 +158,8 @@
       "Реализовать автоматический bootstrap после готовности material, детерминированные initial objects/metadata и одинаковый RID/head на узлах.",
       "Если RID появляется после genesis, закрепить его через предусмотренный P0 проверяемый chain transition/registration с проверкой descriptor/material; не менять chain state из sidecar и не доверять первому произвольному register.",
       "Обеспечить restart/replay, join нового узла и обнаружение несовпадающих descriptor/RID/authority. Текущий repository manager видит repo штатно.",
-      "Bootstrap descriptor -> canonical BLS doc -> RID после initial DKG -> current quorum checkpoint -> registry managed binding. Резервировать capacity; ранняя ordinary регистрация того же RID не даёт полномочий и не блокирует authenticated bootstrap; до binding repo не входит в pre-consensus availability barrier."
+      "Bootstrap descriptor -> canonical BLS doc -> RID после initial DKG -> current quorum checkpoint -> registry managed binding. Резервировать capacity; ранняя ordinary регистрация того же RID не даёт полномочий и не блокирует authenticated bootstrap; до binding repo не входит в pre-consensus availability barrier.",
+      "Implement exact OGD1 DescriptorV1 preimage from design.md §5. Seeded descriptor/hash excludes future genesis_hash/RID/DKG group key; after actual genesis hashing and DKG, authenticated OPB1 binds full genesis identity + descriptor + key + RID without rewriting descriptor."
     ],
     "files": [
       "scripts/{seed_genesis.py,genesis_inputs.py,genesis_network.py,genesis_seed_codec.py,genesis_seed_system.py,genesis_seed_alloc.py}; scripts/{test_create_genesis.py,test_seed_genesis_protocol_constants.py} и новые descriptor fixture tests",
@@ -170,7 +173,8 @@
       "Replay/restart после каждого durable bootstrap шага; повторная регистрация идемпотентна; новый узел проверяет и загружает исходное repo.",
       "DKG ещё не готов, mismatch genesis/descriptor/content/group key/RID и посторонняя регистрация отвергаются или остаются в явном ожидающем состоянии.",
       "Genesis seeding tests, registry storage-layout/replay tests и existing ordinary repo registration compatibility.",
-      "Проверить empty genesis/DKG startup без циклической зависимости на доступность ещё не созданного repo; раннюю ordinary регистрацию; capacity reserve; identical two-node RID и replay."
+      "Проверить empty genesis/DKG startup без циклической зависимости на доступность ещё не созданного repo; раннюю ordinary регистрацию; capacity reserve; identical two-node RID и replay.",
+      "Use fixed OGD1 vector from P0; compare pre-genesis descriptor hash with seeded storage. Same chain_id/descriptor with different actual genesis_hash cannot replay OPJ1/OPB1 bootstrap; changed DKG key/RID requires current quorum binding. No self-referential genesis/hash input."
     ],
     "ac": [
       "Полный автоматический production bootstrap с initial DKG доказан, без вручную подготовленного operator signing key.",

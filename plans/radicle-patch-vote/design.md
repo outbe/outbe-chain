@@ -354,8 +354,41 @@ receipt hash остаётся precondition chain execution, а не требов
 
 Genesis descriptor V1 фиксирует name=`governments`, branch=`main`, description,
 canonical initial Git tree/content commitment, schema/version, native BLS policy и
-initial group-key source=`initial authenticated network DKG`. Descriptor hash включает
-chain identity. В genesis **нет выдуманного заранее готового group public key/RID**.
+initial group-key source=`initial authenticated network DKG`. **Pre-genesis descriptor
+включает chain_id, но не genesis_hash, RID, group key или собственный hash.** Все его
+inputs известны до сборки genesis. После seeding вычисляется actual genesis block hash;
+он входит в последующий OPJ1/OPB1, не записывается обратно в seeded descriptor.
+В genesis **нет выдуманного заранее готового group public key/RID**.
+
+Exact DescriptorV1 hash preimage — bytes в следующем порядке (big endian):
+
+```text
+OGD1[4] || schema:u16=1 || chain_id:u64 || genesis_timestamp:u64
+ || name_length:u16 || UTF8(name="governments")
+ || branch_length:u16 || UTF8(branch="main")
+ || description_length:u16 || UTF8(description)
+ || initial_tree_oid[20] || initial_content_manifest_sha256[32]
+ || policy:u8=1 || key_source:u8=1
+```
+
+Lengths — число bytes, не Unicode characters; name/branch фиксированы указанными
+значениями, description ≤1024 bytes, valid UTF-8 без CR/NUL, bytes сохраняются буквально.
+Schema/policy/key_source с иными значениями, trailing/short bytes, несоответствие
+genesis_timestamp header и невалидный initial tree/content artifact отклоняются.
+Content manifest — pre-genesis artifact с canonical file paths/modes/content SHA256;
+descriptor содержит SHA256 exact bytes этого artifact, а не hash будущей chain state.
+Empty initial content: manifest UTF-8 `[]` без LF, initial_tree_oid — Git empty tree OID.
+Descriptor hash = SHA256(exact OGD1 bytes), без дополнительного JSON/hex/string framing.
+Genesis storage содержит этот descriptor и его hash. Chain ID/timestamp/tree/content
+проверяются из genesis inputs; будущие block hash/DKG/RID в preimage отсутствуют.
+
+Dependency order: pre-genesis inputs → OGD1/hash → seeded genesis → actual genesis_hash
+→ authenticated initial DKG output → identity Doc/RID → bootstrap OPB1 checkpoint.
+OPB1 одновременно связывает **actual chain_id/genesis_hash**, descriptor_hash, owner key,
+RID и initial manifest; chain handler требует seeded descriptor hash и свою actual
+chain identity. Два genesis с одинаковыми chain_id/descriptor, но разным block hash не
+разделяют publication authority: OPJ1/native context и OPB1 identity signatures различаются.
+Никакое post-genesis действие не меняет descriptor, чтобы включить в него genesis_hash.
 
 После initial DKG validating node получает authenticated group key/output. Из descriptor
 и key строится canonical native identity document с одним BLS delegate, delegate
