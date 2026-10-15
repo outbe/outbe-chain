@@ -1,36 +1,25 @@
 {
   "task_id": "outbe-chain-pjz.1",
-  "status": "reopened_round5_wire_oid_prefix_correction",
+  "status": "complete_evidence_round5_awaiting_independent_reviews",
+  "review_round": 5,
+  "reviewed_source_sha": "4139bd9ef23c3320b6ac599c65e6123824131e07",
   "source_base": "42d08693a06a7fdc088cf452b582c2d18596ed9a",
-  "timestamp_utc": "2026-10-15T10:42:32.870923+00:00",
-  "previous_candidate": "65e2a7429f9b3c18ac7aa870629e0b16caedc483",
+  "timestamp_utc": "2026-10-15T13:45:16.773398+00:00",
+  "spec_hash": "a0e36f17d4d4f8410f8e6c67668bab71857306569df154b8237b49bf6b172232",
+  "spec_hash_algorithm": "SHA256(Beads parent description UTF-8 bytes), no added newline/title/JSON",
+  "previous_candidate": "44bd1a8f9ce6e26b87841774a7cd659978b3b889",
   "previous_review_verdicts": {
-    "R1": "PASS superseded",
-    "R2": "PASS superseded",
-    "R3": "FAIL periodic material capacity"
+    "R1": "round4 PASS invalidated by corrected legacy OID wire contract",
+    "R2": "round4 PASS invalidated by corrected legacy OID wire contract",
+    "R3": "round4 PASS invalidated by corrected legacy OID wire contract"
   },
   "independent_reviews": {
     "R1": "pending round5",
     "R2": "pending round5",
     "R3": "pending round5"
   },
-  "production_implementation": "not_started",
-  "claimed_ac_coverage": "README.md acceptance/correction matrix; design.md selected contract",
-  "spec_hash": "a0e36f17d4d4f8410f8e6c67668bab71857306569df154b8237b49bf6b172232",
-  "spec_hash_algorithm": "SHA256(Beads parent description UTF-8 bytes), no added newline/title/JSON",
-  "artifacts": {
-    "design.md": "cb9e375ded4782bae2af80a5ddf72ed85b21bfec4e60f424868196639d71676c",
-    "task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
-    "evidence/outbe-chain-pjz.1/README.md": "1ac7bb685d27f3024602c53ca83e1297a4c3a5fcd6857e9035ce371de32fec58",
-    "evidence/outbe-chain-pjz.1/source-audit.json": "e520b3c2c62a01141ae99fd9dd874256fbb84cd96ed6732bfdcce3d4134acd97",
-    "evidence/outbe-chain-pjz.1/design-check.log": "493fa160f280d0662f4bf6cdc6fbb18834d23ab40d860930d2a5c28d78dd044b",
-    "evidence/outbe-chain-pjz.1/descriptor-check.log": "7868d0e940c62a46ffad8bacdb33edafe65d6357819d50aa43dfbf0947a0ce0b",
-    "evidence/outbe-chain-pjz.1/schedule-check.log": "66a22e6c06664edf7e936bbb18bcf3dd92f98acc273cf579162fbf0f7954e069",
-    "evidence/outbe-chain-pjz.1/check-environment.json": "ace188dbd09b3ed95f0b3a8f357c98773b175f0cdc5fbf202b2363c4dde9b356"
-  },
-  "commands": "check-environment.json; beads-lint.log; dependency-cycles.json",
-  "scope": "real BLS primitive + finite native/descriptor vectors + reduced publication/convergence/capacity models; not production P1–P8",
-  "reviewed_source_sha": "f1c224eda9907565c9810c8987c64e4efd2a804a",
-  "historical_acceptance": "closure-round4.json; invalidated for corrected wire contract",
-  "review_round": 5
+  "commands": "round5/commands.json",
+  "scope": "P0 design/spike only; P1 stable update accepted separately, P2 incomplete, P3-P8 not implemented",
+  "claimed_ac_coverage": "README.md AC1-AC5 matrix and Round5 section",
+  "historical_acceptance": "closure-round4.json; closure.json invalidated"
 }
