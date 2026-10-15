@@ -716,7 +716,6 @@ impl Localnet {
         Ok(peers.join(","))
     }
 
-    /// Run `outbe-keygen <args>` and return stdout.
     fn sign_registration(
         &self,
         signing_key: &str,
@@ -741,6 +740,7 @@ impl Localnet {
         .ok_or_else(|| eyre!("no registration signature from keygen"))
     }
 
+    /// Run `outbe-keygen <args>` and return stdout.
     fn keygen(&self, args: &[&str]) -> Result<String> {
         proc::run_capture(&self.cfg.bin_keygen, args)
     }

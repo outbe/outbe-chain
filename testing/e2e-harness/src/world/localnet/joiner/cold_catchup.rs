@@ -38,7 +38,7 @@ impl ColdCatchup<'_> {
     fn pending(&self, target: Option<FinalizedCheckpoint>, log: &str) -> Result<Option<String>> {
         match (target, self.rpc.finalized_result(self.port)) {
             (Some(expected), Ok(local)) if local >= expected.height => self.parity(expected, log),
-            observation => Ok(Some(format!("finalized observations: {:?}", observation.1))),
+            observation => Ok(Some(format!("finalized observations: {observation:?}"))),
         }
     }
 

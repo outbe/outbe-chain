@@ -364,7 +364,12 @@ fn assert_registration_rejected_unchanged(world: &World, case: RejectionCase) {
     let absent = !world
         .rpc
         .is_validator(port, &address_string(identity.address()))
-        .expect("observe rejected candidate registry membership");
+        .unwrap_or_else(|error| {
+            panic!(
+                "{}: observe rejected candidate registry membership: {error:?}",
+                case.invariant
+            )
+        });
     let mut violations = Vec::new();
     if outcome.success {
         violations.push(format!(
