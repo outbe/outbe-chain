@@ -63,6 +63,9 @@ anchors=[
 ('S43','crates/blockchain/engine/src/stack/dkg/persistence.rs','let next_epoch = next_consensus_epoch_after_dkg_activation'),
 ('S44','crates/blockchain/engine/src/stack/epoch/activation.rs','invariant:'),
 ('S45','scripts/genesis_stages.py','"dkgPrepareWindowBlocks": int('),
+('S46','vendor/heartwood/crates/radicle-protocol/src/wire.rs','impl Encode for git::Oid'),
+('S47','vendor/heartwood/crates/radicle-protocol/src/wire/message.rs','impl wire::Encode for RefsAnnouncement'),
+('S48','vendor/heartwood/crates/radicle-protocol/src/wire/frame.rs','fn native_namespace_frames_preserve_signed_encoding_and_transport_identity'),
 ]
 rows=[]
 for key,path,needle in anchors:
@@ -73,7 +76,9 @@ for key,path,needle in anchors:
 cmd=['rg','-l',r'\b(PublicKey|NodeId|RemoteId|ActorId|Signature|Signer)\b',
  'vendor/heartwood/crates/radicle/src','vendor/heartwood/crates/radicle-cob/src',
  'vendor/heartwood/crates/radicle-protocol/src','vendor/heartwood/crates/radicle-fetch/src',
- 'vendor/heartwood/crates/radicle-node/src','vendor/heartwood/crates/radicle-remote-helper/src']
+ 'vendor/heartwood/crates/radicle-node/src','vendor/heartwood/crates/radicle-remote-helper/src',
+ 'vendor/heartwood/crates/radicle-crypto/src','vendor/heartwood/crates/radicle-git-metadata/src',
+ 'vendor/heartwood/crates/radicle-cli/src']
 paths=subprocess.run(cmd,cwd=root,capture_output=True,text=True,check=True).stdout.splitlines()
 result=dict(base_sha=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),
  commonware_revision='d476a2361ce6840d2b9d0aa6fb30a924429046d4',anchors=rows,

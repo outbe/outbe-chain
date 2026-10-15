@@ -1,22 +1,25 @@
 {
   "task_id": "outbe-chain-pjz.3",
-  "status": "in_progress_crypto_layer_only",
-  "production_native_integration": "not_started",
+  "status": "in_progress_repository_roles_metadata_wire",
+  "production_native_integration": "roles_and_wire_integrated; native_identity_COB_sigrefs_and_policy_pending",
   "implemented": [
     "RepositoryKey Ed25519/BLS split without transport changes",
     "validated compressed G2 keys and canonical textual/tagged formats",
     "125byte native signing subjects,269byte detached envelopes and fixed Commonware-compatible MinSig POP namespace verification",
-    "real P0 threshold vectors and wrong-domain/valid-wrong-signature/subgroup/encoding/length negatives"
+    "real P0 threshold vectors and wrong-domain/valid-wrong-signature/subgroup/encoding/length negatives",
+    "Strict exact unsigned/signed BLS Git commit metadata codec with native P0 commit OID/trailer roundtrip and grammar negatives",
+    "RepositoryKey DID/actor/namespace/ref-cache/fetch role propagation with Ed25519 transport retained",
+    "V1/V2 authenticated Upgrade/Ack negotiation and signed encoding preserved across relay/cache migration/reopen",
+    "existing wire OID prefixes and gossip byte limits preserved; unnegotiated V2 and oversized gossip rejected before payload work"
   ],
-  "checks": "17 crypto tests, all-feature and default Clippy, alloc-only check passed on Darwin; not full P2 evidence or acceptance",
+  "checks": "frontier/commands.json: required root check, whole vendor workspace/all-target Clippy,648 native tests,exact signed wire vectors passed; current/current and legacy/current actual Ed peer scenarios passed; optional all-features profiling attempt NOT RUN (offline dhat missing); generic-wire follow-up9500ce8c3:109 protocol tests and whole-workspace/all-target Clippy passed on identical committed code bytes",
   "remaining": [
-    "DID/delegate/COB/refs production integration",
-    "prepare/attach/apply native APIs",
-    "native unsigned Git metadata/header grammar",
-    "repository namespaces,wire negotiation and Ed transport compatibility",
-    "generic managed-owner publication policy through local/fetch/evaluator/cache/reopen/rebuild",
-    "two-node BLS repo with Ed author/Review/sigrefs and all P2 negative/regression requirements",
-    "frozen complete P2 evidence and three independent reviews"
+    "native BLS identity/COB/sigrefs prepare/attach/load verification",
+    "generic managed-owner publication policy across every local/fetch/evaluator/cache/direct/reopen/rebuild path",
+    "remaining CLI repository namespace vs transport selection checks",
+    "actual two-node BLS repository acceptance with Ed patch author before Vote and all required negatives",
+    "complete frozen P2 evidence and three independent full-AC reviews"
   ],
-  "review_state": "not_ready; all P2 review children remain blocked"
+  "review_state": "not_ready; P2 reviews remain blocked; P0 reopened for wire OID contract correction",
+  "source_sha": "9500ce8c35a4d6fedd2ab9ea0aa970ecb887808c"
 }

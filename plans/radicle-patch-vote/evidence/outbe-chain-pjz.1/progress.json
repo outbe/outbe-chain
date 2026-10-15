@@ -1,6 +1,6 @@
 {
   "task_id": "outbe-chain-pjz.1",
-  "status": "candidate_round4_awaiting_independent_reviews",
+  "status": "reopened_round5_wire_oid_prefix_correction",
   "source_base": "42d08693a06a7fdc088cf452b582c2d18596ed9a",
   "timestamp_utc": "2026-10-15T10:42:32.870923+00:00",
   "previous_candidate": "65e2a7429f9b3c18ac7aa870629e0b16caedc483",
@@ -10,9 +10,9 @@
     "R3": "FAIL periodic material capacity"
   },
   "independent_reviews": {
-    "R1": "pending round4",
-    "R2": "pending round4",
-    "R3": "pending round4"
+    "R1": "pending round5",
+    "R2": "pending round5",
+    "R3": "pending round5"
   },
   "production_implementation": "not_started",
   "claimed_ac_coverage": "README.md acceptance/correction matrix; design.md selected contract",
@@ -29,5 +29,8 @@
     "evidence/outbe-chain-pjz.1/check-environment.json": "ace188dbd09b3ed95f0b3a8f357c98773b175f0cdc5fbf202b2363c4dde9b356"
   },
   "commands": "check-environment.json; beads-lint.log; dependency-cycles.json",
-  "scope": "real BLS primitive + finite native/descriptor vectors + reduced publication/convergence/capacity models; not production P1–P8"
+  "scope": "real BLS primitive + finite native/descriptor vectors + reduced publication/convergence/capacity models; not production P1–P8",
+  "reviewed_source_sha": "f1c224eda9907565c9810c8987c64e4efd2a804a",
+  "historical_acceptance": "closure-round4.json; invalidated for corrected wire contract",
+  "review_round": 5
 }

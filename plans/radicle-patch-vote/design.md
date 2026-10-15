@@ -121,7 +121,9 @@ tag1=BLS G2[96]. Внутри tagged поля нет длины/padding; unknown
 в standalone key, noncanonical/subgroup/identity key отвергаются. Binary NodeId остаётся
 untagged Ed25519[32] в обеих версиях.
 
-Legacy frame `rad\x01` и legacy RefsAt remote[32]||at[20] неизменны. Upgrade объявляет
+Legacy frame `rad\x01` и legacy RefsAt remote[32]||OID-length:u16be(20)||at[20]
+неизменны. RID тоже сохраняет existing OID-length:u16be(20) перед hash[20].
+OID length prefixes остаются в V2; меняется только repository key field. Upgrade объявляет
 feature bit `1<<63` в existing u64 Node Features (сейчас занят только SEED bit0).
 Первичные control/gossip остаются V1. После получения authenticated peer capabilities
 и отправки своего announcement peer может послать V1 control Upgrade: control type3,

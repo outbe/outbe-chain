@@ -5,14 +5,17 @@ Task: `outbe-chain-pjz.1`. Source base: `42d08693a`; предыдущий invest
 Первый candidate 2fa7187 получил три FAIL; отчёты в reviews/R1.md–R3.md сохранены.
 Round2 получил два PASS и один FAIL по descriptor preimage; оба PASS аннулированы,
 review children переоткрыты. Round3 оставил cadence blocker: два PASS снова аннулированы.
-Round4 exact SHA/spec/artifact hashes — `review-candidate-r4.json`.
-Ни один P0 review PASS здесь заранее не объявлен. P1–P8 не реализованы.
+Round4 получил три PASS на `44bd1a8f9`, но P0 переоткрыта при production wire проверке P2:
+описание RefsAt пропустило existing u16 OID length prefix. Historical closure сохранён
+в `closure-round4.json`; `closure.json` помечен invalidated. Round5 требует три новых
+независимых full-AC PASS на исправленном evidence. P1 stable update принят отдельно;
+P2 выполняется, P3–P8 ещё не реализованы. Ни один Round5 PASS заранее не объявлен.
 
 ## Acceptance matrix
 
 | AC | Source и решение | Проверяемое evidence |
 | --- | --- | --- |
-| AC1 | design.md §§1–7: выбран native BLS + external finalized publication policy; static key, exact current membership, authenticated material, genesis и lifecycle определены | source-audit.json: S01–S45/C01–C06; decision model; source-backed ограничения и assumptions прямо указаны |
+| AC1 | design.md §§1–7: выбран native BLS + external finalized publication policy; static key, exact current membership, authenticated material, genesis и lifecycle определены | source-audit.json: S01–S48/C01–C06; decision model; source-backed ограничения и assumptions прямо указаны |
 | AC2 | design.md §2: отдельно identity blob OID, COB tree OID и canonical refs bytes; RDB1 framing/meta/policy context; §6 dependency order без self-reference | S05–S10/S16/S28; primitive namespace/subject negative checks. native.rs + verify_vectors.py и design-check.log дают все три exact RDB1/OPJ1/native Git object/wire/envelope vectors; production parser ещё задача P2 |
 | AC3 | design.md §§3–5: existing canonical DKG material + узкий fixed-domain signer; q current identity endorsements для initial material/descriptor→RID, CAS binding, no operator owner key | S05/S19–S24/S26/S33, C01–C06; настоящие 3-of-4 primitive vectors; отдельная схема bootstrap/material checkpoints. Anonymous fixture не называется distributed DKG |
 | AC4 | design.md §4: raw old-key signature не даёт новое canonical write; обязательный current quorum + immutable chain checkpoint; history и Promote различаются | design-check.log, publication.rs: actual MinPk signatures и reduced state model для retired identity/epoch race/t-1/duplicate/tamper/exact history. Production fetch gate не объявляется существующим |
@@ -36,7 +39,7 @@ Standalone Cargo.lock закрепляет dependency resolution. Commonware sou
 же, что в root Cargo.lock; target directory находится вне основного checkout. Private
 shares и secret keys не выводятся. Вывод — public keys/signature и PASS выбранных checks.
 
-`audit_sources.py` по умолчанию read-only: сверяет 51 anchors/141 candidate hashes;
+`audit_sources.py` по умолчанию read-only: сверяет 54 anchors/178 candidate hashes;
 явный --write только регенерирует inventory. Это не source-string regression test поведения.
 `publication.rs` — reduced executable **проектная модель** с настоящими identity signatures,
 не будущий handler/finality verifier. Она не проверяет omitted fields полного PublicationBody,
@@ -111,3 +114,25 @@ feature. Mandatory artifacts/64KiB и current generation checks сохраняю
 materials, n256, default300/30,300/200 и shortest65/1, explicit delays/omissions. Это
 не production DKG timing/codec/gas/finality execution. S41–S45 привязывают решение к
 actual periodic lifecycle и genesis timing inputs.
+
+## Round5: existing OID length prefix
+
+`design.md` §2.1 теперь явно сохраняет existing `u16be(20)` перед RID/at OID в
+обеих wire версиях. S46–S48 показывают production encoder, RefsAnnouncement и
+точный independent-layout regression test. V1 RefsAt занимает54 bytes; V2
+Ed25519 —55, BLS —119. Fixed refs message overhead130 bytes включает transport
+Ed25519 key/signature, type, RID length/hash, count и timestamp. Existing65535-byte
+limit оставляет549 полных BLS RefsAt; слишком большой gossip payload отклоняется
+до allocation/decoding. Git streams сохраняют возможность большего payload.
+
+`round5/` повторяет Commonware primitive/native/policy finite checks, независимые
+vector/descriptor/schedule checks и source inventory. Проверка production wire
+включает три фиксированных signed frames: legacy Ed V1, BLS V2 и Ed V2. Последний
+сохраняет signed V2 encoding при decode/relay/cache reopen. Полная native regression
+и два actual Ed peer сценария лежат в P2 `frontier/`; это дополнительная проверка
+сохранения contracts, не доказательство готовности native BLS identity/COB/refs.
+
+AC1–AC5 и исходный closure gate не ослаблены. Все исходные design/model ограничения
+выше сохраняются. Round5 artifact manifest связывает corrected design, 54 anchors,
+178 source candidate hashes, каждый executable check и actual Beads snapshot;
+current reviewed SHA указан в `review-candidate-r5.json`.
