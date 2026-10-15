@@ -184,7 +184,7 @@ impl PublicationManifest {
     }
 
     /// Checks the committed format/job fields; this is not native-object or witness verification.
-    fn bind_receipt(&self, body: &PublicationBody) -> Result<(), Error> {
+    pub(crate) fn bind_receipt(&self, body: &PublicationBody) -> Result<(), Error> {
         if self.hash()? != body.package_manifest_hash {
             return Err(Error::Receipt);
         }

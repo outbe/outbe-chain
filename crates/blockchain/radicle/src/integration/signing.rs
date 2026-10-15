@@ -1,5 +1,6 @@
 //! Current finalized committee/DKG binding for native repository partials.
 
+pub mod accepted;
 pub mod witness;
 
 use alloy_primitives::Address;
@@ -34,12 +35,14 @@ pub enum Error {
     Unavailable,
     #[error(transparent)]
     Authority(#[from] crate::manager::ManagerError),
-    #[error("DKG output differs from the current finalized committee or network owner")]
+    #[error("DKG output does not match the trusted repository material or owner")]
     Material,
     #[error("native Review or its signed refs are not prepared for the current signing context")]
     Context,
     #[error("partial sender is not the current DKG participant")]
     Participant,
+    #[error("native witness does not match the exact finalized publication receipt")]
+    Accepted,
     #[error("invalid authenticated repository partial")]
     Partial,
     #[error("invalid, noncanonical or oversized repository witness bundle")]
@@ -66,21 +69,7 @@ impl RepositorySigningMaterial {
         bytes: &[u8],
         owner: BlsPublicKey,
     ) -> Result<Self, Error> {
-        if bytes.len() > MAX_PUBLIC_OUTPUT_BYTES {
-            return Err(Error::Material);
-        }
-        let mut reader = bytes;
-        let cfg = (
-            std::num::NonZeroU32::new(outbe_consensus::bls::MAX_VALIDATORS)
-                .ok_or(Error::Material)?,
-            ModeVersion::v0(),
-        );
-        let output = Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut reader, &cfg)
-            .map_err(|_| Error::Material)?;
-        if !reader.is_empty() || output.encode().as_ref() != bytes {
-            return Err(Error::Material);
-        }
-        Self::new(authority, output, owner)
+        Self::new(authority, decode_output(bytes)?, owner)
     }
 
     /// Independently verify sorted current q-partial witnesses for a reconstructed native subject.
@@ -91,39 +80,14 @@ impl RepositorySigningMaterial {
         envelope: &BlsEnvelope,
         frames: &[RepositoryPartial],
     ) -> Result<(), Error> {
-        if frames.len() < self.output.public().required() as usize
-            || frames.len() > self.output.players().len()
-        {
-            return Err(Error::Partial);
-        }
-        let mut previous = None;
-        let contributions = frames
-            .iter()
-            .map(|frame| {
-                let index = frame.body.partial.index;
-                if previous.is_some_and(|old| old >= index) {
-                    return Err(Error::Partial);
-                }
-                previous = Some(index);
-                let sender = self
-                    .output
-                    .players()
-                    .iter()
-                    .nth(index.get() as usize)
-                    .ok_or(Error::Participant)?;
-                Ok((sender.clone(), frame.clone()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        // A receiver needs only the authenticated public polynomial, never a local Share.
-        let verifier = VrfMaterialProvider::new(
-            self.authority.committee().vrf_material_version,
-            self.output.public().clone(),
-            None,
-        );
-        if self.recover_subject(&verifier, actual, &contributions)? != *envelope {
-            return Err(Error::Partial);
-        }
-        Ok(())
+        verify_native_witness(
+            &self.review_context([0; 32]),
+            &self.output,
+            self.owner,
+            actual,
+            envelope,
+            frames,
+        )
     }
 
     fn authorize_current_review(
@@ -217,17 +181,12 @@ impl RepositorySigningMaterial {
         )
         .map_err(|_| Error::Material)?
         .0;
-        let encoded = output.encode();
-        let length = u32::try_from(encoded.len()).map_err(|_| Error::Material)?;
-        let material_hash = Sha256::hash(&[
-            b"ODM1",
-            &authority.epoch().to_be_bytes(),
-            &committee.vrf_material_version.to_be_bytes(),
-            &players_commitment,
-            &length.to_be_bytes(),
-            encoded.as_ref(),
-        ])
-        .0;
+        let material_hash = compute_material_hash(
+            authority.epoch(),
+            committee.vrf_material_version,
+            players_commitment,
+            &output,
+        )?;
         Ok(Self {
             authority,
             output,
@@ -378,28 +337,14 @@ impl RepositorySigningMaterial {
         sender: &bls12381::PublicKey,
         frame: &RepositoryPartial,
     ) -> Result<PartialSignature<MinSig>, Error> {
-        if frame.body.chain_id != self.authority.chain_id()
-            || frame.body.genesis_hash != self.authority.genesis_hash().0
-            || frame.body.epoch != self.authority.epoch()
-            || frame.body.material_version != self.authority.committee().vrf_material_version
-            || frame.body.material_hash != self.material_hash
-            || frame.body.message_hash != Sha256::hash(&[subject.as_bytes()]).0
-        {
-            return Err(Error::Context);
-        }
-        if self.output.players().index(sender) != Some(frame.body.partial.index) {
-            return Err(Error::Participant);
-        }
-        if !sender.verify(PARTIAL_NAMESPACE, &frame.body.to_bytes(), &frame.signature) {
-            return Err(Error::Partial);
-        }
-        provider.verify_repository_partial(
-            self.authority.committee().vrf_material_version,
-            self.output.public(),
+        verify_native_partial(
+            &self.review_context([0; 32]),
+            &self.output,
+            provider,
             subject,
-            &frame.body.partial,
-        )?;
-        Ok(frame.body.partial.clone())
+            sender,
+            frame,
+        )
     }
 
     pub fn recover_review(
@@ -428,28 +373,14 @@ impl RepositorySigningMaterial {
         subject: &RepositorySubject,
         contributions: &[(bls12381::PublicKey, RepositoryPartial)],
     ) -> Result<BlsEnvelope, Error> {
-        if contributions.len() > self.authority.committee().committee.len() {
-            return Err(Error::Partial);
-        }
-        let partials = contributions
-            .iter()
-            .map(|(sender, frame)| self.verify_subject_partial(provider, subject, sender, frame))
-            .collect::<Result<Vec<_>, _>>()?;
-        let signature = provider.recover_repository(
-            self.authority.committee().vrf_material_version,
-            self.output.public(),
-            subject,
-            &partials,
-        )?;
-        Ok(BlsEnvelope::attach(
-            subject.clone(),
+        recover_native_subject(
+            &self.review_context([0; 32]),
+            &self.output,
             self.owner,
-            signature
-                .encode()
-                .to_vec()
-                .try_into()
-                .map_err(|_| Error::Partial)?,
-        )?)
+            provider,
+            subject,
+            contributions,
+        )
     }
 }
 
@@ -522,4 +453,146 @@ impl RepositoryPartial {
             signature: bls12381::Signature::decode(&bytes[172..]).map_err(|_| Error::Partial)?,
         })
     }
+}
+
+fn verify_native_witness(
+    context: &ReviewSigningContext,
+    output: &Output<MinSig, bls12381::PublicKey>,
+    owner: BlsPublicKey,
+    actual: &RepositorySubject,
+    envelope: &BlsEnvelope,
+    frames: &[RepositoryPartial],
+) -> Result<(), Error> {
+    if frames.len() < output.public().required() as usize || frames.len() > output.players().len() {
+        return Err(Error::Partial);
+    }
+    let mut previous = None;
+    let contributions = frames
+        .iter()
+        .map(|frame| {
+            let index = frame.body.partial.index;
+            if previous.is_some_and(|old| old >= index) {
+                return Err(Error::Partial);
+            }
+            previous = Some(index);
+            let sender = output
+                .players()
+                .iter()
+                .nth(index.get() as usize)
+                .ok_or(Error::Participant)?;
+            Ok((sender.clone(), frame.clone()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    // A receiver needs only the authenticated public polynomial, never a local Share.
+    let verifier =
+        VrfMaterialProvider::new(context.material_version, output.public().clone(), None);
+    if recover_native_subject(context, output, owner, &verifier, actual, &contributions)?
+        != *envelope
+    {
+        return Err(Error::Partial);
+    }
+    Ok(())
+}
+
+fn verify_native_partial(
+    context: &ReviewSigningContext,
+    output: &Output<MinSig, bls12381::PublicKey>,
+    provider: &VrfMaterialProvider<MinSig>,
+    subject: &RepositorySubject,
+    sender: &bls12381::PublicKey,
+    frame: &RepositoryPartial,
+) -> Result<PartialSignature<MinSig>, Error> {
+    if frame.body.chain_id != context.chain_id
+        || frame.body.genesis_hash != context.genesis_hash
+        || frame.body.epoch != context.epoch
+        || frame.body.material_version != context.material_version
+        || frame.body.material_hash != context.material_hash
+        || frame.body.message_hash != Sha256::hash(&[subject.as_bytes()]).0
+    {
+        return Err(Error::Context);
+    }
+    if output.players().index(sender) != Some(frame.body.partial.index) {
+        return Err(Error::Participant);
+    }
+    if !sender.verify(PARTIAL_NAMESPACE, &frame.body.to_bytes(), &frame.signature) {
+        return Err(Error::Partial);
+    }
+    provider.verify_repository_partial(
+        context.material_version,
+        output.public(),
+        subject,
+        &frame.body.partial,
+    )?;
+    Ok(frame.body.partial.clone())
+}
+
+fn recover_native_subject(
+    context: &ReviewSigningContext,
+    output: &Output<MinSig, bls12381::PublicKey>,
+    owner: BlsPublicKey,
+    provider: &VrfMaterialProvider<MinSig>,
+    subject: &RepositorySubject,
+    contributions: &[(bls12381::PublicKey, RepositoryPartial)],
+) -> Result<BlsEnvelope, Error> {
+    if contributions.len() > output.players().len() {
+        return Err(Error::Partial);
+    }
+    let partials = contributions
+        .iter()
+        .map(|(sender, frame)| {
+            verify_native_partial(context, output, provider, subject, sender, frame)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let signature = provider.recover_repository(
+        context.material_version,
+        output.public(),
+        subject,
+        &partials,
+    )?;
+    Ok(BlsEnvelope::attach(
+        subject.clone(),
+        owner,
+        signature
+            .encode()
+            .to_vec()
+            .try_into()
+            .map_err(|_| Error::Partial)?,
+    )?)
+}
+
+fn compute_material_hash(
+    epoch: u64,
+    version: u64,
+    players_commitment: [u8; 32],
+    output: &Output<MinSig, bls12381::PublicKey>,
+) -> Result<[u8; 32], Error> {
+    let encoded = output.encode();
+    let length = u32::try_from(encoded.len()).map_err(|_| Error::Material)?;
+    let material_hash = Sha256::hash(&[
+        b"ODM1",
+        &epoch.to_be_bytes(),
+        &version.to_be_bytes(),
+        &players_commitment,
+        &length.to_be_bytes(),
+        encoded.as_ref(),
+    ])
+    .0;
+    Ok(material_hash)
+}
+
+fn decode_output(bytes: &[u8]) -> Result<Output<MinSig, bls12381::PublicKey>, Error> {
+    if bytes.len() > MAX_PUBLIC_OUTPUT_BYTES {
+        return Err(Error::Material);
+    }
+    let mut reader = bytes;
+    let cfg = (
+        std::num::NonZeroU32::new(outbe_consensus::bls::MAX_VALIDATORS).ok_or(Error::Material)?,
+        ModeVersion::v0(),
+    );
+    let output = Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut reader, &cfg)
+        .map_err(|_| Error::Material)?;
+    if !reader.is_empty() || output.encode().as_ref() != bytes {
+        return Err(Error::Material);
+    }
+    Ok(output)
 }

@@ -1,5 +1,6 @@
 //! Separate interchangeable evidence; these bytes never enter the native manifest hash.
 
+use super::accepted::AcceptedPublicationVerifier;
 use super::{Error, RepositoryPartial, RepositorySigningMaterial};
 use radicle::{
     canonical::formatter::CanonicalFormatter,
@@ -30,6 +31,25 @@ struct SubjectWire {
 }
 
 impl RepositoryWitnessBundle {
+    /// Exact accepted envelopes stay verifiable after current authority/material changes.
+    pub fn verify_accepted(
+        &self,
+        accepted: &AcceptedPublicationVerifier,
+        actual: &[(RepositorySubject, BlsEnvelope)],
+    ) -> Result<(), Error> {
+        if self.output != accepted.canonical_output()
+            || self.subjects.len() != actual.len()
+            || actual.len() != accepted.manifest().subjects().len()
+        {
+            return Err(Error::Accepted);
+        }
+        for (ordinal, (frames, (subject, envelope))) in self.subjects.iter().zip(actual).enumerate()
+        {
+            accepted.verify_witness(ordinal, subject, envelope, frames)?;
+        }
+        Ok(())
+    }
+
     /// Subject order is native signing order; each participant list is canonicalized.
     pub fn new(output: Vec<u8>, mut subjects: Vec<Vec<RepositoryPartial>>) -> Result<Self, Error> {
         if subjects.len() > 3
