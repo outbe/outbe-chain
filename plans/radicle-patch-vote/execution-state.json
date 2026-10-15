@@ -2,8 +2,8 @@
   "feature": "outbe-chain-pjz",
   "goal_status": "active",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-15T16:23:40Z",
-  "next_periodic_report_due_utc": "2026-10-15T16:53:40Z",
+  "last_periodic_report_utc": "2026-10-15T17:03:00Z",
+  "next_periodic_report_due_utc": "2026-10-15T17:33:00Z",
   "period_minutes": 30,
   "stage": "P5 closed; P2 native prepare/runtime/static BLS/stream/CLI/Ed compatibility verified; managed publication and cache paths incomplete",
   "decision_gate": {
@@ -37,7 +37,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "6c19aaaf514b7d5bd77c3de3559185459eaf425f",
+  "source_sha": "b7ee1e16536e80ab4295ca3017303179b8371d47",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -56,12 +56,18 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "tracked source clean; native P2 checkpoint commits d91a9563d,6c9c71082,6c19aaaf5",
+  "current_source_changes": "b7ee1e165 direct native BLS identity verification; intermediate evidence frozen; no D2 production implementation",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
     "stream_failed_probe": "evidence/outbe-chain-pjz.3/native-stream",
     "ed_compatibility": "evidence/outbe-chain-pjz.3/ed-compatibility",
-    "all_acceptance_criteria_complete": false
+    "all_acceptance_criteria_complete": false,
+    "native_identity": "evidence/outbe-chain-pjz.3/native-identity"
+  },
+  "scope_control": {
+    "D2": "excluded from implementation per explicit user correction; no D2 production changes; do not investigate or dispatch reviews",
+    "next": "P2 specified native cache/reopen/rebuild and current-source Ed compatibility only",
+    "constraint": "No new architecture or deliverable outside approved P0-P8"
   }
 }
