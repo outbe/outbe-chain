@@ -53,6 +53,54 @@ impl From<ProcessError> for OfferError {
     }
 }
 
+impl OfferError {
+    /// Convert invalid input to its public rejection reason, preserving backend
+    /// failures as typed errors so callers abort without returning a partial batch.
+    pub(crate) fn into_rejection(self) -> Result<String, Self> {
+        use outbe_compressed_entities::CommitmentError;
+        use outbe_poseidon::PoseidonError;
+        use outbe_zk::Error as ZkError;
+
+        match self {
+            error @ Self::Commitment(CommitmentError::CryptoBackend(_))
+            | error @ Self::Zk {
+                source: ZkError::CryptoBackend(_),
+                ..
+            }
+            | error @ Self::Zk {
+                source:
+                    ZkError::Hash(
+                        PoseidonError::Runtime(_)
+                        | PoseidonError::ResponseLength { .. }
+                        | PoseidonError::NoncanonicalField { .. },
+                    ),
+                ..
+            } => Err(error),
+            error @ Self::Domain(_)
+            | error @ Self::Commitment(
+                CommitmentError::InputTooLong
+                | CommitmentError::UnsupportedCommitmentScheme { .. }
+                | CommitmentError::UnsupportedSchema { .. }
+                | CommitmentError::EmptyPayload
+                | CommitmentError::ZeroPresentLeaf
+                | CommitmentError::NonCanonicalFieldElement,
+            )
+            | error @ Self::Zk {
+                source:
+                    ZkError::Hash(PoseidonError::InputLength)
+                    | ZkError::Identity(_)
+                    | ZkError::Signature(_)
+                    | ZkError::OwnerMismatch
+                    | ZkError::NonCanonical(_)
+                    | ZkError::UnsortedSet(_)
+                    | ZkError::Proof(_)
+                    | ZkError::Merkle(_),
+                ..
+            } => Ok(error.to_string()),
+        }
+    }
+}
+
 /// The enclave-resident offer decryption key material (derived from the sealed
 /// root seed via the HKDF chain). Borrowed for the duration of a batch call.
 pub struct TributeOfferKeyMaterial<'a> {
@@ -68,57 +116,11 @@ pub fn process_tribute_offer_batch(
     key: &TributeOfferKeyMaterial<'_>,
     offers: &[EncryptedTributeOffer],
 ) -> Result<(Vec<TributeOfferResult>, B256), OfferError> {
-    use outbe_compressed_entities::CommitmentError;
-    use outbe_poseidon::PoseidonError;
-    use outbe_zk::Error as ZkError;
-
     let mut results = Vec::with_capacity(offers.len());
     for offer in offers {
         let result = match process_one(key, offer) {
             Ok(result) => result,
-            Err(error @ OfferError::Commitment(CommitmentError::CryptoBackend(_)))
-            | Err(
-                error @ OfferError::Zk {
-                    source: ZkError::CryptoBackend(_),
-                    ..
-                },
-            )
-            | Err(
-                error @ OfferError::Zk {
-                    source:
-                        ZkError::Hash(
-                            PoseidonError::Runtime(_)
-                            | PoseidonError::ResponseLength { .. }
-                            | PoseidonError::NoncanonicalField { .. },
-                        ),
-                    ..
-                },
-            ) => return Err(error),
-            Err(error @ OfferError::Domain(_))
-            | Err(
-                error @ OfferError::Commitment(
-                    CommitmentError::InputTooLong
-                    | CommitmentError::UnsupportedCommitmentScheme { .. }
-                    | CommitmentError::UnsupportedSchema { .. }
-                    | CommitmentError::EmptyPayload
-                    | CommitmentError::ZeroPresentLeaf
-                    | CommitmentError::NonCanonicalFieldElement,
-                ),
-            )
-            | Err(
-                error @ OfferError::Zk {
-                    source:
-                        ZkError::Hash(PoseidonError::InputLength)
-                        | ZkError::Identity(_)
-                        | ZkError::Signature(_)
-                        | ZkError::OwnerMismatch
-                        | ZkError::NonCanonical(_)
-                        | ZkError::UnsortedSet(_)
-                        | ZkError::Proof(_)
-                        | ZkError::Merkle(_),
-                    ..
-                },
-            ) => rejected(error),
+            Err(error) => rejected(error.into_rejection()?),
         };
         results.push(result);
     }
@@ -188,7 +190,7 @@ fn process_one(
 /// Build a `Rejected` result. Nothing is known beyond the reason. Every field
 /// the host sent stays on the host, and everything else needed decryption to
 /// have succeeded. `owner` is zero rather than echoed for the same reason.
-fn rejected(reason: OfferError) -> TributeOfferResult {
+fn rejected(reason: String) -> TributeOfferResult {
     TributeOfferResult {
         token_id: B256::ZERO,
         owner: Address::ZERO,
@@ -199,9 +201,7 @@ fn rejected(reason: OfferError) -> TributeOfferResult {
         wallet_addresses: Vec::new(),
         sra_addresses: Vec::new(),
         zk_expected_hashes: None,
-        status: TributeOfferStatus::Rejected {
-            reason: reason.to_string(),
-        },
+        status: TributeOfferStatus::Rejected { reason },
     }
 }
 

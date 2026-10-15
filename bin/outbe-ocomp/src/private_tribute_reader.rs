@@ -43,6 +43,14 @@ impl TeeReaderConfig {
         if mode.is_none() && endpoint.is_none() && directory.is_none() {
             return Ok(Self::Unconfigured);
         }
+        Self::configured(mode, endpoint, directory)
+    }
+
+    fn configured(
+        mode: Option<&str>,
+        endpoint: Option<OsString>,
+        directory: Option<OsString>,
+    ) -> Result<Self, OcompCliError> {
         if mode == Some("development") && directory.is_some() {
             return Err(OcompCliError::DevelopmentTeeReaderHasNodeDataDir);
         }

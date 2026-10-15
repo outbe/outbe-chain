@@ -24,10 +24,10 @@ VERIFIER_PATH = REPO_ROOT / "scripts/release/verify_project_toolchain.py"
 APT_SOURCES_PATH = REPO_ROOT / "release/apt/ubuntu.sources"
 
 
-def load_verifier():
-    spec = importlib.util.spec_from_file_location("verify_project_toolchain", VERIFIER_PATH)
+def load_verifier(path=VERIFIER_PATH):
+    spec = importlib.util.spec_from_file_location("verify_project_toolchain", path)
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load {VERIFIER_PATH}")
+        raise RuntimeError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -107,6 +107,44 @@ class ProjectToolchainContractTests(unittest.TestCase):
             path.write_text(json.dumps(pin), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "system package set"):
                 load_verifier().load_and_validate_pin(path)
+
+    def test_pin_validation_preserves_first_error_order(self) -> None:
+        valid = json.loads(PIN_PATH.read_text(encoding="utf-8"))
+        errors = (
+            ("schema_version", "unsupported project toolchain pin version"),
+            ("activation", "unsupported project toolchain activation state"),
+            ("target", "project toolchain supports only x86_64 Linux"),
+            ("platform", "project toolchain supports only linux/amd64"),
+            ("apt_provenance", "project APT provenance has an unsupported shape"),
+            ("rust", "project Rust pin has an unsupported shape"),
+            ("gramine", "project Gramine pin has an unsupported shape"),
+            ("system_packages", "project system packages must be sorted exact version pins"),
+            ("host_only_packages", "project toolchain has an unsupported host-only package set"),
+            ("zk_tools", "project toolchain has an unsupported ZK tool set"),
+        )
+        pin = dict.fromkeys(valid)
+        verifier = load_verifier()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pin.json"
+            for field, message in errors:
+                with self.subTest(field=field):
+                    path.write_text(json.dumps(pin), encoding="utf-8")
+                    with self.assertRaises(ValueError) as raised:
+                        verifier.load_and_validate_pin(path)
+                    self.assertEqual(str(raised.exception), message)
+                    pin[field] = valid[field]
+            path.write_text(json.dumps(pin), encoding="utf-8")
+            self.assertEqual(verifier.load_and_validate_pin(path), valid)
+
+    def test_pin_validation_stays_standalone_for_container_consumers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / VERIFIER_PATH.name
+            shutil.copy2(VERIFIER_PATH, path)
+            verifier = load_verifier(path)
+            self.assertEqual(
+                verifier.load_and_validate_pin(PIN_PATH),
+                json.loads(PIN_PATH.read_text(encoding="utf-8")),
+            )
 
     def test_static_barretenberg_version_and_platform_drift_fail_closed(self) -> None:
         for old, new, message in (

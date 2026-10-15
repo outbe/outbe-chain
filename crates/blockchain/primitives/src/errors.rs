@@ -351,40 +351,7 @@ impl PrecompileError {
                     return Some(error);
                 }
             }
-            // Transparent wrappers delegate `source()` to their inner cause's
-            // source, which can skip the typed error entirely. Inspect the
-            // production executor/import wrappers before following `source()`.
-            if let Some(reth_ethereum::node::api::BeaconOnNewPayloadError::Internal(inner)) =
-                error.downcast_ref::<reth_ethereum::node::api::BeaconOnNewPayloadError>()
-            {
-                error = inner.as_ref();
-                continue;
-            }
-            if let Some(reth_ethereum::node::api::InsertBlockFatalError::BlockExecutionError(
-                inner,
-            )) = error.downcast_ref::<reth_ethereum::node::api::InsertBlockFatalError>()
-            {
-                error = inner;
-                continue;
-            }
-            if let Some(alloy_evm::block::BlockExecutionError::Internal(inner)) =
-                error.downcast_ref::<alloy_evm::block::BlockExecutionError>()
-            {
-                error = inner;
-                continue;
-            }
-            if let Some(inner) =
-                error.downcast_ref::<alloy_evm::block::InternalBlockExecutionError>()
-            {
-                error = match inner {
-                    alloy_evm::block::InternalBlockExecutionError::Other(inner)
-                    | alloy_evm::block::InternalBlockExecutionError::EVM { error: inner, .. } => {
-                        inner.as_ref()
-                    }
-                };
-                continue;
-            }
-            error = error.source()?;
+            error = transparent_execution_source(error).or_else(|| error.source())?;
         }
     }
 
@@ -431,6 +398,38 @@ impl PrecompileError {
             other => other.sweep_failure(),
         }
     }
+}
+
+/// Transparent wrappers can skip their inner typed error in `source()`.
+/// Inspect the executor/import adapters before traversing an ordinary source.
+fn transparent_execution_source<'a>(
+    error: &'a (dyn std::error::Error + 'static),
+) -> Option<&'a (dyn std::error::Error + 'static)> {
+    use alloy_evm::block::{BlockExecutionError, InternalBlockExecutionError};
+    use reth_ethereum::node::api::{BeaconOnNewPayloadError, InsertBlockFatalError};
+
+    if let Some(BeaconOnNewPayloadError::Internal(inner)) =
+        error.downcast_ref::<BeaconOnNewPayloadError>()
+    {
+        return Some(inner.as_ref());
+    }
+    if let Some(InsertBlockFatalError::BlockExecutionError(inner)) =
+        error.downcast_ref::<InsertBlockFatalError>()
+    {
+        return Some(inner);
+    }
+    if let Some(BlockExecutionError::Internal(inner)) = error.downcast_ref::<BlockExecutionError>()
+    {
+        return Some(inner);
+    }
+    error.downcast_ref::<InternalBlockExecutionError>().map(
+        |inner| -> &(dyn std::error::Error + 'static) {
+            match inner {
+                InternalBlockExecutionError::Other(inner)
+                | InternalBlockExecutionError::EVM { error: inner, .. } => inner.as_ref(),
+            }
+        },
+    )
 }
 
 /// Outcome for one sweep item.
