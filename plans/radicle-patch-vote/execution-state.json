@@ -2,8 +2,8 @@
   "feature": "outbe-chain-pjz",
   "goal_status": "active",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-15T23:15:31Z",
-  "next_periodic_report_due_utc": "2026-10-15T23:45:31Z",
+  "last_periodic_report_utc": "2026-10-15T23:44:37Z",
+  "next_periodic_report_due_utc": "2026-10-16T00:14:37Z",
   "period_minutes": 30,
   "stage": "P2/P3 exact accepted Review verifier and Outbe archive policy backed by sealed full native proof; native receiver deny-before/allow-after verified. Protected UDS/latest promotion/full collector/bootstrap/Merge/E2E incomplete.",
   "decision_gate": {
@@ -20,11 +20,11 @@
   },
   "acceptance": "P0/P1/P5 closed; P2/P3 in_progress and incomplete; P4/P6/P7/P8 open; P4 descriptor prerequisite implemented under P3 activation only",
   "last_periodic_report": {
-    "completed": "2ddfe4a53 corrected durable complete Review package/slot selection and recovery; working accepted-history witness verifier bound to exact finalized receipt/manifest, without signing API.",
-    "proof": "Frozen2ddfe4a53:53 adapter tests/7 consumers/Clippy/componentfmt PASS(.4/review-store-r2), prior RED retained. Working accepted verifier53 tests PASS, frozen evidence pending.",
-    "tasks": "P0/P1/P5 closed;P2/P3 in_progress;P4/P6/P7/P8 open. No new reviews/closures.",
-    "limitations": "No active approval question. Provider-version fixture is not live resharing/validator transition; full native accepted policy/control transport/collector/production E2E incomplete.",
-    "next": "Finish frozen accepted witness verifier,then accepted-policy/control bridge and remaining full P0-P8."
+    "completed": "Exact accepted Review verifier3ffebe3d4 and scoped Outbe archive PublicationPolicy275c59a61; separate native receiver deny-before/allow-after and Ed pre-grant access. Read-only initial DKG source trace distinguishes distributed runtime from central CLI/manual provisioning.",
+    "proof": "Both frozen sources:53 adapter lib tests/0ignored,7 consumer all-target checks,Clippy -D warnings,scoped fmt PASS; evidence .4/accepted-review and .4/accepted-policy. P4 source-only audit .5/initial-dkg-source, no runtime/chain provenance claim.",
+    "tasks": "P0/P1/P5 closed;P2/P3 in_progress;P4/P6/P7/P8 open; no new acceptance reviews or closures.",
+    "limitations": "No active approval question. No latest canonical promotion/CAS, runtime UDS/policy provisioning/rebuild, full collector/distributed collection, automatic bootstrap, Merge or production E2E. No actual resharing/deployed key provenance claim.",
+    "next": "Continue protected node/sidecar control and existing bootstrap/collector requirements; keep full P0-P8 objective and decision/acceptance gates."
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
@@ -107,5 +107,6 @@
     "current_boundary": "node preflight queries native nodeId/config; sidecar owns Home/storage and existing control/status runtime. Protected Outbe signer link not yet implemented; no protocol/data-path decision presented or approval question pending."
   },
   "accepted_review_evidence": "evidence/outbe-chain-pjz.4/accepted-review",
-  "accepted_policy_evidence": "evidence/outbe-chain-pjz.4/accepted-policy"
+  "accepted_policy_evidence": "evidence/outbe-chain-pjz.4/accepted-policy",
+  "initial_dkg_source_evidence": "evidence/outbe-chain-pjz.5/initial-dkg-source"
 }
