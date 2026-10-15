@@ -302,7 +302,7 @@ fn direct_managed_identity_read_requires_both_current_entry_receipts() {
             &repo, &owner, &TYPENAME, &object_id, &tip,
         )
     };
-    let drafts = storage::git::cob::DraftStore::new(&repo, owner);
+    let drafts = crate::storage::git::cob::DraftStore::new(&repo, owner);
     let draft_ref = git::refs::storage::draft::cob(&owner, &TYPENAME, &object_id);
     let publish_draft =
         |tip| radicle_cob::object::Storage::update(&drafts, &owner, &TYPENAME, &object_id, &tip);
