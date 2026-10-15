@@ -50,10 +50,8 @@ pub(in super::super) fn execute_amount_map_unit(
     authority: UnitExecutionAuthority<'_>,
 ) -> Result<UnitArtifactV1, WorkerError> {
     let UnitExecutionAuthority {
-        manifest,
         input_chunks,
         producer_artifacts,
-        bundle,
         limits,
         cancelled,
         ..
@@ -72,14 +70,7 @@ pub(in super::super) fn execute_amount_map_unit(
         ),
         producer_artifacts,
     )?;
-    let entry_prices = evaluate_oracle_entry_prices(
-        spec,
-        manifest,
-        authority.plan.logical_evaluation_time,
-        input_chunks,
-        bundle,
-        limits,
-    )?;
+    let entry_prices = evaluate_oracle_entry_prices(spec, &authority)?;
     let observed = collect_observed_tributes(
         (input_chunks, shard_ordinal),
         &enumerated,
@@ -306,15 +297,16 @@ fn validate_fraction_root_producer(
 
 fn evaluate_oracle_entry_prices(
     spec: &UnitSpecV1,
-    manifest: &outbe_ocomp_protocol::input::InputManifestV1,
-    logical_evaluation_time: u64,
-    input_chunks: &[(
-        outbe_ocomp_protocol::input::InputChunkRefV1,
-        outbe_ocomp_protocol::input::AuthenticatedInputChunkV1,
-    )],
-    bundle: &outbe_ocomp_protocol::profile::ProtocolBundleV1,
-    limits: &outbe_ocomp_protocol::SchemaLimits,
+    authority: &UnitExecutionAuthority<'_>,
 ) -> Result<std::collections::BTreeMap<u16, alloy_primitives::U256>, WorkerError> {
+    let UnitExecutionAuthority {
+        plan,
+        manifest,
+        input_chunks,
+        bundle,
+        limits,
+        ..
+    } = authority;
     let mut oracle_chunks = input_chunks
         .iter()
         .filter(|(_, chunk)| chunk.kind == InputChunkKind::Oracle);
@@ -352,7 +344,7 @@ fn evaluate_oracle_entry_prices(
         .map(|slot| (slot.slot, slot.value))
         .collect::<Vec<_>>();
     evaluate_entry_prices(
-        entry_price_day(logical_evaluation_time),
+        entry_price_day(plan.logical_evaluation_time),
         &reference_isos,
         &raw_slots,
     )
