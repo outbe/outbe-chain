@@ -1034,8 +1034,10 @@ class LaunchBundleTests(unittest.TestCase):
             self.assertTrue(names)
             for value in names:
                 self.assertIn(value, known, f"{value} is not a provider the feeder knows")
-            # The endpoint lists the market, or the pair has no source.
-            self.assertIn('markets = [{ quote = "840" }]', toml)
+            self.assertIn('pairs = "pairs.toml"', toml)
+            # The pair lists its market, or the pair has no source.
+            pairs = (output_dir / "validator-0" / "pairs.toml").read_text()
+            self.assertIn('markets = [{ provider = "mock_http", quote = "840" }]', pairs)
             self.assertNotIn("chain_denom", toml)
             self.assertNotIn("providers =", toml)
             self.assertNotIn("websocket =", toml)
@@ -1056,7 +1058,10 @@ class LaunchBundleTests(unittest.TestCase):
             'websocket = "wss://stream.binance.com:9443/ws"',
             toml,
         )
-        self.assertIn('markets = [{ quote = "USDT" }]', toml)
+        self.assertIn(
+            'markets = [{ provider = "binance", quote = "USDT" }]',
+            LB.feeder_pairs(config=config),
+        )
         self.assertNotIn("chain_denom", toml)
         self.assertNotIn("rest =", toml)
 

@@ -1,3 +1,6 @@
+# Pairs and their markets, shared by every validator.
+pairs = "pairs.toml"
+
 [chain]
 rpc_endpoint = "http://127.0.0.1:8545"
 chain_id = 54322345
@@ -17,16 +20,7 @@ poll_interval_secs = 2
 enabled = true
 bind_address = "0.0.0.0:9002"
 
-[[currency_pairs]]
-base = "COEN"
-quote = "840"
-
 # Mock REST price server from the test config.
 [[api_providers]]
 name = "mock_http"
 rest = "https://prc.testnet.outbe.net"
-markets = [{ quote = "840" }]
-
-[[deviation_thresholds]]
-base = "COEN"
-threshold = "2.0"

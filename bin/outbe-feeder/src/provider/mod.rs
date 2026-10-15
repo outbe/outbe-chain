@@ -14,7 +14,7 @@ pub(crate) mod test_server;
 use eyre::{eyre, Result};
 use std::collections::HashMap;
 
-use crate::config::{ApiProviderConfig, FeederConfig};
+use crate::config::{ApiProviderConfig, CurrencyPairConfig, FeederConfig};
 use crate::fixed::FixedValue;
 
 /// Whether an upstream endpoint supplied a volume field.
@@ -166,6 +166,29 @@ pub trait Provider: Send + Sync {
     }
 }
 
+/// An ISO-based pair (`978/840`) or a cross pair's markets give a currency
+/// rate. An exchange or a DEX
+/// pool carries crypto volume that would outweigh the volume-free oracle
+/// feeds, so only those may feed it.
+pub(crate) fn validate_currency_rate_sources(pair: &CurrencyPairConfig) -> Result<()> {
+    if pair.market_base().parse::<u16>().is_err() {
+        return Ok(());
+    }
+    for source in &pair.sources {
+        let crypto_volume = cex::ExchangeKind::for_name(&source.provider).is_some()
+            || matches!(source.provider.as_str(), "uniswap" | "pancakeswap");
+        if crypto_volume {
+            return Err(eyre!(
+                "provider '{}' cannot feed {}/{}: exchanges and DEX pools are not for cross-currency rates",
+                source.provider,
+                pair.base,
+                pair.quote
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Creates provider instances from configuration.
 pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>> {
     let mut providers: Vec<Box<dyn Provider>> = Vec::new();
@@ -194,13 +217,10 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
                 })?;
                 Box::new(mock_http::MockHttpProvider::new(endpoint)?)
             }
-            "pyth" => Box::new(pyth::PythProvider::new()?),
-            "redstone" => {
-                let endpoint = endpoints
-                    .get("redstone")
-                    .ok_or_else(|| eyre!("provider redstone requires a [[api_providers]] entry"))?;
-                Box::new(redstone::RedstoneProvider::new(endpoint)?)
-            }
+            "pyth" => Box::new(pyth::PythProvider::new(endpoints.get("pyth").copied())?),
+            "redstone" => Box::new(redstone::RedstoneProvider::new(
+                endpoints.get("redstone").copied(),
+            )?),
             "binance" => Box::new(cex::binance::BinanceProvider::new()?),
             "kraken" => Box::new(cex::kraken::KrakenProvider::new()?),
             "okx" => Box::new(cex::okx::OkxProvider::new()?),

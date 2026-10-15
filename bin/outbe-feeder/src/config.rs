@@ -4,6 +4,7 @@ use alloy_primitives::{Address, U256};
 use eyre::{Context, Result};
 use outbe_primitives::stablecoin::{iso_4217_alpha, ISO_4217_NUMERIC_CODES};
 use serde::Deserialize;
+use std::path::Path;
 
 use crate::fixed::FixedValue;
 use outbe_primitives::asset_type::AssetType;
@@ -93,32 +94,27 @@ pub struct CurrencyPairConfig {
     pub base: String,
     /// On-chain Oracle quote asset: an ISO numeric code or an address.
     pub quote: String,
-    /// External markets aggregated into this one Oracle observation. Built
-    /// from the provider sections by [`FeederConfig::resolve_sources`]: every
-    /// market a provider lists feeds the pair its quote names.
-    #[serde(skip)]
+    /// Cross rate: `<base>/<quote>` = `<base>/<cross>` ÷ `<quote>/<cross>`. The
+    /// markets then price `<quote>` in `<cross>`, and `<base>/<cross>` must be
+    /// another configured pair.
+    #[serde(default)]
+    pub cross: Option<String>,
+    /// External markets aggregated into this one Oracle observation.
+    #[serde(rename = "markets", default)]
     pub sources: Vec<CurrencyPairSource>,
 }
 
-/// One provider-native market used to price an on-chain Oracle pair.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct CurrencyPairSource {
-    pub provider: String,
-    pub base: String,
-    pub quote: String,
-}
-
-/// A market a provider section lists: the provider's quote symbol and, when
-/// the provider calls the pair's base by another name, that name. `pair`
-/// names the Oracle pair as `BASE/QUOTE` when several pairs share the quote.
+/// One provider-native market used to price an on-chain Oracle pair: the
+/// provider's quote symbol and, when the provider calls the pair's base by
+/// another name, that name.
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct MarketConfig {
+pub struct CurrencyPairSource {
+    pub provider: String,
+    /// Empty means the pair's market base. See [`FeederConfig::resolve_sources`].
+    #[serde(default)]
+    pub base: String,
     pub quote: String,
-    #[serde(default)]
-    pub base: Option<String>,
-    #[serde(default)]
-    pub pair: Option<String>,
 }
 
 /// The Oracle quote a provider quote feeds: `USDT` and `USDC` are the dollar;
@@ -144,9 +140,6 @@ pub fn oracle_quote_of(quote: &str) -> Option<String> {
 #[serde(deny_unknown_fields)]
 pub struct ApiProviderConfig {
     pub name: String,
-    /// Markets this provider feeds, by its quote symbol.
-    #[serde(default)]
-    pub markets: Vec<MarketConfig>,
     /// REST base URL. Empty selects the provider default.
     #[serde(default)]
     pub rest: String,
@@ -178,74 +171,48 @@ fn default_deviation() -> FixedValue {
 }
 
 impl FeederConfig {
-    /// Loads configuration from a TOML file.
+    /// Loads configuration from a TOML file. A top-level `pairs` key names a
+    /// second file, relative to this one, whose sections join the config.
     pub fn load(path: &str) -> Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read config file: {path}"))?;
-        let mut config: Self =
-            toml::from_str(&content).with_context(|| "failed to parse feeder config")?;
+        let mut table = read_table(Path::new(path))?;
+        if let Some(pairs) = table.remove("pairs") {
+            let pairs = pairs
+                .as_str()
+                .ok_or_else(|| eyre::eyre!("`pairs` must be a file path"))?;
+            let pairs_path = Path::new(path)
+                .parent()
+                .unwrap_or(Path::new(""))
+                .join(pairs);
+            for (key, value) in read_table(&pairs_path)? {
+                if table.insert(key.clone(), value).is_some() {
+                    return Err(eyre::eyre!(
+                        "`{key}` is set in both {path} and {}",
+                        pairs_path.display()
+                    ));
+                }
+            }
+        }
+        let mut config: Self = table
+            .try_into()
+            .with_context(|| "failed to parse feeder config")?;
         config.resolve_sources()?;
         Ok(config)
     }
 
-    /// Attaches every market the provider sections list to the Oracle pair
-    /// its quote names (see [`oracle_quote_of`]), then hands the DEX and
-    /// on-chain providers the markets they serve.
+    /// Fills each market's default base and hands the DEX and on-chain
+    /// providers the markets that name them.
     pub fn resolve_sources(&mut self) -> Result<()> {
         for pair in &mut self.currency_pairs {
-            pair.sources.clear();
-        }
-        let listed: Vec<(String, MarketConfig)> = self
-            .api_providers
-            .iter()
-            .flat_map(|e| e.markets.iter().map(|m| (e.name.clone(), m.clone())))
-            .chain(crate::provider::dex::listed_markets(self))
-            .chain(crate::provider::onchain_feed::listed_markets(self))
-            .collect();
-        for (provider, market) in listed {
-            let pair = Self::pair_of_market(&mut self.currency_pairs, &provider, &market)?;
-            pair.sources.push(CurrencyPairSource {
-                provider,
-                base: market.base.unwrap_or_else(|| pair.base.clone()),
-                quote: market.quote,
-            });
+            let base = pair.market_base().to_owned();
+            for source in &mut pair.sources {
+                if source.base.is_empty() {
+                    source.base = base.clone();
+                }
+            }
         }
         crate::provider::dex::collect_markets(self);
         crate::provider::onchain_feed::collect_feeds(self);
         Ok(())
-    }
-
-    /// The Oracle pair a listed market feeds: the one `market.pair` names,
-    /// else the one pair quoted in what the market's quote maps to.
-    fn pair_of_market<'a>(
-        pairs: &'a mut [CurrencyPairConfig],
-        provider: &str,
-        market: &MarketConfig,
-    ) -> Result<&'a mut CurrencyPairConfig> {
-        if let Some(named) = &market.pair {
-            return pairs
-                .iter_mut()
-                .find(|pair| format!("{}/{}", pair.base, pair.quote) == *named)
-                .ok_or_else(|| eyre::eyre!("provider {provider} names unknown pair {named}"));
-        }
-        let oracle_quote = oracle_quote_of(&market.quote).ok_or_else(|| {
-            eyre::eyre!(
-                "provider {provider} market quote '{}' names no Oracle pair",
-                market.quote
-            )
-        })?;
-        let mut quoted = pairs.iter_mut().filter(|pair| pair.quote == oracle_quote);
-        match (quoted.next(), quoted.next()) {
-            (Some(pair), None) => Ok(pair),
-            (None, _) => Err(eyre::eyre!(
-                "provider {provider} market {} needs a currency pair quoted in {oracle_quote}",
-                market.quote
-            )),
-            (Some(_), Some(_)) => Err(eyre::eyre!(
-                "several pairs are quoted in {oracle_quote}: give provider {provider} market {} a pair",
-                market.quote
-            )),
-        }
     }
 
     /// Known provider names.
@@ -271,8 +238,7 @@ impl FeederConfig {
         self.validate_currency_pairs()?;
         self.validate_api_providers()?;
         crate::provider::dex::validate_config(self)?;
-        crate::provider::onchain_feed::validate_config(self, Self::KNOWN_PROVIDERS)?;
-        crate::provider::redstone::validate_config(self)
+        crate::provider::onchain_feed::validate_config(self, Self::KNOWN_PROVIDERS)
     }
 
     fn validate_oracle_and_account(&self) -> Result<()> {
@@ -329,9 +295,46 @@ impl FeederConfig {
                     pair.quote
                 ));
             }
+            self.validate_cross(pair)?;
             self.validate_pair_sources(pair)?;
         }
         Ok(())
+    }
+
+    /// A cross pair is `<asset>/<ISO>` over another ISO code whose
+    /// `<asset>/<cross>` pair is configured directly, not as a cross itself.
+    fn validate_cross(&self, pair: &CurrencyPairConfig) -> Result<()> {
+        let Some(cross) = &pair.cross else {
+            return Ok(());
+        };
+        let iso = |code: &str| code.parse::<u16>().is_ok_and(|c| (1..=999).contains(&c));
+        if iso(&pair.base) || !iso(&pair.quote) || !iso(cross) {
+            return Err(eyre::eyre!(
+                "cross pair {}/{} with cross '{cross}' needs a COEN or token base, an ISO quote and an ISO cross",
+                pair.base,
+                pair.quote
+            ));
+        }
+        if self.cross_leg(pair).is_none() {
+            return Err(eyre::eyre!(
+                "cross pair {}/{} needs a direct {}/{cross} pair",
+                pair.base,
+                pair.quote,
+                pair.base
+            ));
+        }
+        Ok(())
+    }
+
+    /// The direct `<base>/<cross>` pair a cross pair divides.
+    pub(crate) fn cross_leg(&self, pair: &CurrencyPairConfig) -> Option<&CurrencyPairConfig> {
+        let cross = pair.cross.as_deref()?;
+        let base = parse_oracle_asset(&pair.base).ok()?;
+        self.currency_pairs.iter().find(|leg| {
+            leg.cross.is_none()
+                && leg.quote == cross
+                && parse_oracle_asset(&leg.base).is_ok_and(|leg_base| leg_base == base)
+        })
     }
 
     /// A pair names at least one source; each source is well-formed, uses a
@@ -344,8 +347,24 @@ impl FeederConfig {
                 pair.quote
             ));
         }
+        crate::provider::validate_currency_rate_sources(pair)?;
         let mut sources = std::collections::BTreeSet::new();
         for source in &pair.sources {
+            crate::provider::cex::validate_exchange_market(source)?;
+            // A market priced in another currency than the pair would vote a
+            // wrong price. Non-ISO quotes (token addresses) are not checked.
+            let quote = pair.market_quote();
+            if quote.parse::<u16>().is_ok()
+                && oracle_quote_of(&source.quote).as_deref() != Some(quote)
+            {
+                return Err(eyre::eyre!(
+                    "provider '{}' market quote '{}' does not price pair {}/{}",
+                    source.provider,
+                    source.quote,
+                    pair.base,
+                    pair.quote
+                ));
+            }
             if !Self::KNOWN_PROVIDERS.contains(&source.provider.as_str())
                 && !crate::provider::onchain_feed::is_section_name(self, &source.provider)
             {
@@ -390,13 +409,14 @@ impl FeederConfig {
             if !endpoint_names.insert(endpoint.name.as_str()) {
                 return Err(eyre::eyre!("duplicate api provider '{}'", endpoint.name));
             }
-            if !endpoint.api_key.is_empty() && endpoint.name != "redstone" {
+            if !endpoint.api_key.is_empty()
+                && !matches!(endpoint.name.as_str(), "redstone" | "pyth")
+            {
                 return Err(eyre::eyre!("provider '{}' takes no api_key", endpoint.name));
             }
             if !endpoint.websocket.is_empty() {
                 Self::validate_websocket_endpoint(endpoint)?;
             }
-            crate::provider::cex::validate_exchange_markets(endpoint)?;
         }
         Ok(())
     }
@@ -443,6 +463,27 @@ impl CurrencyPairConfig {
             parse_oracle_asset(&self.quote)?,
         ))
     }
+
+    /// The asset the markets price: the quote currency for a cross pair.
+    pub(crate) fn market_base(&self) -> &str {
+        if self.cross.is_some() {
+            &self.quote
+        } else {
+            &self.base
+        }
+    }
+
+    /// The currency the markets price in: the cross currency for a cross pair.
+    pub(crate) fn market_quote(&self) -> &str {
+        self.cross.as_deref().unwrap_or(&self.quote)
+    }
+}
+
+fn read_table(path: &Path) -> Result<toml::Table> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read config file: {}", path.display()))?;
+    toml::from_str(&content)
+        .with_context(|| format!("failed to parse config file: {}", path.display()))
 }
 
 fn parse_oracle_asset(symbol: &str) -> Result<Address> {
@@ -526,6 +567,7 @@ mod tests {
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
             quote: "840".to_string(),
+            cross: None,
             sources: vec![],
         });
         assert!(cfg.validate().is_err());
@@ -537,6 +579,7 @@ mod tests {
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
             quote: "840".to_string(),
+            cross: None,
             sources: vec![source("nonexistent_exchange", "COEN", "USDT")],
         });
         assert!(cfg.validate().is_err());
@@ -548,6 +591,7 @@ mod tests {
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
             quote: "840".to_string(),
+            cross: None,
             sources: vec![source("mock", "COEN", "USDT")],
         });
         assert!(cfg.validate().is_ok());
@@ -574,7 +618,6 @@ mod tests {
         let mut cfg = minimal_config(2);
         cfg.api_providers.push(ApiProviderConfig {
             name: "mock_http".to_string(),
-            markets: vec![],
             rest: "http://localhost:8000".to_string(),
             websocket: String::new(),
             api_key: String::new(),
@@ -582,6 +625,7 @@ mod tests {
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "COEN".to_string(),
             quote: "840".to_string(),
+            cross: None,
             sources: vec![source("mock_http", "COEN", "USDT")],
         });
         assert!(cfg.validate().is_ok());
@@ -592,7 +636,6 @@ mod tests {
         let mut cfg = minimal_config(2);
         cfg.api_providers.push(ApiProviderConfig {
             name: "binance".to_string(),
-            markets: vec![],
             rest: String::new(),
             websocket: "wss://stream.binance.com:9443/ws".to_string(),
             api_key: String::new(),
@@ -605,7 +648,6 @@ mod tests {
         let mut cfg = minimal_config(2);
         cfg.api_providers.push(ApiProviderConfig {
             name: "mock_http".to_string(),
-            markets: vec![],
             rest: "http://localhost:8000".to_string(),
             websocket: "ws://localhost:8001".to_string(),
             api_key: String::new(),
@@ -617,20 +659,89 @@ mod tests {
             .contains("does not support websocket"));
     }
 
+    const HEADER: &str = r#"
+        [chain]
+        rpc_endpoint = "http://localhost:8545"
+        chain_id = 1
+        [account]
+        private_key = "0x01"
+        validator_address = "0x1111111111111111111111111111111111111111"
+        [oracle]
+        vote_period = 8
+    "#;
+
+    fn parse(pairs: &str) -> FeederConfig {
+        let mut cfg: FeederConfig = toml::from_str(&format!("{HEADER}{pairs}")).unwrap();
+        cfg.resolve_sources().unwrap();
+        cfg
+    }
+
+    #[test]
+    fn cross_pair_markets_price_the_currency_and_need_the_coen_leg() {
+        let cross = r#"
+            [[currency_pairs]]
+            base = "COEN"
+            quote = "978"
+            cross = "840"
+            markets = [{ provider = "pyth", quote = "840" }]
+        "#;
+        let leg = r#"
+            [[currency_pairs]]
+            base = "COEN"
+            quote = "840"
+            markets = [{ provider = "binance", quote = "USDT" }]
+        "#;
+        let mut cfg = parse(&format!("{leg}{cross}"));
+        assert_eq!(
+            cfg.currency_pairs[1].sources,
+            vec![source("pyth", "978", "840")]
+        );
+        cfg.validate().unwrap();
+
+        cfg.currency_pairs[1].sources[0].provider = "binance".into();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("not for cross-currency rates"), "{err}");
+
+        cfg.currency_pairs[1].sources[0] = source("pyth", "978", "978");
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("does not price pair"), "{err}");
+
+        let err = parse(cross).validate().unwrap_err().to_string();
+        assert!(err.contains("needs a direct COEN/840 pair"), "{err}");
+    }
+
+    #[test]
+    fn fx_pair_refuses_exchanges_and_dex() {
+        let mut cfg = parse(
+            r#"
+            [[currency_pairs]]
+            base = "978"
+            quote = "840"
+            markets = [{ provider = "kraken", base = "EUR", quote = "USD" }]
+        "#,
+        );
+        let error = cfg.validate().unwrap_err().to_string();
+        assert!(error.contains("not for cross-currency rates"), "{error}");
+
+        cfg.currency_pairs[0].sources[0].provider = "redstone".into();
+        cfg.api_providers
+            .push(toml::from_str("name = 'redstone'\napi_key = 'key'").unwrap());
+        cfg.validate().unwrap();
+    }
+
     #[test]
     fn an_exchange_market_is_not_quoted_in_an_iso_code() {
         let mut cfg = minimal_config(8);
-        cfg.api_providers.push(ApiProviderConfig {
-            name: "binance".to_string(),
-            markets: vec![toml::from_str("quote = '840'").unwrap()],
-            rest: String::new(),
-            websocket: String::new(),
-            api_key: String::new(),
+        cfg.currency_pairs.push(CurrencyPairConfig {
+            base: "COEN".to_string(),
+            quote: "840".to_string(),
+            cross: None,
+            sources: vec![source("binance", "COEN", "840")],
         });
         let error = cfg.validate().unwrap_err().to_string();
         assert!(error.contains("ISO code"), "{error}");
 
-        cfg.api_providers[0].markets[0].quote = "USDT".into();
+        cfg.currency_pairs[0].sources[0].quote = "USDT".into();
         assert!(cfg.validate().is_ok());
     }
 
@@ -639,7 +750,6 @@ mod tests {
         let mut cfg = minimal_config(8);
         cfg.api_providers.push(ApiProviderConfig {
             name: "binance".to_string(),
-            markets: vec![],
             rest: String::new(),
             websocket: String::new(),
             api_key: "key".to_string(),
@@ -656,7 +766,6 @@ mod tests {
         for _ in 0..2 {
             cfg.api_providers.push(ApiProviderConfig {
                 name: "binance".to_string(),
-                markets: vec![],
                 rest: String::new(),
                 websocket: String::new(),
                 api_key: String::new(),
@@ -675,6 +784,7 @@ mod tests {
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "840".to_string(),
             quote: "COEN".to_string(),
+            cross: None,
             sources: vec![source("mock", "USDT", "COEN")],
         });
         assert!(cfg.validate().unwrap_err().to_string().contains("COEN/ISO"));
@@ -693,6 +803,7 @@ mod tests {
         cfg.currency_pairs.push(CurrencyPairConfig {
             base: "BTC".to_string(),
             quote: "840".to_string(),
+            cross: None,
             sources: vec![source("binance", "BTC", "USDT")],
         });
 
@@ -703,51 +814,43 @@ mod tests {
     }
 
     #[test]
-    fn provider_markets_attach_to_the_pair_their_quote_names() {
-        let mut cfg: FeederConfig = toml::from_str(
+    fn each_pair_lists_its_own_markets() {
+        let mut cfg = parse(
             r#"
-            [chain]
-            rpc_endpoint = "http://localhost:8545"
-            chain_id = 1
-            [account]
-            private_key = "0x01"
-            validator_address = "0x1111111111111111111111111111111111111111"
-            [oracle]
-            vote_period = 8
             [[currency_pairs]]
             base = "COEN"
             quote = "840"
+            markets = [
+              { provider = "binance", quote = "USDT" },
+              { provider = "coinbase", quote = "USD" },
+            ]
             [[currency_pairs]]
             base = "COEN"
             quote = "978"
-            [[api_providers]]
-            name = "binance"
-            markets = [{ quote = "USDT" }, { quote = "USDC" }, { quote = "USDT", base = "ETH" }]
-            [[api_providers]]
-            name = "coinbase"
-            markets = [{ quote = "USD" }]
-            [[api_providers]]
-            name = "kraken"
-            markets = [{ quote = "EUR" }]
+            markets = [{ provider = "kraken", quote = "EUR" }]
+            [[currency_pairs]]
+            base = "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"
+            quote = "840"
+            markets = [{ provider = "binance", base = "BTC", quote = "USDT" }]
         "#,
-        )
-        .unwrap();
-        cfg.resolve_sources().unwrap();
+        );
         cfg.validate().unwrap();
 
-        // USDT, USDC and USD are the dollar pair; the base defaults to COEN.
+        // The base defaults to the pair's base. Two pairs share 840 freely.
         assert_eq!(
             cfg.currency_pairs[0].sources,
             vec![
                 source("binance", "COEN", "USDT"),
-                source("binance", "COEN", "USDC"),
-                source("binance", "ETH", "USDT"),
-                source("coinbase", "COEN", "USD"),
+                source("coinbase", "COEN", "USD")
             ]
         );
         assert_eq!(
             cfg.currency_pairs[1].sources,
             vec![source("kraken", "COEN", "EUR")]
+        );
+        assert_eq!(
+            cfg.currency_pairs[2].sources,
+            vec![source("binance", "BTC", "USDT")]
         );
         assert_eq!(
             cfg.currency_pairs[0].oracle_pair().unwrap().0,
@@ -758,35 +861,14 @@ mod tests {
             AssetType::IsoCurrency(840)
         );
 
-        // A quote no pair is quoted in has nowhere to go.
-        cfg.api_providers[2].markets[0].quote = "JPY".into();
-        assert!(cfg.resolve_sources().is_err());
-        cfg.api_providers[2].markets[0].quote = "EUR".into();
-        // Two pairs quoted in 840: a market must name its pair.
-        cfg.currency_pairs.push(
-            toml::from_str("base = '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599'\nquote = '840'")
-                .unwrap(),
-        );
-        assert!(cfg.resolve_sources().is_err());
-        for market in cfg.api_providers.iter_mut().flat_map(|e| &mut e.markets) {
-            if market.quote != "978" {
-                market.pair = Some("COEN/840".into());
-            }
-        }
-        cfg.api_providers[0].markets[2].pair =
-            Some("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599/840".into());
-        cfg.resolve_sources().unwrap();
-        assert_eq!(
-            cfg.currency_pairs[2].sources,
-            vec![source("binance", "ETH", "USDT")]
-        );
-        cfg.currency_pairs.pop();
-        for market in cfg.api_providers.iter_mut().flat_map(|e| &mut e.markets) {
-            market.pair = None;
-        }
+        // A market quoted in another currency than its pair is rejected.
+        cfg.currency_pairs[1].sources[0].quote = "USD".into();
+        let error = cfg.validate().unwrap_err().to_string();
+        assert!(error.contains("does not price pair COEN/978"), "{error}");
+        cfg.currency_pairs[1].sources[0].quote = "EUR".into();
+
         // A pair without markets is rejected.
-        cfg.api_providers.pop();
-        cfg.resolve_sources().unwrap();
+        cfg.currency_pairs[1].sources.clear();
         assert!(cfg.validate().is_err());
     }
 
@@ -803,19 +885,32 @@ mod tests {
         assert!(numeric.is_err());
     }
 
-    /// The README's configuration example is a config the feeder accepts.
+    /// `pairs` names a second file, relative to the main one, and a section
+    /// may not appear in both.
     #[test]
-    fn readme_example_config_validates() {
-        let readme = include_str!("../README.md");
-        let start = readme.find("```toml\n").expect("toml block") + "```toml\n".len();
-        let end = start + readme[start..].find("```").expect("block end");
-        let mut cfg: FeederConfig = toml::from_str(&readme[start..end]).unwrap();
-        cfg.resolve_sources().unwrap();
+    fn pairs_file_joins_the_main_config() {
+        let directory =
+            std::env::temp_dir().join(format!("outbe-feeder-pairs-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let main = directory.join("feeder.toml");
+        std::fs::write(&main, format!("pairs = \"pairs.toml\"\n{HEADER}")).unwrap();
+        let pairs = "[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\n\
+                     markets = [{ provider = \"mock\", quote = \"USDT\" }]\n";
+        std::fs::write(directory.join("pairs.toml"), pairs).unwrap();
+        let cfg = FeederConfig::load(main.to_str().unwrap()).unwrap();
         cfg.validate().unwrap();
         assert_eq!(
-            cfg.currency_pairs[0].sources[0],
-            source("binance", "COEN", "USDT")
+            cfg.currency_pairs[0].sources,
+            vec![source("mock", "COEN", "USDT")]
         );
+
+        std::fs::write(directory.join("pairs.toml"), format!("{pairs}[oracle]\n")).unwrap();
+        let error = FeederConfig::load(main.to_str().unwrap()).unwrap_err();
+        assert!(
+            error.to_string().contains("`oracle` is set in both"),
+            "{error}"
+        );
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

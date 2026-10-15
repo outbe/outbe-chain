@@ -9,16 +9,20 @@
 
 use alloy_primitives::{address, Address};
 use async_trait::async_trait;
-use eyre::{ensure, eyre, Context, Result};
+use eyre::{eyre, Context, Result};
 use serde::Deserialize;
 use std::collections::{BTreeSet, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
-use crate::config::{ApiProviderConfig, FeederConfig};
+use crate::config::ApiProviderConfig;
 use crate::fixed::{FixedValue, JsonDecimal};
+use outbe_primitives::stablecoin::iso_4217_alpha;
 
+/// Authenticated gateway: serves the requested feeds to a key holder.
 const DEFAULT_GATEWAY_URL: &str = "https://oracle-gateway.a.redstone.finance";
+/// Public gateway: no key, but every feed in one response of about 2 MB.
+const PUBLIC_GATEWAY_URL: &str = "https://oracle-gateway-1.a.redstone.finance";
 const DATA_SERVICE_ID: &str = "redstone-primary-prod";
 /// `uniqueSignersCount` the RedStone SDK recommends for production.
 const UNIQUE_SIGNERS: usize = 3;
@@ -49,9 +53,18 @@ const REGISTERED_SIGNERS: [Address; 17] = [
     address!("0x080B4dB52c765Ef7b0E7156E5171F5e5999D06be"),
 ];
 
-/// RedStone feed ids are plain USD-quoted base symbols.
+/// RedStone feed ids are plain USD-quoted base symbols. A currency's feed is
+/// its alpha code, so an ISO numeric base reads as one (`978` is `EUR`).
 fn feed_id(base: &str, quote: &str) -> Option<String> {
-    matches!(quote, "USD" | "840").then(|| base.to_uppercase())
+    if !matches!(quote, "USD" | "840") {
+        return None;
+    }
+    let alpha = base
+        .parse::<u16>()
+        .ok()
+        .and_then(iso_4217_alpha)
+        .map(|code| String::from_utf8_lossy(&code).into_owned());
+    Some(alpha.unwrap_or_else(|| base.to_uppercase()))
 }
 
 pub struct RedstoneProvider {
@@ -61,44 +74,21 @@ pub struct RedstoneProvider {
 }
 
 impl RedstoneProvider {
-    pub fn new(endpoint: &ApiProviderConfig) -> Result<Self> {
-        ensure!(
-            !endpoint.api_key.trim().is_empty(),
-            "api provider redstone needs an api_key"
-        );
-        let gateway_url = if endpoint.rest.trim().is_empty() {
-            DEFAULT_GATEWAY_URL.to_owned()
-        } else {
-            endpoint.rest.trim_end_matches('/').to_owned()
+    /// Without an `api_key` the provider reads the public gateway.
+    pub fn new(endpoint: Option<&ApiProviderConfig>) -> Result<Self> {
+        let api_key = endpoint.map_or("", |e| e.api_key.trim()).to_owned();
+        let rest = endpoint.map_or("", |e| e.rest.trim());
+        let gateway_url = match (rest.is_empty(), api_key.is_empty()) {
+            (false, _) => rest.trim_end_matches('/').to_owned(),
+            (true, false) => DEFAULT_GATEWAY_URL.to_owned(),
+            (true, true) => PUBLIC_GATEWAY_URL.to_owned(),
         };
         Ok(Self {
             client: reqwest::Client::new(),
             gateway_url,
-            api_key: endpoint.api_key.clone(),
+            api_key,
         })
     }
-}
-
-/// A `redstone` source needs a `redstone` api provider with a key.
-pub(crate) fn validate_config(config: &FeederConfig) -> Result<()> {
-    let used = config
-        .currency_pairs
-        .iter()
-        .flat_map(|pair| &pair.sources)
-        .any(|source| source.provider == "redstone");
-    if !used {
-        return Ok(());
-    }
-    let endpoint = config
-        .api_providers
-        .iter()
-        .find(|endpoint| endpoint.name == "redstone")
-        .ok_or_else(|| eyre!("provider redstone requires a [[api_providers]] entry"))?;
-    ensure!(
-        !endpoint.api_key.trim().is_empty(),
-        "api provider redstone needs an api_key"
-    );
-    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -187,16 +177,24 @@ impl Provider for RedstoneProvider {
         ids.sort_unstable();
         ids.dedup();
 
-        let url = format!(
-            "{}/v2/data-packages/latest-by-data-feeds/{DATA_SERVICE_ID}",
-            self.gateway_url
-        );
-        let response = self
-            .client
-            .get(&url)
-            .query(&[("dataFeedIds", ids.join(","))])
-            .header("x-api-key", &self.api_key)
-            .timeout(std::time::Duration::from_secs(5))
+        // ponytail: the public gateway sends every feed, ~2 MB per vote. A key
+        // or a cached background fetch cuts that when it matters.
+        let request = if self.api_key.is_empty() {
+            self.client.get(format!(
+                "{}/data-packages/latest/{DATA_SERVICE_ID}",
+                self.gateway_url
+            ))
+        } else {
+            self.client
+                .get(format!(
+                    "{}/v2/data-packages/latest-by-data-feeds/{DATA_SERVICE_ID}",
+                    self.gateway_url
+                ))
+                .query(&[("dataFeedIds", ids.join(","))])
+                .header("x-api-key", &self.api_key)
+        };
+        let response = request
+            .timeout(std::time::Duration::from_secs(10))
             .send()
             .await
             .map_err(reqwest::Error::without_url)
@@ -315,27 +313,30 @@ mod tests {
         assert_eq!(feed_id("usdc", "840").as_deref(), Some("USDC"));
         assert_eq!(feed_id("ETH", "USD").as_deref(), Some("ETH"));
         assert_eq!(feed_id("COEN", "USDT"), None);
+        assert_eq!(feed_id("978", "840").as_deref(), Some("EUR"));
     }
 
-    /// Live gateway read; needs a key:
-    /// `REDSTONE_API_KEY=... cargo test -p outbe-feeder live_gateway -- --ignored --nocapture`
+    /// Live gateway read. Without `REDSTONE_API_KEY` it reads the public
+    /// gateway: `cargo test -p outbe-feeder live_gateway -- --ignored --nocapture`
     #[tokio::test]
     #[ignore]
     async fn live_gateway_feeds() {
-        let api_key = std::env::var("REDSTONE_API_KEY").expect("REDSTONE_API_KEY");
-        let provider = RedstoneProvider::new(&ApiProviderConfig {
+        let endpoint = ApiProviderConfig {
             name: "redstone".into(),
-            markets: vec![],
             rest: String::new(),
             websocket: String::new(),
-            api_key,
-        })
-        .unwrap();
-        let pairs = vec![("USDC".into(), "840".into()), ("USDT".into(), "840".into())];
+            api_key: std::env::var("REDSTONE_API_KEY").unwrap_or_default(),
+        };
+        let provider = RedstoneProvider::new(Some(&endpoint)).unwrap();
+        let pairs = vec![
+            ("USDC".into(), "840".into()),
+            ("ETH".into(), "840".into()),
+            ("978".into(), "840".into()),
+        ];
         let tickers = provider.get_ticker_prices(&pairs).await.unwrap();
-        for key in ["USDC/840", "USDT/840"] {
+        for key in ["USDC/840", "ETH/840", "978/840"] {
             eprintln!("{key}: {} FP18", tickers[key].price.raw());
         }
-        assert_eq!(tickers.len(), 2);
+        assert_eq!(tickers.len(), 3);
     }
 }

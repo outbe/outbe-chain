@@ -431,10 +431,8 @@ exec {quote(binary)} node \\
 """
 
 
-def feeder_config(
-    *, config: dict[str, Any], index: int, validator: dict[str, Any], signer_key: str
-) -> str:
-    oracle = config.get("oracle", {}).get("config", {})
+def feeder_pairs(*, config: dict[str, Any]) -> str:
+    """The pairs file every validator's feeder.toml names."""
     price_provider = str(config.get("price_provider", "mock_http"))
     source_quote = str(
         config.get(
@@ -442,19 +440,34 @@ def feeder_config(
             "840" if price_provider == "mock_http" else "USDT",
         )
     )
-    markets_line = f'markets = [{{ quote = "{source_quote}" }}]'
+    return f"""[[currency_pairs]]
+base = "COEN"
+quote = "840"
+markets = [{{ provider = "{price_provider}", quote = "{source_quote}" }}]
+
+[[deviation_thresholds]]
+base = "COEN"
+threshold = "2.0"
+"""
+
+
+def feeder_config(
+    *, config: dict[str, Any], index: int, validator: dict[str, Any], signer_key: str
+) -> str:
+    oracle = config.get("oracle", {}).get("config", {})
+    price_provider = str(config.get("price_provider", "mock_http"))
     if price_provider == "mock_http":
         api_provider = f'''[[api_providers]]
 name = "mock_http"
-rest = "{config.get("price_feed_rest", "https://prc.testnet.outbe.net")}"
-{markets_line}'''
+rest = "{config.get("price_feed_rest", "https://prc.testnet.outbe.net")}"'''
     else:
         websocket = str(config.get("price_feed_websocket", "")).strip()
         websocket_line = f'\nwebsocket = "{websocket}"' if websocket else ""
         api_provider = f'''[[api_providers]]
-name = "{price_provider}"{websocket_line}
-{markets_line}'''
+name = "{price_provider}"{websocket_line}'''
     return f"""# Price oracle feeder for validator-{index}.
+pairs = "pairs.toml"
+
 [chain]
 rpc_endpoint = "http://127.0.0.1:{port_of(config, "rpc_port")}"
 chain_id = {int(config["chain_id"])}
@@ -477,14 +490,6 @@ bind_address = "127.0.0.1:{port_of(config, "feeder_health_port")}"
 # invented name is rejected at startup. `mock_http` uses the configured REST
 # endpoint; exchange providers use live WebSocket market streams.
 {api_provider}
-
-[[currency_pairs]]
-base = "COEN"
-quote = "840"
-
-[[deviation_thresholds]]
-base = "COEN"
-threshold = "2.0"
 """
 
 
@@ -1518,6 +1523,7 @@ def render(
             )
         )
         feeder_path.chmod(0o600)
+        (directory / "pairs.toml").write_text(feeder_pairs(config=config))
         write_script(
             directory / "start-all.sh",
             start_all_script(

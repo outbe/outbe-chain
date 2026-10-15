@@ -273,9 +273,7 @@ poll_interval_secs = 1
 [[currency_pairs]]
 base = "COEN"
 quote = "840"
-[[api_providers]]
-name = "mock"
-markets = [{{ quote = "840" }}]
+markets = [{{ provider = "mock", quote = "840" }}]
 "#,
             rpc.endpoint
         ))

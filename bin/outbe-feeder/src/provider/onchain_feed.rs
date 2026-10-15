@@ -25,7 +25,7 @@ use tokio::sync::RwLock;
 use super::dex::math::scale_fp18;
 use super::evm_rpc::Rpc;
 use super::{checked_ticker, Provider, TickerPrice, VolumeInput};
-use crate::config::{FeederConfig, MarketConfig};
+use crate::config::FeederConfig;
 use crate::fixed::FixedValue;
 
 sol! {
@@ -42,20 +42,15 @@ sol! {
 pub(crate) const MAX_FEED_AGE_SECS: u64 = 90_000;
 const MAX_FUTURE_SECS: u64 = 60;
 
-/// One `[[onchain_providers]]` entry: a vendor's feed contracts on one EVM
-/// network, listed by the quote each feed prices the pair base in.
+/// One `[[onchain_providers]]` entry: one vendor feed contract on one EVM
+/// network. A pair market names it by `name`.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OnchainFeedConfig {
-    /// Provider name used in `currency_pairs.sources`.
+    /// Provider name a `currency_pairs` market names.
     pub name: String,
     pub chain_id: u64,
     pub rpc_endpoint: String,
-    /// The quote the feed prices the pair base in.
-    pub quote: String,
-    /// The vendor's name for the pair base, when it differs (`ETH` for WETH).
-    #[serde(default)]
-    pub base: Option<String>,
     /// Feed contract (the vendor's proxy address); it must implement
     /// Chainlink's `AggregatorV3Interface`. The implementation behind a proxy
     /// may rotate. The operator is responsible for the address: nothing
@@ -115,22 +110,6 @@ impl OnchainFeedConfig {
     }
 }
 
-/// The market every entry lists, as `(provider name, market)`.
-pub(crate) fn listed_markets(config: &FeederConfig) -> Vec<(String, MarketConfig)> {
-    config
-        .onchain_providers
-        .iter()
-        .map(|entry| {
-            let market = MarketConfig {
-                quote: entry.quote.clone(),
-                base: entry.base.clone(),
-                pair: None,
-            };
-            (entry.name.clone(), market)
-        })
-        .collect()
-}
-
 /// Rebuilds every entry's feed map from the source that names it.
 pub(crate) fn collect_feeds(config: &mut FeederConfig) {
     for entry in &mut config.onchain_providers {
@@ -138,7 +117,7 @@ pub(crate) fn collect_feeds(config: &mut FeederConfig) {
             .currency_pairs
             .iter()
             .flat_map(|pair| &pair.sources)
-            .filter(|source| source.provider == entry.name && source.quote == entry.quote)
+            .filter(|source| source.provider == entry.name)
             .map(|source| {
                 let key = format!("{}/{}", source.base, source.quote);
                 let feed = FeedConfig {
@@ -381,8 +360,6 @@ mod tests {
             name: "chainlink".to_owned(),
             chain_id: 1,
             rpc_endpoint: endpoint.to_owned(),
-            quote: "840".to_owned(),
-            base: Some("ETH".to_owned()),
             contract: AGGREGATOR,
             markets: BTreeMap::from([feed("ETH/840", AGGREGATOR)]),
         }
@@ -486,12 +463,11 @@ mod tests {
             [[currency_pairs]]
             base = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
             quote = "840"
+            markets = [{ provider = "chainlink", base = "ETH", quote = "840" }]
             [[onchain_providers]]
             name = "chainlink"
             chain_id = 1
             rpc_endpoint = "http://localhost:8545"
-            quote = "840"
-            base = "ETH"
             contract = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"
         "#,
         )
@@ -512,6 +488,9 @@ mod tests {
         redstone.name = "redstone_push".into();
         redstone.contract = address!("0x67F6838e58859d612E4ddF04dA396d6DABB66Dc4");
         feeder.onchain_providers.push(redstone);
+        let mut second = feeder.currency_pairs[0].sources[0].clone();
+        second.provider = "redstone_push".into();
+        feeder.currency_pairs[0].sources.push(second);
         feeder.resolve_sources().unwrap();
         feeder.validate().unwrap();
         assert_eq!(feeder.currency_pairs[0].sources.len(), 2);
@@ -528,11 +507,9 @@ mod tests {
         feeder.resolve_sources().unwrap();
         assert!(feeder.validate().is_err(), "built-in name is reserved");
         feeder.onchain_providers[1].name = "redstone_push".into();
-        feeder.onchain_providers[1].quote = "978".into();
-        assert!(
-            feeder.resolve_sources().is_err(),
-            "a feed quoted in a currency no pair is quoted in"
-        );
+        feeder.currency_pairs[0].sources.pop();
+        feeder.resolve_sources().unwrap();
+        assert!(feeder.validate().is_err(), "an entry no pair market names");
     }
 
     /// Live mainnet read of a Chainlink and a RedStone feed; run with

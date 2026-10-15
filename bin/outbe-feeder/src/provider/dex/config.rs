@@ -3,7 +3,7 @@ use eyre::{ensure, Result};
 use serde::Deserialize;
 use std::collections::BTreeSet;
 
-use crate::config::{FeederConfig, MarketConfig};
+use crate::config::FeederConfig;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,8 +23,6 @@ pub(crate) struct DexProviderConfig {
     /// Maximum wall-clock age of the block read, including `confirmations`.
     #[serde(default = "block_age", alias = "max_finalized_age_secs")]
     pub max_block_age_secs: u64,
-    /// The quote symbol the pool feeds the pair base under.
-    pub quote: String,
     /// The pair base's and the quote's ERC20 contracts on this network.
     pub(super) base_token: Address,
     pub(super) quote_token: Address,
@@ -257,22 +255,6 @@ fn validate_fee(fee: u32) -> Result<()> {
     Ok(())
 }
 
-/// The market every DEX entry lists, as `(provider name, market)`.
-pub(crate) fn listed_markets(config: &FeederConfig) -> Vec<(String, MarketConfig)> {
-    config
-        .dex_providers
-        .iter()
-        .map(|dex| {
-            let market = MarketConfig {
-                quote: dex.quote.clone(),
-                base: None,
-                pair: None,
-            };
-            (dex.name.clone(), market)
-        })
-        .collect()
-}
-
 /// Rebuilds every DEX entry's market from the source that names it.
 pub(crate) fn collect_markets(config: &mut FeederConfig) {
     for dex in &mut config.dex_providers {
@@ -280,7 +262,7 @@ pub(crate) fn collect_markets(config: &mut FeederConfig) {
             .currency_pairs
             .iter()
             .flat_map(|pair| &pair.sources)
-            .filter(|source| source.provider == dex.name && source.quote == dex.quote)
+            .filter(|source| source.provider == dex.name)
             .map(|source| DexMarketConfig {
                 base: source.base.clone(),
                 quote: source.quote.clone(),
