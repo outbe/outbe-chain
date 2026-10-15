@@ -7,6 +7,8 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
+#[cfg(test)]
+use alloy_sol_types::SolCall;
 use cucumber::{then, when};
 use eyre::{ensure, eyre, Result};
 #[cfg(test)]
