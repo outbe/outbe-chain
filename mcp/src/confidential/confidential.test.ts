@@ -11,6 +11,7 @@ import { MODIFY_KEY, fakeEnclave, promisBlob } from "../test/fake-enclave.js";
 import { OUTBE_RPC, SIGNER, SIGNER_KEY, startHarness } from "../test/harness.js";
 import { withAuthorization } from "./authorize.js";
 import { openGratis, openPromis } from "./balances.js";
+import { fidelityQueryAuth, fidelityQueryMessage } from "./fidelity.js";
 import { openNodAmount } from "./nod.js";
 import { deriveKeysMessage, unsealKeys } from "./keys.js";
 import { type Ledger, OP, chainIdWord, modifyMac } from "./mac.js";
@@ -158,4 +159,12 @@ test("a Nod's Gratis amount opens with the creator key, as the enclave encrypted
   const amount = openNodAmount(hexToBytes(v.creatorSecret), hexToBytes(v.networkPublicKey), nod);
   assert.equal(amount, BigInt(v.gratisAmount));
   assert.throws(() => openNodAmount(new Uint8Array(32).fill(0x32), hexToBytes(v.networkPublicKey), nod));
+});
+
+test("the Fidelity query authorization matches the bytes the enclave verifies", async () => {
+  const v = vectors.fidelityQuery;
+  const account = privateKeyToAccount(vectors.deriveKeys.signerKey);
+  assert.equal(account.address, v.account);
+  assert.equal(bytesToHex(fidelityQueryMessage(Number(v.chainId), v.account, BigInt(v.expiry))), v.message);
+  assert.equal(await fidelityQueryAuth(account, Number(v.chainId), BigInt(v.expiry)), v.signature);
 });

@@ -4,7 +4,8 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::tee_signatures::recover_signer;
 use outbe_tee::protocol::{
-    derive_account_keys_message, eip191_hash, GratisOp, Ledger, PromisOp,
+    derive_account_keys_message, eip191_hash, fidelity_query_auth_message, GratisOp, Ledger,
+    PromisOp,
 };
 use outbe_tee_enclave::crypto::{decrypt_share, encrypt_share_deterministic, EncryptedShare};
 use outbe_tee_enclave::{gratis, promis};
@@ -33,6 +34,24 @@ fn mcp_signs_the_derive_keys_request_the_enclave_accepts() {
         Ledger::Promis,
         account,
         B256::from(word(&v["ephemeralPubkey"])),
+    );
+    assert_eq!(message, bytes(&v["message"]));
+    let signature: [u8; 65] = bytes(&v["signature"]).try_into().unwrap();
+    assert_eq!(
+        recover_signer(&eip191_hash(&message), &signature).unwrap(),
+        account
+    );
+}
+
+#[test]
+fn mcp_signs_the_fidelity_query_the_enclave_accepts() {
+    let v = &vectors()["fidelityQuery"];
+    let account: Address = v["account"].as_str().unwrap().parse().unwrap();
+    let chain_id = U256::from(v["chainId"].as_str().unwrap().parse::<u64>().unwrap());
+    let message = fidelity_query_auth_message(
+        B256::from(chain_id),
+        account,
+        v["expiry"].as_str().unwrap().parse().unwrap(),
     );
     assert_eq!(message, bytes(&v["message"]));
     let signature: [u8; 65] = bytes(&v["signature"]).try_into().unwrap();
