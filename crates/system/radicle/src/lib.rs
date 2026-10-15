@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use radicle::crypto::ssh::Keystore;
 use radicle::identity::RepoId;
@@ -271,11 +271,22 @@ fn serve_status(
 }
 
 fn handle_status(mut stream: TcpStream, availability: &dyn RepositoryAvailability) {
-    let _ = stream.set_read_timeout(Some(STATUS_DEADLINE));
-    let _ = stream.set_write_timeout(Some(STATUS_DEADLINE));
+    // Accepted sockets inherit the listener's nonblocking mode on some platforms.
+    if stream.set_nonblocking(false).is_err()
+        || stream.set_write_timeout(Some(STATUS_DEADLINE)).is_err()
+    {
+        return;
+    }
+    let deadline = Instant::now() + STATUS_DEADLINE;
     let mut request = [0_u8; MAX_REQUEST_BYTES];
     let mut length = 0;
     loop {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return;
+        };
+        if remaining.is_zero() || stream.set_read_timeout(Some(remaining)).is_err() {
+            return;
+        }
         let Ok(read) = stream.read(&mut request[length..]) else {
             return;
         };
