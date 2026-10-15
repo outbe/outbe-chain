@@ -18,11 +18,11 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 #[repr(u32)]
 pub enum TriggerId {
     ProtocolCycle = 0,
-    IntexDaily = 1,
+    IntexCallDaily = 1,
     /// Reserved historical identifier. No active trigger uses it.
     WwdAdvanceNoon = 2,
     AuctionAdvance = 3,
-    GemDaily = 4,
+    GemCallDaily = 4,
     AuctionClearing = 5,
     /// Reserved historical identifier. Called notices now leave with the call slice.
     IntexDrainNotices = 6,
@@ -73,9 +73,9 @@ pub struct TriggerSpec {
 #[derive(Clone, Copy)]
 pub enum TriggerHandler {
     ProtocolCycle,
-    IntexDaily,
+    IntexCallDaily,
     AuctionAdvance,
-    GemDaily,
+    GemCallDaily,
     AuctionClearing,
     CredisCallDaily,
     NodCallDaily,
@@ -93,13 +93,13 @@ impl TriggerHandler {
     ) -> Result<()> {
         match self {
             Self::ProtocolCycle => crate::handler::run_protocol_cycle(ctx, scope, parent),
-            Self::IntexDaily => outbe_intexfactory::called::run_daily(ctx),
+            Self::IntexCallDaily => outbe_intexfactory::called::run_daily(ctx),
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
-            Self::GemDaily => outbe_gem::called::run_daily(ctx),
+            Self::GemCallDaily => outbe_gemfactory::called::run_daily(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
-            Self::NodCallDaily => outbe_nod::called::run_daily(ctx),
-            Self::GemPositionDaily => outbe_gemfactory::expired::run_daily(ctx),
+            Self::NodCallDaily => outbe_nodfactory::called::run_daily(ctx),
+            Self::GemPositionDaily => outbe_gemfactory::positions_expired::run_daily(ctx),
             Self::IntexDrainParked => outbe_intexfactory::parked::drain(ctx),
             Self::IntexVwapPush => outbe_intexfactory::vwap_push::run(ctx),
         }
@@ -163,8 +163,8 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::ProtocolCycle,
         },
         TriggerSpec {
-            id: TriggerId::IntexDaily.as_u32(),
-            label: "intex_daily",
+            id: TriggerId::IntexCallDaily.as_u32(),
+            label: "intex_call_daily",
             period_seconds: CALL_SWEEP_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Reads finalized oracle VWAP history to call series. It has no
@@ -173,7 +173,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             // The sweeps take their day from the block clock, so a missed slot
             // would only walk the same day again.
             coalesces_backlog: true,
-            handler: TriggerHandler::IntexDaily,
+            handler: TriggerHandler::IntexCallDaily,
         },
         TriggerSpec {
             id: TriggerId::AuctionAdvance.as_u32(),
@@ -190,8 +190,8 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::AuctionAdvance,
         },
         TriggerSpec {
-            id: TriggerId::GemDaily.as_u32(),
-            label: "gem_daily",
+            id: TriggerId::GemCallDaily.as_u32(),
+            label: "gem_call_daily",
             period_seconds: CALL_SWEEP_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Reads finalized oracle VWAP history to force-call gems. It has
@@ -200,7 +200,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             // The sweeps take their day from the block clock, so a missed slot
             // would only walk the same day again.
             coalesces_backlog: true,
-            handler: TriggerHandler::GemDaily,
+            handler: TriggerHandler::GemCallDaily,
         },
         TriggerSpec {
             id: TriggerId::AuctionClearing.as_u32(),
@@ -232,7 +232,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         },
         TriggerSpec {
             id: TriggerId::NodCallDaily.as_u32(),
-            label: "nod_daily",
+            label: "nod_call_daily",
             period_seconds: CALL_SWEEP_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Schedules the latest completed UTC day for the call sweep.
@@ -331,7 +331,10 @@ mod protocol_parameter_tests {
         assert_eq!(configured[2].period_seconds, 3_600);
         assert_eq!(configured[2].start_offset_seconds, 0);
         assert_eq!(configured[3].period_seconds, CALL_SWEEP_PERIOD_SECONDS);
-        assert!(matches!(configured[3].handler, TriggerHandler::GemDaily));
+        assert!(matches!(
+            configured[3].handler,
+            TriggerHandler::GemCallDaily
+        ));
         assert_eq!(configured[4].period_seconds, 600);
         assert!(matches!(
             configured[4].handler,

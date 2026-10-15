@@ -89,3 +89,36 @@ impl From<VaultRouterError> for PrecompileError {
         PrecompileError::Revert(err.to_string())
     }
 }
+
+/// Why a right's settlement quote or payment failed: asset acceptance, conversion,
+/// or the token transfer into the reserve vault.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum SettlementError {
+    #[error("assetVaultsCount undecodable")]
+    AssetVaultsCount,
+    #[error("settlement asset {asset} has no registered vault")]
+    AssetNotRegistered { asset: Address },
+    #[error("settlement asset currency {iso_code} does not match the right")]
+    CurrencyMismatch { iso_code: u16 },
+    #[error("settlement asset decimals undecodable")]
+    AssetDecimals,
+    #[error("settlement asset isoCode undecodable")]
+    AssetIsoCode,
+    #[error("{0}")]
+    Rounding(#[source] outbe_common::settlement::RoundingError),
+    #[error("oracle nominal unavailable")]
+    OracleUnavailable,
+    #[error("VWAP snapshot {authorized:#x} does not match the required {required:#x}")]
+    SnapshotMismatch { authorized: U256, required: U256 },
+    #[error("settlement token call failed")]
+    TokenOperationFailed,
+    #[error("settlement token moved an unexpected amount")]
+    AmountMismatch,
+}
+
+impl From<SettlementError> for PrecompileError {
+    fn from(error: SettlementError) -> Self {
+        PrecompileError::Revert(error.to_string())
+    }
+}

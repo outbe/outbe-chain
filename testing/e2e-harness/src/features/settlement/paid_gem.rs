@@ -150,9 +150,9 @@ fn prepare(world: &mut World) -> PaidGem {
             .expect("committee head timestamp");
         eth::send_call(
             &url,
-            addresses::GEM_ADDR,
+            addresses::GEM_FACTORY_ADDR,
             DEPLOYER_KEY,
-            &crate::features::gem_lifecycle::IGemTestArming::backdateGemForTestCall {
+            &crate::features::gem_lifecycle::IGemFactoryTestArming::backdateGemForTestCall {
                 gemId: gem_id,
                 issuedAt: now.saturating_sub(3 * 86_400),
             },
@@ -256,7 +256,7 @@ impl PaidGem {
         for &p in ports {
             let observed = gem_view_at(
                 &world.rpc.url(p),
-                &eth::IGem::getGemStatusCall { gemId: gem_id },
+                &eth::IGem::getGemCall { gemId: gem_id },
                 height,
                 "finalized settled reward Gem",
             );

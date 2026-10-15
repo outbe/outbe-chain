@@ -517,7 +517,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         let body = eth::read_call_at_result(
             &peer_url,
             addresses::NOD_ADDR,
-            &eth::INod::nodDataCall {
+            &eth::INod::getNodCall {
                 nodId: U256::from_be_slice(&nod_id),
             },
             checkpoint.height,
@@ -862,7 +862,7 @@ fn wait_for_validator_reward_gem(world: &World) -> (Address, U256, eth::IGem::Ge
                 let gem = eth::read_call(
                     &url,
                     addresses::GEM_ADDR,
-                    &eth::IGem::getGemStatusCall { gemId: gem_id },
+                    &eth::IGem::getGemCall { gemId: gem_id },
                 )
                 .expect("validator reward Gem data");
                 return (owner, gem_id, gem);

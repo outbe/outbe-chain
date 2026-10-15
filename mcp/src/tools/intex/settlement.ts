@@ -9,7 +9,7 @@ import { ensureAllowance } from "../../net/erc20.js";
 import { handler, ok } from "../util.js";
 import { ERC20_ABI, FACTORY_ABI, INTEX_ABI } from "../../intex/registry.js";
 import { grindNonce } from "../../intex/pow.js";
-import { PROMIS_MINED_EVENT, addr, quoteSettlement, settlementTokens } from "../../intex/reads.js";
+import { INTEX_EXERCISED_EVENT, addr, quoteSettlement, settlementTokens } from "../../intex/reads.js";
 import { accountArg, seriesArg, unitsArg } from "./args.js";
 import type { IntexDeps } from "./deps.js";
 
@@ -126,14 +126,14 @@ export function registerSettlementTools(server: McpServer, deps: IntexDeps): voi
       const sd = await n.client.readContract({
         address: addr(n, "intex"),
         abi: INTEX_ABI,
-        functionName: "seriesData",
+        functionName: "getIntexSeries",
         args: [series],
       });
       const promisMinor = sd.promisLoadMinor * amt;
       // seq = this owner's prior mines for the series (feeds the PoW preimage).
       const logs = await n.client.getLogs({
         address: addr(n, "factory"),
-        event: PROMIS_MINED_EVENT,
+        event: INTEX_EXERCISED_EVENT,
         args: { seriesId: series, owner },
         fromBlock: 0n,
         toBlock: "latest",

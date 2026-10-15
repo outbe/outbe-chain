@@ -36,6 +36,7 @@ alloy_sol_types::sol! {
             uint16 referenceCurrency,
             uint64 issuedAt
         ) external;
+        function closeCallNoticeForTest(bytes32 bucketKey, uint64 deadline) external;
     }
 }
 
@@ -139,7 +140,7 @@ impl Lifecycle for NodLifecycle {
             let data = eth::read_call_result(
                 &url,
                 addresses::NOD_ADDR,
-                &eth::INod::nodDataCall { nodId: id },
+                &eth::INod::getNodCall { nodId: id },
             )?;
             if data.owner != target.owner || data.isSettled || data.effectiveState != expected_state {
                 return Err(format!(
@@ -273,9 +274,9 @@ impl Lifecycle for NodLifecycle {
         );
         eth::send_call(
             &url,
-            addresses::NOD_ADDR,
+            addresses::NOD_FACTORY_ADDR,
             DEPLOYER_KEY,
-            &INodTestArming::closeCallNoticeForTestCall {
+            &INodFactoryTestArming::closeCallNoticeForTestCall {
                 bucketKey: bucket_key,
                 deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
             },
@@ -390,7 +391,7 @@ fn assert_burned(world: &World, owner: Address, id: U256, timeout: Duration) {
         eth::read_call(
             &world.rpc.url(world.validators.primary_port()),
             addresses::NOD_ADDR,
-            &eth::INod::nodDataCall { nodId: id }
+            &eth::INod::getNodCall { nodId: id }
         )
         .is_none(),
         "a burned Nod must not be readable"
@@ -402,7 +403,7 @@ fn nod_balance(world: &World, owner: Address) -> U256 {
 }
 
 fn read_nod(world: &World, id: U256) -> eth::INod::NodData {
-    read_nod_view(world, &eth::INod::nodDataCall { nodId: id }, "Nod data")
+    read_nod_view(world, &eth::INod::getNodCall { nodId: id }, "Nod data")
 }
 
 /// Nod views read through the compressed-body projection. The projection trails the block
@@ -443,12 +444,6 @@ fn wait_for_nod_of(url: &str, owner: Address) -> U256 {
         },
     );
     id.expect("owner's Nod id")
-}
-
-alloy_sol_types::sol! {
-    interface INodTestArming {
-        function closeCallNoticeForTest(bytes32 bucketKey, uint64 deadline) external;
-    }
 }
 
 fn paid_nod_mining_call(

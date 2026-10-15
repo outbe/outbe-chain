@@ -60,8 +60,8 @@ fn only_current_state_scans_and_calendar_owned_protocol_cycle_coalesce() {
         TriggerId::ProtocolCycle,
         TriggerId::NodCallDaily,
         TriggerId::CredisCallDaily,
-        TriggerId::IntexDaily,
-        TriggerId::GemDaily,
+        TriggerId::IntexCallDaily,
+        TriggerId::GemCallDaily,
         TriggerId::IntexDrainParked,
         TriggerId::IntexVwapPush,
     ];

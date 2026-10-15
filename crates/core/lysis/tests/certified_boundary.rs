@@ -22,7 +22,7 @@ fn ordinary_storage_provider_cannot_mint_the_certified_activation_capability() {
     });
 
     assert!(!entered.get());
-    assert!(matches!(error, PrecompileError::Fatal(_)));
+    assert!(matches!(error, PrecompileError::Revert(_)));
 }
 
 #[test]
@@ -57,5 +57,5 @@ fn entitled_frame_rejects_success_without_all_owner_effects() {
             .unwrap_err()
     });
 
-    assert!(matches!(error, PrecompileError::Fatal(_)));
+    assert!(matches!(error, PrecompileError::Revert(_)));
 }

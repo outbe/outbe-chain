@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn issue_creates_series_in_registry() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
 
         // The series is captured in Intex with the issuance identity.
         let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
@@ -37,9 +37,9 @@ fn issue_creates_series_in_registry() {
 #[test]
 fn issue_rejects_duplicate_series() {
     with_factory(|s| {
-        runtime::issue(&s, sample(7)).unwrap();
+        runtime::issue_intex(&s, sample(7)).unwrap();
         // The registry record-create rejects a duplicate series id.
-        assert!(runtime::issue(&s, sample(7)).is_err());
+        assert!(runtime::issue_intex(&s, sample(7)).is_err());
     });
 }
 
@@ -48,7 +48,7 @@ fn issue_zero_winners_leaves_the_day_untouched() {
     with_factory(|s| {
         let mut p = sample(7);
         p.issued_units = 0;
-        runtime::issue(&s, p).unwrap();
+        runtime::issue_intex(&s, p).unwrap();
 
         assert!(!outbe_intex::api::series_exists(&s, sid(7)).unwrap());
     });
@@ -74,8 +74,8 @@ fn issuance_legs_route_winners_to_their_own_chain() {
 #[test]
 fn issue_enrolls_series_in_dense_enumeration() {
     with_factory(|s| {
-        runtime::issue(&s, sample(11)).unwrap();
-        runtime::issue(&s, sample(22)).unwrap();
+        runtime::issue_intex(&s, sample(11)).unwrap();
+        runtime::issue_intex(&s, sample(22)).unwrap();
         assert_eq!(outbe_intex::api::total_series(&s).unwrap(), 2);
         assert_eq!(outbe_intex::api::series_id_at(&s, 0).unwrap(), sid(11));
         assert_eq!(outbe_intex::api::series_id_at(&s, 1).unwrap(), sid(22));
@@ -84,18 +84,19 @@ fn issue_enrolls_series_in_dense_enumeration() {
 
 #[test]
 fn floor_and_call_derivation() {
-    let floor = runtime::marked_up(U256::from(ENTRY_PRICE), FLOOR_RATE).unwrap();
-    let call = runtime::marked_up(U256::from(ENTRY_PRICE), CALL_RATE).unwrap();
+    let floor =
+        outbe_primitives::markup::marked_up(U256::from(ENTRY_PRICE), FLOOR_RATE_PCT).unwrap();
+    let call = outbe_primitives::markup::marked_up(U256::from(ENTRY_PRICE), CALL_RATE_PCT).unwrap();
     assert_eq!(floor, U256::from(EXPECTED_FLOOR));
     assert_eq!(call, U256::from(EXPECTED_TRIGGER));
 
     let one = U256::from(1_000_000u64);
     assert_eq!(
-        runtime::marked_up(one, FLOOR_RATE).unwrap(),
+        outbe_primitives::markup::marked_up(one, FLOOR_RATE_PCT).unwrap(),
         U256::from(1_080_000u64)
     );
     assert_eq!(
-        runtime::marked_up(one, CALL_RATE).unwrap(),
+        outbe_primitives::markup::marked_up(one, CALL_RATE_PCT).unwrap(),
         U256::from(2_280_000u64)
     );
 }
@@ -103,7 +104,7 @@ fn floor_and_call_derivation() {
 #[test]
 fn coen_iso_one_maps_to_the_center_price_bin_at_six_decimals() {
     assert_eq!(
-        IntexFactoryContract::price_to_bin(U256::from(1_000_000u64)).unwrap(),
+        outbe_primitives::call_bins::price_to_bin(U256::from(1_000_000u64)).unwrap(),
         REAL_ID_SHIFT as u32
     );
 }
@@ -352,7 +353,7 @@ pub(super) fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
             issuance_currency: EUR_ISO,
             ..sample(7)
         };
-        runtime::issue(&s, params).unwrap();
+        runtime::issue_intex(&s, params).unwrap();
     });
     storage
 }
@@ -529,7 +530,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
         .unwrap()
         .cutoff();
     let reached_payment = outbe_primitives::error::PrecompileError::from(
-        crate::errors::IntexFactoryError::SettlementAmountMismatch,
+        outbe_vaultrouter::settlement::SettlementError::AmountMismatch,
     )
     .to_string();
 
@@ -542,7 +543,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     assert_eq!(
         settle(&mut storage, quoted),
         outbe_primitives::error::PrecompileError::from(
-            crate::errors::IntexFactoryError::VwapSnapshotMismatch {
+            outbe_vaultrouter::settlement::SettlementError::SnapshotMismatch {
                 authorized: quoted,
                 required,
             }
@@ -560,7 +561,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     assert_eq!(
         settle(&mut storage, other_policy.to_u256()),
         outbe_primitives::error::PrecompileError::from(
-            crate::errors::IntexFactoryError::VwapSnapshotMismatch {
+            outbe_vaultrouter::settlement::SettlementError::SnapshotMismatch {
                 authorized: other_policy.to_u256(),
                 required,
             }
@@ -619,7 +620,7 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
         let notice = outbe_intex::api::read_series(&s, sid(7))
             .unwrap()
             .call_notice_period_seconds;
-        outbe_intex::api::mark_called(&s, sid(7), (deadline - u64::from(notice)) as u32).unwrap();
+        outbe_intex::api::record_called(&s, sid(7), (deadline - u64::from(notice)) as u32).unwrap();
     });
 
     storage.set_timestamp(U256::from(deadline));
@@ -627,7 +628,7 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
     assert_eq!(
         settle(&mut storage, quoted),
         outbe_primitives::error::PrecompileError::from(
-            crate::errors::IntexFactoryError::VwapSnapshotMismatch {
+            outbe_vaultrouter::settlement::SettlementError::SnapshotMismatch {
                 authorized: quoted,
                 required,
             }
@@ -666,7 +667,7 @@ fn a_reference_payment_ignores_the_snapshot_it_names() {
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::IntexFactoryError::SettlementAmountMismatch
+                outbe_vaultrouter::settlement::SettlementError::AmountMismatch
             )
             .to_string()
         );

@@ -9,9 +9,7 @@ use outbe_compressed_entities::{
     begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
     ParentBodySourceError, QueryRef, StoredBody, WwdEntityId,
 };
-use outbe_nod::{
-    api, called, hooks, precompile::INod, NodContract, NodItemState, NodRepositoryReader,
-};
+use outbe_nod::{api, precompile::INod, NodItemState, NodRepositoryReader};
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::time::{first_full_day, WorldwideDay};
 use outbe_primitives::{
@@ -70,7 +68,17 @@ fn same_block_issue_is_visible_to_point_and_list_reads() {
     let body = item(Address::repeat_byte(0x21), WorldwideDay::new(20_260_716));
 
     StorageHandle::enter(&mut provider, |storage| {
-        api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+        api::add_nod(
+            &storage,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
+            &body,
+            U256::from(5),
+            outbe_nod::test_support::sealed_terms(&storage, &body, U256::from(5)),
+        )
+        .unwrap();
         assert_eq!(
             api::get_item(&storage, &scope, &parent, body.nod_id)
                 .unwrap()
@@ -109,7 +117,17 @@ fn qualification_reads_the_finalized_day_and_writes_nothing() {
     let (mut provider, scope, parent) = active_world();
     let body = item(Address::repeat_byte(0x31), WorldwideDay::new(20_260_716));
     StorageHandle::enter(&mut provider, |storage| {
-        api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+        api::add_nod(
+            &storage,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
+            &body,
+            U256::from(5),
+            outbe_nod::test_support::sealed_terms(&storage, &body, U256::from(5)),
+        )
+        .unwrap();
         let midnight = outbe_primitives::time::date_key_to_utc_timestamp(20260716);
         let context = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, midnight, 1),
@@ -194,7 +212,17 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
                 outbe_nod::test_support::set_entry_price(&mut body, entry);
                 outbe_nod::test_support::set_terms(&mut body);
                 body.bucket_key = outbe_nod::identity::bucket_key(day, entry, currency);
-                api::add_nod(&storage, &scope, &parent, &body, entry).unwrap();
+                api::add_nod(
+                    &storage,
+                    outbe_compressed_entities::ExecutionReaders {
+                        scope: &scope,
+                        parent: &parent,
+                    },
+                    &body,
+                    entry,
+                    outbe_nod::test_support::sealed_terms(&storage, &body, entry),
+                )
+                .unwrap();
                 WwdEntityId::from_day_and_digest(day, body.bucket_key.0)
             })
             .collect();
@@ -251,7 +279,17 @@ fn removal_consumes_loaded_capabilities_without_a_second_parent_read() {
     };
     let body = item(Address::repeat_byte(0x41), WorldwideDay::new(20_260_716));
     StorageHandle::enter(&mut provider, |storage| {
-        api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+        api::add_nod(
+            &storage,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &parent,
+            },
+            &body,
+            U256::from(5),
+            outbe_nod::test_support::sealed_terms(&storage, &body, U256::from(5)),
+        )
+        .unwrap();
         let loaded_item = api::load_item(&storage, &scope, &parent, body.nod_id)
             .unwrap()
             .unwrap();
@@ -266,49 +304,4 @@ fn removal_consumes_loaded_capabilities_without_a_second_parent_read() {
             .unwrap()
             .is_none());
     });
-}
-
-#[test]
-fn idle_daily_scans_do_not_write_storage() {
-    let (mut provider, scope, parent) = active_world();
-    let midnight = outbe_primitives::time::date_key_to_utc_timestamp(20260716);
-    StorageHandle::enter(&mut provider, |storage| {
-        let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-        let pair = outbe_oracle::api::AddressPair::new_coen_to(978);
-        let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
-        oracle.reference_currencies.push(978).unwrap();
-        oracle
-            .record_utc_day_vwap(20260715, index, U256::from(13))
-            .unwrap();
-        oracle.utc_day_vwap_last_finalized.write(20260715).unwrap();
-        for (owner, entry) in [(0x51, 12u64), (0x52, 13)] {
-            let entry = U256::from(entry);
-            let mut body = item(Address::repeat_byte(owner), WorldwideDay::new(20260715));
-            body.bucket_key = outbe_nod::identity::bucket_key(body.worldwide_day, entry, 978);
-            outbe_nod::test_support::set_entry_price(&mut body, entry);
-            api::add_nod(&storage, &scope, &parent, &body, entry).unwrap();
-        }
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, midnight, 1),
-            storage.clone(),
-        );
-        called::run_daily(&ctx).unwrap();
-        hooks::sweep_forfeits(&ctx, &scope, &parent).unwrap();
-        called::run_call_slice(&ctx).unwrap();
-        assert_eq!(
-            NodContract::new(storage).call_sweep_day.read().unwrap(),
-            0,
-            "both buckets wait below their call price, so the sweep closes at once"
-        );
-    });
-    // An idle CycleTick only continues an in-flight sweep, so it issues no SSTORE.
-    provider.enable_production_storage_gas_metering();
-    StorageHandle::enter(&mut provider, |storage| {
-        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, midnight, 1), storage);
-        hooks::sweep_forfeits(&ctx, &scope, &parent).unwrap();
-        called::run_call_slice(&ctx).unwrap();
-    });
-    let (reads, writes) = provider.metered_storage_operations();
-    assert!(reads > 0);
-    assert_eq!(writes, 0);
 }

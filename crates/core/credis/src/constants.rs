@@ -9,9 +9,6 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
     "settled by its settlement deadline, otherwise it is forfeited."
 );
 
-/// Denominator for [`CALL_RATE_PCT`].
-pub const PRICE_RATE_DEN: u16 = 100;
-
 /// The call price adds 64% to `call_anchor_price_minor`. A sustained breach arms the call.
 pub const CALL_RATE_PCT: u16 = 64;
 

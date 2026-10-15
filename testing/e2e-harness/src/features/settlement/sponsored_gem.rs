@@ -177,9 +177,9 @@ fn prepare(world: &mut World) -> SponsoredGem {
             .expect("committee head timestamp");
         eth::send_call(
             &url,
-            addresses::GEM_ADDR,
+            addresses::GEM_FACTORY_ADDR,
             DEPLOYER_KEY,
-            &crate::features::gem_lifecycle::IGemTestArming::backdateGemForTestCall {
+            &crate::features::gem_lifecycle::IGemFactoryTestArming::backdateGemForTestCall {
                 gemId: gem_id,
                 issuedAt: now.saturating_sub(3 * 86_400),
             },
@@ -211,7 +211,7 @@ fn prepare(world: &mut World) -> SponsoredGem {
     gem = eth::read_call(
         &url,
         addresses::GEM_ADDR,
-        &eth::IGem::getGemStatusCall { gemId: gem_id },
+        &eth::IGem::getGemCall { gemId: gem_id },
     )
     .expect("read the same reward Gem after qualification");
     assert_eq!(

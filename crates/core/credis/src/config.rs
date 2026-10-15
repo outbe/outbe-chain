@@ -3,7 +3,6 @@
 //! which resolves by network, so only mainnet runs PROD. The call price stays a
 //! constant: the requirements fix it at 1.64 times the anchor.
 
-use outbe_primitives::chain::is_mainnet;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -11,10 +10,7 @@ use crate::constants::{CALL_NOTICE_PERIOD, CALL_THRESHOLD, CALL_WINDOW, SECS_PER
 use crate::errors::CredisError;
 use crate::schema::CredisContract;
 
-/// Resolve by network: PROD on mainnet, DEV everywhere else.
-pub const PROFILE_AUTO: u8 = 0;
-pub const PROFILE_DEV: u8 = 1;
-pub const PROFILE_PROD: u8 = 2;
+pub use outbe_primitives::profile::{PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
 
 /// Resolved Credis call terms, in seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,12 +39,8 @@ impl CredisParams {
     };
 
     pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {
-        match selector {
-            PROFILE_AUTO if is_mainnet(chain_id) => Ok(Self::PROD),
-            PROFILE_AUTO | PROFILE_DEV => Ok(Self::DEV),
-            PROFILE_PROD => Ok(Self::PROD),
-            other => Err(CredisError::UnknownProfileSelector(other).into()),
-        }
+        outbe_primitives::profile::select(selector, chain_id, Self::PROD, Self::DEV)
+            .ok_or_else(|| CredisError::UnknownProfileSelector(selector).into())
     }
 }
 

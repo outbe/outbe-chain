@@ -127,3 +127,25 @@ pub fn set_entry_price(item: &mut NodItemState, price: U256) {
     terms.entry_price_minor = price;
     item.encrypted = encrypt(terms, amount);
 }
+
+/// The call terms NodFactory seals on a bucket opened by `item` at `entry_price_minor`,
+/// from the live profile. Fixtures record Nods without the factory.
+pub fn sealed_terms(
+    storage: &outbe_primitives::storage::StorageHandle<'_>,
+    item: &NodItemState,
+    entry_price_minor: U256,
+) -> Option<crate::schema::CallTerms> {
+    if entry_price_minor.is_zero() {
+        return None;
+    }
+    let params = crate::config::read(storage).unwrap();
+    Some(crate::schema::CallTerms {
+        call_price_minor: outbe_primitives::markup::marked_up(entry_price_minor, params.call_rate)
+            .unwrap(),
+        reference_currency: item.reference_currency,
+        call_rate: params.call_rate,
+        call_window_seconds: params.call_window_seconds,
+        call_threshold_seconds: params.call_threshold_seconds,
+        call_notice_period_seconds: params.call_notice_period_seconds,
+    })
+}

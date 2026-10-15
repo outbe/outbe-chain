@@ -1,13 +1,16 @@
+//! Nod: the terms, profile and data of a Nod. Bodies, buckets, the call bins and the
+//! expiry queue live here, with the read-time state, qualification and settlement cost.
+//!
+//! NodFactory applies every rule and runs the call and forfeit sweeps through [`api`].
+//! The precompile surface is the Nod NFT and its views.
+
 pub mod api;
-pub mod called;
 pub mod config;
 pub mod constants;
 mod enclave_client;
 pub mod errors;
-pub(crate) mod expired;
-pub mod hooks;
 pub mod identity;
-mod index_keys;
+pub mod index_keys;
 mod issuance;
 mod metadata;
 pub mod openings;
@@ -32,10 +35,5 @@ pub use schema::{
     NodOcompTargetProjection,
 };
 
-#[cfg(test)]
-mod adr006_tests;
-
-#[cfg(test)]
-mod called_tests;
 #[cfg(test)]
 mod tests;

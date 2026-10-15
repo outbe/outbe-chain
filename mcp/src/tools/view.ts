@@ -73,7 +73,7 @@ function registerEntityViews(server: McpServer, ctx: Ctx): void {
     { id: z.string().describe("Nod token id as a uint256 (decimal or 0x hex)") },
     handler(async ({ id }) => {
       const [data, metadata] = await Promise.all([
-        view(ctx, "nod", "nodData", [id]),
+        view(ctx, "nod", "getNod", [id]),
         view(ctx, "nod", "tokenURI", [id]),
       ]);
       return ok({ nodId: id, data, metadata });
@@ -102,7 +102,7 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
     { id: z.string().describe("Gem token id (decimal or 0x hex)") },
     handler(async ({ id }) => {
       const [data, qualified, metadata] = await Promise.all([
-        view(ctx, "gem", "getGemStatus", [BigInt(id)]),
+        view(ctx, "gem", "getGem", [BigInt(id)]),
         view(ctx, "gem", "isQualified", [BigInt(id)]),
         view(ctx, "gem", "tokenURI", [BigInt(id)]),
       ]);
@@ -138,11 +138,11 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
   server.tool(
     "gems_by_owner",
     "List Gems owned by an address with decoded status for each (Gem has no bulk getter, " +
-      "so this enumerates balanceOf -> tokenOfOwnerByIndex -> getGemStatus).",
+      "so this enumerates balanceOf -> tokenOfOwnerByIndex -> getGem).",
     { owner: address },
     handler(async ({ owner }) => {
       const ids = await ownedTokenIds(ctx, "gem", owner);
-      const gems = await Promise.all(ids.map((id) => view(ctx, "gem", "getGemStatus", [id])));
+      const gems = await Promise.all(ids.map((id) => view(ctx, "gem", "getGem", [id])));
       return ok({ owner, count: ids.length, gems });
     }),
   );

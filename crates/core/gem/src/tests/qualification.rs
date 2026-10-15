@@ -91,8 +91,10 @@ fn a_gem_without_a_floor_qualifies_on_its_first_closed_day() {
         seed_day_price(storage, USD, Some(U256::from(1u64)));
         assert!(is_qualified(storage, world, gem_id));
         let gem = GemContract::new(storage.clone());
-        let bin =
-            GemContract::price_to_bin(view(storage, world, gem_id).terms.call_price_minor).unwrap();
+        let bin = outbe_primitives::call_bins::price_to_bin(
+            view(storage, world, gem_id).terms.call_price_minor,
+        )
+        .unwrap();
         assert!(tree_math::contains(&crate::state::CallBins(&gem, USD), bin).unwrap());
     });
 }

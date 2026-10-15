@@ -220,12 +220,9 @@ fn owner_holds_issued_units(world: &mut World) {
             Some((u64::from(COMMITTEE_UNITS), 0)),
             "series {series} did not mint its committee units to the owner"
         );
-        loop {
-            if venue_probes::series_balances(&target_url, target_nft, series, owner)
-                == Some((u64::from(TARGET_UNITS), 0))
-            {
-                break;
-            }
+        while venue_probes::series_balances(&target_url, target_nft, series, owner)
+            != Some((u64::from(TARGET_UNITS), 0))
+        {
             assert!(
                 Instant::now() < deadline,
                 "series {series} did not reach its exact target-chain balance before the delivery deadline"
@@ -269,11 +266,7 @@ fn cards_read_qualified(world: &mut World) {
         let source = eth::read_call(url, *nft, &IIntexCard::vwapSourceCall {})
             .expect("the collection names its VWAP source");
         for series in world.state.lifecycle_series.clone() {
-            loop {
-                let state = card_state(url, *nft, series);
-                if state.as_deref() == Some("Qualified") {
-                    break;
-                }
+            while let Some(state) = card_unqualified(url, *nft, series) {
                 let (iso_code, floor, from) = venue_probes::series_floor_terms(url, *nft, series)
                     .expect("the chain knows the series");
                 let max = eth::read_call(
@@ -295,6 +288,12 @@ fn cards_read_qualified(world: &mut World) {
             }
         }
     }
+}
+
+/// The card's state while it does not read Qualified yet.
+fn card_unqualified(url: &str, nft: Address, series: FixedBytes<14>) -> Option<Option<String>> {
+    let state = card_state(url, nft, series);
+    (state.as_deref() != Some("Qualified")).then_some(state)
 }
 
 /// The `Series State` trait of the issued class's card.
@@ -323,23 +322,17 @@ fn card_state(url: &str, nft: alloy_primitives::Address, series: FixedBytes<14>)
 /// stalled and one that is merely slow need different answers.
 fn wait_for_chain_time(world: &World, port: u16, target: u64) {
     let deadline = Instant::now() + Duration::from_secs(CATCH_UP_TIMEOUT_SECS);
-    let mut first = None;
-    loop {
-        let now = world.rpc.latest_block_timestamp(port);
-        if first.is_none() {
-            first = now;
-        }
-        if now.is_some_and(|now| now >= target) {
-            return;
-        }
-        if Instant::now() >= deadline {
-            panic!(
-                "the committee never reached logical time {target}: started at {first:?}, \
-                 reached {now:?} (short by {:?}s) after {CATCH_UP_TIMEOUT_SECS}s",
-                now.map(|now| target.saturating_sub(now))
-            );
-        }
+    let first = world.rpc.latest_block_timestamp(port);
+    let mut now = first;
+    while now.is_none_or(|now| now < target) {
+        assert!(
+            Instant::now() < deadline,
+            "the committee never reached logical time {target}: started at {first:?}, \
+             reached {now:?} (short by {:?}s) after {CATCH_UP_TIMEOUT_SECS}s",
+            now.map(|now| target.saturating_sub(now))
+        );
         sleep(Duration::from_secs(2));
+        now = world.rpc.latest_block_timestamp(port);
     }
 }
 
@@ -619,10 +612,10 @@ impl Lifecycle for IntexLifecycle {
         for (series, unrealized, returned) in expired {
             assert_single_event(
                 &url,
-                addresses::INTEX_FACTORY_ADDR,
+                addresses::INTEX_ADDR,
                 from,
                 height,
-                eth::IIntexFactory::SeriesExpired {
+                eth::IIntex::IntexSeriesExpired {
                     seriesId: series,
                     forfeitedUnits: unrealized,
                     returnedPromisMinor: returned,
@@ -664,8 +657,8 @@ impl Lifecycle for IntexLifecycle {
             // The engine counts what it burned, so the series' classes stay disjoint.
             let counts = eth::read_call(
                 &url,
-                addresses::INTEX_FACTORY_ADDR,
-                &eth::IIntexFactory::seriesUnitCountsCall { seriesId: series },
+                addresses::INTEX_ADDR,
+                &eth::IIntex::seriesUnitCountsCall { seriesId: series },
             )
             .expect("series unit counts");
             assert_eq!(
@@ -954,46 +947,17 @@ fn unsettled_series_expired(world: &mut World) {
         .expect("carry the elapsed call notice to the target chain");
 
     for series in expiring_series(world) {
-        // A mark whose calledAt sits ahead of this chain's clock is parked, not
-        // applied. Nothing in a localnet plays the operator who retries it.
-        let parked = eth::read_call(
-            &target_url,
-            target_router,
-            &venue_probes::IIssuedSeries::parkedMarkCall { seriesId: series },
-        );
-        if parked.is_some_and(|called_at| called_at != 0) {
-            eth::send_call(
-                &target_url,
-                target_router,
-                crate::world::forge::DEPLOYER_KEY,
-                &venue_probes::IIssuedSeries::applyParkedMarkCall { seriesId: series },
-                None,
-            )
-            .expect("apply the mark the target chain parked");
-        }
-
+        let parked = apply_parked_mark(&target_url, target_router, series);
         for (label, at, collection) in [
             ("committee", url.as_str(), nft),
             ("target chain", target_url.as_str(), target_nft),
         ] {
-            let deadline = Instant::now() + Duration::from_secs(DELIVERY_TIMEOUT_SECS);
-            loop {
-                if venue_probes::series_state(at, collection, series) == Some(EXPIRED) {
-                    break;
-                }
-                assert!(
-                    Instant::now() < deadline,
-                    "series {series} never read Expired on the {label}: {:?}; the call time parked \
-                     on the target router reads {:?}",
-                    venue_probes::series_state(at, collection, series),
-                    eth::read_call(
-                        &target_url,
-                        target_router,
-                        &venue_probes::IIssuedSeries::parkedMarkCall { seriesId: series },
-                    )
-                );
-                sleep(Duration::from_secs(2));
-            }
+            await_expired(
+                label,
+                (at, collection),
+                (&target_url, target_router),
+                series,
+            );
         }
         let committee_deadline = venue_probes::series_call_deadline(&url, nft, series)
             .expect("committee expiry deadline");
@@ -1013,6 +977,55 @@ fn unsettled_series_expired(world: &mut World) {
             "INTEX_EXPIRY_CLOCK series={series} committee_timestamp={now} \
              target_timestamp={target_timestamp} deadline={target_deadline} pending_mark={parked:?}"
         );
+    }
+}
+
+/// A mark whose calledAt sits ahead of the target's clock is parked, not applied. Nothing
+/// in a localnet plays the operator who retries it, so apply it here. Returns the mark read.
+fn apply_parked_mark(
+    target_url: &str,
+    target_router: Address,
+    series: FixedBytes<14>,
+) -> Option<u32> {
+    let parked = eth::read_call(
+        target_url,
+        target_router,
+        &venue_probes::IIssuedSeries::parkedMarkCall { seriesId: series },
+    );
+    if parked.is_some_and(|called_at| called_at != 0) {
+        eth::send_call(
+            target_url,
+            target_router,
+            crate::world::forge::DEPLOYER_KEY,
+            &venue_probes::IIssuedSeries::applyParkedMarkCall { seriesId: series },
+            None,
+        )
+        .expect("apply the mark the target chain parked");
+    }
+    parked
+}
+
+/// Waits until `series` reads Expired through `collection` on the chain at `at`.
+fn await_expired(
+    label: &str,
+    (at, collection): (&str, Address),
+    (target_url, target_router): (&str, Address),
+    series: FixedBytes<14>,
+) {
+    let deadline = Instant::now() + Duration::from_secs(DELIVERY_TIMEOUT_SECS);
+    while venue_probes::series_state(at, collection, series) != Some(EXPIRED) {
+        assert!(
+            Instant::now() < deadline,
+            "series {series} never read Expired on the {label}: {:?}; the call time parked \
+             on the target router reads {:?}",
+            venue_probes::series_state(at, collection, series),
+            eth::read_call(
+                target_url,
+                target_router,
+                &venue_probes::IIssuedSeries::parkedMarkCall { seriesId: series },
+            )
+        );
+        sleep(Duration::from_secs(2));
     }
 }
 
@@ -1070,7 +1083,7 @@ fn public_state(url: &str, series: FixedBytes<14>) -> u8 {
     eth::read_call(
         url,
         addresses::INTEX_ADDR,
-        &eth::IIntex::seriesDataCall { seriesId: series },
+        &eth::IIntex::getIntexSeriesCall { seriesId: series },
     )
     .unwrap_or_else(|| panic!("series {series} does not read back"))
     .state
@@ -1079,8 +1092,8 @@ fn public_state(url: &str, series: FixedBytes<14>) -> u8 {
 fn is_qualified(url: &str, series: FixedBytes<14>) -> bool {
     eth::read_call(
         url,
-        addresses::INTEX_FACTORY_ADDR,
-        &eth::IIntexFactory::isSeriesQualifiedCall { seriesId: series },
+        addresses::INTEX_ADDR,
+        &eth::IIntex::isQualifiedCall { seriesId: series },
     )
     .unwrap_or_else(|| panic!("series {series} qualification does not read back"))
 }
