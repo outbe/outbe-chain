@@ -124,6 +124,7 @@ fn seed_projection(
                 bucket_count: 1,
                 nod_amount_total: U256::from(10_000),
                 lysis_allocation_minor: U256::from(10_000),
+                nod_gratis_load_max: U256::from(1_000),
                 issued_at: 1_600_000_000,
                 next_nod_ordinal: 0,
                 last_progress_height: 1,
@@ -142,6 +143,8 @@ fn seed_projection(
                 .write(&worldwide_day, projection.nod_amount_total)?;
             nod.ocomp_lysis_allocation_minor
                 .write(&worldwide_day, projection.lysis_allocation_minor)?;
+            nod.ocomp_nod_gratis_load_max
+                .write(&worldwide_day, projection.nod_gratis_load_max)?;
             nod.ocomp_materialization_job_id
                 .write(&worldwide_day, projection.job_id)?;
             nod.ocomp_materialization_protocol_bundle_hash
@@ -185,6 +188,10 @@ fn assert_projection_cleared(world: &mut World, materialization_wwd: u32) {
                 U256::ZERO
             );
             assert_eq!(nod.ocomp_nod_amount_total.read(&worldwide_day)?, U256::ZERO);
+            assert_eq!(
+                nod.ocomp_nod_gratis_load_max.read(&worldwide_day)?,
+                U256::ZERO
+            );
             assert_eq!(
                 nod.ocomp_lysis_allocation_minor.read(&worldwide_day)?,
                 U256::ZERO
@@ -747,6 +754,7 @@ fn protected_authority(
             .unwrap(),
         subtree_height: profile().batch_subtree_height,
         sealed_tribute_root: source_root,
+        nod_gratis_load_max: U256::from(1_000),
     }
 }
 

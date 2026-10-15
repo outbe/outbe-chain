@@ -35,6 +35,7 @@ object	0x0026	LysisTerminalV1	LysisTerminalV1
 object	0x0027	NodMaterializationBatchV1	NodMaterializationBatchV1
 object	0x0028	NodMaterializationHeadV1	NodMaterializationHeadV1
 domain		ProtocolBundle	OUTBE_OCOMP_PROTOCOL_BUNDLE_V1
+domain		LysisProgramSemantics	OUTBE_OCOMP_LYSIS_PROGRAM_SEMANTICS_V1
 domain		PreAdmission	OUTBE_OCOMP_PRE_ADMISSION_V1
 domain		ActivationPreconditions	OUTBE_OCOMP_ACTIVATION_PRECONDITIONS_V1
 domain		Intent	OUTBE_OCOMP_INTENT_V1

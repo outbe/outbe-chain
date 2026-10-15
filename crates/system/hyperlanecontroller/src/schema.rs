@@ -22,6 +22,8 @@ use outbe_primitives::storage::keys::address_u32_key;
 ///   7: miss_count - mapping(validator => consecutive liveness misses)
 ///   8: validator_announce - ValidatorAnnounce on Outbe, where validators
 ///      publish the location of their checkpoint bucket
+///   9: bootstrap_admin - the only caller allowed to `initialize`. Genesis
+///      seeds it. Zero = nobody can initialize
 #[storage_schema]
 #[contract(addr = HYPERLANE_CONTROLLER_ADDRESS)]
 pub struct HyperlaneControllerContract {
@@ -51,6 +53,9 @@ pub struct HyperlaneControllerContract {
 
     #[attribute(order = 8)]
     pub validator_announce: outbe_primitives::storage::dsl::Value<Address>,
+
+    #[attribute(order = 9)]
+    pub bootstrap_admin: outbe_primitives::storage::dsl::Value<Address>,
 }
 
 /// Composite key for the per-(validator, domain) checkpoint maps.

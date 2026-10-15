@@ -182,6 +182,7 @@ fn certified_fixture(count: usize) -> Result<CertifiedFixture, String> {
                     head: head.encode_canonical(&limits).map_err(|e| e.to_string())?,
                     subtree_height: SUBTREE_HEIGHT as u8,
                     sealed_tribute_root: sources.source_root(),
+                    nod_gratis_load_max: U256::from(10_000),
                 },
                 &batch,
             )
@@ -238,6 +239,7 @@ fn seed_certified_world(
         bucket_count: 1,
         nod_amount_total: U256::from(10_000),
         lysis_allocation_minor: U256::from(10_000),
+        nod_gratis_load_max: U256::from(10_000),
         issued_at: 1_600_000_000,
         next_nod_ordinal: 0,
         last_progress_height: 1,
@@ -263,6 +265,9 @@ fn seed_certified_world(
         .map_err(|error| error.to_string())?;
     nod.ocomp_lysis_allocation_minor
         .write(&TARGET_WWD, projection.lysis_allocation_minor)
+        .map_err(|error| error.to_string())?;
+    nod.ocomp_nod_gratis_load_max
+        .write(&TARGET_WWD, projection.nod_gratis_load_max)
         .map_err(|error| error.to_string())?;
     nod.ocomp_materialization_job_id
         .write(&TARGET_WWD, projection.job_id)

@@ -425,6 +425,9 @@ impl Localnet {
         if let Some((user, cca)) = profile.credis_accounts {
             prepare_credis_seed(root, user, cca)?;
         }
+        // The Hyperlane feature calls `initialize` with the forge deployer key.
+        root.entry("hyperlane_controller")
+            .or_insert_with(|| json!({ "admin": crate::world::forge::DEPLOYER_ADDRESS }));
         let validator_set = root
             .entry("validator_set")
             .or_insert_with(|| json!({}))

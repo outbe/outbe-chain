@@ -22,8 +22,6 @@ use outbe_lysis::program_v1::phases::fidelity_map;
 use outbe_lysis::program_v1::ObservationValueV1;
 use outbe_lysis::program_v1::ObservedTributeV1;
 
-use super::tribute_nominal::{refill_nominal, shard_tribute_nominals};
-
 use outbe_ocomp_protocol::common::BoundedBytes;
 use outbe_ocomp_protocol::input::AuthenticatedOpeningV1;
 use outbe_ocomp_protocol::input::InputChunkKind;
@@ -54,7 +52,7 @@ pub(in super::super) fn execute_fidelity_map_unit(
         ..
     } = authority;
     require_lease_active(cancelled)?;
-    let (shard_ordinal, enumerated, producer_header) =
+    let (_shard_ordinal, enumerated, producer_header) =
         validate_fidelity_enumerate_producer(spec, &authority)?;
     let leagues = collect_fidelity_opening_leagues(
         spec,
@@ -62,12 +60,7 @@ pub(in super::super) fn execute_fidelity_map_unit(
         input_chunks,
         (bundle, limits, cancelled),
     )?;
-    let observed = collect_fidelity_observed_tributes(
-        (input_chunks, shard_ordinal),
-        &enumerated,
-        &leagues,
-        cancelled,
-    )?;
+    let observed = collect_fidelity_observed_tributes(&enumerated, &leagues, cancelled)?;
     let output =
         fidelity_map(enumerated.start_ordinal, &observed).map_err(LysisArtifactErrorV1::from)?;
     let output_coverage_root = output.coverage_root()?;
@@ -133,6 +126,26 @@ fn collect_fidelity_opening_leagues(
     )],
     (bundle, limits, cancelled): (&ProtocolBundleV1, &SchemaLimits, Option<&AtomicBool>),
 ) -> Result<BTreeMap<Address, u16>, WorkerError> {
+    let (leagues, fidelity_opening_count, fidelity_encoded_bytes) =
+        collect_fidelity_leagues_from_chunks(manifest, input_chunks, (bundle, limits, cancelled))?;
+    require_authenticated_input(
+        spec,
+        InputPurpose::FidelityOpenings,
+        manifest.fidelity_opening_root,
+        fidelity_opening_count,
+        fidelity_encoded_bytes,
+    )?;
+    Ok(leagues)
+}
+
+fn collect_fidelity_leagues_from_chunks(
+    manifest: &InputManifestV1,
+    input_chunks: &[(
+        outbe_ocomp_protocol::input::InputChunkRefV1,
+        outbe_ocomp_protocol::input::AuthenticatedInputChunkV1,
+    )],
+    (bundle, limits, cancelled): (&ProtocolBundleV1, &SchemaLimits, Option<&AtomicBool>),
+) -> Result<(BTreeMap<Address, u16>, u32, u64), WorkerError> {
     let mut leagues = BTreeMap::new();
     let mut fidelity_opening_count = 0_u32;
     let mut fidelity_encoded_bytes = 0_u64;
@@ -160,14 +173,7 @@ fn collect_fidelity_opening_leagues(
             InputChunkKind::Oracle => return Err(WorkerError::UnitBindingMismatch),
         }
     }
-    require_authenticated_input(
-        spec,
-        InputPurpose::FidelityOpenings,
-        manifest.fidelity_opening_root,
-        fidelity_opening_count,
-        fidelity_encoded_bytes,
-    )?;
-    Ok(leagues)
+    Ok((leagues, fidelity_opening_count, fidelity_encoded_bytes))
 }
 
 fn record_fidelity_opening_leagues(
@@ -211,21 +217,10 @@ fn record_fidelity_opening_leagues(
 }
 
 fn collect_fidelity_observed_tributes(
-    (input_chunks, shard_ordinal): (
-        &[(
-            outbe_ocomp_protocol::input::InputChunkRefV1,
-            outbe_ocomp_protocol::input::AuthenticatedInputChunkV1,
-        )],
-        u32,
-    ),
     enumerated: &EnumeratedRunV1,
     leagues: &BTreeMap<Address, u16>,
     cancelled: Option<&AtomicBool>,
 ) -> Result<Vec<ObservedTributeV1>, WorkerError> {
-    let nominals = shard_tribute_nominals(input_chunks, shard_ordinal)?;
-    if nominals.len() != enumerated.ordered_records.len() {
-        return Err(WorkerError::UnitBindingMismatch);
-    }
     let mut observed = Vec::new();
     observed
         .try_reserve_exact(enumerated.ordered_records.len())
@@ -236,10 +231,8 @@ fn collect_fidelity_observed_tributes(
             .get(&record.tribute.owner)
             .copied()
             .ok_or(WorkerError::UnitBindingMismatch)?;
-        let mut tribute = record.tribute.clone();
-        refill_nominal(&mut tribute, &nominals)?;
         observed.push(ObservedTributeV1 {
-            tribute,
+            tribute: record.tribute.clone(),
             first_league: ObservationValueV1::Value(league),
             second_league: ObservationValueV1::Value(league),
             entry_price_minor: ObservationValueV1::Unavailable,

@@ -99,6 +99,7 @@ fn fractions_by_league(table: &[Value]) -> BTreeMap<u16, BigUint> {
 
 struct Evaluation {
     unit: BigUint,
+    nod_gratis_load_max: BigUint,
     remaining: BigUint,
     observations: Vec<Value>,
     actions: Vec<Value>,
@@ -111,7 +112,8 @@ impl Evaluation {
         tribute: &CorpusTribute,
         fraction: &BigUint,
     ) -> Result<BigUint, ReferenceFailure> {
-        let load = wrap_u256(decimal(&tribute.nominal)? * fraction) / &self.unit;
+        let load = (wrap_u256(decimal(&tribute.nominal)? * fraction) / &self.unit)
+            .min(self.nod_gratis_load_max.clone());
         if load.is_zero() {
             return Err(ReferenceFailure::ordinal("ZERO_GRATIS_LOAD", ordinal));
         }
@@ -222,6 +224,7 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
 
     let mut evaluation = Evaluation {
         unit: scale(),
+        nod_gratis_load_max: &allocation / 1024_u32,
         remaining: allocation.clone(),
         observations,
         actions: Vec::with_capacity(tributes.len()),
