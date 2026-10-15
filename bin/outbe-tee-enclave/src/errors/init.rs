@@ -156,7 +156,7 @@ pub enum InitError {
     MissingSgxSealingKey,
     /// A production DCAP release binary refused a non-DCAP runtime mode.
     #[error("production DCAP release refuses runtime attestation {0}")]
-    ProdDcapReleaseRefusesAttestation(&'static str),
+    ProdDcapReleaseRefusesAttestation(String),
     /// The measured consensus chain ID exceeds u64.
     #[error("measured consensus chain id does not fit u64")]
     MeasuredChainIdOverflow,
