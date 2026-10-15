@@ -104,7 +104,7 @@ impl CeMdbx {
         validate_root(genesis_marker.parent_root)?;
         validate_root(genesis_marker.new_root)?;
         let expected_genesis_root =
-            crate::sealed_root(B256::ZERO).map_err(PersistenceError::staging)?;
+            crate::sealed_root(B256::ZERO).map_err(PersistenceError::collection_hash)?;
         if genesis_marker.new_root != expected_genesis_root {
             return Err(PersistenceError::InvalidGenesisShardRoot {
                 expected: expected_genesis_root,
@@ -233,7 +233,7 @@ impl CeMdbx {
                 let catalog_root =
                     read_required_tree_root(&tx, &self.path, TreeNamespace::Catalog)?;
                 let wrapped =
-                    crate::sealed_root(catalog_root).map_err(PersistenceError::staging)?;
+                    crate::sealed_root(catalog_root).map_err(PersistenceError::collection_hash)?;
                 if wrapped != marker.new_root {
                     return Err(PersistenceError::CatalogWrapperMismatch {
                         expected: marker.new_root,

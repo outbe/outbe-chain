@@ -27,6 +27,7 @@ alloy-primitives = { workspace = true, optional = true }
 blake2 = { version = "0.10", default-features = false }
 hex-literal = "0.4"
 outbe-poseidon.workspace = true
+outbe-barretenberg.workspace = true
 thiserror.workspace = true
 zeroize.workspace = true
 

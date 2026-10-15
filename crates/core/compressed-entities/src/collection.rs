@@ -119,7 +119,7 @@ impl TryFrom<B256> for CollectionKey {
 #[derive(Debug, Error)]
 pub enum CollectionError {
     #[error("CES2 collection hashing failed: {0}")]
-    Hash(String),
+    Hash(#[source] crate::CommitmentError),
     #[error("present collection root computed to zero")]
     ZeroCollectionRoot,
     #[error("sealed root computed to zero")]
@@ -137,16 +137,19 @@ pub enum CollectionError {
     #[error("duplicate Tribute tree key in partition reconstruction")]
     DuplicateTributeKey,
     #[error("Tribute partition tree reconstruction failed: {0}")]
-    Tree(String),
+    Tree(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl CollectionError {
-    pub(crate) fn hash(error: impl core::fmt::Display) -> Self {
-        Self::Hash(error.to_string())
+    pub(crate) fn hash(error: crate::CommitmentError) -> Self {
+        Self::Hash(error)
     }
 
-    pub(crate) fn tree(error: impl core::fmt::Display) -> Self {
-        Self::Tree(error.to_string())
+    pub(crate) fn tree(error: crate::smt::TreeError) -> Self {
+        match error {
+            crate::smt::TreeError::Poseidon(error) => Self::Hash(error),
+            other => Self::Tree(Box::new(other)),
+        }
     }
 }
 

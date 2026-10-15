@@ -371,8 +371,11 @@ fn decode_merge(bytes: &[u8], path: &Path) -> Result<MergeValue> {
 fn shard_path(root: &Path, shard: usize) -> PathBuf {
     root.join(format!("proof-shard-{shard:02}.bin"))
 }
-fn tree_error(error: impl core::fmt::Display) -> TributePartitionReconstructionError {
-    protocol_error(error)
+fn tree_error(error: TreeError) -> TributePartitionReconstructionError {
+    match error {
+        TreeError::Poseidon(error) => TributePartitionReconstructionError::CryptoBackend(error),
+        other => protocol_error(other.to_string()),
+    }
 }
 fn protocol_error(message: impl core::fmt::Display) -> TributePartitionReconstructionError {
     TributePartitionReconstructionError::Tree(message.to_string())

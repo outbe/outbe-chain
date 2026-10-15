@@ -180,10 +180,9 @@ impl RetirementBatch {
                 "only a complete Tribute collection may retire",
             ));
         }
-        let top = aggregate_b256_shard_roots(&parent_shard_roots)
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid retirement shard roots"))?;
-        if collection_root(domain, key, top)
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid retirement collection"))?
+        let top =
+            aggregate_b256_shard_roots(&parent_shard_roots).map_err(StagingError::tree_hash)?;
+        if collection_root(domain, key, top).map_err(StagingError::Collection)?
             != parent_collection_root
         {
             return Err(StagingError::InvalidCatalogEnvelope(
@@ -228,7 +227,7 @@ impl CollectionBatch {
         }
         if let Some(parent) = parent_collection_root {
             let expected = collection_root(domain, key, shard_set.parent_shard_top_root)
-                .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid parent collection"))?;
+                .map_err(StagingError::Collection)?;
             if parent != expected {
                 return Err(StagingError::InvalidCatalogEnvelope(
                     "parent collection root mismatch",
@@ -244,7 +243,7 @@ impl CollectionBatch {
             ));
         }
         let expected = collection_root(domain, key, shard_set.new_shard_top_root)
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid new collection"))?;
+            .map_err(StagingError::Collection)?;
         if expected != new_collection_root || shard_set.changed_shards.is_empty() {
             return Err(StagingError::InvalidCatalogEnvelope(
                 "changed collection root or shard payload mismatch",
@@ -346,8 +345,7 @@ impl ProvisionalTreeBatch {
         parent_block_hash: B256,
         parent_catalog_root: B256,
     ) -> Result<Self, StagingError> {
-        let parent_r_sealed = sealed_root(parent_catalog_root)
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid identity parent"))?;
+        let parent_r_sealed = sealed_root(parent_catalog_root).map_err(StagingError::Collection)?;
         Self::new(
             block_number,
             parent_block_hash,
@@ -758,6 +756,10 @@ pub use cache::{CandidateCache, CandidateCacheLimits, PublicationOutcome};
 
 #[derive(Debug, Error)]
 pub enum StagingError {
+    #[error("CES2 hashing failed: {0}")]
+    Hash(#[source] crate::CommitmentError),
+    #[error("CES2 collection construction failed: {0}")]
+    Collection(#[source] crate::CollectionError),
     #[error(transparent)]
     Persistence(#[from] PersistenceError),
     #[error("staged record size overflow")]
@@ -784,6 +786,15 @@ pub enum StagingError {
     },
     #[error("candidate block number zero has no finalized execution parent")]
     CandidateBlockNumberZero,
+}
+
+impl StagingError {
+    pub(crate) fn tree_hash(error: crate::smt::TreeError) -> Self {
+        match error {
+            crate::smt::TreeError::Poseidon(error) => Self::Hash(error),
+            _ => Self::InvalidShardEnvelope("invalid shard root aggregate"),
+        }
+    }
 }
 
 #[cfg(test)]

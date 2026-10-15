@@ -168,6 +168,17 @@ pub enum TributeFactoryError {
 }
 
 impl TributeFactoryError {
+    pub(crate) fn identity_hash(
+        error: outbe_compressed_entities::CommitmentError,
+    ) -> PrecompileError {
+        match error {
+            outbe_compressed_entities::CommitmentError::CryptoBackend(error) => {
+                PrecompileError::CryptoBackendUnavailable(error.to_string())
+            }
+            error => Self::fatal(error).into(),
+        }
+    }
+
     pub fn malformed_zk_proof(err: impl Display) -> Self {
         Self::MalformedZkProof(err.to_string())
     }

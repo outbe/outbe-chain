@@ -117,7 +117,7 @@ impl TributeFactoryContract<'_> {
             .as_ref()
             .ok_or(TributeFactoryError::CreatedTributeMissingBody)?;
         let expected_digest = derive_poseidon_digest(record.owner, worldwide_day)
-            .map_err(TributeFactoryError::fatal)?;
+            .map_err(TributeFactoryError::identity_hash)?;
         let tribute_id = WwdEntityId::from_day_and_digest(worldwide_day, expected_digest);
         if result.token_id != expected_digest || record.tribute_id != tribute_id {
             return Err(TributeFactoryError::InvalidCanonicalIdentity.into());
@@ -257,7 +257,24 @@ fn validate_zk_result(
     }
     let verified = Barretenberg::default()
         .verify_combined(verification_key, zk_proof)
-        .map_err(TributeFactoryError::zk_verifier_unavailable)?;
+        .map_err(|error| match error {
+            outbe_zk::Error::CryptoBackend(_)
+            | outbe_zk::Error::Hash(
+                outbe_poseidon::PoseidonError::Runtime(_)
+                | outbe_poseidon::PoseidonError::ResponseLength { .. }
+                | outbe_poseidon::PoseidonError::NoncanonicalField { .. },
+            ) => PrecompileError::CryptoBackendUnavailable(error.to_string()),
+            outbe_zk::Error::Hash(outbe_poseidon::PoseidonError::InputLength)
+            | outbe_zk::Error::Identity(_)
+            | outbe_zk::Error::Signature(_)
+            | outbe_zk::Error::OwnerMismatch
+            | outbe_zk::Error::NonCanonical(_)
+            | outbe_zk::Error::UnsortedSet(_)
+            | outbe_zk::Error::Proof(_)
+            | outbe_zk::Error::Merkle(_) => {
+                TributeFactoryError::MalformedZkProof(error.to_string()).into()
+            }
+        })?;
     if !verified {
         return Err(TributeFactoryError::InvalidZkProof.into());
     }
@@ -404,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn treats_backend_rejection_as_fatal_after_public_inputs_match() {
+    fn rejects_malformed_proof_deterministically_after_public_inputs_match() {
         let public = public_inputs();
         let expected = TributeZkExpectedHashes {
             nft_hash: public.nft_hash,
@@ -421,6 +438,11 @@ mod tests {
         assert!(
             matches!(error, PrecompileError::Revert(_)),
             "unexpected error: {error}"
+        );
+        assert!(!error.is_node_local());
+        assert_eq!(
+            error.sweep_failure(),
+            outbe_primitives::error::SweepFailure::Skip
         );
     }
 

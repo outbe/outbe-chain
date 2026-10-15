@@ -23,8 +23,8 @@ impl CeMdbx {
         validate_root(marker.new_root)?;
         let tx = self.db.tx_mut().map_err(|error| self.db_error(error))?;
         let catalog_root = read_required_tree_root(&tx, &self.path, TreeNamespace::Catalog)?;
-        let wrapped = crate::sealed_root(catalog_root)
-            .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+        let wrapped =
+            crate::sealed_root(catalog_root).map_err(PersistenceError::collection_hash)?;
         if wrapped != marker.new_root {
             return Err(PersistenceError::CatalogWrapperMismatch {
                 expected: marker.new_root,

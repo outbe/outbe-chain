@@ -575,6 +575,8 @@ impl RunReader {
 
 #[derive(Debug, Error)]
 pub enum TributePartitionReconstructionError {
+    #[error("Tribute reconstruction hashing failed: {0}")]
+    CryptoBackend(#[source] crate::CommitmentError),
     #[error(transparent)]
     Collection(#[from] CollectionError),
     #[error("unsupported Tribute commitment scheme {0}")]
@@ -622,8 +624,13 @@ fn sync_directory(path: &Path) -> Result<(), TributePartitionReconstructionError
         .map_err(|source| io_error("fsync scratch directory", path, source))
 }
 
-pub(crate) fn map_tree(error: impl core::fmt::Display) -> TributePartitionReconstructionError {
-    TributePartitionReconstructionError::Tree(error.to_string())
+pub(crate) fn map_tree(error: crate::smt::TreeError) -> TributePartitionReconstructionError {
+    match error {
+        crate::smt::TreeError::Poseidon(error) => {
+            TributePartitionReconstructionError::CryptoBackend(error)
+        }
+        other => TributePartitionReconstructionError::Tree(other.to_string()),
+    }
 }
 
 fn io_error(

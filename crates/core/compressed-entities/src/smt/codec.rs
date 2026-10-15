@@ -1,10 +1,39 @@
 use ark_bn254::Fr;
-use ark_ff::{BigInteger, PrimeField};
+use ark_ff::{BigInt, BigInteger, PrimeField};
 use outbe_sparse_merkle_tree_v061::{traits::Hasher, H256};
+use std::cell::RefCell;
 
 use crate::{TAG_SMT_BASE, TAG_SMT_NORMAL, TAG_SMT_ZERO};
 
 const HASH_ERROR_BYTES: [u8; 32] = [u8::MAX; 32];
+
+thread_local! {
+    static HASH_FAILURES: RefCell<Vec<Option<crate::CommitmentError>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Keep the typed cause local to one CKB operation, including nested operations.
+pub(super) fn hash_scope<T>(
+    operation: impl FnOnce() -> Result<T, super::TreeError>,
+) -> Result<T, super::TreeError> {
+    struct Scope;
+    impl Drop for Scope {
+        fn drop(&mut self) {
+            HASH_FAILURES.with(|failures| {
+                failures.borrow_mut().pop();
+            });
+        }
+    }
+    HASH_FAILURES.with(|failures| failures.borrow_mut().push(None));
+    let scope = Scope;
+    let result = operation();
+    let cause =
+        HASH_FAILURES.with(|failures| failures.borrow_mut().last_mut().and_then(Option::take));
+    drop(scope);
+    match cause {
+        Some(error) => Err(super::TreeError::Poseidon(error)),
+        None => result,
+    }
+}
 
 pub(crate) fn hash_error() -> H256 {
     H256::from(HASH_ERROR_BYTES)
@@ -23,12 +52,25 @@ pub(crate) struct PoseidonCkbHasher {
 }
 
 impl PoseidonCkbHasher {
-    fn finish_with(self, hash: impl FnOnce(u64, &[Fr]) -> Result<Fr, ()>) -> H256 {
+    fn finish_with(
+        self,
+        hash: impl FnOnce(u64, &[Fr]) -> Result<Fr, crate::CommitmentError>,
+    ) -> H256 {
         let Ok((tag, inputs)) = classify(&self.transcript) else {
             return hash_error();
         };
-        let Ok(output) = hash(tag, &inputs) else {
-            return hash_error();
+        let output = match hash(tag, &inputs) {
+            Ok(output) => output,
+            Err(error) => {
+                HASH_FAILURES.with(|failures| {
+                    if let Some(slot) = failures.borrow_mut().last_mut() {
+                        if slot.is_none() {
+                            *slot = Some(error);
+                        }
+                    }
+                });
+                return hash_error();
+            }
         };
         if output == Fr::from(0_u64) {
             return hash_error();
@@ -47,7 +89,7 @@ impl Hasher for PoseidonCkbHasher {
     }
 
     fn finish(self) -> H256 {
-        self.finish_with(|tag, inputs| crate::commitment::poseidon(tag, inputs).map_err(|_| ()))
+        self.finish_with(crate::commitment::poseidon)
     }
 }
 
@@ -93,15 +135,23 @@ pub(super) fn field(value: H256) -> Result<Fr, ()> {
         return Err(());
     }
     let bytes: [u8; 32] = value.into();
-    let field = Fr::from_be_bytes_mod_order(&bytes);
-    if field_to_be32(field) != bytes {
-        return Err(());
+    let mut limbs = [0_u64; 4];
+    for (limb, chunk) in limbs.iter_mut().rev().zip(bytes.chunks_exact(8)) {
+        let mut word = [0_u8; 8];
+        word.copy_from_slice(chunk);
+        *limb = u64::from_be_bytes(word);
     }
-    Ok(field)
+    Fr::from_bigint(BigInt::new(limbs)).ok_or(())
 }
 
 pub(super) fn is_canonical(value: H256) -> bool {
-    field(value).is_ok()
+    let bytes: [u8; 32] = value.into();
+    let mut modulus = [0_u8; 32];
+    for (chunk, limb) in modulus.chunks_exact_mut(8).zip(Fr::MODULUS.0.iter().rev()) {
+        chunk.copy_from_slice(&limb.to_be_bytes());
+    }
+    // Fixed-width big-endian ordering checks the modulus without field arithmetic.
+    bytes < modulus
 }
 
 fn field_to_be32(value: Fr) -> [u8; 32] {
@@ -115,6 +165,17 @@ fn field_to_be32(value: Fr) -> [u8; 32] {
 mod tests {
     use super::*;
 
+    proptest::proptest! {
+        #[test]
+        fn checked_field_conversion_matches_canonical_reference(bytes: [u8; 32]) {
+            let reference = Fr::from_be_bytes_mod_order(&bytes);
+            let canonical = field_to_be32(reference) == bytes;
+            let word = H256::from(bytes);
+            proptest::prop_assert_eq!(is_canonical(word), canonical);
+            proptest::prop_assert_eq!(field(word), canonical.then_some(reference).ok_or(()));
+        }
+    }
+
     #[test]
     fn unexpected_transcript_and_hash_failure_are_poisoned() {
         let mut unexpected = PoseidonCkbHasher::default();
@@ -125,7 +186,10 @@ mod tests {
         valid.write_byte(0);
         valid.write_h256(&H256::zero());
         valid.write_h256(&H256::from([0_u8; 32]));
-        assert_eq!(valid.finish_with(|_, _| Err(())), hash_error());
+        assert_eq!(
+            valid.finish_with(|_, _| Err(crate::CommitmentError::InputTooLong)),
+            hash_error()
+        );
     }
 
     #[test]
@@ -142,5 +206,47 @@ mod tests {
             hasher.write_h256(&invalid);
             assert_eq!(hasher.finish(), hash_error());
         }
+    }
+
+    #[test]
+    fn sentinel_does_not_invent_backend_provenance_or_leak_between_scopes() {
+        let malformed = hash_scope(|| {
+            let mut hasher = PoseidonCkbHasher::default();
+            hasher.write_byte(9);
+            assert_eq!(hasher.finish(), hash_error());
+            Err::<(), _>(super::super::TreeError::TreeHashError)
+        })
+        .unwrap_err();
+        assert_eq!(malformed, super::super::TreeError::TreeHashError);
+        let zero = hash_scope(|| {
+            let mut hasher = PoseidonCkbHasher::default();
+            hasher.write_byte(0);
+            hasher.write_h256(&H256::zero());
+            hasher.write_h256(&H256::zero());
+            assert_eq!(hasher.finish_with(|_, _| Ok(Fr::from(0_u64))), hash_error());
+            Err::<(), _>(super::super::TreeError::TreeHashError)
+        })
+        .unwrap_err();
+        assert_eq!(zero, super::super::TreeError::TreeHashError);
+        let failed = {
+            let _failure = outbe_poseidon::testing::fail_after(0);
+            hash_scope(|| {
+                let mut hasher = PoseidonCkbHasher::default();
+                hasher.write_byte(0);
+                hasher.write_h256(&H256::zero());
+                hasher.write_h256(&H256::zero());
+                assert_eq!(hasher.finish(), hash_error());
+                Ok(())
+            })
+            .unwrap_err()
+        };
+        assert!(matches!(
+            failed,
+            super::super::TreeError::Poseidon(crate::CommitmentError::CryptoBackend(_))
+        ));
+        assert!(hash_scope(|| Ok(())).is_ok());
+        assert!(std::thread::spawn(|| hash_scope(|| Ok(())).is_ok())
+            .join()
+            .unwrap());
     }
 }

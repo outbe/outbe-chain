@@ -71,7 +71,8 @@ impl<'storage> State<'storage> {
                 }
                 #[cfg(test)]
                 {
-                    let root = crate::sealed_root(B256::ZERO).map_err(fatal)?;
+                    let root =
+                        crate::sealed_root(B256::ZERO).map_err(crate::errors::collection_error)?;
                     schema
                         .last_smt_root
                         .write(U256::from_be_slice(root.as_slice()))?;
@@ -146,7 +147,7 @@ impl<'storage> State<'storage> {
         partition: PartitionRef,
     ) -> Result<RetirementOutcome> {
         self.ensure_schema()?;
-        let (_, key) = partition_collection_key(partition).map_err(revert)?;
+        let (_, key) = partition_collection_key(partition).map_err(collection_revert)?;
         let storage_key = B256::from(*key.as_bytes());
         if !self
             .schema()
@@ -164,7 +165,7 @@ impl<'storage> State<'storage> {
                 Collection::Gem => CeDomain::Gem,
                 Collection::GemBucket => CeDomain::GemBucket,
             };
-            if collection_key(domain, entity_id).map_err(revert)? == key {
+            if collection_key(domain, entity_id).map_err(collection_revert)? == key {
                 return Err(revert(
                     "collection retirement conflicts with an earlier entity mutation",
                 ));
@@ -198,7 +199,7 @@ impl<'storage> State<'storage> {
         for day in days {
             let partition =
                 PartitionRef::TributeWwd(outbe_primitives::time::WorldwideDay::new(day));
-            let (_, key) = partition_collection_key(partition).map_err(revert)?;
+            let (_, key) = partition_collection_key(partition).map_err(collection_revert)?;
             let storage_key = B256::from(*key.as_bytes());
             if !unique.insert(storage_key)
                 || self.schema().pending_retirement.read(&storage_key)? != U256::from(1)
@@ -236,4 +237,13 @@ fn fatal(message: impl core::fmt::Display) -> PrecompileError {
 
 fn revert(message: impl core::fmt::Display) -> PrecompileError {
     crate::errors::revert_error(message)
+}
+
+fn collection_revert(error: crate::CollectionError) -> PrecompileError {
+    match error {
+        error @ crate::CollectionError::Hash(crate::CommitmentError::CryptoBackend(_)) => {
+            crate::errors::collection_error(error)
+        }
+        error => revert(error),
+    }
 }

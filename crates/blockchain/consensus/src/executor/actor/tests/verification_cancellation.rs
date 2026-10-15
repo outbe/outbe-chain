@@ -1,6 +1,45 @@
 use super::*;
 
 #[test]
+fn crypto_backend_failure_does_not_vote_invalid_and_same_block_is_eligible() -> eyre::Result<()> {
+    deterministic::Runner::default().start(|clock| async move {
+        let mut engine = EngineStub::new();
+        let mut work = VerificationWork::default();
+        let block = linked(1, B256::ZERO, 37);
+        let (receiver, _) = enqueue(&mut work, request(block.clone(), None));
+        work.schedule(&engine.handle);
+        assert!(work.next_event().now_or_never().is_none());
+        let BeaconEngineMessage::NewPayload { tx, .. } = engine.rx.try_recv()? else {
+            return Err(eyre::eyre!("expected new_payload"));
+        };
+        tx.send(Err(
+            reth_ethereum::node::api::BeaconOnNewPayloadError::internal(
+                outbe_primitives::error::PrecompileError::CryptoBackendUnavailable(
+                    "injected native failure".into(),
+                ),
+            ),
+        ))
+        .map_err(|_| eyre::eyre!("new_payload receiver closed"))?;
+        let event = work.next_event().await;
+        assert!(work
+            .handle_event(event, &clock, (Height::zero(), Digest::ZERO))?
+            .is_none());
+        assert_eq!(receiver.await?, VerificationOutcome::Unavailable);
+
+        let (retry, _) = enqueue(&mut work, request(block.clone(), None));
+        probe(
+            &mut work,
+            &clock,
+            &mut engine,
+            (block.digest(), PayloadStatusEnum::Valid),
+        )
+        .await?;
+        assert_eq!(retry.await?, VerificationOutcome::Valid);
+        Ok(())
+    })
+}
+
+#[test]
 fn retired_execution_accepts_only_cancellation_after_finality_or_epoch_change() {
     for epoch_change in [false, true] {
         deterministic::Runner::default().start(|clock| async move {

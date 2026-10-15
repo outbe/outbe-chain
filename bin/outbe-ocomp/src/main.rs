@@ -265,23 +265,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn install_private_tribute_reader(chain_id: u64) -> Result<(), Box<dyn std::error::Error>> {
-    match (
-        env::var_os("OUTBE_OCOMP_TEE_ENDPOINT"),
-        env::var_os("OUTBE_OCOMP_NODE_DATA_DIR"),
-    ) {
-        (None, None) => Ok(()),
-        (Some(endpoint), Some(directory)) => {
-            let endpoint = endpoint
-                .into_string()
-                .map_err(|_| OcompCliError::InvalidTeeEndpointUtf8)?;
+    use outbe_ocomp::private_tribute_reader::TeeReaderConfig;
+
+    match TeeReaderConfig::from_lookup(|name| env::var_os(name))? {
+        TeeReaderConfig::Unconfigured => Ok(()),
+        TeeReaderConfig::Development { endpoint } => {
+            outbe_ocomp::private_tribute_reader::install_development_private_tribute_reader(
+                &endpoint, chain_id,
+            )?;
+            Ok(())
+        }
+        TeeReaderConfig::Production {
+            endpoint,
+            node_data_dir,
+        } => {
             outbe_ocomp::private_tribute_reader::install_private_tribute_reader(
                 &endpoint,
-                &PathBuf::from(directory),
+                &node_data_dir,
                 chain_id,
             )?;
             Ok(())
         }
-        _ => Err(OcompCliError::IncompleteTeeReaderConfig.into()),
     }
 }
 

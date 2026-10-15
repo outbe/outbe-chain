@@ -12,6 +12,7 @@ use commonware_consensus::types::{Height, Round};
 use commonware_runtime::Clock;
 use futures::{future::BoxFuture, FutureExt};
 use outbe_primitives::{
+    error::PrecompileError,
     projection::{ExecutionReadBudget, ExecutionReadCancelled, NodeLocalExecutionAbort},
     OutbeExecutionData,
 };
@@ -48,6 +49,7 @@ struct ExecutionRequest {
 enum ExecutionStatus {
     Completed(PayloadStatus),
     Cancelled(ExecutionReadCancelled),
+    CryptoBackendUnavailable,
     NodeLocalAbort(NodeLocalExecutionAbort),
 }
 
@@ -240,7 +242,10 @@ impl VerificationWork {
                         PayloadStatusEnum::Valid,
                     )))
                 } else {
-                    ExecutionStatus::from_engine(engine.new_payload(execution_data).await, digest)
+                    ExecutionStatus::from_engine_with_crypto(
+                        engine.new_payload(execution_data).await,
+                        digest,
+                    )
                 };
                 Delivery {
                     request: ExecutionRequest {
@@ -305,5 +310,21 @@ impl Verification {
 impl Event {
     fn from_progress(result: eyre::Result<()>) -> Self {
         result.map_or_else(Event::Failed, |_| Event::Changed)
+    }
+}
+
+impl ExecutionStatus {
+    fn from_engine_with_crypto(
+        result: Result<PayloadStatus, reth_ethereum::node::api::BeaconOnNewPayloadError>,
+        digest: Digest,
+    ) -> eyre::Result<Self> {
+        if let Err(reth_ethereum::node::api::BeaconOnNewPayloadError::Internal(source)) = &result {
+            if PrecompileError::find_crypto_backend_failure(source.as_ref()).is_some() {
+                tracing::error!(error = %source,
+                    "native cryptographic backend unavailable; block validity not determined");
+                return Ok(Self::CryptoBackendUnavailable);
+            }
+        }
+        Self::from_engine(result, digest)
     }
 }

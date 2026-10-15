@@ -82,6 +82,7 @@ members = [
     "testing/lysis-v1-reference",
     "testing/protocol-benchmarks",
     "crates/zk/outbe-zk",
+    "crates/zk/outbe-barretenberg",
     "crates/zk/outbe-zk-backend",
 ]
 exclude = [
@@ -111,6 +112,8 @@ warnings = "deny"
 undocumented_unsafe_blocks = "deny"
 
 [workspace.dependencies]
+barretenberg-rs = { version = "=5.0.0-nightly.20260522", default-features = false, features = ["ffi"] }
+outbe-barretenberg = { path = "crates/zk/outbe-barretenberg" }
 # Internal - blockchain
 outbe-macros = { path = "crates/blockchain/macros" }
 outbe-chain-constants = { path = "crates/blockchain/constants" }

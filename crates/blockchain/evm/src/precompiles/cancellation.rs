@@ -15,6 +15,7 @@ use std::sync::Arc;
 enum AbortTerminal {
     ReadCancelled(ExecutionReadCancelled),
     NodeLocal(NodeLocalExecutionAbort),
+    CryptoBackendUnavailable(String),
 }
 
 #[derive(Clone, Default)]
@@ -28,11 +29,23 @@ impl ExecutionAbortBridge {
     }
 
     pub(crate) fn observe(&self, error: &PrecompileError, readers: Option<&RuntimeBodyReaders>) {
+        // A handler cannot convert a failed native operation into a deterministic
+        // revert or success by catching a child error. Clear only at call end.
+        if matches!(
+            *self.terminal.lock(),
+            Some(AbortTerminal::CryptoBackendUnavailable(_))
+        ) {
+            return;
+        }
         match error {
             PrecompileError::BodyReadRequestDeadline => {
                 *self.terminal.lock() = readers
                     .and_then(RuntimeBodyReaders::cancelled_read_budget)
                     .map(|budget| AbortTerminal::ReadCancelled(ExecutionReadCancelled { budget }));
+            }
+            PrecompileError::CryptoBackendUnavailable(message) => {
+                *self.terminal.lock() =
+                    Some(AbortTerminal::CryptoBackendUnavailable(message.clone()));
             }
             PrecompileError::EnclaveUnavailable(reason)
             | PrecompileError::BodyReadUnavailable(reason)
@@ -59,7 +72,7 @@ impl ExecutionAbortBridge {
     pub(crate) fn check_subcall(&self) -> Result<(), SubCallError> {
         if self.terminal.lock().is_some() {
             return Err(SubCallError::Fatal(
-                "execution already stopped on a cancelled body read".into(),
+                "execution already stopped on a node-local infrastructure failure".into(),
             ));
         }
         Ok(())
@@ -82,6 +95,12 @@ impl ExecutionCall {
             | (Ok(_), Some(AbortTerminal::NodeLocal(abort))) => {
                 Err(EVMError::CustomAny(AnyError::new(abort)))
             }
+            (Err(EVMError::Custom(_)), Some(AbortTerminal::CryptoBackendUnavailable(message)))
+            | (Ok(_), Some(AbortTerminal::CryptoBackendUnavailable(message))) => {
+                Err(EVMError::CustomAny(AnyError::new(
+                    PrecompileError::CryptoBackendUnavailable(message),
+                )))
+            }
             (result, _) => result,
         }
     }
@@ -98,6 +117,23 @@ mod tests {
     use super::*;
     use outbe_offchain_storage::MemoryStorage;
     use outbe_primitives::projection::ExecutionReadBudget;
+
+    #[test]
+    fn crypto_abort_survives_caught_child_errors_and_does_not_leak() {
+        let bridge = ExecutionAbortBridge::default();
+        let call = bridge.begin_call();
+        bridge.observe(
+            &PrecompileError::CryptoBackendUnavailable("injected".into()),
+            None,
+        );
+        bridge.observe(&PrecompileError::Revert("caught child error".into()), None);
+        let result: Result<(), EVMError<std::convert::Infallible>> = Ok(());
+        let error = call.finish(result);
+        assert!(matches!(error, Err(EVMError::CustomAny(_))));
+        assert!(bridge.check_subcall().is_ok());
+        let result: Result<(), EVMError<std::convert::Infallible>> = Ok(());
+        assert!(bridge.begin_call().finish(result).is_ok());
+    }
 
     #[test]
     fn abort_marker_cannot_reclassify_a_database_or_later_provider_failure() {

@@ -9,6 +9,10 @@ foundry = "latest"                 # forge, cast, anvil (Solidity + Ethereum CLI
 #   - openssl       (linked by openssl-sys; pkg-config locates it)
 # macOS: `brew install openssl pkg-config` (clang ships with Xcode CLT)
 # Debian/Ubuntu: `sudo apt install build-essential clang libssl-dev pkg-config libc++-dev libc++abi-dev`
+# Native Poseidon consumers also require libc++ at runtime (Linux: libc++1/libc++abi1).
+# bb is the CLI, not libbb-external.a. FFI builds fetch the matching static archive
+# unless BB_LIB_DIR is set; do not override BARRETENBERG_VERSION or use an unverified
+# BB_LIB_DIR for releases. The release container supplies a checksum-pinned archive.
 
 # -- Cargo tools ------------------------------------------------------- #
 # Core tools needed by build/test/audit tasks. The heavier audit toolchain

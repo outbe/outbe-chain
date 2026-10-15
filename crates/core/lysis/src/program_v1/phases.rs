@@ -703,7 +703,7 @@ pub fn output_finalize(
             return Err(ProgramErrorV1::OutputCountMismatch);
         }
         let nod_id = derive_poseidon_entity_id(amount.owner, amount.worldwide_day)
-            .map_err(ProgramErrorV1::arithmetic)?;
+            .map_err(ProgramErrorV1::IdentityHash)?;
         ordered_records.push(FinalizedOutputRecordV1 {
             raw_ordinal: amount.raw_ordinal,
             nod_action: NodActionV1 {

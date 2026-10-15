@@ -277,7 +277,7 @@ pub(super) fn validate_poseidon_identity(
     worldwide_day: outbe_primitives::time::WorldwideDay,
 ) -> Result<(), ProjectionError> {
     let expected = derive_poseidon_entity_id(owner, worldwide_day)
-        .map_err(|error| malformed_event(source, error))?;
+        .map_err(|error| commitment_event_error(source, error))?;
     if actual != expected {
         return Err(malformed_event(
             source,
@@ -343,7 +343,7 @@ pub(super) fn validate_stored_commitment(
             .map_err(|error| malformed_event(source, error))?;
     }
     let expected = body_commitment(ACTIVE_COMMITMENT_SCHEME, schema_version, identity, payload)
-        .map_err(|error| malformed_event(source, error))?;
+        .map_err(|error| commitment_event_error(source, error))?;
     if new != B256::from(*expected.as_bytes()) {
         return Err(malformed_event(
             source,
@@ -369,6 +369,18 @@ pub(super) fn malformed_event(
     ProjectionError::MalformedProjectionEvent {
         event_source: Box::new(source),
         reason: error.to_string(),
+    }
+}
+
+fn commitment_event_error(
+    source: ProjectionSource,
+    error: outbe_compressed_entities::CommitmentError,
+) -> ProjectionError {
+    match error {
+        outbe_compressed_entities::CommitmentError::CryptoBackend(_) => {
+            ProjectionError::CryptoBackendUnavailable(error)
+        }
+        _ => malformed_event(source, error),
     }
 }
 

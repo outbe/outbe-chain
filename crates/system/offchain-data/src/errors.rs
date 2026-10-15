@@ -14,6 +14,8 @@ use crate::state::{ProjectionConfig, ProjectionSource};
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ProjectionError {
+    #[error("node-local cryptographic backend unavailable: {0}")]
+    CryptoBackendUnavailable(#[source] outbe_compressed_entities::CommitmentError),
     #[error("off-chain storage failure: {0}")]
     Storage(#[from] StorageError),
     #[error("Tribute repository failure: {0}")]
@@ -103,7 +105,12 @@ impl From<outbe_compressed_entities::CanonicalBodyError> for ProjectionError {
 
 impl From<outbe_compressed_entities::CommitmentError> for ProjectionError {
     fn from(error: outbe_compressed_entities::CommitmentError) -> Self {
-        Self::CorruptProjectedBody(error.to_string())
+        match error {
+            outbe_compressed_entities::CommitmentError::CryptoBackend(_) => {
+                Self::CryptoBackendUnavailable(error)
+            }
+            _ => Self::CorruptProjectedBody(error.to_string()),
+        }
     }
 }
 

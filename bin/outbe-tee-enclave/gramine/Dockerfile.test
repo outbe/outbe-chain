@@ -4,6 +4,10 @@
 # image. Test artifacts from this image are never release artifacts.
 FROM gramineproject/gramine:1.9-noble@sha256:bdf2d0ef9bd09fa10684e14fbe822236df35708d58a852209c5f235842ecb6d7
 
+# Standalone native hashing now needs libc++ even in the mock enclave lane.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libc++1 libc++abi1 && rm -rf /var/lib/apt/lists/*
+
 COPY outbe-tee-enclave.manifest.template /app/
 COPY entrypoint.test.sh /app/
 RUN chmod 0755 /app/entrypoint.test.sh

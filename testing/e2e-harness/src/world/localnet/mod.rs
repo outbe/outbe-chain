@@ -15,147 +15,57 @@
 //! - [`follower`] - full-execution follower nodes (`--upstream`).
 //! - [`log_audit`] - runtime-log normalization, policy, and evidence.
 //! - [`probes`] - datadir, compressed-entity, and timing observations.
+//! - [`enclave`] - enclave image identity, execution profile, and startup budgets.
+//! - [`teardown`] - owned-process shutdown and scoped data cleanup.
+//! - [`timing`] - start options and scenario clock calculations.
 
 mod bootstrap;
 mod committee;
+mod enclave;
 mod follower;
 mod joiner;
 mod log_audit;
 mod probes;
 mod radicle;
+#[cfg(feature = "ocomp-integration")]
+mod snapshot;
+mod teardown;
+mod timing;
 
 pub use bootstrap::BootstrapProfile;
 pub(crate) use log_audit::{ExpectedTeeFailures, LogAudit};
 pub use probes::{CeStartupReplayObservationV1, OcompRuntimeTraceMarkerV1};
 #[cfg(feature = "ocomp-integration")]
 pub(crate) use radicle::RadicleRepositoryFixtureV1;
+#[cfg(feature = "ocomp-integration")]
+use snapshot::{checked_node_interrupt, process_observed_millis, NodeLaunchRecipe};
+#[cfg(feature = "ocomp-integration")]
+pub(crate) use snapshot::{NodeLaunchObservation, StoppedSnapshotNode};
+pub(crate) use timing::ymd_utc;
+pub use timing::{worldwide_day, StartOpts};
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use eyre::{bail, Result, WrapErr};
 
 use crate::internal::config::Config;
 use crate::internal::launch_log::LaunchLog;
-use crate::internal::proc::{
-    self, args, redact_args_for_log, ChildGuard, DockerImageId, EnclaveGuard,
-};
+#[cfg(test)]
+use crate::internal::proc;
+use crate::internal::proc::{args, redact_args_for_log, ChildGuard, DockerImageId, EnclaveGuard};
 use crate::internal::shell::Sh;
-use crate::world::state::DkgExpiryExpectedExit;
+#[cfg(test)]
+use enclave::extend_real_sgx_process_environment;
+#[cfg(test)]
+use teardown::sealed_dirs;
 
 /// Per-node execution cache for validators co-located by the devnet harness.
 /// The upstream 4 GiB default is a single-node deployment default. Applying it
 /// to every local validator would consume the process budget before OCOMP begins.
 const CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB: u64 = 512;
-
-/// Test-provided knobs for a localnet start. The **enclave mode** is NOT here.
-/// It is an environment decision read from [`Config::tee_mode`]. Only per-scenario
-/// parameters live on this struct.
-#[derive(Debug, Clone, Default)]
-pub struct StartOpts {
-    /// Expected governance voting window in the already materialized genesis.
-    /// Startup rejects a mismatch. This option never changes chain parameters.
-    pub voting_window: Option<u64>,
-    /// Signed wall-clock offset used only by debug-node day-boundary E2E.
-    pub unix_time_offset_secs: Option<i64>,
-    /// The scenario already shifted `genesis.json` before deriving another
-    /// immutable manifest binding from it. Nodes still receive the clock
-    /// offset, but the common start path must not shift genesis a second time.
-    pub genesis_timestamp_pre_shifted: bool,
-    /// Short-lived pool policy used only by the dedicated eviction scenario.
-    pub is_txpool_eviction_profile: bool,
-}
-
-impl StartOpts {
-    /// A start expecting the given genesis governance voting window.
-    pub fn with_voting_window(window: u64) -> Self {
-        Self {
-            voting_window: Some(window),
-            unix_time_offset_secs: None,
-            genesis_timestamp_pre_shifted: false,
-            is_txpool_eviction_profile: false,
-        }
-    }
-
-    pub fn with_txpool_eviction_profile(window: u64) -> Self {
-        Self {
-            voting_window: Some(window),
-            is_txpool_eviction_profile: true,
-            ..Self::default()
-        }
-    }
-
-    pub fn near_next_utc_day(window: u64, now_secs: u64) -> Self {
-        const BOUNDARY_LEAD_SECS: u64 = 120;
-        Self::near_next_utc_day_with_lead(window, now_secs, BOUNDARY_LEAD_SECS)
-    }
-
-    /// Position the debug-node clock an exact number of seconds before the next
-    /// UTC day boundary. Capacity scenarios need a wider lead than the ordinary
-    /// one-item lifecycle because every input must first be finalized through
-    /// the public transaction path.
-    pub fn near_next_utc_day_with_lead(
-        window: u64,
-        now_secs: u64,
-        boundary_lead_secs: u64,
-    ) -> Self {
-        use outbe_primitives::time::SECONDS_PER_DAY;
-        let next_day = now_secs - (now_secs % SECONDS_PER_DAY) + SECONDS_PER_DAY;
-        let target = next_day.saturating_sub(boundary_lead_secs);
-        Self {
-            voting_window: Some(window),
-            unix_time_offset_secs: Some(target as i64 - now_secs as i64),
-            genesis_timestamp_pre_shifted: false,
-            is_txpool_eviction_profile: false,
-        }
-    }
-}
-
-/// Facts captured from the configured command and this owned launch.
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg(feature = "ocomp-integration")]
-pub(crate) struct NodeLaunchObservation {
-    pub(crate) index: usize,
-    pub(crate) pid: u32,
-    pub(crate) program: PathBuf,
-    pub(crate) argv: Vec<String>,
-    pub(crate) started_at_millis: u64,
-    pub(crate) log_path: PathBuf,
-    pub(crate) log_start: u64,
-}
-
-#[derive(Clone, Debug)]
-#[cfg(feature = "ocomp-integration")]
-struct NodeLaunchRecipe {
-    observation: NodeLaunchObservation,
-    node_dir: PathBuf,
-    environment: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
-    current_dir: Option<PathBuf>,
-}
-#[cfg(feature = "ocomp-integration")]
-impl NodeLaunchRecipe {
-    fn command(&self) -> Command {
-        let mut command = Command::new(&self.observation.program);
-        command.args(&self.observation.argv);
-        for (key, value) in &self.environment {
-            match value {
-                Some(value) => {
-                    command.env(key, value);
-                }
-                None => {
-                    command.env_remove(key);
-                }
-            }
-        }
-        if let Some(path) = &self.current_dir {
-            command.current_dir(path);
-        }
-        command
-    }
-}
 
 #[derive(Clone, Debug)]
 #[cfg(feature = "ocomp-integration")]
@@ -165,55 +75,6 @@ pub(crate) struct NodeStopObservation {
     pub(crate) reaped_at_millis: u64,
     pub(crate) code: Option<i32>,
     pub(crate) signal: Option<i32>,
-}
-
-/// One stopped owned incarnation, consumed when replaying its own launch.
-/// Private recipe/owner fields prevent constructing a donor recipe for a recipient.
-#[derive(Debug)]
-#[cfg(feature = "ocomp-integration")]
-pub(crate) struct StoppedSnapshotNode {
-    pub(crate) observation: NodeStopObservation,
-    recipe: NodeLaunchRecipe,
-    follower_name: Option<String>,
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn process_observed_millis() -> Result<u64> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_millis()
-        .try_into()?)
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn checked_node_interrupt(
-    child: &mut ChildGuard,
-    launch: NodeLaunchObservation,
-) -> Result<NodeStopObservation> {
-    use std::os::unix::process::ExitStatusExt as _;
-    eyre::ensure!(child.pid() == launch.pid, "owned node incarnation changed");
-    eyre::ensure!(
-        child.exit_status()?.is_none(),
-        "owned node exited before requested snapshot stop"
-    );
-    let requested = process_observed_millis()?;
-    child.interrupt();
-    let status = child
-        .exit_status()?
-        .ok_or_else(|| eyre::eyre!("owned node remained live after SIGINT stop"))?;
-    // A default signal exit or fallback SIGKILL is not a successfully closed node.
-    eyre::ensure!(
-        status.success(),
-        "owned node PID {} failed during SIGINT stop: {status}",
-        child.pid()
-    );
-    Ok(NodeStopObservation {
-        launch,
-        stop_requested_at_millis: requested,
-        reaped_at_millis: process_observed_millis()?,
-        code: status.code(),
-        signal: status.signal(),
-    })
 }
 
 #[derive(Debug)]
@@ -290,79 +151,6 @@ impl Localnet {
     /// Enable forged pre-announces only for nodes in this scenario.
     pub(crate) fn arm_byzantine_preannounces(&mut self) {
         self.byzantine_preannounce = true;
-    }
-
-    fn enclave_startup_deadline(&self, nonhardware_seconds: u64) -> std::time::Instant {
-        let now = std::time::Instant::now();
-        let seconds = if self.cfg.tee_mode.passes_sgx_devices() {
-            crate::env::CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS
-        } else {
-            nonhardware_seconds
-        };
-        let deadline = now + std::time::Duration::from_secs(seconds);
-        // Leave the existing watchdog time for diagnostics and owned teardown.
-        self.scenario_deadline.map_or(deadline, |outer| {
-            deadline.min(
-                outer
-                    .checked_sub(std::time::Duration::from_secs(20))
-                    .unwrap_or(now),
-            )
-        })
-    }
-
-    fn retain_enclave_image_id(&mut self, image_id: DockerImageId) -> Result<()> {
-        match &self.enclave_image_id {
-            Some(established) if established != &image_id => {
-                bail!("Gramine Docker image identity changed during the scenario");
-            }
-            Some(_) => Ok(()),
-            None => {
-                self.enclave_image_id = Some(image_id);
-                Ok(())
-            }
-        }
-    }
-
-    fn ensure_enclave_image_once_with<F>(&mut self, resolve: F) -> Result<()>
-    where
-        F: FnOnce() -> Result<DockerImageId>,
-    {
-        if self.enclave_image_id.is_some() {
-            return Ok(());
-        }
-        self.retain_enclave_image_id(resolve()?)
-    }
-
-    fn ensure_enclave_image_once(&mut self) -> Result<()> {
-        // The native profile runs no container, so it must not build, resolve or
-        // retain an image identity. `enclave_image_id()` stays `None`, and the
-        // evidence records no Gramine image for a run that never used one.
-        if self.cfg.tee_mode.runs_native_host_enclave() {
-            return Ok(());
-        }
-        let repo = self.cfg.repo.clone();
-        let sudo = self.cfg.sudo;
-        let signing_key = self.cfg.dir.join("test-sgx-signing-key.pem");
-        self.ensure_enclave_image_once_with(|| {
-            proc::ensure_enclave_image(&repo, sudo, &signing_key, None)
-        })
-    }
-
-    /// The execution profile every enclave in this scenario runs under.
-    fn enclave_launch(&self) -> Result<proc::EnclaveLaunch> {
-        if self.cfg.tee_mode.runs_native_host_enclave() {
-            return Ok(proc::EnclaveLaunch::NativeHost);
-        }
-        Ok(proc::EnclaveLaunch::Gramine {
-            image_id: self
-                .enclave_image_id
-                .clone()
-                .ok_or_else(|| eyre::eyre!("Gramine Docker image identity was not resolved"))?,
-        })
-    }
-
-    pub(crate) fn enclave_image_id(&self) -> Option<&str> {
-        self.enclave_image_id.as_ref().map(DockerImageId::as_str)
     }
 
     fn sh(&self) -> Sh<'_> {
@@ -442,31 +230,6 @@ impl Localnet {
         Ok((node_pid, self.live_enclave_pid(index)?))
     }
 
-    /// The owned foreground enclave launcher must remain observable and live.
-    pub(crate) fn live_enclave_pid(&mut self, index: usize) -> Result<u32> {
-        let enclave = self
-            .enclaves
-            .get_mut(&index)
-            .ok_or_else(|| eyre::eyre!("validator-{index} has no owned enclave"))?;
-        eyre::ensure!(
-            enclave.exit_status()?.is_none(),
-            "validator-{index} enclave exited"
-        );
-        Ok(enclave.pid())
-    }
-
-    /// Co-located hardware enclaves have an E2E-only startup allowance. The
-    /// node's production/testnet default remains unchanged. The node's operator
-    /// must choose that value for the deployment topology.
-    fn extend_real_sgx_startup_timeout(&self, args: &mut Vec<String>) {
-        if self.cfg.tee_mode.passes_sgx_devices() {
-            args.extend(args![
-                "--tee-bootstrap-timeout-secs",
-                crate::env::CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS
-            ]);
-        }
-    }
-
     /// The flags common to every node process (committee, joiner, follower):
     /// reth http/p2p/discovery/authrpc/ipc/log for port index `i`, rooted at
     /// `node_dir`. Callers `.extend(args![...])` with their role-specific tail.
@@ -516,9 +279,14 @@ impl Localnet {
             "--color",
             "never",
         ];
-        if matches!(self.cfg.tee_mode, crate::env::TeeMode::SgxNoAttest) {
-            args.extend(args!["--tee-session-mode", "production-node-host"]);
-        }
+        args.extend(args![
+            "--tee-session-mode",
+            if self.cfg.uses_production_node_host_session() {
+                "production-node-host"
+            } else {
+                "development"
+            }
+        ]);
         args
     }
 
@@ -572,7 +340,7 @@ impl Localnet {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         ensure_manual_tee_lease_node_args(&node_args)?;
-        extend_real_sgx_process_environment(self.cfg.tee_mode, &mut cmd);
+        enclave::extend_real_sgx_process_environment(self.cfg.tee_mode, &mut cmd);
         if self.byzantine_preannounce {
             cmd.env("OUTBE_TEST_BYZANTINE_PREANNOUNCE", "1");
         } else {
@@ -650,295 +418,6 @@ impl Localnet {
         log.read()
             .wrap_err_with(|| format!("read node-{index} launch log for PID {expected_pid}"))
     }
-
-    #[cfg(feature = "ocomp-integration")]
-    fn captured_node_recipe(&self, index: usize, expected_pid: u32) -> Result<NodeLaunchRecipe> {
-        let recipe = self
-            .node_launch_recipes
-            .get(&index)
-            .ok_or_else(|| eyre::eyre!("node-{index} has no captured launch recipe"))?;
-        eyre::ensure!(
-            recipe.observation.pid == expected_pid,
-            "node-{index} captured launch PID mismatch"
-        );
-        Ok(recipe.clone())
-    }
-
-    #[cfg(feature = "ocomp-integration")]
-    pub(crate) fn validator_launch_observation(
-        &mut self,
-        index: usize,
-    ) -> Result<NodeLaunchObservation> {
-        let child = self
-            .validators
-            .get_mut(&index)
-            .ok_or_else(|| eyre::eyre!("validator-{index} has no owned node"))?;
-        eyre::ensure!(
-            child.exit_status()?.is_none(),
-            "validator-{index} node exited"
-        );
-        let pid = child.pid();
-        Ok(self.captured_node_recipe(index, pid)?.observation)
-    }
-
-    #[cfg(feature = "ocomp-integration")]
-    pub(crate) fn stop_validator_for_snapshot(
-        &mut self,
-        index: usize,
-        expected_pid: u32,
-    ) -> Result<StoppedSnapshotNode> {
-        let observed = self.validator_launch_observation(index)?;
-        eyre::ensure!(
-            observed.pid == expected_pid,
-            "validator-{index} stop PID mismatch"
-        );
-        let recipe = self.captured_node_recipe(index, expected_pid)?;
-        let observation = checked_node_interrupt(
-            self.validators.get_mut(&index).expect("checked owned node"),
-            observed,
-        )?;
-        self.validators.remove(&index);
-        if let Some((pid, log)) = self.node_launch_logs.get_mut(&index) {
-            eyre::ensure!(*pid == expected_pid, "node stop log incarnation changed");
-            log.seal()?;
-        }
-        Ok(StoppedSnapshotNode {
-            observation,
-            recipe,
-            follower_name: None,
-        })
-    }
-
-    /// Replay this stopped process's actual command. The replay reuses native
-    /// stores, keys, enclave, arguments and explicit environment. No provisioning
-    /// runs here.
-    #[cfg(feature = "ocomp-integration")]
-    pub(crate) fn resume_snapshot_node(
-        &mut self,
-        stopped: StoppedSnapshotNode,
-    ) -> Result<NodeLaunchObservation> {
-        let index = stopped.observation.launch.index;
-        let node_dir = self.cfg.validator_dir(index);
-        eyre::ensure!(
-            stopped.recipe.node_dir == node_dir,
-            "stopped recipe belongs to another node directory"
-        );
-        eyre::ensure!(
-            !self.validators.contains_key(&index),
-            "node index still has an owned validator"
-        );
-        eyre::ensure!(
-            !self
-                .validators
-                .values()
-                .chain(self.followers.values())
-                .any(|child| child.owns_node_data_dir(&node_dir.join("data"))),
-            "node datadir still has an owned writer"
-        );
-        if let Some(name) = &stopped.follower_name {
-            eyre::ensure!(
-                !self.followers.contains_key(name),
-                "follower name still has an owned node"
-            );
-            follower::ensure_validator_recovery_follower_args(&stopped.recipe.observation.argv)?;
-        }
-        let label = stopped
-            .follower_name
-            .clone()
-            .unwrap_or_else(|| format!("validator-{index}"));
-        let mut command = stopped.recipe.command();
-        proc::attach_log(&mut command, &node_dir)?;
-        let guard = self.spawn_node(&label, index, &node_dir, command)?;
-        let pid = guard.pid();
-        if let Some(name) = stopped.follower_name {
-            self.followers.insert(name, guard);
-        } else {
-            self.validators.insert(index, guard);
-        }
-        // Capture actual final argv again. Projection option handling is idempotent.
-        let observed = self.captured_node_recipe(index, pid)?.observation;
-        eyre::ensure!(
-            observed.argv == stopped.recipe.observation.argv
-                && observed.program == stopped.recipe.observation.program,
-            "ordinary restart changed actual launch options"
-        );
-        Ok(observed)
-    }
-
-    // ---- teardown ------------------------------------------------------------
-
-    fn clear_owned_nodes(&mut self) {
-        self.validators.clear();
-        self.followers.clear();
-        self.follower_startup_probes.clear();
-        self.node_launch_logs.clear();
-        #[cfg(feature = "ocomp-integration")]
-        self.node_launch_recipes.clear();
-    }
-
-    /// Drop the owned node handles (killing nodes + `docker rm -f`ing enclaves),
-    /// then run a stateless backstop sweep. Its primary role is the SIGINT path,
-    /// where the `World` is never dropped so the guards never fire (plus
-    /// intra-run belt-and-suspenders between scenarios). It is scoped to this
-    /// run's unique data subdir + enclave run tag, so it never touches another
-    /// run's nodes/containers.
-    fn shutdown(&mut self) -> Result<()> {
-        self.shutdown_with_expected_exits(&[], &[])
-    }
-
-    fn stop_owned_nodes(
-        &mut self,
-        expected_failed_slots: &[usize],
-        expected_dkg_expiry_exits: &[DkgExpiryExpectedExit],
-    ) -> Result<()> {
-        let mut failures = Vec::new();
-        // Check every retained slot, including missing handles that the stop
-        // loop cannot visit. A replacement launch cannot inherit this proof.
-        for proof in expected_dkg_expiry_exits {
-            let owned_pid = self.validators.get(&proof.slot).map(ChildGuard::pid);
-            let launch_pid = self.node_launch_logs.get(&proof.slot).map(|(pid, _)| *pid);
-            if proof.node_pid == 0
-                || owned_pid != Some(proof.node_pid)
-                || launch_pid != Some(proof.node_pid)
-            {
-                failures.push(format!(
-                    "DKG expiry slot {} expected PID {}, owned {owned_pid:?}, launch {launch_pid:?}",
-                    proof.slot, proof.node_pid
-                ));
-            }
-        }
-        for (slot, child) in self
-            .validators
-            .iter_mut()
-            .map(|(slot, child)| (Some(*slot), child))
-            .chain(self.followers.values_mut().map(|child| (None, child)))
-        {
-            let pid = child.pid();
-            let expiry = expected_dkg_expiry_exits
-                .iter()
-                .find(|proof| Some(proof.slot) == slot);
-            let expected = self.node_launch_logs.iter().any(|(slot, (owned_pid, _))| {
-                *owned_pid == pid && expected_failed_slots.contains(slot)
-            });
-            let result = (|| -> Result<()> {
-                let before = child.exit_status()?;
-                let status = child.stop_and_reap()?;
-                if let Some(proof) = expiry {
-                    eyre::ensure!(
-                        proof.node_pid == pid
-                            && before.is_some_and(|status| status.code() == Some(1))
-                            && status.code() == Some(1),
-                        "DKG expiry slot {} PID {pid} did not retain its witnessed natural exit 1 before cleanup: before={before:?}, after={status}",
-                        proof.slot
-                    );
-                    return Ok(());
-                }
-                // An intentional protocol rejection must have happened before
-                // cleanup. The after-hook independently requires its exact
-                // cause in both runtime log sinks. This is not a log waiver.
-                eyre::ensure!(
-                    status.success() || (expected && before.is_some() && status.code() == Some(1)),
-                    "owned node PID {pid} exited with {status}"
-                );
-                Ok(())
-            })();
-            if let Err(error) = result {
-                failures.push(format!("{error:#}"));
-            }
-        }
-        self.clear_owned_nodes();
-        eyre::ensure!(
-            failures.is_empty(),
-            "node teardown failed: {}",
-            failures.join("; ")
-        );
-        Ok(())
-    }
-
-    fn shutdown_with_expected_exits(
-        &mut self,
-        expected_failed_slots: &[usize],
-        expected_dkg_expiry_exits: &[DkgExpiryExpectedExit],
-    ) -> Result<()> {
-        // Stateless signal-path backstop for the harness-owned price feeder.
-        // Its config argv is rooted under this run/scenario directory.
-        let feeder = format!("outbe-feeder.*{}", self.dir());
-        self.sh().sudo_best_effort("pkill", &["-9", "-f", &feeder]);
-        // Nodes first (release MDBX locks), then their enclaves - matching the
-        // stop-nodes-then-teardown-enclaves ordering `run-testnet.sh` used.
-        let node_result = self.stop_owned_nodes(expected_failed_slots, expected_dkg_expiry_exits);
-        self.radicle_sidecars.clear();
-        self.user_radicle = None;
-        self.enclaves.clear();
-        // No settle is needed here. Clearing the maps dropped every guard, which
-        // synchronously `kill()`s + `wait()`s the owned nodes/enclaves. The sweep
-        // below is a fire-and-forget backstop.
-
-        let nodes = format!("outbe-chain node.*{}", self.dir());
-        self.sh().sudo_best_effort("pkill", &["-9", "-f", &nodes]);
-        let radicle = format!("outbe-radicle.*{}", self.dir());
-        self.sh().sudo_best_effort("pkill", &["-9", "-f", &radicle]);
-        if self.cfg.tee_mode.runs_native_host_enclave() {
-            // Native enclaves are processes, not containers. Their `--tee-dir`
-            // argv carries this run's dir, so the pattern is run-scoped exactly
-            // like the node sweep above.
-            let enclaves = format!("outbe-tee-enclave.*{}", self.dir());
-            self.sh()
-                .sudo_best_effort("pkill", &["-9", "-f", &enclaves]);
-        } else {
-            let tee_sweep = format!(
-                "docker ps -aq --filter name=outbe-tee-gramine-{}- | xargs -r docker rm -f",
-                self.cfg.run_tag
-            );
-            self.sh().sudo_best_effort("bash", &["-c", &tee_sweep]);
-        }
-        let runtime_result = self.cleanup_radicle_runtime();
-        node_result.and(runtime_result)
-    }
-
-    /// Remove `cfg.dir` (this localnet's scenario dir, or the whole run dir when
-    /// built from the run-level [`Config`]). Already-gone is success.
-    ///
-    /// `validator-<i>/tee` is the enclave container's only writable mount
-    /// (`proc::spawn_enclave`), so under `--sudo` it is the only thing this user
-    /// can't unlink. Drop those with `sudo rm` first. Everything else the
-    /// harness created itself, and a failure to remove it is a real error.
-    pub fn wipe(&self) -> Result<()> {
-        self.cleanup_radicle_runtime()?;
-        if !self.cfg.dir.exists() {
-            return Ok(());
-        }
-        if self.cfg.sudo {
-            for tee in sealed_dirs(&self.cfg.dir) {
-                self.sh()
-                    .sudo_best_effort("rm", &["-rf", &tee.display().to_string()]);
-            }
-        }
-        fs::remove_dir_all(&self.cfg.dir)
-            .wrap_err_with(|| format!("wiping data dir {}", self.dir()))
-    }
-
-    /// Post-run teardown: shut down all nodes + enclave containers, leaving the
-    /// data dir (logs/chain state) intact for inspection. Invoked from the
-    /// cucumber `after` hook (and the SIGINT handler).
-    pub fn teardown(&mut self) -> Result<()> {
-        self.shutdown()
-    }
-
-    /// Expected exit-1 slots still require the after-hook's exact fault audit.
-    /// DKG expiry additionally requires its retained slot/PID halt evidence.
-    pub(crate) fn teardown_with_expected_exits(
-        &mut self,
-        slots: &[usize],
-        dkg_expiry_exits: &[DkgExpiryExpectedExit],
-    ) -> Result<()> {
-        self.shutdown_with_expected_exits(slots, dkg_expiry_exits)
-    }
-
-    /// Stop the localnet (alias for [`teardown`](Self::teardown)).
-    pub fn stop(&mut self) -> Result<()> {
-        self.shutdown()
-    }
 }
 
 fn ensure_manual_tee_lease_node_args(args: &[String]) -> Result<()> {
@@ -950,80 +429,6 @@ fn ensure_manual_tee_lease_node_args(args: &[String]) -> Result<()> {
         bail!("generated node command contains removed TEE renewal option {option}");
     }
     Ok(())
-}
-
-/// Co-located real enclaves share one physical EPC. A request can therefore
-/// complete in the enclave after the production-oriented 30-second host timeout.
-/// The enclave then observes a broken pipe even though it produced and sealed the
-/// result. Widen only the hardware E2E lane. Production/testnet retain their
-/// explicit operator-selected/default deadline.
-fn extend_real_sgx_process_environment(mode: crate::env::TeeMode, cmd: &mut Command) {
-    if mode.passes_sgx_devices() {
-        cmd.env(
-            "OUTBE_TEE_IO_TIMEOUT_SECS",
-            crate::env::CO_LOCATED_HARDWARE_SGX_TIMEOUT_SECS.to_string(),
-        );
-    }
-}
-
-/// The sealed-state dirs under `root` - the only paths the (root) enclave
-/// container writes. `root` is either a scenario dir (`validator-<i>/tee`) or a
-/// run dir (`scenario-<n>/validator-<i>/tee`). This function checks both shapes.
-///
-/// Deliberately not a recursive walk: `validator-<i>/data` holds the reth MDBX
-/// store, and descending into it would cost far more than the two `read_dir`s
-/// this needs.
-fn sealed_dirs(root: &Path) -> Vec<PathBuf> {
-    fn push_validator_tee(base: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(entries) = fs::read_dir(base) else {
-            return;
-        };
-        for e in entries.flatten() {
-            if e.file_name().to_string_lossy().starts_with("validator-") {
-                let tee = e.path().join("tee");
-                if tee.is_dir() {
-                    out.push(tee);
-                }
-            }
-        }
-    }
-
-    let mut out = Vec::new();
-    push_validator_tee(root, &mut out);
-    if let Ok(entries) = fs::read_dir(root) {
-        for e in entries.flatten() {
-            if e.file_name().to_string_lossy().starts_with("scenario-") {
-                push_validator_tee(&e.path(), &mut out);
-            }
-        }
-    }
-    out
-}
-
-/// The chain's current worldwide-day key (`YYYYMMDD`), matching how
-/// `bootstrap-testnet.sh` seeds genesis: `date_key(now + UTC_PLUS_14_OFFSET)`
-/// (lib.sh:33-34). Pure-Rust civil-date conversion so no `date(1)` shell-out.
-pub fn worldwide_day() -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    ymd_utc(now + 50_400)
-}
-
-/// `YYYYMMDD` for a UTC epoch second (Howard Hinnant's `civil_from_days`).
-pub(crate) fn ymd_utc(secs: u64) -> String {
-    let z = (secs / 86_400) as i64 + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}{m:02}{d:02}")
 }
 
 #[cfg(test)]
@@ -1072,153 +477,6 @@ mod tests {
         let pid = child.pid();
         localnet.validators.insert(index, child);
         pid
-    }
-
-    #[test]
-    fn owned_node_cleanup_rejects_silent_failure_and_checks_expected_slot() {
-        for (code, expected_slots, accepted) in [
-            (0, vec![], true),
-            (1, vec![], false),
-            (1, vec![0], true),
-            (1, vec![1], false),
-            (2, vec![0], false),
-        ] {
-            let dir = tempfile::tempdir().unwrap();
-            let env = Environment {
-                data_dir: dir.path().canonicalize().unwrap(),
-                ..Environment::default()
-            };
-            let mut localnet = Localnet::new(Config::resolve(&env));
-            let node_dir = localnet.cfg.validator_dir(0);
-            fs::create_dir_all(&node_dir).unwrap();
-            let mut command = Command::new("sh");
-            command.args(["-c", &format!("exit {code}")]);
-            proc::attach_log(&mut command, &node_dir).unwrap();
-            let mut child = localnet
-                .spawn_node("exit-fixture", 0, &node_dir, command)
-                .unwrap();
-            child.reap_fault(std::time::Duration::from_secs(2)).unwrap();
-            localnet.validators.insert(0, child);
-            assert_eq!(
-                localnet.stop_owned_nodes(&expected_slots, &[]).is_ok(),
-                accepted,
-                "exit {code}, expected {expected_slots:?}"
-            );
-            assert!(localnet.validators.is_empty());
-            assert!(localnet.node_launch_logs.is_empty());
-        }
-    }
-
-    fn expiry_cleanup_fixture(script: &str, exited: bool) -> (tempfile::TempDir, Localnet, u32) {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment {
-            data_dir: dir.path().canonicalize().unwrap(),
-            ..Environment::default()
-        };
-        let mut localnet = Localnet::new(Config::resolve(&env));
-        let node_dir = localnet.cfg.validator_dir(0);
-        fs::create_dir_all(&node_dir).unwrap();
-        let mut command = Command::new("sh");
-        command.args(["-c", script]);
-        proc::attach_log(&mut command, &node_dir).unwrap();
-        // attach_log defaults stdin to null. This fixture must keep `read`
-        // blocked until cleanup signals it instead of exiting on immediate EOF.
-        command.stdin(std::process::Stdio::piped());
-        let mut child = localnet
-            .spawn_node("expiry-exit-fixture", 0, &node_dir, command)
-            .unwrap();
-        if exited {
-            child.reap_fault(std::time::Duration::from_secs(2)).unwrap();
-        } else {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            while !localnet
-                .node_launch_log(0, child.pid())
-                .unwrap()
-                .contains("ready\n")
-            {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "live fixture not ready"
-                );
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            assert!(child.exit_status().unwrap().is_none());
-        }
-        let pid = child.pid();
-        localnet.validators.insert(0, child);
-        (dir, localnet, pid)
-    }
-
-    #[test]
-    fn dkg_expiry_cleanup_requires_exact_owned_and_launch_pid() {
-        for damage in [
-            "none",
-            "witness_pid",
-            "zero_pid",
-            "witness_slot",
-            "launch_pid",
-            "missing_launch",
-            "missing_owner",
-            "missing_proof",
-        ] {
-            let (_dir, mut localnet, pid) = expiry_cleanup_fixture("exit 1", true);
-            let mut proofs = vec![DkgExpiryExpectedExit {
-                slot: 0,
-                node_pid: pid,
-            }];
-            match damage {
-                "none" => {}
-                "witness_pid" => proofs[0].node_pid += 1,
-                "zero_pid" => proofs[0].node_pid = 0,
-                "witness_slot" => proofs[0].slot = 1,
-                "launch_pid" => localnet.node_launch_logs.get_mut(&0).unwrap().0 += 1,
-                "missing_launch" => {
-                    localnet.node_launch_logs.remove(&0);
-                }
-                "missing_owner" => {
-                    localnet.validators.remove(&0);
-                }
-                "missing_proof" => proofs.clear(),
-                _ => unreachable!(),
-            }
-            assert_eq!(
-                localnet.stop_owned_nodes(&[], &proofs).is_ok(),
-                damage == "none",
-                "accepted damaged DKG expiry evidence: {damage}"
-            );
-            assert!(localnet.validators.is_empty());
-            assert!(localnet.node_launch_logs.is_empty());
-        }
-    }
-
-    #[test]
-    fn dkg_expiry_cleanup_rejects_success_other_errors_signals_and_live_children() {
-        for (script, exited, accepted) in [
-            ("exit 1", true, true),
-            ("exit 0", true, false),
-            ("exit 2", true, false),
-            ("kill -KILL $$", true, false),
-            // Readiness is emitted after installing the trap. Cleanup itself
-            // will produce exit 1, which must not count as a natural halt.
-            (
-                "trap 'exit 1' TERM; printf 'ready\\n'; read unused",
-                false,
-                false,
-            ),
-        ] {
-            let (_dir, mut localnet, pid) = expiry_cleanup_fixture(script, exited);
-            let proof = DkgExpiryExpectedExit {
-                slot: 0,
-                node_pid: pid,
-            };
-            // Even an existing slot allowance cannot bypass the exact proof.
-            assert_eq!(
-                localnet.stop_owned_nodes(&[0], &[proof]).is_ok(),
-                accepted,
-                "script {script}, exited before cleanup {exited}"
-            );
-            assert!(localnet.validators.is_empty());
-        }
     }
 
     #[test]
@@ -1571,176 +829,5 @@ mod tests {
         assert!(eviction.is_txpool_eviction_profile);
         assert_eq!(eviction.voting_window, Some(6));
         assert_eq!(eviction.unix_time_offset_secs, None);
-    }
-}
-
-#[cfg(all(test, feature = "ocomp-integration"))]
-mod snapshot_process_tests {
-    use super::*;
-    use crate::env::Environment;
-    use std::time::{Duration, Instant};
-
-    fn fixture() -> (tempfile::TempDir, Localnet) {
-        let dir = tempfile::tempdir().unwrap();
-        let env = Environment {
-            data_dir: dir.path().canonicalize().unwrap(),
-            ..Environment::default()
-        };
-        (dir, Localnet::new(Config::resolve(&env)))
-    }
-    fn launch(net: &mut Localnet, index: usize, follower: bool, script: &str) -> u32 {
-        let node_dir = net.cfg.validator_dir(index);
-        fs::create_dir_all(node_dir.join("data")).unwrap();
-        let mut command = Command::new("sh");
-        command
-            .args(["-c", script, "owned-node-fixture"])
-            .arg("--datadir")
-            .arg(node_dir.join("data"))
-            .args([
-                "--upstream",
-                "http://127.0.0.1:12345",
-                "--custom=value with spaces",
-                "--custom",
-                "second value",
-            ])
-            .env("OUTBE_FIXTURE_RECIPE", "preserved value")
-            .current_dir(&node_dir);
-        proc::attach_log(&mut command, &node_dir).unwrap();
-        let child = net
-            .spawn_node("owned-node-fixture", index, &node_dir, command)
-            .unwrap();
-        let pid = child.pid();
-        if follower {
-            net.followers.insert(format!("recipient-{index}"), child);
-        } else {
-            net.validators.insert(index, child);
-        }
-        pid
-    }
-    fn ready(net: &mut Localnet, index: usize, pid: u32) -> String {
-        let deadline = Instant::now() + Duration::from_secs(3);
-        loop {
-            let text = net.node_launch_log(index, pid).unwrap();
-            if text.contains("fixture-ready") {
-                return text;
-            }
-            assert!(Instant::now() < deadline, "fixture did not become ready");
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-    const LIVE: &str = "trap 'exit 0' INT; printf '%s\\n' \"$OUTBE_FIXTURE_RECIPE\" \"$PWD\" \"$@\" fixture-ready; while :; do sleep 1; done";
-
-    #[test]
-    fn snapshot_stop_requires_owned_live_incarnation_and_does_not_stop_peer() {
-        for follower in [false, true] {
-            let (_dir, mut net) = fixture();
-            assert!(net.stop_validator_for_snapshot(0, 123).is_err());
-            assert!(net.stop_follower_for_snapshot("missing", 0, 123).is_err());
-            let pid = launch(&mut net, 0, follower, LIVE);
-            let peer = launch(&mut net, 1, false, LIVE);
-            ready(&mut net, 0, pid);
-            ready(&mut net, 1, peer);
-            let wrong = if follower {
-                net.stop_follower_for_snapshot("recipient-0", 0, pid + 1)
-            } else {
-                net.stop_validator_for_snapshot(0, pid + 1)
-            };
-            assert!(wrong.is_err());
-            let stopped = if follower {
-                net.stop_follower_for_snapshot("recipient-0", 0, pid)
-            } else {
-                net.stop_validator_for_snapshot(0, pid)
-            }
-            .unwrap();
-            assert_eq!(stopped.observation.launch.pid, pid);
-            assert_eq!(stopped.observation.code, Some(0));
-            assert_eq!(stopped.observation.signal, None);
-            assert!(
-                stopped.observation.reaped_at_millis
-                    >= stopped.observation.stop_requested_at_millis
-            );
-            assert_eq!(net.validator_launch_observation(1).unwrap().pid, peer);
-            assert!(net
-                .validators
-                .get_mut(&1)
-                .unwrap()
-                .exit_status()
-                .unwrap()
-                .is_none());
-        }
-    }
-
-    #[test]
-    fn snapshot_stop_rejects_already_exited_owner_even_with_success_status() {
-        for follower in [false, true] {
-            for code in [0, 7] {
-                let (_dir, mut net) = fixture();
-                let pid = launch(&mut net, 0, follower, &format!("exit {code}"));
-                let child = if follower {
-                    net.followers.get_mut("recipient-0").unwrap()
-                } else {
-                    net.validators.get_mut(&0).unwrap()
-                };
-                child.reap_fault(Duration::from_secs(3)).unwrap();
-                let result = if follower {
-                    net.stop_follower_for_snapshot("recipient-0", 0, pid)
-                } else {
-                    net.stop_validator_for_snapshot(0, pid)
-                };
-                assert!(
-                    result.is_err(),
-                    "earlier exit must not become an offline stop witness"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn snapshot_ordinary_restart_preserves_actual_final_options_environment_and_data() {
-        for follower in [false, true] {
-            let (_dir, mut net) = fixture();
-            let pid = launch(&mut net, 0, follower, LIVE);
-            let first_text = ready(&mut net, 0, pid);
-            let sentinel = net.cfg.validator_dir(0).join("data/resident-sentinel");
-            fs::write(&sentinel, "resident data").unwrap();
-            let before = if follower {
-                net.follower_launch_observation("recipient-0", 0)
-            } else {
-                net.validator_launch_observation(0)
-            }
-            .unwrap();
-            assert_eq!(
-                before
-                    .argv
-                    .iter()
-                    .filter(|a| *a == "--projection.storage-config")
-                    .count(),
-                1
-            );
-            assert!(before
-                .argv
-                .contains(&"--custom=value with spaces".to_owned()));
-            let stopped = if follower {
-                net.stop_follower_for_snapshot("recipient-0", 0, pid)
-            } else {
-                net.stop_validator_for_snapshot(0, pid)
-            }
-            .unwrap();
-            let restarted = net.resume_snapshot_node(stopped).unwrap();
-            let second_text = ready(&mut net, 0, restarted.pid);
-            assert_eq!(restarted.argv, before.argv);
-            assert_eq!(restarted.program, before.program);
-            assert_eq!(
-                first_text, second_text,
-                "same actual child args/cwd/explicit env"
-            );
-            assert_eq!(fs::read_to_string(&sentinel).unwrap(), "resident data");
-            let _ = if follower {
-                net.stop_follower_for_snapshot("recipient-0", 0, restarted.pid)
-            } else {
-                net.stop_validator_for_snapshot(0, restarted.pid)
-            }
-            .unwrap();
-        }
     }
 }

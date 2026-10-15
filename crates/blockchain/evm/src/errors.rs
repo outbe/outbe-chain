@@ -375,14 +375,51 @@ impl ZkPrecompileError {
         Self::DecodeVerifyCall(error.to_string()).into()
     }
 
-    pub(crate) fn backend_failed(error: impl Display) -> PrecompileError {
-        Self::BackendFailed(error.to_string()).into()
+    pub(crate) fn backend_failed(error: outbe_zk::error::Error) -> PrecompileError {
+        match error {
+            outbe_zk::error::Error::CryptoBackend(_)
+            | outbe_zk::error::Error::Hash(
+                outbe_poseidon::PoseidonError::Runtime(_)
+                | outbe_poseidon::PoseidonError::ResponseLength { .. }
+                | outbe_poseidon::PoseidonError::NoncanonicalField { .. },
+            ) => PrecompileError::CryptoBackendUnavailable(error.to_string()),
+            _ => Self::BackendFailed(error.to_string()).into(),
+        }
     }
 }
 
 impl From<ZkPrecompileError> for PrecompileError {
     fn from(error: ZkPrecompileError) -> Self {
         Self::Revert(error.to_string())
+    }
+}
+
+#[cfg(test)]
+mod zk_error_tests {
+    use super::{PrecompileError, ZkPrecompileError};
+    use outbe_poseidon::PoseidonError;
+
+    #[test]
+    fn malformed_hash_responses_abort_verification_instead_of_reverting() {
+        for cause in [
+            PoseidonError::ResponseLength {
+                index: 0,
+                actual: 31,
+            },
+            PoseidonError::NoncanonicalField { index: 0 },
+        ] {
+            let error = ZkPrecompileError::backend_failed(cause.into());
+            assert!(matches!(
+                error,
+                PrecompileError::CryptoBackendUnavailable(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn invalid_hash_input_remains_a_rejection() {
+        let error = ZkPrecompileError::backend_failed(PoseidonError::InputLength.into());
+        assert!(matches!(error, PrecompileError::Revert(_)));
     }
 }
 

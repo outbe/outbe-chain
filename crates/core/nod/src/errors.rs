@@ -150,9 +150,16 @@ pub enum NodError {
 }
 
 impl NodError {
-    /// Converts an entity-ID derivation failure into a precompile error.
-    pub(crate) fn entity_id_derivation(error: impl std::fmt::Display) -> PrecompileError {
-        Self::EntityIdDerivation(error.to_string()).into()
+    /// Keeps node-local hashing failures distinct from invalid entity identities.
+    pub(crate) fn entity_id_derivation(
+        error: outbe_compressed_entities::CommitmentError,
+    ) -> PrecompileError {
+        match error {
+            outbe_compressed_entities::CommitmentError::CryptoBackend(error) => {
+                PrecompileError::CryptoBackendUnavailable(error.to_string())
+            }
+            error => Self::EntityIdDerivation(error.to_string()).into(),
+        }
     }
 }
 

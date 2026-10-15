@@ -3,11 +3,15 @@
 use thiserror::Error;
 
 /// Errors that cryptographic primitives and protocol logic return.
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum Error {
     /// A hash or KDF operation failed.
     #[error("hash error: {0}")]
-    Hash(String),
+    Hash(#[source] outbe_poseidon::PoseidonError),
+
+    /// Node-local native dispatcher or transport failure, not an invalid proof.
+    #[error("crypto backend unavailable: {0}")]
+    CryptoBackend(#[from] outbe_barretenberg::RuntimeError),
 
     /// A curve point was the identity when the protocol requires a non-identity point.
     #[error("unexpected identity point: {0}")]
@@ -43,6 +47,6 @@ pub enum Error {
 
 impl From<outbe_poseidon::Error> for Error {
     fn from(error: outbe_poseidon::Error) -> Self {
-        Self::Hash(error.to_string())
+        Self::Hash(error)
     }
 }

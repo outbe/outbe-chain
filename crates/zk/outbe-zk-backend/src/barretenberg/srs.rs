@@ -10,12 +10,15 @@
 
 use std::sync::OnceLock;
 
-use barretenberg_rs::api::BarretenbergApi;
-use barretenberg_rs::backends::FfiBackend;
 use barretenberg_rs::generated_types::{CircuitInput, ProofSystemSettings};
 use sha2::{Digest, Sha256};
 
+use outbe_barretenberg::{NativeApi, RuntimeError};
 use outbe_zk::error::Error;
+
+fn setup_error(message: String) -> Error {
+    RuntimeError::Setup(message).into()
+}
 
 /// bb's global CRS is **one-shot**: `srs_init_srs` takes effect once per process
 /// and a later call with more points is ignored. So we init exactly once (to
@@ -115,7 +118,7 @@ fn verify_g1(num_points: u32, bytes: &[u8]) -> Result<(), Error> {
     let digest: [u8; 32] = Sha256::digest(bytes).into();
     match PINNED_G1_SHA256.iter().find(|(n, _)| *n == num_points) {
         Some((_, expected)) if &digest == expected => Ok(()),
-        Some((_, expected)) => Err(Error::Proof(format!(
+        Some((_, expected)) => Err(setup_error(format!(
             "SRS checksum mismatch at {num_points} points (tampered CRS?): \
              got {}, pinned {}",
             hex32(&digest),
@@ -162,7 +165,7 @@ fn local_g1_path() -> std::path::PathBuf {
 /// (`prover trying to get too many points`). Guards with the next-pow2 of
 /// `num_gates` too, in case `num_gates_dyadic` is ever the smaller of the two.
 fn subgroup_size(
-    api: &mut BarretenbergApi<FfiBackend>,
+    api: &mut NativeApi,
     acir_uncompressed: &[u8],
     settings: &ProofSystemSettings,
 ) -> Result<u32, Error> {
@@ -173,7 +176,7 @@ fn subgroup_size(
     };
     let info = api
         .circuit_stats(circuit, false, settings.clone())
-        .map_err(|e| Error::Proof(format!("bb circuit_stats: {e}")))?;
+        .map_err(|e| RuntimeError::Backend(std::sync::Arc::new(e)))?;
     Ok(info
         .num_gates_dyadic
         .max(compute_subgroup_size(info.num_gates)))
@@ -183,10 +186,10 @@ fn subgroup_size(
 fn local_g1(num_points: u32) -> Result<Vec<u8>, Error> {
     let path = local_g1_path();
     let bytes = std::fs::read(&path)
-        .map_err(|e| Error::Proof(format!("read SRS {}: {e}", path.display())))?;
+        .map_err(|e| setup_error(format!("read SRS {}: {e}", path.display())))?;
     let need = (num_points * G1_POINT_SIZE) as usize;
     if bytes.len() < need {
-        return Err(Error::Proof(format!(
+        return Err(setup_error(format!(
             "cached SRS {} has {} bytes, need {} for {num_points} points",
             path.display(),
             bytes.len(),
@@ -211,10 +214,10 @@ fn net_g1(num_points: u32) -> Result<Vec<u8>, Error> {
         .get(AZTEC_CRS_G1)
         .header(reqwest::header::RANGE, format!("bytes=0-{g1_end}"))
         .send()
-        .map_err(|e| Error::Proof(format!("SRS download: {e}")))?;
+        .map_err(|e| setup_error(format!("SRS download: {e}")))?;
     let bytes = resp
         .bytes()
-        .map_err(|e| Error::Proof(format!("SRS download body: {e}")))?
+        .map_err(|e| setup_error(format!("SRS download body: {e}")))?
         .to_vec();
     Ok(bytes)
 }
@@ -235,12 +238,12 @@ fn cache_g1(bytes: &[u8]) {
 /// network) + the fixed G2 — **once** per process (one-shot). A later request
 /// for ≤ the init'd size is a no-op; a request for *more* errors, since bb
 /// can't grow the CRS — pre-size with [`super::preinit_srs`].
-pub fn ensure_srs(api: &mut BarretenbergApi<FfiBackend>, num_points: u32) -> Result<(), Error> {
+pub fn ensure_srs(api: &mut NativeApi, num_points: u32) -> Result<(), Error> {
     if let Some(&n) = SRS_POINTS.get() {
         if num_points <= n {
             return Ok(());
         }
-        return Err(Error::Proof(format!(
+        return Err(setup_error(format!(
             "bb SRS already initialized to {n} points (one-shot) but this circuit needs \
              {num_points}; call preinit_srs(max) with the largest circuit's size first"
         )));
@@ -258,7 +261,7 @@ pub fn ensure_srs(api: &mut BarretenbergApi<FfiBackend>, num_points: u32) -> Res
         Err(_local_err) => {
             #[cfg(not(feature = "with-network-srs"))]
             {
-                return Err(Error::Proof(format!(
+                return Err(setup_error(format!(
                     "SRS not available at {} ({_local_err}); the network fallback is disabled \
                      (built without `with-network-srs`). Initialize the wallet with a bundled \
                      SRS file via set_srs_path() before proving.",
@@ -275,7 +278,7 @@ pub fn ensure_srs(api: &mut BarretenbergApi<FfiBackend>, num_points: u32) -> Res
         }
     };
     api.srs_init_srs(&g1, num_points, &G2)
-        .map_err(|e| Error::Proof(format!("srs init: {e}")))?;
+        .map_err(|e| RuntimeError::Backend(std::sync::Arc::new(e)))?;
     let _ = SRS_POINTS.set(num_points);
     Ok(())
 }
@@ -283,7 +286,7 @@ pub fn ensure_srs(api: &mut BarretenbergApi<FfiBackend>, num_points: u32) -> Res
 /// Ensure the CRS is sized for `acir`: `circuit_stats` dyadic domain `+ 1`
 /// points (≥ the prover's need, which is `circuit_size` + ZK padding).
 pub fn ensure_srs_for(
-    api: &mut BarretenbergApi<FfiBackend>,
+    api: &mut NativeApi,
     acir_uncompressed: &[u8],
     settings: &ProofSystemSettings,
 ) -> Result<(), Error> {

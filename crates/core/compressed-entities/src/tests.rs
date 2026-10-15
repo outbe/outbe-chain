@@ -45,7 +45,7 @@ fn field_to_be32(value: Fr) -> [u8; 32] {
 fn tagged_poseidon(tag: u64, inputs: &[Fr]) -> [u8; 32] {
     let mut tagged = vec![Fr::from(tag)];
     tagged.extend_from_slice(inputs);
-    let mut hasher = Poseidon2::<Fr>::new();
+    let mut hasher = Poseidon2::new();
     field_to_be32(hasher.hash(&tagged).unwrap())
 }
 
@@ -825,7 +825,7 @@ fn noir_sponge_and_collection_vectors_are_pinned() {
             .iter()
             .map(|value| Fr::from_be_bytes_mod_order(&json_hex(value)))
             .collect::<Vec<_>>();
-        let actual = Poseidon2::<Fr>::new().hash(&inputs).unwrap();
+        let actual = Poseidon2::new().hash(&inputs).unwrap();
         assert_eq!(hex::encode(field_to_be32(actual)), vector["output"]);
     }
     let identity = WwdEntityId::try_from(

@@ -58,7 +58,16 @@ impl core::fmt::Display for LysisFinalizationErrorV1 {
     }
 }
 
-impl std::error::Error for LysisFinalizationErrorV1 {}
+impl std::error::Error for LysisFinalizationErrorV1 {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Protocol(error) => Some(error),
+            Self::Artifact(error) => Some(error),
+            Self::Planner(error) => Some(error),
+            Self::Authority(_) => None,
+        }
+    }
+}
 
 impl From<ProtocolError> for LysisFinalizationErrorV1 {
     fn from(error: ProtocolError) -> Self {

@@ -79,6 +79,106 @@ fn fixture() -> (
     (evm, calldata, owner)
 }
 
+#[test]
+fn native_hash_failure_aborts_real_transaction_without_receipt_and_allows_retry() -> eyre::Result<()>
+{
+    use alloy_primitives::U256;
+    use outbe_primitives::error::PrecompileError;
+    use revm::Database;
+
+    for system in [false, true] {
+        let (mut evm, calldata, owner, failures) = supervised_fixture(false);
+        let target = Address::repeat_byte(0x45);
+        // Mutate a contract slot, then STATICCALL the production Nod reader.
+        // Native failure must not yield a committable partial storage update.
+        let mut code = vec![
+            0x60, 1, 0x60, 0, 0x55, 0x36, 0x60, 0, 0x60, 0, 0x37, 0x60, 0x20, 0x60, 0, 0x36, 0x60,
+            0, 0x73,
+        ];
+        code.extend_from_slice(NOD_ADDRESS.as_slice());
+        code.extend_from_slice(&[0x5a, 0xfa, 0x50, 0x60, 0x20, 0x60, 0, 0xf3]);
+        let code = revm::state::Bytecode::new_raw(code.into());
+        evm.inner.ctx.journaled_state.database.insert_account_info(
+            target,
+            revm::state::AccountInfo {
+                code_hash: code.hash_slow(),
+                code: Some(code),
+                ..Default::default()
+            },
+        );
+        let transaction = TxEnv::builder()
+            .caller(owner)
+            .kind(TxKind::Call(target))
+            .data(calldata.clone())
+            .gas_limit(1_000_000)
+            .build_fill();
+
+        // Failure occurs inside body verification, after native hashing has
+        // already succeeded once, not during fixture construction.
+        let guard = outbe_poseidon::testing::fail_after(1);
+        let result = if system {
+            evm.transact_system_call(owner, target, calldata.clone())
+        } else {
+            evm.transact_raw(transaction.clone())
+        };
+        let error = result.err().ok_or_else(|| {
+            eyre::eyre!("backend failure returned an accepted transaction result")
+        })?;
+        let classified = PrecompileError::find_crypto_backend_failure(&error).ok_or_else(|| {
+            eyre::eyre!("backend failure lost its typed node-local cause: {error}")
+        })?;
+        assert!(classified.is_node_local());
+        assert_eq!(
+            classified.sweep_failure(),
+            outbe_primitives::error::SweepFailure::Propagate
+        );
+        let block_error = alloy_evm::block::BlockExecutionError::evm(error, B256::ZERO);
+        assert!(block_error.as_internal().is_some());
+        assert!(block_error.as_validation().is_none());
+        assert!(PrecompileError::find_crypto_backend_failure(&block_error).is_some());
+        let import_error = reth_ethereum::node::api::InsertBlockErrorKind::Execution(block_error)
+            .ensure_validation_error()
+            .err()
+            .ok_or_else(|| eyre::eyre!("native failure marked the block invalid"))?;
+        let engine_error: reth_ethereum::node::api::BeaconOnNewPayloadError = import_error.into();
+        assert!(PrecompileError::find_crypto_backend_failure(&engine_error).is_some());
+        assert!(
+            failures.borrow().is_none(),
+            "native failure is not body corruption"
+        );
+        assert_eq!(
+            evm.inner
+                .ctx
+                .journaled_state
+                .database
+                .storage(target, U256::ZERO)?,
+            U256::ZERO
+        );
+        drop(guard);
+
+        // The exact same input succeeds after restoring the backend. The first
+        // attempt returned no ResultAndState, so no receipt or state was committed.
+        let healthy = if system {
+            evm.transact_system_call(owner, target, calldata)
+        } else {
+            evm.transact_raw(transaction)
+        }?;
+        assert!(healthy.result.is_success());
+        let changed = healthy
+            .state
+            .get(&target)
+            .and_then(|account| account.storage.get(&U256::ZERO))
+            .ok_or_else(|| eyre::eyre!("healthy transaction did not produce its storage update"))?;
+        assert_eq!(changed.present_value(), U256::ONE);
+        let output = healthy
+            .result
+            .output()
+            .ok_or_else(|| eyre::eyre!("missing output"))?;
+        assert_eq!(INod::ownerOfCall::abi_decode_returns(output)?, owner);
+    }
+    Ok(())
+}
+
 type SupervisedFixture = (
     OutbeEvm<CacheDB<EmptyDB>, NoOpInspector, PrecompilesMap>,
     Bytes,

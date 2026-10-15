@@ -1061,3 +1061,51 @@ fn hook_readiness_error_keeps_its_type_across_the_executor_boundary() {
         Some(outbe_primitives::error::PrecompileError::TreeUnavailable(_))
     ));
 }
+
+#[test]
+fn native_hash_failure_rolls_back_hook_sweep_and_the_same_batch_can_retry() -> eyre::Result<()> {
+    use outbe_primitives::error::{decide, Decided, PrecompileError};
+    let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut state = State::builder()
+        .with_database(db)
+        .with_bundle_update()
+        .build();
+    let ctx = BlockContext::new(7, 84, CHAIN_ID, OWNER, Vec::new());
+    let address = Address::repeat_byte(0x61);
+    let slot = U256::from(0x46_u64);
+    let value = U256::from(0x193_u64);
+    let day = outbe_primitives::time::WorldwideDay::new(20261007);
+    let hooks =
+        |hook_ctx: &BlockRuntimeContext| {
+            hook_ctx.storage.sstore(address, slot, value)?;
+            for owner in [OWNER, address] {
+                let outcome = outbe_compressed_entities::derive_poseidon_entity_id(owner, day)
+                    .map_err(|error| match error {
+                        outbe_compressed_entities::CommitmentError::CryptoBackend(_) => {
+                            PrecompileError::from(error)
+                        }
+                        _ => PrecompileError::BodyReadCorruption(error.to_string()),
+                    });
+                match decide(outcome, PrecompileError::sweep_failure)? {
+                    Decided::Done(_) => {}
+                    _ => return Err(PrecompileError::Fatal("hash sweep item was skipped".into())),
+                }
+            }
+            Ok(())
+        };
+    let guard = outbe_poseidon::testing::fail_after(1);
+    let error = super::run_atomic_storage_hooks(&mut state, ctx.clone(), hooks)
+        .err()
+        .ok_or_else(|| eyre::eyre!("native failure finalized a partial hook batch"))?;
+    assert!(PrecompileError::find_crypto_backend_failure(&error).is_some());
+    assert_eq!(state.storage(address, slot)?, U256::ZERO);
+    drop(guard);
+    let (changes, events) = super::run_atomic_storage_hooks(&mut state, ctx, hooks)?;
+    let changed = changes
+        .get(&address)
+        .and_then(|account| account.storage.get(&slot))
+        .ok_or_else(|| eyre::eyre!("healthy retry did not report its state update"))?;
+    assert_eq!(changed.present_value(), value);
+    assert!(events.is_empty());
+    Ok(())
+}

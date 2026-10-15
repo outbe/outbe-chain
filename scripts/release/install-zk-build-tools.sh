@@ -9,7 +9,7 @@ trap 'rm -rf "${work_dir}"' EXIT
 
 mkdir -p "${install_dir}"
 
-for entry in nargo:nargo barretenberg:bb; do
+for entry in nargo:nargo barretenberg:bb barretenberg_static:libbb-external.a; do
   name="${entry%%:*}"
   binary="${entry##*:}"
   version="$(jq -er --arg name "${name}" '.zk_tools[$name].version' "${manifest}")"
@@ -26,6 +26,12 @@ for entry in nargo:nargo barretenberg:bb; do
     --output "${archive}" "${url}"
   printf '%s  %s\n' "${digest}" "${archive}" | sha256sum -c -
   tar -xzf "${archive}" -C "${extract_dir}"
+  if [[ "${name}" == barretenberg_static ]]; then
+    test "${version}" = "$(jq -er '.zk_tools.barretenberg.version' "${manifest}")"
+    mkdir -p "${install_dir}/../lib/barretenberg"
+    install -m 0644 "${extract_dir}/${binary}" "${install_dir}/../lib/barretenberg/${binary}"
+    continue
+  fi
   install -m 0755 "${extract_dir}/${binary}" "${install_dir}/${binary}"
 
   case "${binary}" in
@@ -41,4 +47,9 @@ done
 
 if [[ -n "${GITHUB_PATH:-}" ]]; then
   printf '%s\n' "${install_dir}" >> "${GITHUB_PATH}"
+fi
+if [[ -n "${GITHUB_ENV:-}" ]]; then
+  printf 'BB_LIB_DIR=%s\nBARRETENBERG_VERSION=%s\n' \
+    "$(cd "${install_dir}/../lib/barretenberg" && pwd)" \
+    "$(jq -er '.zk_tools.barretenberg_static.version' "${manifest}")" >> "${GITHUB_ENV}"
 fi

@@ -11,6 +11,15 @@ description = "BN254 Poseidon2 (Barretenberg/Noir-compatible) hash implementatio
 [dependencies]
 ark-ff.workspace = true
 ark-bn254.workspace = true
+outbe-barretenberg.workspace = true
+thiserror.workspace = true
+
+[features]
+test-utils = []
+
+[dev-dependencies]
+barretenberg-rs.workspace = true
+rmp-serde = "1"
 
 [lints]
 workspace = true

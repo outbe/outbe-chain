@@ -1,13 +1,15 @@
 #[cfg(test)]
 use crate::StoredBody;
 
+mod errors;
 mod frozen;
+
+pub use errors::{PointReadRequestError, PointReadServiceError};
 
 use alloy_primitives::{Bytes, B256};
 use ark_bn254::Fr;
 use ark_ff::PrimeField;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 use crate::{
     body_commitment, collection_key, collection_root,
@@ -184,30 +186,6 @@ pub struct SelectedHeaderV1 {
 pub enum VerifiedPointReadV1 {
     Present,
     Absent,
-}
-
-#[derive(Debug, Error, Eq, PartialEq)]
-pub enum PointReadRequestError {
-    #[error("unknown compressed-entity domain ID {0}")]
-    UnknownDomain(u16),
-}
-
-#[derive(Debug, Error)]
-pub enum PointReadServiceError {
-    #[error("compressed-entity proof service is not ready at genesis")]
-    GenesisUnavailable,
-    #[error("compressed-entity proof materialization is inconsistent: {0}")]
-    Materialization(String),
-    #[error("compiled proof length {actual} is outside v1 bounds")]
-    MalformedProofLength { actual: usize },
-    #[error("point proof package is invalid: {0}")]
-    InvalidPackage(&'static str),
-}
-
-impl PointReadServiceError {
-    pub(crate) fn materialization(error: impl core::fmt::Display) -> Self {
-        Self::Materialization(error.to_string())
-    }
 }
 
 #[derive(Clone, Debug)]

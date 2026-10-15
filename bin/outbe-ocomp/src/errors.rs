@@ -42,8 +42,20 @@ pub enum OcompCliError {
     InvalidDevelopmentRootDir,
     #[error("OUTBE_OCOMP_TEE_ENDPOINT must be valid UTF-8")]
     InvalidTeeEndpointUtf8,
-    #[error("OUTBE_OCOMP_TEE_ENDPOINT and OUTBE_OCOMP_NODE_DATA_DIR must be configured together")]
+    #[error(
+        "TEE reader requires an endpoint and, for production-node-host, a node data directory"
+    )]
     IncompleteTeeReaderConfig,
+    #[error("OUTBE_OCOMP_TEE_SESSION_MODE must be valid UTF-8")]
+    InvalidTeeSessionModeUtf8,
+    #[error("OUTBE_OCOMP_TEE_SESSION_MODE must be development or production-node-host")]
+    InvalidTeeSessionMode,
+    #[error("development TEE reader must not configure OUTBE_OCOMP_NODE_DATA_DIR")]
+    DevelopmentTeeReaderHasNodeDataDir,
+    #[error("OUTBE_OCOMP_TEE_ENDPOINT must be nonempty and have no surrounding whitespace")]
+    InvalidTeeReaderEndpoint,
+    #[error("OUTBE_OCOMP_NODE_DATA_DIR must be nonempty")]
+    InvalidTeeReaderNodeDataDir,
     #[error("worker ordinal exceeds the supported per-Supervisor worker count")]
     WorkerOrdinalExceedsMax,
     #[error("derived worker process nonce is reserved zero")]

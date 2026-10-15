@@ -28,9 +28,78 @@ use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferResult, TributeOffe
 
 use crate::compute::{compute_nominal, compute_token_id, parse_canonical_amount};
 use crate::crypto::ecdhe_tribute_offer_decrypt;
-use crate::errors::{EnclaveError, EnclaveResult, ProcessError};
+use crate::errors::{EnclaveError, ProcessError};
 use crate::payload::parse_and_validate;
 use crate::zk_claim::derive_expected_hashes;
+
+/// Offer validation failures retain crypto causes until the batch boundary.
+#[derive(Debug, thiserror::Error)]
+pub enum OfferError {
+    #[error(transparent)]
+    Domain(#[from] EnclaveError),
+    #[error(transparent)]
+    Commitment(#[from] outbe_compressed_entities::CommitmentError),
+    #[error("{context}: {source}")]
+    Zk {
+        context: &'static str,
+        #[source]
+        source: outbe_zk::Error,
+    },
+}
+
+impl From<ProcessError> for OfferError {
+    fn from(error: ProcessError) -> Self {
+        Self::Domain(error.into())
+    }
+}
+
+impl OfferError {
+    /// Convert invalid input to its public rejection reason, preserving backend
+    /// failures as typed errors so callers abort without returning a partial batch.
+    pub(crate) fn into_rejection(self) -> Result<String, Self> {
+        use outbe_compressed_entities::CommitmentError;
+        use outbe_poseidon::PoseidonError;
+        use outbe_zk::Error as ZkError;
+
+        match self {
+            error @ Self::Commitment(CommitmentError::CryptoBackend(_))
+            | error @ Self::Zk {
+                source: ZkError::CryptoBackend(_),
+                ..
+            }
+            | error @ Self::Zk {
+                source:
+                    ZkError::Hash(
+                        PoseidonError::Runtime(_)
+                        | PoseidonError::ResponseLength { .. }
+                        | PoseidonError::NoncanonicalField { .. },
+                    ),
+                ..
+            } => Err(error),
+            error @ Self::Domain(_)
+            | error @ Self::Commitment(
+                CommitmentError::InputTooLong
+                | CommitmentError::UnsupportedCommitmentScheme { .. }
+                | CommitmentError::UnsupportedSchema { .. }
+                | CommitmentError::EmptyPayload
+                | CommitmentError::ZeroPresentLeaf
+                | CommitmentError::NonCanonicalFieldElement,
+            )
+            | error @ Self::Zk {
+                source:
+                    ZkError::Hash(PoseidonError::InputLength)
+                    | ZkError::Identity(_)
+                    | ZkError::Signature(_)
+                    | ZkError::OwnerMismatch
+                    | ZkError::NonCanonical(_)
+                    | ZkError::UnsortedSet(_)
+                    | ZkError::Proof(_)
+                    | ZkError::Merkle(_),
+                ..
+            } => Ok(error.to_string()),
+        }
+    }
+}
 
 /// The enclave-resident offer decryption key material (derived from the sealed
 /// root seed via the HKDF chain). Borrowed for the duration of a batch call.
@@ -40,29 +109,29 @@ pub struct TributeOfferKeyMaterial<'a> {
 }
 
 /// Process a batch of encrypted offers, each carrying its own node-resolved
-/// price. Per-offer failures become `Rejected{reason}` (never abort the whole
-/// batch). Returns the results plus a canonical-inputs hash used by the host to
+/// price. Invalid offers become `Rejected{reason}`; infrastructure failures abort
+/// the batch without returning partial results. Returns a canonical-inputs hash used by the host to
 /// detect enclave non-determinism.
 pub fn process_tribute_offer_batch(
     key: &TributeOfferKeyMaterial<'_>,
     offers: &[EncryptedTributeOffer],
-) -> (Vec<TributeOfferResult>, B256) {
+) -> Result<(Vec<TributeOfferResult>, B256), OfferError> {
     let mut results = Vec::with_capacity(offers.len());
     for offer in offers {
         let result = match process_one(key, offer) {
             Ok(result) => result,
-            Err(reason) => rejected(reason),
+            Err(error) => rejected(error.into_rejection()?),
         };
         results.push(result);
     }
     let hash = outbe_tee::protocol::inputs_canonical_hash(offers);
-    (results, hash)
+    Ok((results, hash))
 }
 
 fn process_one(
     key: &TributeOfferKeyMaterial<'_>,
     offer: &EncryptedTributeOffer,
-) -> EnclaveResult<TributeOfferResult> {
+) -> Result<TributeOfferResult, OfferError> {
     let ephemeral = offer.ephemeral_pubkey.to_be_bytes::<32>();
     let plaintext = ecdhe_tribute_offer_decrypt(
         key.tribute_offer_private_key,
@@ -121,7 +190,7 @@ fn process_one(
 /// Build a `Rejected` result. Nothing is known beyond the reason. Every field
 /// the host sent stays on the host, and everything else needed decryption to
 /// have succeeded. `owner` is zero rather than echoed for the same reason.
-fn rejected(reason: EnclaveError) -> TributeOfferResult {
+fn rejected(reason: String) -> TributeOfferResult {
     TributeOfferResult {
         token_id: B256::ZERO,
         owner: Address::ZERO,
@@ -132,9 +201,7 @@ fn rejected(reason: EnclaveError) -> TributeOfferResult {
         wallet_addresses: Vec::new(),
         sra_addresses: Vec::new(),
         zk_expected_hashes: None,
-        status: TributeOfferStatus::Rejected {
-            reason: reason.into(),
-        },
+        status: TributeOfferStatus::Rejected { reason },
     }
 }
 
@@ -213,13 +280,51 @@ mod tests {
     }
 
     #[test]
+    fn backend_failure_aborts_batch_after_a_created_offer_and_recovers() {
+        let offers = [
+            make_tribute_offer(Address::repeat_byte(0x11), GOOD_JSON),
+            make_tribute_offer(Address::repeat_byte(0x22), GOOD_JSON),
+        ];
+        {
+            // The first two-input token digest completes; the next offer fails.
+            let _failure = outbe_poseidon::testing::fail_after(1);
+            let error = process_tribute_offer_batch(&key(), &offers).unwrap_err();
+            assert!(matches!(
+                error,
+                OfferError::Commitment(outbe_compressed_entities::CommitmentError::CryptoBackend(
+                    outbe_poseidon::PoseidonError::Runtime(_)
+                ))
+            ));
+        }
+        let (results, _) = process_tribute_offer_batch(&key(), &offers).unwrap();
+        assert!(results
+            .iter()
+            .all(|result| result.status == TributeOfferStatus::Created));
+    }
+
+    #[test]
+    fn zk_backend_failure_aborts_instead_of_rejecting() {
+        let mut offer = make_tribute_offer(Address::repeat_byte(0x33), GOOD_JSON);
+        offer.zk_context = Some(zk_context());
+        let _failure = outbe_poseidon::testing::fail_after(1);
+        let error = process_tribute_offer_batch(&key(), &[offer]).unwrap_err();
+        assert!(matches!(
+            error,
+            OfferError::Zk {
+                source: outbe_zk::Error::Hash(outbe_poseidon::PoseidonError::Runtime(_)),
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn batch_creates_tribute_with_correct_economics() {
         let owner = Address::repeat_byte(0xAB);
         let mut offer = make_tribute_offer(owner, GOOD_JSON);
         offer.issuance_wwd_vwap_minor = U256::from(2u64) * SCALE_1E6_U256;
         offer.reference_wwd_vwap_minor = offer.issuance_wwd_vwap_minor;
 
-        let (results, hash) = process_tribute_offer_batch(&key(), &[offer]);
+        let (results, hash) = process_tribute_offer_batch(&key(), &[offer]).unwrap();
         assert_eq!(results.len(), 1);
         let r = &results[0];
         assert_eq!(r.status, TributeOfferStatus::Created);
@@ -245,7 +350,7 @@ mod tests {
         offer.issuance_wwd_vwap_minor = U256::from(4u64) * SCALE_1E6_U256;
         offer.reference_wwd_vwap_minor = offer.issuance_wwd_vwap_minor;
 
-        let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
+        let (results, _) = process_tribute_offer_batch(&key(), &[offer]).unwrap();
         assert_eq!(results[0].status, TributeOfferStatus::Created);
         assert_eq!(
             results[0].nominal_amount_minor,
@@ -264,7 +369,7 @@ mod tests {
         eur.issuance_wwd_vwap_minor = U256::from(5u64) * SCALE_1E6_U256;
         eur.reference_wwd_vwap_minor = eur.issuance_wwd_vwap_minor;
 
-        let (results, _) = process_tribute_offer_batch(&key(), &[usd, eur]);
+        let (results, _) = process_tribute_offer_batch(&key(), &[usd, eur]).unwrap();
         assert_eq!(results[0].status, TributeOfferStatus::Created);
         assert_eq!(
             results[0].nominal_amount_minor,
@@ -283,7 +388,7 @@ mod tests {
         let mut zk = make_tribute_offer(Address::repeat_byte(0x32), BASE_AND_MICRO_JSON);
         zk.zk_context = Some(zk_context());
 
-        let (results, _) = process_tribute_offer_batch(&key(), &[plain, zk]);
+        let (results, _) = process_tribute_offer_batch(&key(), &[plain, zk]).unwrap();
         assert_eq!(results.len(), 2);
         for result in results {
             assert_eq!(result.status, TributeOfferStatus::Created);
@@ -306,7 +411,7 @@ mod tests {
         offer.reference_wwd_vwap_minor = U256::from(250_000u64);
         offer.reference_scurve_minor = U256::from(320_000u64);
 
-        let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
+        let (results, _) = process_tribute_offer_batch(&key(), &[offer]).unwrap();
         assert_eq!(results[0].status, TributeOfferStatus::Created);
         assert_eq!(results[0].nominal_amount_minor, U256::from(31_250u64));
         assert_eq!(
@@ -321,7 +426,7 @@ mod tests {
         let mut offer = make_tribute_offer(sender, GOOD_JSON);
         offer.zk_context = Some(zk_context());
 
-        let (results, _) = process_tribute_offer_batch(&key(), &[offer.clone()]);
+        let (results, _) = process_tribute_offer_batch(&key(), &[offer.clone()]).unwrap();
         let expected = results[0]
             .zk_expected_hashes
             .as_ref()
@@ -331,13 +436,13 @@ mod tests {
 
         let mut other_l2 = offer.clone();
         other_l2.zk_context.as_mut().unwrap().l2_chain_id = NIFLHEIM_CHAIN_ID;
-        let (different_l2, _) = process_tribute_offer_batch(&key(), &[other_l2]);
+        let (different_l2, _) = process_tribute_offer_batch(&key(), &[other_l2]).unwrap();
         let different_l2 = different_l2[0].zk_expected_hashes.as_ref().unwrap();
         assert_ne!(different_l2.binding_hash, expected.binding_hash);
         assert_eq!(different_l2.nft_hash, expected.nft_hash);
 
         offer.zk_context.as_mut().unwrap().derived_owner = B256::from([0x02; 32]);
-        let (different_owner, _) = process_tribute_offer_batch(&key(), &[offer.clone()]);
+        let (different_owner, _) = process_tribute_offer_batch(&key(), &[offer.clone()]).unwrap();
         assert_ne!(
             different_owner[0]
                 .zk_expected_hashes
@@ -348,7 +453,7 @@ mod tests {
         );
 
         offer.owner = Address::repeat_byte(0xCD);
-        let (different_sender, _) = process_tribute_offer_batch(&key(), &[offer]);
+        let (different_sender, _) = process_tribute_offer_batch(&key(), &[offer]).unwrap();
         assert_ne!(
             different_sender[0]
                 .zk_expected_hashes
@@ -371,7 +476,7 @@ mod tests {
         base.zk_context = Some(zk_context());
 
         let nft_hash = |offer: EncryptedTributeOffer| {
-            let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
+            let (results, _) = process_tribute_offer_batch(&key(), &[offer]).unwrap();
             results[0]
                 .zk_expected_hashes
                 .as_ref()
@@ -411,7 +516,7 @@ mod tests {
         first.zk_context = Some(zk_context());
         second.zk_context = Some(zk_context());
 
-        let (results, _) = process_tribute_offer_batch(&key(), &[first, second]);
+        let (results, _) = process_tribute_offer_batch(&key(), &[first, second]).unwrap();
         assert_eq!(
             results[0].zk_expected_hashes.as_ref().unwrap().nft_hash,
             results[1].zk_expected_hashes.as_ref().unwrap().nft_hash
@@ -431,7 +536,7 @@ mod tests {
             let mut zk = make_tribute_offer(Address::repeat_byte(0x42), &json);
             zk.zk_context = Some(zk_context());
 
-            let (results, _) = process_tribute_offer_batch(&key(), &[plain, zk]);
+            let (results, _) = process_tribute_offer_batch(&key(), &[plain, zk]).unwrap();
             assert_eq!(results.len(), 2);
             assert!(results
                 .iter()
@@ -468,7 +573,7 @@ mod tests {
         bad.issuance_wwd_vwap_minor = U256::ZERO;
         let good = make_tribute_offer(Address::repeat_byte(0x0B), GOOD_JSON);
 
-        let (results, _) = process_tribute_offer_batch(&key(), &[bad, good]);
+        let (results, _) = process_tribute_offer_batch(&key(), &[bad, good]).unwrap();
         assert!(matches!(
             results[0].status,
             TributeOfferStatus::Rejected { .. }
@@ -481,7 +586,7 @@ mod tests {
         let mut offer = make_tribute_offer(Address::repeat_byte(0x02), GOOD_JSON);
         offer.cipher_text = vec![0xDE, 0xAD, 0xBE, 0xEF];
 
-        let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
+        let (results, _) = process_tribute_offer_batch(&key(), &[offer]).unwrap();
         assert!(matches!(
             results[0].status,
             TributeOfferStatus::Rejected { .. }
@@ -499,7 +604,7 @@ mod tests {
         }"#;
         let offers = vec![make_tribute_offer(Address::repeat_byte(0x04), bad_json)];
 
-        let (results, _) = process_tribute_offer_batch(&key(), &offers);
+        let (results, _) = process_tribute_offer_batch(&key(), &offers).unwrap();
         assert!(matches!(
             results[0].status,
             TributeOfferStatus::Rejected { .. }

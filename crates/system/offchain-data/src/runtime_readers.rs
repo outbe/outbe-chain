@@ -556,6 +556,12 @@ fn map_storage_parent_error(kind: StorageErrorKind, message: String) -> ParentBo
 }
 
 fn map_tribute_parent_error(error: TributeRepositoryError) -> ParentBodySourceError {
+    if let TributeRepositoryError::RetainedCommitment(
+        error @ outbe_compressed_entities::CommitmentError::CryptoBackend(_),
+    ) = error
+    {
+        return ParentBodySourceError::CryptoBackendUnavailable(error);
+    }
     let message = error.to_string();
     match &error {
         TributeRepositoryError::Storage(storage) => {

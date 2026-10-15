@@ -181,9 +181,16 @@ impl TributeError {
         Self::InvalidCertifiedProtocolValue(error.to_string()).into()
     }
 
-    /// Converts an entity-ID derivation failure into a precompile error.
-    pub(crate) fn entity_id_derivation(error: impl std::fmt::Display) -> PrecompileError {
-        Self::EntityIdDerivation(error.to_string()).into()
+    /// Keeps node-local hashing failures distinct from invalid entity identities.
+    pub(crate) fn entity_id_derivation(
+        error: outbe_compressed_entities::CommitmentError,
+    ) -> PrecompileError {
+        match error {
+            outbe_compressed_entities::CommitmentError::CryptoBackend(error) => {
+                PrecompileError::CryptoBackendUnavailable(error.to_string())
+            }
+            error => Self::EntityIdDerivation(error.to_string()).into(),
+        }
     }
 
     /// Converts a calculation-view failure into a precompile error.
@@ -261,8 +268,10 @@ pub(crate) fn enclave_transport_error(error: impl std::fmt::Display) -> outbe_te
 }
 
 /// Converts a retained-commitment derivation failure into a repository error.
-pub(crate) fn retained_commitment_error(error: impl std::fmt::Display) -> TributeRepositoryError {
-    TributeRepositoryError::RetainedCommitment(error.to_string())
+pub(crate) fn retained_commitment_error(
+    error: outbe_compressed_entities::CommitmentError,
+) -> TributeRepositoryError {
+    TributeRepositoryError::RetainedCommitment(error)
 }
 
 impl From<TributeRepositoryError> for PrecompileError {
@@ -271,6 +280,9 @@ impl From<TributeRepositoryError> for PrecompileError {
 
         let message = value.to_string();
         match &value {
+            TributeRepositoryError::RetainedCommitment(
+                outbe_compressed_entities::CommitmentError::CryptoBackend(_),
+            ) => PrecompileError::CryptoBackendUnavailable(message),
             TributeRepositoryError::Storage(error)
                 if error.kind() == StorageErrorKind::RequestDeadline =>
             {

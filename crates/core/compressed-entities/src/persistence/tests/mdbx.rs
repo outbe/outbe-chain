@@ -124,7 +124,7 @@ fn mdbx_rejects_gap_conflict_and_bad_batch_before_persistent_mutation() {
     malformed.encoded_size = 1;
     assert!(matches!(
         store.apply_finalized(&malformed),
-        Err(PersistenceError::Staging(_))
+        Err(PersistenceError::StagingSource(error)) if matches!(*error, crate::staging::StagingError::EncodedSizeMismatch { .. })
     ));
     assert_eq!(store.marker().unwrap(), genesis);
 }

@@ -51,7 +51,7 @@ fn reference_field_word(value: Fr) -> [u8; 32] {
 fn reference_poseidon(tag: u64, inputs: &[Fr]) -> H256 {
     let mut tagged = vec![Fr::from(tag)];
     tagged.extend_from_slice(inputs);
-    let mut hasher = Poseidon2::<Fr>::new();
+    let mut hasher = Poseidon2::new();
     H256::from(reference_field_word(hasher.hash(&tagged).unwrap()))
 }
 
@@ -451,6 +451,69 @@ fn empty_singleton_update_delete_and_reinsert_have_canonical_roots() {
     );
     assert_eq!(tree.get(key(1)).unwrap(), TreeLeaf::ZERO);
     assert_eq!(tree.update(key(1), leaf(101)).unwrap(), first);
+}
+
+#[test]
+fn backend_failure_after_a_successful_hash_preserves_memory_tree_and_proofs() {
+    let mut tree = PoseidonSmt::empty();
+    let committed = tree.update(key(1), leaf(101)).unwrap();
+    let proof = tree.prove(vec![key(1)]).unwrap();
+    {
+        // The base-node hash completes two permutations before the next hash fails.
+        let _failure = outbe_poseidon::testing::fail_after(2);
+        let error = tree
+            .update_all(vec![(key(1), leaf(202)), (key(2), leaf(303))])
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                TreeError::Poseidon(crate::CommitmentError::CryptoBackend(_))
+            ),
+            "{error:?}"
+        );
+    }
+    assert_eq!(tree.root().unwrap(), committed);
+    assert_eq!(tree.get(key(1)).unwrap(), leaf(101));
+    assert_eq!(tree.get(key(2)).unwrap(), TreeLeaf::ZERO);
+    tree.verify(committed, &proof, vec![(key(1), leaf(101))])
+        .unwrap();
+    {
+        let _failure = outbe_poseidon::testing::fail_after(2);
+        let error = proof.compute_root(key(1), leaf(101)).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                TreeError::Poseidon(crate::CommitmentError::CryptoBackend(_))
+            ),
+            "{error:?}"
+        );
+    }
+    assert_eq!(proof.compute_root(key(1), leaf(101)).unwrap(), committed);
+    assert_ne!(tree.update(key(1), leaf(202)).unwrap(), committed);
+}
+
+#[test]
+fn failed_sorted_reducer_cannot_finish_as_an_empty_or_partial_root() {
+    let mut reducer = SortedPoseidonRootReducer::new();
+    let mut failed = false;
+    {
+        let _failure = outbe_poseidon::testing::fail_after(2);
+        for value in 1..=4 {
+            if let Err(error) = reducer.push(key(value), leaf(value + 100)) {
+                assert!(
+                    matches!(
+                        error,
+                        TreeError::Poseidon(crate::CommitmentError::CryptoBackend(_))
+                    ),
+                    "{error:?}"
+                );
+                failed = true;
+                break;
+            }
+        }
+    }
+    assert!(failed);
+    assert_eq!(reducer.finish(), Err(TreeError::UpdateInvalidated));
 }
 
 #[test]

@@ -115,7 +115,7 @@ impl MdbxAuthenticatedTree {
                 &proof,
                 vec![(catalog_key, leaf)],
             )
-            .map_err(tree_corruption)?;
+            .map_err(classify_tree_error)?;
 
         if leaf == TreeLeaf::ZERO {
             if self
@@ -166,8 +166,8 @@ impl MdbxAuthenticatedTree {
             ));
             roots.push(root);
         }
-        let top = aggregate_b256_shard_roots(&roots).map_err(tree_corruption)?;
-        let recomputed = collection_root(domain, key, top).map_err(tree_corruption)?;
+        let top = aggregate_b256_shard_roots(&roots).map_err(classify_tree_error)?;
+        let recomputed = collection_root(domain, key, top).map_err(classify_collection_error)?;
         if recomputed != parent_collection_root {
             return Err(tree_corruption(
                 "catalog collection root does not match exact shard-root vector",
@@ -232,7 +232,7 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
             return Ok(*cached);
         }
         let (domain, _, id) = entity_parts(entity);
-        let key = collection_key(domain, id).map_err(tree_corruption)?;
+        let key = collection_key(domain, id).map_err(classify_collection_error)?;
         self.ensure_collection(&mut state, domain, key)?;
         let session = state
             .collections
@@ -253,7 +253,7 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
             &proof,
             vec![(tree_key, leaf)],
         )
-        .map_err(tree_corruption)?;
+        .map_err(classify_tree_error)?;
         let commitment = if leaf == TreeLeaf::ZERO {
             None
         } else {
@@ -273,7 +273,8 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
                 "requested EVM root does not match exact catalog view",
             ));
         }
-        let (domain, key) = crate::partition_collection_key(partition).map_err(tree_corruption)?;
+        let (domain, key) =
+            crate::partition_collection_key(partition).map_err(classify_collection_error)?;
         let mut state = self
             .state
             .lock()
@@ -296,7 +297,8 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
                 "requested EVM root does not match exact catalog view",
             ));
         }
-        let (domain, key) = crate::partition_collection_key(partition).map_err(tree_corruption)?;
+        let (domain, key) =
+            crate::partition_collection_key(partition).map_err(classify_collection_error)?;
         let mut state = self
             .state
             .lock()
@@ -353,7 +355,25 @@ fn entity_parts(entity: EntityRef) -> (CeDomain, Collection, crate::WwdEntityId)
 
 fn entity_tree_key(entity: EntityRef) -> Result<TreeKey> {
     let (_, collection, id) = entity_parts(entity);
-    derive_tree_key(collection, id).map_err(tree_corruption)
+    derive_tree_key(collection, id).map_err(classify_tree_error)
+}
+
+fn classify_tree_error(error: crate::smt::TreeError) -> PrecompileError {
+    match error {
+        crate::smt::TreeError::Poseidon(error @ crate::CommitmentError::CryptoBackend(_)) => {
+            error.into()
+        }
+        error => tree_corruption(error),
+    }
+}
+
+fn classify_collection_error(error: crate::CollectionError) -> PrecompileError {
+    match error {
+        crate::CollectionError::Hash(error @ crate::CommitmentError::CryptoBackend(_)) => {
+            error.into()
+        }
+        error => tree_corruption(error),
+    }
 }
 
 fn tree_unavailable(message: impl Into<String>) -> PrecompileError {
@@ -362,6 +382,9 @@ fn tree_unavailable(message: impl Into<String>) -> PrecompileError {
 
 fn classify_snapshot_error(error: PersistenceError) -> PrecompileError {
     match error {
+        PersistenceError::CryptoBackend(error @ crate::CommitmentError::CryptoBackend(_)) => {
+            error.into()
+        }
         PersistenceError::Io { .. } | PersistenceError::Database { .. } => {
             tree_unavailable(error.to_string())
         }
@@ -382,6 +405,10 @@ fn classify_snapshot_error(error: PersistenceError) -> PrecompileError {
 
 fn classify_staging_error(error: StagingError) -> PrecompileError {
     match error {
+        StagingError::Hash(error @ crate::CommitmentError::CryptoBackend(_)) => error.into(),
+        StagingError::Collection(crate::CollectionError::Hash(
+            error @ crate::CommitmentError::CryptoBackend(_),
+        )) => error.into(),
         StagingError::Persistence(error) => classify_snapshot_error(error),
         corruption => tree_corruption(corruption),
     }

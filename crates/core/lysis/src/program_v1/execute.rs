@@ -227,7 +227,7 @@ impl ProgramExecutionV1 {
         }
         calculate_cost(entry_price_minor, pending.gratis_load_minor, ordinal)?;
         let nod_id = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day)
-            .map_err(ProgramErrorV1::arithmetic)?;
+            .map_err(ProgramErrorV1::IdentityHash)?;
         if !nod_target_available || tribute.owner.is_zero() {
             return Err(ProgramErrorV1::InvalidNodTarget { ordinal });
         }
@@ -439,7 +439,7 @@ pub(crate) fn validate_canonical_tributes(
         }
         previous = Some(tribute.tribute_id);
         let expected = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day)
-            .map_err(ProgramErrorV1::arithmetic)?;
+            .map_err(ProgramErrorV1::IdentityHash)?;
         if tribute.tribute_id != expected {
             return Err(ProgramErrorV1::InvalidTributeIdentity { ordinal });
         }

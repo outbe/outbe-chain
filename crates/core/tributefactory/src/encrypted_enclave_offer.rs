@@ -45,6 +45,8 @@ pub(crate) fn process_encrypted_offers(
             &key,
         ),
         EnclaveResponse::Error { message } => {
+            // The enclave returns deterministic offer refusals in `results`.
+            // A batch-level error (including native hash failure) is local.
             Err(TributeFactoryError::EncryptedOfferEnclaveError(message).into())
         }
         _ => Err(TributeFactoryError::UnexpectedEncryptedOfferResponse.into()),

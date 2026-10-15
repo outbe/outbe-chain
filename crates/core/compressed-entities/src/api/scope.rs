@@ -248,7 +248,8 @@ impl ExecutionScope {
     ) -> Result<SealedCollectionRoot> {
         self.validate_seal_output(output)?;
         let parent = self.opened_parent_tree()?;
-        let (_, key) = crate::partition_collection_key(partition).map_err(fatal_scope)?;
+        let (_, key) =
+            crate::partition_collection_key(partition).map_err(crate::errors::collection_error)?;
         let root = match output.staged_tree_batch.changed_collections.get(&key) {
             Some(crate::CollectionOperation::Mutate(batch)) => Some(batch.new_collection_root),
             Some(crate::CollectionOperation::Retire(_)) => None,

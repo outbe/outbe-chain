@@ -103,6 +103,11 @@ pub(crate) struct Config {
 }
 
 impl Config {
+    /// The session protocol is independent of the network's attestation policy.
+    pub fn uses_production_node_host_session(&self) -> bool {
+        matches!(self.tee_mode, TeeMode::Real | TeeMode::SgxNoAttest)
+    }
+
     /// Reject unusable paths before allocating scenario services or bootstrap state.
     pub fn validate_committee_ipc_paths(&self, validators: usize) -> Result<()> {
         for index in 0..validators {

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import tomllib
@@ -14,8 +15,6 @@ from typing import Any
 
 CONTRACT_PATH = "release/project-toolchain-v1.json"
 APT_SOURCES_PATH = "release/apt/ubuntu.sources"
-APT_SNAPSHOT_HOST = "https://snapshot.ubuntu.com/ubuntu/"
-MUTABLE_APT_HOSTS = ("archive.ubuntu.com", "security.ubuntu.com", "ports.ubuntu.com")
 EXPECTED_TOP_LEVEL_KEYS = {
     "activation",
     "apt_provenance",
@@ -55,7 +54,7 @@ EXPECTED_SYSTEM_PACKAGES = (
     "pkg-config",
 )
 EXPECTED_HOST_ONLY_PACKAGES = ("libsgx-dcap-default-qpl",)
-EXPECTED_ZK_TOOLS = ("barretenberg", "nargo")
+EXPECTED_ZK_TOOLS = ("barretenberg", "barretenberg_static", "nargo")
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -75,30 +74,48 @@ def _sha256_file(path: Path) -> str:
 
 def load_and_validate_pin(path: Path) -> dict[str, Any]:
     pin = _read_json(path)
+    _validate_pin_header(pin)
+    _validate_apt_provenance(pin["apt_provenance"])
+    _validate_rust(pin["rust"])
+    _validate_gramine(pin["gramine"])
+    _validate_packages(pin["system_packages"], pin["host_only_packages"])
+    _validate_zk_tools(pin["zk_tools"])
+    return pin
+
+
+def _validate_pin_header(pin: dict[str, Any]) -> None:
     if set(pin) != EXPECTED_TOP_LEVEL_KEYS:
         raise ValueError("project toolchain pin has an unsupported shape")
-    if pin["schema_version"] != 1:
-        raise ValueError("unsupported project toolchain pin version")
-    if pin["activation"] != "pending-container-delivery":
-        raise ValueError("unsupported project toolchain activation state")
-    if pin["target"] != "x86_64-unknown-linux-gnu":
-        raise ValueError("project toolchain supports only x86_64 Linux")
-    if pin["platform"] != "linux/amd64":
-        raise ValueError("project toolchain supports only linux/amd64")
-
-    apt = pin["apt_provenance"]
-    if not isinstance(apt, dict) or set(apt) != {"deb_closure", "source_files"}:
-        raise ValueError("project APT provenance has an unsupported shape")
-    closure = apt["deb_closure"]
-    if (
-        not isinstance(closure, dict)
-        or set(closure) != {"count", "format", "sha256"}
-        or not isinstance(closure["count"], int)
-        or isinstance(closure["count"], bool)
-        or closure["count"] <= 0
-        or closure["format"] != "sha256sum-lines-sorted-by-filename-v1"
-        or not SHA256_RE.fullmatch(closure["sha256"])
+    for field, expected, message in (
+        ("schema_version", 1, "unsupported project toolchain pin version"),
+        ("activation", "pending-container-delivery", "unsupported project toolchain activation state"),
+        ("target", "x86_64-unknown-linux-gnu", "project toolchain supports only x86_64 Linux"),
+        ("platform", "linux/amd64", "project toolchain supports only linux/amd64"),
     ):
+        if pin[field] != expected:
+            raise ValueError(message)
+
+
+def _has_keys(value: Any, keys: set[str]) -> bool:
+    return isinstance(value, dict) and set(value) == keys
+
+
+def _validate_shape(value: Any, keys: set[str], message: str) -> None:
+    if not _has_keys(value, keys):
+        raise ValueError(message)
+
+
+def _validate_pattern(pattern: str, value: str, message: str) -> None:
+    if not re.fullmatch(pattern, value):
+        raise ValueError(message)
+
+
+def _validate_apt_provenance(apt: Any) -> None:
+    _validate_shape(
+        apt, {"deb_closure", "source_files"}, "project APT provenance has an unsupported shape"
+    )
+    closure = apt["deb_closure"]
+    if not _valid_deb_closure(closure):
         raise ValueError("project APT package closure must have an exact digest and count")
     source_files = apt["source_files"]
     if (
@@ -114,11 +131,22 @@ def load_and_validate_pin(path: Path) -> dict[str, Any]:
     ):
         raise ValueError("project APT source and key files must be hash-pinned")
 
-    rust = pin["rust"]
-    if not isinstance(rust, dict) or set(rust) != {"components", "version"}:
-        raise ValueError("project Rust pin has an unsupported shape")
-    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", rust["version"]):
-        raise ValueError("project Rust version must be exact")
+
+def _valid_deb_closure(closure: Any) -> bool:
+    if not _has_keys(closure, {"count", "format", "sha256"}):
+        return False
+    count = closure["count"]
+    if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+        return False
+    return (
+        closure["format"] == "sha256sum-lines-sorted-by-filename-v1"
+        and bool(SHA256_RE.fullmatch(closure["sha256"]))
+    )
+
+
+def _validate_rust(rust: Any) -> None:
+    _validate_shape(rust, {"components", "version"}, "project Rust pin has an unsupported shape")
+    _validate_pattern(r"[0-9]+\.[0-9]+\.[0-9]+", rust["version"], "project Rust version must be exact")
     components = rust["components"]
     if (
         not isinstance(components, list)
@@ -128,63 +156,76 @@ def load_and_validate_pin(path: Path) -> dict[str, Any]:
     ):
         raise ValueError("project Rust components must be unique, sorted names")
 
-    gramine = pin["gramine"]
-    if not isinstance(gramine, dict) or set(gramine) != {"source_commit", "version"}:
-        raise ValueError("project Gramine pin has an unsupported shape")
-    if not re.fullmatch(r"[0-9]+\.[0-9]+", gramine["version"]):
-        raise ValueError("project Gramine version must be exact")
-    if not LOWER_GIT_SHA_RE.fullmatch(gramine["source_commit"]):
-        raise ValueError("project Gramine source commit must be an exact lowercase Git SHA")
 
-    packages = pin["system_packages"]
+def _validate_gramine(gramine: Any) -> None:
+    _validate_shape(
+        gramine, {"source_commit", "version"}, "project Gramine pin has an unsupported shape"
+    )
+    _validate_pattern(r"[0-9]+\.[0-9]+", gramine["version"], "project Gramine version must be exact")
+    _validate_pattern(
+        LOWER_GIT_SHA_RE.pattern, gramine["source_commit"],
+        "project Gramine source commit must be an exact lowercase Git SHA",
+    )
+
+
+def _exact_version(version: Any) -> bool:
+    return isinstance(version, str) and bool(version) and not any(
+        character.isspace() for character in version
+    )
+
+
+def _valid_package(name: Any, version: Any) -> bool:
+    return isinstance(name, str) and bool(name) and _exact_version(version)
+
+
+def _validate_packages(packages: Any, host_only_packages: Any) -> None:
     if (
         not isinstance(packages, dict)
         or not packages
-        or any(
-            not isinstance(name, str)
-            or not name
-            or not isinstance(version, str)
-            or not version
-            or any(character.isspace() for character in version)
-            for name, version in packages.items()
-        )
+        or any(not _valid_package(name, version) for name, version in packages.items())
     ):
         raise ValueError("project system packages must be sorted exact version pins")
     if tuple(packages) != EXPECTED_SYSTEM_PACKAGES:
         raise ValueError("project toolchain has an unsupported system package set")
-    host_only_packages = pin["host_only_packages"]
     if (
         not isinstance(host_only_packages, dict)
         or tuple(host_only_packages) != EXPECTED_HOST_ONLY_PACKAGES
-        or any(
-            not isinstance(version, str)
-            or not version
-            or any(character.isspace() for character in version)
-            for version in host_only_packages.values()
-        )
+        or any(not _exact_version(version) for version in host_only_packages.values())
     ):
         raise ValueError("project toolchain has an unsupported host-only package set")
     if set(host_only_packages).intersection(packages):
         raise ValueError("host-only packages must not enter the release build image")
 
-    zk_tools = pin["zk_tools"]
+
+def _valid_zk_archive(tool: Any) -> bool:
+    if not _has_keys(tool, {"archive_sha256", "archive_url", "version"}):
+        return False
+    if not _exact_version(tool["version"]):
+        return False
+    if not isinstance(tool["archive_sha256"], str) or not SHA256_RE.fullmatch(tool["archive_sha256"]):
+        return False
+    url = tool["archive_url"]
+    return (
+        isinstance(url, str)
+        and url.startswith("https://github.com/")
+        and f"/v{tool['version']}/" in url
+    )
+
+
+def _validate_zk_tools(zk_tools: Any) -> None:
     if not isinstance(zk_tools, dict) or tuple(zk_tools) != EXPECTED_ZK_TOOLS:
         raise ValueError("project toolchain has an unsupported ZK tool set")
     for name, tool in zk_tools.items():
-        if (
-            not isinstance(tool, dict)
-            or set(tool) != {"archive_sha256", "archive_url", "version"}
-            or not isinstance(tool["version"], str)
-            or not tool["version"]
-            or any(character.isspace() for character in tool["version"])
-            or not isinstance(tool["archive_sha256"], str)
-            or not SHA256_RE.fullmatch(tool["archive_sha256"])
-            or not isinstance(tool["archive_url"], str)
-            or not tool["archive_url"].startswith("https://github.com/")
-            or f"/v{tool['version']}/" not in tool["archive_url"]
-        ):
+        if not _valid_zk_archive(tool):
             raise ValueError(f"project {name} tool must use an exact GitHub archive pin")
-    return pin
+    if zk_tools["barretenberg_static"]["version"] != zk_tools["barretenberg"]["version"]:
+        raise ValueError("Barretenberg CLI and static library versions must match")
+    static = zk_tools["barretenberg_static"]
+    if static["archive_url"] != (
+        "https://github.com/AztecProtocol/barretenberg/releases/download/"
+        f"v{static['version']}/barretenberg-static-amd64-linux.tar.gz"
+    ):
+        raise ValueError("Barretenberg static library must match the Linux amd64 release target")
 
 
 def apt_ledger(deb_dir: Path) -> tuple[str, str, int]:
@@ -203,11 +244,7 @@ def verify_apt_inputs(*, pin_path: Path, root: Path, deb_dir: Path) -> None:
     pin = load_and_validate_pin(pin_path)
     root = root.resolve()
     for source in pin["apt_provenance"]["source_files"]:
-        candidate = root / source["path"].lstrip("/")
-        if not candidate.is_file() or candidate.is_symlink():
-            raise ValueError(f"missing or non-regular APT provenance input: {source['path']}")
-        if _sha256_file(candidate) != source["sha256"]:
-            raise ValueError(f"APT provenance digest mismatch: {source['path']}")
+        _verify_apt_source(source, root)
 
     ledger, actual_digest, count = apt_ledger(deb_dir)
     closure = pin["apt_provenance"]["deb_closure"]
@@ -224,205 +261,52 @@ def verify_apt_inputs(*, pin_path: Path, root: Path, deb_dir: Path) -> None:
         )
 
 
-def _require_equal(
-    differences: list[str],
-    *,
-    label: str,
-    actual: object,
-    expected: object,
-) -> None:
-    if actual != expected:
-        differences.append(f"{label}: expected {expected!r}, found {actual!r}")
+def _verify_apt_source(source: dict[str, str], root: Path) -> None:
+    candidate = root / source["path"].lstrip("/")
+    if not candidate.is_file() or candidate.is_symlink():
+        raise ValueError(f"missing or non-regular APT provenance input: {source['path']}")
+    if _sha256_file(candidate) != source["sha256"]:
+        raise ValueError(f"APT provenance digest mismatch: {source['path']}")
 
 
 def repository_differences(repo_root: Path) -> list[str]:
     pin = load_and_validate_pin(repo_root / CONTRACT_PATH)
+    # Container consumers copy this verifier alone and only use pin/APT validation.
+    helper_path = Path(__file__).with_name("project_toolchain_consumers.py")
+    spec = importlib.util.spec_from_file_location("project_toolchain_consumers", helper_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {helper_path}")
+    consumers = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(consumers)
     differences: list[str] = []
-    rust = pin["rust"]
-    gramine = pin["gramine"]
-    packages = pin["system_packages"]
 
     rust_toolchain = tomllib.loads(
         (repo_root / "rust-toolchain.toml").read_text(encoding="utf-8")
     )["toolchain"]
-    _require_equal(
-        differences,
-        label="rust-toolchain channel",
-        actual=rust_toolchain.get("channel"),
-        expected=rust["version"],
-    )
-    _require_equal(
-        differences,
-        label="rust-toolchain components",
-        actual=sorted(rust_toolchain.get("components", [])),
-        expected=rust["components"],
-    )
+    consumers.rust_differences(rust_toolchain, pin["rust"], differences)
 
     elf = _read_json(repo_root / "release/reproducible-elf-build-v1.json")
-    _require_equal(
-        differences,
-        label="ELF project toolchain contract",
-        actual=elf.get("project_toolchain"),
-        expected=CONTRACT_PATH,
-    )
-    _require_equal(
-        differences,
-        label="ELF Rust version",
-        actual=elf.get("rust_toolchain"),
-        expected=rust["version"],
-    )
-    elf_builder = elf.get("builder", {})
-    _require_equal(
-        differences,
-        label="ELF builder recipe",
-        actual=elf_builder.get("recipe"),
-        expected="Dockerfile.project-toolchain",
-    )
-    elf_base_images = elf_builder.get("base_images", [])
-    if not any(f"rust:{rust['version']}-" in image for image in elf_base_images):
-        differences.append("ELF builder images do not use the pinned Rust version")
-    if not any(f"gramineproject/gramine:{gramine['version']}-" in image for image in elf_base_images):
-        differences.append("ELF builder images do not use the pinned Gramine version")
-    _require_equal(
-        differences,
-        label="ELF builder system packages",
-        actual=elf_builder.get("system_packages"),
-        expected=[f"{name}={version}" for name, version in packages.items()],
-    )
-    for required_input in (
-        CONTRACT_PATH,
-        APT_SOURCES_PATH,
-        "release/dcap-native-qvl-v1.json",
-        "scripts/release/verify_dcap_native_qvl.py",
-        "scripts/release/verify_project_toolchain.py",
-    ):
-        if required_input not in elf.get("inputs", []):
-            differences.append(f"ELF release inputs do not bind {required_input}")
+    consumers.elf_differences(elf, pin, CONTRACT_PATH, APT_SOURCES_PATH, differences)
 
     sgx_profiles = {
         network: _read_json(repo_root / f"release/{network}-sgx-bundle-v1.json")
         for network in ("testnet", "mainnet")
     }
-    for network, sgx in sgx_profiles.items():
-        _require_equal(
-            differences,
-            label=f"{network} SGX project toolchain contract",
-            actual=sgx.get("project_toolchain"),
-            expected=CONTRACT_PATH,
-        )
-        _require_equal(
-            differences,
-            label=f"{network} SGX Gramine version",
-            actual=sgx.get("gramine", {}).get("version"),
-            expected=gramine["version"],
-        )
-        _require_equal(
-            differences,
-            label=f"{network} SGX Gramine source commit",
-            actual=sgx.get("gramine", {}).get("source_commit"),
-            expected=gramine["source_commit"],
-        )
-        for required_input in (CONTRACT_PATH, "scripts/release/verify_project_toolchain.py"):
-            if required_input not in sgx.get("inputs", []):
-                differences.append(
-                    f"{network} SGX release inputs do not bind {required_input}"
-                )
-    for field in (
-        "bundle_version",
-        "gramine",
-        "install_root",
-        "platform",
-        "sealed_state_schema",
-        "sgx",
-        "spec_version",
-    ):
-        _require_equal(
-            differences,
-            label=f"SGX physical profile parity for {field}",
-            actual=sgx_profiles["mainnet"].get(field),
-            expected=sgx_profiles["testnet"].get(field),
-        )
+    consumers.sgx_differences(sgx_profiles, pin["gramine"], CONTRACT_PATH, differences)
 
     qvl = _read_json(repo_root / "release/dcap-native-qvl-v1.json")
-    _require_equal(
-        differences,
-        label="QVL Gramine version",
-        actual=qvl.get("gramine_version"),
-        expected=gramine["version"],
-    )
-    qvl_packages = {
-        "libsgx-dcap-quote-verify": qvl.get("intel_dcap", {}).get(
-            "runtime_package_version"
-        ),
-        "libsgx-dcap-quote-verify-dev": qvl.get("intel_dcap", {}).get(
-            "development_package_version"
-        ),
-        "libsgx-headers": qvl.get("intel_dcap", {}).get("headers_package_version"),
-    }
-    for package, actual in qvl_packages.items():
-        _require_equal(
-            differences,
-            label=f"QVL {package}",
-            actual=actual,
-            expected=packages[package],
-        )
-    artifact_versions = {
-        artifact.get("package"): artifact.get("package_version")
-        for artifact in qvl.get("artifacts", [])
-    }
-    for package in ("libsgx-dcap-quote-verify", "libstdc++6", "libgcc-s1"):
-        _require_equal(
-            differences,
-            label=f"QVL artifact {package}",
-            actual=artifact_versions.get(package),
-            expected=packages[package],
-        )
+    consumers.qvl_differences(qvl, pin, differences)
 
     recipe = (repo_root / "Dockerfile.project-toolchain").read_text(encoding="utf-8")
-    if f"rust:{rust['version']}-" not in recipe:
-        differences.append("project toolchain recipe does not use the pinned Rust version")
-    if f"gramineproject/gramine:{gramine['version']}-" not in recipe:
-        differences.append("project toolchain recipe does not use the pinned Gramine version")
-    for package, version in packages.items():
-        if f"{package}={version}" not in recipe:
-            differences.append(
-                f"project toolchain recipe does not install {package}={version}"
-            )
-    for image in elf_base_images:
-        if f"FROM {image} " not in recipe:
-            differences.append(f"project toolchain recipe does not consume {image}")
-    if "FROM toolchain AS builder" not in recipe or "FROM scratch AS artifacts" not in recipe:
-        differences.append("project toolchain recipe does not own the release artifact stages")
-    if f"COPY {APT_SOURCES_PATH} /etc/apt/sources.list.d/ubuntu.sources" not in recipe:
-        differences.append("project toolchain recipe does not install the frozen APT sources")
+    consumers.recipe_differences(
+        recipe, pin, elf.get("builder", {}).get("base_images", []), APT_SOURCES_PATH, differences
+    )
 
     apt_sources = (repo_root / APT_SOURCES_PATH).read_text(encoding="utf-8")
-    uris = [
-        line.split(":", 1)[1].strip()
-        for line in apt_sources.splitlines()
-        if line.startswith("URIs:")
-    ]
-    if not uris:
-        differences.append("frozen APT sources declare no URI")
-    for uri in uris:
-        if not uri.startswith(APT_SNAPSHOT_HOST):
-            differences.append(f"frozen APT sources use a mutable archive URI: {uri}")
-    for host in MUTABLE_APT_HOSTS:
-        if any(host in line for line in apt_sources.splitlines() if not line.startswith("#")):
-            differences.append(f"frozen APT sources still reach the mutable host {host}")
+    consumers.apt_source_differences(apt_sources, differences)
 
     tee_build = (repo_root / "crates/system/tee/build.rs").read_text(encoding="utf-8")
-    for release_pin in (
-        'include_str!("../../../release/project-toolchain-v1.json")',
-        'include_str!("../../../release/dcap-native-qvl-v1.json")',
-    ):
-        if release_pin not in tee_build:
-            differences.append(f"native-DCAP build contract does not consume {release_pin}")
-    for version in packages.values():
-        if f'"{version}"' in tee_build:
-            differences.append(
-                f"native-DCAP build contract duplicates project package version {version}"
-            )
+    consumers.tee_build_differences(tee_build, pin["system_packages"], differences)
     return differences
 
 

@@ -25,12 +25,13 @@ use outbe_zk::protocol::entity::Entity as EntityTrait;
 use crate::compute::CanonicalAmount;
 use crate::errors::{EnclaveResult, ProcessError};
 use crate::payload::TributeInputPayload;
+use crate::process::OfferError;
 
 pub(crate) fn derive_expected_hashes(
     offer: &EncryptedTributeOffer,
     payload: &TributeInputPayload,
     amount: &CanonicalAmount,
-) -> EnclaveResult<Option<TributeZkExpectedHashes>> {
+) -> Result<Option<TributeZkExpectedHashes>, OfferError> {
     let Some(context) = &offer.zk_context else {
         return Ok(None);
     };
@@ -53,9 +54,10 @@ pub(crate) fn derive_expected_hashes(
         atto: amount.micro,
         su_ids,
     };
-    let nft_hash = draft
-        .entity_hash()
-        .map_err(ProcessError::invalid_canonical_draft)?;
+    let nft_hash = draft.entity_hash().map_err(|source| OfferError::Zk {
+        context: "invalid canonical TributeDraft",
+        source,
+    })?;
     let sender = offer.owner.into_array();
     let commitment_id: [u8; 32] = id.into();
     let binding_hash = outbe_zk::primitive::hash::binding(
@@ -64,7 +66,10 @@ pub(crate) fn derive_expected_hashes(
         context.chain_id,
         context.l2_chain_id,
     )
-    .map_err(ProcessError::derive_binding_hash)?;
+    .map_err(|source| OfferError::Zk {
+        context: "failed to derive binding_hash",
+        source,
+    })?;
 
     Ok(Some(TributeZkExpectedHashes {
         nft_hash: field_to_b256(nft_hash),

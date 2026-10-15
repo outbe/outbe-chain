@@ -104,6 +104,35 @@ fn program_input(input: &CorpusInput) -> ProgramInputV1 {
     }
 }
 
+#[test]
+fn identity_hash_failure_is_node_local_not_arithmetic_and_retries(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let input = corpus_cases()
+        .into_iter()
+        .map(|case| program_input(&case.input))
+        .find(|input| execute(input.clone()).is_ok())
+        .ok_or("no successful reference case")?;
+    let healthy = execute(input.clone())?;
+    let guard = outbe_poseidon::testing::fail_after(1);
+    let error = execute(input.clone())
+        .err()
+        .ok_or("injection did not abort execution")?;
+    assert!(matches!(
+        error,
+        ProgramErrorV1::IdentityHash(outbe_compressed_entities::CommitmentError::CryptoBackend(_))
+    ));
+    assert!(std::error::Error::source(&error).is_some());
+    let precompile: outbe_primitives::error::PrecompileError = error.into();
+    assert!(precompile.is_node_local());
+    assert_eq!(
+        precompile.sweep_failure(),
+        outbe_primitives::error::SweepFailure::Propagate
+    );
+    drop(guard);
+    assert_eq!(execute(input)?, healthy);
+    Ok(())
+}
+
 fn lowercase_address(value: Address) -> String {
     format!("0x{}", hex::encode(value.as_slice()))
 }
@@ -241,6 +270,7 @@ fn failure_json(error: ProgramErrorV1) -> Value {
             ("ENTRY_PRICE_UNAVAILABLE", Some(ordinal), Some(currency))
         }
         ProgramErrorV1::Arithmetic { .. } => ("ARITHMETIC", None, None),
+        ProgramErrorV1::IdentityHash(_) => ("IDENTITY_HASH", None, None),
         ProgramErrorV1::ZeroGratisLoad { ordinal } => ("ZERO_GRATIS_LOAD", Some(ordinal), None),
         ProgramErrorV1::ZeroCost { ordinal, .. } => ("ZERO_COST", Some(ordinal), None),
         ProgramErrorV1::GratisLoadExceedsRemaining { ordinal } => {

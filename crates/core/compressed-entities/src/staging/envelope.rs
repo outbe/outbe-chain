@@ -50,8 +50,7 @@ pub(super) fn validate_shard_envelope(
 }
 
 pub(super) fn aggregate_b256_roots(roots: &[B256]) -> Result<B256, StagingError> {
-    aggregate_b256_shard_roots(roots)
-        .map_err(|_| StagingError::InvalidShardEnvelope("invalid shard root aggregate"))
+    aggregate_b256_shard_roots(roots).map_err(StagingError::tree_hash)
 }
 
 pub(super) fn validate_catalog_envelope(
@@ -165,7 +164,7 @@ fn validate_collection_operation(
                 .parent_collection_root
                 .map(|_| collection_root(domain, key, collection.shard_set.parent_shard_top_root))
                 .transpose()
-                .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid parent collection"))?;
+                .map_err(StagingError::Collection)?;
             if expected_parent != collection.parent_collection_root
                 || (collection.parent_collection_root.is_none()
                     && collection
@@ -174,7 +173,7 @@ fn validate_collection_operation(
                         .iter()
                         .any(|root| *root != B256::ZERO))
                 || collection_root(domain, key, collection.shard_set.new_shard_top_root)
-                    .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid new collection"))?
+                    .map_err(StagingError::Collection)?
                     != collection.new_collection_root
             {
                 return Err(StagingError::InvalidCatalogEnvelope(
@@ -213,12 +212,8 @@ fn validate_catalog_roots(roots: CatalogRoots) -> Result<(), StagingError> {
     let new_r_sealed = roots.sealed.new;
     let parent_catalog_root = roots.catalog.parent;
     let new_catalog_root = roots.catalog.new;
-    if sealed_root(parent_catalog_root)
-        .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid parent sealed-root wrapper"))?
-        != parent_r_sealed
-        || sealed_root(new_catalog_root)
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid new sealed-root wrapper"))?
-            != new_r_sealed
+    if sealed_root(parent_catalog_root).map_err(StagingError::Collection)? != parent_r_sealed
+        || sealed_root(new_catalog_root).map_err(StagingError::Collection)? != new_r_sealed
     {
         return Err(StagingError::InvalidCatalogEnvelope(
             "sealed-root wrapper mismatch",

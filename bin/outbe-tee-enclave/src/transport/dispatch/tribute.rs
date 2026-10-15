@@ -28,7 +28,8 @@ pub(super) fn process_offers(
         let (results, inputs_canonical_hash) =
             crate::encrypted_tribute_offer::process_encrypted_tribute_offer_batch(
                 &key, chain_id, offers,
-            );
+            )
+            .map_err(|_| TransportDispatchError::TributeCryptoBackendUnavailable)?;
         let preimage =
             tribute_v2::encrypted_offer_attestation_preimage(inputs_canonical_hash, &results)
                 .map_err(|_| TransportDispatchError::CannotEncodeEncryptedTributeResults)?;

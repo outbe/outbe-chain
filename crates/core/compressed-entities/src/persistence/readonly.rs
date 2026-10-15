@@ -83,7 +83,7 @@ impl CeMdbxReadOnly {
     ) -> Result<crate::staging::AuthenticatedCatalogView, PersistenceError> {
         let snapshot = self.open_snapshot()?;
         crate::staging::AuthenticatedCatalogView::open(snapshot, required)
-            .map_err(PersistenceError::staging)
+            .map_err(PersistenceError::from)
     }
 
     fn open_snapshot(&self) -> Result<Box<dyn FinalizedTreeSnapshot>, PersistenceError> {
@@ -113,7 +113,8 @@ impl CeMdbxReadOnly {
             return Err(PersistenceError::EnvironmentMarkerSchemeMismatch);
         }
         let catalog_root = read_required_tree_root(&tx, &self.path, TreeNamespace::Catalog)?;
-        let wrapped = crate::sealed_root(catalog_root).map_err(PersistenceError::staging)?;
+        let wrapped =
+            crate::sealed_root(catalog_root).map_err(PersistenceError::collection_hash)?;
         if wrapped != marker.new_root {
             return Err(PersistenceError::CatalogWrapperMismatch {
                 expected: marker.new_root,

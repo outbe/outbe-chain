@@ -8,6 +8,9 @@ use outbe_tee::TransportError;
 /// Error from enclave transport offer-key persistence and request dispatch.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TransportDispatchError {
+    /// Tribute hashing failed because the node-local crypto backend is unavailable.
+    #[error("Tribute crypto backend unavailable")]
+    TributeCryptoBackendUnavailable,
     /// Reading the sealed permanent offer key at boot failed.
     #[error("read sealed permanent offer key {path}: {detail}; no recovery or fallback exists")]
     ReadSealedPermanentOfferKey { path: String, detail: String },

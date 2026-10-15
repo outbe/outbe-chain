@@ -110,7 +110,7 @@ impl AuthenticatedTributePartition<'_> {
 #[derive(Debug, Error)]
 pub enum ExportViewError {
     #[error("authenticated CE export tree failed: {0}")]
-    Tree(String),
+    Tree(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("finalized Tribute partition is missing")]
     MissingPartition,
     #[error("finalized Tribute collection key mismatch: expected {expected}, got {actual}")]
@@ -126,7 +126,7 @@ pub enum ExportViewError {
 }
 
 impl ExportViewError {
-    pub(crate) fn tree(error: impl core::fmt::Display) -> Self {
-        Self::Tree(error.to_string())
+    pub(crate) fn tree(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Tree(Box::new(error))
     }
 }

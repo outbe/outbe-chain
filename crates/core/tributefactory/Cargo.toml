@@ -20,6 +20,7 @@ outbe-l2registry.workspace = true
 outbe-tee.workspace = true
 outbe-zk.workspace = true
 outbe-zk-backend.workspace = true
+outbe-poseidon.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 hex.workspace = true

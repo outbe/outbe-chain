@@ -25,7 +25,7 @@ impl From<LysisError> for PrecompileError {
     }
 }
 
-/// Deterministic errors that the Lysis V1 semantic program returns.
+/// Semantic failures and typed node-local hashing failures in Lysis V1.
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum ProgramErrorV1 {
     #[error("Lysis V1 input is empty")]
@@ -68,6 +68,9 @@ pub enum ProgramErrorV1 {
     #[error("Lysis V1 arithmetic: {message}")]
     Arithmetic { message: String },
 
+    #[error("Lysis V1 identity hash: {0}")]
+    IdentityHash(#[source] outbe_compressed_entities::CommitmentError),
+
     #[error("Lysis V1 zero Gratis load at {ordinal}")]
     ZeroGratisLoad { ordinal: usize },
 
@@ -102,6 +105,11 @@ impl ProgramErrorV1 {
 
 impl From<ProgramErrorV1> for PrecompileError {
     fn from(error: ProgramErrorV1) -> Self {
-        PrecompileError::BodyReadCorruption(error.to_string())
+        match error {
+            ProgramErrorV1::IdentityHash(
+                outbe_compressed_entities::CommitmentError::CryptoBackend(_),
+            ) => PrecompileError::CryptoBackendUnavailable(error.to_string()),
+            error => PrecompileError::BodyReadCorruption(error.to_string()),
+        }
     }
 }

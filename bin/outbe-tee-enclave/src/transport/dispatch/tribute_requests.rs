@@ -29,7 +29,14 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
                 Some(d) => keys.tribute_offer_key_material_with(d.secret()),
                 None => keys.tribute_offer_key_material(),
             };
-            let (results, inputs_canonical_hash) = process_tribute_offer_batch(&km, &offers);
+            let (results, inputs_canonical_hash) = match process_tribute_offer_batch(&km, &offers) {
+                Ok(batch) => batch,
+                Err(error) => {
+                    return EnclaveResponse::Error {
+                        message: error.to_string(),
+                    }
+                }
+            };
             // Sign (inputs_canonical_hash || results) with the enclave's
             // Ed25519 attestation key. The host verifies this signature against the
             // attestation key it pinned from the quote. This proves that this attested

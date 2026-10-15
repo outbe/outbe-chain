@@ -13,5 +13,6 @@ pub(crate) use facade::{
     TreeKey, TreeLeaf, TreeProof, TreeRoot,
 };
 
+mod overlay;
 #[cfg(test)]
 mod tests;

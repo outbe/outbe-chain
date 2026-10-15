@@ -33,6 +33,13 @@ impl VerificationWork {
                 self.retire_cancelled(delivery.request, cancelled)?;
                 return Ok(None);
             }
+            ExecutionStatus::CryptoBackendUnavailable => {
+                // Local execution cannot decide this block's validity. Retire
+                // this attempt as unavailable, not invalid. Do not repeatedly
+                // retry a poisoned native session; a fresh request after backend
+                // recovery can process the same block.
+                PayloadStatusEnum::Accepted
+            }
             ExecutionStatus::NodeLocalAbort(abort) => {
                 self.retire_node_local_abort(delivery.request, abort);
                 return Ok(None);
