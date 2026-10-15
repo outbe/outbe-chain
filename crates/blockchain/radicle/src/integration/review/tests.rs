@@ -153,6 +153,55 @@ fn native_object_commitments(repo: &Repository, roots: &[git::Oid]) -> Vec<Objec
     objects
 }
 
+fn assert_independent_witnesses(
+    verifier: &RepositorySigningMaterial,
+    actual: &RepositorySubject,
+    envelope: &BlsEnvelope,
+    contributions: &[(bls12381::PublicKey, RepositoryPartial)],
+) {
+    let frames: Vec<_> = contributions.iter().map(|(_, f)| f.clone()).collect();
+    verifier.verify_witness(actual, envelope, &frames).unwrap();
+    verifier
+        .verify_witness(actual, envelope, &frames[..3])
+        .unwrap();
+    verifier
+        .verify_witness(actual, envelope, &frames[1..])
+        .unwrap();
+    assert!(verifier
+        .verify_witness(actual, envelope, &frames[..2])
+        .is_err());
+    assert!(verifier.verify_witness(actual, envelope, &[]).is_err());
+    let mut duplicate = frames.clone();
+    duplicate[1] = duplicate[0].clone();
+    assert!(verifier
+        .verify_witness(actual, envelope, &duplicate)
+        .is_err());
+    let mut unsorted = frames.clone();
+    unsorted.swap(0, 1);
+    assert!(verifier
+        .verify_witness(actual, envelope, &unsorted)
+        .is_err());
+    let mut invalid_last = frames.clone();
+    let mut bytes = invalid_last.last().unwrap().to_bytes();
+    bytes[0] ^= 1;
+    *invalid_last.last_mut().unwrap() = RepositoryPartial::from_bytes(&bytes).unwrap();
+    assert!(verifier
+        .verify_witness(actual, envelope, &invalid_last)
+        .is_err());
+    let mut outsider = frames.clone();
+    let mut bytes = outsider.last().unwrap().to_bytes();
+    bytes[120..124].copy_from_slice(&u32::MAX.to_be_bytes());
+    *outsider.last_mut().unwrap() = RepositoryPartial::from_bytes(&bytes).unwrap();
+    assert!(verifier
+        .verify_witness(actual, envelope, &outsider)
+        .is_err());
+    let mut oversized = frames;
+    oversized.push(oversized[0].clone());
+    assert!(verifier
+        .verify_witness(actual, envelope, &oversized)
+        .is_err());
+}
+
 #[test]
 fn review_context_matches_frozen_p0_native_vectors() {
     let decision = PatchVotePayloadV1::accept(
@@ -483,6 +532,27 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         },
     )
     .unwrap();
+    let public_output = material.canonical_output();
+    let independent = RepositorySigningMaterial::from_canonical_output(
+        authority.clone(),
+        &public_output,
+        owner_key,
+    )
+    .unwrap();
+    assert_eq!(independent.material_hash(), material.material_hash());
+    for invalid in [
+        vec![],
+        public_output[..public_output.len() - 1].to_vec(),
+        [public_output.as_slice(), &[0]].concat(),
+        vec![0; 1024 * 1024 + 1],
+    ] {
+        assert!(RepositorySigningMaterial::from_canonical_output(
+            authority.clone(),
+            &invalid,
+            owner_key
+        )
+        .is_err());
+    }
     let owner_snapshot: Vec<_> = accepted_refs
         .iter()
         .map(|(name, id)| OwnerRef {
@@ -704,10 +774,28 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         .recover_review(&providers[0], &prepared, &contributions[1..])
         .unwrap();
     assert_eq!(signature.to_bytes(), alternate.to_bytes());
+    assert_independent_witnesses(&independent, prepared.subject(), &signature, &contributions);
+    for forged in [forged, wrong_partial, wrong_domain] {
+        let mut frames: Vec<_> = contributions[..3].iter().map(|(_, f)| f.clone()).collect();
+        frames[0] = forged;
+        assert!(independent
+            .verify_witness(prepared.subject(), &signature, &frames)
+            .is_err());
+    }
     let mut other_material = signing.clone();
     other_material.material_version += 1;
     let stale = prepare_patch_review(&repo, &approval, identity, None, &other_material).unwrap();
     assert!(signature.verify(&stale.subject, owner).is_err());
+    assert!(independent
+        .verify_witness(
+            stale.subject(),
+            &signature,
+            &contributions
+                .iter()
+                .map(|(_, f)| f.clone())
+                .collect::<Vec<_>>()
+        )
+        .is_err());
     assert!(material
         .sign_review(
             &providers[0],
@@ -798,6 +886,32 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     let alternate_refs_signature = material
         .recover_review_refs(&providers[0], &prepared_refs, &refs_contributions[1..])
         .unwrap();
+    assert_independent_witnesses(
+        &independent,
+        prepared_refs.subject(),
+        &refs_signature,
+        &refs_contributions,
+    );
+    assert!(independent
+        .verify_witness(
+            prepared_refs.subject(),
+            &refs_signature,
+            &contributions
+                .iter()
+                .map(|(_, f)| f.clone())
+                .collect::<Vec<_>>()
+        )
+        .is_err());
+    assert!(independent
+        .verify_witness(
+            prepared_refs.subject(),
+            &signature,
+            &refs_contributions
+                .iter()
+                .map(|(_, f)| f.clone())
+                .collect::<Vec<_>>()
+        )
+        .is_err());
     assert_eq!(
         refs_signature.to_bytes(),
         alternate_refs_signature.to_bytes()

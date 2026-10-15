@@ -1,12 +1,15 @@
 //! Current finalized committee/DKG binding for native repository partials.
 
 use alloy_primitives::Address;
-use commonware_codec::{DecodeExt as _, Encode as _};
+use commonware_codec::{DecodeExt as _, Encode as _, Read as _};
 use commonware_cryptography::{
     bls12381::{
         self,
         dkg::feldman_desmedt::Output,
-        primitives::variant::{MinSig, PartialSignature, Variant},
+        primitives::{
+            sharing::ModeVersion,
+            variant::{MinSig, PartialSignature, Variant},
+        },
     },
     Hasher as _, Sha256, Signer as _, Verifier as _,
 };
@@ -21,6 +24,7 @@ use crate::manager::FinalizedPatchSigningState;
 use crate::manager::FinalizedRepositoryAuthority;
 
 const PARTIAL_NAMESPACE: &[u8] = b"outbe.radicle.partial.v1";
+const MAX_PUBLIC_OUTPUT_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -51,6 +55,73 @@ pub struct RepositorySigningMaterial {
 }
 
 impl RepositorySigningMaterial {
+    /// Decode the public Output component of a witness against local finalized authority.
+    /// The caller also binds its material hash to the current checkpoint before publication.
+    pub fn from_canonical_output(
+        authority: FinalizedRepositoryAuthority,
+        bytes: &[u8],
+        owner: BlsPublicKey,
+    ) -> Result<Self, Error> {
+        if bytes.len() > MAX_PUBLIC_OUTPUT_BYTES {
+            return Err(Error::Material);
+        }
+        let mut reader = bytes;
+        let cfg = (
+            std::num::NonZeroU32::new(outbe_consensus::bls::MAX_VALIDATORS)
+                .ok_or(Error::Material)?,
+            ModeVersion::v0(),
+        );
+        let output = Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut reader, &cfg)
+            .map_err(|_| Error::Material)?;
+        if !reader.is_empty() || output.encode().as_ref() != bytes {
+            return Err(Error::Material);
+        }
+        Self::new(authority, output, owner)
+    }
+
+    /// Independently verify sorted current q-partial witnesses for a reconstructed native subject.
+    /// This checks cryptographic evidence, not Git contents or permission to publish.
+    pub fn verify_witness(
+        &self,
+        actual: &RepositorySubject,
+        envelope: &BlsEnvelope,
+        frames: &[RepositoryPartial],
+    ) -> Result<(), Error> {
+        if frames.len() < self.output.public().required() as usize
+            || frames.len() > self.output.players().len()
+        {
+            return Err(Error::Partial);
+        }
+        let mut previous = None;
+        let contributions = frames
+            .iter()
+            .map(|frame| {
+                let index = frame.body.partial.index;
+                if previous.is_some_and(|old| old >= index) {
+                    return Err(Error::Partial);
+                }
+                previous = Some(index);
+                let sender = self
+                    .output
+                    .players()
+                    .iter()
+                    .nth(index.get() as usize)
+                    .ok_or(Error::Participant)?;
+                Ok((sender.clone(), frame.clone()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // A receiver needs only the authenticated public polynomial, never a local Share.
+        let verifier = VrfMaterialProvider::new(
+            self.authority.committee().vrf_material_version,
+            self.output.public().clone(),
+            None,
+        );
+        if self.recover_subject(&verifier, actual, &contributions)? != *envelope {
+            return Err(Error::Partial);
+        }
+        Ok(())
+    }
+
     fn authorize_current_review(
         &self,
         state: &FinalizedPatchSigningState,
