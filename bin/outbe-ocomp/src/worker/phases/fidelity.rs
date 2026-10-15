@@ -127,11 +127,7 @@ fn collect_fidelity_opening_leagues(
     (bundle, limits, cancelled): (&ProtocolBundleV1, &SchemaLimits, Option<&AtomicBool>),
 ) -> Result<BTreeMap<Address, u16>, WorkerError> {
     let (leagues, fidelity_opening_count, fidelity_encoded_bytes) =
-        collect_fidelity_leagues_from_chunks(
-            manifest,
-            input_chunks,
-            (bundle, limits, cancelled),
-        )?;
+        collect_fidelity_leagues_from_chunks(manifest, input_chunks, (bundle, limits, cancelled))?;
     require_authenticated_input(
         spec,
         InputPurpose::FidelityOpenings,
