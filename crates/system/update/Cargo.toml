@@ -23,6 +23,16 @@ tracing.workspace = true
 [dev-dependencies]
 outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
+outbe-evm.workspace = true
+outbe-vote.workspace = true
+outbe-compressed-entities.workspace = true
+outbe-offchain-data.workspace = true
+outbe-offchain-storage.workspace = true
+outbe-oracle.workspace = true
+outbe-primitives = { workspace = true, features = ["test-utils"] }
+serde_json.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
 
 [lints]
 workspace = true

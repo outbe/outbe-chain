@@ -8527,25 +8527,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-e2e"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "outbe-compressed-entities",
- "outbe-evm",
- "outbe-governance",
- "outbe-offchain-data",
- "outbe-offchain-storage",
- "outbe-oracle",
- "outbe-primitives",
- "outbe-update",
- "outbe-validatorset",
- "outbe-vote",
- "serde_json",
-]
-
-[[package]]
 name = "outbe-e2e-harness"
 version = "0.1.0"
 dependencies = [
@@ -8910,6 +8891,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-evm",
  "outbe-macros",
  "outbe-primitives",
  "outbe-validatorset",
@@ -10061,9 +10043,14 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "hex",
+ "outbe-compressed-entities",
+ "outbe-evm",
  "outbe-macros",
  "outbe-ocomp-protocol",
  "outbe-ocompregistry",
+ "outbe-offchain-data",
+ "outbe-offchain-storage",
+ "outbe-oracle",
  "outbe-primitives",
  "outbe-teeregistry",
  "outbe-validatorset",
