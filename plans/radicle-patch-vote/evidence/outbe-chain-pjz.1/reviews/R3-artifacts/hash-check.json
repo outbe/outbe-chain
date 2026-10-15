@@ -1,0 +1,35 @@
+{
+  "candidate_artifacts": {
+    "plans/radicle-patch-vote/design.md": {
+      "expected": "f36c868f6c11bcb4939deb198c4605f2d5a4313a1e0634679c0a6dfd7e875bcd",
+      "actual": "f36c868f6c11bcb4939deb198c4605f2d5a4313a1e0634679c0a6dfd7e875bcd"
+    },
+    "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/README.md": {
+      "expected": "19e5696917505f3305117f12977772e969635c51d1db6a6f074c24eb6bd3b0ed",
+      "actual": "19e5696917505f3305117f12977772e969635c51d1db6a6f074c24eb6bd3b0ed"
+    },
+    "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/source-audit.json": {
+      "expected": "17c3212c8991694f8915dcaa24ca9c405925b6704d3c2839a935be83c0f020c1",
+      "actual": "17c3212c8991694f8915dcaa24ca9c405925b6704d3c2839a935be83c0f020c1"
+    },
+    "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/design-check.log": {
+      "expected": "79deaf98b9276f03fb87a6ba9dd1b92f668a142393cb224e9682f62c36d7c3d7",
+      "actual": "79deaf98b9276f03fb87a6ba9dd1b92f668a142393cb224e9682f62c36d7c3d7"
+    },
+    "plans/radicle-patch-vote/p0-check/src/main.rs": {
+      "expected": "443d53bb65b9b8108ca648bb3ab5027741e0f3c4c743c792e8b995e8f3913955",
+      "actual": "443d53bb65b9b8108ca648bb3ab5027741e0f3c4c743c792e8b995e8f3913955"
+    },
+    "plans/radicle-patch-vote/p0-check/src/publication.rs": {
+      "expected": "456e6ac20c51a129aeddcfd695157c24962883442399d6a52ed73752ac4b0f49",
+      "actual": "456e6ac20c51a129aeddcfd695157c24962883442399d6a52ed73752ac4b0f49"
+    },
+    "plans/radicle-patch-vote/p0-check/Cargo.lock": {
+      "expected": "7b9cccb5ad05822faeaa87b4177f6914afd7b61db6828400cae9ade71aff79bc",
+      "actual": "7b9cccb5ad05822faeaa87b4177f6914afd7b61db6828400cae9ade71aff79bc"
+    }
+  },
+  "anchors": 39,
+  "coupling_candidates": 141,
+  "source_hash_or_line_failures": []
+}
