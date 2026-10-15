@@ -139,7 +139,7 @@ fn read_ok() {
     assert_eq!(head.verified.commit().oid(), &oid);
     assert_eq!(
         head.verified.commit().signature(),
-        &crypto::Signature::from([1; 64])
+        &crypto::RepositorySignature::from(crypto::Signature::from([1; 64]))
     );
     assert_eq!(head.verified.commit().parent(), None);
     assert_eq!(

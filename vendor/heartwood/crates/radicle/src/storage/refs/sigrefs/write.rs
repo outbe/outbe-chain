@@ -23,6 +23,105 @@ use crate::storage::refs::{
     SIGREFS_PARENT,
 };
 
+/// Exact refs ready for external signing. Attachment stores objects without promoting refs.
+pub struct PreparedSignedRefs {
+    refs: Refs,
+    repository: RepoId,
+    authority: RepositoryKey,
+    context: [u8; 32],
+    previous: Option<Oid>,
+    committer: Author,
+    message: String,
+}
+
+impl PreparedSignedRefs {
+    pub fn new(
+        mut refs: Refs,
+        repository: RepoId,
+        authority: RepositoryKey,
+        context: [u8; 32],
+        previous: Option<Oid>,
+        committer: Committer,
+        message: String,
+    ) -> Result<Self, error::Native> {
+        if authority.as_ed25519().is_some()
+            || refs.get(&IDENTITY_ROOT).is_none()
+            || refs.get(&SIGREFS_PARENT).is_some()
+            || previous.is_some_and(|oid| oid.is_zero())
+        {
+            return Err(error::Native::InvalidRefs);
+        }
+        refs.remove_sigrefs();
+        if let Some(parent) = previous {
+            refs.add_parent(parent);
+        }
+        let prepared = Self {
+            refs,
+            repository,
+            authority,
+            context,
+            previous,
+            committer: committer.into_inner(),
+            message,
+        };
+        prepared.subject()?;
+        Ok(prepared)
+    }
+
+    pub fn subject(&self) -> Result<crypto::RepositorySubject, crypto::repository::Error> {
+        crypto::RepositorySubject::signed_refs(
+            self.repository
+                .into_sha1()
+                .ok_or(crypto::repository::Error::InvalidSubject)?,
+            self.context,
+            self.previous
+                .map(|p| {
+                    p.into_sha1()
+                        .ok_or(crypto::repository::Error::InvalidSubject)
+                })
+                .transpose()?
+                .unwrap_or([0; 20]),
+            &self.refs.canonical(),
+        )
+    }
+
+    pub fn attach<R>(
+        self,
+        repo: &R,
+        envelope: crypto::BlsEnvelope,
+    ) -> Result<VerifiedCommit, error::Native>
+    where
+        R: object::Writer + object::Reader,
+    {
+        envelope.verify(&self.subject()?, self.authority)?;
+        let tree = repo.write_tree(
+            object::RefsEntry {
+                path: Path::new(REFS_BLOB_PATH).into(),
+                content: self.refs.canonical(),
+            },
+            object::SignatureEntry {
+                path: Path::new(SIGNATURE_BLOB_PATH).into(),
+                content: envelope.to_bytes().to_vec(),
+            },
+        )?;
+        let commit = CommitData::new::<_, _, OwnedTrailer>(
+            tree,
+            self.previous,
+            self.committer.clone(),
+            self.committer,
+            Headers::new(),
+            self.message,
+            vec![],
+        );
+        let oid = repo.write_commit(commit.to_string().as_bytes())?;
+        let verifier = read::RepositoryVerifier::new(self.authority, |_| Ok(self.context));
+        CommitReader::new(oid, repo)
+            .read()?
+            .verify(self.repository, &verifier)
+            .map_err(Into::into)
+    }
+}
+
 /// The result of attempting to write signed references using
 /// [`SignedRefsWriter`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -213,7 +312,7 @@ impl Commit {
         SignedRefs {
             at: self.oid,
             id,
-            signature: self.signature,
+            signature: self.signature.into(),
             refs: self.refs,
             level,
             parent: self.parent,

@@ -19,7 +19,7 @@ pub fn signed_refs_at(g: &mut qcheck::Gen, root: Oid, signer: &impl crypto::Sign
     let signature = crypto::signature::Signer::sign(signer, &refs.canonical());
     SignedRefs {
         refs,
-        signature,
+        signature: signature.into(),
         id: signer.public_key().into(),
         level: level.unwrap_or_else(|| FeatureLevel::arbitrary(g)),
         parent: Arbitrary::arbitrary(g),

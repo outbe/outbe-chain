@@ -12,7 +12,7 @@ use std::str::FromStr;
 
 use crypto::RepositoryKey as PublicKey;
 use crypto::RepositoryKey;
-use crypto::Signature;
+use crypto::RepositorySignature;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -376,7 +376,7 @@ pub struct SignedRefs {
     refs: Refs,
     /// The signature of the signer over the refs.
     #[serde(skip)]
-    signature: Signature,
+    signature: RepositorySignature,
     /// This is the remote under which these refs exist, and the public key of the signer.
     id: PublicKey,
 
