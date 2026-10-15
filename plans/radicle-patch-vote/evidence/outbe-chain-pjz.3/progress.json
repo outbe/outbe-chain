@@ -1,7 +1,7 @@
 {
   "task_id": "outbe-chain-pjz.3",
-  "status": "in_progress_repository_roles_metadata_wire",
-  "production_native_integration": "roles_and_wire_integrated; native_identity_COB_sigrefs_and_policy_pending",
+  "status": "in_progress_native_COB_backend",
+  "production_native_integration": "roles_wire_and_native_COB_backend; identity_actions_sigrefs_policy_and_storage_wiring_pending",
   "implemented": [
     "RepositoryKey Ed25519/BLS split without transport changes",
     "validated compressed G2 keys and canonical textual/tagged formats",
@@ -10,16 +10,18 @@
     "Strict exact unsigned/signed BLS Git commit metadata codec with native P0 commit OID/trailer roundtrip and grammar negatives",
     "RepositoryKey DID/actor/namespace/ref-cache/fetch role propagation with Ed25519 transport retained",
     "V1/V2 authenticated Upgrade/Ack negotiation and signed encoding preserved across relay/cache migration/reopen",
-    "existing wire OID prefixes and gossip byte limits preserved; unnegotiated V2 and oversized gossip rejected before payload work"
+    "existing wire OID prefixes and gossip byte limits preserved; unnegotiated V2 and oversized gossip rejected before payload work",
+    "Shared RepositorySignature strict Ed/BLS blob and identity-action JSON codec with separately reconstructed native subject verification",
+    "Native BLS COB prepared metadata attach/load/reopen with opaque verified commit/tree/actor binding; lower raw Git load fails closed without repository/context"
   ],
-  "checks": "frontier/commands.json: required root check, whole vendor workspace/all-target Clippy,648 native tests,exact signed wire vectors passed; current/current and legacy/current actual Ed peer scenarios passed; optional all-features profiling attempt NOT RUN (offline dhat missing); generic-wire follow-up9500ce8c3:109 protocol tests and whole-workspace/all-target Clippy passed on identical committed code bytes",
+  "checks": "frontier/commands.json: required root check, whole vendor workspace/all-target Clippy,648 native tests,exact signed wire vectors passed; current/current and legacy/current actual Ed peer scenarios passed; optional all-features profiling attempt NOT RUN (offline dhat missing); generic-wire follow-up9500ce8c3:109 protocol tests and whole-workspace/all-target Clippy passed on identical committed code bytes; native-cob/checks.json:663 native tests,full vendor Clippy,root consumers and no-git COB check pass on source bytes committed as e8e9806c1a1dde90167589586bcf5bffc9fefa87",
   "remaining": [
-    "native BLS identity/COB/sigrefs prepare/attach/load verification",
+    "native BLS identity action and signed-refs integration plus production storage/stream/cache context wiring",
     "generic managed-owner publication policy across every local/fetch/evaluator/cache/direct/reopen/rebuild path",
     "remaining CLI repository namespace vs transport selection checks",
     "actual two-node BLS repository acceptance with Ed patch author before Vote and all required negatives",
     "complete frozen P2 evidence and three independent full-AC reviews"
   ],
-  "review_state": "not_ready; P2 reviews remain blocked; P0 reopened for wire OID contract correction",
-  "source_sha": "9500ce8c35a4d6fedd2ab9ea0aa970ecb887808c"
+  "review_state": "not_ready; P2 reviews remain blocked; P0 Round5 accepted by three full-AC PASS",
+  "source_sha": "e8e9806c1a1dde90167589586bcf5bffc9fefa87"
 }
