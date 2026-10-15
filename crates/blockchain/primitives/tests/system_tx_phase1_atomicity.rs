@@ -12,7 +12,7 @@
 //! Tests that require the actual Phase 1 commit-into-pre-execution move are
 //! marked `#[ignore]` and reference the follow-up.
 
-use outbe_evm::system_tx::{SystemTxKind, SystemTxPhase, GENESIS_BOOTSTRAP_BLOCK_NUMBER};
+use outbe_primitives::system_tx::{SystemTxKind, SystemTxPhase, GENESIS_BOOTSTRAP_BLOCK_NUMBER};
 
 const BLOCK_1: u64 = 1;
 const BLOCK_2: u64 = 2;

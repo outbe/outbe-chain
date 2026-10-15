@@ -15,7 +15,7 @@
 //! `SystemTime`-derived state). Then proposer and validator paths would
 //! diverge on the per-block cursor sequence, and the block hash would split.
 
-use outbe_evm::system_tx::{SystemTxKind, SystemTxPhase, GENESIS_BOOTSTRAP_BLOCK_NUMBER};
+use outbe_primitives::system_tx::{SystemTxKind, SystemTxPhase, GENESIS_BOOTSTRAP_BLOCK_NUMBER};
 use proptest::prelude::*;
 
 /// The full set of `SystemTxPhase` variants must equal the V2 contract:

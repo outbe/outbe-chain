@@ -7,7 +7,7 @@
 //! requires the actual commit-timing move are marked `#[ignore]`. They point
 //! to (Phase 1 commit-into-pre-execution + state-root ordering).
 
-use outbe_evm::system_tx::{
+use outbe_primitives::system_tx::{
     expected_begin_block_kinds, SystemTxKind, SystemTxPhase, GENESIS_BOOTSTRAP_BLOCK_NUMBER,
 };
 

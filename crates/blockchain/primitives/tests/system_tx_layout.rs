@@ -6,7 +6,8 @@
 
 use alloy_consensus::{SignableTransaction as _, TxLegacy};
 use alloy_primitives::{address, Bytes, Signature, TxKind, U256};
-use outbe_evm::system_tx::{
+use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
+use outbe_primitives::system_tx::{
     build_unsigned_system_tx, expected_begin_block_kinds,
     expected_begin_block_kinds_for_activation, expected_end_block_kinds, split_system_layout,
     validate_active_system_tx_set, validate_system_tx_set_for_activation, BodyZone,
@@ -15,7 +16,6 @@ use outbe_evm::system_tx::{
     CYCLE_TICK_SELECTOR, OCOMP_LIFECYCLE_BEGIN_SELECTOR, OCOMP_TERMINAL_REQUEST_SELECTOR,
     ORACLE_SLASH_WINDOW_SELECTOR, REWARDS_GEM_DELIVERY_SELECTOR, SYSTEM_TX_INPUT_VERSION,
 };
-use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use reth_ethereum::TransactionSigned;
 
 /// Empty layout - used by the block-1 / block-0 layout tests that only need to

@@ -1,6 +1,6 @@
 use alloy_consensus::{SignableTransaction as _, Transaction as _, TxLegacy};
 use alloy_primitives::{address, Address, Bytes, Signature, TxKind, B256, U256};
-use outbe_evm::system_tx::{
+use outbe_primitives::system_tx::{
     build_unsigned_system_tx, split_system_layout, system_tx_visible_gas_limit,
     validate_active_system_tx_set, SystemTxInputV2, SystemTxKind, MAX_SYSTEM_TXS_PER_BLOCK,
     SYSTEM_TX_ARTIFACT_GAS_LIMIT, SYSTEM_TX_VISIBLE_GAS_FLOOR,

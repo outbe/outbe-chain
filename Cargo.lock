@@ -9473,6 +9473,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "k256 0.13.4",
+ "outbe-primitives",
  "proptest",
  "reth-codecs",
  "reth-ethereum",
