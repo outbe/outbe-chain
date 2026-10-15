@@ -66,15 +66,16 @@ pub fn reference_source_dir() -> PathBuf {
     repository_root().join(REFERENCE_PATH)
 }
 
-/// Hashes the `sha256sum *.rs` listing of the reference source directory.
+/// Hashes the `LC_ALL=C sha256sum *.rs` listing of the reference source directory.
 pub fn reference_sha256() -> Result<String> {
     let directory = reference_source_dir();
     let mut names = Vec::new();
     for entry in std::fs::read_dir(&directory)
         .wrap_err_with(|| format!("failed reading {}", directory.display()))?
     {
-        let name = entry?.file_name().to_string_lossy().into_owned();
-        if name.ends_with(".rs") {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if entry.file_type()?.is_file() && !name.starts_with('.') && name.ends_with(".rs") {
             names.push(name);
         }
     }
