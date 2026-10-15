@@ -89,7 +89,6 @@ pub fn encode_amount_run(
     encoded.write_u32(run.start_ordinal)?;
     encoded.write_u32(run.end_ordinal)?;
     encoded.write_u256(run.checked_segment_gratis_total)?;
-    encoded.write_u256(run.checked_segment_nominal_total)?;
     encoded.write_u256(run.checked_segment_settlement_cost_total)?;
     encoded.write_u32(
         u32::try_from(run.ordered_records.len())
@@ -120,7 +119,6 @@ pub fn decode_amount_run(
     let start_ordinal = input.read_u32()?;
     let end_ordinal = input.read_u32()?;
     let checked_segment_gratis_total = input.read_u256()?;
-    let checked_segment_nominal_total = input.read_u256()?;
     let checked_segment_settlement_cost_total = input.read_u256()?;
     let count = input.read_u32()?;
     validate_shard_size(usize::try_from(count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?)?;
@@ -149,7 +147,7 @@ pub fn decode_amount_run(
         end_ordinal,
         ordered_records,
         checked_segment_gratis_total,
-        checked_segment_nominal_total,
+        checked_segment_nominal_total: U256::ZERO,
         checked_segment_settlement_cost_total,
     };
     validate_amount_run(&run)?;
@@ -186,7 +184,6 @@ pub fn encode_finalized_output_run(
         encoded.write_u16(nod.issuance_currency)?;
         encoded.write_u16(nod.reference_currency)?;
     }
-    encoded.write_u256(run.checked_tribute_nominal_total)?;
     encoded.write_u256(run.checked_segment_gratis_total)?;
     encoded.write_u256(run.checked_settlement_cost_total)?;
     Ok(encoded.into_bytes())
@@ -236,7 +233,6 @@ pub fn decode_finalized_output_run(
             },
         });
     }
-    let checked_tribute_nominal_total = input.read_u256()?;
     let checked_segment_gratis_total = input.read_u256()?;
     let checked_settlement_cost_total = input.read_u256()?;
     input.finish()?;
@@ -244,7 +240,7 @@ pub fn decode_finalized_output_run(
         start_ordinal,
         end_ordinal,
         ordered_records,
-        checked_tribute_nominal_total,
+        checked_tribute_nominal_total: U256::ZERO,
         checked_segment_gratis_total,
         checked_settlement_cost_total,
     };
@@ -377,7 +373,6 @@ fn validate_amount_run(run: &AmountRunV1) -> Result<(), LysisArtifactErrorV1> {
         .checked_add(count)
         .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
     let has_zero_total = run.checked_segment_gratis_total.is_zero()
-        || run.checked_segment_nominal_total.is_zero()
         || run.checked_segment_settlement_cost_total.is_zero();
     if run.end_ordinal != end_ordinal || has_zero_total {
         return Err(LysisArtifactErrorV1::InvalidEncoding(
@@ -417,9 +412,8 @@ fn validate_finalized_output_run(run: &FinalizedOutputRunV1) -> Result<(), Lysis
     validate_shard_size(run.ordered_records.len())?;
     let count = u32::try_from(run.ordered_records.len())
         .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
-    let has_zero_total = run.checked_tribute_nominal_total.is_zero()
-        || run.checked_segment_gratis_total.is_zero()
-        || run.checked_settlement_cost_total.is_zero();
+    let has_zero_total =
+        run.checked_segment_gratis_total.is_zero() || run.checked_settlement_cost_total.is_zero();
     if !run.start_ordinal.is_multiple_of(PRIMARY_WORK_SHARD_SIZE)
         || has_zero_total
         || run.end_ordinal

@@ -1,8 +1,8 @@
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 #[test]
 fn dynamic_oracle_refresh_is_staged_three_hours_before_daily_cycle() {
-    const SECONDS_PER_DAY: u64 = 86_400;
     const REFRESH_HEADROOM: u64 = 3 * 60 * 60;
     let next_daily_cycle = 2 * SECONDS_PER_DAY + 1;
 
@@ -16,7 +16,7 @@ fn dynamic_oracle_refresh_is_staged_three_hours_before_daily_cycle() {
 #[test]
 fn protocol_cycle_keeps_an_exact_hourly_processing_boundary() {
     assert_eq!(
-        first_protocol_cycle_at_or_after_interval(172_800, 3_600),
+        first_protocol_cycle_at_or_after_interval(2 * SECONDS_PER_DAY, 3_600),
         172_801
     );
 }

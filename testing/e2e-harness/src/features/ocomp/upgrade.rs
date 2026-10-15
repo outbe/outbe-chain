@@ -1,4 +1,5 @@
 use crate::features::ocomp::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 #[when("an OCOMP successor is preloaded and activated while that V1 job remains pending")]
 fn activate_ocomp_successor_with_pending_v1_job(world: &mut World) {
@@ -459,7 +460,7 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
     let successor_wwd = WorldwideDay::from_timestamp(
         first_wwd
             .start_timestamp()
-            .checked_add(86_400)
+            .checked_add(SECONDS_PER_DAY)
             .expect("next WorldwideDay timestamp"),
     );
     let successor_wwd_value = successor_wwd.value();

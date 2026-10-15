@@ -1,7 +1,7 @@
 use super::*;
 
 const GENESIS_TS: u64 = 1_704_067_200;
-const SECONDS_PER_DAY: u64 = 86_400;
+use outbe_primitives::time::SECONDS_PER_DAY;
 const VALIDATOR_COUNT: u32 = outbe_consensus::bls::MAX_VALIDATORS;
 
 #[derive(Clone, Copy)]

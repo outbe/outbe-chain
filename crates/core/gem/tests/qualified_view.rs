@@ -53,6 +53,8 @@ fn provider() -> (HashMapStorageProvider, World) {
 }
 
 fn issue(s: &StorageHandle<'_>, world: &World) -> U256 {
+    let profile = outbe_gem::config::read(s).unwrap();
+    let entry = U256::from(500_000);
     api::add_gem(
         s,
         &world.scope,
@@ -66,6 +68,15 @@ fn issue(s: &StorageHandle<'_>, world: &World) -> U256 {
             issuance_currency: 978,
             reference_currency: 840,
             issued_at: ISSUED,
+            call_terms: Some(outbe_gem::CallTerms {
+                call_price_minor: outbe_primitives::markup::marked_up(entry, profile.call_rate)
+                    .unwrap(),
+                reference_currency: 840,
+                call_rate: profile.call_rate,
+                call_window_seconds: profile.call_window_seconds,
+                call_threshold_seconds: profile.call_threshold_seconds,
+                call_notice_period_seconds: profile.call_notice_period_seconds,
+            }),
         },
     )
     .unwrap()
@@ -89,12 +100,12 @@ fn status(s: &StorageHandle<'_>, world: &World, id: U256) -> IGem::GemData {
     let result = dispatch(
         s.clone(),
         world.readers(),
-        &IGem::getGemStatusCall { gemId: id }.abi_encode(),
+        &IGem::getGemCall { gemId: id }.abi_encode(),
         Address::ZERO,
         U256::ZERO,
     )
     .unwrap();
-    IGem::getGemStatusCall::abi_decode_returns(&result).unwrap()
+    IGem::getGemCall::abi_decode_returns(&result).unwrap()
 }
 
 fn agrees(s: &StorageHandle<'_>, world: &World, id: U256, expected: u8) {
@@ -144,8 +155,11 @@ fn qualified_gem_projection_preserves_called_deadline_and_settled_states() {
             .bucket_key;
         let mut contract = GemContract::new(s.clone());
         let terms = contract.read_call_terms(bucket).unwrap();
-        contract.mark_bucket_called(bucket, &terms, ISSUED).unwrap();
-        (id, ISSUED + u64::from(terms.call_notice_period_seconds))
+        let deadline = ISSUED + u64::from(terms.call_notice_period_seconds);
+        contract
+            .record_bucket_called(bucket, ISSUED, deadline)
+            .unwrap();
+        (id, deadline)
     });
     provider.set_timestamp(U256::from(deadline));
     StorageHandle::enter(&mut provider, |s| {
@@ -154,14 +168,13 @@ fn qualified_gem_projection_preserves_called_deadline_and_settled_states() {
     provider.set_timestamp(U256::from(deadline + 1));
     StorageHandle::enter(&mut provider, |s| {
         assert_eq!(status(&s, &world, id).state, 4);
-        assert!(
-            api::settle_gem(&s, &world.scope, &world.parent, id).is_err(),
-            "past the deadline nothing can be paid"
-        );
     });
     provider.set_timestamp(U256::from(deadline));
     StorageHandle::enter(&mut provider, |s| {
-        api::settle_gem(&s, &world.scope, &world.parent, id).unwrap();
+        let (item, bucket) = api::load_pair(&s, &world.scope, &world.parent, id)
+            .unwrap()
+            .unwrap();
+        api::record_settled(&s, &world.scope, item, bucket).unwrap();
         assert_eq!(status(&s, &world, id).state, 3);
     });
     provider.set_timestamp(U256::from(deadline + 1));

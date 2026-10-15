@@ -4,6 +4,8 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_primitives::addresses::GEM_ADDRESS;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 use super::*;
 use crate::config::GemParams;
@@ -428,8 +430,11 @@ fn config_unset_resolves_by_chain_id() {
         // An explicit selector still wins over the network default.
         set_profile(storage, crate::config::PROFILE_PROD);
         assert_eq!(crate::config::read(storage).unwrap(), GemParams::PROD);
-        assert_eq!(GemParams::PROD.call_window_seconds, 28 * 24 * 3600);
-        assert_eq!(GemParams::PROD.position_validity, 365 * 24 * 3600);
+        assert_eq!(
+            GemParams::PROD.call_window_seconds,
+            28 * SECONDS_PER_DAY_U32
+        );
+        assert_eq!(GemParams::PROD.position_validity, 365 * SECONDS_PER_DAY);
     });
 }
 
@@ -438,9 +443,15 @@ fn config_unset_resolves_by_chain_id() {
 fn config_auto_profile_follows_the_network() {
     use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
 
-    assert_eq!(GemParams::for_chain_id(MAINNET_CHAIN_ID), GemParams::PROD);
+    assert_eq!(
+        GemParams::from_selector(crate::config::PROFILE_AUTO, MAINNET_CHAIN_ID).unwrap(),
+        GemParams::PROD
+    );
     for chain_id in [TESTNET_CHAIN_ID, DEVNET_CHAIN_ID, 31_337] {
-        assert_eq!(GemParams::for_chain_id(chain_id), GemParams::DEV);
+        assert_eq!(
+            GemParams::from_selector(crate::config::PROFILE_AUTO, chain_id).unwrap(),
+            GemParams::DEV
+        );
     }
 }
 

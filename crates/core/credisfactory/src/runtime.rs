@@ -6,7 +6,10 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_credis::{CredisContract, Forfeit, IssueCredisParams};
+use outbe_credis::runtime::effective_state;
+use outbe_credis::{CredisContract, CredisState};
+
+use crate::rules::{self, Forfeit, IssueCredisParams};
 use outbe_gratisfactory::api as pledges;
 use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
@@ -72,20 +75,23 @@ pub fn issue_credis(
             return Err(CredisFactoryError::CcaStakeMismatch.into());
         }
         let mut credis = CredisContract::new(storage.clone());
-        let id = credis.issue(IssueCredisParams {
-            owner: r.credis_owner,
-            cca: caller,
-            source: r.source,
-            asset: r.asset,
-            issuance_currency: r.issuance_currency,
-            reference_currency: r.reference_currency,
-            policy_rate: r.policy_rate,
-            principal_minor: r.amount,
-            entry_price_minor: r.entry_price_minor,
-            call_anchor_price_minor: r.call_anchor_price_minor,
-            gratis_minor: r.gratis_minor,
-            issued_at: now,
-        })?;
+        let id = rules::issue(
+            &mut credis,
+            IssueCredisParams {
+                owner: r.credis_owner,
+                cca: caller,
+                source: r.source,
+                asset: r.asset,
+                issuance_currency: r.issuance_currency,
+                reference_currency: r.reference_currency,
+                policy_rate: r.policy_rate,
+                principal_minor: r.amount,
+                entry_price_minor: r.entry_price_minor,
+                call_anchor_price_minor: r.call_anchor_price_minor,
+                gratis_minor: r.gratis_minor,
+                issued_at: now,
+            },
+        )?;
         pledges::send_to_credis(&storage, reservation_id, id, r.source, r.gratis_minor)?;
         let opened = credis.get_credis(id)?;
         storage.transfer_balance(CREDIS_FACTORY_ADDRESS, r.credis_owner, stake)?;
@@ -155,9 +161,24 @@ fn collect_payment(
     Ok(())
 }
 
+/// What paying `credis_id` off now takes: outstanding principal plus accrued interest.
+/// Zero once it is Settled or Forfeited.
+pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<U256> {
+    let record = CredisContract::new(storage.clone()).get_credis(credis_id)?;
+    let now =
+        u64::try_from(storage.timestamp()?).map_err(|_| CredisFactoryError::TimestampOverflow)?;
+    match effective_state(&record, now)? {
+        CredisState::Settled | CredisState::Forfeited => Ok(U256::ZERO),
+        CredisState::Issued | CredisState::Called => record
+            .outstanding_principal_minor
+            .checked_add(CredisContract::accrued_interest(&record, now)?)
+            .ok_or_else(|| CredisFactoryError::PayoffOverflow.into()),
+    }
+}
+
 /// Collect payment first, then return the released collateral to the source's
 /// liquid balance. No Fidelity mutation.
-pub fn settle(
+pub fn settle_credis(
     storage: StorageHandle<'_>,
     caller: Address,
     credis_id: U256,
@@ -171,7 +192,7 @@ pub fn settle(
         let before = credis.get_credis(credis_id)?;
         let now = u64::try_from(storage.timestamp()?)
             .map_err(|_| CredisFactoryError::TimestampOverflow)?;
-        let settlement = credis.settle(credis_id, amount, now)?;
+        let settlement = rules::settle(&mut credis, credis_id, amount, now)?;
         let after = credis.get_credis(credis_id)?;
         let released = before
             .outstanding_gratis_minor
@@ -198,7 +219,9 @@ pub fn settle(
 pub fn forfeit_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()> {
     let now =
         u64::try_from(storage.timestamp()?).map_err(|_| CredisFactoryError::TimestampOverflow)?;
-    burn_forfeited_collateral(storage, credis_id, |credis| credis.forfeit(credis_id, now))?;
+    burn_forfeited_collateral(storage, credis_id, |credis| {
+        rules::forfeit(credis, credis_id, now)
+    })?;
     Ok(())
 }
 
@@ -209,7 +232,7 @@ pub fn forfeit_by_owner(
     credis_id: U256,
 ) -> Result<Forfeit> {
     burn_forfeited_collateral(storage, credis_id, |credis| {
-        credis.forfeit_by_owner(credis_id, caller)
+        rules::forfeit_by_owner(credis, credis_id, caller)
     })
 }
 

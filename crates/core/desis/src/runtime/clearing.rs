@@ -218,7 +218,7 @@ fn clear_inner(
     } else {
         let mut legs = Vec::new();
         for group in issuance_groups(&result, &config, worldwide_day, snapshot)? {
-            legs.extend(outbe_intexfactory::api::issue(&storage, group)?);
+            legs.extend(outbe_intexfactory::api::issue_intex(&storage, group)?);
         }
 
         outbe_intexfactory::api::send_issuance(&storage, legs)?;

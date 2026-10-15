@@ -8,6 +8,7 @@ pub mod errors;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;
+pub mod settlement;
 mod sol_ext;
 
 pub use schema::{LiquidityReservation, VaultRouterContract};

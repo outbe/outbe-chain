@@ -29,6 +29,10 @@ pub fn dispatch(
     // CredisFactory is a payable route, so the boundary credits value to this address
     // before dispatch. Refuse it for every selector except the published one.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
+    #[cfg(feature = "e2e-test")]
+    if let Some(result) = crate::test_arming_e2e::dispatch(&storage, data) {
+        return result;
+    }
     dispatch_call(
         data,
         ICredisFactory::ICredisFactoryCalls::abi_decode,
@@ -54,12 +58,13 @@ pub fn dispatch(
                 ),
                 settleCredis(c) => mutate(&storage, c, caller, |sender, c| {
                     let (principal, interest) =
-                        runtime::settle(storage.clone(), sender, c.credisId, c.amountMinor)?;
+                        runtime::settle_credis(storage.clone(), sender, c.credisId, c.amountMinor)?;
                     Ok(ICredisFactory::settleCredisReturn {
                         principalPaidMinor: principal,
                         interestPaidMinor: interest,
                     })
                 }),
+                quoteSettlement(c) => view(c, |c| runtime::quote_settlement(&storage, c.credisId)),
                 forfeitCredis(c) => mutate(&storage, c, caller, |sender, c| {
                     let forfeit = runtime::forfeit_by_owner(storage.clone(), sender, c.credisId)?;
                     Ok(ICredisFactory::forfeitCredisReturn {

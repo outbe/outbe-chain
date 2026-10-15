@@ -1,6 +1,7 @@
 //! Qualify the NOD with finalized Oracle prices and bounded retries.
 
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 struct NodQualification {
     id: WwdEntityId,
@@ -93,19 +94,19 @@ fn close_qualification_day(
         .latest_block_timestamp(port)
         .expect("qualification clock");
     assert_eq!(
-        published_at / 86_400,
-        now / 86_400,
+        published_at / SECONDS_PER_DAY,
+        now / SECONDS_PER_DAY,
         "high quote must finalize within the day being closed"
     );
     if let Some(expected_day) = first_boundary_day {
         assert_eq!(
-            published_at / 86_400,
+            published_at / SECONDS_PER_DAY,
             expected_day,
             "fallback must close the complete subsequent UTC day"
         );
     }
-    let target = (now / 86_400 + 1)
-        .checked_mul(86_400)
+    let target = (now / SECONDS_PER_DAY + 1)
+        .checked_mul(SECONDS_PER_DAY)
         .and_then(|v| v.checked_add(1))
         .expect("next UTC boundary");
     let closed_day = outbe_primitives::time::timestamp_to_date_key(now);
@@ -170,7 +171,7 @@ fn wait_qualification(
             if closed_day < first_full_day || vwap <= floor {
                 assert_eq!(boundary, 0, "isolated high-price day must exceed Nod floor");
                 eprintln!("settlement_evidence kind=qualification_fallback day={closed_day} first_full_day={first_full_day} vwap={vwap} floor={floor}");
-                return DayQualification::NextDay(target / 86_400);
+                return DayQualification::NextDay(target / SECONDS_PER_DAY);
             }
             if successor_is_qualified(world, owner, id, checkpoint.height) {
                 eprintln!("settlement_evidence kind=successor_qualified day={closed_day} vwap={vwap} floor={floor} boundary={} height={}", boundary + 1, checkpoint.height);

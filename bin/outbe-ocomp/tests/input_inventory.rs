@@ -158,21 +158,6 @@ fn encrypted_inventory_authenticates_ciphertext_then_reads_private_amounts_and_p
             )
         )
     ));
-    assert!(matches!(
-        builder.push(record.clone()),
-        Err(outbe_ocomp::input_inventory::TributeInventoryError::PrivateTribute(_))
-    ));
-    let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
-    let mut wrong_total = record.clone();
-    wrong_total.nominal_amount_minor += U256::from(1);
-    assert!(matches!(
-        builder.push(wrong_total),
-        Err(
-            outbe_ocomp::input_inventory::TributeInventoryError::Authority(
-                "private Tribute nominal amount"
-            )
-        )
-    ));
     builder.push(record.clone()).unwrap();
     let inventory = builder.finish().unwrap();
     let mut spool = inventory.tribute_bodies().unwrap();

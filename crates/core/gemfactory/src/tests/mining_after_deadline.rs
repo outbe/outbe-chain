@@ -23,7 +23,7 @@ fn called_bucket(load: U256) -> (HashMapStorageProvider, GemWorld, U256, U256) {
             .bucket_called_at
             .write(&bucket, T_NOW)
             .unwrap();
-        gem_api::settle_gem(&handle, &world.scope, &world.parent, paid).unwrap();
+        record_settled(&handle, &world, paid);
         (paid, unpaid)
     });
     (provider, world, ids.0, ids.1)

@@ -2,6 +2,7 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_intex::SeriesId;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     addresses::GEM_FACTORY_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
@@ -11,7 +12,7 @@ use outbe_primitives::{
 };
 use outbe_promislimit::PromisLimitContract;
 
-use crate::{expired, schema::GemPosition, GemFactoryContract};
+use crate::{positions_expired, schema::GemPosition, GemFactoryContract};
 
 const EXPIRES: u64 = 1_704_153_600;
 const REMAINDER: u64 = 3_000_007;
@@ -31,7 +32,7 @@ fn world() -> HashMapStorageProvider {
                 source_floor_price_minor: U256::from(1_080_000),
                 issuance_currency: 840,
                 reference_currency: 840,
-                issued_at: EXPIRES - 86_400,
+                issued_at: EXPIRES - SECONDS_PER_DAY,
                 expires_at: EXPIRES,
             })
             .unwrap();
@@ -43,7 +44,7 @@ fn world() -> HashMapStorageProvider {
 
 fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<u32> {
     StorageHandle::enter(p, |s| {
-        expired::sweep_expired_positions(&BlockRuntimeContext::new(
+        positions_expired::sweep_expired_positions(&BlockRuntimeContext::new(
             BlockContext::empty_for_tests(2, at, 1),
             s,
         ))
@@ -96,7 +97,7 @@ fn position_expiry_and_queue_prune_never_credit_the_remainder_twice() {
     });
     assert_eq!(sweep(&mut p, EXPIRES).unwrap(), 1);
     conserved(&mut p, true);
-    assert_eq!(sweep(&mut p, EXPIRES + 86_400).unwrap(), 0);
+    assert_eq!(sweep(&mut p, EXPIRES + SECONDS_PER_DAY).unwrap(), 0);
     conserved(&mut p, true);
 }
 
@@ -126,7 +127,7 @@ fn every_position_expiry_write_failure_preserves_remaining_load_then_retries_onc
             assert!(reached, "unreached fault {point}, after={after}");
             conserved(&mut p, false);
             sweep(&mut p, EXPIRES + 1).unwrap();
-            sweep(&mut p, EXPIRES + 86_400).unwrap();
+            sweep(&mut p, EXPIRES + SECONDS_PER_DAY).unwrap();
             conserved(&mut p, true);
         }
     }

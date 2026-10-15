@@ -69,7 +69,10 @@ mod tests {
 
             // Block 100, 30 days later - still 20240101.
             let ctx_later = BlockRuntimeContext::new(
-                block_ctx(100, GENESIS_TS_2024_01_01 + 86_400 * 30),
+                block_ctx(
+                    100,
+                    GENESIS_TS_2024_01_01 + 30 * outbe_primitives::time::SECONDS_PER_DAY,
+                ),
                 ctx0.storage.clone(),
             );
             <RewardsLifecycle as BlockLifecycle>::begin_block(&ctx_later).unwrap();

@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 fn measurement_rule(marker: u8) -> TeeMeasurementRuleV1 {
     TeeMeasurementRuleV1 {
@@ -39,7 +40,7 @@ fn policy(
         accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
         accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
         minimum_lease: 3_600,
-        maximum_lease: 604_800,
+        maximum_lease: 7 * SECONDS_PER_DAY,
         collateral_margin: 3_600,
         resource_schedule_hash: resources.schedule_hash().unwrap(),
         measurement_rules: vec![measurement_rule(1), measurement_rule(3)],
@@ -48,7 +49,7 @@ fn policy(
 
 #[test]
 fn tee_policy_accepts_at_most_thirty_days() {
-    const THIRTY_DAYS: u64 = 30 * 24 * 60 * 60;
+    const THIRTY_DAYS: u64 = 30 * SECONDS_PER_DAY;
 
     let mut at_limit = policy(1, 1, B256::ZERO);
     at_limit.maximum_lease = THIRTY_DAYS;

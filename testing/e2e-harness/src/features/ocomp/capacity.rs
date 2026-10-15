@@ -286,12 +286,12 @@ fn certified_generation_crosses_multiple_materialization_batches(world: &mut Wor
     world.state.ocomp_nod_materialization = Some(observation);
 }
 
-#[then("every capacity owner enumerates one ordinary NOD with matching nodData")]
+#[then("every capacity owner enumerates one ordinary NOD with matching getNod")]
 fn every_capacity_owner_has_one_materialized_nod(world: &mut World) {
     assert_materialized_capacity_owners(world, usize::MAX);
 }
 
-#[then("five deterministic capacity owners enumerate ordinary NODs with matching nodData")]
+#[then("five deterministic capacity owners enumerate ordinary NODs with matching getNod")]
 fn five_capacity_owners_have_materialized_nods(world: &mut World) {
     assert_materialized_capacity_owners(world, 5);
 }
@@ -322,7 +322,7 @@ fn assert_materialized_capacity_owners(world: &mut World, limit: usize) {
                 owner,
                 completion_block_number,
             )
-            .expect("ordinary owner NOD and nodData");
+            .expect("ordinary owner NOD and getNod");
     }
 }
 

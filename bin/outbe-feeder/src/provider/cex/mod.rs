@@ -17,7 +17,7 @@ use tokio::time::{sleep, Instant};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use super::{CandlePrice, Provider, TickerPrice};
-use crate::config::ApiProviderConfig;
+use crate::config::{ApiProviderConfig, CurrencyPairSource};
 use crate::errors::CexError;
 use decode::{
     clear_routes, decompress_gzip, normalize_symbol, process_payload, subscription_messages,
@@ -146,18 +146,13 @@ impl ExchangeKind {
 /// An exchange market is written in the exchange's own symbols. The code
 /// substitutes nothing for an ISO code: which dollar market prices the pair,
 /// USDT, USDC or USD, is the operator's choice.
-pub(crate) fn validate_exchange_markets(endpoint: &ApiProviderConfig) -> Result<()> {
-    if ExchangeKind::for_name(&endpoint.name).is_none() {
-        return Ok(());
-    }
-    for market in &endpoint.markets {
-        if is_iso_symbol(&market.quote) {
-            return Err(CexError::IsoMarketQuote {
-                exchange: endpoint.name.clone(),
-                quote: market.quote.clone(),
-            }
-            .into());
+pub(crate) fn validate_exchange_market(source: &CurrencyPairSource) -> Result<()> {
+    if ExchangeKind::for_name(&source.provider).is_some() && is_iso_symbol(&source.quote) {
+        return Err(CexError::IsoMarketQuote {
+            exchange: source.provider.clone(),
+            quote: source.quote.clone(),
         }
+        .into());
     }
     Ok(())
 }

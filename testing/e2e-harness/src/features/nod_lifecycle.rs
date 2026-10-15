@@ -2,6 +2,7 @@
 //! to five owners. Two are paid while qualified, two are inside the call notice, and one is
 //! forfeited.
 
+use outbe_primitives::time::SECONDS_PER_DAY;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -36,6 +37,7 @@ alloy_sol_types::sol! {
             uint16 referenceCurrency,
             uint64 issuedAt
         ) external;
+        function closeCallNoticeForTest(bytes32 bucketKey, uint64 deadline) external;
     }
 }
 
@@ -77,7 +79,7 @@ fn issue_five_nods(world: &mut World) {
     let day = outbe_primitives::time::worldwide_day_from_timestamp(now);
     // Qualification and the call count only days after the bucket's stamp: stamp it
     // behind every day the scenario seeds.
-    let issued_at = now.saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * 86_400);
+    let issued_at = now.saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * SECONDS_PER_DAY);
     holders::fund(world, HOLDER_SEED);
     let mut nods = Vec::with_capacity(HOLDERS);
     for index in 0..HOLDERS {
@@ -139,7 +141,7 @@ impl Lifecycle for NodLifecycle {
             let data = eth::read_call_result(
                 &url,
                 addresses::NOD_ADDR,
-                &eth::INod::nodDataCall { nodId: id },
+                &eth::INod::getNodCall { nodId: id },
             )?;
             if data.owner != target.owner || data.isSettled || data.effectiveState != expected_state {
                 return Err(format!(
@@ -273,9 +275,9 @@ impl Lifecycle for NodLifecycle {
         );
         eth::send_call(
             &url,
-            addresses::NOD_ADDR,
+            addresses::NOD_FACTORY_ADDR,
             DEPLOYER_KEY,
-            &INodTestArming::closeCallNoticeForTestCall {
+            &INodFactoryTestArming::closeCallNoticeForTestCall {
                 bucketKey: bucket_key,
                 deadline: head_time(world).saturating_sub(EXPIRY_BUCKET_SECS),
             },
@@ -390,7 +392,7 @@ fn assert_burned(world: &World, owner: Address, id: U256, timeout: Duration) {
         eth::read_call(
             &world.rpc.url(world.validators.primary_port()),
             addresses::NOD_ADDR,
-            &eth::INod::nodDataCall { nodId: id }
+            &eth::INod::getNodCall { nodId: id }
         )
         .is_none(),
         "a burned Nod must not be readable"
@@ -402,7 +404,7 @@ fn nod_balance(world: &World, owner: Address) -> U256 {
 }
 
 fn read_nod(world: &World, id: U256) -> eth::INod::NodData {
-    read_nod_view(world, &eth::INod::nodDataCall { nodId: id }, "Nod data")
+    read_nod_view(world, &eth::INod::getNodCall { nodId: id }, "Nod data")
 }
 
 /// Nod views read through the compressed-body projection. The projection trails the block
@@ -443,12 +445,6 @@ fn wait_for_nod_of(url: &str, owner: Address) -> U256 {
         },
     );
     id.expect("owner's Nod id")
-}
-
-alloy_sol_types::sol! {
-    interface INodTestArming {
-        function closeCallNoticeForTest(bytes32 bucketKey, uint64 deadline) external;
-    }
 }
 
 fn paid_nod_mining_call(

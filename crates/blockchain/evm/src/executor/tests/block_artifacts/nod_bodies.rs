@@ -4,6 +4,7 @@
 use super::*;
 use outbe_offchain_data::runtime_body_readers;
 use outbe_primitives::projection::{ExecutionReadBudget, ExecutionReadCancelled};
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 type NodBlockObservation = (
     B256,
@@ -340,10 +341,17 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
                 tribute_contract.issue(&scope, &tribute_reader, &tribute)?;
                 outbe_nod::api::add_nod(
                     &hook_ctx.storage,
-                    &scope,
-                    &nod_reader,
+                    outbe_compressed_entities::ExecutionReaders {
+                        scope: &scope,
+                        parent: &nod_reader,
+                    },
                     &nod_fixture(),
                     U256::from(16),
+                    outbe_nod::test_support::sealed_terms(
+                        &hook_ctx.storage,
+                        &nod_fixture(),
+                        U256::from(16),
+                    ),
                 )?;
                 outbe_compressed_entities::end_block(hook_ctx.storage.clone(), &scope).map(|_| ())
             })
@@ -408,10 +416,17 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
         tribute_contract.issue(&scope, &tribute_reader, &tribute)?;
         outbe_nod::api::add_nod(
             &hook_ctx.storage,
-            &scope,
-            &nod_reader,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: &nod_reader,
+            },
             &nod_fixture(),
             U256::from(16),
+            outbe_nod::test_support::sealed_terms(
+                &hook_ctx.storage,
+                &nod_fixture(),
+                U256::from(16),
+            ),
         )?;
         Err(outbe_primitives::error::PrecompileError::Fatal(
             "later transaction stage failed".into(),
@@ -512,17 +527,18 @@ fn seed_called_nod(
     let empty_reader = outbe_nod::nod_reader(Arc::new(MemoryStorage::new()));
     outbe_nod::api::add_nod(
         &storage,
-        scope,
-        &empty_reader,
+        outbe_compressed_entities::ExecutionReaders {
+            scope,
+            parent: &empty_reader,
+        },
         &fixture.item,
         fixture.entry_price_minor,
+        outbe_nod::test_support::sealed_terms(&storage, &fixture.item, fixture.entry_price_minor),
     )?;
     // CycleTick forfeits the lapsed called bucket and deletes both bodies.
     let nod = NodContract::new(storage.clone());
     nod.bucket_called_at.write(&bucket_key, 1)?;
-    let notice = nod
-        .callable_bucket_call_notice_period_seconds
-        .read(&bucket_key)?;
+    let notice = nod.bucket_call_notice_period_seconds.read(&bucket_key)?;
     outbe_primitives::expiry_queue::push(
         &outbe_nod::state::ExpiryHours(&nod),
         bucket_key,
@@ -548,7 +564,7 @@ fn seed_nod_daily_trigger(
         .last_executed_at
         .write(
             &outbe_cycle::triggers::TriggerId::NodCallDaily.as_u32(),
-            TEST_BLOCK_TIMESTAMP_BASE - 86_400,
+            TEST_BLOCK_TIMESTAMP_BASE - SECONDS_PER_DAY,
         )?;
 
     Ok(())

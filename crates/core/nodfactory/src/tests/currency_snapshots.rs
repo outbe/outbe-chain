@@ -70,7 +70,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     };
     let (_, amount, quoted) = quote(&mut world);
     let snapshot = outbe_oracle::api::VwapSnapshotId::from_u256(quoted).unwrap();
-    let mismatch = PrecompileError::from(NodFactoryError::SettlementAmountMismatch).to_string();
+    let mismatch = PrecompileError::from(SettlementError::AmountMismatch).to_string();
 
     world.set_timestamp(snapshot.cutoff() + 3_599);
     let same_hour = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, quoted);
@@ -82,7 +82,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     let stale = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, quoted);
     assert_eq!(
         stale.unwrap_err().to_string(),
-        PrecompileError::from(NodFactoryError::VwapSnapshotMismatch {
+        PrecompileError::from(SettlementError::SnapshotMismatch {
             authorized: quoted,
             required: next,
         })
@@ -122,7 +122,7 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
     let stale = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, quoted);
     assert_eq!(
         stale.unwrap_err().to_string(),
-        PrecompileError::from(NodFactoryError::VwapSnapshotMismatch {
+        PrecompileError::from(SettlementError::SnapshotMismatch {
             authorized: quoted,
             required,
         })
@@ -174,7 +174,7 @@ fn a_snapshot_of_another_policy_is_rejected() {
     .unwrap_err();
     assert_eq!(
         error.to_string(),
-        PrecompileError::from(NodFactoryError::VwapSnapshotMismatch {
+        PrecompileError::from(SettlementError::SnapshotMismatch {
             authorized: other_policy.to_u256(),
             required: quoted,
         })
@@ -271,7 +271,7 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
         .unwrap_err();
     assert_eq!(
         erc20_error.to_string(),
-        PrecompileError::from(NodFactoryError::SettlementAssetNotRegistered {
+        PrecompileError::from(SettlementError::AssetNotRegistered {
             asset: PAYMENT_ASSET
         })
         .to_string()
@@ -293,7 +293,7 @@ fn issuance_rail_rejects_a_leg_the_window_never_priced() {
     let error = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, U256::ZERO).unwrap_err();
     assert_eq!(
         error.to_string(),
-        PrecompileError::from(NodFactoryError::OracleUnavailable).to_string()
+        PrecompileError::from(SettlementError::OracleUnavailable).to_string()
     );
     assert!(!is_settled(&mut world, nod_id));
 
@@ -307,7 +307,7 @@ fn issuance_rail_rejects_a_leg_the_window_never_priced() {
     let error = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, live).unwrap_err();
     assert_eq!(
         error.to_string(),
-        PrecompileError::from(NodFactoryError::SettlementAmountMismatch).to_string()
+        PrecompileError::from(SettlementError::AmountMismatch).to_string()
     );
 }
 
@@ -414,7 +414,7 @@ fn issuance_rail_rejects_a_window_whose_prices_fail_coverage() {
     .unwrap_err();
     assert_eq!(
         error.to_string(),
-        PrecompileError::from(NodFactoryError::OracleUnavailable).to_string()
+        PrecompileError::from(SettlementError::OracleUnavailable).to_string()
     );
     assert_eq!(world.provider.storage, slots);
     assert_eq!(world.provider.get_ordered_events(), events);

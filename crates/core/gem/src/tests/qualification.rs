@@ -5,6 +5,7 @@ use alloy_primitives::U256;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use super::*;
@@ -91,8 +92,10 @@ fn a_gem_without_a_floor_qualifies_on_its_first_closed_day() {
         seed_day_price(storage, USD, Some(U256::from(1u64)));
         assert!(is_qualified(storage, world, gem_id));
         let gem = GemContract::new(storage.clone());
-        let bin =
-            GemContract::price_to_bin(view(storage, world, gem_id).terms.call_price_minor).unwrap();
+        let bin = outbe_primitives::call_bins::price_to_bin(
+            view(storage, world, gem_id).terms.call_price_minor,
+        )
+        .unwrap();
         assert!(tree_math::contains(&crate::state::CallBins(&gem, USD), bin).unwrap());
     });
 }
@@ -150,7 +153,7 @@ fn a_day_without_a_price_qualifies_nothing_and_the_next_one_still_can() {
         let index = seed_day_price(storage, USD, Some(U256::ZERO));
         assert!(!is_qualified(storage, world, gem_id));
 
-        let next_day = previous_date_key(timestamp_to_date_key(QUALIFY_TS + 86_400));
+        let next_day = previous_date_key(timestamp_to_date_key(QUALIFY_TS + SECONDS_PER_DAY));
         let oracle = OracleContract::new(storage.clone());
         oracle
             .record_utc_day_vwap(next_day, index, floor + U256::from(1u64))

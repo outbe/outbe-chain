@@ -91,7 +91,10 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         oracle.reference_currencies.push(840).unwrap();
-        oracle.config_lookback_duration.write(86_400).unwrap();
+        oracle
+            .config_lookback_duration
+            .write(SECONDS_PER_DAY)
+            .unwrap();
         let usd_index = oracle
             .pair_index_of(outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();

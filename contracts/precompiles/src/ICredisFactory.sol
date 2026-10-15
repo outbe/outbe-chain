@@ -17,6 +17,18 @@ interface ICredisFactory {
     event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
     /// A forfeit that failed left the Credis queued until `retryAt`.
     event ExpiryDeferred(uint256 indexed credisId, uint64 retryAt);
+    /// @notice One successful settlement. `interestPaidMinor` is this payment's interest.
+    ///         The Credis's `interestPaidMinor` is the sum of these payments
+    ///         across successful settlements. A reverted settlement emits nothing
+    ///         and leaves that total unchanged.
+    event SettlementApplied(
+        uint256 indexed credisId,
+        uint256 interestPaidMinor,
+        uint256 principalPaidMinor,
+        uint256 gratisReturnedMinor,
+        uint256 outstandingPrincipalMinor
+    );
+    event CredisSettled(uint256 indexed credisId);
 
     /// Use the reservation's pledge and every term it fixed, the call terms included.
     /// The caller must be its CCA.
@@ -26,6 +38,11 @@ interface ICredisFactory {
     function settleCredis(uint256 credisId, uint256 amountMinor)
         external
         returns (uint256 principalPaidMinor, uint256 interestPaidMinor);
+    /// What paying the Credis off now takes: its outstanding principal plus the interest
+    /// accrued since the last settlement. Zero once it is Settled or Forfeited. Interest
+    /// grows by whole days, so a payment landing a day later needs that day more;
+    /// `settleCredis` takes only what is owed, so paying more is safe.
+    function quoteSettlement(uint256 credisId) external view returns (uint256 payoffMinor);
     /// The owner gives up an Issued or Called Credis: its remaining Gratis burns, the principal is written off.
     function forfeitCredis(uint256 credisId)
         external

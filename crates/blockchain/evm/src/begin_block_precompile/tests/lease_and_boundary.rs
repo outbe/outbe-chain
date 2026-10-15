@@ -1,5 +1,6 @@
 use super::super::cycle::{enforce_tee_lease_deadlines, run_ocomp_recovery_sweep};
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 #[test]
 fn mandatory_cycle_tick_sweep_closes_due_ocomp_recovery_when_lifecycle_is_disabled() {
@@ -135,7 +136,7 @@ fn tee_lease_sweep_treats_missing_post_bootstrap_binding_as_overdue() {
 #[test]
 fn tee_lease_sweep_reexecution_and_timestamp_jump_are_deterministic() {
     let deadline = 1_700_000_100;
-    let jumped_timestamp = deadline + 10 * 1_209_600;
+    let jumped_timestamp = deadline + 10 * 14 * SECONDS_PER_DAY;
     let mut base = configured_storage(12, jumped_timestamp);
     install_validator_lease(&mut base, deadline);
     let parent = base.storage.clone();

@@ -472,7 +472,7 @@ fn multiple_batches_create_ordinary_nods_and_advance_fifo_atomically() {
     let bucket_issued_at = world
         .enter(|storage, _, _| {
             NodContract::new(storage)
-                .callable_bucket_issued_at
+                .bucket_issued_at
                 .read(&first_item.bucket_key)
         })
         .unwrap();

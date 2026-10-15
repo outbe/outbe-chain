@@ -8305,6 +8305,7 @@ dependencies = [
 name = "outbe-chain-constants"
 version = "0.1.0"
 dependencies = [
+ "outbe-primitives",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -8434,12 +8435,9 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "base64 0.22.1",
- "outbe-ccaregistry",
  "outbe-common",
  "outbe-macros",
  "outbe-primitives",
- "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -8449,7 +8447,9 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "base64 0.22.1",
  "outbe-ccaregistry",
+ "outbe-common",
  "outbe-credis",
  "outbe-fidelity",
  "outbe-gratis",
@@ -8460,6 +8460,7 @@ dependencies = [
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-vaultrouter",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -8484,6 +8485,7 @@ dependencies = [
  "outbe-macros",
  "outbe-metadosis",
  "outbe-nod",
+ "outbe-nodfactory",
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
@@ -8590,6 +8592,7 @@ dependencies = [
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
+ "outbe-vaultrouter",
  "outbe-zk",
  "outbe-zk-backend",
  "radicle",
@@ -8855,12 +8858,10 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-promislimit",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
@@ -8875,6 +8876,7 @@ dependencies = [
  "outbe-gem",
  "outbe-intex",
  "outbe-macros",
+ "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promis",
@@ -9144,14 +9146,12 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
- "outbe-promislimit",
  "outbe-tee",
  "outbe-tee-enclave",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
- "tracing",
  "x25519-dalek 2.0.1",
 ]
 
@@ -9238,6 +9238,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "base64 0.22.1",
  "hex",
  "outbe-chain-constants",
  "outbe-common",
@@ -9249,6 +9250,7 @@ dependencies = [
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-promislimit",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
@@ -9258,6 +9260,7 @@ dependencies = [
  "revm",
  "tempfile",
  "thiserror 2.0.18",
+ "tracing",
  "x25519-dalek 2.0.1",
 ]
 
@@ -9625,12 +9628,8 @@ dependencies = [
  "lexopt",
  "log",
  "radicle",
- "radicle-crypto",
- "radicle-log",
  "radicle-node",
  "radicle-signals",
- "serde",
- "serde_json",
  "tempfile",
  "thiserror 2.0.18",
 ]
@@ -10065,6 +10064,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-ccaregistry",
+ "outbe-common",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",

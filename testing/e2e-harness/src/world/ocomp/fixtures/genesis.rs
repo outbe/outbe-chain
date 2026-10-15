@@ -257,7 +257,7 @@ pub(in crate::world::ocomp) fn schedule_public_measurement_day(
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         let inherited_scurve_expiry = genesis_timestamp
             .checked_add(
-                (outbe_oracle::scurve::PERIOD as u64 + 1) * outbe_oracle::scurve::DAY_SECONDS,
+                (outbe_oracle::scurve::PERIOD as u64 + 1) * outbe_primitives::time::SECONDS_PER_DAY,
             )
             .ok_or_else(|| {
                 outbe_primitives::error::PrecompileError::Fatal(

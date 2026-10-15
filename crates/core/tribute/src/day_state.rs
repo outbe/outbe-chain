@@ -115,12 +115,30 @@ impl TributeContract<'_> {
         view.is_sealed = stored.is_sealed;
         view.sealed_collection_root = stored.sealed_collection_root;
         view.sealed_tribute_count = stored.sealed_tribute_count;
-        view.sealed_tribute_nominal_total_minor = self.day_nominal_amount(day, true)?;
+        view.sealed_tribute_nominal_total_minor = if stored.is_sealed {
+            self.day_nominal_amount(day, true)?
+        } else {
+            U256::ZERO
+        };
         view.canonical_body_bytes = stored.canonical_body_bytes;
         view.distinct_owner_count = stored.distinct_owner_count;
         view.distinct_reference_currency_count = stored.distinct_reference_currency_count;
         view.source_generation = stored.source_generation;
         Ok(view)
+    }
+
+    pub(crate) fn set_day_sealed(&mut self, day: WorldwideDay, is_sealed: bool) -> Result<()> {
+        let mut stored = self
+            .day_totals
+            .get(day)?
+            .unwrap_or_else(|| StoredDayTotals::with_key(day));
+        stored.initialized = true;
+        stored.is_sealed = is_sealed;
+        if self.day_totals.exists(day)? {
+            self.day_totals.update(&stored)
+        } else {
+            self.day_totals.create(&stored)
+        }
     }
 
     pub(crate) fn store_day_metadata(&mut self, totals: &DayTotals) -> Result<()> {

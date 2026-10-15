@@ -313,7 +313,17 @@ fn mint_authenticated_nod(
     );
     let seal = StorageHandle::enter(evm, |storage| {
         begin_block(storage.clone(), &scope).unwrap();
-        api::add_nod(&storage, &scope, readers, &item, U256::from(5)).unwrap();
+        api::add_nod(
+            &storage,
+            outbe_compressed_entities::ExecutionReaders {
+                scope: &scope,
+                parent: readers,
+            },
+            &item,
+            U256::from(5),
+            outbe_nod::test_support::sealed_terms(&storage, &item, U256::from(5)),
+        )
+        .unwrap();
         end_block(storage, &scope).unwrap()
     });
     let hash = B256::repeat_byte(height as u8);

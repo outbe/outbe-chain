@@ -1,5 +1,7 @@
 //! Module-local protocol constants for Credis.
 
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
+
 pub const TOKEN_NAME: &str = "Credis";
 pub const TOKEN_SYMBOL: &str = "CREDIS";
 pub const TOKEN_DESCRIPTION: &str = concat!(
@@ -9,16 +11,8 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
     "settled by its settlement deadline, otherwise it is forfeited."
 );
 
-/// Denominator for [`CALL_RATE_PCT`].
-pub const PRICE_RATE_DEN: u16 = 100;
-
 /// The call price adds 64% to `call_anchor_price_minor`. A sustained breach arms the call.
 pub const CALL_RATE_PCT: u16 = 64;
-
-/// Seconds in a day, for the second-encoded call terms below. A Credis seals
-/// its window and threshold in seconds, the way gem's record does. The daily
-/// scan divides them back into day counts.
-pub const SECS_PER_DAY: u32 = 24 * 60 * 60;
 
 /// Evaluation window for the call, in closed UTC days: the daily scan looks
 /// back this far over the official daily reference series. Distinct from
@@ -33,14 +27,14 @@ pub const CALL_LOOKBACK_DAYS: u32 = 28;
 pub const CALL_THRESHOLD_DAYS: u32 = 21;
 
 /// [`CALL_LOOKBACK_DAYS`] in seconds: the PROD `call_window_seconds`.
-pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECS_PER_DAY;
+pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECONDS_PER_DAY_U32;
 
 /// [`CALL_THRESHOLD_DAYS`] in seconds: the PROD `call_threshold_seconds`.
-pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECS_PER_DAY;
+pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECONDS_PER_DAY_U32;
 
 /// Settlement window that the call opens, in seconds: the PROD
 /// `call_notice_period_seconds`.
-pub const CALL_NOTICE_PERIOD: u32 = 7 * SECS_PER_DAY;
+pub const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 
 /// Day count convention for interest accrual: simple, ACT/365.
 pub const DAYS_PER_YEAR: u64 = 365;

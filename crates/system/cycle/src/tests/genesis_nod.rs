@@ -185,7 +185,13 @@ fn issue_nod(
         },
         U256::from(entry),
     );
-    outbe_nod::api::add_nod(storage, scope, parent, &body, U256::from(entry))?;
+    outbe_nod::api::add_nod(
+        storage,
+        outbe_compressed_entities::ExecutionReaders { scope, parent },
+        &body,
+        U256::from(entry),
+        outbe_nod::test_support::sealed_terms(storage, &body, U256::from(entry)),
+    )?;
     Ok(body.bucket_key)
 }
 
@@ -196,6 +202,6 @@ fn dispatch_and_call(
     parent: &impl outbe_compressed_entities::ParentBodySource,
 ) -> outbe_primitives::error::Result<()> {
     crate::runtime::dispatch_triggers(ctx, scope, parent)?;
-    outbe_nod::called::run_call_slice(ctx)?;
+    outbe_nodfactory::called::run_call_slice(ctx)?;
     Ok(())
 }

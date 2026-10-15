@@ -278,6 +278,3 @@ fn validate_input(
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

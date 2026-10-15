@@ -117,12 +117,12 @@ fn an_expired_position_returns_its_remainder() {
         let capacity = sent_capacity(six_decimal_u128());
 
         let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS - 1);
-        assert_eq!(expired::sweep_expired_positions(&ctx).unwrap(), 0);
+        assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 0);
         assert_eq!(unallocated(storage), U256::ZERO);
 
         // At the instant issuing starts reverting, the sweep takes it.
         let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS);
-        assert_eq!(expired::sweep_expired_positions(&ctx).unwrap(), 1);
+        assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 1);
         assert_eq!(unallocated(storage), capacity);
 
         let factory = GemFactoryContract::new(storage.clone());
@@ -149,7 +149,7 @@ fn a_storage_fault_in_the_position_sweep_fails_the_block() {
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = block_ctx(&storage, T_NOW + POSITION_VALIDITY_SECONDS);
         assert!(matches!(
-            expired::sweep_expired_positions(&ctx).unwrap_err(),
+            positions_expired::sweep_expired_positions(&ctx).unwrap_err(),
             outbe_primitives::error::PrecompileError::Storage(_)
         ));
         let record = GemFactoryContract::new(storage.clone())
@@ -188,7 +188,7 @@ fn a_drained_position_leaves_the_queue() {
         assert!(factory.live_queue_slot(0).unwrap().is_none());
 
         let ctx = block_ctx(storage, T_NOW + POSITION_VALIDITY_SECONDS);
-        assert_eq!(expired::sweep_expired_positions(&ctx).unwrap(), 0);
+        assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 0);
         assert_eq!(unallocated(storage), U256::ZERO);
     });
 }

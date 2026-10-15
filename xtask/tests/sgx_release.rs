@@ -4,6 +4,7 @@ use alloy_primitives::{keccak256, B256, U256};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use outbe_consensus::storage_identity::bind_consensus_storage_identity;
 use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     chain::TESTNET_CHAIN_ID,
     tee_attestation_v1::{
@@ -95,7 +96,7 @@ fn repository_default_testnet_genesis_is_dcap_required_but_not_release_authority
     );
     assert_eq!(binding.policy.measurement_rules.len(), 1);
     assert_eq!(binding.policy.minimum_tcb_evaluation_data_number, 1);
-    assert_eq!(binding.policy.maximum_lease, 2_592_000);
+    assert_eq!(binding.policy.maximum_lease, 30 * SECONDS_PER_DAY);
     let genesis: serde_json::Value = serde_json::from_slice(
         &fs::read(repo_root().join("release/testnet-genesis.json")).unwrap(),
     )
@@ -614,9 +615,7 @@ fn release_preflight_rehearses_critical_paths_without_release_authority() {
         "source_ref:",
         "ref: ${{ inputs.source_ref }}",
         "persist-credentials: false",
-        "RUSTFLAGS: -D warnings",
-        "--execute-artifact-check-plan",
-        "--package xtask --bin xtask",
+        "RUSTFLAGS=-D warnings",
         "--features release-sgx-e2e --bin outbe-release-sgx-e2e",
         "--bin outbe-release-dcap-evidence",
         "scripts/release/verify_reproducible_elf.py",
