@@ -88,18 +88,20 @@ use logical_time::{
 use observations::completion::{
     bounded_completion_decision, completed_accountability_is_preserved, dynamic_job_record,
     dynamic_pre_restart_vote_baseline_ready, dynamic_vote_submission_path, finalized_job_id,
-    finalized_vote_for_delegate_on_job, local_result_path, observe_timely_completed_replay,
+    finalized_vote_for_delegate_on_job, local_result_path,
     quorum_applies_lysis_and_creates_nod_for_request, singleton_participant_bitmap,
-    verify_case_one_completed_artifacts, wait_for_finalized_ocomp_activation,
-    BoundedCompletionDecision, PublicVoteSetExpectation,
+    wait_for_finalized_ocomp_activation, BoundedCompletionDecision, PublicVoteSetExpectation,
 };
+
+use observations::replay::{observe_timely_completed_replay, verify_case_one_completed_artifacts};
 
 use observations::deadline::{
     accountability_slot_for_vote, assert_job_expires_without_nod, dynamic_deadline_account,
     dynamic_deadline_assert_live, dynamic_deadline_checkpoint, dynamic_deadline_decode_events,
     dynamic_deadline_ports, dynamic_deadline_validate_accountability,
     dynamic_deadline_validate_penalties, dynamic_deadline_validate_receipt,
-    wait_for_released_retention, DynamicDeadlineAccount, DYNAMIC_OCOMP_RECOVERY_BLOCKS,
+    wait_for_released_retention, DynamicDeadlineAccount, ExpiredVotes,
+    DYNAMIC_OCOMP_RECOVERY_BLOCKS,
 };
 
 use observations::progress::{
@@ -127,7 +129,10 @@ use logical_time::{
 use membership::joiner_restart_is_in_safe_early_epoch_window;
 
 #[cfg(test)]
-use observations::completion::{public_vote_set_matches, timely_replay_receipt_height};
+use observations::completion::public_vote_set_matches;
+
+#[cfg(test)]
+use observations::replay::timely_replay_receipt_height;
 
 #[cfg(test)]
 use observations::deadline::{
