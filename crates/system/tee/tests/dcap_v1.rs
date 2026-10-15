@@ -8,6 +8,7 @@ use outbe_primitives::tee_attestation_v1::{
     DcapCollateralKind, DcapEvidenceV1, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1,
     RegistrationIntentV1, TeeMeasurementRuleV1, TeePolicyV1, TeeRegistryGasScheduleV1,
 };
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_tee::dcap_v1::{verify_dcap_evidence, DcapRejectCodeV1};
 use support::{signed_document, FixtureCollateral, QUOTE};
 
@@ -50,7 +51,7 @@ fn policy() -> TeePolicyV1 {
         accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
         accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
         minimum_lease: 3_600,
-        maximum_lease: 604_800,
+        maximum_lease: 7 * SECONDS_PER_DAY,
         collateral_margin: 3_600,
         resource_schedule_hash: B256::repeat_byte(0x44),
         measurement_rules: vec![TeeMeasurementRuleV1 {

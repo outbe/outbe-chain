@@ -33,8 +33,8 @@ use proptest::prelude::*;
 
 const CHAIN_ID: u64 = 1;
 const HOUR: u64 = 3_600;
-const DAY: u64 = 86_400;
-const WEEK: u64 = 604_800;
+use outbe_primitives::time::SECONDS_PER_DAY as DAY;
+const WEEK: u64 = 7 * DAY;
 const MONTH: u64 = 30 * DAY;
 
 fn gated_spec(period_seconds: u64) -> TriggerSpec {

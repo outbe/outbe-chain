@@ -7,6 +7,8 @@ use outbe_intex::{
     SeriesId,
 };
 use outbe_oracle::schema::OracleContract;
+use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::{
     address_pair::AddressPair,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -29,9 +31,9 @@ fn issue(s: &StorageHandle<'_>) -> SeriesId {
             floor_price_minor: U256::from(FLOOR),
             call_price_minor: U256::from(2_280_000),
             call_trigger: IntexCallTrigger {
-                call_window_seconds: 30 * 86_400,
-                call_threshold_seconds: 5 * 86_400,
-                call_notice_period_seconds: 7 * 86_400,
+                call_window_seconds: 30 * SECONDS_PER_DAY_U32,
+                call_threshold_seconds: 5 * SECONDS_PER_DAY_U32,
+                call_notice_period_seconds: 7 * SECONDS_PER_DAY_U32,
             },
             issued_at: ISSUED,
             issuance_currency: 978,
@@ -122,7 +124,7 @@ fn qualified_intex_projection_preserves_called_deadline_and_internal_issued_rout
         api::record_called(&s, id, ISSUED).unwrap();
         id
     });
-    let deadline = u64::from(ISSUED) + 7 * 86_400;
+    let deadline = u64::from(ISSUED) + 7 * SECONDS_PER_DAY;
     provider.set_timestamp(U256::from(deadline));
     StorageHandle::enter(&mut provider, |s| assert_eq!(state(&s, id), 2));
     provider.set_timestamp(U256::from(deadline + 1));

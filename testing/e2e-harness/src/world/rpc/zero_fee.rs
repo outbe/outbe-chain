@@ -1,4 +1,5 @@
 use crate::world::rpc::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 impl Rpc {
     // ---- ZeroFee EIP-7702 vertical slice ----------------------------------
@@ -655,7 +656,7 @@ impl Rpc {
             let latest_timestamp = self.latest_block_timestamp(self.cfg.primary_port());
             let current = self.zerofee_counter(address);
             latest_observation = Some((latest_timestamp, current));
-            if latest_timestamp.is_some_and(|timestamp| timestamp % 86_400 < 200)
+            if latest_timestamp.is_some_and(|timestamp| timestamp % SECONDS_PER_DAY < 200)
                 && current.is_some_and(|value| value.0 != before.0 && value.1 == 0)
             {
                 reset = current;
@@ -765,7 +766,6 @@ impl Rpc {
 }
 
 pub(in crate::world::rpc) fn zerofee_rollover_wait_budget_secs(latest_timestamp: u64) -> u64 {
-    const SECONDS_PER_DAY: u64 = 86_400;
     const MINIMUM_WAIT_SECONDS: u64 = 150;
     const FINALITY_SLACK_SECONDS: u64 = 60;
 

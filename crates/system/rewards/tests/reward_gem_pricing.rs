@@ -2,6 +2,7 @@
 
 use alloy_primitives::{Address, U256};
 use outbe_gem::test_support::GemWorld;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     storage::hashmap::HashMapStorageProvider,
@@ -70,7 +71,7 @@ fn with_ctx<R>(f: impl FnOnce(&BlockRuntimeContext) -> R) -> R {
         let ctx = BlockRuntimeContext::new(
             BlockContext::new(
                 2,
-                GENESIS_TS + 3 * 86_400 + 60,
+                GENESIS_TS + 3 * SECONDS_PER_DAY + 60,
                 CHAIN_ID,
                 Address::ZERO,
                 Vec::new(),

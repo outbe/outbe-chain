@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 #[cucumber::when(
     "the snapshot FullNode executes a fresh next-day OCOMP job and restarts at current progress"
@@ -95,7 +96,7 @@ pub(super) fn perform_snapshot_job(
     let day = WorldwideDay::from_timestamp(
         WorldwideDay::new(original.worldwide_day)
             .start_timestamp()
-            .checked_add(86_400)
+            .checked_add(SECONDS_PER_DAY)
             .ok_or_else(|| eyre!("day overflow"))?,
     )
     .value();

@@ -3,6 +3,7 @@
 use outbe_cycle::triggers::{
     active_triggers, last_fire_at, next_fire_at, TriggerId, ACTIVE_TRIGGERS,
 };
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 const PERIOD: u64 = 600;
 const OFFSET: u64 = 0;
@@ -102,7 +103,7 @@ fn the_clearing_poll_runs_after_the_stage_schedule() {
 
 #[test]
 fn the_genesis_interval_leaves_the_clearing_poll_alone() {
-    for interval in [10_u64, 600, 86_400] {
+    for interval in [10_u64, 600, SECONDS_PER_DAY] {
         let configured = active_triggers(interval);
         let clearing = configured
             .iter()

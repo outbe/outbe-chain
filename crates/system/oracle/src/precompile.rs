@@ -14,6 +14,7 @@ use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate_void, reject_value, view};
 use outbe_primitives::error::Result;
 use outbe_primitives::math::reference_price::pair_scales;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -435,7 +436,7 @@ fn day_vwap(oracle: &OracleContract, c: IOracle::getDayVwapCall) -> Result<Bytes
     view(c, |c| {
         let pair = oracle.require_pair_from(c.base, c.quote)?;
         let now = oracle.storage.timestamp()?.to::<u64>();
-        oracle.calculate_vwap_lookback(pair, now, 86400)
+        oracle.calculate_vwap_lookback(pair, now, SECONDS_PER_DAY)
     })
 }
 

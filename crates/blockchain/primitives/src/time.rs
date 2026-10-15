@@ -17,6 +17,9 @@ use crate::storage::types::{Storable, StorableType, StorageKey};
 /// timestamp arithmetic without redefining the constant.
 pub const SECONDS_PER_DAY: u64 = 86_400;
 
+/// [`SECONDS_PER_DAY`] for call durations stored as `u32`.
+pub const SECONDS_PER_DAY_U32: u32 = SECONDS_PER_DAY as u32;
+
 /// UTC+14 offset used by `worldwide_day_from_timestamp`. Public so
 /// callers that need to align Metadosis WWD with arbitrary timestamps can
 /// use the same constant.

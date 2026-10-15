@@ -5,9 +5,10 @@ use alloy_sol_types::SolEvent;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 use super::query::entry_pair;
-use super::{compute_scurve_value, truncate_to_day, DAY_SECONDS};
+use super::{compute_scurve_value, truncate_to_day};
 use crate::errors::OracleError;
 use crate::precompile::IOracle;
 use crate::schema::OracleContract;
@@ -49,7 +50,7 @@ fn store_scurve_entry_inner(
         if peak_day < current_peak_day {
             return Ok(false);
         }
-        let days_since = ((peak_day - current_peak_day) / DAY_SECONDS) as usize;
+        let days_since = ((peak_day - current_peak_day) / SECONDS_PER_DAY) as usize;
         let current_value = compute_scurve_value(oracle.scurve_peak_price.read(&idx)?, days_since);
         if peak_price <= current_value {
             return Ok(false);
@@ -112,9 +113,9 @@ fn process_daily_scurve_inner(
     // close of the day that follows it.
     //
     //   day_minus_3 (close before peak) < day_minus_2 (peak) > day_minus_1 (close after peak)
-    let day_minus_1 = current_day.saturating_sub(DAY_SECONDS);
-    let day_minus_2 = current_day.saturating_sub(2 * DAY_SECONDS);
-    let day_minus_3 = current_day.saturating_sub(3 * DAY_SECONDS);
+    let day_minus_1 = current_day.saturating_sub(SECONDS_PER_DAY);
+    let day_minus_2 = current_day.saturating_sub(2 * SECONDS_PER_DAY);
+    let day_minus_3 = current_day.saturating_sub(3 * SECONDS_PER_DAY);
 
     // Last snapshot rate within each fully-closed UTC day.
     let close_d1 = get_daily_close(oracle, pair, day_minus_1)?;
@@ -152,7 +153,7 @@ fn process_daily_scurve_inner(
 ///
 /// Scans snapshots backwards from the day end to find the last rate for that day.
 fn get_daily_close(oracle: &OracleContract, pair: AddressPair, day_start: u64) -> Result<U256> {
-    let day_end = day_start + DAY_SECONDS;
+    let day_end = day_start + SECONDS_PER_DAY;
     let write_idx = oracle.snapshot_write_idx.read()?;
     let oldest_idx = oracle.snapshot_oldest_idx.read()?;
 

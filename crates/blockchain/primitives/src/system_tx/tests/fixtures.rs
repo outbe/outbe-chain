@@ -74,7 +74,7 @@ fn sample_tee_bootstrap() -> crate::tee_bootstrap_v2::TeeBootstrapV2 {
         accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
         accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
         minimum_lease: 3_600,
-        maximum_lease: 604_800,
+        maximum_lease: 7 * crate::time::SECONDS_PER_DAY,
         collateral_margin: 3_600,
         resource_schedule_hash: ResourceScheduleV1::normative()
             .expect("normative resource schedule")

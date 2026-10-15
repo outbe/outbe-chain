@@ -1,4 +1,5 @@
 use super::*;
+use crate::time::SECONDS_PER_DAY;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -311,7 +312,7 @@ impl TeePolicyV1 {
 
     fn validate_lease_policy(&self) -> Result<(), CodecError> {
         let supported_range = self.minimum_lease >= 3_600
-            && self.maximum_lease <= 2_592_000
+            && self.maximum_lease <= 30 * SECONDS_PER_DAY
             && self.minimum_lease <= self.maximum_lease;
         if !supported_range
             || !self.maximum_lease.is_multiple_of(2)

@@ -1,6 +1,7 @@
 //! The read-only precompile.
 
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 #[test]
 fn precompile_series_data_round_trip() {
@@ -19,8 +20,8 @@ fn precompile_series_data_round_trip() {
         assert_eq!(data.entryPriceMinor, U256::from(ENTRY_PRICE_MINOR));
         assert_eq!(data.floorPriceMinor, U256::from(FLOOR_PRICE_MINOR));
         assert_eq!(data.issuedUnits, 100);
-        assert_eq!(data.callWindow, 30 * 24 * 60 * 60);
-        assert_eq!(data.callThreshold, 5 * 24 * 60 * 60);
+        assert_eq!(data.callWindow, 30 * SECONDS_PER_DAY_U32);
+        assert_eq!(data.callThreshold, 5 * SECONDS_PER_DAY_U32);
         assert_eq!(data.callPriceMinor, U256::from(CALL_PRICE_MINOR));
         assert_eq!(data.state, IntexState::Issued as u8);
         assert_eq!(data.issuedAt, ISSUED_AT);

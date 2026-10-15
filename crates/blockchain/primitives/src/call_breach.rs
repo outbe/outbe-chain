@@ -8,9 +8,7 @@ use alloy_primitives::U256;
 
 use crate::error::Result;
 use crate::storage::dsl::Map;
-use crate::time::SECONDS_PER_DAY;
-
-const SECS_PER_DAY: u32 = SECONDS_PER_DAY as u32;
+use crate::time::SECONDS_PER_DAY_U32;
 
 /// The call terms one right was sealed with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,7 +40,7 @@ pub fn widen_scan_terms(
         max_window.write(&reference_currency, window_seconds)?;
     }
     // A threshold under a day can never be met, and would latch the range shut.
-    if threshold_seconds < SECS_PER_DAY {
+    if threshold_seconds < SECONDS_PER_DAY_U32 {
         return Ok(());
     }
     let min = min_threshold.read(&reference_currency)?;
@@ -67,15 +65,15 @@ pub fn scan_terms(
     // A live threshold under a day is not one, as in `widen_scan_terms`.
     let threshold = match (
         min_threshold.read(&reference_currency)?,
-        live_threshold_seconds >= SECS_PER_DAY,
+        live_threshold_seconds >= SECONDS_PER_DAY_U32,
     ) {
         (0, _) => live_threshold_seconds,
         (stored, true) => stored.min(live_threshold_seconds),
         (stored, false) => stored,
     };
     Ok(ScanTerms {
-        window_days: window / SECS_PER_DAY,
-        threshold_days: threshold / SECS_PER_DAY,
+        window_days: window / SECONDS_PER_DAY_U32,
+        threshold_days: threshold / SECONDS_PER_DAY_U32,
     })
 }
 
@@ -84,8 +82,8 @@ pub fn scan_terms(
 /// mean no terms, not a breach on every day. The walk stops at the first day before
 /// `start_day`; the window is newest first, so everything past it is older still.
 pub fn breached_enough(vwaps: &[(u32, Option<U256>)], terms: &BreachTerms) -> bool {
-    let window_days = terms.window_seconds / SECS_PER_DAY;
-    let threshold_days = terms.threshold_seconds / SECS_PER_DAY;
+    let window_days = terms.window_seconds / SECONDS_PER_DAY_U32;
+    let threshold_days = terms.threshold_seconds / SECONDS_PER_DAY_U32;
     if window_days == 0 || threshold_days == 0 || threshold_days > window_days {
         return false;
     }
@@ -109,7 +107,7 @@ mod tests {
     use super::*;
     use crate::test_utils::call_breach_prices as days;
 
-    const DAY: u32 = SECS_PER_DAY;
+    const DAY: u32 = SECONDS_PER_DAY_U32;
 
     fn terms(price: u64, window: u32, threshold: u32, start_day: u32) -> BreachTerms {
         BreachTerms {

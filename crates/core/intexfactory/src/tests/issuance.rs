@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 #[test]
 fn issue_creates_series_in_registry() {
@@ -19,8 +20,8 @@ fn issue_creates_series_in_registry() {
         assert_eq!(
             r.call_trigger(),
             outbe_intex::IntexCallTrigger {
-                call_window_seconds: 28 * DAY as u32,
-                call_threshold_seconds: 21 * DAY as u32,
+                call_window_seconds: 28 * SECONDS_PER_DAY_U32,
+                call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
                 call_notice_period_seconds: CALL_NOTICE_PERIOD,
             }
         );

@@ -4,6 +4,8 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_primitives::addresses::GEM_ADDRESS;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 use super::*;
 use crate::config::GemParams;
@@ -428,8 +430,11 @@ fn config_unset_resolves_by_chain_id() {
         // An explicit selector still wins over the network default.
         set_profile(storage, crate::config::PROFILE_PROD);
         assert_eq!(crate::config::read(storage).unwrap(), GemParams::PROD);
-        assert_eq!(GemParams::PROD.call_window_seconds, 28 * 24 * 3600);
-        assert_eq!(GemParams::PROD.position_validity, 365 * 24 * 3600);
+        assert_eq!(
+            GemParams::PROD.call_window_seconds,
+            28 * SECONDS_PER_DAY_U32
+        );
+        assert_eq!(GemParams::PROD.position_validity, 365 * SECONDS_PER_DAY);
     });
 }
 

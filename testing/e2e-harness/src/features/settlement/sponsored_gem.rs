@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 struct SponsoredGem {
     key: String,
@@ -181,7 +182,7 @@ fn prepare(world: &mut World) -> SponsoredGem {
             DEPLOYER_KEY,
             &crate::features::gem_lifecycle::IGemFactoryTestArming::backdateGemForTestCall {
                 gemId: gem_id,
-                issuedAt: now.saturating_sub(3 * 86_400),
+                issuedAt: now.saturating_sub(3 * SECONDS_PER_DAY),
             },
             None,
         )

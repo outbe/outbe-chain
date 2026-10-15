@@ -16,6 +16,7 @@ use outbe_primitives::sweep_budget::{
     SweepBudget, SWEEP_BODY_WRITES_PER_BLOCK, SWEEP_VISITS_PER_BLOCK,
 };
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::{
     addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},
@@ -28,7 +29,7 @@ use outbe_nod::{
     api,
     constants::{
         CALL_LOOKBACK_DAYS, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_THRESHOLD_DAYS,
-        CALL_WINDOW, SECS_PER_DAY,
+        CALL_WINDOW,
     },
     precompile::INod,
     NodContract, NodItemState, NodRepositoryReader,
@@ -62,7 +63,7 @@ fn qualify(storage: &StorageHandle<'_>, item: &NodItemState, entry: U256) {
 
 const CHAIN_ID: u64 = 1;
 const BLOCK_NUMBER: u64 = 42;
-const DAY: u64 = 86_400;
+use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 /// The notice period a bucket seals at issuance, in the width these tests
 /// do timestamp arithmetic in.
 const NOTICE: u64 = CALL_NOTICE_PERIOD as u64;
@@ -412,22 +413,22 @@ struct SealedCallTerms {
 /// Rewrites sealed terms and widens the currency high-water mark as at issuance.
 fn reterm(storage: &StorageHandle<'_>, bucket_key: B256, iso: u16, terms: SealedCallTerms) {
     let nod = NodContract::new(storage.clone());
-    let window = terms.window_days * SECS_PER_DAY;
+    let window = terms.window_days * SECONDS_PER_DAY_U32;
     nod.bucket_call_window_seconds
         .write(&bucket_key, window)
         .unwrap();
     nod.bucket_call_threshold_seconds
-        .write(&bucket_key, terms.threshold_days * SECS_PER_DAY)
+        .write(&bucket_key, terms.threshold_days * SECONDS_PER_DAY_U32)
         .unwrap();
     nod.bucket_call_notice_period_seconds
-        .write(&bucket_key, terms.notice_days * SECS_PER_DAY)
+        .write(&bucket_key, terms.notice_days * SECONDS_PER_DAY_U32)
         .unwrap();
     outbe_primitives::call_breach::widen_scan_terms(
         &nod.max_call_window_seconds,
         &nod.min_call_threshold_seconds,
         iso,
         window,
-        terms.threshold_days * SECS_PER_DAY,
+        terms.threshold_days * SECONDS_PER_DAY_U32,
     )
     .unwrap();
 }

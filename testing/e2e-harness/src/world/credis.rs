@@ -37,7 +37,7 @@ sol! {
 }
 
 pub(crate) const USD: u16 = 840;
-pub(crate) const DAY: u64 = 86_400;
+pub(crate) use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 pub(crate) const INITIAL_GRATIS: U256 = U256::from_limbs([1_000_000_000, 0, 0, 0]);
 pub(crate) const INITIAL_STABLES: U256 = INITIAL_GRATIS;
 pub(crate) const LIQUIDITY: U256 = U256::from_limbs([10_000_000_000, 0, 0, 0]);

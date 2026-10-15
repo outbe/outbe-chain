@@ -24,6 +24,7 @@ use outbe_primitives::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
 use outbe_primitives::tee_attestation_v1::{
     AttestationMode, NetworkBindingV1, TrustedNetworkDescriptorV1,
 };
+use outbe_primitives::time::SECONDS_PER_DAY;
 use serde_json::json;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
@@ -256,7 +257,7 @@ impl Localnet {
             .unwrap_or(0);
         let localnet_forming_period = localnet_metadosis_forming_period_seconds(now, profile)?;
         // genesisTime is one day in the past so the chain can produce immediately.
-        let genesis_time = OffsetDateTime::from_unix_timestamp(now as i64 - 86_400)
+        let genesis_time = OffsetDateTime::from_unix_timestamp((now - SECONDS_PER_DAY) as i64)
             .wrap_err("genesis time")?
             .format(&Rfc3339)
             .wrap_err("format genesis time")?;

@@ -9,6 +9,7 @@ mod query;
 mod store;
 
 use alloy_primitives::U256;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::units::SCALE_1E6_U256;
 
 pub use query::{
@@ -20,12 +21,9 @@ pub use store::{evict_expired_scurves, process_daily_scurve, store_scurve_entry}
 /// S-curve period in days.
 pub const PERIOD: usize = 128;
 
-/// Seconds in one day.
-pub const DAY_SECONDS: u64 = 86400;
-
 /// Truncates a timestamp to the start of the UTC day (00:00 UTC).
 pub fn truncate_to_day(timestamp: u64) -> u64 {
-    (timestamp / DAY_SECONDS) * DAY_SECONDS
+    (timestamp / SECONDS_PER_DAY) * SECONDS_PER_DAY
 }
 
 /// Precomputed COEN/840 S-curve coefficients at six-decimal scale (128 entries).
@@ -328,9 +326,9 @@ mod tests {
         // 2025-01-01 12:34:56 UTC
         let ts = 1735735696u64;
         let day = truncate_to_day(ts);
-        assert_eq!(day % DAY_SECONDS, 0);
+        assert_eq!(day % SECONDS_PER_DAY, 0);
         assert!(day <= ts);
-        assert!(ts - day < DAY_SECONDS);
+        assert!(ts - day < SECONDS_PER_DAY);
     }
 
     #[test]
@@ -355,11 +353,11 @@ mod tests {
             assert_eq!(val, peak_price);
 
             // Query value at peak_day + 127 days -> should be ~92% of peak
-            let far_future = peak_day + 127 * DAY_SECONDS;
+            let far_future = peak_day + 127 * SECONDS_PER_DAY;
             let val_127 = get_max_active_scurve_value(&oracle, pair, far_future).unwrap();
             assert_eq!(val_127, price6(460)); // 500 * 0.92 = 460
 
-            let continued = peak_day + 128 * DAY_SECONDS;
+            let continued = peak_day + 128 * SECONDS_PER_DAY;
             let value = get_max_active_scurve_value(&oracle, pair, continued).unwrap();
             assert_eq!(value, price6(460));
 
@@ -393,14 +391,14 @@ mod tests {
             let peak1_price = price6(100);
             store_scurve_entry(&mut oracle, pair, peak1_day, peak1_price).unwrap();
 
-            let peak2_day = peak1_day + 10 * DAY_SECONDS;
+            let peak2_day = peak1_day + 10 * SECONDS_PER_DAY;
             store_scurve_entry(&mut oracle, pair, peak2_day, price6(90)).unwrap();
             assert_eq!(oracle.scurve_count.read().unwrap(), 1);
             assert_eq!(oracle.scurve_peak_day.read(&0).unwrap(), peak1_day);
 
             // At day 128 the old chain is 92, so a new peak of 93 replaces
             // it even though it is lower than the original 100 peak.
-            let replacement_day = peak1_day + 128 * DAY_SECONDS;
+            let replacement_day = peak1_day + 128 * SECONDS_PER_DAY;
             let replacement_price = price6(93);
             store_scurve_entry(&mut oracle, pair, replacement_day, replacement_price).unwrap();
             assert_eq!(oracle.scurve_count.read().unwrap(), 1);
@@ -416,8 +414,13 @@ mod tests {
 
             // Replays and lower peaks remain storage no-ops.
             store_scurve_entry(&mut oracle, pair, replacement_day, replacement_price).unwrap();
-            store_scurve_entry(&mut oracle, pair, replacement_day + DAY_SECONDS, price6(80))
-                .unwrap();
+            store_scurve_entry(
+                &mut oracle,
+                pair,
+                replacement_day + SECONDS_PER_DAY,
+                price6(80),
+            )
+            .unwrap();
             assert_eq!(oracle.scurve_count.read().unwrap(), 1);
             assert_eq!(oracle.scurve_peak_day.read(&0).unwrap(), replacement_day);
         });
@@ -437,15 +440,15 @@ mod tests {
 
             store_scurve_entry(&mut oracle, usd, peak_day, price6(100)).unwrap();
             store_scurve_entry(&mut oracle, eur, peak_day, price6(200)).unwrap();
-            store_scurve_entry(&mut oracle, usd, peak_day + DAY_SECONDS, price6(150)).unwrap();
+            store_scurve_entry(&mut oracle, usd, peak_day + SECONDS_PER_DAY, price6(150)).unwrap();
 
             assert_eq!(oracle.scurve_count.read().unwrap(), 2);
             assert_eq!(
-                get_max_active_scurve_value(&oracle, usd, peak_day + DAY_SECONDS).unwrap(),
+                get_max_active_scurve_value(&oracle, usd, peak_day + SECONDS_PER_DAY).unwrap(),
                 price6(150)
             );
             assert_eq!(
-                get_max_active_scurve_value(&oracle, eur, peak_day + DAY_SECONDS).unwrap(),
+                get_max_active_scurve_value(&oracle, eur, peak_day + SECONDS_PER_DAY).unwrap(),
                 compute_scurve_value(price6(200), 1)
             );
         });
@@ -500,9 +503,9 @@ mod tests {
             let pair = register_test_pair(&mut oracle);
 
             let d0 = truncate_to_day(1_700_000_000); // current day - empty at fire time
-            let d1 = d0 - DAY_SECONDS;
-            let d2 = d0 - 2 * DAY_SECONDS; // peak
-            let d3 = d0 - 3 * DAY_SECONDS;
+            let d1 = d0 - SECONDS_PER_DAY;
+            let d2 = d0 - 2 * SECONDS_PER_DAY; // peak
+            let d3 = d0 - 3 * SECONDS_PER_DAY;
 
             write_daily_close(&mut oracle, pair, d3, price6(100));
             write_daily_close(&mut oracle, pair, d2, price6(120));
@@ -530,9 +533,9 @@ mod tests {
             let pair = register_test_pair(&mut oracle);
 
             let d0 = truncate_to_day(1_700_000_000);
-            let d1 = d0 - DAY_SECONDS;
-            let d2 = d0 - 2 * DAY_SECONDS;
-            let d3 = d0 - 3 * DAY_SECONDS;
+            let d1 = d0 - SECONDS_PER_DAY;
+            let d2 = d0 - 2 * SECONDS_PER_DAY;
+            let d3 = d0 - 3 * SECONDS_PER_DAY;
 
             write_daily_close(&mut oracle, pair, d3, price6(100));
             write_daily_close(&mut oracle, pair, d2, price6(120));
@@ -559,9 +562,9 @@ mod tests {
             let pair = register_test_pair(&mut oracle);
 
             let d0 = truncate_to_day(1_700_000_000);
-            let d1 = d0 - DAY_SECONDS;
-            let d2 = d0 - 2 * DAY_SECONDS;
-            let d3 = d0 - 3 * DAY_SECONDS;
+            let d1 = d0 - SECONDS_PER_DAY;
+            let d2 = d0 - 2 * SECONDS_PER_DAY;
+            let d3 = d0 - 3 * SECONDS_PER_DAY;
 
             // Monotonic rising: no local max at D-2.
             write_daily_close(&mut oracle, pair, d3, price6(100));
@@ -586,8 +589,8 @@ mod tests {
             let pair = register_test_pair(&mut oracle);
 
             let d0 = truncate_to_day(1_700_000_000);
-            let d1 = d0 - DAY_SECONDS;
-            let d2 = d0 - 2 * DAY_SECONDS;
+            let d1 = d0 - SECONDS_PER_DAY;
+            let d2 = d0 - 2 * SECONDS_PER_DAY;
 
             write_daily_close(&mut oracle, pair, d2, price6(100));
             write_daily_close(&mut oracle, pair, d1, price6(120));

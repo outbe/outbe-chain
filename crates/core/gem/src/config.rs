@@ -5,6 +5,7 @@
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 use crate::constants::{
     CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE_PCT,
@@ -42,16 +43,16 @@ impl GemParams {
     /// Short timings for dev/test. `called` is day-granular, so window and
     /// threshold stay whole days. The notice and validity are real waits.
     pub const DEV: Self = Self {
-        call_window_seconds: 3 * 24 * 3600,
-        call_threshold_seconds: 2 * 24 * 3600,
+        call_window_seconds: 3 * SECONDS_PER_DAY_U32,
+        call_threshold_seconds: 2 * SECONDS_PER_DAY_U32,
         #[cfg(not(feature = "e2e-test"))]
-        call_notice_period_seconds: 3 * 24 * 3600,
+        call_notice_period_seconds: 3 * SECONDS_PER_DAY_U32,
         #[cfg(feature = "e2e-test")]
         call_notice_period_seconds: 600,
         call_rate: 10,
         floor_rate: 5,
         #[cfg(not(feature = "e2e-test"))]
-        position_validity: 7 * 24 * 3600,
+        position_validity: 7 * outbe_primitives::time::SECONDS_PER_DAY,
         #[cfg(feature = "e2e-test")]
         position_validity: 900,
     };
