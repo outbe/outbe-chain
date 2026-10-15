@@ -2,10 +2,10 @@
   "feature": "outbe-chain-pjz",
   "goal_status": "active",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-15T22:16:00Z",
-  "next_periodic_report_due_utc": "2026-10-15T22:46:00Z",
+  "last_periodic_report_utc": "2026-10-15T22:46:40Z",
+  "next_periodic_report_due_utc": "2026-10-15T23:16:40Z",
   "period_minutes": 30,
-  "stage": "P3 complete Review package verification and fresh local identity attestation path verified; durable collector job/slot journal, protected UDS/distributed collector/bootstrap/Merge/E2E incomplete",
+  "stage": "P3 durable complete Review package store and immutable local body selection now required before local identity attestation; corrected and verified. Protected UDS/full collector FSM/order/partial journal/distributed collection/bootstrap/Merge/E2E incomplete",
   "decision_gate": {
     "id": "D1",
     "status": "historical_approval_request_withdrawn; no active user approval question",
@@ -20,11 +20,11 @@
   },
   "acceptance": "P0/P1/P5 closed; P2/P3 in_progress and incomplete; P4/P6/P7/P8 open; P4 descriptor prerequisite implemented under P3 activation only",
   "last_periodic_report": {
-    "completed": "83f6690b9 public-only q-witness verification;9352d9538 canonical bounded separate bundle;57a4aac88 pinned Git closure before typed signing and exact complete Review package reconstruction/verification with fresh sealed proof guard.",
-    "proof": "50 full adapter lib tests/0 ignored;7 consumer all-target checks;adapter scopedClippy -D warnings;scopedfmt PASS; exact source/spec/log hashes in .4/review-package; earlier .4/public-witness and .4/witness-bundle evidence retained.",
-    "tasks": "Live bd --sandbox show check: P0/P1/P5 closed;P2/P3 in_progress;P4/P6/P7/P8 open. No new acceptance reviews/closure.",
-    "limitations": "No active approval question. Distinct receiver uses ODB copy/test authority/receipt providers, not normal network/live checkpoint E2E. Actual attestation/protected UDS/collector/journal/bootstrap/Merge/E2E incomplete; graph worker budgets unmeasured. No git.rs/fetch-gate/D2.",
-    "next": "Connect verified Review publication to fresh local identity attestation path, then protected typed node/sidecar transport and collector/journal per P3/P6."
+    "completed": "7ba8dfe03 local fresh package attestation;4d74923f7 durable complete Review package store,OS writer lock,immutable same-generation/sequence selected body and selected token required before attestation.",
+    "proof": "Verified7ba8dfe03:50 full adapter tests/7 consumers/Clippy/fmt PASS (.4/review-attestation). Store working iteration53 tests PASS; frozen4d74923f7 exact-SHA rerun in progress, not yet claimed verified.",
+    "tasks": "P0/P1/P5 closed;P2/P3 in_progress;P4/P6/P7/P8 open. No new reviews/closures.",
+    "limitations": "No active approval question. Protected UDS,full collector FSM/approval ordering/distributed collection/checkpoint delivery/bootstrap/Merge/production E2E incomplete. Native store restore is distinct Git storage,not live node crash E2E.",
+    "next": "Finish frozen store checks/evidence,then protected node/sidecar transport and complete collector/journal/scheduling per existing P3/P6."
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
@@ -37,7 +37,7 @@
     "user_confirmation": "\u0434\u0430 \u0432\u0441\u0435 \u0432\u0441\u0435\u0440\u043d\u043e, goal \u043c\u043e\u0436\u043d\u043e \u0441\u043d\u0438\u043c\u0430\u0442\u044c \u0441 \u043f\u0430\u0443\u0437\u044b ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "7ba8dfe03688a17a93cabd0aa59777999f616e43",
+  "source_sha": "2ddfe4a5382511f83d4ba4ae2f31a7a0b4ce591a",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -56,7 +56,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "7ba8dfe03: bounded same-process Review publication attestation accepts sealed verified package, rereads current finalized permission/checkpoint/material, authenticates local effective participant and signs fixed OPB1 under separate publication namespace. Previous57a4aac88 complete native Review package/pinned closure retained. No native wire/git.rs/fetch-gate/D2.",
+  "current_source_changes": "4d74923f7 introduced durable complete Review package storage/fsync/OS writer lock/selected token gating; superseded by2ddfe4a53 fixing corrupt original witness pointer on same-body continuation. Exact corrected53-test evidence .4/review-store-r2; RED base+test-only patch retained .4/review-store. No native wire/git.rs/fetch-gate/D2.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -82,10 +82,10 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "7ba8dfe03688a17a93cabd0aa59777999f616e43",
-    "checks": "50 full adapter lib tests/0 ignored;7 consumer all-target checks;adapter scopedClippy -D warnings;scopedfmt PASS",
-    "acceptance": "Intermediate P3/P6 only; no full-AC acceptance/closure/reviewer PASS. Durable job/slot selection, protected UDS/distributed collector/live checkpoint and production E2E incomplete.",
-    "scenarios": "Four actual local actors attest the verified native package with8 fresh state reads each; outsider,changed approval/stage/checkpoint,missing reader,wrong output generation,publisher withdrawal reject. Real MinPk signatures verify only publication namespace; actual4-entry carrier roundtrip. Fixture authority readers/NoSend; no live epoch/checkpoint/normal replication. No Share needed for additional identity attestation."
+    "source_sha": "2ddfe4a5382511f83d4ba4ae2f31a7a0b4ce591a",
+    "checks": "53 full adapter lib tests/0 ignored;7 consumer all-target checks;adapter scopedClippy -D warnings;all component rootfmt PASS",
+    "acceptance": "Intermediate P3/P6 only; no full-AC acceptance/closure/reviewer PASS. Full collector FSM/approval ordering/received-partial journal,protected UDS/distributed collection/live checkpoint/bootstrap/Merge/production E2E incomplete.",
+    "scenarios": "Native package persisted before4 actor attestations; OS writer lock/reopen/idempotent body selection; valid012/123 witness variants preserve body; separate Git storage missing every new native object restored and freshly verified without refs; committed witness/manifest corruption rejects; symlink target and existing public directory unchanged. RED on4d+test-only patch exited101; corrected2dd passes. No SIGKILL/power-loss/live full-node crash E2E."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
@@ -95,8 +95,15 @@
   "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing",
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
-  "last_goal_turn_classification": "progress: source57a4aac88 complete native Review package/pinned closure and7ba8dfe03 fresh local identity-attestation path implemented; exact source/spec evidence recorded; no decision pending/task closure",
-  "next_required_work": "Implement protected typed node/sidecar transport and durable collector job/slot journal/scheduling per P3/P6; then distributed collection/checkpoint installation/normal announcement,automatic bootstrap,separate Merge/E2E. Preserve approved P0-P8 scope and decision/acceptance gates.",
+  "last_goal_turn_classification": "progress: implemented durable package/slot prerequisite, reproduced corrupt-witness RED on old runtime and fixed it; frozen corrected53-test/7-consumer evidence recorded; no decision pending/task closure",
+  "next_required_work": "Connect protected node/sidecar transport using existing native storage/control startup hooks and the verified typed signing/durable selection path; no free-message signing. Complete existing collector FSM/ordered pending jobs/partial persistence/distributed collection/checkpoint/refCAS/normal announcement; then automatic bootstrap,separate Merge and production E2E. Preserve P0-P8 and decision/acceptance gates.",
   "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
-  "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation"
+  "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
+  "review_store_evidence": "evidence/outbe-chain-pjz.4/review-store-r2",
+  "review_store_superseded_candidate": "evidence/outbe-chain-pjz.4/review-store",
+  "transport_investigation": {
+    "repowise": "MCP unavailable; CLI ask confirmed worktree not indexed; no init/update or main-checkout changes",
+    "known_sources": "bin/outbe-chain/src/launch/node/radicle.rs; integration/sidecar.rs; crates/system/radicle/src/lib.rs::PreparedSidecar",
+    "current_boundary": "node preflight queries native nodeId/config; sidecar owns Home/storage and existing control/status runtime. Protected Outbe signer link not yet implemented; no protocol/data-path decision presented or approval question pending."
+  }
 }

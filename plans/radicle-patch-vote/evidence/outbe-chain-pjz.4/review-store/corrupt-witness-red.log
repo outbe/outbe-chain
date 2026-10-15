@@ -1,0 +1,21 @@
+    Finished `test` profile [unoptimized] target(s) in 0.64s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_radicle-35b1ee5a8a3e4119)
+
+running 1 test
+test integration::review::tests::exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_accepts ... FAILED
+
+failures:
+
+---- integration::review::tests::exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_accepts stdout ----
+
+thread 'integration::review::tests::exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_accepts' (16414461) panicked at crates/blockchain/radicle/src/integration/review/tests.rs:1436:5:
+a corrupt committed slot cannot issue another selected token via a different valid witness subset
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    integration::review::tests::exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_accepts
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 52 filtered out; finished in 1.77s
+
+error: test failed, to rerun pass `-p outbe-radicle --lib`
