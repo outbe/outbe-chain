@@ -1,0 +1,67 @@
+{
+  "feature": "outbe-chain-pjz",
+  "goal_status": "active",
+  "scope": "approved plan.md + task-specs.json + design.md only",
+  "last_periodic_report_utc": "2026-10-15T16:23:40Z",
+  "next_periodic_report_due_utc": "2026-10-15T16:53:40Z",
+  "period_minutes": 30,
+  "stage": "P5 closed; P2 native prepare/runtime/static BLS/stream/CLI/Ed compatibility verified; managed publication and cache paths incomplete",
+  "decision_gate": {
+    "id": "D1",
+    "status": "original_approval_request_withdrawn_pending_concrete_semantic_evidence",
+    "proposal": "decisions/D1/proposal.md",
+    "snapshot": "decisions/D1/snapshot.json",
+    "dependent_implementation": "D1 not implemented; original frozen source/proposal preserved",
+    "user_approval": "A not approved; user confirmed only the BLS-only/no-delegation/immutable-history contract",
+    "rule": "three independent checks -> concrete proposal to user -> wait explicit answer; never infer approval from silence or reviewers PASS",
+    "user_proposal": "decisions/D1/user-proposal.md",
+    "user_proposal_sha256": "f97944c485f9ee3538760011329511fb9eaacbcd4fa7fcfd44589c440ac68d89",
+    "clarification": "Do not use old shares or a user-delegation feature as justification for D1; initial repro proves dependency-load gap only, not unauthorized patch acceptance. No new confirmation requested on that evidence."
+  },
+  "acceptance": "P0/P1/P5 closed; P2 incomplete; P3/P4/P6/P7/P8 incomplete",
+  "last_periodic_report": {
+    "completed": "Closed P5 after three independent full-AC PASS; P2 raw/typed external COB prepare and sole BLS identity evaluator/reopen, actual two-runtime BLS repo/Ed patch/BLS Review, invalid refs rejection/state preservation, policy-aware native streams and real CLI BLS pretty/JSON; current and legacy Ed peers",
+    "proof": "Source6c19aaaf514b7d5bd77c3de3559185459eaf425f:669 native lib tests+10 sidecar+2 CLI,fullvendor all-target Clippy/fmt,root consumers PASS; both actual Ed peer scenarios PASS",
+    "limitations": "P2 incomplete; full managed publication/CAS, reachable closure/cache provenance/reopen/rebuild not implemented; no D1 permission or implementation; P5 broad root lint unchanged Tribute failure remains preserved",
+    "tasks": "P0/P1/P5 closed; P2 in_progress; P3/P4/P6-P8 incomplete",
+    "next": "Inspect remaining managed publication/cache requirements against actual entry/read/promotion callers; no D1 shared-closure implementation without proper decision gate"
+  },
+  "blocked_audit": {
+    "consecutive_goal_turns": 0,
+    "reset": "user explicitly resumed goal; independent P5 work available"
+  },
+  "user_confirmed_contract": {
+    "network_repository_owner": "sole network BLS authority; no user delegation feature",
+    "decision": "only network Vote by eligible current ValidatorSet for exact patch revision",
+    "accepted_history": "accepted stays accepted; validator/material change never revokes an accepted patch",
+    "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
+    "resume_intent": "explicit; API cannot resume a blocked goal"
+  },
+  "source_sha": "6c19aaaf514b7d5bd77c3de3559185459eaf425f",
+  "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
+  "p5_reviews": {
+    "R1": "outbe-chain-pjz.6.1",
+    "R2": "outbe-chain-pjz.6.2",
+    "R3": "outbe-chain-pjz.6.3",
+    "status": "all three full-AC PASS and reviewer-owned children closed; parent closed",
+    "R1_status": "closed PASS AC1-AC4",
+    "R2_status": "closed PASS AC1-AC4",
+    "evidence_commit": "999b0e643"
+  },
+  "p2_baseline": {
+    "source": "91644eb78148e7b81cd8e46478dfb0466d321e27",
+    "tests": "665 native lib tests PASS/0 ignored",
+    "lint": "full vendor workspace all-target Clippy -D warnings PASS",
+    "root_consumers": "sidecar/runtime/keygen/e2e-harness all-target check PASS",
+    "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
+    "acceptance": "intermediate only; P2 incomplete"
+  },
+  "current_source_changes": "tracked source clean; native P2 checkpoint commits d91a9563d,6c9c71082,6c19aaaf5",
+  "p2_evidence": {
+    "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
+    "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
+    "stream_failed_probe": "evidence/outbe-chain-pjz.3/native-stream",
+    "ed_compatibility": "evidence/outbe-chain-pjz.3/ed-compatibility",
+    "all_acceptance_criteria_complete": false
+  }
+}

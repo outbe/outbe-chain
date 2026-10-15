@@ -1,0 +1,11 @@
+{
+  "README.md": "b595f82de4429e7756f665fa1e4cc1e579cd467df2e4bd1a17e028682a005ebe",
+  "diagnostic-before.log": "30c6fb7b5e23f80e9087a925b22f61961617ed21334f4372db154c019a7f32cd",
+  "native-clippy.log": "0231486c2de1a8a85bd7f419c71f63967083ed44e3070907c526cc5ee2942591",
+  "native-commands.json": "530c1935dd0ffde780d20b9bbddf7854b94b283d8102b1488a600057eef46280",
+  "native-tests.log": "19486b2cbf080262da493f57a20c654dcc9cb31ae3aef55097882d73577753aa",
+  "root-commands.json": "3da474a1b6d86662cfeebe90575f4c9e85a104d87937e714d52133a4173b6531",
+  "root-consumers.log": "8f560d337d89d2233c7f2e8f50ddd8e4af28b5a7fb9ee66717d43f920b5d7de3",
+  "run_checks.py": "cd537d732a5ba7b3237d08fdf5b135aab16ad078a2ec887bda2125e733942879",
+  "sidecar-tests.log": "092af07ccb3ae9eae8a08269a44ae2ec2649bd850fa15fb57a35da01e2f1f867"
+}

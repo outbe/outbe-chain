@@ -1,0 +1,85 @@
+{
+  "scope": "Intermediate P2 preparation/static BLS workflow only, not P2 acceptance",
+  "source_sha": "d91a9563df25b8f3c9063f15138e71ef93e15dcd",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "toolchain": {
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)"
+  },
+  "environment": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4"
+  },
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "vendor/heartwood/Cargo.toml",
+        "-p",
+        "radicle",
+        "-p",
+        "radicle-cob",
+        "-p",
+        "radicle-crypto",
+        "-p",
+        "radicle-git-metadata",
+        "-p",
+        "radicle-node",
+        "-p",
+        "radicle-protocol",
+        "--lib",
+        "--",
+        "--nocapture"
+      ],
+      "started_at_utc": "2026-10-15T16:08:29.334227+00:00",
+      "ended_at_utc": "2026-10-15T16:09:10.529200+00:00",
+      "exit_code": 0,
+      "log": "native-tests.log",
+      "sha256": "88554e0f681a6a15e72f80cef23fcc2b3cae3960e8b75579641e8088af39a3b2"
+    },
+    {
+      "argv": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "vendor/heartwood/Cargo.toml",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "started_at_utc": "2026-10-15T16:09:10.530810+00:00",
+      "ended_at_utc": "2026-10-15T16:09:18.648349+00:00",
+      "exit_code": 0,
+      "log": "native-clippy.log",
+      "sha256": "074586d1733a448886430a67f1b90cdf8fc867b4a2b5f39c89e0d6bf089fa3c5"
+    },
+    {
+      "argv": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "vendor/heartwood/Cargo.toml",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "started_at_utc": "2026-10-15T16:09:18.648717+00:00",
+      "ended_at_utc": "2026-10-15T16:09:19.218454+00:00",
+      "exit_code": 0,
+      "log": "native-format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}
