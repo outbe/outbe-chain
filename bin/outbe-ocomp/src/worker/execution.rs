@@ -168,6 +168,7 @@ pub(crate) fn execute_unit(
     authority: UnitExecutionAuthority<'_>,
 ) -> Result<UnitArtifactV1, WorkerError> {
     require_lease_active(authority.cancelled)?;
+    authority.bundle.validate_supported_lysis_v1_semantics()?;
     match spec.phase {
         UnitPhase::Enumerate => execute_enumerate_unit(spec, authority),
         UnitPhase::FidelityMap => execute_fidelity_map_unit(spec, authority),

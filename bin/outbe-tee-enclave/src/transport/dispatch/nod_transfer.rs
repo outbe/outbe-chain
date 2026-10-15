@@ -219,6 +219,7 @@ mod tests {
                     head: vec![255; 70_000],
                     subtree_height: 3,
                     sealed_tribute_root: B256::ZERO,
+                    nod_gratis_load_max: alloy_primitives::U256::ONE,
                 },
                 batch: vec![],
                 sources: vec![],
