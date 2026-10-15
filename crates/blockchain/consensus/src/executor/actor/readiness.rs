@@ -2,6 +2,7 @@ use outbe_primitives::projection::ProjectionCheckpoint;
 use outbe_primitives::projection::ProjectionReadinessHandle;
 
 /// Whether to update head or finalized.
+#[derive(Debug)]
 pub(super) enum HeadOrFinalized {
     Head,
     Finalized,

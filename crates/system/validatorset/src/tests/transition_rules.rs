@@ -331,7 +331,7 @@ fn unjail_and_tee_expiry_reject_ineligible_validators_without_effect() -> Result
     assert_without_effect(
         &mut seeded(|vs| register(vs, FIRST))?,
         |vs| vs.jail_validator_for_tee_expiry(FIRST),
-        &format!("Fatal: TEE expiry sweep selected validator {FIRST} with ineligible status 0"),
+        &format!("Revert: TEE expiry sweep selected validator {FIRST} with ineligible status 0"),
     );
     Ok(())
 }
@@ -477,7 +477,7 @@ fn founder_import_checks_cover_proof_binding_identity_and_uniqueness_in_order() 
     assert_without_effect(
         &mut storage,
         |vs| vs.initialize_founder_ocomp_registrations(&valid[..1]),
-        "Fatal: OCOMP founder registrations must exactly cover ACTIVE ValidatorSet: 1 registrations for 2 validators",
+        "Revert: OCOMP founder registrations must exactly cover ACTIVE ValidatorSet: 1 registrations for 2 validators",
     );
     let mut tampered = valid.clone();
     tampered[0].proof_of_possession[0] ^= 1;
@@ -491,19 +491,19 @@ fn founder_import_checks_cover_proof_binding_identity_and_uniqueness_in_order() 
     assert_without_effect(
         &mut storage,
         |vs| vs.initialize_founder_ocomp_registrations(&tampered),
-        &format!("Fatal: invalid OCOMP founder proof of possession: {proof_error}"),
+        &format!("Revert: invalid OCOMP founder proof of possession: {proof_error}"),
     );
     let swapped = vec![valid[1].clone(), valid[0].clone()];
     assert_without_effect(
         &mut storage,
         |vs| vs.initialize_founder_ocomp_registrations(&swapped),
-        &format!("Fatal: OCOMP founder registration identity mismatch for {FIRST}"),
+        &format!("Revert: OCOMP founder registration identity mismatch for {FIRST}"),
     );
     let shared_key = founder_registrations(&mut storage, [(FIRST, 0x51), (SECOND, 0x51)])?;
     assert_without_effect(
         &mut storage,
         |vs| vs.initialize_founder_ocomp_registrations(&shared_key),
-        "Fatal: OCOMP founder registrations contain duplicate identity or key",
+        "Revert: OCOMP founder registrations contain duplicate identity or key",
     );
     let mut other_chain = seeded_on(
         storage_for_chain(CHAIN_ID, B256::repeat_byte(0x99))?,
@@ -513,7 +513,7 @@ fn founder_import_checks_cover_proof_binding_identity_and_uniqueness_in_order() 
     assert_without_effect(
         &mut other_chain,
         |vs| vs.initialize_founder_ocomp_registrations(&unbound),
-        "Fatal: OCOMP founder registration chain binding mismatch",
+        "Revert: OCOMP founder registration chain binding mismatch",
     );
     Ok(())
 }
@@ -546,13 +546,13 @@ fn founder_import_is_atomic_exactly_replayable_and_rejects_partial_state() -> Re
     assert_without_effect(
         &mut storage,
         |vs| vs.initialize_founder_ocomp_registrations(&valid),
-        "Fatal: partial OCOMP founder registration import is fatal",
+        "Revert: partial OCOMP founder registration import is fatal",
     );
     let conflicting = founder_registrations(&mut storage, [(FIRST, 0x53), (SECOND, 0x52)])?;
     assert_without_effect(
         &mut storage,
         |vs| vs.initialize_founder_ocomp_registrations(&conflicting),
-        &format!("Fatal: partial or conflicting OCOMP founder state for {FIRST}"),
+        &format!("Revert: partial or conflicting OCOMP founder state for {FIRST}"),
     );
     Ok(())
 }

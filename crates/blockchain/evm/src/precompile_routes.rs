@@ -553,7 +553,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             error,
-            PrecompileError::Fatal(message)
+            PrecompileError::BodyReadUnavailable(message)
                 if message == "execution body read authority was not supplied"
         ));
     }
@@ -833,7 +833,7 @@ mod tests {
                 None,
                 class_call(token, &[]),
             ),
-            Err(PrecompileError::Fatal(message)) if message.contains("marker code mismatch")
+            Err(PrecompileError::Revert(message)) if message.contains("marker code mismatch")
         ));
 
         storage
@@ -849,7 +849,7 @@ mod tests {
                 None,
                 class_call(token, &[]),
             ),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     }
 
@@ -884,7 +884,7 @@ mod tests {
                 None,
                 class_call(token, &call.abi_encode()),
             ),
-            Err(PrecompileError::Fatal(message)) if message.contains("identity does not match")
+            Err(PrecompileError::Revert(message)) if message.contains("identity does not match")
         ));
     }
 }

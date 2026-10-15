@@ -221,7 +221,7 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
         // Ok(None) on success, Err on DB error.
         match self.internals.transfer(from, to, amount) {
             Ok(None) => Ok(()),
-            Ok(Some(_transfer_error)) => Err(PrecompileError::fatal(format!(
+            Ok(Some(_transfer_error)) => Err(PrecompileError::revert(format!(
                 "insufficient balance for transfer from {from}: needs {amount}"
             ))),
             Err(e) => Err(PrecompileError::Storage(format!("transfer failed: {e}"))),
@@ -249,7 +249,7 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
             .map_err(|e| PrecompileError::Storage(format!("burn account load failed: {e}")))?;
         let balance = account.data.info.balance;
         let new_balance = balance.checked_sub(amount).ok_or_else(|| {
-            PrecompileError::fatal(format!(
+            PrecompileError::revert(format!(
                 "insufficient balance for burn from {address}: has {balance} but needs {amount}"
             ))
         })?;

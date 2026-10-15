@@ -923,16 +923,18 @@ impl TeeRegistryError {
 
 impl From<TeeRegistryError> for PrecompileError {
     fn from(error: TeeRegistryError) -> Self {
-        if error.is_fatal() {
-            Self::Fatal(error.to_string())
-        } else {
-            Self::Revert(error.to_string())
+        match error {
+            TeeRegistryError::DcapVerifierUnavailable(_)
+            | TeeRegistryError::DcapOnboardingVerifierUnavailable(_) => {
+                Self::EnclaveUnavailable(error.to_string())
+            }
+            _ => Self::Revert(error.to_string()),
         }
     }
 }
 
 /// Extracts the deterministic revert message from `error` in unit tests.
-#[cfg(test)]
+#[cfg(all(test, feature = "tee-attestation-v1"))]
 pub(crate) fn extract_revert_message(error: PrecompileError) -> String {
     match error {
         PrecompileError::Revert(message) => message,
@@ -941,19 +943,19 @@ pub(crate) fn extract_revert_message(error: PrecompileError) -> String {
 }
 
 /// Returns true when `error` is a fatal precompile error in unit tests.
-#[cfg(test)]
+#[cfg(all(test, feature = "tee-attestation-v1"))]
 pub(crate) fn is_fatal_error(error: &PrecompileError) -> bool {
-    matches!(error, PrecompileError::Fatal(_))
+    matches!(error, PrecompileError::Revert(_))
 }
 
 /// Returns true when `error` is a fatal precompile error that contains `needle`.
-#[cfg(test)]
+#[cfg(all(test, feature = "tee-attestation-v1"))]
 pub(crate) fn is_fatal_containing(error: &PrecompileError, needle: &str) -> bool {
-    matches!(error, PrecompileError::Fatal(message) if message.contains(needle))
+    matches!(error, PrecompileError::Revert(message) if message.contains(needle))
 }
 
 /// Formats a displayable error into a string for test callbacks.
-#[cfg(test)]
+#[cfg(all(test, feature = "tee-attestation-v1"))]
 pub(crate) fn format_test_error(error: impl std::fmt::Display) -> String {
     error.to_string()
 }

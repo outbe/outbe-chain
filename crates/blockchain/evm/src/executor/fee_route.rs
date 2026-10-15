@@ -28,11 +28,12 @@ where
         let tx = recovered.tx();
         let signer = *recovered.signer();
         if tx.gas_limit() < Self::SOFT_FAILURE_GAS {
-            return Err(BlockExecutionError::msg(format!(
+            return Err(BlockValidationError::msg(format!(
                 "transaction gas limit {} is below intrinsic gas floor {}",
                 tx.gas_limit(),
                 Self::SOFT_FAILURE_GAS
-            )));
+            ))
+            .into());
         }
 
         let zero_fee_tx = zero_fee_transaction(tx, signer);

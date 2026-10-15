@@ -328,7 +328,7 @@ fn execution_revalidation_rejects_payload_or_account_mismatch_and_keeps_reservat
         factory.reserve(&item).unwrap();
         assert!(matches!(
             factory.execute_approved(proposal_id, issuer, &changed_raw, 0),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
         assert_eq!(
             factory.pending_token_id.read(&item.token_id).unwrap(),
@@ -349,7 +349,7 @@ fn execution_revalidation_rejects_payload_or_account_mismatch_and_keeps_reservat
             .unwrap();
         assert!(matches!(
             factory.execute_approved(proposal_id, issuer, &raw, 0),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
         assert_eq!(
             factory.pending_token_id.read(&item.token_id).unwrap(),
@@ -999,7 +999,7 @@ fn corrupted_reservation_triple_is_fatal_and_not_partially_cleaned() {
 
         assert!(matches!(
             factory.release(item.proposal_id),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
         assert_eq!(
             factory.pending_token_id.read(&item.token_id).unwrap(),
@@ -1071,7 +1071,7 @@ fn unknown_schema_and_unknown_reverse_lookup_fail_closed() {
         factory.schema_version.write(2).unwrap();
         assert!(matches!(
             factory.token_count(),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     });
 

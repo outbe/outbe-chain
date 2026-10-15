@@ -49,14 +49,22 @@ where
                 outbe_zerofee::record_sponsorship_use(storage, signer, current_day)
             };
             if let Err(err) = recorded {
-                return Err(BlockExecutionError::msg(format!(
-                    "sponsored quota write failed after inclusion: {err}"
-                )));
+                return Err(match err {
+                    outbe_zerofee::ZeroFeePolicyError::Storage(reason) => {
+                        BlockExecutionError::other(PrecompileError::storage(format!(
+                            "sponsored quota write failed after inclusion: {reason}"
+                        )))
+                    }
+                    other => BlockValidationError::msg(format!(
+                        "sponsored quota write failed after inclusion: {other}"
+                    ))
+                    .into(),
+                });
             }
             provider.flush().map_err(|err| {
-                BlockExecutionError::msg(format!(
+                BlockExecutionError::other(PrecompileError::storage(format!(
                     "sponsored quota flush failed after inclusion: {err}"
-                ))
+                )))
             })?;
             let events = provider.take_events();
             // State::commit already notified the parallel state root hook.

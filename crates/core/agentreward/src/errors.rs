@@ -57,6 +57,6 @@ pub enum AgentRewardFatalError {
 
 impl From<AgentRewardFatalError> for PrecompileError {
     fn from(err: AgentRewardFatalError) -> Self {
-        PrecompileError::Fatal(err.to_string())
+        PrecompileError::Revert(err.to_string())
     }
 }

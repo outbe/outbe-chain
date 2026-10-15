@@ -118,7 +118,7 @@ fn terminal_receipt_view_stays_fatal_on_unknown_stored_outcome() {
                 Address::ZERO,
                 U256::ZERO,
             ),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     });
 }

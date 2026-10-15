@@ -112,7 +112,7 @@ pub(crate) fn verify_present_admissions(
                 },
             )?;
             require(
-                !maximum_records.is_some_and(|maximum| u64::from(counts.present) >= maximum),
+                maximum_records.is_none_or(|maximum| u64::from(counts.present) < maximum),
                 Incomplete(format!(
                     "present admission walk stopped after {} records; plan has {} positions",
                     counts.present, counts.expected

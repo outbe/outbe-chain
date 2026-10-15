@@ -135,10 +135,10 @@ impl<'a> CanonicalState<'a> {
             return Err(SnapshotError::MetadosisJobIntentDayMismatch.into());
         }
         if let Some(expected) = expected_job_id {
-            if !record
+            if record
                 .finalized
                 .as_ref()
-                .is_some_and(|job| job.job_id == expected)
+                .is_none_or(|job| job.job_id != expected)
             {
                 return Err(SnapshotError::MetadosisJobIdMismatch.into());
             }

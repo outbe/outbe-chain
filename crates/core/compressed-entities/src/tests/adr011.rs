@@ -131,8 +131,14 @@ fn duplicate_retirement_and_retirement_then_mutation_are_rejected() {
             retire_partition(storage.clone(), scope, PartitionRef::TributeWwd(day)).unwrap(),
             RetirementOutcome::Requested
         );
-        assert!(retire_partition(storage.clone(), scope, PartitionRef::TributeWwd(day)).is_err());
-        assert!(mint(storage, scope, BodyInput::Tribute(&tribute(day))).is_err());
+        assert!(matches!(
+            retire_partition(storage.clone(), scope, PartitionRef::TributeWwd(day)),
+            Err(PrecompileError::Revert(_))
+        ));
+        assert!(matches!(
+            mint(storage, scope, BodyInput::Tribute(&tribute(day))),
+            Err(PrecompileError::Revert(_))
+        ));
     });
 }
 
@@ -141,7 +147,10 @@ fn mutation_then_retirement_is_rejected() {
     with_active_scope(true, |storage, scope| {
         let day = WorldwideDay::new(20_260_717);
         mint(storage.clone(), scope, BodyInput::Tribute(&tribute(day))).unwrap();
-        assert!(retire_partition(storage, scope, PartitionRef::TributeWwd(day)).is_err());
+        assert!(matches!(
+            retire_partition(storage, scope, PartitionRef::TributeWwd(day)),
+            Err(PrecompileError::Revert(_))
+        ));
     });
 }
 
@@ -175,12 +184,14 @@ fn absent_partition_is_noop_and_checkpoint_reverts_the_complete_request() {
 #[test]
 fn invalid_wwd_and_calls_outside_the_active_phase_are_rejected_and_cleanup_is_complete() {
     with_active_scope(true, |storage, scope| {
-        assert!(retire_partition(
-            storage.clone(),
-            scope,
-            PartitionRef::TributeWwd(WorldwideDay::new(20_261_340)),
-        )
-        .is_err());
+        assert!(matches!(
+            retire_partition(
+                storage.clone(),
+                scope,
+                PartitionRef::TributeWwd(WorldwideDay::new(20_261_340)),
+            ),
+            Err(PrecompileError::Revert(_))
+        ));
 
         let day = WorldwideDay::new(20_260_717);
         assert_eq!(

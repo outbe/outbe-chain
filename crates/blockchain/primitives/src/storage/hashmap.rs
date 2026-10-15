@@ -478,7 +478,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
                 .metadosis_mutation_entitlements
                 .consume(purpose, binding)
         {
-            return Err(PrecompileError::fatal(
+            return Err(PrecompileError::revert(
                 "test provider has no matching Metadosis mutation lease",
             ));
         }
@@ -495,12 +495,12 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         let Some((active_purpose, active_binding, _, _)) =
             self.metadosis_mutation_active.as_ref().copied()
         else {
-            return Err(PrecompileError::fatal(
+            return Err(PrecompileError::revert(
                 "test provider has no active Metadosis mutation lease",
             ));
         };
         if active_purpose != purpose || active_binding != binding {
-            return Err(PrecompileError::fatal(
+            return Err(PrecompileError::revert(
                 "test provider Metadosis mutation lease identity mismatch",
             ));
         }
@@ -513,7 +513,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             || self.lysis_activation_attempted
             || self.lysis_activation_call_id.is_some()
         {
-            return Err(PrecompileError::fatal(
+            return Err(PrecompileError::revert(
                 "test provider has no certified Lysis activation lease",
             ));
         }
@@ -528,7 +528,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         _completed: bool,
     ) -> Result<()> {
         if self.lysis_activation_call_id.take() != Some(activation_call_id) {
-            return Err(PrecompileError::fatal(
+            return Err(PrecompileError::revert(
                 "test provider Lysis activation lease identity mismatch",
             ));
         }
@@ -701,7 +701,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
         let from_balance = self.accounts.entry(from).or_default().balance;
         if from_balance < amount {
-            return Err(crate::error::PrecompileError::fatal(format!(
+            return Err(crate::error::PrecompileError::revert(format!(
                 "insufficient balance: {from} has {from_balance} but needs {amount}"
             )));
         }
@@ -766,7 +766,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         }
         let entry = self.accounts.entry(address).or_default();
         if entry.balance < amount {
-            return Err(PrecompileError::fatal(format!(
+            return Err(PrecompileError::revert(format!(
                 "insufficient balance for burn: {address} has {} but needs {amount}",
                 entry.balance
             )));

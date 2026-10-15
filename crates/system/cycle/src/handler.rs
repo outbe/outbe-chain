@@ -42,8 +42,15 @@ pub enum ProtocolDayAction {
 /// more than one calendar day, every completed day in that gap is deliberately
 /// forfeited: no economic state is synthesized after the halt.
 pub fn protocol_day_action(active_utc_day: u32, block_utc_day: u32) -> Result<ProtocolDayAction> {
-    if !is_valid_utc_day(active_utc_day) || !is_valid_utc_day(block_utc_day) {
-        return Err(CycleError::InvalidUtcDay {
+    if !is_valid_utc_day(active_utc_day) {
+        return Err(CycleError::InvalidActiveUtcDay {
+            active: active_utc_day,
+            block: block_utc_day,
+        }
+        .into());
+    }
+    if !is_valid_utc_day(block_utc_day) {
+        return Err(CycleError::InvalidBlockUtcDay {
             active: active_utc_day,
             block: block_utc_day,
         }

@@ -56,6 +56,6 @@ pub enum GovernanceFatalError {
 
 impl From<GovernanceFatalError> for PrecompileError {
     fn from(value: GovernanceFatalError) -> Self {
-        PrecompileError::Fatal(value.to_string())
+        PrecompileError::Revert(value.to_string())
     }
 }

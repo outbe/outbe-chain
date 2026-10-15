@@ -121,7 +121,7 @@ pub fn demote_joining(
 ) -> Result<WaitingForStake> {
     require_below_minimum(stake, minimum)?;
     if deactivated_at_height == 0 {
-        return Err(PrecompileError::Fatal(
+        return Err(PrecompileError::Revert(
             "validator deactivation height must be non-zero".into(),
         ));
     }
@@ -141,7 +141,7 @@ pub fn demote_joining(
 fn exit_demoted_joiner(joiner: JoinerPayload, deactivated_at_height: u64) -> Result<Exiting> {
     require_canonical_stake(joiner.stake)?;
     if deactivated_at_height == 0 {
-        return Err(PrecompileError::Fatal(
+        return Err(PrecompileError::Revert(
             "validator deactivation height must be non-zero".into(),
         ));
     }
@@ -249,7 +249,7 @@ pub fn begin_exit(
 ) -> Result<Exiting> {
     require_canonical_stake(stake)?;
     if deactivated_at_height == 0 {
-        return Err(PrecompileError::Fatal(
+        return Err(PrecompileError::Revert(
             "validator deactivation height must be non-zero".into(),
         ));
     }
@@ -267,7 +267,7 @@ pub fn begin_exit(
 /// Jails an active validator without clearing the old committee share.
 pub fn jail(state: Active, jailed_at: u64) -> Result<JailRetained> {
     if jailed_at == 0 {
-        return Err(PrecompileError::Fatal(
+        return Err(PrecompileError::Revert(
             "validator jail height must be non-zero".into(),
         ));
     }
@@ -326,7 +326,7 @@ pub fn unjail(
     let ready_at = state
         .jailed_at
         .checked_add(cooldown_blocks)
-        .ok_or_else(|| PrecompileError::Fatal("unjail cooldown height overflow".into()))?;
+        .ok_or_else(|| PrecompileError::Revert("unjail cooldown height overflow".into()))?;
     if current_height < ready_at {
         return Err(PrecompileError::Revert(format!(
             "unjail cooldown not elapsed: ready at {ready_at}, current {current_height}"
@@ -460,7 +460,7 @@ pub(crate) fn with_history(
     history: ValidatorHistory,
 ) -> Result<ValidatorLifecycle> {
     if history.last_deactivated_at_height == Some(0) {
-        return Err(PrecompileError::Fatal(
+        return Err(PrecompileError::Revert(
             "deactivation height must not use the zero sentinel".into(),
         ));
     }
@@ -503,7 +503,7 @@ fn history_rejection(
         }
         _ => return None,
     };
-    Some(PrecompileError::Fatal(rule.into()))
+    Some(PrecompileError::Revert(rule.into()))
 }
 
 fn history_mut(lifecycle: &mut ValidatorLifecycle) -> Option<&mut ValidatorHistory> {
@@ -555,7 +555,7 @@ fn require_fully_unstaked(stake: StakeProjection) -> Result<()> {
 
 fn require_canonical_stake(stake: StakeProjection) -> Result<()> {
     if stake.unbonding_end_hint == Some(0) {
-        return Err(PrecompileError::Fatal(
+        return Err(PrecompileError::Revert(
             "unbonding-end hint must not use the zero sentinel".into(),
         ));
     }

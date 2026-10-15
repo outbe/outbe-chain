@@ -288,7 +288,7 @@ fn mine_rejects_total_supply_overflow_across_accounts() {
         .unwrap();
 
         // Minting to bob would push `total_supply` past U256::MAX. The host guards
-        // the aggregate with `checked_add` and returns a Fatal error before it
+        // the aggregate with `checked_add` and returns a Revert error before it
         // advances the supply. The real tx then reverts and rolls the balance write
         // back. The unit harness has no rollback, so the test asserts the supply
         // invariant. That invariant is what the guard actually protects.
@@ -299,6 +299,10 @@ fn mine_rejects_total_supply_overflow_across_accounts() {
             auth(PromisOp::Mint, bob(), U256::from(100u64), 0),
         )
         .unwrap_err();
+        assert!(matches!(
+            err,
+            outbe_primitives::error::PrecompileError::Revert(_)
+        ));
         assert!(err.to_string().contains("overflow"));
         assert_eq!(api::total_supply(storage.clone()).unwrap(), near_max);
     });

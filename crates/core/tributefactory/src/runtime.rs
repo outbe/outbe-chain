@@ -155,9 +155,13 @@ impl TributeFactoryContract<'_> {
             tribute.issue(
                 scope,
                 parent,
-                &record
-                    .calculation_view()
-                    .map_err(TributeFactoryError::fatal)?,
+                &record.calculation_view().map_err(|error| {
+                    if error.is_node_local() {
+                        TributeFactoryError::sidecar_unavailable(error)
+                    } else {
+                        TributeFactoryError::fatal(error)
+                    }
+                })?,
             )?;
             #[cfg(not(any(test, feature = "bench-utils")))]
             return Err(TributeFactoryError::EncryptedOfferReturnedLegacyBody.into());
@@ -416,7 +420,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(error, PrecompileError::Fatal(_)),
+            matches!(error, PrecompileError::Revert(_)),
             "unexpected error: {error}"
         );
     }

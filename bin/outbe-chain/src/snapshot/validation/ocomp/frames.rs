@@ -183,7 +183,7 @@ pub(super) fn visit_retained_frames(
             .ok_or(SnapshotOcompError::ReplayTxRangeOverflow { height })?;
         for number in indices.first_tx_num..tx_end {
             require(
-                !maximum_transactions.is_some_and(|maximum| result.transactions >= maximum),
+                maximum_transactions.is_none_or(|maximum| result.transactions < maximum),
                 Incomplete(format!(
                     "replay frame scan stopped at block {height}/{}, transaction {number}/{tx_end}; {} blocks, {} transactions visited",
                     end.number, result.blocks, result.transactions
