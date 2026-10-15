@@ -10145,6 +10145,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-validatorset",
+ "outbe-zerofee",
  "proptest",
  "revm",
  "thiserror 2.0.18",
