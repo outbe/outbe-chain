@@ -187,7 +187,8 @@ fn accumulate_league_nominals(
         let chunk = find_tribute_shard_chunk(authority.input_chunks, shard_ordinal)?;
         for encoded in &chunk.canonical_records_or_openings {
             require_lease_active(authority.cancelled)?;
-            let tribute = outbe_tribute::record::decode_canonical(&encoded.0)?.calculation_view()?;
+            let tribute =
+                outbe_tribute::record::decode_canonical(&encoded.0)?.calculation_view()?;
             let league = leagues
                 .get(&tribute.owner)
                 .copied()
