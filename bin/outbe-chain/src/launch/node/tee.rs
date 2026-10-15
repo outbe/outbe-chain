@@ -48,16 +48,14 @@ pub(super) async fn prepare(
         .ok_or(LaunchError::TeeEnclaveEndpointNotUtf8)?;
     let tee_session = args
         .tee_session_mode
-        .resolve(initial_tee_policy.attestation_mode)
-        .map_err(eyre::Report::msg)?;
+        .resolve(initial_tee_policy.attestation_mode)?;
     let (node_host_signing, reth_p2p_public) =
         load_reth_p2p_node_host_signer(&config.network, config.datadir().p2p_secret())?;
     outbe_tee::call_context::set_snapshot(outbe_tee::call_context::EnclaveCallContextV1 {
         chain_id: config.chain.chain().id(),
         genesis_hash: config.chain.genesis_hash(),
         ..Default::default()
-    })
-    .map_err(eyre::Report::msg)?;
+    })?;
     let expected_enclave_id = match tee_session {
         outbe_engine::args::ResolvedTeeSession::ProductionNodeHost => {
             use k256::ecdsa::signature::hazmat::PrehashSigner as _;

@@ -7,8 +7,19 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum FidelityError {
-    #[error("{0}")]
-    QueryFailed(String),
+    #[error("enclave QueryFidelityIndex error: {reason}")]
+    EnclaveQueryError { reason: String },
+
+    #[error("{reason}")]
+    QueryFailed { reason: String },
+}
+
+impl FidelityError {
+    pub fn enclave_query_error(err: impl core::fmt::Display) -> Self {
+        Self::EnclaveQueryError {
+            reason: err.to_string(),
+        }
+    }
 }
 
 impl From<FidelityError> for PrecompileError {
@@ -24,10 +35,13 @@ pub(crate) fn surface_query_error(err: PrecompileError) -> PrecompileError {
         PrecompileError::EnclaveUnavailable(msg)
             if msg.starts_with("enclave QueryFidelityIndex error:") =>
         {
-            FidelityError::QueryFailed(msg).into()
+            FidelityError::QueryFailed { reason: msg }.into()
         }
         err if err.is_node_local() => err,
-        other => FidelityError::QueryFailed(other.to_string()).into(),
+        other => FidelityError::QueryFailed {
+            reason: other.to_string(),
+        }
+        .into(),
     }
 }
 

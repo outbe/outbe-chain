@@ -221,8 +221,7 @@ pub(super) fn validate_startup_authority_and_pruning(
         }
     })?;
     let initial_tee_policy = tee_activation
-        .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
-        .map_err(eyre::Report::msg)?;
+        .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)?;
     let extra = &config.chain.genesis.config.extra_fields;
     let dkg_prepare_window_blocks = extra
         .get_deserialized::<u64>("dkgPrepareWindowBlocks")

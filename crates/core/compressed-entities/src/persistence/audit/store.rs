@@ -177,25 +177,25 @@ impl<'a, const N: usize> RecordSorter<'a, N> {
         let invalid_dimensions = N == 0 || key_len == 0 || key_len > N;
         let invalid_limits = work.limits.records_per_run == 0 || work.limits.merge_fan_in < 2;
         if invalid_dimensions || invalid_limits {
-            return Err(sort_invalid("invalid sort dimensions or limits"));
+            return Err(CeAuditError::InvalidSortDimensionsOrLimits);
         }
         // Reject impossible layouts before allocating or creating anything.
         checked_buffer_bytes(N, work.limits.records_per_run)?;
         let merge_entry_bytes = std::mem::size_of::<RunReader<N>>()
             .checked_add(std::mem::size_of::<Reverse<([u8; N], usize)>>())
-            .ok_or_else(|| sort_invalid("sort merge layout overflow"))?;
+            .ok_or(CeAuditError::SortMergeLayoutOverflow)?;
         checked_buffer_bytes(merge_entry_bytes, work.limits.merge_fan_in)?;
         run_length::<N>(
             u64::try_from(work.limits.records_per_run)
-                .map_err(|_| sort_invalid("sort run count overflow"))?,
+                .map_err(|_| CeAuditError::SortRunCountOverflow)?,
         )?;
         let mut buffer = Vec::new();
         buffer
             .try_reserve_exact(work.limits.records_per_run)
-            .map_err(|_| sort_invalid("cannot reserve sort buffer"))?;
+            .map_err(|_| CeAuditError::CannotReserveSortBuffer)?;
         let id = NEXT_SORT_ID
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-            .map_err(|_| sort_invalid("sort directory counter overflow"))?;
+            .map_err(|_| CeAuditError::SortDirectoryCounterOverflow)?;
         let directory = work.root.join(format!("sort-{id:020}"));
         fs::create_dir(&directory)?;
         Ok(Self {
@@ -215,7 +215,7 @@ impl<'a, const N: usize> RecordSorter<'a, N> {
 
     pub(super) fn push(&mut self, record: [u8; N]) -> Result<(), CeAuditError> {
         if self.failed {
-            return Err(sort_invalid("sorter already failed"));
+            return Err(CeAuditError::SorterAlreadyFailed);
         }
         self.buffer.push(record);
         self.peak_buffered = self.peak_buffered.max(self.buffer.len());
@@ -237,9 +237,9 @@ impl<'a, const N: usize> RecordSorter<'a, N> {
         let next_count = self
             .run_count
             .checked_add(1)
-            .ok_or_else(|| sort_invalid("sort run counter overflow"))?;
+            .ok_or(CeAuditError::SortRunCounterOverflow)?;
         let count =
-            u64::try_from(self.buffer.len()).map_err(|_| sort_invalid("sort count overflow"))?;
+            u64::try_from(self.buffer.len()).map_err(|_| CeAuditError::SortCountOverflow)?;
         let mut writer = RunWriter::<N>::create(
             &run_path(&self.directory, 0, self.run_count),
             self.key_len,
@@ -256,18 +256,16 @@ impl<'a, const N: usize> RecordSorter<'a, N> {
 
     pub(super) fn finish(mut self) -> Result<SortedRecords<'a, N>, CeAuditError> {
         if self.failed {
-            return Err(sort_invalid("sorter already failed"));
+            return Err(CeAuditError::SorterAlreadyFailed);
         }
         self.flush()?;
         // Release the input buffer before allocating merge readers and heads.
         self.buffer = Vec::new();
         let fan_in = u64::try_from(self.work.limits.merge_fan_in)
-            .map_err(|_| sort_invalid("sort fan-in overflow"))?;
+            .map_err(|_| CeAuditError::SortFanInOverflow)?;
         let mut pass = 0_u64;
         while self.run_count > 1 {
-            let next_pass = pass
-                .checked_add(1)
-                .ok_or_else(|| sort_invalid("sort pass overflow"))?;
+            let next_pass = pass.checked_add(1).ok_or(CeAuditError::SortPassOverflow)?;
             let mut start = 0_u64;
             let mut outputs = 0_u64;
             while start < self.run_count {
@@ -282,10 +280,10 @@ impl<'a, const N: usize> RecordSorter<'a, N> {
                 merge_runs::<N>(&self.directory, merge, self.key_len)?;
                 start = start
                     .checked_add(count)
-                    .ok_or_else(|| sort_invalid("sort run counter overflow"))?;
+                    .ok_or(CeAuditError::SortRunCounterOverflow)?;
                 outputs = outputs
                     .checked_add(1)
-                    .ok_or_else(|| sort_invalid("sort run counter overflow"))?;
+                    .ok_or(CeAuditError::SortRunCounterOverflow)?;
             }
             self.run_count = outputs;
             pass = next_pass;
@@ -334,15 +332,11 @@ impl<const N: usize> std::iter::FusedIterator for SortedRecords<'_, N> {}
 fn checked_buffer_bytes(width: usize, count: usize) -> Result<(), CeAuditError> {
     let bytes = width
         .checked_mul(count)
-        .ok_or_else(|| sort_invalid("sort buffer size overflow"))?;
+        .ok_or(CeAuditError::SortBufferSizeOverflow)?;
     if bytes > isize::MAX as usize {
-        return Err(sort_invalid("sort buffer exceeds addressable memory"));
+        return Err(CeAuditError::SortBufferExceedsAddressableMemory);
     }
     Ok(())
-}
-
-fn sort_invalid(message: &str) -> CeAuditError {
-    CeAuditError::Invalid(message.into())
 }
 
 fn run_path(directory: &Path, pass: u64, index: u64) -> PathBuf {
@@ -354,7 +348,7 @@ fn run_length<const N: usize>(count: u64) -> Result<u64, CeAuditError> {
         .ok()
         .and_then(|width| width.checked_mul(count))
         .and_then(|bytes| bytes.checked_add(RUN_HEADER_BYTES))
-        .ok_or_else(|| sort_invalid("sort run length overflow"))
+        .ok_or(CeAuditError::SortRunLengthOverflow)
 }
 
 struct RunWriter<const N: usize> {
@@ -368,9 +362,8 @@ struct RunWriter<const N: usize> {
 impl<const N: usize> RunWriter<N> {
     fn create(path: &Path, key_len: usize, count: u64) -> Result<Self, CeAuditError> {
         run_length::<N>(count)?;
-        let width = u64::try_from(N).map_err(|_| sort_invalid("sort width overflow"))?;
-        let key_width =
-            u64::try_from(key_len).map_err(|_| sort_invalid("sort key width overflow"))?;
+        let width = u64::try_from(N).map_err(|_| CeAuditError::SortWidthOverflow)?;
+        let key_width = u64::try_from(key_len).map_err(|_| CeAuditError::SortKeyWidthOverflow)?;
         let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
         file.write_all(&RUN_MAGIC)?;
         file.write_all(&width.to_be_bytes())?;
@@ -387,7 +380,7 @@ impl<const N: usize> RunWriter<N> {
 
     fn write_record(&mut self, record: [u8; N]) -> Result<(), CeAuditError> {
         if self.written >= self.expected {
-            return Err(sort_invalid("too many sort records"));
+            return Err(CeAuditError::TooManySortRecords);
         }
         ensure_increasing(self.previous.as_ref(), &record, self.key_len)?;
         self.file.write_all(&record)?;
@@ -398,7 +391,7 @@ impl<const N: usize> RunWriter<N> {
 
     fn finish(mut self) -> Result<(), CeAuditError> {
         if self.written != self.expected {
-            return Err(sort_invalid("missing sort records"));
+            return Err(CeAuditError::MissingSortRecords);
         }
         self.file.flush()?;
         Ok(())
@@ -418,7 +411,7 @@ impl<const N: usize> RunReader<N> {
         let mut file = File::open(path)?;
         let metadata = file.metadata()?;
         if !metadata.is_file() {
-            return Err(sort_invalid("sort run is not a regular file"));
+            return Err(CeAuditError::SortRunNotRegularFile);
         }
         let mut header = [0; RUN_HEADER_BYTES as usize];
         file.read_exact(&mut header)?;
@@ -429,12 +422,11 @@ impl<const N: usize> RunReader<N> {
         };
         let count = word(24);
         if header[..8] != RUN_MAGIC
-            || word(8) != u64::try_from(N).map_err(|_| sort_invalid("sort width overflow"))?
-            || word(16)
-                != u64::try_from(key_len).map_err(|_| sort_invalid("sort key width overflow"))?
+            || word(8) != u64::try_from(N).map_err(|_| CeAuditError::SortWidthOverflow)?
+            || word(16) != u64::try_from(key_len).map_err(|_| CeAuditError::SortKeyWidthOverflow)?
             || metadata.len() != run_length::<N>(count)?
         {
-            return Err(sort_invalid("invalid sort run header or length"));
+            return Err(CeAuditError::InvalidSortRunHeaderOrLength);
         }
         Ok(Self {
             file,
@@ -448,7 +440,7 @@ impl<const N: usize> RunReader<N> {
     fn next_record(&mut self) -> Result<Option<[u8; N]>, CeAuditError> {
         if self.read == self.count {
             if self.file.read(&mut [0; 1])? != 0 {
-                return Err(sort_invalid("trailing sort run bytes"));
+                return Err(CeAuditError::TrailingSortRunBytes);
             }
             return Ok(None);
         }
@@ -467,7 +459,7 @@ fn ensure_increasing<const N: usize>(
     key_len: usize,
 ) -> Result<(), CeAuditError> {
     if previous.is_some_and(|previous| previous[..key_len] >= record[..key_len]) {
-        return Err(sort_invalid("duplicate or unordered sort identity"));
+        return Err(CeAuditError::DuplicateOrUnorderedSortIdentity);
     }
     Ok(())
 }
@@ -493,24 +485,24 @@ fn merge_runs<const N: usize>(
         next_pass,
         output,
     } = merge;
-    let capacity = usize::try_from(count).map_err(|_| sort_invalid("sort merge count overflow"))?;
+    let capacity = usize::try_from(count).map_err(|_| CeAuditError::SortMergeCountOverflow)?;
     let mut readers = Vec::new();
     readers
         .try_reserve_exact(capacity)
-        .map_err(|_| sort_invalid("cannot reserve sort readers"))?;
+        .map_err(|_| CeAuditError::CannotReserveSortReaders)?;
     let mut heads = BinaryHeap::new();
     heads
         .try_reserve_exact(capacity)
-        .map_err(|_| sort_invalid("cannot reserve sort heads"))?;
+        .map_err(|_| CeAuditError::CannotReserveSortHeads)?;
     let mut total = 0_u64;
     for offset in 0..count {
         let index = start
             .checked_add(offset)
-            .ok_or_else(|| sort_invalid("sort run counter overflow"))?;
+            .ok_or(CeAuditError::SortRunCounterOverflow)?;
         let reader = RunReader::<N>::open(&run_path(directory, pass, index), key_len)?;
         total = total
             .checked_add(reader.count)
-            .ok_or_else(|| sort_invalid("sort record count overflow"))?;
+            .ok_or(CeAuditError::SortRecordCountOverflow)?;
         readers.push(reader);
     }
     let mut writer =
@@ -531,7 +523,7 @@ fn merge_runs<const N: usize>(
     for offset in 0..count {
         let index = start
             .checked_add(offset)
-            .ok_or_else(|| sort_invalid("sort run counter overflow"))?;
+            .ok_or(CeAuditError::SortRunCounterOverflow)?;
         fs::remove_file(run_path(directory, pass, index))?;
     }
     Ok(())

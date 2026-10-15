@@ -9,7 +9,9 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use outbe_radicle_runtime::{Options, PreparedSidecar, RepositoryAvailability, StatusServer};
+use outbe_radicle_runtime::{
+    Options, PreparedSidecar, RepositoryAvailability, RepositoryAvailabilityError, StatusServer,
+};
 use radicle::crypto::ssh::Keystore;
 use radicle::crypto::{Seed, Signer as _, SigningKey};
 use radicle::identity::RepoId;
@@ -112,13 +114,13 @@ struct Availability {
 struct UnavailableStorage;
 
 impl RepositoryAvailability for UnavailableStorage {
-    fn contains(&self, _rid: &RepoId) -> Result<bool, String> {
-        Err("storage failed".to_owned())
+    fn contains(&self, _rid: &RepoId) -> Result<bool, RepositoryAvailabilityError> {
+        Err(RepositoryAvailabilityError::Offline)
     }
 }
 
 impl RepositoryAvailability for Availability {
-    fn contains(&self, rid: &RepoId) -> Result<bool, String> {
+    fn contains(&self, rid: &RepoId) -> Result<bool, RepositoryAvailabilityError> {
         Ok(self.repositories.contains(rid))
     }
 }

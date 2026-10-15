@@ -5,7 +5,7 @@ use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use revm::state::{AccountInfo, Bytecode};
 use revm::Database;
 
-use crate::error::{PrecompileError, Result};
+use crate::error::{PrecompileError, PrimitivesStorageError, Result};
 use crate::storage::gas::GasTracker;
 use crate::storage::PrecompileStorageProvider;
 
@@ -115,10 +115,12 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
         // for blocks outside the window (or ahead of the current head).
         // We map ZERO back to `None` so callers see a clean "unknown"
         // signal. Genuine canonical hashes are statistically never zero.
-        let hash =
-            self.internals.db_mut().block_hash(number).map_err(|e| {
-                PrecompileError::Storage(format!("block_hash({number}) failed: {e}"))
-            })?;
+        let hash = self.internals.db_mut().block_hash(number).map_err(|e| {
+            PrimitivesStorageError::BlockHashRead {
+                number,
+                reason: e.to_string(),
+            }
+        })?;
         Ok((!hash.is_zero()).then_some(hash))
     }
 
@@ -221,10 +223,17 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
         // Ok(None) on success, Err on DB error.
         match self.internals.transfer(from, to, amount) {
             Ok(None) => Ok(()),
-            Ok(Some(_transfer_error)) => Err(PrecompileError::revert(format!(
-                "insufficient balance for transfer from {from}: needs {amount}"
-            ))),
-            Err(e) => Err(PrecompileError::Storage(format!("transfer failed: {e}"))),
+            Ok(Some(_transfer_error)) => {
+                Err(PrimitivesStorageError::InsufficientBalanceForTransfer {
+                    from,
+                    needed: amount,
+                }
+                .into())
+            }
+            Err(e) => Err(PrimitivesStorageError::TransferFailed {
+                reason: e.to_string(),
+            }
+            .into()),
         }
     }
 
@@ -232,9 +241,11 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
         if amount.is_zero() {
             return Ok(());
         }
-        self.internals
-            .balance_incr(address, amount)
-            .map_err(|e| PrecompileError::Storage(format!("balance_incr failed: {e}")))?;
+        self.internals.balance_incr(address, amount).map_err(|e| {
+            PrimitivesStorageError::BalanceIncrFailed {
+                reason: e.to_string(),
+            }
+        })?;
         Ok(())
     }
 
@@ -243,20 +254,25 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
             return Ok(());
         }
 
-        let account = self
-            .internals
-            .load_account(address)
-            .map_err(|e| PrecompileError::Storage(format!("burn account load failed: {e}")))?;
-        let balance = account.data.info.balance;
-        let new_balance = balance.checked_sub(amount).ok_or_else(|| {
-            PrecompileError::revert(format!(
-                "insufficient balance for burn from {address}: has {balance} but needs {amount}"
-            ))
+        let account = self.internals.load_account(address).map_err(|e| {
+            PrimitivesStorageError::BurnAccountLoadFailed {
+                reason: e.to_string(),
+            }
         })?;
+        let balance = account.data.info.balance;
+        let new_balance = balance.checked_sub(amount).ok_or(
+            PrimitivesStorageError::InsufficientBalanceForBurnFrom {
+                address,
+                balance,
+                needed: amount,
+            },
+        )?;
 
         self.internals
             .set_balance(address, new_balance)
-            .map_err(|e| PrecompileError::Storage(format!("burn set_balance failed: {e}")))?;
+            .map_err(|e| PrimitivesStorageError::BurnSetBalanceFailed {
+                reason: e.to_string(),
+            })?;
         Ok(())
     }
 }

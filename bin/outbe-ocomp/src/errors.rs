@@ -72,6 +72,32 @@ pub enum OcompCliError {
     InvalidBundleHashListCount,
     #[error("OCOMP protocol bundle {0} is not installed")]
     ProtocolBundleNotInstalled(B256),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Control(#[from] crate::control::ControlError),
+    #[error(transparent)]
+    Protocol(#[from] outbe_ocomp_protocol::ProtocolError),
+    #[error(transparent)]
+    Worker(#[from] WorkerError),
+    #[error(transparent)]
+    Transport(#[from] outbe_tee::TransportError),
+    #[error(transparent)]
+    Signer(#[from] outbe_primitives::signer::SignerError),
+    #[error(transparent)]
+    WorkerObservability(#[from] WorkerObservabilityErrorV1),
+    #[error(transparent)]
+    ParseInt(#[from] std::num::ParseIntError),
+    #[error(transparent)]
+    FromHex(#[from] alloy_primitives::hex::FromHexError),
+    #[error(transparent)]
+    Storage(#[from] outbe_offchain_storage::StorageError),
+    #[error(transparent)]
+    RpcInputExporter(#[from] RpcInputExporterErrorV1),
+    #[error(transparent)]
+    DiscoverySpool(#[from] crate::discovery_spool::DiscoverySpoolError),
+    #[error(transparent)]
+    ConsensusChainId(#[from] outbe_consensus::proof::constants::ConsensusChainIdError),
 }
 
 impl OcompCliError {

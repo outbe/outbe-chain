@@ -59,7 +59,7 @@ pub trait TributeRetentionSelector: Send + Sync {
     fn active_pin_for(
         &self,
         worldwide_day: WorldwideDay,
-    ) -> Result<Option<RetainedTributePin>, String>;
+    ) -> Result<Option<RetainedTributePin>, crate::RetentionSelectorError>;
 }
 
 /// Portable projector identity and progress persisted beside domain data.

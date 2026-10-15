@@ -78,3 +78,15 @@ impl PoolTransactionError for OutbeOcompSystemCarrierPoolError {
         self
     }
 }
+
+#[derive(Debug, Error)]
+pub(crate) enum TxPoolStateReadError {
+    #[error("state read failed: {0}")]
+    StateReadFailed(String),
+}
+
+impl From<TxPoolStateReadError> for PrecompileError {
+    fn from(error: TxPoolStateReadError) -> Self {
+        Self::Storage(error.to_string())
+    }
+}

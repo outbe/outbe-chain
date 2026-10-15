@@ -18,23 +18,21 @@ impl<'storage> State<'storage> {
         match pending {
             PendingWord::Untouched => {
                 if !body.is_empty() || identity_record.is_some() {
-                    return Err(fatal(
-                        "untouched compressed-entity locator has residual dynamic state",
-                    ));
+                    return Err(
+                        CompressedEntitiesFatalError::UntouchedLocatorHasResidualState.into(),
+                    );
                 }
             }
             PendingWord::Set(_) => {
                 self.validate_body_record(locator, collection, entity_id, identity_record)?;
                 if body.is_empty() {
-                    return Err(fatal("compressed-entity Set entry has no pending body"));
+                    return Err(CompressedEntitiesFatalError::SetEntryMissingPendingBody.into());
                 }
             }
             PendingWord::Deleted => {
                 self.validate_body_record(locator, collection, entity_id, identity_record)?;
                 if !body.is_empty() {
-                    return Err(fatal(
-                        "compressed-entity Deleted entry retains pending body",
-                    ));
+                    return Err(CompressedEntitiesFatalError::DeletedEntryRetainsPendingBody.into());
                 }
             }
         }
@@ -48,17 +46,13 @@ impl<'storage> State<'storage> {
         stored: Option<(Collection, WwdEntityId)>,
     ) -> Result<()> {
         let Some((stored_collection, stored_id)) = stored else {
-            return Err(fatal(
-                "compressed-entity body identity record/hash mismatch",
-            ));
+            return Err(CompressedEntitiesFatalError::BodyIdentityRecordHashMismatch.into());
         };
         if stored_collection != collection
             || stored_id != entity_id
             || body_locator(stored_collection, stored_id)? != locator
         {
-            return Err(fatal(
-                "compressed-entity body identity record/hash mismatch",
-            ));
+            return Err(CompressedEntitiesFatalError::BodyIdentityRecordHashMismatch.into());
         }
         Ok(())
     }
@@ -122,16 +116,15 @@ impl<'storage> State<'storage> {
             Collection::Gem => CeDomain::Gem,
             Collection::GemBucket => CeDomain::GemBucket,
         };
-        let collection_key = collection_key(domain, entity_id).map_err(revert)?;
+        let collection_key =
+            collection_key(domain, entity_id).map_err(CompressedEntitiesError::from)?;
         if !self
             .schema()
             .pending_retirement
             .read(&B256::from(*collection_key.as_bytes()))?
             .is_zero()
         {
-            return Err(revert(
-                "compressed-entity mutation conflicts with pending collection retirement",
-            ));
+            return Err(CompressedEntitiesError::MutationConflictsWithPendingRetirement.into());
         }
         // The transaction footprint includes keys already touched by an
         // earlier transaction in this block, even though they need no second
@@ -163,7 +156,7 @@ impl<'storage> State<'storage> {
         self.ensure_schema()?;
         let schema = self.schema();
         if !self.has_body_identity(locator)? {
-            return Err(fatal("pending Set was not prepared by first-touch logic"));
+            return Err(CompressedEntitiesFatalError::PendingSetNotPrepared.into());
         }
         schema.pending_body.get_bytes(&locator).write(stored_body)?;
         schema
@@ -174,9 +167,7 @@ impl<'storage> State<'storage> {
         self.ensure_schema()?;
         let schema = self.schema();
         if !self.has_body_identity(locator)? {
-            return Err(fatal(
-                "pending Deleted was not prepared by first-touch logic",
-            ));
+            return Err(CompressedEntitiesFatalError::PendingDeletedNotPrepared.into());
         }
         schema.pending_body.get_bytes(&locator).clear()?;
         schema
@@ -194,22 +185,22 @@ impl<'storage> State<'storage> {
         let mut mutations = Vec::with_capacity(locators.len());
         for locator in locators {
             if !unique_locators.insert(locator) {
-                return Err(fatal("duplicate compressed-entity touched body locator"));
+                return Err(CompressedEntitiesFatalError::DuplicateTouchedBodyLocator.into());
             }
             let (collection, entity_id) = self
                 .read_body_identity(locator)?
-                .ok_or_else(|| fatal("touched compressed-entity body has no identity"))?;
+                .ok_or(CompressedEntitiesFatalError::TouchedBodyMissingIdentity)?;
             if body_locator(collection, entity_id)? != locator {
-                return Err(fatal("compressed-entity touched body locator mismatch"));
+                return Err(CompressedEntitiesFatalError::TouchedBodyLocatorMismatch.into());
             }
             if !unique_identities.insert((collection.id(), entity_id)) {
-                return Err(fatal("duplicate compressed-entity touched identity"));
+                return Err(CompressedEntitiesFatalError::DuplicateTouchedIdentity.into());
             }
             let final_leaf = match PendingWord::decode(schema.pending_word.read(&locator)?)? {
                 PendingWord::Set(commitment) => Some(commitment),
                 PendingWord::Deleted => None,
                 PendingWord::Untouched => {
-                    return Err(fatal("touched compressed-entity body is Untouched"));
+                    return Err(CompressedEntitiesFatalError::TouchedBodyIsUntouched.into());
                 }
             };
             mutations.push((collection, entity_id, final_leaf));

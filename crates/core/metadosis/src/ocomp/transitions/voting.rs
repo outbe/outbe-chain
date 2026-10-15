@@ -2,7 +2,7 @@ use super::super::{
     index::{insert_response_deadline_key, ResponseDeadlineKey},
     state::{JobFsmCommand, JobFsmState},
 };
-use crate::{errors::storage_corruption_message, schema::MetadosisContract};
+use crate::{errors::MetadosisStorageCorruptionError, schema::MetadosisContract};
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::{
     state::{OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus},
@@ -42,7 +42,7 @@ impl MetadosisContract<'_> {
                     at_height,
                     deadline_height: finalized.deadline_height,
                 })
-                .map_err(storage_corruption_message)?;
+                .map_err(MetadosisStorageCorruptionError::from)?;
             let accountability = OcompVoteAccountabilityV1::empty(VoteAccountabilitySeed {
                 job_id: finalized.job_id,
                 result_validator_set_epoch: record.intent.result_validator_set_epoch,
@@ -51,21 +51,19 @@ impl MetadosisContract<'_> {
                 member_count: record.intent.result_member_count,
                 quorum_threshold: record.intent.result_quorum_threshold,
             })
-            .map_err(|error| {
-                crate::errors::storage_corruption_context("create OCOMP vote slots", error)
-            })?;
+            .map_err(|error| MetadosisStorageCorruptionError::CreateOcompVoteSlots { error })?;
             let slot = self.ocomp_vote_accountability.get_bytes(&finalized.job_id);
             if !slot.is_empty()? {
-                return Err(storage_corruption_message(
-                    "OCOMP vote accountability already exists",
-                ));
+                return Err(
+                    MetadosisStorageCorruptionError::OcompVoteAccountabilityAlreadyExists.into(),
+                );
             }
             slot.write(
                 &accountability
                     .encode_canonical(schema_limits)
-                    .map_err(|error| {
-                        crate::errors::storage_corruption_context("encode OCOMP vote slots", error)
-                    })?,
+                    .map_err(
+                        |error| MetadosisStorageCorruptionError::EncodeOcompVoteSlots { error },
+                    )?,
             )?;
             let mut response_index = self.read_response_deadline_index()?;
             insert_response_deadline_key(
@@ -92,12 +90,13 @@ impl MetadosisContract<'_> {
     ) -> Result<Option<DueVotingJob>> {
         let mut selected = None;
         for state in self.live_ocomp_fsm_states(schema_limits)? {
-            let intent_id = state.projection().live_intent_id.ok_or_else(|| {
-                storage_corruption_message("OCOMP live scheduler has no IntentId")
-            })?;
+            let intent_id = state
+                .projection()
+                .live_intent_id
+                .ok_or(MetadosisStorageCorruptionError::OcompLiveSchedulerHasNoIntentId)?;
             let record = self
                 .ocomp_job_record(intent_id, schema_limits)?
-                .ok_or_else(|| storage_corruption_message("OCOMP live scheduler job is missing"))?;
+                .ok_or(MetadosisStorageCorruptionError::OcompLiveSchedulerJobMissing)?;
             if record.status != OcompJobStatus::AwaitingFinality {
                 continue;
             }
@@ -108,9 +107,9 @@ impl MetadosisContract<'_> {
                 continue;
             }
             if at_height >= finalized.deadline_height {
-                return Err(storage_corruption_message(
-                    "OCOMP voting cannot open at or after its deadline",
-                ));
+                return Err(
+                    MetadosisStorageCorruptionError::OcompVotingCannotOpenAtOrAfterDeadline.into(),
+                );
             }
             if selected
                 .replace(DueVotingJob {
@@ -121,9 +120,9 @@ impl MetadosisContract<'_> {
                 })
                 .is_some()
             {
-                return Err(storage_corruption_message(
-                    "multiple OCOMP jobs are due at one bounded open height",
-                ));
+                return Err(
+                    MetadosisStorageCorruptionError::MultipleOcompJobsDueAtOneOpenHeight.into(),
+                );
             }
         }
         Ok(selected)

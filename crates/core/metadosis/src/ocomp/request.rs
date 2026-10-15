@@ -18,7 +18,7 @@ use outbe_tribute::{TributeContract, TributePreAdmissionProjection};
 use crate::{
     aggregate::WwdDayType,
     commit::plan_outer_transition,
-    errors::storage_corruption_message,
+    errors::MetadosisStorageCorruptionError,
     ocomp_limits::{apply_fresh_request_limit_effect, RequestLimitEffect},
     pre_admission::{
         evaluate_pre_admission, PreAdmissionContext, PreAdmissionDecision, PreAdmissionInputs,
@@ -114,14 +114,12 @@ fn run_terminal_request_inner(
     };
     let due_height = projection
         .next_check_height
-        .ok_or_else(|| storage_corruption_message("READY OCOMP state has no due height"))?;
+        .ok_or(MetadosisStorageCorruptionError::ReadyOcompStateMissingDueHeight)?;
     if ctx.block.block_number < due_height {
         return Ok(TerminalRequestOutcome::NoReadyJob);
     }
     if projection.terminal_records != 0 || projection.pending_nonce != 0 {
-        return Err(storage_corruption_message(
-            "OCOMP READY state contains a prior job attempt",
-        ));
+        return Err(MetadosisStorageCorruptionError::OcompReadyStateContainsPriorJobAttempt.into());
     }
     let outer_transition = plan_outer_transition(
         ctx.storage.clone(),
@@ -209,9 +207,10 @@ fn inspect_request_candidate(
     // the committed snapshot root to bind into the envelope.
     let snapshot_root = metadosis.ocomp_fidelity_league_snapshot_root.read(&wwd)?;
     if snapshot_root.is_zero() {
-        return Err(storage_corruption_message(
-            "OCOMP Fidelity league snapshot missing at terminal request",
-        ));
+        return Err(
+            MetadosisStorageCorruptionError::OcompFidelityLeagueSnapshotMissingAtTerminalRequest
+                .into(),
+        );
     }
     let pre_admission_context = PreAdmissionContext {
         chain_id: profile.chain_id,
@@ -275,14 +274,14 @@ fn seal_request_admission(
         },
     )?;
     let PreAdmissionDecision::Eligible(sealed_envelope) = sealed_decision else {
-        return Err(storage_corruption_message(
-            "eligible OCOMP admission changed after exact Tribute seal",
-        ));
+        return Err(
+            MetadosisStorageCorruptionError::EligibleOcompAdmissionChangedAfterTributeSeal.into(),
+        );
     };
     if sealed_envelope != candidate_envelope {
-        return Err(storage_corruption_message(
-            "OCOMP admission envelope changed after exact Tribute seal",
-        ));
+        return Err(
+            MetadosisStorageCorruptionError::OcompAdmissionEnvelopeChangedAfterTributeSeal.into(),
+        );
     }
 
     let (envelope_projection, envelope_hash) =
@@ -307,13 +306,13 @@ fn persist_sealed_admission(
         metadosis.commit_pre_admission_envelope(wwd, sealed_envelope, &schema_limits)?;
     let envelope_hash = sealed_envelope
         .envelope_hash(&schema_limits)
-        .map_err(|error| {
-            storage_corruption_message(format!("hash OCOMP pre-admission envelope: {error}"))
-        })?;
+        .map_err(
+            |error| MetadosisStorageCorruptionError::HashOcompPreAdmissionEnvelope { error },
+        )?;
     if envelope_projection.envelope_hash != envelope_hash {
-        return Err(storage_corruption_message(
-            "stored OCOMP pre-admission envelope hash mismatch",
-        ));
+        return Err(
+            MetadosisStorageCorruptionError::StoredOcompPreAdmissionEnvelopeHashMismatch.into(),
+        );
     }
 
     Ok((envelope_projection, envelope_hash))
@@ -360,13 +359,13 @@ fn freeze_request_limits(
     let state = metadosis.ocomp_fsm_state(wwd, &schema_limits)?;
     let mode = state
         .request_effect_mode()
-        .map_err(storage_corruption_message)?;
+        .map_err(MetadosisStorageCorruptionError::from)?;
     let authoritative_receipt = metadosis.request_limit_receipt(wwd, &schema_limits)?;
     let receipt =
         apply_or_validate_limit_effect(ctx, effect, mode, authoritative_receipt.as_ref())?;
-    let receipt_hash = receipt.receipt_hash(&schema_limits).map_err(|error| {
-        crate::errors::storage_corruption_context("hash OCOMP request receipt", error)
-    })?;
+    let receipt_hash = receipt
+        .receipt_hash(&schema_limits)
+        .map_err(|error| MetadosisStorageCorruptionError::HashOcompRequestReceipt { error })?;
 
     Ok(FrozenRequest {
         calculation,
@@ -435,9 +434,9 @@ fn build_request_intent(
     let lysis_limit_minor = calculation.lysis_limit_minor;
     let ce_sealed_root = roots.sealed_root;
     let attempt = u32::try_from(pending_nonce)
-        .map_err(|_| storage_corruption_message("OCOMP pending nonce exceeds u32"))?;
+        .map_err(|_| MetadosisStorageCorruptionError::OcompPendingNonceExceedsU32)?;
     let (_, collection_key) = partition_collection_key(PartitionRef::TributeWwd(wwd))
-        .map_err(storage_corruption_message)?;
+        .map_err(MetadosisStorageCorruptionError::from)?;
     let activation_preconditions =
         request_activation_preconditions(request, admitted, &collection_key);
     let previous_vwap = metadosis.worldwide_days.entry(wwd).previous_vwap().read()?;
@@ -491,21 +490,22 @@ fn commit_and_emit_request(
     let schema_limits = poc_schema_limits();
     let intent_id = intent
         .intent_id(&schema_limits)
-        .map_err(|error| storage_corruption_message(format!("hash OCOMP intent: {error}")))?;
+        .map_err(|error| MetadosisStorageCorruptionError::HashOcompIntent { error })?;
     let activation_preconditions_hash = intent
         .activation_preconditions
         .activation_preconditions_hash(&schema_limits)
-        .map_err(|error| {
-            storage_corruption_message(format!("hash OCOMP activation preconditions: {error}"))
-        })?;
+        .map_err(
+            |error| MetadosisStorageCorruptionError::HashOcompActivationPreconditions { error },
+        )?;
 
     request.ctx.with_checkpoint(|| {
         let pinned_bundle = outbe_ocompregistry::OcompRegistry::new(request.ctx.storage.clone())
             .pin_lineage(intent_id, &schema_limits)?;
         if pinned_bundle != intent.protocol_bundle_hash {
-            return Err(storage_corruption_message(
-                "OCOMP intent bundle differs from its Registry lineage pin",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompIntentBundleDiffersFromRegistryLineagePin
+                    .into(),
+            );
         }
 
         metadosis.commit_ocomp_request(
@@ -534,15 +534,16 @@ fn candidate_tribute_projection(
             PartitionRef::TributeWwd(day) => day,
         }
     {
-        return Err(storage_corruption_message(
-            "OCOMP Tribute projection/partition day mismatch",
-        ));
+        return Err(
+            MetadosisStorageCorruptionError::OcompTributeProjectionPartitionDayMismatch.into(),
+        );
     }
     if projection.is_sealed {
         if projection.sealed_collection_root != exact_collection.root() {
-            return Err(storage_corruption_message(
-                "stored OCOMP Tribute root differs from provisional CE seal",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::StoredOcompTributeRootDiffersFromProvisionalCeSeal
+                    .into(),
+            );
         }
         return Ok(projection);
     }
@@ -563,9 +564,10 @@ fn apply_or_validate_limit_effect(
         {
             apply_fresh_request_limit_effect(ctx.storage.clone(), effect)
         }
-        _ => Err(storage_corruption_message(
-            "authoritative OCOMP receipt disagrees with request effect mode",
-        )),
+        _ => Err(
+            MetadosisStorageCorruptionError::AuthoritativeOcompReceiptDisagreesWithRequestEffectMode
+                .into(),
+        ),
     }
 }
 
@@ -577,7 +579,7 @@ fn defer_ready(
 ) -> Result<()> {
     let next_check_height = at_height
         .checked_add(profile.capacity_profile.ready_backoff_blocks)
-        .ok_or_else(|| storage_corruption_message("OCOMP deferred height overflow"))?;
+        .ok_or(MetadosisStorageCorruptionError::OcompDeferredHeightOverflow)?;
     metadosis.defer_ocomp_ready(wwd, at_height, next_check_height, &poc_schema_limits())
 }
 
@@ -585,9 +587,9 @@ fn protocol_day_type(value: WwdDayType) -> Result<DayType> {
     match value {
         WwdDayType::Green => Ok(DayType::Green),
         WwdDayType::Red => Ok(DayType::Red),
-        WwdDayType::Unknown => Err(storage_corruption_message(
-            "OCOMP request requires a resolved day type",
-        )),
+        WwdDayType::Unknown => {
+            Err(MetadosisStorageCorruptionError::OcompRequestRequiresResolvedDayType.into())
+        }
     }
 }
 

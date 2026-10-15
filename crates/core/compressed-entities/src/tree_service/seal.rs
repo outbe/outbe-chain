@@ -10,9 +10,7 @@ impl MdbxAuthenticatedTree {
         retirements: &[crate::PartitionRef],
     ) -> Result<ProvisionalTreeBatch> {
         if block_number != self.identity.block_number.saturating_add(1) {
-            return Err(tree_corruption(
-                "compressed-entity seal block is not parent height + 1",
-            ));
+            return Err(CompressedEntitiesTreeCorruptionError::SealBlockNotParentPlusOne.into());
         }
         // Seal preparation is a side-effect-free projection and may be
         // repeated after a provisional terminal decision. Build it from a
@@ -22,7 +20,7 @@ impl MdbxAuthenticatedTree {
         let mut state = preparation
             .state
             .lock()
-            .map_err(|_| tree_corruption("authenticated catalog session lock poisoned"))?;
+            .map_err(|_| CompressedEntitiesTreeCorruptionError::CatalogSessionLockPoisoned)?;
         let grouped = group_mutations(mutations)?;
 
         let result = (|| {
@@ -35,10 +33,10 @@ impl MdbxAuthenticatedTree {
                     continue;
                 };
                 let new_collection_root = collection_batch.new_collection_root;
-                let catalog_key =
-                    TreeKey::from_be_bytes(*collection_key.as_bytes()).map_err(tree_corruption)?;
-                let catalog_leaf =
-                    TreeLeaf::from_be_bytes(new_collection_root.0).map_err(tree_corruption)?;
+                let catalog_key = TreeKey::from_be_bytes(*collection_key.as_bytes())
+                    .map_err(CompressedEntitiesTreeCorruptionError::from)?;
+                let catalog_leaf = TreeLeaf::from_be_bytes(new_collection_root.0)
+                    .map_err(CompressedEntitiesTreeCorruptionError::from)?;
                 catalog_updates.push((catalog_key, catalog_leaf));
                 changed_collections.insert(
                     collection_key,
@@ -76,18 +74,19 @@ impl MdbxAuthenticatedTree {
         let session = state
             .collections
             .get_mut(&collection_key)
-            .ok_or_else(|| tree_corruption("collection session is missing"))?;
+            .ok_or(CompressedEntitiesTreeCorruptionError::MissingCollectionSession)?;
         self.ensure_mutable_trees(collection_key, session);
         keyed.sort_by_key(|(_, key, _)| *key);
         let mut by_shard: BTreeMap<ShardIndex, Vec<(TreeKey, TreeLeaf)>> = BTreeMap::new();
         for (_, key, leaf) in keyed {
-            let shard = shard_index(key, domain.shard_count()).map_err(tree_corruption)?;
+            let shard = shard_index(key, domain.shard_count())
+                .map_err(CompressedEntitiesTreeCorruptionError::from)?;
             by_shard.entry(shard).or_default().push((key, leaf));
         }
         let trees = session
             .trees
             .take()
-            .ok_or_else(|| tree_corruption("collection shard set already sealed"))?;
+            .ok_or(CompressedEntitiesTreeCorruptionError::CollectionShardSetAlreadySealed)?;
         let mut new_roots = session.parent_shard_roots.clone();
         let mut changed_shards = BTreeMap::new();
         for (position, tree) in trees.into_iter().enumerate() {
@@ -103,16 +102,19 @@ impl MdbxAuthenticatedTree {
             }
         }
         if !by_shard.is_empty() {
-            return Err(tree_corruption("derived mutation shard was not prepared"));
+            return Err(
+                CompressedEntitiesTreeCorruptionError::DerivedMutationShardNotPrepared.into(),
+            );
         }
         if changed_shards.is_empty() {
             return Ok(None);
         }
-        let parent_top =
-            aggregate_b256_shard_roots(&session.parent_shard_roots).map_err(tree_corruption)?;
-        let new_top = aggregate_b256_shard_roots(&new_roots).map_err(tree_corruption)?;
-        let new_collection_root =
-            collection_root(domain, collection_key, new_top).map_err(tree_corruption)?;
+        let parent_top = aggregate_b256_shard_roots(&session.parent_shard_roots)
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
+        let new_top = aggregate_b256_shard_roots(&new_roots)
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
+        let new_collection_root = collection_root(domain, collection_key, new_top)
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
         let shard_set = ProvisionalShardSetBatch::new(
             domain.shard_count(),
             crate::staging::RootTransition {
@@ -123,7 +125,7 @@ impl MdbxAuthenticatedTree {
             new_roots,
             changed_shards,
         )
-        .map_err(tree_corruption)?;
+        .map_err(CompressedEntitiesTreeCorruptionError::from)?;
         let collection_batch = CollectionBatch::new(
             domain,
             collection_key,
@@ -131,7 +133,7 @@ impl MdbxAuthenticatedTree {
             new_collection_root,
             shard_set,
         )
-        .map_err(tree_corruption)?;
+        .map_err(CompressedEntitiesTreeCorruptionError::from)?;
         Ok(Some(collection_batch))
     }
     fn prepare_retirements(
@@ -143,33 +145,37 @@ impl MdbxAuthenticatedTree {
     ) -> Result<()> {
         let mut unique_retirements = BTreeSet::new();
         for partition in retirements {
-            let (domain, collection_key) =
-                crate::partition_collection_key(*partition).map_err(tree_corruption)?;
+            let (domain, collection_key) = crate::partition_collection_key(*partition)
+                .map_err(CompressedEntitiesTreeCorruptionError::from)?;
             if !unique_retirements.insert(collection_key) {
-                return Err(tree_corruption("duplicate collection retirement at seal"));
+                return Err(
+                    CompressedEntitiesTreeCorruptionError::DuplicateCollectionRetirementAtSeal
+                        .into(),
+                );
             }
             if changed_collections.contains_key(&collection_key) {
-                return Err(tree_corruption(
-                    "collection mutation and retirement coexist in one block",
-                ));
+                return Err(
+                    CompressedEntitiesTreeCorruptionError::CollectionMutationAndRetirementCoexist
+                        .into(),
+                );
             }
             self.ensure_collection(state, domain, collection_key)?;
             let session = state
                 .collections
                 .get(&collection_key)
-                .ok_or_else(|| tree_corruption("retirement collection session is missing"))?;
-            let parent_collection_root = session.parent_collection_root.ok_or_else(|| {
-                tree_corruption("retirement collection is absent from the parent catalog")
-            })?;
+                .ok_or(CompressedEntitiesTreeCorruptionError::MissingRetirementCollectionSession)?;
+            let parent_collection_root = session.parent_collection_root.ok_or(
+                CompressedEntitiesTreeCorruptionError::RetirementCollectionAbsentFromParentCatalog,
+            )?;
             let retirement = crate::RetirementBatch::new(
                 domain,
                 collection_key,
                 parent_collection_root,
                 session.parent_shard_roots.clone(),
             )
-            .map_err(tree_corruption)?;
-            let catalog_key =
-                TreeKey::from_be_bytes(*collection_key.as_bytes()).map_err(tree_corruption)?;
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
+            let catalog_key = TreeKey::from_be_bytes(*collection_key.as_bytes())
+                .map_err(CompressedEntitiesTreeCorruptionError::from)?;
             catalog_updates.push((catalog_key, TreeLeaf::ZERO));
             changed_collections.insert(
                 collection_key,
@@ -188,7 +194,7 @@ impl MdbxAuthenticatedTree {
         let mut catalog_tree = state
             .catalog_tree
             .take()
-            .ok_or_else(|| tree_corruption("authenticated catalog sealed more than once"))?;
+            .ok_or(CompressedEntitiesTreeCorruptionError::CatalogSealedMoreThanOnce)?;
         let new_catalog_root = if catalog_updates.is_empty() {
             self.view.catalog_root()
         } else {
@@ -202,36 +208,41 @@ impl MdbxAuthenticatedTree {
                     catalog_tree
                         .get(*key)
                         .map(|leaf| (*key, leaf))
-                        .map_err(tree_corruption)
+                        .map_err(|err| CompressedEntitiesTreeCorruptionError::from(err).into())
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let proof = catalog_tree.prove(keys).map_err(tree_corruption)?;
+            let proof = catalog_tree
+                .prove(keys)
+                .map_err(CompressedEntitiesTreeCorruptionError::from)?;
             catalog_tree
                 .verify(
-                    TreeRoot::from_be_bytes(self.view.catalog_root().0).map_err(tree_corruption)?,
+                    TreeRoot::from_be_bytes(self.view.catalog_root().0)
+                        .map_err(CompressedEntitiesTreeCorruptionError::from)?,
                     &proof,
                     parents,
                 )
-                .map_err(tree_corruption)?;
+                .map_err(CompressedEntitiesTreeCorruptionError::from)?;
             B256::from(
                 catalog_tree
                     .update_all(catalog_updates)
-                    .map_err(tree_corruption)?
+                    .map_err(CompressedEntitiesTreeCorruptionError::from)?
                     .as_bytes(),
             )
         };
         let catalog_batch = catalog_tree
             .into_store()
             .freeze_shard(new_catalog_root)
-            .map_err(tree_corruption)?
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?
             .map(|batch| ProvisionalCatalogBatch {
                 parent_catalog_root: batch.parent_shard_root,
                 new_catalog_root: batch.new_shard_root,
                 branch_changes: batch.branch_changes,
                 leaf_changes: batch.leaf_changes,
             });
-        let parent_r_sealed = sealed_root(self.view.catalog_root()).map_err(tree_corruption)?;
-        let new_r_sealed = sealed_root(new_catalog_root).map_err(tree_corruption)?;
+        let parent_r_sealed = sealed_root(self.view.catalog_root())
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
+        let new_r_sealed =
+            sealed_root(new_catalog_root).map_err(CompressedEntitiesTreeCorruptionError::from)?;
         ProvisionalTreeBatch::new(
             block_number,
             self.identity.block_hash,
@@ -248,7 +259,7 @@ impl MdbxAuthenticatedTree {
             changed_collections,
             catalog_batch,
         )
-        .map_err(tree_corruption)
+        .map_err(|err| CompressedEntitiesTreeCorruptionError::from(err).into())
     }
 }
 fn group_mutations(mutations: &[FinalLeafMutation]) -> Result<GroupedCollectionMutations> {
@@ -257,22 +268,25 @@ fn group_mutations(mutations: &[FinalLeafMutation]) -> Result<GroupedCollectionM
     let mut unique_keys = BTreeMap::new();
     for mutation in mutations {
         if !unique_entities.insert(mutation.entity) {
-            return Err(tree_corruption(
-                "duplicate compressed-entity identity at seal",
-            ));
+            return Err(
+                CompressedEntitiesTreeCorruptionError::DuplicateEntityIdentityAtSeal.into(),
+            );
         }
         let (domain, _, id) = entity_parts(mutation.entity);
-        let collection = collection_key(domain, id).map_err(tree_corruption)?;
+        let collection =
+            collection_key(domain, id).map_err(CompressedEntitiesTreeCorruptionError::from)?;
         let key = entity_tree_key(mutation.entity)?;
         if let Some(other) = unique_keys.insert((collection, key), mutation.entity) {
             if other != mutation.entity {
-                return Err(tree_corruption("compressed-entity tree-key collision"));
+                return Err(CompressedEntitiesTreeCorruptionError::TreeKeyCollision.into());
             }
         }
         let leaf = mutation
             .final_leaf
             .map_or(Ok(TreeLeaf::ZERO), |commitment| {
-                TreeLeaf::from_be_bytes(*commitment.as_bytes()).map_err(tree_corruption)
+                TreeLeaf::from_be_bytes(*commitment.as_bytes()).map_err(|err| {
+                    PrecompileError::from(CompressedEntitiesTreeCorruptionError::from(err))
+                })
             })?;
         grouped
             .entry(collection)
@@ -294,16 +308,19 @@ fn prepare_shard(
         .map(|key| {
             tree.get(*key)
                 .map(|leaf| (*key, leaf))
-                .map_err(tree_corruption)
+                .map_err(|err| CompressedEntitiesTreeCorruptionError::from(err).into())
         })
         .collect::<Result<Vec<_>>>()?;
-    let proof = tree.prove(keys).map_err(tree_corruption)?;
+    let proof = tree
+        .prove(keys)
+        .map_err(CompressedEntitiesTreeCorruptionError::from)?;
     tree.verify(
-        TreeRoot::from_be_bytes(parent_root.0).map_err(tree_corruption)?,
+        TreeRoot::from_be_bytes(parent_root.0)
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?,
         &proof,
         parents.clone(),
     )
-    .map_err(tree_corruption)?;
+    .map_err(CompressedEntitiesTreeCorruptionError::from)?;
     let effective = updates
         .into_iter()
         .zip(parents)
@@ -312,12 +329,17 @@ fn prepare_shard(
         })
         .collect::<Vec<_>>();
     if !effective.is_empty() {
-        tree.update_all(effective).map_err(tree_corruption)?;
+        tree.update_all(effective)
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?;
     }
-    let new_root = B256::from(tree.root().map_err(tree_corruption)?.as_bytes());
+    let new_root = B256::from(
+        tree.root()
+            .map_err(CompressedEntitiesTreeCorruptionError::from)?
+            .as_bytes(),
+    );
     let batch = tree
         .into_store()
         .freeze_shard(new_root)
-        .map_err(tree_corruption)?;
+        .map_err(CompressedEntitiesTreeCorruptionError::from)?;
     Ok((new_root, batch))
 }

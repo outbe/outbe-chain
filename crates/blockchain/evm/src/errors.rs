@@ -158,6 +158,12 @@ pub enum TeeAttestationActivationError {
     PolicyScheduleNotCanonicalHex,
     #[error("decode TEE policy schedule: {0}")]
     DecodePolicyScheduleHex(String),
+    #[error("TEE attestation ChainSpec authority is not bound")]
+    UnboundAuthority,
+    #[error("genesis config is missing required {field}")]
+    MissingGenesisConfigField { field: &'static str },
+    #[error("invalid genesis config {field}: {reason}")]
+    InvalidGenesisConfigField { field: &'static str, reason: String },
 }
 
 impl TeeAttestationActivationError {
@@ -200,8 +206,15 @@ impl TeeAttestationActivationError {
         Self::ParseDcapGenesisChainSpec(error.to_string())
     }
 
-    pub(crate) fn invalid_chain_spec_activation(error: &str) -> Self {
-        Self::InvalidChainSpecActivation(error.to_owned())
+    pub(crate) fn invalid_chain_spec_activation(error: impl Display) -> Self {
+        Self::InvalidChainSpecActivation(error.to_string())
+    }
+
+    pub(crate) fn invalid_genesis_config_field(field: &'static str, error: impl Display) -> Self {
+        Self::InvalidGenesisConfigField {
+            field,
+            reason: error.to_string(),
+        }
     }
 
     pub(crate) fn encode_dcap_policy(error: impl Display) -> Self {
@@ -291,16 +304,34 @@ impl From<FinalityAuthorityLocalError> for OcompFinalityAuthorityError {
     }
 }
 
-/// Errors that occur when the config recovers signers from system transactions.
+/// Errors that occur when the config validates or recovers signers from system transactions.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SystemTxExpectationError {
+    #[error("decode Outbe block artifacts for system tx validation: {0}")]
+    DecodeBlockArtifacts(String),
+    #[error("{0}")]
+    Layout(String),
     #[error("recover system tx signer: {0}")]
     RecoverSigner(String),
+    #[error("compressed-entity exact-parent scope configuration failed: {0}")]
+    ConfigureCompressedEntitiesScope(String),
 }
 
 impl SystemTxExpectationError {
+    pub(crate) fn decode_block_artifacts(error: impl Display) -> Self {
+        Self::DecodeBlockArtifacts(error.to_string())
+    }
+
+    pub(crate) fn layout(error: impl Display) -> Self {
+        Self::Layout(error.to_string())
+    }
+
     pub(crate) fn recover_signer(error: impl Display) -> Self {
         Self::RecoverSigner(error.to_string())
+    }
+
+    pub(crate) fn configure_compressed_entities_scope(error: impl Display) -> Self {
+        Self::ConfigureCompressedEntitiesScope(error.to_string())
     }
 }
 
@@ -876,3 +907,7 @@ impl From<CtxStorageError> for PrecompileError {
         }
     }
 }
+
+#[path = "errors/executor.rs"]
+mod executor;
+pub use executor::{ExecutorStorageError, ExecutorValidationError, SystemTxBuildError};

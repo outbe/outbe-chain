@@ -81,11 +81,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             .inner
             .cumulative_tx_gas_used
             .checked_add(visible_gas_used)
-            .ok_or_else(|| {
-                BlockExecutionError::from(BlockValidationError::msg(
-                    "HookEvents visible gas overflow",
-                ))
-            })?;
+            .ok_or(crate::errors::ExecutorValidationError::HookEventsVisibleGasOverflow)?;
         self.inner.receipts.push(Receipt {
             tx_type,
             success: true,
@@ -120,38 +116,38 @@ where
         compressed_entities_gas: u64,
         signed_gas_limit: u64,
     ) -> Result<u64, BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         let visible_gas = visible_base_gas
             .checked_add(compressed_entities_gas)
-            .ok_or_else(|| {
-                BlockExecutionError::from(BlockValidationError::msg(
-                    "system tx visible gas overflow after compressed-entity charge",
-                ))
-            })?;
+            .ok_or(ExecutorValidationError::SystemTxVisibleGasOverflowAfterCeCharge)?;
         if visible_gas > signed_gas_limit {
-            return Err(BlockValidationError::msg(format!(
-                "system tx receipt gas exceeds signed gas limit: visible={visible_gas}, \
-                 signed_limit={signed_gas_limit}, visible_base={visible_base_gas}, \
-                 compressed_entities={compressed_entities_gas}"
-            ))
-            .into());
+            return Err(
+                ExecutorValidationError::SystemTxReceiptGasExceedsSignedLimit {
+                    visible: visible_gas,
+                    signed_limit: signed_gas_limit,
+                    visible_base: visible_base_gas,
+                    compressed_entities: compressed_entities_gas,
+                }
+                .into(),
+            );
         }
         let cumulative = self
             .inner
             .cumulative_tx_gas_used
             .checked_add(visible_gas)
-            .ok_or_else(|| {
-                BlockExecutionError::from(BlockValidationError::msg(
-                    "system tx cumulative visible gas overflow",
-                ))
-            })?;
+            .ok_or(ExecutorValidationError::SystemTxCumulativeVisibleGasOverflow)?;
         let block_gas_limit = self.inner.evm.block().gas_limit();
         if cumulative > block_gas_limit {
-            return Err(BlockValidationError::msg(format!(
-                "system tx visible gas exceeds block gas limit: cumulative={cumulative}, \
-                 block_limit={block_gas_limit}, visible_base={visible_base_gas}, \
-                 compressed_entities={compressed_entities_gas}"
-            ))
-            .into());
+            return Err(
+                ExecutorValidationError::SystemTxVisibleGasExceedsBlockLimit {
+                    cumulative,
+                    block_limit: block_gas_limit,
+                    visible_base: visible_base_gas,
+                    compressed_entities: compressed_entities_gas,
+                }
+                .into(),
+            );
         }
         Ok(visible_gas)
     }
@@ -179,11 +175,7 @@ where
             .inner
             .cumulative_tx_gas_used
             .checked_add(visible_gas_used)
-            .ok_or_else(|| {
-                BlockExecutionError::from(BlockValidationError::msg(
-                    "system tx failure visible gas overflow",
-                ))
-            })?;
+            .ok_or(crate::errors::ExecutorValidationError::SystemTxFailureVisibleGasOverflow)?;
         self.inner.receipts.push(Receipt {
             tx_type: input.tx_type,
             success: false,

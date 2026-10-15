@@ -5,7 +5,7 @@
 
 use alloy_primitives::{U256, U512};
 
-use crate::error::{PrecompileError, Result};
+use crate::error::{PrimitivesMathError, Result};
 use crate::units::MAX_ASSET_DECIMALS;
 
 /// Quote asset-atomic principal against a canonical six-decimal
@@ -22,12 +22,10 @@ use crate::units::MAX_ASSET_DECIMALS;
 /// `U256` fail. `V` is that canonical six-decimal price.
 pub fn checked_quote(principal: U256, decimals: u8, vwap_minor: U256) -> Result<(U256, U256)> {
     if decimals > MAX_ASSET_DECIMALS {
-        return Err(PrecompileError::revert("unsupported asset decimals"));
+        return Err(PrimitivesMathError::UnsupportedAssetDecimals.into());
     }
     if principal.is_zero() || vwap_minor.is_zero() {
-        return Err(PrecompileError::revert(
-            "principal and valuation must be positive",
-        ));
+        return Err(PrimitivesMathError::PrincipalAndValuationMustBePositive.into());
     }
     let asset_scale = U512::from(10u64).pow(U512::from(decimals));
     let principal = U512::from(principal);
@@ -45,9 +43,9 @@ fn convert_to_u256(value: U512) -> Result<U256> {
     // A quote is stored as U256: explicitly reject values outside that bound
     // instead of truncating the high limbs (covered by quote boundary tests).
     let value = U256::checked_from_limbs_slice(value.as_limbs())
-        .ok_or_else(|| PrecompileError::revert("arithmetic overflow"))?;
+        .ok_or(PrimitivesMathError::ArithmeticOverflow)?;
     if value.is_zero() {
-        return Err(PrecompileError::revert("value rounds to zero"));
+        return Err(PrimitivesMathError::ValueRoundsToZero.into());
     }
     Ok(value)
 }
@@ -55,12 +53,12 @@ fn convert_to_u256(value: U512) -> Result<U256> {
 fn checked_product(numerator: U256, multiplier: U256) -> Result<U256> {
     numerator
         .checked_mul(multiplier)
-        .ok_or_else(|| PrecompileError::revert("scaled_math: multiplication overflow"))
+        .ok_or_else(|| PrimitivesMathError::ScaledMathMultiplicationOverflow.into())
 }
 
 fn require_denominator(denominator: U256) -> Result<()> {
     if denominator.is_zero() {
-        return Err(PrecompileError::revert("scaled_math: division by zero"));
+        return Err(PrimitivesMathError::ScaledMathDivisionByZero.into());
     }
     Ok(())
 }
@@ -81,7 +79,7 @@ pub fn checked_mul_div_ceil(numerator: U256, multiplier: U256, denominator: U256
     }
     quotient
         .checked_add(U256::ONE)
-        .ok_or_else(|| PrecompileError::revert("scaled_math: ceiling overflow"))
+        .ok_or_else(|| PrimitivesMathError::ScaledMathCeilingOverflow.into())
 }
 
 #[cfg(test)]

@@ -16,6 +16,8 @@ use std::num::NonZeroU64;
 use alloy_primitives::U256;
 use outbe_primitives::error::{PrecompileError, Result};
 
+use crate::errors::ValidatorSetError;
+
 /// Creates the first registered lifecycle bundle for an absent address.
 pub(crate) fn register(
     state: ValidatorState,
@@ -24,14 +26,10 @@ pub(crate) fn register(
     joined_at_height: u64,
 ) -> Result<ValidatorState> {
     if !matches!(state.lifecycle, ValidatorLifecycle::Absent) {
-        return Err(PrecompileError::Revert(
-            "validator is already registered".into(),
-        ));
+        return Err(ValidatorSetError::ValidatorIsAlreadyRegistered.into());
     }
     if consensus_pubkey == [0; 48] {
-        return Err(PrecompileError::Revert(
-            "consensus public key must not be zero".into(),
-        ));
+        return Err(ValidatorSetError::ZeroConsensusPublicKey.into());
     }
     state.with_lifecycle(ValidatorLifecycle::WaitingForStake(WaitingForStake {
         registry_index,
@@ -50,9 +48,7 @@ pub fn reregister(
     joined_at_height: u64,
 ) -> Result<WaitingForStake> {
     if consensus_pubkey == [0; 48] {
-        return Err(PrecompileError::Revert(
-            "consensus public key must not be zero".into(),
-        ));
+        return Err(ValidatorSetError::ZeroConsensusPublicKey.into());
     }
     Ok(WaitingForStake {
         registry_index: state.registry_index,
@@ -121,9 +117,7 @@ pub fn demote_joining(
 ) -> Result<WaitingForStake> {
     require_below_minimum(stake, minimum)?;
     if deactivated_at_height == 0 {
-        return Err(PrecompileError::Revert(
-            "validator deactivation height must be non-zero".into(),
-        ));
+        return Err(ValidatorSetError::ValidatorDeactivationHeightZero.into());
     }
     Ok(WaitingForStake {
         registry_index: state.registry_index,
@@ -141,9 +135,7 @@ pub fn demote_joining(
 fn exit_demoted_joiner(joiner: JoinerPayload, deactivated_at_height: u64) -> Result<Exiting> {
     require_canonical_stake(joiner.stake)?;
     if deactivated_at_height == 0 {
-        return Err(PrecompileError::Revert(
-            "validator deactivation height must be non-zero".into(),
-        ));
+        return Err(ValidatorSetError::ValidatorDeactivationHeightZero.into());
     }
     Ok(Exiting {
         registry_index: joiner.registry_index,
@@ -249,9 +241,7 @@ pub fn begin_exit(
 ) -> Result<Exiting> {
     require_canonical_stake(stake)?;
     if deactivated_at_height == 0 {
-        return Err(PrecompileError::Revert(
-            "validator deactivation height must be non-zero".into(),
-        ));
+        return Err(ValidatorSetError::ValidatorDeactivationHeightZero.into());
     }
     Ok(Exiting {
         registry_index: state.registry_index,
@@ -267,9 +257,7 @@ pub fn begin_exit(
 /// Jails an active validator without clearing the old committee share.
 pub fn jail(state: Active, jailed_at: u64) -> Result<JailRetained> {
     if jailed_at == 0 {
-        return Err(PrecompileError::Revert(
-            "validator jail height must be non-zero".into(),
-        ));
+        return Err(ValidatorSetError::ValidatorJailHeightZero.into());
     }
     Ok(JailRetained {
         registry_index: state.registry_index,
@@ -326,11 +314,13 @@ pub fn unjail(
     let ready_at = state
         .jailed_at
         .checked_add(cooldown_blocks)
-        .ok_or_else(|| PrecompileError::Revert("unjail cooldown height overflow".into()))?;
+        .ok_or(ValidatorSetError::UnjailCooldownHeightOverflow)?;
     if current_height < ready_at {
-        return Err(PrecompileError::Revert(format!(
-            "unjail cooldown not elapsed: ready at {ready_at}, current {current_height}"
-        )));
+        return Err(ValidatorSetError::UnjailCooldownNotElapsed {
+            ready_at,
+            current_height,
+        }
+        .into());
     }
     Ok(WaitingForReadiness {
         registry_index: state.registry_index,
@@ -370,9 +360,7 @@ pub fn exclude_exiting_at_boundary(state: Exiting) -> Unbonding {
 /// remaining live claim, represented here by a cleared compatibility hint.
 pub fn complete_unbonding(state: Unbonding) -> Result<Inactive> {
     if !state.stake.bonded.is_zero() || state.stake.unbonding_end_hint.is_some() {
-        return Err(PrecompileError::Revert(
-            "cannot complete unbonding while bonded value or a live-claim hint remains".into(),
-        ));
+        return Err(ValidatorSetError::CannotCompleteUnbondingWithRemainingStakeOrClaim.into());
     }
     Ok(Inactive {
         registry_index: state.registry_index,
@@ -416,12 +404,10 @@ pub(crate) fn with_stake(
 /// an absent address or an inactive registry entry.
 pub(crate) fn stake_target_rejection(lifecycle: &ValidatorLifecycle) -> Option<PrecompileError> {
     match lifecycle {
-        ValidatorLifecycle::Absent => Some(PrecompileError::Revert(
-            "cannot stake before validator registration".into(),
-        )),
-        ValidatorLifecycle::Inactive(_) => Some(PrecompileError::Revert(
-            "inactive validator must re-register before staking".into(),
-        )),
+        ValidatorLifecycle::Absent => Some(ValidatorSetError::CannotStakeBeforeRegistration.into()),
+        ValidatorLifecycle::Inactive(_) => {
+            Some(ValidatorSetError::InactiveValidatorMustReregisterBeforeStaking.into())
+        }
         _ => None,
     }
 }
@@ -448,7 +434,7 @@ pub(crate) fn with_p2p(
         ValidatorLifecycle::Unbonding(state) => state.p2p = p2p,
         ValidatorLifecycle::Inactive(state) => state.p2p = p2p,
         ValidatorLifecycle::Absent => {
-            return Err(PrecompileError::Revert("validator not registered".into()));
+            return Err(ValidatorSetError::ValidatorNotRegistered.into());
         }
     }
     Ok(lifecycle)
@@ -460,9 +446,7 @@ pub(crate) fn with_history(
     history: ValidatorHistory,
 ) -> Result<ValidatorLifecycle> {
     if history.last_deactivated_at_height == Some(0) {
-        return Err(PrecompileError::Revert(
-            "deactivation height must not use the zero sentinel".into(),
-        ));
+        return Err(ValidatorSetError::DeactivationHeightZeroSentinel.into());
     }
     if let Some(rejection) = history_rejection(&lifecycle, &history) {
         return Err(rejection);
@@ -479,31 +463,29 @@ fn history_rejection(
     history: &ValidatorHistory,
 ) -> Option<PrecompileError> {
     let deactivated_at = history.last_deactivated_at_height;
-    let rule = match lifecycle {
-        ValidatorLifecycle::Absent => {
-            return Some(PrecompileError::Revert("validator not registered".into()));
-        }
+    let error = match lifecycle {
+        ValidatorLifecycle::Absent => ValidatorSetError::ValidatorNotRegistered,
         ValidatorLifecycle::Active(_) if deactivated_at.is_some() => {
-            "active history must not contain a deactivation height"
+            ValidatorSetError::ActiveHistoryHasDeactivationHeight
         }
         ValidatorLifecycle::JailRetained(state) if deactivated_at != Some(state.jailed_at) => {
-            "retained jail history must match the jail height"
+            ValidatorSetError::RetainedJailHistoryHeightMismatch
         }
         ValidatorLifecycle::Jail(state) if deactivated_at != Some(state.jailed_at) => {
-            "jail history must match the jail height"
+            ValidatorSetError::JailHistoryHeightMismatch
         }
         ValidatorLifecycle::Exiting(_) if deactivated_at.is_none() => {
-            "exiting history requires a deactivation height"
+            ValidatorSetError::ExitingHistoryMissingDeactivationHeight
         }
         ValidatorLifecycle::Unbonding(_) if deactivated_at.is_none() => {
-            "unbonding history requires a deactivation height"
+            ValidatorSetError::UnbondingHistoryMissingDeactivationHeight
         }
         ValidatorLifecycle::Inactive(_) if deactivated_at.is_none() => {
-            "inactive history requires a deactivation height"
+            ValidatorSetError::InactiveHistoryMissingDeactivationHeight
         }
         _ => return None,
     };
-    Some(PrecompileError::Revert(rule.into()))
+    Some(error.into())
 }
 
 fn history_mut(lifecycle: &mut ValidatorLifecycle) -> Option<&mut ValidatorHistory> {
@@ -524,10 +506,11 @@ fn history_mut(lifecycle: &mut ValidatorLifecycle) -> Option<&mut ValidatorHisto
 fn require_at_least_minimum(stake: StakeProjection, minimum: U256) -> Result<()> {
     require_canonical_stake(stake)?;
     if stake.bonded < minimum {
-        return Err(PrecompileError::Revert(format!(
-            "bonded stake {} is below minimum {minimum}",
-            stake.bonded
-        )));
+        return Err(ValidatorSetError::BondedStakeBelowMinimum {
+            bonded: stake.bonded,
+            minimum,
+        }
+        .into());
     }
     Ok(())
 }
@@ -535,10 +518,11 @@ fn require_at_least_minimum(stake: StakeProjection, minimum: U256) -> Result<()>
 fn require_below_minimum(stake: StakeProjection, minimum: U256) -> Result<()> {
     require_canonical_stake(stake)?;
     if stake.bonded >= minimum {
-        return Err(PrecompileError::Revert(format!(
-            "bonded stake {} has not fallen below minimum {minimum}",
-            stake.bonded
-        )));
+        return Err(ValidatorSetError::BondedStakeNotBelowMinimum {
+            bonded: stake.bonded,
+            minimum,
+        }
+        .into());
     }
     Ok(())
 }
@@ -546,18 +530,14 @@ fn require_below_minimum(stake: StakeProjection, minimum: U256) -> Result<()> {
 fn require_fully_unstaked(stake: StakeProjection) -> Result<()> {
     require_canonical_stake(stake)?;
     if !stake.bonded.is_zero() {
-        return Err(PrecompileError::Revert(
-            "jailed validator must fully unstake before permanent exit".into(),
-        ));
+        return Err(ValidatorSetError::JailedValidatorMustFullyUnstakeForExit.into());
     }
     Ok(())
 }
 
 fn require_canonical_stake(stake: StakeProjection) -> Result<()> {
     if stake.unbonding_end_hint == Some(0) {
-        return Err(PrecompileError::Revert(
-            "unbonding-end hint must not use the zero sentinel".into(),
-        ));
+        return Err(ValidatorSetError::UnbondingEndHintZeroSentinel.into());
     }
     Ok(())
 }

@@ -113,6 +113,23 @@ impl TeeCallContextError {
     }
 }
 
+/// Errors returned by read-only [`outbe_primitives::storage::readonly::StorageReader`] adapters in `outbe-node`.
+#[derive(Debug, thiserror::Error)]
+pub enum NodeStorageReadError {
+    #[error("pinned OCOMP snapshot state read failed: {0}")]
+    PinnedOcompSnapshotStateReadFailed(#[source] ProviderError),
+    #[error("anchored proof reader is restricted to TeeRegistry")]
+    AnchoredProofReaderRestrictedToTeeRegistry,
+    #[error("finalized state read failed: {0}")]
+    FinalizedStateReadFailed(#[source] ProviderError),
+}
+
+impl From<NodeStorageReadError> for outbe_primitives::error::PrecompileError {
+    fn from(error: NodeStorageReadError) -> Self {
+        Self::Storage(error.to_string())
+    }
+}
+
 /// This enum defines errors that occur when the node validates a canary batch.
 #[derive(Debug, thiserror::Error)]
 pub enum CanaryBatchValidationError {
@@ -351,6 +368,50 @@ pub enum NodeProjectionError {
         finalized_number: u64,
         finalized_hash: B256,
     },
+    #[error("offchain-data projector lock is poisoned")]
+    ProjectorLockPoisoned,
+    #[error("projection recovery acknowledgement receiver is closed")]
+    RecoveryAckReceiverClosed,
+    #[error("logical checkpoint receiver is closed")]
+    LogicalCheckpointReceiverClosed,
+    #[error("projection checkpoint height overflow")]
+    CheckpointHeightOverflow,
+    #[error("durable offchain storage writer queue is closed")]
+    DurableWriterQueueClosed,
+    #[error(
+        "projection checkpoint {checkpoint_number} ({checkpoint_hash}) is ahead of finalized target {target_number} ({target_hash})"
+    )]
+    CheckpointAheadOfFinalizedTarget {
+        checkpoint_number: u64,
+        checkpoint_hash: B256,
+        target_number: u64,
+        target_hash: B256,
+    },
+    #[error(
+        "projection checkpoint hash {checkpoint_hash} conflicts with finalized hash {target_hash} at height {height}"
+    )]
+    CheckpointFinalizedHashConflict {
+        checkpoint_hash: B256,
+        target_hash: B256,
+        height: u64,
+    },
+    #[error("canonical block {block_number} for restored projection checkpoint is unavailable")]
+    RestoredCheckpointCanonicalBlockUnavailable { block_number: u64 },
+    #[error(
+        "finalized target regressed from {current_number} ({current_hash}) to {incoming_number} ({incoming_hash})"
+    )]
+    FinalizedTargetRegressed {
+        current_number: u64,
+        current_hash: B256,
+        incoming_number: u64,
+        incoming_hash: B256,
+    },
+    #[error("finalized target hash changed at height {height}: {current_hash} -> {incoming_hash}")]
+    FinalizedTargetHashChanged {
+        height: u64,
+        current_hash: B256,
+        incoming_hash: B256,
+    },
 }
 
 impl LocalRegistryAdmissionError {
@@ -464,7 +525,31 @@ impl RetentionError {
     }
 
     #[must_use]
-    pub fn into_selector_error(self) -> CallContextError {
-        self.to_string()
+    pub fn into_selector_error(self) -> outbe_offchain_data::RetentionSelectorError {
+        match self {
+            Self::RetentionCoordinatorNotInstalled => {
+                outbe_offchain_data::RetentionSelectorError::RetentionCoordinatorNotInstalled
+            }
+            Self::RetainedTributeStorageUnavailable => {
+                outbe_offchain_data::RetentionSelectorError::RetainedTributeStorageUnavailable
+            }
+            Self::MultipleInputRetentionIdentities => {
+                outbe_offchain_data::RetentionSelectorError::MultipleInputRetentionIdentities
+            }
+            Self::Poisoned => outbe_offchain_data::RetentionSelectorError::Poisoned,
+            Self::Quarantined(reason) => {
+                outbe_offchain_data::RetentionSelectorError::Quarantined(reason)
+            }
+            Self::JournalUnavailable {
+                operation,
+                path,
+                reason,
+            } => outbe_offchain_data::RetentionSelectorError::JournalUnavailable {
+                operation,
+                path,
+                reason,
+            },
+            other => outbe_offchain_data::RetentionSelectorError::Failed(other.to_string()),
+        }
     }
 }

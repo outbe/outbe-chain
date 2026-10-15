@@ -99,23 +99,24 @@ impl FixtureKernelExt for MetadosisContract<'_> {
         lookback_delay_hours: u64,
         offering_period_hours: u64,
     ) -> PrecompileResult<()> {
-        let seconds = |hours: u64, label: &str| {
-            hours.checked_mul(SECONDS_PER_HOUR).ok_or_else(|| {
-                PrecompileError::Revert(format!("Metadosis {label} duration overflow"))
-            })
+        use crate::errors::MetadosisCallerError;
+        let seconds = |hours: u64, label: &'static str| -> PrecompileResult<u64> {
+            hours
+                .checked_mul(SECONDS_PER_HOUR)
+                .ok_or_else(|| MetadosisCallerError::DurationOverflow { label }.into())
         };
         let forming_end = forming_start
             .checked_add(seconds(FORMING_PERIOD_HOURS, "forming")?)
-            .ok_or_else(|| PrecompileError::Revert("Metadosis forming window overflow".into()))?;
+            .ok_or(MetadosisCallerError::FormingWindowOverflow)?;
         let lookback_end = forming_end
             .checked_add(seconds(lookback_delay_hours, "lookback")?)
-            .ok_or_else(|| PrecompileError::Revert("Metadosis lookback window overflow".into()))?;
+            .ok_or(MetadosisCallerError::LookbackWindowOverflow)?;
         let offering_end = lookback_end
             .checked_add(seconds(offering_period_hours, "offering")?)
-            .ok_or_else(|| PrecompileError::Revert("Metadosis offering window overflow".into()))?;
+            .ok_or(MetadosisCallerError::OfferingWindowOverflow)?;
         let scheduled_process_time = offering_end
             .checked_add(seconds(WAITING_PERIOD_HOURS, "waiting")?)
-            .ok_or_else(|| PrecompileError::Revert("Metadosis waiting window overflow".into()))?;
+            .ok_or(MetadosisCallerError::WaitingWindowOverflow)?;
 
         self.worldwide_days.create(&WorldwideDayRecord {
             wwd,
@@ -160,9 +161,7 @@ impl FixtureKernelExt for MetadosisContract<'_> {
             .formed()
             .read()?
         {
-            return Err(PrecompileError::Revert(
-                "formed OCOMP day limit is immutable".into(),
-            ));
+            return Err(crate::errors::MetadosisCallerError::FormedOcompDayLimitImmutable.into());
         }
         self.worldwide_days
             .entry(wwd)
@@ -261,7 +260,7 @@ impl FixtureKernelExt for MetadosisContract<'_> {
         encoded_record: &[u8],
     ) -> PrecompileResult<()> {
         let key = intent_storage_key(intent_id).map_err(|error| {
-            PrecompileError::Fatal(format!("fixture OCOMP intent key is invalid: {error}"))
+            crate::errors::MetadosisTestSupportError::FixtureOcompIntentKeyInvalid { error }
         })?;
         self.ocomp_job_records.get_bytes(&key).write(encoded_record)
     }
@@ -320,9 +319,13 @@ impl FixtureKernelExt for MetadosisContract<'_> {
             return Ok(());
         }
         if active.len() >= MAX_ACTIVE_WWDS {
-            return Err(PrecompileError::Fatal(format!(
-                "Metadosis active WWD cap {MAX_ACTIVE_WWDS} reached before inserting {wwd}"
-            )));
+            return Err(
+                crate::errors::MetadosisTestSupportError::ActiveWwdCapReached {
+                    max_active_wwds: MAX_ACTIVE_WWDS,
+                    wwd,
+                }
+                .into(),
+            );
         }
         self.active_wwd.insert(wwd).map(|_| ())
     }

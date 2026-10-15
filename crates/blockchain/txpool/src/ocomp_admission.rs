@@ -355,8 +355,6 @@ where
         self.state
             .storage(address, key)
             .map(|value| value.unwrap_or(U256::ZERO))
-            .map_err(|e| {
-                outbe_primitives::error::PrecompileError::Storage(format!("state read failed: {e}"))
-            })
+            .map_err(|e| crate::errors::TxPoolStateReadError::StateReadFailed(e.to_string()).into())
     }
 }

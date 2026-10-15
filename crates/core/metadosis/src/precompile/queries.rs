@@ -39,7 +39,7 @@ pub(super) fn worldwide_days_by_status(
     c: IMetadosis::getWorldwideDaysByStatusCall,
 ) -> Result<<IMetadosis::getWorldwideDaysByStatusCall as SolCall>::Return> {
     let wanted = WwdStatus::try_from(c.status)
-        .map_err(|_| crate::errors::caller_rejection("unknown WorldwideDay status"))?;
+        .map_err(|_| crate::errors::MetadosisCallerError::UnknownWorldwideDayStatus)?;
     let wwds = metadosis.get_active_wwd_by_status(wanted)?;
     Ok(wwds.into_iter().map(u32::from).collect())
 }

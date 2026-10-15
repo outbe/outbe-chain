@@ -40,3 +40,17 @@ impl From<RpcValidatorStateError> for PrecompileError {
         Self::Fatal(error.to_string())
     }
 }
+
+/// Errors that occur when bridging Reth state storage into precompile storage.
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+pub enum RpcStateReadError {
+    /// Reading a storage slot from the Reth state provider failed.
+    #[error("state read failed: {0}")]
+    StateReadFailed(String),
+}
+
+impl From<RpcStateReadError> for PrecompileError {
+    fn from(error: RpcStateReadError) -> Self {
+        Self::Storage(error.to_string())
+    }
+}

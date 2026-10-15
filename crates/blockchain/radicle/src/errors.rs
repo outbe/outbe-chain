@@ -115,3 +115,17 @@ impl SidecarError {
         Self::Malformed(error.to_string())
     }
 }
+
+/// Errors returned when reading finalized state into precompile storage.
+#[derive(Debug, Error)]
+pub enum SnapshotStateReadError {
+    /// Reading a storage slot from the finalized state provider failed.
+    #[error("finalized state read failed: {0}")]
+    FinalizedStateReadFailed(String),
+}
+
+impl From<SnapshotStateReadError> for outbe_primitives::error::PrecompileError {
+    fn from(error: SnapshotStateReadError) -> Self {
+        Self::Storage(error.to_string())
+    }
+}

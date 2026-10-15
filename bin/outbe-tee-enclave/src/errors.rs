@@ -11,7 +11,9 @@ pub mod transport;
 use std::fmt;
 
 pub use attestation::{DcapVerifyError, FinalizedAdmissionError, GramineError};
-pub use compute::{ComputeError, PayloadError, ProcessError};
+pub use compute::{
+    ComputeError, GratisRejectReason, PayloadError, ProcessError, PromisRejectReason,
+};
 pub use init::{InitError, OnboardingUploadError, RunError, SgxSealingError};
 pub use transport::{
     transport_handshake, transport_noise, transport_noise_debug, TransportDispatchError,

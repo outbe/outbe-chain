@@ -205,7 +205,10 @@ mod tests {
             _intent: &RegistrationIntentV1,
         ) -> Result<GeneratedDcapQuoteV1> {
             self.dcap_calls += 1;
-            eyre::bail!("DCAP must not be invoked for GramineDirectDev renewal");
+            Err(
+                RenewalError::TestFault("DCAP must not be invoked for GramineDirectDev renewal")
+                    .into(),
+            )
         }
 
         fn sign_registration_intent_dev_v1(
@@ -289,7 +292,7 @@ mod tests {
                     ITeeRegistryV1::tributeOfferPublicKeyCall::abi_encode_returns(&U256::from(9)),
                 );
             }
-            eyre::bail!("unexpected Registry call");
+            Err(RenewalError::TestFault("unexpected Registry call").into())
         }
     }
 
@@ -301,15 +304,15 @@ mod tests {
 
     impl RelayPreparationRpc for ReplayRpc {
         async fn gas_price(&self) -> Result<U256> {
-            eyre::bail!("restart replay regenerated gas price");
+            Err(RenewalError::TestFault("restart replay regenerated gas price").into())
         }
 
         async fn transaction_count(&self, _address: Address) -> Result<u64> {
-            eyre::bail!("restart replay regenerated account nonce");
+            Err(RenewalError::TestFault("restart replay regenerated account nonce").into())
         }
 
         async fn balance(&self, _address: Address) -> Result<U256> {
-            eyre::bail!("restart replay rechecked preparation balance");
+            Err(RenewalError::TestFault("restart replay rechecked preparation balance").into())
         }
     }
 
@@ -320,7 +323,7 @@ mod tests {
                 if let Some(receipt) = &self.receipt_after_send_error {
                     *self.receipt.lock().unwrap() = Some(receipt.clone());
                 }
-                return Err(eyre::eyre!(error));
+                return Err(RenewalError::TestFault(error).into());
             }
             Ok(format!("{:#x}", keccak256(raw_transaction)))
         }
@@ -782,15 +785,14 @@ mod tests {
 
     #[test]
     fn replay_transport_errors_are_classified_narrowly() {
-        assert!(transaction_is_already_known(&eyre::eyre!("already known")));
-        assert!(transaction_is_already_known(&eyre::eyre!(
-            "known transaction"
-        )));
-        assert!(!transaction_is_already_known(&eyre::eyre!("nonce too low")));
-        assert!(transaction_nonce_is_too_low(&eyre::eyre!(
+        let report = |msg| eyre::Report::from(RenewalError::TestFault(msg));
+        assert!(transaction_is_already_known(&report("already known")));
+        assert!(transaction_is_already_known(&report("known transaction")));
+        assert!(!transaction_is_already_known(&report("nonce too low")));
+        assert!(transaction_nonce_is_too_low(&report(
             "nonce too low: next nonce 1, tx nonce 0"
         )));
-        assert!(!transaction_nonce_is_too_low(&eyre::eyre!(
+        assert!(!transaction_nonce_is_too_low(&report(
             "replacement transaction underpriced"
         )));
     }

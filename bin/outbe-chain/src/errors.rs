@@ -10,7 +10,7 @@ pub(crate) mod snapshot_ocomp;
 pub(crate) use cli::CliError;
 pub(crate) use genesis::{OcompGenesisError, TeeGenesisError};
 pub(crate) use launch::{LaunchError, LysisOpeningsError};
-pub(crate) use ocomp_exex::OcompExExError;
+pub(crate) use ocomp_exex::{OcompExExError, OcompExExStateReadError};
 pub(crate) use snapshot::{CanonicalStatePrecompileError, SnapshotError};
 pub(crate) use snapshot_ocomp::SnapshotOcompError;
 

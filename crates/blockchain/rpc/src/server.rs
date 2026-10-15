@@ -67,9 +67,7 @@ impl StorageReader for RethStateReader<'_> {
         self.state
             .storage(address, key)
             .map(|opt| opt.unwrap_or(U256::ZERO))
-            .map_err(|e| {
-                outbe_primitives::error::PrecompileError::Storage(format!("state read failed: {e}"))
-            })
+            .map_err(|e| crate::errors::RpcStateReadError::StateReadFailed(e.to_string()).into())
     }
 }
 

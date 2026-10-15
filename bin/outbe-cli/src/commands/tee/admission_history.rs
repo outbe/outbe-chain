@@ -159,7 +159,7 @@ mod tests {
             proof_fn: Some(Box::new(move |height| {
                 recorded.lock().unwrap().push(height);
                 if height == 10 {
-                    eyre::bail!("distance to target block exceeds maximum proof window")
+                    return Err(TeeAdmissionHistoryError::ProofWindowExpired.into());
                 }
                 Ok(serde_json::json!({"height":height}))
             })),
@@ -173,17 +173,18 @@ mod tests {
 
     #[tokio::test]
     async fn proof_retries_are_bounded_and_only_for_window_expiry() {
-        for (message, expected_calls) in [
-            ("distance to target block exceeds maximum proof window", 4),
-            ("invalid proof request", 1),
-        ] {
+        for (expired_window, expected_calls) in [(true, 4), (false, 1)] {
             let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let recorded = calls.clone();
             let rpc = MockRpc {
                 finalized_block: Ok(serde_json::json!({"number":"0x90"})),
                 proof_fn: Some(Box::new(move |_| {
                     recorded.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    Err(eyre::eyre!(message))
+                    if expired_window {
+                        Err(TeeAdmissionHistoryError::ProofWindowExpired.into())
+                    } else {
+                        Err(TeeAdmissionHistoryError::InvalidProofRequest.into())
+                    }
                 })),
                 ..Default::default()
             };
@@ -200,7 +201,7 @@ mod tests {
         let rpc = MockRpc {
             finalized_block: Ok(serde_json::json!({"number":"0x9"})),
             proof_fn: Some(Box::new(|_| {
-                eyre::bail!("distance to target block exceeds maximum proof window")
+                Err(TeeAdmissionHistoryError::ProofWindowExpired.into())
             })),
             ..Default::default()
         };

@@ -10,6 +10,29 @@ use thiserror::Error;
 
 use crate::state::{ProjectionConfig, ProjectionSource};
 
+/// Typed error returned by [`crate::TributeRetentionSelector::active_pin_for`].
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum RetentionSelectorError {
+    #[error("OCOMP retention coordinator is not installed")]
+    RetentionCoordinatorNotInstalled,
+    #[error("retained Tribute storage is not configured")]
+    RetainedTributeStorageUnavailable,
+    #[error("multiple input retention identities exist for one WWD")]
+    MultipleInputRetentionIdentities,
+    #[error("OCOMP pin journal mutex is poisoned")]
+    Poisoned,
+    #[error("OCOMP retention is quarantined: {0}")]
+    Quarantined(String),
+    #[error("OCOMP retention journal is unavailable after {operation} at {path}: {reason}")]
+    JournalUnavailable {
+        operation: &'static str,
+        path: std::path::PathBuf,
+        reason: String,
+    },
+    #[error("{0}")]
+    Failed(String),
+}
+
 /// Stable projector failures. No backend-specific type crosses this boundary.
 #[derive(Debug, Error)]
 #[non_exhaustive]

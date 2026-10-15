@@ -130,9 +130,8 @@ impl StorageReader for RethStateReader<'_> {
             .storage(address, key)
             .map(|value| value.unwrap_or(U256::ZERO))
             .map_err(|error| {
-                outbe_primitives::error::PrecompileError::Storage(format!(
-                    "finalized state read failed: {error}"
-                ))
+                crate::errors::SnapshotStateReadError::FinalizedStateReadFailed(error.to_string())
+                    .into()
             })
     }
 }

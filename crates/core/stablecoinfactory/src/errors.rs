@@ -53,8 +53,38 @@ pub enum StablecoinFactoryError {
     #[error("unknown stablecoin {token}")]
     UnknownStablecoin { token: Address },
 
-    #[error("factory invariant violated: {reason}")]
-    Invariant { reason: String },
+    #[error("stablecoin factory: token set length/data mismatch")]
+    TokenSetLengthDataMismatch,
+
+    #[error("stablecoin factory: proposal id zero cannot own a reservation")]
+    ZeroProposalReservation,
+
+    #[error("stablecoin factory: proposal {proposal_id} already owns a reservation")]
+    ProposalAlreadyOwnsReservation { proposal_id: U256 },
+
+    #[error(
+        "stablecoin factory: proposal {proposal_id} payload does not match its Factory reservation"
+    )]
+    ReservationPayloadMismatch { proposal_id: U256 },
+
+    #[error(
+        "stablecoin factory: reserved stablecoin address {token} has pre-existing nonce or code"
+    )]
+    NonPristineTokenAccount { token: Address },
+
+    #[error("stablecoin factory: reserved token address is already in the permanent token set")]
+    ReservedTokenAlreadyInPermanentSet,
+
+    #[error("stablecoin factory: proposal {proposal_id} has no Factory reservation")]
+    MissingReservation { proposal_id: U256 },
+
+    #[error(
+        "stablecoin factory: proposal {proposal_id} reservation triple does not match its record"
+    )]
+    ReservationTripleMismatch { proposal_id: U256 },
+
+    #[error("stablecoin factory: proposal {proposal_id} reservation collides with permanent Factory state")]
+    ReservationCollidesWithPermanentState { proposal_id: U256 },
 
     #[error("stablecoin Factory schema {schema} is unsupported")]
     UnsupportedSchema { schema: u32 },
@@ -131,10 +161,16 @@ impl From<StablecoinFactoryError> for PrecompileError {
             StablecoinFactoryError::UnknownStablecoin { token } => {
                 I::UnknownStablecoin { token }.abi_encode()
             }
-            StablecoinFactoryError::Invariant { reason } => {
-                return PrecompileError::Revert(format!("stablecoin factory: {reason}"));
-            }
-            StablecoinFactoryError::UnsupportedSchema { .. } => {
+            StablecoinFactoryError::TokenSetLengthDataMismatch
+            | StablecoinFactoryError::ZeroProposalReservation
+            | StablecoinFactoryError::ProposalAlreadyOwnsReservation { .. }
+            | StablecoinFactoryError::ReservationPayloadMismatch { .. }
+            | StablecoinFactoryError::NonPristineTokenAccount { .. }
+            | StablecoinFactoryError::ReservedTokenAlreadyInPermanentSet
+            | StablecoinFactoryError::MissingReservation { .. }
+            | StablecoinFactoryError::ReservationTripleMismatch { .. }
+            | StablecoinFactoryError::ReservationCollidesWithPermanentState { .. }
+            | StablecoinFactoryError::UnsupportedSchema { .. } => {
                 return PrecompileError::Revert(error.to_string());
             }
         };

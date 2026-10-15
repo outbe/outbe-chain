@@ -141,3 +141,37 @@ impl ProcessError {
         Self::DeriveBindingHashFailed(err.to_string())
     }
 }
+
+/// Business or cryptographic rejection reasons for Promis balance transitions.
+#[derive(Debug, thiserror::Error)]
+pub enum PromisRejectReason {
+    #[error("amount must be positive")]
+    AmountMustBePositive,
+    #[error("invalid address")]
+    InvalidAddress,
+    #[error("invalid modify authorization")]
+    InvalidModifyAuthorization,
+    #[error("promis balance overflow")]
+    BalanceOverflow,
+    #[error("insufficient balance")]
+    InsufficientBalance,
+    #[error(transparent)]
+    Tee(#[from] crate::errors::TeeError),
+}
+
+/// Business or cryptographic rejection reasons for Gratis balance transitions.
+#[derive(Debug, thiserror::Error)]
+pub enum GratisRejectReason {
+    #[error("invalid modify authorization")]
+    InvalidModifyAuthorization,
+    #[error("modify nonce exhausted")]
+    ModifyNonceExhausted,
+    #[error("amount and account must be nonzero")]
+    AmountAndAccountMustBeNonzero,
+    #[error("collateral must not change Fidelity")]
+    CollateralMustNotChangeFidelity,
+    #[error("insufficient balance or balance overflow")]
+    InsufficientBalanceOrOverflow,
+    #[error(transparent)]
+    Tee(#[from] crate::errors::TeeError),
+}

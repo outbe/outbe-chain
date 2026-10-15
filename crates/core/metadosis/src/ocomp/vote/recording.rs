@@ -43,38 +43,33 @@ impl MetadosisContract<'_> {
                 if deadline_closed {
                     return Err(vote_reject(DEADLINE_PASSED));
                 }
-                return Err(reject("OCOMP result vote has no open response window"));
+                return Err(MetadosisCallerError::ResultVoteHasNoOpenResponseWindow.into());
             }
         };
         let record = self
             .ocomp_job_record(response.intent_id, input.limits)?
-            .ok_or_else(|| {
-                storage_corruption_message("OCOMP response index points to a missing job")
-            })?;
-        let finalized = record.finalized.as_ref().ok_or_else(|| {
-            storage_corruption_message("OCOMP response-window job is not finalized")
-        })?;
+            .ok_or(MetadosisStorageCorruptionError::OcompResponseIndexMissingJob)?;
+        let finalized = record
+            .finalized
+            .as_ref()
+            .ok_or(MetadosisStorageCorruptionError::OcompResponseWindowJobNotFinalized)?;
         if finalized.job_id != response.job_id
             || finalized.deadline_height != response.deadline_height
         {
-            return Err(storage_corruption_message(
-                "OCOMP response index/job binding mismatch",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompResponseIndexJobBindingMismatch.into(),
+            );
         }
         if !matches!(
             record.status,
             OcompJobStatus::VotingOpen | OcompJobStatus::Completed
         ) {
-            return Err(reject(
-                "OCOMP result vote requires an open or quorum-certified job",
-            ));
+            return Err(MetadosisCallerError::ResultVoteRequiresOpenOrQuorumCertifiedJob.into());
         }
         if PinnedVoteBinding::from_prefix(&input.vote.prefix())
             != PinnedVoteBinding::from_record(&record)
         {
-            return Err(reject(
-                "OCOMP result vote does not match pinned job binding",
-            ));
+            return Err(MetadosisCallerError::ResultVotePinnedJobBindingMismatch.into());
         }
         let member = self.verify_pinned_signature(input, &record)?;
         Ok(VerifiedVote {
@@ -89,9 +84,10 @@ impl MetadosisContract<'_> {
         input: &VoteInput<'_>,
         record: &OcompJobRecordV1,
     ) -> Result<ResolvedHistoricalResultVoteMemberV1> {
-        let finalized = record.finalized.as_ref().ok_or_else(|| {
-            storage_corruption_message("OCOMP response-window job is not finalized")
-        })?;
+        let finalized = record
+            .finalized
+            .as_ref()
+            .ok_or(MetadosisStorageCorruptionError::OcompResponseWindowJobNotFinalized)?;
         let snapshot = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
             self.storage.clone(),
             record.intent.result_validator_set_epoch,
@@ -99,7 +95,7 @@ impl MetadosisContract<'_> {
             record.intent.result_ocomp_binding_hash,
         )?
         .filter(|snapshot| snapshot.member_count == record.intent.result_member_count)
-        .ok_or_else(|| reject("OCOMP result vote historical snapshot is missing"))?;
+        .ok_or(MetadosisCallerError::ResultVoteHistoricalSnapshotMissing)?;
         let snapshot_key = outbe_validatorset::committee_snapshot_key(
             record.intent.result_validator_set_epoch,
             record.intent.result_committee_set_hash,
@@ -111,7 +107,7 @@ impl MetadosisContract<'_> {
             input.vote.ocomp_key_hash,
             input.vote.key_epoch,
         )?
-        .ok_or_else(|| reject("OCOMP result vote member is missing"))?;
+        .ok_or(MetadosisCallerError::ResultVoteMemberMissing)?;
         input
             .vote
             .verify_historical_member(
@@ -129,7 +125,7 @@ impl MetadosisContract<'_> {
                 },
                 input.limits,
             )
-            .map_err(|error| reject(format!("invalid OCOMP result vote: {error}")))?;
+            .map_err(|error| MetadosisCallerError::InvalidOcompResultVote { error })?;
 
         Ok(member)
     }
@@ -140,18 +136,17 @@ impl MetadosisContract<'_> {
         verified: &VerifiedVote,
     ) -> Result<RecordedResultVoteV1> {
         let record = &verified.record;
-        let finalized = record.finalized.as_ref().ok_or_else(|| {
-            storage_corruption_message("OCOMP response-window job is not finalized")
-        })?;
+        let finalized = record
+            .finalized
+            .as_ref()
+            .ok_or(MetadosisStorageCorruptionError::OcompResponseWindowJobNotFinalized)?;
         let mut accountability = self
             .result_vote_accountability(finalized.job_id, input.limits)?
-            .ok_or_else(|| {
-                storage_corruption_message("OCOMP response-window vote slots are missing")
-            })?;
+            .ok_or(MetadosisStorageCorruptionError::OcompResponseWindowVoteSlotsMissing)?;
         if accountability.quorum != finalized.quorum {
-            return Err(storage_corruption_message(
-                "OCOMP job/accountability quorum mismatch",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompJobAccountabilityQuorumMismatch.into(),
+            );
         }
         let had_quorum = accountability.quorum.is_some();
         let outcome = accountability
@@ -161,7 +156,7 @@ impl MetadosisContract<'_> {
                 input.inclusion_height,
                 input.limits,
             )
-            .map_err(|error| reject(format!("invalid OCOMP vote transition: {error}")))?;
+            .map_err(|error| MetadosisCallerError::InvalidOcompVoteTransition { error })?;
         let quorum = accountability.quorum.clone();
 
         if !had_quorum {
@@ -170,14 +165,12 @@ impl MetadosisContract<'_> {
                     record.intent.protocol_bundle_hash,
                     input.limits,
                 )?
-                .ok_or_else(|| {
-                    storage_corruption_message("OCOMP activation authority is not installed")
-                })?;
+                .ok_or(MetadosisStorageCorruptionError::OcompActivationAuthorityNotInstalled)?;
             if let Some(formed) = &quorum {
                 self.apply_new_quorum(input, verified, formed, &authority)?;
             }
         } else if finalized.quorum != quorum {
-            return Err(storage_corruption_message("OCOMP immutable quorum changed"));
+            return Err(MetadosisStorageCorruptionError::OcompImmutableQuorumChanged.into());
         }
         self.write_result_vote_accountability(&accountability, input.limits)?;
         Ok(RecordedResultVoteV1 { outcome, quorum })
@@ -192,19 +185,21 @@ impl MetadosisContract<'_> {
     ) -> Result<()> {
         let record = &verified.record;
         if record.status != OcompJobStatus::VotingOpen {
-            return Err(storage_corruption_message(
-                "OCOMP quorum formed outside the voting-open transition",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompQuorumFormedOutsideVotingOpenTransition
+                    .into(),
+            );
         }
-        let current_time =
-            self.storage.timestamp()?.try_into().map_err(|_| {
-                storage_corruption_message("OCOMP block timestamp does not fit u64")
-            })?;
+        let current_time = self
+            .storage
+            .timestamp()?
+            .try_into()
+            .map_err(|_| MetadosisStorageCorruptionError::OcompBlockTimestampDoesNotFitU64)?;
         let worldwide_day = outbe_primitives::time::WorldwideDay::new(record.intent.wwd);
         let aggregate = ValidatedWwdAggregate::load_and_validate(self.storage.clone())?;
-        let outer = aggregate.record(worldwide_day).ok_or_else(|| {
-            storage_corruption_message("OCOMP q-forming vote has no persisted outer WorldwideDay")
-        })?;
+        let outer = aggregate
+            .record(worldwide_day)
+            .ok_or(MetadosisStorageCorruptionError::OcompQFormingVoteMissingPersistedOuterWwd)?;
         let completed_transition = reduce_outer_wwd(Some(outer), OuterWwdEvent::OcompCompleted)?;
         let storage = self.storage.clone();
         let apply_context = super::super::activation::QuorumApplyContext::new(
@@ -230,7 +225,7 @@ impl MetadosisContract<'_> {
         )?;
         let applied = self
             .ocomp_job_record(verified.response.intent_id, input.limits)?
-            .ok_or_else(|| storage_corruption_message("OCOMP q-forming apply removed the job"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompQFormingApplyRemovedJob)?;
         if !matches!(applied.status, OcompJobStatus::Completed)
             || applied
                 .finalized
@@ -238,9 +233,10 @@ impl MetadosisContract<'_> {
                 .and_then(|finalized| finalized.quorum.as_ref())
                 != Some(formed)
         {
-            return Err(storage_corruption_message(
-                "OCOMP q-forming apply did not commit terminal quorum state",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompQFormingApplyDidNotCommitTerminalQuorumState
+                    .into(),
+            );
         }
         Ok(())
     }

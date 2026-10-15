@@ -1,3 +1,15 @@
+mod business;
+mod caller;
+mod corruption;
+#[cfg(any(test, feature = "test-utils"))]
+mod test_support;
+
+pub use business::MetadosisBusinessError;
+pub use caller::{MetadosisCallerError, ResultVoteCarrierInvalidError};
+pub use corruption::MetadosisStorageCorruptionError;
+#[cfg(any(test, feature = "test-utils"))]
+pub use test_support::MetadosisTestSupportError;
+
 use alloy_primitives::{Bytes, B256, U256};
 use outbe_ocomp_protocol::abi::{
     OCOMP_ACTIVATION_REJECTED_SELECTOR, OCOMP_RESULT_VOTE_REJECTED_SELECTOR,
@@ -81,13 +93,14 @@ impl MetadosisError {
 
 impl From<MetadosisError> for PrecompileError {
     fn from(value: MetadosisError) -> Self {
-        let message = value.to_string();
         match value {
             MetadosisError::UnknownWorldwideDayType
             | MetadosisError::VwapMustBeNonZero
             | MetadosisError::InvalidOcompLimitSplit { .. }
             | MetadosisError::DesisLimitUnavailable { .. }
-            | MetadosisError::OcompDesisBriefHashMismatch => business_failure(message),
+            | MetadosisError::OcompDesisBriefHashMismatch => {
+                PrecompileError::Revert(format!("Metadosis business failure: {value}"))
+            }
             MetadosisError::OcompLimitReceiptMismatch
             | MetadosisError::OcompPreAdmissionNotInitialized { .. }
             | MetadosisError::OcompPreAdmissionAlreadySealed { .. }
@@ -97,36 +110,14 @@ impl From<MetadosisError> for PrecompileError {
             | MetadosisError::OcompStateVersionOverflow { .. }
             | MetadosisError::CorruptOcompPreAdmissionState { .. }
             | MetadosisError::InvalidTransitionToCompleted { .. }
-            | MetadosisError::InvalidTransitionToFailed { .. } => storage_corruption(message),
+            | MetadosisError::InvalidTransitionToFailed { .. } => {
+                PrecompileError::Revert(value.to_string())
+            }
         }
     }
 }
 
 pub type MetadosisResult<T> = std::result::Result<T, MetadosisError>;
-
-/// Reports storage corruption when persisted state violates an invariant.
-pub(crate) fn storage_corruption(message: impl std::fmt::Display) -> PrecompileError {
-    PrecompileError::Revert(message.to_string())
-}
-
-pub(crate) fn storage_corruption_message(message: impl std::fmt::Display) -> PrecompileError {
-    storage_corruption(message)
-}
-
-pub(crate) fn storage_corruption_context(
-    context: &'static str,
-    error: impl std::fmt::Display,
-) -> PrecompileError {
-    storage_corruption(format!("{context}: {error}"))
-}
-
-pub(crate) fn caller_rejection(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Revert(message.into())
-}
-
-pub(crate) fn business_failure(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::Revert(format!("Metadosis business failure: {}", message.into()))
-}
 
 pub(crate) fn is_business_failure(error: &PrecompileError) -> bool {
     matches!(error, PrecompileError::Revert(message) if message.starts_with("Metadosis business failure: "))
@@ -134,15 +125,6 @@ pub(crate) fn is_business_failure(error: &PrecompileError) -> bool {
 
 pub(crate) fn is_vwap_overflow(error: &PrecompileError) -> bool {
     matches!(error, PrecompileError::Revert(message) if message.starts_with("VWAP overflow:"))
-}
-
-pub(crate) fn owner_apply_error(error: PrecompileError) -> PrecompileError {
-    match error {
-        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
-            business_failure(format!("Lysis owner apply rejected: {error}"))
-        }
-        other => other,
-    }
 }
 
 pub(crate) fn map_vote_transition_error(error: PrecompileError) -> PrecompileError {
@@ -191,34 +173,6 @@ pub(crate) fn is_state_unavailable(error: &PrecompileError) -> bool {
             | PrecompileError::BodyReadRequestDeadline
             | PrecompileError::TreeUnavailable(_)
     )
-}
-
-pub(crate) fn malformed_result_vote_reason(error: impl std::fmt::Display) -> String {
-    format!("malformed canonical result vote: {error}")
-}
-
-pub(crate) fn record_active_miss_error(
-    participant_index: u16,
-    error: PrecompileError,
-) -> PrecompileError {
-    match error {
-        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => storage_corruption_message(
-            format!("record ACTIVE missing OCOMP validator {participant_index}: {error}"),
-        ),
-        other => other,
-    }
-}
-
-pub(crate) fn resolve_due_ocomp_recovery_error(
-    participant_index: u16,
-    error: PrecompileError,
-) -> PrecompileError {
-    match error {
-        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => storage_corruption_message(
-            format!("resolve due OCOMP recovery for participant {participant_index}: {error}"),
-        ),
-        other => other,
-    }
 }
 
 pub(crate) fn activation_rejection(code: u16) -> PrecompileError {
@@ -290,5 +244,6 @@ mod tests {
         let error: PrecompileError = MetadosisError::VwapMustBeNonZero.into();
 
         assert!(matches!(error, PrecompileError::Revert(_)));
+        assert!(is_business_failure(&error));
     }
 }

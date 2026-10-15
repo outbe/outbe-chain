@@ -16,10 +16,11 @@ use outbe_ocomp_protocol::{
     },
     profile::poc_schema_limits,
 };
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::{
+    errors::ValidatorSetError,
     hooks::{activate_boundary_atomic, BoundaryActivationInputs},
     runtime::status,
     schema::ValidatorSet,
@@ -44,9 +45,7 @@ fn test_ocomp_signing_key(identity: B256) -> Result<SigningKey> {
         }
         candidate = keccak256(candidate).0;
     }
-    Err(PrecompileError::Fatal(
-        "failed to derive deterministic test OCOMP signing key".into(),
-    ))
+    Err(ValidatorSetError::TestOcompSigningKeyDerivationFailed.into())
 }
 
 fn test_ocomp_registration(
@@ -56,7 +55,9 @@ fn test_ocomp_registration(
     genesis_hash: B256,
 ) -> Result<Vec<u8>> {
     let identity = validator_identity_hash_v1(validator, consensus_pubkey).map_err(|error| {
-        PrecompileError::Fatal(format!("cannot derive test validator identity: {error}"))
+        ValidatorSetError::CannotDeriveTestValidatorIdentity {
+            reason: error.to_string(),
+        }
     })?;
     let signing_key = test_ocomp_signing_key(identity)?;
     test_signed_ocomp_registration(
@@ -77,8 +78,11 @@ pub fn test_seeded_ocomp_registration(
     key_seed: u8,
     chain: (u64, B256),
 ) -> Result<(OcompKeyRegistrationV1, Vec<u8>)> {
-    let signing_key = SigningKey::from_bytes((&[key_seed; 32]).into())
-        .map_err(|error| PrecompileError::Fatal(format!("test OCOMP seed key: {error}")))?;
+    let signing_key = SigningKey::from_bytes((&[key_seed; 32]).into()).map_err(|error| {
+        ValidatorSetError::TestOcompSeedKeyInvalid {
+            reason: error.to_string(),
+        }
+    })?;
     test_signed_ocomp_registration(validator, consensus_pubkey, &signing_key, chain)
 }
 
@@ -92,7 +96,9 @@ fn test_signed_ocomp_registration(
     (chain_id, genesis_hash): (u64, B256),
 ) -> Result<(OcompKeyRegistrationV1, Vec<u8>)> {
     let identity = validator_identity_hash_v1(validator, consensus_pubkey).map_err(|error| {
-        PrecompileError::Fatal(format!("cannot derive test validator identity: {error}"))
+        ValidatorSetError::CannotDeriveTestValidatorIdentity {
+            reason: error.to_string(),
+        }
     })?;
     let mut registration = OcompKeyRegistrationV1 {
         core: OcompKeyRegistrationCoreV1 {
@@ -104,9 +110,7 @@ fn test_signed_ocomp_registration(
                 .to_encoded_point(true)
                 .as_bytes()
                 .try_into()
-                .map_err(|_| {
-                    PrecompileError::Fatal("test OCOMP SEC1 key is not 33 bytes".into())
-                })?,
+                .map_err(|_| ValidatorSetError::TestOcompSec1KeyWrongLength)?,
             key_epoch: POC_KEY_EPOCH,
             allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
         },
@@ -115,17 +119,23 @@ fn test_signed_ocomp_registration(
     let limits = poc_schema_limits();
     let digest = registration
         .proof_of_possession_digest(&limits)
-        .map_err(|error| PrecompileError::Fatal(format!("test OCOMP PoP digest: {error}")))?;
+        .map_err(|error| ValidatorSetError::TestOcompPopDigestFailed {
+            reason: error.to_string(),
+        })?;
     let signature: Signature = signing_key
         .sign_prehash(digest.as_slice())
-        .map_err(|error| PrecompileError::Fatal(format!("test OCOMP PoP signing: {error}")))?;
+        .map_err(|error| ValidatorSetError::TestOcompPopSigningFailed {
+            reason: error.to_string(),
+        })?;
     registration.proof_of_possession = signature
         .normalize_s()
         .unwrap_or(signature)
         .to_bytes()
         .into();
     let encoded = registration.encode_canonical(&limits).map_err(|error| {
-        PrecompileError::Fatal(format!("test OCOMP registration encode: {error}"))
+        ValidatorSetError::TestOcompRegistrationEncodeFailed {
+            reason: error.to_string(),
+        }
     })?;
     Ok((registration, encoded))
 }
@@ -139,14 +149,12 @@ pub fn admit_validator_for_boundary(
 ) -> Result<()> {
     let record = validators
         .get_validator(validator)?
-        .ok_or_else(|| PrecompileError::Revert("test validator is not registered".into()))?;
+        .ok_or(ValidatorSetError::TestValidatorNotRegistered)?;
     match record.status {
         status::REGISTERED => validators.mark_pending(validator)?,
         status::PENDING | status::ACTIVE => {}
         other => {
-            return Err(PrecompileError::Revert(format!(
-                "test boundary activation cannot admit validator status {other}"
-            )))
+            return Err(ValidatorSetError::TestBoundaryCannotAdmitStatus { status: other }.into())
         }
     }
 
@@ -156,11 +164,11 @@ pub fn admit_validator_for_boundary(
         let encoded = match validators.ocomp_registration(validator)? {
             Some(registration) => registration
                 .encode_canonical(&poc_schema_limits())
-                .map_err(|error| {
-                    PrecompileError::Fatal(format!(
-                        "stored test OCOMP registration encode: {error}"
-                    ))
-                })?,
+                .map_err(
+                    |error| ValidatorSetError::StoredTestOcompRegistrationEncodeFailed {
+                        reason: error.to_string(),
+                    },
+                )?,
             None => test_ocomp_registration(
                 validator,
                 &record.consensus_pubkey,
@@ -194,7 +202,7 @@ pub fn activate_validator_via_boundary(
         incoming.push(
             validators
                 .get_validator(validator)?
-                .ok_or_else(|| PrecompileError::Fatal("test validator disappeared".into()))?,
+                .ok_or(ValidatorSetError::TestValidatorDisappeared)?,
         );
     }
     incoming.sort_by_key(|member| member.consensus_pubkey);
@@ -258,15 +266,11 @@ impl ValidatorSet<'_> {
             self.validator_lifecycle(validator)?,
             ValidatorLifecycle::WaitingForReadiness(_)
         ) {
-            return Err(PrecompileError::Revert(format!(
-                "fixture {validator} is not PENDING before promotion"
-            )));
+            return Err(ValidatorSetError::FixtureNotPendingBeforePromotion { validator }.into());
         }
         self.activate_validator_via_boundary_for_test(validator)?;
         if !self.validator_lifecycle(validator)?.is_active_status() {
-            return Err(PrecompileError::Revert(format!(
-                "fixture {validator} is not ACTIVE after promotion"
-            )));
+            return Err(ValidatorSetError::FixtureNotActiveAfterPromotion { validator }.into());
         }
         Ok(())
     }
@@ -338,10 +342,11 @@ impl ValidatorSet<'_> {
         minimum: U256,
     ) -> Result<()> {
         if stake.bonded() < minimum {
-            return Err(PrecompileError::Revert(format!(
-                "fixture activation stake {} is below minimum {minimum}",
-                stake.bonded()
-            )));
+            return Err(ValidatorSetError::FixtureActivationStakeBelowMinimum {
+                bonded: stake.bonded(),
+                minimum,
+            }
+            .into());
         }
 
         let before = self.validator_state(address)?;
@@ -357,10 +362,10 @@ impl ValidatorSet<'_> {
             ValidatorLifecycle::Joining(joining) => state_machine::activate_at_boundary(joining),
             ValidatorLifecycle::Active(active) => active,
             lifecycle => {
-                return Err(PrecompileError::Revert(format!(
-                    "fixture activation requires a join-path lifecycle, got status {:?}",
-                    lifecycle.stored_status()
-                )));
+                return Err(ValidatorSetError::FixtureActivationRequiresJoinPath {
+                    status: lifecycle.stored_status(),
+                }
+                .into());
             }
         };
         let after = before
@@ -413,9 +418,7 @@ impl ValidatorSet<'_> {
     pub fn test_set_history(&mut self, address: Address, history: ValidatorHistory) -> Result<()> {
         let before = self.validator_state(address)?;
         if !before.is_registered() {
-            return Err(PrecompileError::Fatal(
-                "test fixture history requires a registered validator".into(),
-            ));
+            return Err(ValidatorSetError::TestFixtureHistoryRequiresRegisteredValidator.into());
         }
         let lifecycle = state_machine::with_history(before.lifecycle().clone(), history)?;
         let after = before.clone().with_lifecycle(lifecycle)?;

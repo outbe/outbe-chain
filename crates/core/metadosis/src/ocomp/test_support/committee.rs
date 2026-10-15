@@ -1,4 +1,5 @@
 use super::*;
+use crate::errors::MetadosisTestSupportError;
 
 pub(super) fn signing_key(index: u8) -> SigningKey {
     SigningKey::from_bytes((&[index + 1; 32]).into()).unwrap()
@@ -26,9 +27,8 @@ pub(crate) fn founder_registrations_for_validators(
 ) -> PrecompileResult<Vec<OcompKeyRegistrationV1>> {
     let mut registrations = Vec::with_capacity(validators.len());
     for (index, (validator, consensus_pubkey)) in validators.iter().enumerate() {
-        let index = u8::try_from(index).map_err(|_| {
-            PrecompileError::Fatal("test founder validator index exceeds u8".into())
-        })?;
+        let index = u8::try_from(index)
+            .map_err(|_| MetadosisTestSupportError::FounderValidatorIndexExceedsU8)?;
         let registration = registration_for_validator(
             index,
             (*validator, *consensus_pubkey),
@@ -139,19 +139,15 @@ pub(super) fn registration_for_validator(
             chain_id,
             genesis_hash,
             validator_identity_hash: validator_identity_hash_v1(validator, &consensus_pubkey)
-                .map_err(|error| {
-                    PrecompileError::Fatal(format!(
-                        "test founder validator identity failed: {error}"
-                    ))
-                })?,
+                .map_err(
+                    |error| MetadosisTestSupportError::FounderValidatorIdentityFailed { error },
+                )?,
             ocomp_public_key_sec1: key
                 .verifying_key()
                 .to_encoded_point(true)
                 .as_bytes()
                 .try_into()
-                .map_err(|_| {
-                    PrecompileError::Fatal("test founder OCOMP key is not 33 bytes".into())
-                })?,
+                .map_err(|_| MetadosisTestSupportError::FounderOcompKeyNot33Bytes)?,
             key_epoch: 1,
             allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
         },
@@ -161,9 +157,7 @@ pub(super) fn registration_for_validator(
         &key,
         registration
             .proof_of_possession_digest(limits)
-            .map_err(|error| {
-                PrecompileError::Fatal(format!("test founder PoP digest failed: {error}"))
-            })?,
+            .map_err(|error| MetadosisTestSupportError::FounderPopDigestFailed { error })?,
     );
     Ok(registration)
 }

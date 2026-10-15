@@ -262,5 +262,5 @@ pub fn record_settled(
 /// Internal arithmetic boundary; public bodies and projections retain ciphertext.
 pub fn calculation_amount(item: &NodItemState) -> Result<U256> {
     crate::enclave_client::read_amount(&item.encrypted)
-        .map_err(crate::errors::map_amount_read_error)
+        .map_err(|error| crate::errors::NodError::AmountReadFailed(error).into())
 }

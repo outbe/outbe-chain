@@ -303,9 +303,8 @@ impl StorageReader for OcompSnapshotStateReader<'_> {
             .storage(address, key)
             .map(|value| value.unwrap_or_default())
             .map_err(|error| {
-                outbe_primitives::error::PrecompileError::Storage(format!(
-                    "pinned OCOMP snapshot state read failed: {error}"
-                ))
+                crate::errors::NodeStorageReadError::PinnedOcompSnapshotStateReadFailed(error)
+                    .into()
             })
     }
 }

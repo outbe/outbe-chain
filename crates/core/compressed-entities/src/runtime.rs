@@ -21,6 +21,10 @@ use crate::{
     },
     body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, decode_tribute_v1,
     encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1,
+    errors::{
+        CompressedEntitiesBodyCorruptionError, CompressedEntitiesError,
+        CompressedEntitiesFatalError, StoredBodyVerificationError,
+    },
     schema::{Collection, DeltaStatus, IndexKind, IndexRecord, PendingWord},
     state::State,
     Commitment, NodBucketBodyV1, NodItemBodyV1, StoredBody, TributeBodyV1, WwdEntityId,
@@ -88,7 +92,7 @@ pub(crate) fn read(
         PendingWord::Set(commitment) => {
             charge_body_read(&storage, scope, pending_body.len())?;
             let stored = crate::decode_stored_body(&pending_body)
-                .map_err(|error| fatal(format!("invalid pending StoredBody: {error}")))?;
+                .map_err(CompressedEntitiesFatalError::InvalidPendingStoredBody)?;
             verify_stored(entity, stored, commitment, BodyOrigin::Overlay).map(Some)
         }
         PendingWord::Deleted => Ok(None),
@@ -100,11 +104,7 @@ pub(crate) fn read(
             let stored = parent
                 .get(entity)
                 .map_err(PrecompileError::from)?
-                .ok_or_else(|| {
-                    crate::errors::body_read_corruption(format!(
-                        "committed body {entity_id} is missing from finalized parent"
-                    ))
-                })?;
+                .ok_or(CompressedEntitiesBodyCorruptionError::MissingCommittedBody { entity_id })?;
             charge_body_read(&storage, scope, stored.encode().len())?;
             verify_stored(entity, stored, commitment, BodyOrigin::Parent)
                 .map(Some)
@@ -130,7 +130,7 @@ pub(crate) fn mint(
     let prepared = prepare_input(new_body)?;
     let state = State::new(storage.clone());
     if current_commitment(scope, &state, prepared.collection, prepared.entity_id)?.is_some() {
-        return Err(revert("compressed entity already exists"));
+        return Err(CompressedEntitiesError::EntityAlreadyExists.into());
     }
 
     let locator = state.prepare_body_touch(scope, prepared.collection, prepared.entity_id)?;
@@ -150,9 +150,7 @@ pub(crate) fn update(
     scope.require_active()?;
     let prepared = prepare_input(new_body)?;
     if current.entity != prepared.entity_ref() {
-        return Err(revert(
-            "compressed entity update collection or identity mismatch",
-        ));
+        return Err(CompressedEntitiesError::UpdateCollectionOrIdentityMismatch.into());
     }
     let state = State::new(storage.clone());
     require_capability_current(scope, &state, &current)?;
@@ -209,7 +207,8 @@ pub(crate) fn list(
 }
 
 fn calculate_commitment(entity_id: WwdEntityId, payload: &[u8]) -> Result<Commitment> {
-    body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, entity_id, payload).map_err(fatal)
+    body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, entity_id, payload)
+        .map_err(|err| CompressedEntitiesFatalError::from(err).into())
 }
 
 fn current_commitment(
@@ -225,7 +224,7 @@ fn current_commitment(
         }
         PendingWord::Set(value) => {
             let stored = crate::decode_stored_body(&body)
-                .map_err(|error| fatal(format!("invalid pending StoredBody: {error}")))?;
+                .map_err(CompressedEntitiesFatalError::InvalidPendingStoredBody)?;
             verify_stored(
                 entity_from_parts(collection, entity_id),
                 stored,
@@ -245,10 +244,10 @@ fn require_capability_current(
 ) -> Result<()> {
     let (collection, entity_id) = entity_parts(current.entity);
     match current_commitment(scope, state, collection, entity_id)? {
-        None => Err(revert("compressed entity is absent")),
-        Some(actual) if actual != current.commitment => Err(revert(
-            "verified body capability no longer matches current value",
-        )),
+        None => Err(CompressedEntitiesError::EntityAbsent.into()),
+        Some(actual) if actual != current.commitment => {
+            Err(CompressedEntitiesError::CapabilityStale.into())
+        }
         Some(_) => Ok(()),
     }
 }
@@ -280,7 +279,7 @@ fn memberships_for_verified(body: &VerifiedBody) -> Result<Vec<IndexRecord>> {
     } else if body.payload.as_nod_bucket().is_some() || body.payload.as_gem_bucket().is_some() {
         Ok(Vec::new())
     } else {
-        Err(fatal("verified payload has no typed variant"))
+        Err(CompressedEntitiesFatalError::VerifiedPayloadMissingVariant.into())
     }
 }
 
@@ -425,7 +424,8 @@ fn charge_body_read(
     scope: &ExecutionScope,
     bytes: usize,
 ) -> Result<()> {
-    let bytes = u64::try_from(bytes).map_err(|_| fatal("body length exceeds gas range"))?;
+    let bytes = u64::try_from(bytes)
+        .map_err(|_| CompressedEntitiesFatalError::BodyLengthExceedsGasRange)?;
     scope.deduct_explicit_gas(
         storage,
         READ_FIXED_GAS.saturating_add(READ_GAS_PER_CANONICAL_BYTE.saturating_mul(bytes)),
@@ -436,10 +436,6 @@ fn commitment_b256(value: Option<Commitment>) -> B256 {
     value.map_or(B256::ZERO, |commitment| B256::from(*commitment.as_bytes()))
 }
 
-fn input_error(error: impl core::fmt::Display) -> PrecompileError {
-    revert(error)
-}
-
 #[derive(Clone, Copy, Debug)]
 enum BodyOrigin {
     Overlay,
@@ -447,18 +443,18 @@ enum BodyOrigin {
 }
 
 impl BodyOrigin {
-    fn invalid(self, message: impl core::fmt::Display) -> PrecompileError {
+    const fn as_str(self) -> &'static str {
         match self {
-            Self::Overlay => fatal(message),
-            Self::Parent => crate::errors::body_read_corruption(message),
+            Self::Overlay => "Overlay",
+            Self::Parent => "Parent",
         }
     }
-}
 
-fn fatal(message: impl core::fmt::Display) -> PrecompileError {
-    crate::errors::fatal_error(message)
-}
-
-fn revert(message: impl core::fmt::Display) -> PrecompileError {
-    crate::errors::revert_error(message)
+    fn invalid(self, error: impl Into<StoredBodyVerificationError>) -> PrecompileError {
+        let message = error.into().to_string();
+        match self {
+            Self::Overlay => PrecompileError::Fatal(message),
+            Self::Parent => PrecompileError::BodyReadCorruption(message),
+        }
+    }
 }
