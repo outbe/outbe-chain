@@ -419,7 +419,7 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
 }
 
 #[test]
-fn output_finalize_commits_nominal_once_per_shard_and_checks_overflow() {
+fn output_finalize_carries_the_shard_nominal_total() {
     let day = WorldwideDay::new(20_260_724);
     let make_record = |seed: u8| {
         let owner = Address::repeat_byte(seed);
@@ -435,13 +435,12 @@ fn output_finalize_commits_nominal_once_per_shard_and_checks_overflow() {
             reference_currency: 978,
         }
     };
-    let run = |nominals: [U256; 2]| {
+    let run = |nominal_total: U256| {
         let mut ordered_records = vec![make_record(1), make_record(2)];
         ordered_records.sort_by_key(|record| record.tribute_id);
         for (ordinal, record) in ordered_records.iter_mut().enumerate() {
             record.raw_ordinal = u32::try_from(ordinal).unwrap();
         }
-        let nominal_total = nominals[0].saturating_add(nominals[1]);
         AmountRunV1 {
             start_ordinal: 0,
             end_ordinal: 2,
@@ -458,7 +457,7 @@ fn output_finalize_commits_nominal_once_per_shard_and_checks_overflow() {
         first_error_ordinal: None,
     };
 
-    let finalized = output_finalize(&run([U256::from(7), U256::from(11)]), &prefix).unwrap();
+    let finalized = output_finalize(&run(U256::from(18)), &prefix).unwrap();
     assert_eq!(finalized.checked_tribute_nominal_total, U256::from(18));
     let limits = poc_schema_limits();
     let encoded = encode_finalized_output_run(&finalized, &limits).unwrap();
