@@ -137,9 +137,12 @@ jobs:
           test "$(jq -r '.config | has("teeAttestationV1")' "${genesis_path}")" = false
           echo "GENESIS_PATH=${genesis_path}" >> "${GITHUB_ENV}"
 
-      - name: Deny warnings in every release-compiled Rust entrypoint
+      - name: Deny warnings in release hardware e2e entrypoints
         run: |
           set -euo pipefail
+          # The production ELF matrix and xtask are compiled by the following
+          # release-flow steps. Only these hardware e2e binaries otherwise lack
+          # compile coverage in preflight.
           # Native DCAP is a property of the pinned production builder, not of
           # whichever self-hosted runner happens to accept this job.
           docker buildx build --load \
@@ -166,11 +169,6 @@ jobs:
             "${PREFLIGHT_TOOLCHAIN_IMAGE}" \
             bash -c '
               set -euo pipefail
-              python3 scripts/release/reproducible_build_inputs.py \
-                --build-spec release/reproducible-elf-build-v1.json \
-                --repo-root . \
-                --execute-artifact-check-plan
-              cargo check --locked --release --package xtask --bin xtask
               cargo check --locked --release --package outbe-e2e-harness \
                 --features release-sgx-e2e --bin outbe-release-sgx-e2e
               cargo check --locked --release --package outbe-e2e-harness \
