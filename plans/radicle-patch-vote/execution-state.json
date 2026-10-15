@@ -5,7 +5,7 @@
   "last_periodic_report_utc": "2026-10-15T22:16:00Z",
   "next_periodic_report_due_utc": "2026-10-15T22:46:00Z",
   "period_minutes": 30,
-  "stage": "P3 native Review package reconstruction/independent verification and pinned Git closure before typed signing job verified; actual attestation actor/guard wiring, protected UDS/collector/journal/bootstrap/Merge/E2E incomplete",
+  "stage": "P3 complete Review package verification and fresh local identity attestation path verified; durable collector job/slot journal, protected UDS/distributed collector/bootstrap/Merge/E2E incomplete",
   "decision_gate": {
     "id": "D1",
     "status": "historical_approval_request_withdrawn; no active user approval question",
@@ -37,7 +37,7 @@
     "user_confirmation": "\u0434\u0430 \u0432\u0441\u0435 \u0432\u0441\u0435\u0440\u043d\u043e, goal \u043c\u043e\u0436\u043d\u043e \u0441\u043d\u0438\u043c\u0430\u0442\u044c \u0441 \u043f\u0430\u0443\u0437\u044b ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "57a4aac883529227227315c148d2589df32c1eef",
+  "source_sha": "7ba8dfe03688a17a93cabd0aa59777999f616e43",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -56,7 +56,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "57a4aac88: actual pinned Git closure before checkpoint-bound partial-signing job, deterministic complete Review package body/native object type/OID/SHA256/refs manifest reconstruction, separate q witness verification on independent Git storage and sealed current publication proof guard. No native wire/git.rs/fetch-gate/D2.",
+  "current_source_changes": "7ba8dfe03: bounded same-process Review publication attestation accepts sealed verified package, rereads current finalized permission/checkpoint/material, authenticates local effective participant and signs fixed OPB1 under separate publication namespace. Previous57a4aac88 complete native Review package/pinned closure retained. No native wire/git.rs/fetch-gate/D2.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -82,10 +82,10 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "57a4aac883529227227315c148d2589df32c1eef",
+    "source_sha": "7ba8dfe03688a17a93cabd0aa59777999f616e43",
     "checks": "50 full adapter lib tests/0 ignored;7 consumer all-target checks;adapter scopedClippy -D warnings;scopedfmt PASS",
-    "acceptance": "Intermediate P3/P6 only; no full-AC acceptance/closure/reviewer PASS. Actual publication attestation wiring, protected UDS/live collector protocol and production E2E incomplete.",
-    "scenarios": "Distinct Git storage with copied ODB/public-only material rejects missing approved blob; after delivery verifies both012/123 Review packages. Type/SHA/missing/extra pinned/unapproved-object/refs/snapshot/sequence/anchor substitutions reject. Current proof guard rejects consumed/changed/stale observations; fresh material on newer observation preserves same package. Gitlink external repo remains valid. No normal network replication/live checkpoint; graph worker budgets unmeasured."
+    "acceptance": "Intermediate P3/P6 only; no full-AC acceptance/closure/reviewer PASS. Durable job/slot selection, protected UDS/distributed collector/live checkpoint and production E2E incomplete.",
+    "scenarios": "Four actual local actors attest the verified native package with8 fresh state reads each; outsider,changed approval/stage/checkpoint,missing reader,wrong output generation,publisher withdrawal reject. Real MinPk signatures verify only publication namespace; actual4-entry carrier roundtrip. Fixture authority readers/NoSend; no live epoch/checkpoint/normal replication. No Share needed for additional identity attestation."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
@@ -95,7 +95,8 @@
   "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing",
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
-  "last_goal_turn_classification": "progress: source57a4aac88 implements and tests exact native Review package validation and dependency closure before typed signing; frozen evidence and live Beads status recorded; no decision pending/task closure",
-  "next_required_work": "Connect verified Review publication to fresh local identity attestation path, then protected typed node/sidecar transport and collector/journal per P3/P6. Preserve approved full P0-P8 end state and gates.",
-  "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package"
+  "last_goal_turn_classification": "progress: source57a4aac88 complete native Review package/pinned closure and7ba8dfe03 fresh local identity-attestation path implemented; exact source/spec evidence recorded; no decision pending/task closure",
+  "next_required_work": "Implement protected typed node/sidecar transport and durable collector job/slot journal/scheduling per P3/P6; then distributed collection/checkpoint installation/normal announcement,automatic bootstrap,separate Merge/E2E. Preserve approved P0-P8 scope and decision/acceptance gates.",
+  "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
+  "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation"
 }
