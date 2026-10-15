@@ -7,11 +7,10 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_sol_types::SolCall;
 use cucumber::{then, when};
 use eyre::{ensure, eyre, Result};
+#[cfg(test)]
 use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
-use outbe_primitives::reshare_artifact::{decode_outbe_block_artifacts, ConsensusHeaderArtifact};
 use serde::Serialize;
 use serde_json::{json, Value};
 
