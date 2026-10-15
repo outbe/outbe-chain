@@ -182,6 +182,17 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
     }),
   );
 
+  server.tool(
+    "credis_by_owner",
+    "Credis an address owns, decoded like credis_get without metadata.",
+    { owner: address },
+    handler(async ({ owner }) => {
+      const ids = await ownedTokenIds(ctx, "credis", owner);
+      const credis = await Promise.all(ids.map((id) => view(ctx, "credis", "getCredis", [id])));
+      return ok({ owner, count: credis.length, credis });
+    }),
+  );
+
   // --- Balances --------------------------------------------------------------
   server.tool(
     "gratis_balance",

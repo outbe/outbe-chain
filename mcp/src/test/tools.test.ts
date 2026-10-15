@@ -270,6 +270,7 @@ const SCENARIOS: Case[] = [
   ["cca_unbonded_claim", {}],
   ["credis_reservation_return", { reservation_id: "5" }],
   ["fidelity_index", {}],
+  ["credis_by_owner", { owner: OTHER }],
 ];
 
 /** Replaces both randomness sources the offer encryption draws from with a counter. */
