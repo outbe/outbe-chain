@@ -152,21 +152,10 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             },
         );
 
-        // Mirror production: the price and league snapshots are built in the active CE phase
+        // Mirror production: the league snapshot is built in the active CE phase
         // (process_ocomp_ready_candidate) before the post-seal terminal request.
-        outbe_lysis::api::freeze_entry_price_snapshot(storage.clone(), wwd, prepare_time).unwrap();
         metadosis
             .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
-            .unwrap();
-
-        // The request is delayed across UTC midnight; newer daily and current
-        // prices must not replace the preparation snapshot.
-        oracle
-            .record_utc_day_vwap(
-                previous_date_key(timestamp_to_date_key(block_time)),
-                usd_index,
-                U256::from(700_000),
-            )
             .unwrap();
 
         end_block(storage.clone(), &scope).unwrap();
@@ -175,18 +164,6 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             storage.clone(),
         );
         run_terminal_request(&ctx, &scope).unwrap();
-        assert!(NodContract::new(storage.clone())
-            .entry_prices_frozen
-            .read(&wwd)
-            .unwrap());
-        assert_eq!(
-            NodContract::new(storage.clone())
-                .entry_price_minor
-                .get_nested(&wwd)
-                .read(&840)
-                .unwrap(),
-            U256::from(250_000)
-        );
 
         let metadosis = MetadosisContract::new(storage.clone());
         let fsm = metadosis
@@ -1224,7 +1201,6 @@ fn prepare_request_fixture_with_day_type(
         metadosis
             .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
             .unwrap();
-        outbe_lysis::api::freeze_entry_price_snapshot(storage.clone(), wwd, block_time).unwrap();
         end_block(storage, &scope).unwrap();
     });
 
@@ -1326,8 +1302,6 @@ fn prepare_ready_days_fixture(
             metadosis
                 .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
                 .unwrap();
-            outbe_lysis::api::freeze_entry_price_snapshot(storage.clone(), wwd, block_time)
-                .unwrap();
         }
         end_block(storage, &scope).unwrap();
     });
@@ -1349,7 +1323,6 @@ struct RequestObservables {
     desis_stage: u8,
     desis_limit_minor: U256,
     nod_supply: u64,
-    nod_prices_frozen: bool,
     tribute_supply: u64,
     tribute_pre_admission: outbe_tribute::TributePreAdmissionProjection,
 }
@@ -1375,10 +1348,6 @@ fn request_observables(
             .read(&wwd)
             .unwrap(),
         nod_supply: NodContract::new(storage.clone()).total_supply().unwrap(),
-        nod_prices_frozen: NodContract::new(storage.clone())
-            .entry_prices_frozen
-            .read(&wwd)
-            .unwrap(),
         tribute_supply: TributeContract::new(storage.clone())
             .total_supply()
             .unwrap(),
@@ -1459,7 +1428,6 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
             .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
             .unwrap();
 
-        outbe_lysis::api::freeze_entry_price_snapshot(storage.clone(), wwd, block_time).unwrap();
         end_block(storage.clone(), &scope).unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(block_number, block_time, chain::CHAIN_ID),

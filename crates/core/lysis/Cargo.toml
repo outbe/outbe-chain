@@ -9,13 +9,13 @@ publish.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-primitives.workspace = true
 outbe-nod.workspace = true
-outbe-oracle.workspace = true
 outbe-ocomp-protocol.workspace = true
 alloy-primitives.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 hex.workspace = true
+outbe-oracle.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
