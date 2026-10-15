@@ -51,7 +51,7 @@ pub type PatchStream<'a> = cob::stream::Stream<'a, Action>;
 impl<'a> PatchStream<'a> {
     pub fn init(patch: PatchId, store: &'a storage::git::Repository) -> Self {
         let history = cob::stream::CobRange::new(&TYPENAME, &patch);
-        Self::new(&store.backend, history, TYPENAME.clone())
+        Self::new(store, history, TYPENAME.clone())
     }
 }
 

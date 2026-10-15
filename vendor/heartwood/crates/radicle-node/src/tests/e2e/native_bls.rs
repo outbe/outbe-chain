@@ -3,6 +3,7 @@ use blst::min_sig;
 use radicle::cob::identity::{self, Identity};
 use radicle::cob::patch::{self, Patch, Patches, Verdict};
 use radicle::cob::store::Transaction;
+use radicle::cob::stream::CobStream as _;
 use radicle::crypto::{BlsEnvelope, BlsPublicKey, RepositoryKey, RepositorySubject};
 use radicle::identity::{Doc, Project, RepoId, Visibility};
 use radicle::storage::git::Repository;
@@ -282,6 +283,23 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
     assert_eq!(accepted.id(), review.id.into());
     assert!(reopened.validate().unwrap().is_empty());
     assert_eq!(reopened.remote(&owner).unwrap().refs.at, at);
+    let operations = patch::PatchStream::init(patch_id, &reopened)
+        .all()
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(
+        operations
+            .iter()
+            .any(|op| op.id == review.id && op.author == owner)
+    );
+    let identity_ops = identity::IdentityStream::init(identity.into(), &reopened)
+        .all()
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(identity_ops.len(), 1);
+    assert_eq!(identity_ops[0].author, owner);
     println!(
         "repo={rid} owner={owner} identity={identity} patch={patch_id} revision={revision} review={} sigrefs={at} source_transport={} receiver_transport={}",
         review.id, alice.id, bob.id

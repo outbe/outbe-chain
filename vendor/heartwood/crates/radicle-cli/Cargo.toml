@@ -68,6 +68,7 @@ radicle-windows = { workspace = true }
 winsplit = { workspace = true }
 
 [dev-dependencies]
+blst = { workspace = true }
 radicle = { workspace = true, features = ["test"] }
 radicle-cli-test = { workspace = true }
 radicle-localtime = { workspace = true }

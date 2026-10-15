@@ -43,7 +43,7 @@ pub type IdentityStream<'a> = cob::stream::Stream<'a, Action>;
 impl<'a> IdentityStream<'a> {
     pub fn init(identity: ObjectId, store: &'a storage::git::Repository) -> Self {
         let history = cob::stream::CobRange::new(&TYPENAME, &identity);
-        Self::new(&store.backend, history, TYPENAME.clone())
+        Self::new(store, history, TYPENAME.clone())
     }
 }
 

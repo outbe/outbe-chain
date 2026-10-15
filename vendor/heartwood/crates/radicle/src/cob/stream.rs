@@ -8,8 +8,8 @@ use std::marker::PhantomData;
 
 use serde::Deserialize;
 
-use crate::git;
 use crate::git::Oid;
+use crate::storage::git::Repository;
 
 use super::{ObjectId, Op, TypeName};
 
@@ -93,16 +93,16 @@ impl HasRoot for CobRange {
 ///
 /// To construct a `Stream`, use [`Stream::new`].
 pub struct Stream<'a, A> {
-    repo: &'a git::raw::Repository,
+    repo: &'a Repository,
     range: CobRange,
     typename: TypeName,
     marker: PhantomData<A>,
 }
 
 impl<'a, A> Stream<'a, A> {
-    /// Construct a new stream providing the underlying `repo`, a [`CobRange`],
-    /// and the [`TypeName`] of the COB that is being streamed.
-    pub fn new(repo: &'a git::raw::Repository, range: CobRange, typename: TypeName) -> Self {
+    /// Construct a stream using the repository's native signature and publication
+    /// verifier, a [`CobRange`], and the COB's [`TypeName`].
+    pub fn new(repo: &'a Repository, range: CobRange, typename: TypeName) -> Self {
         Self {
             repo,
             range,
@@ -128,8 +128,9 @@ where
 
     fn all(&self) -> Result<Self::Iter, error::Stream> {
         Ok(OpsIter::new(
+            self.repo,
             Walk::from(self.range.clone())
-                .iter(self.repo)
+                .iter(&self.repo.backend)
                 .map_err(error::Stream::new)?,
             self.typename.clone(),
         ))
@@ -137,9 +138,10 @@ where
 
     fn since(&self, oid: Oid) -> Result<Self::Iter, error::Stream> {
         Ok(OpsIter::new(
+            self.repo,
             Walk::from(self.range.clone())
                 .since(oid)
-                .iter(self.repo)
+                .iter(&self.repo.backend)
                 .map_err(error::Stream::new)?,
             self.typename.clone(),
         ))
@@ -147,9 +149,10 @@ where
 
     fn until(&self, oid: Oid) -> Result<Self::Iter, error::Stream> {
         Ok(OpsIter::new(
+            self.repo,
             Walk::from(self.range.clone())
                 .until(oid)
-                .iter(self.repo)
+                .iter(&self.repo.backend)
                 .map_err(error::Stream::new)?,
             self.typename.clone(),
         ))
@@ -157,8 +160,9 @@ where
 
     fn range(&self, from: Oid, until: Oid) -> Result<Self::Iter, error::Stream> {
         Ok(OpsIter::new(
+            self.repo,
             Walk::new(from, until.into())
-                .iter(self.repo)
+                .iter(&self.repo.backend)
                 .map_err(error::Stream::new)?,
             self.typename.clone(),
         ))
@@ -178,12 +182,150 @@ mod tests {
     use crate::crypto::SigningKey;
     use crate::test::arbitrary;
     use crate::test::arbitrary::r#gen;
-    use crate::{cob, test};
+    use crate::{cob, git, test};
 
     use super::*;
 
     fn typename() -> TypeName {
         "xyz.radicle.test".parse::<TypeName>().unwrap()
+    }
+
+    #[test]
+    fn native_stream_uses_repository_policy_for_each_requested_range() {
+        use crate::crypto::{BlsEnvelope, RepositoryKey, Signer as _};
+        use crate::storage::WriteStorage as _;
+        use crate::storage::publication::{
+            self, EntryAuthorization, EntryRequest, PublicationPolicy,
+        };
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        #[derive(Debug)]
+        struct Deny(Arc<AtomicUsize>);
+        impl PublicationPolicy for Deny {
+            fn id(&self) -> &str {
+                "test.native-stream"
+            }
+            fn authorize_entry(
+                &self,
+                _: &EntryRequest,
+            ) -> Result<EntryAuthorization, publication::Error> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Err(publication::Error::Denied)
+            }
+        }
+        let vectors: json::Value = json::from_str(include_str!(
+            "../../../radicle-crypto/src/repository/vectors.json"
+        ))
+        .unwrap();
+        let envelope =
+            BlsEnvelope::from_hex(vectors["vectors"][1]["envelope"].as_str().unwrap()).unwrap();
+        let rid = vectors["repo"]
+            .as_str()
+            .unwrap()
+            .parse::<Oid>()
+            .unwrap()
+            .into();
+        let temp = tempfile::tempdir().unwrap();
+        let signer = SigningKey::mock(42);
+        let storage = crate::Storage::open(
+            temp.path(),
+            git::UserInfo {
+                alias: crate::node::Alias::new("transport"),
+                key: *signer.public_key(),
+            },
+        )
+        .unwrap();
+        let checks = Arc::new(AtomicUsize::new(0));
+        storage
+            .manage_repository(
+                rid,
+                RepositoryKey::from(envelope.key()),
+                Arc::new(Deny(Arc::clone(&checks))),
+            )
+            .unwrap();
+        let repo = storage.create(rid).unwrap();
+        let author = "Outbe Network <network@outbe.invalid> 1700000000 +0000"
+            .parse::<radicle_git_metadata::author::Author>()
+            .unwrap();
+        let prepared = cob::prepare_native(&repo.backend, None, vec![], cob::change::Template {
+            type_name: crate::cob::patch::TYPENAME.clone(), tips: vec![], message: "Accept patch\n".into(), embeds: vec![],
+            contents: NonEmpty::new(br#"{"revision":"3333333333333333333333333333333333333333","type":"review","verdict":"accept"}"#.to_vec()),
+        }, author.clone(), author).unwrap();
+        let context: [u8; 32] = vectors["vectors"][1]["context"]
+            .as_str()
+            .unwrap()
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+        let entry = cob::attach_native(
+            &repo.backend,
+            prepared,
+            rid.into_sha1().unwrap(),
+            context,
+            &envelope,
+        )
+        .unwrap();
+        assert!(entry.valid_signatures());
+        let stream = Stream::<json::Value>::new(
+            &repo,
+            CobRange {
+                root: entry.id,
+                until: entry.id.into(),
+            },
+            crate::cob::patch::TYPENAME.clone(),
+        );
+        for mut range in [
+            stream.all().unwrap(),
+            stream.since(entry.id).unwrap(),
+            stream.until(entry.id).unwrap(),
+            stream.range(entry.id, entry.id).unwrap(),
+        ] {
+            let err = range.next().unwrap().unwrap_err();
+            let error::Ops::Load {
+                source: cob::op::LoadError::Load { source, .. },
+            } = err
+            else {
+                panic!("expected policy-aware load error: {err:?}")
+            };
+            assert!(matches!(
+                source.downcast_ref::<crate::storage::git::cob::LoadError>(),
+                Some(crate::storage::git::cob::LoadError::Publication(
+                    publication::Error::Denied
+                ))
+            ));
+        }
+        assert_eq!(checks.load(Ordering::SeqCst), 4);
+        let ordinary = create_entry(
+            &repo.backend,
+            &signer,
+            create_contents(std::iter::once("author before approval".into())),
+            None,
+        );
+        let stream = Stream::<json::Value>::new(
+            &repo,
+            CobRange {
+                root: ordinary.id,
+                until: ordinary.id.into(),
+            },
+            typename(),
+        );
+        let ordinary_ops = stream
+            .all()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(ordinary_ops.len(), 1);
+        assert_eq!(
+            ordinary_ops[0].author,
+            RepositoryKey::from(signer.public_key())
+        );
+        assert_eq!(checks.load(Ordering::SeqCst), 4);
     }
 
     fn gen_ops(repo: &git::raw::Repository, signer: &SigningKey) -> Vec<cob::Entry> {
@@ -338,6 +480,7 @@ mod tests {
             root: ops.first().unwrap().id,
             until: ops.last().unwrap().id.into(),
         };
+        let repo = Repository::open(repo.path(), Oid::from_sha1([42; 20]).into()).unwrap();
         let stream = Stream::<json::Value>::new(&repo, history, typename());
         prop_all_from(&stream)
     }
@@ -353,6 +496,7 @@ mod tests {
             root: ops.first().unwrap().id,
             until: tip.into(),
         };
+        let repo = Repository::open(repo.path(), Oid::from_sha1([42; 20]).into()).unwrap();
         let stream = Stream::<json::Value>::new(&repo, history, typename());
         prop_all_until(&stream, tip)
     }
@@ -368,6 +512,7 @@ mod tests {
             root: ops.first().unwrap().id,
             until: tip.into(),
         };
+        let repo = Repository::open(repo.path(), Oid::from_sha1([42; 20]).into()).unwrap();
         let stream = Stream::<json::Value>::new(&repo, history, typename());
         prop_all_from_until(&stream, tip)
     }
@@ -391,6 +536,7 @@ mod tests {
         } else {
             (ops[y].id, ops[x].id)
         };
+        let repo = Repository::open(repo.path(), Oid::from_sha1([42; 20]).into()).unwrap();
         let stream = Stream::<json::Value>::new(&repo, history, typename());
         prop_from_until(&stream, from, until)
     }
@@ -425,6 +571,7 @@ mod tests {
             root: op1.id,
             until: op3.id.into(),
         };
+        let repo = Repository::open(repo.path(), Oid::from_sha1([42; 20]).into()).unwrap();
         let stream = Stream::<json::Value>::new(&repo, history, typename());
         eprintln!("Op 1: {}", op1.id);
         eprintln!("Op 2: {}", op2.id);

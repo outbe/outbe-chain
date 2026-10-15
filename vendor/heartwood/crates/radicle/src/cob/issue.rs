@@ -38,7 +38,7 @@ pub type IssueStream<'a> = cob::stream::Stream<'a, Action>;
 impl<'a> IssueStream<'a> {
     pub fn init(issue: IssueId, store: &'a storage::git::Repository) -> Self {
         let history = cob::stream::CobRange::new(&TYPENAME, &issue);
-        Self::new(&store.backend, history, TYPENAME.clone())
+        Self::new(store, history, TYPENAME.clone())
     }
 }
 
