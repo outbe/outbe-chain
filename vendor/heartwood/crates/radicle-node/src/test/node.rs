@@ -474,13 +474,14 @@ impl Node {
 
         let listen = vec![(Ipv4Addr::LOCALHOST, 0).into()];
         let (_, signals) = mpsc::sync_channel(1);
-        let rt = Runtime::init(
+        let rt = Runtime::init_with_storage(
             self.home.clone(),
             self.config,
             self.home.socket_default(),
             listen,
             signals,
             self.secret_key.clone(),
+            self.storage.clone(),
         )
         .unwrap();
 

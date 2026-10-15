@@ -403,6 +403,14 @@ impl DerefMut for Validations {
 /// `rad/sigrefs` contents and the identity of the repository.
 #[derive(Debug, Error)]
 pub enum Validation {
+    #[error("invalid native COB at `refs/namespaces/{remote}/{refname}` ({oid}): {source}")]
+    NativeCob {
+        remote: RemoteId,
+        refname: RefString,
+        oid: Oid,
+        #[source]
+        source: cob::UpdateError,
+    },
     #[error("found unsigned ref `{0}`")]
     UnsignedRef(RefString),
     #[error("expected `refs/namespaces/{remote}/{refname}` at {expected} but found {actual}")]
@@ -436,6 +444,35 @@ pub enum Validation {
 }
 
 impl Repository {
+    /// Validate an actual native COB target before its ref is promoted.
+    pub fn validate_native_cob(
+        &self,
+        remote: RemoteId,
+        refname: &RefString,
+        oid: Oid,
+    ) -> Option<Validation> {
+        if !refname.as_str().starts_with("refs/cobs/") {
+            return None;
+        }
+        let verified = (|| -> Result<(), cob::UpdateError> {
+            let commit = self.backend.find_commit(oid.into())?;
+            if commit
+                .raw_header_bytes()
+                .split(|b| *b == b'\n')
+                .any(|line| line.starts_with(b"radicle-bls-sig"))
+            {
+                cob::verify_update(self, &self.backend, oid)?;
+            }
+            Ok(())
+        })();
+        verified.err().map(|source| Validation::NativeCob {
+            remote,
+            refname: refname.clone(),
+            oid,
+            source,
+        })
+    }
+
     /// Open an existing repository.
     pub fn open<P: AsRef<Path>>(path: P, id: RepoId) -> Result<Self, RepositoryError> {
         let backend = git::raw::Repository::open_ext(
@@ -708,6 +745,9 @@ impl ValidateRepository for Repository {
             if refname == refs::SIGREFS_BRANCH.to_ref_string() {
                 has_sigrefs = true;
                 continue;
+            }
+            if let Some(failure) = self.validate_native_cob(remote.id(), &refname, oid) {
+                failures.push(failure);
             }
             if let Some(signed_oid) = signed.remove(&refname) {
                 if oid != signed_oid {

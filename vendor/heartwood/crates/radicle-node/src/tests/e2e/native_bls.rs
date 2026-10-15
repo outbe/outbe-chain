@@ -5,12 +5,54 @@ use radicle::cob::patch::cache::Patches as _;
 use radicle::cob::patch::{self, Patch, Patches, Verdict};
 use radicle::cob::store::Transaction;
 use radicle::cob::stream::CobStream as _;
-use radicle::crypto::{BlsEnvelope, BlsPublicKey, RepositoryKey, RepositorySubject};
+use radicle::crypto::{BlsEnvelope, BlsPublicKey, RepositoryKey, RepositorySubject, SubjectKind};
 use radicle::identity::{Doc, Project, RepoId, Visibility};
 use radicle::storage::git::Repository;
 use radicle::storage::publication::{self, EntryAuthorization, EntryRequest, PublicationPolicy};
 use radicle::storage::refs::SIGREFS_BRANCH;
 use radicle::storage::refs::sigrefs::{git::Committer, write::PreparedSignedRefs};
+
+#[derive(Debug)]
+struct Receipts {
+    context: [u8; 32],
+    entries: std::sync::Mutex<Vec<(git::Oid, SubjectKind)>>,
+}
+
+impl Receipts {
+    fn new(context: [u8; 32]) -> Self {
+        Self {
+            context,
+            entries: Default::default(),
+        }
+    }
+    fn accept(&self, entry: git::Oid, kind: SubjectKind) {
+        self.entries.lock().unwrap().push((entry, kind));
+    }
+}
+
+impl PublicationPolicy for Receipts {
+    fn id(&self) -> &str {
+        "test.exact-receipts"
+    }
+    fn authorize_entry(
+        &self,
+        request: &EntryRequest,
+    ) -> Result<EntryAuthorization, publication::Error> {
+        if !self
+            .entries
+            .lock()
+            .unwrap()
+            .contains(&(request.entry, request.kind))
+        {
+            return Err(publication::Error::Denied);
+        }
+        Ok(EntryAuthorization::accepted(
+            request.clone(),
+            self.context,
+            [17; 32],
+        ))
+    }
+}
 
 fn sign(key: &min_sig::SecretKey, subject: RepositorySubject) -> BlsEnvelope {
     let mut message = vec![25];
@@ -43,6 +85,7 @@ fn attach(
     resource: Option<git::Oid>,
     tips: Vec<git::Oid>,
     key: &min_sig::SecretKey,
+    context: [u8; 32],
 ) -> cob::Entry {
     let prepared = tx
         .prepare_native(
@@ -57,7 +100,7 @@ fn attach(
         key,
         RepositorySubject::cob(
             repo.id().into_sha1().unwrap(),
-            [0; 32],
+            context,
             prepared.tree(),
             prepared.as_bytes(),
         ),
@@ -66,7 +109,7 @@ fn attach(
         repo.raw(),
         prepared,
         repo.id().into_sha1().unwrap(),
-        [0; 32],
+        context,
         &signature,
     )
     .unwrap()
@@ -77,12 +120,13 @@ fn signed_refs(
     owner: RepositoryKey,
     key: &min_sig::SecretKey,
     previous: Option<git::Oid>,
+    context: [u8; 32],
 ) -> git::Oid {
     let prepared = PreparedSignedRefs::new(
         repo.references_of(&owner).unwrap(),
         repo.id(),
         owner,
-        [0; 32],
+        context,
         previous,
         metadata(),
         "Update signed refs\n".into(),
@@ -182,6 +226,15 @@ fn assert_cached_patch(
 
 #[test_log::test]
 fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
+    fetch_native_repository(false);
+}
+
+#[test_log::test]
+fn managed_runtime_nodes_require_receipts_for_bls_owner_but_not_ed_patch() {
+    fetch_native_repository(true);
+}
+
+fn fetch_native_repository(managed: bool) {
     #[derive(Debug)]
     struct MissingReceipts;
     impl PublicationPolicy for MissingReceipts {
@@ -198,7 +251,10 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
     let tmp = tempfile::tempdir().unwrap();
     let mut alice = Node::init(tmp.path(), config::relay("bls-source"), 13);
     let bob = Node::init(tmp.path(), config::relay("bls-receiver"), 37);
-    let guarded = Node::init(tmp.path(), config::relay("managed-receiver"), 57);
+    let mut guarded = Node::init(tmp.path(), config::relay("managed-receiver"), 57);
+    let context = if managed { [3; 32] } else { [0; 32] };
+    let source_receipts = std::sync::Arc::new(Receipts::new(context));
+    let receiver_receipts = std::sync::Arc::new(Receipts::new(context));
     let key = min_sig::SecretKey::key_gen(&[73; 32], &[]).unwrap();
     let owner = RepositoryKey::from(BlsPublicKey::from_bytes(key.sk_to_pk().to_bytes()).unwrap());
     let doc = Doc::initial(
@@ -218,10 +274,21 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
         .manage_repository(rid, owner, std::sync::Arc::new(MissingReceipts))
         .unwrap();
     assert!(!guarded.storage.contains(&rid).unwrap());
+    let info = guarded.storage.info().clone();
+    guarded.storage = radicle::Storage::open(guarded.storage.path(), info).unwrap();
+    if managed {
+        alice
+            .storage
+            .manage_repository(rid, owner, source_receipts.clone())
+            .unwrap();
+        bob.storage
+            .manage_repository(rid, owner, receiver_receipts.clone())
+            .unwrap();
+    }
     let repo = alice.storage.create(rid).unwrap();
     let signature = sign(
         &key,
-        RepositorySubject::identity(rid.into_sha1().unwrap(), [0; 32], blob.into_sha1().unwrap()),
+        RepositorySubject::identity(rid.into_sha1().unwrap(), context, blob.into_sha1().unwrap()),
     );
     let tx = Transaction::<Identity, Repository>::new(
         identity::TYPENAME.clone(),
@@ -234,8 +301,10 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
         }],
         vec![cob::Embed::<cob::Uri>::store("radicle.json", &bytes, repo.raw()).unwrap()],
     );
-    let entry = attach(&repo, tx, None, vec![], &key);
+    let entry = attach(&repo, tx, None, vec![], &key, context);
     let identity = entry.id;
+    source_receipts.accept(identity, SubjectKind::Cob);
+    source_receipts.accept(identity, SubjectKind::Identity);
     let identity_ref = git::refs::storage::cob(&owner, &identity::TYPENAME, &identity.into());
     cob::object::Storage::update(
         &repo,
@@ -265,7 +334,8 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
             "static BLS main",
         )
         .unwrap();
-    let first_refs = signed_refs(&repo, owner, &key, None);
+    let first_refs = signed_refs(&repo, owner, &key, None, context);
+    source_receipts.accept(first_refs, SubjectKind::SignedRefs);
     repo.set_canonical_symbolic_refs("static BLS canonical refs")
         .unwrap();
     repo.set_default_branch_to_canonical_head().unwrap();
@@ -293,7 +363,7 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
     alice.policies.seed(&rid, Scope::All).unwrap();
     let mut alice = alice.spawn();
     let mut bob = bob.spawn();
-    // Runtime reopens storage; the managed marker must still require its provider.
+    // The explicitly reopened storage retains its marker but has no provider.
     let mut guarded = guarded.spawn();
     guarded.connect(&alice);
     guarded.handle.seed(rid, Scope::All).unwrap();
@@ -314,6 +384,21 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
     println!("managed_receiver_without_policy={denied:?} canonical_repository_absent=true");
     bob.connect(&alice);
     bob.handle.seed(rid, Scope::All).unwrap();
+    if managed {
+        let denied = bob
+            .handle
+            .fetch(rid, alice.id, time::Duration::from_secs(10), None)
+            .unwrap();
+        assert!(
+            !denied.is_success(),
+            "managed bootstrap without receipt: {denied:?}"
+        );
+        assert!(!bob.storage.path_of(&rid).exists());
+        println!("managed_bootstrap_without_receipt={denied:?}");
+    }
+    receiver_receipts.accept(identity, SubjectKind::Cob);
+    receiver_receipts.accept(identity, SubjectKind::Identity);
+    receiver_receipts.accept(first_refs, SubjectKind::SignedRefs);
     let result = bob
         .handle
         .fetch(rid, alice.id, time::Duration::from_secs(10), None)
@@ -343,10 +428,37 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
     let mut tx = Transaction::<Patch, Repository>::default();
     tx.review(revision, Some(Verdict::Accept), None, vec![])
         .unwrap();
-    let review = attach(&repo, tx, Some(identity), vec![*revision], &key);
+    let review = attach(&repo, tx, Some(identity), vec![*revision], &key, context);
+    source_receipts.accept(review.id, SubjectKind::Cob);
     cob::object::Storage::update(&repo, &owner, &patch::TYPENAME, &patch_id, &review.id).unwrap();
-    let at = signed_refs(&repo, owner, &key, Some(first_refs));
+    let at = signed_refs(&repo, owner, &key, Some(first_refs), context);
+    source_receipts.accept(at, SubjectKind::SignedRefs);
     alice.handle.announce_refs_for(rid, [owner]).unwrap();
+    if managed {
+        receiver_receipts.accept(at, SubjectKind::SignedRefs);
+        let denied = bob
+            .handle
+            .fetch(rid, alice.id, time::Duration::from_secs(10), None)
+            .unwrap();
+        assert!(
+            !denied.is_success(),
+            "managed Review without receipt: {denied:?}"
+        );
+        let unchanged = bob.storage.repository(rid).unwrap();
+        assert_eq!(unchanged.remote(&owner).unwrap().refs.at, first_refs);
+        assert_eq!(
+            Patches::open(&unchanged, ReadOnly)
+                .unwrap()
+                .get(&patch_id)
+                .unwrap()
+                .unwrap(),
+            fetched
+        );
+        assert_cached_patch(&unchanged, patch_id, &fetched, &cache_path);
+        println!("managed_review_without_receipt={denied:?} preserved_sigrefs={first_refs}");
+    }
+    receiver_receipts.accept(review.id, SubjectKind::Cob);
+    receiver_receipts.accept(at, SubjectKind::SignedRefs);
     let result = bob
         .handle
         .fetch(rid, alice.id, time::Duration::from_secs(10), None)
@@ -435,6 +547,7 @@ fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
             "tampered static BLS refs fixture",
         )
         .unwrap();
+    receiver_receipts.accept(forged.into(), SubjectKind::SignedRefs);
     let result = bob
         .handle
         .fetch(rid, alice.id, time::Duration::from_secs(10), None)
