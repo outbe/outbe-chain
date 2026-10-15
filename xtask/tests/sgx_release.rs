@@ -164,6 +164,17 @@ fn write_processor_dcap_archive(
 ) {
     let output = fs::File::create(path).expect("create Processor DCAP evidence archive");
     let mut archive = tar::Builder::new(output);
+    let mut root = tar::Header::new_gnu();
+    root.set_entry_type(tar::EntryType::Directory);
+    root.set_mode(0o755);
+    root.set_uid(0);
+    root.set_gid(0);
+    root.set_mtime(source_date_epoch as u64);
+    root.set_size(0);
+    root.set_cksum();
+    archive
+        .append_data(&mut root, "./", Cursor::new([]))
+        .expect("append Processor DCAP archive root directory");
     let mut directory = tar::Header::new_gnu();
     directory.set_entry_type(tar::EntryType::Directory);
     directory.set_mode(0o755);
