@@ -367,45 +367,7 @@
   },
   {
     "type": "event",
-    "name": "LateProceedsBurned",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "ProceedsBurned",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ProceedsCredited",
     "inputs": [
       {
         "name": "worldwideDay",
@@ -421,6 +383,12 @@
       },
       {
         "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "creditedPromisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

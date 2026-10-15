@@ -101,7 +101,7 @@ impl LysisPlanTopologyV1 {
             | UnitPhase::OutputFinalize => {
                 return Ok(PlannedUnitPositionV1::Primary { phase, ordinal })
             }
-            UnitPhase::BucketShuffle => return self.run_span_at(phase, ordinal),
+            UnitPhase::BucketShuffle => return self.run_span_at(ordinal),
             UnitPhase::FixedReduce => self.full_bottom_up_node_at(ordinal)?,
             UnitPhase::GratisPrefix if ordinal < primary => (0, ordinal),
             UnitPhase::GratisPrefix => self.active_bottom_up_node_at(ordinal - primary)?,
@@ -119,11 +119,7 @@ impl LysisPlanTopologyV1 {
         })
     }
 
-    fn run_span_at(
-        self,
-        phase: UnitPhase,
-        ordinal: u32,
-    ) -> Result<PlannedUnitPositionV1, PlannerErrorV1> {
+    fn run_span_at(self, ordinal: u32) -> Result<PlannedUnitPositionV1, PlannerErrorV1> {
         let primary = self.tree.primary_leaf_count;
         let (level, index) = if ordinal < primary {
             (0, ordinal)
@@ -138,7 +134,7 @@ impl LysisPlanTopologyV1 {
             .ok_or(PlannerErrorV1::IntegerOverflow)?;
         let end_run = start_run.saturating_add(width).min(primary);
         Ok(PlannedUnitPositionV1::RunSpan {
-            phase,
+            phase: UnitPhase::BucketShuffle,
             level,
             index,
             start_run,

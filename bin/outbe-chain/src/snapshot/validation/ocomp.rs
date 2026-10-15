@@ -2,7 +2,6 @@
 
 use crate::errors::{require, SnapshotOcompError};
 use alloy_primitives::{B256, U256};
-use outbe_intex::schema::SeriesId;
 use outbe_primitives::time::WorldwideDay;
 
 use super::Incomplete;
@@ -90,8 +89,6 @@ use projection::verify_present_projection_structure;
 pub(crate) use admissions::verify_local_result;
 
 pub(crate) use pins::verify_lease_inputs;
-
-pub(crate) use frames::verify_series_day;
 
 #[cfg(all(test, feature = "snapshot-integration"))]
 pub(crate) use canonical::{CanonicalActiveAudit, CanonicalLocalPinStage};

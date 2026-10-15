@@ -456,7 +456,7 @@ library TargetInbound {
             );
         uint128 accrued = progress.proceedsAccrued + totalPaid;
 
-        // One transfer per day: the origin counts a chain paid on the first delivery.
+        // One transfer per day, so the day pays one bridge fee.
         uint128 proceeds = completesDay ? accrued : 0;
         $.refundProgress[worldwideDay] =
             RefundProgress({totalChunks: totalChunks, chunksSeen: seen, proceedsAccrued: accrued - proceeds});

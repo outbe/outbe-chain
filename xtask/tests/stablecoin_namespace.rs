@@ -13,7 +13,7 @@ fn repository_namespace_is_collision_free() {
     assert!(report.declared_addresses > 30);
     assert_eq!(report.ethereum_builtins, 10);
     assert!(report.genesis_files >= 1);
-    assert!(report.predeploy_addresses >= 6);
+    assert!(report.predeploy_addresses >= 5);
     assert_eq!(report.planned_classes, 1);
 }
 

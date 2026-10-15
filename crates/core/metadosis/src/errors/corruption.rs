@@ -318,9 +318,6 @@ pub enum MetadosisStorageCorruptionError {
     #[error("hash live OCOMP intent: {error}")]
     HashLiveOcompIntent { error: ProtocolError },
 
-    #[error("Nod issuance instant is missing from the Lysis freeze")]
-    NodIssuanceInstantMissingFromLysisFreeze,
-
     #[error("hash target OCOMP intent: {error}")]
     HashTargetOcompIntent { error: ProtocolError },
 

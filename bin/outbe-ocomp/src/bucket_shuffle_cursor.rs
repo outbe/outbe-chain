@@ -2,10 +2,7 @@
 
 use outbe_lysis::program_v1::planner::{LysisPlanTopologyV1, PlannedUnitPositionV1};
 use outbe_ocomp_protocol::{
-    shuffle::{
-        verified_shuffle_run_records, ShuffleRunArtifactV1, ShuffleRunKindV1,
-        VerifiedShuffleRecordV1,
-    },
+    shuffle::{verified_shuffle_run_records, ShuffleBucketRecordV1, ShuffleRunArtifactV1},
     unit::{UnitArtifactV1, UnitPhase},
     ProtocolError, SchemaLimits,
 };
@@ -31,7 +28,7 @@ pub fn authoritative_bucket_shuffle_records<'a>(
     reader: &'a FilesystemCasReader,
     limits: &'a SchemaLimits,
 ) -> Result<
-    impl Iterator<Item = Result<VerifiedShuffleRecordV1, ProtocolError>> + 'a,
+    impl Iterator<Item = Result<ShuffleBucketRecordV1, ProtocolError>> + 'a,
     AuthoritativeBucketShuffleError,
 > {
     let authority = catalog.plan_authority();
@@ -129,7 +126,6 @@ fn matches_bucket_shuffle_root(
         root.job_id,
         root.attempt,
         root.unit_id,
-        root.kind,
         root.run_span.start_run,
         root.run_span.end_run,
     );
@@ -138,7 +134,6 @@ fn matches_bucket_shuffle_root(
         authority.job_id,
         authority.attempt,
         expected_unit_id,
-        ShuffleRunKindV1::Bucket,
         0,
         authority.primary_work_unit_count,
     );

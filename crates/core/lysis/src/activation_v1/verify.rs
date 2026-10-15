@@ -81,7 +81,7 @@ pub fn verify_result(inputs: LysisResultInputsV1<'_>) -> Result<LysisApplyPlanV1
         activation_call_id: call_core.activation_call_id(limits)?,
     };
     binding.validate_call(&call_core, limits)?;
-    // Certified Nods are issued at the Worldwide Day's Lysis entry-price freeze.
+    // Certified Nods are issued at the request instant that also fixes their entry price.
     ensure(nod_issued_at != 0, "Lysis Nod issuance instant")?;
 
     Ok(LysisApplyPlanPartsV1 {

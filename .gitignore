@@ -20,8 +20,6 @@ piolium
 /.vscode
 
 .idea
-/e2e/evm/out
-/e2e/evm/cache
 
 # codegraph index (local code-intelligence cache)
 /.codegraph

@@ -174,11 +174,16 @@ where
             }
         })?,
     };
-    let openings =
-        outbe_node::ocomp::build_lysis_openings(provider, &limits, candidate, request.subjects)
-            .map_err(|error| LysisOpeningsError::BuildOpenings {
-                details: crate::errors::display_error(error),
-            })?;
+    let openings = outbe_node::ocomp::build_lysis_openings(
+        provider,
+        &limits,
+        candidate,
+        record.intent.logical_evaluation_time,
+        request.subjects,
+    )
+    .map_err(|error| LysisOpeningsError::BuildOpenings {
+        details: crate::errors::display_error(error),
+    })?;
     if openings.job_id != finalized.job_id {
         return Err(LysisOpeningsError::OpeningsJobIdMismatch);
     }

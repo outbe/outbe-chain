@@ -114,14 +114,11 @@ impl LysisPlannerV1 {
 
     pub fn shuffle_unit_at(
         self,
-        phase: UnitPhase,
         phase_ordinal: u32,
         producer_unit_ids: &[B256],
         limits: &SchemaLimits,
     ) -> Result<UnitSpecV1, PlannerErrorV1> {
-        if phase != UnitPhase::BucketShuffle {
-            return Err(PlannerErrorV1::ProducerMembershipMismatch);
-        }
+        let phase = UnitPhase::BucketShuffle;
         let topology = LysisPlanTopologyV1::new(self.primary_work_unit_count())?;
         let position = topology.phase_position_at(phase, phase_ordinal)?;
         let PlannedUnitPositionV1::RunSpan {

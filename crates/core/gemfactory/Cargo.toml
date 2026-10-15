@@ -32,6 +32,11 @@ alloy-primitives = { workspace = true, features = ["rand"] }
 outbe-promis = { workspace = true, features = ["test-enclave"] }
 outbe-tee.workspace = true
 outbe-tee-enclave.workspace = true
+outbe-evm = { workspace = true, features = ["test-utils"] }
+outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
+outbe-offchain-data.workspace = true
+outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
+revm.workspace = true
 
 [features]
 default = []

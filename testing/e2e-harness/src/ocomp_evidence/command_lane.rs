@@ -15,6 +15,7 @@ use eyre::{bail, ensure, Result, WrapErr};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use super::io::read_assertions;
 use super::{
     capture_source_identity, discover, hash_file, publish_assertions, publish_manifest,
     publish_member, AssertionRecordV1, AssertionStatus, EvidenceMode, MemberDigestV1,
@@ -287,7 +288,6 @@ pub(crate) fn verify_command_lane_evidence(
     lane: &str,
     evidence_dir: &Path,
 ) -> Result<(SourceIdentityV1, CommandLaneRunV1)> {
-    let plan = command_plan(lane)?;
     let source = capture_source_identity(repo)?;
     let run_path = evidence_dir.join(COMMAND_RUN_FILE);
     let run: CommandLaneRunV1 = serde_json::from_slice(
@@ -295,7 +295,7 @@ pub(crate) fn verify_command_lane_evidence(
             .wrap_err_with(|| format!("read command lane receipt {}", run_path.display()))?,
     )
     .wrap_err("decode command lane receipt")?;
-    validate_command_run(repo, ledger, lane, &source, &run, plan, evidence_dir)?;
+    validate_command_run(ledger, lane, &source, &run, evidence_dir)?;
     Ok((source, run))
 }
 
@@ -312,7 +312,7 @@ pub(crate) fn verify_command_lane_manifest_semantics(
             && manifest.sections.get("exact_binary_hashes") == Some(&json!(&run.artifact_set)),
         "command lane manifest identity differs from its independently verified receipt"
     );
-    let assertions = read_manifest_assertions(evidence_dir, manifest)?;
+    let assertions = read_assertions(evidence_dir, manifest)?;
     let mut by_test = BTreeMap::new();
     for assertion in assertions {
         ensure!(
@@ -347,35 +347,14 @@ pub(crate) fn verify_command_lane_manifest_semantics(
     Ok(())
 }
 
-fn read_manifest_assertions(
-    evidence_dir: &Path,
-    manifest: &RunManifestV1,
-) -> Result<Vec<AssertionRecordV1>> {
-    let text = std::fs::read_to_string(evidence_dir.join(&manifest.assertions_path))
-        .wrap_err("read command lane assertions")?;
-    text.lines()
-        .enumerate()
-        .map(|(index, line)| {
-            ensure!(
-                !line.trim().is_empty(),
-                "blank command assertion line {}",
-                index + 1
-            );
-            serde_json::from_str(line)
-                .wrap_err_with(|| format!("decode command assertion line {}", index + 1))
-        })
-        .collect()
-}
-
 fn validate_command_run(
-    _repo: &Path,
     ledger: &PlanningLedger,
     lane: &str,
     source: &SourceIdentityV1,
     run: &CommandLaneRunV1,
-    plan: &[CommandBatchV1],
     evidence_dir: &Path,
 ) -> Result<()> {
+    let plan = command_plan(lane)?;
     ensure!(
         run.schema_version == RUNTIME_SCHEMA_VERSION
             && run.lane == lane
@@ -604,12 +583,12 @@ const FAST_PLAN: &[CommandBatchV1] = &[
 
 const INT_PLAN: &[CommandBatchV1] = &[
     CommandBatchV1 {
-        command_id: "int-evm",
+        command_id: "int-node-request-lifecycle",
         arguments: &[
             "test",
             "--locked",
             "-p",
-            "outbe-evm",
+            "outbe-node",
             "--test",
             "ocomp_request_lifecycle",
         ],

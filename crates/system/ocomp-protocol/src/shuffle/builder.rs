@@ -11,23 +11,8 @@ use crate::{
 
 use super::{
     require_valid_run_span, ShuffleBucketRecordV1, ShufflePageSpanV1, ShuffleRunArtifactV1,
-    ShuffleRunBuildContextV1, ShuffleRunKindV1, ShuffleRunPayloadV1, VerifiedShuffleRecordV1,
-    MAX_SHUFFLE_LEAF_RECORDS,
+    ShuffleRunBuildContextV1, ShuffleRunPayloadV1, MAX_SHUFFLE_LEAF_RECORDS,
 };
-
-trait ShuffleRunRecord {
-    const KIND: ShuffleRunKindV1;
-
-    fn into_verified(self) -> VerifiedShuffleRecordV1;
-}
-
-impl ShuffleRunRecord for ShuffleBucketRecordV1 {
-    const KIND: ShuffleRunKindV1 = ShuffleRunKindV1::Bucket;
-
-    fn into_verified(self) -> VerifiedShuffleRecordV1 {
-        VerifiedShuffleRecordV1::Bucket(self)
-    }
-}
 
 pub fn build_bucket_shuffle_run<I, S>(
     context: ShuffleRunBuildContextV1,
@@ -39,24 +24,7 @@ where
     I: IntoIterator<Item = Result<ShuffleBucketRecordV1, ProtocolError>>,
     S: FnMut(&[u8]) -> Result<CasObjectRefV1, ProtocolError>,
 {
-    build_typed_shuffle_run(context, records, limits, stage)
-}
-
-fn build_typed_shuffle_run<I, S, T>(
-    context: ShuffleRunBuildContextV1,
-    records: I,
-    limits: &SchemaLimits,
-    stage: S,
-) -> Result<ShuffleRunArtifactV1, ProtocolError>
-where
-    I: IntoIterator<Item = Result<T, ProtocolError>>,
-    T: ShuffleRunRecord,
-    S: FnMut(&[u8]) -> Result<CasObjectRefV1, ProtocolError>,
-{
-    let records = records
-        .into_iter()
-        .map(|record| record.map(T::into_verified));
-    let mut builder = ShuffleRunBuilder::new(context, T::KIND, limits, stage)?;
+    let mut builder = ShuffleRunBuilder::new(context, limits, stage)?;
     for record in records {
         builder.push(record?)?;
     }
@@ -70,11 +38,10 @@ struct BuiltShuffleSubtreeV1 {
 
 struct ShuffleRunBuilder<'a, S> {
     context: ShuffleRunBuildContextV1,
-    kind: ShuffleRunKindV1,
     limits: &'a SchemaLimits,
     stage: S,
     frontier: Vec<Option<BuiltShuffleSubtreeV1>>,
-    page: Vec<VerifiedShuffleRecordV1>,
+    page: Vec<ShuffleBucketRecordV1>,
     page_ordinal: u32,
     first_record_ordinal: u32,
     previous_bucket: Option<(B256, u32)>,
@@ -86,7 +53,6 @@ where
 {
     fn new(
         context: ShuffleRunBuildContextV1,
-        kind: ShuffleRunKindV1,
         limits: &'a SchemaLimits,
         stage: S,
     ) -> Result<Self, ProtocolError> {
@@ -99,7 +65,6 @@ where
         require(job_identity && source_coverage, "shuffle build context")?;
         Ok(Self {
             context,
-            kind,
             limits,
             stage,
             frontier: Vec::new(),
@@ -110,7 +75,7 @@ where
         })
     }
 
-    fn push(&mut self, record: VerifiedShuffleRecordV1) -> Result<(), ProtocolError> {
+    fn push(&mut self, record: ShuffleBucketRecordV1) -> Result<(), ProtocolError> {
         self.validate_record(&record)?;
         self.page.push(record);
         if self.page.len() == MAX_SHUFFLE_LEAF_RECORDS {
@@ -159,13 +124,8 @@ where
         Ok(root)
     }
 
-    fn validate_record(&mut self, record: &VerifiedShuffleRecordV1) -> Result<(), ProtocolError> {
-        let VerifiedShuffleRecordV1::Bucket(record) = record;
-        require(
-            self.kind == ShuffleRunKindV1::Bucket,
-            "shuffle build record kind",
-        )?;
-        let key = (record.bucket_key, record.raw_ordinal);
+    fn validate_record(&mut self, record: &ShuffleBucketRecordV1) -> Result<(), ProtocolError> {
+        let key = super::shuffle_record_key(record);
         require(
             self.previous_bucket.is_none_or(|previous| previous < key),
             "global bucket shuffle order",
@@ -176,21 +136,13 @@ where
 
     fn build_leaf(
         &mut self,
-        records: Vec<VerifiedShuffleRecordV1>,
+        records: Vec<ShuffleBucketRecordV1>,
     ) -> Result<BuiltShuffleSubtreeV1, ProtocolError> {
         let record_count =
             u32::try_from(records.len()).map_err(|_| ProtocolError::IntegerOverflow {
                 what: "shuffle leaf record count",
             })?;
-        let payload = ShuffleRunPayloadV1::BucketLeaf(
-            records
-                .into_iter()
-                .map(|record| {
-                    let VerifiedShuffleRecordV1::Bucket(record) = record;
-                    record
-                })
-                .collect(),
-        );
+        let payload = ShuffleRunPayloadV1::BucketLeaf(records);
         let page_span = ShufflePageSpanV1 {
             start_page: self.page_ordinal,
             end_page: self
@@ -267,7 +219,6 @@ where
             job_id: self.context.job_id,
             attempt: self.context.attempt,
             unit_id: self.context.unit_id,
-            kind: self.kind,
             run_span: self.context.run_span.clone(),
             page_span,
             first_record_ordinal,

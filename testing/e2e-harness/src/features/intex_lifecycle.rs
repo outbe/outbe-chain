@@ -659,7 +659,7 @@ impl Lifecycle for IntexLifecycle {
             let (mac, op_nonce) =
                 mint_authorization(world, Ledger::Promis, DEPLOYER_KEY, owner, promis);
             let nonce = test_issuance::mine_nonce(owner, promis, series, 0)
-                .expect("a nonce clearing one leading zero byte");
+                .expect("a nonce clearing two leading zero bytes");
             test_issuance::mine_promis(&url, DEPLOYER_KEY, series, UNITS, nonce, mac.0, op_nonce)
                 .expect("mine Promis from the settled units");
             // The engine counts what it burned, so the series' classes stay disjoint.

@@ -27,7 +27,7 @@ use outbe_lysis::program_v1::planner::{
 use outbe_lysis::program_v1::result::{
     decode_root_reduce_output, encode_root_reduce_output, RootReduceOutputV1,
 };
-use outbe_nod::openings::entry_price_slots;
+use outbe_nod::openings::{entry_price_day, entry_price_slots};
 use outbe_ocomp::admission_catalog::{
     AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog,
 };
@@ -66,7 +66,7 @@ use outbe_ocomp_protocol::opening::{
 };
 use outbe_ocomp_protocol::result::ResultChunkV1;
 use outbe_ocomp_protocol::shuffle::{
-    verified_shuffle_run_records, ShuffleBucketRecordV1, ShuffleRunArtifactV1, ShuffleRunKindV1,
+    verified_shuffle_run_records, ShuffleBucketRecordV1, ShuffleRunArtifactV1,
 };
 use outbe_ocomp_protocol::unit::{
     CanonicalInputRefV1, EntityIdHalfOpenRange, InputPurpose, InputSourceKind, PlanCommitmentV1,
@@ -78,6 +78,8 @@ use outbe_ocomp_protocol::{
 };
 use outbe_primitives::time::WorldwideDay;
 use support::tempdir;
+
+const LOGICAL_EVALUATION_TIME: u64 = 1_784_765_900;
 
 struct RunningWorker {
     child: Child,
@@ -216,17 +218,23 @@ fn real_worker_processes_execute_through_output_finalize() {
         account_proof: ProofBytes(vec![0xa1]),
         storage_proof: ProofBytes(vec![0xb1]),
     };
-    let oracle_plan = entry_price_slots(day, &[840, 978]).expect("fixture Oracle slot plan");
+    let oracle_plan = entry_price_slots(
+        entry_price_day(LOGICAL_EVALUATION_TIME),
+        &[840, 978],
+        &[1, 2],
+    )
+    .expect("fixture Oracle slot plan");
     let coen840_price = U256::from(1_000_000_u64);
     let generic_price_scale = U256::from(1_000_000_000_000_000_000_u64);
     let oracle_values = [
         U256::from(1),
+        U256::from(2),
         coen840_price,
         generic_price_scale * U256::from(2),
     ];
     assert_eq!(oracle_plan.len(), oracle_values.len());
     let oracle_raw = RawContractOpeningProofV1 {
-        contract_address: outbe_primitives::addresses::NOD_ADDRESS,
+        contract_address: outbe_primitives::addresses::ORACLE_ADDRESS,
         state_root: finalized_state_root,
         ordered_slots: oracle_plan
             .into_iter()
@@ -354,7 +362,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         input_manifest_hash: published.manifest_hash,
         wwd: day.value(),
         lysis_limit_minor: U256::from(99_000_000_u64),
-        logical_evaluation_time: 1_784_765_900,
+        logical_evaluation_time: LOGICAL_EVALUATION_TIME,
         tribute_count: published.tribute_count,
         max_tributes_per_work_shard: 256,
         primary_work_unit_count: 1,
@@ -1334,12 +1342,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         .expect("publish OutputFinalize shuffle producer");
     finalized_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
     let bucket_spec = planner
-        .shuffle_unit_at(
-            UnitPhase::BucketShuffle,
-            0,
-            &[output_finalize_artifact.unit_id],
-            &limits,
-        )
+        .shuffle_unit_at(0, &[output_finalize_artifact.unit_id], &limits)
         .expect("derive BucketShuffle leaf");
     let bucket_offset = output_finalize_offset
         .checked_add(topology.phase_unit_count(UnitPhase::OutputFinalize))
@@ -1370,7 +1373,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     bucket_root
         .validate_root_semantics(&limits)
         .expect("validate BucketShuffle root");
-    assert_eq!(bucket_root.kind, ShuffleRunKindV1::Bucket);
     assert_eq!(bucket_root.record_count, 1);
     verify_lysis_shuffle_phase_replay(
         (bucket_offset, &bucket_spec, &bucket_artifact),
@@ -1961,7 +1963,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         producer_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
         let bucket_spec = planner
             .shuffle_unit_at(
-                UnitPhase::BucketShuffle,
                 u32::try_from(ordinal).expect("merge bucket ordinal"),
                 &[finalized_artifact.unit_id],
                 &limits,
@@ -2002,7 +2003,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     }
     let bucket_merge_spec = planner
         .shuffle_unit_at(
-            UnitPhase::BucketShuffle,
             2,
             &[bucket_artifacts[0].unit_id, bucket_artifacts[1].unit_id],
             &limits,
@@ -2031,7 +2031,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         &limits,
     )
     .expect("decode bucket internal merge root");
-    assert_eq!(bucket_root.kind, ShuffleRunKindV1::Bucket);
     assert_eq!(bucket_root.run_span.start_run, 0);
     assert_eq!(bucket_root.run_span.end_run, 2);
     assert_eq!(bucket_root.source_coverage_count, tribute_count);

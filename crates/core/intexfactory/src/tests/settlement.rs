@@ -566,10 +566,10 @@ fn compute_pow_hash_matches_the_shared_client_vectors() {
 fn validate_pow_accepts_valid_and_rejects_invalid_nonce() {
     let pa = U256::from(1_000u64);
     let (series_id, seq) = (sid(7), 0u32);
-    // Difficulty 1: ~1/256 of nonces pass. Brute-force a valid and an invalid one.
+    // Difficulty 2: ~1/65536 of nonces pass. Brute-force a valid and an invalid one.
     let mut good = None;
     let mut bad = None;
-    for n in 0u64..100_000 {
+    for n in 0u64..1_000_000 {
         let ok = runtime::validate_pow(owner(), pa, series_id, seq, n).is_ok();
         if ok && good.is_none() {
             good = Some(n);

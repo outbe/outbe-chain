@@ -165,11 +165,6 @@ pub(crate) fn process_ocomp_ready_candidate(
     // 1. Snapshot while CE is active.
     // 2. Enqueue the OCOMP FSM.
     // 3. Commit the outer transition.
-    outbe_lysis::api::freeze_entry_price_snapshot(
-        ctx.storage.clone(),
-        wwd,
-        current.scheduled_process_time,
-    )?;
     metadosis.build_fidelity_league_snapshot(scope, parent, wwd, ctx.block.timestamp)?;
     metadosis.enqueue_ocomp_ready(wwd, ctx.block.block_number)?;
     commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)

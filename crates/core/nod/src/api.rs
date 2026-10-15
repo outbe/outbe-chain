@@ -1,13 +1,11 @@
 //! Cross-module API for the Nod entity store.
 
-use std::collections::BTreeMap;
-
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
     ExecutionReaders, ExecutionScope, ParentBodySource, VerifiedBody, WwdEntityId,
 };
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
-use outbe_primitives::time::{first_full_day, WorldwideDay};
+use outbe_primitives::time::first_full_day;
 use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
@@ -46,29 +44,6 @@ pub fn is_qualified(storage: &StorageHandle<'_>, bucket: &NodBucketState) -> Res
         bucket.floor_price_minor()?,
         first_full_day(issued_at),
     )
-}
-
-/// Frozen entry prices, or `None` before the snapshot has been captured.
-pub fn entry_price_snapshot(
-    storage: StorageHandle,
-    day: WorldwideDay,
-) -> Result<Option<BTreeMap<u16, U256>>> {
-    NodContract::new(storage).entry_price_snapshot(day)
-}
-
-/// UTC day the frozen snapshot was read from, or `None` before it was captured.
-pub fn entry_price_source_day(storage: StorageHandle, day: WorldwideDay) -> Result<Option<u32>> {
-    NodContract::new(storage).entry_price_source_day(day)
-}
-
-/// Stores the complete map atomically. A frozen day cannot be overwritten.
-pub fn store_entry_price_snapshot(
-    storage: StorageHandle,
-    day: WorldwideDay,
-    source_day: u32,
-    prices: &BTreeMap<u16, U256>,
-) -> Result<()> {
-    NodContract::new(storage).store_entry_price_snapshot(day, source_day, prices)
 }
 
 /// The Nod's settlement cost: `floor(entry_price_minor * gratis_load_minor / 1e6)`.

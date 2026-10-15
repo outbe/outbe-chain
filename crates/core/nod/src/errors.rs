@@ -35,11 +35,8 @@ pub enum NodError {
     #[error("nod floor price overflows")]
     FloorPriceOverflow,
 
-    #[error("nod entry-price snapshot is already frozen")]
-    EntryPricesAlreadyFrozen,
-
-    #[error("invalid nod entry-price snapshot")]
-    InvalidEntryPriceSnapshot,
+    #[error("invalid nod entry-price opening")]
+    InvalidEntryPriceOpening,
 
     #[error("nod is non-transferable")]
     NonTransferable,

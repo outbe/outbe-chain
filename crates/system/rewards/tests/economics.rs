@@ -137,8 +137,8 @@ fn late_local_votes_do_not_add_credit_beyond_block_carried_certificate() {
 //
 // This test asserts the precondition that the executor relies on: a Phase 1
 // fingerprint failure produces a `Fatal` error before any per-voter
-// accounting write that would back a credit. The `phase1_atomicity`
-// integration tests in `crates/blockchain/evm/tests/` cover the full
+// accounting write that would back a credit. The `system_tx_phase1_atomicity`
+// integration tests in `crates/blockchain/primitives/tests/` cover the full
 // executor rollback path (storage checkpoint reverts on any precompile error).
 // ---------------------------------------------------------------------------
 

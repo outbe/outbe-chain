@@ -151,13 +151,9 @@ struct RequestCandidate {
     candidate_envelope: Box<outbe_ocomp_protocol::intent::PreAdmissionEnvelopeV1>,
 }
 
-struct RequestTargets {
-    nod: outbe_nod::schema::NodOcompTargetProjection,
-}
-
 struct AdmittedRequest {
     tribute: TributePreAdmissionProjection,
-    targets: RequestTargets,
+    nod_target: outbe_nod::schema::NodOcompTargetProjection,
     envelope_projection: crate::pre_admission::MetadosisPreAdmissionProjection,
     envelope_hash: B256,
     current_vwap: alloy_primitives::U256,
@@ -289,7 +285,7 @@ fn seal_request_admission(
 
     Ok(AdmittedRequest {
         tribute: sealed_tribute_projection,
-        targets: RequestTargets { nod: nod_target },
+        nod_target,
         envelope_projection,
         envelope_hash,
         current_vwap,
@@ -383,7 +379,7 @@ fn request_activation_preconditions(
     let wwd = request.wwd;
     let pending_nonce = request.pending_nonce;
     let sealed_tribute_projection = admitted.tribute;
-    let nod_target = &admitted.targets.nod;
+    let nod_target = &admitted.nod_target;
     let envelope_projection = admitted.envelope_projection;
     let activation_preconditions = ActivationPreconditionsV1 {
         tribute: TributeInputBindingV1 {

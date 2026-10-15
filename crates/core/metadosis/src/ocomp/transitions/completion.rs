@@ -30,7 +30,7 @@ pub(crate) struct CompletionInput<'a> {
 }
 impl MetadosisContract<'_> {
     /// Commits the certified terminal receipt and active generation after all
-    /// four owner receipts have been verified in the same activation frame.
+    /// three owner receipts have been verified in the same activation frame.
     ///
     /// This function advances the one-shot terminal permit only after every
     /// consensus write and event succeeds.
