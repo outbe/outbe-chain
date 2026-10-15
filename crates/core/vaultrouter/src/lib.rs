@@ -10,6 +10,8 @@ pub mod runtime;
 pub mod schema;
 pub mod settlement;
 mod sol_ext;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_support;
 
 pub use schema::{LiquidityReservation, VaultRouterContract};
 

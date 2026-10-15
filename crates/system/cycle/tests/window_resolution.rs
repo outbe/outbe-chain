@@ -81,7 +81,7 @@ impl AccountingProgressView for StubProgress {
 // Two complementary sets of tests cover the "Phase 1 commit happens before the
 // Cycle dispatcher" invariant REALLY (no source-text scanning):
 //
-//   * Phase ORDER - `crates/blockchain/evm/tests/phase1_reorder.rs`
+//   * Phase ORDER - `crates/blockchain/primitives/tests/system_tx_phase1_reorder.rs`
 //     (`phase1_receipt_index_0_before_cycle_tick`,
 //     `phase1_reordering_preserves_body_receipt_order`) asserts that Phase 1
 //     owns body_index 0 and CycleTick owns body_index 1. It uses the real

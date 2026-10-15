@@ -484,84 +484,11 @@ fn reserved_system_address_invalidates_valid_pool_outcome() {
     }
 }
 
-// -----------------------------------------------------------------
-// EIP-7702 sponsorship admission. These tests pin the pool/executor contract:
-//   1. classify_sponsorship rejects shape violations (the executor would
-//      do the same, so the codes must match).
-//   2. precheck_sponsorship rejects self-sponsorship and has no
-//      account balance or quota input.
-// The pool's `try_eip7702_sponsorship` chains classify + precheck.
-// These tests cover both individually and the policy code surface.
-// -----------------------------------------------------------------
-
 use alloy_primitives::address;
-use outbe_primitives::addresses::{AGENT_REWARD_ADDRESS, ZEROFEE_ADDRESS};
-use outbe_zerofee::{classify_sponsorship, precheck_sponsorship, ZeroFeeTransaction};
+use outbe_primitives::addresses::ZEROFEE_ADDRESS;
+use outbe_zerofee::{fixtures::sponsored_envelope, ZeroFeeTransaction};
 
 const NON_VALIDATOR_SIGNER: Address = address!("0x9999999999999999999999999999999999999999");
-
-fn sponsored_envelope<'a>(input: &'a [u8]) -> ZeroFeeTransaction<'a> {
-    ZeroFeeTransaction {
-        signer: NON_VALIDATOR_SIGNER,
-        call: TransactionCallFields {
-            to: Some(AGENT_REWARD_ADDRESS),
-            value: U256::ZERO,
-            input,
-            gas_limit: 100_000,
-            max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
-            max_priority_fee_per_gas: Some(0),
-        },
-    }
-}
-
-#[test]
-fn pool_classify_accepts_well_formed_sponsored_envelope() {
-    assert!(classify_sponsorship(&sponsored_envelope(&[])).is_ok());
-}
-
-#[test]
-fn pool_classify_rejects_non_zero_value_with_plan_code_113() {
-    let mut tx = sponsored_envelope(&[]);
-    tx.call.value = U256::from(1);
-    let err = classify_sponsorship(&tx).unwrap_err();
-    assert_eq!(err.code(), 113);
-}
-
-#[test]
-fn pool_classify_rejects_oversized_gas_with_plan_code_114() {
-    let mut tx = sponsored_envelope(&[]);
-    tx.call.gas_limit = outbe_zerofee::FREE_TX_DAILY_GAS_LIMIT + 1;
-    let err = classify_sponsorship(&tx).unwrap_err();
-    assert_eq!(err.code(), 114);
-}
-
-#[test]
-fn pool_classify_rejects_oversized_calldata_with_plan_code_115() {
-    let big = vec![0u8; outbe_zerofee::FREE_TX_DAILY_CALLDATA_BYTES + 1];
-    let tx = sponsored_envelope(&big);
-    let err = classify_sponsorship(&tx).unwrap_err();
-    assert_eq!(err.code(), 115);
-}
-
-#[test]
-fn pool_classify_rejects_target_outside_whitelist_with_plan_code_116() {
-    let mut tx = sponsored_envelope(&[]);
-    // ZEROFEE_ADDRESS itself is not in the SPONSORED_TARGET_WHITELIST.
-    tx.call.to = Some(ZEROFEE_ADDRESS);
-    let err = classify_sponsorship(&tx).unwrap_err();
-    assert_eq!(err.code(), 116);
-}
-
-#[test]
-fn pool_precheck_rejects_self_sponsorship_with_code_107() {
-    let err = precheck_sponsorship(ZEROFEE_ADDRESS).unwrap_err();
-    assert_eq!(err.code(), 107);
-}
-
-#[test]
-fn pool_precheck_accepts_non_paymaster_signer() {
-    assert!(precheck_sponsorship(NON_VALIDATOR_SIGNER).is_ok());
-}
 
 // -----------------------------------------------------------------
 // sponsorship_decision - the pure pool-admission decision core.
@@ -575,7 +502,7 @@ fn pool_precheck_accepts_non_paymaster_signer() {
 // -----------------------------------------------------------------
 
 fn ok_sponsored_envelope<'a>() -> ZeroFeeTransaction<'a> {
-    sponsored_envelope(&[])
+    sponsored_envelope(NON_VALIDATOR_SIGNER, &[])
 }
 
 #[test]
