@@ -287,7 +287,6 @@ pub(crate) fn verify_command_lane_evidence(
     lane: &str,
     evidence_dir: &Path,
 ) -> Result<(SourceIdentityV1, CommandLaneRunV1)> {
-    let plan = command_plan(lane)?;
     let source = capture_source_identity(repo)?;
     let run_path = evidence_dir.join(COMMAND_RUN_FILE);
     let run: CommandLaneRunV1 = serde_json::from_slice(
@@ -295,7 +294,7 @@ pub(crate) fn verify_command_lane_evidence(
             .wrap_err_with(|| format!("read command lane receipt {}", run_path.display()))?,
     )
     .wrap_err("decode command lane receipt")?;
-    validate_command_run(repo, ledger, lane, &source, &run, plan, evidence_dir)?;
+    validate_command_run(ledger, lane, &source, &run, evidence_dir)?;
     Ok((source, run))
 }
 
@@ -368,14 +367,13 @@ fn read_manifest_assertions(
 }
 
 fn validate_command_run(
-    _repo: &Path,
     ledger: &PlanningLedger,
     lane: &str,
     source: &SourceIdentityV1,
     run: &CommandLaneRunV1,
-    plan: &[CommandBatchV1],
     evidence_dir: &Path,
 ) -> Result<()> {
+    let plan = command_plan(lane)?;
     ensure!(
         run.schema_version == RUNTIME_SCHEMA_VERSION
             && run.lane == lane
