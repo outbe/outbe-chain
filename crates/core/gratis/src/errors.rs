@@ -48,7 +48,19 @@ pub enum GratisFatalError {
 
 impl From<GratisFatalError> for PrecompileError {
     fn from(err: GratisFatalError) -> Self {
-        PrecompileError::Fatal(err.to_string())
+        let message = err.to_string();
+        match err {
+            GratisFatalError::EncryptedNodEnclaveFailed(_)
+            | GratisFatalError::UnexpectedEnclaveResponse(_) => {
+                PrecompileError::EnclaveUnavailable(message)
+            }
+            GratisFatalError::PledgedSupplyUnderflow
+            | GratisFatalError::TestEnclaveError(_)
+            | GratisFatalError::MissingFidelityOutcome
+            | GratisFatalError::InvalidOwnerMovement
+            | GratisFatalError::WrongOpNonce
+            | GratisFatalError::CollateralResultMismatch => PrecompileError::Revert(message),
+        }
     }
 }
 

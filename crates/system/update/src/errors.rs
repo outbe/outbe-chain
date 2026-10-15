@@ -74,17 +74,7 @@ pub enum UpdateError {
 impl From<UpdateError> for PrecompileError {
     fn from(err: UpdateError) -> Self {
         match err {
-            UpdateError::ActiveVersionDoesNotFitU32
-            | UpdateError::CannotActivateVersionAboveCeiling { .. }
-            | UpdateError::UpgradeHandlerFailed { .. }
-            | UpdateError::StagedTeePolicyMissingProposal { .. }
-            | UpdateError::StagedOcompSuccessorMissingProposal { .. }
-            | UpdateError::TeePolicyActivationFailed { .. }
-            | UpdateError::StoredProposalPayloadInvalid(_)
-            | UpdateError::InvalidActiveTeePolicy(_)
-            | UpdateError::StoredOcompSuccessorInvalid(_)
-            | UpdateError::VoteTargetInvariantFailure(_)
-            | UpdateError::UnexpectedAppliedClassification => {
+            UpdateError::CannotActivateVersionAboveCeiling { .. } => {
                 PrecompileError::Fatal(err.to_string())
             }
             _ => PrecompileError::Revert(err.to_string()),
@@ -93,9 +83,10 @@ impl From<UpdateError> for PrecompileError {
 }
 
 impl UpdateError {
-    /// Wraps a non-fatal upgrade handler failure as a fatal precompile error.
+    /// Wraps a non-fatal upgrade handler failure as a precompile error.
     pub fn wrap_upgrade_handler_error(err: PrecompileError, label: &str) -> PrecompileError {
         match err {
+            err if err.is_node_local() => err,
             PrecompileError::Fatal(message) => PrecompileError::Fatal(message),
             other => Self::UpgradeHandlerFailed {
                 label: label.to_string(),
@@ -105,12 +96,13 @@ impl UpdateError {
         }
     }
 
-    /// Wraps a non-fatal TEE policy activation error as a fatal precompile error.
+    /// Wraps a non-fatal TEE policy activation error as a precompile error.
     pub fn wrap_tee_policy_activation_error(
         err: PrecompileError,
         proposal_id: U256,
     ) -> PrecompileError {
         match err {
+            err if err.is_node_local() => err,
             PrecompileError::Fatal(message) => PrecompileError::Fatal(message),
             other => Self::TeePolicyActivationFailed {
                 proposal_id,

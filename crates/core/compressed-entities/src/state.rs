@@ -146,7 +146,7 @@ impl<'storage> State<'storage> {
         partition: PartitionRef,
     ) -> Result<RetirementOutcome> {
         self.ensure_schema()?;
-        let (_, key) = partition_collection_key(partition).map_err(fatal)?;
+        let (_, key) = partition_collection_key(partition).map_err(revert)?;
         let storage_key = B256::from(*key.as_bytes());
         if !self
             .schema()
@@ -154,7 +154,7 @@ impl<'storage> State<'storage> {
             .read(&storage_key)?
             .is_zero()
         {
-            return Err(fatal("duplicate compressed-entity retirement request"));
+            return Err(revert("duplicate compressed-entity retirement request"));
         }
         for (collection, entity_id, _) in self.final_body_mutations()? {
             let domain = match collection {
@@ -164,8 +164,8 @@ impl<'storage> State<'storage> {
                 Collection::Gem => CeDomain::Gem,
                 Collection::GemBucket => CeDomain::GemBucket,
             };
-            if collection_key(domain, entity_id).map_err(fatal)? == key {
-                return Err(fatal(
+            if collection_key(domain, entity_id).map_err(revert)? == key {
+                return Err(revert(
                     "collection retirement conflicts with an earlier entity mutation",
                 ));
             }
@@ -198,7 +198,7 @@ impl<'storage> State<'storage> {
         for day in days {
             let partition =
                 PartitionRef::TributeWwd(outbe_primitives::time::WorldwideDay::new(day));
-            let (_, key) = partition_collection_key(partition).map_err(fatal)?;
+            let (_, key) = partition_collection_key(partition).map_err(revert)?;
             let storage_key = B256::from(*key.as_bytes());
             if !unique.insert(storage_key)
                 || self.schema().pending_retirement.read(&storage_key)? != U256::from(1)
@@ -232,4 +232,8 @@ impl<'storage> State<'storage> {
 
 fn fatal(message: impl core::fmt::Display) -> PrecompileError {
     crate::errors::fatal_error(message)
+}
+
+fn revert(message: impl core::fmt::Display) -> PrecompileError {
+    crate::errors::revert_error(message)
 }

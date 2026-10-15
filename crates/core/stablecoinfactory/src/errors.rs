@@ -132,10 +132,10 @@ impl From<StablecoinFactoryError> for PrecompileError {
                 I::UnknownStablecoin { token }.abi_encode()
             }
             StablecoinFactoryError::Invariant { reason } => {
-                return PrecompileError::Fatal(format!("stablecoin factory: {reason}"));
+                return PrecompileError::Revert(format!("stablecoin factory: {reason}"));
             }
             StablecoinFactoryError::UnsupportedSchema { .. } => {
-                return PrecompileError::Fatal(error.to_string());
+                return PrecompileError::Revert(error.to_string());
             }
         };
         PrecompileError::RevertBytes(Bytes::from(encoded))

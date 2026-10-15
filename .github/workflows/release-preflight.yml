@@ -1,0 +1,292 @@
+name: release preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Branch, tag or commit SHA to validate"
+        required: true
+        default: main
+        type: string
+      network:
+        description: "Release network profile"
+        required: true
+        default: testnet
+        type: choice
+        options:
+          - testnet
+          - mainnet
+      seeded_genesis_url:
+        description: "Optional HTTPS seeded genesis URL (defaults to the repository variable)"
+        required: false
+        type: string
+      seeded_genesis_sha256:
+        description: "Optional lowercase SHA-256 (defaults to the repository variable)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-preflight-${{ inputs.network }}-${{ inputs.source_ref }}
+  cancel-in-progress: false
+
+env:
+  NETWORK: ${{ inputs.network }}
+  SOURCE_REF_INPUT: ${{ inputs.source_ref }}
+  PREFLIGHT_NAME: outbe-release-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+  PREFLIGHT_IMAGE: outbe-release-preflight:${{ inputs.network }}-${{ github.run_id }}-${{ github.run_attempt }}
+  PREFLIGHT_TOOLCHAIN_IMAGE: outbe-release-toolchain:${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  preflight:
+    name: clean reproducible release candidate
+    runs-on: testnet-release-sgx
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.source_ref }}
+
+      - name: Bind the requested ref to one clean source commit
+        id: source
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse --verify HEAD^{commit})"
+          [[ "${source_sha}" =~ ^[0-9a-f]{40}$ ]]
+          case "${GITHUB_REF}" in
+            refs/heads/main)
+              ;;
+            refs/heads/*)
+              [[ "${source_sha}" == "${GITHUB_SHA}" ]] || {
+                echo "a branch preflight may only validate its own dispatch commit" >&2
+                exit 2
+              }
+              ;;
+            *)
+              echo "dispatch the preflight workflow from main or a source branch" >&2
+              exit 2
+              ;;
+          esac
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          PREFLIGHT_ROOT="${RUNNER_TEMP}/${PREFLIGHT_NAME}"
+          CARGO_TARGET_DIR="${PREFLIGHT_ROOT}/cargo-target"
+          test ! -e "${PREFLIGHT_ROOT}"
+          mkdir -p "${PREFLIGHT_ROOT}/evidence"
+          printf 'source_ref=%s\nsource_sha=%s\nnetwork=%s\n' \
+            "${SOURCE_REF_INPUT}" "${source_sha}" "${NETWORK}" \
+            > "${PREFLIGHT_ROOT}/evidence/source-identity.txt"
+          echo "PREFLIGHT_ROOT=${PREFLIGHT_ROOT}" >> "${GITHUB_ENV}"
+          echo "CARGO_TARGET_DIR=${CARGO_TARGET_DIR}" >> "${GITHUB_ENV}"
+          echo "source_sha=${source_sha}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install and verify pinned Noir build tools
+        run: scripts/release/install-zk-build-tools.sh
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        with:
+          version: v0.35.0
+          driver: docker-container
+          driver-opts: |
+            image=moby/buildkit@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+
+      - name: Fetch and verify the seeded genesis
+        env:
+          INPUT_GENESIS_SHA256: ${{ inputs.seeded_genesis_sha256 }}
+          INPUT_GENESIS_URL: ${{ inputs.seeded_genesis_url }}
+          MAINNET_GENESIS_SHA256: ${{ vars.OUTBE_MAINNET_SEEDED_GENESIS_SHA256 }}
+          MAINNET_GENESIS_URL: ${{ vars.OUTBE_MAINNET_SEEDED_GENESIS_URL }}
+          TESTNET_GENESIS_SHA256: ${{ vars.OUTBE_TESTNET_SEEDED_GENESIS_SHA256 }}
+          TESTNET_GENESIS_URL: ${{ vars.OUTBE_TESTNET_SEEDED_GENESIS_URL }}
+        run: |
+          set -euo pipefail
+          genesis_url="${INPUT_GENESIS_URL}"
+          genesis_sha256="${INPUT_GENESIS_SHA256}"
+          case "${NETWORK}" in
+            testnet)
+              chain_id=54322345
+              genesis_url="${genesis_url:-${TESTNET_GENESIS_URL}}"
+              genesis_sha256="${genesis_sha256:-${TESTNET_GENESIS_SHA256}}"
+              ;;
+            mainnet)
+              chain_id=676
+              genesis_url="${genesis_url:-${MAINNET_GENESIS_URL}}"
+              genesis_sha256="${genesis_sha256:-${MAINNET_GENESIS_SHA256}}"
+              ;;
+            *)
+              echo "unsupported release network: ${NETWORK}" >&2
+              exit 2
+              ;;
+          esac
+          [[ "${genesis_url}" == https://* ]] || {
+            echo "seeded genesis URL must use HTTPS" >&2
+            exit 2
+          }
+          [[ "${genesis_sha256}" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "seeded genesis SHA-256 must be 64 lowercase hexadecimal characters" >&2
+            exit 2
+          }
+          genesis_path="${PREFLIGHT_ROOT}/${NETWORK}-seeded-genesis.json"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            --output "${genesis_path}" "${genesis_url}"
+          printf '%s  %s\n' "${genesis_sha256}" "${genesis_path}" | sha256sum --check
+          test "$(jq -er '.config.chainId' "${genesis_path}")" = "${chain_id}"
+          test "$(jq -r '.config | has("teeAttestationV1")' "${genesis_path}")" = false
+          echo "GENESIS_PATH=${genesis_path}" >> "${GITHUB_ENV}"
+
+      - name: Deny warnings in release hardware e2e entrypoints
+        run: |
+          set -euo pipefail
+          # The production ELF matrix and xtask are compiled by the following
+          # release-flow steps. Only these hardware e2e binaries otherwise lack
+          # compile coverage in preflight.
+          # Native DCAP is a property of the pinned production builder, not of
+          # whichever self-hosted runner happens to accept this job.
+          docker buildx build --load \
+            --platform linux/amd64 \
+            --file Dockerfile.project-toolchain \
+            --target toolchain \
+            --tag "${PREFLIGHT_TOOLCHAIN_IMAGE}" \
+            .
+          mkdir -p \
+            "${PREFLIGHT_ROOT}/warning-cargo-home" \
+            "${PREFLIGHT_ROOT}/warning-target"
+          docker run --rm \
+            --platform linux/amd64 \
+            --user "$(id -u):$(id -g)" \
+            --env CARGO_HOME=/cargo-home \
+            --env CARGO_TARGET_DIR=/target \
+            --env HOME=/cargo-home \
+            --env OUTBE_NATIVE_DCAP=require \
+            --env 'RUSTFLAGS=-D warnings' \
+            --volume "${PWD}:/workspace:ro" \
+            --volume "${PREFLIGHT_ROOT}/warning-cargo-home:/cargo-home" \
+            --volume "${PREFLIGHT_ROOT}/warning-target:/target" \
+            --workdir /workspace \
+            "${PREFLIGHT_TOOLCHAIN_IMAGE}" \
+            bash -c '
+              set -euo pipefail
+              cargo check --locked --release --package outbe-e2e-harness \
+                --features release-sgx-e2e --bin outbe-release-sgx-e2e
+              cargo check --locked --release --package outbe-e2e-harness \
+                --bin outbe-release-dcap-evidence
+            '
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Build the exact production ELF matrix twice without cache
+        run: |
+          set -euo pipefail
+          scripts/release/reproducible-build.sh \
+            --no-cache --output "${PREFLIGHT_ROOT}/elf-a"
+          scripts/release/reproducible-build.sh \
+            --no-cache --output "${PREFLIGHT_ROOT}/elf-b"
+
+      - name: Independently verify byte-for-byte ELF reproducibility
+        run: |
+          set -euo pipefail
+          python3 -m venv "${PREFLIGHT_ROOT}/release-verifier"
+          "${PREFLIGHT_ROOT}/release-verifier/bin/pip" install \
+            --require-hashes -r release/reproducible-verifier-requirements.txt
+          "${PREFLIGHT_ROOT}/release-verifier/bin/python" \
+            scripts/release/verify_reproducible_elf.py \
+            --first "${PREFLIGHT_ROOT}/elf-a" \
+            --second "${PREFLIGHT_ROOT}/elf-b" \
+            --repo-root . \
+            --output "${PREFLIGHT_ROOT}/evidence/elf-reproducibility.json"
+
+      - name: Prepare and compare two unsigned SGX bundles
+        run: |
+          set -euo pipefail
+          cargo xtask release sgx prepare \
+            --network "${NETWORK}" \
+            --genesis "${GENESIS_PATH}" \
+            --elf-output "${PREFLIGHT_ROOT}/elf-a" \
+            --output "${PREFLIGHT_ROOT}/unsigned-a"
+          cargo xtask release sgx prepare \
+            --network "${NETWORK}" \
+            --genesis "${GENESIS_PATH}" \
+            --elf-output "${PREFLIGHT_ROOT}/elf-b" \
+            --output "${PREFLIGHT_ROOT}/unsigned-b"
+          cargo xtask release sgx compare \
+            --first "${PREFLIGHT_ROOT}/unsigned-a" \
+            --second "${PREFLIGHT_ROOT}/unsigned-b" \
+            --output "${PREFLIGHT_ROOT}/evidence/sgx-reproducibility.json"
+
+      - name: Exercise signing, genesis finalization and archive with an ephemeral key
+        run: |
+          set -euo pipefail
+          umask 077
+          key="${PREFLIGHT_ROOT}/ephemeral-sgx-key.pem"
+          cleanup_key() {
+            shred -u "${key}" 2>/dev/null || rm -f "${key}"
+          }
+          trap cleanup_key EXIT
+          openssl genrsa -3 -out "${key}" 3072
+          cargo xtask release sgx sign \
+            --network "${NETWORK}" \
+            --unsigned "${PREFLIGHT_ROOT}/unsigned-a" \
+            --key-file "${key}" \
+            --output "${PREFLIGHT_ROOT}/signed"
+          cargo xtask release sgx finalize-genesis \
+            --network "${NETWORK}" \
+            --seeded-genesis "${GENESIS_PATH}" \
+            --bundle "${PREFLIGHT_ROOT}/signed" \
+            --output "${PREFLIGHT_ROOT}/evidence/${NETWORK}-genesis.json" \
+            --evidence-output "${PREFLIGHT_ROOT}/evidence/genesis-binding.json"
+          cargo xtask release sgx verify \
+            --network "${NETWORK}" \
+            --bundle "${PREFLIGHT_ROOT}/signed" \
+            --genesis "${PREFLIGHT_ROOT}/evidence/${NETWORK}-genesis.json"
+          cargo xtask release sgx archive \
+            --network "${NETWORK}" \
+            --bundle "${PREFLIGHT_ROOT}/signed" \
+            --output "${PREFLIGHT_ROOT}/signed-sgx-bundle.tar"
+          ! tar -tf "${PREFLIGHT_ROOT}/signed-sgx-bundle.tar" \
+            | grep -E '(^|/)(.*private.*|.*key.*\.pem)$'
+
+      - name: Build and inspect the signed bundle as a local OCI image
+        run: |
+          set -euo pipefail
+          cargo xtask release sgx image \
+            --network "${NETWORK}" \
+            --bundle "${PREFLIGHT_ROOT}/signed" \
+            --image "${PREFLIGHT_IMAGE}" \
+            --output "${PREFLIGHT_ROOT}/evidence/oci-image.json"
+          docker image inspect "${PREFLIGHT_IMAGE}" >/dev/null
+
+      - name: Publish preflight evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-preflight-${{ inputs.network }}-${{ steps.source.outputs.source_sha }}
+          path: ${{ env.PREFLIGHT_ROOT }}/evidence
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Record successful preflight
+        run: |
+          {
+            echo '## Release preflight passed'
+            echo
+            echo '- Source: `${{ steps.source.outputs.source_sha }}`'
+            echo '- Network: `${{ inputs.network }}`'
+            echo '- Production warnings: denied'
+            echo '- ELF and unsigned SGX reproducibility: verified'
+            echo '- Ephemeral signing, genesis finalization and archive: verified'
+            echo '- Local OCI image: verified'
+            echo '- Production credentials and publication: not used'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Remove local preflight image and temporary outputs
+        if: always()
+        run: |
+          if [[ -n "${PREFLIGHT_IMAGE:-}" ]]; then
+            docker image rm --force "${PREFLIGHT_IMAGE}" >/dev/null 2>&1 || true
+          fi
+          if [[ -n "${PREFLIGHT_TOOLCHAIN_IMAGE:-}" ]]; then
+            docker image rm --force "${PREFLIGHT_TOOLCHAIN_IMAGE}" >/dev/null 2>&1 || true
+          fi
+          root="${PREFLIGHT_ROOT:-${RUNNER_TEMP}/${PREFLIGHT_NAME}}"
+          rm -rf "${root}"

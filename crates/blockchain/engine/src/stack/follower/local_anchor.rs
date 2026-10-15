@@ -165,9 +165,9 @@ where
             epoch,
             Height::new(height),
         );
-        if !epocher
+        if epocher
             .containing(Height::new(self.floor))
-            .is_some_and(|value| value.epoch() == epoch)
+            .is_none_or(|value| value.epoch() != epoch)
         {
             return Err(
                 FollowerStackError::LocalCommitteeBoundaryCannotContainFloor {

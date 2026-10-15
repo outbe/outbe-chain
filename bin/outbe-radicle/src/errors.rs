@@ -8,5 +8,5 @@ pub enum RadicleBinaryError {
     Io(#[from] std::io::Error),
     /// The sidecar failed to initialize or run.
     #[error(transparent)]
-    Sidecar(#[from] heartwood_outbe_radicle::Error),
+    Sidecar(#[from] outbe_radicle_runtime::Error),
 }

@@ -180,3 +180,59 @@ fn cancelled_body_read_retires_verification_before_response_receiver_closes() {
         assert_eq!(receiver.await.unwrap(), VerificationOutcome::Valid);
     });
 }
+
+#[test]
+fn ce_work_limit_exceeded_marks_candidate_invalid_without_stopping_actor() {
+    deterministic::Runner::default().start(|clock| async move {
+        let mut engine = EngineStub::new();
+        let mut work = VerificationWork::default();
+        let block = linked(1, B256::ZERO, 33);
+        let (receiver, _budget) = enqueue(&mut work, request(block, None));
+        work.schedule(&engine.handle);
+        assert!(work.next_event().now_or_never().is_none());
+        let BeaconEngineMessage::NewPayload { tx, .. } = engine.rx.try_recv().unwrap() else {
+            panic!("expected new_payload");
+        };
+        tx.send(Err(
+            reth_ethereum::node::api::BeaconOnNewPayloadError::internal(
+                outbe_primitives::error::PrecompileError::TransactionCeWorkLimitExceeded,
+            ),
+        ))
+        .unwrap();
+        let event = work.next_event().await;
+        assert!(work
+            .handle_event(event, &clock, (Height::zero(), Digest::ZERO))
+            .unwrap()
+            .is_none());
+        assert_eq!(receiver.await.unwrap(), VerificationOutcome::Invalid);
+    });
+}
+
+#[test]
+fn revert_precompile_error_marks_candidate_invalid_without_stopping_actor() {
+    deterministic::Runner::default().start(|clock| async move {
+        let mut engine = EngineStub::new();
+        let mut work = VerificationWork::default();
+        let block = linked(1, B256::ZERO, 37);
+        let (receiver, _budget) = enqueue(&mut work, request(block, None));
+        work.schedule(&engine.handle);
+        assert!(work.next_event().now_or_never().is_none());
+        let BeaconEngineMessage::NewPayload { tx, .. } = engine.rx.try_recv().unwrap() else {
+            panic!("expected new_payload");
+        };
+        tx.send(Err(
+            reth_ethereum::node::api::BeaconOnNewPayloadError::internal(
+                outbe_primitives::error::PrecompileError::Revert(
+                    "candidate hook reverted".to_string(),
+                ),
+            ),
+        ))
+        .unwrap();
+        let event = work.next_event().await;
+        assert!(work
+            .handle_event(event, &clock, (Height::zero(), Digest::ZERO))
+            .unwrap()
+            .is_none());
+        assert_eq!(receiver.await.unwrap(), VerificationOutcome::Invalid);
+    });
+}

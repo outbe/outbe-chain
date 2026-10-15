@@ -158,14 +158,9 @@ impl From<OracleError> for PrecompileError {
     fn from(err: OracleError) -> Self {
         use OracleError::*;
         match err {
-            // A monotonic counter that cannot advance means the stored oracle
-            // state is no longer self-consistent. A revert would let the caller
-            // keep reading it.
-            SnapshotWriteIndexOverflow | ScurveWriteIndexOverflow => {
-                PrecompileError::BodyReadCorruption(err.to_string())
-            }
-
-            PairBaseQuoteIdentical
+            SnapshotWriteIndexOverflow
+            | ScurveWriteIndexOverflow
+            | PairBaseQuoteIdentical
             | PairNotCanonical { .. }
             | PairAlreadyRegistered { .. }
             | PairNotRegistered { .. }
@@ -284,9 +279,8 @@ impl From<OracleOcompError> for PrecompileError {
         use OracleOcompError::*;
         match err {
             // Fork activation reached a state the profile cannot be built from.
-            // Continuing would pin a wrong projection for every later block.
             DayTypePairNotRegistered | ProfileReadyWithZeroVersion | PartialPreForkState => {
-                PrecompileError::Fatal(err.to_string())
+                PrecompileError::Revert(err.to_string())
             }
 
             // Stored OCOMP state or an opening does not match what the protocol
@@ -326,14 +320,6 @@ mod tests {
         for err in [
             OracleError::SnapshotWriteIndexOverflow,
             OracleError::ScurveWriteIndexOverflow,
-        ] {
-            let message = err.to_string();
-            assert!(
-                matches!(PrecompileError::from(err), PrecompileError::BodyReadCorruption(m) if m == message)
-            );
-        }
-
-        for err in [
             OracleError::PairNotRegistered {
                 pair: AddressPair::new_coen_to(840),
             },
@@ -349,7 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn ocomp_activation_breaches_are_fatal_and_the_rest_is_corruption() {
+    fn ocomp_activation_breaches_revert_and_the_rest_is_corruption() {
         for err in [
             OracleOcompError::DayTypePairNotRegistered,
             OracleOcompError::ProfileReadyWithZeroVersion,
@@ -357,7 +343,7 @@ mod tests {
         ] {
             let message = err.to_string();
             assert!(
-                matches!(PrecompileError::from(err), PrecompileError::Fatal(m) if m == message)
+                matches!(PrecompileError::from(err), PrecompileError::Revert(m) if m == message)
             );
         }
 

@@ -156,7 +156,7 @@ pub enum InitError {
     MissingSgxSealingKey,
     /// A production DCAP release binary refused a non-DCAP runtime mode.
     #[error("production DCAP release refuses runtime attestation {0}")]
-    ProdDcapReleaseRefusesAttestation(&'static str),
+    ProdDcapReleaseRefusesAttestation(String),
     /// The measured consensus chain ID exceeds u64.
     #[error("measured consensus chain id does not fit u64")]
     MeasuredChainIdOverflow,
@@ -436,6 +436,26 @@ impl SgxSealingError {
     /// Wrap an underlying operation error.
     pub fn operation(err: impl fmt::Display) -> Self {
         Self::Operation(err.to_string())
+    }
+
+    /// Alias for [`Self::operation`].
+    pub fn other(err: impl fmt::Display) -> Self {
+        Self::Operation(err.to_string())
+    }
+
+    /// Construct a missing CLI argument error.
+    pub fn missing_arg(name: impl fmt::Display) -> Self {
+        Self::Operation(format!("missing {name}"))
+    }
+
+    /// Construct an invalid CLI argument error.
+    pub fn invalid_arg(name: impl fmt::Display) -> Self {
+        Self::Operation(format!("invalid {name}"))
+    }
+
+    /// Construct an endpoint parse error.
+    pub fn endpoint(err: impl fmt::Display) -> Self {
+        Self::Operation(format!("invalid endpoint: {err}"))
     }
 }
 

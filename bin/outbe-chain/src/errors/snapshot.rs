@@ -8,6 +8,9 @@ use thiserror::Error;
 /// Errors that occur during snapshot creation and core validation.
 #[derive(Debug, Error)]
 pub(crate) enum SnapshotError {
+    #[cfg(all(test, feature = "snapshot-integration"))]
+    #[error("Lysis terminal receipt intent or job binding differs")]
+    LysisTerminalReceiptMismatch,
     /// Projection configuration is missing.
     #[error("missing required projection configuration")]
     MissingProjectionConfig,
@@ -220,10 +223,6 @@ pub(crate) enum SnapshotError {
     /// Canonical Metadosis job identifier binding differs.
     #[error("canonical Metadosis JobId binding differs")]
     MetadosisJobIdMismatch,
-    /// Canonical Lysis terminal receipt intent or job binding differs.
-    #[error("canonical Lysis terminal receipt intent/job binding differs")]
-    #[cfg(all(test, feature = "snapshot-integration"))]
-    LysisTerminalReceiptMismatch,
     /// Canonical Metadosis request binding differs from the retained header.
     #[error("canonical Metadosis request binding differs from retained header B={number}")]
     MetadosisRequestBindingMismatch {

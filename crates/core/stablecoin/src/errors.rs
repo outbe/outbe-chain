@@ -219,7 +219,7 @@ impl From<StablecoinStateError> for PrecompileError {
             | StablecoinStateError::BalanceOverflow
             | StablecoinStateError::SupplyBalanceInvariantCorrupted
             | StablecoinStateError::FrozenBalanceInvariantCorrupted) => {
-                PrecompileError::Fatal(fatal.to_string())
+                PrecompileError::Revert(fatal.to_string())
             }
             StablecoinStateError::InvalidAddress { account } => PrecompileError::RevertBytes(
                 Bytes::from(IStablecoin::InvalidAddress { account }.abi_encode()),

@@ -121,7 +121,7 @@ impl MdbxAuthenticatedTree {
             if self
                 .view
                 .collection_has_records(key)
-                .map_err(tree_corruption)?
+                .map_err(classify_staging_error)?
             {
                 return Err(tree_corruption(
                     "orphan collection records behind catalog non-membership",
@@ -143,7 +143,7 @@ impl MdbxAuthenticatedTree {
         let root_count = self
             .view
             .collection_root_count(key)
-            .map_err(tree_corruption)?;
+            .map_err(classify_staging_error)?;
         if root_count != domain.shard_count() as usize {
             return Err(tree_corruption(format!(
                 "present collection has {root_count} shard roots, expected {}",
@@ -157,7 +157,7 @@ impl MdbxAuthenticatedTree {
             let root = self
                 .view
                 .tree_root(namespace)
-                .map_err(tree_corruption)?
+                .map_err(classify_staging_error)?
                 .ok_or_else(|| tree_corruption("present collection has a missing shard root"))?;
             let tree_root = TreeRoot::from_be_bytes(root.0).map_err(tree_corruption)?;
             trees.push(PoseidonSmt::open_with_store(
@@ -220,7 +220,7 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
         expected_parent_root: B256,
     ) -> Result<Option<Commitment>> {
         if expected_parent_root != self.identity.root {
-            return Err(tree_corruption(
+            return Err(tree_unavailable(
                 "requested EVM root does not match exact catalog view",
             ));
         }
@@ -269,7 +269,7 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
         expected_parent_root: B256,
     ) -> Result<bool> {
         if expected_parent_root != self.identity.root {
-            return Err(tree_corruption(
+            return Err(tree_unavailable(
                 "requested EVM root does not match exact catalog view",
             ));
         }
@@ -292,7 +292,7 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
         expected_parent_root: B256,
     ) -> Result<Option<B256>> {
         if expected_parent_root != self.identity.root {
-            return Err(tree_corruption(
+            return Err(tree_unavailable(
                 "requested EVM root does not match exact catalog view",
             ));
         }

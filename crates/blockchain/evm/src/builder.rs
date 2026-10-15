@@ -14,7 +14,7 @@ use reth_ethereum::{
 };
 use reth_evm::execute::{
     BlockAssembler, BlockAssemblerInput, BlockBuilder, BlockBuilderOutcome, BlockExecutionError,
-    ExecutorTx,
+    BlockValidationError, ExecutorTx,
 };
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 use reth_provider::StateProvider;
@@ -32,15 +32,15 @@ pub(crate) fn encode_final_header_artifacts(
     timestamp_millis_part: u64,
     compressed_root: alloy_primitives::B256,
 ) -> Result<alloy_primitives::Bytes, BlockExecutionError> {
-    let mut artifacts =
-        decode_outbe_block_artifacts(prefinal_extra_data).map_err(BlockExecutionError::msg)?;
+    let mut artifacts = decode_outbe_block_artifacts(prefinal_extra_data)
+        .map_err(|err| -> BlockExecutionError { BlockValidationError::msg(err).into() })?;
     artifacts.execution_summary = Some(execution_summary);
     artifacts.timestamp_millis_part = timestamp_millis_part;
     artifacts.compressed_entities_root = Some(CompressedEntitiesRootArtifact {
         commitment_scheme_version: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
         r_sealed: compressed_root,
     });
-    encode_outbe_block_artifacts(&artifacts).map_err(BlockExecutionError::msg)
+    encode_outbe_block_artifacts(&artifacts).map_err(|err| BlockValidationError::msg(err).into())
 }
 
 pub struct OutbeBlockBuilder<'a, EVM>
@@ -80,10 +80,11 @@ where
     /// CE seal. Payload building calls this before either state-root path. The
     /// final `finish` call repeats it idempotently as a defensive invariant.
     pub fn finalize_header_artifacts(&mut self) -> Result<(), BlockExecutionError> {
-        let compressed_seal_output = self
-            .executor
-            .compressed_entities_seal_output()
-            .ok_or_else(|| BlockExecutionError::msg("missing compressed-entities SealOutput"))?;
+        let compressed_seal_output = self.executor.compressed_entities_seal_output().ok_or_else(
+            || -> BlockExecutionError {
+                BlockValidationError::msg("missing compressed-entities SealOutput").into()
+            },
+        )?;
         self.ctx.inner.extra_data = encode_final_header_artifacts(
             self.ctx.inner.extra_data.as_ref(),
             self.executor.current_execution_summary(),
@@ -159,10 +160,11 @@ where
         // value is the canonical source for this block. This code overwrites
         // whatever the proposer placed in `extra_data` earlier.
         self.finalize_header_artifacts()?;
-        let compressed_seal_output = self
-            .executor
-            .compressed_entities_seal_output()
-            .ok_or_else(|| BlockExecutionError::msg("missing compressed-entities SealOutput"))?;
+        let compressed_seal_output = self.executor.compressed_entities_seal_output().ok_or_else(
+            || -> BlockExecutionError {
+                BlockValidationError::msg("missing compressed-entities SealOutput").into()
+            },
+        )?;
 
         // Proposer execution does not know the block hash until assembly. Seal
         // first, retain the immutable provisional batch across assembly, then
@@ -210,7 +212,11 @@ where
         if let Some(service) = compressed_tree_service {
             service
                 .publish_candidate(block.hash(), compressed_seal_output.staged_tree_batch)
-                .map_err(BlockExecutionError::msg)?;
+                .map_err(|err| {
+                    BlockExecutionError::other(
+                        outbe_primitives::error::PrecompileError::TreeUnavailable(err.to_string()),
+                    )
+                })?;
         }
         if let Some(bridge) = &self.bridge {
             bridge.record_execution_summary_with_state_root(

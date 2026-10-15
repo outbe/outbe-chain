@@ -164,6 +164,17 @@ fn write_processor_dcap_archive(
 ) {
     let output = fs::File::create(path).expect("create Processor DCAP evidence archive");
     let mut archive = tar::Builder::new(output);
+    let mut root = tar::Header::new_gnu();
+    root.set_entry_type(tar::EntryType::Directory);
+    root.set_mode(0o755);
+    root.set_uid(0);
+    root.set_gid(0);
+    root.set_mtime(source_date_epoch as u64);
+    root.set_size(0);
+    root.set_cksum();
+    archive
+        .append_data(&mut root, "./", Cursor::new([]))
+        .expect("append Processor DCAP archive root directory");
     let mut directory = tar::Header::new_gnu();
     directory.set_entry_type(tar::EntryType::Directory);
     directory.set_mode(0o755);
@@ -590,6 +601,60 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
     let cargo_config =
         fs::read_to_string(root.join(".cargo/config.toml")).expect("Cargo configuration");
     assert!(cargo_config.contains("xtask = \"run --locked --package xtask --\""));
+}
+
+#[test]
+fn release_preflight_rehearses_critical_paths_without_release_authority() {
+    let root = repo_root();
+    let workflow = fs::read_to_string(root.join(".github/workflows/release-preflight.yml"))
+        .expect("release preflight workflow");
+
+    for required in [
+        "workflow_dispatch:",
+        "source_ref:",
+        "ref: ${{ inputs.source_ref }}",
+        "persist-credentials: false",
+        "RUSTFLAGS: -D warnings",
+        "--execute-artifact-check-plan",
+        "--package xtask --bin xtask",
+        "--features release-sgx-e2e --bin outbe-release-sgx-e2e",
+        "--bin outbe-release-dcap-evidence",
+        "scripts/release/verify_reproducible_elf.py",
+        "cargo xtask release sgx prepare",
+        "cargo xtask release sgx compare",
+        "openssl genrsa -3",
+        "cargo xtask release sgx sign",
+        "cargo xtask release sgx finalize-genesis",
+        "cargo xtask release sgx verify",
+        "cargo xtask release sgx archive",
+        "cargo xtask release sgx image",
+        "docker image inspect",
+    ] {
+        assert!(workflow.contains(required), "missing {required}");
+    }
+    assert_eq!(
+        workflow
+            .matches("scripts/release/reproducible-build.sh")
+            .count(),
+        2,
+        "preflight must perform two independent clean builds"
+    );
+    for forbidden in [
+        "packages: write",
+        "id-token: write",
+        "secrets.",
+        "cosign sign",
+        "--push",
+        "gh release",
+        "cargo xtask release sgx manifest",
+        "outbe-release-sgx-e2e --",
+        "outbe-release-dcap-evidence --",
+    ] {
+        assert!(
+            !workflow.contains(forbidden),
+            "preflight unexpectedly has production or hardware authority: {forbidden}"
+        );
+    }
 }
 
 #[test]

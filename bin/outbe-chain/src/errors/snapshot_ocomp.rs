@@ -48,10 +48,6 @@ pub(crate) enum SnapshotOcompError {
     /// Present admission count calculation overflowed.
     #[error("present admission count overflow")]
     PresentAdmissionCountOverflow,
-    /// Local result comparison has no canonical finality.
-    #[error("local result comparison requires canonical finality")]
-    #[cfg(all(test, feature = "snapshot-integration"))]
-    LocalResultComparisonRequiresFinality,
     /// A local result lacks canonical finality.
     #[error("local result lacks canonical finality")]
     LocalResultLacksFinality,

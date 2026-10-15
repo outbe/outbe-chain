@@ -44,6 +44,6 @@ pub enum CcaFatalError {
 
 impl From<CcaFatalError> for PrecompileError {
     fn from(error: CcaFatalError) -> Self {
-        Self::Fatal(error.to_string())
+        Self::Revert(error.to_string())
     }
 }

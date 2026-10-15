@@ -286,8 +286,8 @@ mod enclave_responses {
 
     fn fatal<T: core::fmt::Debug>(result: Result<T>) -> String {
         match result {
-            Err(PrecompileError::Fatal(message)) => message,
-            other => panic!("expected a Fatal error, got {other:?}"),
+            Err(PrecompileError::EnclaveUnavailable(message)) => message,
+            other => panic!("expected an EnclaveUnavailable error, got {other:?}"),
         }
     }
 

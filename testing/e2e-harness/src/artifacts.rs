@@ -14,8 +14,6 @@ use crate::env::{Environment, TeeMode};
 use crate::ocomp_evidence::{hash_file, MemberDigestV1};
 
 const BUILD_MANIFEST_SCHEMA_VERSION: u32 = 1;
-// Keep aligned with the workspace Heartwood dependencies (checked below).
-const HEARTWOOD_REV: &str = "b76a17801329291153585ed31db61ee3c658046e";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -336,23 +334,21 @@ fn build_commands(lane: BuildLane, jobs: usize) -> Vec<Vec<String>> {
         lane,
         BuildLane::Mock | BuildLane::SgxNoAttest | BuildLane::RadicleSgx
     ) {
-        commands.push(strings(&[
-            "install",
-            "--locked",
-            "-j",
-            &jobs,
-            "--git",
-            "https://github.com/outbe/outbe-heartwood.git",
-            "--rev",
-            HEARTWOOD_REV,
-            "--root",
-            "target/e2e-heartwood",
-            "--target-dir",
-            "target/e2e-heartwood/build",
-            "--bins",
-            "radicle-cli",
-            "radicle-remote-helper",
-        ]));
+        for package in ["radicle-cli", "radicle-remote-helper"] {
+            commands.push(strings(&[
+                "install",
+                "--locked",
+                "-j",
+                &jobs,
+                "--path",
+                &format!("vendor/heartwood/crates/{package}"),
+                "--root",
+                "target/e2e-heartwood",
+                "--target-dir",
+                "target/e2e-heartwood/build",
+                "--bins",
+            ]));
+        }
     }
     commands.push(release_build_command(
         &jobs,
@@ -696,13 +692,7 @@ mod tests {
     use cucumber::gherkin::GherkinEnv;
 
     #[test]
-    fn heartwood_install_matches_workspace_pin_and_runtime_paths() {
-        let workspace = include_str!("../../../Cargo.toml");
-        let dependency = workspace
-            .lines()
-            .find(|line| line.starts_with("heartwood-outbe-radicle ="))
-            .unwrap();
-        assert!(dependency.contains(&format!("rev = \"{HEARTWOOD_REV}\"")));
+    fn heartwood_install_uses_vendored_sources_and_runtime_paths() {
         let repo = tempfile::tempdir().unwrap();
         let env = Environment {
             repo: repo.path().to_owned(),
@@ -715,18 +705,23 @@ mod tests {
             BuildLane::RadicleSgx,
         ] {
             let commands = build_commands(lane, 4);
-            let install = commands.iter().find(|args| args[0] == "install").unwrap();
-            assert!(install
-                .windows(2)
-                .any(|pair| pair == ["--rev", HEARTWOOD_REV]));
-            assert!(!commands
+            let installs: Vec<_> = commands
                 .iter()
-                .flatten()
-                .any(|arg| arg.contains("../outbe-heartwood")));
-            let root = install.windows(2).find(|pair| pair[0] == "--root").unwrap();
-            let bin = env.repo.join(&root[1]).join("bin");
-            assert_eq!(config.bin_rad, bin.join("rad"));
-            assert_eq!(config.bin_git_remote_rad, bin.join("git-remote-rad"));
+                .filter(|args| args[0] == "install")
+                .collect();
+            assert_eq!(installs.len(), 2);
+            for (install, package) in installs
+                .iter()
+                .zip(["radicle-cli", "radicle-remote-helper"])
+            {
+                let path = install.windows(2).find(|pair| pair[0] == "--path").unwrap();
+                assert_eq!(path[1], format!("vendor/heartwood/crates/{package}"));
+                assert!(!install.iter().any(|arg| arg == "--git" || arg == "--rev"));
+                let root = install.windows(2).find(|pair| pair[0] == "--root").unwrap();
+                let bin = env.repo.join(&root[1]).join("bin");
+                assert_eq!(config.bin_rad, bin.join("rad"));
+                assert_eq!(config.bin_git_remote_rad, bin.join("git-remote-rad"));
+            }
             let artifacts = lane_artifacts(&env.repo, lane);
             for (name, path) in [
                 ("rad", &config.bin_rad),
