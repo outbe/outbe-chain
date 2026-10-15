@@ -36,7 +36,7 @@ const NOW: u64 = 1_699_920_000 + 5;
 const ANCHOR: u64 = NOW - NOW % SECONDS_PER_DAY;
 const ENTRY_PRICE: u128 = 2_000_000; // 2.0 on the COEN/840 scale; escrow basis = promis_load
 /// The load any first priced brief picks, pinned by `the_fixture_load_is_the_one_the_ladder_picks`.
-const LOAD_MINOR: u128 = 100_000 * PROMIS_LOAD_MINOR;
+const LOAD_MINOR: u128 = 1_000_000 * PROMIS_LOAD_MINOR;
 
 fn wcoen(protocol_units: u128) -> u128 {
     protocol_units * NATIVE_UNITS_PER_PROTOCOL_UNIT.to::<u128>()
@@ -73,8 +73,8 @@ fn the_bridge_caps_match_the_contracts() {
 
 // --- PROMIS load ladder ---
 
-/// The launch decade: 100 000 PROMIS at COEN/USD = 0.001.
-const LAUNCH_EXPONENT: u32 = 11;
+/// The launch decade: 1 000 000 PROMIS at COEN/USD = 0.001.
+const LAUNCH_EXPONENT: u32 = 12;
 
 /// The anchor a 0.001 launch captures. Every deadband fixture below runs on it.
 const ANCHOR_DIGITS: u32 = LAUNCH_EXPONENT + 4;
@@ -149,11 +149,11 @@ fn the_fixture_load_is_the_one_the_ladder_picks() {
 fn the_anchor_holds_its_launch_product_across_the_decades() {
     let launch_product = runtime::promis_load_minor(LAUNCH_EXPONENT) * 1_000 / 1_000_000;
     for (rate_minor, expected) in [
-        (100u128, 1_000_000_000_000u128),
-        (1_000, 100_000_000_000),
-        (10_000, 10_000_000_000),
-        (100_000, 1_000_000_000),
-        (1_000_000, 100_000_000),
+        (100u128, 10_000_000_000_000u128),
+        (1_000, 1_000_000_000_000),
+        (10_000, 100_000_000_000),
+        (100_000, 10_000_000_000),
+        (1_000_000, 1_000_000_000),
     ] {
         let load = ladder_load(None, rate_minor);
         assert_eq!(load, expected, "load at rate {rate_minor}");
@@ -216,13 +216,13 @@ fn a_rate_that_gaps_several_decades_lands_where_the_anchor_says() {
 #[test]
 fn the_band_survives_integer_division_in_the_narrowest_decade() {
     // A 2% band on a boundary of 10 rounds to nothing if the edges are divided down.
-    assert_eq!(ladder(Some(14), 10), 14);
-    assert_eq!(ladder(Some(14), 11), 13);
+    assert_eq!(ladder(Some(15), 10), 15);
+    assert_eq!(ladder(Some(15), 11), 14);
 }
 
 #[test]
 fn an_absurd_rate_saturates_instead_of_underflowing() {
-    assert_eq!(ladder_load(None, 0), 1_000_000_000_000_000);
+    assert_eq!(ladder_load(None, 0), 10_000_000_000_000_000);
     assert_eq!(ladder_load(None, u128::MAX), 1);
 }
 

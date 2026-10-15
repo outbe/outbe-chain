@@ -92,8 +92,8 @@ const POW10: [u128; PROMIS_LOAD_MAX_EXPONENT as usize + 2] = {
 
 const _: () = assert!(
     POW10[PROMIS_LOAD_LAUNCH_EXPONENT as usize]
-        == 100_000 * 10u128.pow(PROTOCOL_AMOUNT_DECIMALS as u32),
-    "the launch rung must carry 100 000 PROMIS"
+        == 1_000_000 * 10u128.pow(PROTOCOL_AMOUNT_DECIMALS as u32),
+    "the launch rung must carry 1 000 000 PROMIS"
 );
 
 pub(crate) fn promis_load_minor(exponent: u32) -> u128 {

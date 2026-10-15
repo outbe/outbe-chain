@@ -6,8 +6,8 @@ pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 /// Currency the ladder reads the rate in; mirrors the oracle's `DAY_TYPE_ISO`.
 pub const PROMIS_LOAD_ANCHOR_ISO: u16 = 840;
 
-/// The rung the first Intex carries: 10^11 minor, 100 000 PROMIS at six decimals.
-pub const PROMIS_LOAD_LAUNCH_EXPONENT: u32 = 11;
+/// The rung the first Intex carries: 10^12 minor, 1 000 000 PROMIS at six decimals.
+pub const PROMIS_LOAD_LAUNCH_EXPONENT: u32 = 12;
 
 /// Deadband at each decade boundary, so a rate loitering there stops flipping the load daily.
 pub const PROMIS_LOAD_DEADBAND_BPS: u32 = 200;
