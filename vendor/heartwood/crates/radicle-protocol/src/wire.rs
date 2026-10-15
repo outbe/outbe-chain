@@ -516,6 +516,10 @@ impl Decode for filter::Filter {
 }
 
 impl Encode for RefsAt {
+    fn protocol_version(&self) -> u8 {
+        2
+    }
+
     fn encode(&self, buf: &mut impl BufMut) {
         buf.put_slice(&self.remote.to_tagged_bytes());
         self.at.encode(buf);
@@ -523,6 +527,17 @@ impl Encode for RefsAt {
 }
 
 impl Decode for RefsAt {
+    fn decode_version(buf: &mut impl Buf, version: u8) -> Result<Self, Error> {
+        match version {
+            1 => Ok(Self {
+                remote: PublicKey::decode(buf)?.into(),
+                at: git::Oid::decode(buf)?,
+            }),
+            2 => Self::decode(buf),
+            actual => Err(Invalid::ProtocolVersionUnsupported { actual }.into()),
+        }
+    }
+
     fn decode(buf: &mut impl Buf) -> Result<Self, Error> {
         let tag = u8::decode(buf)?;
         let size = match tag {

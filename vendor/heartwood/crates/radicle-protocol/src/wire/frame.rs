@@ -568,6 +568,34 @@ mod test {
     }
 
     #[test]
+    fn generic_repository_payloads_keep_enclosing_key_version() {
+        use crate::service::message::RefsAnnouncement;
+        use radicle::storage::refs::RefsAt;
+        use radicle::test::{arbitrary, fixtures};
+        use wire::{Decode as _, Encode as _};
+        let refs = RefsAt {
+            remote: fixtures::bls_repository_key(),
+            at: radicle::git::Oid::ZERO_SHA1,
+        };
+        let frame = Frame::gossip(Link::Outbound, refs);
+        let bytes = frame.encode_to_vec();
+        assert_eq!(frame.version.number(), 2);
+        assert_eq!(
+            Frame::<RefsAt>::decode(&mut bytes.as_slice()).unwrap(),
+            frame
+        );
+        let ann =
+            RefsAnnouncement::new(arbitrary::r#gen(1), Some(refs).into(), arbitrary::r#gen(1));
+        let frame = Frame::gossip(Link::Outbound, ann);
+        let bytes = frame.encode_to_vec();
+        assert_eq!(frame.version.number(), 2);
+        assert_eq!(
+            Frame::<RefsAnnouncement>::decode(&mut bytes.as_slice()).unwrap(),
+            frame
+        );
+    }
+
+    #[test]
     fn test_stream_id() {
         assert_eq!(StreamId(VarInt(0b000)).kind().unwrap(), StreamType::Control);
         assert_eq!(StreamId(VarInt(0b010)).kind().unwrap(), StreamType::Gossip);

@@ -78,6 +78,13 @@ impl Message {
 }
 
 impl wire::Encode for AnnouncementMessage {
+    fn protocol_version(&self) -> u8 {
+        match self {
+            Self::Refs(ann) => ann.encoding(),
+            _ => 1,
+        }
+    }
+
     fn encode(&self, buf: &mut impl BufMut) {
         match self {
             Self::Node(ann) => ann.encode(buf),
@@ -88,6 +95,10 @@ impl wire::Encode for AnnouncementMessage {
 }
 
 impl wire::Encode for RefsAnnouncement {
+    fn protocol_version(&self) -> u8 {
+        self.encoding()
+    }
+
     fn encode(&self, buf: &mut impl BufMut) {
         self.rid.encode(buf);
         (self.refs.len() as wire::Size).encode(buf);
@@ -120,14 +131,7 @@ impl wire::Decode for RefsAnnouncement {
         let mut refs =
             BoundedVec::<_, REF_REMOTE_LIMIT>::with_capacity(count).map_err(wire::Invalid::from)?;
         for _ in 0..count {
-            let item = if version == 1 {
-                radicle::storage::refs::RefsAt {
-                    remote: NodeId::decode(buf)?.into(),
-                    at: Oid::decode(buf)?,
-                }
-            } else {
-                radicle::storage::refs::RefsAt::decode(buf)?
-            };
+            let item = radicle::storage::refs::RefsAt::decode_version(buf, version)?;
             refs.push(item).map_err(wire::Invalid::from)?;
         }
         let timestamp = Timestamp::decode(buf)?;
