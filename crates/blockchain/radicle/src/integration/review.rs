@@ -19,6 +19,7 @@ use radicle_git_metadata::{
 
 use super::publication::CheckpointOwnerSnapshot;
 use crate::manager::FinalizedPatchApproval;
+use std::collections::BTreeSet;
 
 #[cfg(test)]
 mod tests;
@@ -47,6 +48,8 @@ pub enum Error {
     Attach(#[from] cob::GitLoadError),
     #[error(transparent)]
     SignedRefs(#[from] radicle::storage::refs::sigrefs::write::error::Native),
+    #[error("invalid pinned Git object closure")]
+    Object,
     #[error("owner refs differ from the accepted preparation snapshot")]
     Snapshot,
 }
@@ -62,6 +65,7 @@ pub struct PreparedPatchReview {
     metadata: Author,
     previous_owner_tip: Option<git::Oid>,
     signing: ReviewSigningContext,
+    dependencies: Vec<git::Oid>,
 }
 
 /// Review with its complete preparation snapshot pinned to an accepted checkpoint.
@@ -143,6 +147,15 @@ pub fn prepare_patch_review_from_checkpoint(
     snapshot: &CheckpointOwnerSnapshot,
     context: &ReviewSigningContext,
 ) -> Result<CheckpointPreparedReview, Error> {
+    prepare_patch_review_with_objects(repo, approval, snapshot, context).map(|(job, _)| job)
+}
+
+pub(crate) fn prepare_patch_review_with_objects(
+    repo: &Repository,
+    approval: &FinalizedPatchApproval,
+    snapshot: &CheckpointOwnerSnapshot,
+    context: &ReviewSigningContext,
+) -> Result<(CheckpointPreparedReview, BTreeSet<git::Oid>), Error> {
     let receipt = snapshot.checkpoint().receipt();
     let body = &receipt.body;
     if context.chain_id != body.chain_id
@@ -171,11 +184,18 @@ pub fn prepare_patch_review_from_checkpoint(
     if review.owner() != owner {
         return Err(Error::Authority);
     }
-    Ok(CheckpointPreparedReview {
-        review,
-        snapshot: snapshot.clone(),
-        approval: approval.approval.clone(),
-    })
+    let mut roots: Vec<_> = snapshot.owner_refs().iter().map(|(_, oid)| *oid).collect();
+    roots.push(snapshot.sigrefs());
+    roots.extend_from_slice(&review.dependencies);
+    let objects = object_closure(repo.raw(), roots, true)?;
+    Ok((
+        CheckpointPreparedReview {
+            review,
+            snapshot: snapshot.clone(),
+            approval: approval.approval.clone(),
+        },
+        objects,
+    ))
 }
 
 impl PreparedPatchReview {
@@ -359,10 +379,19 @@ pub fn prepare_patch_review(
         _ => return Err(Error::Target),
     }
     let revision_state = object.object.revision(&revision).ok_or(Error::Revision)?;
-    repo.raw().find_commit((*revision_state.base()).into())?;
-    repo.raw().find_commit(revision_state.head().into())?;
-    repo.raw()
-        .find_commit(git::Oid::from_sha1(decision.expected_target_head.0).into())?;
+    let content = [
+        *revision_state.base(),
+        revision_state.head(),
+        git::Oid::from_sha1(decision.expected_target_head.0),
+    ];
+    for id in content {
+        repo.raw().find_commit(id.into())?;
+    }
+    let mut dependencies = tips.clone();
+    dependencies.push(identity);
+    dependencies.extend(content);
+    dependencies.sort_unstable();
+    dependencies.dedup();
     let mut transaction = Transaction::<patch::Patch, Repository>::default();
     transaction.review(revision, Some(patch::Verdict::Accept), None, vec![])?;
     let metadata = Author {
@@ -392,6 +421,48 @@ pub fn prepare_patch_review(
         metadata,
         previous_owner_tip,
         signing: context.clone(),
+        dependencies,
         commit,
     })
+}
+
+pub(crate) fn object_closure(
+    repo: &git::raw::Repository,
+    mut pending: Vec<git::Oid>,
+    parents: bool,
+) -> Result<BTreeSet<git::Oid>, Error> {
+    let mut seen = BTreeSet::new();
+    let odb = repo.odb()?;
+    while let Some(id) = pending.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let object = odb.read(id.into())?;
+        if git::raw::Oid::hash_object(object.kind(), object.data())? != id.into() {
+            return Err(Error::Object);
+        }
+        match object.kind() {
+            git::raw::ObjectType::Commit => {
+                let commit = repo.find_commit(id.into())?;
+                pending.push(commit.tree_id().into());
+                if parents {
+                    pending.extend(commit.parent_ids().map(git::Oid::from));
+                }
+            }
+            git::raw::ObjectType::Tree => {
+                for entry in repo.find_tree(id.into())?.iter() {
+                    match entry.kind() {
+                        Some(git::raw::ObjectType::Blob | git::raw::ObjectType::Tree) => {
+                            pending.push(entry.id().into())
+                        }
+                        Some(git::raw::ObjectType::Commit) if entry.filemode() == 0o160000 => (),
+                        _ => return Err(Error::Object),
+                    }
+                }
+            }
+            git::raw::ObjectType::Blob => (),
+            _ => return Err(Error::Object),
+        }
+    }
+    Ok(seen)
 }

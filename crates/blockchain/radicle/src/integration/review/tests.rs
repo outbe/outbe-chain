@@ -1,4 +1,7 @@
 use super::*;
+use crate::integration::publication::review::{
+    prepare_review_publication, verify_review_publication,
+};
 use crate::integration::publication::{
     native_policy_context, CheckpointOwnerSnapshot, NativeSubject, ObjectCommitment, ObjectKind,
     OwnerRef, PublicationManifest, RefUpdate,
@@ -1203,6 +1206,229 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     review_body.finalized_anchor_height = approval.approval.approved_height;
     review_body.finalized_anchor_hash = B256::repeat_byte(10);
     review_body.package_manifest_hash = review_manifest.hash().unwrap();
+    let witness = RepositoryWitnessBundle::from_bytes(&bundles[0]).unwrap();
+    let proof = prepare_review_publication(
+        &repo,
+        &current_state,
+        &snapshot,
+        &material,
+        [&signature, &refs_signature],
+        &witness,
+    )
+    .unwrap();
+    assert_eq!(proof.body(), &review_body);
+    assert_eq!(proof.manifest(), &review_manifest);
+    proof.authorize_current(&current_state, &material).unwrap();
+    let mut consumed = current_state.clone();
+    consumed.stage = outbe_radicleregistry::schema::PATCH_EXECUTION_REVIEWED;
+    assert!(proof.authorize_current(&consumed, &material).is_err());
+    let mut changed = current_state.clone();
+    changed.approval.approval.approved_timestamp += 1;
+    assert!(proof.authorize_current(&changed, &material).is_err());
+    let mut advanced = current_state.clone();
+    advanced.checkpoint.receipt.body.sequence += 1;
+    advanced.checkpoint.receipt.receipt_hash = advanced.checkpoint.receipt.body.receipt_hash();
+    assert!(proof.authorize_current(&advanced, &material).is_err());
+    let mut newer_head = current_state.clone();
+    newer_head.authority.block.number += 1;
+    newer_head.authority.block.hash = B256::repeat_byte(13);
+    let newer_material = RepositorySigningMaterial::from_canonical_output(
+        newer_head.authority.clone(),
+        &material.canonical_output(),
+        owner_key,
+    )
+    .unwrap();
+    proof
+        .authorize_current(&newer_head, &newer_material)
+        .unwrap();
+    assert!(proof.authorize_current(&newer_head, &material).is_err());
+    let receiver_storage = radicle::Storage::open(
+        temp.path().join("independent-verifier"),
+        git::UserInfo {
+            alias: radicle::node::Alias::new("Verifier"),
+            key: *SigningKey::from_seed(Seed::new([42; 32])).public_key(),
+        },
+    )
+    .unwrap();
+    receiver_storage
+        .manage_repository(rid, owner, receipts.clone())
+        .unwrap();
+    let receiver = receiver_storage.create(rid).unwrap();
+    let missing_blob = repo
+        .raw()
+        .find_commit(head.into())
+        .unwrap()
+        .tree()
+        .unwrap()
+        .get_name("README")
+        .unwrap()
+        .id();
+    let source_odb = repo.raw().odb().unwrap();
+    let receiver_odb = receiver.raw().odb().unwrap();
+    source_odb
+        .foreach(|oid| {
+            if *oid != missing_blob {
+                let object = source_odb.read(*oid).unwrap();
+                assert_eq!(
+                    receiver_odb.write(object.kind(), object.data()).unwrap(),
+                    *oid
+                );
+            }
+            true
+        })
+        .unwrap();
+    assert!(
+        prepare_patch_review_from_checkpoint(&receiver, &approval, &snapshot, &signing).is_err()
+    );
+    assert!(verify_review_publication(
+        &receiver,
+        &current_state,
+        &snapshot,
+        &material,
+        &review_body,
+        &review_manifest,
+        &witness,
+    )
+    .is_err());
+    let object = source_odb.read(missing_blob).unwrap();
+    receiver_odb.write(object.kind(), object.data()).unwrap();
+    for encoded in &bundles {
+        let witness = RepositoryWitnessBundle::from_bytes(encoded).unwrap();
+        let received = verify_review_publication(
+            &receiver,
+            &current_state,
+            &snapshot,
+            &independent,
+            &review_body,
+            &review_manifest,
+            &witness,
+        )
+        .unwrap();
+        assert_eq!(received.manifest(), &review_manifest);
+    }
+    let mut bad_manifests = vec![];
+    let mut objects = review_manifest.objects().to_vec();
+    objects[0].sha256 = hex::encode([0; 32]);
+    bad_manifests.push(
+        PublicationManifest::new(
+            objects,
+            review_manifest.refs().to_vec(),
+            review_manifest.subjects().to_vec(),
+            review_manifest.owner_snapshot().to_vec(),
+        )
+        .unwrap(),
+    );
+    let mut objects = review_manifest.objects().to_vec();
+    objects.pop();
+    bad_manifests.push(
+        PublicationManifest::new(
+            objects,
+            review_manifest.refs().to_vec(),
+            review_manifest.subjects().to_vec(),
+            review_manifest.owner_snapshot().to_vec(),
+        )
+        .unwrap(),
+    );
+    let mut objects = review_manifest.objects().to_vec();
+    objects[0].kind = match objects[0].kind {
+        ObjectKind::Blob => ObjectKind::Tree,
+        _ => ObjectKind::Blob,
+    };
+    bad_manifests.push(
+        PublicationManifest::new(
+            objects,
+            review_manifest.refs().to_vec(),
+            review_manifest.subjects().to_vec(),
+            review_manifest.owner_snapshot().to_vec(),
+        )
+        .unwrap(),
+    );
+    for extra in [base, later_head] {
+        let object = source_odb.read(extra.into()).unwrap();
+        let mut objects = review_manifest.objects().to_vec();
+        objects.push(ObjectCommitment {
+            kind: ObjectKind::Commit,
+            oid: extra.to_string(),
+            sha256: hex::encode(Sha256::hash(&[object.data()]).0),
+        });
+        bad_manifests.push(
+            PublicationManifest::new(
+                objects,
+                review_manifest.refs().to_vec(),
+                review_manifest.subjects().to_vec(),
+                review_manifest.owner_snapshot().to_vec(),
+            )
+            .unwrap(),
+        );
+    }
+    let mut wrong_refs = review_manifest.refs().to_vec();
+    wrong_refs
+        .iter_mut()
+        .find(|r| r.name == radicle::storage::refs::SIGREFS_BRANCH.as_str())
+        .unwrap()
+        .old = git::Oid::ZERO_SHA1.to_string();
+    bad_manifests.push(
+        PublicationManifest::new(
+            review_manifest.objects().to_vec(),
+            wrong_refs,
+            review_manifest.subjects().to_vec(),
+            review_manifest.owner_snapshot().to_vec(),
+        )
+        .unwrap(),
+    );
+    let mut wrong_snapshot = review_manifest.owner_snapshot().to_vec();
+    wrong_snapshot
+        .iter_mut()
+        .find(|r| r.name == "refs/heads/main")
+        .unwrap()
+        .oid = later_head.to_string();
+    bad_manifests.push(
+        PublicationManifest::new(
+            review_manifest.objects().to_vec(),
+            review_manifest.refs().to_vec(),
+            review_manifest.subjects().to_vec(),
+            wrong_snapshot,
+        )
+        .unwrap(),
+    );
+    for bad_manifest in bad_manifests {
+        let mut bad_body = review_body.clone();
+        bad_body.package_manifest_hash = bad_manifest.hash().unwrap();
+        assert!(verify_review_publication(
+            &receiver,
+            &current_state,
+            &snapshot,
+            &independent,
+            &bad_body,
+            &bad_manifest,
+            &witness,
+        )
+        .is_err());
+    }
+    for field in 0..3 {
+        let mut bad_body = review_body.clone();
+        match field {
+            0 => bad_body.sequence += 1,
+            1 => bad_body.finalized_anchor_height += 1,
+            _ => bad_body.finalized_anchor_hash = B256::repeat_byte(99),
+        }
+        assert!(verify_review_publication(
+            &receiver,
+            &current_state,
+            &snapshot,
+            &independent,
+            &bad_body,
+            &review_manifest,
+            &witness,
+        )
+        .is_err());
+    }
+    assert!(receiver.raw().references().unwrap().next().is_none());
+    assert_eq!(
+        repo.reference_oid(&owner, &git::refs::storage::SIGREFS_BRANCH)
+            .unwrap(),
+        previous_sigrefs
+    );
     let checkpoint = crate::manager::FinalizedPublicationReceipt {
         block: approval.block,
         receipt: outbe_radicleregistry::publication::PublicationReceipt {
@@ -1358,4 +1584,25 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         .recover_review(&providers[0], &again, &contributions[..3])
         .is_err());
     signature.verify(&again.subject, owner).unwrap();
+}
+
+#[test]
+fn pinned_git_closure_checks_code_objects_and_preserves_external_submodules() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = git::raw::Repository::init_bare(temp.path()).unwrap();
+    let blob = repo.blob(b"pinned content").unwrap();
+    let external = git::raw::Oid::from_bytes(&[97; 20]).unwrap();
+    let mut builder = repo.treebuilder(None).unwrap();
+    builder.insert("README", blob, 0o100644).unwrap();
+    builder.insert("submodule", external, 0o160000).unwrap();
+    let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+    let actor = git::raw::Signature::now("Author", "a@example.test").unwrap();
+    let commit = repo
+        .commit(None, &actor, &actor, "Pinned", &tree, &[])
+        .unwrap();
+    let objects = object_closure(&repo, vec![commit.into()], true).unwrap();
+    assert_eq!(objects.len(), 3);
+    assert!(objects.contains(&blob.into()));
+    assert!(!objects.contains(&external.into()));
+    assert!(object_closure(&repo, vec![external.into()], true).is_err());
 }

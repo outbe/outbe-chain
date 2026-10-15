@@ -237,6 +237,10 @@ impl RepositorySigningMaterial {
         })
     }
 
+    pub(crate) fn authority(&self) -> &FinalizedRepositoryAuthority {
+        &self.authority
+    }
+
     pub fn players_commitment(&self) -> [u8; 32] {
         self.players_commitment
     }

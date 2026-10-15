@@ -1,5 +1,7 @@
 //! Canonical publication commitments. Native objects and partial witnesses are verified separately.
 
+pub mod review;
+
 use crate::manager::FinalizedPublicationReceipt;
 use alloy_primitives::B256;
 use commonware_cryptography::{Hasher as _, Sha256};
