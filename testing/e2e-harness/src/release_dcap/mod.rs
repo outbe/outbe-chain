@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::Read as _;
 use std::net::TcpListener;
-use std::os::unix::fs::{FileTypeExt as _, PermissionsExt as _};
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -35,6 +35,11 @@ use rand_core::{OsRng, RngCore as _};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
+
+mod host;
+
+pub(crate) use host::add_sgx_runtime_mounts;
+use host::host_preflight;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum ReleaseDcapNetworkArg {
@@ -121,22 +126,6 @@ struct SourceIdentity {
 struct BundleManifest {
     measurements: Measurements,
     source: SourceIdentity,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-struct EpcRegion {
-    node: String,
-    total_bytes: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-struct HostPreflight {
-    architecture: String,
-    cpu_model: String,
-    epc: Vec<EpcRegion>,
-    physical_package_count: u64,
-    sgx_enclave_device: String,
-    sgx_provision_device: String,
 }
 
 struct RunningEnclave {
@@ -537,127 +526,6 @@ fn run(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-fn host_preflight() -> Result<HostPreflight> {
-    ensure!(std::env::consts::ARCH == "x86_64", "H1 requires x86_64");
-    let (sgx_enclave_device, sgx_provision_device) = sgx_devices()?;
-    let lscpu: Value = serde_json::from_slice(
-        &Command::new("lscpu")
-            .arg("--json")
-            .output()
-            .wrap_err("run lscpu preflight")?
-            .stdout,
-    )
-    .wrap_err("parse lscpu JSON")?;
-    let fields = lscpu_fields(&lscpu)?;
-    let packages = parse_lscpu_u64(&fields, &["Socket(s):", "Sockets:"])?;
-    let cpu_model = field_value(&fields, &["Model name:"])?;
-    let cpuinfo = fs::read_to_string("/proc/cpuinfo")?;
-    ensure!(
-        cpuinfo.lines().any(|line| {
-            line.starts_with("flags")
-                && line
-                    .split_whitespace()
-                    .any(|flag| flag == "sgx" || flag == "sgx_lc")
-        }),
-        "CPU flags do not expose SGX"
-    );
-    let epc = epc_regions()?;
-    ensure!(
-        epc.iter().any(|region| region.total_bytes > 0),
-        "no non-zero SGX EPC region is exposed"
-    );
-    Ok(HostPreflight {
-        architecture: "x86_64".to_owned(),
-        cpu_model,
-        epc,
-        physical_package_count: packages,
-        sgx_enclave_device,
-        sgx_provision_device,
-    })
-}
-
-fn lscpu_fields(value: &Value) -> Result<BTreeMap<String, String>> {
-    let rows = value
-        .get("lscpu")
-        .and_then(Value::as_array)
-        .ok_or_else(|| eyre!("lscpu JSON has no lscpu array"))?;
-    let mut fields = BTreeMap::new();
-    for row in rows {
-        let field = row.get("field").and_then(Value::as_str);
-        let data = row.get("data").and_then(Value::as_str);
-        if let (Some(field), Some(data)) = (field, data) {
-            fields.insert(field.to_owned(), data.to_owned());
-        }
-    }
-    Ok(fields)
-}
-
-fn parse_lscpu_u64(fields: &BTreeMap<String, String>, names: &[&str]) -> Result<u64> {
-    field_value(fields, names)?
-        .parse()
-        .wrap_err_with(|| format!("lscpu {} is not u64", names.join("/")))
-}
-
-fn field_value(fields: &BTreeMap<String, String>, names: &[&str]) -> Result<String> {
-    names
-        .iter()
-        .find_map(|name| fields.get(*name))
-        .cloned()
-        .ok_or_else(|| eyre!("lscpu lacks {}", names.join("/")))
-}
-
-fn epc_regions() -> Result<Vec<EpcRegion>> {
-    let mut regions = Vec::new();
-    let nodes = Path::new("/sys/devices/system/node");
-    if nodes.is_dir() {
-        for entry in fs::read_dir(nodes)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if !name.starts_with("node") || !name[4..].bytes().all(|byte| byte.is_ascii_digit()) {
-                continue;
-            }
-            let path = entry.path().join("x86/sgx_total_bytes");
-            if path.is_file() {
-                let total_bytes = fs::read_to_string(&path)?.trim().parse::<u64>()?;
-                regions.push(EpcRegion {
-                    node: name,
-                    total_bytes,
-                });
-            }
-        }
-    }
-    regions.sort_by(|a, b| a.node.cmp(&b.node));
-    Ok(regions)
-}
-
-fn sgx_devices() -> Result<(String, String)> {
-    for (enclave, provision) in [
-        ("/dev/sgx_enclave", "/dev/sgx_provision"),
-        ("/dev/sgx/enclave", "/dev/sgx/provision"),
-    ] {
-        if Path::new(enclave).exists() && Path::new(provision).exists() {
-            return Ok((enclave.to_owned(), provision.to_owned()));
-        }
-    }
-    bail!("required SGX enclave and provision devices are absent");
-}
-
-pub(crate) fn add_sgx_runtime_mounts(command: &mut Command) -> Result<()> {
-    let (enclave, provision) = sgx_devices()?;
-    command
-        .args(["--device", &format!("{enclave}:/dev/sgx_enclave")])
-        .args(["--device", &format!("{provision}:/dev/sgx_provision")]);
-
-    const AESM_SOCKET: &str = "/var/run/aesmd/aesm.socket";
-    let metadata = fs::symlink_metadata(AESM_SOCKET)
-        .wrap_err_with(|| format!("required AESM socket is absent: {AESM_SOCKET}"))?;
-    if !metadata.file_type().is_socket() {
-        bail!("required AESM path is not a Unix socket: {AESM_SOCKET}");
-    }
-    command.args(["-v", &format!("{AESM_SOCKET}:{AESM_SOCKET}")]);
-    Ok(())
-}
-
 fn start_enclave(
     image: &str,
     endpoint: &str,
@@ -949,181 +817,4 @@ fn default_repo() -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use outbe_primitives::{
-        chain::{OutbeNetwork, TESTNET_CHAIN_ID},
-        tee_attestation_v1::{PlatformTcbStatusSetV1, QvlTcbStatusV1, TeePolicyV1},
-        tee_genesis_v1::{initial_tee_policy_v1, InitialTeeProfileV1, ProductionSgxMeasurementV1},
-    };
-
-    #[test]
-    fn release_cli_requires_an_explicit_production_network_and_genesis() {
-        let mainnet = Cli::try_parse_from([
-            "outbe-release-dcap-evidence",
-            "--network",
-            "mainnet",
-            "--image",
-            "ghcr.io/outbe/enclave@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "--bundle",
-            "/tmp/bundle",
-            "--genesis",
-            "/tmp/mainnet-genesis.json",
-            "--expected-pck-ca",
-            "processor",
-            "--output-dir",
-            "/tmp/evidence",
-        ])
-        .expect("Mainnet release CLI");
-        assert_eq!(
-            mainnet.network.artifact_set(),
-            ReleaseDcapArtifactSetV1::Mainnet
-        );
-        assert_eq!(mainnet.genesis, PathBuf::from("/tmp/mainnet-genesis.json"));
-
-        assert!(Cli::try_parse_from([
-            "outbe-release-dcap-evidence",
-            "--network",
-            "devnet",
-            "--image",
-            "ghcr.io/outbe/enclave@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "--bundle",
-            "/tmp/bundle",
-            "--genesis",
-            "/tmp/genesis.json",
-            "--expected-pck-ca",
-            "processor",
-            "--output-dir",
-            "/tmp/evidence",
-        ])
-        .is_err());
-        assert!(Cli::try_parse_from([
-            "outbe-release-dcap-evidence",
-            "--image",
-            "ghcr.io/outbe/enclave@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "--bundle",
-            "/tmp/bundle",
-            "--genesis",
-            "/tmp/genesis.json",
-            "--expected-pck-ca",
-            "processor",
-            "--output-dir",
-            "/tmp/evidence",
-        ])
-        .is_err());
-    }
-
-    #[test]
-    fn hardware_release_chain_binding_is_closed_per_network() {
-        assert!(ensure_release_chain_id(
-            ReleaseDcapArtifactSetV1::Mainnet,
-            outbe_primitives::chain::MAINNET_CHAIN_ID
-        )
-        .is_ok());
-        assert!(ensure_release_chain_id(
-            ReleaseDcapArtifactSetV1::Testnet,
-            outbe_primitives::chain::TESTNET_CHAIN_ID
-        )
-        .is_ok());
-        assert!(ensure_release_chain_id(
-            ReleaseDcapArtifactSetV1::Mainnet,
-            outbe_primitives::chain::TESTNET_CHAIN_ID
-        )
-        .is_err());
-        assert!(ensure_release_chain_id(
-            ReleaseDcapArtifactSetV1::Testnet,
-            outbe_primitives::chain::MAINNET_CHAIN_ID
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn release_artifact_sets_are_closed_and_differ_only_by_genesis() {
-        let testnet = ReleaseDcapArtifactSetV1::for_network(OutbeNetwork::Testnet).unwrap();
-        let mainnet = ReleaseDcapArtifactSetV1::for_network(OutbeNetwork::Mainnet).unwrap();
-        assert!(ReleaseDcapArtifactSetV1::for_network(OutbeNetwork::Devnet).is_none());
-        assert_eq!(testnet.paths().len(), 18);
-        assert_eq!(mainnet.paths().len(), 18);
-        assert!(testnet.paths().contains("testnet-genesis.json"));
-        assert!(!testnet.paths().contains("mainnet-genesis.json"));
-        assert!(mainnet.paths().contains("mainnet-genesis.json"));
-        assert!(!mainnet.paths().contains("testnet-genesis.json"));
-
-        let common = testnet
-            .paths()
-            .intersection(&mainnet.paths())
-            .copied()
-            .collect::<BTreeSet<_>>();
-        assert_eq!(common.len(), 17);
-    }
-
-    fn testnet_policy(measurements: &Measurements) -> TeePolicyV1 {
-        initial_tee_policy_v1(
-            InitialTeeProfileV1::DcapRequired(ProductionSgxMeasurementV1 {
-                mrenclave: parse_b256(&measurements.mrenclave).unwrap(),
-                mrsigner: parse_b256(&measurements.mrsigner).unwrap(),
-                isv_prod_id: measurements.isv_prod_id,
-                minimum_isv_svn: measurements.isv_svn,
-                minimum_tcb_evaluation_data_number: 1,
-            }),
-            TESTNET_CHAIN_ID,
-            B256::repeat_byte(3),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn exact_image_reference_requires_lowercase_sha256() {
-        let digest = "a".repeat(64);
-        assert_eq!(
-            exact_image_digest(&format!("ghcr.io/outbe/enclave@sha256:{digest}"))
-                .expect("exact digest"),
-            digest
-        );
-        assert!(exact_image_digest("ghcr.io/outbe/enclave:latest").is_err());
-        assert!(
-            exact_image_digest(&format!("ghcr.io/outbe/enclave@sha256:{}", "A".repeat(64)))
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn records_lscpu_package_topology_as_untrusted_provenance() {
-        let value = serde_json::json!({"lscpu": [
-            {"field": "Model name:", "data": "Intel(R) Xeon(R)"},
-            {"field": "Socket(s):", "data": "2"}
-        ]});
-        let fields = lscpu_fields(&value).expect("lscpu fields");
-        assert_eq!(parse_lscpu_u64(&fields, &["Socket(s):"]).unwrap(), 2);
-        assert_eq!(
-            field_value(&fields, &["Model name:"]).unwrap(),
-            "Intel(R) Xeon(R)"
-        );
-    }
-
-    #[test]
-    fn testnet_policy_fixture_binds_signed_measurements_and_strict_statuses() {
-        let measurements = Measurements {
-            debug: false,
-            isv_prod_id: 1,
-            isv_svn: 2,
-            mrenclave: "11".repeat(32),
-            mrsigner: "22".repeat(32),
-        };
-        let policy = testnet_policy(&measurements);
-        assert_eq!(
-            policy.accepted_platform_tcb_statuses,
-            PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded
-        );
-        assert_eq!(policy.accepted_qe_tcb_status, QvlTcbStatusV1::UpToDate);
-        assert_eq!(policy.measurement_rules.len(), 1);
-        assert_eq!(
-            policy.measurement_rules[0].mrenclave,
-            B256::repeat_byte(0x11)
-        );
-        assert_eq!(
-            policy.measurement_rules[0].mrsigner,
-            B256::repeat_byte(0x22)
-        );
-    }
-}
+mod tests;

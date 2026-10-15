@@ -1,4 +1,4 @@
-#[path = "../release_dcap.rs"]
+#[path = "../release_dcap/mod.rs"]
 #[allow(dead_code)]
 mod release_dcap;
 #[path = "../release_sgx.rs"]

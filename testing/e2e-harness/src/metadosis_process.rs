@@ -272,13 +272,18 @@ pub fn run_p0_parity(repo: &Path, output: &Path) -> Result<()> {
         &build_log,
     )?;
 
+    let roots = P0CaseRoots {
+        tools_target: &tools_target,
+        data_root: &data_root,
+        cases_root: &cases_root,
+    };
     for case in MetadosisP0Case::ALL {
         let node = if case.label().starts_with("debug_") {
             &debug_node
         } else {
             &release_node
         };
-        run_p0_case(&lane, &tools_target, &data_root, &cases_root, case, node)?;
+        run_p0_case(&lane, &roots, case, node)?;
     }
 
     let source_revision = current_clean_git_revision(&lane.repo)?;
@@ -306,16 +311,21 @@ pub fn run_p0_parity(repo: &Path, output: &Path) -> Result<()> {
     Ok(())
 }
 
+struct P0CaseRoots<'a> {
+    tools_target: &'a Path,
+    data_root: &'a Path,
+    cases_root: &'a Path,
+}
+
 fn run_p0_case(
     lane: &Lane,
-    tools_target: &Path,
-    data_root: &Path,
-    cases_root: &Path,
+    roots: &P0CaseRoots<'_>,
     case: MetadosisP0Case,
     node: &Path,
 ) -> Result<()> {
-    let case_dir = cases_root.join(case.label());
-    let data_dir = data_root.join(case.label());
+    let tools_target = roots.tools_target;
+    let case_dir = roots.cases_root.join(case.label());
+    let data_dir = roots.data_root.join(case.label());
     fs::create_dir(&case_dir)?;
     fs::create_dir(&data_dir)?;
     let mut command = Command::new(tools_target.join("release/outbe-e2e"));
