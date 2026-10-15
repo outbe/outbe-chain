@@ -272,7 +272,6 @@ fn offer(db: &mut CacheDB<EmptyDB>, chain_id: u64, key: &NetworkKey) -> Executio
         worldwideDay: DAY,
         tributeCurrency: 840,
         referenceCurrency: 840,
-        excludeFromIntexIssuance: false,
         zkProof: Bytes::new(),
         chainId: u32::try_from(chain_id).expect("the L2 chain id fits uint32"),
         version: "1.1.0".to_owned(),

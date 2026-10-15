@@ -530,7 +530,6 @@ fn fresh_post_activation_tribute_completes_on_v2(world: &mut World) {
                 wwd: &successor_wwd_value.to_string(),
                 amounts: ("100", "0"),
                 currency: 840,
-                exclude_from_intex_issuance: false,
             },
         )
         .expect("submit fresh V2-era Tribute");

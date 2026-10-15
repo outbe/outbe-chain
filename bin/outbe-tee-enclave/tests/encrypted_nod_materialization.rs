@@ -41,7 +41,6 @@ fn materialization_binds_current_authority_and_exact_authenticated_source() {
         issuance_currency: 840,
         reference_currency: 978,
         tribute_price_minor: U256::ONE,
-        exclude_from_intex_issuance: false,
         offer_input_hash: B256::repeat_byte(5),
     };
     let amounts = TributeAmountsV2 {

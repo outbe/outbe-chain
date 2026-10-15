@@ -330,7 +330,6 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
         nominal_amount_minor: U256::from(11),
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: true,
     };
     let repository = TributeRepositoryWriter::new(storage.clone(), storage.clone());
     repository.put(&tribute).expect("fixture current Tribute");

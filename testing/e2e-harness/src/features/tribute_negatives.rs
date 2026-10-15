@@ -87,6 +87,20 @@ fn latest_header(world: &World, port: u16) -> ObservedHeader {
     }
 }
 
+fn offer_call(transaction: &serde_json::Value) -> ITributeFactory::offerTributeCall {
+    let data = hex::decode(
+        transaction["input"]
+            .as_str()
+            .expect("calldata")
+            .trim_start_matches("0x"),
+    )
+    .expect("hex calldata");
+    let call =
+        ITributeFactory::offerTributeCall::abi_decode_validate(&data).expect("canonical offer ABI");
+    assert_eq!(call.abi_encode(), data);
+    call
+}
+
 pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejection: Rejection) {
     assert!(
         world.rpc.wait_receipt_status(tx_hash, false, 120),
@@ -126,16 +140,7 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
         quantity(&receipt, "gasUsed") < U256::from(gas),
         "out-of-gas is not guard evidence"
     );
-    let data = hex::decode(
-        transaction["input"]
-            .as_str()
-            .expect("calldata")
-            .trim_start_matches("0x"),
-    )
-    .expect("hex calldata");
-    let call =
-        ITributeFactory::offerTributeCall::abi_decode_validate(&data).expect("canonical offer ABI");
-    assert_eq!(call.abi_encode(), data);
+    let call = offer_call(&transaction);
     assert_eq!(
         call.worldwideDay,
         world
@@ -150,7 +155,27 @@ pub(super) fn assert_rejection(world: &World, tx_hash: &str, key: &str, rejectio
     assert_eq!(call.nonce.len(), 12);
     assert!(!call.ephemeralPubkey.is_zero());
     match rejection {
-        Rejection::Duplicate => assert!(call.excludeFromIntexIssuance),
+        Rejection::Duplicate => {
+            let original = world
+                .state
+                .tribute_tx_hash
+                .as_deref()
+                .expect("original tribute tx");
+            let original = offer_call(
+                &eth::raw_json_result(
+                    &url,
+                    "eth_getTransactionByHash",
+                    serde_json::json!([original]),
+                )
+                .expect("original offer transaction"),
+            );
+            assert_eq!(original.worldwideDay, call.worldwideDay);
+            assert_ne!(
+                (original.tributeCurrency, original.referenceCurrency),
+                (call.tributeCurrency, call.referenceCurrency),
+                "the duplicate must change its public terms"
+            );
+        }
         Rejection::MissingSignature => {
             assert_eq!(call.zkMerkleRoot.len(), 32, "must reach signature guard");
             assert!(call.signature.is_empty());

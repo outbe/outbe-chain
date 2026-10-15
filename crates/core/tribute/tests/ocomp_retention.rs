@@ -23,7 +23,6 @@ fn tribute(day: WorldwideDay, discriminator: u8) -> TributeData {
         nominal_amount_minor: U256::from(700_u64),
         reference_currency: 840,
         tribute_price_minor: U256::from(2_u64),
-        exclude_from_intex_issuance: false,
     }
 }
 
@@ -199,7 +198,6 @@ fn release_pages_across_the_work_shard_boundary_without_dropping_the_last_tribut
             nominal_amount_minor: U256::from(700_u64),
             reference_currency: 840,
             tribute_price_minor: U256::from(2_u64),
-            exclude_from_intex_issuance: false,
         };
         last_id = Some(body.tribute_id);
         current_writer.put(&body).unwrap();

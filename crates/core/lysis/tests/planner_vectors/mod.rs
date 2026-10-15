@@ -48,7 +48,7 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::SCALE_1E6_U256;
 use std::collections::BTreeMap;
 
-fn tribute(seed: u32, day: WorldwideDay, nominal: u64, excluded: bool) -> TributeInputV1 {
+fn tribute(seed: u32, day: WorldwideDay, nominal: u64) -> TributeInputV1 {
     let mut owner_bytes = [0_u8; 20];
     owner_bytes[16..].copy_from_slice(&seed.to_be_bytes());
     let owner = Address::from(owner_bytes);
@@ -60,19 +60,12 @@ fn tribute(seed: u32, day: WorldwideDay, nominal: u64, excluded: bool) -> Tribut
         nominal_amount_minor: U256::from(nominal),
         reference_currency: 978,
         tribute_price_minor: U256::from(2),
-        exclude_from_intex_issuance: excluded,
     }
 }
 
-fn observed(
-    seed: u32,
-    day: WorldwideDay,
-    nominal: u64,
-    league: u16,
-    excluded: bool,
-) -> ObservedTributeV1 {
+fn observed(seed: u32, day: WorldwideDay, nominal: u64, league: u16) -> ObservedTributeV1 {
     ObservedTributeV1 {
-        tribute: tribute(seed, day, nominal, excluded),
+        tribute: tribute(seed, day, nominal),
         first_league: ObservationValueV1::Value(league),
         second_league: ObservationValueV1::Value(league),
         entry_price_minor: ObservationValueV1::Value(U256::from(3)),

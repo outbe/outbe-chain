@@ -27,7 +27,7 @@ fn primary_work_is_unbounded_in_total_and_partitioned_in_exact_256_record_shards
 fn enumerate_artifact_is_bounded_canonical_and_commits_raw_coverage() {
     let limits = poc_schema_limits();
     let day = WorldwideDay::new(20_260_724);
-    let mut tributes = vec![tribute(1, day, 10, false), tribute(2, day, 20, true)];
+    let mut tributes = vec![tribute(1, day, 10), tribute(2, day, 20)];
     tributes.sort_by_key(|tribute| tribute.tribute_id);
     let run = enumerate_tributes(256, day, &tributes).unwrap();
 
@@ -58,12 +58,12 @@ fn enumerate_rejects_empty_oversized_and_noncanonical_shards() {
     assert!(enumerate_tributes(0, day, &[]).is_err());
 
     let mut oversized = (0..257)
-        .map(|index| tribute(index + 1, day, 1, false))
+        .map(|index| tribute(index + 1, day, 1))
         .collect::<Vec<_>>();
     oversized.sort_by_key(|tribute| tribute.tribute_id);
     assert!(enumerate_tributes(0, day, &oversized).is_err());
 
-    let duplicate = tribute(1, day, 1, false);
+    let duplicate = tribute(1, day, 1);
     assert!(enumerate_tributes(0, day, &[duplicate.clone(), duplicate]).is_err());
 }
 
@@ -71,10 +71,7 @@ fn enumerate_rejects_empty_oversized_and_noncanonical_shards() {
 fn fidelity_map_artifact_is_bounded_canonical_and_preserves_raw_coverage() {
     let limits = poc_schema_limits();
     let day = WorldwideDay::new(20_260_724);
-    let mut observed = vec![
-        observed(1, day, 10, 2, false),
-        observed(2, day, 20, 3, true),
-    ];
+    let mut observed = vec![observed(1, day, 10, 2), observed(2, day, 20, 3)];
     observed.sort_by_key(|item| item.tribute.tribute_id);
     let output = fidelity_map(256, &observed).unwrap();
 
@@ -264,7 +261,6 @@ fn root_reduce_summary_is_bounded_canonical_and_rejects_cross_list_substitution(
         nod_count: 257,
         bucket_count: 257,
         tribute_nominal_total: U256::from(10_000),
-        eligible_nominal_total: U256::from(100),
         lysis_allocation_minor: U256::from(90),
         nod_cost_total: U256::from(9_000),
         first_error_ordinal: None,
@@ -335,7 +331,6 @@ fn root_reduce_output_is_a_closed_leaf_or_node_payload() {
         nod_count: 1,
         bucket_count: 1,
         tribute_nominal_total: U256::from(100),
-        eligible_nominal_total: U256::from(100),
         lysis_allocation_minor: U256::from(10),
         nod_cost_total: U256::from(90),
         first_error_ordinal: None,
@@ -504,7 +499,6 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
                 nod_count: tribute_count,
                 bucket_count: tribute_count,
                 tribute_nominal_total: U256::from(tribute_count) * U256::from(10),
-                eligible_nominal_total: U256::from(tribute_count) * U256::from(8),
                 lysis_allocation_minor: U256::from(tribute_count) * U256::from(3),
                 nod_cost_total: U256::from(tribute_count) * U256::from(7),
                 first_error_ordinal,
@@ -517,7 +511,6 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
     assert_eq!(merged.covered_primary_start, 0);
     assert_eq!(merged.covered_primary_count, 2);
     assert_eq!(merged.tribute_count, 257);
-    assert_eq!(merged.eligible_nominal_total, U256::from(2_056));
     assert_eq!(merged.tribute_nominal_total, U256::from(2_570));
     assert_eq!(merged.first_error_ordinal, Some(1));
     assert_eq!(merged.nod_actions.subtree_height, 9);
@@ -531,23 +524,6 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
     let mut overflowing = left.clone();
     overflowing.tribute_nominal_total = U256::MAX;
     assert!(overflowing.merge_adjacent(right.clone()).is_err());
-
-    // Eligible nominal is a shard total. A valid page may carry more eligible
-    // nominal than its own tribute nominal. Conservation is meaningful only
-    // at the complete root, after every page reduces.
-    let mut eligible_paged_left = left.clone();
-    eligible_paged_left.tribute_nominal_total = U256::from(1_000);
-    eligible_paged_left.eligible_nominal_total = U256::from(2_000);
-    let mut eligible_paged_right = right.clone();
-    eligible_paged_right.tribute_nominal_total = U256::from(1_570);
-    eligible_paged_right.eligible_nominal_total = U256::ZERO;
-    encode_root_reduce_summary(&eligible_paged_left, &poc_schema_limits())
-        .expect("a page whose eligible total exceeds its tribute nominal encodes");
-    let globally_conserved = eligible_paged_left
-        .merge_adjacent(eligible_paged_right)
-        .expect("adjacent pages reduce eligible and tribute totals independently");
-    assert_eq!(globally_conserved.eligible_nominal_total, U256::from(2_000));
-    assert_eq!(globally_conserved.tribute_nominal_total, U256::from(2_570));
 
     let empty_summary = |primary_ordinal| RootReduceSummaryV1 {
         protocol_bundle_hash: left.protocol_bundle_hash,
@@ -580,7 +556,6 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
         nod_count: 0,
         bucket_count: 0,
         tribute_nominal_total: U256::ZERO,
-        eligible_nominal_total: U256::ZERO,
         lysis_allocation_minor: U256::ZERO,
         nod_cost_total: U256::ZERO,
         first_error_ordinal: None,

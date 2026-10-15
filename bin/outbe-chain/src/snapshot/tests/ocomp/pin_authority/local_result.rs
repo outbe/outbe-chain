@@ -43,7 +43,6 @@ pub(super) fn result_for(job: &OcompJobRecordV1) -> LysisResultV1 {
     let unused = frozen.lysis_limit_minor;
     let conservation = ConservationTotalsV1 {
         tribute_nominal_total: intent.authenticated_day_nominal,
-        eligible_nominal_total: U256::ZERO,
         day_limit: frozen.day_limit,
         gratis_demand: frozen.gratis_demand,
         day_gratis_limit_minor: frozen.day_gratis_limit_minor,

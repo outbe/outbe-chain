@@ -94,7 +94,6 @@ fn verified_input(
     assert_eq!(body.issuance_currency, 840);
     assert_eq!(body.reference_currency, 840);
     assert_eq!(body.worldwide_day.value(), day);
-    assert!(!body.exclude_from_intex_issuance);
     let request = PointReadRequestV1 {
         domain_id: 1,
         raw_id: body.tribute_id,

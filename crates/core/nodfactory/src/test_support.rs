@@ -213,7 +213,6 @@ fn source_body(
             issuance_currency: action.issuance_currency,
             reference_currency: action.reference_currency,
             tribute_price_minor: U256::ONE,
-            exclude_from_intex_issuance: false,
             offer_input_hash: action.tribute_id,
         },
         &TributeAmountsV2 {

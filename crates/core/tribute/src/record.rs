@@ -16,7 +16,6 @@ pub struct TributeMetadata {
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub tribute_price_minor: U256,
-    pub exclude_from_intex_issuance: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -49,7 +48,6 @@ pub fn from_encrypted(body: EncryptedTributeV2) -> TributeRecord {
         issuance_currency: context.issuance_currency,
         reference_currency: context.reference_currency,
         tribute_price_minor: context.tribute_price_minor,
-        exclude_from_intex_issuance: context.exclude_from_intex_issuance,
     };
     TributeRecord {
         metadata,
@@ -65,7 +63,6 @@ pub fn from_legacy(body: TributeData) -> TributeRecord {
         issuance_currency: body.issuance_currency,
         reference_currency: body.reference_currency,
         tribute_price_minor: body.tribute_price_minor,
-        exclude_from_intex_issuance: body.exclude_from_intex_issuance,
     };
     TributeRecord {
         metadata,
@@ -157,7 +154,6 @@ impl TributeRecord {
             nominal_amount_minor: U256::ZERO,
             reference_currency: self.reference_currency,
             tribute_price_minor: self.tribute_price_minor,
-            exclude_from_intex_issuance: self.exclude_from_intex_issuance,
         }
     }
 
@@ -177,7 +173,6 @@ impl TributeRecord {
             issuance_currency: self.issuance_currency,
             reference_currency: self.reference_currency,
             tribute_price_minor: self.tribute_price_minor,
-            exclude_from_intex_issuance: self.exclude_from_intex_issuance,
         })
     }
 }

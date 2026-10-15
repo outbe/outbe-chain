@@ -15,7 +15,6 @@ fn present_golden_packages_cover_every_closed_domain() {
         nominal_amount_minor: U256::from(11),
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: false,
     };
     let nod_id = WwdEntityId::from_day_and_digest(day, [0x32; 32]);
     let nod = NodItemBodyV1 {

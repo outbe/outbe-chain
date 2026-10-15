@@ -91,10 +91,6 @@ export function registerTributeTools(server: McpServer, ctx: Ctx): void {
       amount: tributeBase.optional().describe('whole amount_base matching the proof (default "100")'),
       amount_micro: amountMicro.optional(),
       currency: z.number().int().optional().describe("ISO 4217 numeric, default 840 (USD)"),
-      exclude_from_intex_issuance: z
-        .boolean()
-        .optional()
-        .describe("exclude the resulting Tribute from Intex issuance (default false)"),
       zk_proof: zkProof,
       zk_merkle_root: zkMerkleRoot,
       signature: zkSignature,
@@ -107,7 +103,6 @@ export function registerTributeTools(server: McpServer, ctx: Ctx): void {
     handler(async (a) => {
       if (!ctx.account) throw new Error("set OUTBE_PRIVATE_KEY to submit offers");
       const currency = a.currency ?? 840;
-      const excludeFromIntex = a.exclude_from_intex_issuance ?? false;
       const amount = a.amount ?? "100";
       const offerPub = await offerPublicKey(ctx);
       const worldwideDay = a.worldwide_day ?? (await offeringDay(ctx));
@@ -121,7 +116,6 @@ export function registerTributeTools(server: McpServer, ctx: Ctx): void {
       const args = offerTributeArgs(encryptOffer(offerPub, payload), {
         worldwideDay,
         currency,
-        excludeFromIntex,
         zkProof: a.zk_proof as Hex,
         l2ChainId: a.l2_chain_id,
         circuitVersion: a.circuit_version,
@@ -137,7 +131,6 @@ export function registerTributeTools(server: McpServer, ctx: Ctx): void {
         currency,
         amount_base: amount,
         amount_micro: a.amount_micro ?? "0",
-        exclude_from_intex_issuance: excludeFromIntex,
         creator: ctx.account.address,
         l2_chain_id: a.l2_chain_id,
         circuit_version: a.circuit_version,

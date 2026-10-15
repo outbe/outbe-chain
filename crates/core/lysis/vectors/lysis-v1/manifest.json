@@ -4,10 +4,10 @@
   "semantic_version": "1.0.0-poc",
   "migration_baseline_revision": "04606071023a237e43d5a3ca47642ee202983e86",
   "decision_reference": "outbe-plan/off-chain-poc-lysis-v1-semantics.md",
-  "reference_path": "testing/lysis-v1-reference/src/lib.rs",
-  "reference_sha256": "f496d35a7730230e9bccc7aaac2040a00b2ff121c9740cd10b3c7a5dc2d6bc02",
+  "reference_path": "testing/lysis-v1-reference/src",
+  "reference_sha256": "3820713db360a37157d94c1eafa9008a2901c1a2d17b705c741fb823f86f05fd",
   "case_path": "crates/core/lysis/vectors/lysis-v1/cases.jsonl",
-  "case_file_sha256": "8dfee41df34925a19e9ffb36cbd18ad41462c081a3a5840952a216d7856aebdb",
+  "case_file_sha256": "52163d6a8e5a50fe0c220f057d2dc307ad5c01b23d175cadb9a21bcfad8663d8",
   "case_count": 16,
   "required_arithmetic_vectors": [
     "u256-wrapping-multiply",

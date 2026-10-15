@@ -47,7 +47,6 @@ fn worker_reconstructs_the_complete_manifest_from_exact_cas_streams() {
         nominal_amount_minor: U256::from(100),
         reference_currency: 978,
         tribute_price_minor: U256::from(3),
-        exclude_from_intex_issuance: false,
     };
     let raw_opening = |address, slot_byte, value| RawContractOpeningProofV1 {
         contract_address: address,
@@ -240,7 +239,6 @@ fn exporter_starts_a_second_tribute_chunk_at_the_frozen_256_record_boundary() {
                 nominal_amount_minor: U256::from(1),
                 reference_currency: 978,
                 tribute_price_minor: U256::from(1),
-                exclude_from_intex_issuance: false,
             }
         })
         .collect::<Vec<_>>();

@@ -33,7 +33,7 @@ pub const MIN_ONBOARDING_ARTIFACT_BYTES: usize = 60;
 /// Fields mirror the part of `ITributeFactory.offerTribute` the enclave needs,
 /// plus the sender and the node-resolved public Oracle inputs:
 ///   - `cipherText`, `nonce`, `ephemeralPubkey`, `worldwideDay`,
-///     `tributeCurrency`, `referenceCurrency`, `excludeFromIntexIssuance` (ABI).
+///     `tributeCurrency`, `referenceCurrency` (ABI).
 ///   - `owner`: the L1 `msg.sender`. The enclave binds it into the result and
 ///     into the `token_id` (computed in-enclave, see `TributeOfferResult`).
 ///   - `issuance_wwd_vwap_minor`, `reference_wwd_vwap_minor`, and
@@ -80,9 +80,6 @@ pub struct EncryptedTributeOffer {
     /// ABI `referenceCurrency`. A separate axis from `tribute_currency`. It
     /// drives gem/intex qualification, not pricing.
     pub reference_currency: u16,
-    /// ABI `excludeFromIntexIssuance`: when true, the resulting Tribute is
-    /// excluded from Intex issuance.
-    pub exclude_from_intex_issuance: bool,
     /// Exact WorldwideDay VWAP for `COEN/<tribute_currency>`, scale 1e6.
     pub issuance_wwd_vwap_minor: U256,
     /// Exact WorldwideDay VWAP for `COEN/<reference_currency>`, scale 1e6.
@@ -151,8 +148,8 @@ pub enum TributeOfferStatus {
 ///
 /// This carries **only what the enclave computed**. The enclave does not echo back
 /// the values that the host supplied in [`EncryptedTributeOffer`] (day, currencies,
-/// exclusion flag, price). The host already holds them, so an echo would be one
-/// more thing to keep in agreement for no gain. `owner` is the deliberate
+/// price). The host already holds them, so an echo would be one more thing to
+/// keep in agreement for no gain. `owner` is the deliberate
 /// exception. The enclave folds it into `token_id`, so a comparison against
 /// `msg.sender` checks the enclave's computation rather than repeating an input.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1111,7 +1108,6 @@ pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
         buf.extend_from_slice(&offer.worldwide_day.value().to_be_bytes());
         buf.extend_from_slice(&offer.tribute_currency.to_be_bytes());
         buf.extend_from_slice(&offer.reference_currency.to_be_bytes());
-        buf.push(u8::from(offer.exclude_from_intex_issuance));
         buf.extend_from_slice(&offer.issuance_wwd_vwap_minor.to_be_bytes::<32>());
         buf.extend_from_slice(&offer.reference_wwd_vwap_minor.to_be_bytes::<32>());
         buf.extend_from_slice(&offer.reference_scurve_minor.to_be_bytes::<32>());

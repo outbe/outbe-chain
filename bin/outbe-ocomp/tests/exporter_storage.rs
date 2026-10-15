@@ -54,7 +54,6 @@ fn populate(reader: StorageReaderHandle, writer: StorageWriterHandle) {
             nominal_amount_minor: U256::from(700),
             reference_currency: 840,
             tribute_price_minor: U256::from(2),
-            exclude_from_intex_issuance: false,
         };
         repository.put(&body).unwrap();
         if index <= 4 {

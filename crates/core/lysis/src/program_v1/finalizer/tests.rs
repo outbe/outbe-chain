@@ -1,6 +1,6 @@
 use super::{
-    canonical_empty_summary, require_global_nominal_conservation, stream_result_chunks,
-    FinalizationResultChunkV1, LysisFinalizationErrorV1, ResultBindingV1, SummaryBindingV1,
+    canonical_empty_summary, stream_result_chunks, FinalizationResultChunkV1,
+    LysisFinalizationErrorV1, ResultBindingV1, SummaryBindingV1,
 };
 use crate::program_v1::planner::PRIMARY_WORK_SHARD_SIZE;
 use alloy_primitives::{keccak256, Address, B256, U256};
@@ -92,13 +92,4 @@ fn a_result_chunk_with_an_entry_beyond_the_call_price_bound_is_not_finalized() {
         ),
         Err(LysisFinalizationErrorV1::Authority("Nod entry price bound"))
     ));
-}
-
-#[test]
-fn finalizer_enforces_nominal_conservation_only_at_the_global_root() {
-    require_global_nominal_conservation(U256::from(2_000), U256::from(2_570))
-        .expect("globally conserved totals");
-    require_global_nominal_conservation(U256::from(2_570), U256::from(2_570))
-        .expect("all Tribute can be eligible");
-    assert!(require_global_nominal_conservation(U256::from(2_571), U256::from(2_570)).is_err());
 }

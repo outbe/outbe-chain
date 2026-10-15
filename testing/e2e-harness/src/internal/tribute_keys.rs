@@ -44,6 +44,5 @@ pub(crate) fn calculation_view(
         nominal_amount_minor: amounts.nominal_amount_minor,
         reference_currency: context.reference_currency,
         tribute_price_minor: context.tribute_price_minor,
-        exclude_from_intex_issuance: context.exclude_from_intex_issuance,
     })
 }

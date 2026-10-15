@@ -119,7 +119,6 @@ fn tribute(day: WorldwideDay) -> TributeBodyV1 {
         nominal_amount_minor: U256::from(1),
         reference_currency: 840,
         tribute_price_minor: U256::from(1),
-        exclude_from_intex_issuance: false,
     }
 }
 

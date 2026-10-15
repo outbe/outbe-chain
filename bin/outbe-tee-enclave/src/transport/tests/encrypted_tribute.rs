@@ -44,7 +44,6 @@ fn private_reads_use_the_common_key_across_enclave_identities_and_bind_the_respo
         issuance_currency: 840,
         reference_currency: 978,
         tribute_price_minor: alloy_primitives::U256::from(2_000_000),
-        exclude_from_intex_issuance: false,
         offer_input_hash: B256::repeat_byte(0x44),
     };
     let expected = TributeAmountsV2 {

@@ -51,7 +51,6 @@ pub(crate) fn legacy_fixture(
         issuance_currency: offer.tribute_currency,
         reference_currency: offer.reference_currency,
         tribute_price_minor: result.effective_reference_price_minor,
-        exclude_from_intex_issuance: offer.exclude_from_intex_issuance,
     };
     Ok(ProcessedOffer {
         token_id: result.token_id,

@@ -211,7 +211,6 @@ mod tests {
                         nominal_amount_minor: U256::from(2_000_000),
                         reference_currency: 840,
                         tribute_price_minor: U256::from(1_100_001),
-                        exclude_from_intex_issuance: false,
                     }
                 })
                 .collect();

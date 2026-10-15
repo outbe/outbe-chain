@@ -34,7 +34,6 @@ pub(super) fn issue_sealed_tribute(
                 issuance_currency: 840,
                 nominal_amount_minor: nominal,
                 reference_currency: 840,
-                exclude_from_intex_issuance: false,
                 tribute_price_minor: U256::from(2),
             },
         )

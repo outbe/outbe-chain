@@ -956,7 +956,6 @@ pub fn canonical_body(body: &TributeData) -> TributeBodyV1 {
         nominal_amount_minor: body.nominal_amount_minor,
         reference_currency: body.reference_currency,
         tribute_price_minor: body.tribute_price_minor,
-        exclude_from_intex_issuance: body.exclude_from_intex_issuance,
     }
 }
 
@@ -971,6 +970,5 @@ pub fn from_canonical_body(body: TributeBodyV1) -> TributeData {
         nominal_amount_minor: body.nominal_amount_minor,
         reference_currency: body.reference_currency,
         tribute_price_minor: body.tribute_price_minor,
-        exclude_from_intex_issuance: body.exclude_from_intex_issuance,
     }
 }

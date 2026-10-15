@@ -37,7 +37,6 @@ fn body(index: u32) -> TributeBodyV1 {
         nominal_amount_minor: U256::MAX,
         reference_currency: u16::MAX,
         tribute_price_minor: U256::MAX,
-        exclude_from_intex_issuance: true,
     }
 }
 
