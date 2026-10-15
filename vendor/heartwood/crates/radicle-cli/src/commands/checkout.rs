@@ -72,7 +72,7 @@ fn execute(args: Args, profile: &Profile) -> anyhow::Result<PathBuf> {
         .clone()
         .into_iter()
         .map(|did| *did)
-        .filter(|id| id != profile.id())
+        .filter(|id| id.as_ed25519() != Some(profile.id()))
         .collect::<Vec<_>>();
 
     // Set up remote tracking branches for project delegates.
@@ -93,7 +93,7 @@ fn execute(args: Args, profile: &Profile) -> anyhow::Result<PathBuf> {
 /// Set up a remote and tracking branch for each given remote.
 pub fn setup_remotes(
     setup: project::SetupRemote,
-    remotes: &[NodeId],
+    remotes: &[radicle::crypto::RepositoryKey],
     profile: &Profile,
 ) -> anyhow::Result<()> {
     let aliases = profile.aliases();
@@ -109,14 +109,14 @@ pub fn setup_remotes(
 /// Set up a remote and tracking branch for the given remote.
 pub fn setup_remote(
     setup: &project::SetupRemote,
-    remote_id: &NodeId,
+    remote_id: &radicle::crypto::RepositoryKey,
     remote_name: Option<git::fmt::RefString>,
     aliases: &impl AliasStore,
 ) -> anyhow::Result<git::fmt::RefString> {
     let remote_name = if let Some(name) = remote_name {
         name
     } else {
-        let name = if let Some(alias) = aliases.alias(remote_id) {
+        let name = if let Some(alias) = remote_id.as_ed25519().and_then(|id| aliases.alias(id)) {
             format!("{alias}@{remote_id}")
         } else {
             remote_id.to_human()
@@ -132,7 +132,7 @@ pub fn setup_remote(
         term::success!(
             "Remote-tracking branch {} created for {}",
             term::format::tertiary(branch),
-            term::format::tertiary(term::format::node_id_human(remote_id))
+            term::format::tertiary(remote_id.to_human())
         );
     }
     Ok(remote_name)

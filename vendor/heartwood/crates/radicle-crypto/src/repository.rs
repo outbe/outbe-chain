@@ -2,7 +2,10 @@
 
 #[cfg(feature = "multibase")]
 use alloc::string::String;
-#[cfg(all(feature = "multibase", feature = "radicle-git-ref-format"))]
+#[cfg(all(
+    feature = "multibase",
+    any(feature = "radicle-git-ref-format", feature = "sqlite")
+))]
 use alloc::string::ToString as _;
 use alloc::vec::Vec;
 use blst::{BLST_ERROR, min_sig};
@@ -67,6 +70,30 @@ pub enum RepositoryKey {
     Bls12381G2(BlsPublicKey),
 }
 
+#[cfg(feature = "qcheck")]
+impl qcheck::Arbitrary for RepositoryKey {
+    fn arbitrary(g: &mut qcheck::Gen) -> Self {
+        if bool::arbitrary(g) {
+            return PublicKey::arbitrary(g).into();
+        }
+        let mut seed = [0; 32];
+        for byte in &mut seed {
+            *byte = u8::arbitrary(g);
+        }
+        let key = min_sig::SecretKey::key_gen(&seed, &[])
+            .expect("a 32-byte seed is sufficient for BLS key generation");
+        BlsPublicKey::from_bytes(key.sk_to_pk().to_bytes())
+            .expect("generated BLS keys are valid subgroup points")
+            .into()
+    }
+}
+
+impl From<&RepositoryKey> for RepositoryKey {
+    fn from(key: &RepositoryKey) -> Self {
+        *key
+    }
+}
+
 impl From<PublicKey> for RepositoryKey {
     fn from(key: PublicKey) -> Self {
         Self::Ed25519(key)
@@ -82,6 +109,14 @@ impl From<&PublicKey> for RepositoryKey {
 impl From<BlsPublicKey> for RepositoryKey {
     fn from(key: BlsPublicKey) -> Self {
         Self::Bls12381G2(key)
+    }
+}
+
+impl TryFrom<&RepositoryKey> for crate::VerifyingKey {
+    type Error = crate::signature::Error;
+
+    fn try_from(key: &RepositoryKey) -> Result<Self, Self::Error> {
+        Self::try_from(key.as_ed25519().ok_or_else(crate::signature::Error::new)?)
     }
 }
 
@@ -132,6 +167,49 @@ impl RepositoryKey {
                 multibase::encode(multibase::Base::Base58Btc, bytes)
             }
         }
+    }
+
+    #[cfg(all(feature = "radicle-git-ref-format", feature = "multibase"))]
+    pub fn to_namespace(&self) -> radicle_git_ref_format::RefString {
+        use alloc::borrow::ToOwned as _;
+        use radicle_git_ref_format::name::{NAMESPACES, REFS};
+        REFS.to_owned()
+            .and(NAMESPACES)
+            .and(radicle_git_ref_format::Component::from(self))
+    }
+}
+
+#[cfg(all(feature = "sqlite", feature = "multibase"))]
+impl TryFrom<&sqlite::Value> for RepositoryKey {
+    type Error = sqlite::Error;
+
+    fn try_from(value: &sqlite::Value) -> Result<Self, Self::Error> {
+        let parse = match value {
+            sqlite::Value::String(s) => s.parse().map_err(|e: Error| e.to_string()),
+            _ => Err(String::from("sql: invalid type for repository key")),
+        };
+        parse.map_err(|message| sqlite::Error {
+            code: None,
+            message: Some(message),
+        })
+    }
+}
+
+#[cfg(all(feature = "sqlite", feature = "multibase"))]
+impl sqlite::BindableWithIndex for &RepositoryKey {
+    fn bind<I: sqlite::ParameterIndex>(
+        self,
+        statement: &mut sqlite::Statement<'_>,
+        index: I,
+    ) -> sqlite::Result<()> {
+        sqlite::Value::from(self).bind(statement, index)
+    }
+}
+
+#[cfg(all(feature = "sqlite", feature = "multibase"))]
+impl From<&RepositoryKey> for sqlite::Value {
+    fn from(key: &RepositoryKey) -> Self {
+        Self::String(key.to_human())
     }
 }
 
@@ -395,7 +473,7 @@ impl BlsEnvelope {
 mod tests {
     use super::*;
     use crate::SigningKey;
-    #[cfg(not(feature = "radicle-git-ref-format"))]
+    #[cfg(not(any(feature = "radicle-git-ref-format", feature = "sqlite")))]
     use alloc::string::ToString as _;
     use alloc::vec;
 
@@ -479,6 +557,33 @@ mod tests {
             assert!(BlsEnvelope::from_bytes(&raw[..268]).is_err());
             assert!(BlsEnvelope::from_bytes(&[raw.as_slice(), b"\0"].concat()).is_err());
         }
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn repository_key_sql_roundtrip_preserves_algorithm() {
+        let db = sqlite::open(":memory:").unwrap();
+        db.execute("CREATE TABLE authorities (key TEXT NOT NULL)")
+            .unwrap();
+        let ed = RepositoryKey::from(SigningKey::mock(7).public_key());
+        let bls: RepositoryKey = vectors()["key"].as_str().unwrap().parse().unwrap();
+        for key in [ed, bls] {
+            let mut insert = db.prepare("INSERT INTO authorities VALUES (?)").unwrap();
+            insert.bind((1, &key)).unwrap();
+            assert_eq!(insert.next().unwrap(), sqlite::State::Done);
+        }
+        let mut query = db
+            .prepare("SELECT key FROM authorities ORDER BY rowid")
+            .unwrap();
+        for key in [ed, bls] {
+            assert_eq!(query.next().unwrap(), sqlite::State::Row);
+            let value = query.read::<sqlite::Value, _>(0).unwrap();
+            assert_eq!(RepositoryKey::try_from(&value).unwrap(), key);
+            assert_eq!(crate::VerifyingKey::try_from(&key).is_ok(), key == ed);
+        }
+        assert_eq!(query.next().unwrap(), sqlite::State::Done);
+        assert!(RepositoryKey::try_from(&sqlite::Value::Integer(1)).is_err());
+        assert!(RepositoryKey::try_from(&sqlite::Value::String(String::from("invalid"))).is_err());
     }
 
     #[test]

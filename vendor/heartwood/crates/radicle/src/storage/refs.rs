@@ -10,9 +10,9 @@ use std::io::{BufRead, BufReader};
 use std::ops::Deref;
 use std::str::FromStr;
 
-use crypto::PublicKey;
+use crypto::RepositoryKey as PublicKey;
+use crypto::RepositoryKey;
 use crypto::Signature;
-use radicle_core::NodeId;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -72,7 +72,7 @@ impl Refs {
     /// This creates a new commit on the signed refs branch, and updates the branch pointer.
     pub fn save<Repo>(
         self,
-        namespace: NodeId,
+        namespace: RepositoryKey,
         committer: sigrefs::git::Committer,
         repo: &Repo,
         signer: &impl crypto::Signer,
@@ -88,7 +88,7 @@ impl Refs {
     /// Save the signed refs to disk, even if the refs are unchanged.
     pub fn force_save<Repo>(
         self,
-        namespace: NodeId,
+        namespace: RepositoryKey,
         committer: sigrefs::git::Committer,
         repo: &Repo,
         signer: &impl crypto::Signer,
@@ -103,7 +103,7 @@ impl Refs {
 
     fn save_with<Repo>(
         self,
-        namespace: NodeId,
+        namespace: RepositoryKey,
         committer: sigrefs::git::Committer,
         repo: &Repo,
         signer: &impl crypto::Signer,
@@ -391,8 +391,8 @@ pub struct SignedRefs {
 }
 
 impl SignedRefs {
-    /// Returns the [`NodeId`] of the [`SignedRefs`].
-    pub fn id(&self) -> NodeId {
+    /// Returns the [`RepositoryKey`] of the [`SignedRefs`].
+    pub fn id(&self) -> RepositoryKey {
         self.id
     }
 
@@ -591,7 +591,7 @@ mod tests {
         let (bob_paris_sigrefs, bob_head) = {
             let bob_working = rad::checkout(
                 paris.id,
-                bob.public_key(),
+                &bob.public_key().into(),
                 tmp.path().join("working"),
                 &storage,
                 false,
@@ -629,7 +629,7 @@ mod tests {
 
         {
             // Sanity check: make sure the default branches don't already match between Alice and Bob.
-            let alice_paris_sigrefs = SignedRefs::load(*alice.public_key(), &paris)
+            let alice_paris_sigrefs = SignedRefs::load(alice.public_key().into(), &paris)
                 .unwrap()
                 .unwrap();
             assert_ne!(
@@ -687,7 +687,7 @@ mod tests {
         // Due to the verification, we get a validation error when trying to load Bob's remote.
         // The graft is not allowed.
         assert_matches!(
-            london.remote(bob.public_key()),
+            london.remote(&bob.public_key().into()),
             Err(Error::Read(sigrefs::read::error::Read::Verify(sigrefs::read::error::Verify::MismatchedIdentity {
                 expected,
                 found,

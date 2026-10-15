@@ -1,7 +1,8 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use radicle_core::{NodeId, RepoId};
+use crypto::RepositoryKey;
+use radicle_core::RepoId;
 use radicle_git_metadata::commit;
 use radicle_oid::Oid;
 use thiserror::Error;
@@ -18,7 +19,7 @@ pub enum Read {
     #[error(transparent)]
     FindReference(reference::error::FindReference),
     #[error("failed to find `refs/namespaces/{namespace}/refs/rad/sigrefs`")]
-    MissingSigrefs { namespace: NodeId },
+    MissingSigrefs { namespace: RepositoryKey },
     #[error(transparent)]
     Verify(Verify),
     #[error("failed to find a valid set of signed references starting from {head}")]

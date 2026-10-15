@@ -330,11 +330,11 @@ where
             }
         }
 
-        self.announcement(RefsAnnouncement {
+        self.announcement(RefsAnnouncement::new(
             rid,
             refs,
-            timestamp: Timestamp::from(*self.clock()),
-        })
+            Timestamp::from(*self.clock()),
+        ))
     }
 
     pub fn announcement(&self, ann: impl Into<AnnouncementMessage>) -> Message {

@@ -4,14 +4,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use crypto::PublicKey;
+use crypto::RepositoryKey as PublicKey;
 
 use crate::crypto::ExtendedSignature;
 pub use crate::git;
 use crate::git::fmt;
 
 use crate::identity::doc::{Doc, DocAt, DocError, RawDoc, RepoId};
-use crate::node::NodeId;
 
 pub use crate::storage::*;
 
@@ -134,7 +133,7 @@ impl WriteStorage for MockStorage {
 pub struct MockRepository {
     pub id: RepoId,
     pub doc: DocAt,
-    pub remotes: HashMap<NodeId, refs::SignedRefs>,
+    pub remotes: HashMap<RemoteId, refs::SignedRefs>,
 }
 
 impl MockRepository {
@@ -399,7 +398,7 @@ impl radicle_cob::object::Storage for MockRepository {
     type UpdateError = Infallible;
     type RemoveError = Infallible;
 
-    type Namespace = crypto::PublicKey;
+    type Namespace = crypto::RepositoryKey;
 
     fn objects(
         &self,

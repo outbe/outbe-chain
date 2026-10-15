@@ -8,7 +8,7 @@ pub mod reference;
 #[cfg(test)]
 mod properties;
 
-use crypto::PublicKey;
+use crypto::RepositoryKey as PublicKey;
 use radicle_git_metadata::author::Author;
 use radicle_git_metadata::author::Time;
 

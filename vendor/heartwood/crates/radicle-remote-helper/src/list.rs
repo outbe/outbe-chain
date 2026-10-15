@@ -4,8 +4,8 @@ use thiserror::Error;
 
 use radicle::Profile;
 use radicle::cob;
+use radicle::crypto::RepositoryKey;
 use radicle::git;
-use radicle::prelude::NodeId;
 use radicle::storage::ReadRepository;
 use radicle::storage::git::transport::local::Url;
 
@@ -35,7 +35,7 @@ pub(super) enum Error {
 }
 
 /// List refs for fetching (`git fetch` and `git ls-remote`).
-pub(super) fn for_fetch<R: ReadRepository + cob::Store<Namespace = NodeId> + 'static>(
+pub(super) fn for_fetch<R: ReadRepository + cob::Store<Namespace = RepositoryKey> + 'static>(
     url: &Url,
     profile: &Profile,
     stored: &R,
@@ -100,7 +100,7 @@ pub(super) fn for_push<R: ReadRepository>(
     let mut lines = Vec::new();
 
     // Only our own refs can be pushed to.
-    for (name, oid) in stored.references_of(profile.id())? {
+    for (name, oid) in stored.references_of(&profile.id().into())? {
         // Only branches and tags can be pushed to.
         if name.starts_with(git::fmt::refname!("refs/heads").as_str())
             || name.starts_with(git::fmt::refname!("refs/tags").as_str())
@@ -113,7 +113,7 @@ pub(super) fn for_push<R: ReadRepository>(
 }
 
 /// List canonical patch references. These are magic refs that can be used to pull patch updates.
-fn patch_refs<R: ReadRepository + cob::Store<Namespace = NodeId> + 'static>(
+fn patch_refs<R: ReadRepository + cob::Store<Namespace = RepositoryKey> + 'static>(
     profile: &Profile,
     stored: &R,
 ) -> Result<Vec<String>, Error> {

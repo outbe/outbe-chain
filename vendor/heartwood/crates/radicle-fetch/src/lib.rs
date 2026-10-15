@@ -37,11 +37,17 @@ pub enum Error {
         err: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
     #[error(transparent)]
-    Protocol(#[from] state::error::Protocol),
+    Protocol(Box<state::error::Protocol>),
     #[error("missing `rad/id`")]
     MissingRadId,
     #[error("attempted to replicate from self")]
     ReplicateSelf,
+}
+
+impl From<state::error::Protocol> for Error {
+    fn from(err: state::error::Protocol) -> Self {
+        Self::Protocol(Box::new(err))
+    }
 }
 
 impl From<HandshakeError> for Error {
@@ -84,8 +90,8 @@ where
     // N.b. ensure that we ignore the local peer's key.
     handle.blocked.extend([local]);
     let result = state
-        .run(handle, &handshake, config, remote, refs_at)
-        .map_err(Error::Protocol);
+        .run(handle, &handshake, config, remote.into(), refs_at)
+        .map_err(Error::from);
 
     log::debug!(
         "Finished pull of {} ({}ms)",
@@ -115,8 +121,8 @@ where
     let handshake = perform_handshake(handle)?;
     let state = FetchState::default();
     let result = state
-        .run(handle, &handshake, config, remote, None)
-        .map_err(Error::Protocol);
+        .run(handle, &handshake, config, remote.into(), None)
+        .map_err(Error::from);
     let elapsed = start.elapsed().as_millis();
     let rid = handle.repository().id();
 

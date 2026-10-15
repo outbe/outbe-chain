@@ -718,7 +718,7 @@ impl Config {
     }
 
     pub fn features(&self) -> node::Features {
-        node::Features::SEED
+        node::Features::SEED.with(node::Features::REPOSITORY_KEYS)
     }
 
     /// Return the configured user agent, if set. Otherwise, fall back to the

@@ -166,7 +166,7 @@ impl ReadStorage for Storage {
                 }
             };
             // Nb. This will be `None` if they were not found.
-            let refs = SignedRefsInfo::new(refs::SignedRefs::load(self.info.key, &repo))
+            let refs = SignedRefsInfo::new(refs::SignedRefs::load(self.info.key.into(), &repo))
                 .map_err(|err| Error::Refs(refs::Error::Read(err)))?;
 
             let synced_at = match &refs {
@@ -201,11 +201,11 @@ impl WriteStorage for Storage {
         let repo = self.repository(rid)?;
         // N.b. we remove the repository if the `local` peer has no
         // `rad/sigrefs`. There's no risk of them corrupting data.
-        let has_sigrefs = SignedRefs::load(self.info.key, &repo)
+        let has_sigrefs = SignedRefs::load(self.info.key.into(), &repo)
             .map_err(|err| RepositoryError::from(refs::Error::Read(err)))?
             .is_some();
         if has_sigrefs {
-            repo.clean(&self.info.key)
+            repo.clean(&self.info.key.into())
         } else {
             let remotes = repo.remote_ids()?.collect::<Result<_, _>>()?;
             repo.remove()?;
@@ -258,7 +258,7 @@ impl Storage {
             let repo = self.repository(*rid)?;
             let head = repo.head().ok().map(|(_, head)| head);
 
-            let refs = SignedRefsInfo::new(refs::SignedRefs::load(self.info.key, &repo))
+            let refs = SignedRefsInfo::new(refs::SignedRefs::load(self.info.key.into(), &repo))
                 .map_err(|err| Error::Refs(refs::Error::Read(err)))?;
 
             let synced_at = match &refs {
@@ -1063,7 +1063,7 @@ impl Repository {
         signer: &impl crypto::Signer,
         force: bool,
     ) -> Result<SignedRefs, RepositoryError> {
-        let remote = signer.public_key();
+        let remote = &crypto::RepositoryKey::from(signer.public_key());
         // Ensure the root reference is set, which is checked during sigref verification.
         if self
             .reference_oid(remote, &git::refs::storage::IDENTITY_ROOT)
@@ -1175,7 +1175,7 @@ mod tests {
         let cob = format!("refs/cobs/xyz.radicle.id/{id}");
 
         let mut refs = repo
-            .references_of(signer.public_key())
+            .references_of(&signer.public_key().into())
             .unwrap()
             .keys()
             .map(|r| r.to_string())
@@ -1218,8 +1218,8 @@ mod tests {
         .unwrap();
 
         let signed = stored.sign_refs(&signer).unwrap();
-        let remote = stored.remote(alice).unwrap();
-        let mut unsigned = stored.references_of(alice).unwrap();
+        let remote = stored.remote(&alice.into()).unwrap();
+        let mut unsigned = stored.references_of(&alice.into()).unwrap();
 
         // The signed refs doesn't contain the signature ref itself.
         unsigned.remove_sigrefs().unwrap();

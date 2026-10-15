@@ -20,7 +20,7 @@ pub fn signed_refs_at(g: &mut qcheck::Gen, root: Oid, signer: &impl crypto::Sign
     SignedRefs {
         refs,
         signature,
-        id: *signer.public_key(),
+        id: signer.public_key().into(),
         level: level.unwrap_or_else(|| FeatureLevel::arbitrary(g)),
         parent: Arbitrary::arbitrary(g),
         at: Oid::arbitrary(g),
@@ -56,7 +56,7 @@ impl Arbitrary for Refs {
 impl Arbitrary for RefsAt {
     fn arbitrary(g: &mut qcheck::Gen) -> Self {
         Self {
-            remote: PublicKey::arbitrary(g),
+            remote: crypto::PublicKey::arbitrary(g).into(),
             at: Oid::arbitrary(g),
         }
     }

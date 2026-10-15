@@ -210,7 +210,7 @@ impl NodeHandle {
         log::debug!(target: "test", "Waiting for {} to be in sync with {nid} for {rid}", self.id);
 
         loop {
-            let seeds = self.handle.seeds_for(*rid, [self.id]).unwrap();
+            let seeds = self.handle.seeds_for(*rid, [self.id.into()]).unwrap();
             if seeds.iter().any(|s| s.nid == *nid && s.is_synced()) {
                 break;
             }
@@ -246,7 +246,7 @@ impl NodeHandle {
 
         loop {
             if let Ok(repo) = self.storage.repository(*rid)
-                && repo.remote(nid).is_ok()
+                && repo.remote(&(*nid).into()).is_ok()
             {
                 log::debug!(target: "test", "Node {} has {rid}/{nid}", self.id);
                 break;

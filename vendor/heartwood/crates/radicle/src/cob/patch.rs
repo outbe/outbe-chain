@@ -26,7 +26,7 @@ use crate::cob::thread;
 use crate::cob::thread::Thread;
 use crate::cob::thread::{Comment, CommentId, Edit, Reactions};
 use crate::cob::{ActorId, Embed, EntryId, ObjectId, TypeName, Uri, op, store};
-use crate::crypto::PublicKey;
+use crate::crypto::RepositoryKey as PublicKey;
 use crate::git;
 use crate::identity::PayloadError;
 use crate::identity::doc::{DefaultBranchError, DocAt, DocError};
@@ -172,7 +172,7 @@ pub enum Error {
     EmptyReview,
     /// Duplicate review.
     #[error("review {0} of {1} already exists by author {2}")]
-    DuplicateReview(ReviewId, RevisionId, NodeId),
+    DuplicateReview(ReviewId, RevisionId, Box<ActorId>),
     /// Error loading the document payload.
     #[error("payload failed to load: {0}")]
     Payload(#[from] PayloadError),
@@ -2212,7 +2212,7 @@ pub struct PatchMut<'a, 'b, 'g, Repo, Signer: crypto::Signer, Cache> {
 
 impl<'a, 'b, 'g, Repo, Signer: crypto::Signer, Update> PatchMut<'a, 'b, 'g, Repo, Signer, Update>
 where
-    Repo: ReadRepository + SignRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + SignRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     Update: cob::cache::Update<Patch>,
 {
     pub fn new(
@@ -2625,7 +2625,7 @@ where
 
 impl<'a, Repo, Access> Patches<'a, Repo, Access>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     Access: store::access::Access,
 {
     /// Open a patches store.
@@ -2639,7 +2639,7 @@ where
 
 impl<'a, Repo, Access> Patches<'a, Repo, Access>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     Access: store::access::Access,
 {
     /// Patches count by state.
@@ -2715,7 +2715,7 @@ where
 
 impl<'a, 'b, Repo, Signer> Patches<'a, Repo, WriteAs<'b, Signer>>
 where
-    Repo: ReadRepository + SignRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + SignRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     Signer: crypto::Signer,
 {
     /// Open a new patch.
@@ -3522,7 +3522,7 @@ mod test {
         assert_eq!(merges.len(), 1);
 
         let (merger, merge) = merges.first().unwrap();
-        assert_eq!(*merger, alice.signer.public_key());
+        assert_eq!(*merger, &ActorId::from(alice.signer.public_key()));
         assert_eq!(merge.commit, branch.base);
     }
 
@@ -3558,7 +3558,9 @@ mod test {
         let (_, revision) = patch.latest();
         assert_eq!(revision.reviews.len(), 1);
 
-        let review = revision.review_by(alice.signer.public_key()).unwrap();
+        let review = revision
+            .review_by(&alice.signer.public_key().into())
+            .unwrap();
         assert_eq!(review.verdict(), Some(Verdict::Accept));
         assert_eq!(review.summary(), "LGTM");
 
@@ -3795,7 +3797,9 @@ mod test {
             .unwrap(); // Overwrite the comment.
 
         let (_, revision) = patch.latest();
-        let review = revision.review_by(alice.signer.public_key()).unwrap();
+        let review = revision
+            .review_by(&alice.signer.public_key().into())
+            .unwrap();
         assert_eq!(review.verdict(), Some(Verdict::Reject));
         assert_eq!(review.summary(), "Whoops!");
     }
@@ -3826,7 +3830,9 @@ mod test {
             .unwrap(); // This review is ignored, since there is already a review by this author.
 
         let (_, revision) = patch.latest();
-        let review = revision.review_by(alice.signer.public_key()).unwrap();
+        let review = revision
+            .review_by(&alice.signer.public_key().into())
+            .unwrap();
         assert_eq!(review.verdict(), Some(Verdict::Accept));
     }
 
@@ -3869,7 +3875,9 @@ mod test {
             .unwrap();
 
         let (_, revision) = patch.latest();
-        let review = revision.review_by(alice.signer.public_key()).unwrap();
+        let review = revision
+            .review_by(&alice.signer.public_key().into())
+            .unwrap();
         assert_eq!(review.verdict(), Some(Verdict::Reject));
         assert_eq!(review.comments().count(), 2);
         assert_eq!(review.comments().next().unwrap().1.body(), "First comment!");
@@ -3917,7 +3925,9 @@ mod test {
             .unwrap();
 
         let (_, revision) = patch.latest();
-        let review = revision.review_by(alice.signer.public_key()).unwrap();
+        let review = revision
+            .review_by(&alice.signer.public_key().into())
+            .unwrap();
         let (_, comment) = review.comments().next().unwrap();
 
         assert_eq!(comment.body(), "I like these lines of code");
@@ -3958,7 +3968,9 @@ mod test {
         let id = patch.id;
         let patch = patches.get_mut(&id).unwrap();
         let (_, revision) = patch.latest();
-        let review = revision.review_by(alice.signer.public_key()).unwrap();
+        let review = revision
+            .review_by(&alice.signer.public_key().into())
+            .unwrap();
 
         assert_eq!(review.verdict(), Some(Verdict::Accept));
         assert_eq!(review.summary(), "");

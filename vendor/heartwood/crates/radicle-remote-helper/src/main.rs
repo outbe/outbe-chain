@@ -32,7 +32,7 @@ use thiserror::Error;
 
 use radicle::cob::store::access::{ReadOnly, WriteAs};
 use radicle::crypto;
-use radicle::prelude::NodeId;
+use radicle::crypto::RepositoryKey;
 use radicle::storage::git::transport::local::{Url, UrlError};
 use radicle::storage::{ReadRepository, WriteStorage};
 use radicle::version::Version;
@@ -480,7 +480,7 @@ pub(crate) fn warn(s: impl fmt::Display) {
 }
 
 /// Get the patch store.
-pub(crate) fn patches<'a, Repo: ReadRepository + cob::Store<Namespace = NodeId>>(
+pub(crate) fn patches<'a, Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>>(
     profile: &Profile,
     repo: &'a Repo,
 ) -> Result<cob::patch::Cache<'a, Repo, ReadOnly, cob::cache::StoreReader>, list::Error> {

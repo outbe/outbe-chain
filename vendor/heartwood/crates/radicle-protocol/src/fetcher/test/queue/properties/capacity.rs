@@ -67,7 +67,7 @@ fn capacity_reached_returns_same_item(item: QueuedFetch) -> bool {
     let _ = queue.enqueue(create_fetch()); // Fill the queue
 
     match queue.enqueue(item.clone()) {
-        Enqueue::CapacityReached(returned) => returned == item,
+        Enqueue::CapacityReached(returned) => *returned == item,
         Enqueue::Merged => true, // If same rid, merge takes precedence
         _ => false,
     }

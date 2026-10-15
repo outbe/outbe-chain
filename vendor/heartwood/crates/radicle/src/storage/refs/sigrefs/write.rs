@@ -5,9 +5,10 @@ mod test;
 
 use std::path::Path;
 
-use crypto::PublicKey;
+use crypto::RepositoryKey as PublicKey;
+use crypto::RepositoryKey;
 use crypto::signature;
-use radicle_core::{NodeId, RepoId};
+use radicle_core::RepoId;
 use radicle_git_metadata::author::Author;
 use radicle_git_metadata::commit::{CommitData, headers::Headers, trailers::OwnedTrailer};
 use radicle_oid::Oid;
@@ -56,7 +57,7 @@ impl Update {
 ///
 /// The construction expects:
 /// - A [`Refs`] to write to the commit.
-/// - A [`NodeId`] which identifies the namespace for which `rad/sigrefs`
+/// - A [`RepositoryKey`] which identifies the namespace for which `rad/sigrefs`
 ///   reference should be read and written to.
 /// - A `repository` which is the Git repository being used for reading and
 ///   writing.
@@ -65,7 +66,7 @@ impl Update {
 pub struct SignedRefsWriter<'a, Repo, Signer: crypto::Signer> {
     refs: Refs,
     rid: RepoId,
-    namespace: NodeId,
+    namespace: RepositoryKey,
     repository: &'a Repo,
     signer: &'a Signer,
 }
@@ -84,7 +85,7 @@ where
     pub fn new(
         mut refs: Refs,
         rid: RepoId,
-        namespace: NodeId,
+        namespace: RepositoryKey,
         repository: &'a Repo,
         signer: &'a Signer,
     ) -> Self {

@@ -5,10 +5,10 @@ use localtime::LocalTime;
 use sqlite as sql;
 use thiserror::Error;
 
+use crate::crypto::RepositoryKey;
 use crate::git::Oid;
 use crate::git::fmt::Qualified;
 use crate::node::Database;
-use crate::node::NodeId;
 use crate::prelude::RepoId;
 use crate::storage;
 use crate::storage::{ReadRepository, ReadStorage, RemoteRepository, RepositoryError};
@@ -43,7 +43,7 @@ pub trait Store {
     fn set(
         &mut self,
         repo: &RepoId,
-        namespace: &NodeId,
+        namespace: &RepositoryKey,
         refname: &Qualified,
         oid: Oid,
         timestamp: LocalTime,
@@ -52,14 +52,14 @@ pub trait Store {
     fn get(
         &self,
         repo: &RepoId,
-        namespace: &NodeId,
+        namespace: &RepositoryKey,
         refname: &Qualified,
     ) -> Result<Option<(Oid, LocalTime)>, Error>;
     /// Delete a reference.
     fn delete(
         &mut self,
         repo: &RepoId,
-        namespace: &NodeId,
+        namespace: &RepositoryKey,
         refname: &Qualified,
     ) -> Result<bool, Error>;
     /// Populate the database from storage.
@@ -76,7 +76,7 @@ impl Store for Database {
     fn set(
         &mut self,
         repo: &RepoId,
-        namespace: &NodeId,
+        namespace: &RepositoryKey,
         refname: &Qualified,
         oid: Oid,
         timestamp: LocalTime,
@@ -101,7 +101,7 @@ impl Store for Database {
     fn get(
         &self,
         repo: &RepoId,
-        namespace: &NodeId,
+        namespace: &RepositoryKey,
         refname: &Qualified,
     ) -> Result<Option<(Oid, LocalTime)>, Error> {
         let mut stmt = self.db.prepare(
@@ -132,7 +132,7 @@ impl Store for Database {
     fn delete(
         &mut self,
         repo: &RepoId,
-        namespace: &NodeId,
+        namespace: &RepositoryKey,
         refname: &Qualified,
     ) -> Result<bool, Error> {
         let mut stmt = self
@@ -186,7 +186,7 @@ mod test {
         let oid = arbitrary::oid();
 
         let repo = arbitrary::r#gen::<RepoId>(1);
-        let namespace = arbitrary::r#gen::<NodeId>(1);
+        let namespace = arbitrary::r#gen::<RepositoryKey>(1);
         let refname1 = qualified!("refs/heads/master");
         let refname2 = qualified!("refs/heads/main");
         let timestamp = LocalTime::now();
@@ -214,7 +214,7 @@ mod test {
         let oid = arbitrary::oid();
 
         let repo = arbitrary::r#gen::<RepoId>(1);
-        let namespace = arbitrary::r#gen::<NodeId>(1);
+        let namespace = arbitrary::r#gen::<RepositoryKey>(1);
         let refname = qualified!("refs/heads/master");
         let timestamp = LocalTime::now();
 
@@ -234,7 +234,7 @@ mod test {
         assert_ne!(oid1, oid2);
 
         let repo = arbitrary::r#gen::<RepoId>(1);
-        let namespace = arbitrary::r#gen::<NodeId>(1);
+        let namespace = arbitrary::r#gen::<RepositoryKey>(1);
         let refname = qualified!("refs/heads/master");
         let mut timestamp = LocalTime::now();
 

@@ -58,7 +58,7 @@ pub fn run(args: Args, ctx: impl term::Context) -> anyhow::Result<()> {
         .delegates()
         .iter()
         .map(|d| **d)
-        .filter(|id| id != profile.id())
+        .filter(|id| id.as_ed25519() != Some(profile.id()))
         .collect::<Vec<_>>();
 
     let default_branch = repo.identity_doc()?.default_branch_name().ok();
@@ -174,7 +174,7 @@ impl Checkout {
 
         Ok(Self {
             id: rid,
-            remote: *profile.id(),
+            remote: profile.id().into(),
             path,
             repository,
             doc: doc.doc,

@@ -26,7 +26,7 @@ fn roundtrip(BoundedVec(all_refs): BoundedVec<Refs>) -> TestResult {
         let writer = SignedRefsWriter::new(
             refs.clone(),
             fixture.rid(),
-            *node_id,
+            (*node_id).into(),
             fixture.repo(),
             &signer,
         );
@@ -50,7 +50,7 @@ fn roundtrip(BoundedVec(all_refs): BoundedVec<Refs>) -> TestResult {
 
         let reader = SignedRefsReader::new(
             fixture.rid(),
-            Tip::Reference(*node_id),
+            Tip::Reference((*node_id).into()),
             fixture.repo(),
             &verifier,
         );
@@ -77,7 +77,7 @@ fn idempotent(refs: Refs) -> TestResult {
     if let Err(e) = SignedRefsWriter::new(
         refs.clone(),
         fixture.rid(),
-        node_id,
+        node_id.into(),
         fixture.repo(),
         &signer,
     )
@@ -92,7 +92,7 @@ fn idempotent(refs: Refs) -> TestResult {
     match SignedRefsWriter::new(
         refs.clone(),
         fixture.rid(),
-        node_id,
+        node_id.into(),
         fixture.repo(),
         &signer,
     )

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use crate::git::Oid;
-use crypto::PublicKey;
+use crypto::RepositoryKey as PublicKey;
 pub use git::{Validation, Validations};
 
 use crate::cob;
@@ -35,7 +35,7 @@ pub enum SignedRefsInfo {
     /// Repositories with this set to `None` are ones that are seeded but not forked.
     None,
     /// Local signed refs, if any.
-    Some(refs::SignedRefs),
+    Some(Box<refs::SignedRefs>),
     NeedsMigration,
 }
 
@@ -47,7 +47,7 @@ impl SignedRefsInfo {
             Ok(Some(refs))
                 if refs.feature_level() >= FeatureLevel::LATEST && refs.parent().is_some() =>
             {
-                SignedRefsInfo::Some(refs)
+                SignedRefsInfo::Some(Box::new(refs))
             }
             Ok(Some(_)) => SignedRefsInfo::NeedsMigration,
             Ok(None) => SignedRefsInfo::None,
@@ -230,7 +230,7 @@ pub enum FetchError {
     Repository(#[from] RepositoryError),
 }
 
-pub type RemoteId = PublicKey;
+pub type RemoteId = crypto::RepositoryKey;
 
 /// An update to a reference.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

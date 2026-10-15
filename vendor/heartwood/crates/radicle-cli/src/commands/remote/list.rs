@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 
 use radicle::Profile;
+use radicle::crypto::RepositoryKey;
 use radicle::git::Url;
 use radicle::identity::{Did, RepoId};
-use radicle::node::{Alias, AliasStore as _, NodeId};
+use radicle::node::{Alias, AliasStore as _};
 use radicle::storage::ReadStorage as _;
 use radicle_term::{Element, Table};
 
@@ -23,7 +24,7 @@ pub struct Tracked {
 }
 
 impl Tracked {
-    fn namespace(&self) -> Option<NodeId> {
+    fn namespace(&self) -> Option<RepositoryKey> {
         match self.direction.as_ref()? {
             Direction::Push(url) => url.namespace,
             Direction::Fetch(url) => url.namespace,
@@ -33,7 +34,7 @@ impl Tracked {
 
 #[derive(Debug)]
 pub struct Untracked {
-    remote: NodeId,
+    remote: RepositoryKey,
     alias: Option<Alias>,
 }
 
@@ -72,7 +73,7 @@ pub fn untracked<'a>(
                 .map(|remote| {
                     (!git_remotes.contains(&remote)).then_some(Untracked {
                         remote,
-                        alias: aliases.alias(&remote),
+                        alias: remote.as_ed25519().and_then(|id| aliases.alias(id)),
                     })
                 })
                 .transpose()

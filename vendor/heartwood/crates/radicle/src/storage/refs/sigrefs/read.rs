@@ -9,9 +9,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::num::NonZeroUsize;
 use std::path::Path;
 
-use crypto::{PublicKey, VerifyingKey, signature};
+use crypto::RepositoryKey;
+use crypto::{RepositoryKey as PublicKey, VerifyingKey, signature};
 use nonempty::NonEmpty;
-use radicle_core::{NodeId, RepoId};
+use radicle_core::RepoId;
 use radicle_git_metadata::commit::CommitData;
 use radicle_oid::Oid;
 
@@ -81,9 +82,9 @@ pub struct SignedRefsReader<'a, Repository, Verifier = VerifyingKey> {
 
 /// Describe where to start a [`SignedRefsReader`]'s commit chain.
 pub enum Tip {
-    /// Use the namespace of the given [`NodeId`], resolving their `rad/sigrefs`
+    /// Use the namespace of the given [`RepositoryKey`], resolving their `rad/sigrefs`
     /// to its commit [`Oid`].
-    Reference(NodeId),
+    Reference(RepositoryKey),
     /// Use the supplied commit [`Oid`].
     Commit(Oid),
 }

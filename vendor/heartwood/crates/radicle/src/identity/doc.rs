@@ -971,10 +971,10 @@ impl Doc {
     /// document blob.
     pub fn verify_signature(
         &self,
-        key: &PublicKey,
+        key: &crypto::RepositoryKey,
         signature: &Signature,
         blob: Oid,
-    ) -> Result<(), PublicKey> {
+    ) -> Result<(), crypto::RepositoryKey> {
         use crypto::signature::Verifier as _;
 
         if !self.is_delegate(&key.into()) {
@@ -1059,7 +1059,7 @@ impl Doc {
         signer: &impl crypto::Signer,
     ) -> Result<git::Oid, RepositoryError> {
         let cob = identity::Identity::initialize(self, repo, signer)?;
-        let public_key = signer.public_key();
+        let public_key = &crypto::RepositoryKey::from(signer.public_key());
         let id_ref = git::refs::storage::id(public_key);
         let cob_ref = git::refs::storage::cob(public_key, &crate::cob::identity::TYPENAME, &cob.id);
         // Set `…/refs/rad/id` -> `…/refs/cobs/xyz.radicle.id/<id>`

@@ -3,10 +3,10 @@ use std::ops::Not as _;
 
 pub use radicle::storage::refs::SignedRefs;
 pub use radicle::storage::{Validations, git::Validation};
-use radicle::{crypto::PublicKey, storage::ValidateRepository};
+use radicle::{crypto::RepositoryKey as PublicKey, storage::ValidateRepository};
 
 pub mod error {
-    use radicle::crypto::PublicKey;
+    use radicle::crypto::RepositoryKey as PublicKey;
     use thiserror::Error;
 
     #[derive(Debug, Error)]

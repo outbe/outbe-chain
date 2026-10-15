@@ -90,21 +90,53 @@ impl wire::Encode for AnnouncementMessage {
 impl wire::Encode for RefsAnnouncement {
     fn encode(&self, buf: &mut impl BufMut) {
         self.rid.encode(buf);
-        self.refs.encode(buf);
+        (self.refs.len() as wire::Size).encode(buf);
+        for refs in self.refs.iter() {
+            if self.encoding() == 1 {
+                refs.remote
+                    .as_ed25519()
+                    .expect("V1 encoding contains only Ed25519 namespaces")
+                    .encode(buf);
+                refs.at.encode(buf);
+            } else {
+                refs.encode(buf);
+            }
+        }
         self.timestamp.encode(buf);
     }
 }
 
 impl wire::Decode for RefsAnnouncement {
     fn decode(buf: &mut impl Buf) -> Result<Self, wire::Error> {
+        Self::decode_version(buf, 1)
+    }
+
+    fn decode_version(buf: &mut impl Buf, version: u8) -> Result<Self, wire::Error> {
+        if !matches!(version, 1 | 2) {
+            return Err(wire::Invalid::ProtocolVersionUnsupported { actual: version }.into());
+        }
         let rid = RepoId::decode(buf)?;
-        let refs = BoundedVec::<_, REF_REMOTE_LIMIT>::decode(buf)?;
+        let count = wire::Size::decode(buf)? as usize;
+        let mut refs =
+            BoundedVec::<_, REF_REMOTE_LIMIT>::with_capacity(count).map_err(wire::Invalid::from)?;
+        for _ in 0..count {
+            let item = if version == 1 {
+                radicle::storage::refs::RefsAt {
+                    remote: NodeId::decode(buf)?.into(),
+                    at: Oid::decode(buf)?,
+                }
+            } else {
+                radicle::storage::refs::RefsAt::decode(buf)?
+            };
+            refs.push(item).map_err(wire::Invalid::from)?;
+        }
         let timestamp = Timestamp::decode(buf)?;
 
         Ok(Self {
             rid,
             refs,
             timestamp,
+            encoding: version,
         })
     }
 }
@@ -196,6 +228,16 @@ impl wire::Decode for Info {
 }
 
 impl wire::Encode for Message {
+    fn protocol_version(&self) -> u8 {
+        match self {
+            Self::Announcement(Announcement {
+                message: AnnouncementMessage::Refs(ann),
+                ..
+            }) => ann.encoding(),
+            _ => 1,
+        }
+    }
+
     fn encode(&self, buf: &mut impl BufMut) {
         let buf = &mut buf.limit(wire::Size::MAX as usize);
 
@@ -236,6 +278,13 @@ impl wire::Encode for Message {
 
 impl wire::Decode for Message {
     fn decode(buf: &mut impl Buf) -> Result<Self, wire::Error> {
+        Self::decode_version(buf, 1)
+    }
+
+    fn decode_version(buf: &mut impl Buf, version: u8) -> Result<Self, wire::Error> {
+        if !matches!(version, 1 | 2) {
+            return Err(wire::Invalid::ProtocolVersionUnsupported { actual: version }.into());
+        }
         let type_id = buf.try_get_u16()?;
 
         match MessageType::try_from(type_id) {
@@ -277,7 +326,7 @@ impl wire::Decode for Message {
             Ok(MessageType::RefsAnnouncement) => {
                 let node = NodeId::decode(buf)?;
                 let signature = Signature::decode(buf)?;
-                let message = RefsAnnouncement::decode(buf)?.into();
+                let message = RefsAnnouncement::decode_version(buf, version)?.into();
 
                 Ok(Announcement {
                     node,
@@ -425,11 +474,11 @@ mod tests {
     fn test_refs_ann_max_size() {
         let signer = radicle::crypto::SigningKey::mock(235);
         let refs: [RefsAt; REF_REMOTE_LIMIT] = arbitrary::r#gen(1);
-        let ann = AnnouncementMessage::Refs(RefsAnnouncement {
-            rid: arbitrary::r#gen(1),
-            refs: BoundedVec::collect_from(&mut refs.into_iter()),
-            timestamp: arbitrary::r#gen(1),
-        });
+        let ann = AnnouncementMessage::Refs(RefsAnnouncement::new(
+            arbitrary::r#gen(1),
+            BoundedVec::collect_from(&mut refs.into_iter()),
+            arbitrary::r#gen(1),
+        ));
         let ann = ann.signed(&signer);
         let msg = Message::Announcement(ann);
         let data = msg.encode_to_vec();

@@ -14,7 +14,7 @@ use radicle::issue::cache::Issues as _;
 use radicle::node::notifications;
 use radicle::node::notifications::*;
 use radicle::patch::cache::Patches as _;
-use radicle::prelude::{NodeId, Profile, RepoId};
+use radicle::prelude::{Profile, RepoId};
 use radicle::storage::{ReadRepository, ReadStorage};
 use radicle::{Storage, cob, git};
 
@@ -142,7 +142,7 @@ fn list_repo<'a, R: ReadStorage>(
     profile: &Profile,
 ) -> anyhow::Result<Option<term::VStack<'a>>>
 where
-    <R as ReadStorage>::Repository: cob::Store<Namespace = NodeId>,
+    <R as ReadStorage>::Repository: cob::Store<Namespace = radicle::crypto::RepositoryKey>,
 {
     let repo = storage.repository(rid)?;
     let head = repo.head().ok().map(|(_, head)| head);
@@ -172,7 +172,7 @@ where
         let author = n
             .remote
             .map(|r| {
-                let (alias, _) = term::format::Author::new(&r, profile, false).labels();
+                let (alias, _) = term::format::Author::new(r, profile, false).labels();
                 alias
             })
             .unwrap_or_default();

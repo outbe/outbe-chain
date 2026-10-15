@@ -101,7 +101,12 @@ fn init_configure(
     let pk = signer.public_key();
 
     git::configure_repository(repo)?;
-    git::configure_remote(repo, &REMOTE_NAME, url, &url.clone().with_namespace(*pk))?;
+    git::configure_remote(
+        repo,
+        &REMOTE_NAME,
+        url,
+        &url.clone().with_namespace((*pk).into()),
+    )?;
     let branch = git::fmt::Qualified::from(git::fmt::lit::refs_heads(default_branch));
 
     {
@@ -132,7 +137,7 @@ fn init_configure(
             *REMOTE_COMPONENT, default_branch
         ),
     )?;
-    stored.set_remote_identity_root_to(pk, identity)?;
+    stored.set_remote_identity_root_to(&(*pk).into(), identity)?;
     stored.set_identity_head_to(identity)?;
     stored.set_canonical_symbolic_refs("set-canonical from init (radicle)")?;
     stored.set_default_branch_to_canonical_head()?;
@@ -561,7 +566,7 @@ mod tests {
                 .unwrap(),
         );
 
-        assert_eq!(remotes[public_key].refs.refs(), refs.refs());
+        assert_eq!(remotes[&(*public_key).into()].refs.refs(), refs.refs());
         assert_eq!(project.name(), "acme");
         assert_eq!(project.description(), "Acme's repo");
         assert_eq!(project.default_branch(), &git::fmt::refname!("master"));
@@ -574,7 +579,7 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         let alice = SigningKey::mock(rng.usize(..));
         let bob = SigningKey::mock(rng.usize(..));
-        let bob_id = bob.public_key();
+        let bob_id = &crypto::RepositoryKey::from(bob.public_key());
         let storage = Storage::open(tempdir.path().join("storage"), fixtures::user()).unwrap();
 
         transport::local::register(storage.clone());
@@ -611,7 +616,7 @@ mod tests {
     fn test_checkout() {
         let tempdir = tempfile::tempdir().unwrap();
         let signer = SigningKey::mock(73);
-        let remote_id = signer.public_key();
+        let remote_id = &crypto::RepositoryKey::from(signer.public_key());
         let storage = Storage::open(tempdir.path().join("storage"), fixtures::user()).unwrap();
 
         transport::local::register(storage.clone());

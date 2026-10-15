@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 use gix_protocol::Handshake;
-use radicle::crypto::PublicKey;
+use radicle::crypto::RepositoryKey as PublicKey;
 use radicle::git::{Oid, fmt::Qualified};
 use radicle::identity::{Did, Doc, DocError};
 
@@ -30,8 +30,8 @@ pub const DEFAULT_FETCH_SPECIAL_REFS_LIMIT: u64 = 1024 * 1024 * 5;
 pub const DEFAULT_FETCH_DATA_REFS_LIMIT: u64 = 1024 * 1024 * 1024 * 5;
 
 pub mod error {
+    use radicle::crypto::RepositoryKey as PublicKey;
     use radicle::git::Oid;
-    use radicle::prelude::PublicKey;
     use thiserror::Error;
 
     use crate::{git, git::repository, handle, sigrefs, stage, transport};
@@ -56,7 +56,7 @@ pub mod error {
         Canonical(#[from] Canonical),
         #[error("delegate '{remote}' has diverged 'rad/sigrefs': {current} -> {received}")]
         Diverged {
-            remote: PublicKey,
+            remote: Box<PublicKey>,
             current: Oid,
             received: Oid,
         },
@@ -612,7 +612,7 @@ impl FetchState {
                                 continue;
                             } else if matches!(ancestry, repository::Ancestry::Diverged) {
                                 return Err(error::Protocol::Diverged {
-                                    remote,
+                                    remote: Box::new(remote),
                                     current: at,
                                     received: refs.at,
                                 });

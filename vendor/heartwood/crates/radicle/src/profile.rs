@@ -791,7 +791,7 @@ impl Home {
         repository: &'a Repo,
     ) -> Result<cob::issue::Cache<'a, Repo, ReadOnly, cob::cache::StoreReader>, Error>
     where
-        Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+        Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     {
         let db = self.cobs_db()?;
 
@@ -809,7 +809,7 @@ impl Home {
         signer: &'b Signer,
     ) -> Result<cob::issue::Cache<'a, Repo, WriteAs<'b, Signer>, cob::cache::StoreWriter>, Error>
     where
-        Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+        Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     {
         let db = self.cobs_db_mut()?;
         let store = cob::issue::Issues::open(repository, WriteAs::new(signer))?;
@@ -825,7 +825,7 @@ impl Home {
         repository: &'a Repo,
     ) -> Result<cob::patch::Cache<'a, Repo, ReadOnly, cob::cache::StoreReader>, Error>
     where
-        Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+        Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     {
         let db = self.cobs_db()?;
         let store = cob::patch::Patches::open(repository, ReadOnly)?;
@@ -842,7 +842,7 @@ impl Home {
         signer: &'b Signer,
     ) -> Result<cob::patch::Cache<'a, Repo, WriteAs<'b, Signer>, cob::cache::StoreWriter>, Error>
     where
-        Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+        Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     {
         let db = self.cobs_db_mut()?;
         let store = cob::patch::Patches::open(repository, WriteAs::new(signer))?;

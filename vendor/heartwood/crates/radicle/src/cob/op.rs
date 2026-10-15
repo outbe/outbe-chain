@@ -4,7 +4,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use radicle_cob::history::{Entry, EntryId};
-use radicle_crypto::PublicKey;
+use radicle_crypto::RepositoryKey;
 
 use crate::cob;
 use crate::cob::Timestamp;
@@ -14,7 +14,7 @@ use crate::identity::DocAt;
 use crate::storage::ReadRepository;
 
 /// The author of an [`Op`].
-pub type ActorId = PublicKey;
+pub type ActorId = RepositoryKey;
 
 /// Error decoding an operation from an entry.
 #[derive(Error, Debug)]
@@ -161,7 +161,7 @@ impl From<Entry> for Op<Vec<u8>> {
         Self {
             id: *entry.id(),
             actions: entry.contents().clone(),
-            author: *entry.author(),
+            author: (*entry.author()).into(),
             parents: entry.parents,
             related: entry.related,
             timestamp: Timestamp::from_secs(entry.timestamp),
@@ -193,7 +193,7 @@ where
         let op = Op {
             id,
             actions,
-            author: *entry.author(),
+            author: (*entry.author()).into(),
             timestamp: Timestamp::from_secs(entry.timestamp),
             parents: entry.parents.to_owned(),
             related: entry.related.to_owned(),

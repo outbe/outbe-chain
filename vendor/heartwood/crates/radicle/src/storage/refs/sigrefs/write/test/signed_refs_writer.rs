@@ -42,7 +42,7 @@ fn write(refs: Refs, repo: &MockRepository) -> Result<Update, error::Write> {
     SignedRefsWriter::new(
         refs,
         mock::rid(),
-        mock::node_id(),
+        mock::node_id().into(),
         repo,
         &mock::AlwaysSign::new(),
     )
@@ -57,7 +57,7 @@ fn force_write(refs: Refs, repo: &MockRepository) -> Result<Update, error::Write
     SignedRefsWriter::new(
         refs,
         mock::rid(),
-        mock::node_id(),
+        mock::node_id().into(),
         repo,
         &mock::AlwaysSign::new(),
     )

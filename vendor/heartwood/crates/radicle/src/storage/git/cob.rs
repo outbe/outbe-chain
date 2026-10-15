@@ -10,12 +10,12 @@ use storage::RepositoryError;
 use storage::SignRepository;
 use storage::ValidateRepository;
 
+use crate::crypto::RepositoryKey;
 use crate::git;
 use crate::git::fmt::*;
 use crate::git::*;
 use crate::identity;
 use crate::identity::doc::DocError;
-use crate::node::NodeId;
 use crate::storage;
 use crate::storage::Error;
 use crate::storage::{
@@ -88,7 +88,7 @@ impl cob::object::Storage for Repository {
     type UpdateError = git::raw::Error;
     type RemoveError = git::raw::Error;
 
-    type Namespace = NodeId;
+    type Namespace = RepositoryKey;
 
     fn objects(
         &self,
@@ -236,7 +236,7 @@ where
     ) -> Result<storage::refs::SignedRefs, RepositoryError> {
         // Since this is a draft store, we do not actually want to sign the refs.
         // Instead, we just return the existing signed refs.
-        let remote = self.repo.remote(signer.public_key())?;
+        let remote = self.repo.remote(&signer.public_key().into())?;
 
         Ok(remote.refs)
     }
@@ -380,7 +380,7 @@ impl<R: storage::WriteRepository> cob::object::Storage for DraftStore<'_, R> {
     type UpdateError = git::raw::Error;
     type RemoveError = git::raw::Error;
 
-    type Namespace = NodeId;
+    type Namespace = RepositoryKey;
 
     fn objects(
         &self,

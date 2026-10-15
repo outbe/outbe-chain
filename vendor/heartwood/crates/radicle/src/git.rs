@@ -192,7 +192,7 @@ pub mod refs {
         }
 
         impl Special {
-            pub fn namespaced<'a>(&self, remote: &PublicKey) -> Namespaced<'a> {
+            pub fn namespaced<'a>(&self, remote: &crate::crypto::RepositoryKey) -> Namespaced<'a> {
                 Qualified::from(*self).with_namespace(Component::from(remote))
             }
 

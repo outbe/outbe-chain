@@ -155,7 +155,7 @@ fn test_cob_replication() {
     // announcement; otherwise, Alice will consider it stale.
     std::thread::sleep(std::time::Duration::from_millis(3));
 
-    bob.handle.announce_refs_for(rid, [bob.id]).unwrap();
+    bob.handle.announce_refs_for(rid, [bob.id.into()]).unwrap();
 
     // Wait for Alice to fetch the issue refs.
     events

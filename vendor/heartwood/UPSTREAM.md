@@ -45,3 +45,17 @@ existing compatible versions. No old Heartwood Git source is required.
 The upstream MSRV is Rust 1.88.0. Its standalone development toolchain file is
 retained from the release; chain builds and validation run from the chain root
 with its existing Rust 1.96.0 toolchain. No chain toolchain upgrade is required.
+
+## Native repository authority work (P2, incomplete)
+
+The downstream crypto layer adds a validated Ed25519/BLS repository key and fixed
+Commonware-compatible detached BLS subjects/envelopes. DID, COB actor IDs, Git
+namespaces, reference caches and fetch results use repository keys; Noise and
+transport identities remain Ed25519. Native BLS commit metadata has an exact-byte
+codec. Repository namespace announcements negotiate V2 on the authenticated V1
+control stream and retain their signed encoding through relay/database reopen.
+Migration 10 adds the announcement encoding version; existing rows keep V1.
+
+Native identity/COB/sigrefs attachment and verification, generic publication-policy
+integration and full two-node BLS acceptance are still pending. These changes do
+not yet establish complete P2 support or any Outbe Vote integration.

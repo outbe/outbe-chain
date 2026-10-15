@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cob::op::Op;
 use crate::cob::{Create, Embed, EntryId, ObjectId, TypeName, Update, Updated, Uri, Version};
+use crate::crypto::RepositoryKey;
 use crate::git;
 use crate::prelude::*;
 use crate::storage::git as storage;
@@ -180,7 +181,7 @@ impl<T, Repo, Access> AsRef<Repo> for Store<'_, T, Repo, Access> {
 
 impl<'a, T, Repo, Access> Store<'a, T, Repo, Access>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>,
     Access: access::Access,
 {
     pub fn open_for(
@@ -202,7 +203,7 @@ where
 
 impl<'a, T, Repo, Access> Store<'a, T, Repo, Access>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>,
     Access: access::Access,
 {
     /// Return a new store with the attached identity.
@@ -219,7 +220,7 @@ where
 impl<'a, T, Repo, Access> Store<'a, T, Repo, Access>
 where
     T: CobWithType,
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>,
     Access: access::Access,
 {
     /// Open a new generic store.
@@ -236,7 +237,7 @@ where
 impl<'a, 'b, T, Repo, Signer: crypto::Signer> Store<'a, T, Repo, WriteAs<'b, Signer>>
 where
     T: Cob + cob::Evaluate<Repo>,
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>,
 {
     #[deprecated(note = "only exists to accommodate signatures in crate::cob::identity")]
     pub(super) fn signer(&self) -> &Signer {
@@ -261,7 +262,7 @@ impl<'a, 'b, T, Repo, Signer> Store<'a, T, Repo, WriteAs<'b, Signer>>
 where
     T: Cob + cob::Evaluate<Repo>,
     T::Action: Serialize,
-    Repo: ReadRepository + SignRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + SignRepository + cob::Store<Namespace = RepositoryKey>,
     Signer: crypto::Signer,
 {
     /// Update an object.
@@ -285,7 +286,7 @@ where
                 })
             })
             .collect::<Result<_, _>>()?;
-        let namespace = self.access.signer.public_key();
+        let namespace = &RepositoryKey::from(self.access.signer.public_key());
         let updated = cob::update(
             self.repo,
             self.access.signer,
@@ -326,7 +327,7 @@ where
                 })
             })
             .collect::<Result<_, _>>()?;
-        let namespace = self.access.signer.public_key();
+        let namespace = &RepositoryKey::from(self.access.signer.public_key());
         let cob = cob::create::<T, _>(
             self.repo,
             self.access.signer,
@@ -354,7 +355,7 @@ where
 
     /// Remove an object.
     pub fn remove(&mut self, id: &ObjectId) -> Result<(), Error> {
-        let namespace = self.access.signer.public_key();
+        let namespace = &RepositoryKey::from(self.access.signer.public_key());
         let name = git::refs::storage::cob(namespace, self.scope.type_name, id);
         match self.repo.reference_oid(namespace, &name.strip_namespace()) {
             Ok(_) => {
@@ -377,7 +378,7 @@ impl<'a, T, Repo, Access> Store<'a, T, Repo, Access>
 where
     T: Cob + cob::Evaluate<Repo> + 'a,
     T::Action: Serialize,
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>,
     Access: access::Access,
 {
     /// Get an object.
@@ -473,7 +474,7 @@ where
     ) -> Result<(ObjectId, T), Error>
     where
         T::Action: Serialize + Clone,
-        Repo: ReadRepository + SignRepository + cob::Store<Namespace = NodeId>,
+        Repo: ReadRepository + SignRepository + cob::Store<Namespace = RepositoryKey>,
         Tx: From<Self>,
         Self: From<Tx>,
         F: FnOnce(&mut Tx, &Repo) -> Result<(), Error>,
@@ -539,7 +540,7 @@ where
     ) -> Result<(T, EntryId), Error>
     where
         T::Action: Serialize + Clone,
-        Repo: ReadRepository + SignRepository + cob::Store<Namespace = NodeId>,
+        Repo: ReadRepository + SignRepository + cob::Store<Namespace = RepositoryKey>,
     {
         let actions = NonEmpty::from_vec(self.actions)
             .expect("Transaction::commit: transaction must not be empty");

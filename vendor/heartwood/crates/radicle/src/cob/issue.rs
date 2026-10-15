@@ -17,7 +17,6 @@ use crate::cob::thread::{Comment, CommentId, Thread};
 use crate::cob::{ActorId, Embed, EntryId, ObjectId, TypeName, op, store};
 use crate::cob::{TitleError, thread};
 use crate::identity::doc::DocError;
-use crate::node::NodeId;
 use crate::prelude::{Did, Doc, ReadRepository, RepoId};
 use crate::storage;
 use crate::storage::{HasRepoId, RepositoryError, WriteRepository};
@@ -57,7 +56,7 @@ pub enum Error {
     TitleError(#[from] TitleError),
     /// Action not authorized.
     #[error("{0} not authorized to apply {1:?}")]
-    NotAuthorized(ActorId, Action),
+    NotAuthorized(Box<ActorId>, Action),
     /// Action not allowed.
     #[error("action is not allowed: {0}")]
     NotAllowed(EntryId),
@@ -186,7 +185,7 @@ impl store::Cob for Issue {
                     issue.action(action, op.id, op.author, op.timestamp, &[], &doc, repo)?;
                 }
                 Authorization::Deny => {
-                    return Err(Error::NotAuthorized(op.author, action));
+                    return Err(Error::NotAuthorized(Box::new(op.author), action));
                 }
                 Authorization::Unknown => {
                     // Note that this shouldn't really happen since there's no concurrency in the
@@ -405,7 +404,7 @@ impl Issue {
             Authorization::Allow => {
                 self.action(action, id, author, timestamp, concurrent, doc, repo)
             }
-            Authorization::Deny => Err(Error::NotAuthorized(author, action)),
+            Authorization::Deny => Err(Error::NotAuthorized(Box::new(author), action)),
             Authorization::Unknown => Ok(()),
         }
     }
@@ -601,7 +600,7 @@ impl<Repo, Signer: crypto::Signer, Cache> std::fmt::Debug
 
 impl<Repo, Signer: crypto::Signer, Cache> IssueMut<'_, '_, '_, Repo, Signer, Cache>
 where
-    Repo: WriteRepository + cob::Store<Namespace = NodeId>,
+    Repo: WriteRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     Cache: cob::cache::Update<Issue>,
 {
     /// Reload the issue data from storage.
@@ -756,7 +755,7 @@ impl IssueCounts {
 
 impl<'a, Repo, Access> Issues<'a, Repo, Access>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     Access: store::access::Access,
 {
     /// Open an issues store.
@@ -770,7 +769,7 @@ where
 
 impl<'a, 'b, Repo, Signer> Issues<'a, Repo, WriteAs<'b, Signer>>
 where
-    Repo: WriteRepository + cob::Store<Namespace = NodeId>,
+    Repo: WriteRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     Signer: crypto::Signer,
 {
     /// Get an issue mutably.
@@ -840,7 +839,7 @@ where
 
 impl<'a, Repo, Access> Issues<'a, Repo, Access>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     Access: store::access::Access,
 {
     /// Get an issue.
@@ -1255,7 +1254,10 @@ mod test {
         let reactions = issue.comment(&comment).unwrap().reactions();
         let authors = reactions.get(&reaction).unwrap();
 
-        assert_eq!(*authors.first().unwrap(), node.signer.public_key());
+        assert_eq!(
+            *authors.first().unwrap(),
+            &ActorId::from(node.signer.public_key())
+        );
 
         // TODO: Test multiple reactions from same author and different authors
     }
@@ -1340,7 +1342,7 @@ mod test {
     #[test]
     fn test_issue_comment() {
         let test::setup::NodeWithRepo { node, repo, .. } = test::setup::NodeWithRepo::default();
-        let author = node.signer.public_key();
+        let author = &ActorId::from(node.signer.public_key());
         let mut issues = Cache::no_cache(&*repo, &node.signer).unwrap();
         let mut issue = issues
             .create(
@@ -1703,7 +1705,7 @@ mod test {
             )
             .unwrap();
 
-        repo.update(eve.public_key(), &type_name, &issue.id, &invalid.id)
+        repo.update(&eve.public_key().into(), &type_name, &issue.id, &invalid.id)
             .unwrap();
 
         // If we fetch the COB with its history, *without* trying to interpret it as an issue,

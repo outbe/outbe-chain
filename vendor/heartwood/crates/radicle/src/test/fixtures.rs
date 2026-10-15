@@ -20,6 +20,12 @@ const USER_NAME: &str = "anonymous";
 // also change this to "anonymous@radicle.example.com".
 const USER_EMAIL: &str = "anonymous@radicle.xyz";
 
+/// Public authority from the Commonware threshold signing interoperability vectors.
+pub fn bls_repository_key() -> crate::crypto::RepositoryKey {
+    "zUC76MTqiMm7Ka3fDpoTkRQL8PieYCgweoLJKEZTk8tNhchUmQse8UnRJX3fDZaNsjqUwxnKrq1D27Dg5rU6hZf27Yq1GAVKhyHGUhUFs799KRUzgmUTgP4vYjkDHvPWTZraK1h"
+        .parse().unwrap()
+}
+
 /// Create a new user info object.
 pub fn user() -> git::UserInfo {
     git::UserInfo {

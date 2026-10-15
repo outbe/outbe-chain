@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::{fmt, ops::Deref, str::FromStr};
 
-use crypto::{PublicKey, Signature};
+use crypto::{RepositoryKey as PublicKey, Signature};
 use nonempty::NonEmpty;
 use radicle_cob::{Embed, ObjectId, TypeName};
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,6 @@ use crate::cob::store::access::WriteAs;
 use crate::git;
 use crate::git::Oid;
 use crate::identity::doc::Doc;
-use crate::node::NodeId;
 use crate::storage;
 use crate::{
     cob,
@@ -114,7 +113,7 @@ pub enum ApplyError {
     Init(&'static str),
     /// Invalid signature over document blob.
     #[error("invalid signature from {0} for blob {1}")]
-    InvalidSignature(PublicKey, Oid),
+    InvalidSignature(Box<PublicKey>, Oid),
     /// Unauthorized action.
     #[error("not authorized to perform this action")]
     NotAuthorized,
@@ -133,7 +132,7 @@ pub enum ApplyError {
     #[error("identity document error: {0}")]
     Doc(#[from] DocError),
     #[error("{author} is not a delegate, and only delegates are allowed to {action}")]
-    NonDelegateUnauthorized { author: Did, action: String },
+    NonDelegateUnauthorized { author: Box<Did>, action: String },
 }
 
 impl ApplyError {
@@ -146,7 +145,7 @@ impl ApplyError {
             Action::RevisionRedact { .. } => "redact a revision",
         };
         Self::NonDelegateUnauthorized {
-            author,
+            author: Box::new(author),
             action: action.to_string(),
         }
     }
@@ -221,7 +220,7 @@ impl Identity {
         signer: &'b Signer,
     ) -> Result<IdentityMut<'a, 'b, Repo, Signer>, cob::store::Error>
     where
-        Repo: WriteRepository + cob::Store<Namespace = NodeId>,
+        Repo: WriteRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
         Signer: crypto::Signer,
     {
         let mut store = cob::store::Store::open(store, WriteAs::new(signer))?;
@@ -266,7 +265,7 @@ impl Identity {
         signer: &'b Signer,
     ) -> Result<IdentityMut<'a, 'b, Repo, Signer>, store::Error>
     where
-        Repo: WriteRepository + cob::Store<Namespace = NodeId>,
+        Repo: WriteRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
         Signer: crypto::Signer,
     {
         let obj = Self::get(id, repo)?;
@@ -291,7 +290,7 @@ impl Identity {
         signer: &'b Signer,
     ) -> Result<IdentityMut<'a, 'b, Repo, Signer>, RepositoryError>
     where
-        Repo: WriteRepository + cob::Store<Namespace = NodeId>,
+        Repo: WriteRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
         Signer: crypto::Signer,
     {
         let oid = repo.identity_root()?;
@@ -445,7 +444,7 @@ impl store::Cob for Identity {
             .verify_signature(founder, &signature, root.blob)
             .is_err()
         {
-            return Err(ApplyError::InvalidSignature(**founder, root.blob));
+            return Err(ApplyError::InvalidSignature(Box::new(**founder), root.blob));
         }
         let revision = Revision::new(
             root.commit,
@@ -558,7 +557,10 @@ impl Identity {
                                 parent
                                     .verify_signature(&author, &signature, revision.blob)
                                     .map_err(|_source| {
-                                        ApplyError::InvalidSignature(author, revision.blob)
+                                        ApplyError::InvalidSignature(
+                                            Box::new(author),
+                                            revision.blob,
+                                        )
                                     })?;
 
                                 if self
@@ -653,7 +655,7 @@ impl Identity {
 
                 if !parent.is_delegate(&did) {
                     return Err(ApplyError::NonDelegateUnauthorized {
-                        author: author.into(),
+                        author: Box::new(author.into()),
                         action: "create a revision".to_string(),
                     });
                 }
@@ -665,7 +667,7 @@ impl Identity {
 
                 // Verify signature over new blob, using trusted delegates.
                 if parent.verify_signature(&author, &signature, blob).is_err() {
-                    return Err(ApplyError::InvalidSignature(author, blob));
+                    return Err(ApplyError::InvalidSignature(Box::new(author), blob));
                 }
 
                 // If the parent is already rejected or redacted, this revision is dead on arrival.
@@ -1195,7 +1197,7 @@ impl<Repo, Signer: crypto::Signer> fmt::Debug for IdentityMut<'_, '_, Repo, Sign
 
 impl<Repo, Signer: crypto::Signer> IdentityMut<'_, '_, Repo, Signer>
 where
-    Repo: WriteRepository + cob::Store<Namespace = NodeId>,
+    Repo: WriteRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
 {
     /// Reload the identity data from storage.
     #[cfg(test)]
@@ -2584,8 +2586,8 @@ mod test {
             fixtures::project(tempdir.path().join("copy"), &storage, &alice).unwrap();
 
         // Bob and Eve fork the project from Alice.
-        rad::fork_remote(id, alice.public_key(), &bob, &storage).unwrap();
-        rad::fork_remote(id, alice.public_key(), &eve, &storage).unwrap();
+        rad::fork_remote(id, &alice.public_key().into(), &bob, &storage).unwrap();
+        rad::fork_remote(id, &alice.public_key().into(), &eve, &storage).unwrap();
 
         let repo = storage.repository(id).unwrap();
         let mut identity = Identity::load_mut(&repo, &alice).unwrap();
