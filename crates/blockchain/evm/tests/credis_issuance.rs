@@ -6,7 +6,10 @@ use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratis::precompile::IGratis;
 use outbe_gratisfactory::precompile::IGratisFactory;
-use outbe_oracle::{api::AddressPair, schema::OracleContract};
+use outbe_oracle::{
+    schema::OracleContract,
+    test_support::{publish_day_type_quote, record_finalized_day_vwap},
+};
 use outbe_primitives::{
     addresses::{
         CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS,
@@ -20,7 +23,11 @@ use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_tee_enclave::gratis::{
     decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
 };
-use outbe_vaultrouter::{api::IVaultRouter, LiquidityReservation, VaultRouterContract};
+use outbe_vaultrouter::{
+    api::IVaultRouter,
+    test_support::{register_source, register_target},
+    LiquidityReservation, VaultRouterContract,
+};
 use revm::{
     context_interface::JournalTr,
     database::{CacheDB, EmptyDB},
@@ -129,15 +136,15 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
     )?;
     let router = VaultRouterContract::new(storage.clone());
     router.asset_vault_set(ASSET).insert(VAULT)?;
-    router.liquidity_sources.insert(CREDIS_FACTORY_ADDRESS)?;
-    router.liquidity_source_types.write(
-        &CREDIS_FACTORY_ADDRESS,
-        IVaultRouter::StablesSource::CredisCostAmount as u8,
+    register_source(
+        &storage,
+        CREDIS_FACTORY_ADDRESS,
+        IVaultRouter::StablesSource::CredisCostAmount,
     )?;
-    router.liquidity_targets.insert(CREDIS_FACTORY_ADDRESS)?;
-    router.liquidity_target_types.write(
-        &CREDIS_FACTORY_ADDRESS,
-        IVaultRouter::StablesTarget::Credis as u8,
+    register_target(
+        &storage,
+        CREDIS_FACTORY_ADDRESS,
+        IVaultRouter::StablesTarget::Credis,
     )?;
     // Reserve before pledging. The code below funds the held assets through real ERC20 calls.
     router.reservations.create(&LiquidityReservation {
@@ -165,25 +172,12 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
 
 fn seed_issuance_oracle(storage: StorageHandle<'_>) -> eyre::Result<()> {
     let price = U256::from(2_000_000);
-    outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(840))?;
-    outbe_oracle::api::set_exchange_rate(
-        storage.clone(),
-        Address::ZERO,
-        AddressPair::new_coen_to(840),
-        outbe_oracle::api::RateObservation {
-            rate: price,
-            block_number: 1,
-            timestamp: NOW,
-        },
-    )?;
-    let oracle = OracleContract::new(storage.clone());
-    oracle.reference_currencies.push(840)?;
-    oracle.policy_rate.write(&840, U256::from(43_000))?;
+    publish_day_type_quote(&storage, price, 1, NOW)?;
+    OracleContract::new(storage.clone())
+        .policy_rate
+        .write(&840, U256::from(43_000))?;
     let day = previous_date_key(timestamp_to_date_key(NOW));
-    let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)?
-        .ok_or_else(|| eyre::eyre!("missing fixture value"))?;
-    oracle.record_utc_day_vwap(day, index, price)?;
-    oracle.utc_day_vwap_last_finalized.write(day)?;
+    record_finalized_day_vwap(&storage, 840, day, price)?;
 
     Ok(())
 }

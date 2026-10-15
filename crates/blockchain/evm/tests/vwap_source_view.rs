@@ -7,7 +7,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::sol;
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_offchain_storage::MemoryStorage;
-use outbe_oracle::{api::AddressPair, schema::OracleContract};
+use outbe_oracle::test_support::record_finalized_day_vwap;
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use revm::database::{CacheDB, EmptyDB};
 
@@ -31,19 +31,9 @@ fn a_solidity_view_reads_the_factory_as_its_vwap_source() {
         &runtime_code(include_str!("fixtures/VwapSourceReader.hex")),
     );
     seed_storage(&mut db, TIMESTAMP, CALLER, |storage| {
-        let oracle = OracleContract::new(storage.clone());
-        let index =
-            outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(840))
-                .unwrap();
         for (day, vwap) in [(20_231_110u32, 7u64), (20_231_111, 9)] {
-            oracle
-                .record_utc_day_vwap(day, index, U256::from(vwap))
-                .unwrap();
+            record_finalized_day_vwap(&storage, 840, day, U256::from(vwap)).unwrap();
         }
-        oracle
-            .utc_day_vwap_last_finalized
-            .write(20_231_111)
-            .unwrap();
     });
 
     let mut world = EvmWorld::new(db)

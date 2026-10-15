@@ -15,5 +15,8 @@ alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
 
+[features]
+test-utils = []
+
 [lints]
 workspace = true

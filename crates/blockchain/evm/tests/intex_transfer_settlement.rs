@@ -9,12 +9,16 @@ use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
 use outbe_offchain_storage::MemoryStorage;
+use outbe_oracle::test_support::record_finalized_day_vwap;
 use outbe_primitives::{
     addresses::{INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS},
     storage::{SubCallOutput, SubCallStatus},
     time::WorldwideDay,
 };
-use outbe_vaultrouter::{api::IVaultRouter, VaultRouterContract};
+use outbe_vaultrouter::{
+    api::IVaultRouter::StablesSource,
+    test_support::{register_source, register_vault},
+};
 use revm::database::{CacheDB, EmptyDB};
 
 sol!("../../../contracts/intex/src/shared/interfaces/IIntexNFT1155.sol");
@@ -82,39 +86,20 @@ impl World {
             install_code(&mut db, addr, &runtime_code(hex));
         }
         seed_storage(&mut db, TIMESTAMP, ALICE, |storage| {
-            let router = VaultRouterContract::new(storage.clone());
-            router.assets.insert(ASSET).unwrap();
-            router.asset_vault_set(ASSET).insert(VAULT).unwrap();
-            router
-                .reference_currency_vault_set(840)
-                .insert(VAULT)
-                .unwrap();
-            router
-                .vault_reference_currencies
-                .write(&VAULT, 840)
-                .unwrap();
-            router
-                .liquidity_sources
-                .insert(INTEX_FACTORY_ADDRESS)
-                .unwrap();
-            router
-                .liquidity_source_types
-                .write(
-                    &INTEX_FACTORY_ADDRESS,
-                    IVaultRouter::StablesSource::IntexCostAmount as u8,
-                )
-                .unwrap();
-            let day = outbe_primitives::time::first_full_day(TIMESTAMP);
-            let pair = outbe_oracle::api::register_pair(
-                storage.clone(),
-                outbe_oracle::api::AddressPair::new_coen_to(840),
+            register_vault(&storage, ASSET, VAULT, 840).unwrap();
+            register_source(
+                &storage,
+                INTEX_FACTORY_ADDRESS,
+                StablesSource::IntexCostAmount,
             )
             .unwrap();
-            let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-            oracle
-                .record_utc_day_vwap(day, pair, U256::from(2_160_001))
-                .unwrap();
-            oracle.utc_day_vwap_last_finalized.write(day).unwrap();
+            record_finalized_day_vwap(
+                &storage,
+                840,
+                outbe_primitives::time::first_full_day(TIMESTAMP),
+                U256::from(2_160_001),
+            )
+            .unwrap();
             outbe_intex::api::create_series(
                 &storage,
                 CreateSeriesParams {
