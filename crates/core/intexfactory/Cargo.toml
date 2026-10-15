@@ -28,6 +28,14 @@ outbe-tee.workspace = true
 outbe-tee-enclave.workspace = true
 revm.workspace = true
 serde_json.workspace = true
+outbe-evm = { workspace = true, features = ["test-utils"] }
+outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
+outbe-oracle = { workspace = true, features = ["test-utils"] }
+outbe-offchain-data.workspace = true
+outbe-offchain-storage.workspace = true
+outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
+outbe-primitives = { workspace = true, features = ["test-utils"] }
+alloy-primitives.workspace = true
 
 [lints]
 workspace = true
