@@ -187,6 +187,17 @@ impl Registry {
     }
 
     pub(crate) fn authorize(&self, request: EntryRequest) -> Result<EntryAuthorization, Error> {
+        if request.authority.as_ed25519().is_some() && request.kind != SubjectKind::Identity {
+            return Ok(EntryAuthorization::native(request));
+        }
+        let record = self.record(request.repository)?;
+        if request.kind == SubjectKind::Identity
+            && record
+                .as_ref()
+                .is_some_and(|record| record.owner != request.authority)
+        {
+            return Err(Error::Denied);
+        }
         if request.authority.as_ed25519().is_some() {
             return Ok(EntryAuthorization::native(request));
         }
@@ -196,7 +207,7 @@ impl Registry {
             .map_err(|_| Error::Unavailable)?
             .get(&request.repository)
             .cloned();
-        let Some(record) = self.record(request.repository)? else {
+        let Some(record) = record else {
             return if provider.is_some() {
                 Err(Error::Configuration)
             } else {

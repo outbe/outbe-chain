@@ -46,6 +46,16 @@ pub const IDENTITY_VERSION: Version = Version(NonZeroU32::new(1).unwrap());
 
 #[derive(Error, Debug)]
 pub enum DocError {
+    #[error("native identity entry: {0}")]
+    NativeEntry(Box<storage::git::cob::LoadError>),
+    #[error(transparent)]
+    NativeOperation(#[from] crate::cob::op::OpEncodingError),
+    #[error(transparent)]
+    NativeSignature(#[from] crypto::repository::Error),
+    #[error(transparent)]
+    Publication(#[from] storage::publication::Error),
+    #[error("invalid native identity COB or document blob binding")]
+    InvalidNativeIdentity,
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
@@ -1047,6 +1057,55 @@ impl Doc {
     pub fn load_at<R: ReadRepository>(commit: Oid, repo: &R) -> Result<DocAt, DocError> {
         let blob = Self::blob_at(commit, repo)?;
         let doc = Self::from_blob(&blob)?;
+        repo.authorize_entry(
+            **doc.delegates().first(),
+            commit,
+            crypto::SubjectKind::Identity,
+        )?;
+        let object = repo.commit(commit)?;
+        let native = doc
+            .delegates()
+            .iter()
+            .any(|key| key.as_key().as_ed25519().is_none())
+            || object
+                .raw_header_bytes()
+                .split(|b| *b == b'\n')
+                .any(|line| line.starts_with(b"radicle-bls-sig"));
+        if native {
+            // Direct document reads must use the same current-entry verifier as COB reads.
+            let git = git::raw::Repository::open_bare(repo.path())?;
+            let entry = storage::git::cob::load_entry(repo, &git, commit)
+                .map_err(|e| DocError::NativeEntry(Box::new(e)))?;
+            if !entry.valid_signatures() || entry.type_name() != &*identity::TYPENAME {
+                return Err(DocError::InvalidNativeIdentity);
+            }
+            let op = identity::Op::try_from(&entry)?;
+            let mut revisions = op.actions.into_iter().filter_map(|action| match action {
+                identity::Action::Revision {
+                    blob, signature, ..
+                } => Some((blob, signature)),
+                _ => None,
+            });
+            let (signed_blob, signature) =
+                revisions.next().ok_or(DocError::InvalidNativeIdentity)?;
+            if revisions.next().is_some() || signed_blob != blob.id() {
+                return Err(DocError::InvalidNativeIdentity);
+            }
+            let authority = *entry.author();
+            let context = repo
+                .authorize_entry(authority, commit, crypto::SubjectKind::Identity)?
+                .context();
+            signature.verify_identity(
+                authority,
+                repo.id()
+                    .into_sha1()
+                    .ok_or(crypto::repository::Error::InvalidSubject)?,
+                context,
+                signed_blob
+                    .into_sha1()
+                    .ok_or(crypto::repository::Error::InvalidSubject)?,
+            )?;
+        }
 
         Ok(DocAt {
             commit,

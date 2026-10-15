@@ -38,7 +38,7 @@ pub enum LoadError {
     Publication(#[from] storage::publication::Error),
 }
 
-fn load_entry<R: ReadRepository>(
+pub(crate) fn load_entry<R: ReadRepository>(
     repo: &R,
     raw: &git::raw::Repository,
     id: Oid,
