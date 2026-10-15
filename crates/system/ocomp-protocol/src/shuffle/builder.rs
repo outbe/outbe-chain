@@ -125,7 +125,7 @@ where
     }
 
     fn validate_record(&mut self, record: &ShuffleBucketRecordV1) -> Result<(), ProtocolError> {
-        let key = (record.bucket_key, record.raw_ordinal);
+        let key = super::shuffle_record_key(record);
         require(
             self.previous_bucket.is_none_or(|previous| previous < key),
             "global bucket shuffle order",

@@ -547,7 +547,6 @@ impl ShuffleRunArtifactV1 {
             ShuffleRunPayloadV1::BucketLeaf(records) => {
                 validate_bucket_records(records, limits)?;
                 ordered_leaf_root(
-                    ListKind::BucketRecords,
                     records
                         .iter()
                         .map(|record| encode_nested_value(record, limits)),
@@ -598,7 +597,6 @@ fn validate_page_span(
 }
 
 fn ordered_leaf_root(
-    kind: ListKind,
     records: impl IntoIterator<Item = Result<Vec<u8>, ProtocolError>>,
     record_count: usize,
     limits: &SchemaLimits,
@@ -607,7 +605,7 @@ fn ordered_leaf_root(
         u32::try_from(record_count).map_err(|_| ProtocolError::IntegerOverflow {
             what: "shuffle leaf record count",
         })?;
-    let mut root = StreamingOrderedListRoot::new(kind, expected_count)?;
+    let mut root = StreamingOrderedListRoot::new(ListKind::BucketRecords, expected_count)?;
     for record in records {
         root.push(&record?, limits.max_bounded_bytes)?;
     }

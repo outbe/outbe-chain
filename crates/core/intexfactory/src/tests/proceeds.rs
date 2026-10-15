@@ -101,9 +101,8 @@ fn every_delivery_of_a_day_burns_and_credits() {
 /// `PAYABLE_SELECTORS`, or a funded call to a non-payable selector would strand
 /// native value at an address with no accounting entry for it.
 ///
-/// Characterization: the per-arm checks this replaced already covered these two
-/// selectors with the same message, so the test pins current behavior rather
-/// than proving a fix. Its value is catching a future removal of the guard.
+/// Characterization: the test pins current behavior. Its value is catching a
+/// future removal of the guard.
 #[test]
 fn unpublished_selectors_refuse_native_value() {
     use crate::precompile::{dispatch, IIntexFactory};

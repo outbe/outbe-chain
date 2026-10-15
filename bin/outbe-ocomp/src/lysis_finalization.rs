@@ -142,12 +142,11 @@ pub fn finalize_verified_lysis_v1(
     });
     let buckets =
         authoritative_bucket_shuffle_records(audit.admissions(), reader, limits)?.map(|record| {
-            match record {
-                Ok(bucket) => Ok(bucket),
-                Err(_) => Err(LysisFinalizationErrorV1::Authority(
+            record.map_err(|_| {
+                LysisFinalizationErrorV1::Authority(
                     "cold-reloaded authoritative BucketShuffle cursor",
-                )),
-            }
+                )
+            })
         });
     let eligible_nominal_total = audit.eligible_nominal_total()?;
     let result = finalize_v1(

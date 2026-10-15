@@ -223,7 +223,7 @@ pub(super) fn validate_bucket_records(
     }
     for pair in records.windows(2) {
         require(
-            (pair[0].bucket_key, pair[0].raw_ordinal) < (pair[1].bucket_key, pair[1].raw_ordinal),
+            super::shuffle_record_key(&pair[0]) < super::shuffle_record_key(&pair[1]),
             "bucket shuffle records strictly ordered",
         )?;
     }

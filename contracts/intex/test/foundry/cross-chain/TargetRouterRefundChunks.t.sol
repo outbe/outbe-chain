@@ -48,8 +48,8 @@ contract CountingTokenBridge {
     }
 }
 
-/// A chain's refunds arrive as a run of chunks. But the day's proceeds leave as one transfer: the
-/// origin counts a chain paid on the first delivery.
+/// A chain's refunds arrive as a run of chunks. But the day's proceeds leave as one transfer, so the
+/// day pays one bridge fee.
 contract TargetRouterRefundChunksTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_260_713;

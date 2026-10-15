@@ -1,7 +1,7 @@
 //! inventory obligations for the offline OCOMP audit.
 use super::*;
 
-/// Scratch-only set of NOD FIFO day/job keys, kept out of RAM.
+/// Scratch-only key/value rows, kept out of RAM.
 #[derive(Debug)]
 pub(super) struct InventoryRows;
 impl Table for InventoryRows {

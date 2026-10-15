@@ -3,9 +3,7 @@ use super::*;
 use outbe_primitives::units::native_to_protocol_floor;
 use outbe_promislimit::PromisLimitContract;
 
-/// Burn auction proceeds (native COEN, arriving as `amount` = msg.value) from one
-/// target chain and credit the same COEN to the Promis limit pool at 1 COEN = 1 Promis.
-/// Gated to the OriginRouter. Wei below one protocol unit burns without a credit.
+/// Burns the proceeds and credits whole units to the Promis limit pool; sub-unit wei is not credited.
 pub fn distribute(
     storage: &StorageHandle<'_>,
     caller: Address,

@@ -57,8 +57,8 @@ interface IIntexFactory {
     /// @notice Leading zero bytes `minePromis` requires of the work hash.
     function powDifficulty() external view returns (uint8);
 
-    /// @notice Burn auction proceeds (native COEN, sent as msg.value) and credit the
-    ///         same COEN to the Promis limit pool. Callable only by the OriginRouter.
+    /// @notice Burn auction proceeds (native COEN, sent as msg.value) and credit them to the
+    ///         Promis limit pool in whole protocol units. Callable only by the OriginRouter.
     /// @param worldwideDay Worldwide day (yyyymmdd) the proceeds belong to.
     /// @param srcChainId Target chain the proceeds arrived from.
     function distribute(uint32 worldwideDay, uint32 srcChainId) external payable;
