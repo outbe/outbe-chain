@@ -265,6 +265,10 @@ const SCENARIOS: Case[] = [
   ["promis_gratis_mine", { amount: "1" }],
   ["gratis_coen_mine", { amount: "1" }],
   ["nod_gratis_mine", { nod_id: "3", gratis_amount: "1" }],
+  ["cca_bond", { name: "Desk", amount: "1" }],
+  ["cca_unbond", {}],
+  ["cca_unbonded_claim", {}],
+  ["credis_reservation_return", { reservation_id: "5" }],
 ];
 
 /** Replaces both randomness sources the offer encryption draws from with a counter. */

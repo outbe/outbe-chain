@@ -101,6 +101,12 @@ export const CONTRACTS: Record<string, ContractEntry> = {
     abi: ABI.ICredisFactory,
   },
 
+  ccaregistry: {
+    address: A("0x0000000000000000000000000000000000001011"),
+    note: "CCA registry (bond, unbond)",
+    abi: ABI.ICcaRegistry,
+  },
+
   vaultrouter: {
     address: A("0x0000000000000000000000000000000000001017"),
     note: "Vault router (reserve vaults, Credis liquidity reservations)",

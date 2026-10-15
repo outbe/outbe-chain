@@ -148,3 +148,14 @@ function sampleReservation() {
     source: SIGNER,
   };
 }
+
+test("cca_bond sends the bond as value and names the CCA state its event carries", async () => {
+  const registry = resolveContract("ccaregistry");
+  const topics = encodeEventTopics({ abi: registry.abi, eventName: "Bonded", args: { cca: SIGNER } });
+  const data = encodeAbiParameters([{ type: "uint256" }, { type: "uint8" }], [1_500_000_000_000_000_000n, 1]);
+  const { out, sent } = await call("cca_bond", { name: "Desk", amount: "1.5" }, (chain) =>
+    chain.receiptLogs("bond", [{ address: registry.address, topics: topics as Hex[], data }]),
+  );
+  assert.equal(out.state, "Active");
+  assert.deepEqual([sent.at(-1)?.function, sent.at(-1)?.args, sent.at(-1)?.value], ["bond", ["Desk"], "1500000000000000000"]);
+});
