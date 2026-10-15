@@ -251,7 +251,7 @@ pub fn hardware_probe(action: &str, path: &std::path::Path) -> EnclaveResult<()>
             };
             let blob = seal_payload(&[0x55; 32], b"public hardware test data", binding, &header)?;
             if !blob.starts_with(MAGIC) {
-                return Err(SgxSealingError::ProbeNotHardwareSealing.into());
+                return Err(SgxSealingError::ProbeDidNotUseHardwareSealing.into());
             }
             std::fs::write(path, blob).map_err(SgxSealingError::other)?;
         }

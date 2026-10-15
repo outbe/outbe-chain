@@ -216,7 +216,7 @@ pub(crate) fn verify_local_result(
     let finalized = job
         .finalized
         .as_ref()
-        .ok_or(SnapshotOcompError::LocalResultComparisonRequiresFinality)?;
+        .ok_or(SnapshotOcompError::LocalResultLacksFinality)?;
     let limits = poc_schema_limits();
     let reader = LocalLysisResultReader::open_existing(root, limits)?;
     let Some(loaded) = reader.load(finalized.job_id)? else {

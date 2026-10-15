@@ -34,6 +34,6 @@ pub enum PromisLimitFatalError {
 
 impl From<PromisLimitFatalError> for PrecompileError {
     fn from(err: PromisLimitFatalError) -> Self {
-        PrecompileError::Fatal(err.to_string())
+        PrecompileError::Revert(err.to_string())
     }
 }

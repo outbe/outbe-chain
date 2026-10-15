@@ -85,13 +85,13 @@ fn successor_errors_preserve_priority_at_the_protocol_version_limit() {
 
     assert!(matches!(
         next.validate_against(&predecessor, 50, &limits),
-        Err(PrecompileError::Fatal(message)) if message == "OCOMP protocol version overflow"
+        Err(PrecompileError::Revert(message)) if message == "OCOMP protocol version overflow"
     ));
 
     next.activation_height = 50;
     assert!(matches!(
         next.validate_against(&predecessor, 50, &limits),
-        Err(PrecompileError::Fatal(message))
+        Err(PrecompileError::Revert(message))
             if message == "OCOMP successor violates predecessor or immutable-policy invariants"
     ));
 
@@ -99,7 +99,7 @@ fn successor_errors_preserve_priority_at_the_protocol_version_limit() {
     next.authority.request_profile.source_availability_policy_id = hash(45);
     assert!(matches!(
         next.validate_against(&predecessor, 50, &limits),
-        Err(PrecompileError::Fatal(message))
+        Err(PrecompileError::Revert(message))
             if message == "OCOMP successor violates predecessor or immutable-policy invariants"
     ));
 }
@@ -112,7 +112,7 @@ fn request_profile_reports_reserved_identity_before_capacity_violation() {
 
     assert!(matches!(
         profile.validate(),
-        Err(PrecompileError::Fatal(message))
+        Err(PrecompileError::Revert(message))
             if message == "OCOMP request profile contains a reserved zero identity"
     ));
 }
@@ -124,7 +124,7 @@ fn request_profile_reports_frozen_capacity_bounds() {
 
     assert!(matches!(
         profile.validate(),
-        Err(PrecompileError::Fatal(message))
+        Err(PrecompileError::Revert(message))
             if message == "OCOMP request profile violates frozen PoC bounds"
     ));
 
@@ -132,7 +132,7 @@ fn request_profile_reports_frozen_capacity_bounds() {
     profile.capacity_profile.max_reference_currencies = 0;
     assert!(matches!(
         profile.validate(),
-        Err(PrecompileError::Fatal(message))
+        Err(PrecompileError::Revert(message))
             if message == "OCOMP request profile violates frozen PoC bounds"
     ));
 }

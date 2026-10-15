@@ -62,6 +62,20 @@ pub enum FinalizedFrameError {
     },
 }
 
+impl FinalizedFrameError {
+    /// Returns true when the error reflects transient provider lag rather than
+    /// a canonical history or receipt conflict.
+    #[must_use]
+    pub const fn is_transient_unavailability(&self) -> bool {
+        matches!(
+            self,
+            Self::CanonicalBlockUnavailable { .. }
+                | Self::BlockUnavailableByHash { .. }
+                | Self::ReceiptsUnavailable { .. }
+        )
+    }
+}
+
 /// This enum defines errors that [`crate::shutdown::NodeShutdown`] returns.
 #[derive(Debug, thiserror::Error)]
 pub enum NodeShutdownError {
@@ -347,19 +361,23 @@ impl LocalRegistryAdmissionError {
 }
 
 impl ExternalRegistryAdmissionError {
+    fn map_reason(ctor: fn(String) -> Self, error: impl core::fmt::Display) -> Self {
+        ctor(error.to_string())
+    }
+
     #[must_use]
     pub fn slot_plan(error: impl core::fmt::Display) -> Self {
-        Self::SlotPlan(error.to_string())
+        Self::map_reason(Self::SlotPlan, error)
     }
 
     #[must_use]
     pub fn proof(error: impl core::fmt::Display) -> Self {
-        Self::Proof(error.to_string())
+        Self::map_reason(Self::Proof, error)
     }
 
     #[must_use]
     pub fn registry(error: impl core::fmt::Display) -> Self {
-        Self::Registry(error.to_string())
+        Self::map_reason(Self::Registry, error)
     }
 }
 

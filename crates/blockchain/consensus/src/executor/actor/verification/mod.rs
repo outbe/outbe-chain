@@ -12,7 +12,7 @@ use commonware_consensus::types::{Height, Round};
 use commonware_runtime::Clock;
 use futures::{future::BoxFuture, FutureExt};
 use outbe_primitives::{
-    projection::{ExecutionReadBudget, ExecutionReadCancelled},
+    projection::{ExecutionReadBudget, ExecutionReadCancelled, NodeLocalExecutionAbort},
     OutbeExecutionData,
 };
 use std::{collections::BTreeMap, sync::Arc, task::Poll};
@@ -48,6 +48,7 @@ struct ExecutionRequest {
 enum ExecutionStatus {
     Completed(PayloadStatus),
     Cancelled(ExecutionReadCancelled),
+    NodeLocalAbort(NodeLocalExecutionAbort),
 }
 
 pub(super) enum Event {
@@ -304,29 +305,5 @@ impl Verification {
 impl Event {
     fn from_progress(result: eyre::Result<()>) -> Self {
         result.map_or_else(Event::Failed, |_| Event::Changed)
-    }
-}
-
-impl ExecutionStatus {
-    fn from_engine(
-        result: Result<PayloadStatus, reth_ethereum::node::api::BeaconOnNewPayloadError>,
-        digest: Digest,
-    ) -> eyre::Result<Self> {
-        let error = match result {
-            Ok(status) => return Ok(Self::Completed(status)),
-            Err(error) => error,
-        };
-        let cancelled = match &error {
-            reth_ethereum::node::api::BeaconOnNewPayloadError::Internal(source) => {
-                ExecutionReadCancelled::find(source.as_ref())
-            }
-            _ => None,
-        };
-        if let Some(cancelled) = cancelled {
-            return Ok(Self::Cancelled(cancelled.clone()));
-        }
-        Err(eyre::Report::new(error).wrap_err(format!(
-            "new_payload failed during executor verification: target={digest}"
-        )))
     }
 }

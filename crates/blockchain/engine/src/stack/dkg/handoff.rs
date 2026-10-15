@@ -324,7 +324,7 @@ pub(in crate::stack) fn find_exact_finalized_preannounce_carrier(
 
     let mut height = pending.freeze_height;
     loop {
-        let canonical_hash = provider
+        let mut canonical_hash = provider
             .block_hash(height)
             .map_err(
                 |error| crate::errors::StackDkgError::ReadCanonicalHashAtHeight {
@@ -333,13 +333,31 @@ pub(in crate::stack) fn find_exact_finalized_preannounce_carrier(
                 },
             )?
             .ok_or(crate::errors::StackDkgError::MissingPreannounceBlockHash { height })?;
-        let header = provider
+        let mut header = provider
             .sealed_header(height)
             .map_err(|error| crate::errors::StackDkgError::ReadFinalizedHeader {
                 height,
                 reason: format!("{error}"),
             })?
             .ok_or(crate::errors::StackDkgError::MissingPreannounceHeader { height })?;
+        if header.hash() != canonical_hash {
+            canonical_hash = provider
+                .block_hash(height)
+                .map_err(
+                    |error| crate::errors::StackDkgError::ReadCanonicalHashAtHeight {
+                        height,
+                        reason: format!("{error}"),
+                    },
+                )?
+                .ok_or(crate::errors::StackDkgError::MissingPreannounceBlockHash { height })?;
+            header = provider
+                .sealed_header(height)
+                .map_err(|error| crate::errors::StackDkgError::ReadFinalizedHeader {
+                    height,
+                    reason: format!("{error}"),
+                })?
+                .ok_or(crate::errors::StackDkgError::MissingPreannounceHeader { height })?;
+        }
         if header.hash() != canonical_hash {
             return Err(
                 crate::errors::StackDkgError::PreannounceHeaderHashMismatch {

@@ -29,7 +29,6 @@ const NATIVE_CONTROL_DEADLINE: Duration = Duration::from_secs(5);
 const RADICLE_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const RADICLE_READY_POLL: Duration = Duration::from_millis(100);
 const RADICLE_SOURCE_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(180);
-const HEARTWOOD_REVISION: &str = "b76a17801329291153585ed31db61ee3c658046e";
 
 #[derive(Clone, Debug)]
 pub struct RadicleRepositoryFixtureV1 {
@@ -280,13 +279,14 @@ impl Localnet {
 
     /// Create a public source repository while its non-validator sidecar is offline.
     pub fn prepare_user_radicle_repository(&self) -> Result<RadicleRepositoryFixtureV1> {
+        let revision = self.git(&self.cfg.repo, &["rev-parse", "HEAD"])?;
         for (name, binary) in [
             ("rad", &self.cfg.bin_rad),
             ("git-remote-rad", &self.cfg.bin_git_remote_rad),
         ] {
             let mut command = Command::new(binary);
             command.arg("--version");
-            verify_user_tool_version(name, &output(command, name)?)
+            verify_user_tool_version(name, &output(command, name)?, revision.trim())
                 .wrap_err_with(|| format!("verify user Radicle tool {}", binary.display()))?;
         }
         let home = self.cfg.dir.join("user-radicle");
@@ -740,15 +740,15 @@ fn native_node_id(node_id: [u8; 32]) -> String {
     multibase::encode(multibase::Base::Base58Btc, bytes)
 }
 
-fn verify_user_tool_version(name: &str, version: &str) -> Result<()> {
+fn verify_user_tool_version(name: &str, version: &str, revision: &str) -> Result<()> {
     let version = version.trim();
     let commit = version
         .strip_prefix(&format!("{name} "))
         .and_then(|value| value.rsplit_once(" ("))
         .and_then(|(_, commit)| commit.strip_suffix(')'))
         .filter(|commit| commit.len() >= 7 && commit.bytes().all(|byte| byte.is_ascii_hexdigit()));
-    if !commit.is_some_and(|commit| HEARTWOOD_REVISION.starts_with(commit)) {
-        bail!("{name} must come from pinned Outbe Heartwood {HEARTWOOD_REVISION}; observed {version:?}");
+    if !commit.is_some_and(|commit| revision.starts_with(commit)) {
+        bail!("{name} must come from vendored Heartwood at chain revision {revision}; observed {version:?}");
     }
     Ok(())
 }
@@ -1717,14 +1717,32 @@ mod tests {
     }
 
     #[test]
-    fn user_tools_must_match_the_pinned_fork() {
+    fn user_tools_must_match_the_chain_revision() {
+        let revision = "a825e13a324fe1f10df486690a746cbd80da66d0";
         for name in ["rad", "git-remote-rad"] {
-            assert!(verify_user_tool_version(name, &format!("{name} 1.0 (b76a178)\n")).is_ok());
-            assert!(verify_user_tool_version(name, &format!("{name} 1.0 (deadbee)")).is_err());
-            assert!(verify_user_tool_version(name, &format!("{name} 1.0 (b76)")).is_err());
             assert!(
-                verify_user_tool_version(name, &format!("{name} 1.0 (b76a178-dirty)")).is_err()
+                verify_user_tool_version(name, &format!("{name} 1.0 (a825e13)\n"), revision)
+                    .is_ok()
             );
+            assert!(
+                verify_user_tool_version(name, &format!("{name} 1.0 ({revision})"), revision)
+                    .is_ok()
+            );
+            assert!(
+                verify_user_tool_version(name, &format!("{name} 1.0 (b76a178)"), revision).is_err()
+            );
+            assert!(
+                verify_user_tool_version(name, &format!("{name} 1.0 (deadbee)"), revision).is_err()
+            );
+            assert!(
+                verify_user_tool_version(name, &format!("{name} 1.0 (a82)"), revision).is_err()
+            );
+            assert!(verify_user_tool_version(
+                name,
+                &format!("{name} 1.0 (a825e13-dirty)"),
+                revision
+            )
+            .is_err());
         }
     }
 

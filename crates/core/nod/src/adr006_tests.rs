@@ -232,7 +232,7 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
             .unwrap();
         let error = api::add_nod(&storage, &scope, &parent, &second, U256::from(5)).unwrap_err();
         assert!(
-            matches!(error, PrecompileError::Fatal(message) if message.contains("member index overflow"))
+            matches!(error, PrecompileError::Revert(message) if message.contains("member index overflow"))
         );
         assert_eq!(nod.total_supply().unwrap(), 1);
         assert_eq!(
@@ -265,6 +265,26 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
             original
         );
     });
+}
+
+#[test]
+fn nod_error_and_calculation_amount_never_return_fatal() {
+    let domain_error: PrecompileError = crate::errors::NodError::NonNodItemPayload.into();
+    assert!(matches!(domain_error, PrecompileError::Revert(_)));
+
+    let mut corrupted = item(Address::repeat_byte(0x75));
+    crate::test_support::uninstall();
+    assert!(matches!(
+        api::calculation_amount(&corrupted),
+        Err(PrecompileError::EnclaveUnavailable(_))
+    ));
+
+    crate::test_support::install();
+    corrupted.encrypted.encrypted_gratis_amount.clear();
+    assert!(matches!(
+        api::calculation_amount(&corrupted),
+        Err(PrecompileError::Revert(_))
+    ));
 }
 
 /// Slot assignment is dense in `order` sequence. Inserting a field rather than

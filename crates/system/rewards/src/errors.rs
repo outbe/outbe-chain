@@ -87,15 +87,6 @@ impl From<TimeError> for RewardsError {
 
 impl From<RewardsError> for PrecompileError {
     fn from(err: RewardsError) -> Self {
-        match err {
-            RewardsError::RewardWindowHeightOverflow
-            | RewardsError::ParticipationAfterGemBatchPreparation
-            | RewardsError::CreditOutsideInclusionWindow
-            | RewardsError::LateCreditMissingCanonicalUtcDay
-            | RewardsError::GemPreparationBeforeParticipationWindowsClose => {
-                PrecompileError::Fatal(err.to_string())
-            }
-            _ => PrecompileError::Revert(err.to_string()),
-        }
+        PrecompileError::Revert(err.to_string())
     }
 }

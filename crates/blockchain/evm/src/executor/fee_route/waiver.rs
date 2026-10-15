@@ -96,9 +96,14 @@ where
         storage
             .with_account_info(signer, |info| Ok(info.clone()))
             .map_err(|error| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!("free-tx signer account read failed: {error}").into(),
-                ))
+                if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
+                    BlockExecutionError::other(error)
+                } else {
+                    BlockValidationError::msg(format!(
+                        "free-tx signer account read failed: {error}"
+                    ))
+                    .into()
+                }
             })
     }
 
@@ -120,9 +125,9 @@ where
             .code_by_hash(account.code_hash)
             .map(|code| code.eip7702_address())
             .map_err(|error| {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-                    format!("free-tx signer code lookup failed: {error}").into(),
-                ))
+                BlockExecutionError::other(PrecompileError::storage(format!(
+                    "free-tx signer code lookup failed: {error}"
+                )))
             })
     }
 }

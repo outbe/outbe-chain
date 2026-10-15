@@ -381,36 +381,17 @@ pub(super) fn authenticate_ancestor_proof(
     Ok(())
 }
 
-async fn rebuild_epoch_boundary<F>(
-    chain: &SharedCommitteeChain,
+async fn find_boundary_outcome_in_window<F>(
     source: &F,
-    epocher: &FollowerEpocher,
     epoch: Epoch,
-    recovered_height: Height,
-) -> Result<()>
+    earliest: Height,
+    scan_end: u64,
+) -> Result<(Height, super::upstream::AncestorFinalityProof)>
 where
     F: FinalizedSource,
 {
     use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact as CHA;
 
-    let previous_epoch = Epoch::new(epoch.get().saturating_sub(1));
-    let (earliest, latest) = epocher
-        .next_boundary_window(previous_epoch)
-        .ok_or_else(|| FollowError::MissingPriorEpochActivation {
-            epoch: previous_epoch.get(),
-        })?;
-    let scan_end = latest.get().min(recovered_height.get());
-    if scan_end < earliest.get() {
-        return Err(FollowError::RecoveredHeightPrecedesActivationWindow {
-            recovered: recovered_height.get(),
-            earliest: earliest.get(),
-            latest: latest.get(),
-            epoch: epoch.get(),
-        }
-        .into());
-    }
-
-    let mut boundary = None;
     for height in (earliest.get()..=scan_end).rev() {
         let Some(candidate) = source.get_finality_proof(Height::new(height)).await else {
             continue;
@@ -433,23 +414,29 @@ where
                 }
                 .into());
             }
-            boundary = Some((Height::new(height), candidate));
-            break;
+            return Ok((Height::new(height), candidate));
         }
     }
-    let (boundary_height, boundary) =
-        boundary.ok_or_else(|| FollowError::MissingBoundaryOutcomeInWindow {
-            epoch: epoch.get(),
-            earliest: earliest.get(),
-            scan_end,
-        })?;
+    Err(FollowError::MissingBoundaryOutcomeInWindow {
+        epoch: epoch.get(),
+        earliest: earliest.get(),
+        scan_end,
+    }
+    .into())
+}
 
-    let previous_activation = epocher
-        .activation_height(previous_epoch)
-        .ok_or(FollowError::MissingPriorActivationHeight)?
-        .get();
-    let mut carrier_height = None;
-    for height in (previous_activation..boundary_height.get()).rev() {
+async fn find_committee_preannounce_carrier<F>(
+    chain: &SharedCommitteeChain,
+    source: &F,
+    epoch: Epoch,
+    scan_range: std::ops::Range<u64>,
+) -> Result<u64>
+where
+    F: FinalizedSource,
+{
+    let previous_epoch = Epoch::new(epoch.get().saturating_sub(1));
+    let boundary_height = scan_range.end;
+    for height in scan_range.rev() {
         let Some(candidate) = source.get_finality_proof(Height::new(height)).await else {
             continue;
         };
@@ -465,15 +452,56 @@ where
             AdmissionPolicy::CarrierFor { epoch },
         )?;
         if admission == Admission::SuccessorRegistered(epoch) {
-            carrier_height = Some(height);
-            break;
+            return Ok(height);
         }
     }
-    let carrier_height =
-        carrier_height.ok_or_else(|| FollowError::MissingCommitteePreAnnounce {
-            epoch: epoch.get(),
-            boundary_height: boundary_height.get(),
+    Err(FollowError::MissingCommitteePreAnnounce {
+        epoch: epoch.get(),
+        boundary_height,
+    }
+    .into())
+}
+
+async fn rebuild_epoch_boundary<F>(
+    chain: &SharedCommitteeChain,
+    source: &F,
+    epocher: &FollowerEpocher,
+    epoch: Epoch,
+    recovered_height: Height,
+) -> Result<()>
+where
+    F: FinalizedSource,
+{
+    let previous_epoch = Epoch::new(epoch.get().saturating_sub(1));
+    let (earliest, latest) = epocher
+        .next_boundary_window(previous_epoch)
+        .ok_or_else(|| FollowError::MissingPriorEpochActivation {
+            epoch: previous_epoch.get(),
         })?;
+    let scan_end = latest.get().min(recovered_height.get());
+    if scan_end < earliest.get() {
+        return Err(FollowError::RecoveredHeightPrecedesActivationWindow {
+            recovered: recovered_height.get(),
+            earliest: earliest.get(),
+            latest: latest.get(),
+            epoch: epoch.get(),
+        }
+        .into());
+    }
+
+    let (boundary_height, boundary) =
+        find_boundary_outcome_in_window(source, epoch, earliest, scan_end).await?;
+    let previous_activation = epocher
+        .activation_height(previous_epoch)
+        .ok_or(FollowError::MissingPriorActivationHeight)?
+        .get();
+    let carrier_height = find_committee_preannounce_carrier(
+        chain,
+        source,
+        epoch,
+        previous_activation..boundary_height.get(),
+    )
+    .await?;
 
     // The boundary block, finalized by the new committee itself, must carry
     // the outcome its carrier pre-announced. Live delivery does exactly this check.

@@ -16,6 +16,7 @@ pub enum QuoteParseError {
 }
 
 impl PartialEq<&str> for QuoteParseError {
+    #[allow(clippy::cmp_owned)]
     fn eq(&self, other: &&str) -> bool {
         self.to_string().as_str() == *other
     }

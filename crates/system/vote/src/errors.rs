@@ -71,13 +71,6 @@ impl From<VoteError> for PrecompileError {
             VoteError::InvalidProposalBond { expected, actual } => PrecompileError::RevertBytes(
                 Bytes::from(IVote::InvalidProposalBond { expected, actual }.abi_encode()),
             ),
-            VoteError::InvalidBondSettlement
-            | VoteError::BondLiabilityOverflow
-            | VoteError::BondLiabilityUnderflow
-            | VoteError::BondLiabilityInvariant { .. }
-            | VoteError::StoredPayloadInvalid { .. }
-            | VoteError::PendingProposalBondAlreadySettled { .. }
-            | VoteError::InconsistentBondState { .. } => PrecompileError::Fatal(err.to_string()),
             _ => PrecompileError::Revert(err.to_string()),
         }
     }

@@ -15,7 +15,7 @@
 //! enclave call is a **blocking** TCP or Unix domain socket request from the precompile path.
 //! It never holds a `StorageHandle` across an await and never spawns a
 //! thread (the `StorageHandle` `!Send` constraint). A dead sidecar (after the
-//! session's one bounded reconnect + retry) surfaces as `PrecompileError::Fatal`
+//! session's one bounded reconnect + retry) surfaces as `PrecompileError::EnclaveUnavailable`
 //! (`tee_sidecar_unavailable`). This is a node-local fault, never a deterministic
 //! revert, and it matches the gratis/promis/fidelity enclave paths. Only per-offer
 //! rejections that the enclave reports inside the results are deterministic and
@@ -33,7 +33,7 @@ use outbe_tee::{verify_tribute_offer_attestation, EnclaveClient};
 use crate::errors::{EnclaveInitError, TributeFactoryError};
 
 /// True once the process-global enclave client is installed.
-/// Offers always use the enclave. A missing client returns `PrecompileError::Fatal` with
+/// Offers always use the enclave. A missing client returns `PrecompileError::EnclaveUnavailable` with
 /// `tee_sidecar_unavailable`.
 /// This node-local fault rejects block execution.
 pub fn is_enclave_configured() -> bool {
@@ -99,7 +99,7 @@ pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
 /// [`validate_tribute_offer_batch_response`] so they are unit-testable without a sidecar.
 ///
 /// Failure classification (aligned with `gratis::enclave_client::apply_gratis_op`):
-/// every failure of THIS function is a node-local fault (`PrecompileError::Fatal`):
+/// every failure of THIS function is a node-local fault (`PrecompileError::EnclaveUnavailable`):
 /// - dead sidecar
 /// - transport error after the session's bounded reconnect+retry
 /// - enclave authorization denial (keyless enclave)
@@ -150,7 +150,7 @@ pub fn process_tribute_offer_batch_via_enclave(
 /// 2. The per-offer attestation tag verifies against the pinned attestation key
 ///    (-> `tee_offer_attestation_invalid`).
 ///
-/// Both failures are node-local (`Fatal`), never deterministic reverts.
+/// Both failures are node-local (`EnclaveUnavailable`), never deterministic reverts.
 /// Returns the results on success. Pure (no transport) so it is unit-testable.
 fn validate_tribute_offer_batch_response(
     offers: &[EncryptedTributeOffer],
@@ -243,7 +243,7 @@ mod tests {
     }
 
     /// Regression (2026-08-22 testnet incident): a dead/unconfigured sidecar is
-    /// a NODE-LOCAL fault. It must surface as `PrecompileError::Fatal`, never as
+    /// a NODE-LOCAL fault. It must surface as `PrecompileError::EnclaveUnavailable`, never as
     /// a deterministic revert. Reverting a tx that healthy validators execute
     /// diverges state.
     #[test]
@@ -252,11 +252,11 @@ mod tests {
         let err = process_tribute_offer_batch_via_enclave(&[sample_tribute_offer()])
             .expect_err("no enclave configured");
         match err {
-            PrecompileError::Fatal(message) => assert!(
+            PrecompileError::EnclaveUnavailable(message) => assert!(
                 message.contains("tee_sidecar_unavailable"),
-                "unexpected fatal message: {message}"
+                "unexpected enclave unavailable message: {message}"
             ),
-            other => panic!("expected Fatal, got: {other:?}"),
+            other => panic!("expected EnclaveUnavailable, got: {other:?}"),
         }
     }
 

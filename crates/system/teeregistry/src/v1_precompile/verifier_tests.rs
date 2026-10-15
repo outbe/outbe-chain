@@ -33,11 +33,11 @@ where
     })?;
     let artifact = if outcome == V1RegistrationOutcome::Created {
         artifact_for_recipient(intent.recipient_x25519)
-            .map_err(PrecompileError::Fatal)?
+            .map_err(PrecompileError::EnclaveUnavailable)?
             .map(|bytes| {
                 outbe_tee::dcap_protocol::DcapOnboardingArtifactV1::decode_canonical(&bytes)
                     .map_err(|code| {
-                        PrecompileError::Fatal(format!(
+                        PrecompileError::EnclaveUnavailable(format!(
                             "test verifier returned a non-canonical onboarding artifact: {:#06x}",
                             code.code()
                         ))

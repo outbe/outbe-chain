@@ -32,7 +32,7 @@ fn dispatch_rejects_unknown_selector() {
             crate::system_tx::SYSTEM_TX_INPUT_VERSION,
         ];
         let err = dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).unwrap_err();
-        assert!(matches!(err, PrecompileError::Fatal(_)));
+        assert!(matches!(err, PrecompileError::Revert(_)));
         assert!(err.to_string().contains("unknown system tx selector"));
     });
 }
@@ -44,7 +44,7 @@ fn dispatch_rejects_wrong_version() {
         let mut input = SystemTxInputV2::CycleTick.encode().unwrap().to_vec();
         input[4] = crate::system_tx::SYSTEM_TX_INPUT_VERSION.saturating_add(1);
         let err = dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).unwrap_err();
-        assert!(matches!(err, PrecompileError::Fatal(_)));
+        assert!(matches!(err, PrecompileError::Revert(_)));
         assert!(err
             .to_string()
             .contains("unsupported system tx input version"));

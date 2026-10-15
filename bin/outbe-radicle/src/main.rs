@@ -14,8 +14,8 @@ fn main() {
 }
 
 fn run() -> Result<(), RadicleBinaryError> {
-    let options = heartwood_outbe_radicle::Options::from_env()?;
+    let options = outbe_radicle_runtime::Options::from_env()?;
     let (sender, receiver) = mpsc::sync_channel(1);
     radicle_signals::install(sender)?;
-    Ok(heartwood_outbe_radicle::PreparedSidecar::prepare(options, receiver)?.run()?)
+    Ok(outbe_radicle_runtime::PreparedSidecar::prepare(options, receiver)?.run()?)
 }

@@ -140,7 +140,7 @@ fn bond_accounting_is_checked_and_exactly_once() {
         vote.unsettled_bond_liabilities.write(U256::MAX).unwrap();
         assert!(matches!(
             vote.record_proposal_bond(proposal_id, U256::from(1u64)),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
         assert_eq!(
             vote.proposal_bond(proposal_id).unwrap().settlement,
@@ -159,7 +159,7 @@ fn bond_accounting_is_checked_and_exactly_once() {
             .unwrap();
         assert!(matches!(
             vote.settle_proposal_bond_accounting(proposal_id, BondSettlement::Burned),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
         assert_eq!(
             vote.proposal_bond(proposal_id).unwrap().settlement,
@@ -184,7 +184,7 @@ fn invalid_bond_enum_and_proposal_counter_exhaustion_are_typed() {
             .unwrap();
         assert!(matches!(
             vote.proposal_bond(proposal_id),
-            Err(PrecompileError::Fatal(_))
+            Err(PrecompileError::Revert(_))
         ));
     });
 
