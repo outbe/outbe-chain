@@ -2,10 +2,10 @@
   "feature": "outbe-chain-pjz",
   "goal_status": "active",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-15T21:26:39Z",
-  "next_periodic_report_due_utc": "2026-10-15T21:56:39Z",
+  "last_periodic_report_utc": "2026-10-15T21:50:25Z",
+  "next_periodic_report_due_utc": "2026-10-15T22:20:25Z",
   "period_minutes": 30,
-  "stage": "P3 canonical manifest/finalized receipt replay and checkpoint-pinned native Review/refs preparation verified; current approval/stage signing gate, protected transport, independent package/witness verifier, collector/bootstrap/Merge incomplete",
+  "stage": "P3 current finalized permission gate and bounded same-process native Review/refs signing bridge verified; protected UDS, complete native object/q-witness verifier, collector/bootstrap/Merge/E2E incomplete",
   "decision_gate": {
     "id": "D1",
     "status": "historical_approval_request_withdrawn; no active user approval question",
@@ -20,11 +20,11 @@
   },
   "acceptance": "P0/P1/P5 closed; P2/P3 in_progress and incomplete; P4/P6/P7/P8 open; P4 descriptor prerequisite implemented under P3 activation only",
   "last_periodic_report": {
-    "completed": "48a30d859 canonical bounded manifest, exact finalized sealed receipt reader, sequential checkpoint owner snapshot replay, checkpoint-pinned native Review/refs preparation; same012/123 subsets give identical native OIDs/manifest and failed old-sigrefs CAS preserves snapshot.",
-    "proof": "Frozen48a30d859:47 full Outbe Radicle tests+3 standalone canonical formatter tests,0 ignored;7 consumer all-target checks;adapter Clippy -D warnings and scoped root/native fmt PASS. checks.json/sha256.json and exact source/spec hashes in .4/checkpoint-preparation.",
-    "tasks": "P0/P1/P5 closed; P2/P3 in_progress; P4/P6/P7/P8 open. No new acceptance reviews/closure.",
-    "limitations": "No active approval question. Structural manifest/snapshot binding is not independent actual object/q-witness verification. Protected signing transport, fresh approval/stage gate, collector/journal/bootstrap/Merge/E2E remain incomplete. No git.rs/fetch-gate/D2.",
-    "next": "Connect fresh current Approved/execution-stage checks and protected typed local signing transport; then distributed collector per existing P3/P6."
+    "completed": "289d3a51e: one exact current finalized state for committee/terminal approval/execution stage/latest receipt/material; sealed checkpoint-derived Review/refs jobs; engine local Arc provider capability and bounded actor partial signing without Share export. No Git storage/fetch-gate/D2 changes.",
+    "proof": "267 full engine +49 full adapter lib tests(316/0 ignored);7 consumers all-target check;adapter/engine scopedClippy -D warnings;scoped rootfmt PASS; exact source/spec/log hashes in .4/current-signing.",
+    "tasks": "P0/P1/P5 closed;P2/P3 in_progress;P4/P6/P7/P8 open. No new acceptance reviews/closure.",
+    "limitations": "No active approval question. Protected UDS and complete package verification,collector/journal/bootstrap/Merge/E2E incomplete. No git.rs/fetch-gate/D2.",
+    "next": "Implement independent q-partial witness verification for actual native subjects per P3/P6; then protected transport/collector."
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
@@ -34,10 +34,10 @@
     "network_repository_owner": "sole network BLS authority; no user delegation feature",
     "decision": "only network Vote by eligible current ValidatorSet for exact patch revision",
     "accepted_history": "accepted stays accepted; validator/material change never revokes an accepted patch",
-    "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
+    "user_confirmation": "\u0434\u0430 \u0432\u0441\u0435 \u0432\u0441\u0435\u0440\u043d\u043e, goal \u043c\u043e\u0436\u043d\u043e \u0441\u043d\u0438\u043c\u0430\u0442\u044c \u0441 \u043f\u0430\u0443\u0437\u044b ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "48a30d859ad79ff926614a478f97d291404abbcb",
+  "source_sha": "289d3a51e839ce6c10a6af5cdd71fb3e915096f8",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -56,7 +56,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "48a30d859: canonical bounded manifest V1; sealed exact-finalized receipt reader; sequential checkpoint owner snapshot replay preserving native sigrefs across BindMaterial and atomic ref CAS; checkpoint-pinned native Review preparation/attachment; real native 012/123 subsets produce equal COB/sigrefs/manifest. Heartwood canonical formatter visibility only; no git.rs/fetch-gate/D2 changes.",
+  "current_source_changes": "289d3a51e: one exact current finalized state for committee/terminal approval/execution stage/latest receipt/material; sealed checkpoint-derived Review/refs jobs; engine local Arc provider capability and bounded actor partial signing without Share export. No Git storage/fetch-gate/D2 changes.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -82,14 +82,15 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "48a30d859ad79ff926614a478f97d291404abbcb",
-    "checks": "47 full outbe-radicle lib tests +3 existing standalone native canonical formatter tests,0 ignored;7 consumer all-target checks;outbe-radicle lib+tests Clippy -D warnings;scoped root/native rustfmt PASS",
-    "acceptance": "Intermediate only; no full P3/P6 acceptance/closure/reviewer PASS; independent actual object/witness verifier and live protocol remain incomplete",
-    "scenarios": "Canonical/duplicates/size/NFC/ref/subject negatives; exact Reth finalized receipt history/corruption tests; multiple BindMaterial retain sigrefs; native checkpoint-based Review 012/123 equal OIDs/manifest; failed old-sigrefs CAS preserves snapshot."
+    "source_sha": "289d3a51e839ce6c10a6af5cdd71fb3e915096f8",
+    "checks": "267 full engine +49 full adapter lib tests(316/0 ignored);7 consumers all-target check;adapter/engine scopedClippy -D warnings;scoped rootfmt PASS",
+    "acceptance": "Intermediate only; no full P3/P6 acceptance/closure/reviewer PASS; protected UDS, independent complete native object/q-witness verification and live protocol remain incomplete",
+    "scenarios": "One exact Reth finalized state with real Vote/registry state; pending/expired/corrupt/future rejection; actual local actor signing of COB/refs by4SDKproviders; fresh state read on every request; changed approval/stage/checkpoint/material/unavailable state fail closed. Fixture checkpoints; no live rotation/quorum publication/UDS."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
   "review_refs_evidence": "evidence/outbe-chain-pjz.4/review-refs",
   "public_output_evidence": "evidence/outbe-chain-pjz.4/public-output",
-  "checkpoint_preparation_evidence": "evidence/outbe-chain-pjz.4/checkpoint-preparation"
+  "checkpoint_preparation_evidence": "evidence/outbe-chain-pjz.4/checkpoint-preparation",
+  "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing"
 }
