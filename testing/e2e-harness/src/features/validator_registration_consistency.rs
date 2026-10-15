@@ -335,14 +335,28 @@ fn submit_same_registration_material(world: &mut World) {
     state.outcome = Some(outcome);
 }
 
-#[then("the cross-chain proof replay is rejected without changing the registry identity bundle")]
-fn cross_chain_replay_is_rejected(world: &mut World) {
+struct RejectionCase {
+    invariant: &'static str,
+    transaction: &'static str,
+    candidate: &'static str,
+}
+
+fn assert_registration_rejected_unchanged(world: &World, case: RejectionCase) {
     let (identity, before, outcome) = {
         let state = scenario_state();
         (
-            state.identity.clone().expect("replay identity"),
-            state.registry_before.clone().expect("pre-replay bundle"),
-            state.outcome.clone().expect("replay outcome"),
+            state
+                .identity
+                .clone()
+                .expect("rejected registration identity"),
+            state
+                .registry_before
+                .clone()
+                .expect("pre-rejection registry bundle"),
+            state
+                .outcome
+                .clone()
+                .expect("rejected registration outcome"),
         )
     };
     let port = world.validators.primary_port();
@@ -350,24 +364,37 @@ fn cross_chain_replay_is_rejected(world: &mut World) {
     let absent = !world
         .rpc
         .is_validator(port, &address_string(identity.address()))
-        .expect("observe replay candidate registry membership");
+        .expect("observe rejected candidate registry membership");
     let mut violations = Vec::new();
     if outcome.success {
         violations.push(format!(
-            "cross-chain replay transaction {} was accepted",
-            outcome.transaction_hash
+            "{} {} was accepted",
+            case.transaction, outcome.transaction_hash
         ));
     }
     if after != before {
         violations.push("registry identity/index bundle changed".to_owned());
     }
     if !absent {
-        violations.push("replayed address acquired a validator record".to_owned());
+        violations.push(format!("{} acquired a validator record", case.candidate));
     }
     assert!(
         violations.is_empty(),
-        "D-01A target invariant failed: {}",
+        "{} target invariant failed: {}",
+        case.invariant,
         violations.join("; ")
+    );
+}
+
+#[then("the cross-chain proof replay is rejected without changing the registry identity bundle")]
+fn cross_chain_replay_is_rejected(world: &mut World) {
+    assert_registration_rejected_unchanged(
+        world,
+        RejectionCase {
+            invariant: "D-01A",
+            transaction: "cross-chain replay transaction",
+            candidate: "replayed address",
+        },
     );
 }
 
@@ -421,40 +448,13 @@ fn owner_submits_empty_proof_registration(world: &mut World) {
 
 #[then("owner registration is rejected without changing the registry identity bundle")]
 fn owner_registration_without_pop_is_rejected(world: &mut World) {
-    let (identity, before, outcome) = {
-        let state = scenario_state();
-        (
-            state.identity.clone().expect("owner-registration identity"),
-            state
-                .registry_before
-                .clone()
-                .expect("owner-registration bundle"),
-            state.outcome.clone().expect("owner-registration outcome"),
-        )
-    };
-    let port = world.validators.primary_port();
-    let after = registry_identity_bundle(world, port);
-    let absent = !world
-        .rpc
-        .is_validator(port, &address_string(identity.address()))
-        .expect("observe no-PoP candidate registry membership");
-    let mut violations = Vec::new();
-    if outcome.success {
-        violations.push(format!(
-            "owner no-PoP transaction {} was accepted",
-            outcome.transaction_hash
-        ));
-    }
-    if after != before {
-        violations.push("registry identity/index bundle changed".to_owned());
-    }
-    if !absent {
-        violations.push("no-PoP identity acquired a validator record".to_owned());
-    }
-    assert!(
-        violations.is_empty(),
-        "D-01B target invariant failed: {}",
-        violations.join("; ")
+    assert_registration_rejected_unchanged(
+        world,
+        RejectionCase {
+            invariant: "D-01B",
+            transaction: "owner no-PoP transaction",
+            candidate: "no-PoP identity",
+        },
     );
 }
 

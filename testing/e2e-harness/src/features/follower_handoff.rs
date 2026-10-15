@@ -80,24 +80,13 @@ fn require_boundary_future(world: &World, pinned: &PinnedHandoff) -> Result<()> 
     Ok(())
 }
 
-#[then("both live followers authenticate one new preannounce before its boundary")]
-fn pin_live_handoff(world: &mut World) {
-    let ports = all_ports(world);
-    world
-        .localnet
-        .ensure_committee_alive()
-        .expect("live committee before handoff");
-    let pids = follower_pids(world).expect("both owned FullNodes alive before pin selection");
-    world
-        .rpc
-        .wait_finalized_checkpoint(&ports, 2, 90)
-        .expect("initial exact checkpoint on all six nodes");
+fn authenticated_baseline(world: &mut World, ports: &[u16]) -> AuthenticatedHistory {
     let binding = DcapSeededChainSpecBindingV1::from_genesis_path(
         &world.localnet.scenario_dir().join("genesis.json"),
     )
     .map_err(|error| eyre!(error))
     .expect("trusted materialized genesis binding");
-    for port in &ports {
+    for port in ports {
         assert_eq!(
             world
                 .rpc
@@ -120,18 +109,47 @@ fn pin_live_handoff(world: &mut World) {
         .expect("nonempty committee");
     world
         .rpc
-        .wait_finalized_checkpoint(&ports, baseline, 90)
+        .wait_finalized_checkpoint(ports, baseline, 90)
         .expect("both followers reach fixed pre-selection history");
     let mut history = AuthenticatedHistory::new(&binding).expect("genesis committee verifier");
     advance_through(&world.rpc, primary, &mut history, baseline)
         .expect("authenticate every transition from genesis");
+    history
+}
+
+fn find_preannounce(
+    rpc: &Rpc,
+    primary: u16,
+    history: &mut AuthenticatedHistory,
+    through: u64,
+    wanted: u64,
+) -> Option<alloy_primitives::Bytes> {
+    while history.height() < through {
+        if let Some(ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, outcome }) =
+            advance_one(rpc, primary, history).expect("authenticate next history block")
+        {
+            assert!(epoch <= wanted, "skipped pinned successor epoch");
+            if epoch == wanted {
+                return Some(outcome);
+            }
+        }
+    }
+    None
+}
+
+fn select_pinned_handoff(
+    world: &mut World,
+    mut history: AuthenticatedHistory,
+    pids: [u32; 2],
+    deadline: Instant,
+) -> PinnedHandoff {
+    let primary = world.validators.primary_port();
     let wanted = history
         .highest_registered_epoch()
         .unwrap()
         .checked_add(1)
         .expect("successor epoch");
-    let deadline = Instant::now() + Duration::from_secs(360);
-    let pinned = loop {
+    loop {
         assert!(
             Instant::now() < deadline,
             "no future preannounce for pinned epoch {wanted}"
@@ -145,25 +163,13 @@ fn pin_live_handoff(world: &mut World) {
             .rpc
             .finalized_result(primary)
             .expect("primary finalized history");
-        let mut found = None;
-        while history.height() < through {
-            if let Some(ConsensusHeaderArtifact::CommitteePreAnnounce { epoch, outcome }) =
-                advance_one(&world.rpc, primary, &mut history)
-                    .expect("authenticate next history block")
-            {
-                assert!(epoch <= wanted, "skipped pinned successor epoch");
-                if epoch == wanted {
-                    found = Some(outcome);
-                    break;
-                }
-            }
-        }
-        if let Some(outcome) = found {
+        if let Some(outcome) = find_preannounce(&world.rpc, primary, &mut history, through, wanted)
+        {
             let carrier = world
                 .rpc
                 .checkpoint_at(primary, history.height())
                 .expect("pinned canonical carrier");
-            break PinnedHandoff {
+            return PinnedHandoff {
                 history,
                 epoch: wanted,
                 carrier,
@@ -175,46 +181,78 @@ fn pin_live_handoff(world: &mut World) {
             };
         }
         sleep(Duration::from_millis(100));
-    };
+    }
+}
+
+fn witness_carrier(world: &World, pinned: &PinnedHandoff, slot: usize) -> bool {
+    let port = world.validators.http_port(slot);
+    let available = world
+        .rpc
+        .finalized_result(port)
+        .expect("follower finalized availability")
+        >= pinned.carrier.height;
+    if !available {
+        return false;
+    }
+    let proof = read_certified(
+        &world.rpc,
+        port,
+        pinned.carrier.height,
+        pinned.history.member_count(),
+    )
+    .expect("local marshal carrier proof");
+    pinned
+        .verify_carrier(&proof)
+        .expect("follower authenticated the exact pinned preannounce");
+    true
+}
+
+fn witness_pinned_carrier(
+    world: &mut World,
+    pinned: &PinnedHandoff,
+    pids: [u32; 2],
+    deadline: Instant,
+) {
     let mut witnessed = [false; 2];
     loop {
         assert!(
             Instant::now() < deadline,
             "local pinned finalizations never became available"
         );
-        require_boundary_future(world, &pinned).expect("selected boundary must still be future");
+        require_boundary_future(world, pinned).expect("selected boundary must still be future");
         assert_eq!(follower_pids(world).unwrap(), pids);
         for (index, (_, slot)) in FOLLOWERS.iter().enumerate() {
-            let port = world.validators.http_port(*slot);
-            if !witnessed[index]
-                && world
-                    .rpc
-                    .finalized_result(port)
-                    .expect("follower finalized availability")
-                    >= pinned.carrier.height
-            {
-                let proof = read_certified(
-                    &world.rpc,
-                    port,
-                    pinned.carrier.height,
-                    pinned.history.member_count(),
-                )
-                .expect("local marshal carrier proof");
-                pinned
-                    .verify_carrier(&proof)
-                    .expect("follower authenticated the exact pinned preannounce");
-                witnessed[index] = true;
+            if !witnessed[index] {
+                witnessed[index] = witness_carrier(world, pinned, *slot);
             }
         }
         // This observation must follow both local proofs. A lagging validator
         // is already before the boundary. It must not delay valid witnesses.
-        require_boundary_future(world, &pinned)
+        require_boundary_future(world, pinned)
             .expect("both local witnesses precede every canonical successor boundary");
         if witnessed.iter().all(|done| *done) {
-            break;
+            return;
         }
         sleep(Duration::from_millis(100));
     }
+}
+
+#[then("both live followers authenticate one new preannounce before its boundary")]
+fn pin_live_handoff(world: &mut World) {
+    let ports = all_ports(world);
+    world
+        .localnet
+        .ensure_committee_alive()
+        .expect("live committee before handoff");
+    let pids = follower_pids(world).expect("both owned FullNodes alive before pin selection");
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, 2, 90)
+        .expect("initial exact checkpoint on all six nodes");
+    let history = authenticated_baseline(world, &ports);
+    let deadline = Instant::now() + Duration::from_secs(360);
+    let pinned = select_pinned_handoff(world, history, pids, deadline);
+    witness_pinned_carrier(world, &pinned, pids, deadline);
     // Keep the authenticated verifier and immutable carrier for the later
     // boundary/restart checks. Never perform a fresh latest-handoff selection.
     assert_eq!(follower_pids(world).unwrap(), pids);
@@ -244,6 +282,28 @@ fn verify_both_pinned(world: &mut World, pinned: &PinnedHandoff) -> Result<()> {
     Ok(())
 }
 
+fn scan_pinned_boundary(rpc: &Rpc, primary: u16, pinned: &mut PinnedHandoff, through: u64) {
+    while pinned.history.height() < through {
+        let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
+            advance_one(rpc, primary, &mut pinned.history).expect("authenticated boundary history")
+        else {
+            continue;
+        };
+        assert!(boundary.epoch <= pinned.epoch, "pinned boundary skipped");
+        if boundary.epoch == pinned.epoch {
+            assert_eq!(
+                boundary.outcome, pinned.outcome,
+                "successor changed the pinned DKG outcome"
+            );
+            pinned.boundary = Some(
+                rpc.checkpoint_at(primary, pinned.history.height())
+                    .expect("canonical pinned boundary"),
+            );
+            return;
+        }
+    }
+}
+
 #[then("both followers finalize that exact successor boundary")]
 fn confirm_pinned_boundary(world: &mut World) {
     let mut pinned = world
@@ -263,27 +323,7 @@ fn confirm_pinned_boundary(world: &mut World) {
             .rpc
             .finalized_result(primary)
             .expect("primary boundary progress");
-        while pinned.history.height() < through {
-            if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
-                advance_one(&world.rpc, primary, &mut pinned.history)
-                    .expect("authenticated boundary history")
-            {
-                assert!(boundary.epoch <= pinned.epoch, "pinned boundary skipped");
-                if boundary.epoch == pinned.epoch {
-                    assert_eq!(
-                        boundary.outcome, pinned.outcome,
-                        "successor changed the pinned DKG outcome"
-                    );
-                    pinned.boundary = Some(
-                        world
-                            .rpc
-                            .checkpoint_at(primary, pinned.history.height())
-                            .expect("canonical pinned boundary"),
-                    );
-                    break;
-                }
-            }
-        }
+        scan_pinned_boundary(&world.rpc, primary, &mut pinned, through);
         sleep(Duration::from_millis(100));
     }
     let target = pinned.boundary.unwrap().height.checked_add(2).unwrap();

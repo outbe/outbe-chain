@@ -151,18 +151,13 @@ fn revealed_inputs(
     (bids, input_height)
 }
 
-pub(super) fn assert_clearing(
-    world: &World,
-    sides: &[VenueSide],
-    bidders: &[Bidder],
-    allowance: U256,
-) {
+/// The canonical auction input agrees on every committee member at the request height.
+fn canonical_desis_limit_minor(world: &World) -> (u32, U256) {
     let request = world
         .state
         .ocomp_job_request
         .as_ref()
         .expect("auction input JobIntent");
-    let day = request.worldwide_day;
     let ports = world.validators.committee_ports();
     world
         .rpc
@@ -195,6 +190,14 @@ pub(super) fn assert_clearing(
             input_checkpoint
         );
     }
+    (
+        request.worldwide_day,
+        input.frozen_metadosis_values.desis_limit_minor,
+    )
+}
+
+fn frozen_targets(world: &World, sides: &[VenueSide], day: u32) -> Vec<u32> {
+    let ports = world.validators.committee_ports();
     let origin = world
         .state
         .origin_contracts
@@ -217,9 +220,18 @@ pub(super) fn assert_clearing(
             .collect::<BTreeSet<_>>()
     );
     assert_eq!(targets.len(), sides.len(), "no duplicate frozen targets");
+    targets
+}
+
+fn submitted_bids(
+    world: &World,
+    sides: &[VenueSide],
+    bidders: &[Bidder],
+    day: u32,
+) -> (Vec<auction_reference::Bid>, IVenueSchedule::AuctionParams) {
     let mut bids = Vec::new();
     let mut params = None;
-    for target in targets {
+    for target in frozen_targets(world, sides, day) {
         let side = sides
             .iter()
             .find(|side| side.chain_id == u64::from(target))
@@ -246,9 +258,147 @@ pub(super) fn assert_clearing(
         }
         bids.extend(submitted);
     }
-    let params = params.expect("auction inputs on named chains");
-    let desis_limit_units =
-        input.frozen_metadosis_values.desis_limit_minor / U256::from(params.promisLoadMinor);
+    (bids, params.expect("auction inputs on named chains"))
+}
+
+struct SettledView<'a> {
+    url: &'a str,
+    side: &'a VenueSide,
+    day: u32,
+    height: u64,
+}
+
+fn assert_clearing_event(view: &SettledView<'_>, expected: &auction_reference::Clearing) {
+    let clearing_data: Vec<_> = [
+        U256::from(expected.units),
+        U256::from(expected.rate),
+        U256::from(expected.demand),
+    ]
+    .into_iter()
+    .flat_map(|v| v.to_be_bytes::<32>())
+    .collect();
+    let event = logs(
+        view.url,
+        crate::internal::addresses::DESIS_ADDR,
+        view.height,
+        vec![
+            json!(keccak256("AuctionCleared(uint32,uint32,uint32,uint64)")),
+            word(U256::from(view.day)),
+        ],
+    );
+    assert_eq!(event.len(), 1, "one canonical clearing event");
+    assert_eq!(
+        data(&event[0]),
+        clearing_data,
+        "exact clearing rate, units and demand"
+    );
+}
+
+fn assert_allocation(
+    view: &SettledView<'_>,
+    token_id: U256,
+    allocation: &auction_reference::Allocation,
+    allowance: U256,
+) {
+    let SettledView {
+        url,
+        side,
+        day,
+        height,
+    } = *view;
+    let bidder = allocation.bid.bidder;
+    assert_eq!(
+        eth::read_call_at(
+            url,
+            side.intex_nft,
+            &IIssuedSeries::balanceOfCall {
+                account: bidder,
+                id: token_id
+            },
+            height
+        )
+        .expect("bidder NFT units"),
+        U256::from(allocation.units),
+        "exact winner units"
+    );
+    assert_eq!(
+        eth::read_call_at(
+            url,
+            side.payment_token,
+            &IPaymentToken::balanceOfCall { account: bidder },
+            height
+        )
+        .expect("bidder payment balance"),
+        allowance - allocation.paid,
+        "exact payment token debit after refund"
+    );
+    let lock = eth::read_call_at(
+        url,
+        side.escrow,
+        &IBidSettlement::getBidLockCall {
+            worldwideDay: day,
+            bidder,
+        },
+        height,
+    )
+    .expect("settled bid lock");
+    assert_eq!(lock.lockedAmount, 0, "claimed lock deleted");
+    assert_eq!(lock.status, 0, "claimed lock deleted");
+    let refund = logs(
+        url,
+        side.escrow,
+        height,
+        vec![
+            json!(keccak256("FundsRefunded(bytes32,uint32,address,uint128)")),
+            Value::Null,
+            word(U256::from(day)),
+            word(U256::from_be_slice(bidder.as_slice())),
+        ],
+    );
+    if allocation.refund.is_zero() {
+        assert!(refund.is_empty(), "no zero refund event");
+    } else {
+        assert_eq!(refund.len(), 1, "one exact refund event");
+        assert_eq!(data(&refund[0]), allocation.refund.to_be_bytes::<32>());
+    }
+}
+
+fn assert_venue_result(
+    view: &SettledView<'_>,
+    expected: &auction_reference::Clearing,
+    chain_allocations: &[&auction_reference::Allocation],
+    promis_load_minor: u128,
+) {
+    let auction = eth::read_call_at(
+        view.url,
+        view.side.auction,
+        &IVenueSchedule::getAuctionInfoCall {
+            worldwideDay: view.day,
+        },
+        view.height,
+    )
+    .expect("final venue result");
+    assert_eq!(auction.result.auctionClearingRate, u64::from(expected.rate));
+    assert_eq!(auction.result.issuedUnits, expected.units);
+    assert_eq!(
+        auction.result.issuedPromisLoadMinor,
+        u128::from(expected.units) * promis_load_minor
+    );
+    assert_eq!(
+        auction.result.wonBidsCount as usize,
+        chain_allocations.iter().filter(|a| a.units > 0).count()
+    );
+}
+
+pub(super) fn assert_clearing(
+    world: &World,
+    sides: &[VenueSide],
+    bidders: &[Bidder],
+    allowance: U256,
+) {
+    let (day, desis_limit_minor) = canonical_desis_limit_minor(world);
+    let (bids, params) = submitted_bids(world, sides, bidders, day);
+    let desis_limit_units = desis_limit_minor / U256::from(params.promisLoadMinor);
     let desis_limit_units =
         u32::try_from(desis_limit_units.min(U256::from(u32::MAX))).expect("capped auction units");
     let expected = auction_reference::clear(
@@ -261,53 +411,26 @@ pub(super) fn assert_clearing(
     assert!(expected.units > 0, "fixture exercises actual issuance");
     for side in sides {
         let (urls, height, block_hash, state_root) = view(world, side);
-        let clearing_data: Vec<_> = [
-            U256::from(expected.units),
-            U256::from(expected.rate),
-            U256::from(expected.demand),
-        ]
-        .into_iter()
-        .flat_map(|v| v.to_be_bytes::<32>())
-        .collect();
         let chain_allocations: Vec<_> = expected
             .allocations
             .iter()
             .filter(|a| a.bid.chain_id == side.chain_id)
             .collect();
         for url in &urls {
-            if !side.is_target_chain {
-                let event = logs(
-                    url,
-                    crate::internal::addresses::DESIS_ADDR,
-                    height,
-                    vec![
-                        json!(keccak256("AuctionCleared(uint32,uint32,uint32,uint64)")),
-                        word(U256::from(day)),
-                    ],
-                );
-                assert_eq!(event.len(), 1, "one canonical clearing event");
-                assert_eq!(
-                    data(&event[0]),
-                    clearing_data,
-                    "exact clearing rate, units and demand"
-                );
-            }
-            let auction = eth::read_call_at(
+            let settled = SettledView {
                 url,
-                side.auction,
-                &IVenueSchedule::getAuctionInfoCall { worldwideDay: day },
+                side,
+                day,
                 height,
-            )
-            .expect("final venue result");
-            assert_eq!(auction.result.auctionClearingRate, u64::from(expected.rate));
-            assert_eq!(auction.result.issuedUnits, expected.units);
-            assert_eq!(
-                auction.result.issuedPromisLoadMinor,
-                u128::from(expected.units) * params.promisLoadMinor
-            );
-            assert_eq!(
-                auction.result.wonBidsCount as usize,
-                chain_allocations.iter().filter(|a| a.units > 0).count()
+            };
+            if !side.is_target_chain {
+                assert_clearing_event(&settled, &expected);
+            }
+            assert_venue_result(
+                &settled,
+                &expected,
+                &chain_allocations,
+                params.promisLoadMinor,
             );
             let series = venue_probes::issued_series(url, side.target_router)
                 .expect("issued fixture series");
@@ -319,61 +442,7 @@ pub(super) fn assert_clearing(
             )
             .expect("issued token ID");
             for allocation in &chain_allocations {
-                let bidder = allocation.bid.bidder;
-                assert_eq!(
-                    eth::read_call_at(
-                        url,
-                        side.intex_nft,
-                        &IIssuedSeries::balanceOfCall {
-                            account: bidder,
-                            id: token_id
-                        },
-                        height
-                    )
-                    .expect("bidder NFT units"),
-                    U256::from(allocation.units),
-                    "exact winner units"
-                );
-                assert_eq!(
-                    eth::read_call_at(
-                        url,
-                        side.payment_token,
-                        &IPaymentToken::balanceOfCall { account: bidder },
-                        height
-                    )
-                    .expect("bidder payment balance"),
-                    allowance - allocation.paid,
-                    "exact payment token debit after refund"
-                );
-                let lock = eth::read_call_at(
-                    url,
-                    side.escrow,
-                    &IBidSettlement::getBidLockCall {
-                        worldwideDay: day,
-                        bidder,
-                    },
-                    height,
-                )
-                .expect("settled bid lock");
-                assert_eq!(lock.lockedAmount, 0, "claimed lock deleted");
-                assert_eq!(lock.status, 0, "claimed lock deleted");
-                let refund = logs(
-                    url,
-                    side.escrow,
-                    height,
-                    vec![
-                        json!(keccak256("FundsRefunded(bytes32,uint32,address,uint128)")),
-                        Value::Null,
-                        word(U256::from(day)),
-                        word(U256::from_be_slice(bidder.as_slice())),
-                    ],
-                );
-                if allocation.refund.is_zero() {
-                    assert!(refund.is_empty(), "no zero refund event");
-                } else {
-                    assert_eq!(refund.len(), 1, "one exact refund event");
-                    assert_eq!(data(&refund[0]), allocation.refund.to_be_bytes::<32>());
-                }
+                assert_allocation(&settled, token_id, allocation, allowance);
             }
             assert_eq!(
                 eth::block_hash(url, height)
@@ -390,7 +459,7 @@ pub(super) fn assert_clearing(
         eprintln!(
             "AUCTION_EXPECTATION {}",
             json!({"day": day, "chain_id": side.chain_id,
-                "height": height, "block_hash": block_hash, "input_desis_limit_minor": input.frozen_metadosis_values.desis_limit_minor,
+                "height": height, "block_hash": block_hash, "input_desis_limit_minor": desis_limit_minor,
                 "input_desis_limit_units": desis_limit_units, "expected": expected,
             })
         );

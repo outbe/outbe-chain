@@ -12,7 +12,7 @@ use cucumber::{given, then, when};
 
 use crate::features::common::boot_localnet;
 use crate::features::negative_assertions::{
-    assert_mined_revert_reason, assert_mined_revert_reason_on,
+    assert_mined_revert_reason, assert_mined_revert_reason_on, NegativeTx,
 };
 use crate::internal::{
     addresses::{SLASH_ADDR, STK_ADDR},
@@ -445,11 +445,13 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
     let exact_replay = assert_mined_revert_reason_on(
         world,
         &survivor_ports,
-        SLASH_ADDR,
-        &reporter_key,
-        &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
-            block1: Bytes::copy_from_slice(&evidence.block1),
-            block2: Bytes::copy_from_slice(&evidence.block2),
+        NegativeTx {
+            to: SLASH_ADDR,
+            key: &reporter_key,
+            call: &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
+                block1: Bytes::copy_from_slice(&evidence.block1),
+                block2: Bytes::copy_from_slice(&evidence.block2),
+            },
         },
         "evidence already processed",
     );
@@ -472,11 +474,13 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
     let reverse_replay = assert_mined_revert_reason_on(
         world,
         &survivor_ports,
-        SLASH_ADDR,
-        &reporter_key,
-        &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
-            block1: Bytes::copy_from_slice(&evidence.block2),
-            block2: Bytes::copy_from_slice(&evidence.block1),
+        NegativeTx {
+            to: SLASH_ADDR,
+            key: &reporter_key,
+            call: &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
+                block1: Bytes::copy_from_slice(&evidence.block2),
+                block2: Bytes::copy_from_slice(&evidence.block1),
+            },
         },
         "evidence already processed",
     );
@@ -671,9 +675,11 @@ fn requests_early_unjail(world: &mut World) {
     let outcome = assert_mined_revert_reason_on(
         world,
         &survivor_ports,
-        STK_ADDR,
-        &victim_key,
-        &IStaking::unjailValidatorCall {},
+        NegativeTx {
+            to: STK_ADDR,
+            key: &victim_key,
+            call: &IStaking::unjailValidatorCall {},
+        },
         "jailed validator is still retained in the current committee",
     );
     world.state.marker_count = Some(outcome.success as usize);
@@ -931,12 +937,15 @@ fn early_unjail_requires_reconfirmation_and_reshare(world: &mut World) {
             );
             let local = material(local_port);
             let healthy = material(port);
-            local["hasThresholdShares"].as_bool() == Some(true)
-                && local["vrfMaterialVersion"] != before_material["vrfMaterialVersion"]
+            let has_shares = local["hasThresholdShares"].as_bool() == Some(true);
+            let fresh_vrf = local["vrfMaterialVersion"] != before_material["vrfMaterialVersion"]
                 && !local["vrfMaterialVersion"].is_null()
-                && local["vrfMaterialVersion"] == healthy["vrfMaterialVersion"]
-                && !local["lastDkgActivationHeight"].is_null()
-                && local["lastDkgActivationHeight"] == healthy["lastDkgActivationHeight"]
+                && local["vrfMaterialVersion"] == healthy["vrfMaterialVersion"];
+            let same_activation = !local["lastDkgActivationHeight"].is_null()
+                && local["lastDkgActivationHeight"] == healthy["lastDkgActivationHeight"];
+            has_shares
+                && fresh_vrf
+                && same_activation
                 && world
                     .rpc
                     .is_participant(port, &victim)

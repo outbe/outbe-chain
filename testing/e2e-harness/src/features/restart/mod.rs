@@ -45,8 +45,8 @@ use observations::{
 mod frozen_round;
 use frozen_round::{
     restart_inflight_round, restart_install_replacement, restart_joiner_pair,
-    restart_retain_frozen_target, restart_validate_frozen_target, RestartFrozenRound,
-    RestartFrozenTarget,
+    restart_retain_frozen_target, restart_validate_frozen_target, ReplacementLogs,
+    RestartFrozenRound, RestartFrozenTarget,
 };
 
 #[cfg(test)]
@@ -56,7 +56,9 @@ mod signing;
 use signing::{restart_activation, restart_prove_signing, wait_for_dkg_retry_snapshot};
 
 #[cfg(test)]
-use signing::{restart_boundary_transition, restart_signing_comparison};
+use signing::{
+    restart_boundary_transition, restart_signing_comparison, BoundaryEpochs, SigningSample,
+};
 
 mod active;
 

@@ -298,23 +298,18 @@ fn wait_active_pending_eviction(world: &mut World) {
 }
 
 fn exact_pending_eviction(line: &str, fixture: &PendingValidatorPoolFixture) -> bool {
+    let fields = [
+        format!("tx_hash={}", fixture.hash),
+        format!("sender={}", fixture.sender),
+        format!("nonce={}", fixture.nonce),
+        "reason=\"stale_pending\"".to_owned(),
+        "staleness_interval_secs=20".to_owned(),
+    ];
     line.contains("outbe::txpool")
         && line.contains("evicting stale pending transaction")
-        && line
-            .split_whitespace()
-            .any(|field| field == format!("tx_hash={}", fixture.hash))
-        && line
-            .split_whitespace()
-            .any(|field| field == format!("sender={}", fixture.sender))
-        && line
-            .split_whitespace()
-            .any(|field| field == format!("nonce={}", fixture.nonce))
-        && line
-            .split_whitespace()
-            .any(|field| field == "reason=\"stale_pending\"")
-        && line
-            .split_whitespace()
-            .any(|field| field == "staleness_interval_secs=20")
+        && fields
+            .iter()
+            .all(|expected| line.split_whitespace().any(|field| field == expected))
 }
 
 fn require_absent_and_nonce_unconsumed(world: &mut World) {

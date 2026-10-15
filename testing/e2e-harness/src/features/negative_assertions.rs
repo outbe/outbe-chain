@@ -6,6 +6,12 @@ use alloy_sol_types::{Revert, SolCall, SolError};
 
 use crate::{internal::eth, world::World};
 
+pub(super) struct NegativeTx<'a, C> {
+    pub to: Address,
+    pub key: &'a str,
+    pub call: &'a C,
+}
+
 pub(super) fn assert_mined_revert_reason<C: SolCall>(
     world: &World,
     to: Address,
@@ -15,9 +21,7 @@ pub(super) fn assert_mined_revert_reason<C: SolCall>(
 ) -> crate::world::rpc::TxOutcome {
     assert_mined_revert(
         world,
-        to,
-        key,
-        call,
+        NegativeTx { to, key, call },
         U256::ZERO,
         &Revert {
             reason: reason.to_owned(),
@@ -31,17 +35,13 @@ pub(super) fn assert_mined_revert_reason<C: SolCall>(
 pub(super) fn assert_mined_revert_reason_on<C: SolCall>(
     world: &World,
     ports: &[u16],
-    to: Address,
-    key: &str,
-    call: &C,
+    tx: NegativeTx<'_, C>,
     reason: &str,
 ) -> crate::world::rpc::TxOutcome {
     assert_mined_revert_on(
         world,
         ports,
-        to,
-        key,
-        call,
+        tx,
         U256::ZERO,
         &Revert {
             reason: reason.to_owned(),
@@ -74,25 +74,22 @@ pub(super) fn assert_registration_revert(
 
 pub(super) fn assert_mined_revert<C: SolCall>(
     world: &World,
-    to: Address,
-    key: &str,
-    call: &C,
+    tx: NegativeTx<'_, C>,
     value: U256,
     expected: &[u8],
 ) -> eth::MinedCallOutcome {
     let ports = world.validators.committee_ports();
-    assert_mined_revert_on(world, &ports, to, key, call, value, expected)
+    assert_mined_revert_on(world, &ports, tx, value, expected)
 }
 
 fn assert_mined_revert_on<C: SolCall>(
     world: &World,
     ports: &[u16],
-    to: Address,
-    key: &str,
-    call: &C,
+    tx: NegativeTx<'_, C>,
     value: U256,
     expected: &[u8],
 ) -> eth::MinedCallOutcome {
+    let NegativeTx { to, key, call } = tx;
     assert!(
         !ports.is_empty(),
         "negative requires validator observations"

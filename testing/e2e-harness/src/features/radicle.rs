@@ -745,6 +745,29 @@ fn seed_scope_all(world: &World, repo: &str, count: usize) -> Vec<usize> {
         .collect()
 }
 
+fn signed_mesh_peer(
+    peer: &serde_json::Value,
+    expected: &std::collections::BTreeMap<String, String>,
+    genesis_hash: &str,
+) -> bool {
+    let (Some(node_id), Some(validator)) = (peer["nodeId"].as_str(), peer["validator"].as_str())
+    else {
+        return false;
+    };
+    let bound = expected.get(node_id).map(String::as_str) == Some(&validator.to_ascii_lowercase())
+        && peer["genesisHash"] == genesis_hash;
+    let signed = peer["senderBlsPublicKey"].as_str().map(str::len) == Some(98)
+        && peer["signature"].as_str().map(str::len) == Some(194);
+    let framed = peer["encodedFrame"]
+        .as_str()
+        .is_some_and(|frame| frame.len() > 2)
+        && peer["addresses"]
+            .as_array()
+            .is_some_and(|addresses| !addresses.is_empty());
+    let live = peer["validUntilHeight"].as_u64() > peer["anchorNumber"].as_u64();
+    bound && signed && framed && live
+}
+
 fn signed_mesh_snapshot(
     world: &World,
     node_ids: &[String],
@@ -777,23 +800,9 @@ fn signed_mesh_snapshot(
             .map(|(_, node_id)| node_id.as_str())
             .collect::<BTreeSet<_>>();
         if observed != expected_nodes
-            || peers.iter().any(|peer| {
-                let Some(node_id) = peer["nodeId"].as_str() else {
-                    return true;
-                };
-                let Some(validator) = peer["validator"].as_str() else {
-                    return true;
-                };
-                expected.get(node_id).map(String::as_str) != Some(&validator.to_ascii_lowercase())
-                    || peer["genesisHash"] != genesis_hash
-                    || peer["senderBlsPublicKey"].as_str().map(str::len) != Some(98)
-                    || peer["signature"].as_str().map(str::len) != Some(194)
-                    || peer["encodedFrame"]
-                        .as_str()
-                        .is_none_or(|frame| frame.len() <= 2)
-                    || peer["addresses"].as_array().is_none_or(Vec::is_empty)
-                    || peer["validUntilHeight"].as_u64() <= peer["anchorNumber"].as_u64()
-            })
+            || !peers
+                .iter()
+                .all(|peer| signed_mesh_peer(peer, &expected, genesis_hash))
         {
             return None;
         }
