@@ -1,4 +1,5 @@
 pub mod git;
+pub mod publication;
 pub mod refs;
 
 use std::collections::{HashSet, hash_map};
@@ -182,6 +183,8 @@ impl RepositoryError {
 /// Storage error.
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error(transparent)]
+    Publication(#[from] publication::Error),
     #[error("invalid git reference")]
     InvalidRef,
     #[error("identity doc: {0}")]
@@ -483,11 +486,37 @@ pub trait WriteStorage: ReadStorage {
 /// Anything can return the [`RepoId`] that it is associated with.
 pub trait HasRepoId {
     fn rid(&self) -> RepoId;
+    fn authorize_entry(
+        &self,
+        authority: crypto::RepositoryKey,
+        entry: Oid,
+        kind: crypto::SubjectKind,
+    ) -> Result<publication::EntryAuthorization, publication::Error> {
+        if authority.as_ed25519().is_none() {
+            return Err(publication::Error::Unavailable);
+        }
+        Ok(publication::EntryAuthorization::native(
+            publication::EntryRequest {
+                repository: self.rid(),
+                authority,
+                entry,
+                kind,
+            },
+        ))
+    }
 }
 
 impl<T: ReadRepository> HasRepoId for T {
     fn rid(&self) -> RepoId {
         ReadRepository::id(self)
+    }
+    fn authorize_entry(
+        &self,
+        authority: crypto::RepositoryKey,
+        entry: Oid,
+        kind: crypto::SubjectKind,
+    ) -> Result<publication::EntryAuthorization, publication::Error> {
+        ReadRepository::authorize_entry(self, authority, entry, kind)
     }
 }
 
@@ -495,6 +524,25 @@ impl<T: ReadRepository> HasRepoId for T {
 pub trait ReadRepository: Sized + ValidateRepository {
     /// Return the repository id.
     fn id(&self) -> RepoId;
+
+    fn authorize_entry(
+        &self,
+        authority: crypto::RepositoryKey,
+        entry: Oid,
+        kind: crypto::SubjectKind,
+    ) -> Result<publication::EntryAuthorization, publication::Error> {
+        if authority.as_ed25519().is_none() {
+            return Err(publication::Error::Unavailable);
+        }
+        Ok(publication::EntryAuthorization::native(
+            publication::EntryRequest {
+                repository: self.id(),
+                authority,
+                entry,
+                kind,
+            },
+        ))
+    }
 
     /// Returns `true` if there are no references in the repository.
     fn is_empty(&self) -> Result<bool, crate::git::raw::Error>;

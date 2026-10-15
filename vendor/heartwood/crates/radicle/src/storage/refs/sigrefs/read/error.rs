@@ -113,6 +113,10 @@ pub enum IdentityRoot {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Verify {
+    #[error(transparent)]
+    Publication(crate::storage::publication::Error),
+    #[error(transparent)]
+    NativeSignature(crypto::repository::Error),
     #[error("failed to verify signature over signed references")]
     Signature(crypto::signature::Error),
     #[error(

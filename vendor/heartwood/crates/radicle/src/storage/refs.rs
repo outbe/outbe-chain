@@ -447,9 +447,10 @@ impl SignedRefs {
     {
         let root = repo.rid();
 
-        let verifier = crypto::VerifyingKey::try_from(&remote).map_err(|source| {
-            sigrefs::read::error::Read::Verify(sigrefs::read::error::Verify::Signature(source))
-        })?;
+        let verifier = sigrefs::read::RepositoryVerifier::new(remote, |commit| {
+            repo.authorize_entry(remote, commit, crypto::SubjectKind::SignedRefs)
+                .map(|authorization| authorization.context())
+        });
 
         match sigrefs::SignedRefsReader::new(root, tip, repo, &verifier).read() {
             Ok(latest) => Ok(Some(latest.into_sigrefs_at(remote))),

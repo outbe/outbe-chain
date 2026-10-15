@@ -972,18 +972,22 @@ impl Doc {
     pub fn verify_signature(
         &self,
         key: &crypto::RepositoryKey,
-        signature: &Signature,
+        signature: &crypto::RepositorySignature,
         blob: Oid,
+        repository: RepoId,
+        context: [u8; 32],
     ) -> Result<(), crypto::RepositoryKey> {
-        use crypto::signature::Verifier as _;
-
         if !self.is_delegate(&key.into()) {
             return Err(*key);
         }
 
-        VerifyingKey::try_from(key)
-            .map_err(|_| *key)?
-            .verify(AsRef::<[u8]>::as_ref(&blob), signature)
+        signature
+            .verify_identity(
+                *key,
+                repository.into_sha1().ok_or(*key)?,
+                context,
+                blob.into_sha1().ok_or(*key)?,
+            )
             .map_err(|_| *key)
     }
 

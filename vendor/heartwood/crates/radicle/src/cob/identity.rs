@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::{fmt, ops::Deref, str::FromStr};
 
-use crypto::{RepositoryKey as PublicKey, Signature};
+use crypto::{RepositoryKey as PublicKey, RepositorySignature as Signature};
 use nonempty::NonEmpty;
 use radicle_cob::{Embed, ObjectId, TypeName};
 use serde::{Deserialize, Serialize};
@@ -64,7 +64,6 @@ pub enum Action {
         /// Parent revision that this revision replaces.
         parent: Option<RevisionId>,
         /// Signature over the revision blob.
-        #[serde(with = "signature")]
         signature: Signature,
     },
     RevisionEdit {
@@ -80,7 +79,6 @@ pub enum Action {
     RevisionAccept {
         revision: RevisionId,
         /// Signature over the blob.
-        #[serde(with = "signature")]
         signature: Signature,
     },
     #[serde(rename = "revision.reject")]
@@ -99,6 +97,8 @@ impl CobAction for Action {
 #[non_exhaustive]
 #[derive(Error, Debug)]
 pub enum ApplyError {
+    #[error(transparent)]
+    Publication(#[from] storage::publication::Error),
     /// Causal dependency missing.
     ///
     /// This error indicates that the operations are not being applied
@@ -440,8 +440,11 @@ impl store::Cob for Identity {
         }
         // Verify signature against root document. Since there is no previous document,
         // we verify it against itself.
+        let context = repo
+            .authorize_entry(**founder, op.id, crypto::SubjectKind::Identity)?
+            .context();
         if root
-            .verify_signature(founder, &signature, root.blob)
+            .verify_signature(founder, &signature, root.blob, repo.id(), context)
             .is_err()
         {
             return Err(ApplyError::InvalidSignature(Box::new(**founder), root.blob));
@@ -554,8 +557,17 @@ impl Identity {
                                     return Ok(());
                                 }
 
+                                let context = repo
+                                    .authorize_entry(author, id, crypto::SubjectKind::Identity)?
+                                    .context();
                                 parent
-                                    .verify_signature(&author, &signature, revision.blob)
+                                    .verify_signature(
+                                        &author,
+                                        &signature,
+                                        revision.blob,
+                                        repo.id(),
+                                        context,
+                                    )
                                     .map_err(|_source| {
                                         ApplyError::InvalidSignature(
                                             Box::new(author),
@@ -666,7 +678,13 @@ impl Identity {
                 }
 
                 // Verify signature over new blob, using trusted delegates.
-                if parent.verify_signature(&author, &signature, blob).is_err() {
+                let context = repo
+                    .authorize_entry(author, id, crypto::SubjectKind::Identity)?
+                    .context();
+                if parent
+                    .verify_signature(&author, &signature, blob, repo.id(), context)
+                    .is_err()
+                {
                     return Err(ApplyError::InvalidSignature(Box::new(author), blob));
                 }
 
@@ -901,7 +919,7 @@ impl<R: ReadRepository> cob::Evaluate<R> for Identity {
 pub enum Verdict {
     /// An accepting verdict must supply the [`Signature`] over the
     /// new proposed [`Doc`].
-    Accept(#[serde(with = "signature")] Signature),
+    Accept(Signature),
     /// Rejecting the proposed [`Doc`].
     Reject,
 }
@@ -1046,7 +1064,7 @@ impl std::ops::Deref for Revision {
 impl Revision {
     pub fn signatures(&self) -> impl Iterator<Item = (&PublicKey, Signature)> {
         self.verdicts().filter_map(|(key, verdict)| match verdict {
-            Verdict::Accept(sig) => Some((key, *sig)),
+            Verdict::Accept(sig) => Some((key, sig.clone())),
             Verdict::Reject => None,
         })
     }
@@ -1074,7 +1092,7 @@ impl Revision {
         })
     }
 
-    pub fn sign(&self, signer: &impl crypto::Signer) -> Result<Signature, DocError> {
+    pub fn sign(&self, signer: &impl crypto::Signer) -> Result<crypto::Signature, DocError> {
         self.doc.signature_of(signer)
     }
 }
@@ -1115,11 +1133,11 @@ impl<R: ReadRepository> store::Transaction<Identity, R> {
     pub fn accept(
         &mut self,
         revision: RevisionId,
-        signature: Signature,
+        signature: impl Into<Signature>,
     ) -> Result<(), store::Error> {
         self.push(Action::RevisionAccept {
             revision,
-            signature,
+            signature: signature.into(),
         })
     }
 
@@ -1172,7 +1190,7 @@ impl<Repo: WriteRepository> store::Transaction<Identity, Repo> {
             description: description.to_string(),
             blob,
             parent,
-            signature,
+            signature: signature.into(),
         })?;
 
         Ok(tx)
@@ -1317,53 +1335,6 @@ impl<Repo, Signer: crypto::Signer> Deref for IdentityMut<'_, '_, Repo, Signer> {
 
     fn deref(&self) -> &Self::Target {
         &self.identity
-    }
-}
-
-/// This module defines functions to serialize and deserialize [`Signature`]
-/// to/from a Unicode string in [multibase format].
-///
-/// Serialization to `base58btc` uses  [`multibase::encode`] with
-/// [`multibase::Base::Base58Btc`] and deserialization uses [`multibase::decode`].
-///
-/// The names of these functions are so that the module can be consumed via
-/// `serde_derive`'s `with`, see <https://serde.rs/field-attrs.html#with>. This
-/// is done in particular for variants of [`Action`] and [`Verdict`] that carry
-/// a [`Signature`].
-///
-/// This module exists because, historically, [`Signature`] was a type that did
-/// implement [`serde::Serialize`] and [`serde::Deserialize`], but it was
-/// changed to refer to `ed25519::Signature` in order to maximize compatibility,
-/// which does not implement these traits.
-/// So, for backwards compatibility, this module fills the gap by providing a
-/// way to (de)serialize [`Signature`].
-///
-/// [multibase format]: https://datatracker.ietf.org/doc/draft-multiformats-multibase/
-mod signature {
-    pub fn serialize<Serializer>(
-        signature: &crypto::Signature,
-        serializer: Serializer,
-    ) -> Result<Serializer::Ok, Serializer::Error>
-    where
-        Serializer: serde::Serializer,
-    {
-        serializer.serialize_str(&multibase::encode(
-            multibase::Base::Base58Btc,
-            signature.to_bytes(),
-        ))
-    }
-
-    pub fn deserialize<'de, Deserializer>(
-        deserializer: Deserializer,
-    ) -> Result<crypto::Signature, Deserializer::Error>
-    where
-        Deserializer: serde::Deserializer<'de>,
-    {
-        use serde::Deserialize;
-
-        let (_, bytes) = multibase::decode(String::deserialize(deserializer)?)
-            .map_err(serde::de::Error::custom)?;
-        crypto::Signature::from_slice(bytes.as_slice()).map_err(serde::de::Error::custom)
     }
 }
 

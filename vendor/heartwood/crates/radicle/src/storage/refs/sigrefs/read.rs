@@ -33,7 +33,7 @@ pub trait Verify {
         parent: Option<Oid>,
         refs: &[u8],
         signature: &crypto::RepositorySignature,
-    ) -> Result<(), signature::Error>;
+    ) -> Result<(), error::Verify>;
 }
 
 impl<V: signature::Verifier<crypto::Signature>> Verify for V {
@@ -44,12 +44,14 @@ impl<V: signature::Verifier<crypto::Signature>> Verify for V {
         _: Option<Oid>,
         refs: &[u8],
         signature: &crypto::RepositorySignature,
-    ) -> Result<(), signature::Error> {
+    ) -> Result<(), error::Verify> {
         match signature {
             crypto::RepositorySignature::Ed25519(signature) => {
-                signature::Verifier::verify(self, refs, signature)
+                signature::Verifier::verify(self, refs, signature).map_err(error::Verify::Signature)
             }
-            crypto::RepositorySignature::Bls12381G2(_) => Err(signature::Error::new()),
+            crypto::RepositorySignature::Bls12381G2(_) => {
+                Err(error::Verify::Signature(signature::Error::new()))
+            }
         }
     }
 }
@@ -67,7 +69,9 @@ impl<F> RepositoryVerifier<F> {
     }
 }
 
-impl<F: Fn(Oid) -> Result<[u8; 32], signature::Error>> Verify for RepositoryVerifier<F> {
+impl<F: Fn(Oid) -> Result<[u8; 32], crate::storage::publication::Error>> Verify
+    for RepositoryVerifier<F>
+{
     fn verify(
         &self,
         repository: RepoId,
@@ -75,26 +79,39 @@ impl<F: Fn(Oid) -> Result<[u8; 32], signature::Error>> Verify for RepositoryVeri
         parent: Option<Oid>,
         refs: &[u8],
         signature: &crypto::RepositorySignature,
-    ) -> Result<(), signature::Error> {
-        if parent.is_some_and(|oid| oid.is_zero()) {
-            return Err(signature::Error::new());
+    ) -> Result<(), error::Verify> {
+        if let crypto::RepositorySignature::Ed25519(signature) = signature {
+            let verifier =
+                VerifyingKey::try_from(&self.authority).map_err(error::Verify::Signature)?;
+            return signature::Verifier::verify(&verifier, refs, signature)
+                .map_err(error::Verify::Signature);
         }
-        let context = match signature {
-            crypto::RepositorySignature::Ed25519(_) => [0; 32],
-            crypto::RepositorySignature::Bls12381G2(_) => (self.context)(commit)?,
-        };
+        if parent.is_some_and(|oid| oid.is_zero()) {
+            return Err(error::Verify::NativeSignature(
+                crypto::repository::Error::InvalidSubject,
+            ));
+        }
+        let context = (self.context)(commit).map_err(error::Verify::Publication)?;
         signature
             .verify_signed_refs(
                 self.authority,
-                repository.into_sha1().ok_or_else(signature::Error::new)?,
+                repository
+                    .into_sha1()
+                    .ok_or(error::Verify::NativeSignature(
+                        crypto::repository::Error::InvalidSubject,
+                    ))?,
                 context,
                 parent
-                    .map(|p| p.into_sha1().ok_or_else(signature::Error::new))
+                    .map(|p| {
+                        p.into_sha1().ok_or(error::Verify::NativeSignature(
+                            crypto::repository::Error::InvalidSubject,
+                        ))
+                    })
                     .transpose()?
                     .unwrap_or([0; 20]),
                 refs,
             )
-            .map_err(|_| signature::Error::new())
+            .map_err(error::Verify::NativeSignature)
     }
 }
 
@@ -430,15 +447,13 @@ impl Commit {
     where
         Verifier: Verify,
     {
-        verifier
-            .verify(
-                expected,
-                self.oid,
-                self.parent,
-                &self.refs.canonical(),
-                &self.signature,
-            )
-            .map_err(error::Verify::Signature)?;
+        verifier.verify(
+            expected,
+            self.oid,
+            self.parent,
+            &self.refs.canonical(),
+            &self.signature,
+        )?;
 
         let level = if let Some(IdentityRoot {
             commit: identity_commit,

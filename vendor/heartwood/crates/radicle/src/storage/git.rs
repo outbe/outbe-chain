@@ -8,6 +8,7 @@ pub use temp::TempRepository;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::LazyLock;
 use std::{fs, io};
 
@@ -80,6 +81,7 @@ impl TryFrom<git::raw::Reference<'_>> for Ref {
 pub struct Storage {
     path: PathBuf,
     info: UserInfo,
+    publication: Arc<super::publication::Registry>,
 }
 
 impl ReadStorage for Storage {
@@ -106,7 +108,9 @@ impl ReadStorage for Storage {
     }
 
     fn repository(&self, rid: RepoId) -> Result<Self::Repository, RepositoryError> {
-        Repository::open(paths::repository(self, &rid), rid)
+        let mut repo = Repository::open(paths::repository(self, &rid), rid)?;
+        repo.publication = Arc::clone(&self.publication);
+        Ok(repo)
     }
 
     fn repositories(&self) -> Result<Vec<RepositoryInfo>, Error> {
@@ -190,11 +194,13 @@ impl WriteStorage for Storage {
     type RepositoryMut = Repository;
 
     fn repository_mut(&self, rid: RepoId) -> Result<Self::RepositoryMut, RepositoryError> {
-        Repository::open(paths::repository(self, &rid), rid)
+        self.repository(rid)
     }
 
     fn create(&self, rid: RepoId) -> Result<Self::RepositoryMut, Error> {
-        Repository::create(paths::repository(self, &rid), rid, &self.info)
+        let mut repo = Repository::create(paths::repository(self, &rid), rid, &self.info)?;
+        repo.publication = Arc::clone(&self.publication);
+        Ok(repo)
     }
 
     fn clean(&self, rid: RepoId) -> Result<Vec<RemoteId>, RepositoryError> {
@@ -224,7 +230,24 @@ impl Storage {
             Err(err) => return Err(Error::Io(err)),
             Ok(()) => {}
         }
-        Ok(Self { path, info })
+        let publication = Arc::new(super::publication::Registry::new(&path));
+        Ok(Self {
+            path,
+            info,
+            publication,
+        })
+    }
+
+    /// Install a trusted managed-owner requirement before creating or fetching its repository.
+    pub fn manage_repository(
+        &self,
+        repository: RepoId,
+        owner: crypto::RepositoryKey,
+        policy: Arc<dyn super::publication::PublicationPolicy>,
+    ) -> Result<(), Error> {
+        self.publication
+            .manage(repository, owner, policy)
+            .map_err(Into::into)
     }
 
     /// Create a [`Repository`] in a temporary directory.
@@ -240,7 +263,7 @@ impl Storage {
             ))
             .into());
         }
-        TempRepository::new(self.path(), rid, &self.info)
+        TempRepository::new(self.path(), rid, &self.info, Arc::clone(&self.publication))
     }
 
     pub fn path(&self) -> &Path {
@@ -299,6 +322,7 @@ pub struct Repository {
     pub id: RepoId,
     /// The backing Git repository.
     pub backend: git::raw::Repository,
+    pub(crate) publication: Arc<super::publication::Registry>,
 }
 
 impl AsRef<Repository> for Repository {
@@ -423,7 +447,17 @@ impl Repository {
             &[] as &[&std::ffi::OsStr],
         )?;
 
-        Ok(Self { id, backend })
+        let publication = Arc::new(super::publication::Registry::new(
+            backend
+                .path()
+                .parent()
+                .ok_or_else(|| git::raw::Error::from_str("repository has no storage root"))?,
+        ));
+        Ok(Self {
+            id,
+            backend,
+            publication,
+        })
     }
 
     /// Create a new repository.
@@ -456,7 +490,17 @@ impl Repository {
         config.set_str("user.name", &info.name())?;
         config.set_str("user.email", &info.email())?;
 
-        Ok(Self { id, backend })
+        let publication = Arc::new(super::publication::Registry::new(
+            backend
+                .path()
+                .parent()
+                .ok_or_else(|| git::raw::Error::from_str("repository has no storage root"))?,
+        ));
+        Ok(Self {
+            id,
+            backend,
+            publication,
+        })
     }
 
     /// Remove an existing repository
@@ -700,6 +744,20 @@ impl ValidateRepository for Repository {
 }
 
 impl ReadRepository for Repository {
+    fn authorize_entry(
+        &self,
+        authority: crypto::RepositoryKey,
+        entry: Oid,
+        kind: crypto::SubjectKind,
+    ) -> Result<super::publication::EntryAuthorization, super::publication::Error> {
+        self.publication
+            .authorize(super::publication::EntryRequest {
+                repository: self.id,
+                authority,
+                entry,
+                kind,
+            })
+    }
     fn id(&self) -> RepoId {
         self.id
     }

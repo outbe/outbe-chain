@@ -119,8 +119,9 @@ fn externally_signed_refs_bind_actual_repository_parent_and_per_commit_context()
     let other = min_sig::SecretKey::key_gen(&[43; 32], &[]).unwrap();
     let other = BlsPublicKey::from_bytes(other.sk_to_pk().to_bytes()).unwrap();
     assert!(read(repo.id, other.into(), context).is_err());
-    let unavailable =
-        read::RepositoryVerifier::new(authority, |_| Err(crypto::signature::Error::new()));
+    let unavailable = read::RepositoryVerifier::new(authority, |_| {
+        Err(crate::storage::publication::Error::Unavailable)
+    });
     assert!(
         SignedRefsReader::new(repo.id, read::Tip::Commit(child_id), raw, &unavailable)
             .read()
