@@ -77,8 +77,8 @@ outbe-zk.workspace = true
 outbe-radicle.workspace = true
 # The signer-side evidence encoder that the SlashIndicator tests also use.
 outbe-slashindicator = { workspace = true, features = ["test-utils"] }
-# Read-only Heartwood policy/COB storage; same revision as heartwood-outbe-radicle.
-radicle = { git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }
+# Read-only policy/COB storage from the same vendored Heartwood as the sidecar.
+radicle.workspace = true
 outbe-tee.workspace = true
 outbe-zk-backend.workspace = true
 outbe-common = { workspace = true, optional = true }
