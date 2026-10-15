@@ -58,6 +58,8 @@ export interface OfferPayload {
   tribute_draft_id: string;
   /** SpendingUnit hashes bound by the proof. Contains at least one hash. */
   su_hashes: readonly string[];
+  /** X25519 public key the enclave encrypts the Tribute and Nod amounts to. */
+  creator_public_key: string;
 }
 
 const U64_MAX = 18_446_744_073_709_551_615n;
@@ -95,6 +97,7 @@ export function buildPayload(p: OfferPayload): Uint8Array {
     su_hashes: [...p.su_hashes],
     wallet_addresses: [] as string[],
     sra_addresses: [] as string[],
+    creator_public_key: p.creator_public_key,
   };
   return new TextEncoder().encode(JSON.stringify(obj));
 }
