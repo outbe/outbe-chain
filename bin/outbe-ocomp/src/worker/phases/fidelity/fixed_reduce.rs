@@ -164,10 +164,12 @@ fn populate_root_aggregate_nominals(
     })
 }
 
+type LeagueNominals = (BTreeMap<u16, (u32, U256)>, U256, u32);
+
 fn accumulate_league_nominals(
     authority: &UnitExecutionAuthority<'_>,
     leagues: &BTreeMap<alloy_primitives::Address, u16>,
-) -> Result<(BTreeMap<u16, (u32, U256)>, U256, u32), WorkerError> {
+) -> Result<LeagueNominals, WorkerError> {
     let tribute_chunk_count = authority
         .input_chunks
         .iter()
