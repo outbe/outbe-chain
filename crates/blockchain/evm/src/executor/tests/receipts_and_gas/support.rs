@@ -1,6 +1,7 @@
 //! Shared fixtures for the receipts and gas tests.
 
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 pub(super) fn test_priority_fee_tx() -> reth_ethereum::TransactionSigned {
     TxEip1559 {
@@ -68,7 +69,7 @@ pub(super) fn seed_retained_capacity_days(
         .map(|offset| -> eyre::Result<_> {
             let days_before = outbe_metadosis::constants::MAX_RETAINED_WWDS - offset;
             Ok(WorldwideDay::from_timestamp(
-                victim.start_timestamp() - u64::try_from(days_before)? * 86_400,
+                victim.start_timestamp() - u64::try_from(days_before)? * SECONDS_PER_DAY,
             ))
         })
         .collect::<eyre::Result<Vec<_>>>()?;

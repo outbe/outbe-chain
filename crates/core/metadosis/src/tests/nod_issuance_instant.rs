@@ -1,5 +1,6 @@
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::first_full_day;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 use crate::fixture_kernel::{FixtureKernelExt, TEST_WWD};
 use crate::schema::MetadosisContract;
@@ -8,7 +9,7 @@ use crate::schema::MetadosisContract;
 const FREEZE_AT: u64 = 1_704_067_200;
 const REQUEST_AT: u64 = FREEZE_AT + 3_600;
 const EARLY_ACTIVATION: u64 = FREEZE_AT + 7_200;
-const LATE_ACTIVATION: u64 = FREEZE_AT + 3 * 86_400 + 60;
+const LATE_ACTIVATION: u64 = FREEZE_AT + 3 * SECONDS_PER_DAY + 60;
 
 fn certified_issued_at(activation_height: u64, activation_time: u64) -> u64 {
     let mut fixture = crate::fixture_kernel::ActivationScenario::new_with_request_clock(

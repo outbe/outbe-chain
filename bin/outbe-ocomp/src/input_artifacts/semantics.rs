@@ -3,7 +3,6 @@ use super::*;
 #[derive(Default)]
 pub(super) struct ManifestSemanticTotals {
     pub tribute_count: u32,
-    pub tribute_nominal_total: U256,
     pub fidelity_count: u32,
     pub oracle_count: u32,
 }
@@ -42,7 +41,7 @@ fn observe_manifest_record(
     } = verification;
     match kind {
         InputChunkKind::Tribute => {
-            let tribute = outbe_tribute::record::decode_canonical(record)?.calculation_view()?;
+            let tribute = outbe_tribute::record::decode_canonical(record)?;
             require(
                 tribute.worldwide_day.value() == manifest.wwd,
                 "Tribute WWD matches manifest",
@@ -51,10 +50,6 @@ fn observe_manifest_record(
                 .tribute_count
                 .checked_add(1)
                 .ok_or(InputArtifactError::CountOverflow)?;
-            totals.tribute_nominal_total = totals
-                .tribute_nominal_total
-                .checked_add(tribute.nominal_amount_minor)
-                .ok_or(InputArtifactError::NominalTotalOverflow)?;
         }
         InputChunkKind::Fidelity | InputChunkKind::Oracle => {
             let opening = AuthenticatedOpeningV1::decode_canonical_record(record, limits)?;

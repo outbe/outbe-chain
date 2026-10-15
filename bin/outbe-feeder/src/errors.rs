@@ -16,7 +16,9 @@ pub(crate) use config::ConfigError;
 pub(crate) use dex::DexError;
 pub(crate) use journal::JournalError;
 pub(crate) use oracle::{FeederError, OracleError, VoteDecodeError};
-pub(crate) use provider::{MockHttpError, OnchainFeedError, ProviderError, RedstoneError};
+pub(crate) use provider::{
+    MockHttpError, OnchainFeedError, ProviderError, PythError, RedstoneError,
+};
 
 /// Returns `Ok(())` when `condition` is true, or `Err(error.into())` when false.
 pub(crate) fn check<E: Into<eyre::Report>>(condition: bool, error: E) -> eyre::Result<()> {

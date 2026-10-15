@@ -2,6 +2,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_oracle::{api, schema::OracleContract};
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     address_pair::AddressPair,
     addresses::DESIS_ADDRESS,
@@ -21,7 +22,7 @@ use crate::{
 
 const NOW: u64 = 1_704_067_205;
 const ANCHOR: u64 = NOW - 5;
-const CLEAR_AT: u64 = ANCHOR + 2 * 86_400;
+const CLEAR_AT: u64 = ANCHOR + 2 * SECONDS_PER_DAY;
 const DAY: WorldwideDay = WorldwideDay::new(20_240_101);
 const LOAD: u128 = 100_000_000_000;
 const LIMIT: u128 = 3 * LOAD + 7;
@@ -47,7 +48,7 @@ fn world(sale: bool) -> HashMapStorageProvider {
         let oracle = OracleContract::new(s.clone());
         oracle.reference_currencies.push(840).unwrap();
         for offset in 0..5 {
-            let day = previous_date_key(timestamp_to_date_key(NOW + offset * 86_400));
+            let day = previous_date_key(timestamp_to_date_key(NOW + offset * SECONDS_PER_DAY));
             oracle
                 .record_utc_day_vwap(day, pair, U256::from(2_000_000))
                 .unwrap();
@@ -65,7 +66,7 @@ fn world(sale: bool) -> HashMapStorageProvider {
         )
         .unwrap();
     });
-    for at in [NOW, ANCHOR + 86_400, CLEAR_AT] {
+    for at in [NOW, ANCHOR + SECONDS_PER_DAY, CLEAR_AT] {
         p.set_timestamp(U256::from(at));
         StorageHandle::enter(&mut p, |s| runtime::schedule_tick(&s, at).unwrap());
     }

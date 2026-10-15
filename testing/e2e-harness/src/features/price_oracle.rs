@@ -22,7 +22,10 @@ pub(crate) const MOCK_VOLUME: &str = "1000.000000";
 pub(crate) const EXPECTED_RATE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 const BTC_TOKEN: Address = address!("2260fac5e5542a773aa44fbcfedf7c193bc2c599");
 const FX_TTL_SECS: u64 = 21_600;
-const PUBLICATION_TIMEOUT: Duration = Duration::from_secs(180);
+/// Four vote periods at 2 s blocks: a publication needs up to two rounds, and
+/// the quorum-loss window waits `2 * vote_period + 2` blocks.
+const PUBLICATION_TIMEOUT: Duration =
+    Duration::from_secs(4 * 2 * crate::internal::config::E2E_ORACLE_VOTE_PERIOD_BLOCKS);
 
 #[then("live feeders reject failed and malformed sources without publishing a new price")]
 fn live_feeders_reject_bad_sources(world: &mut World) {

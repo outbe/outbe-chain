@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 /// Restore a pre-admission-bounds ballot for lifecycle arithmetic regression
 /// tests. Current submitVote rejects these extreme values. Admission tests cover
@@ -162,7 +163,7 @@ fn unrepresentable_legacy_median_volume_omits_snapshot_without_penalizing_any_va
 fn exhausted_existing_aggregate_omits_snapshot_without_penalizing_valid_votes() {
     with_coen840_oracle(|storage, oracle, pair| {
         let timestamp = 1_780_012_800u64 + 60 * 60;
-        let day = timestamp - timestamp % 86_400;
+        let day = timestamp - timestamp % SECONDS_PER_DAY;
         oracle
             .wwd_prefix_pv_sum
             .get_nested(&pair)
@@ -194,7 +195,7 @@ fn exhausted_existing_aggregate_omits_snapshot_without_penalizing_valid_votes() 
 fn limited_existing_headroom_omits_snapshot_without_penalizing_any_validator() {
     with_coen840_oracle(|storage, oracle, pair| {
         let timestamp = 1_780_012_800u64 + 60 * 60;
-        let day = timestamp - timestamp % 86_400;
+        let day = timestamp - timestamp % SECONDS_PER_DAY;
         let rate = coen_iso(2);
         let unit_volume = coen_iso(1);
         oracle

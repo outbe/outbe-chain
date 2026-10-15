@@ -7,6 +7,7 @@ use outbe_credisfactory::precompile::ICredisFactory;
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave as gratis_enclave;
 use outbe_oracle::schema::OracleContract;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS},
     storage::{gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, StorageHandle},
@@ -125,7 +126,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
         storage.clone(),
         ALICE,
         U256::from(100),
-        CREATED_AT - 365 * 86_400,
+        CREATED_AT - 365 * SECONDS_PER_DAY,
     )
     .map_err(|error| error.to_string())?;
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)

@@ -1,6 +1,7 @@
 //! Series records: create, read, call and enumerate.
 
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 #[test]
 fn create_then_read_round_trip() {
@@ -19,8 +20,8 @@ fn create_then_read_round_trip() {
         assert_eq!(
             r.call_trigger(),
             IntexCallTrigger {
-                call_window_seconds: 30 * 24 * 60 * 60,
-                call_threshold_seconds: 5 * 24 * 60 * 60,
+                call_window_seconds: 30 * SECONDS_PER_DAY_U32,
+                call_threshold_seconds: 5 * SECONDS_PER_DAY_U32,
                 call_notice_period_seconds: CALL_NOTICE_PERIOD,
             }
         );

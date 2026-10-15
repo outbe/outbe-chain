@@ -5,6 +5,7 @@
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::units::SCALE_1E18_U128;
 
 use crate::constants::{
@@ -44,10 +45,10 @@ impl IntexParams {
     /// so window/threshold stay whole multiples of a day. The bond drops to
     /// 100 wCOEN so test bidders do not have to mint 100M per commit.
     pub const DEV: Self = Self {
-        call_window_seconds: 3 * 24 * 3600,
-        call_threshold_seconds: 2 * 24 * 3600,
+        call_window_seconds: 3 * SECONDS_PER_DAY_U32,
+        call_threshold_seconds: 2 * SECONDS_PER_DAY_U32,
         #[cfg(not(feature = "e2e-test"))]
-        call_notice_period_seconds: 3 * 24 * 3600,
+        call_notice_period_seconds: 3 * SECONDS_PER_DAY_U32,
         #[cfg(feature = "e2e-test")]
         call_notice_period_seconds: 600,
         call_rate: 10,

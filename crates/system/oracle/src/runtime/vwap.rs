@@ -196,7 +196,7 @@ impl OracleContract<'_> {
         timestamp: u64,
     ) -> Result<(U256, U256, U256, String)> {
         let day_start = crate::scurve::truncate_to_day(timestamp);
-        let day_end = day_start.saturating_add(crate::scurve::DAY_SECONDS);
+        let day_end = day_start.saturating_add(SECONDS_PER_DAY);
         let vwap = self
             .try_calculate_vwap(pair, day_start, day_end)?
             .unwrap_or(U256::ZERO);

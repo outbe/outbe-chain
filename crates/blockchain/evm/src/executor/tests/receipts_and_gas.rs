@@ -291,7 +291,7 @@ fn system_prefix_charges_visible_gas_and_receipt_cumulative_contract() {
 #[test]
 fn apply_pre_execution_changes_emits_cycle_tick_event_in_system_receipt() {
     const GENESIS_TS: u64 = 1_704_067_200;
-    const SECONDS_PER_DAY: u64 = 86_400;
+    use outbe_primitives::time::SECONDS_PER_DAY;
 
     let signer = test_evm_signer();
     let proposer = signer.address();
@@ -344,7 +344,7 @@ fn apply_pre_execution_changes_emits_cycle_tick_event_in_system_receipt() {
 #[test]
 fn cycle_tick_utc_boundary_gas_usage() {
     const GENESIS_TS: u64 = 1_704_067_200;
-    const SECONDS_PER_DAY: u64 = 86_400;
+    use outbe_primitives::time::SECONDS_PER_DAY;
 
     let signer = test_evm_signer();
     let proposer = signer.address();
@@ -419,7 +419,7 @@ fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
 #[test]
 fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     const GENESIS_TS: u64 = 1_704_067_200;
-    const SECONDS_PER_DAY: u64 = 86_400;
+    use outbe_primitives::time::SECONDS_PER_DAY;
     const DENSE_ADDRESS_COUNT: u64 = 512;
     const DENSE_VALIDATOR_COUNT: u32 = outbe_consensus::bls::MAX_VALIDATORS;
 

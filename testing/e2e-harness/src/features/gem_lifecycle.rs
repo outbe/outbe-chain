@@ -1,6 +1,7 @@
 //! What a gem supplies to the shared lifecycle: a merchant parks an Intex into a position,
 //! issues one gem to each of five owners, and the position returns what it never issued.
 
+use outbe_primitives::time::SECONDS_PER_DAY;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -253,7 +254,7 @@ fn issue_five_gems(world: &mut World) {
             &IGemFactoryTestArming::backdateGemForTestCall {
                 gemId: gem_id,
                 issuedAt: head_time(world)
-                    .saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * 86_400),
+                    .saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * SECONDS_PER_DAY),
             },
             None,
         )

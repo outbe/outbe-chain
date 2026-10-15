@@ -1,5 +1,6 @@
 //! Steps for the live EIP-7702 ZeroFee sponsorship vertical slice.
 
+use outbe_primitives::time::SECONDS_PER_DAY;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cucumber::{given, then, when};
@@ -35,7 +36,7 @@ fn near_day_boundary(world: &mut World) {
         .latest_block_timestamp(world.validators.primary_port())
         .expect("latest block timestamp in boundary setup");
     assert!(
-        timestamp % 86_400 >= 86_400 - ZEROFEE_BOUNDARY_LEAD_SECONDS,
+        timestamp % SECONDS_PER_DAY >= SECONDS_PER_DAY - ZEROFEE_BOUNDARY_LEAD_SECONDS,
         "debug-node clock did not enter the worldwide-day boundary window: {timestamp}"
     );
 }
@@ -63,7 +64,6 @@ mod tests {
     #[test]
     fn boundary_profile_leaves_sgx_bootstrap_and_feeder_publication_headroom() {
         const NOW: u64 = 1_700_000_000;
-        const SECONDS_PER_DAY: u64 = 86_400;
 
         let opts = boundary_start_opts(NOW);
         let shifted_now = (NOW as i64

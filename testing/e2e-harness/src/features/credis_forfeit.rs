@@ -8,6 +8,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, SolEvent};
 use cucumber::{then, when};
 use outbe_primitives::addresses::{CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS};
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until,
@@ -31,7 +32,7 @@ const CALL_TIMEOUT_SECS: u64 = 300;
 const FORFEIT_TIMEOUT: Duration = Duration::from_secs(120);
 const EXPIRY_BUCKET_SECS: u64 = 3_600;
 /// Window, threshold and notice of the DEV profile in an e2e build, in seconds.
-const DEV_TERMS: (u32, u32, u32) = (3 * 86_400, 2 * 86_400, 600);
+const DEV_TERMS: (u32, u32, u32) = (3 * SECONDS_PER_DAY_U32, 2 * SECONDS_PER_DAY_U32, 600);
 
 sol! {
     interface ICredisFactoryTestArming {

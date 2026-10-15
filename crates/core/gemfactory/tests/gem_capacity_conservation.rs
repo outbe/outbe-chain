@@ -24,7 +24,7 @@ use outbe_primitives::{
 use outbe_promislimit::PromisLimitContract;
 
 const ISSUED: u64 = 1_704_067_200;
-const DAY: u64 = 86_400;
+use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 const CALLED: u64 = ISSUED + 29 * DAY;
 const DEADLINE: u64 = CALLED + 7 * DAY;
 // Genesis, Validator, SRA, Wallet, Merchant.

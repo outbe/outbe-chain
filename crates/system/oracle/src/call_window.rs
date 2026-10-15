@@ -108,8 +108,7 @@ impl<'storage> CallWindows<'storage> {
 mod tests {
     use super::*;
     use outbe_primitives::test_utils::call_breach_prices as days;
-
-    const DAY: u32 = 86_400;
+    use outbe_primitives::time::SECONDS_PER_DAY_U32 as DAY;
 
     fn terms(price: u64, threshold: u32) -> BreachTerms {
         BreachTerms {

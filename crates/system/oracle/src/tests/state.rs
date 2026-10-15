@@ -1,6 +1,7 @@
 //! State-level tests: pair registry, orientation and exchange rates.
 
 use alloy_primitives::{Address, U256};
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 use super::common::*;
 
@@ -446,7 +447,10 @@ fn config_slots_round_trip_every_genesis_parameter() {
             .write(U256::from(20_000_000_000_000_000u128))
             .unwrap();
         oracle.config_slash_window.write(96).unwrap();
-        oracle.config_lookback_duration.write(86400).unwrap();
+        oracle
+            .config_lookback_duration
+            .write(SECONDS_PER_DAY)
+            .unwrap();
         oracle.config_enabled.write(true).unwrap();
         oracle.config_is_initialized.write(true).unwrap();
 
@@ -456,7 +460,10 @@ fn config_slots_round_trip_every_genesis_parameter() {
             U256::from(20_000_000_000_000_000u128)
         );
         assert_eq!(oracle.config_slash_window.read().unwrap(), 96);
-        assert_eq!(oracle.config_lookback_duration.read().unwrap(), 86400);
+        assert_eq!(
+            oracle.config_lookback_duration.read().unwrap(),
+            SECONDS_PER_DAY
+        );
         assert!(oracle.config_enabled.read().unwrap());
         assert!(oracle.config_is_initialized.read().unwrap());
     });

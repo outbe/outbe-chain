@@ -1404,25 +1404,21 @@ fn write_feeder_config(path: &Path, input: &FeederConfigInput<'_>) -> Result<()>
     );
     for pair in input.pairs {
         config.push_str(&format!(
-            "\n[[currency_pairs]]\nbase = \"{}\"\nquote = \"{}\"\n",
+            "\n[[currency_pairs]]\nbase = \"{}\"\nquote = \"{}\"\nmarkets = [\n",
             pair.base, pair.quote
         ));
-    }
-    // Every market names its pair outright: the harness runs pairs that share
-    // a quote, which the feeder cannot tell apart by quote alone.
-    config.push_str(&format!(
-        "\n[[api_providers]]\nname = \"mock_http\"\nrest = \"{}\"\nmarkets = [\n",
-        input.mock_url
-    ));
-    for pair in input.pairs {
         for source in &pair.sources {
             config.push_str(&format!(
-                "  {{ quote = \"{}\", base = \"{}\", pair = \"{}/{}\" }},\n",
-                source.quote, source.base, pair.base, pair.quote
+                "  {{ provider = \"mock_http\", base = \"{}\", quote = \"{}\" }},\n",
+                source.base, source.quote
             ));
         }
+        config.push_str("]\n");
     }
-    config.push_str("]\n");
+    config.push_str(&format!(
+        "\n[[api_providers]]\nname = \"mock_http\"\nrest = \"{}\"\n",
+        input.mock_url
+    ));
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -1731,8 +1727,12 @@ mod tests {
         assert!(contents.contains("gasless_oracle_votes = true"));
         assert!(contents.contains("enabled = false"));
         assert!(contents.contains("[[api_providers]]"));
-        assert!(contents.contains("{ quote = \"USDT\", base = \"COEN\", pair = \"COEN/840\" }"));
-        assert!(contents.contains("{ quote = \"USDC\", base = \"COEN\", pair = \"COEN/840\" }"));
+        assert!(
+            contents.contains("{ provider = \"mock_http\", base = \"COEN\", quote = \"USDT\" }")
+        );
+        assert!(
+            contents.contains("{ provider = \"mock_http\", base = \"COEN\", quote = \"USDC\" }")
+        );
         assert!(!contents.contains("providers ="));
         #[cfg(unix)]
         {

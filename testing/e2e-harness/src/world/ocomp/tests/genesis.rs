@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 #[cfg(feature = "ocomp-integration")]
 #[test]
@@ -358,7 +359,7 @@ fn public_recovery_fixture_seeds_two_empty_ordered_days() {
     let second_worldwide_day = WorldwideDay::from_timestamp(
         first_worldwide_day
             .start_timestamp()
-            .checked_add(86_400)
+            .checked_add(SECONDS_PER_DAY)
             .unwrap(),
     );
 
@@ -523,9 +524,9 @@ fn dynamic_membership_fixture_schedules_two_distinct_public_jobs() {
         .and_then(|timestamp| u64::try_from(timestamp).ok())
         .expect("dynamic fixture genesis timestamp");
     let expected_controlled_daily_cycle = genesis_timestamp
-        .checked_div(86_400)
+        .checked_div(SECONDS_PER_DAY)
         .and_then(|day| day.checked_add(2))
-        .and_then(|day| day.checked_mul(86_400))
+        .and_then(|day| day.checked_mul(SECONDS_PER_DAY))
         .and_then(|midnight| midnight.checked_add(1))
         .expect("controlled dynamic Job B daily-cycle boundary");
     assert_eq!(

@@ -336,7 +336,7 @@ impl ResultFixture<'_> {
             result_chunk_hash: chunk_hash,
             result_chunk_ref: chunk_ref.clone(),
         };
-        let mut summary = fixture_support::root_summary_fixture(
+        let summary = fixture_support::root_summary_fixture(
             plan_hash,
             &chunk,
             &tributes[start..end],

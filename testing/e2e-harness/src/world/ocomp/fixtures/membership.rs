@@ -1,4 +1,6 @@
 use crate::world::ocomp::*;
+#[cfg(feature = "ocomp-integration")]
+use outbe_primitives::time::SECONDS_PER_DAY;
 
 impl OcompTopology {
     /// Stage the next validator's local runtime material before it starts in
@@ -128,8 +130,6 @@ fn schedule_dynamic_membership_days(
     genesis: &mut serde_json::Value,
     chain_id: u64,
 ) -> Result<(WorldwideDay, WorldwideDay, u64, u64)> {
-    const SECONDS_PER_DAY: u64 = 86_400;
-
     let genesis_timestamp = genesis
         .get("timestamp")
         .and_then(serde_json::Value::as_str)
@@ -181,7 +181,7 @@ pub(in crate::world::ocomp) fn schedule_public_recovery_day(
     let second_worldwide_day = WorldwideDay::from_timestamp(
         first_worldwide_day
             .start_timestamp()
-            .checked_add(86_400)
+            .checked_add(SECONDS_PER_DAY)
             .ok_or_else(|| eyre::eyre!("public recovery WorldwideDay overflow"))?,
     );
     let second_processing_time = second_worldwide_day

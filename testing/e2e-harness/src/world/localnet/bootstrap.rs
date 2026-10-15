@@ -24,6 +24,7 @@ use outbe_primitives::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
 use outbe_primitives::tee_attestation_v1::{
     AttestationMode, NetworkBindingV1, TrustedNetworkDescriptorV1,
 };
+use outbe_primitives::time::SECONDS_PER_DAY;
 use serde_json::json;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
@@ -256,7 +257,7 @@ impl Localnet {
             .unwrap_or(0);
         let localnet_forming_period = localnet_metadosis_forming_period_seconds(now, profile)?;
         // genesisTime is one day in the past so the chain can produce immediately.
-        let genesis_time = OffsetDateTime::from_unix_timestamp(now as i64 - 86_400)
+        let genesis_time = OffsetDateTime::from_unix_timestamp((now - SECONDS_PER_DAY) as i64)
             .wrap_err("genesis time")?
             .format(&Rfc3339)
             .wrap_err("format genesis time")?;
@@ -1179,7 +1180,7 @@ mod tests {
     }
 
     #[test]
-    fn scenario_seed_always_uses_eight_block_oracle_window() {
+    fn scenario_seed_always_uses_the_e2e_oracle_window() {
         let directory = tempfile::tempdir().unwrap();
         let env = crate::env::Environment {
             data_dir: directory.path().to_path_buf(),
@@ -1207,7 +1208,10 @@ mod tests {
                 let path = localnet.prepare_scenario_seed(&profile).unwrap();
                 let actual: serde_json::Value =
                     serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-                assert_eq!(actual["oracle"]["config"]["vote_period"], 8);
+                assert_eq!(
+                    actual["oracle"]["config"]["vote_period"],
+                    E2E_ORACLE_VOTE_PERIOD_BLOCKS
+                );
                 if let Some(penalties) = seed.pointer("/oracle/config/penalties_enabled") {
                     assert_eq!(&actual["oracle"]["config"]["penalties_enabled"], penalties);
                 }

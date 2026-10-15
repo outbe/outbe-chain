@@ -7,6 +7,8 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::sweep_budget::{SweepBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
+use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use super::*;
@@ -23,8 +25,11 @@ fn window_at(storage: &StorageHandle, pair: u32, vwap: U256) -> u32 {
 
 fn full_window(last_closed_day: u32, vwap: U256) -> outbe_oracle::call_window::CallWindow {
     outbe_oracle::call_window::CallWindow::from_vwaps(
-        vec![(last_closed_day, Some(vwap)); (outbe_gem::constants::CALL_WINDOW / 86_400) as usize],
-        outbe_gem::constants::CALL_THRESHOLD / 86_400,
+        vec![
+            (last_closed_day, Some(vwap));
+            (outbe_gem::constants::CALL_WINDOW / SECONDS_PER_DAY_U32) as usize
+        ],
+        outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32,
     )
 }
 
@@ -53,7 +58,7 @@ fn call_scan_reads_each_gem_own_pair_window() {
         let usd_id = mature_gem(storage, world);
         let mut p = sample_params(BOB);
         p.reference_currency = EUR;
-        p.issued_at = T_NOW - 100 * 86_400;
+        p.issued_at = T_NOW - 100 * SECONDS_PER_DAY;
         let eur_id = add(storage, world, p);
 
         let rate = U256::from(600_000u64);
@@ -65,7 +70,7 @@ fn call_scan_reads_each_gem_own_pair_window() {
         let oracle = OracleContract::new(storage.clone());
         let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
         let mut day = last_closed_day;
-        for _ in 0..(outbe_gem::constants::CALL_THRESHOLD / 86_400) {
+        for _ in 0..(outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32) {
             oracle.record_utc_day_vwap(day, eur_pair, breach).unwrap();
             day = previous_date_key(day);
         }
@@ -83,7 +88,7 @@ fn call_scan_reads_each_gem_own_pair_window() {
 #[test]
 fn the_call_pass_resumes_from_its_bin_cursor() {
     with_storage(|storage, world| {
-        let issued_at = T_NOW - 100 * 86_400;
+        let issued_at = T_NOW - 100 * SECONDS_PER_DAY;
         let low_id = callable_gem_of(storage, world, USD, 0, issued_at, U256::from(100_000u64));
         let high_id = callable_gem_of(storage, world, USD, 1, issued_at, U256::from(120_000u64));
 
@@ -107,7 +112,7 @@ fn the_call_pass_resumes_from_its_bin_cursor() {
 #[test]
 fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
     with_storage(|storage, world| {
-        let issued_at = T_NOW - 100 * 86_400;
+        let issued_at = T_NOW - 100 * SECONDS_PER_DAY;
         let first_id = callable_gem_of(storage, world, USD, 0, issued_at, U256::from(100_000u64));
         let pair = seed_currency(storage, USD, Some(U256::from(600_000u64)));
         window_at(storage, pair, U256::from(300_000u64));
@@ -129,7 +134,7 @@ fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
 #[test]
 fn a_bin_wider_than_the_budget_resumes_inside_it() {
     with_storage(|storage, world| {
-        let issued_at = T_NOW - 100 * 86_400;
+        let issued_at = T_NOW - 100 * SECONDS_PER_DAY;
         let ids = [
             callable_gem_of(storage, world, USD, 0, issued_at, U256::from(100_000u64)),
             callable_gem_of(storage, world, USD, 1, issued_at, U256::from(100_000u64)),
@@ -170,7 +175,7 @@ fn call_then_forfeit_lifecycle() {
     with_storage(|storage, world| {
         let gem_id = mature_gem(storage, world);
         let threshold = view(storage, world, gem_id).terms.call_price_minor;
-        let breach_days = (outbe_gem::constants::CALL_THRESHOLD / 86_400) as usize;
+        let breach_days = (outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32) as usize;
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());
@@ -186,13 +191,13 @@ fn call_then_forfeit_lifecycle() {
         assert_eq!(called.called_at(), T_NOW);
 
         // Within the 7-day notice period: no forfeit.
-        begin_block_at(storage, world, T_NOW + 6 * 86_400);
+        begin_block_at(storage, world, T_NOW + 6 * SECONDS_PER_DAY);
         assert!(item(storage, world, gem_id).is_some());
         // Past the deadline: forfeit-burned.
         begin_block_at(
             storage,
             world,
-            GemContract::hour_end(GemContract::deadline_hour(T_NOW + 7 * 86_400)),
+            GemContract::hour_end(GemContract::deadline_hour(T_NOW + 7 * SECONDS_PER_DAY)),
         );
         assert!(item(storage, world, gem_id).is_none());
     });
@@ -200,7 +205,7 @@ fn call_then_forfeit_lifecycle() {
 
 #[test]
 fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
-    let threshold_days = (outbe_gem::constants::CALL_THRESHOLD / 86_400) as usize;
+    let threshold_days = (outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32) as usize;
     // Oldest day of a breach run that is exactly threshold-long.
     let mut oldest_breach = timestamp_to_date_key(T_NOW);
     for _ in 1..threshold_days {
@@ -238,7 +243,7 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
 /// later member issued the same day does not move it.
 #[test]
 fn second_member_with_a_different_issued_at_joins_the_first_members_bucket() {
-    let threshold_days = (outbe_gem::constants::CALL_THRESHOLD / 86_400) as usize;
+    let threshold_days = (outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32) as usize;
     let mut oldest_breach = timestamp_to_date_key(T_NOW);
     for _ in 1..threshold_days {
         oldest_breach = previous_date_key(oldest_breach);
@@ -280,7 +285,7 @@ fn call_skips_below_threshold() {
         let gem_id = mature_gem(storage, world);
         let threshold = view(storage, world, gem_id).terms.call_price_minor;
         // One below the threshold: not enough breach-days to force a call.
-        let breach_days = (outbe_gem::constants::CALL_THRESHOLD / 86_400) as usize - 1;
+        let breach_days = (outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32) as usize - 1;
         let window = breach_window(T_NOW, threshold + U256::from(1u64), breach_days);
 
         let mut gem = GemContract::new(storage.clone());
@@ -364,7 +369,7 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
         let oracle = OracleContract::new(storage.clone());
         let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
         let mut day = last_closed_day;
-        for _ in 0..outbe_gem::constants::CALL_THRESHOLD / 86_400 {
+        for _ in 0..outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32 {
             oracle.record_utc_day_vwap(day, pair, U256::MAX).unwrap();
             day = previous_date_key(day);
         }
@@ -419,7 +424,7 @@ fn a_call_slice_refreshes_all_metadata_once() {
                 &world,
                 USD,
                 nonce,
-                T_NOW - 100 * 86_400,
+                T_NOW - 100 * SECONDS_PER_DAY,
                 U256::from(100_000u64),
             );
         }
@@ -448,7 +453,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
         let gem = GemContract::new(storage.clone());
         set_profile(storage, outbe_gem::config::PROFILE_PROD);
         let pair = seed_currency(storage, USD, Some(U256::from(600_000u64)));
-        let issued_at = T_NOW - 100 * 86_400;
+        let issued_at = T_NOW - 100 * SECONDS_PER_DAY;
         // A bin whose calls spend the whole write budget, and one gem priced above it.
         for nonce in 0..u64::from(SWEEP_WRITES_PER_BLOCK) {
             callable_gem_of(
@@ -468,7 +473,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
         let cursor = gem.call_bin_cursor.read(&USD).unwrap();
         assert_ne!(cursor, 0, "the first slice gave out inside the range");
 
-        let next_ts = T_NOW + 86_400;
+        let next_ts = T_NOW + SECONDS_PER_DAY;
         let next_day = previous_date_key(timestamp_to_date_key(next_ts));
         priced_window(storage, pair, next_day, U256::from(300_000u64));
         let next = block_ctx_at(storage, next_ts);
@@ -503,13 +508,13 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
                 &world,
                 USD,
                 nonce,
-                T_NOW - 100 * 86_400,
+                T_NOW - 100 * SECONDS_PER_DAY,
                 U256::from(100_000u64),
             );
         }
         let mut closed = Vec::new();
         for offset in 0..3u64 {
-            let ts = T_NOW + offset * 86_400;
+            let ts = T_NOW + offset * SECONDS_PER_DAY;
             let day = previous_date_key(timestamp_to_date_key(ts));
             priced_window(&storage, pair, day, U256::from(300_000u64));
             // Only the first trigger's block walks: the later days arrive meanwhile.
@@ -559,7 +564,7 @@ fn a_call_sweep_over_several_currencies_always_ends() {
                     world,
                     iso,
                     nonce,
-                    T_NOW - 5 * 86_400,
+                    T_NOW - 5 * SECONDS_PER_DAY,
                     U256::from(100_000u64),
                 );
             }
@@ -582,7 +587,7 @@ fn an_unpriced_currency_does_not_prevent_calling_the_next_currency() {
             world,
             EUR,
             0,
-            T_NOW - 100 * 86_400,
+            T_NOW - 100 * SECONDS_PER_DAY,
             U256::from(100_000),
         );
         seed_currency(storage, EUR, None);
@@ -591,7 +596,7 @@ fn an_unpriced_currency_does_not_prevent_calling_the_next_currency() {
             world,
             USD,
             1,
-            T_NOW - 100 * 86_400,
+            T_NOW - 100 * SECONDS_PER_DAY,
             U256::from(100_000),
         );
         let pair = seed_currency(storage, USD, Some(U256::from(600_000)));
@@ -619,7 +624,7 @@ fn only_a_slice_that_calls_buckets_emits_a_batch_metadata_update() {
             &world,
             USD,
             0,
-            T_NOW - 100 * 86_400,
+            T_NOW - 100 * SECONDS_PER_DAY,
             U256::from(100_000),
         );
         let pair = seed_currency(&storage, USD, Some(U256::from(600_000)));
