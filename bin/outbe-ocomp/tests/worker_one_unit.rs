@@ -743,7 +743,11 @@ fn real_worker_processes_execute_through_output_finalize() {
                 unit_membership_siblings: Vec::new(),
                 plan_ref: plan_ref.clone(),
                 input_manifest_ref: published.manifest_ref.clone(),
-                ordered_input_refs: vec![fidelity_producer_ref.clone()],
+                ordered_input_refs: vec![
+                    fidelity_producer_ref.clone(),
+                    tribute_ref.clone(),
+                    fidelity_ref.clone(),
+                ],
             }
             .encode_body(&limits)
             .expect("FixedReduce RunUnit body"),
@@ -773,7 +777,13 @@ fn real_worker_processes_execute_through_output_finalize() {
     let reduced =
         decode_fixed_reduce_output(reduce_artifact.phase_payload(&limits).unwrap(), &limits)
             .expect("decode FixedReduce phase output");
-    assert_eq!(reduced.aggregate.unwrap().tribute_count, 1);
+    let reduced_aggregate = reduced.aggregate.unwrap();
+    assert_eq!(reduced_aggregate.tribute_count, 1);
+    assert_eq!(reduced_aggregate.checked_total_nominal, U256::ZERO);
+    assert!(reduced_aggregate
+        .ordered_league_partials
+        .iter()
+        .all(|partial| partial.nominal_amount_minor.is_zero()));
     assert!(!reduced.ordered_fractions.is_empty());
     verify_core_phase_replay(
         (
@@ -782,7 +792,7 @@ fn real_worker_processes_execute_through_output_finalize() {
             &reduce_artifact,
         ),
         (&plan, &manifest),
-        (&[], std::slice::from_ref(&fidelity_artifact)),
+        (&fidelity_inputs, std::slice::from_ref(&fidelity_artifact)),
         (&bundle, &reader, &semantic_replay_inbox),
         &limits,
     )

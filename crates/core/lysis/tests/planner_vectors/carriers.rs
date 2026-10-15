@@ -79,9 +79,14 @@ fn fidelity_map_artifact_is_bounded_canonical_and_preserves_raw_coverage() {
     let output = fidelity_map(256, &observed).unwrap();
 
     let encoded = encode_fidelity_map_output(&output, &limits).unwrap();
+    let mut expected_decoded = output.clone();
+    expected_decoded.aggregate.checked_total_nominal = U256::ZERO;
+    for partial in &mut expected_decoded.aggregate.ordered_league_partials {
+        partial.nominal_amount_minor = U256::ZERO;
+    }
     assert_eq!(
         decode_fidelity_map_output(&encoded, &limits).unwrap(),
-        output
+        expected_decoded
     );
     assert_eq!(output.coverage_root().unwrap(), {
         let enumerated = enumerate_tributes(
@@ -97,7 +102,7 @@ fn fidelity_map_artifact_is_bounded_canonical_and_preserves_raw_coverage() {
     });
 
     let mut changed = encoded.clone();
-    changed[24] ^= 1;
+    changed[23] ^= 1;
     assert!(decode_fidelity_map_output(&changed, &limits).is_err());
 
     let mut trailing = encoded;
@@ -205,11 +210,11 @@ fn fixed_reduce_output_is_canonical_and_binds_aggregate_carrier_and_fractions() 
             start_ordinal: 0,
             end_ordinal: 257,
             tribute_count: 257,
-            checked_total_nominal: U256::from(257),
+            checked_total_nominal: U256::ZERO,
             ordered_league_partials: vec![FidelityLeaguePartialV1 {
                 league_id: 7,
                 count: 257,
-                nominal_amount_minor: U256::from(257),
+                nominal_amount_minor: U256::ZERO,
             }],
         }),
         coverage,
