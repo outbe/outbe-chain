@@ -146,7 +146,6 @@ fn production_publisher_streams_one_million_records_with_a_256_record_peak() {
                     nominal_amount_minor: U256::from(1),
                     reference_currency: 978,
                     tribute_price_minor: U256::from(1),
-                    exclude_from_intex_issuance: false,
                 })
                 .unwrap(),
             )
@@ -229,7 +228,6 @@ fn durable_publisher_matches_existing_chunk_root_catalog_and_manifest_bytes() {
                 nominal_amount_minor: U256::from(1),
                 reference_currency: 978,
                 tribute_price_minor: U256::from(1),
-                exclude_from_intex_issuance: false,
             })
             .unwrap()
         })
@@ -520,7 +518,6 @@ fn durable_publisher_replays_10000_tributes_without_population_sized_results() {
                         nominal_amount_minor: U256::from(1),
                         reference_currency: 978,
                         tribute_price_minor: U256::from(1),
-                        exclude_from_intex_issuance: false,
                     })
                     .unwrap(),
                 )
@@ -593,7 +590,6 @@ fn population_above_the_old_4096_ceiling_streams_into_existing_256_record_chunks
                 nominal_amount_minor: U256::from(1),
                 reference_currency: 978,
                 tribute_price_minor: U256::from(1),
-                exclude_from_intex_issuance: false,
             }
         })
         .collect::<Vec<_>>();

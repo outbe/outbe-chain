@@ -172,7 +172,6 @@ mod tests {
             worldwide_day: DAY,
             tribute_currency: 840,
             reference_currency: 840,
-            exclude_from_intex_issuance: false,
             issuance_wwd_vwap_minor: SCALE_1E6_U256,
             reference_wwd_vwap_minor: SCALE_1E6_U256,
             reference_scurve_minor: U256::ZERO,
@@ -531,7 +530,6 @@ mod tests {
         for mutate in [
             (|o: &mut EncryptedTributeOffer| o.worldwide_day = NEXT_DAY) as fn(&mut _),
             |o: &mut EncryptedTributeOffer| o.tribute_currency = 978,
-            |o: &mut EncryptedTributeOffer| o.exclude_from_intex_issuance = true,
             |o: &mut EncryptedTributeOffer| o.issuance_wwd_vwap_minor = U256::from(2u64),
             |o: &mut EncryptedTributeOffer| o.reference_wwd_vwap_minor = U256::from(2u64),
             |o: &mut EncryptedTributeOffer| o.reference_scurve_minor = U256::from(2u64),

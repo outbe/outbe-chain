@@ -343,7 +343,6 @@ fn retain(root: &Path, record: &OcompJobRecordV1, count: usize) {
                 nominal_amount_minor: U256::ONE,
                 reference_currency: 978,
                 tribute_price_minor: U256::ONE,
-                exclude_from_intex_issuance: false,
             })
             .unwrap();
         storage

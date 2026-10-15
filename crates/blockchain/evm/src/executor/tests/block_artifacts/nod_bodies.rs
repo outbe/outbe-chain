@@ -305,7 +305,6 @@ fn proposer_validator_body_mints_match_for_all_three_commitment_namespaces() {
         nominal_amount_minor: U256::from(11),
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: false,
     };
     let nod_fixture = || {
         outbe_nod::test_support::item(

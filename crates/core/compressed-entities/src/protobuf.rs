@@ -34,7 +34,6 @@ pub struct TributeBodyV1 {
     pub nominal_amount_minor: U256,
     pub reference_currency: u16,
     pub tribute_price_minor: U256,
-    pub exclude_from_intex_issuance: bool,
 }
 
 /// Canonical v1 Nod item payload.
@@ -153,7 +152,6 @@ pub fn encode_tribute_v1(body: &TributeBodyV1) -> Result<Vec<u8>, CanonicalBodyE
         &body.tribute_price_minor.to_be_bytes::<32>(),
         &mut output,
     );
-    encode_optional_varint_field(9, u64::from(body.exclude_from_intex_issuance), &mut output);
     Ok(output)
 }
 
@@ -168,7 +166,6 @@ pub fn decode_tribute_v1(bytes: &[u8]) -> Result<TributeBodyV1, CanonicalBodyErr
     let nominal_amount_minor = decode_u256(required_bytes(&mut fields, 6)?, 6)?;
     let reference_currency = optional_u16(&mut fields, 7)?;
     let tribute_price_minor = decode_u256(required_bytes(&mut fields, 8)?, 8)?;
-    let exclude_from_intex_issuance = optional_bool(&mut fields, 9)?;
     fields.finish()?;
 
     let body = TributeBodyV1 {
@@ -180,7 +177,6 @@ pub fn decode_tribute_v1(bytes: &[u8]) -> Result<TributeBodyV1, CanonicalBodyErr
         nominal_amount_minor,
         reference_currency,
         tribute_price_minor,
-        exclude_from_intex_issuance,
     };
     validate_identity_day(body.tribute_id, body.worldwide_day)?;
     if encode_tribute_v1(&body)? != bytes {

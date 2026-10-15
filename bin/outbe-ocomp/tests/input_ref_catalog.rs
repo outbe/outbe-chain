@@ -132,7 +132,6 @@ fn one_chunk_stage_fixture() -> OneChunkStageFixture {
         nominal_amount_minor: nominal,
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: false,
     };
     let chunk = AuthenticatedInputChunkV1 {
         protocol_bundle_hash,
@@ -359,7 +358,6 @@ fn cold_restart_reopens_each_input_chunk_from_authoritative_cas_and_rederives_it
         nominal_amount_minor: U256::from(11),
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: false,
     };
     let chunk = AuthenticatedInputChunkV1 {
         protocol_bundle_hash,
@@ -478,7 +476,6 @@ fn staged_reference_survives_restart_and_seals_only_after_the_manifest_exists() 
         nominal_amount_minor: U256::from(11),
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: false,
     };
     let chunk = AuthenticatedInputChunkV1 {
         protocol_bundle_hash,
@@ -892,7 +889,6 @@ fn staged_prepare_streams_past_the_old_4096_reference_limit() {
         nominal_amount_minor: U256::from(1),
         reference_currency: 978,
         tribute_price_minor: U256::from(1),
-        exclude_from_intex_issuance: false,
     };
     let canonical_tribute = encode_tribute_v1(&tribute).unwrap();
     let directory = support::tempdir().unwrap();

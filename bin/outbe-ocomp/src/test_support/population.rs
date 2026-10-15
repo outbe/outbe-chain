@@ -17,7 +17,6 @@ pub fn tribute_population(day: WorldwideDay, tribute_count: u32) -> Vec<TributeB
                 nominal_amount_minor: U256::from((index % 7) + 1),
                 reference_currency: if index % 3 == 0 { 978 } else { 392 },
                 tribute_price_minor: U256::from(1),
-                exclude_from_intex_issuance: false,
             }
         })
         .collect::<Vec<_>>();

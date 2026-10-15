@@ -213,7 +213,6 @@ fn the_body_reserve_spans_the_widest_v1_body_and_tail_cleanup_is_exact() {
         nominal_amount_minor: U256::MAX,
         reference_currency: u16::MAX,
         tribute_price_minor: U256::MAX,
-        exclude_from_intex_issuance: true,
     };
     let widest_stored = [
         stored_tribute(&widest_tribute).encode().len(),

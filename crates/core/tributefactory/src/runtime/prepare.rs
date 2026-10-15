@@ -34,7 +34,6 @@ pub(super) fn prepare(
         worldwide_day: input.worldwide_day,
         tribute_currency: input.tribute_currency,
         reference_currency: input.reference_currency,
-        exclude_from_intex_issuance: input.exclude_from_intex_issuance,
         issuance_wwd_vwap_minor: pricing.issuance_wwd_vwap_minor,
         reference_wwd_vwap_minor: pricing.reference_wwd_vwap_minor,
         reference_scurve_minor: pricing.reference_scurve_minor,

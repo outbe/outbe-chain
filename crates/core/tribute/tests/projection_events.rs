@@ -53,10 +53,6 @@ fn assert_roundtrip(record: TributeData) {
         reconstructed.tribute_price_minor,
         record.tribute_price_minor
     );
-    assert_eq!(
-        reconstructed.exclude_from_intex_issuance,
-        record.exclude_from_intex_issuance
-    );
 }
 
 #[test]
@@ -71,7 +67,6 @@ fn stored_event_carries_the_exact_canonical_body_and_commitment() {
         nominal_amount_minor: U256::ZERO,
         reference_currency: 0,
         tribute_price_minor: U256::ZERO,
-        exclude_from_intex_issuance: false,
     });
     let max_day = WorldwideDay::new(u32::MAX);
     assert_roundtrip(TributeData {
@@ -83,7 +78,6 @@ fn stored_event_carries_the_exact_canonical_body_and_commitment() {
         nominal_amount_minor: U256::MAX,
         reference_currency: u16::MAX,
         tribute_price_minor: U256::MAX,
-        exclude_from_intex_issuance: true,
     });
 }
 

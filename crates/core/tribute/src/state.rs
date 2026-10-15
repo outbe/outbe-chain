@@ -87,8 +87,7 @@ impl TributeContract<'_> {
             {"trait_type":"issuance_currency", "value": tribute.issuance_currency.to_string()},
             {"trait_type":"issuance_amount_minor", "value": issuance},
             {"trait_type":"nominal_amount_minor", "value": nominal},
-            {"trait_type":"reference_currency", "value": tribute.reference_currency.to_string()},
-            {"trait_type":"exclude_from_intex_issuance", "value": tribute.exclude_from_intex_issuance}
+            {"trait_type":"reference_currency", "value": tribute.reference_currency.to_string()}
         ]);
         let metadata = serde_json::json!({
             "name": format!("Tribute 0x{}", tribute.tribute_id),

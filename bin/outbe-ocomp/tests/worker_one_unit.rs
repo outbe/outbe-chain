@@ -203,7 +203,6 @@ fn real_worker_processes_execute_through_output_finalize() {
         nominal_amount_minor: U256::from(100_000_000),
         reference_currency: 978,
         tribute_price_minor: U256::from(2),
-        exclude_from_intex_issuance: false,
     };
     let fidelity_raw = RawContractOpeningProofV1 {
         contract_address: Address::repeat_byte(0x54),
@@ -2103,7 +2102,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
                             nominal_amount_minor: U256::from(raw_ordinal + 1),
                             reference_currency: 978,
                             tribute_price_minor: U256::from(2),
-                            exclude_from_intex_issuance: raw_ordinal == 0,
                         })
                         .unwrap(),
                     )

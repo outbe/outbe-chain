@@ -309,7 +309,6 @@ fn bench_input(fixture: &Fixture) -> BenchOfferInput {
         worldwide_day: TARGET_WWD,
         tribute_currency: 840,
         reference_currency: 840,
-        exclude_from_intex_issuance: false,
         zk_proof: fixture.proof.clone(),
         l2_chain_id: L2_CHAIN_ID,
         circuit_version: L2_CIRCUIT_VERSION.to_owned(),

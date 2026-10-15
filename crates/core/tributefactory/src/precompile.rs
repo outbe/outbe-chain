@@ -61,7 +61,6 @@ pub fn dispatch(
                                 worldwide_day: c.worldwideDay.into(),
                                 tribute_currency: c.tributeCurrency,
                                 reference_currency: c.referenceCurrency,
-                                exclude_from_intex_issuance: c.excludeFromIntexIssuance,
                                 zk_proof: c.zkProof,
                                 l2_chain_id: c.chainId,
                                 circuit_version: c.version,

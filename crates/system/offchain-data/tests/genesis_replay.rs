@@ -299,7 +299,6 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         nominal_amount_minor: U256::from(11),
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: false,
     };
     let nod_owner = Address::repeat_byte(0x42);
     let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();

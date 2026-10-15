@@ -198,7 +198,6 @@ pub(super) fn tribute(id: WwdEntityId, owner: Address, price: u64) -> TributeBod
         nominal_amount_minor: U256::from(20),
         reference_currency: 978,
         tribute_price_minor: U256::from(price),
-        exclude_from_intex_issuance: false,
     }
 }
 

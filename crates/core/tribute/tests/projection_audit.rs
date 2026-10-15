@@ -32,7 +32,6 @@ fn body(seed: u64) -> TributeData {
         nominal_amount_minor: U256::from(2),
         reference_currency: 1,
         tribute_price_minor: U256::from(3),
-        exclude_from_intex_issuance: false,
     }
 }
 
