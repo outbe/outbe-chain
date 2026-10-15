@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AbiFunction, AbiParameter } from "viem";
+import { type AbiEvent, type AbiFunction, type AbiParameter, type Hex, encodeAbiParameters, encodeEventTopics } from "viem";
 import { OP, chainIdWord, modifyMac } from "../confidential/mac.js";
 import { grindMiningNonce } from "../pow.js";
 import { ERC20_ABI, FACTORY_ABI, intexAddress } from "../intex/registry.js";
@@ -92,4 +92,28 @@ test("nod_settle approves NodFactory for the quote and settles at its snapshot",
       ["settleNod", [4n, ASSET, 15n]],
     ],
   );
+});
+
+test("agentreward_claim returns the id of the Gem it issued", async () => {
+  const topics = encodeEventTopics({
+    abi: CONTRACTS.gemfactory.abi,
+    eventName: "GemIssued",
+    args: { gemId: 31n, bucketKey: `0x${"00".repeat(32)}` },
+  });
+  const issued = CONTRACTS.gemfactory.abi.find((i) => i.type === "event" && i.name === "GemIssued") as AbiEvent;
+  const data = encodeAbiParameters(
+    issued.inputs.filter((i) => !i.indexed),
+    issued.inputs.filter((i) => !i.indexed).map((i) => sample(i)),
+  );
+  const harness = await startHarness((chain) => {
+    for (const entry of Object.values(CONTRACTS)) chain.register(entry.abi, entry.address);
+    chain.receiptLogs("claimReward", [{ address: CONTRACTS.gemfactory.address, topics: topics as Hex[], data }]);
+  });
+  try {
+    const { text, isError } = await harness.call("agentreward_claim", { pool: 0, issuance_currency: 840, reference_currency: 840 });
+    assert(!isError, text);
+    assert.equal(JSON.parse(text).gemId, "31");
+  } finally {
+    await harness.close();
+  }
 });

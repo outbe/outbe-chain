@@ -3,6 +3,7 @@ import { z } from "zod";
 import { type Ctx, parseNativeAmount } from "../../chain.js";
 import { coenAmount } from "../schemas.js";
 import { handler } from "../util.js";
+import { eventId } from "./events.js";
 import { submit } from "./submit.js";
 
 /** Claiming AgentReward as a Gem. */
@@ -13,7 +14,7 @@ export function registerAgentRewardTools(server: McpServer, ctx: Ctx): void {
     "agentreward_claim",
     "Claim AgentReward from one pool (0 = WAA, 1 = SRA, 2 = CCA) as a Gem in the chosen issuance and reference " +
       "currencies. The entry price is the previous UTC day's COEN VWAP in the reference currency. Omit amount to " +
-      "claim the whole pool balance. Requires OUTBE_PRIVATE_KEY.",
+      "claim the whole pool balance. Returns the gemId. Requires OUTBE_PRIVATE_KEY.",
     {
       pool: z.number().int().min(0).max(2).describe("0 = WAA, 1 = SRA, 2 = CCA"),
       amount: coenAmount.optional().describe("amount to claim; omit for the whole balance"),
@@ -37,6 +38,7 @@ export function registerAgentRewardTools(server: McpServer, ctx: Ctx): void {
           reference_currency,
         ],
         wait,
+        outcome: (receipt) => ({ gemId: eventId(receipt, "gemfactory", "GemIssued", "gemId") }),
       }),
     ),
   );
