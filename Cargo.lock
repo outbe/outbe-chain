@@ -9055,6 +9055,7 @@ dependencies = [
 name = "outbe-l2registry"
 version = "0.1.0"
 dependencies = [
+ "alloy-evm",
  "alloy-primitives",
  "alloy-sol-types",
  "blst",
@@ -9063,13 +9064,19 @@ dependencies = [
  "commonware-cryptography",
  "commonware-math",
  "hex",
+ "outbe-evm",
  "outbe-macros",
+ "outbe-offchain-data",
+ "outbe-offchain-storage",
  "outbe-primitives",
+ "outbe-tributefactory",
  "outbe-vote",
  "outbe-zk",
  "rand 0.10.2",
  "rand_core 0.10.1",
  "rand_core 0.6.4",
+ "reth-ethereum",
+ "revm",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
