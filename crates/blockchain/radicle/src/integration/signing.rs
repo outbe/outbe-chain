@@ -1,5 +1,7 @@
 //! Current finalized committee/DKG binding for native repository partials.
 
+pub mod witness;
+
 use alloy_primitives::Address;
 use commonware_codec::{DecodeExt as _, Encode as _, Read as _};
 use commonware_cryptography::{
@@ -40,6 +42,8 @@ pub enum Error {
     Participant,
     #[error("invalid authenticated repository partial")]
     Partial,
+    #[error("invalid, noncanonical or oversized repository witness bundle")]
+    Witness,
     #[error(transparent)]
     Signing(#[from] RepositorySigningError),
     #[error(transparent)]
@@ -471,6 +475,10 @@ impl PartialBody {
 }
 
 impl RepositoryPartial {
+    pub fn participant_index(&self) -> u32 {
+        self.body.partial.index.get()
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         [self.body.to_bytes(), self.signature.encode().to_vec()].concat()
     }

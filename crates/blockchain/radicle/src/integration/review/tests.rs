@@ -3,6 +3,7 @@ use crate::integration::publication::{
     native_policy_context, CheckpointOwnerSnapshot, NativeSubject, ObjectCommitment, ObjectKind,
     OwnerRef, PublicationManifest, RefUpdate,
 };
+use crate::integration::signing::witness::{RepositoryWitnessBundle, MAX_WITNESS_BYTES};
 use crate::integration::signing::{RepositoryPartial, RepositorySigningMaterial};
 use crate::manager::FinalizedBlock;
 use alloy_primitives::{B256, U256};
@@ -200,6 +201,164 @@ fn assert_independent_witnesses(
     assert!(verifier
         .verify_witness(actual, envelope, &oversized)
         .is_err());
+}
+
+fn assert_witness_bundle(
+    material: &RepositorySigningMaterial,
+    actual: &[(RepositorySubject, BlsEnvelope)],
+    subjects: Vec<Vec<RepositoryPartial>>,
+) -> Vec<u8> {
+    fn encode(value: &serde_json::Value) -> Vec<u8> {
+        let mut bytes = vec![];
+        serde::Serialize::serialize(
+            value,
+            &mut serde_json::Serializer::with_formatter(
+                &mut bytes,
+                radicle::canonical::formatter::CanonicalFormatter::new(),
+            ),
+        )
+        .unwrap();
+        bytes
+    }
+    let bundle =
+        RepositoryWitnessBundle::new(material.canonical_output(), subjects.clone()).unwrap();
+    let bytes = bundle.to_bytes().unwrap();
+    let decoded = RepositoryWitnessBundle::from_bytes(&bytes).unwrap();
+    assert_eq!(decoded.public_output(), material.canonical_output());
+    decoded.verify(material, actual).unwrap();
+    assert!(decoded.verify(material, &actual[..1]).is_err());
+    let mut wrong_subject = actual.to_vec();
+    wrong_subject.swap(0, 1);
+    assert!(decoded.verify(material, &wrong_subject).is_err());
+    let mut unsorted = subjects.clone();
+    unsorted[0].reverse();
+    assert_eq!(
+        RepositoryWitnessBundle::new(material.canonical_output(), unsorted)
+            .unwrap()
+            .to_bytes()
+            .unwrap(),
+        bytes
+    );
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let reject = |value| {
+        assert!(RepositoryWitnessBundle::from_bytes(&encode(&value)).is_err());
+    };
+    let mut invalid = value.clone();
+    invalid["version"] = 2.into();
+    reject(invalid);
+    let mut invalid = value.clone();
+    invalid["extra"] = true.into();
+    reject(invalid);
+    let mut invalid = value.clone();
+    invalid["subjects"][0]["extra"] = true.into();
+    reject(invalid);
+    let mut invalid = value.clone();
+    invalid["subjects"][1]["ordinal"] = 0.into();
+    reject(invalid);
+    let mut invalid = value.clone();
+    invalid["subjects"][1]["ordinal"] = 2.into();
+    reject(invalid);
+    let mut invalid = value.clone();
+    invalid["subjects"][0]["partials"]
+        .as_array_mut()
+        .unwrap()
+        .swap(0, 1);
+    reject(invalid);
+    let mut invalid = value.clone();
+    invalid["subjects"][0]["partials"][1] = invalid["subjects"][0]["partials"][0].clone();
+    reject(invalid);
+    let mut invalid = value.clone();
+    invalid["subjects"][0]["partials"] = serde_json::json!([]);
+    reject(invalid);
+    let mut invalid = value.clone();
+    invalid["subjects"][0]["partials"][0] = "00".into();
+    reject(invalid);
+    let mut invalid = value.clone();
+    invalid["subjects"][0]["partials"][0] = "zz".repeat(268).into();
+    reject(invalid);
+    let mut invalid = value.clone();
+    invalid["subjects"][0]["partials"] =
+        vec![value["subjects"][0]["partials"][0].clone(); 257].into();
+    reject(invalid);
+    let mut invalid = value.clone();
+    invalid["subjects"] = vec![value["subjects"][0].clone(); 4].into();
+    reject(invalid);
+    let mut invalid = value.clone();
+    invalid["publicOutput"] = "".into();
+    reject(invalid);
+    let mut insufficient = subjects.clone();
+    insufficient[1].truncate(2);
+    assert!(
+        RepositoryWitnessBundle::new(material.canonical_output(), insufficient)
+            .unwrap()
+            .verify(material, actual)
+            .is_err()
+    );
+    let mut changed_output = material.canonical_output();
+    changed_output[0] ^= 1;
+    assert!(
+        RepositoryWitnessBundle::new(changed_output, subjects.clone())
+            .unwrap()
+            .verify(material, actual)
+            .is_err()
+    );
+    let mut invalid = value.clone();
+    invalid["publicOutput"] = value["publicOutput"]
+        .as_str()
+        .unwrap()
+        .to_uppercase()
+        .into();
+    reject(invalid);
+    let mut invalid = value.clone();
+    invalid["subjects"][0]["partials"][0] = value["subjects"][0]["partials"][0]
+        .as_str()
+        .unwrap()
+        .to_uppercase()
+        .into();
+    reject(invalid);
+    for invalid in [
+        bytes[..bytes.len() - 1].to_vec(),
+        [bytes.as_slice(), b"\n"].concat(),
+        bytes
+            .strip_suffix(b"}")
+            .unwrap()
+            .iter()
+            .copied()
+            .chain(b",\"version\":1}".iter().copied())
+            .collect(),
+    ] {
+        assert!(RepositoryWitnessBundle::from_bytes(&invalid).is_err());
+    }
+    // The exact-size codec fixture is structural; its padded Output grants no authority.
+    let mut boundary = value.clone();
+    boundary["publicOutput"] = "".into();
+    boundary["subjects"].as_array_mut().unwrap().truncate(1);
+    boundary["subjects"][0]["partials"]
+        .as_array_mut()
+        .unwrap()
+        .truncate(1);
+    let overhead = encode(&boundary).len();
+    boundary["publicOutput"] = "00".repeat((MAX_WITNESS_BYTES - overhead) / 2).into();
+    let mut boundary = encode(&boundary);
+    assert_eq!(boundary.len(), MAX_WITNESS_BYTES);
+    let boundary_bundle = RepositoryWitnessBundle::from_bytes(&boundary).unwrap();
+    assert!(boundary_bundle.verify(material, actual).is_err());
+    boundary.push(b' ');
+    assert!(RepositoryWitnessBundle::from_bytes(&boundary).is_err());
+    assert!(
+        RepositoryWitnessBundle::new(vec![0; MAX_WITNESS_BYTES / 2], subjects.clone()).is_err()
+    );
+    assert!(RepositoryWitnessBundle::new(
+        material.canonical_output(),
+        vec![subjects[0].clone(); 4]
+    )
+    .is_err());
+    assert!(RepositoryWitnessBundle::new(
+        material.canonical_output(),
+        vec![vec![subjects[0][0].clone(); 257]]
+    )
+    .is_err());
+    bytes
 }
 
 #[test]
@@ -886,6 +1045,30 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     let alternate_refs_signature = material
         .recover_review_refs(&providers[0], &prepared_refs, &refs_contributions[1..])
         .unwrap();
+    let actual = [
+        (again.subject().clone(), signature.clone()),
+        (prepared_refs.subject().clone(), refs_signature.clone()),
+    ];
+    let bundles: Vec<_> = [0..3, 1..4]
+        .into_iter()
+        .map(|subset| {
+            assert_witness_bundle(
+                &independent,
+                &actual,
+                vec![
+                    contributions[subset.clone()]
+                        .iter()
+                        .map(|(_, f)| f.clone())
+                        .collect(),
+                    refs_contributions[subset]
+                        .iter()
+                        .map(|(_, f)| f.clone())
+                        .collect(),
+                ],
+            )
+        })
+        .collect();
+    assert_ne!(bundles[0], bundles[1]);
     assert_independent_witnesses(
         &independent,
         prepared_refs.subject(),
