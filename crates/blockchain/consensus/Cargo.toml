@@ -73,6 +73,7 @@ metrics.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-consensus = { workspace = true, features = ["test-utils"] }
 commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.9.0" }
 tempfile.workspace = true

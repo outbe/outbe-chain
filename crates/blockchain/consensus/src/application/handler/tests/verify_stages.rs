@@ -191,6 +191,8 @@ enum EarlyCase {
     InvalidLiveHeader,
     CancelledProjection,
     MissingEpochAnchor,
+    InvalidPublicationAnchor,
+    MissingPublicationAnchor,
 }
 
 #[test]
@@ -203,6 +205,8 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
         EarlyCase::InvalidLiveHeader,
         EarlyCase::CancelledProjection,
         EarlyCase::MissingEpochAnchor,
+        EarlyCase::InvalidPublicationAnchor,
+        EarlyCase::MissingPublicationAnchor,
     ] {
         commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
             |context| async move {
@@ -214,7 +218,35 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
                 let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
                 shared.shared.engine = super::super::EngineHandle::new(engine_tx);
                 let parent = consensus_block_with_timestamp(0x72, 1, 2_000);
-                let block = proposed_block(Some(&parent), true);
+                let publication_case = matches!(
+                    case,
+                    EarlyCase::InvalidPublicationAnchor | EarlyCase::MissingPublicationAnchor
+                );
+                let mut block = proposed_block(Some(&parent), !publication_case);
+                if publication_case {
+                    let mut batch =
+                        outbe_primitives::test_utils::sample_radicle_publication_batch(1);
+                    batch.body.chain_id = shared.chain_id;
+                    batch.body.genesis_hash = shared.genesis_hash;
+                    batch.body.finalized_anchor_height =
+                        if matches!(case, EarlyCase::InvalidPublicationAnchor) {
+                            2
+                        } else {
+                            1
+                        };
+                    batch.body.finalized_anchor_hash = parent.block_hash();
+                    let mut raw = block.into_inner().into_block();
+                    raw.header.inner.extra_data =
+                        outbe_primitives::reshare_artifact::encode_outbe_block_artifacts(
+                            &outbe_primitives::reshare_artifact::OutbeBlockArtifacts {
+                                radicle_publication_enabled: true,
+                                radicle_publication: Some(batch),
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap();
+                    block = ConsensusBlock::from_sealed(SealedBlock::seal_slow(raw));
+                }
                 shared
                     .block_cache
                     .insert_bounded(parent.digest(), parent.clone());
@@ -272,7 +304,9 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
                         request.round = Round::new(Epoch::new(1), View::new(1));
                         request.parent.0 = View::new(0);
                     }
-                    EarlyCase::MalformedPhase1 => {}
+                    EarlyCase::MalformedPhase1
+                    | EarlyCase::InvalidPublicationAnchor
+                    | EarlyCase::MissingPublicationAnchor => {}
                 }
                 let verify = shared.handle_verify(
                     &clock,
@@ -283,11 +317,15 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
                         execution_read_budget: budget,
                     },
                 );
-                if matches!(case, EarlyCase::MissingEpochAnchor) {
+                if matches!(
+                    case,
+                    EarlyCase::MissingEpochAnchor | EarlyCase::MissingPublicationAnchor
+                ) {
                     let cancel = async {
                         clock
                             .sleep(
                                 super::super::GENESIS_ANCHOR_WAIT_TIMEOUT
+                                    + crate::config::VERIFY_RESOLUTION_TIMEOUT
                                     + Duration::from_millis(10),
                             )
                             .await;
