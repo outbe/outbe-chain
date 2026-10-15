@@ -163,6 +163,9 @@ impl<R: Rail> World<R> {
         let quote = rail.quote(&mut world);
         assert_eq!(quote.currency, issuance_currency, "{rail:?}");
         assert!(!quote.cost.is_zero(), "{rail:?}");
+        if issuance_currency == 840 {
+            assert_eq!(quote.snapshot_id, U256::ZERO, "{rail:?}");
+        }
         world.cost = quote.cost;
         world.snapshot_id = quote.snapshot_id;
         rail.prepare(&mut world);
@@ -283,7 +286,7 @@ impl<R: Rail> World<R> {
         ]
     }
 
-    pub fn succeeds(&mut self, out: SubCallOutput) {
+    pub fn succeeds(&self, out: SubCallOutput) {
         assert!(
             matches!(out.status, SubCallStatus::Success),
             "{:?}: {:?}",
