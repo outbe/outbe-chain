@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 const DOMAIN: &[u8] = b"outbe.radicle.publication.v1";
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Body {
     chain: u64,
     genesis: [u8; 32],
@@ -14,6 +14,7 @@ struct Body {
     sequence: u64,
     previous: [u8; 32],
     manifest: [u8; 32],
+    anchor: (u64, [u8; 32]),
 }
 
 impl Body {
@@ -28,6 +29,8 @@ impl Body {
             &self.sequence.to_be_bytes(),
             &self.previous,
             &self.manifest,
+            &self.anchor.0.to_be_bytes(),
+            &self.anchor.1,
         ]
         .concat()
     }
@@ -113,6 +116,7 @@ pub fn check(package: &[u8]) {
         sequence: 1,
         previous: [0; 32],
         manifest: Sha256::hash(&[package]).0,
+        anchor: (10, [10; 32]),
     };
     let receipt = Sha256::hash(&[&body.encode()]).0;
     assert!(!model.authorize(receipt, package));
@@ -151,4 +155,40 @@ pub fn check(package: &[u8]) {
     println!(
         "MODEL ONLY: no production Vote/DKG/finality/registry/fetch implementation is claimed"
     );
+}
+
+// Witnesses passed here have already been verified against the same real native
+// signature in main. They are interchangeable evidence, not committed Git state.
+pub fn convergence_check(package: &[u8], witness_a: &[u8], witness_b: &[u8]) {
+    assert_ne!(witness_a, witness_b);
+    let candidate = |witness: &[u8], latest_finalized: u64| {
+        assert!(!witness.is_empty());
+        let pinned_anchor = 10;
+        assert!(latest_finalized >= pinned_anchor);
+        Body {
+            chain: 2026,
+            genesis: [7; 32],
+            repo: [8; 20],
+            epoch: 2,
+            sequence: 1,
+            previous: [0; 32],
+            manifest: Sha256::hash(&[package]).0,
+            anchor: (pinned_anchor, [10; 32]),
+        }
+    };
+    let a = candidate(witness_a, 11);
+    let b = candidate(witness_b, 200);
+    assert_eq!(a, b); // Different valid subsets/local tips cannot split the slots.
+    let keys: Vec<_> = (3..=6).map(bls12381::PrivateKey::from_seed).collect();
+    let mut model = Model::new(2, keys.iter().map(Signer::public_key).collect());
+    // Original failing schedule: first two see A, last two see B. The third
+    // attestation now seals a receipt; losing a fourth validator is harmless.
+    for (i, key) in keys.iter().enumerate().take(3) {
+        let body = if i < 2 { &a } else { &b };
+        assert!(model.attest(body, i, &key.sign(DOMAIN, &body.encode())));
+    }
+    assert_eq!(model.sequence, 1);
+    assert!(model.authorize(Sha256::hash(&[&a.encode()]).0, package));
+    assert!(!model.attest(&b, 3, &keys[3].sign(DOMAIN, &b.encode())));
+    println!("PASS convergence model: valid subsets 012/123, staggered 2+2 delivery, different local tips, q=3 without fourth participant; one exact checkpoint");
 }

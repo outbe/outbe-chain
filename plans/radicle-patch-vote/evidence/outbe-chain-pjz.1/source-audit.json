@@ -1,5 +1,5 @@
 {
-  "base_sha": "c965901802e735f402ba3e5e438baa66cdf9f90a",
+  "base_sha": "6c04f9ce7f0ee2ec41dfed1b52483e8e5cdbd770",
   "commonware_revision": "d476a2361ce6840d2b9d0aa6fb30a924429046d4",
   "anchors": [
     {
@@ -353,6 +353,70 @@
         142
       ],
       "sha256": "bd45c652e0cd4622df5b7df2474c90f9936e0b06d59b1ca5c88bc003af682d8a"
+    },
+    {
+      "id": "S34",
+      "path": "crates/blockchain/primitives/src/system_tx/layout.rs",
+      "anchor": "pub fn expected_begin_block_kinds_for_activation",
+      "lines": [
+        116
+      ],
+      "sha256": "aded59068e641db06a7713ba3eb2fa0b505312e6634f0fc7cf78658477c5f422"
+    },
+    {
+      "id": "S35",
+      "path": "crates/blockchain/primitives/src/system_tx/phase.rs",
+      "anchor": "pub enum SystemTxPhase",
+      "lines": [
+        22
+      ],
+      "sha256": "d7d833bad6e9fad266b64f3e18a4ae7b6a9de81a71eceb55799cb2f288154de8"
+    },
+    {
+      "id": "S36",
+      "path": "vendor/heartwood/crates/radicle/src/cob/store.rs",
+      "anchor": "pub fn update",
+      "lines": [
+        268
+      ],
+      "sha256": "5b7c1c1b05e31509f0005d6b3f05570e4017d0b01cf852bcdba5f077989dfb44"
+    },
+    {
+      "id": "S37",
+      "path": "vendor/heartwood/crates/radicle/src/cob/patch/cache.rs",
+      "anchor": "pub fn get",
+      "lines": [
+        261,
+        292
+      ],
+      "sha256": "b4cb6021733b0968b1dfe1d9d1dac645937c4aeb3181e3ab7d4d973faed845ce"
+    },
+    {
+      "id": "S38",
+      "path": "vendor/heartwood/crates/radicle-protocol/src/wire/frame.rs",
+      "anchor": "pub const PROTOCOL_VERSION_STRING",
+      "lines": [
+        13
+      ],
+      "sha256": "4965cc57376dce9891e9a1620f795e12cbec1d081dc4c8ca1758e62773803ebb"
+    },
+    {
+      "id": "S39",
+      "path": "vendor/heartwood/crates/radicle/src/node/features.rs",
+      "anchor": "pub const SEED",
+      "lines": [
+        15
+      ],
+      "sha256": "72aeb998f50061a2ec2e6bfe15e18a6f9dd902c535f9e06b1a09b17743a6bd00"
+    },
+    {
+      "id": "S40",
+      "path": "vendor/heartwood/crates/radicle-cob/src/object/collaboration/update.rs",
+      "anchor": "tips: object.history.tips()",
+      "lines": [
+        100
+      ],
+      "sha256": "7322db87f4483065aa0044368e91bb8ac05264f578f5c4c725d2add9b8025491"
     }
   ],
   "coupling_inventory_note": "Search candidates, not a claim every file must change. Transport stays Ed25519; classify before edits.",

@@ -1,79 +1,31 @@
 {
   "task_id": "outbe-chain-pjz.1",
-  "status": "candidate_awaiting_independent_reviews",
+  "status": "candidate_round2_awaiting_independent_reviews",
   "source_base": "42d08693a06a7fdc088cf452b582c2d18596ed9a",
-  "timestamp_utc": "2026-10-15T09:43:31.085870+00:00",
-  "claimed_ac_coverage": "README.md acceptance matrix; design.md selected contract",
+  "timestamp_utc": "2026-10-15T10:10:54.411684+00:00",
+  "previous_candidate": "2fa7187261d6338778abbc30f4e78b5a30187253",
+  "previous_review_verdicts": {
+    "R1": "FAIL",
+    "R2": "FAIL",
+    "R3": "FAIL"
+  },
   "independent_reviews": {
-    "R1": "pending",
-    "R2": "pending",
-    "R3": "pending"
+    "R1": "pending round2",
+    "R2": "pending round2",
+    "R3": "pending round2"
   },
   "production_implementation": "not_started",
-  "commands": [
-    {
-      "argv": [
-        "python3",
-        "plans/radicle-patch-vote/p0-check/audit_sources.py"
-      ],
-      "exit_code": 0,
-      "result": "39 source anchors, 141 coupling candidate files"
-    },
-    {
-      "argv": [
-        "cargo",
-        "run",
-        "--offline",
-        "--locked",
-        "--quiet",
-        "--manifest-path",
-        "plans/radicle-patch-vote/p0-check/Cargo.toml"
-      ],
-      "env": {
-        "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p0-target"
-      },
-      "exit_code": 0,
-      "stdout": "design-check.log",
-      "scope": "real BLS primitive plus reduced executable design model, not production handler"
-    },
-    {
-      "argv": [
-        "rustfmt",
-        "--edition",
-        "2021",
-        "--check",
-        "plans/radicle-patch-vote/p0-check/src/main.rs",
-        "plans/radicle-patch-vote/p0-check/src/publication.rs"
-      ],
-      "exit_code": 0
-    },
-    {
-      "argv": [
-        "bd",
-        "--readonly",
-        "lint",
-        "<40 feature IDs>"
-      ],
-      "exit_code": 0,
-      "stdout": "beads-lint.log"
-    },
-    {
-      "argv": [
-        "bd",
-        "--readonly",
-        "dep",
-        "cycles",
-        "--json"
-      ],
-      "exit_code": 0,
-      "stdout": "dependency-cycles.json"
-    }
-  ],
+  "claimed_ac_coverage": "README.md acceptance/correction matrix; design.md selected contract",
+  "spec_hash": "899e5eebf780f3daf8afe4cf807bd7e3db059a325bbc7a8672606a644c7a6b4c",
+  "spec_hash_algorithm": "SHA256(Beads parent description UTF-8 bytes), no added newline/title/JSON",
   "artifacts": {
-    "design.md": "f36c868f6c11bcb4939deb198c4605f2d5a4313a1e0634679c0a6dfd7e875bcd",
-    "task-specs.json": "091bd4810d7da888ebf7347f2730d77093ec3ccb6562e2a6279bffb7f413aefb",
-    "evidence/outbe-chain-pjz.1/README.md": "19e5696917505f3305117f12977772e969635c51d1db6a6f074c24eb6bd3b0ed",
-    "evidence/outbe-chain-pjz.1/source-audit.json": "17c3212c8991694f8915dcaa24ca9c405925b6704d3c2839a935be83c0f020c1",
-    "evidence/outbe-chain-pjz.1/design-check.log": "79deaf98b9276f03fb87a6ba9dd1b92f668a142393cb224e9682f62c36d7c3d7"
-  }
+    "design.md": "1959105903c02b1d483c0f9c03a5e7b13b4efbab04e2333899cfbd93204b53d1",
+    "task-specs.json": "a33fbe4ba82aa7040be7f4ce4e8ddc9a196f503aa2f7aa99f4bacce1fac251f1",
+    "evidence/outbe-chain-pjz.1/README.md": "52980a6d6c29372d209e57ccda3fb0d1926ad1b97c27ae97359dad8f4cf5d133",
+    "evidence/outbe-chain-pjz.1/source-audit.json": "6346b28056916996887ede2a9604733ce282a3bf91372b20455eb1a8658145f7",
+    "evidence/outbe-chain-pjz.1/design-check.log": "493fa160f280d0662f4bf6cdc6fbb18834d23ab40d860930d2a5c28d78dd044b",
+    "evidence/outbe-chain-pjz.1/check-environment.json": "5b1b8157bed8ff759f439f6fcce462e8ce5bdc2cbb223d1b5e71ed89eb0acc6a"
+  },
+  "commands": "check-environment.json; beads-lint.log; dependency-cycles.json",
+  "scope": "real BLS primitive + finite native vectors + reduced publication/convergence design model; not production P1–P8"
 }

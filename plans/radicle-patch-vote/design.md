@@ -2,7 +2,7 @@
 
 Статус: candidate для трёх независимых P0 reviews. Реализация P1–P8 ещё отсутствует.
 База исследования: `42d08693a06a7fdc088cf452b582c2d18596ed9a`.
-Source anchors S01–S28/C01–C05 разрешаются в `evidence/outbe-chain-pjz.1/source-audit.json`:
+Source anchors S01–S40/C01–C06 разрешаются в `evidence/outbe-chain-pjz.1/source-audit.json`:
 там exact paths, строки и SHA-256. `investigation.md` сохраняет первоначальные вопросы;
 решения ниже заменяют его открытые варианты, но не объявляют production реализацию.
 
@@ -12,7 +12,7 @@ Source anchors S01–S28/C01–C05 разрешаются в `evidence/outbe-cha
 Ed25519 остаётся для пользователей и Noise/NodeId. Heartwood не читает Vote, epoch
 ValidatorSet или EVM state. Его криптографический verifier проверяет key/message/signature.
 
-Разрешение нового canonical write в управляемом репозитории требует **двух** проверок:
+Разрешение нового canonical write **от managed owner** требует **двух** проверок:
 
 1. Все native BLS identity/COB/sigrefs signatures корректны под repository owner key.
 2. Outbe publication policy предъявила подтверждение, что exact package зафиксирован
@@ -24,10 +24,20 @@ repository/expected previous refs/package manifest и разрешает или 
 передаёт `crates/system/radicle`, используя только аутентифицированные сведения своего
 validating Outbe node. Внутри Heartwood нет ветки `if Vote Approved` или OutbeNetwork DID.
 
-Policy gate охватывает local writes и fetch/canonical refs/identity/cache promotion.
-Нельзя проверить только честный collector: получатель с пустым storage должен отклонять
-неавторизованный package. Immutable objects разрешено хранить в quarantine; они не
-влияют на canonical identity, patch evaluator или refs до проверки полного manifest.
+Policy gate охватывает **действия managed owner**, включая их использование через
+чужой namespace, при local writes, fetch, identity/refs promotion и чтении/rebuild cache.
+Обычный Ed25519 автор может создать, изменить и реплицировать patch/revision до Vote:
+его собственные COB entries и sigrefs проходят existing native signature/authorization
+правила без publication checkpoint. Они доступны evaluator и exact revision lookup.
+Это не разрешает автору подписываться за owner, менять delegate identity/owner refs
+или включать неразрешённые owner entries как родителей своего COB. Каждая reachable
+owner-signed entry требует exact accepted receipt независимо от доставившего namespace.
+Смешанный graph проверяется по entry, не по внешнему transport/remote key; чужая ссылка
+на forged owner Review/Merge не легализует его. Неразрешённые owner entries и зависимые
+updates quarantined; чистые author updates не блокируются. Кэш хранит receipt provenance
+owner entries; direct lookup, reopen и rebuild применяют тот же predicate до evaluation.
+Нельзя проверить только честный collector: получатель с пустым storage обязан применять
+эти правила. Immutable quarantined objects не влияют на canonical identity/patch/refs.
 Репозиторий помечается managed в доверенной локальной конфигурации из genesis descriptor;
 peer, отсутствующая запись или неизвестная policy не могут включить permissive fallback.
 
@@ -59,8 +69,8 @@ Unknown codec/length, noncanonical encoding, zero/infinity и неверный s
 | kind | native payload | metadata commitment |
 | --- | --- | --- |
 | 1 / identity | OID canonical identity document blob, 20 bytes | 32 zero bytes |
-| 2 / COB | operation tree OID, 20 bytes | SHA256 canonical commit metadata без signature header |
-| 3 / sigrefs | exact `Refs::canonical()` bytes | SHA256 previous sigrefs commit OID (zero для root) |
+| 2 / COB | operation tree OID, 20 bytes | SHA256 exact unsigned Git commit buffer (§2.1) |
+| 3 / sigrefs | exact `Refs::canonical()` bytes | SHA256(previous sigrefs commit OID[20]); zero OID[20] для root |
 
 BLS message V1 имеет fixed framing:
 
@@ -74,17 +84,60 @@ RDB1[4] || kind:u8 || repo_id[20] || policy_context[32] || metadata_hash[32]
 context, описанного ниже; generic crypto не интерпретирует его. Для обычного static
 BLS repo context нулевой. Managed policy отвергает нулевой/неожиданный context.
 
-Envelope сохраняет все поля message и signature[48]. Для COB это отдельный versioned
-`radicle-bls-sig` Git header; existing `gpgsig` SSH parser не переопределяется. Identity
-action signature принимает tagged BLS envelope или legacy Ed25519 representation.
-Sigrefs `/signature` хранит legacy 64 bytes либо envelope с magic `RDB1`; прочие
-форматы не допускаются. Проверяющий восстанавливает message из actual object, не
-доверяет дублированным payload/meta fields envelope. Все envelopes одного package
-проверяются до canonical promotion.
+Envelope V1 = exact RDB1 message[125] || compressed owner key[96] || signature[48],
+ровно 269 bytes. Signature покрывает message[125], key обязан совпадать с actor/delegate.
+COB header — одна строка `radicle-bls-sig <538 lowercase hex characters>\n`, без folding.
+Legacy `gpgsig` запрещён вместе с этим header; SSH parser не переопределяется. Identity
+action signature — JSON object ровно с полями `algorithm: "bls12381-g2-v1"`,
+`envelope: "<538 lowercase hex>"`; legacy Ed25519 representation неизменен. Unknown,
+duplicate или лишние поля отвергаются. Sigrefs `/signature` хранит legacy 64 raw bytes
+либо 269-byte envelope с magic `RDB1`. Truncation, trailing bytes, upper/mixed hex,
+unknown kind, неверная длина/payload hash/meta/context отвергаются. Проверяющий
+восстанавливает message из actual object, не доверяет дублированным полям envelope.
+Все owner envelopes и receipts проверяются до использования entries/promotion.
 
-Repository wire messages/namespaces получают versioned format для RepositoryKey.
-Existing NodeId frames остаются 32-byte Ed25519. Unsupported peers получают явный
-unsupported-format отказ для BLS, без misparse или downgrade; Ed25519 exchange сохраняется.
+### 2.1. Exact metadata, namespace и wire V1/V2
+
+Unsigned COB buffer — exact Git commit content, без Git object `commit <length>\0`
+prefix и без единственного physical `radicle-bls-sig` header. Его grammar:
+`tree OID\n`, затем ordered `parent OID\n` (без duplicates),
+`author NAME <EMAIL> SECONDS OFFSET\n`, `committer NAME <EMAIL> SECONDS OFFSET\n`,
+пустая строка, затем UTF-8 message, оканчивающееся LF. OID — 40 lowercase hex;
+NAME/EMAIL не содержат CR/LF/NUL/`<`/`>`; SECONDS — i64 decimal без leading zeros или
+`-0`; OFFSET — `+HHMM` или `-HHMM`, HH≤23/MM≤59 (нулевой только `+0000`). Угловые
+скобки вокруг EMAIL — literal Git delimiters; uppercase слова обозначают placeholders.
+V1 BLS COB не допускает другие headers, CR, NUL, folding или несколько signature headers.
+Message включает exact existing Resource/Related trailers, без их удаления/нормализации.
+Подписанный header вставляется после committer перед пустой строкой; verifier удаляет
+только эту одну строку, проверяет grammar и хеширует остальные bytes буквально.
+Tree OID из buffer обязан совпадать с native subject. Managed metadata/parent snapshot
+единственны по §6; static BLS author может выбрать допустимые author/time/parents/message,
+но подпись защищает все эти bytes. Результат не зависит от Git config или process env.
+
+Namespace textual key = `z` + base58btc(canonical multicodec varint || compressed key),
+без `did:key:`; Ed25519 text и существующие namespace paths не меняются. DID добавляет
+`did:key:` к этому key. Binary RepositoryKey V2 = `tag:u8 || key`, tag0=Ed25519[32],
+tag1=BLS G2[96]. Внутри tagged поля нет длины/padding; unknown tag, short/trailing input
+в standalone key, noncanonical/subgroup/identity key отвергаются. Binary NodeId остаётся
+untagged Ed25519[32] в обеих версиях.
+
+Legacy frame `rad\x01` и legacy RefsAt remote[32]||at[20] неизменны. Upgrade объявляет
+feature bit `1<<63` в existing u64 Node Features (сейчас занят только SEED bit0).
+Первичные control/gossip остаются V1. После получения authenticated peer capabilities
+и отправки своего announcement peer может послать V1 control Upgrade: control type3,
+payload byte `02`. Receiver, проверив оба capability, отвечает V1 control UpgradeAck:
+type4, payload `02`. Ни stream id, ни длина внутрь этих двух control payload не добавляются;
+existing outer Frame framing неизменен. Incoming V2 разрешён после отправки Ack, outgoing
+V2 — после получения Ack. Upgrade/Ack idempotent в пределах Noise connection; disconnect
+сбрасывает negotiation. Unsupported version/control/необъявленная capability отклоняются.
+Тем самым ACK гонка не заставляет отправлять V2 peer, который ещё принимает только V1.
+После этого допускаются `rad\x02` frames. V2 отличается только кодированием repository
+key fields (RefsAt.remote и repository namespace lists): tag+key вместо Ed32; остальные
+поля/varints/message tags/limits неизменны. Transport authentication/announcements signer
+по-прежнему NodeId. Ненеготированный V2 отклоняется. BLS request к V1-only peer возвращает
+explicit UnsupportedRepositoryKey, не кодируется в legacy remote и не понижается до Ed.
+Ed-only replication может оставаться V1 между любыми peers. Git protocol namespace
+strings используют canonical textual key выше и existing refname validation.
 
 ## 3. Откуда берутся shares и почему это не готовый arbitrary signer
 
@@ -126,6 +179,15 @@ output, не из сортировки произвольного RPC списк
 commitments и n/threshold/material generation в одном exact finalized block (S19–S24).
 При несовпадении jobs приостанавливаются. Epoch, block height и material version — разные поля.
 
+`players_commitment` = SHA256(`OPL1` || n:u16be || ordered entries), entry =
+index:u32be || EVM address[20] || current MinPk public key[48]. Entries идут в exact DKG
+players order, indices contiguous 0..n-1. `material_hash` = SHA256(`ODM1` || epoch:u64be
+|| version:u64be || players_commitment[32] || output_length:u32be || public Output.encode()),
+где Output — pinned Commonware `feldman_desmedt::Output<MinSig, identity key>`; его
+summary/public/dealers/players/revealed encoding определяется SDK, secret Share исключён.
+Alternate proofs canonical Output не меняют. Honest nodes получают один Output из
+canonical dealer logs; несовпадение — explicit material fault, не выбор другого candidate.
+
 Signing threshold — `q = n - floor((n-1)/3)` pinned N3f1. Collector проверяет identity
 каждого sender, индекс, membership, current polynomial partial public key, namespace,
 полный message и duplicate index **до** сохранения и recovery. Partial frame содержит
@@ -162,19 +224,40 @@ output, а не с присланным peer ключом. Это BFT authorizat
 DKG output commitment, он дополнительно обязан совпасть. Review/Merge требуют terminal
 Approved именно указанного repo/patch/revision.
 Manifest перечисляет exact Git object type/OID/SHA256(bytes), desired ref updates
-с old/new OIDs, native subjects/envelopes и canonical metadata. Manifest также содержит public DKG output или его content-addressed proof, сопоставленный
-с authenticated material hash, и q distinct current partial frames для каждого native
-subject. Receiver может независимо проверить и этот contribution proof, не доверяя
-только итоговой owner signature. Publication identity signatures не входят в manifest.
-Manifest entries сортированы по type/path/OID, partial frames по subject ordinal/index;
-duplicates запрещены. Максимальный размер manifest — 1 MiB, число native subjects
+с old/new OIDs, native subjects/envelopes и canonical metadata. **Manifest не включает
+interchangeable contribution witnesses**: public DKG proof и q indexed partial frames
+передаются в отдельном witness bundle. Bundle обязан сопоставляться с body material hash
+и exact native subjects; каждая partial проверяется до recovery/attestation. Receiver
+также проверяет q current frames для каждого subject независимо от owner signature.
+Разные valid q-subsets разрешены и дают один manifest/body; witness substitution допустима
+только при повторной полной проверке. Witness bytes не являются Git objects/refs и не
+влияют на owner state. Identity attestations также не входят в manifest.
+Manifest содержит ровно newly created native objects и deterministic desired owner refs
+snapshot (§6), не произвольные extra reachable author objects; content closure доставляется
+отдельно и проверяется по OIDs. Objects сортированы по kind/OID, refs по имени,
+subjects по ordinal; duplicates запрещены.
+Witness frames отсортированы по subject ordinal/index, duplicates запрещены, отдельный
+bundle ограничен 1 MiB. Максимальный размер manifest — 1 MiB, число native subjects
 не больше трёх (bootstrap Doc/COB/refs); Review и Merge содержат COB/refs. Сам certificate не входит в hash
 package; circular self-signing отсутствует. Typed `action` и context связывают actual
 native Review/Merge с chain permission; signature над произвольным code commit не подходит.
 
+Manifest V1 — UTF-8 canonical JSON через existing Heartwood `canonical::formatter::CanonicalFormatter` (как Doc::encode),
+без whitespace/extra fields: `version:1`, `objects:[{kind,oid,sha256}]`,
+`refs:[{name,old,new}]`, `subjects:[{ordinal,envelope}]`,
+`ownerSnapshot:[{name,oid}]`. kind — `blob`/`tree`/`commit`; OID — lowercase hex40,
+SHA256 — hex64, envelope — hex538; zero OID только отсутствие old/new ref, не object.
+Objects включают ровно созданные blobs/trees/commits native action, sigrefs и clean merge;
+уже pinned dependencies не дублируются. Snapshot содержит complete desired owner refs,
+исключая сам sigrefs ref. `refs` дополнительно включает update sigrefs branch; отсутствие
+изменения не создаёт ref delta. BindMaterial: первые три arrays пусты, snapshot предыдущий.
+Key sorting recursive canonical serializer; array ordering выше; duplicate JSON keys,
+invalid refname, repeated OID/name/ordinal и size limit нарушают canonical format.
+
 Body принимается в chain **по одной bounded identity attestation за раз**. Verified
-distinct current MinPk signatures учитываются по `(repo, epoch, sequence, body_hash)`;
-один participant не аттестует два body одной sequence. Ровно q действительных участников
+distinct current MinPk signatures учитываются по `(repo, epoch, material_version,
+material_hash, sequence, body_hash)`; один participant не аттестует два body одной
+sequence **в одной current material generation**. Ровно q действительных участников
 завершают checkpoint. Проверяются current epoch/material commitment, `previous_receipt_hash`
 и sequence CAS, Approved subject/step, descriptor/RID и непогашенная execution stage.
 Окончательный receipt атомарно фиксирует manifest hash и новое chain-managed состояние.
@@ -193,9 +276,13 @@ proposer берёт уже подписанные frames из bounded nonblockin
 threshold, не ждёт sidecar и не выполняет Git I/O. Absence поля всегда допустимо.
 DKG и Radicle не заменяют один и тот же enum slot: это два независимых optional record.
 Begin-zone Radicle application идёт после committee boundary activation и Vote hooks,
-с использованием effective execution-state set этого шага. Attester выбирает anchor
-только из проверенной local finality; genesis anchor разрешён только для bootstrap.
-Для остальных actions anchor state должен содержать permission/material. Node verifier
+с использованием effective execution-state set этого шага. Anchor **единственный для job**:
+bootstrap — genesis; BindMaterial — activation block текущего epoch; Review/Merge — блок
+с максимальной height среди terminal approval, current material binding и previous receipt.
+Hash/height берутся из своей проверенной canonical finalized chain; если нужный блок ещё
+не finalized, attester ждёт его, а не выбирает более новый локальный tip. В BindMaterial
+anchor уже полномочен current identity set, а новый output отдельно заверяется этим set.
+Для Review/Merge anchor state содержит permission/material. Node verifier
 проверяет ancestry этого anchor и доступный authenticated finalized context до допуска
 artifact; EVM storage handler не объявляет самостоятельно блок финализированным.
 Verifier выполняет только bounded deterministic crypto/storage checks. Invalid artifact
@@ -210,7 +297,9 @@ body, поэтому нельзя подменить material при неизм�
 Boundedness: n не больше существующего consensus bound 256. Одна attestation содержит
 fixed body, index и одну MinPk signature; проверка constant crypto + bounded state read.
 Нет q pairing loop внутри одного block/precompile call. Pending state — фиксированные
-slots по participant index (максимум 256), каждый содержит epoch/sequence/body hash.
+slots по participant index (максимум 256), каждый содержит epoch/material generation/
+sequence/body hash. Смена material аннулирует pending slots даже внутри одного epoch;
+новая generation может использовать незавершённую sequence заново.
 Generation tags делают старые slots неактивными без неограниченной очистки. Для tally
 допустим scan этих ≤256 slots, но не их crypto re-verification. Conflicting candidate
 не создаёт новые storage keys: один index занимает один slot для sequence. Finalized
@@ -249,6 +338,14 @@ receipt hash остаётся precondition chain execution, а не требов
 - Историческая проверка читает immutable chain receipt/commitments и native signatures;
   она не принимает произвольные backdated certificates от old quorum. Cached crypto-valid
   objects без receipt не повышаются до authoritative history.
+- Для одного execution job honest collectors получают одинаковые native bytes (§6),
+  уникальную recovered BLS signature, один manifest без interchangeable witnesses и один
+  job-derived anchor. Их body совпадает при любых valid q-subsets и разных local tips.
+  Honest attester не подписывает body, отличающийся от independently reconstructed job.
+  Неизменяемый slot поэтому не блокирует honest convergence: ≤f Byzantine slots могут
+  занять другие hashes, остальные ≥q honest slots сходятся на одном. Требуются доставка
+  всех закреплённых author objects и q shares/attestations; неподтверждённый candidate
+  не меняет metadata/parents job. Contention approvals сериализуются по §6.
 - Требуется eventual stable committee и доставка q attestations для liveness. При
   постоянной churn/partition repo может ждать; consensus после bootstrap продолжает
   работу. Чудесной гарантии progress без q online участников нет.
@@ -309,6 +406,32 @@ job-base hash: оно отдельно защищено RDB1, поэтому doc
 actual revision и target, не `latest()`. Авторское обновление/редактирование target не
 расширяет approval. No-voter может подписать корректное исполнение Approved.
 
+Preparation snapshot **не равен локальному latest COB graph**. Для Review COB tips —
+exact approved revision entry плюс previous accepted owner COB tip этого patch из
+previous receipt, если он существует. Для Merge tips — finalized Review entry данного
+approval плюс previous accepted owner tip. Resource — accepted canonical identity tip
+из previous receipt. Related — только required code commit refs exact action (пусто для
+Review; merge result для Merge). Commit parents: ordered COB tips (lexicographic raw OID,
+dedup), затем sorted/dedup Related, затем Resource, с сохранением первого вхождения при
+повторении. Resource/Related trailers отражают те же sorted lists. Все ancestor/object
+dependencies pinned этими OIDs; новые author tips после approved revision не добавляются.
+Signer проверяет нужный native state именно на этом graph slice. Missing objects ждут
+fetch; malformed pinned graph завершает execution явной ошибкой, не меняет snapshot.
+
+Managed action JSON и manifest используют existing canonical serializers, фиксированные
+значения и field order, без local clock/random IDs. Author/committer всегда `Outbe Network`
+`<network@outbe.invalid>` UTC; timestamp Review/Merge — timestamp terminal approval block,
+bootstrap — genesis timestamp. Message `Bootstrap repository\n`, `Accept patch\n` либо
+`Merge patch\n` + required native trailers; нельзя добавлять collector/local metadata.
+Owner signed refs snapshot = предыдущий accepted complete snapshot + ровно action updates
+(bootstrap identity/default head/COB; Review patch COB; Merge head/patch COB), sigrefs ref
+не подписывает сам себя. Previous sigrefs commit берётся из previous receipt. Новые
+sigrefs commit metadata фиксированы теми же actor/time и `Update signed refs\n`.
+BindMaterial — metadata-only chain checkpoint: native subjects/objects пусты, owner refs
+snapshot unchanged; manifest фиксирует это единственное no-op, не заново подписывает refs.
+Таким образом optional extra objects, доставка witness subset, локальный Git config,
+новейший author tip и более новый finalized tip не меняют honest candidate bytes.
+
 Сначала публикуются Review Accept + его signed refs через отдельный finalized checkpoint.
 Затем merge: если current target head отличается от expectedTargetHead — состояние
 `ApprovedUnmerged(TargetMoved)`, нужен новый Vote с новой precondition. Если совпадает,
@@ -350,6 +473,8 @@ Ed25519 workflow обязаны пройти реальный fetch/reopen/tampe
 
 P3: `consensus/hybrid/vrf_material.rs` narrow fixed-domain signer, engine finalized DKG
 mapping; `primitives/reshare_artifact` и consensus/engine header-artifact bundle carrier;
+`primitives/src/system_tx/{kind,input,layout,phase,binding,gas}.rs` и tests/ — actual
+codec, activation и begin order; EVM re-export не владеет отдельным system_tx/ codec.
 `radicleregistry` typed publication attestation/checkpoint runtime/schema; validating
 node ↔ local sidecar authenticated ticket interface. Проверить real namespace isolation,
 old shares/current identity rejection, membership transition, constant per-block work
@@ -366,6 +491,8 @@ other Vote targets unchanged и невозможность receipt для не A
 
 P6: `crates/system/radicle` collector/journal/package/checkpoint publishing, P3 bounded
 carrier bridge в `crates/blockchain/radicle`/launch wiring. Проверить two collectors,
+different valid witness subsets/local tips/extra author tips → identical native package,
+pre-Vote author admission и owner-entry laundering negatives во всех entry/cache paths,
 partial sender/index/domain validation, bad/missing receiver ticket, empty fresh receiver,
 raw old-owner forgery без checkpoint, race before/after checkpoint и crash boundaries.
 
@@ -377,6 +504,9 @@ genesis→patch→Vote→finality→threshold→checkpoint→Review→Merge→fe
 membership attacks, liveness при sidecar outage, required checks/CI и operator runbook.
 
 P0 evidence — source matrix, exact primitive/model checks и этот выбранный контракт.
+`p0-check/src/native.rs` и vectors/ дают finite byte/crypto vectors; fixture parsers не
+production parsers. `design-check.log` содержит actual native payloads, OPJ1/RDB1 bytes,
+Commonware framing, metadata hashes, signatures/envelopes и repository-key wire bytes.
 Они доказывают проектное решение и осуществимость примитивов, а не наличие checkpoint,
 generic policy hook, signer, bootstrap, VoteTarget или E2E в production source.
 Не закрывать P0 до трёх независимых full-AC reviews этого документа и evidence на одном SHA.

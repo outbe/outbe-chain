@@ -1,5 +1,5 @@
 """Reproduce the P0 source inventory, not an implementation or correctness test."""
-import hashlib,json,os,subprocess,tomllib
+import argparse,hashlib,json,os,subprocess,tomllib
 from pathlib import Path
 root=Path(__file__).resolve().parents[3]
 with (root/'Cargo.lock').open('rb') as lockfile:
@@ -51,6 +51,13 @@ anchors=[
 ('S31','crates/blockchain/evm/src/config/system_txs.rs','fn system_tx_expectations_for_block'),
 ('S32','crates/blockchain/consensus/src/proof/constants.rs','pub fn hybrid_seed_namespace'),
 ('S33','crates/blockchain/consensus/src/dkg_manager.rs','let info = Info::<MinSig'),
+('S34','crates/blockchain/primitives/src/system_tx/layout.rs','pub fn expected_begin_block_kinds_for_activation'),
+('S35','crates/blockchain/primitives/src/system_tx/phase.rs','pub enum SystemTxPhase'),
+('S36','vendor/heartwood/crates/radicle/src/cob/store.rs','pub fn update'),
+('S37','vendor/heartwood/crates/radicle/src/cob/patch/cache.rs','pub fn get'),
+('S38','vendor/heartwood/crates/radicle-protocol/src/wire/frame.rs','pub const PROTOCOL_VERSION_STRING'),
+('S39','vendor/heartwood/crates/radicle/src/node/features.rs','pub const SEED'),
+('S40','vendor/heartwood/crates/radicle-cob/src/object/collaboration/update.rs','tips: object.history.tips()'),
 ]
 rows=[]
 for key,path,needle in anchors:
@@ -68,5 +75,13 @@ result=dict(base_sha=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root
  coupling_inventory_note='Search candidates, not a claim every file must change. Transport stays Ed25519; classify before edits.',
  coupling_candidates=[dict(path=p,sha256=hashlib.sha256((root/p).read_bytes()).hexdigest()) for p in sorted(paths)])
 output=root/'plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/source-audit.json'
-output.write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
-print(f'{len(rows)} checked anchors; {len(paths)} coupling candidate files; base {result["base_sha"]}')
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--write',action='store_true',help='regenerate source inventory; default is read-only verification')
+args=parser.parse_args()
+if args.write:
+ output.write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
+else:
+ recorded=json.loads(output.read_text())
+ for key in ('commonware_revision','anchors','coupling_inventory_note','coupling_candidates'):
+  assert recorded[key]==result[key],f'stale source inventory: {key}; inspect before --write'
+print(f'{len(rows)} checked anchors; {len(paths)} coupling candidate files; live HEAD {result["base_sha"]}; write={args.write}')

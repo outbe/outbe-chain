@@ -1,8 +1,9 @@
 //! Primitive feasibility check, not a production DKG or authorization implementation.
-use commonware_codec::Encode;
+use commonware_codec::{DecodeExt, Encode};
 use commonware_cryptography::bls12381::{
     dkg::feldman_desmedt::deal_anonymous,
     primitives::{
+        group::G1,
         ops::{self, threshold},
         sharing::Mode,
         variant::MinSig,
@@ -11,6 +12,7 @@ use commonware_cryptography::bls12381::{
 use commonware_parallel::Sequential;
 use commonware_utils::{Faults, N3f1, TestRng, NZU32};
 
+mod native;
 mod publication;
 
 fn hex(bytes: &[u8]) -> String {
@@ -80,4 +82,36 @@ fn main() {
     assert_eq!(signature.encode().len(), 48);
     let package = [subject.as_slice(), signature.encode().as_ref()].concat();
     publication::check(&package);
+    let witness = |indices: &[usize]| {
+        let mut bytes = Vec::new();
+        for i in indices {
+            bytes.extend_from_slice(&(*i as u32).to_be_bytes());
+            bytes.extend_from_slice(&partials[*i].value.encode());
+        }
+        bytes
+    };
+    publication::convergence_check(&package, &witness(&[0, 1, 2]), &witness(&[1, 2, 3]));
+    native::check(
+        &old.public().encode(),
+        |message| {
+            let parts: Vec<_> = shares
+                .iter()
+                .map(|s| threshold::sign_message::<MinSig>(s, namespace, message))
+                .collect();
+            for part in &parts {
+                threshold::verify_message::<MinSig>(&old, namespace, message, part).unwrap();
+            }
+            let first = threshold::recover::<MinSig, _>(&old, &parts[..3], &Sequential).unwrap();
+            assert_eq!(
+                first,
+                threshold::recover::<MinSig, _>(&old, &parts[1..], &Sequential).unwrap()
+            );
+            first.encode().to_vec()
+        },
+        |message, signature| {
+            G1::decode(signature).is_ok_and(|s| {
+                ops::verify_message::<MinSig>(old.public(), namespace, message, &s).is_ok()
+            })
+        },
+    );
 }

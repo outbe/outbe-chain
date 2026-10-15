@@ -15,12 +15,14 @@
       "plans/radicle-patch-vote/design.md (новый контракт и source matrix)",
       "vendor/heartwood/crates/radicle-crypto/src/{lib.rs,ssh.rs}; vendor/heartwood/crates/radicle/src/{identity,cob,storage,node}; vendor/heartwood/crates/radicle-cob/src/backend/git/change.rs (исследование)",
       "crates/blockchain/consensus/src/{hybrid.rs,hybrid/vrf_material.rs,dkg_manager.rs}; crates/blockchain/engine/src/stack/dkg/ (исследование)",
-      "crates/system/vote/src/{runtime.rs,state.rs,handlers.rs}; crates/system/radicleregistry/src/; scripts/genesis_seed_alloc.py; crates/blockchain/radicle/src/manager/snapshot.rs (исследование)"
+      "crates/system/vote/src/{runtime.rs,state.rs,handlers.rs}; crates/system/radicleregistry/src/; scripts/genesis_seed_alloc.py; crates/blockchain/radicle/src/manager/snapshot.rs (исследование)",
+      "plans/radicle-patch-vote/p0-check/{src/main.rs,src/publication.rs,src/native.rs,vectors/,audit_sources.py,verify_vectors.py}; plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/ (finite design proofs, not production source)"
     ],
     "tests": [
       "Проверка каждого design claim по live source с path:line и существующими тестами; таблица всех blockers с выбранным решением и обоснованием.",
       "Минимальный executable crypto/serialization self-check только если источник/документация не закрывают конкретную осуществимость; результат не является production implementation.",
-      "Threat scenarios для old shares, wrong epoch/domain/network, race committee transition и self-asserted group key; доказать, какое правило их отклоняет."
+      "Threat scenarios для old shares, wrong epoch/domain/network, race committee transition и self-asserted group key; доказать, какое правило их отклоняет.",
+      "Native byte vectors: actual Git doc blob/COB tree/commit OIDs; all three RDB1 messages and Commonware framing, OPJ1 contexts, 269-byte envelope/header/key wire roundtrip, metadata/cross-kind/length/tamper negatives. Reduced convergence model: different valid q-subsets, staggered 2+2 delivery and different local finalized tips yield one checkpoint without all n."
     ],
     "ac": [
       "На все перечисленные design blockers есть конкретное реализуемое решение и source evidence; нет TBD, отложенного решения или скрытой смены требований.",
@@ -78,7 +80,8 @@
       "Провести BLS через DID/delegate identity, COB signing/verification и signed refs, namespaces, fetch/validation и cache paths; определить версию format/feature negotiation и явный отказ неподдерживающего reader.",
       "Сохранить native signing semantics и exact signed bytes; сделать prepare/signature-attachment/apply interface, пригодный для асинхронного threshold signing без блокировки node reactor.",
       "Дать integration tests возможность создать BLS-owned repo, подписать identity/Review/refs и передать их второму узлу; обычный Ed25519 patch author работает в таком repo.",
-      "Добавить generic PublicationPolicy gate перед local/fetch/cache canonical promotion; static BLS/Ed25519 остаются native. Outbe policy реализуется вне Heartwood; защищённый repo не может fallback в permissive mode."
+      "Добавить generic PublicationPolicy gate перед local/fetch/cache canonical promotion; static BLS/Ed25519 остаются native. Outbe policy реализуется вне Heartwood; защищённый repo не может fallback в permissive mode.",
+      "PublicationPolicy distinguishes managed-owner entries/refs from ordinary author activity inside governments. Ed25519 patch/revision and own sigrefs replicate before Vote under native authorization. Every reachable owner entry needs receipt even through author namespace; apply same predicate at local/fetch/evaluator/direct lookup/cache reopen/rebuild. Exact RDB1/metadata/header/key namespace and rad1/rad2 negotiation follow design.md §2.1."
     ],
     "files": [
       "vendor/heartwood/crates/radicle-crypto/src/{lib.rs,ssh.rs}; новый BLS module/encoding по P0",
@@ -92,7 +95,8 @@
       "Identity/COB/sigrefs tampering, key/signature mismatch и cross-domain replay; BLS-only authority нельзя заменить Ed25519 transport signature.",
       "Реальный двухузловой fetch/reopen BLS repo с Ed25519 patch author, BLS Review и signed refs; existing Ed25519 repo workflow и Noise connection regression.",
       "Unsupported format/version явно отклоняется, а не интерпретируется как Ed25519; affected Heartwood package suites и root consumers build/test.",
-      "Fresh receiver: crypto-valid object без policy ticket не становится canonical; legacy Ed25519 workflow и static BLS fetch проходят."
+      "Fresh receiver: crypto-valid object без policy ticket не становится canonical; legacy Ed25519 workflow и static BLS fetch проходят.",
+      "Unapproved ordinary Ed25519 patch/revision reaches second node and exact lookup/cache before Vote. Forged owner Review/Merge embedded in that author graph is rejected across local/fetch/cache/direct lookup without blocking pure author entries. Native vectors match P0; V1 legacy and negotiated V2 preserve Ed transport and reject unsupported BLS/downgrade."
     ],
     "ac": [
       "Второй узел независимо принимает валидные BLS identity/COB/refs и отвергает подменённые объекты через production verifier.",
@@ -122,14 +126,15 @@
       "crates/blockchain/consensus/src/{hybrid.rs,hybrid/vrf_material.rs,dkg_manager.rs,committee_provider.rs}; crates/blockchain/engine/src/stack/dkg/ (только доказанно нужный interface)",
       "bin/outbe-chain/src/launch/node/radicle.rs; crates/system/radicle/src/; vendor/heartwood/crates/radicle/src/identity/ (wiring rotation по P0)",
       "crates/blockchain/radicle/tests/; crates/blockchain/engine/src/stack/tests/ и crypto vectors",
-      "crates/blockchain/primitives/src/reshare_artifact.rs и codec modules; crates/blockchain/node/src/payload_builder/ и artifact size budget; crates/blockchain/evm/src/{config/system_txs.rs,system_tx/,begin_block_precompile/,executor/}; crates/system/radicleregistry/src/ (checkpoint schema/runtime append-only)"
+      "crates/blockchain/primitives/src/reshare_artifact.rs и codec modules; crates/blockchain/node/src/payload_builder/ и artifact size budget; crates/blockchain/primitives/src/system_tx/{kind.rs,input.rs,layout.rs,phase.rs,binding.rs,gas.rs,tests/}; crates/blockchain/evm/src/{config/system_txs.rs,begin_block_precompile/,executor/}; crates/system/radicleregistry/src/ (checkpoint schema/runtime append-only)"
     ],
     "tests": [
       "Реальные 4 participant threshold fixtures: достаточный t и разные subsets дают одну валидную signature; t-1, bad partial, wrong index, duplicate и outsider не дают результата.",
       "Wrong network/repo/domain/material, ACTIVE-but-not-effective и effective/material mismatch не подписывают; excluded validator не участвует после finalized transition.",
       "Committee сменяется до sign, между partials и перед publish; старые shares и смешанные generations отвергаются на production verification path, а историческая valid signature читается.",
       "Signer key access не экспортирует secret; consensus/VRF regression если затронуты shared material interfaces.",
-      "Проверить namespace/VRF isolation, current DKG mapping, guarded receipt authorization и maximum n=256 per-block crypto/state budget; old group signature без current checkpoint отвергается receiver policy."
+      "Проверить namespace/VRF isolation, current DKG mapping, guarded receipt authorization и maximum n=256 per-block crypto/state budget; old group signature без current checkpoint отвергается receiver policy.",
+      "Ancillary carrier V0x0C activation/begin layout/phase/binding/gas tests in primitives/src/system_tx/tests plus EVM wiring; tag4 retired, mandatory artifacts preserved. One-slot attestations converge for deterministic body with separate verified witnesses and pinned job anchor; wrong body cannot consume honest slot."
     ],
     "ac": [
       "Membership, индекс, threshold и group public key получены из одного аутентифицированного finalized context, не из peer-supplied claims.",
@@ -227,7 +232,8 @@
       "Wire partial delivery между sidecars с явной Outbe integration policy и bounded queues/frame sizes/deadlines/rate limits; не делать node без validating chain authority доверенным источником eligibility.",
       "Любой collector может собрать один результат; duplicate/out-of-order/replayed frames не увеличивают threshold. Отделить job identity от content-addressed signing bytes; повторная подготовка после restart детерминирована.",
       "При membership/material change прекратить старый job; проверить fresh authority и approval перед publish. Консенсус после bootstrap продолжает работу при отказе collector.",
-      "Собирать реальные native BLS partials, затем manifest с contribution proofs и current identity attestations. Публиковать только после finalized checkpoint; generic fetch/local gate получает authenticated ticket от validating node по защищённому local interface."
+      "Собирать реальные native BLS partials, затем manifest с contribution proofs и current identity attestations. Публиковать только после finalized checkpoint; generic fetch/local gate получает authenticated ticket от validating node по защищённому local interface.",
+      "Manifest commits deterministic native objects/envelopes and owner refs, excludes interchangeable DKG/partial witness bundles. q witnesses are still fully validated. Anchor is job-derived, not local tip; COB tips/resource/related/metadata derive only from pinned revision + accepted receipts, never latest local graph. Two honest collectors reconstruct identical body independent of q-subset/local author updates."
     ],
     "files": [
       "crates/system/radicle/src/ (новые collector, journal и publication modules; lib.rs wiring); crates/system/radicle/tests/",
@@ -241,7 +247,8 @@
       "Автор patch публикует новую revision после Vote; старая approval не разрешает новую. Wrong repo/patch/tree/refs, nonfinal/Expired/Error approval не подписываются.",
       "Crash/restart до и после journal write/recover/Review publish/sigrefs publish; duplicate delivery; bounded queues и malicious sender flood.",
       "Committee changes на receive/recover/publish, collector offline, proposer offline, threshold-1 и задержки; chain finality не ожидает collector.",
-      "Проверить пустой receiver, raw old owner forgery, altered package, stale context, race до/после checkpoint, изоляцию policy cache и отказ при missing/untrusted ticket."
+      "Проверить пустой receiver, raw old owner forgery, altered package, stale context, race до/после checkpoint, изоляцию policy cache и отказ при missing/untrusted ticket.",
+      "Two collectors with different valid subsets 012/123, staggered 2+2 deliveries, different finality tips and extra unapproved author tips converge to identical native bytes/body/checkpoint with q online (not all n). Invalid witness rejected despite unchanged manifest; author pre-Vote admission plus owner-entry laundering negative via each fetch/cache/direct path."
     ],
     "ac": [
       "Review появляется только из finalized Approved точной revision, подписан native BLS authority и проверяется независимым узлом.",
@@ -277,7 +284,8 @@
       "Merge conflict, moved target head, два одобренных patch к одной ветке и новая patch revision не подменяют содержимое; точно наблюдаем approved-but-unmerged.",
       "Crash/restart на каждой durable границе, повторный publish, missing objects и committee transition перед каждым подписанием/публикацией.",
       "Existing Ed25519 merge workflow и native threshold/delegate authorization regression.",
-      "Crash после каждого durable шага и между object install/refs CAS; conflicting refs quarantined; current quorum не нужен для повторной доставки уже committed exact historical package."
+      "Crash после каждого durable шага и между object install/refs CAS; conflicting refs quarantined; current quorum не нужен для повторной доставки уже committed exact historical package.",
+      "Extra author COB tips/local Git clock/config do not alter pinned Review/Merge preparation; exact resource/parents/trailers and owner refs match across collectors. BindMaterial no-op preserves previous complete owner snapshot."
     ],
     "ac": [
       "Целевая ветка содержит ровно разрешённый результат; native patch Merged относится к одобренной revision и валидному commit/namespace.",
@@ -313,7 +321,8 @@
       "Все негативные сценарии плана со ссылками на реальные наблюдаемые rejection/state invariants; историческая signature valid, новый stale-authority write invalid.",
       "cargo fmt --all -- --check; affected workspace build/clippy/tests и Heartwood standalone suites в требуемой pinned среде; full relevant CI jobs должны реально завершиться.",
       "Независимо проверить evidence chain и отсутствие незавершённых требований на одном финальном SHA; три task reviews проверяют P8, отдельные feature reviews запускаются после закрытия P0–P8 и не являются prerequisite закрытия P8.",
-      "Реальный current-set transition + late historical exact replay + fresh receiver rejecting uncheckpointed old-key object; доказать consensus liveness без sidecar и без ожидания collector в proposer."
+      "Реальный current-set transition + late historical exact replay + fresh receiver rejecting uncheckpointed old-key object; доказать consensus liveness без sidecar и без ожидания collector в proposer.",
+      "Real pre-Vote Ed25519 author patch replication and receiver lookup, owner-entry laundering rejection, two collectors with different valid q-subsets and latest tips, stable committee progress without fourth validator; V0x0C carrier/begin-zone activation and bounded budget evidence."
     ],
     "ac": [
       "End-to-end scenario реализован и выполнен без ручного rad init, operator owner secret или fake BLS verification.",
