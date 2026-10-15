@@ -1,0 +1,20 @@
+{
+  "abi.log": "9350a748384b365e1321a7f18f60f09e2bac78e8e72a72b28a43c1fb1f9ff882",
+  "beads-actions.json": "755676bdccf221b185702c315a84932f9091c3d9164cb18764b4e200907bf238",
+  "beads-final.json": "89e0f28c2fb9037779e3f6921409af34c57e9cc2bd13a8b30ae6ced9eef8c160",
+  "caller-map-command.json": "5c9309a8de1aa4a4eb50a9ff4f47adf7e3efacb2785fd7dd70ac83e25b713e75",
+  "caller-map.log": "862297e78c3a6fd9364cabcea20d7f6f3321ae40518796ad6d17b70b9714d7d8",
+  "clippy.log": "965048c98c05c7f8e7d339b1f5233b93abc3aaeac76cb6e9bd792bca5c7737ca",
+  "commands.json": "ec5ae59bdcb9add51f03f832a14824415a0ea6013c34a8e58198228f7c08fb68",
+  "format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "genesis-layout.log": "efbb8956ab708762706b73115389ded4c72525d106e5fe1f433e3224e440abfc",
+  "integrity-after.json": "0b64641e8f887ad59afcf69c40be7b1387104ee4d2b52c3022525650f5c418ba",
+  "integrity-before.json": "617c794eb03e72a38e96d8f2b2d8dca9effea92e62cdbe785aa90bd8f9e068c8",
+  "parent.json": "97c662a2aa02267ffaedfddda4636b84dbc9a16a6ac1c9b83c85bf0fdacb8bd0",
+  "regressions.log": "4801105e80cae72c5dfb77f869bfde857c2750d43ad9ac88468b6f08eb55cff1",
+  "run-checks.py": "b1ba9d3586f281ed42e584cc1788e7b51acae843654c3b2a305d7ca6b88568e3",
+  "source.diff": "f51f236265ae805cf5f148ed485a01e91411026a65b2f08c1a2bfca5a348fa6f",
+  "targeted-clippy.log": "68d1ae43b8275d1a9523ca1be37e02a1b800953a67d3ac3dfc3f5c7f53bf5892",
+  "toolchain.json": "c8f1b0f470922024e3945a1055bd57e8b628d61fba9e629f55e4b013f2b3c7ed",
+  "unchanged-clippy.json": "d1ae97a227b8b67f00ef74fe06bc28328c2789494e9d30b4c3092d936a9229cf"
+}
