@@ -30,6 +30,7 @@ import {
 } from "../intex/registry.js";
 import { CONTRACTS } from "../registry.js";
 import { type FakeChain, sample } from "./fake-chain.js";
+import { fakeEnclave } from "./fake-enclave.js";
 import { SIGNER, startHarness } from "./harness.js";
 
 const GOLDEN = new URL("./tools.golden.json", import.meta.url);
@@ -274,6 +275,7 @@ function lineJson(golden: { tools: unknown[]; calls: unknown[] }): string {
 
 /** Every contract the tools address, answering with fixed values. */
 function fixedChain(chain: FakeChain): void {
+  fakeEnclave(chain);
   for (const entry of Object.values(CONTRACTS)) chain.register(entry.abi, entry.address);
   for (const network of [
     { name: "outbe-testnet", isOutbe: true },
