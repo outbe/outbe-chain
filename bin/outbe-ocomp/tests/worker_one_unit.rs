@@ -66,7 +66,7 @@ use outbe_ocomp_protocol::opening::{
 };
 use outbe_ocomp_protocol::result::ResultChunkV1;
 use outbe_ocomp_protocol::shuffle::{
-    verified_shuffle_run_records, ShuffleBucketRecordV1, ShuffleRunArtifactV1, ShuffleRunKindV1,
+    verified_shuffle_run_records, ShuffleBucketRecordV1, ShuffleRunArtifactV1,
 };
 use outbe_ocomp_protocol::unit::{
     CanonicalInputRefV1, EntityIdHalfOpenRange, InputPurpose, InputSourceKind, PlanCommitmentV1,
@@ -1334,12 +1334,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         .expect("publish OutputFinalize shuffle producer");
     finalized_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
     let bucket_spec = planner
-        .shuffle_unit_at(
-            UnitPhase::BucketShuffle,
-            0,
-            &[output_finalize_artifact.unit_id],
-            &limits,
-        )
+        .shuffle_unit_at(0, &[output_finalize_artifact.unit_id], &limits)
         .expect("derive BucketShuffle leaf");
     let bucket_offset = output_finalize_offset
         .checked_add(topology.phase_unit_count(UnitPhase::OutputFinalize))
@@ -1370,7 +1365,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     bucket_root
         .validate_root_semantics(&limits)
         .expect("validate BucketShuffle root");
-    assert_eq!(bucket_root.kind, ShuffleRunKindV1::Bucket);
     assert_eq!(bucket_root.record_count, 1);
     verify_lysis_shuffle_phase_replay(
         (bucket_offset, &bucket_spec, &bucket_artifact),
@@ -1961,7 +1955,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         producer_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
         let bucket_spec = planner
             .shuffle_unit_at(
-                UnitPhase::BucketShuffle,
                 u32::try_from(ordinal).expect("merge bucket ordinal"),
                 &[finalized_artifact.unit_id],
                 &limits,
@@ -2002,7 +1995,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     }
     let bucket_merge_spec = planner
         .shuffle_unit_at(
-            UnitPhase::BucketShuffle,
             2,
             &[bucket_artifacts[0].unit_id, bucket_artifacts[1].unit_id],
             &limits,
@@ -2031,7 +2023,6 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         &limits,
     )
     .expect("decode bucket internal merge root");
-    assert_eq!(bucket_root.kind, ShuffleRunKindV1::Bucket);
     assert_eq!(bucket_root.run_span.start_run, 0);
     assert_eq!(bucket_root.run_span.end_run, 2);
     assert_eq!(bucket_root.source_coverage_count, tribute_count);

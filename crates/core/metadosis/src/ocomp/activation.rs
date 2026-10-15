@@ -408,6 +408,11 @@ fn apply_certified_result(
         result_evidence_hash,
         availability_certificate_hash: None,
     };
+    let lysis_limit_minor = conserved_lysis_limit(
+        plan.nod().lysis_allocation_minor(),
+        plan.carry_over().credited_unused_lysis_limit_minor(),
+        request_receipt.lysis_limit_minor,
+    )?;
     let nod_input = CertifiedNodGenerationV1 {
         binding: binding.clone(),
         program_semantics_hash: bundle.lysis_program_semantics_hash,
@@ -416,6 +421,7 @@ fn apply_certified_result(
         counts: plan.nod().exact_counts().clone(),
         nod_amount_total: plan.nod().nod_amount_total(),
         lysis_allocation_minor: plan.nod().lysis_allocation_minor(),
+        nod_gratis_load_max: lysis_limit_minor / U256::from(1024u64),
         issued_at: plan.nod().issued_at(),
     };
     let tribute_input = CertifiedTributeRetirementV1 {
@@ -425,11 +431,6 @@ fn apply_certified_result(
         consumed_nominal_total: plan.tribute().consumed_nominal_total(),
         retired_generation: plan.tribute().retired_generation(),
     };
-    let lysis_limit_minor = conserved_lysis_limit(
-        plan.nod().lysis_allocation_minor(),
-        plan.carry_over().credited_unused_lysis_limit_minor(),
-        request_receipt.lysis_limit_minor,
-    )?;
     let carry_over_input = CertifiedCarryOverCreditV1 {
         binding: binding.clone(),
         source_wwd: plan.carry_over().source_wwd(),

@@ -5,13 +5,13 @@
   "generator": {
     "invocation": "cargo xtask ocomp shape",
     "source_sha256": "ba5ab090ad67cecff7d40e978ee9ee333656e973eba9669ba6bba24d36b89089",
-    "input_set_sha256": "4a67b53e11d5ed6509ab0508200e97359b0497ea88e2584299366dab7d69d47f"
+    "input_set_sha256": "96a3331612a36a3f540888c5268ca2f9c4324a3b15699211466cf31e80b53454"
   },
   "registries": {
     "object_domain_list_sha256": "618cacc0271a6fa163d20e79792f9c07867e0930953f072e77ca442f941168a4",
     "input_codecs_sha256": "95c1d0ee73e795647d59783924fabea37c97eda3e5dd56f0155ff505e3ab1d10",
-    "canonical_schema_sha256": "2fb13d8851f0b0dd8478a5dddb9fff456824f5d8993b0f57233bf1c9f5105e8b",
-    "domain_preimage_sha256": "8edb43e9d71125f9b7ad78b127afa478ba1ba822c26c30f155b4bd943bb4cde7",
+    "canonical_schema_sha256": "ab167585bd726375f43e3d01987c5ec523959d0ef3f00d677156b3c11ba8773e",
+    "domain_preimage_sha256": "169a09872bb4aa77a141cec05406792e0325dd040edbe76798bf6bffbaab0e14",
     "object_count": 35,
     "tribute_body_codec_id": "1e1420ecbb9fc0046e5eb7c7134338546bf36558fb1d1cd31a54a3ee17d12612",
     "fidelity_opening_codec_id": "8e655521b1f67dd006f714236eefb1fc9bbd1b7f619ab5083c26d6e2251cee96",
@@ -20,7 +20,7 @@
   },
   "profiles": {
     "correctness_profile_sha256": "e400f91e97aea2367adfacd0e7f684cce9d00615be57a5d82e5fbcddbca754b2",
-    "candidate_compile_ceiling_sha256": "a3c6ad4cf52140a9ebfc48eef7aafb8af80af59104f0070d09959cd042b13150",
+    "candidate_compile_ceiling_sha256": "141d63839c8ac17765f80af2aa79dc39a14b998e83cb25002e4a3470554a38a2",
     "minimum_devnet_hardware_profile_sha256": "a54ca8d53824f9dcf439267cbd93a939d3f09823703d1678540acb9a588720b7",
     "headroom_policy_sha256": "3a44462d5a5a61bb9065dce7549f727b160757ec50ac574ebe69121feeaa0aaf",
     "bundle_template_sha256": "eaf276a01556660c78f3bfe8fb5f1c12fb0116178662b415e5e76a6bcd1fcaf2"

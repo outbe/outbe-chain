@@ -76,8 +76,7 @@ struct TargetRouterStorage {
     ///        a conflict, so an under-totaled header cannot close the day early.
     ///      - the number of chunks that landed.
     ///      - the proceeds accrued so far. The router routes them as one transfer once every chunk
-    ///        has arrived. It waits because the origin marks a chain paid on first delivery, so a
-    ///        partial sum would close the creator-reward fan-in early.
+    ///        has arrived, so the day pays one bridge fee.
     ///      Twenty bytes, so one slot rather than three.
     mapping(uint32 worldwideDay => RefundProgress) refundProgress;
     /// @dev Bit per applied refund chunk, so a redelivered one neither re-counts nor

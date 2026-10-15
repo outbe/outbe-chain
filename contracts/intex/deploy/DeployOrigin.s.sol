@@ -14,7 +14,7 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 ///         concern (see DeployTarget). The origin engine needs neither.
 /// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS (the ERC-7786 bridge all clients speak to),
 ///      TARGET_CHAIN_IDS (comma-separated auction target chainIds), optional OUTBE_WCOEN_BRIDGE +
-///      OUTBE_WCOEN_TOKEN (creator-reward proceeds unwrap). The deployer is admin + delegate.
+///      OUTBE_WCOEN_TOKEN (proceeds unwrap). The deployer is admin + delegate.
 ///      Target peers are CREATE3-deterministic, so they are predictable before those chains are
 ///      deployed.
 contract DeployOrigin is BaseScript {
@@ -50,7 +50,7 @@ contract DeployOrigin is BaseScript {
             OriginRouter(payable(router)).addTarget(cid);
         }
 
-        // Proceeds route (creator-reward): unwrap inbound WCOEN and hand the native to the factory
+        // Proceeds route: unwrap inbound WCOEN and hand the native to the factory
         // precompile. The script skips this step when the WCOEN env is unset.
         address wcoenBridge = vm.envOr("OUTBE_WCOEN_BRIDGE", address(0));
         address wcoenToken = vm.envOr("OUTBE_WCOEN_TOKEN", address(0));

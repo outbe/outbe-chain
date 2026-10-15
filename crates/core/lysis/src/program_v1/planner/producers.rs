@@ -180,7 +180,7 @@ impl LysisPlanTopologyV1 {
                     phase: UnitPhase::OutputFinalize,
                     ordinal: index,
                 }),
-                PlannedProducerV1::Unit(self.shuffle_root(UnitPhase::BucketShuffle)?),
+                PlannedProducerV1::Unit(self.shuffle_root()?),
             ]),
             PlannedUnitPositionV1::TreeNode {
                 phase: UnitPhase::RootReduce,
@@ -211,8 +211,8 @@ impl LysisPlanTopologyV1 {
         }
     }
 
-    fn shuffle_root(self, phase: UnitPhase) -> Result<PlannedUnitPositionV1, PlannerErrorV1> {
-        self.run_span_root_position(phase, 0, self.tree.primary_leaf_count)
+    fn shuffle_root(self) -> Result<PlannedUnitPositionV1, PlannerErrorV1> {
+        self.run_span_root_position(UnitPhase::BucketShuffle, 0, self.tree.primary_leaf_count)
     }
 
     fn run_span_position(

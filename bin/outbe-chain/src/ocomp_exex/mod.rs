@@ -36,7 +36,6 @@ use outbe_primitives::projection::ProjectionFailureClass;
 use outbe_primitives::projection::ProjectionReadinessPublisher;
 use outbe_primitives::projection::ProjectionStatus;
 
-/// Days each embedded payout tick looks back over.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// The drain and finalized reader share one publication order. Once either

@@ -174,6 +174,7 @@ impl TryFrom<u16> for ObjectKind {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum HashDomain {
     ProtocolBundle,
+    LysisProgramSemantics,
     PreAdmission,
     ActivationPreconditions,
     Intent,
@@ -227,6 +228,7 @@ pub enum HashDomain {
 impl HashDomain {
     pub const ALL: &'static [Self] = &[
         Self::ProtocolBundle,
+        Self::LysisProgramSemantics,
         Self::PreAdmission,
         Self::ActivationPreconditions,
         Self::Intent,
@@ -281,6 +283,7 @@ impl HashDomain {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ProtocolBundle => "OUTBE_OCOMP_PROTOCOL_BUNDLE_V1",
+            Self::LysisProgramSemantics => "OUTBE_OCOMP_LYSIS_PROGRAM_SEMANTICS_V1",
             Self::PreAdmission => "OUTBE_OCOMP_PRE_ADMISSION_V1",
             Self::ActivationPreconditions => "OUTBE_OCOMP_ACTIVATION_PRECONDITIONS_V1",
             Self::Intent => "OUTBE_OCOMP_INTENT_V1",

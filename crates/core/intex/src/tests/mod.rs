@@ -17,7 +17,6 @@ use outbe_primitives::storage::types::{Storable, StorageKey};
 mod group_index;
 mod layout;
 mod precompile;
-mod proceeds;
 mod series;
 mod series_id;
 mod units;

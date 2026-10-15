@@ -235,9 +235,6 @@ fn inventory_selects_native_public_domains_and_excludes_signing_authority() {
             .join("supervisor-v1/materialization-submissions/signed"),
         layout
             .ocomp_root
-            .join("supervisor-v1/payout-submissions/signed"),
-        layout
-            .ocomp_root
             .join(format!("supervisor-v1/jobs/{job}/replay-inbox/input")),
         layout.ocomp_root.join("cas-v1/staging/incomplete"),
     ];

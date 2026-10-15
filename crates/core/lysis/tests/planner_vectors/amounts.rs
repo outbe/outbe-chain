@@ -1,6 +1,50 @@
 use super::*;
 
 #[test]
+fn amount_cap_preserves_fractions_and_uncapped_peers_across_leagues() {
+    let day = WorldwideDay::new(20_260_724);
+    let mut tributes = [(1000, 1), (2000, 1), (5000, 1), (1000, 2)]
+        .into_iter()
+        .enumerate()
+        .map(|(index, (nominal, league))| observed(index as u32 + 1, day, nominal, league))
+        .collect::<Vec<_>>();
+    tributes.sort_by_key(|item| item.tribute.tribute_id);
+    let fidelity = fidelity_map(0, &tributes).unwrap();
+    let fractions = vec![
+        LeagueFractionV1 {
+            league: 1,
+            fraction: U256::from(500_000),
+        },
+        LeagueFractionV1 {
+            league: 2,
+            fraction: U256::from(250_000),
+        },
+    ];
+    let amount = amount_map(
+        0,
+        &tributes,
+        &fidelity.observations,
+        &fractions,
+        U256::from(1000),
+    )
+    .unwrap();
+    assert_eq!(amount.checked_segment_gratis_total, U256::from(2750));
+    for (record, tribute) in amount.ordered_records.iter().zip(&tributes) {
+        let expected_fraction = if record.league_id == 1 {
+            500_000
+        } else {
+            250_000
+        };
+        assert_eq!(record.gratis_fraction_fp, U256::from(expected_fraction));
+        assert_eq!(record.tribute_id, tribute.tribute.tribute_id);
+    }
+    assert!(matches!(
+        amount_map(0, &tributes, &fidelity.observations, &fractions, U256::ZERO),
+        Err(ProgramErrorV1::ZeroGratisLoad { ordinal: 0 })
+    ));
+}
+
+#[test]
 fn amount_map_requires_the_matching_fidelity_leaf_not_only_the_global_fraction_table() {
     let topology = LysisPlanTopologyV1::new(3).unwrap();
     let consumer = PlannedUnitPositionV1::Primary {
@@ -154,7 +198,15 @@ fn dust_cost_matches_between_worker_sequential_lysis_and_nod_settlement() {
 
     let fidelity = fidelity_map(0, &tributes).unwrap();
     let fractions = finalize_fi_fraction_table(&fidelity.aggregate, budget).unwrap();
-    let amount = amount_map(0, &tributes, &fidelity.observations, &fractions).unwrap();
+    let nod_gratis_load_max = budget / U256::from(1024);
+    let amount = amount_map(
+        0,
+        &tributes,
+        &fidelity.observations,
+        &fractions,
+        nod_gratis_load_max,
+    )
+    .unwrap();
     let limits = poc_schema_limits();
     assert_eq!(amount.checked_segment_nominal_total, budget);
     let amount = decode_amount_run(&encode_amount_run(&amount, &limits).unwrap(), &limits).unwrap();
@@ -177,9 +229,10 @@ fn dust_cost_matches_between_worker_sequential_lysis_and_nod_settlement() {
         .map(|record| record.nod_action.clone())
         .collect::<Vec<_>>();
     assert_eq!(actions, sequential.nod_actions);
-    assert_eq!(sequential.remaining_lysis_limit_minor, U256::ZERO);
-    assert_eq!(prefix.outgoing_remaining, U256::ZERO);
-    assert_eq!(amount.checked_segment_gratis_total, budget);
+    let allocated = nod_gratis_load_max * U256::from(tributes.len());
+    assert_eq!(sequential.remaining_lysis_limit_minor, budget - allocated);
+    assert_eq!(prefix.outgoing_remaining, budget - allocated);
+    assert_eq!(amount.checked_segment_gratis_total, allocated);
     for action in &actions {
         assert_eq!(action.entry_price_minor, entry_price);
     }
@@ -244,13 +297,21 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     assert!(fractions
         .windows(2)
         .all(|pair| pair[0].fraction < pair[1].fraction));
-    let amount_left =
-        amount_map(0, &tributes[..256], &fidelity_left.observations, &fractions).unwrap();
+    let nod_gratis_load_max = lysis_limit_minor / U256::from(1024);
+    let amount_left = amount_map(
+        0,
+        &tributes[..256],
+        &fidelity_left.observations,
+        &fractions,
+        nod_gratis_load_max,
+    )
+    .unwrap();
     let amount_right = amount_map(
         256,
         &tributes[256..],
         &fidelity_right.observations,
         &fractions,
+        nod_gratis_load_max,
     )
     .unwrap();
     let limits = poc_schema_limits();
@@ -413,7 +474,14 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
 
     let mut wrong_fidelity_leaf = fidelity_left.observations;
     wrong_fidelity_leaf[0].tribute_id = tributes[256].tribute.tribute_id;
-    assert!(amount_map(0, &tributes[..256], &wrong_fidelity_leaf, &fractions,).is_err());
+    assert!(amount_map(
+        0,
+        &tributes[..256],
+        &wrong_fidelity_leaf,
+        &fractions,
+        nod_gratis_load_max
+    )
+    .is_err());
 
     let mut wrong_prefix = left_prefix.clone();
     wrong_prefix.outgoing_remaining += U256::from(1);
