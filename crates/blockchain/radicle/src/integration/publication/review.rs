@@ -45,9 +45,13 @@ pub struct VerifiedReviewPublication {
     manifest: PublicationManifest,
     approval: PatchApprovalRecord,
     previous: FinalizedPublicationReceipt,
+    witness_hash: alloy_primitives::B256,
 }
 
 impl VerifiedReviewPublication {
+    pub(crate) fn witness_hash(&self) -> alloy_primitives::B256 {
+        self.witness_hash
+    }
     pub fn body(&self) -> &PublicationBody {
         &self.body
     }
@@ -165,6 +169,7 @@ pub fn prepare_review_publication(
         manifest,
         approval: state.approval().approval.clone(),
         previous: snapshot.checkpoint().clone(),
+        witness_hash: Sha256::hash(&[&witness.to_bytes()?]).0.into(),
     })
 }
 

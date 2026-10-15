@@ -5,7 +5,7 @@ mod receive;
 
 pub use evidence::{EndpointEvidenceHandle, SignedEndpointEvidence};
 
-use super::publication::review::{Error as PublicationError, VerifiedReviewPublication};
+use super::publication::{review::Error as PublicationError, store::SelectedReviewPublication};
 use super::review::{CheckpointPreparedReview, CheckpointPreparedReviewRefs};
 use super::{material, signing, RepositoryMaterialPublisher};
 use crate::integration::{RadicleStatusHandle, RadicleVotingGate};
@@ -152,7 +152,7 @@ struct EndpointRefresh<'a> {
 
 enum NetworkCommand {
     RepositoryReviewAttestation {
-        publication: Arc<VerifiedReviewPublication>,
+        publication: Arc<SelectedReviewPublication>,
         result: oneshot::Sender<Result<PublicationAttestation, PublicationError>>,
     },
     RepositoryReviewPartial {
@@ -213,10 +213,10 @@ impl EndpointNetwork {
 }
 
 impl EndpointNetworkResolver {
-    /// Rechecks a verified local package; the collector owns durable job/slot selection.
+    /// Rechecks a durably selected local package before signing its fixed publication body.
     pub async fn attest_review(
         &self,
-        publication: Arc<VerifiedReviewPublication>,
+        publication: Arc<SelectedReviewPublication>,
     ) -> Result<PublicationAttestation, PublicationError> {
         let (result, response) = oneshot::channel();
         self.commands
@@ -340,7 +340,7 @@ impl EndpointNetworkService {
 impl EndpointNetworkState {
     fn review_attestation(
         &self,
-        publication: &VerifiedReviewPublication,
+        publication: &SelectedReviewPublication,
         identity: &bls12381::PrivateKey,
         validator: Address,
     ) -> Result<PublicationAttestation, PublicationError> {

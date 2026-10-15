@@ -1,6 +1,7 @@
 //! Canonical publication commitments. Native objects and partial witnesses are verified separately.
 
 pub mod review;
+pub mod store;
 
 use crate::manager::FinalizedPublicationReceipt;
 use alloy_primitives::B256;

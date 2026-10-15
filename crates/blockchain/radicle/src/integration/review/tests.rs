@@ -1244,9 +1244,18 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         .authorize_current(&newer_head, &newer_material)
         .unwrap();
     assert!(proof.authorize_current(&newer_head, &material).is_err());
+    let store_path = temp.path().join("publication-store");
+    let mut package_store =
+        crate::integration::publication::store::ReviewPackageStore::open(&store_path).unwrap();
+    let selected = Arc::new(
+        package_store
+            .persist_and_select(&repo, proof.clone(), &witness)
+            .unwrap(),
+    );
+    assert!(crate::integration::publication::store::ReviewPackageStore::open(&store_path).is_err());
     let attestations =
         local_runtime.block_on(crate::integration::network::material_tests::attestations(
-            proof.clone(),
+            selected.clone(),
             &current_state,
             &dkg.output,
             &identities,
@@ -1326,7 +1335,90 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         )
         .unwrap();
         assert_eq!(received.manifest(), &review_manifest);
+        let selected_again = package_store
+            .persist_and_select(&receiver, Arc::new(received), &witness)
+            .unwrap();
+        assert_eq!(selected_again.body(), selected.body());
     }
+    drop(package_store);
+    let reopened =
+        crate::integration::publication::store::ReviewPackageStore::open(&store_path).unwrap();
+    let stored = reopened
+        .load_selected(
+            crate::integration::publication::store::review_slot_key(&review_body),
+            &receiver,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.body, review_body);
+    assert_eq!(stored.manifest, review_manifest);
+    verify_review_publication(
+        &receiver,
+        &current_state,
+        &snapshot,
+        &independent,
+        &stored.body,
+        &stored.manifest,
+        &stored.witness,
+    )
+    .unwrap();
+    let restored_storage = radicle::Storage::open(
+        temp.path().join("restored-from-journal"),
+        git::UserInfo {
+            alias: radicle::node::Alias::new("Restored"),
+            key: *SigningKey::from_seed(Seed::new([43; 32])).public_key(),
+        },
+    )
+    .unwrap();
+    restored_storage
+        .manage_repository(rid, owner, receipts.clone())
+        .unwrap();
+    let restored = restored_storage.create(rid).unwrap();
+    let native_ids: std::collections::BTreeSet<_> = review_manifest
+        .objects()
+        .iter()
+        .map(|o| o.oid.clone())
+        .collect();
+    let restored_odb = restored.raw().odb().unwrap();
+    source_odb
+        .foreach(|oid| {
+            if !native_ids.contains(&oid.to_string()) {
+                let object = source_odb.read(*oid).unwrap();
+                restored_odb.write(object.kind(), object.data()).unwrap();
+            }
+            true
+        })
+        .unwrap();
+    assert!(restored_odb.read(review.id.into()).is_err());
+    let recovered = reopened
+        .load_selected(
+            crate::integration::publication::store::review_slot_key(&review_body),
+            &restored,
+        )
+        .unwrap()
+        .unwrap();
+    verify_review_publication(
+        &restored,
+        &current_state,
+        &snapshot,
+        &independent,
+        &recovered.body,
+        &recovered.manifest,
+        &recovered.witness,
+    )
+    .unwrap();
+    assert!(restored.raw().references().unwrap().next().is_none());
+    let persisted_manifest = store_path
+        .join("packages")
+        .join(hex::encode(review_body.receipt_hash()))
+        .join("manifest");
+    std::fs::write(persisted_manifest, b"corrupt").unwrap();
+    assert!(reopened
+        .load_selected(
+            crate::integration::publication::store::review_slot_key(&review_body),
+            &restored
+        )
+        .is_err());
     let mut bad_manifests = vec![];
     let mut objects = review_manifest.objects().to_vec();
     objects[0].sha256 = hex::encode([0; 32]);

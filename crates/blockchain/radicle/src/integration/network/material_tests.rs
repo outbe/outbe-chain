@@ -19,7 +19,7 @@ struct SigningReader {
 }
 
 pub(crate) async fn attestations(
-    publication: Arc<VerifiedReviewPublication>,
+    publication: Arc<SelectedReviewPublication>,
     state: &FinalizedPatchSigningState,
     output: &Output<MinSig, bls12381::PublicKey>,
     keys: &[bls12381::PrivateKey],
