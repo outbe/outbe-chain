@@ -69,15 +69,8 @@ pub fn derive_poseidon_digest(
     owner: Address,
     worldwide_day: WorldwideDay,
 ) -> Result<B256, CommitmentError> {
-    // A 160-bit address and a u32 day are both below the BN254 scalar modulus.
-    let mut hasher = Poseidon2::<Fr>::new();
-    let digest = hasher
-        .hash(&[
-            Fr::from_be_bytes_mod_order(owner.as_slice()),
-            Fr::from(worldwide_day.value()),
-        ])
-        .map_err(CommitmentError::poseidon)?;
-    Ok(B256::from(field_to_be32(digest)))
+    outbe_primitives::wwd_entity_id::derive_poseidon_digest(owner, worldwide_day)
+        .map_err(CommitmentError::poseidon)
 }
 
 /// Derives the Poseidon2 digest from `(owner, worldwide_day)` and prefixes WWD BE4.
@@ -85,10 +78,8 @@ pub fn derive_poseidon_entity_id(
     owner: Address,
     worldwide_day: WorldwideDay,
 ) -> Result<WwdEntityId, CommitmentError> {
-    Ok(WwdEntityId::from_day_and_digest(
-        worldwide_day,
-        derive_poseidon_digest(owner, worldwide_day)?,
-    ))
+    outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner, worldwide_day)
+        .map_err(CommitmentError::poseidon)
 }
 
 /// Derives the canonical field input from the exact 32-byte identity.

@@ -112,6 +112,8 @@ fn is_scalar_like_type(ty: &Type) -> bool {
             | Some("U256")
             | Some("Address")
             | Some("B256")
+            | Some("WorldwideDay")
+            | Some("WwdEntityId")
             | Some("Optional")
             | Some("Option")
             | Some("Deprecated")

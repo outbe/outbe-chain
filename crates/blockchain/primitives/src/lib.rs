@@ -14,6 +14,7 @@ pub mod consensus_p2p;
 pub mod crypto;
 pub mod daily_sweep;
 pub mod dispatch;
+pub mod entity_codec;
 pub mod erc;
 pub mod error;
 pub mod errors;

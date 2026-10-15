@@ -1,6 +1,6 @@
 //! Canonical self-contained encrypted NOD bodies.
 use super::*;
-use outbe_primitives::nod_encryption::{EncryptedNodV2, NodTermsV2};
+use crate::nod_encryption::{EncryptedNodV2, NodTermsV2};
 
 pub const NOD_BODY_SCHEMA_V2: u32 = 2;
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -75,7 +75,7 @@ pub fn decode_nod_item_v2(bytes: &[u8]) -> Result<NodItemBodyV2, CanonicalBodyEr
     Ok(body)
 }
 pub fn decode_stored_nod_item_v2(bytes: &[u8]) -> Result<NodItemBodyV2, CanonicalBodyError> {
-    let stored = crate::decode_stored_body(bytes)?;
+    let stored = super::decode_stored_body(bytes)?;
     if stored.schema_version() != NOD_BODY_SCHEMA_V2 {
         return Err(CanonicalBodyError::UnsupportedSchema {
             actual: stored.schema_version(),

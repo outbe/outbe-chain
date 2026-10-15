@@ -59,6 +59,79 @@ pub struct DynamicExists {
     pub bytes: Vec<u8>,
 }
 
+#[contract(addr = ADDRESS)]
+pub struct NestedMaps {
+    pub values:
+        outbe_primitives::storage::dsl::Map<u32, outbe_primitives::storage::dsl::Map<u16, u64>>,
+    pub lists: outbe_primitives::storage::dsl::Map<
+        u32,
+        outbe_primitives::storage::dsl::Map<u16, outbe_primitives::storage::dsl::List<u64>>,
+    >,
+    pub tail: outbe_primitives::storage::dsl::Value<u64>,
+}
+
+#[contract(addr = ADDRESS)]
+pub struct ByteMaps {
+    pub blobs: outbe_primitives::storage::dsl::Map<u32, outbe_primitives::storage::dsl::Bytes>,
+    pub tail: outbe_primitives::storage::dsl::Value<u64>,
+}
+
+#[test]
+fn mapped_bytes_isolate_dynamic_tails_and_clear_previous_chunks() {
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let contract = ByteMaps::new(storage);
+        assert_eq!(contract.tail.slot(), U256::from(1));
+        let first = contract.blobs.bytes(&7);
+        let second = contract.blobs.bytes(&8);
+        first.write(&[0xa5; 88]).unwrap();
+        second.write(&[0x5a; 56]).unwrap();
+        assert_eq!(first.read().unwrap(), vec![0xa5; 88]);
+        first.write(&[1]).unwrap();
+        assert_eq!(first.read().unwrap(), vec![1]);
+        assert_eq!(second.read().unwrap(), vec![0x5a; 56]);
+        first.clear().unwrap();
+        assert!(first.read().unwrap().is_empty());
+        assert_eq!(second.read().unwrap(), vec![0x5a; 56]);
+    });
+}
+
+#[test]
+fn nested_maps_preserve_slots_and_isolate_keys_and_dynamic_lists() {
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let contract = NestedMaps::new(storage);
+        assert_eq!(contract.values.base_slot(), U256::ZERO);
+        assert_eq!(contract.lists.base_slot(), U256::from(1));
+        assert_eq!(contract.tail.slot(), U256::from(2));
+        contract.values.map(&7).write(&840, 11).unwrap();
+        contract.values.map(&8).write(&840, 22).unwrap();
+        contract.values.map(&7).write(&978, 33).unwrap();
+        assert_eq!(contract.values.map(&7).read(&840).unwrap(), 11);
+        assert_eq!(contract.values.map(&8).read(&840).unwrap(), 22);
+        assert_eq!(contract.values.map(&7).read(&978).unwrap(), 33);
+        assert_eq!(
+            contract.values.map(&7).slot(&840).slot(),
+            840u16.mapping_slot(7u32.mapping_slot(U256::ZERO)),
+        );
+        contract.values.map(&7).clear(&840).unwrap();
+        assert_eq!(contract.values.map(&7).read(&840).unwrap(), 0);
+        assert_eq!(contract.values.map(&8).read(&840).unwrap(), 22);
+        contract.lists.map(&7).list(&840).push(44).unwrap();
+        contract.lists.map(&8).list(&840).push(55).unwrap();
+        assert_eq!(
+            contract.lists.map(&7).list(&840).read_all().unwrap(),
+            vec![44]
+        );
+        assert_eq!(
+            contract.lists.map(&8).list(&840).read_all().unwrap(),
+            vec![55]
+        );
+        contract.tail.write(66).unwrap();
+        assert_eq!(contract.tail.read().unwrap(), 66);
+    });
+}
+
 #[test]
 fn contract_order_is_stable_and_reserves_collection_and_record_widths() {
     assert_eq!(MixedRecord::SLOTS, 5);

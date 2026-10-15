@@ -5,6 +5,7 @@ pub mod finalized_guard_ring;
 pub mod gas;
 pub mod handle;
 pub mod hashmap;
+pub mod indexed_list;
 pub mod keys;
 pub mod lysis_activation;
 mod metadosis_mutation;

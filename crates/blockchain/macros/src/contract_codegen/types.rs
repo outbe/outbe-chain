@@ -30,6 +30,9 @@ pub(super) fn storage_type_with_lifetime(ty: &Type) -> proc_macro2::TokenStream 
             }
         }
         "StorageBytes" => quote! { #name<'storage> },
+        "Bytes" if type_args(ty).is_none_or(|args| args.is_empty()) => {
+            quote! { ::outbe_primitives::storage::dsl::Bytes<'storage> }
+        }
         "StorageVec" | "StorageSet" | "StorageArray" => {
             let args = type_args(ty).unwrap_or_default();
             quote! { #name<'storage, #(#args),*> }
@@ -88,7 +91,11 @@ pub(super) fn contract_slot_count_expr(ty: &Type) -> proc_macro2::TokenStream {
     if is_dsl_map_type(ty) {
         let args = type_args(ty).unwrap_or_default();
         if let Some(GenericArgument::Type(value_ty)) = args.get(1) {
-            if is_scalar_like_type(value_ty) || is_dsl_list_type(value_ty) {
+            if is_scalar_like_type(value_ty)
+                || is_dsl_list_type(value_ty)
+                || is_dsl_map_type(value_ty)
+                || crate::is_ident_type(value_ty, &["Bytes", "StorageBytes"])
+            {
                 quote! { 1u64 }
             } else {
                 quote! { <#value_ty as ::outbe_primitives::storage::dsl::StorageRecord>::SLOTS as u64 }

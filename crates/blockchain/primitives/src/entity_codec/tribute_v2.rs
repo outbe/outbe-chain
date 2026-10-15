@@ -1,6 +1,6 @@
 //! Canonical encrypted Tribute body. Other entity schemas remain at V1.
 
-use outbe_primitives::tribute_encryption::{EncryptedTributeV2, TributeContextV2};
+use crate::tribute_encryption::{EncryptedTributeV2, TributeContextV2};
 
 use super::*;
 
@@ -64,7 +64,7 @@ pub fn decode_tribute_v2(bytes: &[u8]) -> Result<EncryptedTributeV2, CanonicalBo
 }
 
 pub fn decode_stored_tribute_v2(bytes: &[u8]) -> Result<EncryptedTributeV2, CanonicalBodyError> {
-    let stored = crate::decode_stored_body(bytes)?;
+    let stored = super::decode_stored_body(bytes)?;
     if stored.schema_version() != TRIBUTE_BODY_SCHEMA_V2 {
         return Err(CanonicalBodyError::UnsupportedSchema {
             actual: stored.schema_version(),
