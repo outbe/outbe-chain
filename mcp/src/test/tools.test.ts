@@ -217,9 +217,9 @@ const TOOLS: Case[] = [
   ["auction_chains", { worldwideDay: 20261009 }],
   ["auction_bids_by_owner", { worldwideDay: 20261009 }],
   ["auction_bids_by_owner", { account: OTHER }],
-  ["auction_bid_commit", { worldwideDay: 20261009, units: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 }],
-  ["auction_bid_reveal", { worldwideDay: 20261009, units: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 }],
-  ["auction_bid_reveal", { worldwideDay: 20261009, units: 2, rate: "1.5", issuanceCurrency: 949, referenceCurrency: 840 }],
+  ["auction_bid_commit", { worldwideDay: 20261009, quantity: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 }],
+  ["auction_bid_reveal", { worldwideDay: 20261009, quantity: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 }],
+  ["auction_bid_reveal", { worldwideDay: 20261009, quantity: 2, rate: "1.5", issuanceCurrency: 949, referenceCurrency: 840 }],
   ["auction_bid_cancel", { worldwideDay: 20261009 }],
   ["intex_claim_commit_bond", { worldwideDay: 20261009, bidder: OTHER }],
   ["auction_claim_refund", { worldwideDay: 20261009, wait: false }],
@@ -243,7 +243,7 @@ const SCENARIOS: Case[] = [
     chain.logs.push(TRANSFER_TO_OTHER);
     chain.reply("statusOf", 0);
   }],
-  ["auction_bid_commit", { worldwideDay: 20261009, units: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 }, (chain) => {
+  ["auction_bid_commit", { worldwideDay: 20261009, quantity: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 }, (chain) => {
     chain.logs.length = 0;
     chain.reply("allowance", 0n);
   }],

@@ -6,8 +6,8 @@ export const NATIVE_UNITS_PER_PROTOCOL_UNIT = 10n ** BigInt(NATIVE_DECIMALS - PR
 const SCALE_1E6 = 1_000_000n;
 
 /** Convert the protocol-6 auction basis and rate into the native-18 WCOEN lock. */
-export function wcoenLockAmount(units: bigint, promisLoadProtocol: bigint, bidRate: bigint): bigint {
-  return ((units * promisLoadProtocol * bidRate) / SCALE_1E6) * NATIVE_UNITS_PER_PROTOCOL_UNIT;
+export function wcoenLockAmount(quantity: bigint, promisLoadProtocol: bigint, bidRate: bigint): bigint {
+  return ((quantity * promisLoadProtocol * bidRate) / SCALE_1E6) * NATIVE_UNITS_PER_PROTOCOL_UNIT;
 }
 
 export function priced(minor: bigint) {
