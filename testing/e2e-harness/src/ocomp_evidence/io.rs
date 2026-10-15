@@ -8,7 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use eyre::{ensure, Result, WrapErr};
 use sha2::{Digest, Sha256};
 
-use super::schema::{AssertionRecordV1, ClosureReportV1, MemberDigestV1, SourceIdentityV1};
+use super::schema::{
+    AssertionRecordV1, ClosureReportV1, MemberDigestV1, RunManifestV1, SourceIdentityV1,
+};
 
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -215,6 +217,27 @@ fn list_or_none(values: &[String]) -> String {
     } else {
         values.join(", ")
     }
+}
+
+pub(super) fn read_manifest_assertions(
+    evidence_dir: &Path,
+    manifest: &RunManifestV1,
+    label: &str,
+) -> Result<Vec<AssertionRecordV1>> {
+    let text = std::fs::read_to_string(evidence_dir.join(&manifest.assertions_path))
+        .wrap_err_with(|| format!("read {label} lane assertions"))?;
+    text.lines()
+        .enumerate()
+        .map(|(index, line)| {
+            ensure!(
+                !line.trim().is_empty(),
+                "blank {label} assertion line {}",
+                index + 1
+            );
+            serde_json::from_str(line)
+                .wrap_err_with(|| format!("decode {label} assertion line {}", index + 1))
+        })
+        .collect()
 }
 
 #[cfg(test)]

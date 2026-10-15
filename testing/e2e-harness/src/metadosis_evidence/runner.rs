@@ -32,6 +32,18 @@ pub struct CommandPlan {
     pub discovery: Option<(Vec<String>, Vec<String>)>,
 }
 
+fn process_plan(subcommand: &str, output: PathBuf) -> CommandPlan {
+    CommandPlan {
+        execution: vec![
+            METADOSIS_EVIDENCE_BINARY.to_owned(),
+            subcommand.to_owned(),
+            "--output".to_owned(),
+            output.display().to_string(),
+        ],
+        discovery: None,
+    }
+}
+
 /// The domain adapter owns the small set of Cargo target shapes used by this
 /// pack. The adapter accepts no command string or PASS status from evidence input.
 pub fn command_plan(
@@ -45,15 +57,7 @@ pub fn command_plan(
             definition.target == METADOSIS_P0_TARGET && name == METADOSIS_P0_NAME,
             "MET-ENV-001 must remain the exact P0 process target"
         );
-        return Ok(CommandPlan {
-            execution: vec![
-                METADOSIS_EVIDENCE_BINARY.to_owned(),
-                "p0-parity".to_owned(),
-                "--output".to_owned(),
-                bundle_root.join("p0-process").display().to_string(),
-            ],
-            discovery: None,
-        });
+        return Ok(process_plan("p0-parity", bundle_root.join("p0-process")));
     }
     if test_id == METADOSIS_FRESH_DEVNET_TEST_ID {
         ensure!(
@@ -61,15 +65,10 @@ pub fn command_plan(
                 && name == METADOSIS_FRESH_DEVNET_NAME,
             "MET-GEN-005 must remain the exact fresh-devnet process target"
         );
-        return Ok(CommandPlan {
-            execution: vec![
-                METADOSIS_EVIDENCE_BINARY.to_owned(),
-                "fresh-devnet".to_owned(),
-                "--output".to_owned(),
-                bundle_root.join("fresh-devnet").display().to_string(),
-            ],
-            discovery: None,
-        });
+        return Ok(process_plan(
+            "fresh-devnet",
+            bundle_root.join("fresh-devnet"),
+        ));
     }
 
     let (target_args, cargo_features): (Vec<&str>, Vec<&str>) = match test_id {

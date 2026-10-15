@@ -15,6 +15,7 @@ use eyre::{bail, ensure, Result, WrapErr};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use super::io::read_manifest_assertions;
 use super::{
     capture_source_identity, discover, hash_file, publish_assertions, publish_manifest,
     publish_member, AssertionRecordV1, AssertionStatus, EvidenceMode, MemberDigestV1,
@@ -295,7 +296,16 @@ pub(crate) fn verify_command_lane_evidence(
             .wrap_err_with(|| format!("read command lane receipt {}", run_path.display()))?,
     )
     .wrap_err("decode command lane receipt")?;
-    validate_command_run(repo, ledger, lane, &source, &run, plan, evidence_dir)?;
+    validate_command_run(
+        ledger,
+        lane,
+        plan,
+        &CommandReceipt {
+            source: &source,
+            run: &run,
+            evidence_dir,
+        },
+    )?;
     Ok((source, run))
 }
 
@@ -312,7 +322,7 @@ pub(crate) fn verify_command_lane_manifest_semantics(
             && manifest.sections.get("exact_binary_hashes") == Some(&json!(&run.artifact_set)),
         "command lane manifest identity differs from its independently verified receipt"
     );
-    let assertions = read_manifest_assertions(evidence_dir, manifest)?;
+    let assertions = read_manifest_assertions(evidence_dir, manifest, "command")?;
     let mut by_test = BTreeMap::new();
     for assertion in assertions {
         ensure!(
@@ -347,35 +357,23 @@ pub(crate) fn verify_command_lane_manifest_semantics(
     Ok(())
 }
 
-fn read_manifest_assertions(
-    evidence_dir: &Path,
-    manifest: &RunManifestV1,
-) -> Result<Vec<AssertionRecordV1>> {
-    let text = std::fs::read_to_string(evidence_dir.join(&manifest.assertions_path))
-        .wrap_err("read command lane assertions")?;
-    text.lines()
-        .enumerate()
-        .map(|(index, line)| {
-            ensure!(
-                !line.trim().is_empty(),
-                "blank command assertion line {}",
-                index + 1
-            );
-            serde_json::from_str(line)
-                .wrap_err_with(|| format!("decode command assertion line {}", index + 1))
-        })
-        .collect()
+struct CommandReceipt<'a> {
+    source: &'a SourceIdentityV1,
+    run: &'a CommandLaneRunV1,
+    evidence_dir: &'a Path,
 }
 
 fn validate_command_run(
-    _repo: &Path,
     ledger: &PlanningLedger,
     lane: &str,
-    source: &SourceIdentityV1,
-    run: &CommandLaneRunV1,
     plan: &[CommandBatchV1],
-    evidence_dir: &Path,
+    receipt: &CommandReceipt<'_>,
 ) -> Result<()> {
+    let CommandReceipt {
+        source,
+        run,
+        evidence_dir,
+    } = *receipt;
     ensure!(
         run.schema_version == RUNTIME_SCHEMA_VERSION
             && run.lane == lane

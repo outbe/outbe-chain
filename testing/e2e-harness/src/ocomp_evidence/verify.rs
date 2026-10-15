@@ -384,11 +384,7 @@ fn validate_assertions(
     Ok(())
 }
 
-fn compute_report(
-    ledger: &PlanningLedger,
-    manifest: &RunManifestV1,
-    assertions: &[AssertionRecordV1],
-) -> ClosureReportV1 {
+fn partition_by_status(assertions: &[AssertionRecordV1]) -> (BTreeSet<String>, BTreeSet<String>) {
     let mut by_test = BTreeMap::<String, Vec<AssertionStatus>>::new();
     for assertion in assertions {
         by_test
@@ -415,6 +411,80 @@ fn compute_report(
         })
         .map(|(id, _)| id.clone())
         .collect::<BTreeSet<_>>();
+    (passed, non_pass)
+}
+
+fn closure_verdict(
+    passed: &BTreeSet<String>,
+    all_tests: &BTreeSet<String>,
+    requirement_gaps: &[String],
+    errors: &mut Vec<String>,
+) -> bool {
+    if passed != all_tests {
+        errors.push("not every stable test passed on this artifact set".to_owned());
+    }
+    if !requirement_gaps.is_empty() {
+        errors.push("normative coverage is incomplete".to_owned());
+    }
+    passed == all_tests && requirement_gaps.is_empty()
+}
+
+fn task_verdict(
+    ledger: &PlanningLedger,
+    task_id: &str,
+    passed: &BTreeSet<String>,
+    discovered: &BTreeSet<String>,
+    errors: &mut Vec<String>,
+) -> bool {
+    let owned = ledger
+        .owned_tests(task_id)
+        .unwrap_or_default()
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let owned_ok = owned.is_subset(passed);
+    let discovered_ok = discovered.is_subset(passed);
+    if !owned_ok {
+        errors.push(format!("task {task_id} owned tests did not all pass"));
+    }
+    if !discovered_ok {
+        errors.push("a discovered OCOMP test did not pass".to_owned());
+    }
+    owned_ok && discovered_ok
+}
+
+fn lane_verdict(
+    ledger: &PlanningLedger,
+    lane: &str,
+    passed: &BTreeSet<String>,
+    non_pass: &BTreeSet<String>,
+    errors: &mut Vec<String>,
+) -> bool {
+    let lane_tests = ledger
+        .lane_test_ids(lane)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let lane_passed = passed
+        .intersection(&lane_tests)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let lane_non_pass = non_pass
+        .intersection(&lane_tests)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let lane_ok = lane_passed == lane_tests && lane_non_pass.is_empty();
+    if !lane_ok {
+        errors.push(format!("lane {lane} did not pass every registered test"));
+    }
+    lane_ok
+}
+
+fn compute_report(
+    ledger: &PlanningLedger,
+    manifest: &RunManifestV1,
+    assertions: &[AssertionRecordV1],
+) -> ClosureReportV1 {
+    let (passed, non_pass) = partition_by_status(assertions);
     let all_tests = ledger.test_ids();
     let report_test_scope = match &manifest.mode {
         EvidenceMode::Lane { lane } => ledger
@@ -449,50 +519,12 @@ fn compute_report(
     let mut errors = Vec::new();
     let mode_ok = match &manifest.mode {
         EvidenceMode::PocClosure => {
-            if passed != all_tests {
-                errors.push("not every stable test passed on this artifact set".to_owned());
-            }
-            if !requirement_gaps.is_empty() {
-                errors.push("normative coverage is incomplete".to_owned());
-            }
-            passed == all_tests && requirement_gaps.is_empty()
+            closure_verdict(&passed, &all_tests, &requirement_gaps, &mut errors)
         }
         EvidenceMode::TaskProgress { task_id } => {
-            let owned = ledger
-                .owned_tests(task_id)
-                .unwrap_or_default()
-                .iter()
-                .cloned()
-                .collect::<BTreeSet<_>>();
-            let owned_ok = owned.is_subset(&passed);
-            let discovered_ok = discovered.is_subset(&passed);
-            if !owned_ok {
-                errors.push(format!("task {task_id} owned tests did not all pass"));
-            }
-            if !discovered_ok {
-                errors.push("a discovered OCOMP test did not pass".to_owned());
-            }
-            owned_ok && discovered_ok
+            task_verdict(ledger, task_id, &passed, &discovered, &mut errors)
         }
-        EvidenceMode::Lane { lane } => {
-            let lane_tests = ledger
-                .lane_test_ids(lane)
-                .into_iter()
-                .collect::<BTreeSet<_>>();
-            let lane_passed = passed
-                .intersection(&lane_tests)
-                .cloned()
-                .collect::<BTreeSet<_>>();
-            let lane_non_pass = non_pass
-                .intersection(&lane_tests)
-                .cloned()
-                .collect::<BTreeSet<_>>();
-            let lane_ok = lane_passed == lane_tests && lane_non_pass.is_empty();
-            if !lane_ok {
-                errors.push(format!("lane {lane} did not pass every registered test"));
-            }
-            lane_ok
-        }
+        EvidenceMode::Lane { lane } => lane_verdict(ledger, lane, &passed, &non_pass, &mut errors),
     };
     if !non_pass.is_empty() {
         errors.push("bundle contains non-PASS stable tests".to_owned());

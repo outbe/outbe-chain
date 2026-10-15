@@ -22,8 +22,8 @@ use super::runner::{
     METADOSIS_P0_TARGET, METADOSIS_P0_TEST_ID, RUNNER_RECEIPT_MEMBER,
 };
 use super::schema::{
-    CommandReceiptV1, MetadosisRunReceiptV1, METADOSIS_NAMESPACE, METADOSIS_RUN_RECEIPT_KIND,
-    METADOSIS_RUN_RECEIPT_SCHEMA_VERSION,
+    CommandReceiptV1, MetadosisRunReceiptV1, TestRunReceiptV1, METADOSIS_NAMESPACE,
+    METADOSIS_RUN_RECEIPT_KIND, METADOSIS_RUN_RECEIPT_SCHEMA_VERSION,
 };
 use crate::metadosis_p0::{
     capture_outbe_chain_feature_tree, verify_metadosis_p0_parity, MetadosisP0Case,
@@ -31,9 +31,15 @@ use crate::metadosis_p0::{
 };
 use crate::verification_ledger::{
     verify_domain_evidence, verify_member_digests, verify_source_checkout, AssertionStatus,
-    DomainEvidenceV1, EvidenceTestV1, MemberDigestV1, TestDiscoveryV1, VerificationLedger,
-    VERIFICATION_LEDGER_SCHEMA_VERSION,
+    DomainEvidenceV1, EvidenceTestV1, MemberDigestV1, TestDefinitionV1, TestDiscoveryV1,
+    VerificationLedger, VERIFICATION_LEDGER_SCHEMA_VERSION,
 };
+
+mod fresh_devnet;
+
+use fresh_devnet::verify_fresh_devnet_process;
+#[cfg(all(feature = "ocomp-integration", test))]
+use fresh_devnet::verify_price_oracle_evidence;
 
 pub fn assemble(
     repo: &Path,
@@ -188,98 +194,24 @@ fn derive(
         insert_member(&mut all_members, receipt.execution.stdout.clone())?;
         insert_member(&mut all_members, receipt.execution.stderr.clone())?;
 
-        let (discovered, ignored) = if test_id == METADOSIS_P0_TEST_ID {
-            ensure!(
-                definition.target == METADOSIS_P0_TARGET
-                    && definition.name.as_deref() == Some(METADOSIS_P0_NAME),
-                "P0 catalog binding drift"
-            );
-            ensure!(
-                receipt.discovery.is_none(),
-                "P0 process target cannot use Cargo discovery"
-            );
-            let required = verify_p0_process(repo, bundle_root, receipt)?;
-            let recorded = receipt
-                .process_artifacts
-                .iter()
-                .map(|member| member.path.as_str())
-                .collect::<BTreeSet<_>>();
-            let required_paths = required
-                .iter()
-                .map(|member| member.path.as_str())
-                .collect::<BTreeSet<_>>();
-            ensure!(
-                recorded == required_paths,
-                "P0 process artifacts are incomplete or contain unverified members"
-            );
-            for member in required {
-                refs.push(member.path.clone());
-                insert_member(&mut all_members, member)?;
-            }
-            (true, false)
-        } else if test_id == METADOSIS_FRESH_DEVNET_TEST_ID {
-            ensure!(
-                definition.target == METADOSIS_FRESH_DEVNET_TARGET
-                    && definition.name.as_deref() == Some(METADOSIS_FRESH_DEVNET_NAME),
-                "fresh-devnet catalog binding drift"
-            );
-            ensure!(
-                receipt.discovery.is_none(),
-                "fresh-devnet process target cannot use Cargo discovery"
-            );
-            let required = verify_fresh_devnet_process(bundle_root, receipt)?;
-            let recorded = receipt
-                .process_artifacts
-                .iter()
-                .map(|member| member.path.as_str())
-                .collect::<BTreeSet<_>>();
-            let required_paths = required
-                .iter()
-                .map(|member| member.path.as_str())
-                .collect::<BTreeSet<_>>();
-            ensure!(
-                recorded == required_paths,
-                "fresh-devnet process artifacts are incomplete or contain unverified members"
-            );
-            for member in required {
-                refs.push(member.path.clone());
-                insert_member(&mut all_members, member)?;
-            }
-            (true, false)
-        } else {
-            ensure!(
-                receipt.process_artifacts.is_empty(),
-                "{test_id} contains unexpected process artifacts"
-            );
-            let (normal_plan, ignored_plan) =
-                plan.discovery.expect("non-P0 command has Cargo discovery");
-            let observed = receipt
-                .discovery
-                .as_ref()
-                .ok_or_else(|| eyre::eyre!("{test_id} has no Cargo discovery receipt"))?;
-            ensure!(
-                observed.normal.argv == normal_plan && observed.ignored.argv == ignored_plan,
-                "{test_id} discovery argv differs from the fixed command plan"
-            );
-            validate_command(bundle_root, &observed.normal)?;
-            validate_command(bundle_root, &observed.ignored)?;
-            for member in [
-                &observed.normal.stdout,
-                &observed.normal.stderr,
-                &observed.ignored.stdout,
-                &observed.ignored.stderr,
-            ] {
-                refs.push(member.path.clone());
-                insert_member(&mut all_members, member.clone())?;
-            }
-            let name = definition.name.as_deref().unwrap_or(test_id);
-            (
-                observed.normal.succeeded()
-                    && cargo_list_contains(bundle_root, &observed.normal.stdout.path, name)?,
-                observed.ignored.succeeded()
-                    && cargo_list_contains(bundle_root, &observed.ignored.stdout.path, name)?,
-            )
+        let mut collected = CollectedMembers {
+            refs,
+            all: &mut all_members,
         };
+        let (discovered, ignored) = if test_id == METADOSIS_P0_TEST_ID {
+            p0_discovery(repo, bundle_root, definition, receipt, &mut collected)?
+        } else if test_id == METADOSIS_FRESH_DEVNET_TEST_ID {
+            fresh_devnet_discovery(bundle_root, definition, receipt, &mut collected)?
+        } else {
+            cargo_discovery(
+                bundle_root,
+                (test_id, definition),
+                receipt,
+                plan.discovery,
+                &mut collected,
+            )?
+        };
+        let mut refs = collected.refs;
 
         if discovered {
             discovery.discovered.push(test_id.clone());
@@ -327,668 +259,121 @@ fn derive(
     Ok(evidence)
 }
 
-fn verify_fresh_devnet_process(
-    bundle_root: &Path,
-    receipt: &super::schema::TestRunReceiptV1,
-) -> Result<Vec<MemberDigestV1>> {
-    ensure!(
-        receipt.execution.succeeded(),
-        "fresh-devnet process command did not succeed"
-    );
-    let root = bundle_root.join("fresh-devnet");
-    let mut members = Vec::new();
-    let mut scenarios = Vec::new();
-    for entry in WalkDir::new(&root).follow_links(false) {
-        let entry = entry.wrap_err("walk retained fresh-devnet artifacts")?;
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let relative = entry
-            .path()
-            .strip_prefix(bundle_root)
-            .wrap_err("fresh-devnet member escaped bundle")?;
-        let relative = slash_path(relative)?;
-        if relative.starts_with("fresh-devnet/evidence/scenario-") && relative.ends_with(".json") {
-            scenarios.push(relative.clone());
-        }
-        members.push(digest_member(bundle_root, &relative)?);
-    }
-    members.sort();
-    ensure!(
-        scenarios.len() == 1,
-        "fresh-devnet process must retain exactly one scenario receipt"
-    );
-    let scenario: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(bundle_root.join(&scenarios[0]))?)
-            .wrap_err("decode fresh-devnet scenario receipt")?;
-    ensure!(
-        scenario["feature"] == "Off-chain computation and Metadosis"
-            && scenario["scenario"]
-                == "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay"
-            && scenario["result"] == "passed",
-        "fresh-devnet scenario identity or verdict mismatch"
-    );
-    let expected_source_sha = receipt_source_sha(bundle_root)?;
-    ensure!(
-        scenario["source"]["sha"].as_str() == Some(expected_source_sha.as_str())
-            && scenario["source"]["tracked_dirty"] == false
-            && scenario["source"]["untracked_dirty"] == false,
-        "fresh-devnet scenario source identity mismatch"
-    );
-    ensure!(
-        scenario["environment"]["validators"] == 4
-            && scenario["environment"]["tee"] == "gramine-direct"
-            && scenario["environment"]["all"] == true,
-        "fresh-devnet scenario did not use the required four-validator Linux topology"
-    );
-    let launch = &scenario["ocomp"]["topology"]["launch_identity"];
-    ensure!(
-        launch["classification"] == "measurement"
-            && launch["activation_height"] == 1
-            && launch["metadosis_storage_layout_hash"]
-                == crate::world::ocomp::METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX
-            && launch["fork_install_hash"]
-                .as_str()
-                .is_some_and(|hash| hash.len() == 66)
-            && launch["protocol_bundle_hash"]
-                .as_str()
-                .is_some_and(|hash| hash.len() == 66),
-        "fresh-devnet launch identity is not Measurement@1 with the pinned Metadosis layout"
-    );
-    let protocol_parameters = verify_fresh_artifacts(bundle_root, &scenario, &members)?;
-    #[cfg(feature = "ocomp-integration")]
-    verify_price_oracle_evidence(&scenario)?;
-    let processes = scenario["ocomp"]["topology"]["processes"]
-        .as_array()
-        .ok_or_else(|| eyre::eyre!("fresh-devnet scenario has no process topology"))?;
-    ensure!(
-        processes.iter().all(|process| matches!(
-            process["role"].as_str(),
-            Some("snapshot_exporter" | "worker")
-        )),
-        "fresh-devnet process topology contains a non-external OCOMP role"
-    );
-    for validator_index in 0..4_u64 {
-        for role in ["snapshot_exporter", "worker"] {
-            ensure!(
-                processes.iter().any(|process| {
-                    process["validator_index"].as_u64() == Some(validator_index)
-                        && process["role"] == role
-                        && process["stopped_at_millis"].is_null()
-                }),
-                "fresh-devnet validator {validator_index} has no live {role}"
-            );
-        }
-    }
-    let public = &scenario["ocomp"]["public_path"];
-    let capacity = &public["capacity_public_path"];
-    ensure!(
-        public["atomic_quorum_apply_verified"] == true
-            && public["activation"].is_object()
-            && public["certified_generation"].is_object()
-            && capacity["q_forming_receipt_success"] == true
-            && capacity["canonical_import_verified"] == true
-            && capacity["canonical_import_validator_count"] == 4
-            && capacity["tribute_count"] == 257
-            && capacity["nod_count"] == 257,
-        "fresh-devnet scenario did not close the public READY/OCOMP/terminal path"
-    );
-    let lifecycle = &public["metadosis_fresh_lifecycle"];
-    let worldwide_day = lifecycle["worldwide_day"]
-        .as_u64()
-        .ok_or_else(|| eyre::eyre!("fresh Metadosis lifecycle has no WorldwideDay"))?;
-    let forming_start = lifecycle["forming_start"]
-        .as_u64()
-        .ok_or_else(|| eyre::eyre!("fresh Metadosis lifecycle has no forming_start"))?;
-    let forming_end = lifecycle["forming_end"]
-        .as_u64()
-        .ok_or_else(|| eyre::eyre!("fresh Metadosis lifecycle has no forming_end"))?;
-    let lookback_end = lifecycle["lookback_end"]
-        .as_u64()
-        .ok_or_else(|| eyre::eyre!("fresh Metadosis lifecycle has no lookback_end"))?;
-    let offering_end = lifecycle["offering_end"]
-        .as_u64()
-        .ok_or_else(|| eyre::eyre!("fresh Metadosis lifecycle has no offering_end"))?;
-    let scheduled = lifecycle["scheduled_process_time"]
-        .as_u64()
-        .ok_or_else(|| eyre::eyre!("fresh Metadosis lifecycle has no processing time"))?;
-    ensure!(
-        forming_end.checked_sub(forming_start)
-            == Some(protocol_parameters.metadosis_forming_period_seconds)
-            && lookback_end.checked_sub(forming_end)
-                == Some(protocol_parameters.metadosis_lookback_delay_seconds)
-            && offering_end.checked_sub(lookback_end)
-                == Some(protocol_parameters.metadosis_offering_period_seconds)
-            && scheduled.checked_sub(offering_end)
-                == Some(protocol_parameters.metadosis_waiting_period_seconds),
-        "fresh Metadosis lifecycle differs from immutable genesis phase durations"
-    );
-    let initial_timestamp = lifecycle["initial_timestamp"]
-        .as_u64()
-        .ok_or_else(|| eyre::eyre!("fresh Metadosis lifecycle has no initial timestamp"))?;
-    ensure!(
-        initial_timestamp >= forming_start
-            && initial_timestamp < forming_end
-            && lifecycle["initial_unix_time_offset_secs"].is_i64()
-            && crate::world::localnet::ymd_utc(initial_timestamp)
-                .parse::<u64>()
-                .ok()
-                == Some(worldwide_day)
-            && initial_timestamp
-                .checked_add(14 * 3_600)
-                .map(crate::world::localnet::ymd_utc)
-                .and_then(|day| day.parse::<u64>().ok())
-                == Some(worldwide_day),
-        "fresh Metadosis lifecycle did not begin inside FORMING on the block-1 UTC/UTC+14 WWD"
-    );
-    ensure!(
-        lifecycle["genesis_hash"] == launch["genesis_hash"]
-            && lifecycle["created_validator_count"] == 4
-            && lifecycle["unknown_status_revert_validator_count"] == 4
-            && lifecycle["offering_validator_count"] == 4
-            && lifecycle["ready_validator_count"] == 4
-            && lifecycle["completed_validator_count"] == 4,
-        "fresh Metadosis lifecycle is not bound to one four-validator genesis"
-    );
-    let started = &lifecycle["started"];
-    ensure!(
-        started["worldwide_day"].as_u64() == Some(worldwide_day)
-            && started["block_number"] == 1
-            && started["forming_start"].as_u64() == Some(forming_start)
-            && started["forming_end"].as_u64() == Some(forming_end)
-            && started["lookback_end"].as_u64() == Some(lookback_end)
-            && started["offering_end"].as_u64() == Some(offering_end)
-            && started["scheduled_process_time"].as_u64() == Some(scheduled)
-            && digest_like(&started["block_hash"]),
-        "fresh Metadosis lifecycle has no canonical block-1 Create evidence"
-    );
-    let changes = lifecycle["status_changes"]
-        .as_array()
-        .ok_or_else(|| eyre::eyre!("fresh Metadosis lifecycle has no status changes"))?;
-    let expected_edges = [(0_u64, 1_u64), (1, 2), (2, 3), (3, 4)];
-    ensure!(
-        changes.len() == expected_edges.len(),
-        "fresh Metadosis lifecycle has an incomplete Advance edge set"
-    );
-    for (change, (old_status, new_status)) in changes.iter().zip(expected_edges) {
-        ensure!(
-            change["worldwide_day"].as_u64() == Some(worldwide_day)
-                && change["old_status"].as_u64() == Some(old_status)
-                && change["new_status"].as_u64() == Some(new_status)
-                && change["block_number"]
-                    .as_u64()
-                    .is_some_and(|height| height >= 2)
-                && digest_like(&change["block_hash"]),
-            "fresh Metadosis lifecycle contains an invalid finalized Advance edge"
-        );
-    }
-    let epochs = lifecycle["time_control_epochs"]
-        .as_array()
-        .ok_or_else(|| eyre::eyre!("fresh Metadosis lifecycle has no time-control history"))?;
-    ensure!(
-        epochs.len() == 2
-            && epochs[0]["requested_timestamp"].as_u64() == forming_end.checked_add(1)
-            && epochs[1]["requested_timestamp"].as_u64() == scheduled.checked_add(1),
-        "fresh Metadosis lifecycle has incorrect logical-time boundaries"
-    );
-    let mut previous_after_height = 0;
-    for epoch in epochs {
-        ensure!(
-            epoch["unix_time_offset_secs"].is_i64(),
-            "fresh Metadosis time-control epoch has no signed offset"
-        );
-        let before = verified_time_control_points(&epoch["before_restart"])?;
-        let after = verified_time_control_points(&epoch["after_restart"])?;
-        ensure!(
-            before[0] >= previous_after_height && after[0] > before[0],
-            "fresh Metadosis time-control epoch breaks same-chain finality continuity"
-        );
-        previous_after_height = after[0];
-    }
-    ensure!(
-        public["job_request"]["worldwide_day"].as_u64() == Some(worldwide_day)
-            && public["activation"]["worldwide_day"].as_u64() == Some(worldwide_day)
-            && digest_like(&public["activation"]["terminal_receipt_hash"])
-            && public["certified_generation"]["worldwide_day"].as_u64() == Some(worldwide_day),
-        "fresh Metadosis terminal evidence is not linked to the runtime-created WWD"
-    );
-    for required in [
-        "fresh-devnet/commands.log",
-        "fresh-devnet/run.log",
-        scenarios[0].as_str(),
-    ] {
-        ensure!(
-            members.iter().any(|member| member.path == required),
-            "fresh-devnet bundle is missing {required}"
-        );
-    }
-    Ok(members)
+struct CollectedMembers<'a> {
+    refs: Vec<String>,
+    all: &'a mut BTreeMap<String, MemberDigestV1>,
 }
 
-#[cfg(feature = "ocomp-integration")]
-fn verify_price_oracle_evidence(scenario: &serde_json::Value) -> Result<()> {
-    let validator_count = scenario["environment"]["validators"]
-        .as_u64()
-        .and_then(|count| usize::try_from(count).ok())
-        .ok_or_else(|| eyre::eyre!("fresh-devnet evidence has no validator count"))?;
-    let evidence: crate::world::price_oracle::PriceOracleEvidenceV1 =
-        serde_json::from_value(scenario["price_oracle"].clone())
-            .wrap_err("decode typed fresh-devnet PriceOracleEvidenceV1")?;
-    crate::world::price_oracle::verify_price_oracle_evidence(&evidence, validator_count)?;
-
-    ensure!(
-        validator_count == 4,
-        "fresh-devnet Oracle evidence requires four validators"
-    );
-    let quorum = validator_count - validator_count / 3;
-    ensure!(
-        evidence.feeder_processes.len() == quorum * 3,
-        "fresh-devnet Oracle requires the initial quorum and two clock restarts"
-    );
-    let mut identities = BTreeMap::new();
-    let mut previous_stops = BTreeMap::new();
-    for attempt in 1..=3 {
-        let mut validator_indexes = BTreeSet::new();
-        let mut validator_addresses = BTreeSet::new();
-        let mut pids = BTreeSet::new();
-        for process in evidence
-            .feeder_processes
-            .iter()
-            .filter(|row| row.attempt == attempt)
-        {
-            let address = process
-                .validator_address
-                .parse::<alloy_primitives::Address>()
-                .wrap_err("decode fresh-devnet Oracle validator address")?;
-            ensure!(
-                (attempt == 3) == process.stopped_at_millis.is_none()
-                    && process.oracle_pairs == ["COEN/840"]
-                    && process.source_markets == ["mock_http:COEN/840"]
-                    && !address.is_zero()
-                    && validator_indexes.insert(process.validator_index)
-                    && validator_addresses.insert(address)
-                    && pids.insert(process.pid),
-                "fresh-devnet Oracle evidence does not identify independent quorum feeders"
-            );
-            let identity = (address, process.rpc_endpoint.as_str(), process.vote_period);
-            if attempt == 1 {
-                identities.insert(process.validator_index, identity);
-            } else {
-                ensure!(
-                    identities.get(&process.validator_index) == Some(&identity)
-                        && previous_stops
-                            .get(&process.validator_index)
-                            .is_some_and(|stop| *stop <= process.started_at_millis),
-                    "fresh-devnet Oracle restart changed identity or overlapped its old process"
-                );
-            }
-            if let Some(stop) = process.stopped_at_millis {
-                previous_stops.insert(process.validator_index, stop);
-            }
-        }
-        ensure!(
-            validator_indexes == (0..quorum).collect(),
-            "fresh-devnet Oracle attempt has the wrong independent quorum"
-        );
+impl CollectedMembers<'_> {
+    fn add(&mut self, member: MemberDigestV1) -> Result<()> {
+        self.refs.push(member.path.clone());
+        insert_member(self.all, member)
     }
-    let validator_indexes = identities.keys().copied().collect::<BTreeSet<_>>();
+}
 
-    let source_rows = evidence
-        .controlled_sources
+fn bind_process_artifacts(
+    receipt: &TestRunReceiptV1,
+    required: Vec<MemberDigestV1>,
+    label: &str,
+    collected: &mut CollectedMembers<'_>,
+) -> Result<()> {
+    let recorded = receipt
+        .process_artifacts
         .iter()
-        .map(|source| {
-            (
-                source.validator_index,
-                source.phase,
-                source.generation,
-                source.oracle_pair.as_str(),
-                source.source_market.as_str(),
-                source.price.as_str(),
-                source.volume.as_str(),
-            )
-        })
+        .map(|member| member.path.as_str())
+        .collect::<BTreeSet<_>>();
+    let required_paths = required
+        .iter()
+        .map(|member| member.path.as_str())
         .collect::<BTreeSet<_>>();
     ensure!(
-        evidence.controlled_sources.len() == quorum * 4
-            && source_rows.len() == quorum * 3
-            && validator_indexes.iter().all(|validator_index| {
-                source_rows.contains(&(
-                    *validator_index,
-                    crate::world::price_oracle::OracleEvidencePhaseV1::Initial,
-                    1,
-                    "COEN/840",
-                    "mock_http:COEN/840",
-                    "1.000000",
-                    "1000.000000",
-                ))
-            }),
-        "fresh-devnet Oracle evidence is not bound to the initial controlled sources"
+        recorded == required_paths,
+        "{label} process artifacts are incomplete or contain unverified members"
     );
-    for validator_index in &validator_indexes {
-        let restarts = evidence
-            .controlled_sources
-            .iter()
-            .filter(|source| {
-                source.validator_index == *validator_index
-                    && source.phase
-                        == crate::world::price_oracle::OracleEvidencePhaseV1::ClockRestart
-            })
-            .collect::<Vec<_>>();
-        ensure!(
-            restarts.len() == 2
-                && restarts.iter().all(|source| {
-                    source.generation == 1
-                        && source.oracle_pair == "COEN/840"
-                        && source.source_market == "mock_http:COEN/840"
-                        && source.price == "1.000000"
-                        && source.volume == "1000.000000"
-                }),
-            "fresh-devnet Oracle sources do not cover both clock restarts"
-        );
+    for member in required {
+        collected.add(member)?;
     }
-    let updates = evidence
-        .controlled_sources
-        .iter()
-        .filter(|source| {
-            source.phase == crate::world::price_oracle::OracleEvidencePhaseV1::ControlledUpdate
-        })
-        .collect::<Vec<_>>();
-    let final_price = updates
-        .first()
-        .ok_or_else(|| eyre::eyre!("fresh-devnet Oracle evidence has no controlled update"))?
-        .price
-        .as_str();
-    let final_rate = scale6_decimal_minor(final_price)?;
-    let update_validator_indexes = updates
-        .iter()
-        .map(|source| source.validator_index)
-        .collect::<BTreeSet<_>>();
-    ensure!(
-        updates.len() == quorum
-            && update_validator_indexes == validator_indexes
-            && final_rate > 1_000_000
-            && updates.iter().all(|source| {
-                validator_indexes.contains(&source.validator_index)
-                    && source.generation == 2
-                    && source.oracle_pair == "COEN/840"
-                    && source.source_market == "mock_http:COEN/840"
-                    && source.price == final_price
-                    && source.volume == "1000.000000"
-            }),
-        "fresh-devnet Oracle evidence is not bound to one controlled update"
-    );
-
-    let expected_phases = [
-        crate::world::price_oracle::OracleEvidencePhaseV1::Initial,
-        crate::world::price_oracle::OracleEvidencePhaseV1::ClockRestart,
-        crate::world::price_oracle::OracleEvidencePhaseV1::ClockRestart,
-        crate::world::price_oracle::OracleEvidencePhaseV1::ControlledUpdate,
-    ];
-    let expected_base = format!("{:#x}", alloy_primitives::Address::ZERO);
-    let expected_quote = format!("{:#x}", outbe_primitives::asset_type::currency_address(840));
-    ensure!(
-        evidence.cohorts.len() == 3,
-        "fresh-devnet Oracle needs exactly three launch cohorts"
-    );
-    for (index, entry) in evidence.cohorts.iter().enumerate() {
-        ensure!(
-            entry.first_process_record == index * quorum
-                && entry.phase == expected_phases[index]
-                && !entry.cohort.overlapping_pairs,
-            "fresh-devnet Oracle cohort does not match its launch stage"
-        );
-    }
-    let mut previous_oracle_block = 0;
-    ensure!(
-        evidence.canonical_publications.len() == expected_phases.len(),
-        "fresh-devnet Oracle evidence has the wrong publication count"
-    );
-    for (index, publication) in evidence.canonical_publications.iter().enumerate() {
-        let expected_rate = if index + 1 == expected_phases.len() {
-            final_rate
-        } else {
-            1_000_000
-        };
-        ensure!(
-            publication.phase == expected_phases[index]
-                && publication.base == expected_base
-                && publication.quote == expected_quote
-                && publication.rate == expected_rate.to_string()
-                && publication.volume == "1000000000"
-                && publication.oracle_block > previous_oracle_block,
-            "fresh-devnet Oracle evidence has a divergent canonical publication"
-        );
-        previous_oracle_block = publication.oracle_block;
-        let cohort_index = index.min(2);
-        let entry = &evidence.cohorts[cohort_index];
-        let matching = entry
-            .observations
-            .iter()
-            .find(|wrapper| {
-                let observation = &wrapper["observation"];
-                observation["kind"].as_str() == Some("publication_verified")
-                    && observation["oracle_block"].as_u64() == Some(publication.oracle_block)
-                    && observation["phase"] == serde_json::json!(publication.phase)
-                    && observation["base"].as_str() == Some(publication.base.as_str())
-                    && observation["quote"].as_str() == Some(publication.quote.as_str())
-            })
-            .ok_or_else(|| eyre::eyre!("fresh-devnet publication has no matching launch cohort"))?;
-        let attempts: Vec<(usize, u32, u32)> =
-            serde_json::from_value(matching["current_attempts"].clone())?;
-        ensure!(
-            attempts.len() == quorum
-                && attempts.iter().all(|(_, attempt, _)| {
-                    usize::try_from(*attempt).ok() == Some(cohort_index + 1)
-                }),
-            "fresh-devnet publication references the wrong feeder restart"
-        );
-    }
-    ensure!(
-        evidence.quorum_loss_windows.is_empty() && evidence.penalty_snapshots.is_empty(),
-        "fresh-devnet Oracle evidence mixes another scenario profile"
-    );
     Ok(())
 }
 
-#[cfg(feature = "ocomp-integration")]
-fn scale6_decimal_minor(value: &str) -> Result<u128> {
-    let (whole, fraction) = value
-        .split_once('.')
-        .ok_or_else(|| eyre::eyre!("controlled Oracle price is not a scale-6 decimal"))?;
-    ensure!(
-        fraction.len() == 6
-            && whole.bytes().all(|byte| byte.is_ascii_digit())
-            && fraction.bytes().all(|byte| byte.is_ascii_digit()),
-        "controlled Oracle price is not a canonical scale-6 decimal"
-    );
-    whole
-        .parse::<u128>()?
-        .checked_mul(1_000_000)
-        .and_then(|scaled| scaled.checked_add(fraction.parse::<u128>().ok()?))
-        .ok_or_else(|| eyre::eyre!("controlled Oracle price overflows scale-6 evidence"))
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn verify_fresh_artifacts(
+fn p0_discovery(
+    repo: &Path,
     bundle_root: &Path,
-    scenario: &serde_json::Value,
-    members: &[MemberDigestV1],
-) -> Result<GenesisProtocolParametersV1> {
-    let exact_binaries = scenario["ocomp"]["exact_binaries"]
-        .as_object()
-        .ok_or_else(|| eyre::eyre!("fresh-devnet scenario has no exact binary digests"))?;
-    let binaries = [
-        ("outbe_chain", "outbe-chain"),
-        ("outbe_ocomp", "outbe-ocomp"),
-        ("outbe_feeder", "outbe-feeder"),
-        ("outbe_cli", "outbe-cli"),
-        ("outbe_keygen", "outbe-keygen"),
-        ("outbe_e2e", "outbe-e2e"),
-        ("outbe_tee_enclave", "outbe-tee-enclave"),
-    ];
+    definition: &TestDefinitionV1,
+    receipt: &TestRunReceiptV1,
+    collected: &mut CollectedMembers<'_>,
+) -> Result<(bool, bool)> {
     ensure!(
-        exact_binaries.len() == binaries.len(),
-        "fresh-devnet scenario has an unexpected exact binary set"
+        definition.target == METADOSIS_P0_TARGET
+            && definition.name.as_deref() == Some(METADOSIS_P0_NAME),
+        "P0 catalog binding drift"
     );
-    for (identity, file_name) in binaries {
-        let claim: MemberDigestV1 = serde_json::from_value(
-            exact_binaries
-                .get(identity)
-                .cloned()
-                .ok_or_else(|| eyre::eyre!("fresh-devnet scenario is missing {identity}"))?,
-        )?;
-        ensure!(
-            Path::new(&claim.path)
-                .file_name()
-                .and_then(|name| name.to_str())
-                == Some(file_name),
-            "fresh-devnet scenario {identity} path does not identify {file_name}"
-        );
-        let relative = format!("fresh-devnet/artifacts/{file_name}");
-        let retained = members
-            .iter()
-            .find(|member| member.path == relative)
-            .ok_or_else(|| eyre::eyre!("fresh-devnet bundle is missing {relative}"))?;
-        ensure!(
-            claim.length == retained.length && claim.sha256 == retained.sha256,
-            "fresh-devnet retained {file_name} differs from the executed binary"
-        );
-    }
+    ensure!(
+        receipt.discovery.is_none(),
+        "P0 process target cannot use Cargo discovery"
+    );
+    let required = verify_p0_process(repo, bundle_root, receipt)?;
+    bind_process_artifacts(receipt, required, "P0", collected)?;
+    Ok((true, false))
+}
 
-    let genesis_relative = "fresh-devnet/artifacts/genesis.json";
+fn fresh_devnet_discovery(
+    bundle_root: &Path,
+    definition: &TestDefinitionV1,
+    receipt: &TestRunReceiptV1,
+    collected: &mut CollectedMembers<'_>,
+) -> Result<(bool, bool)> {
     ensure!(
-        members.iter().any(|member| member.path == genesis_relative),
-        "fresh-devnet bundle is missing {genesis_relative}"
+        definition.target == METADOSIS_FRESH_DEVNET_TARGET
+            && definition.name.as_deref() == Some(METADOSIS_FRESH_DEVNET_NAME),
+        "fresh-devnet catalog binding drift"
     );
-    let genesis_path = bundle_root.join(genesis_relative);
-    let genesis: serde_json::Value = serde_json::from_slice(&std::fs::read(&genesis_path)?)
-        .wrap_err("decode retained fresh genesis")?;
-    let protocol_parameters = GenesisProtocolParametersV1::from_genesis(&genesis)
-        .wrap_err("read protocol parameters from retained fresh genesis")?;
-    let chain_spec = reth_ethereum::cli::chainspec::chain_value_parser(
-        genesis_path
-            .to_str()
-            .ok_or_else(|| eyre::eyre!("fresh genesis path is not UTF-8"))?,
-    )?
-    .as_ref()
-    .clone()
-    .map_header(OutbeHeader::new);
-    let genesis_hash = chain_spec.genesis_hash();
-    let launch = &scenario["ocomp"]["topology"]["launch_identity"];
     ensure!(
-        launch["genesis_hash"].as_str() == Some(format!("{genesis_hash:#x}").as_str()),
-        "fresh-devnet launch genesis hash is not derived from retained genesis bytes"
+        receipt.discovery.is_none(),
+        "fresh-devnet process target cannot use Cargo discovery"
     );
+    let required = verify_fresh_devnet_process(bundle_root, receipt)?;
+    bind_process_artifacts(receipt, required, "fresh-devnet", collected)?;
+    Ok((true, false))
+}
 
-    let manifest = &genesis["config"]["ocompForkInstallV1"];
-    let canonical_hex = manifest["canonicalBytes"]
-        .as_str()
-        .and_then(|value| value.strip_prefix("0x"))
-        .ok_or_else(|| eyre::eyre!("retained fresh genesis has no canonical OCOMP install"))?;
-    let canonical_install = hex::decode(canonical_hex)?;
-    let install_relative = "fresh-devnet/artifacts/fork-install-v1.ocb1";
+fn cargo_discovery(
+    bundle_root: &Path,
+    (test_id, definition): (&str, &TestDefinitionV1),
+    receipt: &TestRunReceiptV1,
+    plan_discovery: Option<(Vec<String>, Vec<String>)>,
+    collected: &mut CollectedMembers<'_>,
+) -> Result<(bool, bool)> {
     ensure!(
-        std::fs::read(bundle_root.join(install_relative))? == canonical_install,
-        "retained fresh fork install differs from genesis manifest bytes"
+        receipt.process_artifacts.is_empty(),
+        "{test_id} contains unexpected process artifacts"
     );
-    let limits = poc_schema_limits();
-    let install = OcompForkInstallV1::decode_canonical(&canonical_install, &limits)?;
-    install.validate_for_chain(chain_spec.chain().id(), genesis_hash, &limits)?;
-    let install_hash = install.install_hash(&limits)?;
-    let protocol_bundle_hash = install.protocol_bundle.protocol_bundle_hash(&limits)?;
+    let (normal_plan, ignored_plan) = plan_discovery.expect("non-P0 command has Cargo discovery");
+    let observed = receipt
+        .discovery
+        .as_ref()
+        .ok_or_else(|| eyre::eyre!("{test_id} has no Cargo discovery receipt"))?;
     ensure!(
-        install.classification == OcompForkInstallClassification::Measurement
-            && install.activation_height == 1
-            && launch["chain_id"].as_u64() == Some(install.request_profile.chain_id)
-            && launch["fork_install_hash"].as_str() == Some(format!("{install_hash:#x}").as_str())
-            && manifest["installHash"].as_str() == Some(format!("{install_hash:#x}").as_str())
-            && launch["protocol_bundle_hash"].as_str()
-                == Some(format!("{protocol_bundle_hash:#x}").as_str())
-            && install.request_profile.genesis_hash == genesis_hash,
-        "fresh-devnet launch identity is not derived from retained install/profile bytes"
+        observed.normal.argv == normal_plan && observed.ignored.argv == ignored_plan,
+        "{test_id} discovery argv differs from the fixed command plan"
     );
-    ensure!(
-        genesis["config"]["metadosisStorageLayoutV1"]["layoutHash"]
-            == launch["metadosis_storage_layout_hash"],
-        "fresh-devnet layout identity differs from retained genesis"
-    );
-
-    for (relative, expected) in [
-        (
-            "fresh-devnet/artifacts/protocol-bundle-v1.ocb1",
-            install.protocol_bundle.encode_canonical(&limits)?,
-        ),
-        (
-            "fresh-devnet/artifacts/capacity-profile-v1.ocb1",
-            install
-                .request_profile
-                .capacity_profile
-                .encode_canonical(&limits)?,
-        ),
+    validate_command(bundle_root, &observed.normal)?;
+    validate_command(bundle_root, &observed.ignored)?;
+    for member in [
+        &observed.normal.stdout,
+        &observed.normal.stderr,
+        &observed.ignored.stdout,
+        &observed.ignored.stderr,
     ] {
-        ensure!(
-            members.iter().any(|member| member.path == relative)
-                && std::fs::read(bundle_root.join(relative))? == expected,
-            "fresh-devnet retained profile member {relative} is missing or mismatched"
-        );
+        collected.add(member.clone())?;
     }
-    Ok(protocol_parameters)
-}
-
-#[cfg(not(feature = "ocomp-integration"))]
-fn verify_fresh_artifacts(
-    _bundle_root: &Path,
-    _scenario: &serde_json::Value,
-    _members: &[MemberDigestV1],
-) -> Result<GenesisProtocolParametersV1> {
-    eyre::bail!("fresh-devnet artifact verification requires the ocomp-integration feature");
-}
-
-fn digest_like(value: &serde_json::Value) -> bool {
-    value.as_str().is_some_and(|digest| {
-        digest.len() == 66
-            && digest.starts_with("0x")
-            && hex::decode(&digest[2..])
-                .is_ok_and(|bytes| bytes.len() == 32 && bytes.iter().any(|byte| *byte != 0))
-    })
-}
-
-fn verified_time_control_points(value: &serde_json::Value) -> Result<[u64; 2]> {
-    let points = value
-        .as_array()
-        .ok_or_else(|| eyre::eyre!("time-control finalized points are not an array"))?;
-    ensure!(
-        points.len() == 4,
-        "time-control epoch must retain four validator points"
-    );
-    let first_height = points[0]["block_number"]
-        .as_u64()
-        .ok_or_else(|| eyre::eyre!("time-control point has no block number"))?;
-    let first_timestamp = points[0]["block_timestamp"]
-        .as_u64()
-        .ok_or_else(|| eyre::eyre!("time-control point has no block timestamp"))?;
-    let first_hash = &points[0]["block_hash"];
-    ensure!(
-        digest_like(first_hash),
-        "time-control point has no canonical block hash"
-    );
-    let mut validators = BTreeSet::new();
-    for point in points {
-        let validator = point["validator_index"]
-            .as_u64()
-            .ok_or_else(|| eyre::eyre!("time-control point has no validator index"))?;
-        ensure!(
-            validator < 4 && validators.insert(validator),
-            "time-control validator index is duplicate or outside the committee"
-        );
-        ensure!(
-            point["block_number"].as_u64() == Some(first_height)
-                && point["block_timestamp"].as_u64() == Some(first_timestamp)
-                && point["block_hash"] == *first_hash,
-            "time-control validators did not converge on one finalized point"
-        );
-    }
-    Ok([first_height, first_timestamp])
+    let name = definition.name.as_deref().unwrap_or(test_id);
+    Ok((
+        observed.normal.succeeded()
+            && cargo_list_contains(bundle_root, &observed.normal.stdout.path, name)?,
+        observed.ignored.succeeded()
+            && cargo_list_contains(bundle_root, &observed.ignored.stdout.path, name)?,
+    ))
 }
 
 fn validate_receipt_header(receipt: &MetadosisRunReceiptV1) -> Result<()> {
@@ -1054,7 +439,7 @@ fn cargo_list_contains(bundle_root: &Path, member: &str, exact_name: &str) -> Re
 fn verify_p0_process(
     repo: &Path,
     bundle_root: &Path,
-    receipt: &super::schema::TestRunReceiptV1,
+    receipt: &TestRunReceiptV1,
 ) -> Result<Vec<MemberDigestV1>> {
     ensure!(
         receipt.execution.succeeded(),
@@ -1198,667 +583,4 @@ fn slash_path(path: &Path) -> Result<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[cfg(feature = "ocomp-integration")]
-    use std::path::PathBuf;
-
-    use crate::verification_ledger::{SourceIdentityV1, TestDiscoveryV1};
-
-    #[test]
-    fn hand_authored_pass_without_runner_receipt_is_rejected() {
-        let evidence = DomainEvidenceV1 {
-            schema_version: 1,
-            namespace: METADOSIS_NAMESPACE.to_owned(),
-            source: SourceIdentityV1 {
-                sha: "a".repeat(40),
-                tracked_dirty: false,
-                untracked_dirty: false,
-                cargo_lock_sha256: "b".repeat(64),
-                rust_toolchain_sha256: "c".repeat(64),
-                dependency_metadata_sha256: "d".repeat(64),
-            },
-            artifact_profile: "OUTBE_OCOMP_POC_DEVNET_FORK_V1".to_owned(),
-            lane: "METADOSIS-LINUX".to_owned(),
-            linux_image_digest: format!("sha256:{}", "e".repeat(64)),
-            discovery: TestDiscoveryV1 {
-                discovered: vec!["MET-FAKE-001".to_owned()],
-                ..TestDiscoveryV1::default()
-            },
-            tests: vec![EvidenceTestV1 {
-                test_id: "MET-FAKE-001".to_owned(),
-                target: "fake".to_owned(),
-                name: "fake".to_owned(),
-                lane: "METADOSIS-LINUX".to_owned(),
-                production_interface: "fake".to_owned(),
-                substitutions: Vec::new(),
-                status: AssertionStatus::Pass,
-                evidence_member_refs: vec!["fake.log".to_owned()],
-            }],
-            members: vec![MemberDigestV1 {
-                path: "fake.log".to_owned(),
-                length: 0,
-                sha256: "f".repeat(64),
-            }],
-        };
-        let error = require_runner_derivation_member(&evidence).unwrap_err();
-        assert!(error.to_string().contains("runner-receipt.json"));
-    }
-
-    #[test]
-    fn status_is_derived_only_from_discovery_ignore_and_exit_facts() {
-        assert_eq!(
-            derive_status(true, false, true, false),
-            AssertionStatus::Pass
-        );
-        assert_eq!(
-            derive_status(true, false, false, false),
-            AssertionStatus::Fail
-        );
-        assert_eq!(
-            derive_status(true, false, false, true),
-            AssertionStatus::InfraError
-        );
-        assert_eq!(
-            derive_status(false, false, true, false),
-            AssertionStatus::Missing
-        );
-        assert_eq!(
-            derive_status(true, true, true, false),
-            AssertionStatus::Skipped
-        );
-    }
-
-    #[cfg(feature = "ocomp-integration")]
-    #[test]
-    fn fresh_devnet_process_verifier_requires_measurement_one_layout_and_terminal_path() {
-        let root = tempfile::tempdir().unwrap();
-        let fresh = root.path().join("fresh-devnet");
-        std::fs::create_dir_all(fresh.join("evidence")).unwrap();
-        let artifacts = fresh.join("artifacts");
-        std::fs::create_dir(&artifacts).unwrap();
-        std::fs::write(fresh.join("commands.log"), b"exact fresh command\n").unwrap();
-        std::fs::write(fresh.join("run.log"), b"scenario passed\n").unwrap();
-        let source = SourceIdentityV1 {
-            sha: "a".repeat(40),
-            tracked_dirty: false,
-            untracked_dirty: false,
-            cargo_lock_sha256: "b".repeat(64),
-            rust_toolchain_sha256: "c".repeat(64),
-            dependency_metadata_sha256: "d".repeat(64),
-        };
-        let runner = MetadosisRunReceiptV1 {
-            schema_version: METADOSIS_RUN_RECEIPT_SCHEMA_VERSION,
-            kind: METADOSIS_RUN_RECEIPT_KIND.to_owned(),
-            namespace: METADOSIS_NAMESPACE.to_owned(),
-            source: source.clone(),
-            artifact_profile: "OUTBE_OCOMP_POC_DEVNET_FORK_V1".to_owned(),
-            lane: "METADOSIS-LINUX".to_owned(),
-            linux_image_digest: format!("sha256:{}", "e".repeat(64)),
-            launcher_nonce: "f".repeat(64),
-            tests: Vec::new(),
-        };
-        std::fs::write(
-            root.path().join(RUNNER_RECEIPT_MEMBER),
-            serde_json::to_vec(&runner).unwrap(),
-        )
-        .unwrap();
-
-        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let mut genesis: serde_json::Value =
-            serde_json::from_slice(
-                &std::fs::read(repo.join(
-                    "testing/e2e-harness/fixtures/ocomp-final-v1/artifacts/genesis-final.json",
-                ))
-                .unwrap(),
-            )
-            .unwrap();
-        genesis["config"]["outbeProtocol"] = serde_json::json!({
-            "schemaVersion": 1,
-            "metadosis": {
-                "formingPeriodSeconds": 57600,
-                "lookbackDelaySeconds": 0,
-                "offeringPeriodSeconds": 900,
-                "waitingPeriodSeconds": 30,
-                "advanceIntervalSeconds": 10
-            },
-            "ocomp": { "computeVoteWindowBlocks": 120 }
-        });
-        let genesis_path = artifacts.join("genesis.json");
-        std::fs::write(&genesis_path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
-        let base_spec =
-            reth_ethereum::cli::chainspec::chain_value_parser(genesis_path.to_str().unwrap())
-                .unwrap()
-                .as_ref()
-                .clone()
-                .map_header(OutbeHeader::new);
-        let chain_id = base_spec.chain().id();
-        let genesis_hash_value = base_spec.genesis_hash();
-        let limits = poc_schema_limits();
-        let install = ForkInstallScenario::measurement_at(1, chain_id, genesis_hash_value)
-            .unwrap()
-            .into_install();
-        install
-            .validate_for_chain(chain_id, genesis_hash_value, &limits)
-            .unwrap();
-        let canonical_install = install.encode_canonical(&limits).unwrap();
-        let install_hash = install.install_hash(&limits).unwrap();
-        let protocol_bundle_hash = install
-            .protocol_bundle
-            .protocol_bundle_hash(&limits)
-            .unwrap();
-        let config = genesis["config"].as_object_mut().unwrap();
-        config.insert(
-            "ocompForkInstallV1".to_owned(),
-            serde_json::json!({
-                "canonicalBytes": format!("0x{}", hex::encode(&canonical_install)),
-                "installHash": install_hash,
-            }),
-        );
-        config.insert(
-            "metadosisStorageLayoutV1".to_owned(),
-            serde_json::json!({
-                "layoutHash": crate::world::ocomp::METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX,
-            }),
-        );
-        std::fs::write(&genesis_path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
-        std::fs::write(artifacts.join("fork-install-v1.ocb1"), &canonical_install).unwrap();
-        std::fs::write(
-            artifacts.join("protocol-bundle-v1.ocb1"),
-            install.protocol_bundle.encode_canonical(&limits).unwrap(),
-        )
-        .unwrap();
-        std::fs::write(
-            artifacts.join("capacity-profile-v1.ocb1"),
-            install
-                .request_profile
-                .capacity_profile
-                .encode_canonical(&limits)
-                .unwrap(),
-        )
-        .unwrap();
-        let mut exact_binaries = serde_json::Map::new();
-        for (identity, file_name) in [
-            ("outbe_chain", "outbe-chain"),
-            ("outbe_ocomp", "outbe-ocomp"),
-            ("outbe_feeder", "outbe-feeder"),
-            ("outbe_cli", "outbe-cli"),
-            ("outbe_keygen", "outbe-keygen"),
-            ("outbe_e2e", "outbe-e2e"),
-            ("outbe_tee_enclave", "outbe-tee-enclave"),
-        ] {
-            let binary = artifacts.join(file_name);
-            std::fs::write(&binary, format!("exact {file_name} bytes")).unwrap();
-            exact_binaries.insert(
-                identity.to_owned(),
-                serde_json::to_value(crate::ocomp_evidence::hash_file(&binary).unwrap()).unwrap(),
-            );
-        }
-        let mut processes = Vec::new();
-        for validator_index in 0..4 {
-            for role in ["snapshot_exporter", "worker"] {
-                processes.push(serde_json::json!({
-                    "validator_index": validator_index,
-                    "role": role,
-                    "stopped_at_millis": null
-                }));
-            }
-        }
-        let finalized_points = |block_number: u64, block_timestamp: u64, hash_byte: u8| {
-            (0..4)
-                .map(|validator_index| {
-                    serde_json::json!({
-                        "validator_index": validator_index,
-                        "block_number": block_number,
-                        "block_hash": format!("0x{}", format!("{hash_byte:02x}").repeat(32)),
-                        "block_timestamp": block_timestamp
-                    })
-                })
-                .collect::<Vec<_>>()
-        };
-        let forming_start = 1_785_319_200_u64;
-        let initial_timestamp = forming_start + 15 * 3_600;
-        let forming_end = forming_start + 16 * 3_600;
-        let offering_end = forming_end + 900;
-        let scheduled_process_time = offering_end + 30;
-        let first_target = forming_end + 1;
-        let second_target = scheduled_process_time + 1;
-        let before_first_restart = finalized_points(1, initial_timestamp, 0x44);
-        let after_first_restart = finalized_points(2, first_target, 0x55);
-        let before_second_restart = finalized_points(2, first_target, 0x55);
-        let after_second_restart = finalized_points(3, second_target, 0x66);
-        let worldwide_day = 20_260_730_u64;
-        let genesis_hash = format!("{genesis_hash_value:#x}");
-        let scenario_path = fresh.join("evidence/scenario-001.json");
-        let oracle_base = format!("{:#x}", alloy_primitives::Address::ZERO);
-        let oracle_quote = format!("{:#x}", outbe_primitives::asset_type::currency_address(840));
-        let oracle_processes = (1..=3_u32)
-            .flat_map(|attempt| (0..3).map(move |validator_index| {
-                crate::world::price_oracle::FeederProcessEvidenceV1 {
-                    validator_index,
-                    validator_address: format!("0x{:040x}", validator_index + 1),
-                    rpc_endpoint: format!("http://127.0.0.1:{}", 18_545 + validator_index),
-                    vote_period: 8,
-                    attempt,
-                    pid: 12_345 + 100 * attempt + u32::try_from(validator_index).unwrap(),
-                    log: format!(
-                        "fresh-devnet/evidence/price-oracle/validator-{validator_index}-feeder-attempt-{attempt}.log"
-                    ),
-                    started_at_millis: u64::from(attempt) * 100,
-                    stopped_at_millis: (attempt < 3).then_some(u64::from(attempt) * 100 + 10),
-                    oracle_pairs: vec!["COEN/840".to_owned()],
-                    source_markets: vec!["mock_http:COEN/840".to_owned()],
-                }
-            }))
-            .collect::<Vec<_>>();
-        let mut oracle_sources = (0..3)
-            .flat_map(|validator_index| {
-                [
-                    crate::world::price_oracle::ControlledSourceEvidenceV1 {
-                        phase: crate::world::price_oracle::OracleEvidencePhaseV1::Initial,
-                        generation: 1,
-                        validator_index,
-                        oracle_pair: "COEN/840".to_owned(),
-                        source_market: "mock_http:COEN/840".to_owned(),
-                        price: "1.000000".to_owned(),
-                        volume: "1000.000000".to_owned(),
-                    },
-                    crate::world::price_oracle::ControlledSourceEvidenceV1 {
-                        phase: crate::world::price_oracle::OracleEvidencePhaseV1::ControlledUpdate,
-                        generation: 2,
-                        validator_index,
-                        oracle_pair: "COEN/840".to_owned(),
-                        source_market: "mock_http:COEN/840".to_owned(),
-                        price: "1.080001".to_owned(),
-                        volume: "1000.000000".to_owned(),
-                    },
-                ]
-            })
-            .collect::<Vec<_>>();
-        oracle_sources.extend((0..3).flat_map(|validator_index| {
-            (0..2).map(
-                move |_| crate::world::price_oracle::ControlledSourceEvidenceV1 {
-                    phase: crate::world::price_oracle::OracleEvidencePhaseV1::ClockRestart,
-                    generation: 1,
-                    validator_index,
-                    oracle_pair: "COEN/840".to_owned(),
-                    source_market: "mock_http:COEN/840".to_owned(),
-                    price: "1.000000".to_owned(),
-                    volume: "1000.000000".to_owned(),
-                },
-            )
-        }));
-        let oracle_publication = |phase, rate: &str, block, timestamp| {
-            crate::world::price_oracle::CanonicalPricePublicationV1 {
-                phase,
-                validator_count: 4,
-                base: oracle_base.clone(),
-                quote: oracle_quote.clone(),
-                rate: rate.to_owned(),
-                volume: "1000000000".to_owned(),
-                oracle_block: block,
-                oracle_timestamp: timestamp,
-                finalized_height: block,
-                finalized_timestamp: timestamp,
-                age_seconds: 0,
-            }
-        };
-        let mut price_oracle = crate::world::price_oracle::PriceOracleEvidenceV1 {
-            feeder_binary: artifacts.join("outbe-feeder").display().to_string(),
-            feeder_binary_sha256: exact_binaries["outbe_feeder"]["sha256"]
-                .as_str()
-                .unwrap()
-                .to_owned(),
-            feeder_processes: oracle_processes,
-            ticker_requests: 3,
-            candle_requests: 3,
-            controlled_sources: oracle_sources,
-            canonical_publications: vec![
-                oracle_publication(
-                    crate::world::price_oracle::OracleEvidencePhaseV1::Initial,
-                    "1000000",
-                    2,
-                    initial_timestamp,
-                ),
-                oracle_publication(
-                    crate::world::price_oracle::OracleEvidencePhaseV1::ClockRestart,
-                    "1000000",
-                    4,
-                    first_target,
-                ),
-                oracle_publication(
-                    crate::world::price_oracle::OracleEvidencePhaseV1::ClockRestart,
-                    "1000000",
-                    6,
-                    second_target,
-                ),
-                oracle_publication(
-                    crate::world::price_oracle::OracleEvidencePhaseV1::ControlledUpdate,
-                    "1080001",
-                    8,
-                    second_target + 2,
-                ),
-            ],
-            quorum_loss_windows: Vec::new(),
-            penalty_snapshots: Vec::new(),
-            cohorts: Vec::new(),
-        };
-        // The fixture models the initial launch and both real feeder restarts.
-        // Every publication carries the same mandatory cohort proof as a run.
-        for (attempt, publication_indexes) in [(1, vec![0]), (2, vec![1]), (3, vec![2, 3])] {
-            use crate::world::price_oracle::{
-                OracleCheckpointV1, OracleCohortEvidenceV1, OracleCohortV1, OracleMemberV1,
-            };
-            let first = &price_oracle.canonical_publications[publication_indexes[0]];
-            let members = (0..4)
-                .map(|index| OracleMemberV1 {
-                    index,
-                    address: format!("0x{:040x}", index + 1).parse().unwrap(),
-                    port: 18_545 + u16::try_from(index).unwrap(),
-                    node_pid: 10_000 + 100 * attempt + u32::try_from(index).unwrap(),
-                })
-                .collect::<Vec<_>>();
-            let attempts = price_oracle
-                .feeder_processes
-                .iter()
-                .filter(|process| process.attempt == attempt)
-                .map(|process| (process.validator_index, process.attempt, process.pid))
-                .collect::<Vec<_>>();
-            let cohort = OracleCohortV1 {
-                checkpoint: OracleCheckpointV1 {
-                    height: first.oracle_block - 1,
-                    block_hash: alloy_primitives::B256::repeat_byte(0x44),
-                    state_root: alloy_primitives::B256::repeat_byte(0x45),
-                },
-                members,
-                quorum: 3,
-                feeder_indices: vec![0, 1, 2],
-                overlapping_pairs: false,
-            };
-            let observations = publication_indexes
-                .into_iter()
-                .map(|index| {
-                    let publication = &price_oracle.canonical_publications[index];
-                    let checkpoint = OracleCheckpointV1 {
-                        height: publication.finalized_height,
-                        block_hash: alloy_primitives::B256::repeat_byte(0x55),
-                        state_root: alloy_primitives::B256::repeat_byte(0x56),
-                    };
-                    let reads = cohort.members.iter().map(|member| serde_json::json!({
-                    "port": member.port, "finalized": checkpoint.height,
-                    "checkpoint": checkpoint,
-                    "rate": publication.rate.parse::<alloy_primitives::U256>().unwrap(),
-                    "volume": publication.volume.parse::<alloy_primitives::U256>().unwrap(),
-                    "oracle_block": publication.oracle_block,
-                    "oracle_timestamp": publication.oracle_timestamp,
-                    "finalized_timestamp": publication.finalized_timestamp,
-                })).collect::<Vec<_>>();
-                    serde_json::json!({
-                        "process_history_len": attempt * 3,
-                        "current_attempts": attempts,
-                        "observation": {
-                            "kind": "publication_verified", "phase": publication.phase,
-                            "base": publication.base, "quote": publication.quote,
-                            "oracle_block": publication.oracle_block,
-                            "strictly_after_block": publication.oracle_block - 1,
-                            "checkpoint": checkpoint, "reads": reads,
-                        },
-                    })
-                })
-                .collect();
-            price_oracle.cohorts.push(OracleCohortEvidenceV1 {
-                first_process_record: usize::try_from((attempt - 1) * 3).unwrap(),
-                phase: first.phase,
-                cohort,
-                current_attempts: if attempt == 3 { attempts } else { Vec::new() },
-                observations,
-            });
-        }
-        let mut scenario = serde_json::json!({
-            "source": {
-                "sha": source.sha,
-                "tracked_dirty": false,
-                "untracked_dirty": false
-            },
-            "feature": "Off-chain computation and Metadosis",
-            "scenario": "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
-            "result": "passed",
-            "environment": {
-                "validators": 4,
-                "tee": "gramine-direct",
-                "all": true
-            },
-            "price_oracle": price_oracle,
-            "ocomp": {
-                "exact_binaries": exact_binaries,
-                "topology": {
-                    "launch_identity": {
-                        "classification": "measurement",
-                        "activation_height": 1,
-                        "chain_id": chain_id,
-                        "genesis_hash": genesis_hash,
-                        "metadosis_storage_layout_hash":
-                            crate::world::ocomp::METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX,
-                        "fork_install_hash": format!("{install_hash:#x}"),
-                        "protocol_bundle_hash": format!("{protocol_bundle_hash:#x}")
-                    },
-                    "processes": processes
-                },
-                "public_path": {
-                    "atomic_quorum_apply_verified": true,
-                    "job_request": {
-                        "worldwide_day": worldwide_day
-                    },
-                    "activation": {
-                        "worldwide_day": worldwide_day,
-                        "terminal_receipt_hash": format!("0x{}", "77".repeat(32))
-                    },
-                    "certified_generation": {
-                        "worldwide_day": worldwide_day
-                    },
-                    "capacity_public_path": {
-                        "q_forming_receipt_success": true,
-                        "canonical_import_verified": true,
-                        "canonical_import_validator_count": 4,
-                        "tribute_count": 257,
-                        "nod_count": 257
-                    },
-                    "metadosis_fresh_lifecycle": {
-                        "worldwide_day": worldwide_day,
-                        "genesis_hash": genesis_hash,
-                        "initial_timestamp": initial_timestamp,
-                        "initial_unix_time_offset_secs": -10,
-                        "forming_start": forming_start,
-                        "forming_end": forming_end,
-                        "lookback_end": forming_end,
-                        "offering_end": offering_end,
-                        "scheduled_process_time": scheduled_process_time,
-                        "started": {
-                            "worldwide_day": worldwide_day,
-                            "forming_start": forming_start,
-                            "forming_end": forming_end,
-                            "lookback_end": forming_end,
-                            "offering_end": offering_end,
-                            "scheduled_process_time": scheduled_process_time,
-                            "block_number": 1,
-                            "block_hash": format!("0x{}", "44".repeat(32))
-                        },
-                        "status_changes": [
-                            {
-                                "worldwide_day": worldwide_day,
-                                "old_status": 0,
-                                "new_status": 1,
-                                "block_number": 2,
-                                "block_hash": format!("0x{}", "55".repeat(32))
-                            },
-                            {
-                                "worldwide_day": worldwide_day,
-                                "old_status": 1,
-                                "new_status": 2,
-                                "block_number": 2,
-                                "block_hash": format!("0x{}", "55".repeat(32))
-                            },
-                            {
-                                "worldwide_day": worldwide_day,
-                                "old_status": 2,
-                                "new_status": 3,
-                                "block_number": 3,
-                                "block_hash": format!("0x{}", "66".repeat(32))
-                            },
-                            {
-                                "worldwide_day": worldwide_day,
-                                "old_status": 3,
-                                "new_status": 4,
-                                "block_number": 3,
-                                "block_hash": format!("0x{}", "66".repeat(32))
-                            }
-                        ],
-                        "time_control_epochs": [
-                            {
-                                "requested_timestamp": first_target,
-                                "unix_time_offset_secs": 10,
-                                "before_restart": before_first_restart,
-                                "after_restart": after_first_restart
-                            },
-                            {
-                                "requested_timestamp": second_target,
-                                "unix_time_offset_secs": 20,
-                                "before_restart": before_second_restart,
-                                "after_restart": after_second_restart
-                            }
-                        ],
-                        "created_validator_count": 4,
-                        "unknown_status_revert_validator_count": 4,
-                        "offering_validator_count": 4,
-                        "ready_validator_count": 4,
-                        "completed_validator_count": 4
-                    }
-                }
-            }
-        });
-        std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
-        let dummy_member = MemberDigestV1 {
-            path: "unused".to_owned(),
-            length: 1,
-            sha256: "f".repeat(64),
-        };
-        let receipt = crate::metadosis_evidence::schema::TestRunReceiptV1 {
-            test_id: METADOSIS_FRESH_DEVNET_TEST_ID.to_owned(),
-            discovery: None,
-            execution: CommandReceiptV1 {
-                argv: vec![
-                    "outbe-metadosis-evidence".to_owned(),
-                    "fresh-devnet".to_owned(),
-                    "--output".to_owned(),
-                    root.path().join("fresh-devnet").display().to_string(),
-                ],
-                attempt: 1,
-                started_at_unix_ms: 1,
-                finished_at_unix_ms: 2,
-                exit_code: Some(0),
-                stdout: dummy_member.clone(),
-                stderr: dummy_member,
-            },
-            process_artifacts: Vec::new(),
-        };
-        verify_fresh_devnet_process(root.path(), &receipt).unwrap();
-
-        // Verify capture ordering through the complete verifier, not only the
-        // publication helper: a proof cannot borrow another launch's history.
-        for defect in 0..4 {
-            let mut wrong = scenario.clone();
-            let cohorts = &mut wrong["price_oracle"]["cohorts"];
-            match defect {
-                0 => cohorts[0]["observations"][0]["process_history_len"] = serde_json::json!(4),
-                1 => {
-                    cohorts[2]["observations"]
-                        .as_array_mut()
-                        .unwrap()
-                        .push(serde_json::json!({
-                            "process_history_len": 8,
-                            "current_attempts": [],
-                            "observation": {"kind": "diagnostic"},
-                        }));
-                }
-                2 => {
-                    cohorts[1]
-                        .as_object_mut()
-                        .unwrap()
-                        .remove("first_process_record");
-                }
-                _ => cohorts[1]["first_process_record"] = serde_json::json!(0),
-            }
-            assert!(
-                verify_price_oracle_evidence(&wrong).is_err(),
-                "accepted history defect {defect}"
-            );
-        }
-
-        scenario["ocomp"]["topology"]["processes"]
-            .as_array_mut()
-            .unwrap()
-            .push(serde_json::json!({
-                "validator_index": 0,
-                "role": "supervisor",
-                "stopped_at_millis": null
-            }));
-        std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
-        assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
-        scenario["ocomp"]["topology"]["processes"]
-            .as_array_mut()
-            .unwrap()
-            .pop();
-        std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
-
-        let retained_chain = std::fs::read(artifacts.join("outbe-chain")).unwrap();
-        std::fs::write(artifacts.join("outbe-chain"), b"tampered binary").unwrap();
-        assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
-        std::fs::write(artifacts.join("outbe-chain"), retained_chain).unwrap();
-
-        let retained_bundle = std::fs::read(artifacts.join("protocol-bundle-v1.ocb1")).unwrap();
-        std::fs::remove_file(artifacts.join("protocol-bundle-v1.ocb1")).unwrap();
-        assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
-        std::fs::write(artifacts.join("protocol-bundle-v1.ocb1"), retained_bundle).unwrap();
-
-        scenario["ocomp"]["public_path"]["metadosis_fresh_lifecycle"]
-            ["unknown_status_revert_validator_count"] = serde_json::json!(3);
-        std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
-        assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
-
-        scenario["ocomp"]["public_path"]["metadosis_fresh_lifecycle"]
-            ["unknown_status_revert_validator_count"] = serde_json::json!(4);
-        scenario["price_oracle"]["canonical_publications"][1]["age_seconds"] =
-            serde_json::json!(21_601);
-        std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
-        assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
-
-        scenario["price_oracle"]["canonical_publications"][1]["age_seconds"] = serde_json::json!(0);
-        let removed_feeder = scenario["price_oracle"]["feeder_processes"]
-            .as_array_mut()
-            .unwrap()
-            .pop()
-            .unwrap();
-        std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
-        assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
-        scenario["price_oracle"]["feeder_processes"]
-            .as_array_mut()
-            .unwrap()
-            .push(removed_feeder);
-
-        scenario["price_oracle"]["canonical_publications"][3]["rate"] = serde_json::json!("1");
-        std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
-        assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
-        scenario["price_oracle"]["canonical_publications"][3]["rate"] =
-            serde_json::json!("1080001");
-
-        scenario["price_oracle"]["controlled_sources"][5]["validator_index"] = serde_json::json!(1);
-        std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
-        assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
-        scenario["price_oracle"]["controlled_sources"][5]["validator_index"] = serde_json::json!(2);
-
-        scenario["ocomp"]["public_path"]["metadosis_fresh_lifecycle"]["status_changes"][0]
-            ["new_status"] = serde_json::json!(2);
-        std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
-        assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
-    }
-}
+mod tests;

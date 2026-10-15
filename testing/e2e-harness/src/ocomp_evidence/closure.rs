@@ -202,8 +202,8 @@ pub fn assemble_closure(
             exact_binaries: &exact_binary_identity,
             launch: &launch_identity,
             gramine_image: &gramine_image_identity,
+            lane_manifests: &lane_index,
         },
-        &lane_index,
         &members,
     );
     let finished_at = unix_millis().max(finished_at);
@@ -357,8 +357,8 @@ pub fn verify_closure_semantics(
             exact_binaries: &exact_binary_identity,
             launch: &launch_identity,
             gramine_image: &gramine_image_identity,
+            lane_manifests: &lane_index,
         },
-        &lane_index,
         &manifest.members,
     );
     ensure!(
@@ -537,6 +537,7 @@ struct ClosureIdentity<'a> {
     exact_binaries: &'a Value,
     launch: &'a Value,
     gramine_image: &'a Value,
+    lane_manifests: &'a BTreeMap<String, Value>,
 }
 
 fn closure_sections(
@@ -544,9 +545,9 @@ fn closure_sections(
     source: &super::SourceIdentityV1,
     discovery: &super::TestDiscoveryV1,
     identity: ClosureIdentity<'_>,
-    lane_index: &BTreeMap<String, Value>,
     members: &[MemberDigestV1],
 ) -> BTreeMap<String, Value> {
+    let lane_index = identity.lane_manifests;
     ledger
         .runtime_evidence
         .required_sections
