@@ -17,6 +17,9 @@ pub enum HyperlaneControllerError {
     #[error("local domain {domain} must be included in the ISM table")]
     LocalDomainMissing { domain: u32 },
 
+    #[error("caller {caller} is not the bootstrap admin {admin}")]
+    NotBootstrapAdmin { caller: Address, admin: Address },
+
     #[error("caller {caller} is not the current owner {owner} of the local ISM")]
     NotIsmOwner { caller: Address, owner: Address },
 
