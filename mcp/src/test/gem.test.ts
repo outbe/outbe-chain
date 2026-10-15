@@ -78,3 +78,18 @@ test("gem_settle approves GemFactory for the quote and settles at its snapshot",
     ],
   );
 });
+
+test("nod_settle approves NodFactory for the quote and settles at its snapshot", async () => {
+  const { text, isError, sent } = await run("nod_settle", { nod_id: "4", asset: ASSET }, (chain) => {
+    chain.reply("quoteSettlement", [978, 2_000_000n, 15n], CONTRACTS.nodfactory.address);
+    chain.reply("allowance", 0n);
+  });
+  assert(!isError, text);
+  assert.deepEqual(
+    sent.map((s) => [s.function, s.args]),
+    [
+      ["approve", [CONTRACTS.nodfactory.address, 2_000_000n]],
+      ["settleNod", [4n, ASSET, 15n]],
+    ],
+  );
+});

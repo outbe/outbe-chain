@@ -17,6 +17,7 @@ import IGratis from "./abi/generated/precompiles/IGratis.js";
 import IGratisFactory from "./abi/generated/precompiles/IGratisFactory.js";
 import IMetadosis from "./abi/generated/precompiles/IMetadosis.js";
 import INod from "./abi/generated/precompiles/INod.js";
+import INodFactory from "./abi/generated/precompiles/INodFactory.js";
 import IOracle from "./abi/generated/precompiles/IOracle.js";
 import IPromis from "./abi/generated/precompiles/IPromis.js";
 import IPromisLimit from "./abi/generated/precompiles/IPromisLimit.js";
@@ -41,6 +42,7 @@ export const PRECOMPILE_ABI = {
   IGratisFactory,
   IMetadosis,
   INod,
+  INodFactory,
   IOracle,
   IPromis,
   IPromisLimit,

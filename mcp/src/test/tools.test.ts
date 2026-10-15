@@ -259,6 +259,8 @@ const SCENARIOS: Case[] = [
   ["gem_settle", { gem_id: "3", asset: OTHER }],
   ["gem_promis_mine", { gem_id: "3" }],
   ["gem_positions_by_owner", { owner: OTHER }],
+  ["nod_settle_quote", { nod_id: "3", asset: OTHER }],
+  ["nod_settle", { nod_id: "3", asset: OTHER }],
 ];
 
 /** Replaces both randomness sources the offer encryption draws from with a counter. */

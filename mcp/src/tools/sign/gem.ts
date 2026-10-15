@@ -1,11 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { type Address, getAddress } from "viem";
-import { z } from "zod";
 import { type Ctx, readView } from "../../chain.js";
 import { withAuthorization } from "../../confidential/authorize.js";
 import { OP } from "../../confidential/mac.js";
 import { FACTORY_ABI, intexAddress } from "../../intex/registry.js";
-import { ensureAllowance } from "../../net/erc20.js";
 import { contextNetwork } from "../../net/resolver.js";
 import { requireAccount } from "../../net/tx.js";
 import { grindMiningNonce } from "../../pow.js";
@@ -15,6 +13,7 @@ import { seriesArg } from "../intex/args.js";
 import { address, rawAmount, waitFlag } from "../schemas.js";
 import { handler, ok } from "../util.js";
 import { eventId } from "./events.js";
+import { settleRight } from "./settle.js";
 import { submit } from "./submit.js";
 
 const GEM_SETTLED = 3;
@@ -68,29 +67,7 @@ export function registerGemTools(server: McpServer, ctx: Ctx): void {
     "Pay a Gem's settlement cost in `asset`: quotes it, approves GemFactory for that amount if the allowance " +
       "is short, and settles at the quoted snapshot. Anyone may pay; the Gem stays with its owner.",
     { gem_id: rawAmount, asset: address, wait: waitFlag },
-    handler(async ({ gem_id, asset, wait }) => {
-      const gemId = BigInt(gem_id);
-      const token = getAddress(asset);
-      const factory = resolveContract("gemfactory");
-      const { result } = await readView(ctx, factory, "quoteSettlement", [gemId, token]);
-      const [settlementCurrency, paymentMinor, snapshotId] = result as [number, bigint, bigint];
-      const approval =
-        paymentMinor > 0n
-          ? await ensureAllowance(ctx, contextNetwork(ctx), { token, spender: factory.address, amount: paymentMinor })
-          : null;
-      return submit(ctx, {
-        contract: "gemfactory",
-        method: "settleGem",
-        args: [gemId, token, snapshotId],
-        wait,
-        extra: {
-          settlementCurrency,
-          paymentMinor: paymentMinor.toString(),
-          snapshotId: snapshotId.toString(),
-          autoApprove: approval ? { txHash: approval, amount: paymentMinor.toString() } : null,
-        },
-      });
-    }),
+    handler(async ({ gem_id, asset, wait }) => settleRight(ctx, "gemfactory", "settleGem", BigInt(gem_id), asset as Address, wait)),
   );
 
   server.tool(

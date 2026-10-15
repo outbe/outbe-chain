@@ -71,6 +71,12 @@ export const CONTRACTS: Record<string, ContractEntry> = {
     abi: ABI.IGem,
   },
 
+  nodfactory: {
+    address: A("0x0000000000000000000000000000000000001007"),
+    note: "Nod factory (settle, mine Gratis)",
+    abi: ABI.INodFactory,
+  },
+
   gemfactory: {
     address: A("0x0000000000000000000000000000000000002013"),
     note: "Gem factory",
