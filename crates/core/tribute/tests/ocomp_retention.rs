@@ -51,9 +51,10 @@ fn retained_commitment_failure_after_success_preserves_current_and_retained_stat
             .unwrap_err();
         assert!(matches!(
             error,
-            TributeRepositoryError::RetainedCommitment(_)
+            TributeRepositoryError::RetainedCommitment(
+                outbe_compressed_entities::CommitmentError::CryptoBackend(_)
+            )
         ));
-        assert!(error.is_infrastructure());
         let mapped: outbe_primitives::error::PrecompileError = error.into();
         assert!(matches!(
             mapped,
@@ -66,7 +67,12 @@ fn retained_commitment_failure_after_success_preserves_current_and_retained_stat
     assert_eq!(after.len(), before.len());
     assert_eq!(after[0].body_commitment, before[0].body_commitment);
     assert!(retained.plan_retain_current(pin, body.tribute_id).is_ok());
-    assert!(!TributeRepositoryError::MalformedPrimaryKey.is_infrastructure());
+    let malformed: outbe_primitives::error::PrecompileError =
+        TributeRepositoryError::MalformedPrimaryKey.into();
+    assert!(matches!(
+        malformed,
+        outbe_primitives::error::PrecompileError::BodyReadCorruption(_)
+    ));
 }
 
 #[test]

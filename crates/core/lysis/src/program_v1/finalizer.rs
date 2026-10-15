@@ -58,12 +58,6 @@ impl core::fmt::Display for LysisFinalizationErrorV1 {
     }
 }
 
-impl LysisFinalizationErrorV1 {
-    pub fn is_infrastructure(&self) -> bool {
-        matches!(self, Self::Artifact(error) if error.is_infrastructure())
-    }
-}
-
 impl std::error::Error for LysisFinalizationErrorV1 {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {

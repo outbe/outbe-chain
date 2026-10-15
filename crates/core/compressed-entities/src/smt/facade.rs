@@ -132,12 +132,6 @@ pub(crate) enum TreeError {
 }
 
 impl TreeError {
-    pub(crate) fn is_infrastructure(&self) -> bool {
-        matches!(self, Self::Poseidon(error) if error.is_infrastructure())
-    }
-}
-
-impl TreeError {
     pub(crate) fn vendor(error: impl core::fmt::Display) -> Self {
         Self::Vendor(error.to_string())
     }

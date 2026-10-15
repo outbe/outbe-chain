@@ -50,13 +50,3 @@ impl From<outbe_poseidon::Error> for Error {
         Self::Hash(error)
     }
 }
-
-impl Error {
-    pub fn is_infrastructure(&self) -> bool {
-        match self {
-            Self::Hash(error) => error.is_infrastructure(),
-            Self::CryptoBackend(error) => error.is_infrastructure(),
-            _ => false,
-        }
-    }
-}

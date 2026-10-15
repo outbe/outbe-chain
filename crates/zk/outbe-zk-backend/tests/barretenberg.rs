@@ -112,7 +112,7 @@ fn demo_tribute_prove_verify_round_trip() {
         ProofVerifier::<DemoTribute>::verify(&Barretenberg::default(), &public, &truncated);
     match invalid {
         Ok(verified) => assert!(!verified),
-        Err(error) => assert!(!error.is_infrastructure()),
+        Err(error) => assert!(matches!(error, Error::Proof(_))),
     }
     assert_eq!(hash::poseidon2(&input).unwrap(), expected);
 

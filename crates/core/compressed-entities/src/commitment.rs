@@ -201,7 +201,7 @@ pub enum CommitmentError {
     #[error("byte input length is not representable as u64")]
     InputTooLong,
     #[error("Poseidon2-BN254 failure: {0}")]
-    Poseidon(#[source] PoseidonError),
+    CryptoBackend(#[source] PoseidonError),
     #[error("unsupported commitment scheme version {actual}")]
     UnsupportedCommitmentScheme { actual: u32 },
     #[error("unsupported body schema version {actual}")]
@@ -215,11 +215,18 @@ pub enum CommitmentError {
 }
 
 impl CommitmentError {
-    pub fn is_infrastructure(&self) -> bool {
-        matches!(self, Self::Poseidon(error) if error.is_infrastructure())
-    }
-
     pub(crate) fn poseidon(error: outbe_poseidon::PoseidonError) -> Self {
-        Self::Poseidon(error)
+        error.into()
+    }
+}
+
+impl From<PoseidonError> for CommitmentError {
+    fn from(error: PoseidonError) -> Self {
+        match error {
+            PoseidonError::InputLength => Self::InputTooLong,
+            error @ (PoseidonError::Runtime(_)
+            | PoseidonError::ResponseLength { .. }
+            | PoseidonError::NoncanonicalField { .. }) => Self::CryptoBackend(error),
+        }
     }
 }

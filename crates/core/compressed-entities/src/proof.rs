@@ -200,6 +200,8 @@ pub enum PointReadServiceError {
     GenesisUnavailable,
     #[error("compressed-entity proof materialization is inconsistent: {0}")]
     Materialization(String),
+    #[error("compressed-entity proof materialization is inconsistent: {0}")]
+    MaterializationSource(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("compiled proof length {actual} is outside v1 bounds")]
     MalformedProofLength { actual: usize },
     #[error("point proof package is invalid: {0}")]
@@ -207,10 +209,64 @@ pub enum PointReadServiceError {
 }
 
 impl PointReadServiceError {
-    pub(crate) fn materialization(error: impl std::error::Error + 'static) -> Self {
-        match crate::errors::infrastructure_cause(&error) {
-            Some(cause) => Self::CryptoBackend(cause),
-            None => Self::Materialization(error.to_string()),
+    pub(crate) fn materialization(error: impl Into<Self>) -> Self {
+        error.into()
+    }
+}
+
+impl From<crate::smt::TreeError> for PointReadServiceError {
+    fn from(error: crate::smt::TreeError) -> Self {
+        match error {
+            crate::smt::TreeError::Poseidon(error @ crate::CommitmentError::CryptoBackend(_)) => {
+                Self::CryptoBackend(error)
+            }
+            error => Self::MaterializationSource(Box::new(error)),
+        }
+    }
+}
+
+impl From<crate::CollectionError> for PointReadServiceError {
+    fn from(error: crate::CollectionError) -> Self {
+        match error {
+            crate::CollectionError::Hash(error @ crate::CommitmentError::CryptoBackend(_)) => {
+                Self::CryptoBackend(error)
+            }
+            error => Self::MaterializationSource(Box::new(error)),
+        }
+    }
+}
+
+impl From<crate::persistence::PersistenceError> for PointReadServiceError {
+    fn from(error: crate::persistence::PersistenceError) -> Self {
+        match error {
+            crate::persistence::PersistenceError::CryptoBackend(
+                error @ crate::CommitmentError::CryptoBackend(_),
+            ) => Self::CryptoBackend(error),
+            error => Self::MaterializationSource(Box::new(error)),
+        }
+    }
+}
+
+impl From<crate::tree_manager::TreeServiceError> for PointReadServiceError {
+    fn from(error: crate::tree_manager::TreeServiceError) -> Self {
+        match error {
+            crate::tree_manager::TreeServiceError::Persistence(error) => error.into(),
+            error => Self::MaterializationSource(Box::new(error)),
+        }
+    }
+}
+
+impl From<crate::staging::StagingError> for PointReadServiceError {
+    fn from(error: crate::staging::StagingError) -> Self {
+        match error {
+            crate::staging::StagingError::Hash(
+                error @ crate::CommitmentError::CryptoBackend(_),
+            ) => Self::CryptoBackend(error),
+            crate::staging::StagingError::Collection(crate::CollectionError::Hash(
+                error @ crate::CommitmentError::CryptoBackend(_),
+            )) => Self::CryptoBackend(error),
+            crate::staging::StagingError::Persistence(error) => error.into(),
+            error => Self::MaterializationSource(Box::new(error)),
         }
     }
 }

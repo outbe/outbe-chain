@@ -227,7 +227,13 @@ fn failed_hash_update_cannot_change_committed_native_records() {
                     TreeLeaf::from_be_bytes(B256::with_last_byte(9).0).unwrap(),
                 )
                 .unwrap_err();
-            assert!(error.is_infrastructure(), "{error:?}");
+            assert!(
+                matches!(
+                    error,
+                    crate::smt::TreeError::Poseidon(crate::CommitmentError::CryptoBackend(_))
+                ),
+                "{error:?}"
+            );
         }
         assert_eq!(tree.root().unwrap(), committed);
         assert_eq!(tree.get(key).unwrap(), old_leaf);

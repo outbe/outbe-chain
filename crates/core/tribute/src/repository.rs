@@ -173,17 +173,6 @@ pub enum TributeRepositoryError {
     RetainedNamespaceMismatch { job_id: B256 },
 }
 
-impl TributeRepositoryError {
-    /// Whether a native cryptographic backend failure caused this error.
-    #[must_use]
-    pub fn is_infrastructure(&self) -> bool {
-        match self {
-            Self::RetainedCommitment(error) => error.is_infrastructure(),
-            _ => false,
-        }
-    }
-}
-
 /// Cloneable read authority for Tribute bodies and typed indexes.
 #[derive(Clone)]
 pub struct TributeRepositoryReader {

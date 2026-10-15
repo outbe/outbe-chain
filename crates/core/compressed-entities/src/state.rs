@@ -240,9 +240,10 @@ fn revert(message: impl core::fmt::Display) -> PrecompileError {
 }
 
 fn collection_revert(error: crate::CollectionError) -> PrecompileError {
-    if error.is_infrastructure() {
-        crate::errors::collection_error(error)
-    } else {
-        revert(error)
+    match error {
+        error @ crate::CollectionError::Hash(crate::CommitmentError::CryptoBackend(_)) => {
+            crate::errors::collection_error(error)
+        }
+        error => revert(error),
     }
 }

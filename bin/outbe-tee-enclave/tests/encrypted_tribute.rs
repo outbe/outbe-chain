@@ -221,10 +221,12 @@ fn offer_creator_owns_the_tribute_while_proof_binding_uses_the_transaction_calle
             &[offer.clone()],
         )
         .unwrap_err();
-        assert!(error.is_infrastructure());
         assert!(matches!(
             error,
-            outbe_tee_enclave::process::OfferError::Zk { .. }
+            outbe_tee_enclave::process::OfferError::Zk {
+                source: outbe_zk::Error::Hash(outbe_poseidon::PoseidonError::Runtime(_)),
+                ..
+            }
         ));
     }
     {
@@ -237,10 +239,13 @@ fn offer_creator_owns_the_tribute_while_proof_binding_uses_the_transaction_calle
             &[plain.clone(), plain],
         )
         .unwrap_err();
-        assert!(error.is_infrastructure());
         assert!(matches!(
             error,
-            outbe_tee_enclave::process::OfferError::Commitment(_)
+            outbe_tee_enclave::process::OfferError::Commitment(
+                outbe_compressed_entities::CommitmentError::CryptoBackend(
+                    outbe_poseidon::PoseidonError::Runtime(_)
+                )
+            )
         ));
     }
     let (results, _) =

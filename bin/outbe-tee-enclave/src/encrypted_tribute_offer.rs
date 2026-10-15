@@ -34,12 +34,57 @@ pub fn process_encrypted_tribute_offer_batch(
     chain_id: u64,
     offers: &[EncryptedTributeOffer],
 ) -> Result<(Vec<EncryptedTributeOfferResultV2>, B256), OfferError> {
+    use outbe_compressed_entities::CommitmentError;
+    use outbe_poseidon::PoseidonError;
+    use outbe_zk::Error as ZkError;
+
     let results = offers
         .iter()
         .map(|offer| match process_one(key, chain_id, offer) {
             Ok(result) => Ok(result),
-            Err(error) if error.is_infrastructure() => Err(error),
-            Err(error) => Ok(EncryptedTributeOfferResultV2::rejected(error.to_string())),
+            Err(error @ OfferError::Commitment(CommitmentError::CryptoBackend(_)))
+            | Err(
+                error @ OfferError::Zk {
+                    source: ZkError::CryptoBackend(_),
+                    ..
+                },
+            )
+            | Err(
+                error @ OfferError::Zk {
+                    source:
+                        ZkError::Hash(
+                            PoseidonError::Runtime(_)
+                            | PoseidonError::ResponseLength { .. }
+                            | PoseidonError::NoncanonicalField { .. },
+                        ),
+                    ..
+                },
+            ) => Err(error),
+            Err(error @ OfferError::Domain(_))
+            | Err(
+                error @ OfferError::Commitment(
+                    CommitmentError::InputTooLong
+                    | CommitmentError::UnsupportedCommitmentScheme { .. }
+                    | CommitmentError::UnsupportedSchema { .. }
+                    | CommitmentError::EmptyPayload
+                    | CommitmentError::ZeroPresentLeaf
+                    | CommitmentError::NonCanonicalFieldElement,
+                ),
+            )
+            | Err(
+                error @ OfferError::Zk {
+                    source:
+                        ZkError::Hash(PoseidonError::InputLength)
+                        | ZkError::Identity(_)
+                        | ZkError::Signature(_)
+                        | ZkError::OwnerMismatch
+                        | ZkError::NonCanonical(_)
+                        | ZkError::UnsortedSet(_)
+                        | ZkError::Proof(_)
+                        | ZkError::Merkle(_),
+                    ..
+                },
+            ) => Ok(EncryptedTributeOfferResultV2::rejected(error.to_string())),
         })
         .collect::<Result<Vec<_>, OfferError>>()?;
     Ok((results, encrypted_offer_inputs_hash(chain_id, offers)))

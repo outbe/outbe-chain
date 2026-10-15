@@ -789,15 +789,6 @@ pub enum StagingError {
 }
 
 impl StagingError {
-    pub fn is_infrastructure(&self) -> bool {
-        match self {
-            Self::Hash(error) => error.is_infrastructure(),
-            Self::Collection(error) => error.is_infrastructure(),
-            Self::Persistence(error) => error.is_infrastructure(),
-            _ => false,
-        }
-    }
-
     pub(crate) fn tree_hash(error: crate::smt::TreeError) -> Self {
         match error {
             crate::smt::TreeError::Poseidon(error) => Self::Hash(error),

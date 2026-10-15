@@ -171,10 +171,11 @@ impl TributeFactoryError {
     pub(crate) fn identity_hash(
         error: outbe_compressed_entities::CommitmentError,
     ) -> PrecompileError {
-        if error.is_infrastructure() {
-            PrecompileError::CryptoBackendUnavailable(error.to_string())
-        } else {
-            Self::fatal(error).into()
+        match error {
+            outbe_compressed_entities::CommitmentError::CryptoBackend(error) => {
+                PrecompileError::CryptoBackendUnavailable(error.to_string())
+            }
+            error => Self::fatal(error).into(),
         }
     }
 

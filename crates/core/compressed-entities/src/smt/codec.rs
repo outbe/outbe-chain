@@ -217,7 +217,7 @@ mod tests {
             Err::<(), _>(super::super::TreeError::TreeHashError)
         })
         .unwrap_err();
-        assert!(!malformed.is_infrastructure());
+        assert_eq!(malformed, super::super::TreeError::TreeHashError);
         let zero = hash_scope(|| {
             let mut hasher = PoseidonCkbHasher::default();
             hasher.write_byte(0);
@@ -227,7 +227,7 @@ mod tests {
             Err::<(), _>(super::super::TreeError::TreeHashError)
         })
         .unwrap_err();
-        assert!(!zero.is_infrastructure());
+        assert_eq!(zero, super::super::TreeError::TreeHashError);
         let failed = {
             let _failure = outbe_poseidon::testing::fail_after(0);
             hash_scope(|| {
@@ -240,7 +240,10 @@ mod tests {
             })
             .unwrap_err()
         };
-        assert!(failed.is_infrastructure());
+        assert!(matches!(
+            failed,
+            super::super::TreeError::Poseidon(crate::CommitmentError::CryptoBackend(_))
+        ));
         assert!(hash_scope(|| Ok(())).is_ok());
         assert!(std::thread::spawn(|| hash_scope(|| Ok(())).is_ok())
             .join()

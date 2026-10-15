@@ -185,10 +185,11 @@ impl TributeError {
     pub(crate) fn entity_id_derivation(
         error: outbe_compressed_entities::CommitmentError,
     ) -> PrecompileError {
-        if error.is_infrastructure() {
-            PrecompileError::CryptoBackendUnavailable(error.to_string())
-        } else {
-            Self::EntityIdDerivation(error.to_string()).into()
+        match error {
+            outbe_compressed_entities::CommitmentError::CryptoBackend(error) => {
+                PrecompileError::CryptoBackendUnavailable(error.to_string())
+            }
+            error => Self::EntityIdDerivation(error.to_string()).into(),
         }
     }
 
@@ -277,12 +278,11 @@ impl From<TributeRepositoryError> for PrecompileError {
     fn from(value: TributeRepositoryError) -> Self {
         use outbe_offchain_storage::StorageErrorKind;
 
-        if value.is_infrastructure() {
-            return PrecompileError::CryptoBackendUnavailable(value.to_string());
-        }
-
         let message = value.to_string();
         match &value {
+            TributeRepositoryError::RetainedCommitment(
+                outbe_compressed_entities::CommitmentError::CryptoBackend(_),
+            ) => PrecompileError::CryptoBackendUnavailable(message),
             TributeRepositoryError::Storage(error)
                 if error.kind() == StorageErrorKind::RequestDeadline =>
             {

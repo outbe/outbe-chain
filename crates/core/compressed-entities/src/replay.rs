@@ -311,12 +311,9 @@ fn stored_event(
         entity.entity_id(),
         payload,
     )
-    .map_err(|error| {
-        if error.is_infrastructure() {
-            ReplayEventError::CryptoBackend(error)
-        } else {
-            ReplayEventError::malformed(error)
-        }
+    .map_err(|error| match error {
+        error @ crate::CommitmentError::CryptoBackend(_) => ReplayEventError::CryptoBackend(error),
+        error => ReplayEventError::InvalidCommitment(error),
     })?;
     if advertised != B256::from(*expected.as_bytes()) {
         return Err(ReplayEventError::CommitmentMismatch);
@@ -358,13 +355,15 @@ fn optional_commitment(value: B256) -> Result<Option<Commitment>, ReplayEventErr
 }
 
 fn required_commitment(value: B256) -> Result<Commitment, ReplayEventError> {
-    Commitment::try_from(value.0).map_err(ReplayEventError::malformed)
+    Commitment::try_from(value.0).map_err(ReplayEventError::InvalidCommitment)
 }
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ReplayEventError {
     #[error("canonical event hashing backend failed: {0}")]
     CryptoBackend(#[source] crate::CommitmentError),
+    #[error("malformed canonical compressed-entity body event: {0}")]
+    InvalidCommitment(#[source] crate::CommitmentError),
     #[error("malformed canonical compressed-entity body event: {0}")]
     Malformed(String),
     #[error("malformed canonical partition-retirement event: {0}")]
@@ -390,10 +389,6 @@ pub enum ReplayEventError {
 }
 
 impl ReplayEventError {
-    pub fn is_infrastructure(&self) -> bool {
-        matches!(self, Self::CryptoBackend(error) if error.is_infrastructure())
-    }
-
     pub(crate) fn malformed(error: impl core::fmt::Display) -> Self {
         Self::Malformed(error.to_string())
     }

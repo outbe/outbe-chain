@@ -556,8 +556,11 @@ fn map_storage_parent_error(kind: StorageErrorKind, message: String) -> ParentBo
 }
 
 fn map_tribute_parent_error(error: TributeRepositoryError) -> ParentBodySourceError {
-    if error.is_infrastructure() {
-        return ParentBodySourceError::CryptoBackendUnavailable(error.to_string());
+    if let TributeRepositoryError::RetainedCommitment(
+        error @ outbe_compressed_entities::CommitmentError::CryptoBackend(_),
+    ) = error
+    {
+        return ParentBodySourceError::CryptoBackendUnavailable(error);
     }
     let message = error.to_string();
     match &error {
@@ -569,9 +572,6 @@ fn map_tribute_parent_error(error: TributeRepositoryError) -> ParentBodySourceEr
 }
 
 fn map_nod_parent_error(error: NodRepositoryError) -> ParentBodySourceError {
-    if error.is_infrastructure() {
-        return ParentBodySourceError::CryptoBackendUnavailable(error.to_string());
-    }
     let message = error.to_string();
     match &error {
         NodRepositoryError::Storage(storage) => map_storage_parent_error(storage.kind(), message),

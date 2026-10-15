@@ -47,16 +47,6 @@ pub enum OfferError {
     },
 }
 
-impl OfferError {
-    pub fn is_infrastructure(&self) -> bool {
-        match self {
-            Self::Domain(_) => false,
-            Self::Commitment(error) => error.is_infrastructure(),
-            Self::Zk { source, .. } => source.is_infrastructure(),
-        }
-    }
-}
-
 impl From<ProcessError> for OfferError {
     fn from(error: ProcessError) -> Self {
         Self::Domain(error.into())
@@ -78,12 +68,57 @@ pub fn process_tribute_offer_batch(
     key: &TributeOfferKeyMaterial<'_>,
     offers: &[EncryptedTributeOffer],
 ) -> Result<(Vec<TributeOfferResult>, B256), OfferError> {
+    use outbe_compressed_entities::CommitmentError;
+    use outbe_poseidon::PoseidonError;
+    use outbe_zk::Error as ZkError;
+
     let mut results = Vec::with_capacity(offers.len());
     for offer in offers {
         let result = match process_one(key, offer) {
             Ok(result) => result,
-            Err(error) if error.is_infrastructure() => return Err(error),
-            Err(error) => rejected(error),
+            Err(error @ OfferError::Commitment(CommitmentError::CryptoBackend(_)))
+            | Err(
+                error @ OfferError::Zk {
+                    source: ZkError::CryptoBackend(_),
+                    ..
+                },
+            )
+            | Err(
+                error @ OfferError::Zk {
+                    source:
+                        ZkError::Hash(
+                            PoseidonError::Runtime(_)
+                            | PoseidonError::ResponseLength { .. }
+                            | PoseidonError::NoncanonicalField { .. },
+                        ),
+                    ..
+                },
+            ) => return Err(error),
+            Err(error @ OfferError::Domain(_))
+            | Err(
+                error @ OfferError::Commitment(
+                    CommitmentError::InputTooLong
+                    | CommitmentError::UnsupportedCommitmentScheme { .. }
+                    | CommitmentError::UnsupportedSchema { .. }
+                    | CommitmentError::EmptyPayload
+                    | CommitmentError::ZeroPresentLeaf
+                    | CommitmentError::NonCanonicalFieldElement,
+                ),
+            )
+            | Err(
+                error @ OfferError::Zk {
+                    source:
+                        ZkError::Hash(PoseidonError::InputLength)
+                        | ZkError::Identity(_)
+                        | ZkError::Signature(_)
+                        | ZkError::OwnerMismatch
+                        | ZkError::NonCanonical(_)
+                        | ZkError::UnsortedSet(_)
+                        | ZkError::Proof(_)
+                        | ZkError::Merkle(_),
+                    ..
+                },
+            ) => rejected(error),
         };
         results.push(result);
     }
@@ -254,8 +289,12 @@ mod tests {
             // The first two-input token digest completes; the next offer fails.
             let _failure = outbe_poseidon::testing::fail_after(1);
             let error = process_tribute_offer_batch(&key(), &offers).unwrap_err();
-            assert!(error.is_infrastructure());
-            assert!(matches!(error, OfferError::Commitment(_)));
+            assert!(matches!(
+                error,
+                OfferError::Commitment(outbe_compressed_entities::CommitmentError::CryptoBackend(
+                    outbe_poseidon::PoseidonError::Runtime(_)
+                ))
+            ));
         }
         let (results, _) = process_tribute_offer_batch(&key(), &offers).unwrap();
         assert!(results
@@ -269,8 +308,13 @@ mod tests {
         offer.zk_context = Some(zk_context());
         let _failure = outbe_poseidon::testing::fail_after(1);
         let error = process_tribute_offer_batch(&key(), &[offer]).unwrap_err();
-        assert!(error.is_infrastructure());
-        assert!(matches!(error, OfferError::Zk { .. }));
+        assert!(matches!(
+            error,
+            OfferError::Zk {
+                source: outbe_zk::Error::Hash(outbe_poseidon::PoseidonError::Runtime(_)),
+                ..
+            }
+        ));
     }
 
     #[test]

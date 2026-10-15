@@ -464,7 +464,13 @@ fn backend_failure_after_a_successful_hash_preserves_memory_tree_and_proofs() {
         let error = tree
             .update_all(vec![(key(1), leaf(202)), (key(2), leaf(303))])
             .unwrap_err();
-        assert!(error.is_infrastructure(), "{error:?}");
+        assert!(
+            matches!(
+                error,
+                TreeError::Poseidon(crate::CommitmentError::CryptoBackend(_))
+            ),
+            "{error:?}"
+        );
     }
     assert_eq!(tree.root().unwrap(), committed);
     assert_eq!(tree.get(key(1)).unwrap(), leaf(101));
@@ -474,7 +480,13 @@ fn backend_failure_after_a_successful_hash_preserves_memory_tree_and_proofs() {
     {
         let _failure = outbe_poseidon::testing::fail_after(2);
         let error = proof.compute_root(key(1), leaf(101)).unwrap_err();
-        assert!(error.is_infrastructure(), "{error:?}");
+        assert!(
+            matches!(
+                error,
+                TreeError::Poseidon(crate::CommitmentError::CryptoBackend(_))
+            ),
+            "{error:?}"
+        );
     }
     assert_eq!(proof.compute_root(key(1), leaf(101)).unwrap(), committed);
     assert_ne!(tree.update(key(1), leaf(202)).unwrap(), committed);
@@ -488,7 +500,13 @@ fn failed_sorted_reducer_cannot_finish_as_an_empty_or_partial_root() {
         let _failure = outbe_poseidon::testing::fail_after(2);
         for value in 1..=4 {
             if let Err(error) = reducer.push(key(value), leaf(value + 100)) {
-                assert!(error.is_infrastructure(), "{error:?}");
+                assert!(
+                    matches!(
+                        error,
+                        TreeError::Poseidon(crate::CommitmentError::CryptoBackend(_))
+                    ),
+                    "{error:?}"
+                );
                 failed = true;
                 break;
             }

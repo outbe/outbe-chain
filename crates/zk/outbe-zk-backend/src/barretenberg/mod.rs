@@ -335,26 +335,28 @@ mod raw_verifier_tests {
 
     #[test]
     fn verification_failure_classification_retains_origin() {
-        assert!(
-            !verification_error(BarretenbergError::Backend("native command failed".into()))
-                .is_infrastructure()
-        );
-        assert!(
-            verification_error(BarretenbergError::Connection("transport failed".into()))
-                .is_infrastructure()
-        );
-        assert!(
-            verification_error(BarretenbergError::Deserialization("bad response".into()))
-                .is_infrastructure()
-        );
-        assert!(
-            verification_error(BarretenbergError::Serialization("bad request".into()))
-                .is_infrastructure()
-        );
-        assert!(verification_error(BarretenbergError::InvalidResponse(
-            "unexpected response".into()
-        ))
-        .is_infrastructure());
+        assert!(matches!(
+            verification_error(BarretenbergError::Backend("native command failed".into())),
+            Error::Proof(_)
+        ));
+        for cause in [
+            BarretenbergError::Connection("transport failed".into()),
+            BarretenbergError::Deserialization("bad response".into()),
+            BarretenbergError::Serialization("bad request".into()),
+            BarretenbergError::InvalidResponse("unexpected response".into()),
+        ] {
+            let expected = cause.to_string();
+            let error = verification_error(cause);
+            assert!(matches!(
+                &error,
+                Error::CryptoBackend(RuntimeError::Backend(_))
+            ));
+            let runtime = std::error::Error::source(&error).unwrap();
+            assert_eq!(
+                std::error::Error::source(runtime).unwrap().to_string(),
+                expected
+            );
+        }
     }
 
     // These exercise `verify_combined`'s blob-parsing guards, which all return

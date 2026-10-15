@@ -49,13 +49,6 @@ pub enum RuntimeError {
     InjectedFailure,
 }
 
-impl RuntimeError {
-    /// These failures describe local infrastructure, not invalid user inputs.
-    pub const fn is_infrastructure(&self) -> bool {
-        true
-    }
-}
-
 // Native errors are opaque; only the same retained cause compares equal.
 impl PartialEq for RuntimeError {
     fn eq(&self, other: &Self) -> bool {

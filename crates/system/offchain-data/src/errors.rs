@@ -105,10 +105,11 @@ impl From<outbe_compressed_entities::CanonicalBodyError> for ProjectionError {
 
 impl From<outbe_compressed_entities::CommitmentError> for ProjectionError {
     fn from(error: outbe_compressed_entities::CommitmentError) -> Self {
-        if error.is_infrastructure() {
-            Self::CryptoBackendUnavailable(error)
-        } else {
-            Self::CorruptProjectedBody(error.to_string())
+        match error {
+            outbe_compressed_entities::CommitmentError::CryptoBackend(_) => {
+                Self::CryptoBackendUnavailable(error)
+            }
+            _ => Self::CorruptProjectedBody(error.to_string()),
         }
     }
 }

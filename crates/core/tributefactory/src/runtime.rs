@@ -257,10 +257,21 @@ fn validate_zk_result(
     }
     let verified = Barretenberg::default()
         .verify_combined(verification_key, zk_proof)
-        .map_err(|error| {
-            if error.is_infrastructure() {
-                PrecompileError::CryptoBackendUnavailable(error.to_string())
-            } else {
+        .map_err(|error| match error {
+            outbe_zk::Error::CryptoBackend(_)
+            | outbe_zk::Error::Hash(
+                outbe_poseidon::PoseidonError::Runtime(_)
+                | outbe_poseidon::PoseidonError::ResponseLength { .. }
+                | outbe_poseidon::PoseidonError::NoncanonicalField { .. },
+            ) => PrecompileError::CryptoBackendUnavailable(error.to_string()),
+            outbe_zk::Error::Hash(outbe_poseidon::PoseidonError::InputLength)
+            | outbe_zk::Error::Identity(_)
+            | outbe_zk::Error::Signature(_)
+            | outbe_zk::Error::OwnerMismatch
+            | outbe_zk::Error::NonCanonical(_)
+            | outbe_zk::Error::UnsortedSet(_)
+            | outbe_zk::Error::Proof(_)
+            | outbe_zk::Error::Merkle(_) => {
                 TributeFactoryError::MalformedZkProof(error.to_string()).into()
             }
         })?;

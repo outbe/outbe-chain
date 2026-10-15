@@ -96,10 +96,10 @@ fn injection_is_scoped_and_thread_local() {
     {
         let _guard = outbe_poseidon::testing::fail_after(1);
         assert_eq!(Poseidon2::new().hash(&input).unwrap(), expected);
-        assert!(Poseidon2::new()
-            .hash(&input)
-            .unwrap_err()
-            .is_infrastructure());
+        assert!(matches!(
+            Poseidon2::new().hash(&input).unwrap_err(),
+            outbe_poseidon::PoseidonError::Runtime(_)
+        ));
         std::thread::scope(|scope| {
             scope.spawn(|| assert_eq!(Poseidon2::new().hash(&input).unwrap(), expected));
         });

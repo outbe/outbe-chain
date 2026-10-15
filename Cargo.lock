@@ -9979,6 +9979,7 @@ dependencies = [
  "outbe-macros",
  "outbe-metadosis",
  "outbe-oracle",
+ "outbe-poseidon",
  "outbe-primitives",
  "outbe-tee",
  "outbe-tee-enclave",

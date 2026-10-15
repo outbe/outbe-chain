@@ -109,15 +109,6 @@ pub enum NodRepositoryError {
     },
 }
 
-impl NodRepositoryError {
-    /// Whether a native cryptographic backend failure caused this error.
-    #[must_use]
-    pub fn is_infrastructure(&self) -> bool {
-        // Canonical body encoding/decoding does not call the native hash backend.
-        false
-    }
-}
-
 /// Cloneable read authority for Nod item and bucket bodies.
 #[derive(Clone)]
 pub struct NodRepositoryReader {

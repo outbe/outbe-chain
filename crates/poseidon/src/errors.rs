@@ -13,11 +13,5 @@ pub enum PoseidonError {
     InputLength,
 }
 
-impl PoseidonError {
-    pub const fn is_infrastructure(&self) -> bool {
-        !matches!(self, Self::InputLength)
-    }
-}
-
 /// Alias for [`PoseidonError`].
 pub type Error = PoseidonError;

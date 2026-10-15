@@ -140,7 +140,11 @@ pub enum PersistenceError {
         committed: u64,
     },
     #[error("staged batch rejected: {0}")]
-    Staging(String),
+    StagingSource(#[source] Box<StagingError>),
+    #[error("staged batch rejected: {0}")]
+    Collection(#[source] crate::CollectionError),
+    #[error("staged batch rejected: {0}")]
+    Tree(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl From<StagingError> for PersistenceError {
@@ -151,32 +155,23 @@ impl From<StagingError> for PersistenceError {
                 Self::CryptoBackend(error)
             }
             StagingError::Persistence(error) => error,
-            other => Self::Staging(other.to_string()),
+            other => Self::StagingSource(Box::new(other)),
         }
     }
 }
 
 impl PersistenceError {
-    pub fn is_infrastructure(&self) -> bool {
-        matches!(self, Self::CryptoBackend(error) if error.is_infrastructure())
-    }
-
     pub(crate) fn collection_hash(error: crate::CollectionError) -> Self {
         match error {
             crate::CollectionError::Hash(error) => Self::CryptoBackend(error),
-            other => Self::Staging(other.to_string()),
+            other => Self::Collection(other),
         }
     }
 
     pub(crate) fn tree_hash(error: crate::smt::TreeError) -> Self {
         match error {
             crate::smt::TreeError::Poseidon(error) => Self::CryptoBackend(error),
-            other => Self::Staging(other.to_string()),
+            other => Self::Tree(Box::new(other)),
         }
-    }
-
-    /// Converts a displayable staging error into a persistence error.
-    pub(crate) fn staging(error: impl core::fmt::Display) -> Self {
-        Self::Staging(error.to_string())
     }
 }

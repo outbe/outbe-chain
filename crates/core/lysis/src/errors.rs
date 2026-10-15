@@ -95,10 +95,6 @@ pub enum ProgramErrorV1 {
 }
 
 impl ProgramErrorV1 {
-    pub fn is_infrastructure(&self) -> bool {
-        matches!(self, Self::IdentityHash(error) if error.is_infrastructure())
-    }
-
     /// Creates an arithmetic error from a display value.
     pub fn arithmetic(err: impl core::fmt::Display) -> Self {
         Self::Arithmetic {
@@ -109,10 +105,11 @@ impl ProgramErrorV1 {
 
 impl From<ProgramErrorV1> for PrecompileError {
     fn from(error: ProgramErrorV1) -> Self {
-        if error.is_infrastructure() {
-            PrecompileError::CryptoBackendUnavailable(error.to_string())
-        } else {
-            PrecompileError::BodyReadCorruption(error.to_string())
+        match error {
+            ProgramErrorV1::IdentityHash(
+                outbe_compressed_entities::CommitmentError::CryptoBackend(_),
+            ) => PrecompileError::CryptoBackendUnavailable(error.to_string()),
+            error => PrecompileError::BodyReadCorruption(error.to_string()),
         }
     }
 }

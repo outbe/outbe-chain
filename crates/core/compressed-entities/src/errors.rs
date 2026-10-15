@@ -4,24 +4,11 @@ use alloy_primitives::B256;
 use outbe_primitives::error::{PrecompileError, Result};
 use thiserror::Error;
 
-pub(crate) fn infrastructure_cause(
-    mut error: &(dyn std::error::Error + 'static),
-) -> Option<crate::CommitmentError> {
-    loop {
-        if let Some(cause) = error.downcast_ref::<crate::CommitmentError>() {
-            if cause.is_infrastructure() {
-                return Some(cause.clone());
-            }
-        }
-        error = error.source()?;
-    }
-}
-
 /// Errors that the finalized parent adapter returns.
 #[derive(Debug, Error)]
 pub enum ParentBodySourceError {
     #[error("parent body hashing backend unavailable: {0}")]
-    CryptoBackendUnavailable(String),
+    CryptoBackendUnavailable(#[source] crate::CommitmentError),
     /// The consensus request expired while the node waited for the body.
     /// This error shows that the caller cancelled the request.
     #[error("parent body source request deadline exceeded: {0}")]
@@ -39,7 +26,7 @@ impl From<ParentBodySourceError> for PrecompileError {
     fn from(value: ParentBodySourceError) -> Self {
         match value {
             ParentBodySourceError::CryptoBackendUnavailable(message) => {
-                Self::CryptoBackendUnavailable(message)
+                Self::CryptoBackendUnavailable(message.to_string())
             }
             ParentBodySourceError::RequestDeadline(_) => Self::BodyReadRequestDeadline,
             ParentBodySourceError::Unavailable(message) => Self::BodyReadUnavailable(message),
@@ -51,29 +38,82 @@ impl From<ParentBodySourceError> for PrecompileError {
 pub(crate) fn commitment_error(
     error: crate::CommitmentError,
 ) -> outbe_primitives::error::PrecompileError {
-    if error.is_infrastructure() {
-        outbe_primitives::error::PrecompileError::CryptoBackendUnavailable(error.to_string())
-    } else {
-        outbe_primitives::error::PrecompileError::Fatal(error.to_string())
-    }
+    error.into()
 }
 
 pub(crate) fn collection_error(
     error: crate::CollectionError,
 ) -> outbe_primitives::error::PrecompileError {
-    if error.is_infrastructure() {
-        outbe_primitives::error::PrecompileError::CryptoBackendUnavailable(error.to_string())
-    } else {
-        outbe_primitives::error::PrecompileError::Fatal(error.to_string())
-    }
+    error.into()
 }
 
 pub(crate) fn hash_error(
-    error: impl std::error::Error + 'static,
+    error: impl Into<PrecompileError>,
 ) -> outbe_primitives::error::PrecompileError {
-    match infrastructure_cause(&error) {
-        Some(cause) => commitment_error(cause),
-        None => outbe_primitives::error::PrecompileError::Fatal(error.to_string()),
+    error.into()
+}
+
+impl From<crate::CommitmentError> for PrecompileError {
+    fn from(error: crate::CommitmentError) -> Self {
+        match error {
+            error @ crate::CommitmentError::CryptoBackend(_) => {
+                Self::CryptoBackendUnavailable(error.to_string())
+            }
+            error => fatal_error(error),
+        }
+    }
+}
+
+impl From<crate::CollectionError> for PrecompileError {
+    fn from(error: crate::CollectionError) -> Self {
+        match error {
+            crate::CollectionError::Hash(error @ crate::CommitmentError::CryptoBackend(_)) => {
+                error.into()
+            }
+            error => fatal_error(error),
+        }
+    }
+}
+
+impl From<crate::smt::TreeError> for PrecompileError {
+    fn from(error: crate::smt::TreeError) -> Self {
+        match error {
+            crate::smt::TreeError::Poseidon(error @ crate::CommitmentError::CryptoBackend(_)) => {
+                error.into()
+            }
+            error => fatal_error(error),
+        }
+    }
+}
+
+impl From<crate::persistence::PersistenceError> for PrecompileError {
+    fn from(error: crate::persistence::PersistenceError) -> Self {
+        match error {
+            crate::persistence::PersistenceError::CryptoBackend(
+                error @ crate::CommitmentError::CryptoBackend(_),
+            ) => error.into(),
+            error => fatal_error(error),
+        }
+    }
+}
+
+impl From<crate::staging::StagingError> for PrecompileError {
+    fn from(error: crate::staging::StagingError) -> Self {
+        match error {
+            crate::staging::StagingError::Hash(error) => error.into(),
+            crate::staging::StagingError::Collection(error) => error.into(),
+            crate::staging::StagingError::Persistence(error) => error.into(),
+            error => fatal_error(error),
+        }
+    }
+}
+
+impl From<crate::sharding::ShardingError> for PrecompileError {
+    fn from(error: crate::sharding::ShardingError) -> Self {
+        match error {
+            crate::sharding::ShardingError::CryptoBackend(error) => error.into(),
+            error => fatal_error(error),
+        }
     }
 }
 
@@ -134,5 +174,106 @@ pub(crate) fn enrich_body_read_corruption(
             ),
         ),
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use super::*;
+    use crate::{
+        persistence::PersistenceError, staging::StagingError, CollectionError, CommitmentError,
+    };
+
+    fn backend() -> CommitmentError {
+        outbe_poseidon::PoseidonError::ResponseLength {
+            index: 0,
+            actual: 31,
+        }
+        .into()
+    }
+
+    #[test]
+    fn typed_hash_wrappers_preserve_abort_and_invalid_input_semantics() {
+        let failures = [
+            hash_error(backend()),
+            hash_error(CollectionError::Hash(backend())),
+            hash_error(crate::smt::TreeError::Poseidon(backend())),
+            hash_error(PersistenceError::CryptoBackend(backend())),
+            hash_error(StagingError::Hash(backend())),
+            hash_error(StagingError::Collection(CollectionError::Hash(backend()))),
+            hash_error(StagingError::Persistence(PersistenceError::CryptoBackend(
+                backend(),
+            ))),
+            hash_error(crate::ShardingError::CryptoBackend(backend())),
+        ];
+        for error in failures {
+            assert!(
+                matches!(error, PrecompileError::CryptoBackendUnavailable(_)),
+                "{error:?}"
+            );
+        }
+
+        let invalid = CommitmentError::from(outbe_poseidon::PoseidonError::InputLength);
+        assert_eq!(invalid, CommitmentError::InputTooLong);
+        for error in [
+            hash_error(invalid.clone()),
+            hash_error(CollectionError::Hash(invalid.clone())),
+            hash_error(crate::smt::TreeError::Poseidon(invalid.clone())),
+            hash_error(PersistenceError::CryptoBackend(invalid.clone())),
+            hash_error(StagingError::Hash(invalid)),
+            hash_error(crate::smt::TreeError::TreeHashError),
+        ] {
+            assert!(matches!(error, PrecompileError::Fatal(_)), "{error:?}");
+        }
+    }
+
+    #[test]
+    fn parent_and_materialization_errors_retain_typed_sources() {
+        let parent = ParentBodySourceError::CryptoBackendUnavailable(backend());
+        assert!(parent
+            .source()
+            .unwrap()
+            .downcast_ref::<CommitmentError>()
+            .is_some());
+        assert!(matches!(
+            PrecompileError::from(parent),
+            PrecompileError::CryptoBackendUnavailable(_)
+        ));
+
+        let proof = crate::PointReadServiceError::materialization(StagingError::Persistence(
+            PersistenceError::CryptoBackend(backend()),
+        ));
+        assert!(matches!(
+            proof,
+            crate::PointReadServiceError::CryptoBackend(_)
+        ));
+        assert!(proof
+            .source()
+            .unwrap()
+            .downcast_ref::<CommitmentError>()
+            .is_some());
+
+        let proof =
+            crate::PointReadServiceError::materialization(crate::smt::TreeError::TreeHashError);
+        assert!(matches!(
+            proof,
+            crate::PointReadServiceError::MaterializationSource(_)
+        ));
+        assert_eq!(
+            proof
+                .source()
+                .unwrap()
+                .downcast_ref::<crate::smt::TreeError>(),
+            Some(&crate::smt::TreeError::TreeHashError)
+        );
+
+        let persistence = PersistenceError::from(StagingError::InvalidShardEnvelope("bad root"));
+        assert!(persistence
+            .source()
+            .unwrap()
+            .downcast_ref::<Box<StagingError>>()
+            .is_some());
     }
 }

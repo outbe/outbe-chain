@@ -149,12 +149,9 @@ pub(super) fn verify_stored(
         entity_id,
         payload,
     )
-    .map_err(|error| {
-        if error.is_infrastructure() {
-            crate::errors::commitment_error(error)
-        } else {
-            origin.invalid(error)
-        }
+    .map_err(|error| match error {
+        error @ crate::CommitmentError::CryptoBackend(_) => crate::errors::commitment_error(error),
+        error => origin.invalid(error),
     })?;
     if actual != expected {
         // Preserve the exact authenticated input, not a re-encoded replacement.

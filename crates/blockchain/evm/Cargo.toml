@@ -55,6 +55,7 @@ outbe-cycle.workspace = true
 outbe-accounting.workspace = true
 outbe-zk-backend.workspace = true
 outbe-zk.workspace = true
+outbe-poseidon.workspace = true
 
 # Alloy
 alloy-rpc-types-eth.workspace = true

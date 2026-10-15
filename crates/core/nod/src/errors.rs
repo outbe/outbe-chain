@@ -154,10 +154,11 @@ impl NodError {
     pub(crate) fn entity_id_derivation(
         error: outbe_compressed_entities::CommitmentError,
     ) -> PrecompileError {
-        if error.is_infrastructure() {
-            PrecompileError::CryptoBackendUnavailable(error.to_string())
-        } else {
-            Self::EntityIdDerivation(error.to_string()).into()
+        match error {
+            outbe_compressed_entities::CommitmentError::CryptoBackend(error) => {
+                PrecompileError::CryptoBackendUnavailable(error.to_string())
+            }
+            error => Self::EntityIdDerivation(error.to_string()).into(),
         }
     }
 }
@@ -187,10 +188,6 @@ pub(crate) fn enclave_transport_error(error: impl std::fmt::Display) -> outbe_te
 impl From<NodRepositoryError> for PrecompileError {
     fn from(value: NodRepositoryError) -> Self {
         use outbe_offchain_storage::StorageErrorKind;
-
-        if value.is_infrastructure() {
-            return PrecompileError::CryptoBackendUnavailable(value.to_string());
-        }
 
         match value {
             NodRepositoryError::Storage(error)

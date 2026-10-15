@@ -117,8 +117,10 @@ fn identity_hash_failure_is_node_local_not_arithmetic_and_retries(
     let error = execute(input.clone())
         .err()
         .ok_or("injection did not abort execution")?;
-    assert!(matches!(error, ProgramErrorV1::IdentityHash(_)));
-    assert!(error.is_infrastructure());
+    assert!(matches!(
+        error,
+        ProgramErrorV1::IdentityHash(outbe_compressed_entities::CommitmentError::CryptoBackend(_))
+    ));
     assert!(std::error::Error::source(&error).is_some());
     let precompile: outbe_primitives::error::PrecompileError = error.into();
     assert!(precompile.is_node_local());

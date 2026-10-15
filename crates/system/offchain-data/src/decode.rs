@@ -376,10 +376,11 @@ fn commitment_event_error(
     source: ProjectionSource,
     error: outbe_compressed_entities::CommitmentError,
 ) -> ProjectionError {
-    if error.is_infrastructure() {
-        ProjectionError::CryptoBackendUnavailable(error)
-    } else {
-        malformed_event(source, error)
+    match error {
+        outbe_compressed_entities::CommitmentError::CryptoBackend(_) => {
+            ProjectionError::CryptoBackendUnavailable(error)
+        }
+        _ => malformed_event(source, error),
     }
 }
 

@@ -359,18 +359,20 @@ fn entity_tree_key(entity: EntityRef) -> Result<TreeKey> {
 }
 
 fn classify_tree_error(error: crate::smt::TreeError) -> PrecompileError {
-    if error.is_infrastructure() {
-        PrecompileError::CryptoBackendUnavailable(error.to_string())
-    } else {
-        tree_corruption(error)
+    match error {
+        crate::smt::TreeError::Poseidon(error @ crate::CommitmentError::CryptoBackend(_)) => {
+            error.into()
+        }
+        error => tree_corruption(error),
     }
 }
 
 fn classify_collection_error(error: crate::CollectionError) -> PrecompileError {
-    if error.is_infrastructure() {
-        PrecompileError::CryptoBackendUnavailable(error.to_string())
-    } else {
-        tree_corruption(error)
+    match error {
+        crate::CollectionError::Hash(error @ crate::CommitmentError::CryptoBackend(_)) => {
+            error.into()
+        }
+        error => tree_corruption(error),
     }
 }
 
@@ -379,10 +381,10 @@ fn tree_unavailable(message: impl Into<String>) -> PrecompileError {
 }
 
 fn classify_snapshot_error(error: PersistenceError) -> PrecompileError {
-    if error.is_infrastructure() {
-        return PrecompileError::CryptoBackendUnavailable(error.to_string());
-    }
     match error {
+        PersistenceError::CryptoBackend(error @ crate::CommitmentError::CryptoBackend(_)) => {
+            error.into()
+        }
         PersistenceError::Io { .. } | PersistenceError::Database { .. } => {
             tree_unavailable(error.to_string())
         }
@@ -402,10 +404,11 @@ fn classify_snapshot_error(error: PersistenceError) -> PrecompileError {
 }
 
 fn classify_staging_error(error: StagingError) -> PrecompileError {
-    if error.is_infrastructure() {
-        return PrecompileError::CryptoBackendUnavailable(error.to_string());
-    }
     match error {
+        StagingError::Hash(error @ crate::CommitmentError::CryptoBackend(_)) => error.into(),
+        StagingError::Collection(crate::CollectionError::Hash(
+            error @ crate::CommitmentError::CryptoBackend(_),
+        )) => error.into(),
         StagingError::Persistence(error) => classify_snapshot_error(error),
         corruption => tree_corruption(corruption),
     }

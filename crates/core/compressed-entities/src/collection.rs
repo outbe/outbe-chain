@@ -137,7 +137,7 @@ pub enum CollectionError {
     #[error("duplicate Tribute tree key in partition reconstruction")]
     DuplicateTributeKey,
     #[error("Tribute partition tree reconstruction failed: {0}")]
-    Tree(String),
+    Tree(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl CollectionError {
@@ -145,14 +145,10 @@ impl CollectionError {
         Self::Hash(error)
     }
 
-    pub fn is_infrastructure(&self) -> bool {
-        matches!(self, Self::Hash(error) if error.is_infrastructure())
-    }
-
     pub(crate) fn tree(error: crate::smt::TreeError) -> Self {
         match error {
             crate::smt::TreeError::Poseidon(error) => Self::Hash(error),
-            other => Self::Tree(other.to_string()),
+            other => Self::Tree(Box::new(other)),
         }
     }
 }

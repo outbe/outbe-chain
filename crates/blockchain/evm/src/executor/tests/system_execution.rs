@@ -1075,24 +1075,24 @@ fn native_hash_failure_rolls_back_hook_sweep_and_the_same_batch_can_retry() -> e
     let slot = U256::from(0x46_u64);
     let value = U256::from(0x193_u64);
     let day = outbe_primitives::time::WorldwideDay::new(20261007);
-    let hooks = |hook_ctx: &BlockRuntimeContext| {
-        hook_ctx.storage.sstore(address, slot, value)?;
-        for owner in [OWNER, address] {
-            let outcome =
-                outbe_compressed_entities::derive_poseidon_entity_id(owner, day).map_err(|error| {
-                    if error.is_infrastructure() {
-                        PrecompileError::CryptoBackendUnavailable(error.to_string())
-                    } else {
-                        PrecompileError::BodyReadCorruption(error.to_string())
-                    }
-                });
-            match decide(outcome, PrecompileError::sweep_failure)? {
-                Decided::Done(_) => {}
-                _ => return Err(PrecompileError::Fatal("hash sweep item was skipped".into())),
+    let hooks =
+        |hook_ctx: &BlockRuntimeContext| {
+            hook_ctx.storage.sstore(address, slot, value)?;
+            for owner in [OWNER, address] {
+                let outcome = outbe_compressed_entities::derive_poseidon_entity_id(owner, day)
+                    .map_err(|error| match error {
+                        outbe_compressed_entities::CommitmentError::CryptoBackend(_) => {
+                            PrecompileError::from(error)
+                        }
+                        _ => PrecompileError::BodyReadCorruption(error.to_string()),
+                    });
+                match decide(outcome, PrecompileError::sweep_failure)? {
+                    Decided::Done(_) => {}
+                    _ => return Err(PrecompileError::Fatal("hash sweep item was skipped".into())),
+                }
             }
-        }
-        Ok(())
-    };
+            Ok(())
+        };
     let guard = outbe_poseidon::testing::fail_after(1);
     let error = super::run_atomic_storage_hooks(&mut state, ctx.clone(), hooks)
         .err()
