@@ -1,11 +1,11 @@
 {
   "feature": "outbe-chain-pjz",
-  "goal_status": "paused",
+  "goal_status": "active",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-15T18:37:35Z",
-  "next_periodic_report_due_utc": "2026-10-15T19:07:35Z",
+  "last_periodic_report_utc": "2026-10-15T19:33:31Z",
+  "next_periodic_report_due_utc": "2026-10-15T20:03:31Z",
   "period_minutes": 30,
-  "stage": "P3 current finalized authority/DKG binding and authenticated native Review partial library implemented; production actor, additional native subjects and bounded publication carrier/checkpoint incomplete",
+  "stage": "P3 bounded carrier/proposer mailbox and immutable genesis activation prerequisite implemented and verified; checkpoint runtime, production collector and P4 automatic bootstrap incomplete",
   "decision_gate": {
     "id": "D1",
     "status": "historical_approval_request_withdrawn; no active user approval question",
@@ -18,13 +18,13 @@
     "user_proposal_sha256": "f97944c485f9ee3538760011329511fb9eaacbcd4fa7fcfd44589c440ac68d89",
     "clarification": "Original D1 raw dependency-load repro is not a patch acceptance exploit. No shared closure redesign approved or implemented. New current-entry direct/read/local writer verification reuses existing verifier as explicitly required by P2. D2 excluded from implementation by user; no D2 work."
   },
-  "acceptance": "P0/P1/P5 closed; P2 incomplete; P3/P4/P6/P7/P8 incomplete",
+  "acceptance": "P0/P1/P5 closed; P2/P3 in_progress and incomplete; P4/P6/P7/P8 open; P4 descriptor prerequisite implemented under P3 activation only",
   "last_periodic_report": {
-    "completed": "Reverted additional native COB fetch gate in 0f9e5fa495; source1341e6de4 adds current-version fixed-domain threshold sign/recovery, pinned native Review preparation, exact OPJ1 contexts and owner refs preparation. Real DKG resharing fixture rejects old/mixed polynomial partials while historic native signature verifies.",
-    "proof": "Development: 416 radicle/radicle-cob tests, 41 Hybrid/VRF tests, 3 threshold/reshare tests, native Review/sigrefs integration and P0 context vector tests, scoped Clippy/fmt passed. Frozen commit checks running in evidence/outbe-chain-pjz.4/native-review-foundation; not task acceptance.",
-    "tasks": "P0/P1/P5 closed; P2/P3/P4/P6/P7/P8 incomplete; no acceptance review or closure claimed for this slice",
-    "limitations": "Actual post-finality current-set authorization, bounded authenticated partial exchange, checkpoint publication/production collector, genesis bootstrap and final end-to-end feature remain incomplete; old-share revocation at receiver is not proved by low-level signer tests.",
-    "next": "Complete exact-source evidence, then connect authenticated current finalized DKG material and the post-finality signing/collector path within the approved plan."
+    "completed": "Dirty WIP OPB1/OART carrier, bounded nonblocking retry-preserving mailbox, actual proposer prefix assembly with final-field reservations, genesis OGD1 storage/config seeding and enabled-startup DKG window guard.",
+    "proof": "11 publication codec/mailbox/assembly/window tests +4 Python actual seed pipeline/OGD1 cross-language fixture tests PASS. Full affected lib suite and all-target consumers still running. Frozen foundation source26d497f4a/evidencebcfffb560 remains previous exact-source proof.",
+    "tasks": "P0/P1/P5 closed; P2/P3 incomplete; P4 implementation started; P6/P7/P8 open. No new full-AC acceptance or independent review PASS.",
+    "limitations": "No publication checkpoint application/current-set endorsement verification, production collector, automatic native bootstrap or full Vote-to-Review E2E yet. No active decision request; no git.rs gate/D2 work.",
+    "next": "Finish affected builds/tests and wire bounded checkpoint execution under approved P3, then P4/P6 production collector/bootstrap."
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
@@ -37,7 +37,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "26d497f4a2bd5f31582587130bf81cd9a8651eab",
+  "source_sha": "5a7bd515322d61914fe57e4319ab31da3c1c7d2c",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -56,7 +56,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "Source26d497f4a implements exact local-current authority reader, SDK Output binding, strict MinPk-endorsed partial frames and exact-current-polynomial sign/verify/recovery. Source1341e6de4 native Review preparation remains; no additional git.rs/fetch gate or D2 changes.",
+  "current_source_changes": "Source5a7bd5153: fixed OPB1 batch and OART0C carrier; bounded retry-preserving nonblocking mailbox wired to actual proposer with maximum-prefix/final-field reservation; startup/header activation bound to seeded OGD1; enabled cadence guard; Python genesis seeding and append-only registry10/11 typed descriptor. No git.rs gate/D2 changes.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -76,8 +76,14 @@
     "constraint": "No new architecture or deliverable outside approved P0-P8",
     "user_correction": "Latest user accepted direct native Review flow after rollback/studying code. Do not replace ordinary Radicle synchronization or add a separate Git storage/fetch admission redesign."
   },
-  "execution_authorization": "Direct user request: да все верно реализауй; continue the approved Vote -> threshold BLS Review -> native signed refs/announcement path. Goal API remains paused; no replacement goal.",
+  "execution_authorization": "User resumed the existing goal through UI; continue approved P0-P8 only.",
   "foundation_evidence": "evidence/outbe-chain-pjz.4/native-review-foundation",
   "foundation_checks": "Frozen26d497f4a:38 full outbe-radicle lib tests+506 full outbe-consensus lib tests(0 ignored), scoped lib+tests Clippy PASS. Earlier1341e6de4:416 native tests/vendor Clippy/fmt. Intermediate evidence only; no full-AC acceptance or reviewer PASS.",
-  "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material"
+  "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
+  "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
+  "latest_verification": {
+    "source_sha": "5a7bd515322d61914fe57e4319ab31da3c1c7d2c",
+    "checks": "1647 full lib tests across6 packages,0 ignored;8 consumer all-target checks; scoped5-package Clippy/rustfmt; Python98 tests(2 keygen skips),format,new-module lint PASS",
+    "acceptance": "intermediate only; P3/P4 incomplete; no independent full-AC acceptance reviews"
+  }
 }
