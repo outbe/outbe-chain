@@ -163,8 +163,15 @@ fn rad_cob_log_bls_native_operation() {
         assert!(output.contains("accept"));
         if format == "json" {
             let op: serde_json::Value = serde_json::from_str(&output).unwrap();
-            assert_eq!(op["author"], owner.to_string());
-            assert_eq!(op["actions"][0]["verdict"], "accept");
+            assert_eq!(
+                op.get("author"),
+                Some(&serde_json::Value::String(owner.to_string()))
+            );
+            assert_eq!(
+                op.pointer("/actions/0/verdict")
+                    .and_then(serde_json::Value::as_str),
+                Some("accept")
+            );
         }
     }
 }
