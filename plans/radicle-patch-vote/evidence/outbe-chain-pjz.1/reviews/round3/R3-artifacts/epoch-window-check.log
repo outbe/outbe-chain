@@ -1,0 +1,6 @@
+epoch=1 binding=171/171 review=129/171 reset_pending=True
+epoch=2 binding=171/171 review=129/171 reset_pending=True
+epoch=3 binding=171/171 review=129/171 reset_pending=True
+epoch=4 binding=171/171 review=129/171 reset_pending=True
+epoch=5 binding=171/171 review=129/171 reset_pending=True
+COUNTEREXAMPLE: stable membership, timely material rotations, perfect delivery; one attestation/block cannot complete BindMaterial+Review before reset
