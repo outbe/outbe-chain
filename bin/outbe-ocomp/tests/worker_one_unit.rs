@@ -27,7 +27,7 @@ use outbe_lysis::program_v1::planner::{
 use outbe_lysis::program_v1::result::{
     decode_root_reduce_output, encode_root_reduce_output, RootReduceOutputV1,
 };
-use outbe_nod::openings::entry_price_slots;
+use outbe_nod::openings::{entry_price_day, entry_price_slots};
 use outbe_ocomp::admission_catalog::{
     AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog,
 };
@@ -78,6 +78,8 @@ use outbe_ocomp_protocol::{
 };
 use outbe_primitives::time::WorldwideDay;
 use support::tempdir;
+
+const LOGICAL_EVALUATION_TIME: u64 = 1_784_765_900;
 
 struct RunningWorker {
     child: Child,
@@ -217,17 +219,23 @@ fn real_worker_processes_execute_through_output_finalize() {
         account_proof: ProofBytes(vec![0xa1]),
         storage_proof: ProofBytes(vec![0xb1]),
     };
-    let oracle_plan = entry_price_slots(day, &[840, 978]).expect("fixture Oracle slot plan");
+    let oracle_plan = entry_price_slots(
+        entry_price_day(LOGICAL_EVALUATION_TIME),
+        &[840, 978],
+        &[1, 2],
+    )
+    .expect("fixture Oracle slot plan");
     let coen840_price = U256::from(1_000_000_u64);
     let generic_price_scale = U256::from(1_000_000_000_000_000_000_u64);
     let oracle_values = [
         U256::from(1),
+        U256::from(2),
         coen840_price,
         generic_price_scale * U256::from(2),
     ];
     assert_eq!(oracle_plan.len(), oracle_values.len());
     let oracle_raw = RawContractOpeningProofV1 {
-        contract_address: outbe_primitives::addresses::NOD_ADDRESS,
+        contract_address: outbe_primitives::addresses::ORACLE_ADDRESS,
         state_root: finalized_state_root,
         ordered_slots: oracle_plan
             .into_iter()
@@ -355,7 +363,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         input_manifest_hash: published.manifest_hash,
         wwd: day.value(),
         lysis_limit_minor: U256::from(99_000_000_u64),
-        logical_evaluation_time: 1_784_765_900,
+        logical_evaluation_time: LOGICAL_EVALUATION_TIME,
         tribute_count: published.tribute_count,
         max_tributes_per_work_shard: 256,
         primary_work_unit_count: 1,

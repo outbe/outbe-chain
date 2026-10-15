@@ -410,8 +410,8 @@ pub(in crate::features::ocomp) fn quorum_applies_lysis_and_creates_nod(world: &m
     );
 }
 
-#[then("Lysis and OCOMP use the independently frozen previous-day entry price")]
-fn lysis_and_ocomp_use_frozen_entry_price(world: &mut World) {
+#[then("Lysis and OCOMP use the independent previous-day entry price")]
+fn lysis_and_ocomp_use_previous_day_entry_price(world: &mut World) {
     let request = world
         .state
         .ocomp_job_request
@@ -437,7 +437,7 @@ fn lysis_and_ocomp_use_frozen_entry_price(world: &mut World) {
         .intent
         .frozen_metadosis_values
         .current_vwap;
-    let expected = crate::features::oracle_expectations::frozen_entry_price(world);
+    let expected = crate::features::oracle_expectations::entry_price(world);
     assert_ne!(
         expected, wwd_vwap,
         "fixture distinguishes entry price from WWD VWAP"

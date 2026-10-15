@@ -1,13 +1,8 @@
 use std::collections::BTreeMap;
 
-use alloy_primitives::{B256, U256};
-use outbe_nod::{
-    api,
-    openings::{entry_price_slots, evaluate_entry_prices},
-    NodContract,
-};
+use alloy_primitives::U256;
+use outbe_nod::{api, NodContract};
 use outbe_primitives::{
-    addresses::NOD_ADDRESS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::WorldwideDay,
 };
@@ -16,7 +11,7 @@ use outbe_primitives::{
 const SOURCE_DAY: u32 = 20260714;
 
 #[test]
-fn snapshot_round_trips_and_proves_exact_currency_prices() {
+fn snapshot_round_trips_exact_currency_prices() {
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         let day = WorldwideDay::new(20260715);
@@ -45,32 +40,6 @@ fn snapshot_round_trips_and_proves_exact_currency_prices() {
             &BTreeMap::new()
         )
         .is_err());
-        let isos = [826, 840, 978];
-        let slots = entry_price_slots(day, &isos).unwrap();
-        let raw: Vec<_> = slots
-            .iter()
-            .map(|slot| {
-                (
-                    *slot,
-                    storage
-                        .sload(NOD_ADDRESS, U256::from_be_bytes(slot.0))
-                        .unwrap(),
-                )
-            })
-            .collect();
-        assert_eq!(evaluate_entry_prices(day, &isos, &raw).unwrap(), prices);
-        let mut reordered = raw.clone();
-        reordered.swap(1, 2);
-        assert!(evaluate_entry_prices(day, &isos, &reordered).is_err());
-        let mut unfrozen = raw.clone();
-        unfrozen[0].1 = U256::ZERO;
-        assert!(evaluate_entry_prices(day, &isos, &unfrozen).is_err());
-        let mut wrong_slot = raw;
-        wrong_slot[1].0 = B256::ZERO;
-        assert!(evaluate_entry_prices(day, &isos, &wrong_slot).is_err());
-        assert!(entry_price_slots(day, &[978]).is_err());
-        assert!(entry_price_slots(day, &[840, 840]).is_err());
-        assert!(entry_price_slots(day, &[0, 840]).is_err());
     });
 }
 

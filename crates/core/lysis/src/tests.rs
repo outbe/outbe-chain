@@ -659,13 +659,12 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
 // One entry price across the direct path, the certified opening and the snapshot
 // ---------------------------------------------------------------------
 
-/// The frozen snapshot and the storage proof the certified path opens must be the same value.
+/// The certified path opens the Oracle's closed-day VWAP, the same value the runtime reads.
 #[test]
-fn the_snapshot_and_the_certified_opening_agree_on_one_price() {
-    use outbe_primitives::addresses::NOD_ADDRESS;
+fn the_certified_opening_prices_the_last_closed_utc_day() {
+    use outbe_primitives::addresses::ORACLE_ADDRESS;
 
     const T_NOW: u64 = 1_700_000_000;
-    let wwd = WorldwideDay::new(20260526);
     let entry_price = U256::from(500_000u64);
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(T_NOW));
@@ -673,33 +672,31 @@ fn the_snapshot_and_the_certified_opening_agree_on_one_price() {
     StorageHandle::enter(&mut storage, |storage| {
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-        seed_entry_prices(&storage, T_NOW, 840, entry_price, entry_price);
+        seed_entry_prices(&storage, T_NOW, 840, entry_price, U256::from(900_000u64));
+        let day = outbe_nod::openings::entry_price_day(T_NOW);
+        let sload = |slot: alloy_primitives::B256| {
+            storage
+                .sload(ORACLE_ADDRESS, U256::from_be_bytes(slot.0))
+                .unwrap()
+        };
 
-        assert_eq!(
-            crate::api::freeze_entry_price_snapshot(storage.clone(), wwd, T_NOW).unwrap(),
-            std::collections::BTreeMap::from([(840, entry_price)])
-        );
-        assert_eq!(
-            outbe_nod::api::entry_price_source_day(storage.clone(), wwd).unwrap(),
-            Some(previous_date_key(timestamp_to_date_key(T_NOW)))
-        );
-
-        // The certified path opens the very same slots by storage proof.
-        let isos = [840];
-        let slots = outbe_nod::openings::entry_price_slots(wwd, &isos).unwrap();
-        let opened: Vec<_> = slots
-            .iter()
-            .map(|slot| {
-                (
-                    *slot,
-                    storage
-                        .sload(NOD_ADDRESS, U256::from_be_bytes(slot.0))
-                        .unwrap(),
-                )
-            })
+        let isos = [840, 978];
+        let indices = outbe_nod::openings::pair_index_slots(&isos)
+            .unwrap()
+            .into_iter()
+            .map(|slot| sload(slot).to::<u32>())
+            .collect::<Vec<_>>();
+        let opened: Vec<_> = outbe_nod::openings::entry_price_slots(day, &isos, &indices)
+            .unwrap()
+            .into_iter()
+            .map(|slot| (slot, sload(slot)))
             .collect();
         assert_eq!(
-            outbe_nod::openings::evaluate_entry_prices(wwd, &isos, &opened).unwrap(),
+            outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), day, 840).unwrap(),
+            Some(entry_price)
+        );
+        assert_eq!(
+            outbe_nod::openings::evaluate_entry_prices(day, &isos, &opened).unwrap(),
             std::collections::BTreeMap::from([(840, entry_price)])
         );
     });

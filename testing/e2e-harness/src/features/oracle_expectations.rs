@@ -1,12 +1,11 @@
-//! Independent WWD and frozen Nod prices from historical Oracle observations.
+//! Independent WWD and Nod entry prices from historical Oracle observations.
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use alloy_primitives::B256;
 use alloy_primitives::{Address, U256};
-use outbe_primitives::{
-    addresses::{NOD_ADDRESS, ORACLE_ADDRESS},
-    time::WorldwideDay,
-};
+use outbe_nod::openings::{entry_price_day, entry_price_slots, pair_index_slots};
+use outbe_primitives::addresses::ORACLE_ADDRESS;
 use serde::Serialize;
 
 use crate::internal::eth;
@@ -287,8 +286,8 @@ pub(crate) fn fresh_wwd_price(world: &World, height: u64) -> U256 {
     expected
 }
 
-fn previous_day_entry_price(quotes: &[Quote], prepared_at: u64) -> U256 {
-    let end = prepared_at / 86_400 * 86_400;
+fn previous_day_entry_price(quotes: &[Quote], requested_at: u64) -> U256 {
+    let end = requested_at / 86_400 * 86_400;
     let price = weighted_price(quotes, end.saturating_sub(86_400), end);
     assert!(
         !price.is_zero(),
@@ -297,33 +296,28 @@ fn previous_day_entry_price(quotes: &[Quote], prepared_at: u64) -> U256 {
     price
 }
 
-fn frozen_usd_price_at(world: &World, port: u16, day: u32, height: u64) -> U256 {
+fn oracle_word_at(world: &World, port: u16, slot: B256, height: u64) -> U256 {
     // Share only the storage slot layout, never the production price evaluator.
-    let slots = outbe_nod::openings::entry_price_slots(WorldwideDay::new(day), &[840])
-        .expect("bounded USD snapshot slots");
-    let words = slots
-        .into_iter()
-        .map(|slot| {
-            let raw = eth::raw_json_with_params(
-                &world.rpc.url(port),
-                "eth_getStorageAt",
-                serde_json::json!([NOD_ADDRESS, slot, format!("0x{height:x}")]),
-            )
-            .expect("historical frozen Nod snapshot word");
-            serde_json::from_value::<U256>(raw).expect("canonical snapshot word")
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        words[0],
-        U256::from(1),
-        "Nod entry-price snapshot is frozen"
-    );
-    words[1]
+    let raw = eth::raw_json_with_params(
+        &world.rpc.url(port),
+        "eth_getStorageAt",
+        serde_json::json!([ORACLE_ADDRESS, slot, format!("0x{height:x}")]),
+    )
+    .expect("historical Oracle word");
+    serde_json::from_value::<U256>(raw).expect("canonical Oracle word")
 }
 
-/// Recompute the USD entry price from the UTC day preceding preparation.
-/// Find preparation from the first frozen snapshot, even when the request was delayed.
-pub(crate) fn frozen_entry_price(world: &World) -> U256 {
+fn oracle_usd_price_at(world: &World, port: u16, day: u32, height: u64) -> U256 {
+    let index_slot = pair_index_slots(&[840]).expect("USD pair index slot")[0];
+    let index = oracle_word_at(world, port, index_slot, height);
+    let index = u32::try_from(index).expect("registered USD pair index");
+    assert_ne!(index, 0, "COEN/USD is registered");
+    let slots = entry_price_slots(day, &[840], &[index]).expect("USD day VWAP slot");
+    oracle_word_at(world, port, slots[1], height)
+}
+
+/// Recompute the USD entry price from the UTC day before the request block.
+fn request_entry_price(world: &World) -> (u32, U256) {
     let request = world
         .state
         .ocomp_job_request
@@ -345,38 +339,10 @@ pub(crate) fn frozen_entry_price(world: &World) -> U256 {
         .ocomp_job_record_at_on(ports[0], request.intent_id, height)
         .expect("price input JobIntent")
         .intent;
-    let frozen_slot =
-        outbe_nod::openings::entry_price_slots(WorldwideDay::new(request.worldwide_day), &[840])
-            .expect("USD snapshot slots")[0];
-    // The frozen flag is monotonic. Locate its first block with logarithmic RPC reads.
-    let (mut low, mut high) = (0, height);
-    while low < high {
-        let mid = low + (high - low) / 2;
-        let raw = eth::raw_json_with_params(
-            &world.rpc.url(ports[0]),
-            "eth_getStorageAt",
-            serde_json::json!([NOD_ADDRESS, frozen_slot, format!("0x{mid:x}")]),
-        )
-        .expect("historical preparation flag");
-        let frozen: U256 = serde_json::from_value(raw).expect("canonical frozen flag");
-        if frozen.is_zero() {
-            low = mid + 1;
-        } else {
-            assert_eq!(frozen, U256::from(1));
-            high = mid;
-        }
-    }
-    let preparation_height = low;
-    let preparation_checkpoint = world
-        .rpc
-        .checkpoint_at(ports[0], preparation_height)
-        .expect("preparation checkpoint");
-    let prepared_at = world
-        .rpc
-        .block_timestamp(ports[0], preparation_height)
-        .expect("preparation timestamp");
-    let quotes = history(world, ports[0], preparation_height);
-    let expected = previous_day_entry_price(&quotes, prepared_at);
+    let requested_at = intent.logical_evaluation_time;
+    let day = entry_price_day(requested_at);
+    let quotes = history(world, ports[0], height);
+    let expected = previous_day_entry_price(&quotes, requested_at);
     for &port in &ports {
         assert_eq!(
             world
@@ -387,21 +353,14 @@ pub(crate) fn frozen_entry_price(world: &World) -> U256 {
             intent
         );
         assert_eq!(
-            history(world, port, preparation_height),
+            history(world, port, height),
             quotes,
             "Oracle price history on {port}"
         );
         assert_eq!(
-            world
-                .rpc
-                .checkpoint_at(port, preparation_height)
-                .expect("peer preparation checkpoint"),
-            preparation_checkpoint
-        );
-        assert_eq!(
-            frozen_usd_price_at(world, port, request.worldwide_day, height),
+            oracle_usd_price_at(world, port, day, height),
             expected,
-            "independent frozen entry price on {port}"
+            "independent Oracle entry price on {port}"
         );
         assert_eq!(
             world
@@ -416,17 +375,20 @@ pub(crate) fn frozen_entry_price(world: &World) -> U256 {
         serde_json::json!({
             "worldwide_day": request.worldwide_day, "height": height,
             "block_hash": checkpoint.block_hash, "state_root": checkpoint.state_root,
-            "logical_evaluation_time": intent.logical_evaluation_time,
-            "preparation_height": preparation_height, "prepared_at": prepared_at,
+            "logical_evaluation_time": requested_at, "priced_day": day,
             "observations": quotes, "expected_entry_price": expected,
         })
     );
-    expected
+    (day, expected)
 }
 
-#[cucumber::then("the original Nod entry-price snapshot survives Oracle updates and restart")]
-fn frozen_entry_price_survives_updates(world: &mut World) {
-    let expected = frozen_entry_price(world);
+pub(crate) fn entry_price(world: &World) -> U256 {
+    request_entry_price(world).1
+}
+
+#[cucumber::then("the original Nod entry price survives Oracle updates and restart")]
+fn entry_price_survives_updates(world: &mut World) {
+    let (day, expected) = request_entry_price(world);
     let request = world
         .state
         .ocomp_job_request
@@ -445,7 +407,7 @@ fn frozen_entry_price_survives_updates(world: &mut World) {
         .expect("committee");
     assert!(
         height > request.request_height,
-        "check the snapshot after its creation"
+        "check the price after its request"
     );
     let checkpoint = world
         .rpc
@@ -453,7 +415,7 @@ fn frozen_entry_price_survives_updates(world: &mut World) {
         .expect("snapshot checkpoint");
     for &port in &ports {
         assert_eq!(
-            frozen_usd_price_at(world, port, request.worldwide_day, height),
+            oracle_usd_price_at(world, port, day, height),
             expected,
             "Oracle changes must not reprice the original Nod on {port}"
         );
@@ -466,7 +428,7 @@ fn frozen_entry_price_survives_updates(world: &mut World) {
         .expect("changed Oracle quote");
         assert_ne!(
             current, expected,
-            "fixture changed the Oracle price after freezing"
+            "fixture changed the Oracle price after the request"
         );
         assert_eq!(
             world

@@ -1,7 +1,9 @@
-//! Exact-block Fidelity and frozen Nod price openings for LYSIS_V1.
+//! Exact-block Fidelity and Oracle entry-price openings for LYSIS_V1.
 
 use alloy_primitives::B256;
-use outbe_nod::openings::entry_price_slots;
+use outbe_nod::openings::{
+    entry_price_day, entry_price_slots, evaluate_entry_prices, pair_index_slots,
+};
 use outbe_ocomp_protocol::{
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     intent::{job_id_from_intent_id, VerifiedFinalizedIntentV1},
@@ -9,81 +11,21 @@ use outbe_ocomp_protocol::{
     opening::{LysisOpeningsProofV1, OpeningSubjectsV1},
     SchemaLimits,
 };
-use outbe_primitives::addresses::{METADOSIS_ADDRESS, NOD_ADDRESS};
+use outbe_primitives::addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS};
 use reth_provider::StateProviderFactory;
+use reth_storage_api::StateProvider;
 
 use super::{
-    finality::{
-        build_verified_raw_contract_opening, build_verified_raw_contract_opening_from_public_proof,
-        verify_raw_contract_opening, PublicExactBlockProofSourceV1,
-    },
+    finality::{build_verified_raw_contract_opening, verify_raw_contract_opening},
     retention::{CandidatePinV1, RetentionError},
 };
 
-/// Builds the exact Lysis openings exclusively from standard public
-/// `eth_getProof` data at the authenticated request block.
-///
-/// The function derives both slot plans directly from the subjects. The legacy
-/// `oracle` wire field carries the Nod entry-price snapshot proof.
-pub fn build_public_lysis_openings<S>(
-    source: &S,
-    finalized: &VerifiedFinalizedIntentV1,
-    subjects: OpeningSubjectsV1,
-    limits: &SchemaLimits,
-) -> Result<LysisOpeningsProofV1, RetentionError>
-where
-    S: PublicExactBlockProofSourceV1,
-{
-    validate_subjects(&subjects)?;
-    let state_root = finalized.request.state_root;
-    let block_hash = finalized.request.block_hash;
-    let fidelity_slots =
-        fidelity_league_slots(&subjects, finalized.intent.wwd, limits.max_collection_items)?;
-    let fidelity_proof = source
-        .account_proof(METADOSIS_ADDRESS, &fidelity_slots, block_hash)
-        .map_err(|error| RetentionError::Source(format!("read public Fidelity proof: {error}")))?;
-    let fidelity = build_verified_raw_contract_opening_from_public_proof(
-        &fidelity_proof,
-        state_root,
-        METADOSIS_ADDRESS,
-        &fidelity_slots,
-        limits,
-    )
-    .map_err(RetentionError::source)?;
-
-    let day = outbe_primitives::time::WorldwideDay::new(finalized.intent.wwd);
-    let oracle_slots =
-        entry_price_slots(day, &subjects.reference_isos).map_err(RetentionError::source)?;
-    let oracle_proof = source
-        .account_proof(NOD_ADDRESS, &oracle_slots, block_hash)
-        .map_err(|error| RetentionError::Source(format!("read public Nod price proof: {error}")))?;
-    let oracle = build_verified_raw_contract_opening_from_public_proof(
-        &oracle_proof,
-        state_root,
-        NOD_ADDRESS,
-        &oracle_slots,
-        limits,
-    )
-    .map_err(RetentionError::source)?;
-
-    let openings = LysisOpeningsProofV1 {
-        protocol_bundle_hash: finalized.intent.protocol_bundle_hash,
-        job_id: finalized.job_id,
-        finalized_block_hash: block_hash,
-        finalized_state_root: state_root,
-        wwd: finalized.intent.wwd,
-        subjects,
-        fidelity,
-        oracle,
-    };
-    verify_lysis_openings(&openings, finalized, &openings.subjects, limits)?;
-    Ok(openings)
-}
-
+/// `logical_evaluation_time` is the request block's timestamp, which selects the priced UTC day.
 pub fn build_lysis_openings<P>(
     provider: &P,
     limits: &SchemaLimits,
     candidate: CandidatePinV1,
+    logical_evaluation_time: u64,
     subjects: OpeningSubjectsV1,
 ) -> Result<LysisOpeningsProofV1, RetentionError>
 where
@@ -100,11 +42,11 @@ where
 
     let fidelity_slots =
         fidelity_league_slots(&subjects, candidate.wwd, limits.max_collection_items)?;
-    let oracle_slots = entry_price_slots(
-        outbe_primitives::time::WorldwideDay::new(candidate.wwd),
+    let oracle_slots = oracle_entry_price_slots(
+        state.as_ref(),
+        entry_price_day(logical_evaluation_time),
         &subjects.reference_isos,
-    )
-    .map_err(RetentionError::source)?;
+    )?;
     let fidelity = build_verified_raw_contract_opening(
         state.as_ref(),
         candidate.state_root,
@@ -116,7 +58,7 @@ where
     let oracle = build_verified_raw_contract_opening(
         state.as_ref(),
         candidate.state_root,
-        NOD_ADDRESS,
+        ORACLE_ADDRESS,
         &oracle_slots,
         limits,
     )
@@ -148,8 +90,9 @@ where
 ///
 /// For each opening (Fidelity, then Oracle), the function authenticates every
 /// supplied raw value against the finalized state root. Then it compares the
-/// supplied slot order with the canonical slot plan. Each plan comes only from
-/// `wwd` and the expected subjects, so it reads no proven value.
+/// supplied slot order with the canonical slot plan. The Fidelity plan comes
+/// from `wwd` and the subjects; the Oracle plan also follows the proven
+/// pair-index words.
 pub fn verify_lysis_openings(
     openings: &LysisOpeningsProofV1,
     finalized: &VerifiedFinalizedIntentV1,
@@ -204,23 +147,53 @@ pub fn verify_lysis_openings(
         .collect::<Vec<_>>();
     verify_raw_contract_opening(
         &openings.oracle,
-        NOD_ADDRESS,
+        ORACLE_ADDRESS,
         finalized.request.state_root,
         &supplied_oracle_slots,
         limits,
     )
     .map_err(RetentionError::source)?;
-    let expected_oracle_slots = entry_price_slots(
-        outbe_primitives::time::WorldwideDay::new(finalized.intent.wwd),
+    let opened = openings
+        .oracle
+        .ordered_slots
+        .iter()
+        .map(|raw| (raw.slot, raw.value))
+        .collect::<Vec<_>>();
+    evaluate_entry_prices(
+        entry_price_day(finalized.intent.logical_evaluation_time),
         &expected_subjects.reference_isos,
+        &opened,
     )
-    .map_err(RetentionError::source)?;
-    if supplied_oracle_slots != expected_oracle_slots {
-        return Err(RetentionError::Source(
-            "Nod price opening does not match the canonical snapshot slot plan".to_owned(),
-        ));
-    }
+    .map_err(|_| {
+        RetentionError::Source(
+            "Oracle entry-price opening does not match the canonical slot plan".to_owned(),
+        )
+    })?;
     Ok(())
+}
+
+/// Reads each subject pair's registry index, which addresses its day-VWAP slot.
+fn oracle_entry_price_slots(
+    state: &dyn StateProvider,
+    day: u32,
+    isos: &[u16],
+) -> Result<Vec<B256>, RetentionError> {
+    let pair_indices = pair_index_slots(isos)
+        .map_err(RetentionError::source)?
+        .into_iter()
+        .map(|slot| {
+            let index = state
+                .storage(ORACLE_ADDRESS, slot)
+                .map_err(|error| {
+                    RetentionError::Source(format!("read Oracle pair index: {error}"))
+                })?
+                .unwrap_or_default();
+            u32::try_from(index).map_err(|_| {
+                RetentionError::Source("Oracle pair index does not fit u32".to_owned())
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    entry_price_slots(day, isos, &pair_indices).map_err(RetentionError::source)
 }
 
 fn validate_subjects(subjects: &OpeningSubjectsV1) -> Result<(), RetentionError> {
