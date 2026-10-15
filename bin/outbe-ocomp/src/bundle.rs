@@ -16,6 +16,7 @@ impl PinnedProtocolBundle {
     ) -> Result<Self, ProtocolError> {
         let bundle = ProtocolBundleV1::decode_canonical(canonical, limits)?;
         bundle.validate_lysis_v1_input_codecs()?;
+        bundle.validate_supported_lysis_v1_semantics()?;
         let hash = bundle.protocol_bundle_hash(limits)?;
         Ok(Self { bundle, hash })
     }
@@ -27,6 +28,7 @@ impl PinnedProtocolBundle {
     ) -> Result<Self, ProtocolError> {
         let bundle = ProtocolBundleV1::decode_canonical(canonical, limits)?;
         bundle.validate_lysis_v1_input_codecs()?;
+        bundle.validate_supported_lysis_v1_semantics()?;
         let hash = bundle.protocol_bundle_hash(limits)?;
         if hash != expected_hash {
             return Err(ProtocolError::HashMismatch);

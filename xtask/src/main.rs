@@ -391,15 +391,17 @@ fn main() -> Result<()> {
             } => {
                 ocomp::finalize::run(
                     &repo_root,
-                    &capacity,
-                    &base_genesis,
-                    &validators,
-                    ocomp::finalize::FinalArtifactOverrides {
+                    ocomp::finalize::FinalArtifactSources {
+                        capacity: &capacity,
+                        base_genesis: &base_genesis,
+                        validators: &validators,
+                    },
+                    ocomp::finalize::FinalArtifactOptions {
                         registrations_dir: registrations_dir.as_deref(),
                         release_artifacts_dir: release_artifacts_dir.as_deref(),
+                        check,
                     },
                     &output_dir,
-                    check,
                 )?;
             }
             OcompCommand::ValidatorIdentities { validators } => {

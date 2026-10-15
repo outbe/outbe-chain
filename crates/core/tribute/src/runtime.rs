@@ -96,14 +96,13 @@ impl TributeContract<'_> {
         scope: &ExecutionScope,
         day: WorldwideDay,
     ) -> Result<RetirementOutcome> {
-        if self.ocomp_profile_ready.read()? {
-            if self
+        if self.ocomp_profile_ready.read()?
+            && self
                 .day_pre_admission
                 .get(day)?
                 .is_some_and(|admission| admission.is_sealed && admission.sealed_tribute_count != 0)
-            {
-                return Err(TributeError::PopulatedOcompInputRequiresCertifiedRetirement.into());
-            }
+        {
+            return Err(TributeError::PopulatedOcompInputRequiresCertifiedRetirement.into());
         }
         let storage = self.storage_handle();
         storage.with_checkpoint(|| self.retire_completed_partition_inner(scope, day))
