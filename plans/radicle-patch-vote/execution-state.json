@@ -2,10 +2,10 @@
   "feature": "outbe-chain-pjz",
   "goal_status": "active",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-15T19:33:31Z",
-  "next_periodic_report_due_utc": "2026-10-15T20:03:31Z",
+  "last_periodic_report_utc": "2026-10-15T20:02:55Z",
+  "next_periodic_report_due_utc": "2026-10-15T20:32:55Z",
   "period_minutes": 30,
-  "stage": "P3 bounded carrier/proposer mailbox and immutable genesis activation prerequisite implemented and verified; checkpoint runtime, production collector and P4 automatic bootstrap incomplete",
+  "stage": "P3 atomic current-identity checkpoint runtime and optional OSP2 begin-zone phase implemented and verified; validating-node finality/ancestry admission and production actor/output/sidecar wiring incomplete",
   "decision_gate": {
     "id": "D1",
     "status": "historical_approval_request_withdrawn; no active user approval question",
@@ -20,11 +20,11 @@
   },
   "acceptance": "P0/P1/P5 closed; P2/P3 in_progress and incomplete; P4/P6/P7/P8 open; P4 descriptor prerequisite implemented under P3 activation only",
   "last_periodic_report": {
-    "completed": "Dirty WIP OPB1/OART carrier, bounded nonblocking retry-preserving mailbox, actual proposer prefix assembly with final-field reservations, genesis OGD1 storage/config seeding and enabled-startup DKG window guard.",
-    "proof": "11 publication codec/mailbox/assembly/window tests +4 Python actual seed pipeline/OGD1 cross-language fixture tests PASS. Full affected lib suite and all-target consumers still running. Frozen foundation source26d497f4a/evidencebcfffb560 remains previous exact-source proof.",
-    "tasks": "P0/P1/P5 closed; P2/P3 incomplete; P4 implementation started; P6/P7/P8 open. No new full-AC acceptance or independent review PASS.",
-    "limitations": "No publication checkpoint application/current-set endorsement verification, production collector, automatic native bootstrap or full Vote-to-Review E2E yet. No active decision request; no git.rs gate/D2 work.",
-    "next": "Finish affected builds/tests and wire bounded checkpoint execution under approved P3, then P4/P6 production collector/bootstrap."
+    "completed": "Committed source5a7bd5153/evidencec2af75c0f: carrier/proposer/genesis prerequisite. New uncommitted atomic registry checkpoint runtime: current committee/MinPk identity verification, fixed pending index slots, generation reset, exact Approved subject/stage, immutable receipts and reserved/bootstrap RID binding. Added optional OSP2 phase after HookEvents; wiring validation in progress.",
+    "proof": "Frozen prior source1647 full lib tests/8 consumers/scopedClippy PASS. Dirty runtime7 scenarios PASS incl n256/q171 in6 batches, max32 identity checks per batch,34 mutation sites before+after rollback, real Vote separate Review/Merge and accepted-history preservation; new negative matrix and system phase not yet fully tested.",
+    "tasks": "P0/P1/P5 closed; P2/P3 in_progress; P4/P6/P7/P8 open. No new closure or independent acceptance PASS.",
+    "limitations": "New runtime/phase not frozen or production E2E. Node finalized-anchor admission, collector transport/journal/output provisioning, native bootstrap/refs/Merge and manager receipt policy still incomplete. No git.rs gate/D2; no approval question.",
+    "next": "Finish publication system phase/caller compilation and actual EVM dispatch tests, then exact-source evidence and remaining P3/P4/P6 production wiring."
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
@@ -37,7 +37,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "5a7bd515322d61914fe57e4319ab31da3c1c7d2c",
+  "source_sha": "259df4bec745acdcbd656a08e49d782b1e889e94",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -56,7 +56,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "Source5a7bd5153: fixed OPB1 batch and OART0C carrier; bounded retry-preserving nonblocking mailbox wired to actual proposer with maximum-prefix/final-field reservation; startup/header activation bound to seeded OGD1; enabled cadence guard; Python genesis seeding and append-only registry10/11 typed descriptor. No git.rs gate/D2 changes.",
+  "current_source_changes": "Source259df4bec: atomic current-set MinPk attestation admission, fixed pending slots/generation reset, exact Approved subject and separate Review/Merge stages, immutable receipts, reserved/bootstrap managed RID binding, OSP2 phase/header-body parity/actual proposer and verifier cursor/dispatch wiring. Shared OPL1 helper. No git.rs gate/D2 changes.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -82,8 +82,10 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "5a7bd515322d61914fe57e4319ab31da3c1c7d2c",
-    "checks": "1647 full lib tests across6 packages,0 ignored;8 consumer all-target checks; scoped5-package Clippy/rustfmt; Python98 tests(2 keygen skips),format,new-module lint PASS",
-    "acceptance": "intermediate only; P3/P4 incomplete; no independent full-AC acceptance reviews"
-  }
+    "source_sha": "259df4bec745acdcbd656a08e49d782b1e889e94",
+    "checks": "1699 full lib tests across7 packages +23 EVM integration +14 node integration;0 ignored;8 consumers all-target check;scoped7-package Clippy -D warnings/rustfmt PASS",
+    "acceptance": "intermediate only; P3 incomplete; no independent full-AC acceptance reviews",
+    "boundedness": "n256/q171 in6 batches<=32 signatures;max12245 reads/64 writes/1544500 storage gas per valid batch;34 mutation sites before+after atomic rollback"
+  },
+  "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase"
 }
