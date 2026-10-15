@@ -15,6 +15,10 @@ alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+outbe-evm = { workspace = true, features = ["test-utils"] }
+revm.workspace = true
+
 [features]
 test-utils = []
 

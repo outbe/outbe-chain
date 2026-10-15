@@ -10087,9 +10087,11 @@ dependencies = [
  "alloy-sol-types",
  "outbe-ccaregistry",
  "outbe-common",
+ "outbe-evm",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "revm",
  "thiserror 2.0.18",
 ]
 
