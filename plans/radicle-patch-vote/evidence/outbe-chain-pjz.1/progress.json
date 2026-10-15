@@ -1,11 +1,15 @@
 {
   "task_id": "outbe-chain-pjz.1",
-  "status": "in_progress_not_ready_for_acceptance",
-  "base_sha": "42d08693a06a7fdc088cf452b582c2d18596ed9a",
-  "timestamp_utc": "2026-10-15T09:19:34.439376+00:00",
-  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
-  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
-  "toolchain": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "status": "candidate_awaiting_independent_reviews",
+  "source_base": "42d08693a06a7fdc088cf452b582c2d18596ed9a",
+  "timestamp_utc": "2026-10-15T09:43:31.085870+00:00",
+  "claimed_ac_coverage": "README.md acceptance matrix; design.md selected contract",
+  "independent_reviews": {
+    "R1": "pending",
+    "R2": "pending",
+    "R3": "pending"
+  },
+  "production_implementation": "not_started",
   "commands": [
     {
       "argv": [
@@ -13,8 +17,7 @@
         "plans/radicle-patch-vote/p0-check/audit_sources.py"
       ],
       "exit_code": 0,
-      "result": "33 anchors and 141 coupling candidates; source locations/hashes saved",
-      "scope": "source inventory only"
+      "result": "39 source anchors, 141 coupling candidate files"
     },
     {
       "argv": [
@@ -30,19 +33,47 @@
         "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p0-target"
       },
       "exit_code": 0,
-      "stdout": "threshold-check.log",
-      "scope": "actual BLS primitive check; not production DKG/Vote/receiver implementation"
+      "stdout": "design-check.log",
+      "scope": "real BLS primitive plus reduced executable design model, not production handler"
+    },
+    {
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2021",
+        "--check",
+        "plans/radicle-patch-vote/p0-check/src/main.rs",
+        "plans/radicle-patch-vote/p0-check/src/publication.rs"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "bd",
+        "--readonly",
+        "lint",
+        "<40 feature IDs>"
+      ],
+      "exit_code": 0,
+      "stdout": "beads-lint.log"
+    },
+    {
+      "argv": [
+        "bd",
+        "--readonly",
+        "dep",
+        "cycles",
+        "--json"
+      ],
+      "exit_code": 0,
+      "stdout": "dependency-cycles.json"
     }
   ],
-  "unverified_requirements": [
-    "AC1: final current-authority/receiver and genesis binding design",
-    "AC3: authenticated production keyset/bootstrap contract",
-    "AC4: production old-share/new-write rejection proof",
-    "AC5: final P1-P8 map and design freeze"
-  ],
-  "implementation_reviews_started": false,
   "artifacts": {
-    "source-audit.json": "2a4e347fcfaaac8a52bb0d4212c083c6bd8708b76535ea225f05f19029d4e387",
-    "threshold-check.log": "28ace86c5bab8cb6be8dd3ed56858f18f6d347f4886778600d90edde88d84f13"
+    "design.md": "f36c868f6c11bcb4939deb198c4605f2d5a4313a1e0634679c0a6dfd7e875bcd",
+    "task-specs.json": "091bd4810d7da888ebf7347f2730d77093ec3ccb6562e2a6279bffb7f413aefb",
+    "evidence/outbe-chain-pjz.1/README.md": "19e5696917505f3305117f12977772e969635c51d1db6a6f074c24eb6bd3b0ed",
+    "evidence/outbe-chain-pjz.1/source-audit.json": "17c3212c8991694f8915dcaa24ca9c405925b6704d3c2839a935be83c0f020c1",
+    "evidence/outbe-chain-pjz.1/design-check.log": "79deaf98b9276f03fb87a6ba9dd1b92f668a142393cb224e9682f62c36d7c3d7"
   }
 }

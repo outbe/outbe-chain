@@ -45,6 +45,12 @@ anchors=[
 ('C03',str(sdk/'cryptography/src/bls12381/primitives/group.rs'),'pub const G1_MESSAGE'),
 ('C04',str(sdk/'cryptography/src/bls12381/dkg/feldman_desmedt.rs'),'pub fn new<M: Faults>'),
 ('C05',str(sdk/'utils/src/faults.rs'),'fn quorum('),
+('C06',str(sdk/'utils/src/lib.rs'),'pub fn union_unique'),
+('S29','crates/blockchain/primitives/src/reshare_artifact.rs','pub struct OutbeBlockArtifacts'),
+('S30','crates/blockchain/primitives/src/consensus.rs','pub const OUTBE_MAX_EXTRA_DATA_SIZE'),
+('S31','crates/blockchain/evm/src/config/system_txs.rs','fn system_tx_expectations_for_block'),
+('S32','crates/blockchain/consensus/src/proof/constants.rs','pub fn hybrid_seed_namespace'),
+('S33','crates/blockchain/consensus/src/dkg_manager.rs','let info = Info::<MinSig'),
 ]
 rows=[]
 for key,path,needle in anchors:

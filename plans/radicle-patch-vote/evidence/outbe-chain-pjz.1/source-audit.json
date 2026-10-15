@@ -1,5 +1,5 @@
 {
-  "base_sha": "42d08693a06a7fdc088cf452b582c2d18596ed9a",
+  "base_sha": "c965901802e735f402ba3e5e438baa66cdf9f90a",
   "commonware_revision": "d476a2361ce6840d2b9d0aa6fb30a924429046d4",
   "anchors": [
     {
@@ -299,6 +299,60 @@
         61
       ],
       "sha256": "f443c640e027d71263cb908fbb8bfd32ccf09d26bad80585f10495179fc2c1f9"
+    },
+    {
+      "id": "C06",
+      "path": "/Users/sakor/.cargo/git/checkouts/monorepo-9732103c47eb4665/d476a23/utils/src/lib.rs",
+      "anchor": "pub fn union_unique",
+      "lines": [
+        166
+      ],
+      "sha256": "de968d39052258e595c9ddfdaa8adc8dbf586764ba7e558565564e34ac43ab00"
+    },
+    {
+      "id": "S29",
+      "path": "crates/blockchain/primitives/src/reshare_artifact.rs",
+      "anchor": "pub struct OutbeBlockArtifacts",
+      "lines": [
+        95
+      ],
+      "sha256": "75440fd1944ae18ac5ecf17971f401d411525e9b6357883a7b1e3f33314181f8"
+    },
+    {
+      "id": "S30",
+      "path": "crates/blockchain/primitives/src/consensus.rs",
+      "anchor": "pub const OUTBE_MAX_EXTRA_DATA_SIZE",
+      "lines": [
+        26
+      ],
+      "sha256": "5aee1598c5568014c9fd780d9dd99d751b9d3197734554ac25bf509f9ebf0085"
+    },
+    {
+      "id": "S31",
+      "path": "crates/blockchain/evm/src/config/system_txs.rs",
+      "anchor": "fn system_tx_expectations_for_block",
+      "lines": [
+        38
+      ],
+      "sha256": "7da2a2ae9576718a2615af6136e90020af03a7f7f312e3e9e789619d307dc6a8"
+    },
+    {
+      "id": "S32",
+      "path": "crates/blockchain/consensus/src/proof/constants.rs",
+      "anchor": "pub fn hybrid_seed_namespace",
+      "lines": [
+        202
+      ],
+      "sha256": "29eb266dcc07af9ae1327fde303ff657768f01b1699229bd67f4040b369f72d2"
+    },
+    {
+      "id": "S33",
+      "path": "crates/blockchain/consensus/src/dkg_manager.rs",
+      "anchor": "let info = Info::<MinSig",
+      "lines": [
+        142
+      ],
+      "sha256": "bd45c652e0cd4622df5b7df2474c90f9936e0b06d59b1ca5c88bc003af682d8a"
     }
   ],
   "coupling_inventory_note": "Search candidates, not a claim every file must change. Transport stays Ed25519; classify before edits.",

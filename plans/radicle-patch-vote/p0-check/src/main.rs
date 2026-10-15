@@ -11,6 +11,8 @@ use commonware_cryptography::bls12381::{
 use commonware_parallel::Sequential;
 use commonware_utils::{Faults, N3f1, TestRng, NZU32};
 
+mod publication;
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -76,4 +78,6 @@ fn main() {
     println!("signature={}", hex(&signature.encode()));
     assert_eq!(old.public().encode().len(), 96);
     assert_eq!(signature.encode().len(), 48);
+    let package = [subject.as_slice(), signature.encode().as_ref()].concat();
+    publication::check(&package);
 }
