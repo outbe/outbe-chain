@@ -26,6 +26,8 @@ use radicle::node::config::Limits;
 use radicle::node::{Config, ConnectOptions};
 use radicle::storage::git::transport;
 
+mod native_bls;
+
 mod config {
     use super::*;
     use radicle::node::config::{Config, Relay};

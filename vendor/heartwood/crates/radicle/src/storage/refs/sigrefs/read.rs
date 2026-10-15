@@ -131,6 +131,11 @@ pub struct VerifiedCommit {
 }
 
 impl VerifiedCommit {
+    /// Object to include in an externally prepared publication package.
+    pub fn oid(&self) -> Oid {
+        self.commit.oid
+    }
+
     /// Borrow the [`Commit`] that was verified.
     pub(super) fn commit(&self) -> &Commit {
         &self.commit

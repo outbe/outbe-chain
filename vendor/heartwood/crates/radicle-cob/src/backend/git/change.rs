@@ -1,6 +1,6 @@
 // Copyright © 2022 The Radicle Link Contributors
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::TryFrom;
 use std::path::PathBuf;
 use std::sync::LazyLock;
@@ -36,6 +36,16 @@ pub mod error {
     use thiserror::Error;
 
     use crate::signatures::error::Signatures;
+
+    #[derive(Debug, Error)]
+    pub enum Prepare {
+        #[error(transparent)]
+        Git(#[from] git2::Error),
+        #[error(transparent)]
+        WriteCommit(#[from] super::super::commit::error::Write),
+        #[error(transparent)]
+        Metadata(#[from] metadata::commit::bls::Error),
+    }
 
     #[derive(Debug, Error)]
     pub enum Create {
@@ -195,6 +205,57 @@ impl change::Storage for git2::Repository {
             change::EntrySignature::legacy(ExtendedSignature::new(key, sig)),
         )
     }
+}
+
+/// Prepare exact native COB bytes without a signer, clock, Git config or ref update.
+/// Tips and related objects are sorted separately; duplicate actual parents keep
+/// their first position. Attachment can run later after external threshold signing.
+pub fn prepare_native(
+    repo: &git2::Repository,
+    resource: Option<Oid>,
+    mut related: Vec<Oid>,
+    spec: store::Template<Oid>,
+    author: Author,
+    committer: Author,
+) -> Result<metadata::commit::bls::UnsignedCommit, error::Prepare> {
+    let change::Template {
+        type_name,
+        mut tips,
+        message,
+        embeds,
+        contents,
+    } = spec;
+    let manifest = store::Manifest::new(type_name, Version::default());
+    let tree = write_manifest(repo, &manifest, embeds, &contents)?;
+    tips.sort();
+    tips.dedup();
+    related.sort();
+    related.dedup();
+    let mut seen = BTreeSet::new();
+    let parents: Vec<_> = tips
+        .into_iter()
+        .chain(related.iter().copied())
+        .chain(resource)
+        .filter(|id| seen.insert(*id))
+        .map(git2::Oid::from)
+        .collect();
+    let trailers = related
+        .into_iter()
+        .map(trailers::CommitTrailer::Related)
+        .chain(resource.map(trailers::CommitTrailer::Resource));
+    let commit = Commit::new(
+        tree,
+        parents,
+        author,
+        committer,
+        Headers::new(),
+        message,
+        trailers,
+    );
+    commit.verify_for_write(&repo.odb()?)?;
+    Ok(metadata::commit::bls::UnsignedCommit::parse(
+        commit.to_string().as_bytes(),
+    )?)
 }
 
 /// Load BLS using an independently supplied repository and trusted policy context.
@@ -493,7 +554,25 @@ mod native_test {
         let repository = bytes(vectors["repo"].as_str().unwrap()).try_into().unwrap();
         let context = bytes(row["context"].as_str().unwrap()).try_into().unwrap();
         let unsigned = bytes(vectors["unsigned_commit"].as_str().unwrap());
-        let prepared = UnsignedCommit::parse(&unsigned).unwrap();
+        let author: Author = "Outbe Network <network@outbe.invalid> 1700000000 +0000"
+            .parse()
+            .unwrap();
+        let prepared = prepare_native(
+            &repo,
+            None,
+            vec![],
+            store::Template {
+                type_name: "xyz.radicle.patch".parse().unwrap(),
+                tips: vec![],
+                message: "Accept patch\n".into(),
+                embeds: vec![],
+                contents: NonEmpty::new(OP.to_vec()),
+            },
+            author.clone(),
+            author,
+        )
+        .unwrap();
+        assert_eq!(prepared.as_bytes(), unsigned);
         let envelope = crypto::BlsEnvelope::from_hex(row["envelope"].as_str().unwrap()).unwrap();
         let tree = write_manifest(
             &repo,
@@ -587,6 +666,109 @@ mod native_test {
             load_native(&reopened, entry.id, repository, context).unwrap(),
             entry
         );
+    }
+
+    #[test]
+    fn native_preparation_pins_parents_embeds_and_explicit_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init_bare(temp.path()).unwrap();
+        let author: Author = "Native Author <native@example.test> 1700000000 +0000"
+            .parse()
+            .unwrap();
+        let committer: Author = "Native Committer <committer@example.test> 1700000001 +0100"
+            .parse()
+            .unwrap();
+        let tree_id = repo.treebuilder(None).unwrap().write().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let git_author = git2::Signature::new(
+            &author.name,
+            &author.email,
+            &git2::Time::new(author.time.seconds(), author.time.offset()),
+        )
+        .unwrap();
+        let mut commits: Vec<Oid> = ["one", "two", "three"]
+            .into_iter()
+            .map(|m| {
+                repo.commit(None, &git_author, &git_author, m, &tree, &[])
+                    .unwrap()
+                    .into()
+            })
+            .collect();
+        commits.sort();
+        let [a, b, resource]: [Oid; 3] = commits.try_into().unwrap();
+        let blob: Oid = repo.blob(b"embedded document").unwrap().into();
+        let template = |tips| store::Template {
+            type_name: "xyz.radicle.patch".parse().unwrap(),
+            tips,
+            message: "Accept patch\n".into(),
+            embeds: vec![Embed {
+                name: "document.json".into(),
+                content: blob,
+            }],
+            contents: NonEmpty::new(OP.to_vec()),
+        };
+        let prepare = |tips, related, author, committer| {
+            prepare_native(
+                &repo,
+                Some(resource),
+                related,
+                template(tips),
+                author,
+                committer,
+            )
+        };
+        let prepared = prepare(
+            vec![b, a, b],
+            vec![resource, b, resource],
+            author.clone(),
+            committer.clone(),
+        )
+        .unwrap();
+        let same = prepare(
+            vec![a, b],
+            vec![b, resource],
+            author.clone(),
+            committer.clone(),
+        )
+        .unwrap();
+        assert_eq!(prepared, same);
+        let commit = Commit::try_from(prepared.as_bytes()).unwrap();
+        assert_eq!(
+            commit.parents().collect::<Vec<_>>(),
+            vec![a.into(), b.into(), resource.into()]
+        );
+        assert_eq!(commit.author(), &author);
+        assert_eq!(commit.committer(), &committer);
+        let operation_tree = repo.find_tree(*commit.tree()).unwrap();
+        assert_eq!(
+            operation_tree
+                .get_path(std::path::Path::new("embeds/document.json"))
+                .unwrap()
+                .id(),
+            blob.into()
+        );
+        let trailers = String::from_utf8(prepared.as_bytes().to_vec()).unwrap();
+        assert!(trailers.ends_with(&format!(
+            "\nRad-Related: {b}\nRad-Related: {resource}\nRad-Resource: {resource}\n"
+        )));
+        assert!(prepare(vec![blob], vec![], author.clone(), committer.clone()).is_err());
+        assert!(
+            prepare(
+                vec![Oid::from(git2::Oid::ZERO_SHA1)],
+                vec![],
+                author.clone(),
+                committer.clone()
+            )
+            .is_err()
+        );
+        let invalid_author = Author {
+            name: "injected\nheader".into(),
+            ..author.clone()
+        };
+        assert!(prepare(vec![], vec![], invalid_author, committer.clone()).is_err());
+        let other = prepare(vec![a, b], vec![b, resource], committer.clone(), author).unwrap();
+        assert_ne!(prepared, other);
+        assert!(repo.references().unwrap().next().is_none());
     }
 
     #[test]

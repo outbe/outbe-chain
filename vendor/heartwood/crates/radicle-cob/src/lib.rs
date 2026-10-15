@@ -78,9 +78,13 @@ mod trailers;
 
 pub mod change;
 #[cfg(feature = "git2")]
-pub use backend::git::change::{attach_native, load_native};
-#[cfg(feature = "git2")]
 pub use backend::git::change::error::Load as GitLoadError;
+#[cfg(feature = "git2")]
+pub use backend::git::change::error::Prepare as GitPrepareError;
+#[cfg(feature = "git2")]
+pub use backend::git::change::prepare_native;
+#[cfg(feature = "git2")]
+pub use backend::git::change::{attach_native, load_native};
 pub use change::Entry;
 pub use change::store::{Contents, Embed, EntryId, Manifest, Version};
 

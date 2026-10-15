@@ -16,6 +16,8 @@ use crate::storage::{HasRepoId, SignRepository};
 use crate::{cob, identity};
 
 pub mod access;
+#[cfg(test)]
+mod native_test;
 use access::WriteAs;
 
 pub trait CobAction {
@@ -104,6 +106,10 @@ pub trait CobWithType {
 /// Store error.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error(transparent)]
+    PrepareNative(#[from] radicle_cob::GitPrepareError),
+    #[error("a COB operation must contain at least one action")]
+    EmptyTransaction,
     #[error("create error: {0}")]
     Create(#[from] cob::error::Create),
     #[error("update error: {0}")]
@@ -494,6 +500,48 @@ impl<T, Repo> Transaction<T, Repo>
 where
     T: Cob + cob::Evaluate<Repo>,
 {
+    /// Freeze canonical action bytes and pinned parents for external native signing.
+    /// This stores only blobs/trees; attachment and policy-gated publication are separate.
+    pub fn prepare_native(
+        self,
+        repo: &Repo,
+        identity: Option<git::Oid>,
+        tips: Vec<git::Oid>,
+        message: String,
+        committer: radicle_git_metadata::author::Author,
+    ) -> Result<radicle_git_metadata::commit::bls::UnsignedCommit, Error>
+    where
+        Repo: crate::storage::WriteRepository,
+    {
+        let actions = NonEmpty::from_vec(self.actions).ok_or(Error::EmptyTransaction)?;
+        let related = actions.iter().flat_map(T::Action::parents).collect();
+        let contents = actions.try_map(encoding::encode)?;
+        let embeds = self
+            .embeds
+            .into_iter()
+            .map(|embed| {
+                Ok(Embed {
+                    name: embed.name,
+                    content: git::Oid::try_from(&embed.content).map_err(Error::EmbedUri)?,
+                })
+            })
+            .collect::<Result<_, Error>>()?;
+        Ok(radicle_cob::prepare_native(
+            repo.raw(),
+            identity,
+            related,
+            radicle_cob::change::Template {
+                type_name: self.type_name,
+                tips,
+                message,
+                embeds,
+                contents,
+            },
+            committer.clone(),
+            committer,
+        )?)
+    }
+
     /// Add an action to this transaction.
     pub fn push(&mut self, action: T::Action) -> Result<(), Error> {
         if action.produces_identifier() {

@@ -3067,6 +3067,7 @@ name = "radicle-node"
 version = "0.21.1"
 dependencies = [
  "backtrace",
+ "blst",
  "bytes",
  "crossbeam-channel",
  "cyphernet",
