@@ -70,136 +70,11 @@ pub(super) fn snapshot_fullnode_preserves_copied_result_checked(
     Ok(())
 }
 
-pub(super) struct SnapshotOwnerSample<T> {
-    pub(super) before: u64,
-    pub(super) observation: Result<Option<T>, String>,
-    pub(super) after: u64,
-}
-
-// Recognize only an adjacent, unchanged-root CE marker at the observed RPC head.
-// The RPC diagnostic is not a stable wire format: unknown spellings fail closed.
-pub(super) fn snapshot_forward_ce_mismatch(error: &str, before: u64, after: u64) -> bool {
-    fn fields<'a>(text: &'a str, names: &[&str]) -> Option<Vec<&'a str>> {
-        let values: Vec<_> = text.split(", ").collect();
-        if values.len() != names.len() {
-            return None;
-        }
-        values
-            .into_iter()
-            .zip(names)
-            .map(|(value, name)| value.strip_prefix(*name)?.strip_prefix(": "))
-            .collect()
-    }
-    let parsed = (|| -> Option<()> {
-        let detail = error.strip_prefix(
-            "eth_call failed: server returned an error response: error code -32603: Revm error: fatal: compressed-entity tree unavailable: exact parent mismatch: required ExactParentIdentity { ",
-        )?;
-        let (required, marker) = detail.split_once(" }, marker FinalizedMarker { ")?;
-        let required = fields(
-            required,
-            &[
-                "commitment_scheme_version",
-                "block_number",
-                "block_hash",
-                "root",
-            ],
-        )?;
-        let marker = fields(
-            marker.strip_suffix(" }")?,
-            &[
-                "commitment_scheme_version",
-                "height",
-                "block_hash",
-                "parent_block_hash",
-                "parent_root",
-                "new_root",
-            ],
-        )?;
-        let required_scheme = required[0].parse::<u32>().ok()?;
-        let marker_scheme = marker[0].parse::<u32>().ok()?;
-        let required_height = required[1].parse::<u64>().ok()?;
-        let marker_height = marker[1].parse::<u64>().ok()?;
-        let required_hash = required[2].parse::<alloy_primitives::B256>().ok()?;
-        let required_root = required[3].parse::<alloy_primitives::B256>().ok()?;
-        let marker_hash = marker[2].parse::<alloy_primitives::B256>().ok()?;
-        let parent_hash = marker[3].parse::<alloy_primitives::B256>().ok()?;
-        let parent_root = marker[4].parse::<alloy_primitives::B256>().ok()?;
-        let new_root = marker[5].parse::<alloy_primitives::B256>().ok()?;
-        let height_range =
-            required_height <= before && before <= marker_height && marker_height == after;
-        let same_scheme = required_scheme == outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME
-            && required_scheme == marker_scheme;
-        let next_marker = required_height.checked_add(1) == Some(marker_height);
-        let same_parent = parent_hash == required_hash && marker_hash != required_hash;
-        let unchanged_root = parent_root == required_root && new_root == required_root;
-        if !(height_range && same_scheme && next_marker) {
-            return None;
-        }
-        (same_parent && unchanged_root).then_some(())
-    })();
-    parsed.is_some()
-}
-
-// None requests a fresh complete observation. It never means an absent owner.
-pub(super) fn snapshot_owner_decision<T>(
-    sample: SnapshotOwnerSample<T>,
-) -> Result<Option<T>, String> {
-    match sample.observation {
-        Err(error) => {
-            if snapshot_forward_ce_mismatch(&error, sample.before, sample.after) {
-                Ok(None)
-            } else {
-                Err(error)
-            }
-        }
-        Ok(None) => Err("missing materialized owner".to_owned()),
-        Ok(Some(value)) => {
-            if sample.after < sample.before {
-                Err("owner observation head regressed".to_owned())
-            } else if sample.after > sample.before {
-                Ok(None)
-            } else {
-                Ok(Some(value))
-            }
-        }
-    }
-}
-
-pub(super) fn snapshot_observe_owner<T>(
-    deadline: std::time::Instant,
-    mut sample: impl FnMut() -> eyre::Result<SnapshotOwnerSample<T>>,
-    mut now: impl FnMut() -> std::time::Instant,
-    mut wait: impl FnMut(),
-) -> eyre::Result<T> {
-    let mut last = "no owner observation".to_owned();
-    loop {
-        ensure!(
-            now() < deadline,
-            "owner observation deadline exhausted: {last}"
-        );
-        let observed = sample()?;
-        let outcome = match &observed.observation {
-            Ok(Some(_)) => "present",
-            Ok(None) => "missing",
-            Err(error) => error.as_str(),
-        };
-        last = format!(
-            "before={} after={} result={outcome}",
-            observed.before, observed.after,
-        );
-        ensure!(
-            now() < deadline,
-            "owner observation deadline exhausted: {last}"
-        );
-        if let Some(value) =
-            snapshot_owner_decision(observed).map_err(|error| eyre!("{error}; {last}"))?
-        {
-            return Ok(value);
-        }
-        eprintln!("snapshot_owner_observation_retry {last}");
-        wait();
-    }
-}
+#[cfg(test)]
+use crate::internal::live_ce_read::ce_projection_not_ready as snapshot_forward_ce_mismatch;
+use crate::internal::live_ce_read::{
+    observe_projection as snapshot_observe_owner, ProjectionSample as SnapshotOwnerSample,
+};
 
 pub(super) fn snapshot_materialized_owner(
     world: &crate::world::World,
@@ -229,7 +104,7 @@ pub(super) fn snapshot_materialized_owner(
         std::time::Instant::now,
         || {
             std::thread::sleep(
-                std::time::Duration::from_millis(250)
+                std::time::Duration::from_secs(2)
                     .min(deadline.saturating_duration_since(std::time::Instant::now())),
             );
         },
@@ -353,6 +228,36 @@ mod snapshot_owner_observation_tests {
     }
 
     #[test]
+    fn typed_dependency_wrapper_preserves_exact_parent_retry_checks() {
+        let error = CE_RACE.replace(
+            "fatal: compressed-entity tree unavailable:",
+            "execution stopped on a node-local dependency failure:",
+        );
+        assert!(snapshot_forward_ce_mismatch(&error, 521, 522));
+        assert!(!snapshot_forward_ce_mismatch(&error, 521, 521));
+        assert!(!snapshot_forward_ce_mismatch(&error, 600, 601));
+        assert!(!snapshot_forward_ce_mismatch(
+            &error.replace("height: 522", "height: 521"),
+            521,
+            522,
+        ));
+        let wrong_root = format!("0x{}", "11".repeat(32));
+        assert!(!snapshot_forward_ce_mismatch(
+            &error.replace(
+                "new_root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0",
+                &format!("new_root: {wrong_root}"),
+            ),
+            521,
+            522,
+        ));
+        assert!(!snapshot_forward_ce_mismatch(
+            &CE_RACE.replace("tree unavailable:", "tree corruption:"),
+            521,
+            522,
+        ));
+    }
+
+    #[test]
     fn crossed_forward_ce_race_restarts_the_whole_owner_observation() {
         let (result, calls) = observe(
             vec![
@@ -418,7 +323,7 @@ mod snapshot_owner_observation_tests {
     }
 
     #[test]
-    fn generic_rpc_decode_uniqueness_and_missing_owner_fail_even_during_progress() {
+    fn generic_rpc_decode_and_uniqueness_errors_fail_even_during_progress() {
         for error in [
             "eth_call failed: connection reset",
             "ABI decode failed: invalid body",
@@ -431,12 +336,73 @@ mod snapshot_owner_observation_tests {
             assert!(result.unwrap_err().to_string().contains(error));
             assert_eq!(calls, 1);
         }
-        let (result, calls) = observe(vec![sample(521, Ok(None), 522)], 5);
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("missing materialized owner"));
-        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn missing_owner_is_retried_until_a_complete_stable_body_appears() {
+        let (result, calls) = observe(
+            vec![sample(521, Ok(None), 521), sample(522, Ok(Some(7)), 522)],
+            5,
+        );
+        assert_eq!(result.unwrap(), 7);
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn missing_owner_exhausts_the_deadline_without_being_accepted() {
+        let (result, calls) = observe(
+            vec![sample(521, Ok(None), 521), sample(522, Ok(None), 522)],
+            2,
+        );
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("deadline exhausted"));
+        assert!(error.contains("missing materialized owner"));
+        assert_eq!(calls, 2);
+    }
+
+    fn projection_lag_error() -> String {
+        CE_RACE
+            .replace("tree unavailable:", "tree corruption:")
+            .replace("Revm error: fatal:", "Revm error: fatal: fatal:")
+            .replace("block_number: 521", "block_number: 522")
+            .replacen(
+                "block_hash: 0x4fd296af75fedd29d86ad983617c3614614f91b8bdb82001d00057e7cc1aacd7",
+                "block_hash: 0xb0d63f8c96229446dec5685a47eb1bd04a1299e86ca4ff11abc192fc7b445bb9",
+                1,
+            )
+            .replacen(
+                "root: 0x29f48a2e5bae541721b10af1233671747e7e955e794641a604aa9fc380a239e0",
+                &format!("root: 0x{}", "11".repeat(32)),
+                1,
+            )
+    }
+
+    #[test]
+    fn lagging_projection_retries_the_complete_observation() {
+        let error = projection_lag_error();
+        assert!(!snapshot_forward_ce_mismatch(&error, 522, 522));
+        let (result, calls) = observe(
+            vec![sample(523, Err(error), 523), sample(523, Ok(Some(7)), 523)],
+            5,
+        );
+        assert_eq!(result.unwrap(), 7);
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn persistent_projection_lag_exhausts_the_deadline_with_its_error() {
+        let error = projection_lag_error();
+        let (result, calls) = observe(
+            vec![
+                sample(523, Err(error.clone()), 523),
+                sample(523, Err(error.clone()), 523),
+            ],
+            2,
+        );
+        let failure = result.unwrap_err().to_string();
+        assert!(failure.contains("deadline exhausted"));
+        assert!(failure.contains(&error));
+        assert_eq!(calls, 2);
     }
 
     #[test]

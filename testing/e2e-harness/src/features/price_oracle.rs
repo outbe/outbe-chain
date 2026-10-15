@@ -578,12 +578,12 @@ fn start_feeder_with_cohort(
         .copied()
         .map(|validator_index| {
             let validator = world.validators.get(validator_index);
-            let private_key = validator.evm_key().unwrap_or_else(|error| {
+            let validator_key = validator.evm_key().unwrap_or_else(|error| {
                 panic!("validator-{validator_index} EVM key for feeder: {error:#}")
             });
             let validator_address = world
                 .rpc
-                .address_of(&private_key)
+                .address_of(&validator_key)
                 .unwrap_or_else(|| panic!("derive validator-{validator_index} feeder address"));
             assert_eq!(
                 validator_address
@@ -598,6 +598,7 @@ fn start_feeder_with_cohort(
                 "feeder identity changed after finalized cohort resolution"
             );
             let rpc_url = world.rpc.url(world.validators.http_port(validator_index));
+            let private_key = delegated_feeder_key(world, validator_index);
             (validator_index, rpc_url, private_key, validator_address)
         })
         .collect::<Vec<_>>();
@@ -651,14 +652,15 @@ fn start_overlap_feeder(
     phase: OracleEvidencePhaseV1,
 ) {
     let validator = world.validators.get(validator_index);
-    let private_key = validator.evm_key().unwrap_or_else(|error| {
+    let validator_key = validator.evm_key().unwrap_or_else(|error| {
         panic!("validator-{validator_index} EVM key for feeder: {error:#}")
     });
     let validator_address = world
         .rpc
-        .address_of(&private_key)
+        .address_of(&validator_key)
         .unwrap_or_else(|| panic!("derive validator-{validator_index} feeder address"));
     let rpc_url = world.rpc.url(world.validators.http_port(validator_index));
+    let private_key = delegated_feeder_key(world, validator_index);
     let chain_id = world
         .rpc
         .chain_id(world.validators.primary_port())
@@ -681,6 +683,80 @@ fn start_overlap_feeder(
         .unwrap_or_else(|error| {
             panic!("start validator-{validator_index} production price feeder: {error:#}")
         });
+}
+
+fn feeder_private_key(validator: Address) -> String {
+    let mut material = b"outbe/e2e/oracle-feeder/v1".to_vec();
+    material.extend_from_slice(validator.as_slice());
+    let mut key = alloy_primitives::keccak256(material).0;
+    key[0] = (key[0] & 0x3f) | 0x40;
+    format!("0x{}", hex::encode(key))
+}
+
+fn delegated_feeder_key(world: &mut World, validator_index: usize) -> String {
+    let validator_key = world
+        .validators
+        .get(validator_index)
+        .evm_key()
+        .expect("Oracle owner key");
+    let validator = eth::address_of(&validator_key).expect("Oracle owner address");
+    let key = feeder_private_key(validator);
+    let feeder = eth::address_of(&key).expect("dedicated feeder address");
+    assert_ne!(
+        feeder, validator,
+        "Oracle signer must have an independent nonce"
+    );
+    let url = world.rpc.url(world.validators.http_port(validator_index));
+    let ports = world.validators.committee_ports();
+    let binding = eth::IOracle::getFeederDelegationCall { validator };
+    if eth::read_call(&url, outbe_primitives::addresses::ORACLE_ADDRESS, &binding) != Some(feeder) {
+        let outcome = eth::send_call_outcome(
+            &url,
+            outbe_primitives::addresses::ORACLE_ADDRESS,
+            &validator_key,
+            &eth::IOracle::delegateFeederConsentCall { feeder },
+            None,
+        )
+        .expect("register dedicated Oracle feeder through standard delegation");
+        assert!(
+            outcome.success,
+            "Oracle delegation reverted: {}",
+            outcome.receipt
+        );
+        world
+            .rpc
+            .finalize_outcome(&outcome.into(), &ports, 120)
+            .expect("Oracle feeder delegation finality");
+    }
+    let height = ports
+        .iter()
+        .map(|port| {
+            world
+                .rpc
+                .finalized(*port)
+                .expect("Oracle delegation checkpoint")
+        })
+        .min()
+        .expect("Oracle committee exists");
+    for port in ports {
+        assert_eq!(
+            eth::read_call_at_result(
+                &world.rpc.url(port),
+                outbe_primitives::addresses::ORACLE_ADDRESS,
+                &binding,
+                height,
+            )
+            .expect("finalized Oracle feeder delegation"),
+            feeder
+        );
+    }
+    world
+        .price_oracle
+        .record_cohort_observation(serde_json::json!({
+            "kind": "feeder_delegation_verified", "validator_index": validator_index,
+            "validator": validator, "feeder": feeder, "finalized_height": height,
+        }));
+    key
 }
 
 fn overlap_pairs(validator_index: usize) -> Vec<crate::world::price_oracle::FeederPair<'static>> {
@@ -1268,6 +1344,19 @@ fn scale6_quote(rate: U256) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn feeder_signers_are_distinct_from_owners_and_stable_across_restarts() {
+        let owners = [Address::repeat_byte(1), Address::repeat_byte(2)];
+        let signers = owners.map(|owner| {
+            let key = feeder_private_key(owner);
+            assert_eq!(key, feeder_private_key(owner));
+            let signer = eth::address_of(&key).expect("valid dedicated feeder key");
+            assert_ne!(signer, owner);
+            signer
+        });
+        assert_ne!(signers[0], signers[1]);
+    }
 
     fn checkpoint() -> OracleCheckpointV1 {
         OracleCheckpointV1 {

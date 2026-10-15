@@ -32,7 +32,7 @@ pub(super) fn redeem(world: &mut World) {
     let (owner, gem_id, asset, snapshot_id) = (*owner, *gem_id, *asset, *snapshot_id);
     let (settle, settled) = scenario.finalize(
         world,
-        eth::send_call_with_gas_reserve(
+        eth::send_call_outcome(
             url,
             addresses::GEM_FACTORY_ADDR,
             key,
@@ -67,7 +67,7 @@ pub(super) fn redeem(world: &mut World) {
     );
     let (mint, minted) = scenario.finalize(
         world,
-        eth::send_call_with_gas_reserve(
+        eth::send_call_outcome(
             url,
             addresses::GEM_FACTORY_ADDR,
             key,
@@ -101,7 +101,7 @@ pub(super) fn redeem(world: &mut World) {
     );
     let (burn, burned) = scenario.finalize(
         world,
-        eth::send_call_with_gas_reserve(
+        eth::send_call_outcome(
             url,
             addresses::PROMIS_FACTORY_ADDR,
             key,
@@ -149,7 +149,7 @@ fn prepare(world: &mut World) -> PaidGem {
             .rpc
             .latest_block_timestamp(port)
             .expect("committee head timestamp");
-        eth::send_call(
+        let backdated = eth::send_call_outcome(
             &url,
             addresses::GEM_FACTORY_ADDR,
             DEPLOYER_KEY,
@@ -160,6 +160,7 @@ fn prepare(world: &mut World) -> PaidGem {
             None,
         )
         .expect("backdate the reward Gem's issuance stamp");
+        assert_mined_success(&backdated, "backdate the reward Gem's issuance stamp");
         test_issuance::seed_day_vwaps(
             &url,
             DEPLOYER_KEY,
@@ -322,22 +323,17 @@ impl PaidGem {
     fn finalize(
         &self,
         world: &World,
-        tx: String,
+        mined: eth::MinedCallOutcome,
         label: &str,
     ) -> (
         crate::world::rpc::TxOutcome,
         crate::world::rpc::FinalizedCheckpoint,
     ) {
-        let url = &self.url;
         let ports = &self.ports;
         let gem_id = self.gem_id;
 
-        let receipt = successful_receipt(url, &tx, label);
-        let outcome = crate::world::rpc::TxOutcome {
-            transaction_hash: tx,
-            success: true,
-            receipt,
-        };
+        assert_mined_success(&mined, label);
+        let outcome: crate::world::rpc::TxOutcome = mined.into();
         let checkpoint = world
             .rpc
             .finalize_outcome(&outcome, ports, 120)
