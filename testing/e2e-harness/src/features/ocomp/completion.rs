@@ -241,149 +241,19 @@ pub(in crate::features::ocomp) fn wait_case_one_worker_release(
     bundle_hash: B256,
     deadline: Instant,
 ) -> eyre::Result<()> {
-    let ports = world.validators.committee_ports();
-    ensure!(
-        ports.len() == 4 && world.validators.size() == 4,
-        "worker release requires all four founders"
-    );
-    ensure!(Instant::now() < deadline, "worker release budget expired");
-    world.localnet.ensure_committee_alive()?;
-    let pids = (0..4)
-        .map(|index| {
-            let (pid, status) = world.localnet.owned_validator_process(index)?;
-            ensure!(
-                status.is_none(),
-                "validator-{index} exited before worker release"
-            );
-            // Validate all launch captures before entering any polling wait. The
-            // capture predates spawn, so an already-emitted marker is not lost.
-            world.localnet.node_launch_log(index, pid)?;
-            Ok(pid)
-        })
-        .collect::<eyre::Result<Vec<_>>>()?;
-    let limits = poc_schema_limits();
-    let checkpoint = world.rpc.checkpoint_at(ports[0], request.request_height)?;
-    ensure!(
-        checkpoint.block_hash == request.request_block_hash,
-        "worker release request checkpoint changed"
-    );
-    let mut bundles = Vec::new();
-    for (index, &port) in ports.iter().enumerate() {
-        ensure!(
-            world.rpc.checkpoint_at(port, request.request_height)? == checkpoint,
-            "validator-{index} disagrees on the request checkpoint"
-        );
-        let path = world
-            .ocomp
-            .domain_root(u8::try_from(index)?)?
-            .join("protocol-bundles-v1")
-            .join(format!("{}.ocb1", hex::encode(bundle_hash.as_slice())));
-        let bundle = outbe_ocomp_protocol::profile::ProtocolBundleV1::decode_canonical(
-            &std::fs::read(path)?,
-            &limits,
-        )?;
-        ensure!(
-            bundle.protocol_bundle_hash(&limits)? == bundle_hash,
-            "validator-{index} has the wrong worker release bundle"
-        );
-        bundles.push(bundle);
-    }
+    let held = HeldWorkerRelease::capture(world, request, bundle_hash, deadline)?;
     loop {
         ensure!(
             Instant::now() < deadline,
             "four exported compute dispatches exceeded the release budget"
         );
         world.ocomp.ensure_validator_roles_alive()?;
-        for (index, &expected_pid) in pids.iter().enumerate() {
-            let (pid, status) = world.localnet.owned_validator_process(index)?;
-            ensure!(
-                pid == expected_pid && status.is_none(),
-                "validator-{index} incarnation changed or exited during worker release"
-            );
-        }
-        let heights = ports
-            .iter()
-            .map(|&port| world.rpc.finalized_result(port))
-            .collect::<eyre::Result<Vec<_>>>()?;
-        ensure!(
-            heights
-                .iter()
-                .all(|height| *height < request.deadline_height),
-            "job deadline reached before all four workers could be released"
-        );
-        let height = *heights.iter().min().unwrap();
-        let common = world.rpc.checkpoint_at(ports[0], height)?;
-        for &port in &ports[1..] {
-            ensure!(
-                world.rpc.checkpoint_at(port, height)? == common,
-                "worker release peers disagree on exact finalized hash/root"
-            );
-        }
+        held.ensure_incarnations(world)?;
+        let (height, common) = held.common_finalized_checkpoint(world)?;
         if height >= request.open_height {
-            let mut observations = Vec::new();
-            let mut expected_record = None;
-            for (index, &port) in ports.iter().enumerate() {
-                let record = world
-                    .rpc
-                    .ocomp_job_record_at_on(port, request.intent_id, height)?;
-                ensure!(
-                    record.status == OcompJobStatus::VotingOpen
-                        && record.intent.protocol_bundle_hash == bundle_hash,
-                    "held worker job changed bundle or is no longer VotingOpen"
-                );
-                let finalized = record
-                    .finalized
-                    .as_ref()
-                    .ok_or_else(|| eyre!("held job lacks finality"))?;
-                ensure!(
-                    finalized.job_id == request.job_id
-                        && finalized.open_height == request.open_height
-                        && finalized.deadline_height == request.deadline_height
-                        && finalized.finality_recorded_height == request.finality_recorded_height,
-                    "held worker job changed its canonical identity or window"
-                );
-                if let Some(expected) = &expected_record {
-                    ensure!(
-                        &record == expected,
-                        "held worker job differs across finalized peers"
-                    );
-                }
-                let export = crate::internal::ocomp_worker_outage::observe_export(
-                    world.ocomp.domain_root(u8::try_from(index)?)?,
-                    u8::try_from(index)?,
-                    &record,
-                    checkpoint,
-                    &bundles[index],
-                )?;
-                expected_record = Some(record);
-                let text = world.localnet.node_launch_log(index, pids[index])?;
-                if let (Some(export), Some(marker)) =
-                    (export, case_one_compute_started_line(&text, request.job_id))
-                {
-                    observations.push(serde_json::json!({
-                        "validator_index": index, "node_pid": pids[index],
-                        "export": export, "compute_started": marker,
-                    }));
-                }
-            }
+            let observations = held.observe(world, height)?;
             if observations.len() == 4 {
-                // Recheck after filesystem/RPC observation, not merely before
-                // it: no stale live identity or expired window authorizes work.
-                for (index, &port) in ports.iter().enumerate() {
-                    let (pid, status) = world.localnet.owned_validator_process(index)?;
-                    ensure!(
-                        pid == pids[index] && status.is_none(),
-                        "worker release lost its live node owner"
-                    );
-                    ensure!(
-                        world.rpc.finalized_result(port)? < request.deadline_height,
-                        "job deadline crossed during worker release observation"
-                    );
-                }
-                ensure!(
-                    Instant::now() < deadline,
-                    "worker release budget expired during observation"
-                );
+                held.recheck_after_observation(world, deadline)?;
                 eprintln!(
                     "OCOMP_WORKER_RELEASE_V1 {}",
                     serde_json::json!({
@@ -400,6 +270,208 @@ pub(in crate::features::ocomp) fn wait_case_one_worker_release(
         }
         sleep(Duration::from_millis(100));
     }
+}
+
+/// The four held validators, their exact request checkpoint and worker bundles.
+struct HeldWorkerRelease<'a> {
+    request: &'a crate::world::rpc::OcompPublicJobRequestV1,
+    bundle_hash: B256,
+    ports: Vec<u16>,
+    pids: Vec<u32>,
+    checkpoint: crate::world::rpc::FinalizedCheckpoint,
+    bundles: Vec<outbe_ocomp_protocol::profile::ProtocolBundleV1>,
+}
+
+impl<'a> HeldWorkerRelease<'a> {
+    fn capture(
+        world: &mut World,
+        request: &'a crate::world::rpc::OcompPublicJobRequestV1,
+        bundle_hash: B256,
+        deadline: Instant,
+    ) -> eyre::Result<Self> {
+        let ports = world.validators.committee_ports();
+        ensure!(
+            ports.len() == 4 && world.validators.size() == 4,
+            "worker release requires all four founders"
+        );
+        ensure!(Instant::now() < deadline, "worker release budget expired");
+        world.localnet.ensure_committee_alive()?;
+        let pids = (0..4)
+            .map(|index| {
+                let (pid, status) = world.localnet.owned_validator_process(index)?;
+                ensure!(
+                    status.is_none(),
+                    "validator-{index} exited before worker release"
+                );
+                // Validate all launch captures before entering any polling wait. The
+                // capture predates spawn, so an already-emitted marker is not lost.
+                world.localnet.node_launch_log(index, pid)?;
+                Ok(pid)
+            })
+            .collect::<eyre::Result<Vec<_>>>()?;
+        let checkpoint = world.rpc.checkpoint_at(ports[0], request.request_height)?;
+        ensure!(
+            checkpoint.block_hash == request.request_block_hash,
+            "worker release request checkpoint changed"
+        );
+        let bundles = ports
+            .iter()
+            .enumerate()
+            .map(|(index, &port)| {
+                ensure!(
+                    world.rpc.checkpoint_at(port, request.request_height)? == checkpoint,
+                    "validator-{index} disagrees on the request checkpoint"
+                );
+                held_worker_bundle(world, index, bundle_hash)
+            })
+            .collect::<eyre::Result<Vec<_>>>()?;
+        Ok(Self {
+            request,
+            bundle_hash,
+            ports,
+            pids,
+            checkpoint,
+            bundles,
+        })
+    }
+
+    fn ensure_incarnations(&self, world: &mut World) -> eyre::Result<()> {
+        for (index, &expected_pid) in self.pids.iter().enumerate() {
+            let (pid, status) = world.localnet.owned_validator_process(index)?;
+            ensure!(
+                pid == expected_pid && status.is_none(),
+                "validator-{index} incarnation changed or exited during worker release"
+            );
+        }
+        Ok(())
+    }
+
+    fn common_finalized_checkpoint(
+        &self,
+        world: &World,
+    ) -> eyre::Result<(u64, crate::world::rpc::FinalizedCheckpoint)> {
+        let heights = self
+            .ports
+            .iter()
+            .map(|&port| world.rpc.finalized_result(port))
+            .collect::<eyre::Result<Vec<_>>>()?;
+        ensure!(
+            heights
+                .iter()
+                .all(|height| *height < self.request.deadline_height),
+            "job deadline reached before all four workers could be released"
+        );
+        let height = *heights.iter().min().unwrap();
+        let common = world.rpc.checkpoint_at(self.ports[0], height)?;
+        for &port in &self.ports[1..] {
+            ensure!(
+                world.rpc.checkpoint_at(port, height)? == common,
+                "worker release peers disagree on exact finalized hash/root"
+            );
+        }
+        Ok((height, common))
+    }
+
+    /// One export-and-dispatch observation per validator that has both.
+    fn observe(&self, world: &mut World, height: u64) -> eyre::Result<Vec<serde_json::Value>> {
+        let mut observations = Vec::new();
+        let mut expected_record = None;
+        for (index, &port) in self.ports.iter().enumerate() {
+            let record = world
+                .rpc
+                .ocomp_job_record_at_on(port, self.request.intent_id, height)?;
+            self.ensure_held_record(&record)?;
+            if let Some(expected) = &expected_record {
+                ensure!(
+                    &record == expected,
+                    "held worker job differs across finalized peers"
+                );
+            }
+            let export = crate::internal::ocomp_worker_outage::observe_export(
+                world.ocomp.domain_root(u8::try_from(index)?)?,
+                u8::try_from(index)?,
+                &record,
+                self.checkpoint,
+                &self.bundles[index],
+            )?;
+            expected_record = Some(record);
+            let text = world.localnet.node_launch_log(index, self.pids[index])?;
+            if let (Some(export), Some(marker)) = (
+                export,
+                case_one_compute_started_line(&text, self.request.job_id),
+            ) {
+                observations.push(serde_json::json!({
+                    "validator_index": index, "node_pid": self.pids[index],
+                    "export": export, "compute_started": marker,
+                }));
+            }
+        }
+        Ok(observations)
+    }
+
+    fn ensure_held_record(&self, record: &OcompJobRecordV1) -> eyre::Result<()> {
+        let request = self.request;
+        ensure!(
+            record.status == OcompJobStatus::VotingOpen
+                && record.intent.protocol_bundle_hash == self.bundle_hash,
+            "held worker job changed bundle or is no longer VotingOpen"
+        );
+        let finalized = record
+            .finalized
+            .as_ref()
+            .ok_or_else(|| eyre!("held job lacks finality"))?;
+        ensure!(
+            finalized.job_id == request.job_id
+                && finalized.open_height == request.open_height
+                && finalized.deadline_height == request.deadline_height
+                && finalized.finality_recorded_height == request.finality_recorded_height,
+            "held worker job changed its canonical identity or window"
+        );
+        Ok(())
+    }
+
+    /// Recheck after filesystem/RPC observation, not merely before it: no stale live
+    /// identity or expired window authorizes work.
+    fn recheck_after_observation(&self, world: &mut World, deadline: Instant) -> eyre::Result<()> {
+        for (index, &port) in self.ports.iter().enumerate() {
+            let (pid, status) = world.localnet.owned_validator_process(index)?;
+            ensure!(
+                pid == self.pids[index] && status.is_none(),
+                "worker release lost its live node owner"
+            );
+            ensure!(
+                world.rpc.finalized_result(port)? < self.request.deadline_height,
+                "job deadline crossed during worker release observation"
+            );
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "worker release budget expired during observation"
+        );
+        Ok(())
+    }
+}
+
+fn held_worker_bundle(
+    world: &World,
+    index: usize,
+    bundle_hash: B256,
+) -> eyre::Result<outbe_ocomp_protocol::profile::ProtocolBundleV1> {
+    let limits = poc_schema_limits();
+    let path = world
+        .ocomp
+        .domain_root(u8::try_from(index)?)?
+        .join("protocol-bundles-v1")
+        .join(format!("{}.ocb1", hex::encode(bundle_hash.as_slice())));
+    let bundle = outbe_ocomp_protocol::profile::ProtocolBundleV1::decode_canonical(
+        &std::fs::read(path)?,
+        &limits,
+    )?;
+    ensure!(
+        bundle.protocol_bundle_hash(&limits)? == bundle_hash,
+        "validator-{index} has the wrong worker release bundle"
+    );
+    Ok(bundle)
 }
 
 #[then("three matching validator domains atomically apply Lysis and create the Nod")]
