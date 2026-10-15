@@ -311,15 +311,7 @@ impl RepositorySigningMaterial {
         validator: Address,
         identity: &bls12381::PrivateKey,
     ) -> Result<RepositoryPartial, Error> {
-        let key = identity.public_key();
-        let index = self
-            .output
-            .players()
-            .index(&key)
-            .ok_or(Error::Participant)?;
-        if self.authority.committee().committee[index.get() as usize].address != validator {
-            return Err(Error::Participant);
-        }
+        let index = self.participant_for(validator, identity)?;
         let partial = provider.sign_repository(
             self.authority.committee().vrf_material_version,
             index,
@@ -337,6 +329,23 @@ impl RepositorySigningMaterial {
         };
         let signature = identity.sign(PARTIAL_NAMESPACE, &body.to_bytes());
         Ok(RepositoryPartial { body, signature })
+    }
+
+    pub(crate) fn participant_for(
+        &self,
+        validator: Address,
+        identity: &bls12381::PrivateKey,
+    ) -> Result<Participant, Error> {
+        let key = identity.public_key();
+        let index = self
+            .output
+            .players()
+            .index(&key)
+            .ok_or(Error::Participant)?;
+        if self.authority.committee().committee[index.get() as usize].address != validator {
+            return Err(Error::Participant);
+        }
+        Ok(index)
     }
 
     /// Verify before a collector stores a contribution; `sender` comes from its authenticated channel.

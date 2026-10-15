@@ -5,6 +5,7 @@ mod receive;
 
 pub use evidence::{EndpointEvidenceHandle, SignedEndpointEvidence};
 
+use super::publication::review::{Error as PublicationError, VerifiedReviewPublication};
 use super::review::{CheckpointPreparedReview, CheckpointPreparedReviewRefs};
 use super::{material, signing, RepositoryMaterialPublisher};
 use crate::integration::{RadicleStatusHandle, RadicleVotingGate};
@@ -21,9 +22,11 @@ use crate::{
     },
 };
 use alloy_primitives::Address;
+use commonware_codec::Encode as _;
 use commonware_cryptography::{bls12381, Signer as _};
 use commonware_p2p::{CheckedSender as _, LimitedSender, Receiver, Recipients};
 use commonware_runtime::IoBuf;
+use outbe_primitives::radicle_publication::{PublicationAttestation, PUBLICATION_NAMESPACE};
 use std::{
     collections::BTreeMap,
     future::Future,
@@ -148,6 +151,10 @@ struct EndpointRefresh<'a> {
 }
 
 enum NetworkCommand {
+    RepositoryReviewAttestation {
+        publication: Arc<VerifiedReviewPublication>,
+        result: oneshot::Sender<Result<PublicationAttestation, PublicationError>>,
+    },
     RepositoryReviewPartial {
         job: RepositoryReviewJob,
         result: oneshot::Sender<Result<signing::RepositoryPartial, signing::Error>>,
@@ -206,6 +213,24 @@ impl EndpointNetwork {
 }
 
 impl EndpointNetworkResolver {
+    /// Rechecks a verified local package; the collector owns durable job/slot selection.
+    pub async fn attest_review(
+        &self,
+        publication: Arc<VerifiedReviewPublication>,
+    ) -> Result<PublicationAttestation, PublicationError> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::RepositoryReviewAttestation {
+                publication,
+                result,
+            })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
+
     pub async fn sign_review(
         &self,
         job: Arc<CheckpointPreparedReview>,
@@ -313,6 +338,39 @@ impl EndpointNetworkService {
 }
 
 impl EndpointNetworkState {
+    fn review_attestation(
+        &self,
+        publication: &VerifiedReviewPublication,
+        identity: &bls12381::PrivateKey,
+        validator: Address,
+    ) -> Result<PublicationAttestation, PublicationError> {
+        let state = self
+            .repository_authority
+            .as_ref()
+            .ok_or(signing::Error::Unavailable)?
+            .read_current_patch_signing_state(publication.body().proposal_id)
+            .map_err(signing::Error::from)?;
+        if state.authority().chain_id() != self.chain.chain_id
+            || state.authority().genesis_hash() != self.chain.genesis_hash
+        {
+            return Err(PublicationError::Context);
+        }
+        let owner =
+            radicle::crypto::BlsPublicKey::from_bytes(publication.body().owner_bls_public.0)?;
+        let material = self
+            .repository_material
+            .current(state.authority().clone(), owner)?;
+        publication.authorize_current(&state, &material)?;
+        let index = material.participant_for(validator, identity)?;
+        let signature = identity
+            .sign(PUBLICATION_NAMESPACE, &publication.body().to_bytes())
+            .encode();
+        Ok(PublicationAttestation {
+            participant_index: index.get(),
+            signature: alloy_primitives::FixedBytes::from_slice(signature.as_ref()),
+        })
+    }
+
     fn review_partial(
         &self,
         job: &RepositoryReviewJob,
@@ -400,6 +458,9 @@ impl EndpointNetworkState {
                 }
                 command = self.commands.recv() => {
                     match command {
+                        Some(NetworkCommand::RepositoryReviewAttestation {publication,result})=>{
+                            let _=result.send(self.review_attestation(&publication,&signer,local.validator));
+                        }
                         Some(NetworkCommand::RepositoryReviewPartial {job,result})=>{
                             let _=result.send(self.review_partial(&job,&signer,local.validator));
                         }

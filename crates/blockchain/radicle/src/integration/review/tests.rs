@@ -1207,15 +1207,17 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
     review_body.finalized_anchor_hash = B256::repeat_byte(10);
     review_body.package_manifest_hash = review_manifest.hash().unwrap();
     let witness = RepositoryWitnessBundle::from_bytes(&bundles[0]).unwrap();
-    let proof = prepare_review_publication(
-        &repo,
-        &current_state,
-        &snapshot,
-        &material,
-        [&signature, &refs_signature],
-        &witness,
-    )
-    .unwrap();
+    let proof = Arc::new(
+        prepare_review_publication(
+            &repo,
+            &current_state,
+            &snapshot,
+            &material,
+            [&signature, &refs_signature],
+            &witness,
+        )
+        .unwrap(),
+    );
     assert_eq!(proof.body(), &review_body);
     assert_eq!(proof.manifest(), &review_manifest);
     proof.authorize_current(&current_state, &material).unwrap();
@@ -1242,6 +1244,25 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         .authorize_current(&newer_head, &newer_material)
         .unwrap();
     assert!(proof.authorize_current(&newer_head, &material).is_err());
+    let attestations =
+        local_runtime.block_on(crate::integration::network::material_tests::attestations(
+            proof.clone(),
+            &current_state,
+            &dkg.output,
+            &identities,
+        ));
+    assert_eq!(attestations.len(), 4);
+    let batch = outbe_primitives::radicle_publication::PublicationBatch {
+        body: proof.body().clone(),
+        attestations,
+    };
+    assert_eq!(
+        outbe_primitives::radicle_publication::PublicationBatch::from_bytes(
+            &batch.to_bytes().unwrap()
+        )
+        .unwrap(),
+        batch
+    );
     let receiver_storage = radicle::Storage::open(
         temp.path().join("independent-verifier"),
         git::UserInfo {
