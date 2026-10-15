@@ -9627,12 +9627,8 @@ dependencies = [
  "lexopt",
  "log",
  "radicle",
- "radicle-crypto",
- "radicle-log",
  "radicle-node",
  "radicle-signals",
- "serde",
- "serde_json",
  "tempfile",
  "thiserror 2.0.18",
 ]

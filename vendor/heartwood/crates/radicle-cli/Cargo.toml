@@ -75,3 +75,6 @@ radicle-log = { workspace = true, features = ["test"] }
 
 [lints]
 workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["radicle-crypto"]
