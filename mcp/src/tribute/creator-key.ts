@@ -16,6 +16,7 @@ import type { LocalAccount } from "viem/accounts";
 
 const SALT = new TextEncoder().encode("outbe/mcp/creator-key/v1");
 const SECP256K1_ORDER = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+const SECP256K1_HALF_ORDER = SECP256K1_ORDER >> 1n;
 
 /** X25519 key the enclave encrypts the creator's Tribute and Nod amounts to. */
 export interface CreatorKey {
@@ -32,7 +33,8 @@ export async function creatorKey(account: LocalAccount, chainId: number): Promis
   const signature = await account.signMessage({ message: creatorKeyMessage(chainId, account.address) });
   const { r, s } = parseSignature(signature);
   // Wallets disagree on `v` and may return a high `s`, so only the low-s (r, s) pair feeds the key.
-  const low = hexToBigInt(s) > SECP256K1_ORDER / 2n ? SECP256K1_ORDER - hexToBigInt(s) : hexToBigInt(s);
+  const sValue = hexToBigInt(s);
+  const low = sValue > SECP256K1_HALF_ORDER ? SECP256K1_ORDER - sValue : sValue;
   const ikm = concat([hexToBytes(r, { size: 32 }), numberToBytes(low, { size: 32 })]);
   const info = concat([numberToBytes(chainId, { size: 8 }), hexToBytes(getAddress(account.address))]);
   const secret = hkdf(sha256, ikm, SALT, info, 32);
