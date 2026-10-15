@@ -5,7 +5,7 @@
   "last_periodic_report_utc": "2026-10-15T23:15:31Z",
   "next_periodic_report_due_utc": "2026-10-15T23:45:31Z",
   "period_minutes": 30,
-  "stage": "P3 durable complete Review package store and immutable local body selection now required before local identity attestation; corrected and verified. Protected UDS/full collector FSM/order/partial journal/distributed collection/bootstrap/Merge/E2E incomplete",
+  "stage": "P2/P3 exact accepted Review verifier and Outbe archive policy backed by sealed full native proof; native receiver deny-before/allow-after verified. Protected UDS/latest promotion/full collector/bootstrap/Merge/E2E incomplete.",
   "decision_gate": {
     "id": "D1",
     "status": "historical_approval_request_withdrawn; no active user approval question",
@@ -37,7 +37,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "3ffebe3d4814165afacee024c8537acaf123a534",
+  "source_sha": "275c59a615697d4da86e05eb66e8c12bae9839c4",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -56,7 +56,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "3ffebe3d4 adds readonly exact accepted Review verification from sealed finalized receipt/committed Output and q witnesses, with shared native reconstruction. No new signing rights; no vendor git.rs/fetch-gate/D2 changes.",
+  "current_source_changes": "275c59a61 adds scoped Outbe AcceptedRepositoryPolicy for exact accepted Review COB/sigrefs entries, immutable grants/idempotence/conflict rejection; native direct receiver reads verified. No vendor source/git.rs/fetch-gate/D2 changes.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -82,10 +82,10 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "3ffebe3d4814165afacee024c8537acaf123a534",
-    "checks": "53 full adapter lib tests/0 ignored;7 consumer all-target checks;adapter scoped Clippy -D warnings;6 touched Rust-file formatting checks PASS",
-    "scenarios": "Both actual q subsets verify exact accepted Review on separate receiver after provider version activation; changed receipt/Output/manifest/native envelope/subject order/q-1/predecessor/approval timestamp reject. No live chain/actual resharing claim.",
-    "acceptance": "Intermediate P2/P3 only. No task closure or acceptance review. Runtime accepted policy/control bridge/full collector/bootstrap/Merge/production E2E incomplete."
+    "source_sha": "275c59a615697d4da86e05eb66e8c12bae9839c4",
+    "checks": "53 full adapter lib tests/0 ignored;7 consumer all-target checks;adapter scoped Clippy -D warnings;3 touched Rust-file formatting checks PASS",
+    "scenarios": "Real separate Git storage denies owner Review/sigrefs before proof and reads them after both real q-subset accepted proofs; Ed revision reads before grant. Wrong repo/key/OID/kind, descriptor scope, sequence receipt and finalized block conflicts reject without changing original grants. No refs promoted. First invalid Alias fixture failure retained separately.",
+    "acceptance": "Intermediate P2/P3 only; sealed receipt/finality/provider-version fixtures. No live checkpoint, actual resharing, latest promotion/CAS, runtime UDS, persisted policy rebuild, full collector/bootstrap/Merge/production E2E or task acceptance."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
@@ -95,7 +95,7 @@
   "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing",
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
-  "last_goal_turn_classification": "progress: exact accepted Review native reconstruction and historical q-witness verifier frozen and checked on3ffebe3d4; tests/consumers/Clippy/fmt PASS; no active decision question",
+  "last_goal_turn_classification": "progress: froze exact accepted verifier3ffebe3d4 and scoped native PublicationPolicy275c59a61; both53 tests/7 consumers/Clippy/fmt PASS with evidence; no task closures/reviews or active decision question",
   "next_required_work": "Connect protected node/sidecar transport using existing native storage/control startup hooks and the verified typed signing/durable selection path; no free-message signing. Complete existing collector FSM/ordered pending jobs/partial persistence/distributed collection/checkpoint/refCAS/normal announcement; then automatic bootstrap,separate Merge and production E2E. Preserve P0-P8 and decision/acceptance gates.",
   "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
   "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
@@ -106,5 +106,6 @@
     "known_sources": "bin/outbe-chain/src/launch/node/radicle.rs; integration/sidecar.rs; crates/system/radicle/src/lib.rs::PreparedSidecar",
     "current_boundary": "node preflight queries native nodeId/config; sidecar owns Home/storage and existing control/status runtime. Protected Outbe signer link not yet implemented; no protocol/data-path decision presented or approval question pending."
   },
-  "accepted_review_evidence": "evidence/outbe-chain-pjz.4/accepted-review"
+  "accepted_review_evidence": "evidence/outbe-chain-pjz.4/accepted-review",
+  "accepted_policy_evidence": "evidence/outbe-chain-pjz.4/accepted-policy"
 }
