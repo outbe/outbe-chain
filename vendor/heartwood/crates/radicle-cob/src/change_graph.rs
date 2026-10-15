@@ -40,8 +40,8 @@ impl ChangeGraph {
         S: change::Storage<
                 ObjectId = Oid,
                 Parent = Oid,
-                PublicKey = crypto::PublicKey,
-                Signature = crypto::Signature,
+                PublicKey = crypto::RepositoryKey,
+                Signature = crate::change::EntrySignature,
             >,
     {
         let tip_refs = tip_refs.collect::<Vec<_>>();

@@ -55,6 +55,14 @@ pub mod error {
 
     #[derive(Debug, Error)]
     pub enum Load {
+        #[error("BLS entry requires an explicit repository and trusted signing context")]
+        NativeContextRequired,
+        #[error(transparent)]
+        NativeMetadata(#[from] metadata::commit::bls::Error),
+        #[error(transparent)]
+        NativeSignature(#[from] crypto::repository::Error),
+        #[error(transparent)]
+        WriteCommit(#[from] super::super::commit::error::Write),
         #[error(transparent)]
         Read(#[from] super::super::commit::error::Read),
         #[error(transparent)]
@@ -95,8 +103,8 @@ impl change::Storage for git2::Repository {
     type ObjectId = Oid;
     type Parent = Oid;
 
-    type PublicKey = crypto::PublicKey;
-    type Signature = crypto::Signature;
+    type PublicKey = crypto::RepositoryKey;
+    type Signature = change::EntrySignature;
 
     fn store(
         &self,
@@ -142,7 +150,7 @@ impl change::Storage for git2::Repository {
         Ok(Entry {
             id,
             revision: revision.into(),
-            signature,
+            signature: change::EntrySignature::legacy(signature),
             resource,
             parents: tips,
             related,
@@ -168,19 +176,9 @@ impl change::Storage for git2::Repository {
 
     fn load(&self, id: Self::ObjectId) -> Result<Entry, Self::LoadError> {
         let commit = super::commit::Commit::read(self, id.into())?;
-        let timestamp = commit.committer().time.seconds() as u64;
-        let trailers = parse_trailers(commit.trailers())?;
-        let (resources, related): (Vec<_>, Vec<_>) = trailers.iter().partition(|t| match t {
-            CommitTrailer::Resource(_) => true,
-            CommitTrailer::Related(_) => false,
-        });
-        let mut resources = resources.into_iter().map(|r| r.oid()).collect::<Vec<_>>();
-        let related = related.into_iter().map(|r| r.oid()).collect::<Vec<_>>();
-        let parents = commit
-            .parents()
-            .map(Oid::from)
-            .filter(|p| !resources.contains(p) && !related.contains(p))
-            .collect();
+        if commit.headers().any(|(name, _)| name == "radicle-bls-sig") {
+            return Err(error::Load::NativeContextRequired);
+        }
         let mut signatures = Signatures::try_from(&*commit)?
             .into_iter()
             .collect::<Vec<_>>();
@@ -190,26 +188,97 @@ impl change::Storage for git2::Repository {
         if !signatures.is_empty() {
             return Err(error::Load::TooManySignatures(id));
         }
-        if resources.len() > 1 {
-            return Err(error::Load::TooManyResources(id));
-        };
-
-        let tree = self.find_tree(*commit.tree())?;
-        let manifest = load_manifest(self, &tree)?;
-        let contents = load_contents(self, &tree)?;
-
-        Ok(Entry {
+        load_entry(
+            self,
             id,
-            revision: tree.id().into(),
-            signature: ExtendedSignature::new(key, sig),
-            resource: resources.pop(),
-            related,
-            parents,
-            manifest,
-            contents,
-            timestamp,
-        })
+            &commit,
+            change::EntrySignature::legacy(ExtendedSignature::new(key, sig)),
+        )
     }
+}
+
+/// Load BLS using an independently supplied repository and trusted policy context.
+/// Raw `git2::Repository::load` remains Ed25519-only because it has neither.
+pub fn load_native(
+    repo: &git2::Repository,
+    id: Oid,
+    repository: [u8; 20],
+    context: [u8; 32],
+) -> Result<Entry, error::Load> {
+    let odb = repo.odb()?;
+    let raw = odb.read(id.into())?;
+    if raw.kind() != git2::ObjectType::Commit {
+        return Err(git2::Error::from_str("COB entry is not a commit").into());
+    }
+    let signed = metadata::commit::bls::SignedCommit::parse(raw.data())?;
+    let signature = change::EntrySignature::bls(id, repository, context, &signed)?;
+    let commit = Commit::read(repo, id.into())?;
+    load_entry(repo, id, &commit, signature)
+}
+
+/// Attach an external signature to exact prepared metadata. This writes no refs.
+/// The caller supplies the actual repository and trusted context, never envelope echoes.
+pub fn attach_native(
+    repo: &git2::Repository,
+    prepared: metadata::commit::bls::UnsignedCommit,
+    repository: [u8; 20],
+    context: [u8; 32],
+    envelope: &crypto::BlsEnvelope,
+) -> Result<Entry, error::Load> {
+    crypto::RepositorySignature::from(envelope.clone()).verify_cob(
+        envelope.key().into(),
+        repository,
+        context,
+        prepared.tree(),
+        prepared.as_bytes(),
+    )?;
+    let signed = prepared.attach(&envelope.to_hex())?;
+    let buffer = signed.to_bytes();
+    let commit = Commit::try_from(buffer.as_slice()).map_err(super::commit::error::Read::from)?;
+    let odb = repo.odb()?;
+    commit.verify_for_write(&odb)?;
+    let id = odb.write(git2::ObjectType::Commit, &buffer)?;
+    load_native(repo, id.into(), repository, context)
+}
+
+fn load_entry(
+    repo: &git2::Repository,
+    id: Oid,
+    commit: &Commit,
+    signature: ExtendedSignature<crypto::RepositoryKey, change::EntrySignature>,
+) -> Result<Entry, error::Load> {
+    let timestamp = commit.committer().time.seconds() as u64;
+    let trailers = parse_trailers(commit.trailers())?;
+    let (resources, related): (Vec<_>, Vec<_>) = trailers.iter().partition(|t| match t {
+        CommitTrailer::Resource(_) => true,
+        CommitTrailer::Related(_) => false,
+    });
+    let mut resources = resources.into_iter().map(|r| r.oid()).collect::<Vec<_>>();
+    let related = related.into_iter().map(|r| r.oid()).collect::<Vec<_>>();
+    let parents = commit
+        .parents()
+        .map(Oid::from)
+        .filter(|p| !resources.contains(p) && !related.contains(p))
+        .collect();
+    if resources.len() > 1 {
+        return Err(error::Load::TooManyResources(id));
+    };
+
+    let tree = repo.find_tree(*commit.tree())?;
+    let manifest = load_manifest(repo, &tree)?;
+    let contents = load_contents(repo, &tree)?;
+
+    Ok(Entry {
+        id,
+        revision: tree.id().into(),
+        signature,
+        resource: resources.pop(),
+        related,
+        parents,
+        manifest,
+        contents,
+        timestamp,
+    })
 }
 
 fn parse_trailers<'a>(
@@ -392,4 +461,173 @@ fn write_manifest(
     let oid = root.write()?;
 
     Ok(oid)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod native_test {
+    use super::*;
+    use crate::change::Storage as _;
+    use crypto::Signer as _;
+    use metadata::commit::bls::UnsignedCommit;
+
+    const OP: &[u8] = br#"{"revision":"3333333333333333333333333333333333333333","type":"review","verdict":"accept"}"#;
+
+    fn bytes(input: &str) -> Vec<u8> {
+        input
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn external_threshold_signature_attaches_loads_and_binds_actual_git_entry() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init_bare(temp.path()).unwrap();
+        let vectors: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../radicle-crypto/src/repository/vectors.json"
+        ))
+        .unwrap();
+        let row = &vectors["vectors"][1];
+        let repository = bytes(vectors["repo"].as_str().unwrap()).try_into().unwrap();
+        let context = bytes(row["context"].as_str().unwrap()).try_into().unwrap();
+        let unsigned = bytes(vectors["unsigned_commit"].as_str().unwrap());
+        let prepared = UnsignedCommit::parse(&unsigned).unwrap();
+        let envelope = crypto::BlsEnvelope::from_hex(row["envelope"].as_str().unwrap()).unwrap();
+        let tree = write_manifest(
+            &repo,
+            &store::Manifest::new("xyz.radicle.patch".parse().unwrap(), Version::default()),
+            vec![],
+            &NonEmpty::new(OP.to_vec()),
+        )
+        .unwrap();
+        assert_eq!(tree.as_bytes(), prepared.tree());
+        let entry = attach_native(&repo, prepared.clone(), repository, context, &envelope).unwrap();
+        assert!(entry.valid_signatures());
+        assert_eq!(*entry.author(), crypto::RepositoryKey::from(envelope.key()));
+        assert_eq!(entry.revision, Oid::from(tree));
+        assert_ne!(entry.id, entry.revision);
+        assert_eq!(
+            entry.id.to_string(),
+            include_str!("../../../../radicle-git-metadata/src/commit/bls/expected-oid.txt")
+        );
+        assert_eq!(entry.contents.head, OP);
+        assert_eq!(entry.timestamp, 1700000000);
+        let raw = repo
+            .odb()
+            .unwrap()
+            .read(entry.id.into())
+            .unwrap()
+            .data()
+            .to_vec();
+        let expected = prepared
+            .clone()
+            .attach(&envelope.to_hex())
+            .unwrap()
+            .to_bytes();
+        assert_eq!(raw, expected);
+        assert_eq!(
+            entry.id,
+            git2::Oid::hash_object(git2::ObjectType::Commit, &raw).unwrap()
+        );
+        assert!(repo.references().unwrap().next().is_none());
+        assert!(matches!(
+            repo.load(entry.id),
+            Err(error::Load::NativeContextRequired)
+        ));
+        assert!(load_native(&repo, entry.id, [0; 20], context).is_err());
+        assert!(load_native(&repo, entry.id, repository, [0; 32]).is_err());
+        assert!(attach_native(&repo, prepared.clone(), [0; 20], context, &envelope).is_err());
+        for altered in [
+            String::from_utf8(unsigned.clone())
+                .unwrap()
+                .replace("1700000000", "1700000001"),
+            String::from_utf8(unsigned.clone()).unwrap().replace(
+                "Accept patch\n",
+                "Accept patch\n\nRad-Resource: 1111111111111111111111111111111111111111\n",
+            ),
+        ] {
+            let p = UnsignedCommit::parse(altered.as_bytes()).unwrap();
+            assert!(attach_native(&repo, p, repository, context, &envelope).is_err());
+        }
+        for altered in [
+            String::from_utf8(raw.clone())
+                .unwrap()
+                .replace("Accept patch\n", "Reject patch\n"),
+            String::from_utf8(raw.clone())
+                .unwrap()
+                .replace("committer Outbe", "committer Other"),
+            String::from_utf8(raw.clone())
+                .unwrap()
+                .replace("radicle-bls-sig ", "radicle-bls-sig 00"),
+        ] {
+            let id = repo
+                .odb()
+                .unwrap()
+                .write(git2::ObjectType::Commit, altered.as_bytes())
+                .unwrap();
+            assert!(load_native(&repo, id.into(), repository, context).is_err());
+        }
+        let mut changed = entry.clone();
+        changed.id = tree.into();
+        assert!(!changed.valid_signatures());
+        let mut changed = entry.clone();
+        changed.revision = entry.id;
+        assert!(!changed.valid_signatures());
+        let mut changed = entry.clone();
+        changed.signature = ExtendedSignature::new(
+            crypto::RepositoryKey::from(*crypto::SigningKey::mock(42).public_key()),
+            changed.signature.sig().clone(),
+        );
+        assert!(!changed.valid_signatures());
+        drop(repo);
+        let reopened = git2::Repository::open_bare(temp.path()).unwrap();
+        assert_eq!(
+            load_native(&reopened, entry.id, repository, context).unwrap(),
+            entry
+        );
+    }
+
+    #[test]
+    fn legacy_ed_entries_remain_valid_and_mixed_signature_headers_are_rejected() {
+        let storage = crate::test::Storage::new();
+        let repo = storage.as_raw();
+        let signer = crypto::SigningKey::mock(42);
+        let entry = repo
+            .store(
+                None,
+                vec![],
+                &signer,
+                store::Template {
+                    type_name: "xyz.radicle.patch".parse().unwrap(),
+                    tips: vec![],
+                    message: "Legacy entry".into(),
+                    embeds: vec![],
+                    contents: NonEmpty::new(OP.to_vec()),
+                },
+            )
+            .unwrap();
+        assert!(entry.valid_signatures());
+        assert_eq!(repo.load(entry.id).unwrap(), entry);
+        let raw = repo
+            .odb()
+            .unwrap()
+            .read(entry.id.into())
+            .unwrap()
+            .data()
+            .to_vec();
+        let raw = String::from_utf8(raw).unwrap();
+        let mixed = raw.replacen("\n\n", "\nradicle-bls-sig bogus\n\n", 1);
+        let id = repo
+            .odb()
+            .unwrap()
+            .write(git2::ObjectType::Commit, mixed.as_bytes())
+            .unwrap();
+        assert!(matches!(
+            repo.load(id.into()),
+            Err(error::Load::NativeContextRequired)
+        ));
+        assert!(load_native(repo, id.into(), [0; 20], [0; 32]).is_err());
+    }
 }

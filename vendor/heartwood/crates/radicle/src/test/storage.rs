@@ -444,8 +444,8 @@ impl radicle_cob::change::Storage for MockRepository {
     type ObjectId = Oid;
     type Parent = Oid;
 
-    type PublicKey = crypto::PublicKey;
-    type Signature = crypto::Signature;
+    type PublicKey = crypto::RepositoryKey;
+    type Signature = radicle_cob::change::EntrySignature;
 
     fn store(
         &self,

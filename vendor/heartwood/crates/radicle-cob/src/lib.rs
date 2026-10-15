@@ -77,6 +77,8 @@ mod change_graph;
 mod trailers;
 
 pub mod change;
+#[cfg(feature = "git2")]
+pub use backend::git::change::{attach_native, load_native};
 pub use change::Entry;
 pub use change::store::{Contents, Embed, EntryId, Manifest, Version};
 
@@ -118,8 +120,8 @@ where
         + change::Storage<
             ObjectId = oid::Oid,
             Parent = oid::Oid,
-            PublicKey = crypto::PublicKey,
-            Signature = crypto::Signature,
+            PublicKey = crypto::RepositoryKey,
+            Signature = change::EntrySignature,
         >,
 {
 }

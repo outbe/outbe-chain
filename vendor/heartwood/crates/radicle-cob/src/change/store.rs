@@ -2,7 +2,6 @@
 
 use std::{error::Error, fmt, num::NonZeroUsize};
 
-use crypto::signature::Verifier as _;
 use crypto::{ExtendedSignature, VerifyingKey};
 use nonempty::NonEmpty;
 use oid::Oid;
@@ -138,17 +137,14 @@ where
     }
 }
 
-impl<R, Id> Entry<R, Id, signatures::ExtendedSignature<crypto::PublicKey>>
-where
-    Id: AsRef<[u8]>,
-{
+impl<R> Entry<R, Oid, ExtendedSignature<crypto::RepositoryKey, super::EntrySignature>> {
     pub fn valid_signatures(&self) -> bool {
-        VerifyingKey::try_from(self.signature.key())
-            .and_then(|verifier| verifier.verify(self.revision.as_ref(), self.signature.sig()))
-            .is_ok()
+        self.signature
+            .sig()
+            .verify(self.signature.key(), &self.id, &self.revision)
     }
 
-    pub fn author(&self) -> &crypto::PublicKey {
+    pub fn author(&self) -> &crypto::RepositoryKey {
         self.signature.key()
     }
 }

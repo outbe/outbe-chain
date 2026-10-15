@@ -24,8 +24,8 @@ where
     S: crate::change::Storage<
             ObjectId = crate::object::Oid,
             Parent = crate::object::Oid,
-            PublicKey = crypto::PublicKey,
-            Signature = crypto::Signature,
+            PublicKey = crypto::RepositoryKey,
+            Signature = crate::change::EntrySignature,
         >,
 {
     let tip_refs = storage

@@ -225,7 +225,7 @@ mod git {
         let contents = object
             .history()
             .traverse(Vec::new(), &[root], |mut acc, _, entry| {
-                if entry.author() == terry_signer.public_key() {
+                if entry.author().as_ed25519() == Some(terry_signer.public_key()) {
                     acc.push(entry.contents().head.clone());
                 }
                 ControlFlow::Continue(acc)

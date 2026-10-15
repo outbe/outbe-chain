@@ -68,7 +68,7 @@ where
         let signature = ExtendedSignature::try_sign(signer, &[0]).unwrap();
         let change = Entry {
             id: *root,
-            signature,
+            signature: radicle_cob::change::EntrySignature::legacy(signature),
             resource,
             contents,
             timestamp: time.as_secs(),
@@ -103,7 +103,7 @@ where
         let signature = ExtendedSignature::try_sign(signer, data.as_slice()).unwrap();
         let change = Entry {
             id: oid,
-            signature,
+            signature: radicle_cob::change::EntrySignature::legacy(signature),
             resource: self.resource,
             contents: NonEmpty::new(data),
             timestamp: timestamp.as_secs(),

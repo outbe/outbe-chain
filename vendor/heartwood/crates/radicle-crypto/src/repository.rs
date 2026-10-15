@@ -1,5 +1,8 @@
 //! Repository authority keys and detached BLS signatures. Transport keys stay Ed25519.
 
+mod signature;
+pub use signature::RepositorySignature;
+
 #[cfg(feature = "multibase")]
 use alloc::string::String;
 #[cfg(all(

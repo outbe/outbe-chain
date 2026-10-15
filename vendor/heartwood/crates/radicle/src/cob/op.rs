@@ -124,8 +124,8 @@ impl<A> Op<A> {
         S: cob::change::Storage<
                 ObjectId = git::Oid,
                 Parent = git::Oid,
-                PublicKey = crypto::PublicKey,
-                Signature = crypto::Signature,
+                PublicKey = crypto::RepositoryKey,
+                Signature = radicle_cob::change::EntrySignature,
             >,
     {
         store.manifest_of(id).map_err(|err| ManifestError {
@@ -140,8 +140,8 @@ impl<A> Op<A> {
         S: cob::change::Storage<
                 ObjectId = git::Oid,
                 Parent = git::Oid,
-                PublicKey = crypto::PublicKey,
-                Signature = crypto::Signature,
+                PublicKey = crypto::RepositoryKey,
+                Signature = radicle_cob::change::EntrySignature,
             >,
         for<'de> A: serde::Deserialize<'de>,
     {
@@ -161,7 +161,7 @@ impl From<Entry> for Op<Vec<u8>> {
         Self {
             id: *entry.id(),
             actions: entry.contents().clone(),
-            author: (*entry.author()).into(),
+            author: *entry.author(),
             parents: entry.parents,
             related: entry.related,
             timestamp: Timestamp::from_secs(entry.timestamp),
@@ -193,7 +193,7 @@ where
         let op = Op {
             id,
             actions,
-            author: (*entry.author()).into(),
+            author: *entry.author(),
             timestamp: Timestamp::from_secs(entry.timestamp),
             parents: entry.parents.to_owned(),
             related: entry.related.to_owned(),

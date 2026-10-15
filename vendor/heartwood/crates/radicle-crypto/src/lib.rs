@@ -34,7 +34,9 @@ pub use seed::Seed;
 #[cfg(feature = "alloc")]
 pub mod repository;
 #[cfg(feature = "alloc")]
-pub use repository::{BlsEnvelope, BlsPublicKey, RepositoryKey, RepositorySubject, SubjectKind};
+pub use repository::{
+    BlsEnvelope, BlsPublicKey, RepositoryKey, RepositorySignature, RepositorySubject, SubjectKind,
+};
 
 /// Output of a Diffie-Hellman key exchange.
 pub type SharedSecret = [u8; 32];
