@@ -1,4 +1,4 @@
-@tee @sgx-no-attest @sudo @min-validators-4 @fullnode-snapshot-anchor
+@tee @sgx-no-attest @sudo @min-validators-4 @fullnode-snapshot-anchor @ocomp
 Feature: FullNode consensus recovery from a native snapshot
   Scenario: Imported native history bounds consensus recovery on startup and restart
     Given a fresh four-validator snapshot localnet with short epochs
