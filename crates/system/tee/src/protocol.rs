@@ -148,8 +148,8 @@ pub enum TributeOfferStatus {
 ///
 /// This carries **only what the enclave computed**. The enclave does not echo back
 /// the values that the host supplied in [`EncryptedTributeOffer`] (day, currencies,
-/// exclusion flag, price). The host already holds them, so an echo would be one
-/// more thing to keep in agreement for no gain. `owner` is the deliberate
+/// price). The host already holds them, so an echo would be one more thing to
+/// keep in agreement for no gain. `owner` is the deliberate
 /// exception. The enclave folds it into `token_id`, so a comparison against
 /// `msg.sender` checks the enclave's computation rather than repeating an input.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -1128,7 +1128,6 @@ fn submit_fixture_offer(world: &mut World, validator: usize, missing: &str) -> R
                     .ok_or_else(|| eyre!("missing worldwide day"))?,
                 amounts: ("100", "0"),
                 currency: 840,
-                exclude_from_intex_issuance: false,
             },
         )
         .ok_or_else(|| eyre!("{missing}"))?;

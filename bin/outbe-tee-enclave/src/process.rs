@@ -2,9 +2,9 @@
 //! price -> compute the canonical public `TributeOfferResult` (incl. in-enclave
 //! Poseidon `token_id`) for each offer.
 //!
-//! The result carries only what is computed here. Day, currencies, exclusion flag
-//! and price are host-supplied request fields, so echoing them back would just be
-//! one more thing for the two sides to keep in agreement.
+//! The result carries only what is computed here. Day, currencies and price are
+//! host-supplied request fields, so echoing them back would just be one more
+//! thing for the two sides to keep in agreement.
 //!
 //! What the enclave does NOT do (stays on the host):
 //!   - worldwide-day calendar validity and OFFERING status. The node does one

@@ -516,11 +516,11 @@ test("MCP tribute_offer submits the caller's proof, root, signature and circuit 
     abi: resolveContract("tributefactory").abi,
     data: transaction.data,
   });
-  assert.equal(args?.[7], proof, "zkProof");
-  assert.equal(args?.[8], 57005, "chainId");
-  assert.equal(args?.[9], "1.1.0", "version");
-  assert.equal(args?.[11], merkleRoot, "zkMerkleRoot");
-  assert.equal(args?.[12], signature, "signature");
+  assert.equal(args?.[6], proof, "zkProof");
+  assert.equal(args?.[7], 57005, "chainId");
+  assert.equal(args?.[8], "1.1.0", "version");
+  assert.equal(args?.[10], merkleRoot, "zkMerkleRoot");
+  assert.equal(args?.[11], signature, "signature");
 });
 
 test("external intent amounts retain their existing 18-decimal presentation", () => {

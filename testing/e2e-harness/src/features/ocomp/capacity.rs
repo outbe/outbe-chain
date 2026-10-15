@@ -88,7 +88,6 @@ fn capacity_owners_submit_public_tributes(world: &mut World, count: usize, batch
                                     OCOMP_PUBLIC_TRIBUTE_AMOUNT_MICRO,
                                 ),
                                 currency: 840,
-                                exclude_from_intex_issuance: false,
                             },
                         )
                         .ok_or_else(|| {

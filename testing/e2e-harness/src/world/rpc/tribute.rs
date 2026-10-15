@@ -17,7 +17,6 @@ struct TributeCliOffer<'a> {
     wwd: &'a str,
     amounts: (&'a str, &'a str),
     currency: u16,
-    exclude_from_intex_issuance: bool,
 }
 
 impl Rpc {
@@ -170,7 +169,6 @@ impl Rpc {
                 wwd,
                 amounts: ("100", "0"),
                 currency: 840,
-                exclude_from_intex_issuance: false,
             },
         )
     }
@@ -191,7 +189,6 @@ impl Rpc {
             wwd,
             amounts: (amount_base, amount_micro),
             currency,
-            exclude_from_intex_issuance,
         } = offer;
 
         let caller = eth::address_of(key)?;
@@ -203,7 +200,6 @@ impl Rpc {
                 wwd,
                 amounts: (amount_base, amount_micro),
                 currency,
-                exclude_from_intex_issuance,
             },
         )
     }
@@ -220,7 +216,6 @@ impl Rpc {
             wwd,
             amounts: (amount_base, amount_micro),
             currency,
-            exclude_from_intex_issuance,
         } = offer;
 
         self.submit_tribute_cli(
@@ -231,7 +226,6 @@ impl Rpc {
                 wwd,
                 amounts: (amount_base, amount_micro),
                 currency,
-                exclude_from_intex_issuance,
             },
         )
     }
@@ -252,7 +246,6 @@ impl Rpc {
                 wwd,
                 amounts: ("100", "0"),
                 currency: 840,
-                exclude_from_intex_issuance: false,
             },
         )
     }
@@ -264,7 +257,6 @@ impl Rpc {
             wwd,
             amounts: (amount_base, amount_micro),
             currency,
-            exclude_from_intex_issuance,
         } = input;
         let started = Instant::now();
         let caller = eth::address_of(key)?;
@@ -281,7 +273,7 @@ impl Rpc {
                 su_hash,
             },
         );
-        let mut args = vec![
+        let args = vec![
             "--private-key".to_owned(),
             key.to_owned(),
             "--rpc-url".to_owned(),
@@ -314,13 +306,10 @@ impl Rpc {
             "--circuit-version".to_owned(),
             zk.circuit_version.to_owned(),
         ];
-        if exclude_from_intex_issuance {
-            args.push("--exclude-from-intex-issuance".to_owned());
-        }
         let out = self.sh().cli(args.iter().map(String::as_str)).ok()?;
         let tx_hash = parse::extract_tx_hash(&out)?;
         eprintln!(
-            "E2E_TRIBUTE_TIMELINE stage=submitted wall_ms={} cli_elapsed_ms={} tx={tx_hash} owner={} wwd={wwd} amount_base={amount_base} amount_micro={amount_micro} currency={currency} exclude={exclude_from_intex_issuance} l2_chain_id={}",
+            "E2E_TRIBUTE_TIMELINE stage=submitted wall_ms={} cli_elapsed_ms={} tx={tx_hash} owner={} wwd={wwd} amount_base={amount_base} amount_micro={amount_micro} currency={currency} l2_chain_id={}",
             unix_time_millis(),
             started.elapsed().as_millis(),
             self.address_of(key).unwrap_or_else(|| "unknown".to_owned()),
@@ -400,7 +389,6 @@ impl Rpc {
             worldwideDay: worldwide_day,
             tributeCurrency: 840,
             referenceCurrency: 840,
-            excludeFromIntexIssuance: false,
             zkProof: zk.proof.into(),
             chainId: zk.l2_chain_id,
             version: zk.circuit_version.to_owned(),
@@ -446,7 +434,6 @@ impl Rpc {
             wwd,
             amounts: (amount_base, amount_micro),
             currency: tribute_currency,
-            exclude_from_intex_issuance,
         } = offer;
         let worldwide_day = wwd.parse::<u32>().ok()?;
         let creator = eth::address_of(key)?;
@@ -494,7 +481,6 @@ impl Rpc {
             worldwideDay: worldwide_day,
             tributeCurrency: tribute_currency,
             referenceCurrency: reference_currency,
-            excludeFromIntexIssuance: exclude_from_intex_issuance,
             zkProof: zk.proof.into(),
             chainId: zk.l2_chain_id,
             version: zk.circuit_version.to_owned(),
@@ -742,7 +728,6 @@ pub struct TributeOfferParams<'a> {
     pub wwd: &'a str,
     pub amounts: (&'a str, &'a str),
     pub currency: u16,
-    pub exclude_from_intex_issuance: bool,
 }
 pub(crate) struct TributeProofInput<'a> {
     pub caller: Address,
