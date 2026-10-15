@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { type Hex, encodeAbiParameters, encodeEventTopics, zeroAddress } from "viem";
+import { OP, chainIdWord, modifyMac } from "../confidential/mac.js";
 import { CONTRACTS, resolveContract } from "../registry.js";
 import type { FakeChain } from "./fake-chain.js";
+import { MODIFY_KEY, fakeEnclave } from "./fake-enclave.js";
 import { SIGNER, startHarness } from "./harness.js";
 
 const vaultRouter = resolveContract("vaultrouter");
@@ -89,6 +91,41 @@ test("credis_forfeit returns what the forfeit burned and wrote off", async () =>
   assert.equal(out.gratisBurnedMinor, "500000");
   assert.equal(out.principalWrittenOffMinor, "300");
   assert.deepEqual(sent.at(-1)?.args, [77n]);
+});
+
+test("gratis_pledge authorizes the pledge of the reservation's Gratis by its source", async () => {
+  const { out, sent } = await call("gratis_pledge", { reservation_id: "41" }, (chain) => {
+    fakeEnclave(chain);
+    chain.reply("reservationOf", { ...sampleReservation(), gratisMinor: 500_000n });
+    chain.reply("opNonceOf", 2n, CONTRACTS.gratis.address);
+  });
+  const mac = modifyMac(MODIFY_KEY, {
+    ledger: "Gratis",
+    account: SIGNER,
+    op: OP.Gratis.Pledge,
+    amount: 500_000n,
+    opNonce: 2n,
+    chainId: chainIdWord(54_322_345),
+  });
+  assert.deepEqual(sent.at(-1)?.args, [41n, { mac, opNonce: 2n }]);
+  assert.equal(out.status, "success");
+});
+
+test("gratis_pledge refuses a reservation another source pledges or a half-given authorization", async () => {
+  const harness = await startHarness((chain) => {
+    for (const entry of Object.values(CONTRACTS)) chain.register(entry.abi, entry.address);
+    fakeEnclave(chain);
+    chain.reply("reservationOf", { ...sampleReservation(), source: vaultRouter.address });
+  });
+  try {
+    const other = await harness.call("gratis_pledge", { reservation_id: "41" });
+    assert.match(other.text, /reservation 41 is pledged by 0x0000000000000000000000000000000000001017, not the signer/);
+    const half = await harness.call("gratis_pledge", { reservation_id: "41", mac: `0x${"22".repeat(32)}` });
+    assert.match(half.text, /pass mac and op_nonce together, or neither/);
+    assert.equal(harness.chain.sent.length, 0);
+  } finally {
+    await harness.close();
+  }
 });
 
 function sampleReservation() {

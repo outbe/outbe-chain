@@ -253,6 +253,7 @@ const SCENARIOS: Case[] = [
   ["intent_order_track", { order_id: HASH, chain: "bsc-testnet" }, (chain) => {
     chain.reply("destinationOrderStatus", stringToHex("FILLED", { size: 32 }));
   }],
+  ["gratis_pledge", { reservation_id: "1" }],
 ];
 
 /** Replaces both randomness sources the offer encryption draws from with a counter. */
