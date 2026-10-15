@@ -37,7 +37,7 @@ pub fn dispatch(
     // address. Every selector the module has not published refuses it here.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     #[cfg(feature = "e2e-test")]
-    if let Some(result) = crate::test_arming::dispatch(&storage, data) {
+    if let Some(result) = crate::test_arming_e2e::dispatch(&storage, data) {
         return result;
     }
     dispatch_call(

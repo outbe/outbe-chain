@@ -2231,7 +2231,7 @@ fn metadata_update_marks_call_settlement_and_forfeit() {
 #[cfg(feature = "e2e-test")]
 #[test]
 fn static_test_arming_is_rejected() {
-    use crate::test_arming::ICredisFactoryTestArming;
+    use crate::test_arming_e2e::ICredisFactoryTestArming;
     use alloy_sol_types::SolCall;
     use outbe_primitives::error::PrecompileError;
     let mut provider = prod_provider();
@@ -2255,7 +2255,7 @@ fn static_test_arming_is_rejected() {
 #[cfg(feature = "e2e-test")]
 #[test]
 fn test_arming_backdates_and_requeues_only_a_called_credis() {
-    use crate::test_arming::ICredisFactoryTestArming;
+    use crate::test_arming_e2e::ICredisFactoryTestArming;
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage.clone());
         let id = rules::issue(&mut credis, params(alice())).unwrap();

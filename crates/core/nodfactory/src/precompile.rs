@@ -32,7 +32,7 @@ pub fn dispatch(
     let ExecutionReaders { scope, parent } = readers;
     outbe_primitives::dispatch::reject_value(&value)?;
     #[cfg(feature = "e2e-test")]
-    if let Some(answer) = crate::test_arming::dispatch(&storage, scope, parent, data) {
+    if let Some(answer) = crate::test_arming_e2e::dispatch(&storage, scope, parent, data) {
         return answer;
     }
     if data.get(..4)

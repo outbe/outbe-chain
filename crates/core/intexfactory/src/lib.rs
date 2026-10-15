@@ -16,7 +16,7 @@ pub mod schema;
 pub(crate) mod sol_ext;
 pub(crate) mod state;
 #[cfg(feature = "e2e-test")]
-mod test_arming;
+mod test_arming_e2e;
 pub mod vwap_push;
 
 pub use api::issue_intex;

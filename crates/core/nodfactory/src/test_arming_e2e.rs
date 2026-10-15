@@ -7,7 +7,7 @@ use alloy_primitives::{Bytes, B256};
 use alloy_sol_types::SolCall;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_nod::schema::NodContract;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::runtime;

@@ -518,7 +518,7 @@ fn a_gem_id_is_its_raw_keccak_and_the_bucket_id_carries_the_day() {
 #[cfg(feature = "e2e-test")]
 #[test]
 fn backdate_that_changes_the_day_moves_the_gem_and_mints_a_new_bucket_body() {
-    use crate::test_arming::IGemFactoryTestArming;
+    use crate::test_arming_e2e::IGemFactoryTestArming;
     use alloy_sol_types::SolCall;
 
     with_storage(|storage, world| {
@@ -531,7 +531,7 @@ fn backdate_that_changes_the_day_moves_the_gem_and_mints_a_new_bucket_body() {
             issuedAt: issued_at,
         }
         .abi_encode();
-        crate::test_arming::dispatch(storage, &world.scope, &world.parent, &data)
+        crate::test_arming_e2e::dispatch(storage, &world.scope, &world.parent, &data)
             .unwrap()
             .unwrap();
 
@@ -562,7 +562,7 @@ fn backdate_that_changes_the_day_moves_the_gem_and_mints_a_new_bucket_body() {
 #[cfg(feature = "e2e-test")]
 #[test]
 fn settled_for_test_issues_a_paid_body_and_counts_it_in_the_bucket() {
-    use crate::test_arming::IGemFactoryTestArming::issueSettledGemForTestCall;
+    use crate::test_arming_e2e::IGemFactoryTestArming::issueSettledGemForTestCall;
     use alloy_sol_types::SolCall;
 
     with_storage(|storage, world| {
@@ -573,7 +573,7 @@ fn settled_for_test_issues_a_paid_body_and_counts_it_in_the_bucket() {
             currency: params.issuance_currency,
         }
         .abi_encode();
-        let out = crate::test_arming::dispatch(storage, &world.scope, &world.parent, &data)
+        let out = crate::test_arming_e2e::dispatch(storage, &world.scope, &world.parent, &data)
             .unwrap()
             .unwrap();
         let gem_id = issueSettledGemForTestCall::abi_decode_returns(&out).unwrap();

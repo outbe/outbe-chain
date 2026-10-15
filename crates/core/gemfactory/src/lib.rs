@@ -10,7 +10,7 @@ pub mod positions_expired;
 pub mod precompile;
 pub mod schema;
 #[cfg(feature = "e2e-test")]
-mod test_arming;
+mod test_arming_e2e;
 
 pub mod constants;
 pub(crate) mod runtime;

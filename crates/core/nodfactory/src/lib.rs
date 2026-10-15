@@ -14,7 +14,7 @@ pub mod precompile;
 pub mod runtime;
 pub mod sol_ext;
 #[cfg(feature = "e2e-test")]
-mod test_arming;
+mod test_arming_e2e;
 
 #[cfg(test)]
 mod tests;

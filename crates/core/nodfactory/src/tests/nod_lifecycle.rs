@@ -2406,7 +2406,7 @@ fn token_uri_turns_forfeited_past_the_settlement_deadline() {
 #[test]
 fn static_test_command_is_rejected_before_bucket_validation() {
     use crate::precompile::dispatch;
-    use crate::test_arming::INodFactoryTestArming;
+    use crate::test_arming_e2e::INodFactoryTestArming;
     use alloy_sol_types::SolCall;
     use outbe_primitives::error::PrecompileError;
     let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);

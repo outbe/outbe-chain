@@ -30,7 +30,7 @@ pub fn dispatch(
     // before dispatch. Refuse it for every selector except the published one.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     #[cfg(feature = "e2e-test")]
-    if let Some(result) = crate::test_arming::dispatch(&storage, data) {
+    if let Some(result) = crate::test_arming_e2e::dispatch(&storage, data) {
         return result;
     }
     dispatch_call(
