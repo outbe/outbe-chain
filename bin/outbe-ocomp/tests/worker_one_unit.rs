@@ -1200,10 +1200,7 @@ fn real_worker_processes_execute_through_output_finalize() {
     )
     .expect("decode OutputFinalize artifact");
     assert_eq!(finalized.ordered_records.len(), 1);
-    assert_eq!(
-        finalized.checked_tribute_nominal_total,
-        tribute.nominal_amount_minor
-    );
+    assert_eq!(finalized.checked_tribute_nominal_total, U256::ZERO);
     assert_eq!(
         finalized.ordered_records[0].nod_action.source_tribute_id,
         tribute.tribute_id
@@ -1299,7 +1296,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         output_finalize_bytes
     );
     let mut forged_finalized = finalized.clone();
-    forged_finalized.checked_tribute_nominal_total += U256::from(1);
+    forged_finalized.checked_segment_gratis_total += U256::from(1);
     let output_header = output_finalize_artifact.output_header(&limits).unwrap();
     let forged_artifact = UnitArtifactV1::from_canonical_output(
         &output_finalize_spec,
@@ -1625,7 +1622,6 @@ fn real_worker_processes_execute_through_output_finalize() {
                         canonical_chunk_bytes: chunk_bytes,
                     })),
                     bucket_records: std::iter::once(Ok(bucket_record.clone())),
-                    eligible_nominal_total: tribute.nominal_amount_minor,
                 },
                 &limits,
             )

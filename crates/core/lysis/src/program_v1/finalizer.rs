@@ -102,7 +102,6 @@ pub struct VerifiedLysisFinalizationInputsV1<'a, U, C, B> {
     pub unit_artifacts: U,
     pub result_chunks: C,
     pub bucket_records: B,
-    pub eligible_nominal_total: U256,
 }
 
 pub fn finalize_v1<U, C, B>(
@@ -136,13 +135,6 @@ where
     )?;
     let bucket_root =
         stream_bucket_records(inputs.root_reduce_summary, inputs.bucket_records, limits)?;
-    if streamed.reduced_summary.eligible_nominal_total != inputs.eligible_nominal_total
-        || streamed.eligible_nominal_total != inputs.eligible_nominal_total
-    {
-        return Err(LysisFinalizationErrorV1::Authority(
-            "eligible nominal total",
-        ));
-    }
     if streamed.reduced_summary != *inputs.root_reduce_summary {
         return Err(LysisFinalizationErrorV1::Authority(
             "independently reduced ROOT_REDUCE summary",

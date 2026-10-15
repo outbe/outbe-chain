@@ -5,7 +5,7 @@
 //! authority and does not validate phase payload semantics. Therefore neither
 //! an individual item nor `Complete` is a signing/finalization capability.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::derive_poseidon_entity_id;
@@ -152,7 +152,6 @@ pub struct LysisPlanAuditCursorV1<'a> {
     fidelity_root: Option<StreamingOrderedListRoot>,
     oracle_root: Option<StreamingOrderedListRoot>,
     tribute_count: u32,
-    tribute_nominal_total: U256,
     tribute_isos: BTreeSet<u16>,
     previous_tribute_last_key: Option<Vec<u8>>,
     previous_fidelity_owner: Option<Address>,
@@ -337,7 +336,6 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
             )?),
             oracle_root: Some(StreamingOrderedListRoot::new(ListKind::OracleOpenings, 1)?),
             tribute_count: 0,
-            tribute_nominal_total: U256::ZERO,
             tribute_isos: BTreeSet::from([840]),
             previous_tribute_last_key: None,
             previous_fidelity_owner: None,
@@ -354,53 +352,6 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
     #[must_use]
     pub const fn plan(&self) -> &PlanCommitmentV1 {
         &self.schedule.plan
-    }
-
-    /// Opened Tribute nominals, keyed by tribute id. Row artifacts no longer
-    /// carry the amount.
-    pub fn tribute_nominals(&self) -> Result<BTreeMap<B256, U256>, ExactLysisPlanError> {
-        let mut nominals = BTreeMap::new();
-        for verified in self.schedule.exact_verified_cursor()? {
-            let verified = verified?;
-            if verified.reference.kind != InputChunkKind::Tribute {
-                continue;
-            }
-            for record in &verified.chunk.canonical_records_or_openings {
-                let tribute =
-                    outbe_tribute::record::decode_canonical(&record.0)?.calculation_view()?;
-                let id = *tribute.tribute_id;
-                if nominals.insert(id, tribute.nominal_amount_minor).is_some() {
-                    return Err(ExactLysisPlanError::AuthorityMismatch(
-                        "duplicate Tribute id",
-                    ));
-                }
-            }
-        }
-        Ok(nominals)
-    }
-
-    /// Sum of opened Tribute nominals that still enter Intex issuance.
-    pub fn eligible_nominal_total(&self) -> Result<U256, ExactLysisPlanError> {
-        let mut total = U256::ZERO;
-        for verified in self.schedule.exact_verified_cursor()? {
-            let verified = verified?;
-            if verified.reference.kind != InputChunkKind::Tribute {
-                continue;
-            }
-            for record in &verified.chunk.canonical_records_or_openings {
-                let tribute =
-                    outbe_tribute::record::decode_canonical(&record.0)?.calculation_view()?;
-                if tribute.exclude_from_intex_issuance {
-                    continue;
-                }
-                total = total.checked_add(tribute.nominal_amount_minor).ok_or(
-                    ProtocolError::IntegerOverflow {
-                        what: "eligible nominal total",
-                    },
-                )?;
-            }
-        }
-        Ok(total)
     }
 
     /// Public FixedReduce fractions for the enclave Nod load. One pair per league.

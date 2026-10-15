@@ -152,7 +152,6 @@ pub fn finalize_verified_lysis_v1(
                 )),
             }
         });
-    let eligible_nominal_total = audit.eligible_nominal_total()?;
     let result = finalize_v1(
         VerifiedLysisFinalizationInputsV1 {
             finalized_job_id: summary.job_id,
@@ -163,7 +162,6 @@ pub fn finalize_verified_lysis_v1(
             unit_artifacts: units,
             result_chunks: chunks,
             bucket_records: buckets,
-            eligible_nominal_total,
         },
         limits,
     )?;

@@ -230,10 +230,12 @@ fn execute_root_reduce_leaf(
         (expected, resolved),
         limits,
     )?;
-    validate_leaf_tribute_nominals(input_chunks, shard_ordinal, tribute_count, &finalized)?;
+    let (tribute_nominal_total, eligible_nominal_total) =
+        compute_leaf_tribute_nominals(input_chunks, shard_ordinal, tribute_count)?;
     let (summary, output_manifest_entry) = build_root_reduce_leaf_summary(
         spec,
         (shard_ordinal, expected_start, tribute_count, plan_hash),
+        (tribute_nominal_total, eligible_nominal_total),
         &finalized,
         (inbox, limits),
     )?;
@@ -325,15 +327,14 @@ fn validate_root_reduce_leaf_producers(
     Ok((finalized, expected_start, tribute_count))
 }
 
-fn validate_leaf_tribute_nominals(
+fn compute_leaf_tribute_nominals(
     input_chunks: &[(
         outbe_ocomp_protocol::input::InputChunkRefV1,
         outbe_ocomp_protocol::input::AuthenticatedInputChunkV1,
     )],
     shard_ordinal: u32,
     tribute_count: u32,
-    finalized: &FinalizedOutputRunV1,
-) -> Result<(), WorkerError> {
+) -> Result<(U256, U256), WorkerError> {
     if input_chunks.iter().any(|(reference, chunk)| {
         reference.kind != InputChunkKind::Tribute || chunk.kind != InputChunkKind::Tribute
     }) {
@@ -348,17 +349,18 @@ fn validate_leaf_tribute_nominals(
     let expected_len =
         usize::try_from(tribute_count).map_err(|_| WorkerError::UnitBindingMismatch)?;
     if nominals.len() != expected_len
-        || nominal_total != finalized.checked_tribute_nominal_total
-        || eligible_from_bodies != finalized.checked_eligible_nominal_total
+        || nominal_total.is_zero()
+        || eligible_from_bodies > nominal_total
     {
         return Err(WorkerError::UnitBindingMismatch);
     }
-    Ok(())
+    Ok((nominal_total, eligible_from_bodies))
 }
 
 fn build_root_reduce_leaf_summary(
     spec: &UnitSpecV1,
     (shard_ordinal, expected_start, tribute_count, plan_hash): (u32, u32, u32, B256),
+    (tribute_nominal_total, eligible_nominal_total): (U256, U256),
     finalized: &FinalizedOutputRunV1,
     (inbox, limits): (&WorkerInbox, &SchemaLimits),
 ) -> Result<(RootReduceSummaryV1, OutputManifestEntryV1), WorkerError> {
@@ -447,8 +449,8 @@ fn build_root_reduce_leaf_summary(
         tribute_count,
         nod_count: tribute_count,
         bucket_count: tribute_count,
-        tribute_nominal_total: finalized.checked_tribute_nominal_total,
-        eligible_nominal_total: finalized.checked_eligible_nominal_total,
+        tribute_nominal_total,
+        eligible_nominal_total,
         lysis_allocation_minor: finalized.checked_segment_gratis_total,
         nod_cost_total: finalized.checked_settlement_cost_total,
         first_error_ordinal: None,

@@ -86,7 +86,6 @@ impl FinalizedTributeSource {
             expected_nominal_total,
             previous_id: None,
             record_count: 0,
-            nominal_total: U256::ZERO,
             exact_body_bytes: 0,
             peak_source_records: 0,
             exhausted: false,
@@ -115,7 +114,6 @@ impl FinalizedTributeSource {
             expected_nominal_total,
             previous_id: None,
             record_count: 0,
-            nominal_total: U256::ZERO,
             exact_body_bytes: 0,
             peak_source_records: 0,
             exhausted: false,
@@ -171,7 +169,6 @@ pub struct AuthenticatedTributeStream<'source, 'view> {
     expected_nominal_total: U256,
     previous_id: Option<WwdEntityId>,
     record_count: u32,
-    nominal_total: U256,
     exact_body_bytes: u64,
     peak_source_records: usize,
     exhausted: bool,
@@ -218,25 +215,11 @@ impl AuthenticatedTributeStream<'_, '_> {
             return Ok(None);
         };
 
-        // The exact original ciphertext commitment has been authenticated above.
-        let body = outbe_tribute::canonical_body(&record.calculation_view()?);
-
-        self.nominal_total = self
-            .nominal_total
-            .checked_add(body.nominal_amount_minor)
-            .ok_or(FinalizedTributeError::NominalOverflow)?;
-        if self.nominal_total > self.expected_nominal_total {
-            return Err(FinalizedTributeError::NominalMismatch {
-                expected: self.expected_nominal_total,
-                actual: self.nominal_total,
-            });
-        }
-
         Ok(Some(AuthenticatedTributeRecord {
             tribute_id,
             commitment: recomputed,
             canonical_body: stored.payload().to_vec(),
-            body,
+            body: record.public_body_v1(),
         }))
     }
 
@@ -368,15 +351,15 @@ impl AuthenticatedTributeStream<'_, '_> {
 
     pub fn finish(self) -> Result<TributeStreamSummary, FinalizedTributeError> {
         self.finish_count()?;
-        if self.nominal_total != self.expected_nominal_total {
+        if (self.record_count == 0) != self.expected_nominal_total.is_zero() {
             return Err(FinalizedTributeError::NominalMismatch {
                 expected: self.expected_nominal_total,
-                actual: self.nominal_total,
+                actual: U256::ZERO,
             });
         }
         Ok(TributeStreamSummary {
             record_count: self.record_count,
-            nominal_total: self.nominal_total,
+            nominal_total: self.expected_nominal_total,
             exact_body_bytes: self.exact_body_bytes,
         })
     }

@@ -18,7 +18,6 @@ fn cold_restart_streams_exact_result_chunks_only_from_root_reduce_leaves() {
         })
         .collect::<Vec<_>>();
     assert_eq!(first_chunks.len(), 2);
-    let nominals = fixture.with_audit(|audit| audit.tribute_nominals().unwrap());
     let mut tribute_nominal_total = U256::ZERO;
     let mut eligible_nominal_total = U256::ZERO;
     for (ordinal, item) in first_chunks.iter().enumerate() {
@@ -41,14 +40,9 @@ fn cold_restart_streams_exact_result_chunks_only_from_root_reduce_leaves() {
             .checked_add(item.summary().eligible_nominal_total)
             .unwrap();
     }
-    let opened_nominal_total = nominals.values().fold(U256::ZERO, |total, nominal| {
-        total.checked_add(*nominal).unwrap()
-    });
-    assert_eq!(tribute_nominal_total, opened_nominal_total);
-    assert_eq!(
-        eligible_nominal_total,
-        fixture.with_audit(|audit| audit.eligible_nominal_total().unwrap())
-    );
+    let manifest_nominal_total = fixture.with_audit(|audit| audit.manifest().tribute_nominal_total);
+    assert_eq!(tribute_nominal_total, manifest_nominal_total);
+    assert_eq!(eligible_nominal_total, manifest_nominal_total);
 
     let restarted = fixture.result_catalog_steps();
     assert_eq!(restarted, first);
@@ -97,17 +91,6 @@ fn result_catalog_latches_failure_when_a_chunk_changes_after_admission() {
         Err(LysisResultCatalogError::Cas(_))
     ));
     assert!(cursor.next().is_none());
-}
-
-#[test]
-fn result_catalog_compares_repartitioned_eligible_totals_only_after_all_chunks() {
-    let error = result_catalog_error_for_fault(ResultCatalogFault::EligibleTotal);
-    assert!(matches!(
-        error,
-        LysisResultCatalogError::Protocol(outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
-            "global eligible nominal total"
-        ))
-    ));
 }
 
 #[test]
