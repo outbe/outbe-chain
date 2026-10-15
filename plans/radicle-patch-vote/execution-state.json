@@ -5,7 +5,7 @@
   "last_periodic_report_utc": "2026-10-15T18:37:35Z",
   "next_periodic_report_due_utc": "2026-10-15T19:07:35Z",
   "period_minutes": 30,
-  "stage": "Threshold repository signer/recovery and exact finalized-approval Review/signed-refs preparation implemented; production post-finality collector/current-set wiring incomplete",
+  "stage": "P3 current finalized authority/DKG binding and authenticated native Review partial library implemented; production actor, additional native subjects and bounded publication carrier/checkpoint incomplete",
   "decision_gate": {
     "id": "D1",
     "status": "historical_approval_request_withdrawn; no active user approval question",
@@ -37,7 +37,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "1341e6de4c5cf42f7dcbfa575b2c0b8b82a9323d",
+  "source_sha": "26d497f4a2bd5f31582587130bf81cd9a8651eab",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -56,7 +56,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "Committed1341e6de4 native Review/threshold foundation on rollback0f9e5fa495; git.rs/radicle-fetch state.rs/git/cob.rs retain the requested c11c37e2a rollback bytes. No additional fetch gate restored.",
+  "current_source_changes": "Source26d497f4a implements exact local-current authority reader, SDK Output binding, strict MinPk-endorsed partial frames and exact-current-polynomial sign/verify/recovery. Source1341e6de4 native Review preparation remains; no additional git.rs/fetch gate or D2 changes.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -78,5 +78,6 @@
   },
   "execution_authorization": "Direct user request: да все верно реализауй; continue the approved Vote -> threshold BLS Review -> native signed refs/announcement path. Goal API remains paused; no replacement goal.",
   "foundation_evidence": "evidence/outbe-chain-pjz.4/native-review-foundation",
-  "foundation_checks": "All frozen1341e6de4 commands exit0:2 native Review/P0 vector,3 threshold/reshare,41 Hybrid,404+12 native lib tests; scoped root/native Clippy and vendor workspace fmt. Intermediate evidence only."
+  "foundation_checks": "Frozen26d497f4a:38 full outbe-radicle lib tests+506 full outbe-consensus lib tests(0 ignored), scoped lib+tests Clippy PASS. Earlier1341e6de4:416 native tests/vendor Clippy/fmt. Intermediate evidence only; no full-AC acceptance or reviewer PASS.",
+  "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material"
 }

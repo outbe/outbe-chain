@@ -1,0 +1,37 @@
+    Checking outbe-radicle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/radicle)
+error[E0599]: no method named `index` found for reference `&commonware_utils::ordered::Set<commonware_cryptography::bls12381::PublicKey>` in the current scope
+   --> crates/blockchain/radicle/src/integration/signing.rs:144:14
+    |
+141 |           let index = self
+    |  _____________________-
+142 | |             .output
+143 | |             .players()
+144 | |             .index(&key)
+    | |             -^^^^^ method not found in `&commonware_utils::ordered::Set<commonware_cryptography::bls12381::PublicKey>`
+    | |_____________|
+    |
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: the following traits which provide `index` are implemented but not in scope; perhaps you want to import one of them
+    |
+  3 + use commonware_utils::ordered::Quorum;
+    |
+  3 + use std::ops::Index;
+    |
+
+error[E0599]: no method named `index` found for reference `&commonware_utils::ordered::Set<commonware_cryptography::bls12381::PublicKey>` in the current scope
+   --> crates/blockchain/radicle/src/integration/signing.rs:186:34
+    |
+186 |         if self.output.players().index(sender) != Some(frame.partial.index) {
+    |                                  ^^^^^ method not found in `&commonware_utils::ordered::Set<commonware_cryptography::bls12381::PublicKey>`
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: the following traits which provide `index` are implemented but not in scope; perhaps you want to import one of them
+    |
+  3 + use commonware_utils::ordered::Quorum;
+    |
+  3 + use std::ops::Index;
+    |
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `outbe-radicle` (lib) due to 2 previous errors
