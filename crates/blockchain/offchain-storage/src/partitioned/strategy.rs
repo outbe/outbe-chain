@@ -25,7 +25,7 @@ impl PartitionStrategy for WorldwideDayPartition {
     fn partition(&self, context: &PartitionContext<'_>) -> Result<PartitionId, StorageError> {
         let index = context
             .worldwide_day
-            .ok_or_else(|| StorageError::InvalidArgument("WWD strategy requires a day".into()))?;
+            .ok_or(crate::errors::StorageValidationError::WwdStrategyRequiresDay)?;
         Ok(PartitionId::Numbered {
             family: "wwd".into(),
             index,
@@ -53,9 +53,9 @@ impl OwnerModuloPartition {
 }
 impl PartitionStrategy for OwnerModuloPartition {
     fn partition(&self, context: &PartitionContext<'_>) -> Result<PartitionId, StorageError> {
-        let owner = context.owner.ok_or_else(|| {
-            StorageError::InvalidArgument("owner modulo requires an owner".into())
-        })?;
+        let owner = context
+            .owner
+            .ok_or(crate::errors::StorageValidationError::OwnerModuloRequiresOwner)?;
         let modulus = u32::from(self.partitions);
         let index = owner.iter().fold(0_u32, |remainder, byte| {
             (remainder * 256 + u32::from(*byte)) % modulus

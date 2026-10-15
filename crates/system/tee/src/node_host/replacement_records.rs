@@ -170,7 +170,7 @@ impl ReplacementCandidateSubmissionV1 {
         validate_submission_frame(input, &REPLACEMENT_SUBMISSION_VALIDATION)?;
         let evidence_len =
             usize::try_from(u32::from_be_bytes([input[1], input[2], input[3], input[4]])).map_err(
-                |_| TransportError::Codec("replacement evidence length overflow".into()),
+                |_| crate::errors::NodeHostRecordError::ReplacementEvidenceLengthOverflow,
             )?;
         validate_submission_evidence_length(
             input.len(),
@@ -241,7 +241,7 @@ impl ReplacementCandidateRecordV1 {
             .encode_canonical()
             .map_err(TransportError::codec)?;
         let manifest_len = u16::try_from(manifest.len()).map_err(|_| {
-            TransportError::Codec("replacement candidate manifest exceeds its wire field".into())
+            crate::errors::NodeHostRecordError::ReplacementCandidateManifestExceedsWireField
         })?;
         let mut out = Vec::with_capacity(35 + manifest.len());
         out.push(REPLACEMENT_CANDIDATE_VERSION_V1);

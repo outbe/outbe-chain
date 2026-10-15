@@ -13,6 +13,7 @@
 //! commitment tree fixes both).
 
 use crate::error::Error;
+use crate::errors::MerkleError;
 use crate::{primitive::hash, Fr};
 
 /// Result of a single frontier append — mirrors the on-chain `0x0204`
@@ -46,9 +47,7 @@ impl Imt {
         if (1..=63).contains(&depth) {
             return Ok(());
         }
-        Err(Error::Merkle(format!(
-            "tree depth must be in 1..=63, got {depth}"
-        )))
+        Err(MerkleError::InvalidTreeDepth(depth).into())
     }
 
     /// Parent node hash: `Hash([domain, left, right])`.
@@ -92,16 +91,14 @@ impl Imt {
         let depth = frontier.len();
         Self::validate_depth(depth)?;
         if empty_roots.len() != depth + 1 {
-            return Err(Error::Merkle(format!(
-                "frontier_append: empty_roots.len() ({}) must be frontier.len()+1 ({})",
-                empty_roots.len(),
-                depth + 1
-            )));
+            return Err(MerkleError::FrontierAppendEmptyRootsLength {
+                actual: empty_roots.len(),
+                expected: depth + 1,
+            }
+            .into());
         }
         if next_index >= (1u64 << depth) {
-            return Err(Error::Merkle(format!(
-                "frontier_append: next_index {next_index} overflows depth-{depth} tree"
-            )));
+            return Err(MerkleError::FrontierAppendIndexOverflow { next_index, depth }.into());
         }
 
         let mut current = leaf;
@@ -147,9 +144,7 @@ impl Imt {
         let depth = siblings.len();
         Self::validate_depth(depth)?;
         if leaf_index >= (1u64 << depth) {
-            return Err(Error::Merkle(format!(
-                "root_from_inclusion_path: leaf_index {leaf_index} overflows depth-{depth} tree"
-            )));
+            return Err(MerkleError::InclusionPathLeafIndexOverflow { leaf_index, depth }.into());
         }
         let mut current = leaf;
         let mut index = leaf_index;
@@ -198,7 +193,7 @@ impl Imt {
     pub fn append(&mut self, leaf: Fr) -> Result<(u64, Append), Error> {
         let index = self.next_index() as u64;
         if index >= (1u64 << self.depth) {
-            return Err(Error::Merkle("commitment tree is full".into()));
+            return Err(MerkleError::CommitmentTreeFull.into());
         }
         let mut position = self.leaves().len();
         let mut current = leaf;
@@ -252,10 +247,10 @@ impl Imt {
     /// Membership path for an appended leaf under the current root.
     /// Reads O(depth) stored siblings without hashing.
     pub fn inclusion_path(&self, leaf_index: u64) -> Result<InclusionPath, Error> {
-        let mut index = usize::try_from(leaf_index)
-            .map_err(|_| Error::Merkle("leaf index exceeds usize".into()))?;
+        let mut index =
+            usize::try_from(leaf_index).map_err(|_| MerkleError::LeafIndexExceedsUsize)?;
         if index >= self.leaves().len() {
-            return Err(Error::Merkle("leaf index outside tree".into()));
+            return Err(MerkleError::LeafIndexOutsideTree.into());
         }
         let mut siblings = Vec::with_capacity(self.depth);
         for level in 0..self.depth {
@@ -316,10 +311,11 @@ impl InclusionPath {
         let depth = self.depth();
         Imt::validate_depth(depth)?;
         if self.leaf_index >= (1u64 << depth) {
-            return Err(Error::Merkle(format!(
-                "circuit_indices: leaf_index {} overflows depth-{depth} tree",
-                self.leaf_index
-            )));
+            return Err(MerkleError::CircuitIndicesLeafIndexOverflow {
+                leaf_index: self.leaf_index,
+                depth,
+            }
+            .into());
         }
         Ok((0..depth)
             .map(|i| (self.leaf_index >> i) & 1 == 0)

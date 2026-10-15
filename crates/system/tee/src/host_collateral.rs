@@ -57,16 +57,15 @@ struct DynamicLibrary(*mut c_void);
 impl DynamicLibrary {
     #[allow(unsafe_code)]
     fn open(path: &Path) -> Result<Self, TransportError> {
-        let path = CString::new(path.as_os_str().as_encoded_bytes()).map_err(|_| {
-            TransportError::Attestation("pinned QVL path contains an interior NUL".into())
-        })?;
+        let path = CString::new(path.as_os_str().as_encoded_bytes())
+            .map_err(|_| crate::errors::HostCollateralError::PinnedQvlPathInteriorNul)?;
         // SAFETY: the path is a live CString and flags are valid for dlopen.
         let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
         if handle.is_null() {
-            return Err(TransportError::Attestation(format!(
-                "cannot load pinned Intel QVL: {}",
-                dynamic_loader_error()
-            )));
+            return Err(crate::errors::HostCollateralError::CannotLoadPinnedIntelQvl(
+                dynamic_loader_error(),
+            )
+            .into());
         }
         Ok(Self(handle))
     }
@@ -76,10 +75,10 @@ impl DynamicLibrary {
         // SAFETY: every caller supplies a static NUL-terminated symbol name.
         let symbol = unsafe { libc::dlsym(self.0, name.as_ptr().cast()) };
         if symbol.is_null() {
-            return Err(TransportError::Attestation(format!(
-                "pinned Intel QVL is missing a collateral symbol: {}",
-                dynamic_loader_error()
-            )));
+            return Err(crate::errors::HostCollateralError::MissingCollateralSymbol(
+                dynamic_loader_error(),
+            )
+            .into());
         }
         Ok(symbol)
     }
@@ -118,9 +117,7 @@ pub fn acquire_dcap_collateral_v1(
     quote: &[u8],
 ) -> Result<Vec<DcapCollateralComponentV1>, TransportError> {
     if !cfg!(all(target_arch = "x86_64", target_os = "linux")) {
-        return Err(TransportError::Attestation(
-            "production DCAP collateral acquisition requires x86_64 Linux".into(),
-        ));
+        return Err(crate::errors::HostCollateralError::RequiresX8664Linux.into());
     }
     let (library_path, expected_size, expected_sha256) = pinned_qvl_artifact()?;
     verify_pinned_library(&library_path, expected_size, &expected_sha256)?;
@@ -133,9 +130,8 @@ pub fn acquire_dcap_collateral_v1(
     // SAFETY: same ABI argument as above.
     let free: FreeCollateral =
         unsafe { std::mem::transmute(library.symbol(b"tee_qv_free_collateral\0")?) };
-    let quote_size = u32::try_from(quote.len()).map_err(|_| {
-        TransportError::Attestation("SGX quote length exceeds the Intel QVL ABI".into())
-    })?;
+    let quote_size = u32::try_from(quote.len())
+        .map_err(|_| crate::errors::HostCollateralError::QuoteLengthExceedsAbi)?;
     let mut pointer = std::ptr::null_mut();
     let mut allocation_size = 0_u32;
     // SAFETY: quote points to quote_size readable bytes and both out-pointers
@@ -149,15 +145,13 @@ pub fn acquire_dcap_collateral_v1(
         )
     };
     if status != 0 || pointer.is_null() {
-        return Err(TransportError::Attestation(format!(
-            "Intel tee_qv_get_collateral failed with quote3_error_t {status:#06x}"
-        )));
+        return Err(crate::errors::HostCollateralError::GetCollateralFailed { status }.into());
     }
     let allocation = IntelCollateralAllocation { pointer, free };
     if usize::try_from(allocation_size).unwrap_or(0) < std::mem::size_of::<QuoteCollateral>() {
-        return Err(TransportError::Attestation(
-            "Intel collateral allocation is smaller than its ABI header".into(),
-        ));
+        return Err(
+            crate::errors::HostCollateralError::CollateralAllocationSmallerThanHeader.into(),
+        );
     }
     // SAFETY: the allocation size covers QuoteCollateral and remains owned by
     // allocation until every pointed-to component has been copied below.
@@ -165,9 +159,7 @@ pub fn acquire_dcap_collateral_v1(
     let major_version = (collateral.version & 0xffff) as u16;
     let minor_version = (collateral.version >> 16) as u16;
     if major_version != 3 || !matches!(minor_version, 0 | 1) || collateral.tee_type != 0 {
-        return Err(TransportError::Attestation(
-            "Intel collateral ABI is not supported SGX PCS v3.0 or v3.1".into(),
-        ));
+        return Err(crate::errors::HostCollateralError::UnsupportedCollateralAbiVersion.into());
     }
 
     copy_canonical_components(collateral, minor_version, quote)
@@ -251,7 +243,7 @@ fn component(kind: DcapCollateralKind, bytes: Vec<u8>) -> DcapCollateralComponen
 
 fn pinned_qvl_artifact() -> Result<(PathBuf, u64, String), TransportError> {
     let manifest: serde_json::Value = serde_json::from_str(NATIVE_QVL_MANIFEST)
-        .map_err(|error| TransportError::Codec(format!("invalid native QVL manifest: {error}")))?;
+        .map_err(crate::errors::HostCollateralError::InvalidNativeQvlManifest)?;
     let artifact = manifest["artifacts"]
         .as_array()
         .and_then(|artifacts| {
@@ -259,18 +251,18 @@ fn pinned_qvl_artifact() -> Result<(PathBuf, u64, String), TransportError> {
                 .iter()
                 .find(|artifact| artifact["role"].as_str() == Some("qvl"))
         })
-        .ok_or_else(|| TransportError::Codec("native QVL manifest has no QVL artifact".into()))?;
+        .ok_or(crate::errors::HostCollateralError::MissingQvlArtifact)?;
     let path = artifact["path"]
         .as_str()
         .map(PathBuf::from)
-        .ok_or_else(|| TransportError::Codec("native QVL path is missing".into()))?;
+        .ok_or(crate::errors::HostCollateralError::MissingQvlPath)?;
     let size = artifact["size"]
         .as_u64()
-        .ok_or_else(|| TransportError::Codec("native QVL size is missing".into()))?;
+        .ok_or(crate::errors::HostCollateralError::MissingQvlSize)?;
     let sha256 = artifact["sha256"]
         .as_str()
         .map(str::to_owned)
-        .ok_or_else(|| TransportError::Codec("native QVL digest is missing".into()))?;
+        .ok_or(crate::errors::HostCollateralError::MissingQvlDigest)?;
     Ok((path, size, sha256))
 }
 
@@ -280,26 +272,19 @@ fn verify_pinned_library(
     expected_sha256: &str,
 ) -> Result<(), TransportError> {
     if !path.is_absolute() {
-        return Err(TransportError::Attestation(
-            "pinned Intel QVL path is not absolute".into(),
-        ));
+        return Err(crate::errors::HostCollateralError::PinnedQvlPathNotAbsolute.into());
     }
-    let bytes = std::fs::read(path).map_err(|error| {
-        TransportError::Attestation(format!("cannot read pinned Intel QVL: {error}"))
-    })?;
+    let bytes = std::fs::read(path)
+        .map_err(crate::errors::HostCollateralError::CannotReadPinnedIntelQvl)?;
     if u64::try_from(bytes.len()).ok() != Some(expected_size) {
-        return Err(TransportError::Attestation(
-            "installed Intel QVL size differs from the project pin".into(),
-        ));
+        return Err(crate::errors::HostCollateralError::InstalledQvlSizeMismatch.into());
     }
     let actual = Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     if actual != expected_sha256 {
-        return Err(TransportError::Attestation(
-            "installed Intel QVL digest differs from the project pin".into(),
-        ));
+        return Err(crate::errors::HostCollateralError::InstalledQvlDigestMismatch.into());
     }
     Ok(())
 }
@@ -311,9 +296,7 @@ fn extract_type5_pck_chain(quote: &[u8]) -> Result<Vec<u8>, TransportError> {
         || !pck_chain.ends_with(&[0])
         || pck_chain[..pck_chain.len() - 1].contains(&0)
     {
-        return Err(TransportError::Attestation(
-            "type-5 PCK chain is not canonical PEM plus NUL".into(),
-        ));
+        return Err(crate::errors::HostCollateralError::NonCanonicalType5PckChain.into());
     }
     Ok(pck_chain)
 }
@@ -322,23 +305,19 @@ fn validate_complete_sgx_quote_v3(quote: &[u8]) -> Result<(), TransportError> {
     let minimum = FIXED_QUOTE_SIZE
         .checked_add(FIXED_AUTHENTICATION_SIZE)
         .and_then(|value| value.checked_add(8))
-        .ok_or_else(|| TransportError::Codec("SGX quote size overflow".into()))?;
+        .ok_or(crate::errors::HostCollateralError::SgxQuoteSizeOverflow)?;
     if quote.len() < minimum
         || u16::from_le_bytes(quote[0..2].try_into().unwrap_or_default()) != 3
         || u32::from_le_bytes(quote[4..8].try_into().unwrap_or_default()) != 0
     {
-        return Err(TransportError::Attestation(
-            "quote is not a complete SGX quote v3".into(),
-        ));
+        return Err(crate::errors::HostCollateralError::IncompleteSgxQuoteV3.into());
     }
     let authentication_size = usize::try_from(u32::from_le_bytes(
         quote[432..436].try_into().unwrap_or_default(),
     ))
-    .map_err(|_| TransportError::Codec("SGX authentication size overflow".into()))?;
+    .map_err(|_| crate::errors::HostCollateralError::SgxAuthSizeOverflow)?;
     if FIXED_QUOTE_SIZE.checked_add(authentication_size) != Some(quote.len()) {
-        return Err(TransportError::Attestation(
-            "SGX quote has trailing or truncated authentication bytes".into(),
-        ));
+        return Err(crate::errors::HostCollateralError::SgxQuoteAuthBytesMismatch.into());
     }
     Ok(())
 }
@@ -349,28 +328,28 @@ fn type5_certification_data(quote: &[u8]) -> Result<&[u8], TransportError> {
         quote
             .get(cursor..cursor + 2)
             .and_then(|bytes| bytes.try_into().ok())
-            .ok_or_else(|| TransportError::Attestation("QE authentication is truncated".into()))?,
+            .ok_or(crate::errors::HostCollateralError::QeAuthTruncated)?,
     ));
     cursor = cursor
         .checked_add(2)
         .and_then(|value| value.checked_add(qe_auth_size))
-        .ok_or_else(|| TransportError::Codec("QE authentication size overflow".into()))?;
-    let header = quote.get(cursor..cursor + 6).ok_or_else(|| {
-        TransportError::Attestation("quote certification-data header is truncated".into())
-    })?;
+        .ok_or(crate::errors::HostCollateralError::QeAuthSizeOverflow)?;
+    let header = quote
+        .get(cursor..cursor + 6)
+        .ok_or(crate::errors::HostCollateralError::CertificationDataHeaderTruncated)?;
     let certification_type = u16::from_le_bytes(header[0..2].try_into().unwrap_or_default());
     let certification_size = usize::try_from(u32::from_le_bytes(
         header[2..6].try_into().unwrap_or_default(),
     ))
-    .map_err(|_| TransportError::Codec("certification-data size overflow".into()))?;
+    .map_err(|_| crate::errors::HostCollateralError::CertificationDataSizeOverflow)?;
     cursor += 6;
     let end = cursor
         .checked_add(certification_size)
-        .ok_or_else(|| TransportError::Codec("certification-data size overflow".into()))?;
+        .ok_or(crate::errors::HostCollateralError::CertificationDataSizeOverflow)?;
     if certification_type != 5 || end != quote.len() {
-        return Err(TransportError::Attestation(
-            "quote does not contain exact type-5 PCK certification data".into(),
-        ));
+        return Err(
+            crate::errors::HostCollateralError::MissingExactType5PckCertificationData.into(),
+        );
     }
     Ok(&quote[cursor..end])
 }
@@ -382,11 +361,9 @@ fn copy_component(
     label: &'static str,
 ) -> Result<Vec<u8>, TransportError> {
     let size = usize::try_from(size)
-        .map_err(|_| TransportError::Codec(format!("{label} size overflow")))?;
+        .map_err(|_| crate::errors::HostCollateralError::ComponentSizeOverflow { label })?;
     if pointer.is_null() || size == 0 || size > MAX_COLLATERAL_COMPONENT_BYTES + 1 {
-        return Err(TransportError::Attestation(format!(
-            "Intel QPL returned invalid {label} length"
-        )));
+        return Err(crate::errors::HostCollateralError::InvalidQplComponentLength { label }.into());
     }
     // SAFETY: Intel owns a live collateral allocation, this field points to
     // size readable bytes inside it, and the caller copies before freeing.
@@ -395,13 +372,13 @@ fn copy_component(
 
 fn canonical_text(mut bytes: Vec<u8>, label: &'static str) -> Result<Vec<u8>, TransportError> {
     if bytes.last() != Some(&0) || bytes.len() < 2 || bytes[..bytes.len() - 1].contains(&0) {
-        return Err(TransportError::Attestation(format!(
-            "{label} is not terminated by exactly one NUL"
-        )));
+        return Err(
+            crate::errors::HostCollateralError::ComponentNotSingleNulTerminated { label }.into(),
+        );
     }
     bytes.pop();
     std::str::from_utf8(&bytes)
-        .map_err(|_| TransportError::Attestation(format!("{label} is not UTF-8")))?;
+        .map_err(|_| crate::errors::HostCollateralError::ComponentNotUtf8 { label })?;
     Ok(bytes)
 }
 
@@ -415,27 +392,25 @@ fn canonical_crl(
         0 => {
             let encoded = canonical_text(bytes, label)?;
             if encoded.len() % 2 != 0 {
-                return Err(TransportError::Attestation(format!(
-                    "{label} contains odd-length hexadecimal DER"
-                )));
+                return Err(crate::errors::HostCollateralError::OddLengthHexDer { label }.into());
             }
             let mut decoded = Vec::with_capacity(encoded.len() / 2);
             for pair in encoded.as_chunks::<2>().0 {
-                let text = std::str::from_utf8(pair).map_err(|_| {
-                    TransportError::Attestation(format!("{label} is not hexadecimal DER"))
-                })?;
-                decoded.push(u8::from_str_radix(text, 16).map_err(|_| {
-                    TransportError::Attestation(format!("{label} is not hexadecimal DER"))
-                })?);
+                let text = std::str::from_utf8(pair)
+                    .map_err(|_| crate::errors::HostCollateralError::NotHexDer { label })?;
+                decoded.push(
+                    u8::from_str_radix(text, 16)
+                        .map_err(|_| crate::errors::HostCollateralError::NotHexDer { label })?,
+                );
             }
             if decoded.is_empty() {
-                return Err(TransportError::Attestation(format!("{label} is empty")));
+                return Err(crate::errors::HostCollateralError::ComponentEmpty { label }.into());
             }
             Ok(decoded)
         }
-        _ => Err(TransportError::Attestation(format!(
-            "{label} uses unsupported collateral ABI"
-        ))),
+        _ => Err(
+            crate::errors::HostCollateralError::UnsupportedComponentCollateralAbi { label }.into(),
+        ),
     }
 }
 

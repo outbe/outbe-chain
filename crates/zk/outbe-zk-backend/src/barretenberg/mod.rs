@@ -29,7 +29,7 @@ use flate2::read::GzDecoder;
 use outbe_zk::error::Error;
 use outbe_zk::protocol::zk::{Circuit, CircuitId, ProofGenerator, ProofVerifier};
 
-use crate::errors::CrsInitError;
+use crate::errors::{BackendProofError, CrsInitError};
 use crate::witness;
 
 mod srs;
@@ -136,11 +136,11 @@ fn configure_memory(enabled: bool, max_storage_usage: Option<u64>) {
 fn acir_buffer_uncompressed<C: CircuitId>() -> Result<Vec<u8>, Error> {
     let compressed = base64::engine::general_purpose::STANDARD
         .decode(C::BYTECODE_B64)
-        .map_err(|e| Error::Proof(format!("acir bytecode base64: {e}")))?;
+        .map_err(BackendProofError::AcirBytecodeBase64)?;
     let mut raw = Vec::new();
     GzDecoder::new(compressed.as_slice())
         .read_to_end(&mut raw)
-        .map_err(|e| Error::Proof(format!("acir decompress: {e}")))?;
+        .map_err(BackendProofError::AcirDecompress)?;
     Ok(raw)
 }
 
@@ -174,7 +174,7 @@ impl Default for Barretenberg {
 
 impl Barretenberg {
     fn api() -> Result<BarretenbergApi<FfiBackend>, Error> {
-        let backend = FfiBackend::new().map_err(|e| Error::Proof(format!("bb init: {e}")))?;
+        let backend = FfiBackend::new().map_err(|e| BackendProofError::BbInit(e.to_string()))?;
         Ok(BarretenbergApi::new(backend))
     }
 }
@@ -207,7 +207,7 @@ where
         };
         let response = api
             .circuit_prove(circuit, &solved, settings)
-            .map_err(|e| Error::Proof(format!("bb prove: {e}")))?;
+            .map_err(|e| BackendProofError::BbProve(e.to_string()))?;
         Ok(Proof {
             proof: response.proof,
         })
@@ -231,7 +231,7 @@ where
         srs::ensure_srs_for(&mut api, &acir, &settings)?;
         let response = api
             .circuit_verify(C::VK_BYTES, public_inputs, proof.proof.clone(), settings)
-            .map_err(|e| Error::Proof(format!("bb verify: {e}")))?;
+            .map_err(|e| BackendProofError::BbVerify(e.to_string()))?;
         Ok(response.verified)
     }
 }
@@ -271,14 +271,14 @@ impl RawVerifier for Barretenberg {
         // Header: big-endian u32 public-input count.
         let header = combined_proof
             .get(..4)
-            .ok_or_else(|| Error::Proof("combined proof shorter than 4-byte header".into()))?;
+            .ok_or(BackendProofError::CombinedProofHeaderTooShort)?;
         let num_public = u32::from_be_bytes(header.try_into().expect("4 bytes")) as usize;
 
         // [4 .. 4 + 32·N] public-input words.
         let pub_end = 4 + num_public * 32;
         let pub_bytes = combined_proof
             .get(4..pub_end)
-            .ok_or_else(|| Error::Proof("combined proof truncated in public inputs".into()))?;
+            .ok_or(BackendProofError::CombinedProofTruncatedPublicInputs)?;
         let public_inputs: Vec<Vec<u8>> = pub_bytes
             .as_chunks::<32>()
             .0
@@ -289,9 +289,7 @@ impl RawVerifier for Barretenberg {
         // Remainder is the proof, as 32-byte field words.
         let proof_bytes = &combined_proof[pub_end..];
         if !proof_bytes.len().is_multiple_of(32) {
-            return Err(Error::Proof(
-                "combined proof: proof section not a multiple of 32 bytes".into(),
-            ));
+            return Err(BackendProofError::CombinedProofMisalignedProofSection.into());
         }
         let proof: Vec<Vec<u8>> = proof_bytes
             .as_chunks::<32>()
@@ -307,7 +305,7 @@ impl RawVerifier for Barretenberg {
         let mut api = Self::api()?;
         let response = api
             .circuit_verify(vk_bytes, public_inputs, proof, settings)
-            .map_err(|e| Error::Proof(format!("bb raw verify: {e}")))?;
+            .map_err(|e| BackendProofError::BbRawVerify(e.to_string()))?;
         Ok(response.verified)
     }
 }

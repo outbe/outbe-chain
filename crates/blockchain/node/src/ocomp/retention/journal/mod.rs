@@ -85,7 +85,9 @@ impl JournalStore {
             ));
         }
         if metadata.len() > JOURNAL_MAX_BYTES as u64 {
-            return Err(RetentionError::MalformedJournal("journal exceeds byte cap"));
+            return Err(
+                crate::errors::RetentionMalformedJournalError::JournalExceedsByteCap.into(),
+            );
         }
         let mut file = File::open(path).map_err(|source| self.io("open", path, source))?;
         let mut bytes = Vec::with_capacity(metadata.len() as usize);

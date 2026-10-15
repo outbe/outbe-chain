@@ -83,10 +83,13 @@ impl ReferenceMembership {
     ) -> eyre::Result<()> {
         cas.read_verified(reference).map_err(|error| {
             if missing_native_input(&error) {
-                eyre::Report::new(error).wrap_err(Incomplete(format!(
-                    "missing retained CAS object {} for job {job}",
-                    reference.transport_digest
-                )))
+                eyre::Report::new(error).wrap_err(
+                    SnapshotIncompleteError::MissingRetainedCasObject {
+                        transport_digest: reference.transport_digest,
+                        job,
+                    }
+                    .into_incomplete(),
+                )
             } else {
                 eyre::Report::new(error)
             }

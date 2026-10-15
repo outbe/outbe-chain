@@ -3,8 +3,9 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    Key, Namespace, StorageError, StorageMetadata, StoredValue, Value, MAX_METADATA_ENTRIES,
-    MAX_METADATA_KEY_BYTES, MAX_METADATA_VALUE_BYTES, MAX_SCAN_PAGE_VALUE_BYTES, MAX_VALUE_BYTES,
+    errors::RocksDbCodecError, Key, Namespace, StorageError, StorageMetadata, StoredValue, Value,
+    MAX_METADATA_ENTRIES, MAX_METADATA_KEY_BYTES, MAX_METADATA_VALUE_BYTES,
+    MAX_SCAN_PAGE_VALUE_BYTES, MAX_VALUE_BYTES,
 };
 
 const RECORD_MAGIC: &[u8; 4] = b"OSV1";
@@ -54,22 +55,22 @@ pub(crate) fn encode_record(record: &StoredValue) -> Result<Vec<u8>, StorageErro
 
 pub(crate) fn decode_record(mut encoded: &[u8]) -> Result<StoredValue, StorageError> {
     if take(&mut encoded, 4)? != RECORD_MAGIC {
-        return Err(corrupt("unknown record version"));
+        return Err(RocksDbCodecError::UnknownRecordVersion.into());
     }
     let len = u32::from_be_bytes(take_array(&mut encoded)?) as usize;
     if len > MAX_VALUE_BYTES {
-        return Err(corrupt("value length exceeds bound"));
+        return Err(RocksDbCodecError::ValueLengthExceedsBound.into());
     }
-    let value =
-        Value::new(take(&mut encoded, len)?.to_vec()).map_err(|_| corrupt("invalid value"))?;
+    let value = Value::new(take(&mut encoded, len)?.to_vec())
+        .map_err(|_| StorageError::from(RocksDbCodecError::InvalidValue))?;
     let metadata = decode_metadata(&mut encoded)?;
     if !encoded.is_empty() {
-        return Err(corrupt("trailing record bytes"));
+        return Err(RocksDbCodecError::TrailingRecordBytes.into());
     }
     if value.as_bytes().len() + metadata.as_ref().map_or(0, StorageMetadata::encoded_len)
         > MAX_SCAN_PAGE_VALUE_BYTES
     {
-        return Err(corrupt("record exceeds scan page bound"));
+        return Err(RocksDbCodecError::RecordExceedsScanPageBound.into());
     }
     Ok(StoredValue { value, metadata })
 }
@@ -78,21 +79,21 @@ fn decode_metadata(encoded: &mut &[u8]) -> Result<Option<StorageMetadata>, Stora
     match take(encoded, 1)?[0] {
         0 => Ok(None),
         1 => decode_metadata_entries(encoded).map(Some),
-        _ => Err(corrupt("metadata presence tag")),
+        _ => Err(RocksDbCodecError::MetadataPresenceTag.into()),
     }
 }
 
 fn decode_metadata_entries(encoded: &mut &[u8]) -> Result<StorageMetadata, StorageError> {
     let count = usize::from(take(encoded, 1)?[0]);
     if count > MAX_METADATA_ENTRIES {
-        return Err(corrupt("too many metadata entries"));
+        return Err(RocksDbCodecError::TooManyMetadataEntries.into());
     }
     let mut entries = BTreeMap::new();
     let mut previous = None::<String>;
     for _ in 0..count {
         let key = decode_metadata_key(encoded)?;
         if previous.as_ref().is_some_and(|previous| previous >= &key) {
-            return Err(corrupt("metadata keys are not strictly ordered"));
+            return Err(RocksDbCodecError::MetadataKeysNotOrdered.into());
         }
         previous = Some(key.clone());
         let value = decode_metadata_value(encoded)?;
@@ -101,43 +102,40 @@ fn decode_metadata_entries(encoded: &mut &[u8]) -> Result<StorageMetadata, Stora
     if entries.is_empty() {
         Ok(StorageMetadata::default())
     } else {
-        StorageMetadata::new(entries).map_err(|_| corrupt("invalid metadata"))
+        StorageMetadata::new(entries)
+            .map_err(|_| StorageError::from(RocksDbCodecError::InvalidMetadata))
     }
 }
 fn decode_metadata_key(encoded: &mut &[u8]) -> Result<String, StorageError> {
     let len = usize::from(take(encoded, 1)?[0]);
     if len == 0 || len > MAX_METADATA_KEY_BYTES {
-        return Err(corrupt("metadata key length"));
+        return Err(RocksDbCodecError::MetadataKeyLength.into());
     }
     std::str::from_utf8(take(encoded, len)?)
         .map(str::to_owned)
-        .map_err(|_| corrupt("metadata key encoding"))
+        .map_err(|_| StorageError::from(RocksDbCodecError::MetadataKeyEncoding))
 }
 fn decode_metadata_value(encoded: &mut &[u8]) -> Result<String, StorageError> {
     let len = usize::from(u16::from_be_bytes(take_array(encoded)?));
     if len == 0 || len > MAX_METADATA_VALUE_BYTES {
-        return Err(corrupt("metadata value length"));
+        return Err(RocksDbCodecError::MetadataValueLength.into());
     }
     std::str::from_utf8(take(encoded, len)?)
         .map(str::to_owned)
-        .map_err(|_| corrupt("metadata value encoding"))
+        .map_err(|_| StorageError::from(RocksDbCodecError::MetadataValueEncoding))
 }
 fn take_array<const N: usize>(encoded: &mut &[u8]) -> Result<[u8; N], StorageError> {
     take(encoded, N)?
         .try_into()
-        .map_err(|_| corrupt("truncated record"))
+        .map_err(|_| StorageError::from(RocksDbCodecError::TruncatedRecord))
 }
 
 fn take<'a>(bytes: &mut &'a [u8], count: usize) -> Result<&'a [u8], StorageError> {
     let (head, tail) = bytes
         .split_at_checked(count)
-        .ok_or_else(|| corrupt("truncated record"))?;
+        .ok_or(RocksDbCodecError::TruncatedRecord)?;
     *bytes = tail;
     Ok(head)
-}
-
-fn corrupt(message: &str) -> StorageError {
-    StorageError::Corruption(format!("RocksDB storage codec: {message}"))
 }
 
 #[cfg(test)]
@@ -207,12 +205,12 @@ mod tests {
         let bytes = b"OSV1\0\0\0\x01v\x01\x02\x01z\0\x01x\x01a";
         assert_eq!(
             decode_record(bytes).unwrap_err().to_string(),
-            corrupt("metadata keys are not strictly ordered").to_string()
+            StorageError::from(RocksDbCodecError::MetadataKeysNotOrdered).to_string()
         );
         let bytes = b"OSV1\0\0\0\x01v\x01\x01\x01\xff";
         assert_eq!(
             decode_record(bytes).unwrap_err().to_string(),
-            corrupt("metadata key encoding").to_string()
+            StorageError::from(RocksDbCodecError::MetadataKeyEncoding).to_string()
         );
     }
 }

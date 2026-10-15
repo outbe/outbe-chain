@@ -60,6 +60,14 @@ pub(crate) enum OcompNextBlockError {
 }
 
 #[derive(Debug, Error)]
+pub(crate) enum OcompCarrierRejectError {
+    #[error("OCOMP carrier signer is not authorized for this action")]
+    UnauthorizedSigner,
+    #[error("OCOMP carrier authorization failed: {0}")]
+    AuthorizationFailed(PrecompileError),
+}
+
+#[derive(Debug, Error)]
 #[error("OCOMP system carrier rejected: {0}")]
 pub(crate) struct OutbeOcompSystemCarrierPoolError(pub(crate) String);
 

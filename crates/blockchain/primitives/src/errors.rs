@@ -497,6 +497,15 @@ pub enum PrimitivesStorageError {
     VecIndexOutOfBounds,
     #[error("circular buffer not initialized")]
     CircularBufferNotInitialized,
+    #[error("{0}")]
+    EvmInternals(String),
+}
+
+impl PrimitivesStorageError {
+    /// Convert an EVM internals error into a [`PrecompileError::Storage`].
+    pub(crate) fn evm_internals(error: impl std::fmt::Display) -> PrecompileError {
+        Self::EvmInternals(error.to_string()).into()
+    }
 }
 
 impl From<PrimitivesStorageError> for PrecompileError {
@@ -512,9 +521,95 @@ impl From<PrimitivesStorageError> for PrecompileError {
             | PrimitivesStorageError::TransferFailed { .. }
             | PrimitivesStorageError::BalanceIncrFailed { .. }
             | PrimitivesStorageError::BurnAccountLoadFailed { .. }
-            | PrimitivesStorageError::BurnSetBalanceFailed { .. } => Self::Storage(err.to_string()),
+            | PrimitivesStorageError::BurnSetBalanceFailed { .. }
+            | PrimitivesStorageError::EvmInternals(_) => Self::Storage(err.to_string()),
             _ => Self::Revert(err.to_string()),
         }
+    }
+}
+
+/// Errors returned while decoding a Phase 1 signed transaction envelope.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum Phase1TxDecodeError {
+    #[error("phase1 tx has {trailing_bytes} trailing bytes after EIP-2718 envelope")]
+    TrailingBytesAfterEnvelope { trailing_bytes: usize },
+}
+
+impl From<Phase1TxDecodeError> for crate::system_tx::SystemTxError {
+    fn from(error: Phase1TxDecodeError) -> Self {
+        Self::Phase1TxDecode(error.to_string())
+    }
+}
+
+/// Typed non-canonical reasons for [`crate::tee_attestation_v1::CodecError`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum TeeCodecNonCanonicalError {
+    #[error("empty SGX quote")]
+    EmptySgxQuote,
+    #[error("empty DCAP collateral component")]
+    EmptyDcapCollateralComponent,
+    #[error("DirectDev evidence version")]
+    DirectDevEvidenceVersion,
+    #[error("non-normative block gas limits")]
+    NonNormativeBlockGasLimits,
+    #[error("node id length")]
+    NodeIdLength,
+    #[error("descriptor chain id exceeds u64")]
+    DescriptorChainIdExceedsU64,
+    #[error("empty DKG participant set")]
+    EmptyDkgParticipantSet,
+    #[error("zero DKG participant set hash")]
+    ZeroDkgParticipantSetHash,
+    #[error("non-canonical DKG ceremony id")]
+    NonCanonicalDkgCeremonyId,
+    #[error("invalid TEE lease policy")]
+    InvalidTeeLeasePolicy,
+    #[error("TEE policy schedule is empty")]
+    TeePolicyScheduleEmpty,
+    #[error("cached policy hash mismatch")]
+    CachedPolicyHashMismatch,
+    #[error("policy predecessor hash mismatch")]
+    PolicyPredecessorHashMismatch,
+    #[error("transition key-ready proof signature")]
+    TransitionKeyReadyProofSignature,
+    #[error("TEE bootstrap evidence does not contain exactly eight components")]
+    TeeBootstrapEvidenceNotEightComponents,
+    #[error("invalid TeeBootstrapV2 magic")]
+    InvalidTeeBootstrapV2Magic,
+    #[error("TEE bootstrap quote is empty")]
+    TeeBootstrapQuoteEmpty,
+}
+
+impl TeeCodecNonCanonicalError {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::EmptySgxQuote => "empty SGX quote",
+            Self::EmptyDcapCollateralComponent => "empty DCAP collateral component",
+            Self::DirectDevEvidenceVersion => "DirectDev evidence version",
+            Self::NonNormativeBlockGasLimits => "non-normative block gas limits",
+            Self::NodeIdLength => "node id length",
+            Self::DescriptorChainIdExceedsU64 => "descriptor chain id exceeds u64",
+            Self::EmptyDkgParticipantSet => "empty DKG participant set",
+            Self::ZeroDkgParticipantSetHash => "zero DKG participant set hash",
+            Self::NonCanonicalDkgCeremonyId => "non-canonical DKG ceremony id",
+            Self::InvalidTeeLeasePolicy => "invalid TEE lease policy",
+            Self::TeePolicyScheduleEmpty => "TEE policy schedule is empty",
+            Self::CachedPolicyHashMismatch => "cached policy hash mismatch",
+            Self::PolicyPredecessorHashMismatch => "policy predecessor hash mismatch",
+            Self::TransitionKeyReadyProofSignature => "transition key-ready proof signature",
+            Self::TeeBootstrapEvidenceNotEightComponents => {
+                "TEE bootstrap evidence does not contain exactly eight components"
+            }
+            Self::InvalidTeeBootstrapV2Magic => "invalid TeeBootstrapV2 magic",
+            Self::TeeBootstrapQuoteEmpty => "TEE bootstrap quote is empty",
+        }
+    }
+}
+
+impl From<TeeCodecNonCanonicalError> for crate::tee_attestation_v1::CodecError {
+    fn from(error: TeeCodecNonCanonicalError) -> Self {
+        Self::NonCanonical(error.as_str())
     }
 }
 

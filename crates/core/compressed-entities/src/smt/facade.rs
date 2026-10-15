@@ -164,7 +164,7 @@ impl StoreWriteOps<H256> for MemoryStore {
         validate_ckb(key, "tree key").map_err(vendor_store_error)?;
         validate_ckb(leaf, "stored leaf").map_err(vendor_store_error)?;
         if leaf.is_zero() {
-            return Err(VendorError::Store("zero leaf must be deleted".into()));
+            return Err(crate::errors::SmtStoreInvariantError::ZeroLeafMustBeDeleted.into());
         }
         self.leaves.insert(key, leaf);
         Ok(())
@@ -257,23 +257,27 @@ impl<O: SortedNodeObserver> SortedPoseidonRootReducer<O> {
             }
             let fork_height = current.key.ckb().fork_height(&key.ckb());
             self.lift_current(fork_height)?;
-            let completed = self
-                .current
-                .take()
-                .ok_or(TreeError::ReducerInvariant("current subtree disappeared"))?;
+            let completed = self.current.take().ok_or_else(|| {
+                TreeError::from(crate::errors::SmtReducerInvariantReason::CurrentSubtreeDisappeared)
+            })?;
             if completed.key.ckb().is_right(fork_height) {
-                return Err(TreeError::ReducerInvariant(
-                    "ordered subtree is not the left fork child",
-                ));
+                return Err(
+                    crate::errors::SmtReducerInvariantReason::OrderedSubtreeNotLeftForkChild.into(),
+                );
             }
             let slot = self
                 .frontier
                 .get_mut(usize::from(fork_height))
-                .ok_or(TreeError::ReducerInvariant("fork height outside frontier"))?;
+                .ok_or_else(|| {
+                    TreeError::from(
+                        crate::errors::SmtReducerInvariantReason::ForkHeightOutsideFrontier,
+                    )
+                })?;
             if slot.is_some() {
-                return Err(TreeError::ReducerInvariant(
-                    "fork frontier already contains a subtree",
-                ));
+                return Err(
+                    crate::errors::SmtReducerInvariantReason::ForkFrontierAlreadyContainsSubtree
+                        .into(),
+                );
             }
             *slot = Some(completed);
         }
@@ -292,23 +296,24 @@ impl<O: SortedNodeObserver> SortedPoseidonRootReducer<O> {
     pub(crate) fn finish_observing(mut self) -> Result<(TreeRoot, O, Option<u64>), TreeError> {
         if self.current.is_none() {
             if self.frontier.iter().any(Option::is_some) {
-                return Err(TreeError::ReducerInvariant(
-                    "empty reducer retains a pending subtree",
-                ));
+                return Err(
+                    crate::errors::SmtReducerInvariantReason::EmptyReducerRetainsPendingSubtree
+                        .into(),
+                );
             }
             return Ok((TreeRoot::EMPTY, self.observer, None));
         }
         self.lift_current(u8::MAX)?;
         self.merge_current_level(u8::MAX)?;
         if self.frontier.iter().any(Option::is_some) {
-            return Err(TreeError::ReducerInvariant(
-                "finished reducer retains a pending subtree",
-            ));
+            return Err(
+                crate::errors::SmtReducerInvariantReason::FinishedReducerRetainsPendingSubtree
+                    .into(),
+            );
         }
-        let current = self
-            .current
-            .take()
-            .ok_or(TreeError::ReducerInvariant("root subtree disappeared"))?;
+        let current = self.current.take().ok_or_else(|| {
+            TreeError::from(crate::errors::SmtReducerInvariantReason::RootSubtreeDisappeared)
+        })?;
         let root = checked_root(current.value.hash::<PoseidonCkbHasher>())?;
         Ok((root, self.observer, Some(current.archive_id)))
     }
@@ -321,10 +326,9 @@ impl<O: SortedNodeObserver> SortedPoseidonRootReducer<O> {
     }
 
     fn merge_current_level(&mut self, height: u8) -> Result<(), TreeError> {
-        let mut current = self
-            .current
-            .take()
-            .ok_or(TreeError::ReducerInvariant("current subtree is missing"))?;
+        let mut current = self.current.take().ok_or_else(|| {
+            TreeError::from(crate::errors::SmtReducerInvariantReason::CurrentSubtreeMissing)
+        })?;
         let ckb_key = current.key.ckb();
         let parent_key = ckb_key.parent_path(height);
         let left = self.frontier[usize::from(height)].take();
@@ -334,9 +338,10 @@ impl<O: SortedNodeObserver> SortedPoseidonRootReducer<O> {
                 || !ckb_key.is_right(height)
                 || left_key.parent_path(height) != parent_key
             {
-                return Err(TreeError::ReducerInvariant(
-                    "pending subtrees are not ordered siblings",
-                ));
+                return Err(
+                    crate::errors::SmtReducerInvariantReason::PendingSubtreesNotOrderedSiblings
+                        .into(),
+                );
             }
             current.archive_id = self.observer.fork(
                 height,
@@ -471,7 +476,7 @@ fn ensure_unique_keys(keys: &[TreeKey]) -> Result<(), TreeError> {
         return Err(TreeError::DuplicateKey);
     }
     if keys.is_empty() {
-        return Err(TreeError::Vendor("proof keys must not be empty".into()));
+        return Err(crate::errors::SmtStoreInvariantError::ProofKeysMustNotBeEmpty.into());
     }
     Ok(())
 }

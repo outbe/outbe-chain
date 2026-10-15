@@ -13,9 +13,19 @@ pub enum ApplicationShutdownError {
     /// Indicates that the shutdown drain failed.
     #[error("{0}")]
     DrainFailed(String),
+    /// Indicates that the application drain also failed after a primary error.
+    #[error("application drain also failed: {0}")]
+    DrainAlsoFailed(String),
     /// Indicates that the consensus stack panicked.
     #[error("consensus stack panicked: {0}")]
     ConsensusStackPanicked(String),
+}
+
+impl ApplicationShutdownError {
+    /// Formats an additional application drain failure with its full cause chain.
+    pub fn drain_also_failed(cleanup: &eyre::Report) -> Self {
+        Self::DrainAlsoFailed(format!("{cleanup:#}"))
+    }
 }
 
 /// Represents CLI argument validation errors.

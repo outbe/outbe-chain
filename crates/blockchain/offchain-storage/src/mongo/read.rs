@@ -65,8 +65,9 @@ impl StorageReader for MongoStorage {
     ) -> Result<ScanPage, StorageError> {
         request.validate()?;
         let filter = prefix_filter(request);
-        let internal_limit = i64::try_from(request.limit() + 1)
-            .map_err(|_| StorageError::invalid_argument("scan limit does not fit i64"))?;
+        let internal_limit = i64::try_from(request.limit() + 1).map_err(|_| {
+            StorageError::from(crate::errors::StorageValidationError::ScanLimitExceedsI64)
+        })?;
         let cursor = self
             .collection(&namespace)
             .find(filter)

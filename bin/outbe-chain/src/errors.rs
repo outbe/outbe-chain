@@ -12,7 +12,7 @@ pub(crate) use genesis::{OcompGenesisError, TeeGenesisError};
 pub(crate) use launch::{LaunchError, LysisOpeningsError};
 pub(crate) use ocomp_exex::{OcompExExError, OcompExExStateReadError};
 pub(crate) use snapshot::{CanonicalStatePrecompileError, SnapshotError};
-pub(crate) use snapshot_ocomp::SnapshotOcompError;
+pub(crate) use snapshot_ocomp::{SnapshotIncompleteError, SnapshotOcompError};
 
 /// Formats any displayable error as a string.
 pub(crate) fn display_error<E: std::fmt::Display>(error: E) -> String {

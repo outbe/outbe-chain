@@ -45,11 +45,10 @@ pub(super) fn classify_nod_input_error(error: eyre::Report, job: B256) -> eyre::
         return error;
     }
     if missing_native_input(error.as_ref()) {
-        return error.wrap_err(Incomplete(format!(
-            "missing required NOD input for job {job}"
-        )));
+        return error
+            .wrap_err(SnapshotIncompleteError::MissingRequiredNodInput { job }.into_incomplete());
     }
-    error.wrap_err(format!("NOD inputs for job {job}"))
+    error.wrap_err(SnapshotOcompError::NodInputsForJob { job })
 }
 
 fn missing_catalog_native_input(error: &(dyn std::error::Error + 'static)) -> Option<bool> {

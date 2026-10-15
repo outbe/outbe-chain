@@ -72,9 +72,9 @@ pub(in crate::transport) fn dispatch_dkg_open(
         let mut recipient_enc_keys = std::collections::BTreeMap::new();
         for pk in &pubkeys {
             let bls_bytes = commonware_codec::Encode::encode(pk).to_vec();
-            let enc = enc_by_bls.get(&bls_bytes).ok_or_else(|| {
-                crate::errors::TeeError::dkg_err("DkgOpen: enc key missing for participant")
-            })?;
+            let enc = enc_by_bls
+                .get(&bls_bytes)
+                .ok_or(crate::errors::DkgError::MissingParticipantEncKey)?;
             recipient_enc_keys.insert(pk.clone(), *enc);
         }
         dkg.open(

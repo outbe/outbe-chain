@@ -152,9 +152,9 @@ impl RocksDbReader {
             .open(secondary.join("outbe-secondary.lock"))
             .map_err(StorageError::unavailable)?;
         ownership.try_lock().map_err(|error| {
-            StorageError::invalid_argument(format!(
-                "RocksDB secondary directory is already owned or cannot be locked: {error}"
-            ))
+            StorageError::from(
+                crate::errors::StorageValidationError::SecondaryAlreadyOwnedOrCannotLock { error },
+            )
         })?;
         let db = DB::open_as_secondary(&options(), &primary, &secondary).map_err(map_error)?;
         db.try_catch_up_with_primary().map_err(map_error)?;
@@ -258,8 +258,9 @@ fn scan_prefix(
         if !encoded_key.starts_with(&prefix) {
             break;
         }
-        let key = Key::new(encoded_key[namespace.len()..].to_vec())
-            .map_err(|_| StorageError::Corruption("invalid RocksDB storage key".into()))?;
+        let key = Key::new(encoded_key[namespace.len()..].to_vec()).map_err(|_| {
+            StorageError::from(crate::errors::StorageCorruptionError::InvalidRocksDbStorageKey)
+        })?;
         if request.after().is_some_and(|after| &key <= after) {
             continue;
         }
@@ -269,7 +270,7 @@ fn scan_prefix(
         if entries.len() == request.limit() || value_bytes + bytes > MAX_SCAN_PAGE_VALUE_BYTES {
             let next_after = entries
                 .last()
-                .ok_or_else(|| StorageError::Corruption("record exceeds scan page bound".into()))?
+                .ok_or(crate::errors::StorageCorruptionError::RecordExceedsScanPageBound)?
                 .key
                 .clone();
             return Ok(ScanPage {

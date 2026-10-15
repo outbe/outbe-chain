@@ -108,15 +108,13 @@ impl ProjectionSource {
     /// Strictly decodes the fixed metadata schema.
     pub fn from_storage_metadata(metadata: &StorageMetadata) -> Result<Self, ProjectionError> {
         if metadata.len() != SOURCE_KEYS.len() {
-            return Err(ProjectionError::MalformedProjectionMetadata(
-                "projection metadata must contain exactly seven fields".to_owned(),
-            ));
+            return Err(crate::errors::ProjectionMetadataError::WrongFieldCount.into());
         }
         for (key, _) in metadata.iter() {
             if !SOURCE_KEYS.contains(&key) {
-                return Err(ProjectionError::MalformedProjectionMetadata(format!(
-                    "unknown projection metadata field {key}"
-                )));
+                return Err(
+                    crate::errors::ProjectionMetadataError::UnknownField(key.to_owned()).into(),
+                );
             }
         }
         Ok(Self {
@@ -137,7 +135,7 @@ pub(super) fn metadata_value<'a>(
 ) -> Result<&'a str, ProjectionError> {
     metadata
         .get(key)
-        .ok_or_else(|| ProjectionError::MalformedProjectionMetadata(format!("missing {key}")))
+        .ok_or_else(|| crate::errors::ProjectionMetadataError::MissingField(key).into())
 }
 
 pub(super) fn parse_metadata<T>(
@@ -150,11 +148,9 @@ where
     let encoded = metadata_value(metadata, key)?;
     let parsed: T = encoded
         .parse()
-        .map_err(|_| ProjectionError::MalformedProjectionMetadata(format!("invalid {key}")))?;
+        .map_err(|_| crate::errors::ProjectionMetadataError::InvalidField(key))?;
     if parsed.to_string() != encoded {
-        return Err(ProjectionError::MalformedProjectionMetadata(format!(
-            "non-canonical {key}"
-        )));
+        return Err(crate::errors::ProjectionMetadataError::NonCanonicalField(key).into());
     }
     Ok(parsed)
 }
@@ -169,11 +165,9 @@ where
     let encoded = metadata_value(metadata, key)?;
     let parsed: T = encoded
         .parse()
-        .map_err(|_| ProjectionError::MalformedProjectionMetadata(format!("invalid {key}")))?;
+        .map_err(|_| crate::errors::ProjectionMetadataError::InvalidField(key))?;
     if format!("{parsed:#x}") != encoded {
-        return Err(ProjectionError::MalformedProjectionMetadata(format!(
-            "non-canonical {key}"
-        )));
+        return Err(crate::errors::ProjectionMetadataError::NonCanonicalField(key).into());
     }
     Ok(parsed)
 }

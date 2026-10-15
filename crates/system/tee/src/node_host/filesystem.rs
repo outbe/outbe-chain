@@ -75,21 +75,19 @@ pub(super) fn read_owned_bounded_file(
         .open(path)?;
     let metadata = file.metadata()?;
     if !is_owner_only_regular_file(&metadata) || metadata.len() > maximum_len {
-        return Err(TransportError::Codec(format!(
-            "NodeHost {label} must be an owner-only bounded regular file"
-        )));
+        return Err(
+            crate::errors::NodeHostRecordError::NotOwnerOnlyBoundedRegularFile { label }.into(),
+        );
     }
     let capacity = usize::try_from(metadata.len())
         .map_err(TransportError::node_host_length_overflow(label))?;
     let read_limit = maximum_len
         .checked_add(1)
-        .ok_or_else(|| TransportError::Codec(format!("NodeHost {label} read limit overflow")))?;
+        .ok_or(crate::errors::NodeHostRecordError::ReadLimitOverflow { label })?;
     let mut bytes = Vec::with_capacity(capacity);
     file.take(read_limit).read_to_end(&mut bytes)?;
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > maximum_len {
-        return Err(TransportError::Codec(format!(
-            "NodeHost {label} grew beyond its byte bound while being read"
-        )));
+        return Err(crate::errors::NodeHostRecordError::GrewBeyondByteBound { label }.into());
     }
     Ok(bytes)
 }
@@ -175,10 +173,10 @@ pub(super) fn write_bytes_once_or_exact(
         if read_owned_bounded_file(path, record.maximum_len, record.label)? == record.bytes {
             return Ok(());
         }
-        return Err(TransportError::Codec(format!(
-            "durable NodeHost {} conflicts with the requested value",
-            record.label
-        )));
+        return Err(crate::errors::NodeHostRecordError::DurableRecordConflict {
+            label: record.label,
+        }
+        .into());
     }
     stage_complete_bytes(path, scratch_path, record.bytes, directory)
 }

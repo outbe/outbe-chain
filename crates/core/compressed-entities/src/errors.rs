@@ -614,3 +614,577 @@ pub(crate) fn enrich_body_read_corruption(
         other => other,
     }
 }
+
+/// Typed reasons for [`crate::proof::PointReadServiceError::InvalidPackage`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub enum PointReadInvalidPackageReason {
+    /// Failed to derive collection key for the entity.
+    #[error("collection derivation")]
+    CollectionDerivation,
+    /// Recomputed collection root did not match the expected collection root.
+    #[error("collection root mismatch")]
+    CollectionRootMismatch,
+    /// Unknown compressed-entity domain ID.
+    #[error("unknown domain")]
+    UnknownDomain,
+    /// `PointReadResultV1::Unavailable` is not a verifiable proof package.
+    #[error("unavailable is not a proof package")]
+    UnavailableNotProofPackage,
+    /// Present point-read package has an empty body payload.
+    #[error("empty present body")]
+    EmptyPresentBody,
+    /// Catalog key is not a canonical field element.
+    #[error("catalog key")]
+    CatalogKey,
+    /// Catalog leaf is not a canonical field element.
+    #[error("catalog leaf")]
+    CatalogLeaf,
+    /// Catalog CKB proof root computation failed.
+    #[error("catalog proof")]
+    CatalogProof,
+    /// Sealed root wrapper computation failed.
+    #[error("sealed root")]
+    SealedRoot,
+    /// Recomputed sealed root did not match header artifact `r_sealed`.
+    #[error("header root mismatch")]
+    HeaderRootMismatch,
+    /// Tree key derivation failed.
+    #[error("tree key")]
+    TreeKey,
+    /// Shard index derivation failed.
+    #[error("shard index")]
+    ShardIndex,
+    /// Top sibling count did not match `log2(shard_count)`.
+    #[error("top sibling count")]
+    TopSiblingCount,
+    /// Leaf bytes are not a canonical field element.
+    #[error("leaf field")]
+    LeafField,
+    /// Shard CKB proof root computation failed.
+    #[error("shard proof")]
+    ShardProof,
+    /// Top-tree sibling root is not a canonical field element.
+    #[error("non-canonical top sibling")]
+    NonCanonicalTopSibling,
+    /// Recomputed top-tree node is not a canonical field element.
+    #[error("invalid top root")]
+    InvalidTopRoot,
+    /// Collection root computation failed.
+    #[error("collection root")]
+    CollectionRoot,
+    /// Common proof metadata binding did not match request or selected header.
+    #[error("common binding")]
+    CommonBinding,
+    /// Finalized marker height/hash did not match selected header.
+    #[error("marker/header identity")]
+    MarkerHeaderIdentity,
+    /// Finalized marker commitment scheme or root did not match selected header artifact.
+    #[error("marker/header root")]
+    MarkerHeaderRoot,
+    /// Selected header is block 0 (genesis).
+    #[error("genesis header")]
+    GenesisHeader,
+    /// Block extra-data artifact decoding failed.
+    #[error("header artifacts")]
+    HeaderArtifacts,
+    /// Block extra-data is missing tag `0x08` (`compressed_entities_root`).
+    #[error("missing tag 0x08")]
+    MissingTag0x08,
+    /// Header artifact commitment scheme version is not active.
+    #[error("fork scheme")]
+    ForkScheme,
+    /// Stored body envelope decoding failed.
+    #[error("stored body envelope")]
+    StoredBodyEnvelope,
+    /// Encrypted v2 tribute body decoding failed.
+    #[error("encrypted tribute body")]
+    EncryptedTributeBody,
+    /// Tribute v1 body decoding failed.
+    #[error("tribute body")]
+    TributeBody,
+    /// Encrypted v2 NOD item body decoding failed.
+    #[error("encrypted nod body")]
+    EncryptedNodBody,
+    /// NOD item v1 body decoding failed.
+    #[error("nod item body")]
+    NodItemBody,
+    /// NOD bucket v1 body decoding failed.
+    #[error("nod bucket body")]
+    NodBucketBody,
+    /// GEM v1 body decoding failed.
+    #[error("gem body")]
+    GemBody,
+    /// GEM bucket v1 body decoding failed.
+    #[error("gem bucket body")]
+    GemBucketBody,
+    /// Decoded body identity did not match requested entity ID.
+    #[error("body identity")]
+    BodyIdentity,
+    /// Body commitment derivation failed.
+    #[error("body commitment")]
+    BodyCommitment,
+    /// Shard-top root slice or selected shard index is out of bounds.
+    #[error("invalid shard-top envelope")]
+    InvalidShardTopEnvelope,
+    /// Poseidon top-node hash failed.
+    #[error("top hash")]
+    TopHash,
+}
+
+impl PointReadInvalidPackageReason {
+    /// Static message preserved in [`crate::proof::PointReadServiceError::InvalidPackage`].
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CollectionDerivation => "collection derivation",
+            Self::CollectionRootMismatch => "collection root mismatch",
+            Self::UnknownDomain => "unknown domain",
+            Self::UnavailableNotProofPackage => "unavailable is not a proof package",
+            Self::EmptyPresentBody => "empty present body",
+            Self::CatalogKey => "catalog key",
+            Self::CatalogLeaf => "catalog leaf",
+            Self::CatalogProof => "catalog proof",
+            Self::SealedRoot => "sealed root",
+            Self::HeaderRootMismatch => "header root mismatch",
+            Self::TreeKey => "tree key",
+            Self::ShardIndex => "shard index",
+            Self::TopSiblingCount => "top sibling count",
+            Self::LeafField => "leaf field",
+            Self::ShardProof => "shard proof",
+            Self::NonCanonicalTopSibling => "non-canonical top sibling",
+            Self::InvalidTopRoot => "invalid top root",
+            Self::CollectionRoot => "collection root",
+            Self::CommonBinding => "common binding",
+            Self::MarkerHeaderIdentity => "marker/header identity",
+            Self::MarkerHeaderRoot => "marker/header root",
+            Self::GenesisHeader => "genesis header",
+            Self::HeaderArtifacts => "header artifacts",
+            Self::MissingTag0x08 => "missing tag 0x08",
+            Self::ForkScheme => "fork scheme",
+            Self::StoredBodyEnvelope => "stored body envelope",
+            Self::EncryptedTributeBody => "encrypted tribute body",
+            Self::TributeBody => "tribute body",
+            Self::EncryptedNodBody => "encrypted nod body",
+            Self::NodItemBody => "nod item body",
+            Self::NodBucketBody => "nod bucket body",
+            Self::GemBody => "gem body",
+            Self::GemBucketBody => "gem bucket body",
+            Self::BodyIdentity => "body identity",
+            Self::BodyCommitment => "body commitment",
+            Self::InvalidShardTopEnvelope => "invalid shard-top envelope",
+            Self::TopHash => "top hash",
+        }
+    }
+}
+
+impl From<PointReadInvalidPackageReason> for crate::proof::PointReadServiceError {
+    fn from(reason: PointReadInvalidPackageReason) -> Self {
+        Self::InvalidPackage(reason.as_str())
+    }
+}
+
+/// Typed reasons for [`crate::proof::PointReadServiceError::Materialization`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub enum PointReadMaterializationReason {
+    /// Absent catalog leaf still has persisted collection records.
+    #[error("orphan records behind absent catalog leaf")]
+    OrphanRecordsBehindAbsentCatalogLeaf,
+    /// Collection shard-root count does not match domain shard count.
+    #[error("incomplete collection shard-root vector")]
+    IncompleteCollectionShardRootVector,
+    /// A shard root in a present collection is missing.
+    #[error("missing shard root")]
+    MissingShardRoot,
+    /// Recomputed collection root from shard roots does not match catalog leaf.
+    #[error("catalog leaf does not match shard roots")]
+    CatalogLeafDoesNotMatchShardRoots,
+}
+
+impl From<PointReadMaterializationReason> for crate::proof::PointReadServiceError {
+    fn from(reason: PointReadMaterializationReason) -> Self {
+        Self::Materialization(reason.to_string())
+    }
+}
+
+/// Typed reasons for [`crate::smt::TreeError::ReducerInvariant`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub enum SmtReducerInvariantReason {
+    /// Archive node counter overflowed `u64`.
+    #[error("archive node count overflow")]
+    ArchiveNodeCountOverflow,
+    /// Active subtree disappeared during ordered lift.
+    #[error("current subtree disappeared")]
+    CurrentSubtreeDisappeared,
+    /// Completed subtree is on the right branch at its fork height.
+    #[error("ordered subtree is not the left fork child")]
+    OrderedSubtreeNotLeftForkChild,
+    /// Fork height index is outside the 256-level frontier.
+    #[error("fork height outside frontier")]
+    ForkHeightOutsideFrontier,
+    /// Frontier slot at the fork height was already occupied.
+    #[error("fork frontier already contains a subtree")]
+    ForkFrontierAlreadyContainsSubtree,
+    /// Empty reducer had non-empty frontier slots at finish.
+    #[error("empty reducer retains a pending subtree")]
+    EmptyReducerRetainsPendingSubtree,
+    /// Non-empty reducer had remaining frontier slots after top merge.
+    #[error("finished reducer retains a pending subtree")]
+    FinishedReducerRetainsPendingSubtree,
+    /// Root subtree was missing after top merge.
+    #[error("root subtree disappeared")]
+    RootSubtreeDisappeared,
+    /// Current subtree was missing when merging a level.
+    #[error("current subtree is missing")]
+    CurrentSubtreeMissing,
+    /// Left frontier subtree and current subtree are not ordered siblings.
+    #[error("pending subtrees are not ordered siblings")]
+    PendingSubtreesNotOrderedSiblings,
+}
+
+impl SmtReducerInvariantReason {
+    /// Static message preserved in [`crate::smt::TreeError::ReducerInvariant`].
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ArchiveNodeCountOverflow => "archive node count overflow",
+            Self::CurrentSubtreeDisappeared => "current subtree disappeared",
+            Self::OrderedSubtreeNotLeftForkChild => "ordered subtree is not the left fork child",
+            Self::ForkHeightOutsideFrontier => "fork height outside frontier",
+            Self::ForkFrontierAlreadyContainsSubtree => "fork frontier already contains a subtree",
+            Self::EmptyReducerRetainsPendingSubtree => "empty reducer retains a pending subtree",
+            Self::FinishedReducerRetainsPendingSubtree => {
+                "finished reducer retains a pending subtree"
+            }
+            Self::RootSubtreeDisappeared => "root subtree disappeared",
+            Self::CurrentSubtreeMissing => "current subtree is missing",
+            Self::PendingSubtreesNotOrderedSiblings => "pending subtrees are not ordered siblings",
+        }
+    }
+}
+
+impl From<SmtReducerInvariantReason> for crate::smt::TreeError {
+    fn from(reason: SmtReducerInvariantReason) -> Self {
+        Self::ReducerInvariant(reason.as_str())
+    }
+}
+
+/// Typed store/vendor invariant errors for the CKB SMT facade.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub enum SmtStoreInvariantError {
+    /// Zero leaf was passed to `insert_leaf` instead of `remove_leaf`.
+    #[error("zero leaf must be deleted")]
+    ZeroLeafMustBeDeleted,
+    /// Empty key list was passed to `prove` or `verify`.
+    #[error("proof keys must not be empty")]
+    ProofKeysMustNotBeEmpty,
+}
+
+impl From<SmtStoreInvariantError> for outbe_sparse_merkle_tree_v061::error::Error {
+    fn from(error: SmtStoreInvariantError) -> Self {
+        Self::Store(error.to_string())
+    }
+}
+
+impl From<SmtStoreInvariantError> for crate::smt::TreeError {
+    fn from(error: SmtStoreInvariantError) -> Self {
+        Self::Vendor(error.to_string())
+    }
+}
+
+/// Typed tree/archive errors surfaced through [`crate::collection_reconstruction::TributePartitionReconstructionError::Tree`].
+#[derive(Debug, Error)]
+pub enum ArchiveTreeError {
+    /// Failed to fsync a proof shard file.
+    #[error("sync proof shard: {0}")]
+    SyncProofShard(#[source] std::io::Error),
+}
+
+impl From<ArchiveTreeError>
+    for crate::collection_reconstruction::TributePartitionReconstructionError
+{
+    fn from(error: ArchiveTreeError) -> Self {
+        Self::Tree(error.to_string())
+    }
+}
+
+/// Typed reasons for [`crate::staging::StagingError::InvalidShardEnvelope`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub enum ShardEnvelopeErrorReason {
+    /// Changed shard's parent and new roots are identical.
+    #[error("changed shard roots must differ")]
+    ChangedShardRootsMustDiffer,
+    /// Changed shard has neither branch changes nor leaf changes.
+    #[error("changed shard must contain effective records")]
+    ChangedShardMustContainEffectiveRecords,
+    /// Shard count does not fit in `usize`.
+    #[error("shard count is not representable")]
+    ShardCountNotRepresentable,
+    /// Shard count is not a power of two in `1..=256`.
+    #[error("invalid shard count")]
+    InvalidShardCount,
+    /// Parent or new shard-root vector length does not equal `shard_count`.
+    #[error("root vector length mismatch")]
+    RootVectorLengthMismatch,
+    /// Aggregated top root of shard roots does not match declared top root.
+    #[error("aggregate root mismatch")]
+    AggregateRootMismatch,
+    /// Shard index does not fit in `usize`.
+    #[error("shard index overflow")]
+    ShardIndexOverflow,
+    /// Changed shard index is `>= shard_count`.
+    #[error("shard index out of range")]
+    ShardIndexOutOfRange,
+    /// Shard-root top aggregation failed.
+    #[error("invalid shard root aggregate")]
+    InvalidShardRootAggregate,
+    /// Changed shard batch roots do not match the shard-root vectors at that index.
+    #[error("changed shard root mismatch")]
+    ChangedShardRootMismatch,
+    /// Leaf key in a changed shard is not a canonical field element.
+    #[error("invalid leaf key")]
+    InvalidLeafKey,
+    /// Shard index derivation failed for a changed leaf key.
+    #[error("invalid shard derivation")]
+    InvalidShardDerivation,
+    /// Changed leaf key belongs to a different shard index.
+    #[error("misderived leaf shard")]
+    MisderivedLeafShard,
+    /// Shard root changed at an index that has no `ProvisionalShardBatch`.
+    #[error("missing changed shard")]
+    MissingChangedShard,
+    /// `ProvisionalShardBatch` is present for a shard index whose root did not change.
+    #[error("unchanged shard included")]
+    UnchangedShardIncluded,
+    /// Speculative shard store ended with unchanged root but non-empty record changes.
+    #[error("net-no-op shard contains records")]
+    NetNoOpShardContainsRecords,
+}
+
+impl ShardEnvelopeErrorReason {
+    /// Static message preserved in [`crate::staging::StagingError::InvalidShardEnvelope`].
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ChangedShardRootsMustDiffer => "changed shard roots must differ",
+            Self::ChangedShardMustContainEffectiveRecords => {
+                "changed shard must contain effective records"
+            }
+            Self::ShardCountNotRepresentable => "shard count is not representable",
+            Self::InvalidShardCount => "invalid shard count",
+            Self::RootVectorLengthMismatch => "root vector length mismatch",
+            Self::AggregateRootMismatch => "aggregate root mismatch",
+            Self::ShardIndexOverflow => "shard index overflow",
+            Self::ShardIndexOutOfRange => "shard index out of range",
+            Self::InvalidShardRootAggregate => "invalid shard root aggregate",
+            Self::ChangedShardRootMismatch => "changed shard root mismatch",
+            Self::InvalidLeafKey => "invalid leaf key",
+            Self::InvalidShardDerivation => "invalid shard derivation",
+            Self::MisderivedLeafShard => "misderived leaf shard",
+            Self::MissingChangedShard => "missing changed shard",
+            Self::UnchangedShardIncluded => "unchanged shard included",
+            Self::NetNoOpShardContainsRecords => "net-no-op shard contains records",
+        }
+    }
+}
+
+impl From<ShardEnvelopeErrorReason> for crate::staging::StagingError {
+    fn from(reason: ShardEnvelopeErrorReason) -> Self {
+        Self::InvalidShardEnvelope(reason.as_str())
+    }
+}
+
+/// Typed reasons for [`crate::staging::StagingError::InvalidCatalogEnvelope`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub enum CatalogEnvelopeErrorReason {
+    /// Non-Tribute or incomplete collection was passed to `RetirementBatch::new`.
+    #[error("only a complete Tribute collection may retire")]
+    OnlyCompleteTributeCollectionMayRetire,
+    /// Aggregating parent shard roots of a retiring collection failed.
+    #[error("invalid retirement shard roots")]
+    InvalidRetirementShardRoots,
+    /// Computing parent collection root of a retiring collection failed.
+    #[error("invalid retirement collection")]
+    InvalidRetirementCollection,
+    /// Recomputed parent collection root of a retiring collection did not match.
+    #[error("retirement parent collection root mismatch")]
+    RetirementParentCollectionRootMismatch,
+    /// Collection shard count does not match the domain's topology.
+    #[error("collection shard count does not match domain topology")]
+    CollectionShardCountMismatch,
+    /// Computing parent collection root failed.
+    #[error("invalid parent collection")]
+    InvalidParentCollection,
+    /// Recomputed parent collection root did not match declared parent collection root.
+    #[error("parent collection root mismatch")]
+    ParentCollectionRootMismatch,
+    /// Absent parent collection has non-zero parent shard roots.
+    #[error("absent collection must start from all-zero shard roots")]
+    AbsentCollectionNonZeroParentShardRoots,
+    /// Computing new collection root failed.
+    #[error("invalid new collection")]
+    InvalidNewCollection,
+    /// Recomputed new collection root Mismatched or changed shard set is empty.
+    #[error("changed collection root or shard payload mismatch")]
+    ChangedCollectionRootOrShardPayloadMismatch,
+    /// Computing sealed root for an identity batch parent failed.
+    #[error("invalid identity parent")]
+    InvalidIdentityParent,
+    /// Computing sealed root for a benchmark fixture parent failed.
+    #[error("invalid benchmark parent")]
+    InvalidBenchmarkParent,
+    /// Benchmark fixture collection key is invalid.
+    #[error("invalid benchmark collection")]
+    InvalidBenchmarkCollection,
+    /// Aggregating benchmark fixture shard roots failed.
+    #[error("invalid benchmark shard roots")]
+    InvalidBenchmarkShardRoots,
+    /// Computing benchmark fixture collection root failed.
+    #[error("invalid benchmark collection root")]
+    InvalidBenchmarkCollectionRoot,
+    /// Computing benchmark fixture sealed root failed.
+    #[error("invalid benchmark root")]
+    InvalidBenchmarkRoot,
+    /// Identity candidate has a catalog batch or changed catalog root.
+    #[error("identity candidate contains catalog changes")]
+    IdentityCandidateContainsCatalogChanges,
+    /// Changed collections are present without a catalog batch.
+    #[error("changed collections require one aggregate catalog batch")]
+    ChangedCollectionsRequireCatalogBatch,
+    /// Catalog batch parent/new roots do not match the envelope or did not change.
+    #[error("catalog batch root mismatch")]
+    CatalogBatchRootMismatch,
+    /// Catalog batch leaf change count does not match changed collection count.
+    #[error("catalog leaf changes do not cover changed collections")]
+    CatalogLeafChangesDoNotCoverChangedCollections,
+    /// Collection mutation has an unknown domain ID.
+    #[error("unknown collection domain")]
+    UnknownCollectionDomain,
+    /// Recomputed collection root in catalog validation did not match.
+    #[error("collection root mismatch")]
+    CollectionRootMismatch,
+    /// Catalog leaf change does not set the new collection root.
+    #[error("catalog leaf is not the changed collection root")]
+    CatalogLeafNotChangedCollectionRoot,
+    /// Collection retirement has an unknown domain ID.
+    #[error("unknown retirement domain")]
+    UnknownRetirementDomain,
+    /// Retired collection's catalog leaf is not deleted in the catalog batch.
+    #[error("retired catalog leaf is not deleted")]
+    RetiredCatalogLeafNotDeleted,
+    /// Computing parent sealed-root wrapper failed.
+    #[error("invalid parent sealed-root wrapper")]
+    InvalidParentSealedRootWrapper,
+    /// Computing new sealed-root wrapper failed.
+    #[error("invalid new sealed-root wrapper")]
+    InvalidNewSealedRootWrapper,
+    /// Sealed-root wrapper does not match catalog root.
+    #[error("sealed-root wrapper mismatch")]
+    SealedRootWrapperMismatch,
+    /// Snapshot is missing the catalog tree root.
+    #[error("catalog root is missing")]
+    CatalogRootMissing,
+    /// Computing sealed root from snapshot catalog root failed.
+    #[error("invalid exact-parent catalog root")]
+    InvalidExactParentCatalogRoot,
+    /// Snapshot catalog root does not seal to the required authoritative root.
+    #[error("exact-parent catalog root does not match authoritative sealed root")]
+    ExactParentCatalogRootMismatch,
+}
+
+impl CatalogEnvelopeErrorReason {
+    /// Static message preserved in [`crate::staging::StagingError::InvalidCatalogEnvelope`].
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OnlyCompleteTributeCollectionMayRetire => {
+                "only a complete Tribute collection may retire"
+            }
+            Self::InvalidRetirementShardRoots => "invalid retirement shard roots",
+            Self::InvalidRetirementCollection => "invalid retirement collection",
+            Self::RetirementParentCollectionRootMismatch => {
+                "retirement parent collection root mismatch"
+            }
+            Self::CollectionShardCountMismatch => {
+                "collection shard count does not match domain topology"
+            }
+            Self::InvalidParentCollection => "invalid parent collection",
+            Self::ParentCollectionRootMismatch => "parent collection root mismatch",
+            Self::AbsentCollectionNonZeroParentShardRoots => {
+                "absent collection must start from all-zero shard roots"
+            }
+            Self::InvalidNewCollection => "invalid new collection",
+            Self::ChangedCollectionRootOrShardPayloadMismatch => {
+                "changed collection root or shard payload mismatch"
+            }
+            Self::InvalidIdentityParent => "invalid identity parent",
+            Self::InvalidBenchmarkParent => "invalid benchmark parent",
+            Self::InvalidBenchmarkCollection => "invalid benchmark collection",
+            Self::InvalidBenchmarkShardRoots => "invalid benchmark shard roots",
+            Self::InvalidBenchmarkCollectionRoot => "invalid benchmark collection root",
+            Self::InvalidBenchmarkRoot => "invalid benchmark root",
+            Self::IdentityCandidateContainsCatalogChanges => {
+                "identity candidate contains catalog changes"
+            }
+            Self::ChangedCollectionsRequireCatalogBatch => {
+                "changed collections require one aggregate catalog batch"
+            }
+            Self::CatalogBatchRootMismatch => "catalog batch root mismatch",
+            Self::CatalogLeafChangesDoNotCoverChangedCollections => {
+                "catalog leaf changes do not cover changed collections"
+            }
+            Self::UnknownCollectionDomain => "unknown collection domain",
+            Self::CollectionRootMismatch => "collection root mismatch",
+            Self::CatalogLeafNotChangedCollectionRoot => {
+                "catalog leaf is not the changed collection root"
+            }
+            Self::UnknownRetirementDomain => "unknown retirement domain",
+            Self::RetiredCatalogLeafNotDeleted => "retired catalog leaf is not deleted",
+            Self::InvalidParentSealedRootWrapper => "invalid parent sealed-root wrapper",
+            Self::InvalidNewSealedRootWrapper => "invalid new sealed-root wrapper",
+            Self::SealedRootWrapperMismatch => "sealed-root wrapper mismatch",
+            Self::CatalogRootMissing => "catalog root is missing",
+            Self::InvalidExactParentCatalogRoot => "invalid exact-parent catalog root",
+            Self::ExactParentCatalogRootMismatch => {
+                "exact-parent catalog root does not match authoritative sealed root"
+            }
+        }
+    }
+}
+
+impl From<CatalogEnvelopeErrorReason> for crate::staging::StagingError {
+    fn from(reason: CatalogEnvelopeErrorReason) -> Self {
+        Self::InvalidCatalogEnvelope(reason.as_str())
+    }
+}
+
+/// Typed lock identifiers for [`crate::tree_manager::TreeServiceError::LockPoisoned`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub enum TreeServiceLockKind {
+    /// Export lease gate mutex/condvar lock.
+    #[error("export lease gate")]
+    ExportLeaseGate,
+    /// Finalization boundary serialization mutex.
+    #[error("finalization boundary")]
+    FinalizationBoundary,
+    /// Speculative candidate cache mutex.
+    #[error("candidate cache")]
+    CandidateCache,
+}
+
+impl TreeServiceLockKind {
+    /// Static lock name preserved in [`crate::tree_manager::TreeServiceError::LockPoisoned`].
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ExportLeaseGate => "export lease gate",
+            Self::FinalizationBoundary => "finalization boundary",
+            Self::CandidateCache => "candidate cache",
+        }
+    }
+}
+
+impl From<TreeServiceLockKind> for crate::tree_manager::TreeServiceError {
+    fn from(kind: TreeServiceLockKind) -> Self {
+        Self::LockPoisoned(kind.as_str())
+    }
+}

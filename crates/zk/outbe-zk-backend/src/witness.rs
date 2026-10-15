@@ -23,6 +23,8 @@ use outbe_zk::error::Error;
 use outbe_zk::protocol::zk::{Circuit, CircuitId};
 use outbe_zk::Fr;
 
+use crate::errors::BackendProofError;
+
 /// Convert the protocol's BN254 field into the toolchain's field representation.
 fn to_field(f: &Fr) -> FieldElement {
     FieldElement::from_repr(*f)
@@ -46,8 +48,9 @@ where
 fn program<C: CircuitId>() -> Result<Program<FieldElement>, Error> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(C::BYTECODE_B64)
-        .map_err(|e| Error::Proof(format!("acir bytecode base64: {e}")))?;
-    Program::deserialize_program(&bytes).map_err(|e| Error::Proof(format!("acir deserialize: {e}")))
+        .map_err(BackendProofError::AcirBytecodeBase64)?;
+    Program::deserialize_program(&bytes)
+        .map_err(|e| BackendProofError::AcirDeserialize(e.to_string()).into())
 }
 
 /// Build the initial witness, ACVM-solve the committed bytecode, and return the
@@ -63,7 +66,7 @@ where
     let circuit = program
         .functions
         .first()
-        .ok_or_else(|| Error::Proof("acir program has no functions".into()))?;
+        .ok_or(BackendProofError::AcirProgramMissingFunctions)?;
 
     let solver = Bn254BlackBoxSolver;
     let mut acvm = ACVM::new(
@@ -75,7 +78,7 @@ where
     );
     match acvm.solve() {
         ACVMStatus::Solved => {}
-        other => return Err(Error::Proof(format!("acvm solve: {other}"))),
+        other => return Err(BackendProofError::AcvmSolve(other.to_string()).into()),
     }
 
     let mut stack = WitnessStack::default();
@@ -84,11 +87,11 @@ where
     // raw (uncompressed) msgpack witness, so decompress before returning.
     let compressed = stack
         .serialize()
-        .map_err(|e| Error::Proof(format!("witness serialize: {e}")))?;
+        .map_err(|e| BackendProofError::WitnessSerialize(e.to_string()))?;
     let mut raw = Vec::new();
     GzDecoder::new(compressed.as_slice())
         .read_to_end(&mut raw)
-        .map_err(|e| Error::Proof(format!("witness decompress: {e}")))?;
+        .map_err(BackendProofError::WitnessDecompress)?;
     Ok(raw)
 }
 

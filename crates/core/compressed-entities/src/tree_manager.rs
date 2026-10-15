@@ -332,18 +332,17 @@ impl ExportLeaseGate {
                 expire_if_due(&mut state, Instant::now());
                 return Ok(());
             }
-            let (next, _) = self
-                .changed
-                .wait_timeout(state, remaining)
-                .map_err(|_| TreeServiceError::LockPoisoned("export lease gate"))?;
+            let (next, _) = self.changed.wait_timeout(state, remaining).map_err(|_| {
+                TreeServiceError::from(crate::errors::TreeServiceLockKind::ExportLeaseGate)
+            })?;
             state = next;
         }
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, ExportLeaseState>, TreeServiceError> {
-        self.state
-            .lock()
-            .map_err(|_| TreeServiceError::LockPoisoned("export lease gate"))
+        self.state.lock().map_err(|_| {
+            TreeServiceError::from(crate::errors::TreeServiceLockKind::ExportLeaseGate)
+        })
     }
 }
 
@@ -435,10 +434,9 @@ impl CompressedTreeService {
         required: FinalizedMarker,
         challenge: B256,
     ) -> Result<ExportLeaseOffer, TreeServiceError> {
-        let _guard = self
-            .finalization
-            .lock()
-            .map_err(|_| TreeServiceError::LockPoisoned("finalization boundary"))?;
+        let _guard = self.finalization.lock().map_err(|_| {
+            TreeServiceError::from(crate::errors::TreeServiceLockKind::FinalizationBoundary)
+        })?;
         let current = self.db.marker()?;
         if current != required {
             return Err(TreeServiceError::ExportLeaseMarkerAdvanced {
@@ -497,10 +495,9 @@ impl CompressedTreeService {
         block_hash: B256,
         provisional: ProvisionalTreeBatch,
     ) -> Result<PublicationOutcome, TreeServiceError> {
-        let _guard = self
-            .finalization
-            .lock()
-            .map_err(|_| TreeServiceError::LockPoisoned("finalization boundary"))?;
+        let _guard = self.finalization.lock().map_err(|_| {
+            TreeServiceError::from(crate::errors::TreeServiceLockKind::FinalizationBoundary)
+        })?;
         let current = self.db.marker()?;
         let batch = provisional.freeze(block_hash);
         if current == batch.marker(current.commitment_scheme_version) {
@@ -520,7 +517,9 @@ impl CompressedTreeService {
         }
         self.candidates
             .lock()
-            .map_err(|_| TreeServiceError::LockPoisoned("candidate cache"))?
+            .map_err(|_| {
+                TreeServiceError::from(crate::errors::TreeServiceLockKind::CandidateCache)
+            })?
             .publish(batch)
             .map_err(Into::into)
     }
@@ -535,7 +534,9 @@ impl CompressedTreeService {
         let candidate = self
             .candidates
             .lock()
-            .map_err(|_| TreeServiceError::LockPoisoned("candidate cache"))?
+            .map_err(|_| {
+                TreeServiceError::from(crate::errors::TreeServiceLockKind::CandidateCache)
+            })?
             .get(block_hash);
         match candidate {
             Some(candidate) if candidate.block_number != block_number => {
@@ -556,14 +557,12 @@ impl CompressedTreeService {
         block_number: u64,
         block_hash: B256,
     ) -> Result<bool, TreeServiceError> {
-        let _guard = self
-            .finalization
-            .lock()
-            .map_err(|_| TreeServiceError::LockPoisoned("finalization boundary"))?;
-        let mut candidates = self
-            .candidates
-            .lock()
-            .map_err(|_| TreeServiceError::LockPoisoned("candidate cache"))?;
+        let _guard = self.finalization.lock().map_err(|_| {
+            TreeServiceError::from(crate::errors::TreeServiceLockKind::FinalizationBoundary)
+        })?;
+        let mut candidates = self.candidates.lock().map_err(|_| {
+            TreeServiceError::from(crate::errors::TreeServiceLockKind::CandidateCache)
+        })?;
         if let Some(candidate) = candidates.get(block_hash) {
             if candidate.block_number != block_number {
                 return Err(TreeServiceError::CandidateIdentityMismatch {
@@ -585,10 +584,9 @@ impl CompressedTreeService {
         block_hash: B256,
         authoritative_root: B256,
     ) -> Result<FinalizedCandidateOutcome, TreeServiceError> {
-        let _guard = self
-            .finalization
-            .lock()
-            .map_err(|_| TreeServiceError::LockPoisoned("finalization boundary"))?;
+        let _guard = self.finalization.lock().map_err(|_| {
+            TreeServiceError::from(crate::errors::TreeServiceLockKind::FinalizationBoundary)
+        })?;
         let marker_before = self.db.marker()?;
         if block_number > marker_before.height {
             self.export_lease.wait_before_next_apply(marker_before)?;
@@ -642,7 +640,9 @@ impl CompressedTreeService {
     pub fn remove_finalized_candidates(&self, height: u64) -> Result<(), TreeServiceError> {
         self.candidates
             .lock()
-            .map_err(|_| TreeServiceError::LockPoisoned("candidate cache"))?
+            .map_err(|_| {
+                TreeServiceError::from(crate::errors::TreeServiceLockKind::CandidateCache)
+            })?
             .remove_finalized(height);
         Ok(())
     }
@@ -651,7 +651,9 @@ impl CompressedTreeService {
     pub fn discard_speculative_candidates(&self) -> Result<(), TreeServiceError> {
         self.candidates
             .lock()
-            .map_err(|_| TreeServiceError::LockPoisoned("candidate cache"))?
+            .map_err(|_| {
+                TreeServiceError::from(crate::errors::TreeServiceLockKind::CandidateCache)
+            })?
             .discard_all_on_restart();
         Ok(())
     }

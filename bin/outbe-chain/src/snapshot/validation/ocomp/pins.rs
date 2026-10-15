@@ -55,12 +55,12 @@ pub(crate) fn verify_pin_authority(
     // The canonical getter validates finalized B bindings. Awaiting pins also
     // need the retained request header even before canonical finality exists.
     let number = candidate.block_number;
-    let header = view
-        .header(number)?
-        .ok_or_else(|| Incomplete(format!("missing retained pin request header B={number}")))?;
-    let canonical_hash = view
-        .canonical_hash(number)?
-        .ok_or_else(|| Incomplete(format!("missing canonical pin request hash B={number}")))?;
+    let header = view.header(number)?.ok_or_else(|| {
+        SnapshotIncompleteError::MissingRetainedPinRequestHeader { number }.into_incomplete()
+    })?;
+    let canonical_hash = view.canonical_hash(number)?.ok_or_else(|| {
+        SnapshotIncompleteError::MissingCanonicalPinRequestHash { number }.into_incomplete()
+    })?;
     if header.inner.number != number
         || header.hash_slow() != canonical_hash
         || canonical_hash != candidate.block_hash
@@ -151,15 +151,18 @@ pub(crate) fn verify_lease_inputs(
             || matches!(error, FinalizedTributeError::CountMismatch { expected, actual } if actual < expected)
             || missing_native_input(&error)
         {
-            eyre::Report::new(error).wrap_err(Incomplete(format!(
-                "missing required Tribute inputs for lease {}, day {}",
-                pin.input_lease_id, intent.wwd
-            )))
+            eyre::Report::new(error).wrap_err(
+                SnapshotIncompleteError::MissingRequiredTributeInputs {
+                    input_lease_id: pin.input_lease_id,
+                    wwd: intent.wwd,
+                }
+                .into_incomplete(),
+            )
         } else {
-            eyre::Report::new(error).wrap_err(format!(
-                "Tribute inputs for lease {}, day {}",
-                pin.input_lease_id, intent.wwd
-            ))
+            eyre::Report::new(error).wrap_err(SnapshotOcompError::TributeInputsForLease {
+                input_lease_id: pin.input_lease_id,
+                wwd: intent.wwd,
+            })
         }
     };
     let source = FinalizedTributeSource::new(reader, outbe_offchain_storage::MAX_SCAN_ENTRIES)
@@ -183,11 +186,12 @@ pub(crate) fn verify_lease_inputs(
     let mut visited = 0_u64;
     while let Some(record) = stream.next_commitment().map_err(&classify)? {
         if maximum_records.is_some_and(|maximum| visited >= maximum) {
-            return Err(Incomplete(format!(
-                "Tribute lease {} scan stopped at {visited}/{} records",
-                pin.input_lease_id, intent.authenticated_day_count
-            ))
-            .into());
+            return Err(SnapshotIncompleteError::TributeLeaseScanStopped {
+                input_lease_id: pin.input_lease_id,
+                visited,
+                authenticated_day_count: intent.authenticated_day_count,
+            }
+            .into_report());
         }
         partition.push(
             record.tribute_id,

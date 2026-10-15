@@ -130,6 +130,46 @@ impl From<outbe_compressed_entities::CommitmentError> for ProjectionError {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum DayApplyCorruptionError {
+    #[error("day key is shorter than the worldwide-day prefix")]
+    DayKeyTooShort,
+    #[error("Nod owner index key is shorter than an address")]
+    NodOwnerKeyTooShort,
+}
+
+impl From<DayApplyCorruptionError> for StorageError {
+    fn from(error: DayApplyCorruptionError) -> Self {
+        Self::Corruption(error.to_string())
+    }
+}
+
+impl From<DayApplyCorruptionError> for ProjectionError {
+    fn from(error: DayApplyCorruptionError) -> Self {
+        Self::Storage(error.into())
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum ProjectionMetadataError {
+    #[error("projection metadata must contain exactly seven fields")]
+    WrongFieldCount,
+    #[error("unknown projection metadata field {0}")]
+    UnknownField(String),
+    #[error("missing {0}")]
+    MissingField(&'static str),
+    #[error("invalid {0}")]
+    InvalidField(&'static str),
+    #[error("non-canonical {0}")]
+    NonCanonicalField(&'static str),
+}
+
+impl From<ProjectionMetadataError> for ProjectionError {
+    fn from(error: ProjectionMetadataError) -> Self {
+        Self::MalformedProjectionMetadata(error.to_string())
+    }
+}
+
 pub enum PrecompileBodyReadClassification<'a> {
     Unavailable,
     Corruption(&'a str),

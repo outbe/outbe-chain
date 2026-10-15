@@ -4,7 +4,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{MongoStorageConfig, StorageError};
+use crate::{errors::StorageValidationError, MongoStorageConfig, StorageError};
 
 /// Filesystem locations for one primary and its independent read sessions.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -65,10 +65,10 @@ impl StorageConfig {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, StorageError> {
         let path = path.as_ref();
         let source = std::fs::read_to_string(path).map_err(|error| {
-            StorageError::invalid_argument(format!(
-                "cannot read storage configuration {}: {error}",
-                path.display()
-            ))
+            StorageError::from(StorageValidationError::CannotReadConfig {
+                path: path.to_path_buf(),
+                error,
+            })
         })?;
         Self::from_toml(&source, path)
     }
@@ -76,10 +76,7 @@ impl StorageConfig {
     /// Parse using the file's location, never the working directory of its consumer.
     pub fn from_toml(source: &str, path: &Path) -> Result<Self, StorageError> {
         let document: Document = toml::from_str(source).map_err(|error: toml::de::Error| {
-            StorageError::invalid_argument(format!(
-                "invalid storage TOML at byte range {:?}",
-                error.span()
-            ))
+            StorageError::from(StorageValidationError::InvalidToml { span: error.span() })
         })?;
         if document.version != 1 {
             return Err(StorageError::invalid_argument(
@@ -87,9 +84,9 @@ impl StorageConfig {
             ));
         }
         let config_path = absolute_path(path)?;
-        let base = config_path.parent().ok_or_else(|| {
-            StorageError::invalid_argument("storage configuration must have a parent directory")
-        })?;
+        let base = config_path
+            .parent()
+            .ok_or(StorageValidationError::MissingParentDirectory)?;
         let backend = match (document.backend, document.rocksdb, document.mongodb) {
             (BackendName::Rocksdb, Some(mut config), None) => {
                 if config.path.as_os_str().is_empty()
@@ -144,7 +141,7 @@ impl StorageConfig {
             rocksdb,
             mongodb,
         })
-        .map_err(|_| StorageError::invalid_argument("cannot encode storage configuration"))
+        .map_err(|_| StorageError::from(StorageValidationError::CannotEncodeConfig))
     }
 
     #[must_use]

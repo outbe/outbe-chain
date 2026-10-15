@@ -5,7 +5,7 @@ use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use revm::state::{AccountInfo, Bytecode};
 use revm::Database;
 
-use crate::error::{PrecompileError, PrimitivesStorageError, Result};
+use crate::error::{PrimitivesStorageError, Result};
 use crate::storage::gas::GasTracker;
 use crate::storage::PrecompileStorageProvider;
 
@@ -127,14 +127,14 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
         self.internals
             .set_code(address, code)
-            .map_err(PrecompileError::storage_err)
+            .map_err(PrimitivesStorageError::evm_internals)
     }
 
     fn account_info(&mut self, address: Address) -> Result<AccountInfo> {
         let account = self
             .internals
             .load_account_code(address)
-            .map_err(PrecompileError::storage_err)?;
+            .map_err(PrimitivesStorageError::evm_internals)?;
         Ok(account.data.account().info.clone())
     }
 
@@ -144,14 +144,14 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
         let value = self
             .internals
             .sload(address, key)
-            .map_err(PrecompileError::storage_err)?;
+            .map_err(PrimitivesStorageError::evm_internals)?;
         Ok(value.data)
     }
     fn enclave_upgrade_id(&mut self) -> Result<U256> {
         self.internals
             .sload(crate::addresses::TEE_REGISTRY_ADDRESS, U256::from(45))
             .map(|value| value.data)
-            .map_err(PrecompileError::storage_err)
+            .map_err(PrimitivesStorageError::evm_internals)
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
@@ -164,7 +164,7 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
         self.gas.deduct(SSTORE_RESET)?;
         self.internals
             .sstore(address, key, value)
-            .map_err(PrecompileError::storage_err)?;
+            .map_err(PrimitivesStorageError::evm_internals)?;
         Ok(())
     }
 

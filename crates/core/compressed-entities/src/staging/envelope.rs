@@ -13,26 +13,24 @@ pub(super) fn validate_shard_envelope(
         parent: parent_root,
         new: new_root,
     } = roots;
-    let expected_len = usize::try_from(shard_count)
-        .map_err(|_| StagingError::InvalidShardEnvelope("shard count is not representable"))?;
+    let expected_len = usize::try_from(shard_count).map_err(|_| {
+        StagingError::from(crate::errors::ShardEnvelopeErrorReason::ShardCountNotRepresentable)
+    })?;
     if shard_count == 0 || shard_count > 256 || !shard_count.is_power_of_two() {
-        return Err(StagingError::InvalidShardEnvelope("invalid shard count"));
+        return Err(crate::errors::ShardEnvelopeErrorReason::InvalidShardCount.into());
     }
     if parent_shard_roots.len() != expected_len || new_shard_roots.len() != expected_len {
-        return Err(StagingError::InvalidShardEnvelope(
-            "root vector length mismatch",
-        ));
+        return Err(crate::errors::ShardEnvelopeErrorReason::RootVectorLengthMismatch.into());
     }
     let parent = aggregate_b256_roots(parent_shard_roots)?;
     let new = aggregate_b256_roots(new_shard_roots)?;
     if parent != parent_root || new != new_root {
-        return Err(StagingError::InvalidShardEnvelope(
-            "aggregate root mismatch",
-        ));
+        return Err(crate::errors::ShardEnvelopeErrorReason::AggregateRootMismatch.into());
     }
     for index in 0..shard_count {
-        let position = usize::try_from(index)
-            .map_err(|_| StagingError::InvalidShardEnvelope("shard index overflow"))?;
+        let position = usize::try_from(index).map_err(|_| {
+            StagingError::from(crate::errors::ShardEnvelopeErrorReason::ShardIndexOverflow)
+        })?;
         validate_changed_shard(
             index,
             shard_count,
@@ -42,16 +40,15 @@ pub(super) fn validate_shard_envelope(
         )?;
     }
     if changed_shards.keys().any(|index| *index >= shard_count) {
-        return Err(StagingError::InvalidShardEnvelope(
-            "shard index out of range",
-        ));
+        return Err(crate::errors::ShardEnvelopeErrorReason::ShardIndexOutOfRange.into());
     }
     Ok(())
 }
 
 pub(super) fn aggregate_b256_roots(roots: &[B256]) -> Result<B256, StagingError> {
-    aggregate_b256_shard_roots(roots)
-        .map_err(|_| StagingError::InvalidShardEnvelope("invalid shard root aggregate"))
+    aggregate_b256_shard_roots(roots).map_err(|_| {
+        StagingError::from(crate::errors::ShardEnvelopeErrorReason::InvalidShardRootAggregate)
+    })
 }
 
 pub(super) fn validate_catalog_envelope(
@@ -67,28 +64,31 @@ pub(super) fn validate_catalog_envelope(
     match (changed_collections.is_empty(), catalog_batch) {
         (true, None) if parent_catalog_root == new_catalog_root => return Ok(()),
         (true, _) => {
-            return Err(StagingError::InvalidCatalogEnvelope(
-                "identity candidate contains catalog changes",
-            ));
+            return Err(
+                crate::errors::CatalogEnvelopeErrorReason::IdentityCandidateContainsCatalogChanges
+                    .into(),
+            );
         }
         (false, None) => {
-            return Err(StagingError::InvalidCatalogEnvelope(
-                "changed collections require one aggregate catalog batch",
-            ));
+            return Err(
+                crate::errors::CatalogEnvelopeErrorReason::ChangedCollectionsRequireCatalogBatch
+                    .into(),
+            );
         }
         (false, Some(batch)) => {
             if batch.parent_catalog_root != parent_catalog_root
                 || batch.new_catalog_root != new_catalog_root
                 || parent_catalog_root == new_catalog_root
             {
-                return Err(StagingError::InvalidCatalogEnvelope(
-                    "catalog batch root mismatch",
-                ));
+                return Err(
+                    crate::errors::CatalogEnvelopeErrorReason::CatalogBatchRootMismatch.into(),
+                );
             }
             if batch.leaf_changes.len() != changed_collections.len() {
-                return Err(StagingError::InvalidCatalogEnvelope(
-                    "catalog leaf changes do not cover changed collections",
-                ));
+                return Err(
+                    crate::errors::CatalogEnvelopeErrorReason::CatalogLeafChangesDoNotCoverChangedCollections
+                        .into(),
+                );
             }
             for (key, operation) in changed_collections {
                 validate_collection_operation(*key, operation, batch)?;
@@ -108,29 +108,30 @@ fn validate_changed_shard(
     match (parent != new, batch) {
         (true, Some(batch)) => {
             if batch.parent_shard_root != parent || batch.new_shard_root != new {
-                return Err(StagingError::InvalidShardEnvelope(
-                    "changed shard root mismatch",
-                ));
+                return Err(
+                    crate::errors::ShardEnvelopeErrorReason::ChangedShardRootMismatch.into(),
+                );
             }
             for key in batch.leaf_changes.keys() {
-                let smt_key = SmtTreeKey::from_be_bytes(key.encode())
-                    .map_err(|_| StagingError::InvalidShardEnvelope("invalid leaf key"))?;
-                if shard_index(smt_key, shard_count)
-                    .map_err(|_| StagingError::InvalidShardEnvelope("invalid shard derivation"))?
-                    != index
+                let smt_key = SmtTreeKey::from_be_bytes(key.encode()).map_err(|_| {
+                    StagingError::from(crate::errors::ShardEnvelopeErrorReason::InvalidLeafKey)
+                })?;
+                if shard_index(smt_key, shard_count).map_err(|_| {
+                    StagingError::from(
+                        crate::errors::ShardEnvelopeErrorReason::InvalidShardDerivation,
+                    )
+                })? != index
                 {
-                    return Err(StagingError::InvalidShardEnvelope("misderived leaf shard"));
+                    return Err(crate::errors::ShardEnvelopeErrorReason::MisderivedLeafShard.into());
                 }
             }
         }
         (false, None) => {}
         (true, None) => {
-            return Err(StagingError::InvalidShardEnvelope("missing changed shard"));
+            return Err(crate::errors::ShardEnvelopeErrorReason::MissingChangedShard.into());
         }
         (false, Some(_)) => {
-            return Err(StagingError::InvalidShardEnvelope(
-                "unchanged shard included",
-            ));
+            return Err(crate::errors::ShardEnvelopeErrorReason::UnchangedShardIncluded.into());
         }
     }
     Ok(())
@@ -144,12 +145,15 @@ fn validate_collection_operation(
     let tree_key = TreeKey::try_from(B256::from(key.as_bytes()))?;
     match operation {
         CollectionOperation::Mutate(collection) => {
-            let domain = CeDomain::try_from(collection.domain_id)
-                .map_err(|_| StagingError::InvalidCatalogEnvelope("unknown collection domain"))?;
+            let domain = CeDomain::try_from(collection.domain_id).map_err(|_| {
+                StagingError::from(
+                    crate::errors::CatalogEnvelopeErrorReason::UnknownCollectionDomain,
+                )
+            })?;
             if collection.shard_set.shard_count != domain.shard_count() {
-                return Err(StagingError::InvalidCatalogEnvelope(
-                    "collection shard count does not match domain topology",
-                ));
+                return Err(
+                    crate::errors::CatalogEnvelopeErrorReason::CollectionShardCountMismatch.into(),
+                );
             }
             validate_shard_envelope(
                 collection.shard_set.shard_count,
@@ -165,7 +169,11 @@ fn validate_collection_operation(
                 .parent_collection_root
                 .map(|_| collection_root(domain, key, collection.shard_set.parent_shard_top_root))
                 .transpose()
-                .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid parent collection"))?;
+                .map_err(|_| {
+                    StagingError::from(
+                        crate::errors::CatalogEnvelopeErrorReason::InvalidParentCollection,
+                    )
+                })?;
             if expected_parent != collection.parent_collection_root
                 || (collection.parent_collection_root.is_none()
                     && collection
@@ -173,24 +181,32 @@ fn validate_collection_operation(
                         .parent_shard_roots
                         .iter()
                         .any(|root| *root != B256::ZERO))
-                || collection_root(domain, key, collection.shard_set.new_shard_top_root)
-                    .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid new collection"))?
-                    != collection.new_collection_root
+                || collection_root(domain, key, collection.shard_set.new_shard_top_root).map_err(
+                    |_| {
+                        StagingError::from(
+                            crate::errors::CatalogEnvelopeErrorReason::InvalidNewCollection,
+                        )
+                    },
+                )? != collection.new_collection_root
             {
-                return Err(StagingError::InvalidCatalogEnvelope(
-                    "collection root mismatch",
-                ));
+                return Err(
+                    crate::errors::CatalogEnvelopeErrorReason::CollectionRootMismatch.into(),
+                );
             }
             let expected = LeafValue::try_from(collection.new_collection_root)?;
             if batch.leaf_changes.get(&tree_key) != Some(&TreeChange::Set(expected)) {
-                return Err(StagingError::InvalidCatalogEnvelope(
-                    "catalog leaf is not the changed collection root",
-                ));
+                return Err(
+                    crate::errors::CatalogEnvelopeErrorReason::CatalogLeafNotChangedCollectionRoot
+                        .into(),
+                );
             }
         }
         CollectionOperation::Retire(retirement) => {
-            let domain = CeDomain::try_from(retirement.domain_id)
-                .map_err(|_| StagingError::InvalidCatalogEnvelope("unknown retirement domain"))?;
+            let domain = CeDomain::try_from(retirement.domain_id).map_err(|_| {
+                StagingError::from(
+                    crate::errors::CatalogEnvelopeErrorReason::UnknownRetirementDomain,
+                )
+            })?;
             RetirementBatch::new(
                 domain,
                 key,
@@ -198,9 +214,9 @@ fn validate_collection_operation(
                 retirement.parent_shard_roots.clone(),
             )?;
             if batch.leaf_changes.get(&tree_key) != Some(&TreeChange::Delete) {
-                return Err(StagingError::InvalidCatalogEnvelope(
-                    "retired catalog leaf is not deleted",
-                ));
+                return Err(
+                    crate::errors::CatalogEnvelopeErrorReason::RetiredCatalogLeafNotDeleted.into(),
+                );
             }
         }
     }
@@ -213,16 +229,18 @@ fn validate_catalog_roots(roots: CatalogRoots) -> Result<(), StagingError> {
     let new_r_sealed = roots.sealed.new;
     let parent_catalog_root = roots.catalog.parent;
     let new_catalog_root = roots.catalog.new;
-    if sealed_root(parent_catalog_root)
-        .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid parent sealed-root wrapper"))?
-        != parent_r_sealed
-        || sealed_root(new_catalog_root)
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid new sealed-root wrapper"))?
-            != new_r_sealed
+    if sealed_root(parent_catalog_root).map_err(|_| {
+        StagingError::from(
+            crate::errors::CatalogEnvelopeErrorReason::InvalidParentSealedRootWrapper,
+        )
+    })? != parent_r_sealed
+        || sealed_root(new_catalog_root).map_err(|_| {
+            StagingError::from(
+                crate::errors::CatalogEnvelopeErrorReason::InvalidNewSealedRootWrapper,
+            )
+        })? != new_r_sealed
     {
-        return Err(StagingError::InvalidCatalogEnvelope(
-            "sealed-root wrapper mismatch",
-        ));
+        return Err(crate::errors::CatalogEnvelopeErrorReason::SealedRootWrapperMismatch.into());
     }
     Ok(())
 }

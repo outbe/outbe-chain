@@ -105,11 +105,15 @@ impl ProjectionBodyView {
         let equality = if same_frontier {
             Ok(expected.finish()?)
         } else {
-            Err(Incomplete(format!(
-                "live body equality requires the same CE and projection identity: Q={} ({}) P={} ({})",
-                marker.height, marker.block_hash,
-                self.checkpoint.block_number, self.checkpoint.block_hash,
-            )))
+            Err(
+                crate::errors::SnapshotIncompleteError::LiveBodyEqualityFrontierMismatch {
+                    q_height: marker.height,
+                    q_hash: marker.block_hash,
+                    p_height: self.checkpoint.block_number,
+                    p_hash: self.checkpoint.block_hash,
+                }
+                .into_incomplete(),
+            )
         };
         Ok(ProjectionBodyReport {
             checkpoint: self.checkpoint,

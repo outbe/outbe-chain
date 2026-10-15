@@ -241,6 +241,16 @@ pub enum StackShutdownError {
     /// Indicates that the Simplex engine exited with an error.
     #[error("simplex engine exited: {0}")]
     SimplexEngineExited(String),
+    /// Indicates an additional failure while draining the consensus stack.
+    #[error("additional failure while draining the consensus stack: {0}")]
+    AdditionalDrainFailure(String),
+}
+
+impl StackShutdownError {
+    /// Formats an additional failure while draining the consensus stack.
+    pub fn additional_drain_failure(error: &eyre::Report) -> Self {
+        Self::AdditionalDrainFailure(format!("{error:#}"))
+    }
 }
 
 /// Represents errors from consensus stack startup validation.
@@ -580,4 +590,7 @@ pub enum StackRecoveryError {
         "timed out recovering marshal finalization for finalized execution height {0}; likely partial restore/archive corruption; resync/rebuild consensus storage"
     )]
     MarshalFinalizationTimeoutCorrupt(u64),
+    /// Indicates that a recovered forkchoice update attempt timed out.
+    #[error("recovered FCU attempt {0} timed out")]
+    RecoveredFcuAttemptTimedOut(usize),
 }

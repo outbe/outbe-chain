@@ -908,6 +908,86 @@ impl From<CtxStorageError> for PrecompileError {
     }
 }
 
+/// Errors that occur while driving a nested EVM sub-call.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SubCallDriverError {
+    #[error("{0}")]
+    DatabaseError(String),
+    #[error("unsupported subcall state-gas charge")]
+    UnsupportedStateGasCharge,
+    #[error("frame_init: {0}")]
+    FrameInit(String),
+    #[error("frame_run: {0}")]
+    FrameRun(String),
+    #[error("frame_return_result: {0}")]
+    FrameReturnResult(String),
+    #[error("frame_init nested: {0}")]
+    FrameInitNested(String),
+    #[error("non-VM child terminal: {0}")]
+    NonVmChildTerminal(String),
+    #[error("unexpected child terminal: {0}")]
+    UnexpectedChildTerminal(String),
+}
+
+impl SubCallDriverError {
+    pub(crate) fn database_error(
+        error: impl core::fmt::Debug,
+    ) -> outbe_primitives::storage::SubCallError {
+        Self::DatabaseError(format!("{error:?}")).into()
+    }
+
+    pub(crate) fn frame_init(
+        error: impl core::fmt::Debug,
+    ) -> outbe_primitives::storage::SubCallError {
+        Self::FrameInit(format!("{error:?}")).into()
+    }
+
+    pub(crate) fn frame_run(
+        error: impl core::fmt::Debug,
+    ) -> outbe_primitives::storage::SubCallError {
+        Self::FrameRun(format!("{error:?}")).into()
+    }
+
+    pub(crate) fn frame_return_result(
+        error: impl core::fmt::Debug,
+    ) -> outbe_primitives::storage::SubCallError {
+        Self::FrameReturnResult(format!("{error:?}")).into()
+    }
+
+    pub(crate) fn frame_init_nested(
+        error: impl core::fmt::Debug,
+    ) -> outbe_primitives::storage::SubCallError {
+        Self::FrameInitNested(format!("{error:?}")).into()
+    }
+
+    pub(crate) fn non_vm_child_terminal(
+        instr: impl core::fmt::Debug,
+    ) -> outbe_primitives::storage::SubCallError {
+        Self::NonVmChildTerminal(format!("{instr:?}")).into()
+    }
+
+    pub(crate) fn unexpected_child_terminal(
+        other: impl core::fmt::Debug,
+    ) -> outbe_primitives::storage::SubCallError {
+        Self::UnexpectedChildTerminal(format!("{other:?}")).into()
+    }
+}
+
+impl From<SubCallDriverError> for outbe_primitives::storage::SubCallError {
+    fn from(error: SubCallDriverError) -> Self {
+        match error {
+            SubCallDriverError::DatabaseError(_) => Self::DatabaseError(error.to_string()),
+            SubCallDriverError::UnsupportedStateGasCharge
+            | SubCallDriverError::FrameInit(_)
+            | SubCallDriverError::FrameRun(_)
+            | SubCallDriverError::FrameReturnResult(_)
+            | SubCallDriverError::FrameInitNested(_)
+            | SubCallDriverError::NonVmChildTerminal(_)
+            | SubCallDriverError::UnexpectedChildTerminal(_) => Self::Fatal(error.to_string()),
+        }
+    }
+}
+
 #[path = "errors/executor.rs"]
 mod executor;
 pub use executor::{ExecutorStorageError, ExecutorValidationError, SystemTxBuildError};

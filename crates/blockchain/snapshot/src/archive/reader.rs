@@ -7,6 +7,7 @@ use std::{
 
 use super::{digest::stream_sha256, invalid, payload_path, ArchiveIndex};
 use crate::{
+    errors::ArchiveReadError,
     manifest::{DomainInventory, EntryKind, FileEntry, SnapshotManifestV1},
     provenance::SignatureEnvelope,
 };
@@ -21,7 +22,7 @@ pub fn read_archive_index(
     let index = read_signed_index(&mut entries, expected_key)?;
     verify_payload(&mut entries, &index.manifest)?;
     if entries.next().transpose()?.is_some() {
-        return Err(invalid("undeclared archive payload"));
+        return Err(ArchiveReadError::UndeclaredArchivePayload.into());
     }
     verify_tail(archive.into_inner())?;
     Ok(index)
@@ -48,14 +49,19 @@ fn read_metadata<R: Read>(
     name: &str,
     limit: u64,
 ) -> io::Result<Vec<u8>> {
-    let mut entry = entries
-        .next()
-        .ok_or_else(|| invalid(format!("missing {name}")))??;
+    let mut entry = entries.next().ok_or_else(|| {
+        io::Error::from(ArchiveReadError::MissingMetadata {
+            name: name.to_owned(),
+        })
+    })??;
     if entry.path()?.as_ref() != Path::new(name)
         || !entry.header().entry_type().is_file()
         || entry.size() > limit
     {
-        return Err(invalid(format!("invalid {name} archive member")));
+        return Err(ArchiveReadError::InvalidArchiveMember {
+            name: name.to_owned(),
+        }
+        .into());
     }
     let mut bytes = Vec::new();
     entry.read_to_end(&mut bytes)?;
@@ -81,13 +87,13 @@ fn verify_domain<R: Read>(
 ) -> io::Result<()> {
     let wrapper = entries
         .next()
-        .ok_or_else(|| invalid("missing payload domain"))??;
+        .ok_or_else(|| io::Error::from(ArchiveReadError::MissingPayloadDomain))??;
     if wrapper.path()?.as_ref() != Path::new(&payload_path(domain, None))
         || !wrapper.header().entry_type().is_dir()
         || wrapper.size() != 0
         || wrapper.header().mode()? != domain.mode
     {
-        return Err(invalid("payload domain differs from manifest"));
+        return Err(ArchiveReadError::PayloadDomainMismatch.into());
     }
     Ok(())
 }
@@ -99,13 +105,13 @@ fn verify_member<R: Read>(
 ) -> io::Result<()> {
     if member.path.is_empty() && member.kind == EntryKind::Directory {
         if member.mode != domain.mode {
-            return Err(invalid("payload root mode differs from signed entry"));
+            return Err(ArchiveReadError::PayloadRootModeMismatch.into());
         }
         return Ok(());
     }
     let mut entry = entries
         .next()
-        .ok_or_else(|| invalid("missing declared payload"))??;
+        .ok_or_else(|| io::Error::from(ArchiveReadError::MissingDeclaredPayload))??;
     let kind_matches = match member.kind {
         EntryKind::File => entry.header().entry_type().is_file(),
         EntryKind::Directory => entry.header().entry_type().is_dir(),
@@ -115,15 +121,15 @@ fn verify_member<R: Read>(
         || entry.size() != member.size
         || entry.header().mode()? != member.mode
     {
-        return Err(invalid("payload member differs from manifest"));
+        return Err(ArchiveReadError::PayloadMemberMismatch.into());
     }
     if member.kind == EntryKind::File
         && member.sha256.as_deref() != Some(stream_sha256(&mut entry)?.as_str())
     {
-        return Err(invalid(format!(
-            "payload checksum mismatch: {}",
-            member.path
-        )));
+        return Err(ArchiveReadError::PayloadChecksumMismatch {
+            path: member.path.clone(),
+        }
+        .into());
     }
     Ok(())
 }
@@ -136,7 +142,7 @@ fn verify_tail(mut reader: impl Read) -> io::Result<()> {
             break;
         }
         if buffer[..n].iter().any(|byte| *byte != 0) {
-            return Err(invalid("nonzero data after archive terminator"));
+            return Err(ArchiveReadError::NonzeroTailData.into());
         }
     }
     Ok(())

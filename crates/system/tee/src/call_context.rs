@@ -168,9 +168,8 @@ impl StreamContext {
         request: &crate::protocol::EnclaveRequest,
     ) -> std::result::Result<EnclaveCallContextV1, crate::TransportError> {
         let context = if continues_stream(request) {
-            self.context.ok_or_else(|| {
-                crate::TransportError::EnclaveError("stream has no call context".into())
-            })?
+            self.context
+                .ok_or(crate::errors::TeeClientVerificationError::StreamMissingCallContext)?
         } else {
             resolve()?
         };

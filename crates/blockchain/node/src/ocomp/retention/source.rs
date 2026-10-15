@@ -137,7 +137,9 @@ fn observe_request_in_receipts(
                 continue;
             }
             let event = IMetadosis::OffchainJobRequested::decode_log(log).map_err(|error| {
-                RetentionError::Source(format!("decode finalized OCOMP request: {error}"))
+                RetentionError::from(
+                    crate::errors::RetentionSourceError::decode_finalized_ocomp_request(error),
+                )
             })?;
             let decoded = FinalizedRequestObservationV1 {
                 intent_id: event.data.intentId,
@@ -170,19 +172,26 @@ pub fn read_ocomp_job_record_at<P>(
 where
     P: StateProviderFactory,
 {
-    let state = provider
-        .state_by_block_hash(block_hash)
-        .map_err(|error| RetentionError::Source(format!("open exact block state: {error}")))?;
-    let logical_key = intent_storage_key(intent_id)
-        .map_err(|error| RetentionError::Source(format!("derive intent slot: {error}")))?;
+    let state = provider.state_by_block_hash(block_hash).map_err(|error| {
+        RetentionError::from(crate::errors::RetentionSourceError::open_exact_block_state(
+            error,
+        ))
+    })?;
+    let logical_key = intent_storage_key(intent_id).map_err(|error| {
+        RetentionError::from(crate::errors::RetentionSourceError::derive_intent_slot(
+            error,
+        ))
+    })?;
     let base = logical_key.mapping_slot(U256::from(OCOMP_JOB_RECORDS_BASE_SLOT));
     let encoded = read_storage_bytes(state.as_ref(), base, limits.max_bounded_bytes)?;
-    let record = OcompJobRecordV1::decode_canonical(&encoded, limits)
-        .map_err(|error| RetentionError::Source(format!("decode typed job record: {error}")))?;
-    let decoded_id = record
-        .intent
-        .intent_id(limits)
-        .map_err(|error| RetentionError::Source(format!("hash typed job record: {error}")))?;
+    let record = OcompJobRecordV1::decode_canonical(&encoded, limits).map_err(|error| {
+        RetentionError::from(crate::errors::RetentionSourceError::decode_typed_job_record(error))
+    })?;
+    let decoded_id = record.intent.intent_id(limits).map_err(|error| {
+        RetentionError::from(crate::errors::RetentionSourceError::hash_typed_job_record(
+            error,
+        ))
+    })?;
     if decoded_id != intent_id {
         return Err(RetentionError::Source(
             "storage key does not open the exact typed JobIntent".to_owned(),
@@ -348,10 +357,16 @@ where
                 self.provider
                     .sealed_header_by_hash(candidate.block_hash)
                     .map_err(|error| {
-                        RetentionError::Source(format!("load finalized opening header: {error}"))
+                        RetentionError::from(
+                            crate::errors::RetentionSourceError::load_finalized_opening_header(
+                                error,
+                            ),
+                        )
                     })?
                     .ok_or_else(|| {
-                        RetentionError::Source("finalized opening header is unavailable".to_owned())
+                        RetentionError::from(
+                            crate::errors::RetentionSourceError::FinalizedOpeningHeaderUnavailable,
+                        )
                     })?
                     .header(),
                 candidate.block_hash,
@@ -394,7 +409,9 @@ pub(in crate::ocomp::retention) fn canonical_finalized_pin(
 ) -> Result<FinalizedJobPinV1, RetentionError> {
     let limits = poc_schema_limits();
     record.validate_semantics(&limits).map_err(|error| {
-        RetentionError::Source(format!("validate canonical finalized OCOMP job: {error}"))
+        RetentionError::from(
+            crate::errors::RetentionSourceError::validate_canonical_finalized_ocomp_job(error),
+        )
     })?;
     let finalized = record
         .finalized
@@ -454,7 +471,9 @@ pub(in crate::ocomp::retention) fn terminal_height_from_record(
         OcompJobStatus::AwaitingFinality | OcompJobStatus::VotingOpen => Ok(None),
         OcompJobStatus::Completed | OcompJobStatus::Expired | OcompJobStatus::Failed => {
             let terminal = record.terminal.as_ref().ok_or_else(|| {
-                RetentionError::Source("terminal Job is missing terminal record".to_owned())
+                RetentionError::from(
+                    crate::errors::RetentionSourceError::TerminalJobMissingTerminalRecord,
+                )
             })?;
             if terminal.terminal_height > observed_height {
                 return Err(RetentionError::Source(
@@ -497,7 +516,9 @@ fn validate_request_observation(
         .activation_preconditions
         .activation_preconditions_hash(limits)
         .map_err(|error| {
-            RetentionError::Source(format!("hash activation preconditions: {error}"))
+            RetentionError::from(
+                crate::errors::RetentionSourceError::hash_activation_preconditions(error),
+            )
         })?;
     if intent.wwd != observation.wwd
         || intent.pending_nonce != observation.pending_nonce
@@ -519,7 +540,11 @@ fn read_storage_bytes(
     let base_key = B256::new(base.to_be_bytes::<32>());
     let word = state
         .storage(METADOSIS_ADDRESS, base_key)
-        .map_err(|error| RetentionError::Source(format!("read job record base slot: {error}")))?
+        .map_err(|error| {
+            RetentionError::from(
+                crate::errors::RetentionSourceError::read_job_record_base_slot(error),
+            )
+        })?
         .unwrap_or_default();
     let encoded_word = word.to_be_bytes::<32>();
     if encoded_word[31] & 1 == 0 {
@@ -532,10 +557,9 @@ fn read_storage_bytes(
         return Ok(encoded_word[..len].to_vec());
     }
 
-    let encoded_len = word
-        .checked_sub(U256::from(1))
-        .ok_or_else(|| RetentionError::Source("invalid StorageBytes length word".to_owned()))?
-        / U256::from(2);
+    let encoded_len = word.checked_sub(U256::from(1)).ok_or_else(|| {
+        RetentionError::from(crate::errors::RetentionSourceError::InvalidStorageBytesLengthWord)
+    })? / U256::from(2);
     if encoded_len > U256::from(max_len) {
         return Err(RetentionError::Source(
             "job record exceeds bounded StorageBytes length".to_owned(),
@@ -549,7 +573,9 @@ fn read_storage_bytes(
         let chunk = state
             .storage(METADOSIS_ADDRESS, B256::new(slot.to_be_bytes::<32>()))
             .map_err(|error| {
-                RetentionError::Source(format!("read job record data slot {index}: {error}"))
+                RetentionError::from(
+                    crate::errors::RetentionSourceError::read_job_record_data_slot(index, error),
+                )
             })?
             .unwrap_or_default()
             .to_be_bytes::<32>();

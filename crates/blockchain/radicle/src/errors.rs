@@ -87,6 +87,202 @@ impl ManagerError {
     pub fn status(error: impl std::fmt::Display) -> Self {
         Self::Status(error.to_string())
     }
+
+    /// Creates [`ManagerError::Task`] from a displayable error.
+    pub fn task(error: impl std::fmt::Display) -> Self {
+        Self::Task(error.to_string())
+    }
+
+    /// Creates a [`ManagerError::Task`] for an endpoint service failure.
+    pub fn endpoint_service_task(error: impl std::fmt::Display) -> Self {
+        Self::task(RadicleTaskError::EndpointService(error.to_string()))
+    }
+
+    /// Creates a [`ManagerError::Task`] when both endpoint stop and join fail.
+    pub fn endpoint_stop_and_join_failed(
+        stop: impl std::fmt::Display,
+        join: impl std::fmt::Display,
+    ) -> Self {
+        Self::task(RadicleTaskError::EndpointStopAndJoinFailed {
+            stop: stop.to_string(),
+            join: join.to_string(),
+        })
+    }
+
+    /// Creates a [`ManagerError::Task`] for an endpoint actor failure.
+    pub fn endpoint_actor_task(error: impl std::fmt::Display) -> Self {
+        Self::task(RadicleTaskError::EndpointActor(error.to_string()))
+    }
+
+    /// Creates a [`ManagerError::Task`] when both endpoint actor run and cleanup fail.
+    pub fn endpoint_actor_cleanup_failed(
+        error: impl std::fmt::Display,
+        cleanup: impl std::fmt::Display,
+    ) -> Self {
+        Self::task(RadicleTaskError::EndpointActorCleanupAlsoFailed {
+            error: error.to_string(),
+            cleanup: cleanup.to_string(),
+        })
+    }
+
+    /// Creates a [`ManagerError::Task`] for a manager task failure.
+    pub fn manager_task(error: impl std::fmt::Display) -> Self {
+        Self::task(RadicleTaskError::Manager(error.to_string()))
+    }
+}
+
+/// Typed task lifecycle failures wrapped by [`ManagerError::Task`].
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum RadicleTaskError {
+    /// The endpoint task owner mutex was poisoned.
+    #[error("endpoint owner poisoned")]
+    EndpointOwnerPoisoned,
+    /// The endpoint task was already installed.
+    #[error("endpoint already installed")]
+    EndpointAlreadyInstalled,
+    /// The endpoint drain was already claimed.
+    #[error("endpoint drain already claimed")]
+    EndpointDrainAlreadyClaimed,
+    /// The endpoint service task failed.
+    #[error("endpoint service: {0}")]
+    EndpointService(String),
+    /// Both stopping and joining the endpoint service failed.
+    #[error("{stop}; endpoint join also failed: {join}")]
+    EndpointStopAndJoinFailed {
+        /// The stop error message.
+        stop: String,
+        /// The join error message.
+        join: String,
+    },
+    /// The endpoint actor task failed.
+    #[error("endpoint actor: {0}")]
+    EndpointActor(String),
+    /// Both endpoint actor execution and cleanup failed.
+    #[error("{error}; endpoint actor cleanup also failed: {cleanup}")]
+    EndpointActorCleanupAlsoFailed {
+        /// The primary error message.
+        error: String,
+        /// The cleanup error message.
+        cleanup: String,
+    },
+    /// The manager task failed.
+    #[error("manager: {0}")]
+    Manager(String),
+}
+
+impl From<RadicleTaskError> for ManagerError {
+    fn from(error: RadicleTaskError) -> Self {
+        Self::Task(error.to_string())
+    }
+}
+
+/// Typed endpoint lifecycle failures wrapped by [`ManagerError::Endpoint`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum EndpointLifecycleError {
+    /// The shutdown command mailbox is closed.
+    #[error("shutdown mailbox closed")]
+    ShutdownMailboxClosed,
+    /// The shutdown acknowledgement channel closed before replying.
+    #[error("shutdown acknowledgement closed")]
+    ShutdownAckClosed,
+    /// Refreshing endpoints exceeded the handle deadline.
+    #[error("endpoint refresh deadline exceeded")]
+    RefreshDeadlineExceeded,
+    /// The endpoint actor stopped unexpectedly.
+    #[error("endpoint actor stopped unexpectedly")]
+    ActorStoppedUnexpectedly,
+    /// The endpoint actor join handle was missing.
+    #[error("endpoint actor join missing")]
+    ActorJoinMissing,
+}
+
+impl From<EndpointLifecycleError> for ManagerError {
+    fn from(error: EndpointLifecycleError) -> Self {
+        Self::Endpoint(error.to_string())
+    }
+}
+
+/// Typed Heartwood control failures wrapped by [`ManagerError::Control`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum HeartwoodControlReason {
+    /// The Heartwood control call exceeded its deadline.
+    #[error("Heartwood control deadline exceeded")]
+    DeadlineExceeded,
+    /// A peer has no signed endpoint to connect to.
+    #[error("peer has no signed endpoint")]
+    PeerHasNoSignedEndpoint,
+    /// The Heartwood control socket returned an empty response.
+    #[error("empty control response")]
+    EmptyResponse,
+    /// The Heartwood `NodeId` is invalid.
+    #[error("invalid Heartwood NodeId")]
+    InvalidNodeId,
+    /// The Heartwood address is invalid.
+    #[error("invalid Heartwood address")]
+    InvalidAddress,
+    /// The IPv6 endpoint is invalid.
+    #[error("invalid IPv6 endpoint")]
+    InvalidIpv6Endpoint,
+    /// The DNS endpoint is invalid.
+    #[error("invalid DNS endpoint")]
+    InvalidDnsEndpoint,
+    /// The canonical endpoint encoding is invalid.
+    #[error("invalid canonical endpoint encoding")]
+    InvalidCanonicalEndpointEncoding,
+}
+
+impl From<HeartwoodControlReason> for ManagerError {
+    fn from(error: HeartwoodControlReason) -> Self {
+        Self::Control(error.to_string())
+    }
+}
+
+/// Typed repository status failures wrapped by [`ManagerError::Status`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum RepositoryStatusReason {
+    /// The repository status endpoint is not a loopback address.
+    #[error("repository status endpoint must be loopback")]
+    NonLoopbackEndpoint,
+    /// The repository status response did not match the requested identity.
+    #[error("repository status identity mismatch")]
+    IdentityMismatch,
+}
+
+impl From<RepositoryStatusReason> for ManagerError {
+    fn from(error: RepositoryStatusReason) -> Self {
+        Self::Status(error.to_string())
+    }
+}
+
+/// Typed snapshot inconsistency failures wrapped by [`ManagerError::Snapshot`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum SnapshotInconsistencyReason {
+    /// Forward and reverse Radicle bindings in `ValidatorSet` disagree.
+    #[error("Radicle reverse binding mismatch for {0}")]
+    ReverseBindingMismatch(alloy_primitives::Address),
+}
+
+impl From<SnapshotInconsistencyReason> for ManagerError {
+    fn from(error: SnapshotInconsistencyReason) -> Self {
+        Self::Snapshot(error.to_string())
+    }
+}
+
+/// Typed finality feed failures wrapped by [`ManagerError::Finality`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum FinalityFeedReason {
+    /// The finality subscription mutex was poisoned.
+    #[error("finality subscription lock poisoned")]
+    SubscriptionLockPoisoned,
+    /// The finality feed was already subscribed.
+    #[error("finality feed already subscribed")]
+    AlreadySubscribed,
+}
+
+impl From<FinalityFeedReason> for ManagerError {
+    fn from(error: FinalityFeedReason) -> Self {
+        Self::Finality(error.to_string())
+    }
 }
 
 /// Errors returned when querying the Heartwood control socket.
@@ -112,6 +308,33 @@ pub enum SidecarError {
 impl SidecarError {
     /// Creates [`SidecarError::Malformed`] from a displayable error.
     pub fn malformed(error: impl std::fmt::Display) -> Self {
+        Self::Malformed(error.to_string())
+    }
+
+    /// Creates [`SidecarError::Malformed`] for an invalid external address.
+    pub fn invalid_external_address(value: impl std::fmt::Display) -> Self {
+        Self::malformed(SidecarMalformedError::InvalidExternalAddress(
+            value.to_string(),
+        ))
+    }
+}
+
+/// Typed malformed-response reasons wrapped by [`SidecarError::Malformed`].
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum SidecarMalformedError {
+    /// The `externalAddresses` field is missing from the config response.
+    #[error("missing externalAddresses")]
+    MissingExternalAddresses,
+    /// An entry in `externalAddresses` is not a JSON string.
+    #[error("non-string external address")]
+    NonStringExternalAddress,
+    /// An entry in `externalAddresses` could not be parsed as an endpoint address.
+    #[error("invalid external address {0}")]
+    InvalidExternalAddress(String),
+}
+
+impl From<SidecarMalformedError> for SidecarError {
+    fn from(error: SidecarMalformedError) -> Self {
         Self::Malformed(error.to_string())
     }
 }

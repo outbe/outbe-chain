@@ -276,11 +276,11 @@ fn authorize_candidate<Tx: EthPoolTransaction + alloy_consensus::Transaction>(
                 ) {
                 Ok(Some(_)) => ResultVotePoolDecision::Admit,
                 Ok(None) => ResultVotePoolDecision::Reject(
-                    "OCOMP carrier signer is not authorized for this action".to_owned(),
+                    crate::errors::OcompCarrierRejectError::UnauthorizedSigner.to_string(),
                 ),
-                Err(error) => ResultVotePoolDecision::Reject(format!(
-                    "OCOMP carrier authorization failed: {error}"
-                )),
+                Err(error) => ResultVotePoolDecision::Reject(
+                    crate::errors::OcompCarrierRejectError::AuthorizationFailed(error).to_string(),
+                ),
             }
         }
     }

@@ -80,7 +80,7 @@ fn observe_manifest_record(
                         .ok_or(InputArtifactError::CountOverflow)?;
                 }
                 InputChunkKind::Tribute => {
-                    return Err(InputArtifactError::Invariant("opening chunk kind"));
+                    return Err(InputArtifactError::OpeningChunkKind);
                 }
             }
         }

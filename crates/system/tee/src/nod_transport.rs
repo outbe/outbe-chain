@@ -23,7 +23,7 @@ pub(crate) fn request(
         let _ = client.request(&EnclaveRequest::DiscardNodTransferV2 { id });
         result.map(|response| (key, response))
     })
-    .ok_or_else(|| TransportError::EnclaveError("TEE sidecar unavailable".into()))?
+    .ok_or(crate::errors::TeeClientVerificationError::TeeSidecarUnavailable)?
 }
 
 fn upload(client: &mut EnclaveSession, id: B256, bytes: &[u8]) -> Result<(), TransportError> {

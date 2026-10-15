@@ -1,6 +1,6 @@
 //! This module defines typed errors for `outbe-node`.
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use outbe_metadosis::config::OcompForkInstallClassification;
 use reth_ethereum::consensus::ConsensusError;
 use reth_provider::ProviderError;
@@ -27,6 +27,61 @@ pub fn consensus_display_error(error: impl core::fmt::Display) -> ConsensusError
     >::from(
         error.to_string(),
     )))
+}
+
+/// Typed consensus policy and system-transaction validation errors.
+#[derive(Debug, thiserror::Error)]
+pub enum ConsensusPolicyError {
+    #[error("block {block_number} protocol gas limit mismatch: expected {expected}, got {actual}")]
+    ProtocolGasLimitMismatch {
+        block_number: u64,
+        expected: u64,
+        actual: u64,
+    },
+    #[error(
+        "block RLP size {rlp_length} exceeds the {max_block_rlp_bytes}-byte P2P transport cap"
+    )]
+    BlockRlpSizeExceedsTransportCap {
+        rlp_length: usize,
+        max_block_rlp_bytes: usize,
+    },
+    #[error(
+        "block timestamp_millis {timestamp} exceeds parent {parent} by {drift} ms, above the {max_drift} ms maximum drift"
+    )]
+    TimestampExceedsMaxDrift {
+        timestamp: u64,
+        parent: u64,
+        drift: u64,
+        max_drift: u64,
+    },
+    #[error(
+        "block timestamp_millis {timestamp} advances parent {parent} by only {drift} ms, below the {min_advance} ms minimum advance"
+    )]
+    TimestampBelowMinAdvance {
+        timestamp: u64,
+        parent: u64,
+        drift: u64,
+        min_advance: u64,
+    },
+    #[error("timestamp_millis_part {part} must be less than {max_part}")]
+    InvalidTimestampMillisPart { part: u64, max_part: u64 },
+    #[error("non-genesis block beneficiary must be REWARDS_ADDRESS {expected}: got {actual}")]
+    NonGenesisBeneficiaryMismatch { expected: Address, actual: Address },
+    #[error("decode system tx input: {0}")]
+    DecodeSystemTxInput(String),
+}
+
+impl ConsensusPolicyError {
+    #[must_use]
+    pub fn decode_system_tx_input(error: impl core::fmt::Display) -> Self {
+        Self::DecodeSystemTxInput(error.to_string())
+    }
+}
+
+impl From<ConsensusPolicyError> for ConsensusError {
+    fn from(error: ConsensusPolicyError) -> Self {
+        consensus_display_error(error)
+    }
 }
 
 /// This enum defines errors that occur when the node reads a finalized frame.
@@ -93,6 +148,15 @@ pub enum NodeShutdownError {
     TaskPanicked { name: &'static str, message: String },
     #[error("execution engine completion missing after runtime teardown")]
     ExecutionEngineCompletionMissing,
+    #[error("additional shutdown failure: {0}")]
+    AdditionalShutdownFailure(String),
+}
+
+impl NodeShutdownError {
+    #[must_use]
+    pub fn additional_shutdown_failure(error: &eyre::Report) -> Self {
+        Self::AdditionalShutdownFailure(format!("{error:#}"))
+    }
 }
 
 /// This enum defines errors that occur when the node resolves the enclave call context.
@@ -449,6 +513,40 @@ impl HistoricalCommitteeError {
     }
 }
 
+/// Typed validation errors when authenticating historical committee proofs.
+#[derive(Debug, thiserror::Error)]
+pub enum HistoricalCommitteeValidationError {
+    #[error("historical committee account proof rejected: {0}")]
+    AccountProofRejected(String),
+    #[error(
+        "historical committee storage proof count mismatch: expected {expected}, got {actual}"
+    )]
+    StorageProofCountMismatch { expected: usize, actual: usize },
+    #[error("historical committee storage proof {index} rejected: {reason}")]
+    StorageProofRejected { index: usize, reason: String },
+}
+
+impl HistoricalCommitteeValidationError {
+    #[must_use]
+    pub fn account_proof_rejected(error: impl core::fmt::Display) -> Self {
+        Self::AccountProofRejected(error.to_string())
+    }
+
+    #[must_use]
+    pub fn storage_proof_rejected(index: usize, error: impl core::fmt::Display) -> Self {
+        Self::StorageProofRejected {
+            index,
+            reason: error.to_string(),
+        }
+    }
+}
+
+impl From<HistoricalCommitteeValidationError> for HistoricalCommitteeError {
+    fn from(error: HistoricalCommitteeValidationError) -> Self {
+        Self::from_display(error)
+    }
+}
+
 impl FinalizedIntentVerifierError {
     #[must_use]
     pub fn header_decode(error: impl core::fmt::Display) -> Self {
@@ -488,6 +586,150 @@ impl FinalizedIntentProofBuildError {
     #[must_use]
     pub fn intent(error: impl core::fmt::Display) -> Self {
         Self::Intent(error.to_string())
+    }
+}
+
+/// Typed state-access errors when building a finalized OCOMP intent proof.
+#[derive(Debug, thiserror::Error)]
+pub enum FinalizedIntentProofStateError {
+    #[error("open block {block_number} {block_hash}: {reason}")]
+    OpenBlockState {
+        block_number: u64,
+        block_hash: B256,
+        reason: String,
+    },
+    #[error("read raw opening slot {slot}: {reason}")]
+    ReadRawOpeningSlot { slot: B256, reason: String },
+}
+
+impl FinalizedIntentProofStateError {
+    #[must_use]
+    pub fn open_block_state(
+        block_number: u64,
+        block_hash: B256,
+        error: impl core::fmt::Display,
+    ) -> Self {
+        Self::OpenBlockState {
+            block_number,
+            block_hash,
+            reason: error.to_string(),
+        }
+    }
+
+    #[must_use]
+    pub fn read_raw_opening_slot(slot: B256, error: impl core::fmt::Display) -> Self {
+        Self::ReadRawOpeningSlot {
+            slot,
+            reason: error.to_string(),
+        }
+    }
+}
+
+impl From<FinalizedIntentProofStateError> for FinalizedIntentProofBuildError {
+    fn from(error: FinalizedIntentProofStateError) -> Self {
+        Self::State(error.to_string())
+    }
+}
+
+/// Typed trie/witness errors when building a finalized OCOMP intent proof.
+#[derive(Debug, thiserror::Error)]
+pub enum FinalizedIntentProofTrieError {
+    #[error("build Metadosis intent proof: {0}")]
+    BuildMetadosisIntentProof(String),
+    #[error("build ValidatorSet committee proof: {0}")]
+    BuildValidatorSetCommitteeProof(String),
+    #[error("build raw opening proof for {contract_address}: {reason}")]
+    BuildRawOpeningProof {
+        contract_address: Address,
+        reason: String,
+    },
+    #[error("account proof opened no account")]
+    AccountProofOpenedNoAccount,
+    #[error("storage proof count exceeds u32")]
+    StorageProofCountExceedsU32,
+    #[error("proof node count exceeds u32")]
+    ProofNodeCountExceedsU32,
+    #[error("proof node length exceeds u32")]
+    ProofNodeLengthExceedsU32,
+    #[error("committee length exceeds u32")]
+    CommitteeLengthExceedsU32,
+    #[error("VRF group key length exceeds u32")]
+    VrfGroupKeyLengthExceedsU32,
+}
+
+impl FinalizedIntentProofTrieError {
+    #[must_use]
+    pub fn build_metadosis_intent_proof(error: impl core::fmt::Display) -> Self {
+        Self::BuildMetadosisIntentProof(error.to_string())
+    }
+
+    #[must_use]
+    pub fn build_validator_set_committee_proof(error: impl core::fmt::Display) -> Self {
+        Self::BuildValidatorSetCommitteeProof(error.to_string())
+    }
+
+    #[must_use]
+    pub fn build_raw_opening_proof(
+        contract_address: Address,
+        error: impl core::fmt::Display,
+    ) -> Self {
+        Self::BuildRawOpeningProof {
+            contract_address,
+            reason: error.to_string(),
+        }
+    }
+}
+
+impl From<FinalizedIntentProofTrieError> for FinalizedIntentProofBuildError {
+    fn from(error: FinalizedIntentProofTrieError) -> Self {
+        Self::Trie(error.to_string())
+    }
+}
+
+/// Typed intent-source errors when building a finalized OCOMP intent proof.
+#[derive(Debug, thiserror::Error)]
+pub enum FinalizedIntentProofIntentError {
+    #[error("invalid StorageBytes length word")]
+    InvalidStorageBytesLengthWord,
+    #[error("StorageBytes length exceeds usize")]
+    StorageBytesLengthExceedsUsize,
+}
+
+impl From<FinalizedIntentProofIntentError> for FinalizedIntentProofBuildError {
+    fn from(error: FinalizedIntentProofIntentError) -> Self {
+        Self::Intent(error.to_string())
+    }
+}
+
+/// Typed finalization-record errors when building a finalized OCOMP intent proof.
+#[derive(Clone, Copy, Debug, thiserror::Error)]
+pub enum FinalizedIntentProofFinalizationError {
+    #[error("certified notarization cannot authorize an OCOMP JobId")]
+    CertifiedNotarizationCannotAuthorizeJobId,
+    #[error("historical committee length exceeds usize")]
+    HistoricalCommitteeLengthExceedsUsize,
+    #[error("VRF material version exceeds u64")]
+    VrfMaterialVersionExceedsU64,
+    #[error("VRF group key length exceeds usize")]
+    VrfGroupKeyLengthExceedsUsize,
+}
+
+impl From<FinalizedIntentProofFinalizationError> for FinalizedIntentProofBuildError {
+    fn from(error: FinalizedIntentProofFinalizationError) -> Self {
+        match error {
+            FinalizedIntentProofFinalizationError::CertifiedNotarizationCannotAuthorizeJobId => {
+                Self::Finalization("certified notarization cannot authorize an OCOMP JobId")
+            }
+            FinalizedIntentProofFinalizationError::HistoricalCommitteeLengthExceedsUsize => {
+                Self::Finalization("historical committee length exceeds usize")
+            }
+            FinalizedIntentProofFinalizationError::VrfMaterialVersionExceedsU64 => {
+                Self::Finalization("VRF material version exceeds u64")
+            }
+            FinalizedIntentProofFinalizationError::VrfGroupKeyLengthExceedsUsize => {
+                Self::Finalization("VRF group key length exceeds usize")
+            }
+        }
     }
 }
 
@@ -550,6 +792,229 @@ impl RetentionError {
                 reason,
             },
             other => outbe_offchain_data::RetentionSelectorError::Failed(other.to_string()),
+        }
+    }
+}
+
+/// Typed source/provider errors wrapped by [`RetentionError::Source`].
+#[derive(Debug, thiserror::Error)]
+pub enum RetentionSourceError {
+    #[error("open exact block state for Lysis openings: {0}")]
+    OpenBlockStateForLysisOpenings(String),
+    #[error("derive opening JobId: {0}")]
+    DeriveOpeningJobId(String),
+    #[error("read Oracle pair index: {0}")]
+    ReadOraclePairIndex(String),
+    #[error("Oracle pair index does not fit u32")]
+    OraclePairIndexDoesNotFitU32,
+    #[error("derive finalized request JobId: {0}")]
+    DeriveFinalizedRequestJobId(String),
+    #[error("decode finalized intent: {0}")]
+    DecodeFinalizedIntent(String),
+    #[error("derive proof IntentId: {0}")]
+    DeriveProofIntentId(String),
+    #[error("derive proof JobId: {0}")]
+    DeriveProofJobId(String),
+    #[error("decode finalized OCOMP request: {0}")]
+    DecodeFinalizedOcompRequest(String),
+    #[error("open exact block state: {0}")]
+    OpenExactBlockState(String),
+    #[error("derive intent slot: {0}")]
+    DeriveIntentSlot(String),
+    #[error("decode typed job record: {0}")]
+    DecodeTypedJobRecord(String),
+    #[error("hash typed job record: {0}")]
+    HashTypedJobRecord(String),
+    #[error("load finalized opening header: {0}")]
+    LoadFinalizedOpeningHeader(String),
+    #[error("finalized opening header is unavailable")]
+    FinalizedOpeningHeaderUnavailable,
+    #[error("validate canonical finalized OCOMP job: {0}")]
+    ValidateCanonicalFinalizedOcompJob(String),
+    #[error("terminal Job is missing terminal record")]
+    TerminalJobMissingTerminalRecord,
+    #[error("hash activation preconditions: {0}")]
+    HashActivationPreconditions(String),
+    #[error("read job record base slot: {0}")]
+    ReadJobRecordBaseSlot(String),
+    #[error("invalid StorageBytes length word")]
+    InvalidStorageBytesLengthWord,
+    #[error("read job record data slot {index}: {reason}")]
+    ReadJobRecordDataSlot { index: usize, reason: String },
+}
+
+impl RetentionSourceError {
+    #[must_use]
+    pub fn open_block_state_for_lysis_openings(error: impl core::fmt::Display) -> Self {
+        Self::OpenBlockStateForLysisOpenings(error.to_string())
+    }
+
+    #[must_use]
+    pub fn derive_opening_job_id(error: impl core::fmt::Display) -> Self {
+        Self::DeriveOpeningJobId(error.to_string())
+    }
+
+    #[must_use]
+    pub fn read_oracle_pair_index(error: impl core::fmt::Display) -> Self {
+        Self::ReadOraclePairIndex(error.to_string())
+    }
+
+    #[must_use]
+    pub fn derive_finalized_request_job_id(error: impl core::fmt::Display) -> Self {
+        Self::DeriveFinalizedRequestJobId(error.to_string())
+    }
+
+    #[must_use]
+    pub fn decode_finalized_intent(error: impl core::fmt::Display) -> Self {
+        Self::DecodeFinalizedIntent(error.to_string())
+    }
+
+    #[must_use]
+    pub fn derive_proof_intent_id(error: impl core::fmt::Display) -> Self {
+        Self::DeriveProofIntentId(error.to_string())
+    }
+
+    #[must_use]
+    pub fn derive_proof_job_id(error: impl core::fmt::Display) -> Self {
+        Self::DeriveProofJobId(error.to_string())
+    }
+
+    #[must_use]
+    pub fn decode_finalized_ocomp_request(error: impl core::fmt::Display) -> Self {
+        Self::DecodeFinalizedOcompRequest(error.to_string())
+    }
+
+    #[must_use]
+    pub fn open_exact_block_state(error: impl core::fmt::Display) -> Self {
+        Self::OpenExactBlockState(error.to_string())
+    }
+
+    #[must_use]
+    pub fn derive_intent_slot(error: impl core::fmt::Display) -> Self {
+        Self::DeriveIntentSlot(error.to_string())
+    }
+
+    #[must_use]
+    pub fn decode_typed_job_record(error: impl core::fmt::Display) -> Self {
+        Self::DecodeTypedJobRecord(error.to_string())
+    }
+
+    #[must_use]
+    pub fn hash_typed_job_record(error: impl core::fmt::Display) -> Self {
+        Self::HashTypedJobRecord(error.to_string())
+    }
+
+    #[must_use]
+    pub fn load_finalized_opening_header(error: impl core::fmt::Display) -> Self {
+        Self::LoadFinalizedOpeningHeader(error.to_string())
+    }
+
+    #[must_use]
+    pub fn validate_canonical_finalized_ocomp_job(error: impl core::fmt::Display) -> Self {
+        Self::ValidateCanonicalFinalizedOcompJob(error.to_string())
+    }
+
+    #[must_use]
+    pub fn hash_activation_preconditions(error: impl core::fmt::Display) -> Self {
+        Self::HashActivationPreconditions(error.to_string())
+    }
+
+    #[must_use]
+    pub fn read_job_record_base_slot(error: impl core::fmt::Display) -> Self {
+        Self::ReadJobRecordBaseSlot(error.to_string())
+    }
+
+    #[must_use]
+    pub fn read_job_record_data_slot(index: usize, error: impl core::fmt::Display) -> Self {
+        Self::ReadJobRecordDataSlot {
+            index,
+            reason: error.to_string(),
+        }
+    }
+}
+
+impl From<RetentionSourceError> for RetentionError {
+    fn from(error: RetentionSourceError) -> Self {
+        Self::Source(error.to_string())
+    }
+}
+
+/// Typed malformed-journal errors wrapped by [`RetentionError::MalformedJournal`].
+#[derive(Clone, Copy, Debug, thiserror::Error)]
+pub enum RetentionMalformedJournalError {
+    #[error("journal exceeds byte cap")]
+    JournalExceedsByteCap,
+    #[error("checksum mismatch")]
+    ChecksumMismatch,
+    #[error("wrong magic")]
+    WrongMagic,
+    #[error("offset overflow")]
+    OffsetOverflow,
+    #[error("truncated field")]
+    TruncatedField,
+    #[error("field length")]
+    FieldLength,
+    #[error("truncated pin record")]
+    TruncatedPinRecord,
+    #[error("trailing bytes")]
+    TrailingBytes,
+    #[error("unknown state tag")]
+    UnknownStateTag,
+    #[error("registry version length")]
+    RegistryVersionLength,
+}
+
+impl From<RetentionMalformedJournalError> for RetentionError {
+    fn from(error: RetentionMalformedJournalError) -> Self {
+        match error {
+            RetentionMalformedJournalError::JournalExceedsByteCap => {
+                Self::MalformedJournal("journal exceeds byte cap")
+            }
+            RetentionMalformedJournalError::ChecksumMismatch => {
+                Self::MalformedJournal("checksum mismatch")
+            }
+            RetentionMalformedJournalError::WrongMagic => Self::MalformedJournal("wrong magic"),
+            RetentionMalformedJournalError::OffsetOverflow => {
+                Self::MalformedJournal("offset overflow")
+            }
+            RetentionMalformedJournalError::TruncatedField => {
+                Self::MalformedJournal("truncated field")
+            }
+            RetentionMalformedJournalError::FieldLength => Self::MalformedJournal("field length"),
+            RetentionMalformedJournalError::TruncatedPinRecord => {
+                Self::MalformedJournal("truncated pin record")
+            }
+            RetentionMalformedJournalError::TrailingBytes => {
+                Self::MalformedJournal("trailing bytes")
+            }
+            RetentionMalformedJournalError::UnknownStateTag => {
+                Self::MalformedJournal("unknown state tag")
+            }
+            RetentionMalformedJournalError::RegistryVersionLength => {
+                Self::MalformedJournal("registry version length")
+            }
+        }
+    }
+}
+
+/// Typed transition errors wrapped by [`RetentionError::InvalidTransition`].
+#[derive(Clone, Copy, Debug, thiserror::Error)]
+pub enum RetentionTransitionError {
+    #[error("GC claim changed before completion")]
+    GcClaimChangedBeforeCompletion,
+    #[error("OCOMP projection/GC fence is poisoned")]
+    ProjectionGcFencePoisoned,
+}
+
+impl From<RetentionTransitionError> for RetentionError {
+    fn from(error: RetentionTransitionError) -> Self {
+        match error {
+            RetentionTransitionError::GcClaimChangedBeforeCompletion => {
+                Self::InvalidTransition("GC claim changed before completion")
+            }
+            RetentionTransitionError::ProjectionGcFencePoisoned => {
+                Self::InvalidTransition("OCOMP projection/GC fence is poisoned")
+            }
         }
     }
 }

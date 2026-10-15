@@ -5,8 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use alloy_primitives::Address;
 use outbe_nod::clear_owner_day;
 use outbe_offchain_storage::{
-    AtomicWriteBatch, AtomicWriteOperation, DayDatabases, StorageError, StorageReaderHandle,
-    StorageWriterHandle,
+    AtomicWriteBatch, AtomicWriteOperation, DayDatabases, StorageReaderHandle, StorageWriterHandle,
 };
 
 use super::ProjectionError;
@@ -100,12 +99,12 @@ fn day_target(operation: &AtomicWriteOperation) -> Result<Option<(Domain, u32)>,
         NOD_BY_OWNER => (Domain::Nod, 20),
         _ => return Ok(None),
     };
-    let bytes = key.get(offset..offset + 4).ok_or_else(|| {
-        StorageError::Corruption("day key is shorter than the worldwide-day prefix".into())
-    })?;
-    let bytes: [u8; 4] = bytes.try_into().map_err(|_| {
-        StorageError::Corruption("day key is shorter than the worldwide-day prefix".into())
-    })?;
+    let bytes = key
+        .get(offset..offset + 4)
+        .ok_or(crate::errors::DayApplyCorruptionError::DayKeyTooShort)?;
+    let bytes: [u8; 4] = bytes
+        .try_into()
+        .map_err(|_| crate::errors::DayApplyCorruptionError::DayKeyTooShort)?;
     Ok(Some((domain, u32::from_be_bytes(bytes))))
 }
 
@@ -122,10 +121,7 @@ fn owner_addresses(operations: &[AtomicWriteOperation]) -> Result<Vec<Address>, 
             continue;
         }
         if key.len() < Address::len_bytes() {
-            return Err(StorageError::Corruption(
-                "Nod owner index key is shorter than an address".into(),
-            )
-            .into());
+            return Err(crate::errors::DayApplyCorruptionError::NodOwnerKeyTooShort.into());
         }
         owners.insert(Address::from_slice(&key[..Address::len_bytes()]));
     }
