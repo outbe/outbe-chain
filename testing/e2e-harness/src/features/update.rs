@@ -77,11 +77,13 @@ fn unauthorized_proposal(world: &mut World) {
     .to_string();
     super::negative_assertions::assert_mined_revert(
         world,
-        VOTE_ADDR,
-        NON_VALIDATOR_KEY,
-        &IVote::createProposalCall {
-            targetModule: UPDATE_ADDR,
-            payload,
+        super::negative_assertions::NegativeTx {
+            to: VOTE_ADDR,
+            key: NON_VALIDATOR_KEY,
+            call: &IVote::createProposalCall {
+                targetModule: UPDATE_ADDR,
+                payload,
+            },
         },
         U256::ZERO,
         &Revert {
@@ -246,11 +248,13 @@ fn repeat_yes_vote(world: &mut World, name: String, id: u64) {
     let validator = world.validators.by_name(&name).expect("resolve validator");
     super::negative_assertions::assert_mined_revert(
         world,
-        VOTE_ADDR,
-        &validator.evm_key().expect("duplicate voter key"),
-        &IVote::castVoteCall {
-            proposalId: U256::from(id),
-            approve: true,
+        super::negative_assertions::NegativeTx {
+            to: VOTE_ADDR,
+            key: &validator.evm_key().expect("duplicate voter key"),
+            call: &IVote::castVoteCall {
+                proposalId: U256::from(id),
+                approve: true,
+            },
         },
         U256::ZERO,
         &Revert {

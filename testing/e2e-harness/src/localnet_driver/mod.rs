@@ -12,7 +12,7 @@ use std::io::Write as _;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -24,11 +24,7 @@ use crate::env::{EnvCli, Environment, TeeMode};
 use crate::internal::{config::Config, eth, ports::Ports, proc};
 use crate::world::localnet::Localnet;
 #[cfg(feature = "ocomp-integration")]
-use crate::world::localnet::StartOpts;
-#[cfg(feature = "ocomp-integration")]
-use crate::world::ocomp::{
-    OcompLaunchIdentityV1, OcompProcessRole, OcompRuntimeCountsV1, OcompTopology,
-};
+use crate::world::ocomp::{OcompRuntimeCountsV1, OcompTopology};
 
 #[cfg(not(feature = "ocomp-integration"))]
 struct OcompRuntimeCountsV1 {
@@ -542,333 +538,6 @@ fn wait_for_existing_start(
     }
 }
 
-fn stop(cli: &LocalnetCli) -> Result<()> {
-    let Some(state) = read_state(&cli.data_dir)? else {
-        println!("LocalNet is already stopped");
-        return Ok(());
-    };
-    ensure_matches(cli, &state)?;
-    if !state_is_live(&state) {
-        cleanup_stale_owner(cli, &state)?;
-        cleanup_run_scoped(cli)?;
-        remove_state(&cli.data_dir)?;
-        println!("Removed stale LocalNet resources and owner record");
-        return Ok(());
-    }
-    signal_owner(state.owner_pid)?;
-    let deadline = Instant::now() + STOP_TIMEOUT;
-    while Instant::now() < deadline {
-        if !state_is_live(&state) {
-            remove_state(&cli.data_dir)?;
-            println!("LocalNet stopped");
-            return Ok(());
-        }
-        sleep(Duration::from_millis(100));
-    }
-    force_stop_live_owner(cli, &state)?;
-    remove_state(&cli.data_dir)?;
-    println!(
-        "LocalNet owner pid {} required forced process-group cleanup",
-        state.owner_pid
-    );
-    Ok(())
-}
-
-fn terminate_startup_owner(cli: &LocalnetCli, child: &mut Child) -> Result<()> {
-    if child.try_wait()?.is_some() {
-        return Ok(());
-    }
-    signal_owner(child.id())?;
-    let deadline = Instant::now() + STOP_TIMEOUT;
-    while Instant::now() < deadline {
-        if child.try_wait()?.is_some() {
-            return Ok(());
-        }
-        sleep(Duration::from_millis(100));
-    }
-
-    signal_process_group(child.id(), "KILL")?;
-    let _ = child.wait();
-    cleanup_run_scoped(cli).wrap_err("clean resources after forced LocalNet owner stop")
-}
-
-fn signal_owner(pid: u32) -> Result<()> {
-    signal_pid(pid, "TERM")
-}
-
-fn signal_pid(pid: u32, signal: &str) -> Result<()> {
-    let status = Command::new("kill")
-        .args([format!("-{signal}"), pid.to_string()])
-        .status()
-        .wrap_err("signal LocalNet owner")?;
-    ensure!(status.success(), "failed to signal LocalNet owner");
-    Ok(())
-}
-
-fn signal_process_group(group: u32, signal: &str) -> Result<()> {
-    let status = Command::new("kill")
-        .args([format!("-{signal}"), "--".to_owned(), format!("-{group}")])
-        .status()
-        .wrap_err("signal LocalNet owner process group")?;
-    ensure!(
-        status.success(),
-        "failed to signal LocalNet process group {group}"
-    );
-    Ok(())
-}
-
-fn cleanup_stale_owner(_cli: &LocalnetCli, state: &LocalnetStateV1) -> Result<()> {
-    for process in &state.ocomp_processes {
-        if process_identity(process.pid).as_deref() == Some(&process.process_identity) {
-            signal_pid(process.pid, "TERM")?;
-        }
-    }
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while Instant::now() < deadline
-        && state.ocomp_processes.iter().any(|process| {
-            process_identity(process.pid).as_deref() == Some(&process.process_identity)
-        })
-    {
-        sleep(Duration::from_millis(100));
-    }
-    for process in &state.ocomp_processes {
-        if process_identity(process.pid).as_deref() == Some(&process.process_identity) {
-            signal_pid(process.pid, "KILL")?;
-        }
-    }
-    Ok(())
-}
-
-fn force_stop_live_owner(cli: &LocalnetCli, state: &LocalnetStateV1) -> Result<()> {
-    ensure!(state_is_live(state), "refuse to kill a reused owner pid");
-    signal_process_group(state.owner_pid, "KILL")?;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline && state_is_live(state) {
-        sleep(Duration::from_millis(100));
-    }
-    ensure!(
-        !state_is_live(state),
-        "LocalNet owner survived forced process-group cleanup"
-    );
-    cleanup_run_scoped(cli)
-}
-
-async fn serve(cli: &LocalnetCli) -> Result<()> {
-    require_ocomp_integration_build()?;
-    serve_with_ocomp(cli).await
-}
-
-#[cfg(feature = "ocomp-integration")]
-async fn serve_with_ocomp(cli: &LocalnetCli) -> Result<()> {
-    let receipt = read_bootstrap(cli)?;
-    ensure_not_running(&cli.data_dir)?;
-    let env = cli.environment(Some(&receipt.port_blocks))?;
-    env.ports.ensure_available(cli.validators)?;
-    let config = Config::resolve(&env);
-    let rpc_ports = rpc_ports(&config);
-    ensure!(
-        rpc_ports == receipt.rpc_ports,
-        "serve RPC layout differs from bootstrap"
-    );
-    let mut localnet = Localnet::new(config.clone());
-    let mut ocomp = OcompTopology::new(config);
-    let ocomp_identity = ocomp.prepare_bootstrapped_runtime()?;
-    let owner_pid = std::process::id();
-    let owner_process_identity = process_identity(owner_pid)
-        .ok_or_else(|| eyre!("cannot establish LocalNet owner process identity"))?;
-    let mut state = LocalnetStateV1 {
-        version: STATE_VERSION,
-        lane: "dev_mock".to_owned(),
-        phase: DriverPhase::Starting,
-        owner_pid,
-        owner_process_identity,
-        repo: cli.repo.clone(),
-        data_dir: cli.data_dir.clone(),
-        validators: cli.validators,
-        port_blocks: receipt.port_blocks,
-        rpc_ports,
-        heights: vec![0; cli.validators],
-        ocomp_supervisors: 0,
-        ocomp_snapshot_exporters: 0,
-        ocomp_workers: 0,
-        ocomp_registered_workers: 0,
-        ocomp_connected_workers: 0,
-        ocomp_processes: Vec::new(),
-    };
-    write_json_atomic(&state_path(&cli.data_dir), &state)?;
-    let _state_guard = StateGuard(state_path(&cli.data_dir));
-
-    localnet.start(&StartOpts::default())?;
-    state.heights =
-        wait_for_advancing_heights(&mut localnet, &state.rpc_ports, START_TIMEOUT).await?;
-    verify_rpc_chain_identity(&state.rpc_ports, ocomp_identity)?;
-    ocomp.start_baseline_runtime(ocomp_identity)?;
-    let counts = wait_for_ocomp_runtime(&mut ocomp, START_TIMEOUT).await?;
-    apply_ocomp_counts(&mut state, counts);
-    state.ocomp_processes = snapshot_ocomp_processes(&ocomp, counts)?;
-    state.phase = DriverPhase::Running;
-    write_json_atomic(&state_path(&cli.data_dir), &state)?;
-
-    monitor_until_shutdown(&mut localnet, &mut ocomp).await?;
-    drop(ocomp);
-    localnet.stop()?;
-    Ok(())
-}
-
-#[cfg(not(feature = "ocomp-integration"))]
-async fn serve_with_ocomp(_cli: &LocalnetCli) -> Result<()> {
-    unreachable!("require_ocomp_integration_build rejects this build")
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn apply_ocomp_counts(state: &mut LocalnetStateV1, counts: OcompRuntimeCountsV1) {
-    state.ocomp_supervisors = counts.supervisors;
-    state.ocomp_snapshot_exporters = counts.snapshot_exporters;
-    state.ocomp_workers = counts.workers;
-    state.ocomp_registered_workers = counts.registered_workers;
-    state.ocomp_connected_workers = counts.connected_workers;
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn snapshot_ocomp_processes(
-    ocomp: &OcompTopology,
-    counts: OcompRuntimeCountsV1,
-) -> Result<Vec<OwnedOcompProcessV1>> {
-    let mut processes = Vec::new();
-    for record in ocomp
-        .process_records()
-        .iter()
-        .filter(|record| record.stopped_at_millis.is_none())
-    {
-        let role = match record.role {
-            OcompProcessRole::SnapshotExporter => "snapshot_exporter",
-            OcompProcessRole::Worker => "worker",
-        };
-        let process_identity = process_identity(record.pid).ok_or_else(|| {
-            eyre!(
-                "OCOMP {role} pid {} exited before its exact identity was recorded",
-                record.pid
-            )
-        })?;
-        processes.push(OwnedOcompProcessV1 {
-            validator_index: record.validator_index,
-            role: role.to_owned(),
-            worker_ordinal: record.worker_ordinal,
-            pid: record.pid,
-            process_identity,
-        });
-    }
-    ensure_ocomp_process_inventory(&processes, counts)?;
-    Ok(processes)
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn verify_rpc_chain_identity(ports: &[u16], identity: OcompLaunchIdentityV1) -> Result<()> {
-    let expected_genesis = format!("{:#x}", identity.genesis_hash);
-    for port in ports {
-        let url = format!("http://127.0.0.1:{port}");
-        let chain_id = eth::raw_json(&url, "eth_chainId")
-            .and_then(|value| value.as_str().map(ToOwned::to_owned))
-            .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
-            .ok_or_else(|| eyre!("RPC {url} did not report a valid chain ID"))?;
-        ensure!(
-            chain_id == identity.chain_id,
-            "RPC {url} chain ID {chain_id} differs from OCOMP identity {}",
-            identity.chain_id
-        );
-        let genesis = eth::block_hash(&url, 0)
-            .ok_or_else(|| eyre!("RPC {url} did not return genesis block 0"))?;
-        ensure!(
-            genesis.eq_ignore_ascii_case(&expected_genesis),
-            "RPC {url} genesis {genesis} differs from OCOMP identity {expected_genesis}"
-        );
-    }
-    Ok(())
-}
-
-#[cfg(feature = "ocomp-integration")]
-async fn wait_for_ocomp_runtime(
-    ocomp: &mut OcompTopology,
-    timeout: Duration,
-) -> Result<OcompRuntimeCountsV1> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        ocomp.ensure_baseline_processes_alive(1)?;
-        match ocomp.observe_baseline_runtime(1) {
-            Ok(counts) => return Ok(counts),
-            Err(error) if Instant::now() >= deadline => {
-                bail!(
-                    "OCOMP Supervisors/Workers did not become ready within {} seconds: {error}",
-                    timeout.as_secs()
-                );
-            }
-            Err(_) => {}
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-}
-
-#[cfg(feature = "ocomp-integration")]
-async fn monitor_until_shutdown(localnet: &mut Localnet, ocomp: &mut OcompTopology) -> Result<()> {
-    let shutdown = wait_for_shutdown_signal();
-    tokio::pin!(shutdown);
-    let mut interval = tokio::time::interval(Duration::from_secs(2));
-    loop {
-        tokio::select! {
-            () = &mut shutdown => return Ok(()),
-            _ = interval.tick() => {
-                localnet.ensure_committee_alive()?;
-                ocomp.ensure_baseline_runtime_ready(1)?;
-            }
-        }
-    }
-}
-
-#[cfg(feature = "ocomp-integration")]
-async fn wait_for_advancing_heights(
-    localnet: &mut Localnet,
-    ports: &[u16],
-    timeout: Duration,
-) -> Result<Vec<u64>> {
-    let deadline = Instant::now() + timeout;
-    let mut baseline: Option<Vec<u64>> = None;
-    loop {
-        localnet.ensure_committee_alive()?;
-        if let Some(heights) = observe_heights(ports) {
-            if heights.iter().all(|height| *height > 0) {
-                match &baseline {
-                    Some(first)
-                        if heights
-                            .iter()
-                            .zip(first)
-                            .all(|(height, first)| height > first) =>
-                    {
-                        return Ok(heights);
-                    }
-                    None => baseline = Some(heights),
-                    Some(_) => {}
-                }
-            }
-        }
-        if Instant::now() >= deadline {
-            bail!(
-                "all validator RPCs did not advance beyond genesis within {} seconds",
-                timeout.as_secs()
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-}
-
-fn cleanup_run_scoped(cli: &LocalnetCli) -> Result<()> {
-    let receipt = read_bootstrap(cli)?;
-    let env = cli.environment(Some(&receipt.port_blocks))?;
-    let config = Config::resolve(&env);
-    let mut localnet = Localnet::new(config);
-    localnet.teardown()?;
-    Ok(())
-}
-
 fn observe_heights(ports: &[u16]) -> Option<Vec<u64>> {
     ports
         .iter()
@@ -900,26 +569,13 @@ fn observe_ocomp_runtime(_cli: &LocalnetCli, _port_blocks: &[u16]) -> Result<Oco
     unreachable!("require_ocomp_integration_build rejects this build")
 }
 
-#[cfg(feature = "ocomp-integration")]
-async fn wait_for_shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        if let Ok(mut terminate) = signal(SignalKind::terminate()) {
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {}
-                _ = terminate.recv() => {}
-            }
-            return;
-        }
-    }
-    let _ = tokio::signal::ctrl_c().await;
-}
-
 #[cfg(test)]
 mod tests;
 
+mod serve;
 mod state;
+mod stop;
+use serve::serve;
 #[cfg(any(test, feature = "ocomp-integration"))]
 use state::state_path;
 #[cfg(feature = "ocomp-integration")]
@@ -930,3 +586,4 @@ use state::{
     resolve_existing_path, resolve_maybe_missing_path, rpc_ports, state_is_live, validate_data_dir,
     write_json_atomic, StartLock,
 };
+use stop::{cleanup_run_scoped, cleanup_stale_owner, stop, terminate_startup_owner};

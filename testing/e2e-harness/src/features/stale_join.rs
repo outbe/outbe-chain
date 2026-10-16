@@ -9,7 +9,7 @@ use serde_json::json;
 
 use super::dkg::{
     capture_dkg_owner, dkg_addresses, dkg_boundary_at, dkg_epoch_at, dkg_membership_at, dkg_ports,
-    record_dkg_checkpoint, BoundaryWitness,
+    record_dkg_checkpoint, BoundaryWitness, DkgMembership,
 };
 use crate::internal::{addresses, eth};
 use crate::world::rpc::TxOutcome;
@@ -62,8 +62,17 @@ fn staked_joiner_unconfirmed(world: &mut World) {
         .push(json!({"phase": "readiness_stake_receipt",
         "transaction_hash": outcome.transaction_hash, "receipt": outcome.receipt}));
     let members = dkg_addresses(world, 5).expect("expected readiness identities");
-    dkg_membership_at(world, &ports, point, &members[..4], addr, 1)
-        .expect("finalized PENDING nonparticipant");
+    dkg_membership_at(
+        world,
+        &ports,
+        point,
+        &DkgMembership {
+            members: &members[..4],
+            joiner: addr,
+            status: 1,
+        },
+    )
+    .expect("finalized PENDING nonparticipant");
     for &port in &ports {
         let stake = eth::read_call_at_result(
             &world.rpc.url(port),
@@ -232,6 +241,90 @@ fn confirmed_joiner_activates(world: &mut World) {
     dkg_ports(world, &[0, 1, 2, 3, 4]).expect("readiness owners remain unchanged at completion");
 }
 
+struct ReadinessScan {
+    confirmed: bool,
+    receipt_height: u64,
+    epoch: u64,
+    prepare: u64,
+    members: Vec<alloy_primitives::Address>,
+    deadline: Instant,
+    next: u64,
+    fresh: u64,
+    matched: Vec<BoundaryWitness>,
+}
+
+impl ReadinessScan {
+    fn member_count(&self, active: bool) -> usize {
+        if active {
+            5
+        } else {
+            4
+        }
+    }
+
+    fn scan_until(&mut self, world: &mut World, ports: &[u16], height: u64) -> Result<()> {
+        while self.next <= height {
+            ensure!(
+                Instant::now() < self.deadline,
+                "readiness cycle proof exceeded its existing observation budget"
+            );
+            if let Some(boundary) = dkg_boundary_at(world, ports, self.next)? {
+                self.observe_boundary(world, ports, boundary)?;
+            }
+            let active = self.confirmed && !self.matched.is_empty();
+            let at = world.rpc.checkpoint_at(ports[0], self.next)?;
+            dkg_membership_at(
+                world,
+                ports,
+                at,
+                &DkgMembership {
+                    members: &self.members[..self.member_count(active)],
+                    joiner: self.members[4],
+                    status: if active { 2 } else { 1 },
+                },
+            )?;
+            self.next = self
+                .next
+                .checked_add(1)
+                .ok_or_else(|| eyre!("readiness scan height overflow"))?;
+        }
+        Ok(())
+    }
+
+    fn observe_boundary(
+        &mut self,
+        world: &mut World,
+        ports: &[u16],
+        boundary: BoundaryWitness,
+    ) -> Result<()> {
+        validate_readiness_boundary(&boundary, self.epoch, self.prepare)?;
+        validate_boundary_predecessor(world, ports, &boundary, self.epoch)?;
+        if !boundary_covers_receipt(&boundary, self.receipt_height) {
+            return Ok(());
+        }
+        ensure!(
+            self.matched.iter().all(
+                |previous| previous.cycle != boundary.cycle && previous.epoch != boundary.epoch
+            ),
+            "readiness target activated more than once"
+        );
+        let mut actual = boundary.members.clone();
+        actual.sort_unstable();
+        let mut expected = self.members[..self.member_count(self.confirmed)].to_vec();
+        expected.sort_unstable();
+        ensure!(
+            actual == expected,
+            "readiness boundary has the wrong membership"
+        );
+        world.state.restart_observations.push(json!({"phase": "readiness_cycle_boundary",
+            "confirmed": self.confirmed, "receipt_height": self.receipt_height, "epoch_length": self.epoch,
+            "prepare_window": self.prepare, "boundary": boundary}));
+        self.matched.push(boundary);
+        self.fresh = world.rpc.fresh_finality_target(ports)?;
+        Ok(())
+    }
+}
+
 fn observe_readiness_cycle(world: &mut World, confirmed: bool) -> Result<()> {
     let anchor = world
         .state
@@ -241,59 +334,24 @@ fn observe_readiness_cycle(world: &mut World, confirmed: bool) -> Result<()> {
     let members = dkg_addresses(world, 5)?;
     let ports = dkg_ports(world, &[0, 1, 2, 3, 4])?;
     let deadline = Instant::now() + Duration::from_secs(if confirmed { 400 } else { 800 });
-    let mut fresh = world.rpc.fresh_finality_target(&ports)?;
-    let mut next = anchor.height;
+    let fresh = world.rpc.fresh_finality_target(&ports)?;
     let required_cycles = if confirmed { 1 } else { 2 };
-    let mut matched: Vec<BoundaryWitness> = Vec::new();
+    let mut scan = ReadinessScan {
+        confirmed,
+        receipt_height: anchor.height,
+        epoch,
+        prepare,
+        members,
+        deadline,
+        next: anchor.height,
+        fresh,
+        matched: Vec::new(),
+    };
     loop {
         let ports = dkg_ports(world, &[0, 1, 2, 3, 4])?;
         let point = world.rpc.wait_finalized_checkpoint(&ports, 0, 1)?;
-        while next <= point.height {
-            ensure!(
-                Instant::now() < deadline,
-                "readiness cycle proof exceeded its existing observation budget"
-            );
-            if let Some(boundary) = dkg_boundary_at(world, &ports, next)? {
-                validate_readiness_boundary(&boundary, epoch, prepare)?;
-                validate_boundary_predecessor(world, &ports, &boundary, epoch)?;
-                if boundary_covers_receipt(&boundary, anchor.height) {
-                    ensure!(
-                        matched
-                            .iter()
-                            .all(|previous| previous.cycle != boundary.cycle
-                                && previous.epoch != boundary.epoch),
-                        "readiness target activated more than once"
-                    );
-                    let mut actual = boundary.members.clone();
-                    actual.sort_unstable();
-                    let mut expected = members[..if confirmed { 5 } else { 4 }].to_vec();
-                    expected.sort_unstable();
-                    ensure!(
-                        actual == expected,
-                        "readiness boundary has the wrong membership"
-                    );
-                    world.state.restart_observations.push(json!({"phase": "readiness_cycle_boundary",
-                        "confirmed": confirmed, "receipt_height": anchor.height, "epoch_length": epoch,
-                        "prepare_window": prepare, "boundary": boundary}));
-                    matched.push(boundary);
-                    fresh = world.rpc.fresh_finality_target(&ports)?;
-                }
-            }
-            let active = confirmed && !matched.is_empty();
-            let at = world.rpc.checkpoint_at(ports[0], next)?;
-            dkg_membership_at(
-                world,
-                &ports,
-                at,
-                &members[..if active { 5 } else { 4 }],
-                members[4],
-                if active { 2 } else { 1 },
-            )?;
-            next = next
-                .checked_add(1)
-                .ok_or_else(|| eyre!("readiness scan height overflow"))?;
-        }
-        if matched.len() >= required_cycles && point.height >= fresh {
+        scan.scan_until(world, &ports, point.height)?;
+        if scan.matched.len() >= required_cycles && point.height >= scan.fresh {
             dkg_ports(world, &[0, 1, 2, 3, 4])?;
             record_dkg_checkpoint(
                 world,
