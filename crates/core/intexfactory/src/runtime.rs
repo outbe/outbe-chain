@@ -13,8 +13,7 @@ use outbe_intex::{IntexContract, IntexState, SeriesRecord};
 use outbe_vaultrouter::settlement::{self, SettlementPayment};
 
 use crate::constants::{
-    INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
-    ORIGIN_ROUTER_ADDRESS, SETTLED_TAG,
+    INTEX_NFT1155_ADDRESS, MAX_SERIES_PER_MESSAGE, ORIGIN_ROUTER_ADDRESS, SETTLED_TAG,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -73,10 +72,11 @@ pub fn issue_intex(
     )?;
 
     // Not sent here: only the caller sees the whole day, and a chain's share of it
-    // travels in as few messages as the caps allow.
-    let legs: Vec<IssuanceLeg> = issuance_legs(&params)
-        .into_iter()
-        .map(|(chain_id, recipients, units)| IssuanceLeg {
+    // travels in as few messages as the cap allows.
+    let legs: Vec<IssuanceLeg> = params
+        .snapshot_chains
+        .iter()
+        .map(|&chain_id| IssuanceLeg {
             chain_id,
             payload: IOriginRouter::IssuanceInstructionsParams {
                 seriesId: params.series_id.into(),
@@ -91,8 +91,6 @@ pub fn issue_intex(
                 callWindow: cfg.call_window_seconds,
                 callThreshold: cfg.call_threshold_seconds,
                 callPriceMinor: call_price_minor_u64,
-                recipients,
-                units,
             },
         })
         .collect();
@@ -117,39 +115,31 @@ pub fn issue_intex(
     Ok(legs)
 }
 
-/// What one series adds to one chain: the series to create and that chain's winners
-/// (empty on a chain with none, which still needs the series for bridging).
+/// What one series adds to one chain: the series to create. Every snapshot chain gets it, so
+/// Intex can be bridged to any of them.
 #[derive(Clone)]
 pub struct IssuanceLeg {
     pub chain_id: u32,
     pub payload: IOriginRouter::IssuanceInstructionsParams,
 }
 
-/// Pack a day's legs into per-chain messages, up to `MAX_SERIES_PER_MESSAGE` series and
-/// `MAX_RECIPIENTS_PER_ISSUANCE` recipients each. A series with more winners spans several,
-/// which the receiver's create-if-absent makes safe.
+/// Pack a day's legs into per-chain messages of up to `MAX_SERIES_PER_MESSAGE` series each.
 pub fn pack_issuance_messages(
     legs: Vec<IssuanceLeg>,
 ) -> Vec<(u32, Vec<IssuanceInstructionsParams>)> {
     let mut per_chain: Vec<(u32, Vec<IssuanceInstructionsParams>)> = Vec::new();
     for leg in legs {
-        for slice in split_recipients(leg.payload) {
-            // Legs arrive series by series, so this chain's open message is not the last one
-            // built. Matching on the tail alone would batch nothing.
-            let open = per_chain
-                .iter_mut()
-                .rev()
-                .find(|(chain, _)| *chain == leg.chain_id);
-            match open {
-                Some((_, message))
-                    if message.len() < MAX_SERIES_PER_MESSAGE
-                        && recipient_count(message) + slice.recipients.len()
-                            <= MAX_RECIPIENTS_PER_ISSUANCE =>
-                {
-                    message.push(slice);
-                }
-                _ => per_chain.push((leg.chain_id, vec![slice])),
+        // Legs arrive series by series, so this chain's open message is not the last one
+        // built. Matching on the tail alone would batch nothing.
+        let open = per_chain
+            .iter_mut()
+            .rev()
+            .find(|(chain, _)| *chain == leg.chain_id);
+        match open {
+            Some((_, message)) if message.len() < MAX_SERIES_PER_MESSAGE => {
+                message.push(leg.payload);
             }
+            _ => per_chain.push((leg.chain_id, vec![leg.payload])),
         }
     }
     per_chain
@@ -201,49 +191,6 @@ pub(crate) fn chunk_issuance_messages(
         }
     }
     runs
-}
-
-fn recipient_count(message: &[IssuanceInstructionsParams]) -> usize {
-    message.iter().map(|item| item.recipients.len()).sum()
-}
-
-/// One series' instructions cut into pieces a message can carry. Only the winners differ.
-fn split_recipients(payload: IssuanceInstructionsParams) -> Vec<IssuanceInstructionsParams> {
-    if payload.recipients.len() <= MAX_RECIPIENTS_PER_ISSUANCE {
-        return vec![payload];
-    }
-    (0..payload.recipients.len())
-        .step_by(MAX_RECIPIENTS_PER_ISSUANCE)
-        .map(|start| {
-            let end = (start + MAX_RECIPIENTS_PER_ISSUANCE).min(payload.recipients.len());
-            IssuanceInstructionsParams {
-                recipients: payload.recipients[start..end].to_vec(),
-                units: payload.units[start..end].to_vec(),
-                ..payload.clone()
-            }
-        })
-        .collect()
-}
-
-/// One `(chain, recipients, units)` issuance leg per snapshot chain. Winners land on their
-/// own chain, and every other chain gets an empty leg. So the series is created there too
-/// (needed for user NFT bridging).
-pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, Vec<U256>)> {
-    params
-        .snapshot_chains
-        .iter()
-        .map(|&chain_id| {
-            let mut recipients = Vec::new();
-            let mut units = Vec::new();
-            for (i, &c) in params.recipient_chains.iter().enumerate() {
-                if c == chain_id {
-                    recipients.push(params.recipients[i]);
-                    units.push(params.units[i]);
-                }
-            }
-            (chain_id, recipients, units)
-        })
-        .collect()
 }
 
 /// `entry x (100 + rate) / 100`, the markup a series seals its call price at.

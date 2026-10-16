@@ -13,9 +13,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 interface IEscrowAdapter {
     // --- Types ---
 
-    /// @notice Lock status for a bid. `Won`: the payment left with the day's proceeds and the rest
-    ///         waits for `claimRefund`. `claimRefund` deletes a claimed lock, which then reads as
-    ///         `None`.
+    /// @notice Lock status for a bid. `Won`: the payment left with the day's proceeds. The lock keeps
+    ///         the change for `releaseRefund` and the units won for `closeWin`. A closed or refunded
+    ///         lock is deleted and reads as `None`.
     enum LockStatus {
         None,
         Locked,
@@ -26,7 +26,7 @@ interface IEscrowAdapter {
     /// @dev Slot-packed: `lockedAmount` (16B) + `lockedAt` (4B) + `status` (1B) + `bidRate` (4B) + `quantity` (2B)
     ///      = 27B, one slot.
     struct BidLock {
-        /// @notice Amount of payment-token locked.
+        /// @notice Amount of payment-token the lock still holds. For a winner, the change.
         uint128 lockedAmount;
         /// @notice Timestamp when the lock was created (UNIX seconds).
         uint32 lockedAt;
@@ -34,7 +34,7 @@ interface IEscrowAdapter {
         LockStatus status;
         /// @notice Bid rate the lock was taken at (`1e6` fixed-point, share of the escrow basis).
         uint32 bidRate;
-        /// @notice Intex units the bid asked for.
+        /// @notice Intex units the bid asked for. For a winner, the units won.
         uint16 quantity;
     }
 
@@ -110,7 +110,7 @@ interface IEscrowAdapter {
     event CommitBondReleased(uint32 indexed worldwideDay, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when funds are refunded to a bidder.
-    /// @param receiveId `bytes32(0)`: only `claimRefund` pays a refund. A bridge message never does.
+    /// @param receiveId `bytes32(0)`: only a claim pays a refund. A bridge message never does.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder who received the refund.
     /// @param amount Amount refunded to the bidder.
@@ -119,7 +119,7 @@ interface IEscrowAdapter {
     /// @notice Emitted for each refund chunk the escrow applies.
     /// @param receiveId Inbound bridge message that carried the chunk.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param totalRefunded Refunds the chunk's winners are now owed through `claimRefund`.
+    /// @param totalRefunded Change the chunk's winners are now owed.
     /// @param totalPaid Winning payments routed to the proceeds recipient.
     /// @param bidsProcessed Winners the chunk carried.
     event AuctionEscrowFinalized(
@@ -168,6 +168,12 @@ interface IEscrowAdapter {
     event BidderRefundFailed(
         bytes32 indexed receiveId, uint32 indexed worldwideDay, address indexed bidder, bytes reason
     );
+
+    /// @notice Emitted when the auction closes a win: the lock is gone and its units go to the bidder.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param bidder Winner whose lock was closed.
+    /// @param units Units the winner won.
+    event WinClosed(uint32 indexed worldwideDay, address indexed bidder, uint16 units);
 
     /// @notice Emitted when a refund chunk carried winners and settled none of them.
     /// @param worldwideDay Worldwide day (yyyymmdd).
@@ -228,7 +234,11 @@ interface IEscrowAdapter {
     error DayAssetRetired(uint32 worldwideDay, uint8 assetVersion);
     /// @notice Finalization produced proceeds but no recipient is configured.
     error ProceedsRecipientNotSet();
-    /// @notice `claimRefund` was called before the safety window elapsed.
+    /// @notice A winner's lock holds no change to refund.
+    error NothingToRefund();
+    /// @notice The auction cannot change while bidders still have something to claim through it.
+    error LocksOutstanding();
+    /// @notice A refund was claimed before the safety window elapsed.
     /// @param claimableAt Earliest unix-seconds timestamp the refund can be claimed at.
     /// @param now_ Current block timestamp.
     error RefundNotYetClaimable(uint32 claimableAt, uint32 now_);
@@ -245,7 +255,8 @@ interface IEscrowAdapter {
 
     /// @notice Wire contract dependencies.
     /// @dev Rotating `_paymentToken` or `_compact` retires the active asset under its version.
-    ///      Locks and bonds taken under it keep withdrawing from it.
+    ///      Locks and bonds taken under it keep withdrawing from it. The auction changes only once
+    ///      `hasOutstandingLocks` is false: its bidders claim through it.
     /// @param _intexAuction IntexAuction contract address.
     /// @param _compact The Compact contract address.
     /// @param _paymentToken Active payment-token address.
@@ -276,6 +287,13 @@ interface IEscrowAdapter {
     /// @param bidder Bidder whose bond is returned.
     function releaseCommitBond(uint32 worldwideDay, address bidder) external;
 
+    /// @notice Close a winner's lock: pay the change it still holds and return the units won.
+    ///         Callable only by the IntexAuction contract, which issues the units.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param bidder Winner whose lock is closed.
+    /// @return units Units the winner won.
+    function closeWin(uint32 worldwideDay, address bidder) external returns (uint16 units);
+
     /// @notice Active payment token used for bid escrow (WCOEN).
     function paymentToken() external view returns (IERC20);
 
@@ -289,8 +307,8 @@ interface IEscrowAdapter {
 
     /// @notice Apply one refund chunk: take each winner's payment at the day's clearing terms and
     ///         mark the rest of its lock owed. This function pays nothing to bidders. Every
-    ///         bidder collects through `claimRefund`. A bidder that the day's chunks never name
-    ///         lost.
+    ///         bidder collects through the auction's `claimRefund`. A bidder that the day's chunks
+    ///         never name lost.
     /// @dev A winner's lock leaves `Locked` on its first chunk, so none pays twice. `completesDay`
     ///      closes the day.
     /// @param worldwideDay Worldwide day (yyyymmdd).
@@ -317,15 +335,30 @@ interface IEscrowAdapter {
 
     // --- Recovery ---
 
-    /// @notice Permissionless refund. It always pays the stored `bidder` rather than `msg.sender`,
-    ///         and deletes the lock.
-    ///         - A winner collects the rest of its lock at once.
+    /// @notice Pay `bidder` what its lock owes. Callable only by the IntexAuction contract.
+    ///         - A winner collects its change at once. The lock keeps the units won for `closeWin`.
     ///         - A bidder that the finalized day never named collects its full principal at once.
     ///         - A bidder whose day never finalized collects its full principal after
     ///           `UNFINALIZED_REFUND_DELAY`.
+    ///         A lock already gone on a finalized day pays nothing and reports closed.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address whose locked principal is being claimed.
-    function claimRefund(uint32 worldwideDay, address bidder) external;
+    /// @return closed Whether the lock is gone after the call.
+    /// @return finalized Whether the day is finalized.
+    function releaseRefund(uint32 worldwideDay, address bidder) external returns (bool closed, bool finalized);
+
+    /// @notice Escrow-local safety valve for a lock stranded past `REFUND_ABANDON_DELAY` (e.g. the
+    ///         auction contract stopped working). It is time-based only and never consults the
+    ///         auction. It pays the stored `bidder`, not `msg.sender`, and only money: a winner's
+    ///         units stay in its lock.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param bidder Bidder whose lock is being claimed.
+    function claimAbandonedRefund(uint32 worldwideDay, address bidder) external;
+
+    /// @notice `claimAbandonedRefund` was called before the escrow-local safety window elapsed.
+    /// @param claimableAt Earliest unix-seconds timestamp the refund can be claimed at.
+    /// @param now_ Current block timestamp.
+    error RefundNotYetAbandoned(uint32 claimableAt, uint32 now_);
 
     /// @notice Escrow-local safety valve for a commit bond stranded past
     ///         `COMMIT_BOND_ABANDON_DELAY` (e.g. the auction contract was rotated away while the
@@ -343,7 +376,7 @@ interface IEscrowAdapter {
     /// @return lock The stored `BidLock` record for the series/bidder pair.
     function getBidLock(uint32 worldwideDay, address bidder) external view returns (BidLock memory lock);
 
-    /// @notice What `claimRefund` would pay `bidder` for the day, and from when. Zero once nothing is left to
+    /// @notice What the auction's `claimRefund` would pay `bidder` for the day, and from when. Zero once nothing is left to
     ///         claim: a settled or claimed lock is gone.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address.
@@ -370,7 +403,8 @@ interface IEscrowAdapter {
         view
         returns (bool hasLocks, bool isFinalized, uint128 totalLocked);
 
-    /// @notice True while any lock is still live in The Compact under the active lock id.
+    /// @notice True while any win is still open or any asset version still holds money in The Compact:
+    ///         a lock, a change or a commit bond someone can still claim.
     function hasOutstandingLocks() external view returns (bool outstanding);
 
     /// @notice Version number of the active asset.

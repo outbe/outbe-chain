@@ -170,23 +170,23 @@ contract EscrowAdapterBondTest is Test {
 
     /// @dev The valve is auction-independent by design: a bond locked before the auction
     ///      contract is rotated away stays recoverable straight from the escrow.
-    function test_ClaimAbandonedCommitBond_SurvivesAuctionRotation() public {
+    /// @dev A live bond pins the auction. The valve still recovers it without the auction.
+    function test_ALiveBondPinsTheAuctionUntilTheValveRecoversIt() public {
         _lockBond();
 
-        // Rotate the auction wiring only; compact and token stay.
         address newAuction = address(0xA0C71012);
         vm.prank(admin);
+        vm.expectRevert(IEscrowAdapter.LocksOutstanding.selector);
         escrow.wire(newAuction, address(compact), address(paymentToken));
-
-        // The old auction lost AUCTION_ROLE; the new one has no knowledge of the bond.
-        vm.prank(auction);
-        vm.expectRevert();
-        escrow.releaseCommitBond(worldwideDay1, bidder1);
 
         vm.warp(block.timestamp + escrow.COMMIT_BOND_ABANDON_DELAY());
         vm.prank(outsider);
         escrow.claimAbandonedCommitBond(worldwideDay1, bidder1);
         assertEq(paymentToken.balanceOf(bidder1), 1000e18, "full principal recovered");
+
+        vm.prank(admin);
+        escrow.wire(newAuction, address(compact), address(paymentToken));
+        assertEq(escrow.intexAuctionContract(), newAuction);
     }
 
     /// @dev Any bond amount round-trips lock -> release without residue in The Compact.

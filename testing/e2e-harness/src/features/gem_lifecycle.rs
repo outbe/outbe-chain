@@ -115,8 +115,7 @@ fn issue_source_series(world: &mut World) {
         REFERENCE_BYTE,
         U256::from(ENTRY_PRICE_MINOR),
         PROMIS_LOAD_MINOR,
-        merchant,
-        &[UNITS],
+        UNITS,
         &[u32::try_from(chain_id).expect("committee chain id fits a uint32")],
         &[SeriesSpec {
             issuance: *b"MYR",
@@ -130,6 +129,17 @@ fn issue_source_series(world: &mut World) {
     // Issuance reaches the collection as its own message; parking before the
     // units land reverts with NonexistentToken.
     let nft = intex_nft(world);
+    test_issuance::issue_to_owner(
+        &url,
+        nft,
+        DEPLOYER_KEY,
+        merchant,
+        UNITS,
+        &[series],
+        || {},
+        Duration::from_secs(ISSUANCE_TIMEOUT_SECS),
+    )
+    .expect("issue the source units to the merchant");
     let deadline = Instant::now() + Duration::from_secs(ISSUANCE_TIMEOUT_SECS);
     loop {
         if venue_probes::series_balances(&url, nft, series, merchant) == Some((u64::from(UNITS), 0))

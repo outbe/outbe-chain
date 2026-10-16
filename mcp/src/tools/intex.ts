@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Ctx } from "../chain.js";
 import { registerAuctionTools } from "./intex/auctions.js";
-import { registerBidTools } from "./intex/bids.js";
+import { registerBidTools, registerClaimTools } from "./intex/bids.js";
 import { registerBridgeTools } from "./intex/bridge.js";
 import { intexDeps } from "./intex/deps.js";
 import { registerFundingTools } from "./intex/funding.js";
@@ -19,6 +19,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   registerHoldingsTools(server, deps);
   registerAuctionTools(server, deps);
   registerBidTools(server, deps);
+  registerClaimTools(server, deps);
   registerFundingTools(server, deps);
   registerBridgeTools(server, deps);
   registerSettlementTools(server, deps);

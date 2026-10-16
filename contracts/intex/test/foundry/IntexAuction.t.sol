@@ -467,10 +467,25 @@ contract AuctionTest is Test {
         auction.wire(address(0xBEEF));
     }
 
-    /// @dev Bidders claim their own locks, so an escrow still holding them is the steady state and
-    ///      must not pin the auction to it. The locks stay where they are. Only new days go to the
-    ///      new escrow.
-    function test_Wire_RotatesWhileLocksOutstanding() public {
+    function test_SetIntexContract_AdminOnlyAndNonZero() public {
+        vm.prank(iba1);
+        vm.expectRevert();
+        auction.setIntexContract(address(0xBEEF));
+
+        vm.startPrank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "intexContract"));
+        auction.setIntexContract(address(0));
+
+        vm.expectEmit(true, true, true, true, address(auction));
+        emit IIntexAuction.IntexWired(address(auction.intexContract()), address(0xBEEF));
+        auction.setIntexContract(address(0xBEEF));
+        vm.stopPrank();
+        assertEq(address(auction.intexContract()), address(0xBEEF));
+    }
+
+    /// @dev Bidders claim through the auction from the escrow that took their locks, so the escrow
+    ///      stays until nothing is left on it.
+    function test_Wire_RefusesWhileTheEscrowHoldsLocks() public {
         uint256 startTs = block.timestamp;
         uint32 worldwideDay = 20250201;
         _start(worldwideDay, 50, 1);
@@ -481,10 +496,12 @@ contract AuctionTest is Test {
 
         MockAuctionEscrow escrow2 = new MockAuctionEscrow();
         vm.prank(admin);
+        vm.expectRevert(IIntexAuction.EscrowHasLiveLocks.selector);
         auction.wire(address(escrow2));
 
-        assertEq(address(auction.escrowContract()), address(escrow2));
-        assertTrue(escrow.hasOutstandingLocks(), "the old escrow keeps the lock it took");
+        vm.prank(admin);
+        auction.wire(address(escrow));
+        assertEq(address(auction.escrowContract()), address(escrow), "the same escrow rewires");
     }
 
     function test_Wire_SucceedsAfterLocksCleared() public {
@@ -500,53 +517,6 @@ contract AuctionTest is Test {
         vm.prank(admin);
         auction.wire(address(escrow2));
         assertEq(address(auction.escrowContract()), address(escrow2));
-    }
-
-    function test_ReapAuction_ClearsRevealedBidsInPages() public {
-        uint32 worldwideDay = 20250220;
-        _start(worldwideDay, 50, 1);
-        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
-        _commit(worldwideDay, iba2, 40, 70, iba2PrivateKey);
-        IIntexAuction.AuctionSchedule memory sched = auction.getAuctionInfo(worldwideDay).schedule;
-
-        vm.warp(uint256(sched.commitEnd) + 1);
-        _reveal(worldwideDay, iba1, 30, 80, iba1PrivateKey);
-        _reveal(worldwideDay, iba2, 40, 70, iba2PrivateKey);
-
-        vm.warp(uint256(sched.revealEnd) + 1);
-        vm.startPrank(bridger);
-        auction.startClearingStage(worldwideDay);
-        auction.executeAuctionClearing(worldwideDay, 100, 75, 2);
-        vm.stopPrank();
-
-        vm.expectRevert(IIntexAuction.TooEarlyToReap.selector);
-        auction.reapAuction(worldwideDay, 10);
-
-        vm.warp(uint256(sched.issuanceEnd) + 1);
-        auction.reapAuction(worldwideDay, 1);
-        (, IIntexAuction.SubmittedBidData[] memory afterPage1) = auction.getAuctionDetails(worldwideDay);
-        assertEq(afterPage1.length, 1);
-        auction.reapAuction(worldwideDay, 10);
-        (, IIntexAuction.SubmittedBidData[] memory afterPage2) = auction.getAuctionDetails(worldwideDay);
-        assertEq(afterPage2.length, 0);
-    }
-
-    function test_ReapAuction_RevertsBeforeTerminal() public {
-        uint32 worldwideDay = 20250221;
-        _start(worldwideDay, 50, 1);
-        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
-        IIntexAuction.AuctionSchedule memory sched = auction.getAuctionInfo(worldwideDay).schedule;
-        vm.warp(uint256(sched.issuanceEnd) + 1);
-
-        // Green, past revealEnd, never cleared -> Issuance stage, not terminal.
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IIntexAuction.StageRequired.selector,
-                IIntexAuction.AuctionStage.Completed,
-                IIntexAuction.AuctionStage.Issuance
-            )
-        );
-        auction.reapAuction(worldwideDay, 10);
     }
 
     function test_RevealBid_FreesCommitSlot() public {
