@@ -1,9 +1,0 @@
-{
-  "source_sha": "53f369ff532b96e6fe686993f78ca3894e797bf9",
-  "base_sha": "0cc376bb8af2f17ea25d7c3b3db76f09c21a3268",
-  "files": {
-    "vendor/heartwood/crates/radicle-node/src/tests/e2e/native_bls.rs": "621d8775359bfa4e39f29f4b1016c067e1aa965029ce0e577ac66bc30bdcb01e",
-    "vendor/heartwood/crates/radicle/src/cob/store/native_test.rs": "6bc9b4289e460b64d749f80607e4fe3e2dfce2c0a3598c3e00bdddc4cbd404d1",
-    "vendor/heartwood/crates/radicle/src/storage/git/cob.rs": "685fe7529e0f2b9c0283fd4fbe25dec7cc612010fdac82121f8ae76136fef2d5"
-  }
-}

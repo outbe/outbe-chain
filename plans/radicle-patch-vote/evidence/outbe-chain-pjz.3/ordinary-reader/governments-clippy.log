@@ -1,7 +1,0 @@
-    Checking outbe-consensus v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/consensus)
-    Checking outbe-validatorset v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/validatorset)
-    Checking outbe-vote v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/vote)
-    Checking outbe-radicleregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/radicleregistry)
-    Checking outbe-radicle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/radicle)
-    Checking outbe-radicle-runtime v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/radicle)
-    Finished `dev` profile [unoptimized] target(s) in 10.07s

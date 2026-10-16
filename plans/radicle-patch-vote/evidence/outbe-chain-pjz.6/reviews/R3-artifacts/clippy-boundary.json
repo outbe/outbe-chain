@@ -1,6 +1,0 @@
-{
-  "path": "crates/core/tribute/src/runtime.rs",
-  "base_candidate_live_byte_equal": true,
-  "sha256": "79b8562c938530755cba50caa9a9a542cbc0bffceafb556ef0e473bb7182f238",
-  "baseline_execution_claimed": false
-}
