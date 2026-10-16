@@ -49,7 +49,6 @@ pub(super) struct TransportAdmission<'a> {
     pub(super) signing_key: &'a bls12381::PrivateKey,
     pub(super) validator_set: &'a validators::ValidatorSet,
     pub(super) initial_peer_hash: B256,
-    pub(super) ocomp_install_hash: Option<B256>,
 }
 
 pub(super) async fn start_transport<E>(
@@ -80,10 +79,9 @@ where
         signing_key,
         validator_set,
         initial_peer_hash,
-        ocomp_install_hash,
     } = admission;
     // -- 3. Configure P2P network ---------------------------------------
-    let p2p_namespace = ocomp_p2p_namespace(ocomp_install_hash);
+    let p2p_namespace = commonware_utils::union_unique(&config::outbe_app_namespace(), b"_P2P");
     // Cover the full registered validator set plus a local non-validator identity.
     let max_peers_per_set =
         NonZeroUsize::new(outbe_consensus::bls::MAX_VALIDATORS as usize + 1).unwrap();

@@ -120,8 +120,6 @@ pub enum SystemTxBuildError {
     Ost3BootstrapForbiddenAtBlock { block_number: u64 },
     #[error("encode system tx input: {0}")]
     EncodeSystemTxInput(String),
-    #[error("encode terminal system tx input: {0}")]
-    EncodeTerminalSystemTxInput(String),
     #[error("plan visible system tx gas: {0}")]
     PlanVisibleSystemTxGas(String),
     #[error("visible gas plan missing system tx ordinal {ordinal}")]
@@ -136,14 +134,6 @@ pub enum SystemTxBuildError {
     BuildUnsignedSystemTx(String),
     #[error("sign system tx: {0}")]
     SignSystemTx(String),
-    #[error("missing EVM signer for proposer terminal system tx")]
-    MissingProposerTerminalSystemTxSigner,
-    #[error("terminal system tx ordinal {ordinal} exceeds u8 range")]
-    TerminalSystemTxOrdinalExceedsU8 { ordinal: usize },
-    #[error("build terminal system tx: {0}")]
-    BuildTerminalSystemTx(String),
-    #[error("sign terminal system tx: {0}")]
-    SignTerminalSystemTx(String),
     #[error("missing EVM signer for proposer Phase 1 prebuild")]
     MissingPhase1PrebuildSigner,
     #[error("missing parent consensus metadata for Phase 1 prebuild")]
@@ -173,10 +163,6 @@ impl SystemTxBuildError {
         Self::EncodeSystemTxInput(error.to_string())
     }
 
-    pub(crate) fn encode_terminal_system_tx_input(error: impl Display) -> Self {
-        Self::EncodeTerminalSystemTxInput(error.to_string())
-    }
-
     pub(crate) fn plan_visible_system_tx_gas(error: impl Display) -> Self {
         Self::PlanVisibleSystemTxGas(error.to_string())
     }
@@ -187,14 +173,6 @@ impl SystemTxBuildError {
 
     pub(crate) fn sign_system_tx(error: impl Display) -> Self {
         Self::SignSystemTx(error.to_string())
-    }
-
-    pub(crate) fn build_terminal_system_tx(error: impl Display) -> Self {
-        Self::BuildTerminalSystemTx(error.to_string())
-    }
-
-    pub(crate) fn sign_terminal_system_tx(error: impl Display) -> Self {
-        Self::SignTerminalSystemTx(error.to_string())
     }
 
     pub(crate) fn phase1_prebuild_encode_input(error: impl Display) -> Self {
@@ -224,10 +202,6 @@ pub enum ExecutorValidationError {
     BlockArtifacts(String),
     #[error("reserved system transaction cannot execute without commit")]
     ReservedSystemTxWithoutCommit,
-    #[error("transaction follows the terminal OCOMP system transaction")]
-    TransactionFollowsTerminalOcompSystemTx,
-    #[error("active OCOMP block is missing its terminal system transaction")]
-    MissingActiveOcompTerminalSystemTx,
     #[error("missing Outbe post-execution output")]
     MissingPostExecutionOutput,
     #[error("missing execution summary artifact in block extra_data")]
@@ -427,8 +401,6 @@ pub enum ExecutorValidationError {
     ExpectedMandatoryOst3AtOrdinal { ordinal: usize },
     #[error("encode system tx for visible gas plan: {0}")]
     EncodeSystemTxForVisibleGasPlan(String),
-    #[error("encode terminal system tx for visible gas plan: {0}")]
-    EncodeTerminalSystemTxForVisibleGasPlan(String),
     #[error("plan visible system tx gas: {0}")]
     PlanVisibleSystemTxGas(String),
     #[error("visible gas plan missing intrinsic gas for body_index={body_index}")]
@@ -479,16 +451,6 @@ pub enum ExecutorValidationError {
         body_index: usize,
         expected_phase: SystemTxKind,
     },
-    #[error("invalid OCOMP system carrier: {0}")]
-    InvalidOcompSystemCarrier(String),
-    #[error("OCOMP system carrier is not active for this block")]
-    OcompSystemCarrierNotActive,
-    #[error("OCOMP system carrier authorization failed: {0}")]
-    OcompSystemCarrierAuthorizationFailed(String),
-    #[error("OCOMP system carrier signer is not authorized")]
-    OcompSystemCarrierSignerNotAuthorized,
-    #[error("OCOMP system carrier execution did not succeed: {result}")]
-    OcompSystemCarrierDidNotSucceed { result: String },
     #[error("decode system tx at body_index={body_index}: {reason}")]
     DecodeSystemTxAtBodyIndex { body_index: usize, reason: String },
     #[error(
@@ -512,32 +474,6 @@ pub enum ExecutorValidationError {
         signed: u64,
         visible_base: u64,
     },
-    #[error("terminal system tx ordinal {ordinal} exceeds u8 range")]
-    TerminalSystemTxOrdinalExceedsU8 { ordinal: usize },
-    #[error("build expected terminal system tx: {0}")]
-    BuildExpectedTerminalSystemTx(String),
-    #[error("terminal system tx signature hash mismatch")]
-    TerminalSystemTxSignatureHashMismatch,
-    #[error("terminal system tx signer mismatch: expected proposer {proposer}, got {signer}")]
-    TerminalSystemTxSignerMismatch { proposer: Address, signer: Address },
-    #[error("terminal system tx intrinsic gas: {0}")]
-    TerminalSystemTxIntrinsicGas(String),
-    #[error("critical terminal system tx did not succeed at block {block_number}: {result}")]
-    CriticalTerminalSystemTxDidNotSucceed { block_number: u64, result: String },
-    #[error("terminal system transaction cannot execute without commit")]
-    TerminalSystemTxWithoutCommit,
-    #[error("OCOMP terminal request is not active for this block")]
-    OcompTerminalRequestNotActive,
-    #[error("OCOMP terminal request arrived before the begin zone completed")]
-    OcompTerminalRequestBeforeBeginZoneCompleted,
-    #[error("OCOMP lifecycle permits exactly one end-zone system transaction")]
-    MultipleEndZoneSystemTransactions,
-    #[error("terminal system transaction differs from the validated block suffix")]
-    TerminalSystemTxDiffersFromValidatedSuffix,
-    #[error("decode terminal system tx input: {0}")]
-    DecodeTerminalSystemTxInput(String),
-    #[error("end-zone system transaction is not OcompTerminalRequest")]
-    EndZoneSystemTxNotOcompTerminalRequest,
 }
 
 impl ExecutorValidationError {
@@ -652,10 +588,6 @@ impl ExecutorValidationError {
         Self::EncodeSystemTxForVisibleGasPlan(error.to_string())
     }
 
-    pub(crate) fn encode_terminal_system_tx_for_visible_gas_plan(error: impl Display) -> Self {
-        Self::EncodeTerminalSystemTxForVisibleGasPlan(error.to_string())
-    }
-
     pub(crate) fn plan_visible_system_tx_gas(error: impl Display) -> Self {
         Self::PlanVisibleSystemTxGas(error.to_string())
     }
@@ -683,47 +615,11 @@ impl ExecutorValidationError {
         }
     }
 
-    pub(crate) fn invalid_ocomp_system_carrier(error: impl Display) -> Self {
-        Self::InvalidOcompSystemCarrier(error.to_string())
-    }
-
-    pub(crate) fn ocomp_system_carrier_authorization_failed(error: impl Display) -> Self {
-        Self::OcompSystemCarrierAuthorizationFailed(error.to_string())
-    }
-
-    pub(crate) fn ocomp_system_carrier_did_not_succeed(result: impl Debug) -> Self {
-        Self::OcompSystemCarrierDidNotSucceed {
-            result: format!("{result:?}"),
-        }
-    }
-
     pub(crate) fn decode_system_tx_at_body_index(body_index: usize, error: impl Display) -> Self {
         Self::DecodeSystemTxAtBodyIndex {
             body_index,
             reason: error.to_string(),
         }
-    }
-
-    pub(crate) fn build_expected_terminal_system_tx(error: impl Display) -> Self {
-        Self::BuildExpectedTerminalSystemTx(error.to_string())
-    }
-
-    pub(crate) fn terminal_system_tx_intrinsic_gas(error: impl Display) -> Self {
-        Self::TerminalSystemTxIntrinsicGas(error.to_string())
-    }
-
-    pub(crate) fn critical_terminal_system_tx_did_not_succeed(
-        block_number: u64,
-        result: impl Debug,
-    ) -> Self {
-        Self::CriticalTerminalSystemTxDidNotSucceed {
-            block_number,
-            result: format!("{result:?}"),
-        }
-    }
-
-    pub(crate) fn decode_terminal_system_tx_input(error: impl Display) -> Self {
-        Self::DecodeTerminalSystemTxInput(error.to_string())
     }
 }
 

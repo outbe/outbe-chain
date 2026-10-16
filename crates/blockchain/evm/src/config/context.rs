@@ -26,7 +26,6 @@ pub struct OutbeBlockExecutionCtx<'a> {
     /// `None` while a proposer is still building the block.
     pub block_state_root: Option<B256>,
     pub expected_begin_system_txs: Vec<Recovered<TransactionSigned>>,
-    pub expected_end_system_txs: Vec<Recovered<TransactionSigned>>,
     pub system_layout_error: Option<crate::errors::SystemTxExpectationError>,
     pub parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
     pub proposer_evm_address: Option<Address>,

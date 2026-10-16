@@ -33,9 +33,6 @@ pub struct NativeProgress {
     pub partial_state_trie: Option<u64>,
     pub unwind: Option<UnwindProgress>,
     pub storage_version: u32,
-    pub ocomp_baseline: BlockIdentity,
-    pub ocomp_previous: BlockIdentity,
-    pub ocomp_current: BlockIdentity,
 }
 
 /// Finite public data classes. Secret/configuration domains have no variant.
@@ -50,19 +47,6 @@ pub enum DomainKind {
     MarshalMetadata,
     MarshalCache,
     ParentCertificates,
-    OcompRetention,
-    ClosureCheckpoint,
-    Discovery,
-    ProtocolBundles,
-    CasObjects,
-    InputReferences,
-    ExportReceipts,
-    ExportBindings,
-    JobPublicRecords,
-    MaterializationReferences,
-    LocalResults,
-    ExexCheckpoint,
-    FatalEvidence,
 }
 
 /// Informational ordinary configuration root. It is never an extraction destination.
@@ -71,7 +55,6 @@ pub enum DomainKind {
 pub enum NativeRoot {
     Chain,
     Consensus,
-    Ocomp,
     StaticFiles,
     ExecutionRocksDb,
 }
@@ -144,13 +127,7 @@ impl SnapshotManifestV1 {
             is_hash(&self.genesis_hash),
             ManifestError::InvalidGenesisHash,
         )?;
-        for block in [
-            &self.progress.finalized,
-            &self.progress.execution,
-            &self.progress.ocomp_baseline,
-            &self.progress.ocomp_previous,
-            &self.progress.ocomp_current,
-        ] {
+        for block in [&self.progress.finalized, &self.progress.execution] {
             require(
                 is_hash(&block.hash),
                 ManifestError::InvalidNativeCheckpointHash,

@@ -39,10 +39,9 @@ use revm::{
     state::{AccountInfo, Bytecode},
     Database,
 };
-use std::{cell::RefCell, sync::Arc};
+use std::cell::RefCell;
 
-use crate::{gas::SubcallGasMeter, precompiles::OcompActivationBlockMeter, sub_call};
-use outbe_metadosis::api::OcompFinalizedIntentAuthority;
+use crate::{gas::SubcallGasMeter, sub_call};
 
 #[cfg(test)]
 #[path = "subcall_tests.rs"]
@@ -139,15 +138,8 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     pub genesis_hash: B256,
     /// Least-authority off-chain body readers propagated to nested precompiles.
     pub(crate) abort_bridge: crate::precompiles::ExecutionAbortBridge,
-    /// The same block-scoped lifecycle capability used by the outer EVM.
 
-    /// Production finalized-Intent authority propagated to nested precompile calls.
-    pub ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
-    /// The same block-scoped activation meter used by the outer dispatcher.
-    pub ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
-    /// Whether the OCOMP measurement/final profile is active in this block.
-    pub ocomp_lifecycle_active: bool,
-    /// One-shot authority for the active mutation and activation frames.
+    /// One-shot authority for the active Metadosis mutation frame.
     dispatch_frames: DispatchFrameAuthority,
 }
 
@@ -160,23 +152,11 @@ pub(crate) struct CtxStorageProviderConfig {
 
     pub(crate) abort_bridge: crate::precompiles::ExecutionAbortBridge,
 
-    pub(crate) ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
-    pub(crate) ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
-    pub(crate) ocomp_lifecycle_active: bool,
-    pub(crate) lysis_activation_entitled: bool,
     pub(crate) metadosis_mutation_entitlements: MetadosisMutationEntitlements,
 }
 
 struct DispatchFrameAuthority {
-    lysis: LysisActivationLease,
     metadosis: MetadosisMutationFrameState,
-}
-
-#[derive(Debug)]
-struct LysisActivationLease {
-    entitled: bool,
-    attempted: bool,
-    active_call_id: Option<B256>,
 }
 
 #[derive(Debug)]
@@ -232,39 +212,6 @@ impl MetadosisMutationFrameState {
     }
 }
 
-impl LysisActivationLease {
-    const fn new(entitled: bool) -> Self {
-        Self {
-            entitled,
-            attempted: false,
-            active_call_id: None,
-        }
-    }
-
-    fn begin(&mut self, activation_call_id: B256) -> outbe_primitives::error::Result<()> {
-        if !self.entitled || self.attempted || self.active_call_id.is_some() {
-            return Err(crate::errors::CtxStorageError::LysisActivationFrameNotEntitled.into());
-        }
-        self.attempted = true;
-        self.active_call_id = Some(activation_call_id);
-        Ok(())
-    }
-
-    fn finish(
-        &mut self,
-        activation_call_id: B256,
-        _completed: bool,
-    ) -> outbe_primitives::error::Result<()> {
-        if self.active_call_id != Some(activation_call_id) {
-            return Err(
-                crate::errors::CtxStorageError::LysisActivationFrameIdentityMismatch.into(),
-            );
-        }
-        self.active_call_id = None;
-        Ok(())
-    }
-}
-
 impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
     /// Constructor.
     pub(crate) fn new(
@@ -284,11 +231,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
 
             abort_bridge: config.abort_bridge,
 
-            ocomp_finality_authority: config.ocomp_finality_authority,
-            ocomp_activation_block_meter: config.ocomp_activation_block_meter,
-            ocomp_lifecycle_active: config.ocomp_lifecycle_active,
             dispatch_frames: DispatchFrameAuthority {
-                lysis: LysisActivationLease::new(config.lysis_activation_entitled),
                 metadosis: MetadosisMutationFrameState::new(config.metadosis_mutation_entitlements),
             },
         }
@@ -363,23 +306,6 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         _completed: bool,
     ) -> outbe_primitives::error::Result<()> {
         self.dispatch_frames.metadosis.finish(purpose, binding)
-    }
-
-    fn begin_lysis_activation_frame(
-        &mut self,
-        activation_call_id: B256,
-    ) -> outbe_primitives::error::Result<()> {
-        self.dispatch_frames.lysis.begin(activation_call_id)
-    }
-
-    fn finish_lysis_activation_frame(
-        &mut self,
-        activation_call_id: B256,
-        completed: bool,
-    ) -> outbe_primitives::error::Result<()> {
-        self.dispatch_frames
-            .lysis
-            .finish(activation_call_id, completed)
     }
 
     fn chain_id(&self) -> u64 {
@@ -635,12 +561,8 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
                     self.spec,
                     self.genesis_hash,
                 ),
-                runtime: crate::precompiles::OutbePrecompileRuntime::new(
-                    self.ocomp_finality_authority.clone(),
-                    self.ocomp_lifecycle_active,
-                )
-                .with_abort_bridge(self.abort_bridge.clone()),
-                activation_meter: self.ocomp_activation_block_meter.clone(),
+                runtime: crate::precompiles::OutbePrecompileRuntime::new()
+                    .with_abort_bridge(self.abort_bridge.clone()),
             },
             input,
             Some((hash, code)),
@@ -662,45 +584,11 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
 }
 
 #[cfg(test)]
-mod lysis_activation_lease_tests {
-    use super::LysisActivationLease;
-    use alloy_primitives::B256;
-
-    #[test]
-    fn denied_call_cannot_open_activation_frame() {
-        let mut lease = LysisActivationLease::new(false);
-        assert!(lease.begin(B256::repeat_byte(1)).is_err());
-    }
-
-    #[test]
-    fn entitled_call_gets_one_exact_activation_frame() {
-        let call_id = B256::repeat_byte(2);
-        let mut lease = LysisActivationLease::new(true);
-
-        lease.begin(call_id).unwrap();
-        lease.finish(call_id, true).unwrap();
-
-        assert!(lease.begin(call_id).is_err());
-    }
-
-    #[test]
-    fn wrong_frame_identity_cannot_close_or_replace_active_frame() {
-        let call_id = B256::repeat_byte(3);
-        let mut lease = LysisActivationLease::new(true);
-        lease.begin(call_id).unwrap();
-
-        assert!(lease.finish(B256::repeat_byte(4), false).is_err());
-        lease.finish(call_id, false).unwrap();
-        assert!(lease.begin(call_id).is_err());
-    }
-}
-
-#[cfg(test)]
 mod metadosis_mutation_frame_tests {
     use super::MetadosisMutationFrameState;
     use alloy_primitives::B256;
     use outbe_primitives::storage::{
-        MetadosisCertifiedFinalityBinding, MetadosisMutationEntitlements,
+        metadosis_late_settlement_binding, MetadosisMutationEntitlements,
         MetadosisMutationPurposeTag as Purpose,
     };
 
@@ -746,7 +634,7 @@ mod metadosis_mutation_frame_tests {
 
     #[test]
     fn one_route_entitlement_cannot_be_reused() {
-        let purpose = Purpose::VerifiedResultVote;
+        let purpose = Purpose::CycleLifecycle;
         let binding = B256::repeat_byte(7);
         let mut frame =
             MetadosisMutationFrameState::new(MetadosisMutationEntitlements::only(purpose));
@@ -771,30 +659,16 @@ mod metadosis_mutation_frame_tests {
     #[test]
     fn exact_authority_binding_rejects_mismatch_without_consuming_grant() {
         let purpose = Purpose::CertifiedFinality;
-        let finalized_hash = B256::repeat_byte(11);
-        let expected = MetadosisCertifiedFinalityBinding::new(
-            7,
-            11,
-            10,
-            finalized_hash,
-            B256::repeat_byte(12),
-        );
-        let wrong_root = MetadosisCertifiedFinalityBinding::new(
-            7,
-            11,
-            10,
-            finalized_hash,
-            B256::repeat_byte(13),
-        );
-        assert_ne!(expected.binding(), wrong_root.binding());
+        let expected = metadosis_late_settlement_binding(7, 11, 12);
+        let wrong = metadosis_late_settlement_binding(7, 11, 13);
+        assert_ne!(expected, wrong);
         let mut frame = MetadosisMutationFrameState::new(MetadosisMutationEntitlements::exact(
-            purpose,
-            expected.binding(),
+            purpose, expected,
         ));
 
-        assert!(frame.begin(purpose, wrong_root.binding(), 7, 11).is_err());
-        frame.begin(purpose, expected.binding(), 7, 11).unwrap();
-        frame.finish(purpose, expected.binding()).unwrap();
-        assert!(frame.begin(purpose, expected.binding(), 7, 11).is_err());
+        assert!(frame.begin(purpose, wrong, 7, 11).is_err());
+        frame.begin(purpose, expected, 7, 11).unwrap();
+        frame.finish(purpose, expected).unwrap();
+        assert!(frame.begin(purpose, expected, 7, 11).is_err());
     }
 }

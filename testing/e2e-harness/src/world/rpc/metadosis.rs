@@ -33,7 +33,6 @@ impl Rpc {
         })
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub fn metadosis_terminal_receipt_on(
         &self,
         port: u16,
@@ -54,7 +53,6 @@ impl Rpc {
         })
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub fn metadosis_wwd_state_at(
         &self,
         port: u16,
@@ -78,7 +76,6 @@ impl Rpc {
         })
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub fn metadosis_unknown_status_reverts_at(
         &self,
         port: u16,
@@ -93,7 +90,6 @@ impl Rpc {
         )
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub fn finalized_metadosis_wwd_started_on(
         &self,
         port: u16,
@@ -134,7 +130,6 @@ impl Rpc {
         })
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub fn finalized_metadosis_wwd_status_changes_on(
         &self,
         port: u16,

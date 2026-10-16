@@ -6,10 +6,6 @@ use outbe_validatorset::contract::ValidatorSet;
 use crate::contract::Staking;
 use crate::errors::StakingError;
 
-pub use crate::ocomp_recovery::{
-    OcompMissPenalty, OcompRecoveryResolution, OcompRecoverySweep, OCOMP_MISS_SLASH_PERCENT,
-};
-
 impl Staking<'_> {
     /// Stakes `amount` on behalf of `validator`.
     ///

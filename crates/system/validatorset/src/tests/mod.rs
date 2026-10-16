@@ -1,5 +1,4 @@
 use alloy_primitives::{address, keccak256, Address, B256, U256};
-use outbe_ocomp_protocol::{committee::OcompKeyRegistrationV1, profile::poc_schema_limits};
 use outbe_primitives::consensus_p2p::{
     encode_v1, P2pAddress, P2pIngress, MAX_P2P_ADDRESS_ENCODED_LEN, P2P_ADDRESS_VERSION_V1,
 };
@@ -17,9 +16,8 @@ use crate::test_support::StorageOverrides;
 mod fixtures;
 use fixtures::{
     activate_for_test, activate_staked_for_test, at_height, configured_storage, confirm_ready,
-    dummy_consensus_pubkey, make_inactive_for_test, ocomp_registration, register_boundary_active,
-    register_participant, register_validators, registry_storage, with_vs_configured, CHAIN_ID,
-    OWNER,
+    dummy_consensus_pubkey, make_inactive_for_test, register_boundary_active, register_participant,
+    register_validators, registry_storage, with_vs_configured, CHAIN_ID, OWNER,
 };
 
 mod aggregate_seam;
@@ -27,7 +25,6 @@ mod boundary;
 mod boundary_transitions;
 mod identity;
 mod lifecycle;
-mod ocomp_recovery;
 mod operational_key_delegation;
 mod participation;
 mod precompile_routes;

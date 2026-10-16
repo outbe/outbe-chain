@@ -2,7 +2,6 @@ use crate::system_tx::build_unsigned_system_tx;
 use crate::system_tx::build_unsigned_system_tx_with_gas_limit;
 use crate::system_tx::split_system_layout;
 use crate::system_tx::validate_system_tx_set_for_publication;
-use crate::system_tx::OcompLifecycleActivation;
 use crate::system_tx::SystemTxInputV2;
 use crate::system_tx::SystemTxKind;
 use crate::system_tx::SystemTxVisibleGasPlan;
@@ -31,14 +30,12 @@ use crate::errors::{ExecutorValidationError, SystemTxBuildError, SystemTxExpecta
 
 type SystemTxExpectations = (
     Vec<Recovered<TransactionSigned>>,
-    Vec<Recovered<TransactionSigned>>,
     Option<SystemTxExpectationError>,
     Option<Address>,
 );
 
 pub(super) fn system_tx_expectations_for_block(
     block: &SealedBlock<OutbeBlock>,
-    ocomp_lifecycle_activation: OcompLifecycleActivation,
 ) -> SystemTxExpectations {
     let (has_boundary_outcome, has_publication) =
         match decode_outbe_block_artifacts(block.header().extra_data().as_ref()) {
@@ -52,7 +49,6 @@ pub(super) fn system_tx_expectations_for_block(
             Err(error) => {
                 return (
                     Vec::new(),
-                    Vec::new(),
                     Some(SystemTxExpectationError::decode_block_artifacts(error)),
                     None,
                 );
@@ -63,7 +59,6 @@ pub(super) fn system_tx_expectations_for_block(
         Ok(layout) => layout,
         Err(error) => {
             return (
-                Vec::new(),
                 Vec::new(),
                 Some(SystemTxExpectationError::layout(error)),
                 None,
@@ -77,11 +72,9 @@ pub(super) fn system_tx_expectations_for_block(
         block.header().number(),
         has_boundary_outcome,
         has_tee_bootstrap,
-        ocomp_lifecycle_activation,
         has_publication,
     ) {
         return (
-            Vec::new(),
             Vec::new(),
             Some(SystemTxExpectationError::layout(error)),
             None,
@@ -100,23 +93,12 @@ pub(super) fn system_tx_expectations_for_block(
     for tx in layout.begin {
         match recover(tx) {
             Ok(recovered) => begin.push(recovered),
-            Err(error) => return (Vec::new(), Vec::new(), Some(error), None),
+            Err(error) => return (Vec::new(), Some(error), None),
         }
     }
 
-    let mut end = Vec::with_capacity(layout.end.len());
-    for tx in layout.end {
-        match recover(tx) {
-            Ok(recovered) => end.push(recovered),
-            Err(error) => return (Vec::new(), Vec::new(), Some(error), None),
-        }
-    }
-
-    let proposer = begin
-        .first()
-        .or_else(|| end.first())
-        .map(|tx| Address::from(*tx.signer()));
-    (begin, end, None, proposer)
+    let proposer = begin.first().map(|tx| Address::from(*tx.signer()));
+    (begin, None, proposer)
 }
 
 impl OutbeEvmConfig {
@@ -176,9 +158,6 @@ impl OutbeEvmConfig {
                 artifact: artifacts.late_finalize_credits.clone().unwrap_or_default(),
             });
         }
-        if self.ocomp_lifecycle_active_at(block_number) {
-            inputs.push(SystemTxInputV2::OcompLifecycleBegin);
-        }
         if block_number >= 1 {
             inputs.push(SystemTxInputV2::CycleTick);
             inputs.push(SystemTxInputV2::RewardsGemDelivery);
@@ -230,17 +209,7 @@ impl OutbeEvmConfig {
                 Ok((kind, calldata))
             })
             .collect::<Result<Vec<_>, BlockExecutionError>>()?;
-        let mut gas_plan_inputs = encoded_inputs.clone();
-        if self.ocomp_lifecycle_active_at(block_number) {
-            let terminal = SystemTxInputV2::OcompTerminalRequest;
-            gas_plan_inputs.push((
-                terminal.kind(),
-                terminal
-                    .encode()
-                    .map_err(SystemTxBuildError::encode_terminal_system_tx_input)?,
-            ));
-        }
-        let gas_plan = SystemTxVisibleGasPlan::new(block_gas_limit, &gas_plan_inputs)
+        let gas_plan = SystemTxVisibleGasPlan::new(block_gas_limit, &encoded_inputs)
             .map_err(SystemTxBuildError::plan_visible_system_tx_gas)?;
 
         encoded_inputs
@@ -297,53 +266,6 @@ impl OutbeEvmConfig {
                 Ok(Recovered::new_unchecked(signed, proposer))
             })
             .collect()
-    }
-
-    pub fn build_end_system_txs(
-        &self,
-        block_number: u64,
-        chain_id: u64,
-        begin_system_tx_count: usize,
-        proposer_evm_address: Option<Address>,
-    ) -> Result<Vec<Recovered<TransactionSigned>>, BlockExecutionError> {
-        if !self.ocomp_lifecycle_active_at(block_number) {
-            return Ok(Vec::new());
-        }
-
-        let signer = self
-            .evm_signer
-            .as_ref()
-            .ok_or(SystemTxBuildError::MissingProposerTerminalSystemTxSigner)?;
-        let proposer = proposer_evm_address.unwrap_or_else(|| signer.address());
-        if signer.address() != proposer {
-            return Err(SystemTxBuildError::ConfiguredSignerMismatch {
-                signer: signer.address(),
-                proposer,
-            }
-            .into());
-        }
-
-        let input = SystemTxInputV2::OcompTerminalRequest;
-        let calldata = input
-            .encode()
-            .map_err(SystemTxBuildError::encode_terminal_system_tx_input)?;
-        let ordinal = begin_system_tx_count.try_into().map_err(|_| {
-            SystemTxBuildError::TerminalSystemTxOrdinalExceedsU8 {
-                ordinal: begin_system_tx_count,
-            }
-        })?;
-        let unsigned = build_unsigned_system_tx(
-            SystemTxKind::OcompTerminalRequest,
-            ordinal,
-            block_number,
-            chain_id,
-            calldata,
-        )
-        .map_err(SystemTxBuildError::build_terminal_system_tx)?;
-        let signed = signer
-            .sign_unsigned(unsigned)
-            .map_err(SystemTxBuildError::sign_terminal_system_tx)?;
-        Ok(vec![Recovered::new_unchecked(signed, proposer)])
     }
 
     /// build and sign a single Phase 1 (`CertifiedParentAccounting`)

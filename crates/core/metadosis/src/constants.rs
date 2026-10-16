@@ -58,13 +58,10 @@ pub const MAX_PIPELINE_WWDS: usize = if NORMAL_PIPELINE_WWDS > BOOTSTRAP_PIPELIN
     BOOTSTRAP_PIPELINE_WWDS + 1
 };
 
-/// Maximum WWD records kept. This is the canonical historical retention bound,
-/// not a concurrent OCOMP job admission limit.
+/// Maximum WWD records kept in the canonical historical retention queue.
 pub const MAX_RECORDS_KEPT: usize = 365;
 
-/// READY/OFFCHAIN_PENDING work can use the same population already bounded by
-/// the canonical WWD record-retention policy. OCOMP does not impose a smaller
-/// concurrent live-job cap.
+/// READY work uses the population bounded by the canonical WWD retention policy.
 pub const MAX_RETAINED_WWDS: usize = MAX_RECORDS_KEPT;
 
 /// Exact bound for every scan of the active WorldwideDay aggregate.

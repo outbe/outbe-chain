@@ -2,7 +2,7 @@ use std::path::Path;
 
 use outbe_offchain_storage::{StorageBackend, StorageConfig, StorageErrorKind};
 
-const ROCKS: &str = "version = 1\nbackend = 'rocksdb'\n[rocksdb]\npath = 'data/offchain'\nsecondary_path = 'ocomp/secondary'\n";
+const ROCKS: &str = "version = 1\nbackend = 'rocksdb'\n[rocksdb]\npath = 'data/offchain'\nsecondary_path = 'observation/secondary'\n";
 
 #[test]
 fn config_resolves_paths_from_file_and_roundtrips() {
@@ -11,7 +11,10 @@ fn config_resolves_paths_from_file_and_roundtrips() {
     assert_eq!(config.backend_name(), "rocksdb");
     let StorageBackend::RocksDb(paths) = &config.backend;
     assert_eq!(paths.path, Path::new("/node/data/offchain"));
-    assert_eq!(paths.secondary_path, Path::new("/node/ocomp/secondary"));
+    assert_eq!(
+        paths.secondary_path,
+        Path::new("/node/observation/secondary")
+    );
     assert_eq!(
         StorageConfig::from_toml(
             &config.to_toml().unwrap(),
@@ -30,8 +33,8 @@ fn config_rejects_ambiguous_incomplete_and_overlapping_settings() {
         ROCKS.replace("backend = 'rocksdb'\n", ""),
         ROCKS.replace("secondary_path", "typo_path"),
         ROCKS.replace("'data/offchain'", "''"),
-        ROCKS.replace("'ocomp/secondary'", "'data/offchain/child'"),
-        ROCKS.replace("'ocomp/secondary'", "'data/offchain/../offchain'"),
+        ROCKS.replace("'observation/secondary'", "'data/offchain/child'"),
+        ROCKS.replace("'observation/secondary'", "'data/offchain/../offchain'"),
         format!("{ROCKS}\n[mongodb]\nuri='mongodb://localhost'\ndatabase='projection'\n"),
         "version=1\nbackend='mongodb'\n[mongodb]\nuri=''\ndatabase='projection'".to_owned(),
     ] {

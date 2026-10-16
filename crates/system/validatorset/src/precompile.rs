@@ -97,8 +97,8 @@ fn route(
         deactivateValidator(c) => mutate_void(storage, c, caller, |sender, c| {
             vs.deactivate_validator(sender, c.validatorAddress)
         }),
-        confirmValidatorReady(c) => mutate_void(storage, c, caller, |sender, c| {
-            vs.confirm_validator_ready(sender, &c.registration)
+        confirmValidatorReady(c) => mutate_void(storage, c, caller, |sender, _| {
+            vs.confirm_validator_ready(sender)
         }),
     }
 }

@@ -169,40 +169,6 @@ pub(in crate::stack) fn read_reth_recovery_forkchoice(
     })
 }
 
-pub(in crate::stack) async fn wait_for_recovered_projection(
-    name: &str,
-    readiness: ProjectionReadinessHandle,
-    anchor: ProjectionCheckpoint,
-) -> Result<()> {
-    readiness
-        .wait_without_budget(anchor)
-        .await
-        .map_err(|failure| {
-            failure.into_error(
-                || {
-                    crate::errors::StackRecoveryError::ProjectionReadinessExpired(name.to_string())
-                        .into()
-                },
-                || {
-                    crate::errors::StackRecoveryError::ProjectionAheadOfRecoveryAnchor {
-                        name: name.to_string(),
-                        block_number: anchor.block_number,
-                        block_hash: anchor.block_hash,
-                    }
-                    .into()
-                },
-                |failure| {
-                    crate::errors::StackRecoveryError::ProjectionReadinessFailed {
-                        name: name.to_string(),
-                        class: format!("{:?}", failure.class),
-                        message: failure.message,
-                    }
-                    .into()
-                },
-            )
-        })
-}
-
 // ===========================================================================
 // Helper functions
 // ===========================================================================

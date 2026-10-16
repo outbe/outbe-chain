@@ -50,31 +50,33 @@ fn outbe_post_execution_preserves_behavior_for_absent_or_empty_withdrawals() {
 
     for case in cases {
         for (withdrawal_name, withdrawals) in withdrawal_cases.clone() {
-            let ocomp =
-                run(&case, withdrawals.clone(), true).expect("OCOMP withdrawal compatibility");
-            let normal =
-                run(&case, withdrawals.clone(), false).expect("normal withdrawal compatibility");
+            let observation =
+                run(&case, withdrawals.clone()).expect("native withdrawal compatibility");
             assert_eq!(
-                ocomp, normal,
-                "{} / {withdrawal_name}: proposer, validator and OCOMP execution must agree",
-                case.name,
+                observation.0.gas_used, case.expected_gas_used,
+                "{}",
+                case.name
             );
-            assert_eq!(ocomp.0.gas_used, case.expected_gas_used, "{}", case.name);
-            assert_eq!(ocomp.2, U256::ZERO, "{}: DAO source drains", case.name);
             assert_eq!(
-                ocomp.3,
+                observation.2,
+                U256::ZERO,
+                "{}: DAO source drains",
+                case.name
+            );
+            assert_eq!(
+                observation.3,
                 U256::from(DAO_BALANCE),
                 "{}: DAO beneficiary receives the drained balance",
                 case.name
             );
             assert_eq!(
-                ocomp.4,
+                observation.4,
                 U256::ZERO,
                 "{} / {withdrawal_name}: absent or empty withdrawals do not credit a balance",
                 case.name,
             );
             assert_eq!(
-                ocomp
+                observation
                     .0
                     .requests
                     .iter()
@@ -104,14 +106,9 @@ fn non_empty_withdrawal_rejects_before_any_state_write() {
             .map_or(U256::ZERO, |account| account.balance)
     }
 
-    for ocomp in [false, true] {
+    {
         let (chain_spec, mut state) = unsupported_withdrawal_state();
-        let config = if ocomp {
-            OutbeEvmConfig::new(chain_spec.clone())
-                .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(0))
-        } else {
-            OutbeEvmConfig::new(chain_spec.clone())
-        };
+        let config = OutbeEvmConfig::new(chain_spec.clone());
         let evm_env = EvmEnv {
             cfg_env: CfgEnv::new()
                 .with_chain_id(chain_spec.chain().id())
@@ -246,7 +243,6 @@ mod withdrawal_compatibility {
     pub(super) fn run(
         case: &Case,
         withdrawals: Option<Vec<alloy_eips::eip4895::Withdrawal>>,
-        ocomp: bool,
     ) -> eyre::Result<(
         alloy_evm::block::BlockExecutionResult<Receipt>,
         B256,
@@ -255,12 +251,7 @@ mod withdrawal_compatibility {
         U256,
     )> {
         let mut state = fixture_state();
-        let config = if ocomp {
-            OutbeEvmConfig::new(case.chain_spec.clone())
-                .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(0))
-        } else {
-            OutbeEvmConfig::new(case.chain_spec.clone())
-        };
+        let config = OutbeEvmConfig::new(case.chain_spec.clone());
         let evm_env = EvmEnv {
             cfg_env: CfgEnv::new()
                 .with_chain_id(case.chain_spec.chain().id())
@@ -285,11 +276,6 @@ mod withdrawal_compatibility {
         executor.inner.block_state_gas_used = STATE_GAS;
         executor.inner.blob_gas_used = 5;
         executor.validate_execution_summary = false;
-        if ocomp {
-            executor.ocomp_lifecycle_active = true;
-            executor.ocomp_terminal_request_consumed = true;
-            executor.apply_outbe_ethereum_post_execution()?;
-        }
         let (evm, result) = executor.finish()?;
         drop(evm);
 

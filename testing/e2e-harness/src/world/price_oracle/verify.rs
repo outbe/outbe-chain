@@ -1,9 +1,7 @@
 //! Post-scenario verification of retained price-oracle evidence.
 
-#[cfg(any(test, feature = "ocomp-integration"))]
 use super::*;
 
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn verify_price_oracle_evidence(
     evidence: &PriceOracleEvidenceV1,
     validator_count: usize,
@@ -245,7 +243,6 @@ pub(crate) fn verify_price_oracle_evidence(
     Ok(())
 }
 
-#[cfg(any(test, feature = "ocomp-integration"))]
 pub(super) fn verify_publication_cohort(
     evidence: &PriceOracleEvidenceV1,
     publication: &CanonicalPricePublicationV1,
@@ -346,7 +343,6 @@ pub(super) fn verify_publication_cohort(
     Ok(())
 }
 
-#[cfg(feature = "ocomp-integration")]
 fn canonical_unsigned_decimal(value: &str) -> bool {
     let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
     !whole.is_empty()
@@ -355,7 +351,6 @@ fn canonical_unsigned_decimal(value: &str) -> bool {
         && value.matches('.').count() <= 1
 }
 
-#[cfg(any(test, feature = "ocomp-integration"))]
 fn verifies_publication(
     observation: &serde_json::Value,
     phase: &serde_json::Value,

@@ -1,7 +1,6 @@
 use super::*;
 
 /// The one `E` event `emitter` logged in `receipt`.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn receipt_event<E: alloy_sol_types::SolEvent>(
     receipt: &serde_json::Value,
     emitter: Address,

@@ -1,10 +1,10 @@
-@tee @min-validators-4 @ocomp
+@tee @min-validators-4
 Feature: Gem from a parked Intex to Promis and COEN
   # The merchant half of the Gem lifecycle, which nothing else covers: the
   # Call and the two returns to the unallocated pool have never run outside
   # unit tests.
   #
-  # One chain, and no OCOMP. Gems never leave the committee and the source
+  # One chain, using native storage. Gems never leave the committee and the source
   # Intex is issued straight to the merchant, so this scenario needs neither a
   # second venue, nor a relay, nor a day settled out of Tributes.
   #

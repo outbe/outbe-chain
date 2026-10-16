@@ -15,7 +15,7 @@ impl Localnet {
         self.followers.clear();
         self.follower_startup_probes.clear();
         self.node_launch_logs.clear();
-        #[cfg(feature = "ocomp-integration")]
+
         self.node_launch_recipes.clear();
     }
 

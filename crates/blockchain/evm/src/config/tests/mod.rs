@@ -1,21 +1,6 @@
 use std::ops::RangeBounds;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
 
-use alloy_eips::BlockNumHash;
 use alloy_primitives::{Address, Bytes, B256, U256};
-use outbe_metadosis::api::{OcompFinalityAuthorityError, OcompFinalizedIntentAuthority};
-use outbe_ocomp_protocol::{
-    common::{BoundedBytes, ProofBytes},
-    intent::{
-        CertifiedParentAccountingMetadataV2, ExpectedFinalizedIntentBindingV1,
-        FinalizedIntentProofV1, FinalizedIntentVerificationError, ParentProofKind,
-        VerifiedFinalizedIntentV1,
-    },
-    SchemaLimits,
-};
 use outbe_primitives::{
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact, ReshareResult},
     reshare_artifact::{
@@ -26,13 +11,12 @@ use outbe_primitives::{
     tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID,
     OutbeHeader,
 };
-use reth_chainspec::ChainInfo;
 use reth_ethereum::chainspec::ChainSpec;
 use reth_ethereum::{
     chainspec::MAINNET,
     primitives::{Header, SealedHeader},
 };
-use reth_provider::{BlockHashReader, BlockIdReader, BlockNumReader, ProviderResult};
+use reth_provider::ProviderResult;
 
 use reth_evm::{ConfigureEvm, NextBlockEnvAttributes};
 use reth_provider::HeaderProvider;
@@ -40,7 +24,7 @@ use reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv;
 
 use super::{
     AccountedParentArtifactProvider, OutbeEvmConfig, OutbeNextBlockEnvAttributes,
-    ProviderAnchoredOcompFinalityAuthority, RethAccountedParentArtifactProvider,
+    RethAccountedParentArtifactProvider,
 };
 
 mod fixtures;
@@ -51,5 +35,3 @@ use fixtures::{
 mod configuration;
 
 mod parent_artifacts;
-
-mod finality;

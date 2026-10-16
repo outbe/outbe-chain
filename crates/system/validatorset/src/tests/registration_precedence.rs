@@ -257,30 +257,17 @@ fn reregistration_with_another_node_id_is_rejected_before_cooldown() -> Result<(
     )
 }
 
-/// VALIDATOR is INACTIVE after a deactivation at height 1, with an open OCOMP
-/// recovery window.
-fn inactive_with_open_recovery(vs: &mut ValidatorSet<'_>) -> Result<()> {
-    vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD1))?;
-    make_inactive_for_test(vs, VALIDATOR);
-    vs.val_ocomp_recovery_deadline.write(&VALIDATOR, 5)
-}
-
 #[test]
-fn reregistration_cooldown_is_checked_before_the_recovery_window() -> Result<()> {
+fn reregistration_cooldown_rejects_before_any_write() -> Result<()> {
     assert_rejected_first(
         40,
         |vs| {
-            inactive_with_open_recovery(vs)?;
+            vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD1))?;
+            make_inactive_for_test(vs, VALIDATOR);
             vs.config_reregistration_cooldown.write(10)
         },
         |vs| vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD5)),
         "Revert: re-registration cooldown not expired",
-    )?;
-    assert_rejected_first(
-        40,
-        inactive_with_open_recovery,
-        |vs| vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD5)),
-        "Revert: cannot re-register while an OCOMP recovery window is open",
     )
 }
 

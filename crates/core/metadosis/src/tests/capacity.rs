@@ -105,9 +105,8 @@ fn seed_capacity_fixture_with_victim_state(
         victim_state,
     } = case;
     StorageHandle::enter(provider, |storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         let mut tribute = TributeContract::new(storage.clone());
-        tribute.initialize_fresh_ocomp_profile().unwrap();
         for offset in 0..retained_count {
             seed_day(
                 &storage,
@@ -168,24 +167,6 @@ fn derived_caps_are_bound_to_production_phase_and_tick_cadence() {
 }
 
 #[test]
-fn validated_snapshot_rejects_a_pending_fsm_missing_from_the_live_scheduler() {
-    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(30, 3_000, false);
-    StorageHandle::enter(&mut fixture.provider, |storage| {
-        crate::aggregate::ValidatedWwdAggregate::load_and_validate(storage.clone()).unwrap();
-        MetadosisContract::new(storage.clone())
-            .ocomp_scheduler
-            .clear()
-            .unwrap();
-        let error =
-            crate::aggregate::ValidatedWwdAggregate::load_and_validate(storage).unwrap_err();
-        assert!(matches!(error, PrecompileError::Revert(_)));
-        assert!(error
-            .to_string()
-            .contains("pending FSM membership does not exactly match"));
-    });
-}
-
-#[test]
 fn validated_snapshot_orders_ready_days_by_scheduled_time_then_wwd() {
     let expected = [
         outbe_primitives::time::WorldwideDay::new(2026_0201),
@@ -194,7 +175,7 @@ fn validated_snapshot_orders_ready_days_by_scheduled_time_then_wwd() {
     for insertion in [[expected[0], expected[1]], [expected[1], expected[0]]] {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         StorageHandle::enter(&mut provider, |storage| {
-            arm_genesis_ocomp(&storage, CHAIN_ID);
+            install_test_enclaves();
             for wwd in insertion {
                 seed_day(&storage, wwd, status::READY, U256::from(1));
             }
@@ -244,7 +225,7 @@ fn active_protocol_order_matches_btreeset_across_insert_remove_and_requeue_histo
     for insertion in [[0_usize, 1, 2, 3], [3, 2, 1, 0], [1, 3, 0, 2], [2, 0, 3, 1]] {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         StorageHandle::enter(&mut provider, |storage| {
-            arm_genesis_ocomp(&storage, CHAIN_ID);
+            install_test_enclaves();
             let mut model = BTreeSet::new();
             for index in insertion {
                 seed_day(&storage, wwds[index], status::WAITING, U256::from(1));
@@ -362,9 +343,8 @@ fn multiple_due_candidates_advance_exactly_one_per_tick_in_protocol_order() {
         outbe_primitives::time::WorldwideDay::new(2026_0403),
     ];
     let timestamp = StorageHandle::enter(&mut provider, |storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
-        let mut tribute = TributeContract::new(storage.clone());
-        tribute.initialize_fresh_ocomp_profile().unwrap();
+        install_test_enclaves();
+        let tribute = TributeContract::new(storage.clone());
         let mut latest = 0;
         for candidate in candidates {
             latest = latest.max(seed_day(
@@ -429,9 +409,8 @@ fn continuous_creation_cadence_keeps_due_candidates_within_the_derived_wait_boun
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let mut candidates = Vec::with_capacity(MAX_PIPELINE_WWDS + EXTRA_ARRIVALS);
     StorageHandle::enter(&mut provider, |storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         let mut tribute = TributeContract::new(storage.clone());
-        tribute.initialize_fresh_ocomp_profile().unwrap();
         for sequence in 0..MAX_PIPELINE_WWDS {
             let wwd = outbe_primitives::time::WorldwideDay::from_timestamp(
                 BASE_DAY_TIMESTAMP
@@ -515,11 +494,10 @@ fn start_metadosis_settles_one_ready_day_per_tick_oldest_first() {
     let older = outbe_primitives::time::WorldwideDay::new(2026_0501);
     let newer = outbe_primitives::time::WorldwideDay::new(2026_0502);
     let timestamp = StorageHandle::enter(&mut provider, |storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         let newer_time = seed_day(&storage, newer, status::READY, U256::ZERO);
         let older_time = seed_day(&storage, older, status::READY, U256::ZERO);
         let mut tribute = TributeContract::new(storage.clone());
-        tribute.initialize_fresh_ocomp_profile().unwrap();
         tribute.seal_day(newer).unwrap();
         tribute.seal_day(older).unwrap();
         newer_time.max(older_time)
@@ -569,8 +547,6 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
         (
             wwd_words(&metadosis, 2026_0101u32.into()),
             wwd_words(&metadosis, 2026_0102u32.into()),
-            metadosis.ocomp_scheduler.read().unwrap(),
-            metadosis.ocomp_ready_index.read().unwrap(),
         )
     });
 
@@ -585,20 +561,9 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
             (
                 wwd_words(&metadosis, 2026_0101u32.into()),
                 wwd_words(&metadosis, 2026_0102u32.into()),
-                metadosis.ocomp_scheduler.read().unwrap(),
-                metadosis.ocomp_ready_index.read().unwrap(),
             ),
             retained_before
         );
-        assert!(metadosis
-            .ocomp_fsm_states
-            .get_bytes(&victim)
-            .is_empty()
-            .unwrap());
-        assert!(metadosis
-            .active_lysis_generation(victim, &crate::ocomp::schema::poc_schema_limits())
-            .unwrap()
-            .is_none());
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
             desis.auction_stage.read(&victim).unwrap(),
@@ -691,116 +656,6 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
     run_advance(&mut provider, 21, scheduled + 1).unwrap();
     assert_eq!(provider.storage, storage_before_replay);
     assert_eq!(provider.events, events_before_replay);
-}
-
-#[test]
-fn additional_ready_day_preserves_real_pending_ocomp_job_and_indexes_byte_for_byte() {
-    let mut fixture = crate::fixture_kernel::ActivationScenario::new_voting(50, 5_000, true);
-    let pending = crate::fixture_kernel::TEST_WWD;
-    let ready = outbe_primitives::time::WorldwideDay::new(2026_0724);
-    let victim = outbe_primitives::time::WorldwideDay::new(2026_0725);
-    let intent_id = fixture.intent_id;
-    let limits = fixture.limits;
-    let scheduled = StorageHandle::enter(&mut fixture.provider, |storage| {
-        seed_day(&storage, ready, status::READY, U256::from(1));
-        let scheduled = seed_day(&storage, victim, status::WAITING, U256::from(100));
-        TributeContract::new(storage)
-            .day_totals
-            .create(&outbe_tribute::day_schema::StoredDayTotals {
-                worldwide_day: victim,
-                initialized: true,
-                tribute_count: 0,
-                is_sealed: true,
-            })
-            .unwrap();
-        scheduled
-    });
-    let retained_before = StorageHandle::enter(&mut fixture.provider, |storage| {
-        let metadosis = MetadosisContract::new(storage);
-        let job_storage_key = outbe_ocomp_protocol::intent::intent_storage_key(intent_id).unwrap();
-        let snapshot = (
-            wwd_words(&metadosis, pending),
-            metadosis.ocomp_scheduler.read().unwrap(),
-            metadosis.read_ready_index().unwrap(),
-            metadosis.read_response_deadline_index().unwrap(),
-            metadosis
-                .ocomp_fsm_states
-                .get_bytes(&pending)
-                .read()
-                .unwrap(),
-            metadosis
-                .ocomp_job_records
-                .get_bytes(&job_storage_key)
-                .read()
-                .unwrap(),
-        );
-        assert!(
-            !snapshot.1.is_empty(),
-            "real pending scheduler must be seeded"
-        );
-        assert!(
-            !snapshot.3.is_empty(),
-            "real voting deadline index must be seeded"
-        );
-        assert!(!snapshot.4.is_empty(), "real pending FSM must be seeded");
-        assert!(!snapshot.5.is_empty(), "real pending job must be seeded");
-        snapshot
-    });
-
-    run_advance(&mut fixture.provider, 51, scheduled).unwrap();
-
-    StorageHandle::enter(&mut fixture.provider, |storage| {
-        let metadosis = MetadosisContract::new(storage.clone());
-        let job_storage_key = outbe_ocomp_protocol::intent::intent_storage_key(intent_id).unwrap();
-        assert_eq!(
-            (
-                wwd_words(&metadosis, pending),
-                metadosis.ocomp_scheduler.read().unwrap(),
-                metadosis.read_ready_index().unwrap(),
-                metadosis.read_response_deadline_index().unwrap(),
-                metadosis
-                    .ocomp_fsm_states
-                    .get_bytes(&pending)
-                    .read()
-                    .unwrap(),
-                metadosis
-                    .ocomp_job_records
-                    .get_bytes(&job_storage_key)
-                    .read()
-                    .unwrap(),
-            ),
-            retained_before
-        );
-        assert_eq!(
-            metadosis.get_wwd_status(pending).unwrap(),
-            status::OFFCHAIN_PENDING
-        );
-        assert_eq!(metadosis.get_wwd_status(ready).unwrap(), status::READY);
-        assert_eq!(metadosis.get_wwd_status(victim).unwrap(), status::READY);
-        assert!(metadosis.active_wwd.read_all().unwrap().contains(&victim));
-        assert!(metadosis
-            .read_capacity_forfeiture_receipt(victim)
-            .unwrap()
-            .is_none());
-        assert!(metadosis
-            .ocomp_fsm_states
-            .get_bytes(&victim)
-            .is_empty()
-            .unwrap());
-        assert!(metadosis
-            .active_lysis_generation(victim, &limits)
-            .unwrap()
-            .is_none());
-        let desis = storage.contract::<outbe_desis::schema::DesisContract>();
-        assert_eq!(
-            desis.auction_stage.read(&victim).unwrap(),
-            outbe_desis::schema::AuctionStage::None as u8
-        );
-        assert_eq!(
-            desis.pending_desis_limit_minor.read(&victim).unwrap(),
-            U256::ZERO
-        );
-    });
 }
 
 #[test]
@@ -906,8 +761,7 @@ fn populated_and_max_shape_forfeiture_is_constant_size_and_emits_one_canonical_r
             let totals = tribute.get_day_totals(victim).unwrap();
             assert_eq!(totals.tribute_count, 0);
             assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
-            let admission = tribute.pre_admission_projection(victim).unwrap();
-            assert_eq!(admission.source_generation, 1);
+            assert!(tribute.retired_days.read(&victim).unwrap());
         });
         let tribute_events = provider
             .get_ordered_events()
@@ -967,15 +821,6 @@ fn every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_
                 .unwrap(),
             U256::from(107)
         );
-        assert!(metadosis
-            .ocomp_fsm_states
-            .get_bytes(&probe_victim)
-            .is_empty()
-            .unwrap());
-        assert!(metadosis
-            .active_lysis_generation(probe_victim, &crate::ocomp::schema::poc_schema_limits())
-            .unwrap()
-            .is_none());
     });
     let status_events = probe
         .get_ordered_events()
@@ -1081,7 +926,7 @@ fn every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_
 fn active_cap_rejects_create_before_an_orphan_record_or_event() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         let start = 1_700_000_000_u64;
         for offset in 0..MAX_ACTIVE_WWDS {
             let wwd = outbe_primitives::time::WorldwideDay::from_timestamp(

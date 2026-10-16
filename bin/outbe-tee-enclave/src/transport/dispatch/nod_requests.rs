@@ -14,12 +14,6 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
         EnclaveRequest::ExecuteLysis { request } => {
             super::nod::execute_lysis(keys, offer_key, chain_id, &request)
         }
-        EnclaveRequest::PrepareStateNods { request } => {
-            super::nod::prepare_state(keys, offer_key, chain_id, &request)
-        }
-        EnclaveRequest::OpenStateNods { authority, carrier } => {
-            super::nod::open_state(keys, offer_key, chain_id, &authority, &carrier)
-        }
         #[cfg(not(feature = "e2e-test"))]
         EnclaveRequest::CreateNodForTestV2 { .. } => EnclaveResponse::Error {
             message: "NOD fixture command disabled".into(),

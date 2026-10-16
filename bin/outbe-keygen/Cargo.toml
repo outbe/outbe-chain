@@ -11,7 +11,6 @@ path = "src/main.rs"
 
 [dependencies]
 outbe-consensus.workspace = true
-outbe-ocomp-protocol.workspace = true
 outbe-primitives.workspace = true
 commonware-cryptography.workspace = true
 commonware-codec.workspace = true

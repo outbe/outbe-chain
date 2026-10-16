@@ -276,13 +276,7 @@ fn p2p_lifecycle_and_value_routes_keep_their_results() -> Result<()> {
         "Ok(0x)"
     );
     assert_eq!(
-        outcome_text(send(
-            &mut storage,
-            FIRST,
-            &I::confirmValidatorReadyCall {
-                registration: Bytes::new()
-            }
-        )),
+        outcome_text(send(&mut storage, FIRST, &I::confirmValidatorReadyCall {})),
         "Revert: confirmValidatorReady requires PENDING status, got 3"
     );
     Ok(())

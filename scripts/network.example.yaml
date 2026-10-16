@@ -8,7 +8,7 @@
 
 chain_id: 424242
 
-# One host or IP per founding validator, in order. OCOMP V1 fixes the
+# One host or IP per founding validator, in order. The bootstrap profile fixes the
 # founding committee at four members. Append `:port` to give one validator a
 # consensus port of its own (`- 10.0.0.3:31555`).
 validators:
@@ -21,7 +21,6 @@ validators:
 #   keys_dir/validator-0/signing-key.hex          BLS consensus key
 #   keys_dir/validator-0/evm-key.hex              EVM signer
 #   keys_dir/validator-0/radicle/keys/radicle.pub Radicle identity
-#   keys_dir/validator-0/ocomp-registration-v1.ocb1   minted here if absent
 # Produced by `outbe-keygen validator --output-dir <dir> --chain-id <id>`.
 # Public keys, addresses and node ids are read from these files - nothing is
 # duplicated into this yaml.
@@ -57,7 +56,6 @@ tee:
 
 # Binaries on the validator machines; default to PATH lookups.
 # node_binary: outbe-chain
-# ocomp_binary: outbe-ocomp
 # radicle_binary: outbe-radicle
 # feeder_binary: outbe-feeder
 
@@ -122,8 +120,6 @@ tee:
 #     waitingPeriodSeconds: 43200
 #     bootstrapDurationSeconds: 300
 #     advanceIntervalSeconds: 10
-#   ocomp:
-#     computeVoteWindowBlocks: 120
 #   oracle:
 #     vwapLookbackSeconds: 21600
 #     vwapUpdateIntervalSeconds: 1800

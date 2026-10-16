@@ -11,7 +11,6 @@ fn header_fixture_deps<'a, A: crate::dkg_manager::AncestryReader>(
 ) -> HeaderArtifactValidationDeps<'a, A> {
     HeaderArtifactValidationDeps {
         chain_id: outbe_primitives::chain::CHAIN_ID,
-        ocomp_lifecycle_activation: outbe_primitives::system_tx::OcompLifecycleActivation::Disabled,
         certificate_scheme_provider,
         committee_provider,
         dkg_manager,

@@ -1,6 +1,5 @@
 use crate::world::rpc::*;
 
-#[cfg(feature = "ocomp-integration")]
 #[test]
 fn encoded_reward_bearing_tribute_plaintext_preserves_waa_and_sra_beneficiaries() {
     let creator = Address::repeat_byte(0x11);

@@ -687,7 +687,7 @@ fn gas_13_system_receipt_rpc_gas_delta_is_visible_envelope_gas() {
 fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
     let signer = test_evm_signer();
     let proposer = signer.address();
-    let mut state = state_with_active_proposer_without_ocomp(proposer);
+    let mut state = state_with_active_proposer(proposer);
     let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
     let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
     let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
@@ -745,7 +745,7 @@ fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
 fn system_internal_work_budget_rejects_before_receipt_or_state_accounting() {
     let signer = test_evm_signer();
     let proposer = signer.address();
-    let mut state = state_with_active_proposer_without_ocomp(proposer);
+    let mut state = state_with_active_proposer(proposer);
     let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
     let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
     let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));

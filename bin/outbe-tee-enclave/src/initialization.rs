@@ -528,8 +528,6 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         EnclaveRequest::CreateNodForTestV2 { .. } => CommandClass::Never,
         EnclaveRequest::ProcessTributeOfferBatch { .. }
         | EnclaveRequest::ExecuteLysis { .. }
-        | EnclaveRequest::PrepareStateNods { .. }
-        | EnclaveRequest::OpenStateNods { .. }
         | EnclaveRequest::MineEncryptedNodV2 { .. }
         | EnclaveRequest::ReadNodAmountV2 { .. }
         | EnclaveRequest::NodTransferChunkV2 { .. }

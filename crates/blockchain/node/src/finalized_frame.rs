@@ -137,23 +137,6 @@ pub struct FinalizedFrame {
 }
 
 impl FinalizedFrame {
-    #[cfg(test)]
-    pub(crate) fn for_test(
-        identity: BlockNumHash,
-        parent_hash: B256,
-        state_root: B256,
-        block: Block,
-        receipts: Vec<Receipt>,
-    ) -> Self {
-        Self {
-            identity,
-            parent_hash,
-            state_root,
-            block: Arc::new(block),
-            receipts: receipts.into(),
-        }
-    }
-
     #[must_use]
     pub const fn identity(&self) -> BlockNumHash {
         self.identity

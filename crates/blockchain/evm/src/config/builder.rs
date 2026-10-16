@@ -1,7 +1,5 @@
-use crate::{signer::SharedOutbeEvmSigner, system_tx::OcompLifecycleActivation};
+use crate::signer::SharedOutbeEvmSigner;
 
-use outbe_metadosis::api::OcompFinalizedIntentAuthority;
-use outbe_metadosis::config::OcompForkInstallV1;
 use outbe_primitives::{consensus::ConsensusExecutionBridge, OutbeHeader, OutbePrimitives};
 use reth_ethereum::{
     chainspec::ChainSpec,
@@ -14,9 +12,7 @@ use reth_ethereum::{
 use reth_provider::{BlockHashReader, BlockIdReader, HeaderProvider};
 use std::sync::Arc;
 
-use super::{
-    OutbeEvmConfig, ProviderAnchoredOcompFinalityAuthority, RethAccountedParentArtifactProvider,
-};
+use super::{OutbeEvmConfig, RethAccountedParentArtifactProvider};
 
 // ---------------------------------------------------------------------------
 // ExecutorBuilder
@@ -29,12 +25,6 @@ pub struct OutbeExecutorBuilder {
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Optional validator EVM signer, injected by the node binary in validator mode.
     pub evm_signer: Option<SharedOutbeEvmSigner>,
-    /// Inert until the canonical OCM-26 devnet schedule is supplied.
-    pub ocomp_lifecycle_activation: OcompLifecycleActivation,
-    /// Complete immutable authority installed at the activation height.
-    pub ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
-    /// Production finalized JobIntent proof authority supplied by the node.
-    pub ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
 }
 
 impl std::fmt::Debug for OutbeExecutorBuilder {
@@ -44,15 +34,6 @@ impl std::fmt::Debug for OutbeExecutorBuilder {
             .field(
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
-            )
-            .field(
-                "ocomp_lifecycle_activation",
-                &self.ocomp_lifecycle_activation,
-            )
-            .field("ocomp_fork_install", &self.ocomp_fork_install.is_some())
-            .field(
-                "ocomp_finality_authority",
-                &self.ocomp_finality_authority.is_some(),
             )
             .finish()
     }
@@ -64,33 +45,11 @@ impl OutbeExecutorBuilder {
         Self {
             bridge: Some(bridge),
             evm_signer: None,
-
-            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-            ocomp_fork_install: None,
-            ocomp_finality_authority: None,
         }
     }
 
     pub fn with_evm_signer(mut self, signer: SharedOutbeEvmSigner) -> Self {
         self.evm_signer = Some(signer);
-        self
-    }
-
-    pub fn with_ocomp_lifecycle_activation(mut self, activation: OcompLifecycleActivation) -> Self {
-        self.ocomp_lifecycle_activation = activation;
-        self
-    }
-
-    pub fn with_ocomp_fork_install(mut self, install: Arc<OcompForkInstallV1>) -> Self {
-        self.ocomp_fork_install = Some(install);
-        self
-    }
-
-    pub fn with_ocomp_finality_authority(
-        mut self,
-        authority: Arc<dyn OcompFinalizedIntentAuthority>,
-    ) -> Self {
-        self.ocomp_finality_authority = Some(authority);
         self
     }
 }
@@ -111,32 +70,6 @@ where
     type EVM = OutbeEvmConfig;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        match (&self.ocomp_fork_install, self.ocomp_lifecycle_activation) {
-            (Some(install), OcompLifecycleActivation::AtBlock(height))
-                if install.activation_height == height => {}
-            (None, OcompLifecycleActivation::Disabled) => {}
-            (Some(_), OcompLifecycleActivation::Disabled) => {
-                return Err(
-                    crate::errors::OutbeEvmBuilderError::OcompForkInstallRequiresLifecycleSchedule
-                        .into(),
-                );
-            }
-            (None, OcompLifecycleActivation::AtBlock(_)) => {
-                return Err(
-                    crate::errors::OutbeEvmBuilderError::ActiveOcompLifecycleRequiresForkInstall
-                        .into(),
-                );
-            }
-            (Some(install), OcompLifecycleActivation::AtBlock(height)) => {
-                return Err(
-                    crate::errors::OutbeEvmBuilderError::OcompForkInstallHeightMismatch {
-                        install_height: install.activation_height,
-                        lifecycle_height: height,
-                    }
-                    .into(),
-                );
-            }
-        }
         // always install a provider-backed
         // `AccountedParentArtifactProvider` so the executor can resolve the
         // parent artifact in both bridge mode (cache + provider) and full-node
@@ -162,15 +95,6 @@ where
             ),
         };
 
-        let mut config = config.with_ocomp_lifecycle_activation(self.ocomp_lifecycle_activation);
-        if let Some(install) = self.ocomp_fork_install {
-            config = config.with_ocomp_fork_install(install);
-        }
-        if let Some(authority) = self.ocomp_finality_authority {
-            config = config.with_ocomp_finality_authority(Arc::new(
-                ProviderAnchoredOcompFinalityAuthority::new(ctx.provider().clone(), authority),
-            ));
-        }
         Ok(match self.evm_signer {
             Some(signer) => config.with_evm_signer(signer),
             None => config,

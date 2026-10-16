@@ -1,4 +1,4 @@
-//! Bounded multipart transfer for protected materialization across Noise frames.
+//! Bounded multipart transfer for Lysis across Noise frames.
 use crate::{
     protocol::{EnclaveRequest, EnclaveResponse},
     EnclaveSession, TransportError,
@@ -12,8 +12,8 @@ pub(crate) fn request(
 ) -> Result<([u8; 32], EnclaveResponse), TransportError> {
     let bytes = serde_json::to_vec(&request).map_err(TransportError::codec)?;
     if bytes.len() > MAX_TRANSFER_BYTES {
-        return Err(TransportError::NodMaterializationCapacityExceeded(
-            "protected NOD request exceeds transfer bound".into(),
+        return Err(TransportError::NodTransferCapacityExceeded(
+            "Lysis request exceeds transfer bound".into(),
         ));
     }
     let id = keccak256(&bytes);
@@ -60,7 +60,7 @@ fn download(client: &mut EnclaveSession, id: B256) -> Result<EnclaveResponse, Tr
     }
     if keccak256(&output) != digest {
         return Err(TransportError::Codec(
-            "protected NOD response digest mismatch".into(),
+            "Lysis response digest mismatch".into(),
         ));
     }
     serde_json::from_slice(&output).map_err(TransportError::codec)

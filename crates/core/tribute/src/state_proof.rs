@@ -1,5 +1,5 @@
 use alloy_primitives::{B256, U256};
-use outbe_ocomp_protocol::intent::FinalizedRequestBindingV1;
+use outbe_primitives::storage::proof::FinalizedStateCheckpoint;
 use outbe_primitives::{
     addresses::TRIBUTE_ADDRESS,
     error::{PrecompileError, Result},
@@ -47,7 +47,7 @@ pub fn retained_source_binding(
 /// The caller obtains this checkpoint from verified request finality.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TributeStateProofSubject {
-    pub checkpoint: FinalizedRequestBindingV1,
+    pub checkpoint: FinalizedStateCheckpoint,
     pub chain_id: u64,
     pub worldwide_day: WorldwideDay,
     pub tribute_count: u32,
@@ -56,7 +56,7 @@ pub struct TributeStateProofSubject {
 impl From<outbe_tee::tribute_source::TributeSourceSubject> for TributeStateProofSubject {
     fn from(source: outbe_tee::tribute_source::TributeSourceSubject) -> Self {
         Self {
-            checkpoint: FinalizedRequestBindingV1 {
+            checkpoint: FinalizedStateCheckpoint {
                 block_number: source.checkpoint.block_number,
                 block_hash: source.checkpoint.block_hash,
                 state_root: source.checkpoint.state_root,

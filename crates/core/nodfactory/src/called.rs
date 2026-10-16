@@ -123,12 +123,6 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
     }
 }
 
-/// Whether the certified generation of the bucket's Worldwide Day still has Nods to land.
-pub(crate) fn materializing(nod: &NodContract<'_>, bucket_key: B256) -> Result<bool> {
-    let worldwide_day = nod.bucket_worldwide_day.read(&bucket_key)?;
-    Ok(nod.ocomp_target_generation.read(&worldwide_day)? != 0)
-}
-
 /// One currency's call walk: its trailing VWAP window, and the highest bin a
 /// bucket that window breached can sit in.
 pub(crate) struct CurrencyScan<'w> {
@@ -246,7 +240,7 @@ fn call_if_breached(
         threshold_seconds: terms.call_threshold_seconds,
         start_day: first_full_day(issued_at),
     });
-    if !breached || materializing(nod, bucket_key)? {
+    if !breached {
         return Ok(false);
     }
     mark_called(nod, bucket_key, now, terms.call_notice_period_seconds)?;

@@ -455,7 +455,6 @@ fn finalizer_test_shared(
         chain_id: outbe_primitives::chain::CHAIN_ID,
         repository_publication_enabled: false,
         repository_publication: Default::default(),
-        ocomp_lifecycle_activation: outbe_primitives::system_tx::OcompLifecycleActivation::Disabled,
         marshal_mailbox,
         publication: crate::application::publication::ProposalPublication::new(
             context.child("publication"),

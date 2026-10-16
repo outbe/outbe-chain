@@ -1,5 +1,3 @@
-// OCOMP-TEST-ID: OCM-SEM-001
-
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
 
 use alloy_primitives::{Address, U256};

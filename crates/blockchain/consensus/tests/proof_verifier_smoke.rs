@@ -117,7 +117,7 @@ fn verify_v2_proof_rejects_wrong_seed_message() {
 #[test]
 fn quorum_constant_matches_n3f1() {
     // The exported helper is the single source used by both consensus proof
-    // verification and OCOMP attempt construction.
+    // verification and native checkpoint proof construction.
     // commonware_utils::N3f1::quorum for every committee size we test.
     for n in [1usize, 2, 3, 4, 5, 6, 7, 10, 16, 64, 128] {
         let expected = N3f1::quorum(n as u32) as usize;

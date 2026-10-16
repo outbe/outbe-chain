@@ -9,28 +9,27 @@
 //! - [`downtime`] / [`stale_join`] / [`lifecycle`] / [`restart`] / [`dkg`] /
 //!   [`follower`] back the S1-S7 + follower validator-lifecycle scenarios.
 
-#[cfg(feature = "ocomp-integration")]
 pub mod agent_reward;
-#[cfg(feature = "ocomp-integration")]
+
 mod auction_expectations;
 mod byzantine_preannounce;
 pub mod common;
-#[cfg(feature = "ocomp-integration")]
+
 pub mod credis;
-#[cfg(feature = "ocomp-integration")]
+
 mod credis_forfeit;
-#[cfg(feature = "ocomp-integration")]
+
 pub mod entity_lifecycle;
-#[cfg(feature = "ocomp-integration")]
+
 pub mod gem_lifecycle;
 pub mod governance;
-#[cfg(feature = "ocomp-integration")]
+
 pub mod hyperlane_controller;
-#[cfg(feature = "ocomp-integration")]
+
 pub mod intex_lifecycle;
-#[cfg(feature = "ocomp-integration")]
+
 pub mod nod_lifecycle;
-#[cfg(feature = "ocomp-integration")]
+
 mod tribute_expectations;
 pub mod update;
 
@@ -38,29 +37,29 @@ pub mod consensus_resilience;
 pub mod dcap_onboarding;
 pub mod dkg;
 pub mod downtime;
-#[cfg(feature = "ocomp-integration")]
+
 mod encrypted_nod;
-#[cfg(feature = "ocomp-integration")]
+
 mod encrypted_tribute;
 pub mod follower;
 mod follower_handoff;
+
+mod follower_snapshot;
 mod l2_registration;
 pub mod l2_zk_gate;
 pub mod lifecycle;
+
+mod lysis;
 mod negative_assertions;
-#[cfg(feature = "ocomp-integration")]
-mod nod_expectations;
-#[cfg(feature = "ocomp-integration")]
-pub mod ocomp;
-#[cfg(feature = "ocomp-integration")]
+
 mod oracle_expectations;
 pub mod origin_venue;
 mod p2p_admission;
 pub mod price_oracle;
-#[cfg(feature = "ocomp-integration")]
+
 pub mod radicle;
 pub mod restart;
-#[cfg(feature = "ocomp-integration")]
+
 pub mod settlement;
 pub mod stablecoin;
 pub mod stale_join;

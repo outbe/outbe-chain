@@ -7,7 +7,6 @@ pub(crate) use advance::advance_active_worldwide_days;
 use crate::{
     aggregate::ValidatedWwdAggregate,
     commit::{commit_new_wwd, commit_outer_transition, NewWwdSchedule},
-    ocomp::schema::require_active_ocomp_profile,
     reducer::{reduce_outer_wwd, OuterWwdEvent},
     schema::{MetadosisContract, WorldwideDayEntryExt},
 };
@@ -22,7 +21,6 @@ pub(crate) fn validate_metadosis_timestamp(timestamp: u64) -> Result<()> {
 
 pub(crate) fn init_genesis_day(ctx: &BlockRuntimeContext) -> Result<()> {
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
-    require_active_ocomp_profile(&metadosis)?;
     init_genesis_day_inner(&mut metadosis, ctx)
 }
 

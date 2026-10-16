@@ -11,8 +11,7 @@ use std::{
 
 #[derive(clap::Args)]
 pub(crate) struct ValidateArgs {
-    /// Checks to run: all, or comma-separated files,provenance,headers,evm,ocomp.
-    /// The OCOMP check verifies native source proofs and canonical relations.
+    /// Checks to run: all, or comma-separated files,provenance,headers,evm.
     /// It does not read private Tribute amounts.
     #[arg(long, default_value = "all")]
     pub checks: String,
@@ -168,14 +167,7 @@ mod tests {
             "--datadir.rocksdb".into(),
             root.join("execution-rocks").into_os_string(),
         ];
-        for relative in [
-            "chain/db",
-            "static",
-            "execution-rocks",
-            "consensus",
-            "ocomp/domain-v1",
-            "keys",
-        ] {
+        for relative in ["chain/db", "static", "execution-rocks", "consensus", "keys"] {
             let native = root.join(relative);
             std::fs::create_dir_all(&native).unwrap();
             let sentinel = native.join("sentinel");
@@ -248,7 +240,7 @@ mod tests {
         let args = Arguments::try_parse_from([
             "validate",
             "--checks",
-            "evm,ocomp",
+            "evm,headers",
             "--manifest",
             "manifest.json",
             "--signature",
@@ -267,7 +259,7 @@ mod tests {
         ])
         .unwrap()
         .validate;
-        assert_eq!(args.checks, "evm,ocomp");
+        assert_eq!(args.checks, "evm,headers");
         assert_eq!(args.manifest, Some("manifest.json".into()));
         assert_eq!(args.signature, Some("signature.json".into()));
         assert_eq!(args.archive, Some("snapshot.tar".into()));
@@ -287,16 +279,16 @@ mod tests {
     fn incomplete_report_is_written_but_is_not_a_success_or_startup_receipt() {
         let directory = tempfile::tempdir().unwrap();
         let target = directory.path().join("report.json");
-        let mut report = ValidationReport::new([CheckName::Ocomp]);
+        let mut report = ValidationReport::new([CheckName::Headers]);
         report.record(
-            CheckName::Ocomp,
+            CheckName::Headers,
             CheckStatus::Incomplete,
             Some("missing request frame B=100"),
         );
         write_report(&target, &report).unwrap();
         let json: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
-        assert_eq!(json["checks"]["ocomp"]["status"], "incomplete");
+        assert_eq!(json["checks"]["headers"]["status"], "incomplete");
         assert_eq!(json["checks"]["evm"]["status"], "not_requested");
         assert!(json.get("protected_paths").is_none());
         assert!(!report.success());

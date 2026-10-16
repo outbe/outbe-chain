@@ -40,7 +40,6 @@ fn policy(enabled: bool) -> OutbeConsensusPolicy<ChainSpec<OutbeHeader>> {
     OutbeConsensusPolicy {
         chain_spec: Arc::new(spec),
         skip_gas_limit_ramp_check: true,
-        ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
     }
 }
 

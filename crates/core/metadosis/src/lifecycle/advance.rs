@@ -4,7 +4,6 @@ use super::effects::{
 use crate::{
     aggregate::{ValidatedWwdAggregate, WwdProjection},
     commit::commit_outer_transition_with_rate,
-    ocomp::schema::require_active_ocomp_profile,
     reducer::{
         reduce_outer_wwd, OuterWwdEvent, OuterWwdTransition, OuterWwdTransitionKind, WwdAdvanceEdge,
     },
@@ -13,7 +12,6 @@ use crate::{
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 pub(crate) fn advance_active_worldwide_days(ctx: &BlockRuntimeContext) -> Result<()> {
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
-    require_active_ocomp_profile(&metadosis)?;
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
     let retained_count = aggregate.retained_count();
     let block_utc_day = outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp);

@@ -11,4 +11,4 @@ pub mod test_support;
 
 pub use api::OutbeApiServer;
 pub use errors::{RpcError, RpcValidatorStateError};
-pub use server::{OcompLysisOpeningsRuntimeV1, OutbeApiHandler};
+pub use server::OutbeApiHandler;

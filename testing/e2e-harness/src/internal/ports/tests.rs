@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::net::TcpListener;
-use std::path::Path;
 
 use super::Service::*;
 use super::*;
@@ -20,55 +19,11 @@ fn unscanned_layout_is_block_per_node() {
     assert_eq!(p.port(Http, 0), 18545);
     assert_eq!(p.port(Tee, 0), 18546);
     assert_eq!(p.port(Consensus, 0), 18551);
-    assert_eq!(p.port(OcompSupervisor, 0), 18552);
-    assert_eq!(p.port(OcompSnapshotExporter, 0), 18564);
     assert_eq!(p.port(Radicle, 0), RADICLE_BASE);
     assert_eq!(p.port(RadicleStatus, 0), RADICLE_BASE + 1);
     assert_eq!(p.port(Http, 1), NODE_BASE + BLOCK);
     assert_eq!(p.port(Tee, 1), NODE_BASE + BLOCK + 1);
     assert_eq!(p.port(Radicle, 1), RADICLE_BASE + RADICLE_BLOCK);
-}
-
-#[test]
-fn ocomp_derived_listeners_are_inside_each_disjoint_node_block() {
-    let p = static_ports(4);
-    for index in 0..4 {
-        let supervisor = p.port(OcompSupervisor, index);
-        assert_eq!(p.port(OcompMessage, index), supervisor + 1);
-        assert_eq!(p.port(OcompWorker0, index), supervisor + 2);
-        assert_eq!(p.port(OcompWorker3, index), supervisor + 5);
-        assert_eq!(p.port(OcompSuccessorSupervisor, index), supervisor + 6);
-        assert_eq!(p.port(OcompSuccessorMessage, index), supervisor + 7);
-        assert_eq!(p.port(OcompSuccessorWorker0, index), supervisor + 8);
-        assert_eq!(p.port(OcompSuccessorWorker3, index), supervisor + 11);
-        assert_eq!(p.port(OcompSnapshotExporter, index), supervisor + 12);
-    }
-}
-
-#[test]
-fn canonical_ocomp_fixture_uses_the_current_static_consensus_ports() {
-    let fixture =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/ocomp-final-v1/base/validators.json");
-    let validators: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(fixture).expect("canonical validators fixture"))
-            .expect("canonical validators JSON");
-    let validators = validators.as_array().expect("validators array");
-    let ports = static_ports(validators.len());
-
-    for (index, validator) in validators.iter().enumerate() {
-        let address = validator["p2p_address"]
-            .as_str()
-            .expect("validator p2p_address");
-        let fixture_port = address
-            .rsplit_once(':')
-            .and_then(|(_, port)| port.parse::<u16>().ok())
-            .expect("validator p2p port");
-        assert_eq!(
-            fixture_port,
-            ports.port(Consensus, index),
-            "canonical validator-{index} consensus port drifted from the harness layout"
-        );
-    }
 }
 
 /// The reported bug: a node index past the committee used to panic. Blocks

@@ -15,7 +15,7 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 37] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 36] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         CREDIS_ADDRESS,
@@ -69,9 +69,6 @@ pub mod marker_addresses {
         // Hyperlane controller (router + domain->ISM table). Genesis seeds only
         // the bootstrap admin, so the runtime 0xEF marker keeps the rest.
         HYPERLANE_CONTROLLER_ADDRESS,
-        // OCOMP authority and lineage registry. Fresh genesis initializes it
-        // at height 32; the marker preserves successor/refcount state.
-        OCOMP_REGISTRY_ADDRESS,
         UPDATE_ADDRESS,
         VOTE_ADDRESS,
     ];
@@ -164,7 +161,7 @@ pub(crate) fn apply_boundary_outcome(
     let advances_epoch =
         validate_boundary_epoch_transition(current_epoch, boundary.epoch, block_number)?;
 
-    // The activated epoch, active membership/hash and its consensus+OCOMP
+    // The activated epoch, active membership/hash and its consensus
     // snapshot are one state transition. A nominal epoch height is not
     // activation authority. Only this certified BoundaryOutcome is.
     let activation_guard = storage.checkpoint_guard();

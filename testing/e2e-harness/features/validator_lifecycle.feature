@@ -1,6 +1,6 @@
 @tee @min-validators-4
 Feature: Validator admission, membership, recovery, and removal
-  Every scenario owns a distinct ValidatorSet or DKG transition. OCOMP appears
+  Every scenario owns a distinct ValidatorSet or DKG transition. Membership appears
   only where changing ACTIVE membership must preserve historical job snapshots.
 
   @pfs-006-01 @pfs-006-03
@@ -81,23 +81,6 @@ Feature: Validator admission, membership, recovery, and removal
     When validator "validator-3" is killed
     Then the committee keeps finalizing until the validator is slashed exactly once
     And continued downtime does not slash the validator twice
-
-  @ocomp @ocomp-dynamic-admission @ocomp-dynamic-overlap
-  Scenario: New ACTIVE membership affects only new OCOMP jobs
-    Given a fresh four-validator OCOMP dynamic-membership localnet with two scheduled jobs
-    When one public Tribute is submitted for each scheduled OCOMP job
-    And validators 2 and 3 OCOMP workers are stopped before the job
-    Then job A opens with four members and quorum three while job B remains scheduled
-    When a fifth node syncs as a non-voting FullNode
-    Then the fifth node has canonical state parity without OCOMP vote capability
-    And the FullNode independently materializes job A without voting
-    When the synced node completes OCOMP-ready validator admission
-    Then the certified boundary adds exactly one fifth OCOMP validator domain
-    And all five admitted validators finalize the controlled COEN USD quote through the real price feeder
-    And job B opens with five members and quorum four while job A remains four of three
-    When validator 2 OCOMP worker restarts and completes both pinned quorums
-    Then the FullNode result for job A matches the canonical quorum result
-    And both deadlines record validator 3 missing with one soft penalty and all five validators stay live
 
   @pfs-006-02
   Scenario: Unconfirmed joiner remains PENDING until confirm-ready

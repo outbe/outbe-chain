@@ -5,24 +5,9 @@ use crate::state_machine::{
     ValidatorLifecycle, ValidatorState,
 };
 use alloy_primitives::{keccak256, Address, B256};
-use outbe_ocomp_protocol::{committee::OcompKeyRegistrationV1, profile::poc_schema_limits};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::{Mapping, Storable};
 use std::num::NonZeroU64;
-
-impl ValidatorSet<'_> {
-    /// Returns the canonical OCOMP registration admitted for `addr`.
-    /// Stored bytes that no longer decode are consensus-state corruption.
-    pub fn ocomp_registration(&self, addr: Address) -> Result<Option<OcompKeyRegistrationV1>> {
-        let bytes = self.val_ocomp_registration.get_bytes(&addr).read()?;
-        if bytes.is_empty() {
-            return Ok(None);
-        }
-        OcompKeyRegistrationV1::decode_canonical(&bytes, &poc_schema_limits())
-            .map(Some)
-            .map_err(|error| ValidatorSetError::stored_ocomp_registration_invalid(addr, error))
-    }
-}
 
 impl ValidatorSet<'_> {
     /// Reads the 48-byte BLS MinPk consensus pubkey from two storage slots.

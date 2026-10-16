@@ -315,7 +315,6 @@ class RepositoryBuildSpecTests(unittest.TestCase):
                 "outbe-keygen",
                 "outbe-feeder",
                 "outbe-tee-enclave",
-                "outbe-ocomp",
             ],
         )
         enclave = next(artifact for artifact in artifacts if artifact["role"] == "tee-enclave")

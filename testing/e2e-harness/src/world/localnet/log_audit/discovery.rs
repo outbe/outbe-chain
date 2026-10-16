@@ -15,7 +15,6 @@ const UNEXPECTED_RUNTIME_MARKERS: &[&str] = &[
     "radicle observer join deadline exceeded",
     "radicle drain failed before transport shutdown",
     "radicle endpoint actor stopped",
-    "embedded ocomp requested node shutdown",
 ];
 
 pub(super) fn collect_logs(dir: &Path, logs: &mut Vec<PathBuf>) -> Result<()> {
@@ -59,20 +58,9 @@ pub(super) fn is_runtime_log(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| {
-            matches!(
-                name,
-                "node.log" | "enclave.log" | "radicle.log" | "snapshot-exporter.log"
-            ) || name.starts_with("node.log.")
-                || is_worker_log_name(name)
+            matches!(name, "node.log" | "enclave.log" | "radicle.log")
+                || name.starts_with("node.log.")
                 || is_reth_runtime_log_name(name)
-        })
-}
-
-fn is_worker_log_name(name: &str) -> bool {
-    name.strip_prefix("worker-")
-        .and_then(|suffix| suffix.strip_suffix(".log"))
-        .is_some_and(|ordinal| {
-            !ordinal.is_empty() && ordinal.bytes().all(|byte| byte.is_ascii_digit())
         })
 }
 
