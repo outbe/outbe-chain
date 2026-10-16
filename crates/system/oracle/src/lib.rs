@@ -12,6 +12,7 @@ pub mod precompile;
 pub mod runtime;
 pub mod schema;
 pub mod scurve;
+pub mod sources;
 pub mod state;
 pub mod tally;
 #[cfg(feature = "test-utils")]

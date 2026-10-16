@@ -34,3 +34,4 @@ mod lease_and_boundary;
 mod tee_bootstrap;
 
 mod late_credits;
+mod publication;

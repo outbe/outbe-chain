@@ -44,17 +44,7 @@ pub fn dispatch(
                 let exercised = registry.exercised_units.read(&series_id)?;
                 let gem_factory = registry.gem_factory_units.read(&series_id)?;
                 let now = storage.timestamp()?.to::<u64>();
-                let mut data = to_abi_data(&record, settled, exercised, gem_factory, now)?;
-                if data.state == crate::schema::IntexState::Issued as u8
-                    && crate::api::is_qualified(&storage, &record)?
-                {
-                    data.state = 1;
-                }
-                Ok(data)
-            }),
-            isQualified(c) => view(c, |c| {
-                let record = registry.load_series(SeriesId::from(c.seriesId))?;
-                crate::api::is_qualified(&storage, &record)
+                to_abi_data(&record, settled, exercised, gem_factory, now)
             }),
             seriesUnitCounts(c) => view(c, |c| {
                 let counts = crate::api::unit_counts(&storage, SeriesId::from(c.seriesId))?;
@@ -85,7 +75,6 @@ fn to_abi_data(
         seriesId: r.series_id.into(),
         promisLoadMinor: r.promis_load_minor,
         entryPriceMinor: r.entry_price_minor,
-        floorPriceMinor: r.floor_price_minor,
         issuedUnits: r.issued_units,
         callWindow: r.call_window_seconds,
         callThreshold: r.call_threshold_seconds,

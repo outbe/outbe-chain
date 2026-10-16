@@ -1,0 +1,10 @@
+{
+  "head": "91644eb78148e7b81cd8e46478dfb0466d321e27",
+  "base": "8fe62b5dd0e625cd65297479cfa687e3e648ad41",
+  "verified_artifacts": 15,
+  "verified_sources": 27,
+  "live_description_sha256": "e266ca4cf57b3ff94bf349ad8bdb04336a8cf4580e197e31b346a98e3c3ea775",
+  "spec_file_sha256": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+  "task_spec_sha256": "6989338f54b923a0d74a7508ad67e406a28ec631d04faa991c6ecb3bc08b33d5",
+  "tracked_diff": ""
+}

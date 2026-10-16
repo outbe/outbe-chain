@@ -12,8 +12,7 @@ fn issue_creates_series_in_registry() {
         assert_eq!(r.series_id, sid(7));
         assert_eq!(r.promis_load_minor, U256::from(PROMIS_LOAD_MINOR));
         assert_eq!(r.entry_price_minor, U256::from(ENTRY_PRICE));
-        // Floor and trigger are derived from the clearing price at issuance.
-        assert_eq!(r.floor_price_minor, U256::from(EXPECTED_FLOOR));
+        // The trigger is derived from the clearing price at issuance.
         assert_eq!(r.issued_units, 100);
         assert_eq!(r.call_notice_period_seconds, CALL_NOTICE_PERIOD);
         // Window/threshold/call-period are IntexFactory protocol constants now.
@@ -85,18 +84,11 @@ fn issue_enrolls_series_in_dense_enumeration() {
 }
 
 #[test]
-fn floor_and_call_derivation() {
-    let floor =
-        outbe_primitives::markup::marked_up(U256::from(ENTRY_PRICE), FLOOR_RATE_PCT).unwrap();
+fn call_derivation() {
     let call = outbe_primitives::markup::marked_up(U256::from(ENTRY_PRICE), CALL_RATE_PCT).unwrap();
-    assert_eq!(floor, U256::from(EXPECTED_FLOOR));
     assert_eq!(call, U256::from(EXPECTED_TRIGGER));
 
     let one = U256::from(1_000_000u64);
-    assert_eq!(
-        outbe_primitives::markup::marked_up(one, FLOOR_RATE_PCT).unwrap(),
-        U256::from(1_080_000u64)
-    );
     assert_eq!(
         outbe_primitives::markup::marked_up(one, CALL_RATE_PCT).unwrap(),
         U256::from(2_280_000u64)
@@ -132,7 +124,6 @@ fn leg(chain_id: u32, series: u32, recipients: usize) -> runtime::IssuanceLeg {
         issuedUnits: 1,
         promisLoadMinor: PROMIS_LOAD_MINOR,
         entryPriceMinor: 0,
-        floorPriceMinor: 0,
         callNoticePeriod: 0,
         issuanceCurrency: 840,
         referenceCurrency: 840,
@@ -181,7 +172,7 @@ fn a_chains_series_travel_together_up_to_the_message_caps() {
 
 #[test]
 fn the_message_caps_match_the_codec() {
-    use crate::constants::{MAX_RECIPIENTS_PER_MESSAGE, MAX_SERIES_PER_MARK, MAX_VWAP_ROWS};
+    use crate::constants::{MAX_RECIPIENTS_PER_MESSAGE, MAX_SERIES_PER_MARK};
     use outbe_primitives::test_utils::sol_interface::sol_constant;
     const CODEC: &str =
         include_str!("../../../../../contracts/intex/src/shared/libs/BridgeMsgCodec.sol");
@@ -196,10 +187,6 @@ fn the_message_caps_match_the_codec() {
     assert_eq!(
         sol_constant(CODEC, "MAX_SERIES_PER_MARK"),
         Some(MAX_SERIES_PER_MARK)
-    );
-    assert_eq!(
-        sol_constant(CODEC, "MAX_REFERENCE_PRICES"),
-        Some(MAX_VWAP_ROWS)
     );
     assert_eq!(
         sol_constant(CODEC, "MAX_PAYLOAD_ARRAY_LEN"),
@@ -529,7 +516,6 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
             U256::from(2u64) * COEN_ISO_RATE_SCALE,
         );
         write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
-        seed_qualifying_day(&s);
     });
     let (_, amount, quoted) = quote(&mut storage);
     let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
@@ -657,7 +643,6 @@ fn a_reference_payment_ignores_the_snapshot_it_names() {
     let mut storage = dual_currency_series(REFERENCE_ISO as u64);
     stub_token_that_never_credits(&mut storage);
     StorageHandle::enter(&mut storage, |s| {
-        seed_qualifying_day(&s);
         let err = runtime::settle_intex(
             &s,
             sid(7),

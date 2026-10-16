@@ -1,0 +1,19 @@
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+    Finished `test` profile [unoptimized] target(s) in 18.57s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-standalone/debug/deps/radicle-fbfbf6dc2135ded4)
+
+running 1 test
+
+thread 'cob::store::native_test::direct_managed_identity_read_requires_both_current_entry_receipts' (9804454) panicked at crates/radicle/src/cob/store/native_test.rs:305:5:
+local write requires a receipt
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test cob::store::native_test::direct_managed_identity_read_requires_both_current_entry_receipts ... FAILED
+
+failures:
+
+failures:
+    cob::store::native_test::direct_managed_identity_read_requires_both_current_entry_receipts
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 403 filtered out; finished in 2.98s
+
+error: test failed, to rerun pass `-p radicle --lib`

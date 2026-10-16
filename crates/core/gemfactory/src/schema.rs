@@ -9,12 +9,11 @@ use crate::constants::MAX_POSITION_EXPIRIES_PER_RUN;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum GemTypes {
-    Genesis = 0,
-    Validator = 1,
-    Sra = 2,
-    Wallet = 3,
-    Cca = 4,
-    Merchant = 5,
+    Validator = 0,
+    Sra = 1,
+    Wallet = 2,
+    Cca = 3,
+    Merchant = 4,
 }
 
 /// The terms an agent-class gem is issued on.
@@ -63,26 +62,23 @@ pub struct GemPosition {
     #[attribute(order = 2)]
     pub remaining_capacity_minor: U256,
 
-    /// Snapshot of the source Intex entry/floor, used as issuance lower bounds.
+    /// Snapshot of the source Intex entry, the issuance lower bound.
     #[attribute(order = 3)]
     pub source_entry_price_minor: U256,
 
     #[attribute(order = 4)]
-    pub source_floor_price_minor: U256,
-
-    #[attribute(order = 5)]
     pub issuance_currency: u16,
 
-    #[attribute(order = 6)]
+    #[attribute(order = 5)]
     pub reference_currency: u16,
 
     /// When the position was issued.
-    #[attribute(order = 7)]
+    #[attribute(order = 6)]
     pub issued_at: u64,
 
     /// Deadline snapshotted from the profile when the position opened, so a later profile
     /// change cannot retroactively expire positions already in the queue.
-    #[attribute(order = 8)]
+    #[attribute(order = 7)]
     pub expires_at: u64,
 }
 

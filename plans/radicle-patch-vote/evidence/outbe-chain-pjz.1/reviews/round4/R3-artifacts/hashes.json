@@ -1,0 +1,91 @@
+{
+  "reviewed_sha": "44bd1a8f9ce6e26b87841774a7cd659978b3b889",
+  "live_spec_hash": "a0e36f17d4d4f8410f8e6c67668bab71857306569df154b8237b49bf6b172232",
+  "manifest_sha256": "f8d33dbec624ec15fc5d98423f5976c958a6f3ce3bb5170229f9b8bb3f1411fc",
+  "artifacts": {
+    "plans/radicle-patch-vote/design.md": {
+      "expected": "cb9e375ded4782bae2af80a5ddf72ed85b21bfec4e60f424868196639d71676c",
+      "actual": "cb9e375ded4782bae2af80a5ddf72ed85b21bfec4e60f424868196639d71676c"
+    },
+    "plans/radicle-patch-vote/task-specs.json": {
+      "expected": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+      "actual": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412"
+    },
+    "plans/radicle-patch-vote/plan.md": {
+      "expected": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b",
+      "actual": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b"
+    },
+    "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/README.md": {
+      "expected": "1ac7bb685d27f3024602c53ca83e1297a4c3a5fcd6857e9035ce371de32fec58",
+      "actual": "1ac7bb685d27f3024602c53ca83e1297a4c3a5fcd6857e9035ce371de32fec58"
+    },
+    "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/source-audit.json": {
+      "expected": "e520b3c2c62a01141ae99fd9dd874256fbb84cd96ed6732bfdcce3d4134acd97",
+      "actual": "e520b3c2c62a01141ae99fd9dd874256fbb84cd96ed6732bfdcce3d4134acd97"
+    },
+    "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/design-check.log": {
+      "expected": "493fa160f280d0662f4bf6cdc6fbb18834d23ab40d860930d2a5c28d78dd044b",
+      "actual": "493fa160f280d0662f4bf6cdc6fbb18834d23ab40d860930d2a5c28d78dd044b"
+    },
+    "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/descriptor-check.log": {
+      "expected": "7868d0e940c62a46ffad8bacdb33edafe65d6357819d50aa43dfbf0947a0ce0b",
+      "actual": "7868d0e940c62a46ffad8bacdb33edafe65d6357819d50aa43dfbf0947a0ce0b"
+    },
+    "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/schedule-check.log": {
+      "expected": "66a22e6c06664edf7e936bbb18bcf3dd92f98acc273cf579162fbf0f7954e069",
+      "actual": "66a22e6c06664edf7e936bbb18bcf3dd92f98acc273cf579162fbf0f7954e069"
+    },
+    "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/check-environment.json": {
+      "expected": "ace188dbd09b3ed95f0b3a8f357c98773b175f0cdc5fbf202b2363c4dde9b356",
+      "actual": "ace188dbd09b3ed95f0b3a8f357c98773b175f0cdc5fbf202b2363c4dde9b356"
+    },
+    "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/beads-current.jsonl": {
+      "expected": "038ea014952bcf051ba547fa077d525377c97e982b21c14258d3692516707413",
+      "actual": "038ea014952bcf051ba547fa077d525377c97e982b21c14258d3692516707413"
+    },
+    "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/progress.json": {
+      "expected": "237fd9534b408fafac1ec8693ccabe4d6c56143f388edb26ef9659deb804c322",
+      "actual": "237fd9534b408fafac1ec8693ccabe4d6c56143f388edb26ef9659deb804c322"
+    },
+    "plans/radicle-patch-vote/p0-check/Cargo.lock": {
+      "expected": "7b9cccb5ad05822faeaa87b4177f6914afd7b61db6828400cae9ade71aff79bc",
+      "actual": "7b9cccb5ad05822faeaa87b4177f6914afd7b61db6828400cae9ade71aff79bc"
+    },
+    "plans/radicle-patch-vote/p0-check/audit_sources.py": {
+      "expected": "ff5a38cb61af27a9e9450504dc257d42f1509a45ddcc3cf2ceeecbd97b0dcab8",
+      "actual": "ff5a38cb61af27a9e9450504dc257d42f1509a45ddcc3cf2ceeecbd97b0dcab8"
+    },
+    "plans/radicle-patch-vote/p0-check/verify_vectors.py": {
+      "expected": "98dec0d197dcffaf82c2ed2db0c26a00d40a3e8626fc03ec277822ca9805a9c5",
+      "actual": "98dec0d197dcffaf82c2ed2db0c26a00d40a3e8626fc03ec277822ca9805a9c5"
+    },
+    "plans/radicle-patch-vote/p0-check/descriptor_check.py": {
+      "expected": "ad62728499a5a4dd7ffcd221af25de125d629bc3994cc4106dc42bd3fc519c45",
+      "actual": "ad62728499a5a4dd7ffcd221af25de125d629bc3994cc4106dc42bd3fc519c45"
+    },
+    "plans/radicle-patch-vote/p0-check/schedule_check.py": {
+      "expected": "06eb908f946e9b9f3058e6e6b7589cf45062ef5164be83af440a9b8a5d26601a",
+      "actual": "06eb908f946e9b9f3058e6e6b7589cf45062ef5164be83af440a9b8a5d26601a"
+    },
+    "plans/radicle-patch-vote/p0-check/src/main.rs": {
+      "expected": "69c132d08ed2bd8c73f4629de14bafcad9d03bdab550a18b5cae516c19edbe59",
+      "actual": "69c132d08ed2bd8c73f4629de14bafcad9d03bdab550a18b5cae516c19edbe59"
+    },
+    "plans/radicle-patch-vote/p0-check/src/native.rs": {
+      "expected": "41079076167b3956f4796e04a3e375bc70cecbe741b9f250725ab4e1b03b2565",
+      "actual": "41079076167b3956f4796e04a3e375bc70cecbe741b9f250725ab4e1b03b2565"
+    },
+    "plans/radicle-patch-vote/p0-check/src/publication.rs": {
+      "expected": "431da44b95116ae17228a9d2eda9b867c4e4bff85c2034256015c0d8e3ad1876",
+      "actual": "431da44b95116ae17228a9d2eda9b867c4e4bff85c2034256015c0d8e3ad1876"
+    },
+    "plans/radicle-patch-vote/p0-check/vectors/identity.json": {
+      "expected": "f4a30e34a7cc96367eb3620aea46e13728410263bc6bba847509d4142bdf5e9e",
+      "actual": "f4a30e34a7cc96367eb3620aea46e13728410263bc6bba847509d4142bdf5e9e"
+    },
+    "plans/radicle-patch-vote/p0-check/vectors/repository-key.txt": {
+      "expected": "2194aef72fc3b746b58fceab180469fa37ea58de8ee665fadd473ced1cc51cc8",
+      "actual": "2194aef72fc3b746b58fceab180469fa37ea58de8ee665fadd473ced1cc51cc8"
+    }
+  }
+}

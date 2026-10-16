@@ -667,7 +667,6 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
     );
     world.provider.set_block_number(2);
     apply(&mut world, &batch(&population, 8, 2)).unwrap();
-    world.qualify(nod_id);
     world.settle(nod_id, population.actions[0].owner).unwrap();
     let nonce = world.pow_nonce(nod_id);
     let encrypted = world

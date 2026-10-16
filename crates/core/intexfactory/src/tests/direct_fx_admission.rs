@@ -21,7 +21,6 @@ fn a_direct_settlement_in_a_currency_the_window_never_priced_is_refused_without_
             U256::from(2u64) * COEN_ISO_RATE_SCALE,
         );
         write_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
-        seed_qualifying_day(&s);
         outbe_oracle::api::current_vwap_snapshot(s.clone())
             .unwrap()
             .to_u256()

@@ -218,24 +218,6 @@ fn admitted_at_quote(storage: &StorageHandle<'_>, gem_id: U256, asset: Address) 
     (currency, amount)
 }
 
-/// Close the gem's first full day above its floor, which qualifies it.
-fn seed_qualifying_day(storage: &StorageHandle<'_>, gem_id: U256) {
-    let item = gem_item(storage, gem_id);
-    let oracle = OracleContract::new(storage.clone());
-    let pair = oracle
-        .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(
-            item.reference_currency,
-        ))
-        .unwrap();
-    let day = outbe_primitives::time::first_full_day(item.issued_at);
-    oracle
-        .record_utc_day_vwap(day, pair, item.floor_price_minor + U256::ONE)
-        .unwrap();
-    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
-        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
-    }
-}
-
 /// Registers and prices `COEN/<iso>` and adds `iso` to the reference registry.
 /// Registers `COEN/<iso>`, prices it at `rate` both live and for the last closed
 /// day, and adds `iso` to the reference registry.
@@ -262,12 +244,10 @@ fn register_currency(storage: &StorageHandle<'_>, iso: u16, rate: U256) {
 
 // The paid `settle_gem` path (Reserve vault deposit) is not exercisable in the
 // storage-only harness: the stubbed token moves no balance. Mine coverage
-// records Settled through `gem_api::settle_gem` after a qualifying day, which
-// does not deposit. Localnet covers the paid settle.
+// records Settled through `gem_api::settle_gem`, which does not deposit. Localnet covers the paid settle.
 
-/// Qualifies `gem_id` and records Settled. The body stays until it is mined.
+/// Records Settled. The body stays until it is mined.
 fn force_settled(storage: &StorageHandle<'_>, gem_id: U256) {
-    seed_qualifying_day(storage, gem_id);
     record_settled(storage, gem_id);
 }
 
@@ -298,7 +278,6 @@ fn sent_capacity(promis_load: u128) -> U256 {
 fn seed_source_series(
     storage: &StorageHandle,
     entry: U256,
-    floor: U256,
     promis_load: u128,
     call_trigger: outbe_intex::IntexCallTrigger,
 ) {
@@ -310,7 +289,6 @@ fn seed_source_series(
             issued_units: SENT_UNITS as u32,
             promis_load_minor: promis_load,
             entry_price_minor: entry,
-            floor_price_minor: floor,
             call_price_minor: U256::ZERO,
             call_trigger,
             issued_at: T_NOW as u32,
@@ -323,11 +301,10 @@ fn seed_source_series(
 
 /// Seed an Intex series and send the merchant's whole holding into a GemPosition
 /// NFT (burn stubbed via `with_storage`). Returns the `position_id`.
-fn seed_and_send(storage: &StorageHandle, entry: U256, floor: U256, promis_load: u128) -> U256 {
+fn seed_and_send(storage: &StorageHandle, entry: U256, promis_load: u128) -> U256 {
     seed_source_series(
         storage,
         entry,
-        floor,
         promis_load,
         outbe_intex::IntexCallTrigger::default(),
     );
@@ -340,7 +317,6 @@ const SOURCE_NOTICE_SECONDS: u32 = 3_600;
 fn seed_called_source(storage: &StorageHandle, called_at: u64) {
     seed_source_series(
         storage,
-        six_decimal_unit(),
         six_decimal_unit(),
         six_decimal_u128(),
         outbe_intex::IntexCallTrigger {
@@ -408,7 +384,7 @@ fn seed_day_vwap(storage: &StorageHandle, iso: u16, vwap: U256) {
 }
 
 fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
-    let id = seed_and_send(storage, source_entry, source_entry, six_decimal_u128());
+    let id = seed_and_send(storage, source_entry, six_decimal_u128());
     let gem_id = runtime::issue_merchant_gem(
         storage,
         crate::schema::MerchantGemIssueParams {

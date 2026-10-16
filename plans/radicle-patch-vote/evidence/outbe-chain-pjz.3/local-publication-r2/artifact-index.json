@@ -1,0 +1,14 @@
+{
+  "README.md": "ff7489527e70e00259a426ac2e73759497ae33b4018f8cc13ab02b89558343f6",
+  "cli-log-tests.log": "fa48a8e2e5fea3ee8e0397888267db3b2fd6e545a80083052cceb6c67bc8eb30",
+  "native-clippy.log": "b84e94ac90b677ec7fa39fc1b9da5c146a8ca866c8ed6b8dbfcf84b74db7e03a",
+  "native-commands.json": "352bc8319571d296b4ea4932082d2252d6fc4b174a62525a458f032221b74513",
+  "native-format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "native-tests.log": "4685ea56505097e5995611b15d512fe8af51f8daf9ec27d8339e5514c8e6e3b7",
+  "root-commands.json": "81a56036eb1ffbac171c455bf3963aa49afcd1fcff829af2357abb42f40af8e2",
+  "root-consumers.log": "9939b2c7a7ac9b2e13f521a2415a3248940b5a50156673afefafdf5f2c2eb56b",
+  "run_checks.py": "a93b4a0272cbe388d0c817c413acc7cbad19bdd48e6160c6118b3ef89dd9cc75",
+  "sidecar-tests.log": "56f9203299bfc80bcd41f9c3bb40d43fe75b1b76f74e1323e3358b2ac0a35480",
+  "source-hashes.json": "f56af67f1d776705a62401551adcf9fc6d04c614d6fe2e20fc53f660476b6cf5",
+  "source-map.md": "d2ba9a30fe3bb25f96c0052cf07342c2171b1913022137a2f15341590389a538"
+}

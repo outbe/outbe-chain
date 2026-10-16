@@ -13,6 +13,10 @@ use crate::{
 
 const CHAIN_ID: u64 = 1;
 
+mod genesis;
+mod patch_vote;
+mod publication;
+
 fn repo(byte: u8) -> FixedBytes<20> {
     FixedBytes::repeat_byte(byte)
 }
@@ -125,6 +129,29 @@ fn storage_layout_slots_zero_through_five_are_stable() {
         assert_eq!(registry.repository_registrant.base_slot(), U256::from(3));
         assert_eq!(registry.registry_generation.slot(), U256::from(4));
         assert_eq!(registry.config_max_repositories.slot(), U256::from(5));
+        assert_eq!(registry.patch_approvals.base_slot(), U256::from(6));
+        assert_eq!(registry.patch_execution_stage.base_slot(), U256::from(9));
+        assert_eq!(
+            registry.config_descriptor_hash.slot(),
+            U256::from(outbe_primitives::radicle_genesis::GOVERNMENTS_DESCRIPTOR_HASH_SLOT)
+        );
+        assert_eq!(registry.config_descriptor_bytes.len().unwrap(), 0);
+        assert_eq!(registry.network_repository.slot(), U256::from(12));
+        assert_eq!(registry.publication_sequence.slot(), U256::from(13));
+        assert_eq!(registry.publication_receipt_hash.slot(), U256::from(14));
+        assert_eq!(
+            registry.publication_material_sequence.slot(),
+            U256::from(15)
+        );
+        assert_eq!(registry.publication_receipts.base_slot(), U256::from(16));
+        assert_eq!(
+            registry.publication_pending_generation.base_slot(),
+            U256::from(19)
+        );
+        assert_eq!(
+            registry.publication_pending_body_hash.base_slot(),
+            U256::from(20)
+        );
     });
 }
 

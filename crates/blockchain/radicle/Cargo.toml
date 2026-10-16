@@ -8,22 +8,29 @@ publish.workspace = true
 [dependencies]
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
 bytes.workspace = true
 commonware-codec.workspace = true
 commonware-cryptography.workspace = true
 commonware-actor.workspace = true
 commonware-p2p.workspace = true
 commonware-runtime.workspace = true
+commonware-utils.workspace = true
 futures.workspace = true
 hex.workspace = true
 idna.workspace = true
 multibase.workspace = true
 outbe-primitives.workspace = true
+outbe-consensus.workspace = true
 outbe-radicleregistry.workspace = true
+outbe-vote.workspace = true
 outbe-validatorset.workspace = true
 parking_lot.workspace = true
 rand_core.workspace = true
+radicle.workspace = true
+radicle-git-metadata.workspace = true
 reqwest.workspace = true
+rustix = { workspace = true, features = ["net"] }
 reth-chain-state.workspace = true
 reth-provider.workspace = true
 reth-storage-api.workspace = true
@@ -34,6 +41,9 @@ tokio.workspace = true
 metrics.workspace = true
 
 [dev-dependencies]
+alloy-eips.workspace = true
+reth-chainspec.workspace = true
+reth-provider = { workspace = true, features = ["test-utils"] }
 hex.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 proptest.workspace = true

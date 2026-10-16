@@ -268,6 +268,7 @@ fn feeder_config_is_private_and_contains_only_the_frozen_interface() {
     let contents = fs::read_to_string(&path).unwrap();
     assert!(contents.contains("vote_period = 8"));
     assert!(contents.contains("poll_interval_secs = 1"));
+    assert!(contents.contains("sources = \"local\""));
     assert!(contents.contains("gasless_oracle_votes = true"));
     assert!(contents.contains("enabled = false"));
     assert!(contents.contains("[[api_providers]]"));

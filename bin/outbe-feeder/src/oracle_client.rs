@@ -12,7 +12,7 @@ use eyre::{Context, Result};
 use serde_json::{json, Value};
 
 use crate::{
-    abi::{IOracle, IValidatorSet},
+    abi::{IOracle, IUpdate, IValidatorSet},
     config::{AccountConfig, ChainConfig},
     errors::OracleError,
     journal::PendingVote,
@@ -22,6 +22,8 @@ const ORACLE_ADDRESS: Address =
     alloy_primitives::address!("000000000000000000000000000000000000ee05");
 const VALIDATOR_SET_ADDRESS: Address =
     alloy_primitives::address!("000000000000000000000000000000000000ee00");
+const UPDATE_ADDRESS: Address =
+    alloy_primitives::address!("000000000000000000000000000000000000ee0b");
 
 #[derive(Clone, Debug)]
 pub struct Head {
@@ -128,6 +130,26 @@ impl OracleClient {
             .rpc(
                 "eth_call",
                 json!([{"to":to,"data":Bytes::from(call.abi_encode())},head.block_id()]),
+            )
+            .await?;
+        let bytes: Bytes = serde_json::from_value(result)?;
+        Ok(C::abi_decode_returns(&bytes)?)
+    }
+    /// The active protocol version and the node's feeder sources TOML at `height`.
+    pub async fn sources(&self, height: u64) -> Result<(u32, String)> {
+        let version = self
+            .call_at(height, UPDATE_ADDRESS, IUpdate::getActiveVersionCall {})
+            .await?;
+        let text = self
+            .call_at(height, ORACLE_ADDRESS, IOracle::getSourcesCall {})
+            .await?;
+        Ok((version, text))
+    }
+    async fn call_at<C: SolCall>(&self, height: u64, to: Address, call: C) -> Result<C::Return> {
+        let result = self
+            .rpc(
+                "eth_call",
+                json!([{"to":to,"data":Bytes::from(call.abi_encode())},format!("{height:#x}")]),
             )
             .await?;
         let bytes: Bytes = serde_json::from_value(result)?;

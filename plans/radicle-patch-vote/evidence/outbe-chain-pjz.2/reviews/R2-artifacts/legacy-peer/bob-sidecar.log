@@ -1,0 +1,26 @@
+2026-10-15T15:38:01.818+04:00 INFO  node     Opening policy database..
+2026-10-15T15:38:01.819+04:00 INFO  node     Default seeding policy set to 'block (all)'
+2026-10-15T15:38:01.819+04:00 INFO  node     Initializing service (Outbe)..
+2026-10-15T15:38:01.819+04:00 INFO  node     Opening node database..
+2026-10-15T15:38:01.820+04:00 INFO  service  Empty refs database, populating from storage..
+2026-10-15T15:38:01.820+04:00 INFO  reactor  Entering reactor event loop
+2026-10-15T15:38:01.820+04:00 INFO  node     Listening on 127.0.0.1:52861..
+2026-10-15T15:38:01.821+04:00 INFO  node     Binding control socket /tmp/ob-p1-1gxiq198/bob/node/control.sock..
+2026-10-15T15:38:01.821+04:00 INFO  node     Running node z6MkqwkY1AzC1grndrUvrH459dUV5Y4ep1X5wVpPHjxKGcmg in /private/tmp/ob-p1-1gxiq198/bob..
+2026-10-15T15:38:01.821+04:00 INFO  service  Received command QueryState(..)
+2026-10-15T15:38:01.841+04:00 INFO  service  Received command QueryState(..)
+2026-10-15T15:38:01.841+04:00 INFO  service  Received command ListenAddrs
+2026-10-15T15:38:01.842+04:00 INFO  service  Received command Config
+2026-10-15T15:38:02.241+04:00 INFO  service  Received command QueryState(..)
+2026-10-15T15:38:02.241+04:00 INFO  service  Received command Connect(z6MkhdiEWKpJELH5qSNtC76qSGPVhByp5K9BFaBQEh3MYigS, 127.0.0.1:52858, ConnectOptions { persistent: true, timeout: 5s })
+2026-10-15T15:38:02.243+04:00 INFO  service  Connected to z6MkhdiEWKpJELH5qSNtC76qSGPVhByp5K9BFaBQEh3MYigS (127.0.0.1:52858) (Outbound)
+2026-10-15T15:38:02.377+04:00 INFO  service  Received command Seed(rad:zZxXJVwP89mL3mkpmCeMpAro9gkS, followed)
+2026-10-15T15:38:02.378+04:00 INFO  service  Received command Seeds(rad:zZxXJVwP89mL3mkpmCeMpAro9gkS)
+2026-10-15T15:38:02.379+04:00 INFO  service  Received command QueryState(..)
+2026-10-15T15:38:02.379+04:00 INFO  service  Received command Fetch(rad:zZxXJVwP89mL3mkpmCeMpAro9gkS, z6MkhdiEWKpJELH5qSNtC76qSGPVhByp5K9BFaBQEh3MYigS)
+2026-10-15T15:38:02.436+04:00 INFO  service  Fetched rad:zZxXJVwP89mL3mkpmCeMpAro9gkS from z6MkhdiEWKpJELH5qSNtC76qSGPVhByp5K9BFaBQEh3MYigS successfully
+2026-10-15T15:38:02.696+04:00 INFO  service  Received command DisconnectIfOutbound(z6MkhdiEWKpJELH5qSNtC76qSGPVhByp5K9BFaBQEh3MYigS, Some(Address { inner: NetAddr { host: Ip(127.0.0.1), port: 52858 }, is_ipv6_without_square_brackets: false }))
+2026-10-15T15:38:02.696+04:00 INFO  service  Disconnected from z6MkhdiEWKpJELH5qSNtC76qSGPVhByp5K9BFaBQEh3MYigS (command)
+2026-10-15T15:38:02.787+04:00 INFO  node     Termination signal received; shutting down..
+2026-10-15T15:38:02.787+04:00 INFO  reactor::controller Initiating reactor shutdown…
+2026-10-15T15:38:02.787+04:00 INFO  reactor  Shutdown

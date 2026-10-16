@@ -12,9 +12,6 @@ pub enum GemFactoryError {
     #[error("gem not found")]
     GemNotFound,
 
-    #[error("invalid state for action")]
-    InvalidState,
-
     #[error("gem is already settled")]
     GemAlreadySettled,
 
@@ -65,9 +62,6 @@ pub enum GemFactoryError {
 
     #[error("invalid owner")]
     InvalidOwner,
-
-    #[error("only a genesis gem is issued without a floor")]
-    ZeroFloorPrice,
 
     #[error("overflow")]
     Overflow,

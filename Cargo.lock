@@ -8004,19 +8004,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-accounting"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "outbe-evm",
- "outbe-macros",
- "outbe-primitives",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
 name = "outbe-agentreward"
 version = "0.1.0"
 dependencies = [
@@ -8203,6 +8190,7 @@ dependencies = [
  "outbe-primitives",
  "parking_lot",
  "proptest",
+ "radicle-crypto",
  "rand 0.10.2",
  "rand 0.8.6",
  "rand_core 0.10.1",
@@ -8266,7 +8254,6 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-accounting",
  "outbe-agentreward",
  "outbe-ccaregistry",
  "outbe-chain-constants",
@@ -8359,6 +8346,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-radicle",
+ "outbe-radicleregistry",
  "outbe-slashindicator",
  "outbe-tee",
  "outbe-tee-enclave",
@@ -8477,7 +8465,6 @@ dependencies = [
  "eyre",
  "hex",
  "k256 0.13.4",
- "outbe-accounting",
  "outbe-agentreward",
  "outbe-ccaregistry",
  "outbe-chain-constants",
@@ -8610,7 +8597,6 @@ dependencies = [
  "hex",
  "outbe-common",
  "outbe-macros",
- "outbe-oracle",
  "outbe-primitives",
  "serde",
  "serde_json",
@@ -8733,7 +8719,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-macros",
- "outbe-oracle",
  "outbe-primitives",
  "thiserror 2.0.18",
 ]
@@ -9180,6 +9165,7 @@ dependencies = [
  "outbe-macros",
  "outbe-primitives",
  "outbe-staking",
+ "outbe-update",
  "outbe-validatorset",
  "serde_json",
  "thiserror 2.0.18",
@@ -9335,29 +9321,38 @@ name = "outbe-radicle"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips",
  "alloy-primitives",
+ "alloy-sol-types",
  "bytes",
  "commonware-actor",
  "commonware-codec",
  "commonware-cryptography",
  "commonware-p2p",
  "commonware-runtime",
+ "commonware-utils",
  "futures",
  "hex",
  "idna",
  "metrics",
  "metrics-util",
  "multibase",
+ "outbe-consensus",
  "outbe-primitives",
  "outbe-radicleregistry",
  "outbe-validatorset",
+ "outbe-vote",
  "parking_lot",
  "proptest",
+ "radicle",
+ "radicle-git-metadata",
  "rand_core 0.6.4",
  "reqwest 0.12.28",
  "reth-chain-state",
+ "reth-chainspec",
  "reth-provider",
  "reth-storage-api",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
@@ -9369,13 +9364,38 @@ dependencies = [
 name = "outbe-radicle-runtime"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "bytes",
+ "commonware-actor",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-p2p",
+ "commonware-parallel",
+ "commonware-runtime",
+ "commonware-utils",
+ "hex",
  "lexopt",
  "log",
+ "outbe-consensus",
+ "outbe-primitives",
+ "outbe-radicle",
+ "outbe-radicleregistry",
+ "outbe-validatorset",
+ "outbe-vote",
  "radicle",
  "radicle-node",
  "radicle-signals",
+ "rand 0.10.2",
+ "rand_core 0.10.1",
+ "reth-chainspec",
+ "reth-provider",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
@@ -9395,8 +9415,16 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-utils",
+ "outbe-consensus",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-validatorset",
+ "outbe-vote",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -10797,6 +10825,7 @@ dependencies = [
  "radicle-git-ref-format",
  "radicle-localtime",
  "radicle-oid",
+ "radicle-windows",
  "serde",
  "serde-untagged",
  "serde_json",
@@ -10845,6 +10874,7 @@ dependencies = [
 name = "radicle-crypto"
 version = "0.19.0"
 dependencies = [
+ "blst",
  "curve25519-dalek 4.1.3",
  "cyphernet",
  "ed25519-dalek",
@@ -10854,6 +10884,7 @@ dependencies = [
  "radicle-git-ref-format",
  "schemars 1.2.1",
  "serde",
+ "sha2 0.10.9",
  "sqlite",
  "ssh-agent-lib",
  "ssh-key",

@@ -10,7 +10,9 @@ pub use radicle::node::policy::{Policy, Scope, SeedingPolicy};
 #[derive(Clone, Debug)]
 pub enum Allowed {
     All,
-    Followed { remotes: HashSet<PublicKey> },
+    Followed {
+        remotes: HashSet<radicle::crypto::RepositoryKey>,
+    },
 }
 
 impl Allowed {
@@ -43,7 +45,7 @@ impl Allowed {
                     };
 
                     if node.policy == Policy::Allow {
-                        followed.insert(node.nid);
+                        followed.insert(node.nid.into());
                     }
                 }
 
@@ -70,8 +72,8 @@ impl Extend<PublicKey> for BlockList {
 }
 
 impl BlockList {
-    pub fn is_blocked(&self, key: &PublicKey) -> bool {
-        self.0.contains(key)
+    pub fn is_blocked(&self, key: &radicle::crypto::RepositoryKey) -> bool {
+        key.as_ed25519().is_some_and(|node| self.0.contains(node))
     }
 
     pub fn from_config(config: &Config<Read>) -> Result<BlockList, error::Blocked> {

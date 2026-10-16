@@ -1,0 +1,171 @@
+{
+  "reviewer": "/root/p0_review_3",
+  "snapshot_sha256": "22783b25124ef5bfb6dffa29d667ba748c0da5c06aa216b55a96494c16c5bb75",
+  "base_head": "0c1c8773baa8424444744bccede6eadeb022e3eb",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "toolchain": {
+    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "git": "git version 2.54.0 (Apple Git-157)",
+    "python3": "Python 3.15.0"
+  },
+  "verified": [
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle-cob/src/lib.rs",
+      "sha256": "026610f73e917760fb26eabf61b68834443b687f5d14e281b751981d1b6379e4"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle/src/cob/identity.rs",
+      "sha256": "ce5757d52894018db86e3725b78f6380803ffd04887df23ce5d450fe047e6e18"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle/src/identity/doc.rs",
+      "sha256": "28a98c33a12426064d10b6e7474b02ea82f6726fe74be3a3090c8f59af6b9038"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle/src/storage.rs",
+      "sha256": "2f9ac93c3625ef68f73fb6928a001b64b06e7afc6548d6c6b617fc9a8948449d"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle/src/storage/git.rs",
+      "sha256": "7686a9ec218a37ac0ebb78fd05e1b0b62cd64139ec0199422cd76e645aa2b9de"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle/src/storage/git/cob.rs",
+      "sha256": "eb05254c86f395cc9d0c02317f96c41064a27738cb4145ac24b5c7b3291b7308"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle/src/storage/git/temp.rs",
+      "sha256": "88cb792b103680e4091959a813784cb8d7e946d8bba3369f72062e74f0fa7a08"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle/src/storage/refs.rs",
+      "sha256": "95deacc0fd96a4e5e914d2a56a3a7e881aa54d056167ea24981bc9bbe4bf4fd2"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle/src/storage/refs/sigrefs/read.rs",
+      "sha256": "3d8017a68b4f61fcd8486c6f595406370b0726e1e0943c154c67e29d84b5d628"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle/src/storage/refs/sigrefs/read/error.rs",
+      "sha256": "a386a1602842d832a263ed9eb03f62e52c1cae096d8b27dfa54645c499197fe4"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle/src/storage/refs/sigrefs/write/test/native.rs",
+      "sha256": "4271763da7b83193b15c9f53e79491d3f35a3639ebe732bb0f2d4dab91a4ca30"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle/src/storage/publication.rs",
+      "sha256": "1c43fb288f04eb312f3509ee8c8a084c09d7ffc55ec9d59b45ae88f5901070ba"
+    },
+    {
+      "group": "sources",
+      "path": "plans/radicle-patch-vote/design.md",
+      "sha256": "dc9fd94ad85704057e284b374e0da27d7e0398546790ab1a202b2a9270e86df8"
+    },
+    {
+      "group": "sources",
+      "path": "plans/radicle-patch-vote/plan.md",
+      "sha256": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b"
+    },
+    {
+      "group": "sources",
+      "path": "plans/radicle-patch-vote/task-specs.json",
+      "sha256": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle-cob/src/change_graph.rs",
+      "sha256": "76518ba703a362e7791dbfe808747a594b29f26d4fc82f0ffafecc1990c1f342"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle-cob/src/backend/git/change.rs",
+      "sha256": "8d94a9ae876efffb33958fa21e0cd360a239f5700b7c7b59c063f7074cedece7"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle/src/cob/patch/cache.rs",
+      "sha256": "85eae6c5d40db48966dba5c25fe8ae98f8861c80dfd8720e8179f96301680d79"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle/src/cob/issue/cache.rs",
+      "sha256": "9f4d31a8cd31b572eeded3d0ac2784be4103a72250558bb7430ffc7ee8c61fcc"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle/src/cob/store.rs",
+      "sha256": "45a3bc01ee960a82e884fa2ef5c41bd6e507204f6ddb50df97e2298c8a6842c1"
+    },
+    {
+      "group": "sources",
+      "path": "vendor/heartwood/crates/radicle/src/cob/stream/iter.rs",
+      "sha256": "af460570c7aaa3be7754337395babbff0ca448e94b66fb3fc05e901138d041c6"
+    },
+    {
+      "group": "artifacts",
+      "path": "plans/radicle-patch-vote/decisions/D1/proposal.md",
+      "sha256": "93cd6568d64e396a4d22993b9b727cc8be452b1985d71e4ead621f74ecfda188"
+    },
+    {
+      "group": "artifacts",
+      "path": "plans/radicle-patch-vote/decisions/D1/baseline-repro.log",
+      "sha256": "05f0665e25d71f6f67c9cf3b8f7fdeb08f760e75f7c0c79ecbd46bbf146e9900"
+    },
+    {
+      "group": "artifacts",
+      "path": "plans/radicle-patch-vote/decisions/D1/baseline-compile.log",
+      "sha256": "e9a3dc328422a2eb007b3a330f7e4cc1f422f79e1d3e14052135a00bd4250c13"
+    },
+    {
+      "group": "artifacts",
+      "path": "plans/radicle-patch-vote/decisions/D1/repro/Cargo.toml",
+      "sha256": "c6bc25696688566dd4229cad483d615cacc5e8a116d6b9e476f5d67b9b5d1d9d"
+    },
+    {
+      "group": "artifacts",
+      "path": "plans/radicle-patch-vote/decisions/D1/repro/Cargo.lock",
+      "sha256": "4c996bd152ce98d7c2f2eab363b3d42c7c11c466a6b25fa7a7ace16465b29a4c"
+    },
+    {
+      "group": "artifacts",
+      "path": "plans/radicle-patch-vote/decisions/D1/repro/src/main.rs",
+      "sha256": "09546968e87862f2f79c7590ffa5747dcc611438d378f2507f0448b2aaa2ff00"
+    }
+  ],
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "argv": [
+    "cargo",
+    "run",
+    "--offline",
+    "--locked",
+    "--manifest-path",
+    "plans/radicle-patch-vote/decisions/D1/repro/Cargo.toml",
+    "--",
+    "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote"
+  ],
+  "environment": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4"
+  },
+  "started_utc": "2026-10-15T14:42:58.495943+00:00",
+  "exit_code": 0,
+  "finished_utc": "2026-10-15T14:42:59.243359+00:00",
+  "log_sha256": "8d7507db04fef7afa4572e9aef15be4cc701587531ae6d3ca1fe6797c778e9f3"
+}

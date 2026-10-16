@@ -91,6 +91,9 @@ pub(crate) struct ApplicationShared {
     /// during consensus prechecks before Engine status is trusted.
     chain_id: u64,
 
+    repository_publication_enabled: bool,
+    repository_publication: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
+
     /// Immutable chain-manifest activation used by the pre-Engine consensus
     /// system-transaction verifier. This must match the payload builder and
     /// execution configuration so every validator expects the same layout at H.
@@ -190,6 +193,8 @@ pub struct ApplicationDeps {
     pub genesis_hash: B256,
     pub validators: ValidatorSet,
     pub chain_id: u64,
+    pub repository_publication_enabled: bool,
+    pub repository_publication: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
     pub ocomp_lifecycle_activation: OcompLifecycleActivation,
     pub marshal_mailbox: crate::marshal_types::MarshalMailbox,
     pub publication: super::publication::ProposalPublication,
@@ -230,6 +235,8 @@ impl ApplicationHandler {
             genesis_hash,
             validators,
             chain_id,
+            repository_publication_enabled,
+            repository_publication,
             ocomp_lifecycle_activation,
             marshal_mailbox,
             publication,
@@ -259,6 +266,8 @@ impl ApplicationHandler {
                 genesis_hash,
                 validators,
                 chain_id,
+                repository_publication_enabled,
+                repository_publication,
                 ocomp_lifecycle_activation,
                 marshal_mailbox,
                 publication,

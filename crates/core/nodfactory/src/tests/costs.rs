@@ -8,7 +8,6 @@ fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
     input.entry_price_minor = U256::from(19);
     input.gratis_load_minor = U256::from(25_629);
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.register_reference_currency_asset(SETTLEMENT_ASSET);
     assert_eq!(
         public_nod_data(&mut world, nod_id).settlementCostMinor,
@@ -60,7 +59,6 @@ fn a_cost_that_does_not_divide_evenly_is_floored_in_the_quote() {
         ..params(Address::repeat_byte(0x61))
     };
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.register_reference_currency_asset(SETTLEMENT_ASSET);
     assert_eq!(cost_of(&input), 500);
     assert_eq!(
@@ -78,7 +76,6 @@ fn a_wider_asset_quotes_the_cost_scaled_to_its_decimals() {
     let mut world = World::new();
     let input = params(Address::repeat_byte(0x61));
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.register_reference_currency_asset(SETTLEMENT_ASSET);
     world.set_asset_decimals(SETTLEMENT_ASSET, 18);
     let cost = U256::from(cost_of(&input)) * U256::from(1_000_000_000_000u64);
@@ -99,7 +96,6 @@ fn a_nod_cost_above_u128_is_quoted_in_full() {
         ..params(Address::repeat_byte(0x6a))
     };
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.register_reference_currency_asset(SETTLEMENT_ASSET);
     let quote = world
         .enter(|storage| api::quote_settlement(&storage, nod_id, SETTLEMENT_ASSET))

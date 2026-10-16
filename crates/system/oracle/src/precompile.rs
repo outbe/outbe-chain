@@ -65,7 +65,7 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     dispatch_call(data, IOracle::IOracleCalls::abi_decode, |call| {
-        let mut oracle = OracleContract::new(storage);
+        let mut oracle = OracleContract::new(storage.clone());
         let oracle = &mut oracle;
         use IOracle::IOracleCalls::*;
         match call {
@@ -81,6 +81,7 @@ pub fn dispatch(
             getPairCount(_) => pair_count(oracle),
             getPairByIndex(c) => pair_by_index(oracle, c),
             getVoteTargets(_) => vote_targets(oracle),
+            getSources(_) => sources(storage.clone()),
             getAggregateVote(c) => aggregate_vote(oracle, c),
             getSlashWindowProgress(c) => slash_window_progress(oracle, c),
             getVwapForTimeRange(c) => vwap_for_time_range(oracle, c),
@@ -235,6 +236,13 @@ fn vote_targets(oracle: &OracleContract) -> Result<Bytes> {
     metadata::<IOracle::getVoteTargetsCall>(|| {
         let (bases, quotes) = oracle.get_vote_targets()?;
         Ok((bases, quotes).into())
+    })
+}
+
+fn sources(storage: outbe_primitives::storage::StorageHandle) -> Result<Bytes> {
+    metadata::<IOracle::getSourcesCall>(|| {
+        let active = outbe_update::api::resolve_active_version(storage)?;
+        Ok(crate::sources::sources_for(active).to_owned())
     })
 }
 

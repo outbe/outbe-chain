@@ -1,0 +1,57 @@
+[
+  {
+    "path": "development-failures/outbe-publication-carrier-consumers-r2.log",
+    "sha256": "401ed6a1e48df8920be56fdb4bb48fdf520789bc8e883ec18e058d4d786ecf57",
+    "status": "failed development attempt on evolving worktree; not frozen-source acceptance evidence"
+  },
+  {
+    "path": "development-failures/outbe-publication-carrier-consumers-r3.log",
+    "sha256": "9c7f9c8d38b379e9ed19c2f8c45ae3c763577bf656d2fecee598277d0e39bd67",
+    "status": "failed development attempt on evolving worktree; not frozen-source acceptance evidence"
+  },
+  {
+    "path": "development-failures/outbe-publication-carrier-consumers-r4.log",
+    "sha256": "f488179db8511a1fb7b9e9d1ef22576ee9d97da2c6229717f426fc7a2e777902",
+    "status": "failed development attempt on evolving worktree; not frozen-source acceptance evidence"
+  },
+  {
+    "path": "development-failures/outbe-publication-carrier-consumers-r5.log",
+    "sha256": "ea357206e15875e4a3e122ebe64680aa257c6d9b9e51ac8e108dfb4e149a18b1",
+    "status": "failed development attempt on evolving worktree; not frozen-source acceptance evidence"
+  },
+  {
+    "path": "development-failures/outbe-publication-carrier-consumers-r6.log",
+    "sha256": "92c194db39bf1326deb2844ef5d498a69b315d881b852b8a23ce7ef39ebdfbef",
+    "status": "failed development attempt on evolving worktree; not frozen-source acceptance evidence"
+  },
+  {
+    "path": "development-failures/outbe-publication-carrier-consumers-r7.log",
+    "sha256": "30bd326a636172f81451b963d0e2f7ebcf53d60a8e76537864b455e1e8eb403b",
+    "status": "failed development attempt on evolving worktree; not frozen-source acceptance evidence"
+  },
+  {
+    "path": "development-failures/outbe-publication-carrier-consumers-r8.log",
+    "sha256": "4dba52997a5339d95b04eed74c88380e9fd3ed5dec6cd84eea2bbf68b66eab12",
+    "status": "failed development attempt on evolving worktree; not frozen-source acceptance evidence"
+  },
+  {
+    "path": "development-failures/outbe-publication-carrier-consumers.log",
+    "sha256": "2356386c2af40931393d98b541c05d3f77f693a322b96379a8af2995cf6158df",
+    "status": "failed development attempt on evolving worktree; not frozen-source acceptance evidence"
+  },
+  {
+    "path": "development-failures/outbe-publication-carrier-lib-tests.log",
+    "sha256": "a054d8825e780e7bf18f7d61d09d615137142285a735b45785f8689c9dca5397",
+    "status": "failed development attempt on evolving worktree; not frozen-source acceptance evidence"
+  },
+  {
+    "path": "development-failures/outbe-publication-carrier-clippy.log",
+    "sha256": "af1b224d6689466473495d08a84ddea927536fc06e8f2fa45dad2a9e57a0fdcd",
+    "status": "failed development attempt on evolving worktree; not frozen-source acceptance evidence"
+  },
+  {
+    "path": "development-failures/outbe-publication-header-mode-tests.log",
+    "sha256": "de85563a33b526088ea18964b4af3f10bfaf4d1f267591f64ccf16fe19d2a76e",
+    "status": "failed development attempt on evolving worktree; not frozen-source acceptance evidence"
+  }
+]

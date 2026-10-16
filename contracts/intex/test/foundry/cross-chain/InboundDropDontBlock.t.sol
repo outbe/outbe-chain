@@ -92,7 +92,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     ///      snapshot-membership check. The mock bridge records the broadcast without delivering it.
     function _freezeSnapshot(uint32 day) internal {
         IOriginRouter.AuctionStageStartParams memory p;
-        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.worldwideDay = day;
         p.dayState = 1;
         vm.prank(address(desis));

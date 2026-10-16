@@ -248,7 +248,7 @@ fn settlement_quote_dispatch() {
     });
 }
 
-/// A qualified series 7 whose owner holds two units, and a registered six-decimal
+/// An issued series 7 whose owner holds two units, and a registered six-decimal
 /// payment token whose transfers answer `transfer_ret`.
 fn with_erc20_series<R>(
     transfer_ret: alloy_primitives::Bytes,
@@ -282,7 +282,6 @@ fn with_erc20_series<R>(
 
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue_intex(&s, sample(7)).unwrap();
-        seed_qualifying_day(&s);
         f(s)
     })
 }
@@ -388,34 +387,6 @@ fn settle_rejects_missing_series() {
 }
 
 #[test]
-fn settle_rejects_an_unqualified_series() {
-    with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
-        // The only closed day ends at the floor, which does not qualify.
-        write_day_vwap(
-            &OracleContract::new(s.clone()),
-            REFERENCE_ISO,
-            PAIR_ID,
-            ISSUED_AT as u64 + 2 * DAY,
-            U256::from(EXPECTED_FLOOR),
-        );
-        let err = runtime::settle_intex(
-            &s,
-            sid(7),
-            owner(),
-            U256::from(1),
-            SettlementPayment {
-                payer: owner(),
-                asset: settlement_asset(),
-                snapshot_id: U256::ZERO,
-            },
-        )
-        .unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("settleable"));
-    });
-}
-
-#[test]
 fn settle_rejects_expired_deadline() {
     // Late block timestamp so the Called deadline is already in the past.
     let now = (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + 1_000;
@@ -451,19 +422,16 @@ fn settle_rejects_expired_deadline() {
 }
 
 #[test]
-fn a_qualified_series_called_past_its_deadline_stays_closed() {
+fn a_series_called_past_its_deadline_stays_closed() {
     let mut storage = factory_provider();
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue_intex(&s, sample(7)).unwrap();
-        seed_qualifying_day(&s);
         outbe_intex::api::record_called(&s, sid(7), ISSUED_AT).unwrap();
     });
     storage.set_timestamp(U256::from(
         (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + 1_000,
     ));
     StorageHandle::enter(&mut storage, |s| {
-        let series = outbe_intex::api::read_series(&s, sid(7)).unwrap();
-        assert!(outbe_intex::api::is_qualified(&s, &series).unwrap());
         let err = runtime::settle_intex(
             &s,
             sid(7),

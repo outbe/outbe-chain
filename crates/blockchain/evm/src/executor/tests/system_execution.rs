@@ -852,6 +852,8 @@ fn verifier_rejects_boundary_outcome_system_tx_artifact_mismatch() {
     let mut tx_artifact = header_artifact.clone();
     tx_artifact.dkg_cycle = 1;
     let extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
         execution_summary: None,
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(header_artifact)),
         timestamp_millis_part: 0,

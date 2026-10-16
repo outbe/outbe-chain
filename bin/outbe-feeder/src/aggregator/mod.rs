@@ -464,12 +464,14 @@ mod tests {
             oracle: OracleConfig {
                 vote_period: 2,
                 poll_interval_secs: 2,
+                sources: crate::config::SourcesMode::Local,
             },
             currency_pairs: pairs,
             deviation_thresholds: vec![],
             api_providers: vec![],
             dex_providers: vec![],
             onchain_providers: vec![],
+            rpc_endpoints: Default::default(),
             health: None,
         }
     }

@@ -103,7 +103,7 @@ fn capacity_takes_precedence_over_merge_for_new_items() {
     // New item (different rid) should be rejected
     let new_item = create_fetch();
     match queue.enqueue(new_item.clone()) {
-        Enqueue::CapacityReached(returned) => assert_eq!(returned, new_item),
+        Enqueue::CapacityReached(returned) => assert_eq!(*returned, new_item),
         _ => panic!("Expected CapacityReached"),
     }
 }

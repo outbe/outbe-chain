@@ -12,7 +12,6 @@ use radicle::cob::{Title, issue};
 use radicle::Profile;
 use radicle::crypto;
 use radicle::issue::cache::Issues as _;
-use radicle::node::NodeId;
 use radicle::prelude::Did;
 use radicle::profile;
 use radicle::storage;
@@ -244,7 +243,7 @@ where
     }
 
     let assignee = match assigned {
-        Some(Assigned::Me) => Some(*profile.id()),
+        Some(Assigned::Me) => Some(radicle::crypto::RepositoryKey::from(profile.id())),
         Some(Assigned::Peer(id)) => Some((*id).into()),
         None => None,
     };
@@ -312,7 +311,7 @@ where
         labels.sort();
 
         let author = issue.author().id;
-        let (alias, did) = Author::new(&author, profile, verbose).labels();
+        let (alias, did) = Author::new(author, profile, verbose).labels();
 
         mk_issue_row(id, issue, assigned, labels, alias, did)
     }));
@@ -363,7 +362,7 @@ fn open(
     quiet: bool,
     cache: &mut issue::Cache<
         '_,
-        impl WriteRepository + cob::Store<Namespace = NodeId>,
+        impl WriteRepository + cob::Store<Namespace = radicle::crypto::RepositoryKey>,
         WriteAs<'_, impl crypto::Signer>,
         cob::cache::StoreWriter,
     >,
@@ -398,7 +397,7 @@ fn edit<'a, 'b, 'g, Repo, Signer>(
     description: Option<String>,
 ) -> anyhow::Result<issue::IssueMut<'a, 'b, 'g, Repo, Signer, cob::cache::StoreWriter>>
 where
-    Repo: WriteRepository + cob::Store<Namespace = NodeId>,
+    Repo: WriteRepository + cob::Store<Namespace = radicle::crypto::RepositoryKey>,
     Signer: crypto::Signer,
 {
     let id = id.resolve(&repo.backend)?;

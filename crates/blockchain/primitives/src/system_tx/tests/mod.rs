@@ -24,3 +24,4 @@ mod phase;
 mod witness;
 
 mod binding;
+mod publication;

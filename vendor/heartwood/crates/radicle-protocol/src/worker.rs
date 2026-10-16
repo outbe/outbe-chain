@@ -13,6 +13,8 @@ use radicle::node::events::Emitter;
 /// Error returned by fetch.
 #[derive(thiserror::Error, Debug)]
 pub enum FetchError {
+    #[error("UnsupportedRepositoryKey: {0} has not acknowledged repository key V2")]
+    UnsupportedRepositoryKey(NodeId),
     #[error("the 'git fetch' command failed with exit code '{code}'")]
     CommandFailed { code: i32 },
     #[error(transparent)]

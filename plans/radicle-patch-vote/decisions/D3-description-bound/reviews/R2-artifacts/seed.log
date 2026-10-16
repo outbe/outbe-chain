@@ -1,0 +1,6 @@
+description_bytes= 0 seed_accepts= True writes= 6
+description_bytes= 255 seed_accepts= True writes= 13
+description_bytes= 256 seed_accepts= True writes= 14
+description_bytes= 1024 seed_accepts= True writes= 38
+description_bytes= 1025 error= governments description exceeds 1024 UTF-8 bytes
+description_bytes= 1025 seed_accepts= False writes= 0

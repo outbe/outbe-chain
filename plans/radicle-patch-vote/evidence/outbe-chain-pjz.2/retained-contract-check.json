@@ -1,0 +1,20 @@
+{
+  "byte_identical_to_pre_update": [
+    "build.rs",
+    "crates/radicle-node/src/control.rs",
+    "crates/radicle-node/src/runtime/handle.rs",
+    "crates/radicle-node/src/test/handle.rs",
+    "crates/radicle-node/src/tests.rs",
+    "crates/radicle-protocol/src/service.rs",
+    "crates/radicle-protocol/src/service/command.rs",
+    "crates/radicle-surf/Cargo.toml",
+    "crates/radicle/src/node.rs",
+    "crates/radicle/src/node/command.rs"
+  ],
+  "adapted": [
+    "crates/radicle-cli/Cargo.toml: upstream windows dependency plus existing machete metadata",
+    "crates/radicle/src/node/config.rs: retain Outbe; adapt removed public_seeds test",
+    "UPSTREAM.md: new stable/retained provenance"
+  ],
+  "raw_control_boundary": "Base exposes native private control UDS and read-only loopback HTTP; public chain RPC api.rs:457-467 has status/peers/repositories reads, no raw control proxy. These RPC/launch files are byte-identical to base; no new default-on raw remote control was introduced."
+}

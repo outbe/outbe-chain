@@ -1,5 +1,5 @@
 //! The refusals that guard a lifecycle, each read as the exact revert text of the
-//! product's own error: paying early or on wrong terms, mining unpaid or twice, moving.
+//! product's own error: paying on wrong terms, mining unpaid or twice, moving.
 
 use alloy_primitives::{Address, FixedBytes, B256, U256};
 use alloy_sol_types::SolCall;
@@ -13,42 +13,9 @@ use super::entity::{Item, Target};
 use super::markets::{currency, EUR_ISO, MYR_ISO};
 use super::payment::{assert_refused, factory, quote, third_party_key};
 use crate::internal::{addresses, eth};
-use crate::world::settlement_currency::USD_ISO;
 use crate::world::World;
 
-/// `IntexState::Issued`, the stored state an unqualified series refuses payment in.
-const ISSUED_SERIES: u8 = 0;
-
-/// An ERC20 payment in USD, the reference rail, before the holding qualified.
-pub(crate) fn assert_unqualified_refused(world: &World, target: &Target) {
-    let payer = third_party(world);
-    let asset = currency(world, USD_ISO).asset;
-    match &target.item {
-        Item::Gem(id) => assert_refused(
-            world,
-            payer,
-            factory(target),
-            &erc20_gem(*id, asset, U256::ZERO),
-            GemFactoryError::InvalidState,
-        ),
-        Item::Series { id, units } => assert_refused(
-            world,
-            payer,
-            factory(target),
-            &erc20_series(target, *id, *units, asset, U256::ZERO),
-            IntexFactoryError::NotSettleable(ISSUED_SERIES),
-        ),
-        Item::Nod(id) => assert_refused(
-            world,
-            payer,
-            factory(target),
-            &erc20_nod(*id, asset, U256::ZERO),
-            NodFactoryError::NodNotQualified,
-        ),
-    }
-}
-
-/// A qualified holding refuses a stale pricing snapshot and an asset in a third currency.
+/// An issued holding refuses a stale pricing snapshot and an asset in a third currency.
 pub(crate) fn assert_payment_guards(world: &World, target: &Target) {
     let required = quote(world, target, currency(world, MYR_ISO).asset).snapshot;
     assert!(

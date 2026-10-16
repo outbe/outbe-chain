@@ -1,0 +1,43 @@
+{
+  "reviewed_sha": "eb834f31ccd027d7af604ba1393498491cc133e6",
+  "spec_hash": "2e495135b803ae4054d2a236e80aa8d3f75a3d712a13bb1998a2b9aa3fa3f30d",
+  "candidate_manifest_sha256": "901c621bf8bf998a448f1e5eaa37e2f82b53b9a6ee19639e59eb6cca48a8f5b0",
+  "artifact_hashes_verified": 54,
+  "vendor_files": 817,
+  "stable_files": 816,
+  "upstream_changed_paths": 67,
+  "retained_delta": [
+    "UPSTREAM.md",
+    "build.rs",
+    "crates/radicle-cli/Cargo.toml",
+    "crates/radicle-cli/examples/git/git-push-canonical-symbolic-ref.md",
+    "crates/radicle-node/src/control.rs",
+    "crates/radicle-node/src/runtime/handle.rs",
+    "crates/radicle-node/src/test/handle.rs",
+    "crates/radicle-node/src/tests.rs",
+    "crates/radicle-protocol/src/service.rs",
+    "crates/radicle-protocol/src/service/command.rs",
+    "crates/radicle-surf/Cargo.toml",
+    "crates/radicle/src/node.rs",
+    "crates/radicle/src/node/command.rs",
+    "crates/radicle/src/node/config.rs"
+  ],
+  "old_delta_paths": 13,
+  "unchanged_retained_contract_files": [
+    "build.rs",
+    "crates/radicle-node/src/control.rs",
+    "crates/radicle-node/src/runtime/handle.rs",
+    "crates/radicle-node/src/test/handle.rs",
+    "crates/radicle-node/src/tests.rs",
+    "crates/radicle-protocol/src/service.rs",
+    "crates/radicle-protocol/src/service/command.rs",
+    "crates/radicle-surf/Cargo.toml",
+    "crates/radicle/src/node.rs",
+    "crates/radicle/src/node/command.rs"
+  ],
+  "changed_files": 72,
+  "fork_parent": "16de8f1950825672fe48b901dafa0d009f612b04",
+  "stable_tag": "7e1cb406bb935c3de008d2171e8961f57b4336ea",
+  "ancestor_to_stable": true,
+  "all_checks": "PASS"
+}

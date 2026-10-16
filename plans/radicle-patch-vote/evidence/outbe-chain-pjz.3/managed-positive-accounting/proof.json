@@ -1,0 +1,53 @@
+{
+  "reviewed_native_source_sha": "c383730c6b5c090beb5b3ad2cbdc229f4e947030",
+  "accounting_head": "4213355e9ee3cb9444960b6dfe2f8ecdd79d7ea2",
+  "source_file": "vendor/heartwood/crates/radicle-node/src/tests/e2e/native_bls.rs",
+  "source_sha256": "75701471afce50ba25db933f132702d43163b7071fb4a37b67ed347bf8b83523",
+  "source_matches_current_bytes": true,
+  "prior_evidence": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.3/current-native-regression",
+  "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.3/current-native-regression/native-libs.log",
+  "log_sha256": "5c81f55c4f745f3cbcfb60bc96c8559e9e4925430a2627dde1302a4f1cf21176",
+  "actual_command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "--manifest-path",
+    "vendor/heartwood/Cargo.toml",
+    "-p",
+    "radicle",
+    "-p",
+    "radicle-cob",
+    "-p",
+    "radicle-crypto",
+    "-p",
+    "radicle-git-metadata",
+    "-p",
+    "radicle-node",
+    "-p",
+    "radicle-protocol",
+    "--lib",
+    "--",
+    "--nocapture"
+  ],
+  "actual_start_utc": "2026-10-16T00:58:11.422658+00:00",
+  "actual_end_utc": "2026-10-16T00:58:54.416012+00:00",
+  "actual_exit_code": 0,
+  "log_marker_lines": {
+    "managed_runtime_nodes_require_receipts_for_bls_owner_but_not_ed_patch ... ok": [
+      5820
+    ],
+    "managed_bootstrap_without_receipt=": [
+      2846
+    ],
+    "managed_review_without_receipt=": [
+      4196
+    ],
+    "canonical_repository_absent=true": [
+      2215,
+      2223
+    ]
+  },
+  "claim": "Existing positive generic managed runtime/Ed pre-Review/receipt-gated BLS Review/cache/reopen/rebuild scenario is executed and passing, not missing implementation. No new test/source/behavior needed.",
+  "limitations": "Generic deterministic fixture receipt provider and static BLS test key,not network threshold/Vote/trusted local chain policy or full managed provenance/security/acceptance. No D2/fetch/cache redesign or new delegation/history revocation scope."
+}

@@ -8,7 +8,7 @@ mod nft;
 mod views;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::time::{first_full_day, timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     math::{constants::MAX_BIN_ID, tree_math},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -26,32 +26,6 @@ fn seed_production_nod_genesis(storage: &StorageHandle<'_>) {
         .config_profile
         .write(crate::config::PROFILE_PROD)
         .unwrap();
-}
-
-/// Close `day` just above `floor` on `COEN/<iso>`, registering the pair on first use.
-pub(crate) fn close_day_above(storage: &StorageHandle<'_>, iso: u16, floor: U256, day: u32) {
-    let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
-    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    let mut index = oracle.pair_index_of(pair).unwrap();
-    if index == 0 {
-        index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
-    }
-    oracle
-        .record_utc_day_vwap(day, index, floor + U256::from(1))
-        .unwrap();
-    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
-        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
-    }
-}
-
-/// Qualify the Nod's bucket: close its first full day above the floor of `entry`.
-pub(crate) fn qualify(storage: &StorageHandle<'_>, item: &NodItemState, entry: U256) {
-    close_day_above(
-        storage,
-        item.reference_currency,
-        crate::pricing::floor_price_minor(entry).unwrap(),
-        first_full_day(item.issued_at),
-    );
 }
 
 fn bucket_of(storage: &StorageHandle<'_>, item: &NodItemState) -> NodBucketState {

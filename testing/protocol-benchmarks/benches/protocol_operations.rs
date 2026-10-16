@@ -97,7 +97,6 @@ fn execute() -> Result<(), String> {
         run_if_selected(&scenario, &arguments.filter, config, &mut reports)?;
     }
     for scenario in [
-        GemScenario::direct(GemTypes::Genesis),
         GemScenario::direct(GemTypes::Validator),
         GemScenario::direct(GemTypes::Sra),
         GemScenario::direct(GemTypes::Wallet),

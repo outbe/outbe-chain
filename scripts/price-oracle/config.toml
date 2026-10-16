@@ -15,6 +15,8 @@ validator_address = "0x1111111111111111111111111111111111111111"
 [oracle]
 vote_period = 60
 poll_interval_secs = 2
+# Pairs come from pairs.toml, not from the node.
+sources = "local"
 
 [health]
 enabled = true

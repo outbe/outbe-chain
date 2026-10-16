@@ -15,6 +15,7 @@ use crate::internal::proc::{args, ChildGuard};
 
 use super::Localnet;
 
+mod governments;
 mod readiness;
 mod source;
 
@@ -177,8 +178,7 @@ impl Localnet {
             .collect()
     }
 
-    /// Create a public source repository while its non-validator sidecar is offline.
-    pub fn prepare_user_radicle_repository(&self) -> Result<RadicleRepositoryFixtureV1> {
+    fn prepare_user_radicle_home(&self, name: &str) -> Result<PathBuf> {
         let revision = self.git(&self.cfg.repo, &["rev-parse", "HEAD"])?;
         for (name, binary) in [
             ("rad", &self.cfg.bin_rad),
@@ -189,7 +189,7 @@ impl Localnet {
             verify_user_tool_version(name, &output(command, name)?, revision.trim())
                 .wrap_err_with(|| format!("verify user Radicle tool {}", binary.display()))?;
         }
-        let home = self.cfg.dir.join("user-radicle");
+        let home = self.cfg.dir.join(name);
         if !home.exists() {
             let output = Command::new(&self.cfg.bin_keygen)
                 .args(["radicle", "--output-dir"])
@@ -216,6 +216,13 @@ impl Localnet {
             ),
             materialized_max_validators(&self.cfg.dir.join("genesis.json"))?,
         )?;
+
+        Ok(home)
+    }
+
+    /// Create a public source repository while its non-validator sidecar is offline.
+    pub fn prepare_user_radicle_repository(&self) -> Result<RadicleRepositoryFixtureV1> {
+        let home = self.prepare_user_radicle_home("user-radicle")?;
 
         let worktree = self.cfg.dir.join("user-repository");
         fs::create_dir_all(&worktree)?;

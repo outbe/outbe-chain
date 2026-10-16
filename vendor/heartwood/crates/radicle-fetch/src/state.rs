@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 use gix_protocol::Handshake;
-use radicle::crypto::PublicKey;
+use radicle::crypto::RepositoryKey as PublicKey;
 use radicle::git::{Oid, fmt::Qualified};
 use radicle::identity::{Did, Doc, DocError};
 
@@ -13,13 +13,13 @@ use radicle::storage::{
     Remote, RemoteId, RemoteRepository, Remotes, ValidateRepository, Validations, git::Validation,
 };
 
-use crate::git;
 use crate::git::packfile::Keepfile;
 use crate::git::refs::{Applied, Update};
 use crate::git::repository;
 use crate::sigrefs::SignedRefs;
 use crate::stage;
 use crate::stage::ProtocolStage;
+use crate::{Allowed, git};
 use crate::{Handle, refs, sigrefs, transport};
 
 /// The data size limit, 5Mb, while fetching the special refs,
@@ -30,8 +30,8 @@ pub const DEFAULT_FETCH_SPECIAL_REFS_LIMIT: u64 = 1024 * 1024 * 5;
 pub const DEFAULT_FETCH_DATA_REFS_LIMIT: u64 = 1024 * 1024 * 1024 * 5;
 
 pub mod error {
+    use radicle::crypto::RepositoryKey as PublicKey;
     use radicle::git::Oid;
-    use radicle::prelude::PublicKey;
     use thiserror::Error;
 
     use crate::{git, git::repository, handle, sigrefs, stage, transport};
@@ -51,12 +51,14 @@ pub mod error {
     #[derive(Debug, Error)]
     pub enum Protocol {
         #[error(transparent)]
+        Publication(#[from] radicle::storage::publication::Error),
+        #[error(transparent)]
         Ancestry(#[from] repository::error::Ancestry),
         #[error(transparent)]
         Canonical(#[from] Canonical),
         #[error("delegate '{remote}' has diverged 'rad/sigrefs': {current} -> {received}")]
         Diverged {
-            remote: PublicKey,
+            remote: Box<PublicKey>,
             current: Oid,
             received: Oid,
         },
@@ -321,7 +323,27 @@ impl FetchState {
                 refs_at.iter().map(|r| &r.remote).cloned().collect()
             }
             None => {
-                let followed = handle.allowed();
+                let mut followed = handle.allowed();
+
+                if let Allowed::Followed { remotes } = &mut followed {
+                    // The initial identity document is addressed by the repository ID
+                    // and was fetched with the canonical identity history. Include its
+                    // founder so a fresh clone can resolve the identity COB root even
+                    // if the founder is not a delegate anymore.
+                    let repo = handle.repository();
+                    let blob = repo
+                        .backend
+                        .find_blob((*repo.id).into())
+                        .map_err(DocError::from)
+                        .map_err(error::Canonical::Verified)?;
+
+                    let root = Doc::from_blob(&blob).map_err(error::Canonical::Verified)?;
+                    if root.delegates().len() != 1 {
+                        return Err(error::Canonical::Verified(DocError::Missing).into());
+                    }
+                    remotes.insert(PublicKey::from(*root.delegates().first()));
+                }
+
                 log::trace!("Followed nodes {followed:?}");
                 let special_refs = stage::SpecialRefs {
                     blocked: handle.blocked.clone(),
@@ -373,6 +395,63 @@ impl FetchState {
         S: transport::ConnectionStream,
     {
         let start = Instant::now();
+        if let Some((owner, policy)) = storage::publication::fetch_preparation(handle.repository())?
+        {
+            let advertised = handle
+                .transport
+                .ls_refs(
+                    [stage::RefPrefix::Namespace { namespace: owner }],
+                    handshake,
+                )
+                .map_err(error::Step::from)?;
+            let mut refs = Vec::new();
+            for reference in advertised {
+                if matches!(reference, gix_protocol::handshake::Ref::Unborn { .. }) {
+                    continue;
+                }
+                let (name, oid) =
+                    refs::unpack_ref(reference).map_err(|_| storage::publication::Error::Denied)?;
+                if matches!(&name, refs::ReceivedRefname::Namespaced { remote, .. } if *remote == owner)
+                {
+                    refs.push((name.to_qualified(), oid));
+                }
+            }
+            let mut wants = transport::WantsHaves::default();
+            wants
+                .add(
+                    handle.repository(),
+                    refs.iter().map(|(name, oid)| (name.clone(), *oid)),
+                )
+                .map_err(stage::error::WantsHaves::from)
+                .map_err(error::Step::from)?;
+            if !wants.wants.is_empty() {
+                let pack = handle
+                    .transport
+                    .fetch(wants, handle.interrupt.clone(), handshake)
+                    .map_err(error::Step::from)?;
+                self.keepfiles.extend(pack);
+            }
+            // No refs or caches are updated by this object-only acquisition.
+            match policy.prepare_fetch(handle.repository(), &refs) {
+                Err(storage::publication::Error::MissingObjects) => {
+                    // A received tip alone does not prove its closure is complete. Retry once
+                    // without haves so an interrupted or incomplete pack cannot pin that state.
+                    let mut wants = transport::WantsHaves::default();
+                    for (_, oid) in &refs {
+                        wants.want(*oid);
+                    }
+                    if !wants.wants.is_empty() {
+                        let pack = handle
+                            .transport
+                            .fetch(wants, handle.interrupt.clone(), handshake)
+                            .map_err(error::Step::from)?;
+                        self.keepfiles.extend(pack);
+                    }
+                    policy.prepare_fetch(handle.repository(), &refs)?;
+                }
+                result => result?,
+            }
+        }
         // N.b. we always fetch the `rad/id` since our delegate set
         // might be further ahead than theirs, e.g. we are the
         // deciding vote on adding a delegate.
@@ -592,7 +671,7 @@ impl FetchState {
                                 continue;
                             } else if matches!(ancestry, repository::Ancestry::Diverged) {
                                 return Err(error::Protocol::Diverged {
-                                    remote,
+                                    remote: Box::new(remote),
                                     current: at,
                                     received: refs.at,
                                 });

@@ -1,0 +1,9 @@
+{
+  "source_sha": "3c132829a895762574f36320fea30aef631e1859",
+  "base_sha": "cc466515a9ef9f0cf14b270610e46aacb3cc5cd5",
+  "changed_files_sha256": {
+    "crates/blockchain/radicle/src/integration/publication/store.rs": "a43e642229440a072dbed1ed811c75a847dfc6bc2321b4e3de5c5c7c914a37e9"
+  },
+  "scope": "P3/P6 pinned preparation snapshot: existing package store caches accepted receipt-bound body/manifests and replays canonical owner refs/sigrefs in receipt order. Uses existing durable write primitives and CheckpointOwnerSnapshot invariants; no ready marker, attestation selection or native grants. No new quotas/config/native storage/fetch/signing/consensus/genesis/spec changes.",
+  "closed_task_relevance": "P0/P1/P5 source/spec unchanged. Intermediate P3/P6 SDK component; no full task acceptance or new closures."
+}

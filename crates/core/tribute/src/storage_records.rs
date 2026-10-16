@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::storage_record;
+use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
 use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,7 +65,7 @@ impl From<StoredTribute> for outbe_primitives::tribute_encryption::EncryptedTrib
     }
 }
 
-impl crate::TributeContract<'_> {
+impl<'storage> crate::TributeContract<'storage> {
     pub fn state_record(
         &self,
         id: WwdEntityId,
@@ -151,49 +152,28 @@ impl crate::TributeContract<'_> {
             .collect()
     }
 
+    fn record_indexes(&self, record: &StoredTribute) -> [IndexedList<'storage, WwdEntityId>; 2] {
+        [
+            IndexedList::new(
+                self.owner_ids.list(&record.owner),
+                self.owner_id_position.clone(),
+            ),
+            IndexedList::new(
+                self.day_ids.list(&record.worldwide_day),
+                self.day_id_position.clone(),
+            ),
+        ]
+    }
+
     pub fn insert_state_record(
         &self,
         record: &StoredTribute,
     ) -> outbe_primitives::error::Result<()> {
-        use outbe_primitives::storage::indexed_list::IndexedList;
-        let storage = self.records.storage();
-        storage.with_checkpoint(|| {
-            self.records.create(record)?;
-            IndexedList::new(
-                &self.owner_ids.list(&record.owner),
-                self.owner_id_position.clone(),
-            )
-            .insert(record.tribute_id)?;
-            IndexedList::new(
-                &self.day_ids.list(&record.worldwide_day),
-                self.day_id_position.clone(),
-            )
-            .insert(record.tribute_id)?;
-            Ok(())
-        })
+        create_indexed(&self.records, record, self.record_indexes(record))
     }
 
     pub fn delete_state_record(&self, id: WwdEntityId) -> outbe_primitives::error::Result<()> {
-        use outbe_primitives::storage::indexed_list::IndexedList;
-        let storage = self.records.storage();
-        storage.with_checkpoint(|| {
-            let record = self.records.get(id)?.ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::fatal(
-                    "state record is absent from its index",
-                )
-            })?;
-            IndexedList::new(
-                &self.owner_ids.list(&record.owner),
-                self.owner_id_position.clone(),
-            )
-            .remove(id)?;
-            IndexedList::new(
-                &self.day_ids.list(&record.worldwide_day),
-                self.day_id_position.clone(),
-            )
-            .remove(id)?;
-            self.records.delete(id)
-        })
+        delete_indexed(&self.records, id, |record| self.record_indexes(record))
     }
 }
 

@@ -1,0 +1,21 @@
+{
+  "reviewer": "/root/p0_review_2",
+  "source_sha": "4139bd9ef23c3320b6ac599c65e6123824131e07",
+  "evidence_sha": "6dcea234af6d9018f1661232490a115f5d0cf77f",
+  "spec_sha256": "a0e36f17d4d4f8410f8e6c67668bab71857306569df154b8237b49bf6b172232",
+  "manifest_sha256": "7c133b279ce218ce84f5b794d5ba49cbca0722c64f866372c7e95c8cd8d13582",
+  "timestamp_utc": "2026-10-15T13:50:33.672851+00:00",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "tools": {
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "git": "git version 2.54.0 (Apple Git-157)",
+    "python3": "Python 3.15.0"
+  },
+  "original_artifacts_verified": 38,
+  "source_paths_verified": 17,
+  "live_task_spec_entries": "P0-P8 all PASS",
+  "independent_wire": "independent-wire.json",
+  "tracked_modifications": []
+}

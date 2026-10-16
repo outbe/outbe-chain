@@ -16,6 +16,16 @@ where
         + Sync
         + 'static,
 {
+    pub(super) fn publish_repository_material(&self) {
+        if let Some(publisher) = &self.repository_material_publisher {
+            publisher.publish(
+                self.state.current_epoch.get(),
+                self.state.vrf_material_version,
+                self.state.last_dkg_output.as_ref(),
+            );
+        }
+    }
+
     pub(super) async fn run(
         mut self,
         ctx: E,
@@ -24,6 +34,7 @@ where
     ) -> Result<()> {
         self.restore_pending(recovered_pending_boundary, recovery_anchor_height)
             .await?;
+        self.publish_repository_material();
         let mut latest_consensus_tip = *self.consensus_tip_rx.borrow();
         let mut pending_provider_ready_height: Option<u64> = None;
         let mut watchdog_unhealthy_since: Option<SystemTime> = None;

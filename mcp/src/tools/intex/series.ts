@@ -5,7 +5,7 @@ import { networkName } from "../schemas.js";
 import { handler, ok } from "../util.js";
 import { INTEX_ABI } from "../../intex/registry.js";
 import { epochIso, intexState, fromSeriesId } from "../../intex/format.js";
-import { addr, seriesMetadata, seriesQualified } from "../../intex/reads.js";
+import { addr, seriesMetadata } from "../../intex/reads.js";
 import { PROTOCOL_DECIMALS, priced } from "../../intex/units.js";
 import { seriesArg } from "./args.js";
 import type { IntexDeps } from "./deps.js";
@@ -15,9 +15,8 @@ export function registerSeriesTools(server: McpServer, deps: IntexDeps): void {
   const { resolveNetwork } = deps;
   server.tool(
     "intex_series_info",
-    "Canonical series record from the outbe Intex: promis load, entry/floor/call prices, currencies, " +
-      "lifecycle state (Issued/Qualified/Called/Expired), whether it has qualified (derived from finalized daily " +
-      "VWAPs, never stored), issued/called timestamps, the settlementDeadline and the derived `expired` " +
+    "Canonical series record from the outbe Intex: promis load, entry/call prices, currencies, " +
+      "lifecycle state (Issued/Called/Expired), issued/called timestamps, the settlementDeadline and the derived `expired` " +
       "flag - check `expired` before attempting settle (past-deadline settles revert) - " +
       "and how the issued units split into active, settled, exercised, sent to the Gem Factory and forfeited.",
     { series: seriesArg, network: networkName.optional() },
@@ -37,14 +36,13 @@ export function registerSeriesTools(server: McpServer, deps: IntexDeps): void {
         args: [series],
       });
       const settlementDeadline = Number(d.settlementDeadline);
-      const [metadata, qualified] = await Promise.all([seriesMetadata(n, series), seriesQualified(n, series)]);
+      const metadata = await seriesMetadata(n, series);
       return ok({
         network: n.name,
         seriesId: fromSeriesId(d.seriesId),
         // scales per crates/core/intex/src/schema.rs (SeriesRecord):
         promisLoadMinor: { raw: d.promisLoadMinor.toString(), value: formatUnits(d.promisLoadMinor, PROTOCOL_DECIMALS) },
         entryPriceMinor: priced(d.entryPriceMinor),
-        floorPriceMinor: priced(d.floorPriceMinor),
         callPriceMinor: priced(d.callPriceMinor),
         issuedUnits: Number(counts.issuedUnits),
         // Disjoint classes summing to issuedUnits. Active units lose their load to
@@ -61,7 +59,6 @@ export function registerSeriesTools(server: McpServer, deps: IntexDeps): void {
         referenceCurrency: Number(d.referenceCurrency),
         worldwideDay: Number(d.worldwideDay),
         state: intexState(d.state),
-        qualified,
         issuedAt: epochIso(d.issuedAt),
         calledAt: epochIso(d.calledAt),
         settlementDeadline: epochIso(settlementDeadline),

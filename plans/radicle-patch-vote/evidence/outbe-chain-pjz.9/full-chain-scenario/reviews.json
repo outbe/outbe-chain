@@ -1,0 +1,32 @@
+{
+  "source_aggregate_sha256": "669e29a809e83a9762dd8ebe2bf0917ba43535054f2b9d010e01bbac36b25918",
+  "scope": "Independent read-only source review; no runtime/E2E/P8 acceptance.",
+  "reviewers": [
+    {
+      "agent": "/root/description_256_r1",
+      "result": "PASS",
+      "findings_fixed": [
+        "Unsupported60/15governments cadence replaced with96/15/grace20.",
+        "Observer now asserts exact persistent runtime managed pin before provider registration."
+      ],
+      "final_confirmation": "Both mechanical Repository::open fixes and all8livefilehashes verified; runbook separates prepared commands from executed evidence."
+    },
+    {
+      "agent": "/root/description_256_r2",
+      "result": "PASS",
+      "findings_fixed": [
+        "Unsupported governments cadence."
+      ],
+      "reviewed": "Real joiner FullNode->shareless validator/DKG activation, OCOMP staging, independent client lifecycle, actual Vote/finality/Review/Merge/native fetch. Final8filehashes and aggregate confirmed."
+    },
+    {
+      "agent": "/root/d3_review_3",
+      "result": "PASS",
+      "findings_fixed": [
+        "Native Fetch EOF-only JSON was rejected by LF-only helper; Fetch now permits complete EOF JSON, with strict parsing and absolute deadline."
+      ],
+      "final_confirmation": "Both mechanical Repository::open fixes and all8livefilehashes/aggregate independently confirmed. No further confirmed source defects."
+    }
+  ],
+  "not_run": "No reviewer ran tests or E2E."
+}

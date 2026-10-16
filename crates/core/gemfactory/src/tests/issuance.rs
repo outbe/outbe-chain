@@ -1,54 +1,19 @@
 use super::*;
 
+/// A fresh gem is payable at once: no price has to move first.
 #[test]
-fn the_gem_crate_names_the_genesis_type_this_factory_issues() {
-    assert_eq!(GemTypes::Genesis as u8, outbe_gem::GENESIS_GEM_TYPE);
-}
-
-#[test]
-fn issue_genesis_pays_like_agents_but_carries_no_floor() {
+fn a_fresh_gem_is_payable_at_once() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let load = U256::from(10u64) * six_decimal_unit();
-        let gem_id = issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
-
-        let item = gem_view(storage, gem_id);
-        assert_eq!(
-            runtime::gem_cost_minor(&item).unwrap(),
-            U256::from(20u64) * six_decimal_unit()
-        );
-        assert_eq!(item.bucket.entry_price_minor, rate);
-        assert_eq!(item.item.floor_price_minor, U256::ZERO);
-        assert_eq!(
-            item.terms.call_price_minor,
-            rate * U256::from(228u64) / U256::from(100u64)
-        );
-        assert_eq!(item.item.state, GemState::Issued as u8);
-        assert!(
-            !gem_api::is_qualified(storage, &item.item).unwrap(),
-            "a zero floor still waits for its first finalized day"
-        );
-        assert_eq!(item.item.gem_type, GemTypes::Genesis as u8);
-
-        let factory = GemFactoryContract::new(storage.clone());
-        assert_eq!(factory.total_gems_issued.read().unwrap(), U256::from(1u64));
-    });
-}
-
-/// A Genesis gem is payable once its first full day closes: a zero floor clears at any price.
-#[test]
-fn a_genesis_gem_is_payable_once_its_first_day_closes() {
-    let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
-        let load = U256::from(10u64) * six_decimal_unit();
-        let gem_id = issue_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
-        seed_qualifying_day(storage, gem_id);
+        let gem_id =
+            issue_at_live_rate(storage, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
         admitted_at_quote(storage, gem_id, SETTLEMENT_ASSET);
     });
 }
 
 #[test]
-fn issue_validator_post_genesis_behaves_like_wallet() {
+fn issue_validator_behaves_like_wallet() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let load = U256::from(5u64) * six_decimal_unit();
@@ -56,14 +21,14 @@ fn issue_validator_post_genesis_behaves_like_wallet() {
             issue_at_live_rate(storage, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
 
         let item = gem_view(storage, gem_id);
-        // Same as WALLET: cost = entry x load, floor with 8% markup, Issued.
+        // Same as WALLET: cost = entry x load, Issued.
         assert_eq!(
             runtime::gem_cost_minor(&item).unwrap(),
             U256::from(10u64) * six_decimal_unit()
         );
         assert_eq!(
-            item.item.floor_price_minor,
-            rate * U256::from(108u64) / U256::from(100u64)
+            item.terms.call_price_minor,
+            rate * U256::from(228u64) / U256::from(100u64)
         );
         assert_eq!(item.item.state, GemState::Issued as u8);
         assert_eq!(item.item.gem_type, GemTypes::Validator as u8);
@@ -71,7 +36,7 @@ fn issue_validator_post_genesis_behaves_like_wallet() {
 }
 
 #[test]
-fn issue_wallet_cost_and_floor_markup_state_issued() {
+fn issue_wallet_cost_and_state_issued() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let load = U256::from(5u64) * six_decimal_unit();
@@ -83,11 +48,6 @@ fn issue_wallet_cost_and_floor_markup_state_issued() {
         assert_eq!(
             runtime::gem_cost_minor(&item).unwrap(),
             U256::from(10u64) * six_decimal_unit()
-        );
-        // floor = rate * 108 / 100 = 2 * 1.08 = 2.16
-        assert_eq!(
-            item.item.floor_price_minor,
-            rate * U256::from(108u64) / U256::from(100u64)
         );
         assert_eq!(item.item.state, GemState::Issued as u8);
     });
@@ -169,7 +129,7 @@ fn issue_zero_owner_rejected() {
 #[test]
 fn issue_no_oracle_setup_rejected() {
     // The reference currency is registered but its COEN pair is not, so the gem
-    // has no price to anchor its entry, floor and call to. Issuing reverts.
+    // has no price to anchor its entry and call to. Issuing reverts.
     with_storage(None, |storage| {
         let res = issue_at_live_rate(
             storage,

@@ -85,7 +85,7 @@ fn intex_lifecycle_slot_layout_is_pinned() {
             intex.call_scan_failed_day.base_slot(),
         ];
         for (index, slot) in slots.into_iter().enumerate() {
-            assert_eq!(slot, U256::from(21 + index), "field #{index}");
+            assert_eq!(slot, U256::from(20 + index), "field #{index}");
         }
     });
 }

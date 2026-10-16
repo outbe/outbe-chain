@@ -1,7 +1,6 @@
 //! Genesis-selectable profile for the call terms a Nod bucket seals: `PROD` (real
 //! timings) and `DEV` (short timings). An unset `config_profile` byte resolves by
-//! network, so only mainnet runs PROD. The floor rate stays a constant: every floor
-//! derives from its entry price.
+//! network, so only mainnet runs PROD.
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;

@@ -32,7 +32,7 @@ use thiserror::Error;
 
 use radicle::cob::store::access::{ReadOnly, WriteAs};
 use radicle::crypto;
-use radicle::prelude::NodeId;
+use radicle::crypto::RepositoryKey;
 use radicle::storage::git::transport::local::{Url, UrlError};
 use radicle::storage::{ReadRepository, WriteStorage};
 use radicle::version::Version;
@@ -338,6 +338,17 @@ fn run_loop<R: BufRead, W: Write, G: service::GitService, N: service::NodeSessio
                 "progress" => {
                     writeln!(output, "unsupported")?;
                 }
+                "pushcert" => match value {
+                    Some(value) if value == "false" || value == "if-asked" => {
+                        writeln!(output, "ok")?;
+                    }
+                    Some(_) => {
+                        writeln!(output, "unsupported")?;
+                    }
+                    None => {
+                        writeln!(output, "error missing value for pushcert")?;
+                    }
+                },
                 _ => {
                     writeln!(output, "unsupported")?;
                 }
@@ -469,7 +480,7 @@ pub(crate) fn warn(s: impl fmt::Display) {
 }
 
 /// Get the patch store.
-pub(crate) fn patches<'a, Repo: ReadRepository + cob::Store<Namespace = NodeId>>(
+pub(crate) fn patches<'a, Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>>(
     profile: &Profile,
     repo: &'a Repo,
 ) -> Result<cob::patch::Cache<'a, Repo, ReadOnly, cob::cache::StoreReader>, list::Error> {

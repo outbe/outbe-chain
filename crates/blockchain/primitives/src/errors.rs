@@ -236,6 +236,10 @@ impl From<ConsensusMetadataError> for PrecompileError {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ReshareArtifactError {
+    #[error("repository publication requires OART v0x0C")]
+    PublicationRequiresV0c,
+    #[error("duplicate repository publication batch")]
+    DuplicateRadiclePublication,
     #[error("too many block artifact records")]
     TooManyRecords,
     #[error("block artifact length overflow")]

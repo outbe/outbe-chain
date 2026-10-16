@@ -10,7 +10,6 @@ use crate::cob::cache::{Remove, StoreReader, StoreWriter, Update};
 use crate::cob::store;
 use crate::cob::store::access::{ReadOnly, WriteAs};
 use crate::cob::{Embed, Label, ObjectId, TypeName, Uri};
-use crate::node::NodeId;
 use crate::prelude::{Did, RepoId};
 use crate::storage::{HasRepoId, ReadRepository, RepositoryError, SignRepository, WriteRepository};
 
@@ -109,7 +108,8 @@ impl<'a, 'b, Repo, Signer: crypto::Signer, C> Cache<'a, Repo, WriteAs<'b, Signer
         embeds: impl IntoIterator<Item = Embed<Uri>>,
     ) -> Result<IssueMut<'a, 'b, 'g, Repo, Signer, C>, super::Error>
     where
-        Repo: ReadRepository + WriteRepository + cob::Store<Namespace = NodeId>,
+        Repo:
+            ReadRepository + WriteRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
         C: Update<Issue>,
     {
         self.store.create(
@@ -126,7 +126,8 @@ impl<'a, 'b, Repo, Signer: crypto::Signer, C> Cache<'a, Repo, WriteAs<'b, Signer
     /// removing the entry from the `cache`.
     pub fn remove(&mut self, id: &IssueId) -> Result<(), super::Error>
     where
-        Repo: ReadRepository + SignRepository + cob::Store<Namespace = NodeId>,
+        Repo:
+            ReadRepository + SignRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
         C: Remove<Issue>,
     {
         self.store.raw.remove(id)?;
@@ -148,7 +149,7 @@ where
     /// writing it to the `cache`.
     pub fn write(&mut self, id: &IssueId) -> Result<(), super::Error>
     where
-        Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+        Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
         C: Update<Issue>,
     {
         let issue = self
@@ -174,7 +175,7 @@ where
         on_issue: impl Fn(&Result<(IssueId, Issue), store::Error>, &cache::Progress) -> ControlFlow<()>,
     ) -> Result<(), super::Error>
     where
-        Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+        Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
         C: Update<Issue> + Remove<Issue>,
     {
         // Start by clearing the cache. This will get rid of issues that are cached but
@@ -203,7 +204,7 @@ where
 
 impl<'a, 'b, Repo, Signer> Cache<'a, Repo, WriteAs<'b, Signer>, cache::NoCache>
 where
-    Repo: WriteRepository + cob::Store<Namespace = NodeId>,
+    Repo: WriteRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     Signer: crypto::Signer,
 {
     /// Get a `Cache` that does no write-through modifications and
@@ -249,7 +250,7 @@ impl<'a, Repo, Access> Cache<'a, Repo, Access, StoreWriter> {
 
 impl<'a, 'b, Repo, Signer: crypto::Signer> Cache<'a, Repo, WriteAs<'b, Signer>, StoreWriter>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
 {
     /// Get the [`IssueMut`], identified by `id`, using the
     /// `StoreWriter` for retrieving the `Issue`.
@@ -383,7 +384,7 @@ impl Iterator for NoCacheIter<'_> {
 
 impl<'a, Repo, Access> Issues for Cache<'a, Repo, Access, cache::NoCache>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
     Access: store::access::Access,
 {
     type Error = super::Error;

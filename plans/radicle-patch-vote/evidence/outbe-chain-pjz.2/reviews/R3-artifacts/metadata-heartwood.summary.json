@@ -1,0 +1,117 @@
+{
+  "package_count": 512,
+  "radicle": [
+    {
+      "name": "radicle",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-cli",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-cli/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-cli-test",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-cli-test/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-cob",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-cob/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-core",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-core/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-crypto",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-crypto/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-dag",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-dag/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-fetch",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-fetch/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-git-metadata",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-git-metadata/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-git-ref-format",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-git-ref-format/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-localtime",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-localtime/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-log",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-log/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-node",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-node/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-oid",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-oid/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-protocol",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-protocol/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-remote-helper",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-remote-helper/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-schemars",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-schemars/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-signals",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-signals/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-surf",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-surf/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-systemd",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-systemd/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-term",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-term/Cargo.toml",
+      "source": null
+    },
+    {
+      "name": "radicle-windows",
+      "manifest_path": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-windows/Cargo.toml",
+      "source": null
+    }
+  ],
+  "old_fork_dependencies": [],
+  "full_metadata_sha256": "bd0e06cb97a7938dff34a2836ad10dec8e9043d3547c2062adba2a782297b210"
+}

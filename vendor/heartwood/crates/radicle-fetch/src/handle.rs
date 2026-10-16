@@ -30,7 +30,7 @@ pub struct Handle<R, S> {
 }
 
 impl<R, S> Handle<R, S> {
-    pub fn is_blocked(&self, key: &PublicKey) -> bool {
+    pub fn is_blocked(&self, key: &radicle::crypto::RepositoryKey) -> bool {
         self.blocked.is_blocked(key)
     }
 

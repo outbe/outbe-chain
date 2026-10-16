@@ -608,11 +608,6 @@
                   "internalType": "uint64"
                 },
                 {
-                  "name": "floorPriceMinor",
-                  "type": "uint64",
-                  "internalType": "uint64"
-                },
-                {
                   "name": "callPriceMinor",
                   "type": "uint64",
                   "internalType": "uint64"
@@ -653,42 +648,6 @@
         }
       ],
       "outputs": [],
-      "stateMutability": "payable"
-    },
-    {
-      "type": "function",
-      "name": "sendDailyVwap",
-      "inputs": [
-        {
-          "name": "utcDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "rows",
-          "type": "tuple[]",
-          "internalType": "struct IOriginRouter.DailyVwap[]",
-          "components": [
-            {
-              "name": "isoCode",
-              "type": "uint16",
-              "internalType": "uint16"
-            },
-            {
-              "name": "vwapMinor",
-              "type": "uint64",
-              "internalType": "uint64"
-            }
-          ]
-        }
-      ],
-      "outputs": [
-        {
-          "name": "legs",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
       "stateMutability": "payable"
     },
     {
@@ -747,11 +706,6 @@
             },
             {
               "name": "entryPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "floorPriceMinor",
               "type": "uint64",
               "internalType": "uint64"
             },
@@ -1230,31 +1184,6 @@
           "type": "uint16",
           "indexed": false,
           "internalType": "uint16"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "DailyVwapSent",
-      "inputs": [
-        {
-          "name": "sendId",
-          "type": "bytes32",
-          "indexed": true,
-          "internalType": "bytes32"
-        },
-        {
-          "name": "dstChainId",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "utcDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
         }
       ],
       "anonymous": false

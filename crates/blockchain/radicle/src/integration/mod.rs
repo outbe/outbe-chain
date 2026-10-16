@@ -1,16 +1,27 @@
+pub mod bootstrap;
 mod lifecycle;
+pub mod local;
+mod material;
+pub mod merge;
 mod metrics;
 mod network;
+pub mod publication;
+pub mod review;
 mod sidecar;
+pub mod signing;
 mod status;
 
+#[cfg(test)]
+mod bootstrap_probe;
+
 pub use lifecycle::EndpointTaskOwner;
+pub use material::RepositoryMaterialPublisher;
 pub use metrics::RadicleMetrics;
 pub use network::{
     shutdown_bounded, EndpointEvidenceHandle, EndpointNetwork, EndpointNetworkService,
     EndpointSigningIdentity, EndpointTransport, LocalEndpointIdentity,
     LocalEndpointIdentityChannel, LocalEndpointIdentityHandle, LocalEndpointIdentityPublisher,
-    SignedEndpointEvidence,
+    ReceivedRepositoryMessage, RepositoryGossipMessage, SignedEndpointEvidence,
 };
 pub use sidecar::{query_sidecar, SidecarError, SidecarInfo};
 pub use status::{

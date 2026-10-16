@@ -1,0 +1,127 @@
+{
+  "source_sha": "645ebf4d47516261505e5fad57f97c4054979f7b",
+  "base_sha": "570059d31fc76ce4aa81d8eacc8f64b059cfe904",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4",
+    "PYTHONPATH": "scripts"
+  },
+  "changed_files": [
+    "crates/blockchain/radicle/src/integration/local.rs",
+    "crates/blockchain/radicle/src/integration/local/gossip.rs",
+    "crates/blockchain/radicle/src/integration/local/tests.rs",
+    "crates/blockchain/radicle/src/integration/mod.rs",
+    "crates/blockchain/radicle/src/integration/network.rs",
+    "crates/blockchain/radicle/src/integration/network/gossip.rs",
+    "crates/blockchain/radicle/src/integration/network/receive.rs",
+    "crates/blockchain/radicle/src/integration/signing.rs"
+  ],
+  "spec_sha256": {
+    "plans/radicle-patch-vote/design.md": "93be4a659ee70b9ac6fdf12d0447ff948b7aa0f6160e9ccf6428ca493dd20025",
+    "plans/radicle-patch-vote/task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+    "plans/radicle-patch-vote/plan.md": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b"
+  },
+  "checks": [
+    {
+      "name": "full-libs",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "--",
+        "--nocapture"
+      ],
+      "start_utc": "2026-10-16T05:26:12.825833+00:00",
+      "end_utc": "2026-10-16T05:26:38.858106+00:00",
+      "exit_code": 0,
+      "log": "full-libs.log",
+      "sha256": "a5de4c768930dd05657f964242c1e4ef0c404307aada8cda5d93ac28e0284bca"
+    },
+    {
+      "name": "all-consumers",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-engine",
+        "-p",
+        "outbe-chain",
+        "-p",
+        "outbe-radicle-runtime",
+        "-p",
+        "outbe-radicle-sidecar",
+        "-p",
+        "outbe-e2e-harness",
+        "-p",
+        "outbe-keygen",
+        "--all-targets"
+      ],
+      "start_utc": "2026-10-16T05:26:38.858604+00:00",
+      "end_utc": "2026-10-16T05:27:03.522127+00:00",
+      "exit_code": 0,
+      "log": "all-consumers.log",
+      "sha256": "2d7ad57626e38b380199dd72243a18179bb7439a006edb754bdb4e7d8c522cdf"
+    },
+    {
+      "name": "scoped-clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--no-deps",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-chain",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "start_utc": "2026-10-16T05:27:03.522764+00:00",
+      "end_utc": "2026-10-16T05:27:21.372634+00:00",
+      "exit_code": 0,
+      "log": "scoped-clippy.log",
+      "sha256": "1fc9461df6a8068aefcf6f8d2ab00517d15e6e46454266f274d7e409ad4815bc"
+    },
+    {
+      "name": "rustfmt",
+      "command": [
+        "rustfmt",
+        "--check",
+        "--edition",
+        "2021",
+        "--config",
+        "skip_children=true",
+        "crates/blockchain/radicle/src/integration/local.rs",
+        "crates/blockchain/radicle/src/integration/local/gossip.rs",
+        "crates/blockchain/radicle/src/integration/local/tests.rs",
+        "crates/blockchain/radicle/src/integration/mod.rs",
+        "crates/blockchain/radicle/src/integration/network.rs",
+        "crates/blockchain/radicle/src/integration/network/gossip.rs",
+        "crates/blockchain/radicle/src/integration/network/receive.rs",
+        "crates/blockchain/radicle/src/integration/signing.rs"
+      ],
+      "start_utc": "2026-10-16T05:27:21.373016+00:00",
+      "end_utc": "2026-10-16T05:27:21.428079+00:00",
+      "exit_code": 0,
+      "log": "rustfmt.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

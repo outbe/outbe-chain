@@ -1,6 +1,47 @@
 [
   {
     "type": "function",
+    "name": "getPatchApproval",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IRadicleRegistry.PatchApprovalInfo",
+        "components": [
+          {
+            "name": "approved",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "payload",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "approvedHeight",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "approvedTimestamp",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "maxRepositories",
     "inputs": [],
     "outputs": [
@@ -8,6 +49,25 @@
         "name": "",
         "type": "uint32",
         "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "patchExecutionStage",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "stateMutability": "view"

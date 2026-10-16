@@ -81,7 +81,7 @@ pub fn run(args: Args, ctx: impl term::Context) -> anyhow::Result<()> {
                             // `FeatureLevel::Root`. This is so that users
                             // have a chance of detecting that automatic migration
                             // did not run or is otherwise broken.
-                            if &remote == profile.id()
+                            if remote.as_ed25519() == Some(profile.id())
                                 && level == FeatureLevel::Parent
                                 && refs.parent().is_none()
                             {
@@ -131,7 +131,7 @@ pub fn run(args: Args, ctx: impl term::Context) -> anyhow::Result<()> {
             let (_, doc) = repo(rid, storage)?;
             let aliases = profile.aliases();
             for did in doc.delegates().iter() {
-                if let Some(alias) = aliases.alias(did) {
+                if let Some(alias) = did.as_node_id().and_then(|id| aliases.alias(id)) {
                     term::println(format_args!(
                         "{} {}",
                         term::format::tertiary(&did),

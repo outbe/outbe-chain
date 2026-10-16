@@ -1,0 +1,122 @@
+{
+  "source_sha": "57a4aac883529227227315c148d2589df32c1eef",
+  "parent_sha": "d6b6d02fdb4c64b1e014a2cb559f42971641496f",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4",
+    "PYTHONPATH": "scripts"
+  },
+  "changed_files": [
+    "crates/blockchain/radicle/src/integration/publication.rs",
+    "crates/blockchain/radicle/src/integration/publication/review.rs",
+    "crates/blockchain/radicle/src/integration/review.rs",
+    "crates/blockchain/radicle/src/integration/review/tests.rs",
+    "crates/blockchain/radicle/src/integration/signing.rs"
+  ],
+  "spec_sha256": {
+    "plans/radicle-patch-vote/design.md": "dc9fd94ad85704057e284b374e0da27d7e0398546790ab1a202b2a9270e86df8",
+    "plans/radicle-patch-vote/task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+    "plans/radicle-patch-vote/plan.md": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b"
+  },
+  "checks": [
+    {
+      "name": "full-libs",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "--",
+        "--nocapture"
+      ],
+      "start_utc": "2026-10-15T22:13:48.552113+00:00",
+      "log": "full-libs.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T22:14:00.875056+00:00",
+      "sha256": "51af3429aaf4234ac4454b7a0d0944bc81310104e0f4abd73735cf0b671c0ac3"
+    },
+    {
+      "name": "all-consumers",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-engine",
+        "-p",
+        "outbe-chain",
+        "-p",
+        "outbe-radicle-runtime",
+        "-p",
+        "outbe-radicle-sidecar",
+        "-p",
+        "outbe-e2e-harness",
+        "-p",
+        "outbe-keygen",
+        "--all-targets"
+      ],
+      "start_utc": "2026-10-15T22:14:00.875435+00:00",
+      "log": "all-consumers.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T22:14:17.813352+00:00",
+      "sha256": "fdc31b82f681a1b284a1b8f97cf260040809bc048927f100bc31d7fe5c65af09"
+    },
+    {
+      "name": "scoped-clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--no-deps",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "start_utc": "2026-10-15T22:14:17.813801+00:00",
+      "log": "scoped-clippy.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T22:14:23.834334+00:00",
+      "sha256": "7cd5923d69a8741d045b2f5e66d7bf67877ea1f26332db524ce7302b80e8ca4e"
+    },
+    {
+      "name": "rustfmt",
+      "command": [
+        "rustfmt",
+        "--check",
+        "--edition",
+        "2021",
+        "--config",
+        "skip_children=true",
+        "crates/blockchain/radicle/src/integration/publication.rs",
+        "crates/blockchain/radicle/src/integration/publication/review.rs",
+        "crates/blockchain/radicle/src/integration/review.rs",
+        "crates/blockchain/radicle/src/integration/review/tests.rs",
+        "crates/blockchain/radicle/src/integration/signing.rs"
+      ],
+      "start_utc": "2026-10-15T22:14:23.834883+00:00",
+      "log": "rustfmt.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T22:14:23.878743+00:00",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "acceptance": "Intermediate P3/P6: complete native Review package reconstruction/verification from exact approval/checkpoint, pinned object closure before typed signing job, separate q-witness verification and fresh publication proof guard. Live attestation/UDS/collector/journal/bootstrap/Merge/E2E incomplete; no task acceptance claim.",
+  "source_dirty_after_checks": []
+}

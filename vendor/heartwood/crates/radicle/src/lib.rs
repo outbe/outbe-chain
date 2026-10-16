@@ -5,7 +5,7 @@ pub extern crate radicle_crypto as crypto;
 
 extern crate radicle_localtime as localtime;
 
-mod canonical;
+pub mod canonical;
 
 pub mod cli;
 pub mod cob;

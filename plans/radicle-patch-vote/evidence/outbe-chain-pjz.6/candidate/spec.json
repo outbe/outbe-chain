@@ -1,0 +1,38 @@
+{
+  "key": "P5",
+  "title": "Добавить VoteTarget принятия конкретной Radicle patch revision",
+  "deps": [
+    "P0",
+    "P1"
+  ],
+  "context": "Generic Vote есть; Governance target материализует kind/text OIP/GIP, RadicleRegistry только хранит repositories. Patch VoteTarget отсутствует. Нельзя делать Git/Radicle I/O внутри consensus и нельзя голосовать за незакреплённый latest patch.",
+  "changes": [
+    "Ввести canonical versioned payload repoId/patchId/revisionId/action=accept и явно зафиксированную target policy по P0. Из proposal нельзя получить одобрение другой revision или произвольного merge commit.",
+    "В owning chain module (по P0 — расширение radicleregistry, без добавления второго несвязанного registry) реализовать validate/reserve/handle_approved и immutable approval record; включить handler в actual EVM registry.",
+    "Обеспечить правило eligibility electorate, согласованное P0 с active/effective set; existing unrelated Vote targets сохраняют поведение. Повторное исполнение одной approval не создаёт вторую выдачу полномочий.",
+    "Handler работает только с bounded chain data/commitments, без Git fetch и blocking signer. Existence/integrity patch проверяется signer integration до выпуска подписи.",
+    "Добавить чтение approval exact finalized snapshot для consumer и различать Approved decision, offchain execution progress и Merge outcome.",
+    "Patch-specific Vote electorate = ACTIVE ∩ effective consensus set; default других targets неизменен. Immutable approval связывает repo/patch/revision/branch/precondition. Данные checkpoints в owning registry, без Git/network I/O в handler."
+  ],
+  "files": [
+    "crates/system/radicleregistry/src/{lib.rs,schema.rs,runtime.rs,precompile.rs,tests.rs}; новый vote_target.rs/payload.rs по P0",
+    "crates/system/vote/src/{handlers.rs,runtime.rs,state.rs} (только необходимые extension seams); crates/blockchain/evm/src/handlers.rs",
+    "crates/blockchain/radicle/src/manager/{snapshot.rs,types.rs}; contracts/precompiles/src/IRadicleRegistry.sol; contracts/precompiles/abi-export/IRadicleRegistry.json; integration fixtures уточнить в P0",
+    "crates/system/vote/tests/; crates/blockchain/evm/tests/; affected registry tests и genesis layout fixtures",
+    "crates/system/vote/src/{handlers.rs,runtime.rs,state.rs}; crates/system/radicleregistry/src/{vote_target.rs,payload.rs,schema.rs,runtime.rs} (новые явно где отсутствуют); contracts/precompiles/src/IRadicleRegistry.sol и abi-export"
+  ],
+  "tests": [
+    "Реальный EVM proposal -> votes -> deadline -> terminal target execution: Active/eligible, outsider/inactive/pending, quorum boundary и validator-set change при pending proposal.",
+    "Malformed/oversized/noncanonical payload, unknown repo/unsupported action и revision substitution; provider failure и target error/rollback проверяются согласно existing Vote semantics.",
+    "Approval immutable, replay/idempotence, no-approval для Expired/Error и non-finalized state; другие targets regression.",
+    "Bounded execution/gas и exact finalized read, без offchain side effects из handle_approved.",
+    "Cast/tally используют один target-specific electorate; pending epoch transition и default targets regression; нет checkpoint для не Approved subject."
+  ],
+  "ac": [
+    "Выполненный через production Vote lifecycle proposal создаёт единственное разрешение ровно указанного patch/revision после принятия решения.",
+    "Только выбранный electorate влияет на решение; eligibility semantics проверены в transition scenarios.",
+    "Payload/ABI/schema/handler wiring и getters согласованы; consensus execution не зависит от доступности Radicle.",
+    "Неполный/неуспешный proposal не даёт signing authorization."
+  ],
+  "proof": "Encoded payload/ABI vectors, proposal/voter/terminal state trace, approval storage read на exact finalized block, rollback/gas/negative results и source wiring matrix."
+}

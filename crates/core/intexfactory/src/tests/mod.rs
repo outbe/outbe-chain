@@ -17,7 +17,7 @@ use crate::constants::{MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE};
 use crate::precompile::{self, IIntexFactory};
 use crate::runtime;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
-use outbe_intex::constants::{CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE_PCT};
+use outbe_intex::constants::{CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW};
 use outbe_intex::{Group, IntexContract};
 
 /// ISO code every fixture prices in.
@@ -37,9 +37,8 @@ const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 
-// COEN clearing price and the floor/trigger derived from it at issuance.
+// COEN clearing price and the trigger derived from it at issuance.
 const ENTRY_PRICE: u64 = 1_000_000;
-const EXPECTED_FLOOR: u64 = 1_080_000; // ENTRY_PRICE * 108/100
 const EXPECTED_TRIGGER: u64 = 2_280_000; // ENTRY_PRICE * 228/100
 
 fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
@@ -76,13 +75,6 @@ fn select_prod_profile(storage: &StorageHandle<'_>) {
 }
 
 /// Test ids carry a fixed USD/U pair. Only the day varies.
-fn is_series_qualified(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-) -> outbe_primitives::error::Result<bool> {
-    outbe_intex::api::is_qualified(storage, &outbe_intex::api::read_series(storage, series_id)?)
-}
-
 fn sid(worldwide_day: u32) -> SeriesId {
     SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
 }
@@ -180,7 +172,6 @@ mod proceeds;
 mod router_fault;
 mod scans;
 mod settlement;
-mod vwap_push;
 
 // --- // --- Shared across the test modules ---
 const PAIR_ID: u32 = 1;
@@ -189,28 +180,6 @@ const EUR_PAIR_ID: u32 = 2;
 
 fn word(value: u64) -> alloy_primitives::Bytes {
     alloy_primitives::Bytes::from(U256::from(value).to_be_bytes::<32>().to_vec())
-}
-
-/// The finalized VWAP of the UTC day before `ts`, as the Oracle closes it.
-fn write_day_vwap(oracle: &OracleContract, iso_code: u16, pair_id: u32, ts: u64, vwap: U256) {
-    let pair = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
-    oracle.pair_to_index.write(&pair, pair_id).unwrap();
-    let day = previous_date_key(timestamp_to_date_key(ts));
-    oracle.record_utc_day_vwap(day, pair_id, vwap).unwrap();
-    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
-        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
-    }
-}
-
-/// Close a day above the fixtures' floor after their issuance, which qualifies them.
-fn seed_qualifying_day(s: &StorageHandle<'_>) {
-    write_day_vwap(
-        &OracleContract::new(s.clone()),
-        REFERENCE_ISO,
-        PAIR_ID,
-        ISSUED_AT as u64 + 2 * DAY,
-        U256::from(EXPECTED_FLOOR + 1),
-    );
 }
 
 /// Publish `rate` as the finalized COEN/`iso_code` VWAP of the UTC day before

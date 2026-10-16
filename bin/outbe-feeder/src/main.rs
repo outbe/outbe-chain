@@ -24,7 +24,7 @@ use clap::Parser;
 use eyre::Result;
 use tracing::{info, warn};
 
-use crate::config::FeederConfig;
+use crate::config::{FeederConfig, SourcesMode};
 use crate::errors::FeederError;
 use crate::health::FeederHealth;
 
@@ -98,8 +98,33 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let config = FeederConfig::load(&cli.config)?;
+    let local = FeederConfig::read_local(&cli.config)?;
+    let bootstrap = FeederConfig::build(local.clone(), None)?;
+    let client = oracle_client::OracleClient::new(&bootstrap.chain.rpc_endpoint)?;
+    let chain_sources = match bootstrap.oracle.sources {
+        SourcesMode::Local => None,
+        SourcesMode::Chain => {
+            let head = client.head().await?;
+            let period = head.period(bootstrap.oracle.vote_period.max(1));
+            let (version, text) = client
+                .sources(period * bootstrap.oracle.vote_period.max(1))
+                .await?;
+            Some(ChainSources {
+                local,
+                version,
+                text,
+                period,
+            })
+        }
+    };
+    let config = match &chain_sources {
+        Some(chain) => FeederConfig::build(chain.local.clone(), Some(&chain.text))?,
+        None => bootstrap,
+    };
     config.validate()?;
+    if let Some(chain) = &chain_sources {
+        chain.log("feeder sources loaded", &config);
+    }
 
     // ORC-AUD-039: Warn about plaintext key usage.
     // Production deployments should use an encrypted keystore or OS keyring.
@@ -111,7 +136,60 @@ async fn main() -> Result<()> {
         "starting outbe-feeder"
     );
 
-    run_feeder(config, std::path::Path::new(&cli.config)).await
+    run_feeder(
+        config,
+        client,
+        chain_sources,
+        std::path::Path::new(&cli.config),
+    )
+    .await
+}
+
+/// The local config table and the node's sources it was last built from.
+struct ChainSources {
+    local: toml::Table,
+    /// The active protocol version when `text` was read.
+    version: u32,
+    text: String,
+    period: u64,
+}
+
+impl ChainSources {
+    /// Logs the protocol version and the hash of the sources text. Feeders
+    /// with the same hash use the same file.
+    fn log(&self, message: &str, config: &FeederConfig) {
+        info!(
+            version = %format!("v{}.{}", self.version >> 24, self.version & 0x00ff_ffff),
+            hash = %keccak256(self.text.as_bytes()),
+            pairs = config.currency_pairs.len(),
+            "{message}"
+        );
+    }
+
+    /// Once per vote period, reads the node's sources at the period's first
+    /// block, so every feeder reads the same file in one period. Returns a new
+    /// config when the sources changed.
+    async fn reload(
+        &mut self,
+        client: &oracle_client::OracleClient,
+        vote_period: u64,
+    ) -> Result<Option<FeederConfig>> {
+        let period = client.head().await?.period(vote_period);
+        if period == self.period {
+            return Ok(None);
+        }
+        let (version, text) = client.sources(period * vote_period).await?;
+        self.period = period;
+        self.version = version;
+        if text == self.text {
+            return Ok(None);
+        }
+        let config = FeederConfig::build(self.local.clone(), Some(&text))?;
+        config.validate()?;
+        self.text = text;
+        self.log("feeder sources changed", &config);
+        Ok(Some(config))
+    }
 }
 
 /// Persistence errors stop the daemon: continuing could allocate a second nonce
@@ -128,23 +206,22 @@ fn persistence(error: eyre::Report) -> eyre::Report {
     eyre::Report::new(PersistenceError(error.to_string()))
 }
 
-async fn run_feeder(config: FeederConfig, config_path: &std::path::Path) -> Result<()> {
-    let providers = provider::create_providers(&config)?;
+async fn run_feeder(
+    mut config: FeederConfig,
+    client: oracle_client::OracleClient,
+    mut chain_sources: Option<ChainSources>,
+    config_path: &std::path::Path,
+) -> Result<()> {
+    let mut providers = provider::create_providers(&config)?;
     let (wallet, signer) = oracle_client::create_wallet(&config.account)?;
     let validator = config.account.validator_address.parse()?;
-    let client = oracle_client::OracleClient::new(&config.chain.rpc_endpoint)?;
     let identity = client
         .identity(config.chain.chain_id, signer, validator)
         .await?;
     let state_path = pending_vote_journal_path(config_path, &identity)?;
     let mut journal = journal::Journal::open(&state_path, &identity)?;
     let health = Arc::new(FeederHealth::new(config.oracle.vote_period));
-    let pair_names: Vec<_> = config
-        .currency_pairs
-        .iter()
-        .map(|p| format!("{}/{}", p.base, p.quote))
-        .collect();
-    health.expect_pairs(&pair_names);
+    health.expect_pairs(&pair_names(&config));
     let health_bind = config
         .health
         .as_ref()
@@ -157,18 +234,38 @@ async fn run_feeder(config: FeederConfig, config_path: &std::path::Path) -> Resu
     // A zero configured interval must not cause a busy loop.
     let interval = std::time::Duration::from_secs(config.oracle.poll_interval_secs.max(1));
     let mut shutdown = std::pin::pin!(shutdown_signal());
-    let mut tick_ctx = FeederTickContext {
-        config: &config,
-        providers: &providers,
-        client: &client,
-        wallet: &wallet,
-        signer,
-        validator,
-        journal: &mut journal,
-        health: &health,
-        last_attempt: &mut last_attempt,
-    };
     loop {
+        if let Some(chain) = chain_sources.as_mut() {
+            let reloaded = async {
+                let Some(next) = chain.reload(&client, config.oracle.vote_period).await? else {
+                    return Ok(None);
+                };
+                let next_providers = provider::create_providers(&next)?;
+                Ok::<_, eyre::Report>(Some((next, next_providers)))
+            };
+            match reloaded.await {
+                Ok(Some((next, next_providers))) => {
+                    config = next;
+                    providers = next_providers;
+                    health.expect_pairs(&pair_names(&config));
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    warn!(error=%error, "cannot apply the node's feeder sources; keeping the current ones")
+                }
+            }
+        }
+        let mut tick_ctx = FeederTickContext {
+            config: &config,
+            providers: &providers,
+            client: &client,
+            wallet: &wallet,
+            signer,
+            validator,
+            journal: &mut journal,
+            health: &health,
+            last_attempt: &mut last_attempt,
+        };
         let result = tokio::select! {
             result=feeder_tick(&mut tick_ctx)=>result,
             reason=&mut shutdown=>{info!(signal=reason.as_str(),"shutdown; pending transaction preserved");return Ok(());}
@@ -186,6 +283,14 @@ async fn run_feeder(config: FeederConfig, config_path: &std::path::Path) -> Resu
             reason=&mut shutdown=>{info!(signal=reason.as_str(),"shutdown; pending transaction preserved");return Ok(());}
         }
     }
+}
+
+fn pair_names(config: &FeederConfig) -> Vec<String> {
+    config
+        .currency_pairs
+        .iter()
+        .map(|p| format!("{}/{}", p.base, p.quote))
+        .collect()
 }
 
 /// Keep pending votes across machine restarts. A new genesis or signer gets a
