@@ -15,12 +15,12 @@
     "proposal_sha256": "7317219def6e29c7d0d988bcf9b7215b601bd7998545bf1fcb6bbe17aad1b23f",
     "problem": "Approved genesis description<=1024 bytes, native Heartwood Project<=255. Valid256-byte OGD1 cannot form native governments Project.",
     "proposed_decision": "A: align governments descriptor/seeder/spec maximum to255 UTF-8 bytes, no truncation or native Heartwood behavior change; requires explicit user approval and affected acceptance re-review.",
-    "dependent_implementation": "Stopped. No production bound, approved spec, native Project or bootstrap implementation changed. Only diagnostic test and proposal/evidence added.",
+    "dependent_implementation": "Resumed by user; exact256 correction committed8f3008ae2; bootstrap preparation in progress.",
     "rule": "Three independent non-authors -> concrete proposal/evidence -> wait explicit user approval; decision review is not task acceptance.",
     "historical": "D1 approval request withdrawn; D2 explicitly excluded. Neither is reopened.",
     "user_proposal": "decisions/D3-description-bound/user-proposal.md",
     "user_proposal_sha256": "e875e2b093d879dfdc0abe80f4f8c2df70d708e44243f010f6a90225f9574390",
-    "user_approval": "not received",
+    "user_approval": "Explicit user chose256 instead of proposed255; see user-decision-256.md. No further approval pending.",
     "reviews": {
       "R1": {
         "report": "decisions/D3-description-bound/reviews/R1.md",
@@ -38,9 +38,9 @@
         "verdict": "Problem confirmed; A technically acceptable only after explicit user approval; not acceptance"
       }
     },
-    "latest_explicit_question": "Async question resent2026-10-16~00:44UTC: authorize1024->255 UTF-8 byte genesis/seeder/spec correction; answer remains pending. No dependent implementation occurred."
+    "latest_explicit_question": "Resolved by user256 and explicit continue; no pending approval question."
   },
-  "acceptance": "P0 reopened for256-byte contract correction; P1/P5 historical closed; P2/P3 incomplete; P4/P6/P7/P8 open.",
+  "acceptance": "P0 administratively reopened during limit correction, not reclosed; P1/P5 historical closed; P2/P3 incomplete; P4/P6/P7/P8 open. No new task/feature acceptance asserted.",
   "last_periodic_report": {
     "completed": "Accepted manifest cache/replay3c132829a and protected node preparation5dc7c1521 implemented/verified. Required full native current regression c383730c6 completed; existing managed positive runtime/Ed pre-Review/receipt-gated Review/cache scenario found in actual passing run,not reimplemented.",
     "proof": "5dc7c1521:71adapter/7consumers/Clippy/fmt. c383730c6:671native/10sidecar/2CLI,whole vendor Clippy/fmt. Bundles .4/checkpoint-replay-store,.4/local-preparation-context,.3/current-native-regression,.3/managed-positive-accounting.",
@@ -55,7 +55,8 @@
     "basis": "Current source still design/genesis/seeder1024 versus native Project255;3 decision reviews/proposal already complete,async approval question pending. No user answer received. No live test process remains; cannot classify conversation waiting as verified process wait.",
     "next_step": "Wait for explicit user decision; do not change limits/spec/bootstrap, bypass native root authorization,use fixture policy as production,or add D2 fetch/cache architecture.",
     "threshold": "Three consecutive overall impasse audits confirmed,including original. Same missing explicit D3 decision; independent work/proof exhausted at this dependency; no live process to wait on. Eligible for blocked status,not complete or paused.",
-    "actual_goal_status": "blocked confirmed by update_goal2026-10-16T01:13:21Z;objective unchanged and incomplete"
+    "actual_goal_status": "blocked confirmed by update_goal2026-10-16T01:13:21Z;objective unchanged and incomplete",
+    "resolved_by": "Explicit256 instruction and explicit continue; old missing-decision condition no longer exists."
   },
   "user_confirmed_contract": {
     "network_repository_owner": "sole network BLS authority; no user delegation feature",
@@ -83,7 +84,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "5dc7c1521 connects accepted manifest store/replay to protected node local control through OCW1/OCP1 and typed preparation SDK; opt-in node store lifetime. Private local snapshot decoder, bounded framing/workers; no signer/Share/native grants/consensus/genesis/spec changes.",
+  "current_source_changes": "Deterministic bootstrap native document/identity COB/signed refs preparation and full accepted bootstrap reconstruction using existing public q-witness verifier; exact bootstrap policy grants. No ref promotion or source git.rs change.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -103,7 +104,7 @@
     "constraint": "No new architecture or deliverable outside approved P0-P8",
     "user_correction": "Latest user accepted direct native Review flow after rollback/studying code. Do not replace ordinary Radicle synchronization or add a separate Git storage/fetch admission redesign."
   },
-  "execution_authorization": "User resumed the existing goal through UI; continue approved P0-P8 only.",
+  "execution_authorization": "User explicitly instructed пиздуй делвть дальше after selecting256 and stopping excessive review of the limit. Continue approved plan. Goal API still reports blocked and has no resume operation; do not treat it as a remaining user decision.",
   "foundation_evidence": "evidence/outbe-chain-pjz.4/native-review-foundation",
   "foundation_checks": "Frozen26d497f4a:38 full outbe-radicle lib tests+506 full outbe-consensus lib tests(0 ignored), scoped lib+tests Clippy PASS. Earlier1341e6de4:416 native tests/vendor Clippy/fmt. Intermediate evidence only; no full-AC acceptance or reviewer PASS.",
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
@@ -123,7 +124,7 @@
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
   "last_goal_turn_classification": "no progress: third consecutive verified same overall D3 impasse, explicit approval still absent; no production/spec changes or live job to await. Blocked goal status required by threshold.",
-  "next_required_work": "Apply explicitly user-selected256-byte correction, prove boundaries and obtain3 independent full-AC P0 reviews before reclosure; full P0-P8 goal incomplete.",
+  "next_required_work": "Verify current bootstrap factory/policy foundation; wire own finalized bootstrap state/current-material signer, then post-finality collector and existing native publication path under approved P3/P4/P6. No new design question remains for description.",
   "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
   "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
   "review_store_evidence": "evidence/outbe-chain-pjz.4/review-store-r2",
@@ -156,7 +157,7 @@
     "instruction": "нужпо поставить 256",
     "maximum_utf8_bytes": 256,
     "document": "decisions/D3-description-bound/user-decision-256.md",
-    "status": "implementing explicit user direction; acceptance pending; no deployment",
+    "status": "Implemented and focused boundary checks passed at8f3008ae2389157a0019e639a5844fc44ec5f10c; extra re-review stopped on explicit user correction.",
     "goal_api_status": "blocked; this instruction authorizes the concrete correction, does not assert goal resumed"
   }
 }

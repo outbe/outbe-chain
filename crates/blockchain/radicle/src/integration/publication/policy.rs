@@ -104,6 +104,60 @@ impl AcceptedRepositoryPolicy {
                 ))
             })
             .collect::<Result<Vec<_>, Error>>()?;
+        self.insert(receipt, grants)
+    }
+
+    /// Root authority is granted only after complete native bootstrap reconstruction.
+    pub fn accept_bootstrap(
+        &self,
+        proof: &crate::integration::bootstrap::AcceptedBootstrapPublication,
+    ) -> Result<(), Error> {
+        let receipt = proof.receipt();
+        let body = &receipt.receipt().body;
+        if self.scope != Scope::from_body(body)? {
+            return Err(Error::Configuration);
+        }
+        let refs = proof
+            .manifest()
+            .owner_refs()
+            .map_err(|_| Error::Configuration)?;
+        let identity = refs
+            .get(&radicle::storage::refs::IDENTITY_ROOT)
+            .ok_or(Error::Configuration)?;
+        let sigrefs = proof
+            .manifest()
+            .refs()
+            .iter()
+            .find(|update| update.name == SIGREFS_BRANCH.as_str())
+            .ok_or(Error::Configuration)?
+            .new
+            .parse()
+            .map_err(|_| Error::Configuration)?;
+        let grants = [
+            (identity, SubjectKind::Identity, 0),
+            (identity, SubjectKind::Cob, 1),
+            (sigrefs, SubjectKind::SignedRefs, 2),
+        ]
+        .into_iter()
+        .map(|(oid, kind, ordinal)| {
+            (
+                (oid, kind as u8),
+                Grant {
+                    context: native_policy_context(body, ordinal),
+                    receipt: receipt.receipt().receipt_hash.0,
+                },
+            )
+        })
+        .collect();
+        self.insert(receipt, grants)
+    }
+
+    fn insert(
+        &self,
+        receipt: &crate::manager::FinalizedPublicationReceipt,
+        grants: Vec<((git::Oid, u8), Grant)>,
+    ) -> Result<(), Error> {
+        let body = &receipt.receipt().body;
         let mut accepted = self.accepted.write().map_err(|_| Error::Unavailable)?;
         if accepted
             .receipts
