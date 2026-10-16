@@ -18,9 +18,9 @@
 use std::collections::BTreeMap;
 
 use either::Either;
+use radicle::crypto::RepositoryKey as PublicKey;
 use radicle::git::Oid;
 use radicle::git::fmt::{Namespaced, Qualified};
-use radicle::prelude::PublicKey;
 
 pub use radicle::storage::RefUpdate;
 

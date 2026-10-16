@@ -1,0 +1,39 @@
+   Compiling radicle-crypto v0.19.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-crypto)
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+   Compiling radicle-cli v0.23.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-cli)
+   Compiling radicle-node v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-node)
+   Compiling radicle-core v0.4.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-core)
+   Compiling radicle-cob v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-cob)
+   Compiling radicle-fetch v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-fetch)
+   Compiling radicle-protocol v0.9.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-protocol)
+    Finished `test` profile [unoptimized] target(s) in 9.18s
+     Running tests/commands.rs (/private/tmp/outbe-radicle-p1-standalone/debug/deps/commands-48e67552333034d4)
+
+running 2 tests
+1792112509 test: Building binaries for package `radicle-remote-helper`..
+test commands::cob::rad_cob_log_bls_native_operation ... ok
+1792112517 test: Built /private/tmp/outbe-radicle-p1-standalone/debug/git-remote-rad
+1792112517 test: Building binaries for package `radicle-cli`..
+1792112518 test: Built /private/tmp/outbe-radicle-p1-standalone/debug/rad
+1792112518 test: rad-init:6: `rad init --name heartwood --description Radicle Heartwood Protocol & Stack --no-confirm --public -v` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112519 test: rad-init:28: `rad init` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112519 test: rad-init:35: `rad ls` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112519 test: rad-init:46: `rad node inventory` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112519 test: rad-cob-log:6: `rad issue open --title flux capacitor underpowered --description Flux capacitor power requirements exceed current supply --no-announce` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112520 test: rad-cob-log:20: `rad issue list` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112520 test: rad-cob-log:31: `git checkout -b flux-capacitor-power` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112520 test: rad-cob-log:32: `touch REQUIREMENTS` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112520 test: rad-cob-log:33: `git add REQUIREMENTS` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112520 test: rad-cob-log:34: `git commit -v -m Define power requirements` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112520 test: rad-cob-log:38: `git push rad -o patch.message=Define power requirements -o patch.message=See details. HEAD:refs/patches` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112520 test: rad-cob-log:44: `rad patch` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112520 test: rad-cob-log:55: `rad cob list --repo rad:z42hL2jL4XNk6K8oHQaSWfMgCL7ji --type xyz.radicle.issue` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112520 test: rad-cob-log:57: `rad cob list --repo rad:z42hL2jL4XNk6K8oHQaSWfMgCL7ji --type xyz.radicle.patch` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112520 test: rad-cob-log:64: `rad cob log --repo rad:z42hL2jL4XNk6K8oHQaSWfMgCL7ji --type xyz.radicle.issue --object d87dcfe8c2b3200e78b128d9b959cfdf7063fefe` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112520 test: rad-cob-log:85: `rad cob log --repo rad:z42hL2jL4XNk6K8oHQaSWfMgCL7ji --type xyz.radicle.patch --object aa45913e757cacd46972733bddee5472c78fa32a` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112520 test: rad-cob-log:111: `rad issue label d87dcfe --add bug --no-announce` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+1792112520 test: rad-cob-log:112: `rad cob log --repo rad:z42hL2jL4XNk6K8oHQaSWfMgCL7ji --type xyz.radicle.issue --object d87dcfe8c2b3200e78b128d9b959cfdf7063fefe` @ /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmptb3k5X/alice/work
+test commands::cob::rad_cob_log ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 123 filtered out; finished in 10.91s
+

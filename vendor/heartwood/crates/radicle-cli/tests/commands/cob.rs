@@ -74,6 +74,109 @@ fn rad_cob_log() {
 }
 
 #[test]
+fn rad_cob_log_bls_native_operation() {
+    use radicle::crypto::{BlsEnvelope, BlsPublicKey, RepositoryKey, RepositorySubject};
+    use radicle::storage::refs::sigrefs::git::Committer;
+    use radicle::storage::{WriteRepository as _, WriteStorage as _};
+    use std::process::Command;
+
+    let mut environment = Environment::new();
+    let profile = environment.profile("alice");
+    let rid = radicle::git::Oid::from_sha1([42; 20]).into();
+    let repo = profile.storage.create(rid).unwrap();
+    let key = blst::min_sig::SecretKey::key_gen(&[74; 32], &[]).unwrap();
+    let public = BlsPublicKey::from_bytes(key.sk_to_pk().to_bytes()).unwrap();
+    let owner = RepositoryKey::from(public);
+    let author = Committer::new(
+        "BLS author <bls@example.test> 1700000000 +0000"
+            .parse()
+            .unwrap(),
+    )
+    .into_inner();
+    let prepared = radicle::cob::prepare_native(repo.raw(), None, vec![], radicle::cob::change::Template {
+        type_name: radicle::cob::patch::TYPENAME.clone(), tips: vec![], message: "Accept patch\n".into(), embeds: vec![],
+        contents: radicle::cob::Contents::new(br#"{"revision":"3333333333333333333333333333333333333333","type":"review","verdict":"accept"}"#.to_vec()),
+    }, author.clone(), author).unwrap();
+    let subject = RepositorySubject::cob(
+        rid.into_sha1().unwrap(),
+        [0; 32],
+        prepared.tree(),
+        prepared.as_bytes(),
+    );
+    let mut message = vec![25];
+    message.extend_from_slice(b"radicle.repository.bls.v1");
+    message.extend_from_slice(subject.as_bytes());
+    let envelope = BlsEnvelope::attach(
+        subject,
+        public,
+        key.sign(
+            &message,
+            b"BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_",
+            &[],
+        )
+        .to_bytes(),
+    )
+    .unwrap();
+    let entry = radicle::cob::attach_native(
+        repo.raw(),
+        prepared,
+        rid.into_sha1().unwrap(),
+        [0; 32],
+        &envelope,
+    )
+    .unwrap();
+    let object = entry.id.into();
+    repo.raw()
+        .reference(
+            radicle::git::refs::storage::cob(&owner, &radicle::cob::patch::TYPENAME, &object)
+                .as_str(),
+            entry.id.into(),
+            false,
+            "native CLI fixture",
+        )
+        .unwrap();
+    for format in ["pretty", "json"] {
+        let result = Command::new(env!("CARGO_BIN_EXE_rad"))
+            .env("RAD_HOME", profile.home.path())
+            .args([
+                "cob",
+                "log",
+                "--repo",
+                &rid.to_string(),
+                "--type",
+                "xyz.radicle.patch",
+                "--object",
+                &entry.id.to_string(),
+                "--format",
+                format,
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let output = String::from_utf8(result.stdout).unwrap();
+        assert!(output.contains(&owner.to_string()));
+        assert!(output.contains(&entry.id.to_string()));
+        assert!(output.contains("accept"));
+        if format == "json" {
+            let op: serde_json::Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(
+                op.get("author"),
+                Some(&serde_json::Value::String(owner.to_string()))
+            );
+            assert_eq!(
+                op.pointer("/actions/0/verdict")
+                    .and_then(serde_json::Value::as_str),
+                Some("accept")
+            );
+        }
+    }
+}
+
+#[test]
 fn rad_cob_show() {
     Environment::alice(["rad-init", "rad-cob-show"]);
 }
@@ -155,7 +258,7 @@ fn test_cob_replication() {
     // announcement; otherwise, Alice will consider it stale.
     std::thread::sleep(std::time::Duration::from_millis(3));
 
-    bob.handle.announce_refs_for(rid, [bob.id]).unwrap();
+    bob.handle.announce_refs_for(rid, [bob.id.into()]).unwrap();
 
     // Wait for Alice to fetch the issue refs.
     events

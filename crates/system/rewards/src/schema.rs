@@ -56,14 +56,13 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 /// 36: reward_gem_recipient_count - mapping(uint32 => uint32)
 /// 37: reward_gem_owner_at - mapping(uint32 => mapping(uint32 => address))
 /// 38: reward_promis_load_at - mapping(uint32 => mapping(uint32 => uint256))
-/// 39: reward_gem_type - mapping(uint32 => uint8)
-/// 40: reward_gem_issuance_currency - mapping(uint32 => uint16)
-/// 41: reward_gem_reference_currency - mapping(uint32 => uint16)
-/// 42: reward_gem_pending_batch_count - uint64
-/// 43: pending_reward_day - mapping(B256 => uint32)
-/// 44: daily_last_window_close - mapping(uint32 => uint64)
-/// 45: late_residue_dust_native - uint256
-/// 46: reward_gem_delivered_count - mapping(uint32 => uint32)
+/// 39: reward_gem_issuance_currency - mapping(uint32 => uint16)
+/// 40: reward_gem_reference_currency - mapping(uint32 => uint16)
+/// 41: reward_gem_pending_batch_count - uint64
+/// 42: pending_reward_day - mapping(B256 => uint32)
+/// 43: daily_last_window_close - mapping(uint32 => uint64)
+/// 44: late_residue_dust_native - uint256
+/// 45: reward_gem_delivered_count - mapping(uint32 => uint32)
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
     /// UTC day of block 0 (yyyymmdd). 0 means uninitialized. `RewardsLifecycle::begin_block`
@@ -257,9 +256,6 @@ pub struct Rewards {
 
     /// UTC reward day -> pending recipient index -> exact Gem load.
     pub reward_promis_load_at: Mapping<u32, Mapping<u32, U256>>,
-
-    /// Reward-day Gem type, frozen at preparation time.
-    pub reward_gem_type: Mapping<u32, u8>,
 
     /// Reward Gem issuance currency, frozen at preparation time.
     pub reward_gem_issuance_currency: Mapping<u32, u16>,

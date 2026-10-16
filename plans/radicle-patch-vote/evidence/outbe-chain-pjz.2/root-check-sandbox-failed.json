@@ -1,0 +1,30 @@
+{
+  "argv": [
+    "cargo",
+    "check",
+    "--offline",
+    "--locked",
+    "-p",
+    "outbe-radicle-sidecar",
+    "-p",
+    "outbe-radicle-runtime",
+    "-p",
+    "outbe-keygen",
+    "-p",
+    "outbe-e2e-harness",
+    "--features",
+    "outbe-e2e-harness/ocomp-integration",
+    "--all-targets"
+  ],
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "start_utc": "2026-10-15T10:54:18.442310+00:00",
+  "end_utc": "2026-10-15T10:57:16.858673+00:00",
+  "exit_code": 101,
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4"
+  }
+}

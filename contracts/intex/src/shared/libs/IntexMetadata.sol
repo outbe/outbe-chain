@@ -122,9 +122,6 @@ library IntexMetadata {
             ",{\"trait_type\":\"Entry Price\",\"value\":",
             _amountPlain(data.entryPriceMinor, PRICE_DECIMALS, PRICE_PRECISION),
             ",\"display_type\":\"number\"},",
-            "{\"trait_type\":\"Floor Price\",\"value\":",
-            _amountPlain(data.floorPriceMinor, PRICE_DECIMALS, PRICE_PRECISION),
-            ",\"display_type\":\"number\"},",
             "{\"trait_type\":\"Call Price\",\"value\":",
             _amountPlain(data.callPriceMinor, PRICE_DECIMALS, PRICE_PRECISION),
             ",\"display_type\":\"number\"},",
@@ -166,7 +163,6 @@ library IntexMetadata {
 
     function _stateInfo(IIntexNFT1155.IntexState state_) private pure returns (string memory, string memory) {
         if (state_ == IIntexNFT1155.IntexState.Issued) return ("ISSUED", "#2563eb");
-        if (state_ == IIntexNFT1155.IntexState.Qualified) return ("QUALIFIED", "#16a34a");
         if (state_ == IIntexNFT1155.IntexState.Expired) return ("EXPIRED", "#6b7280");
         return ("CALLED", "#f97316");
     }
@@ -206,13 +202,6 @@ library IntexMetadata {
             rows, _generateField("Entry Price", _formatAmount(data.entryPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), y)
         );
         y += ROW_STEP;
-        if (!settled && data.state == IIntexNFT1155.IntexState.Issued) {
-            rows = string.concat(
-                rows,
-                _generateField("Floor Price", _formatAmount(data.floorPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), y)
-            );
-            y += ROW_STEP;
-        }
         rows = string.concat(
             rows, _generateField("Call Price", _formatAmount(data.callPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), y)
         );
@@ -245,7 +234,6 @@ library IntexMetadata {
 
     function _stateString(IIntexNFT1155.IntexState state_) private pure returns (string memory) {
         if (state_ == IIntexNFT1155.IntexState.Issued) return "Issued";
-        if (state_ == IIntexNFT1155.IntexState.Qualified) return "Qualified";
         if (state_ == IIntexNFT1155.IntexState.Expired) return "Expired";
         return "Called";
     }

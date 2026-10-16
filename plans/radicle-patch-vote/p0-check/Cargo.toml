@@ -1,0 +1,14 @@
+[package]
+name = "radicle-p0-threshold-check"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone investigation artifact; not a production workspace member.
+[workspace]
+
+[dependencies]
+commonware-codec = { git = "https://github.com/commonwarexyz/monorepo", rev = "d476a2361ce6840d2b9d0aa6fb30a924429046d4" }
+commonware-cryptography = { git = "https://github.com/commonwarexyz/monorepo", rev = "d476a2361ce6840d2b9d0aa6fb30a924429046d4" }
+commonware-parallel = { git = "https://github.com/commonwarexyz/monorepo", rev = "d476a2361ce6840d2b9d0aa6fb30a924429046d4" }
+commonware-utils = { git = "https://github.com/commonwarexyz/monorepo", rev = "d476a2361ce6840d2b9d0aa6fb30a924429046d4" }

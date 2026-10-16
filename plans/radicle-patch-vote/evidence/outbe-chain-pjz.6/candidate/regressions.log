@@ -1,0 +1,773 @@
+   Compiling tokio v1.53.1
+   Compiling hickory-proto v0.26.1
+   Compiling multiaddr v0.18.2
+   Compiling tokio-util v0.7.18
+   Compiling tokio-rustls v0.26.4
+   Compiling reth-network-peers v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling async-compression v0.4.41
+   Compiling reth-chainspec v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-network-types v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling tokio-stream v0.1.18
+   Compiling tower v0.5.3
+   Compiling h2 v0.4.18
+   Compiling reth-metrics v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-tokio-util v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-storage-api v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling opentelemetry_sdk v0.32.1
+   Compiling tower-http v0.6.8
+   Compiling reth-trie-sparse v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-trie v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling hyper v1.9.0
+   Compiling reth-evm v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-tasks v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-payload-primitives v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling hyper-util v0.1.20
+   Compiling reth-chain-state v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-payload-builder-primitives v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-trie-db v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-eth-wire-types v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-engine-primitives v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-storage-overlay v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling hyper-rustls v0.27.9
+   Compiling hyper-timeout v0.5.2
+   Compiling reqwest v0.13.2
+   Compiling tonic v0.14.5
+   Compiling reth-ethereum-engine-primitives v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-node-types v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling jsonrpsee-core v0.26.0
+   Compiling reth-network-p2p v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling tonic-prost v0.14.5
+   Compiling opentelemetry-proto v0.32.0
+   Compiling opentelemetry-http v0.32.0
+   Compiling tonic-types v0.14.5
+   Compiling reth-revm v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling alloy-transport v2.4.2
+   Compiling opentelemetry-otlp v0.32.0
+   Compiling reth-evm-ethereum v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-config v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling alloy-pubsub v2.4.2
+   Compiling reth-transaction-pool v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-tracing-otlp v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling tokio-tungstenite v0.29.0
+   Compiling reth-tracing v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling hickory-net v0.26.1
+   Compiling interprocess v2.4.2
+   Compiling reth-db v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling hickory-resolver v0.26.1
+   Compiling reth-network-api v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-provider v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling delay_map v0.4.1
+   Compiling alloy-transport-ipc v2.4.2
+   Compiling discv5 v0.10.4 (https://github.com/sigp/discv5?rev=7663c00#7663c00e)
+   Compiling alloy-transport-ws v2.4.2
+   Compiling alloy-transport-http v2.4.2
+   Compiling reth-net-nat v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling alloy-rpc-client v2.4.2
+   Compiling reth-ecies v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-dns-discovery v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-eth-wire v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-rpc-server-types v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-discv5 v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-discv4 v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-rpc-convert v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling commonware-macros v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling jsonrpsee-client-transport v0.26.0
+   Compiling reth-rpc-eth-types v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-network v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-trie-parallel v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-execution-cache v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling jsonrpsee-server v0.26.0
+   Compiling jsonrpsee-http-client v0.26.0
+   Compiling reth-payload-builder v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling jsonrpsee-ws-client v0.26.0
+   Compiling commonware-formatting v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling jsonrpsee v0.26.0
+   Compiling reth-basic-payload-builder v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-engine-local v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling commonware-codec v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling reth-exex-types v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling commonware-utils v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling reth-static-file v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-node-core v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-prune v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling commonware-parallel v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling commonware-math v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling axum v0.8.9
+   Compiling reth-stages-api v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling commonware-cryptography v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling reth-consensus-common v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-node-api v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-rpc-eth-api v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling commonware-runtime v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling reth-era-downloader v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-era-utils v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-exex v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling alloy-provider v2.4.2
+   Compiling reth-stages v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-rpc-api v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-engine-tree v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-ipc v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-rpc-layer v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-consensus-debug-client v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-node-events v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-rpc-engine-api v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-invalid-block-hooks v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-node-metrics v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-db-common v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-rpc v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-engine-util v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-node-ethstats v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-downloaders v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling commonware-actor v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling commonware-stream v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling reth-cli-runner v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling commonware-p2p v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling reth-cli v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-ethereum-consensus v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-ethereum-payload-builder v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling backon v1.6.0
+   Compiling commonware-storage v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling mongodb v3.8.0
+   Compiling reth-rpc-builder v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling commonware-resolver v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling commonware-broadcast v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling reth-node-builder v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling outbe-zk-backend v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/zk/outbe-zk-backend)
+   Compiling reth-cli-commands v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-node-ethereum v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-ethereum-cli v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling reth-ethereum v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+   Compiling outbe-primitives v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/primitives)
+   Compiling commonware-coding v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling commonware-consensus v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+   Compiling outbe-chain-constants v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/constants)
+   Compiling outbe-tee v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/tee)
+   Compiling outbe-consensus v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/consensus)
+   Compiling outbe-fidelity-math v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/fidelity-math)
+   Compiling outbe-compressed-entities v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/compressed-entities)
+   Compiling outbe-common v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/common)
+   Compiling outbe-ccaregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/ccaregistry)
+   Compiling outbe-fidelity v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/fidelity)
+   Compiling outbe-offchain-storage v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/offchain-storage)
+   Compiling outbe-validatorset v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/validatorset)
+   Compiling outbe-tee-enclave v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/bin/outbe-tee-enclave)
+   Compiling outbe-promislimit v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/promislimit)
+   Compiling outbe-promis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/promis)
+   Compiling outbe-teeregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/teeregistry)
+   Compiling outbe-vote v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/vote)
+   Compiling outbe-ocompregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/ocompregistry)
+   Compiling outbe-staking v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/staking)
+   Compiling outbe-gratis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/gratis)
+   Compiling outbe-oracle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/oracle)
+   Compiling outbe-tribute v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/tribute)
+   Compiling outbe-hyperlanecontroller v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/hyperlanecontroller)
+   Compiling outbe-credis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/credis)
+   Compiling outbe-vaultrouter v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/vaultrouter)
+   Compiling outbe-intex v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/intex)
+   Compiling outbe-nod v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/nod)
+   Compiling outbe-gem v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/gem)
+   Compiling outbe-stablecoinpolicy v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/stablecoinpolicy)
+   Compiling outbe-gratisfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/gratisfactory)
+   Compiling outbe-lysis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/lysis)
+   Compiling outbe-promisfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/promisfactory)
+   Compiling outbe-nodfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/nodfactory)
+   Compiling outbe-credisfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/credisfactory)
+   Compiling outbe-intexfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/intexfactory)
+   Compiling outbe-gemfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/gemfactory)
+   Compiling outbe-stablecoin v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/stablecoin)
+   Compiling outbe-zerofee v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/zerofee)
+   Compiling outbe-desis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/desis)
+   Compiling outbe-agentreward v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/agentreward)
+   Compiling outbe-radicleregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/radicleregistry)
+   Compiling outbe-l2registry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/l2registry)
+   Compiling outbe-update v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/update)
+   Compiling outbe-accounting v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/accounting)
+   Compiling outbe-metadosis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/metadosis)
+   Compiling outbe-stablecoinfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/stablecoinfactory)
+   Compiling outbe-offchain-data v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/offchain-data)
+   Compiling outbe-slashindicator v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/slashindicator)
+   Compiling outbe-governance v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/governance)
+   Compiling tokio-native-tls v0.3.1
+   Compiling hyper-tls v0.6.0
+   Compiling outbe-emissionlimit v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/emissionlimit)
+   Compiling outbe-tributefactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/tributefactory)
+   Compiling outbe-rewards v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/rewards)
+   Compiling outbe-txpool v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/txpool)
+   Compiling reqwest v0.12.28
+   Compiling outbe-cycle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/cycle)
+   Compiling outbe-evm v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/evm)
+   Compiling outbe-radicle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/radicle)
+   Compiling outbe-node v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/node)
+    Finished `test` profile [unoptimized] target(s) in 55.70s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_evm-9e4191c1376ad675)
+
+running 269 tests
+test begin_block_precompile::tests::finalization::finalization_rejects_non_parent_metadata_before_summary_use ... ok
+test begin_block_precompile::tests::dispatch::dispatch_rejects_wrong_version ... ok
+test begin_block_precompile::tests::late_credits::late_finalize_window_close_settles_and_recycles_residue ... ok
+test begin_block_precompile::tests::dispatch::dispatch_rejects_external_caller_before_state_mutation ... ok
+test begin_block_precompile::tests::late_credits::late_finalize_unverifiable_credit_is_fatal ... ok
+test begin_block_precompile::tests::late_credits::fb_number_mismatch_rejected ... ok
+test begin_block_precompile::tests::finalization::dispatch_finalization_uses_preloaded_summary_not_calldata_money ... ok
+test begin_block_precompile::tests::late_credits::no_escrow_credit_rejected ... ok
+test begin_block_precompile::tests::dispatch::dispatch_cycle_tick_records_preloaded_proposer ... ok
+test begin_block_precompile::tests::dispatch::dispatch_rejects_unknown_selector ... ok
+test begin_block_precompile::tests::dispatch::dispatch_rejects_native_value ... ok
+test begin_block_precompile::tests::late_credits::late_finalize_out_of_window_credit_is_fatal ... ok
+test begin_block_precompile::tests::finalization::phase1_reorg_same_height_uses_parent_state_progress_not_abandoned_post_state ... ok
+test begin_block_precompile::tests::finalization::dispatch_finalization_counts_duplicate_missed_proposer_events_by_index ... ok
+test begin_block_precompile::tests::lease_and_boundary::mandatory_cycle_tick_sweep_closes_due_ocomp_recovery_when_lifecycle_is_disabled ... ok
+test begin_block_precompile::tests::late_credits::wrong_epoch_rejected ... ok
+test begin_block_precompile::tests::late_credits::wrong_view_rejected ... ok
+test begin_block_precompile::tests::lease_and_boundary::dispatch_boundary_outcome_roundtrip_noop ... ok
+test begin_block_precompile::tests::late_credits::wrong_committee_set_hash_rejected ... ok
+test begin_block_precompile::tests::late_credits::wrong_parent_view_rejected ... ok
+test begin_block_precompile::tests::lease_and_boundary::tee_lease_sweep_reexecution_and_timestamp_jump_are_deterministic ... ok
+test builder::tests::final_artifact_adapter_overwrites_untrusted_root_and_preserves_consensus_fields ... ok
+test begin_block_precompile::tests::lease_and_boundary::boundary_outcome_records_announced_tee_recipient_pubkeys ... ok
+test begin_block_precompile::tests::lease_and_boundary::boundary_outcome_survives_unavailable_hyperlane_sync ... ok
+test begin_block_precompile::tests::lease_and_boundary::tee_lease_sweep_treats_missing_post_bootstrap_binding_as_overdue ... ok
+test begin_block_precompile::tests::late_credits::window_close_records_miss_for_absent_committee_voter_only ... ok
+test begin_block_precompile::tests::late_credits::window_close_miss_survives_epoch_boundary_reset ... ok
+test begin_block_precompile::tests::tee_bootstrap::tee_bootstrap_v1_routes_canonical_invalid_evidence_and_writes_nothing ... ok
+test begin_block_precompile::tests::lease_and_boundary::tee_lease_sweep_skips_bootstrap_then_jails_at_exact_deadline_once ... ok
+test begin_block_precompile::tests::tee_bootstrap::gramine_direct_ost3_rejects_a_signed_wrong_snapshot_hash ... ok
+test config::tests::configuration::pending_env_disables_outbe_hooks_and_uses_rewards_beneficiary ... ok
+test begin_block_precompile::tests::tee_bootstrap::tee_bootstrap_v1_rejects_committee_subset_before_qvl_and_writes_nothing ... ok
+test config::tests::finality::production_finality_wrapper_requires_node_owned_canonical_finalized_anchor ... ok
+test config::tests::parent_artifacts::accounted_parent_artifact_provider_uses_cache_when_provider_header_is_not_visible_yet ... ok
+test executor::block::cancellation_tests::node_local_execution_abort_is_preserved_across_evm_error ... ok
+test executor::block::cancellation_tests::raw_execution_abort_is_internal_and_keeps_its_typed_cause ... ok
+test config::tests::configuration::context_for_next_block_uses_outbe_parent_hash ... ok
+test config::tests::configuration::evm_config_binds_factory_to_canonical_chain_spec_genesis ... ok
+test config::tests::configuration::context_for_next_block_strips_plain_builder_extra_data ... ok
+test config::tests::configuration::context_for_next_block_drops_legacy_finalization_header_tag ... ok
+test config::tests::configuration::new_with_bridge_installs_cache_summary_provider ... ok
+test begin_block_precompile::tests::late_credits::window_close_absentee_pass_is_deterministic_and_correct ... ok
+test config::tests::configuration::sanitizer_preserves_late_credits ... ok
+test config::tests::configuration::context_for_next_block_preserves_valid_consensus_header_artifact ... ok
+test config::tests::configuration::config_fixture_uses_the_gramine_direct_dev_chain_identity ... ok
+test executor::tests::accounting::hint_rejected_when_metadata_hash_mismatch ... ok
+test executor::tests::accounting::hint_accepted_when_metadata_matches_parent ... ok
+test executor::tests::accounting::no_provider_no_hint_returns_missing_artifact_error ... ok
+test executor::tests::accounting::hint_rejected_when_metadata_number_mismatch ... ok
+test executor::tests::accounting::provider_header_not_found_uses_matching_parent_hint ... ok
+test executor::tests::accounting::validate_finalized_metadata_rejects_signer_bitmap_length_mismatch ... ok
+test executor::tests::accounting::validate_finalized_metadata_rejects_unregistered_committee_member ... ok
+test executor::tests::accounting::validate_finalized_metadata_rejects_duplicate_committee_member ... ok
+test executor::tests::begin_layout::cpa_artifact_resolution_fails_before_later_body_inputs_are_decoded ... ok
+test executor::tests::accounting::bad_late_proof_pre_exec_fatal ... ok
+test executor::tests::block_artifacts::compressed_entities_header_semantics_reject_missing_wrong_scheme_and_wrong_root ... ok
+test executor::tests::accounting::validate_finalized_metadata_rejects_missed_proposer_outside_committee ... ok
+test executor::tests::accounting::verifier_rejects_finalization_parent_hash_mismatch ... ok
+test begin_block_precompile::tests::tee_bootstrap::gramine_direct_ost3_bootstraps_once_through_the_activated_dispatch ... ok
+test executor::tests::block_artifacts::finish_rejects_non_artifact_header_extra_data ... ok
+test executor::tests::block_artifacts::finish_without_final_extra_data_setter_rejects_missing_summary ... ok
+test executor::tests::block_artifacts::finish_uses_final_extra_data_setter_for_summary_validation ... ok
+test executor::tests::accounting::validate_finalized_metadata_accepts_registered_historical_committee ... ok
+test executor::tests::accounting::genesis_child_rejects_nonzero_prev_randao_without_parent_proof ... ok
+test executor::tests::begin_layout::forbidden_late_bootstrap_is_checked_after_cpa_and_boundary_but_before_oracle_decode ... ok
+test executor::tests::block_artifacts::pending_rpc_context_opens_ce_scope_but_skips_consensus_hooks ... ok
+test executor::tests::begin_layout::surplus_begin_input_remains_owned_by_structural_body_validation ... ok
+test executor::tests::begin_layout::genesis_ignores_stale_inputs_and_block_one_requires_bootstrap_from_its_active_source ... ok
+test executor::tests::boundary::committee_transition::apply_boundary_outcome_activates_on_validator_set_change_with_hash_change ... ok
+test executor::tests::boundary::committee_transition::apply_boundary_outcome_fatals_on_hash_change_without_set_change ... ok
+test executor::tests::boundary::committee_transition::apply_boundary_outcome_rejects_committee_set_hash_mismatch ... ok
+test executor::tests::boundary::committee_transition::apply_boundary_outcome_rejects_tampered_tee_expiry_commitment ... ok
+test executor::tests::boundary::committee_transition::apply_boundary_outcome_replays_narrow_certified_tee_expiry_demotion ... ok
+test executor::tests::begin_layout::verifier_reports_missing_malformed_and_wrong_kind_at_the_first_bad_ordinal ... ok
+test executor::tests::boundary::committee_transition::apply_boundary_outcome_writes_snapshot_when_hash_matches ... ok
+test executor::tests::boundary::committee_transition::boundary_rejects_skipped_epoch_without_mutating_current_state ... ok
+test executor::tests::boundary::committee_transition::certified_delayed_boundary_atomically_advances_epoch_and_snapshot ... ok
+test executor::tests::boundary::committee_transition::failed_boundary_snapshot_write_rolls_back_epoch_membership_and_counters ... ok
+test executor::tests::boundary::committee_transition::test_reshare_activation_after_participation_decode ... ok
+test executor::tests::boundary::committee_transition::test_committee_size_change_participation_safety ... ok
+test executor::tests::boundary::genesis_validation::genesis_validation_accepts_staked_active_validator ... ok
+test executor::tests::boundary::committee_transition::test_reshare_activation_idempotent ... ok
+test executor::tests::boundary::precompile_persistence::marker_list_covers_stateful_precompiles ... ok
+test executor::tests::boundary::genesis_validation::genesis_validation_rejects_active_validator_with_zero_stake ... ok
+test executor::tests::boundary::system_phases::apply_pre_execution_changes_rejects_non_rewards_beneficiary ... ok
+test builder::tests::builder_keeps_preexecuted_phase1_witness_in_block_body ... ok
+test executor::tests::block_artifacts::proposer_parity::proposer_validator_same_state_root ... ok
+test executor::tests::block_artifacts::withdrawals::non_empty_withdrawal_rejects_before_any_state_write ... ok
+test executor::tests::boundary::system_phases::full_begin_phases_then_user_tx_observes_boundary_activation ... ok
+test executor::tests::construction::executor_construction_scopes_read_budget_to_import_and_proposal ... ok
+test executor::tests::begin_layout::begin_inputs_match_signed_proposer_body_and_verifier_across_phase_matrix ... ok
+test executor::tests::boundary::system_phases::proposer_injects_tee_bootstrap_after_boundary_when_payload_pending ... ok
+test executor::tests::block_artifacts::withdrawals::outbe_post_execution_preserves_behavior_for_absent_or_empty_withdrawals ... ok
+test executor::tests::receipts_and_gas::apply_pre_execution_changes_emits_cycle_tick_event_in_system_receipt ... ok
+test builder::tests::base_block_height2_reexecutes_with_same_state_root ... ok
+test executor::tests::receipts_and_gas::apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt ... ok
+CycleTick UTC boundary visible gas: used=21080, block_limit=30_000_000
+test executor::tests::receipts_and_gas::cycle_tick_utc_boundary_gas_usage ... ok
+test executor::tests::block_artifacts::factory_boundary::factory_boundaries_are_byte_equal_across_proposer_and_validator_execution ... ok
+test executor::tests::block_artifacts::proposer_parity::active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifacts ... ok
+test executor::tests::receipts_and_gas::hook_events::apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt ... ok
+test executor::tests::boundary::system_phases::boundary_activation_allows_registered_next_epoch_proposer ... ok
+test executor::tests::receipts_and_gas::hook_events::hook_events_receipt_carries_whitelisted_update_activation_log ... ok
+test executor::tests::receipts_and_gas::hook_events::pre_exec_hooks_emit_whitelisted_update_activation_event ... ok
+test executor::tests::receipts_and_gas::native_sinks::base_fee_is_burned_tip_reaches_rewards_and_promis_limit_is_untouched ... ok
+test executor::tests::boundary::system_phases::oracle_slash_window_runs_after_boundary_activation ... ok
+test executor::tests::receipts_and_gas::priority_fees_credit_rewards_escrow_in_production_fee_path ... ok
+test executor::tests::receipts_and_gas::hook_events::real_factory_approval_is_published_in_hook_events_receipt ... ok
+test executor::tests::receipts_and_gas::system_internal_work_budget_rejects_before_receipt_or_state_accounting ... ok
+test executor::tests::receipts_and_gas::gas_09_noncritical_system_oog_exhausts_aggregate_budget_atomically ... ok
+test executor::tests::receipts_and_gas::hook_events::real_factory_execution_error_has_no_factory_receipt_log ... ok
+Patch proposal calldata=0x1f02a1e5000000000000000000000000000000000000000000000000000000000000ee1100000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000011e7b2276657273696f6e223a312c227265706f4964223a22307861616161616161616161616161616161616161616161616161616161616161616161616161616161222c2270617463684964223a22307862626262626262626262626262626262626262626262626262626262626262626262626262626262222c227265766973696f6e4964223a22307863636363636363636363636363636363636363636363636363636363636363636363636363636363222c22616374696f6e223a22616363657074222c227461726765744272616e6368223a226d61696e222c22657870656374656454617267657448656164223a22307864646464646464646464646464646464646464646464646464646464646464646464646464646464227d0000
+test executor::tests::sponsorship_quota::sponsored_declined_commit_does_not_burn_quota ... ok
+test executor::tests::receipts_and_gas::system_protocol_precharge_and_ce_gas_are_published_and_block_limited ... ok
+EVM patch Vote proposal=1 yes=1 electorate=3 deadline=9 terminal_height=10 approved=false subject={"version":1,"repoId":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","patchId":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","revisionId":"0xcccccccccccccccccccccccccccccccccccccccc","action":"accept","targetBranch":"main","expectedTargetHead":"0xdddddddddddddddddddddddddddddddddddddddd"}
+test executor::tests::sponsorship_quota::sponsored_gas_below_intrinsic_does_not_burn_quota ... ok
+test executor::tests::sponsorship_quota::sponsored_execution_restores_existing_fee_flags_on_every_result_exit ... ok
+test executor::tests::sponsorship_quota::sponsored_included_revert_keeps_quota ... ok
+test executor::tests::sponsorship_quota::sponsored_nonce_too_low_does_not_burn_quota ... ok
+test executor::tests::system_execution::begin_block_hook_batch_rolls_back_code_and_reports_committed_code_changes ... ok
+test executor::tests::receipts_and_gas::gas_13_system_receipt_rpc_gas_delta_is_visible_envelope_gas ... ok
+test executor::tests::receipts_and_gas::gas_14_executor_finish_sets_visible_system_gas_for_fee_history_input ... ok
+test executor::tests::system_execution::executor_adapter_classifies_the_canonical_ocomp_system_carrier_prefix ... ok
+test executor::tests::system_execution::executor_rejects_user_tx_to_reserved_system_address ... ok
+test executor::tests::receipts_and_gas::gas_16_mixed_system_and_user_block_finish_uses_visible_system_gas ... ok
+test executor::tests::system_execution::gas_02_phase1_preexec_failure_must_consume_body0_or_abort ... ok
+Patch proposal calldata=0x1f02a1e5000000000000000000000000000000000000000000000000000000000000ee1100000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000011e7b2276657273696f6e223a312c227265706f4964223a22307861616161616161616161616161616161616161616161616161616161616161616161616161616161222c2270617463684964223a22307862626262626262626262626262626262626262626262626262626262626262626262626262626262222c227265766973696f6e4964223a22307863636363636363636363636363636363636363636363636363636363636363636363636363636363222c22616374696f6e223a22616363657074222c227461726765744272616e6368223a226d61696e222c22657870656374656454617267657448656164223a22307864646464646464646464646464646464646464646464646464646464646464646464646464646464227d0000
+EVM patch Vote proposal=1 yes=2 electorate=3 deadline=9 terminal_height=10 approved=true subject={"version":1,"repoId":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","patchId":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","revisionId":"0xcccccccccccccccccccccccccccccccccccccccc","action":"accept","targetBranch":"main","expectedTargetHead":"0xdddddddddddddddddddddddddddddddddddddddd"}
+test executor::tests::receipts_and_gas::patch_approval::radicle_patch_approval_runs_through_evm_calls_and_real_begin_block_hooks ... ok
+test executor::tests::system_execution::critical_cycle_tick_revert_fails_block ... ok
+test executor::tests::system_execution::hook_readiness_error_keeps_its_type_across_the_executor_boundary ... ok
+test executor::tests::system_execution::gas_03_without_commit_reserved_system_tx_must_not_use_user_lane_admission ... ok
+test executor::tests::system_execution::critical_cycle_tick_oog_fails_block ... ok
+test executor::tests::system_execution::gas_01_evm_level_system_tx_err_must_not_be_soft_receipted ... ok
+test executor::tests::receipts_and_gas::system_prefix_charges_visible_gas_and_receipt_cumulative_contract ... ok
+test executor::tests::system_execution::verifier_rejects_begin_system_tx_signature_hash_mismatch ... ok
+test executor::tests::system_execution::verifier_rejects_begin_system_tx_signer_mismatch ... ok
+test executor::tests::system_failure_codes::codes_are_in_phase_band ... ok
+test executor::tests::system_failure_codes::only_the_exact_ocomp_deadline_revert_is_a_failed_carrier_receipt ... ok
+test executor::tests::system_failure_codes::only_typed_materialization_race_and_proof_rejections_are_failed_receipts ... ok
+test executor::tests::system_failure_codes::other_halt_maps_to_299 ... ok
+test executor::tests::system_failure_codes::out_of_gas_maps_to_202 ... ok
+test executor::tests::system_failure_codes::revert_maps_to_201 ... ok
+test executor::tests::system_execution::verifier_rejects_boundary_outcome_system_tx_artifact_mismatch ... ok
+test executor::tests::zero_fee::eip7702_bootstrap_accepts_one_atomic_unit_without_fee_or_quota ... ok
+test executor::tests::zero_fee::eip7702_bootstrap_rejects_zero_balance_without_state_change ... ok
+test executor::tests::zero_fee::eip7702_delegated_account_with_priority_fee_pays_normally ... ok
+test executor::tests::zero_fee::eip7702_delegation_detected_via_code_by_hash_fallback ... ok
+test executor::tests::zero_fee::eip7702_delegation_to_non_paymaster_falls_through_to_fee_path ... ok
+test executor::tests::zero_fee::eip7702_ninth_sponsored_tx_soft_fails_with_code_110 ... ok
+test executor::tests::zero_fee::eip7702_sponsored_tx_accepts_fresh_zero_balance_signer ... ok
+test executor::tests::zero_fee::eip7702_sponsored_tx_burns_quota_and_emits_event ... ok
+test executor::tests::zero_fee::gas_10_low_gas_zero_fee_policy_failure_must_not_mint_intrinsic_gas ... ok
+test executor::tests::zero_fee::oracle_tx_keeps_fee_envelope_for_basefee_validation ... ok
+test executor::tests::zero_fee::parity_soft_failed_zero_fee_receipt_is_byte_equal_across_runs ... ok
+test executor::tests::zero_fee::property_soft_fail_does_not_perturb_validator_fee_sum ... ok
+test executor::tests::zero_fee::soft_fail_returns_ok_so_tx_lands_in_block_body ... ok
+test executor::tests::zero_fee::zero_fee_oracle_vote_from_delegated_feeder_keeps_zero_balance ... ok
+test executor::tests::system_execution::active_terminal_request_is_last_semantic_writer_and_rejects_later_transactions ... ok
+test executor::tests::zero_fee::bootstrap_execution_restores_existing_fee_flags_on_every_result_exit ... ok
+test executor::tests::zero_fee::zero_fee_soft_failure_cap_admits_then_rejects_with_invalid_tx ... ok
+test factory::cancellation_tests::cancelled_read_preserves_its_type_through_real_evm_calls ... ok
+test factory::cancellation_tests::factory_forks_keep_cancellation_local_over_one_shared_backend ... ok
+test factory::cancellation_tests::cancelled_read_stays_typed_through_rust_child_and_nested_precompile ... ok
+test executor::tests::system_execution::gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_lane_clean ... ok
+test factory::tests::non_outbe_system_call_keeps_upstream_gas_limit ... ok
+test factory::tests::outbe_system_call_uses_artifact_gas_limit_without_changing_block_limit ... ok
+test factory::tests::runtime_body_reader_clone_reaches_evm_factory_construction ... ok
+test failure_receipt::tests::distinct_codes_produce_distinct_topic1 ... ok
+test failure_receipt::tests::empty_reason_still_encodes ... ok
+test failure_receipt::tests::log_has_two_topics_with_code_indexed ... ok
+test failure_receipt::tests::reason_encoding_is_address_independent ... ok
+test failure_receipt::tests::reason_encoding_is_byte_length_not_char_length ... ok
+test failure_receipt::tests::snapshot_phase_invariant_violation_204 ... ok
+test failure_receipt::tests::snapshot_phase_precompile_revert_201 ... ok
+test failure_receipt::tests::snapshot_zero_fee_already_voted_108 ... ok
+test failure_receipt::tests::snapshot_zero_fee_unauthorized_signer_107 ... ok
+test failure_receipt::tests::topic0_matches_signature ... ok
+test handlers::update::tests::ocomp_genesis_activation_registers_no_generic_update_handler ... ok
+test factory::cancellation_tests::body_mismatch_reverts_real_evm_calls_without_stopping_the_node ... ok
+test factory::cancellation_tests::nested_contract_call_keeps_the_exact_body_read_cancellation ... ok
+test handlers::vote::tests::factory::factory_target_approved_expired_error_and_fatal_paths_are_distinct ... ok
+test factory::cancellation_tests::fresh_execution_fork_reads_the_same_body_after_another_execution_cancels ... ok
+test handlers::vote::tests::below_quorum_l2_registration_expires_without_registry_effects ... ok
+test handlers::vote::tests::factory::pfs_010_06_execution_error_refunds_bond_once_and_retains_reservation ... ok
+test handlers::vote::tests::conflicting_approved_l2_registration_becomes_error_without_blocking_tally ... ok
+test handlers::vote::tests::factory::real_factory_vote_rejects_global_ticker_collision_before_allocation ... ok
+test handlers::vote::tests::factory_public_admission_atomically_records_reservation_and_bond ... ok
+test handlers::vote::tests::factory_target_has_exact_bond_and_reserves_from_genesis ... ok
+test handlers::vote::tests::factory::pfs_010_05_expiry_releases_identity_and_pending_cap_and_burns_once ... ok
+test handlers::vote::tests::l2_registry_is_an_active_validator_vote_target ... ok
+test precompile_routes::tests::authenticated_class_dispatch_uses_the_actual_callee ... ok
+test precompile_routes::tests::class_authentication_requires_registration_marker_schema_and_matching_full_id ... ok
+test precompile_routes::tests::duplicate_and_ethereum_overlap_are_rejected ... ok
+test precompile_routes::tests::factory_route_is_available_from_genesis ... ok
+test precompile_routes::tests::policy_route_is_available_from_genesis ... ok
+test precompile_routes::tests::production_exact_routes_validate ... ok
+test precompile_routes::tests::radicle_registry_route_uses_standard_base_gas ... ok
+test precompile_routes::tests::reader_modes_match_existing_execution_requirements ... ok
+test precompile_routes::tests::registered_stablecoin_token_refuses_a_plain_native_transfer ... ok
+test precompile_routes::tests::required_reader_route_fails_before_module_dispatch_when_authority_is_absent ... ok
+test precompile_routes::tests::stablecoin_class_is_claimed_and_unknown_members_fail_closed ... ok
+test precompile_routes::tests::tee_route_accepts_v1_and_rejects_the_legacy_registration_selector ... ok
+test precompiles::cancellation::tests::abort_marker_cannot_reclassify_a_database_or_later_provider_failure ... ok
+test precompiles::cancellation::tests::dropped_call_clears_its_abort_before_the_next_call ... ok
+test precompiles::tests::call_authority::exact_production_causes_receive_only_their_purpose ... ok
+test precompiles::tests::call_authority::inactive_lysis_selector_does_not_abort_block_execution ... ok
+test precompiles::tests::call_authority::only_exact_non_static_value_free_metadosis_result_vote_is_entitled ... ok
+test precompiles::tests::call_authority::protocol_cycle_entitles_genesis_initialization_at_fallback_activation_height ... ok
+test precompiles::tests::call_authority::protocol_cycle_grants_no_daily_allocation_after_a_multi_day_halt ... ok
+test precompiles::tests::call_authority::route_or_envelope_mismatch_grants_no_mutation_authority ... ok
+test precompiles::tests::value_policy::apparent_value_is_never_credited ... ok
+test precompiles::tests::value_policy::only_the_expected_routes_accept_value_among_exact_routes ... ok
+test precompiles::tests::value_policy::the_stablecoin_class_permits_value ... ok
+test precompiles::tests::value_policy::transferred_value_is_credited_to_payable_routes ... ok
+test precompiles::tests::value_policy::transferred_value_to_a_reject_route_is_refused ... ok
+test precompiles::tests::value_policy::zero_value_dispatches_whatever_the_policy ... ok
+test storage::ctx_provider::lysis_activation_lease_tests::denied_call_cannot_open_activation_frame ... ok
+test storage::ctx_provider::lysis_activation_lease_tests::entitled_call_gets_one_exact_activation_frame ... ok
+test storage::ctx_provider::lysis_activation_lease_tests::wrong_frame_identity_cannot_close_or_replace_active_frame ... ok
+test storage::ctx_provider::metadosis_mutation_frame_tests::denied_or_wrong_purpose_cannot_open_frame ... ok
+test storage::ctx_provider::metadosis_mutation_frame_tests::exact_authority_binding_rejects_mismatch_without_consuming_grant ... ok
+test storage::ctx_provider::metadosis_mutation_frame_tests::exact_bounded_route_budget_is_consumed_one_lease_at_a_time ... ok
+test storage::ctx_provider::metadosis_mutation_frame_tests::nesting_and_wrong_close_preserve_the_active_frame ... ok
+test storage::ctx_provider::metadosis_mutation_frame_tests::one_route_entitlement_cannot_be_reused ... ok
+test storage::ctx_provider::subcall_tests::account_and_child_storage_database_failures_remain_fatal ... ok
+test storage::ctx_provider::subcall_tests::admission_oog_exhausts_parent_and_cannot_be_hidden_by_try_call ... ok
+test storage::ctx_provider::subcall_tests::caught_invalid_opcode_is_not_free ... ok
+test storage::ctx_provider::subcall_tests::child_entry_at_the_native_depth_limit_is_allowed ... ok
+test storage::ctx_provider::subcall_tests::child_memory_obeys_configured_limit ... ok
+test storage::ctx_provider::subcall_tests::delegated_target_is_priced_and_warmed_before_execution ... ok
+test storage::ctx_provider::subcall_tests::depth_rejection_returns_reserved_allowance ... ok
+test storage::ctx_provider::subcall_tests::explicit_cap_and_cold_then_warm_access_are_charged_once ... ok
+test storage::ctx_provider::subcall_tests::inbox_getter_charges_actual_work_once_and_retains_its_child_cap ... ok
+test storage::ctx_provider::subcall_tests::insufficient_balance_returns_unused_child_allowance ... ok
+test storage::ctx_provider::subcall_tests::max_sentinel_uses_eip150_after_upfront_cost ... ok
+test storage::ctx_provider::subcall_tests::native_calls_inside_child_keep_the_enclosing_depth_budget ... ok
+test storage::ctx_provider::subcall_tests::refund_and_storage_survive_success_only ... ok
+test storage::ctx_provider::subcall_tests::reserved_system_command_checks_static_authority_before_decode ... ok
+test storage::ctx_provider::subcall_tests::static_value_is_rejected_before_entry_but_zero_value_call_can_read ... ok
+test storage::ctx_provider::subcall_tests::unsupported_state_gas_is_rejected_before_execution ... ok
+test storage::ctx_provider::subcall_tests::value_transfer_uses_explicit_allowance_without_automatic_stipend ... ok
+test storage::ctx_provider::subcall_tests::zero_value_accounting_matches_native_call_after_wrapper_instructions ... ok
+test tee_attestation_activation::tests::dcap_mainnet_binding_exposes_the_mainnet_chain_identity ... ok
+test tee_attestation_activation::tests::dcap_testnet_binding_exposes_exact_chainspec_policy_bytes ... ok
+test handlers::vote::tests::factory::pfs_010_08_fatal_creation_rolls_back_the_containing_block ... ok
+test tee_attestation_activation::tests::dcap_testnet_binding_loads_the_exact_genesis_file ... ok
+test tee_attestation_activation::tests::dcap_testnet_binding_requires_exact_role_neutral_release_measurement ... ok
+test tee_attestation_activation::tests::malformed_or_oversized_schedule_is_rejected_before_decode ... ok
+test tee_attestation_activation::tests::mismatched_identity_or_hash_fails_closed ... ok
+test tee_attestation_activation::tests::dev_mode_is_valid_for_devnet_and_testnet_but_not_unknown_identities ... ok
+test tee_attestation_activation::tests::valid_activation_binds_chain_policy_and_normative_resources ... ok
+test zk_tests::dispatch_groth16_rejects_nonzero_value ... ok
+test zk_tests::dispatch_groth16_unknown_circuit_returns_zero_bytes ... ok
+test zk_tests::groth16_base_gas_is_flat ... ok
+test zk_tests::zk_verify_input_too_short_errors ... ok
+test zk_tests::zk_verify_max_offset_is_rejected_not_panicking ... ok
+test zk_tests::zk_verify_offset_just_past_canonical_is_rejected ... ok
+test zk_tests::zk_verify_shifted_offset_is_rejected ... ok
+test zk_tests::zk_verify_truncated_payload_errors ... ok
+test zk_tests::zk_verify_unknown_circuit_returns_zero ... ok
+test zk_tests::demo_tribute_with_invalid_curve_points_returns_backend_error ... ok
+test handlers::vote::tests::factory::real_factory_vote_approval_creates_token_refunds_once_and_preserves_surplus ... ok
+test handlers::vote::tests::l2_registration_waits_for_deadline_then_applies_exactly_once ... ok
+test executor::tests::system_execution::whole_committee_ocomp_deadline_and_successor_blocks_execute ... ok
+test executor::tests::system_execution::stale_oracle_cycle_stages_reward_batch_and_allows_later_feeder_vote ... ok
+CapacityForfeiture CycleTick visible gas: used=36080, max_for_20pct_headroom=24000000
+test executor::tests::receipts_and_gas::gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state ... ok
+test executor::tests::system_execution::reward_gem_delivery_mints_one_recipient_per_block_while_cycle_appends_the_next ... ok
+test builder::tests::genesis_block_with_header_artifact_reexecutes_deterministically ... ok
+test executor::tests::block_artifacts::nod_bodies::proposer_validator_body_mints_match_for_all_three_commitment_namespaces ... ok
+CapacityForfeiture CycleTick visible gas: used=36080, max_for_20pct_headroom=24000000
+test executor::tests::receipts_and_gas::capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom ... ok
+test executor::tests::block_artifacts::proposer_and_validator_r_sealed_match_after_gem_issue_settle_and_mine ... ok
+test executor::tests::block_artifacts::nod_bodies::independent_body_stores_produce_identical_full_block_state_receipts_and_balances ... ok
+TEE expiry CycleTick gas: active=128, visible=21080, internal=4345700, limit=30000000
+test executor::tests::receipts_and_gas::tee_expiry_worst_case_active_sweep_fits_cycle_tick_budget ... ok
+
+test result: ok. 269 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.10s
+
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_governance-e0dce1eb89f0af6f)
+
+running 44 tests
+test status::tests::out_of_range_status_rejects ... ok
+test status::tests::text_editable_only_in_draft_rework ... ok
+test status::tests::invalid_transitions_reject ... ok
+test status::tests::valid_transitions_pass ... ok
+test diff::tests::deterministic_for_identical_inputs ... ok
+test diff::tests::identical_texts_produce_empty_diff ... ok
+test diff::tests::empty_base_is_full_insert ... ok
+test diff::tests::edited_line_shows_in_hunk ... ok
+test tests::meta_canon_independent_from_canon ... ok
+test tests::canon_overwrite_shorter_is_clean ... ok
+test tests::canon_roundtrip_and_versioning ... ok
+test tests::author_listing_is_paginated ... ok
+test tests::author_index_lists_own_proposals ... ok
+test tests::gip_diff_against_canon_shows_edits ... ok
+test tests::oip_gip_independent_id_sequences ... ok
+test tests::author_index_is_per_kind ... ok
+test tests::canon_update_requires_authority ... ok
+test tests::gip_mirrors_oip_behavior ... ok
+test tests::reads_python_seeder_output ... ok
+test tests::canon_rejects_empty_and_oversize ... ok
+test tests::missing_proposal_errors ... ok
+test tests::canon_64k_roundtrip ... ok
+test tests::oip_text_update_author_only_and_status_gated ... ok
+test tests::oip_submit_get_roundtrip_text_in_record ... ok
+test tests::out_of_range_status_query_errors ... ok
+test tests::proposal_rejects_empty_and_oversize_text ... ok
+test tests::rework_then_approve_lands_in_approved_only ... ok
+test tests::oip_text_update_shrink_keeps_hash_consistent ... ok
+test tests::status_change_requires_authority_except_author_resubmit ... ok
+test vote_target::tests::encode_decode_roundtrip ... ok
+test vote_target::tests::rejects_empty_text ... ok
+test vote_target::tests::rejects_unknown_kind ... ok
+test tests::status_listing_is_paginated ... ok
+test tests::status_change_preserves_text ... ok
+test tests::status_move_relocates_id_between_buckets ... ok
+test tests::status_transitions_enforced ... ok
+test tests::status_buckets_are_per_kind ... ok
+test tests::authority_follows_live_validator_set ... ok
+test tests::storage_layout_matches_seeder ... ok
+test tests::vote_dispatch::empty_text_is_rejected_at_creation ... ok
+test tests::vote_dispatch::unknown_kind_is_rejected_at_creation ... ok
+test tests::vote_dispatch::invalid_json_payload_is_rejected_at_creation ... ok
+test tests::vote_dispatch::expired_governance_proposal_does_not_create_record ... ok
+test tests::vote_dispatch::approved_vote_creates_approved_proposal ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_radicle-df0502814c33414c)
+
+running 34 tests
+test endpoint::actor::tests::mailbox_bound ... ok
+
+thread 'integration::lifecycle::tests::ack_then_panic_preserves_join_failure' (8435333) panicked at crates/blockchain/radicle/src/integration/lifecycle.rs:223:13:
+panic after service ack
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'integration::network::shutdown_tests::actor_cancellation_panic_is_not_a_deadline' (8435344) panicked at crates/blockchain/radicle/src/integration/network.rs:690:17:
+actor cancellation panic witness
+test integration::lifecycle::tests::unstarted_endpoint_needs_no_ack_and_cannot_start_after_drain ... ok
+
+thread 'integration::network::shutdown_tests::actor_panic_after_ack_is_not_success' (8435345) panicked at crates/blockchain/radicle/src/integration/network.rs:649:13:
+actor panic after ack witness
+test integration::lifecycle::tests::ack_without_service_exit_is_aborted_and_reaped ... ok
+
+thread 'integration::lifecycle::tests::completed_endpoint_retains_actual_transport_error_or_panic' (8435336) panicked at crates/blockchain/radicle/src/integration/lifecycle.rs:165:21:
+endpoint panic witness
+test integration::lifecycle::tests::ack_then_panic_preserves_join_failure ... ok
+test integration::network::shutdown_tests::actor_cancellation_panic_is_not_a_deadline ... ok
+test integration::network::shutdown_tests::closing_network_commands_reaps_actor ... ok
+test integration::network::shutdown_tests::actor_panic_after_ack_is_not_success ... ok
+test integration::lifecycle::tests::closed_ack_is_not_success_even_if_service_exits_cleanly ... ok
+test endpoint::actor::tests::handle_deadline ... ok
+test integration::network::shutdown_tests::shutdown_closed_mailbox_is_not_deadline ... ok
+test integration::lifecycle::tests::completed_endpoint_retains_actual_transport_error_or_panic ... 
+thread 'manager::actor::shutdown_tests::cancellation_preserves_manager_destructor_panic' (8435354) panicked at crates/blockchain/radicle/src/manager/actor.rs:545:17:
+manager cancellation panic witness
+ok
+test integration::network::shutdown_tests::explicit_shutdown_ack_follows_actor_cleanup ... ok
+test integration::network::shutdown_tests::shutdown_preserves_closed_acknowledgement ... ok
+test integration::network::shutdown_tests::network_cancellation_aborts_actor ... ok
+test integration::network::shutdown_tests::shutdown_full_mailbox_waits_until_deadline ... ok
+test integration::network::shutdown_tests::stalled_actor_is_aborted_and_reaped_after_ack ... ok
+test manager::actor::shutdown_tests::cancellation_preserves_manager_destructor_panic ... 
+thread 'manager::actor::shutdown_tests::shutdown_preserves_manager_panic' (8435359) panicked at crates/blockchain/radicle/src/manager/actor.rs:457:51:
+manager panic witness
+ok
+
+thread 'manager::actor::shutdown_tests::shutdown_preserves_manager_panic_and_still_cleans_endpoint' (8435360) panicked at crates/blockchain/radicle/src/manager/actor.rs:520:51:
+manager panic witness
+test integration::network::shutdown_tests::transport_failure_is_preserved_and_actor_reaped ... ok
+test manager::actor::shutdown_tests::dropping_manager_aborts_owned_task ... ok
+test manager::actor::shutdown_tests::shutdown_drains_owned_manager_before_endpoint ... ok
+test integration::network::evidence::tests::publication_remains_available_after_reader_unwinds ... ok
+test manager::actor::shutdown_tests::shutdown_bounds_both_stages_and_cleans_endpoint_after_manager_timeout ... ok
+test manager::actor::shutdown_tests::shutdown_preserves_manager_panic ... ok
+test manager::actor::shutdown_tests::shutdown_timeout_reaps_owned_manager_before_endpoint_cleanup ... ok
+test manager::actor::shutdown_tests::shutdown_preserves_manager_panic_and_still_cleans_endpoint ... ok
+test integration::network::evidence::tests::replacing_peer_preserves_previously_returned_snapshot ... ok
+test integration::network::evidence::tests::pruning_requires_live_exact_validator_peer_and_node_binding ... ok
+test manager::actor::shutdown_tests::unreapable_manager_returns_cancellation_deadline ... ok
+test integration::network::evidence::tests::snapshot_remains_available_after_writer_unwinds ... ok
+test integration::network::evidence::tests::snapshots_are_ordered_independent_copies ... ok
+test manager::snapshot::tests::exact_snapshot ... ok
+test integration::network::evidence::tests::concurrent_readers_observe_complete_signed_records ... ok
+test manager::snapshot::approval_tests::missing_finality_noncanonical_and_unavailable_snapshots_fail_without_fallback ... ok
+test manager::snapshot::approval_tests::exact_finalized_state_does_not_leak_latest_approval_or_revoke_accepted_history ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_radicleregistry-5741ff984e9452bd)
+
+running 17 tests
+test tests::canonical_repo_id_word_has_zero_twelve_byte_tail ... ok
+test tests::storage_layout_slots_zero_through_five_are_stable ... ok
+test tests::precompile_exposes_mutation_views_event_and_rejects_value ... ok
+test tests::registration_is_dense_unique_and_records_registrant_and_generation ... ok
+test tests::unlimited_capacity ... ok
+test payload::tests::exact_subject_roundtrip_and_noncanonical_inputs_are_rejected ... ok
+test tests::zero_duplicate_capacity_and_out_of_range_revert_without_advancing ... ok
+test tests::every_mutation_failure_rolls_back_the_whole_registration ... ok
+test tests::patch_vote::unknown_repository_reservation_rolls_back_proposal_and_electorate ... ok
+test tests::patch_vote::approval_row_alone_does_not_authorize_pending_expired_or_error_proposals ... ok
+test tests::patch_vote::approval_execution_has_bounded_storage_gas ... ok
+test tests::patch_vote::abi_vote_approves_exact_revision_once_only_after_deadline ... ok
+test tests::patch_vote::tally_rechecks_current_membership_and_expired_decision_grants_no_permission ... ok
+test tests::patch_vote::outsiders_pending_and_retained_members_cannot_vote_or_inflate_denominator ... ok
+test tests::patch_vote::pending_joiner_votes_only_after_activation_and_changes_current_quorum ... ok
+test tests::patch_vote::every_terminal_mutation_failure_rolls_back_approval_status_and_events ... ok
+Patch electorate n=256 yes=171 maximum_cast_storage_gas=1121500 terminal_storage_gas=1228600
+test tests::patch_vote::maximum_electorate_has_bounded_cast_and_tally_storage_gas ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.86s
+
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_update-539d818d6fb7678d)
+
+running 76 tests
+test startup::tests::allows_pre_vote_active_version_zero ... ok
+test startup::tests::allows_binary_newer_than_active ... ok
+test constants::tests::only_testnet_skips_the_activation_buffer ... ok
+test constants::tests::every_network_is_strictly_capped_to_the_binary_version ... ok
+test payload::tests::other_chains_still_require_the_buffer ... ok
+test payload::tests::localnet_allows_immediate_activation ... ok
+test startup::tests::rejects_binary_older_than_active ... ok
+test payload::tests::rejects_zero_major_minor_version ... ok
+test payload::tests::rejects_undotted_version_string ... ok
+test payload::tests::rejects_numeric_version_json ... ok
+test payload::tests::optional_measurement_accepts_absent_null_and_empty ... ok
+test payload::tests::encode_decode_roundtrip_major_minor_string ... ok
+test payload::tests::removed_policy_fields_are_rejected ... ok
+test payload::tests::nonempty_measurement_must_be_valid ... ok
+test payload::tests::measurement_payload_roundtrips_without_external_policy_and_requires_future_height ... ok
+test tests::events::dispatch_rejects_unknown_selector ... ok
+test tests::events::schedule_emits_scheduled_update_created_event ... ok
+test tests::lifecycle::activate_version_above_protocol_version_is_fatal ... ok
+test tests::handlers::activation_without_handler_succeeds ... ok
+test tests::handlers::handler_failure_is_fatal_and_leaves_update_unactivated ... ok
+test tests::handlers::registered_handler_is_called_before_activation ... ok
+test tests::lifecycle::activation_boundary_is_begin_block_inclusive ... ok
+test tests::handlers::activated_update_does_not_reinvoke_handler_on_replay ... ok
+test tests::precompile::dispatch_rejects_non_zero_value ... ok
+test tests::lifecycle::waiting_index_tracks_pending_scheduled_updates ... ok
+test tests::events::lifecycle_emits_upgrade_activated_event ... ok
+test tests::precompile::dispatch_rejects_unknown_selector ... ok
+test tests::precompile::precompile_abi_compiles ... ok
+test tests::lifecycle::lifecycle_activates_scheduled_update ... ok
+test tests::records::protocol_version_encoding_roundtrip ... ok
+test tests::records::scheduled_update_status_roundtrip ... ok
+test tests::events::lifecycle_emits_upgrade_canceled_event ... ok
+test tests::precompile::dispatch_get_scheduled_update ... ok
+test tests::lifecycle::second_schedule_at_same_height_is_rejected ... ok
+test tests::scheduled::active_version_helpers_roundtrip ... ok
+test tests::precompile::dispatch_active_version_and_waiting_list ... ok
+test tests::scheduled::rejects_downgrade_schedule ... ok
+test tests::records::scheduled_update_record_dynamic_fields_roundtrip ... ok
+test tests::scheduled::rejects_conflicting_activation_height ... ok
+test tests::unset_version::exact_state_resolver_rejects_noncanonical_width ... ok
+test tests::lifecycle::activate_scheduled_update_cancels_stale_lower_version ... ok
+test tests::handlers::handler_failure_rolls_back_tee_policy_promotion_with_update_activation ... ok
+test tests::unset_version::get_active_version_returns_zero_on_fresh_chain ... ok
+test tests::scheduled::rejects_duplicate_proposal_id ... ok
+test tests::unset_version::is_version_active_zero_on_fresh_chain ... ok
+test tests::unset_version::schedule_update_rejects_zero_version ... ok
+test tests::unset_version::set_active_version_makes_helpers_return_version ... ok
+test tests::unset_version::version_at_height_returns_zero_when_unset ... ok
+test tests::scheduled::schedule_update_writes_fields_and_waiting_index ... ok
+test tests::lifecycle::multiple_due_updates_cannot_reduce_active_version ... ok
+test tests::vote_dispatch::handle_approved_fails_fatally_without_mutation_for_malformed_payload ... ok
+test tests::handlers::software_update_activation_promotes_its_staged_tee_policy ... ok
+test tests::handlers::activating_update_discards_staged_policy_owned_by_canceled_update ... ok
+test tests::vote_dispatch::validate_reverts_with_exact_reason_for_malformed_payload ... ok
+test tests::handlers::software_update_activation_promotes_ocomp_and_keeps_the_predecessor_readable ... ok
+test version::tests::formats_protocol_version_with_raw_value ... ok
+test version::tests::from_word_saturates_oversized_values ... ok
+test version::tests::parse_protocol_version_is_const ... ok
+test version::tests::parses_major_minor_and_raw_versions ... ok
+test version::tests::protocol_version_constants_come_from_package_metadata ... ok
+test version::tests::protocol_version_errors_follow_component_scan_then_decimal_order ... ok
+test version::tests::rejects_invalid_protocol_versions ... ok
+test vote_target::tests::invariant_and_persisted_state_errors_remain_fatal ... ok
+test vote_target::tests::only_expected_execution_conflicts_become_proposal_error ... ok
+test tests::vote_dispatch::unknown_target_is_rejected_at_creation ... ok
+test tests::vote_dispatch::expired_update_proposal_does_not_emit_upgrade_activated ... ok
+test tests::vote_dispatch::unchanged_measurement_rolls_back_update_schedule_and_staging ... ok
+test tests::vote_dispatch::invalid_json_payload_is_rejected_at_creation ... ok
+test tests::vote_dispatch::approved_vote_proposal_schedules_update_and_activates ... ok
+test tests::vote_dispatch::one_approved_update_atomically_stages_tee_and_ocomp_successors ... ok
+test tests::vote_dispatch::invalid_update_payload_is_rejected_at_creation ... ok
+test tests::vote_dispatch::handler_conflict_marks_proposal_error ... ok
+test tests::scheduled::max_waiting_for_activation_updates_is_enforced ... ok
+test tests::vote_dispatch::measurement_only_vote_derives_policy_and_promotes_only_at_deadline ... ok
+test tests::vote_dispatch::software_only_update_keeps_enclave_for_absent_null_and_empty_measurement ... ok
+test tests::vote_dispatch::custom_voting_window_schedules_software_and_enclave_updates_before_default_deadline ... ok
+
+test result: ok. 76 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_vote-0736915ecde522f2)
+
+running 65 tests
+test tests::characterization::public_bonded_admission_records_only_its_exact_liability ... ok
+test tests::characterization::creation_preserves_original_payload_bytes_in_state_and_log ... ok
+test tests::bond::bond_layout_appends_after_the_v0_vote_schema ... ok
+test tests::characterization::public_bonded_execution_error_rolls_back_target_refunds_bond_and_keeps_reservation ... ok
+test tests::characterization::public_bonded_second_pending_proposal_of_a_proposer_fails ... ok
+test tests::characterization::public_bonded_wrong_value_fails_before_allocation ... ok
+test tests::characterization::public_reservation_failure_rolls_back_proposal_liability_and_logs ... ok
+test tests::characterization::registry_rejects_duplicate_target_modules ... ok
+test tests::characterization::unpublished_selectors_refuse_native_value ... ok
+test tests::characterization::insufficient_escrow_rolls_back_target_status_index_accounting_and_events ... ok
+test tests::characterization::approved_handler_failure_rolls_back_target_and_records_error_without_replay ... ok
+test tests::characterization::expired_public_bond_burns_once_and_preserves_forced_surplus ... ok
+test tests::characterization::public_bonded_global_cap_fails_before_allocation ... ok
+test tests::characterization::infrastructure_failure_rolls_back_target_and_aborts_without_changing_proposal ... ok
+test tests::bond::raw_v0_proposal_reads_as_no_bond_and_tallies_after_the_append ... ok
+test tests::characterization::approved_public_bond_refunds_once_and_preserves_forced_surplus ... ok
+test tests::characterization::execution_receives_original_payload_and_exact_context ... ok
+test tests::characterization::outer_hook_checkpoint_revert_restores_pending_state_index_and_logs ... ok
+test tests::bond::invalid_bond_enum_and_proposal_counter_exhaustion_are_typed ... ok
+test tests::error_bond::a_bonded_target_error_refunds_the_bond_once_and_closes_the_liability ... ok
+test tests::duplicate_vote_is_rejected ... ok
+test tests::deadline_quorum_requires_two_thirds_of_active_set ... ok
+test tests::characterization::target_reservation_failure_rolls_back_proposal_target_state_and_log ... ok
+test tests::get_proposal_voters_pagination_is_deterministic ... ok
+test tests::error_bond::a_persisted_legacy_unbonded_error_leaves_the_pending_index_without_settlement ... ok
+test tests::error_bond::a_persisted_legacy_bonded_error_is_released_and_refunded_once_on_the_next_pass ... ok
+test tests::error_bond::an_unbonded_target_error_settles_no_bond_and_leaves_the_pending_index ... ok
+test tests::get_proposal_uses_active_set_at_read_time ... ok
+test tests::guards::cast_vote_rejects_after_deadline ... ok
+test tests::guards::begin_block_does_not_tally_at_exact_deadline ... ok
+test tests::guards::stablecoin_public_cap_preserves_48_vote_slots ... ok
+test tests::bond::bond_accounting_is_checked_and_exactly_once ... ok
+test tests::guards::max_pending_proposals_per_validator_is_enforced ... ok
+test tests::guards::pending_validator_cannot_create_proposal ... ok
+test tests::guards::pending_validator_cannot_cast_vote ... ok
+test tests::guards::pending_validator_cannot_add_a_ballot_to_the_tally ... ok
+test tests::guards::other_validator_can_create_while_proposer_has_pending ... ok
+test tests::guards::cast_vote_rejects_non_validator ... ok
+test tests::guards::create_proposal_rejects_non_validator ... ok
+test tests::inactive_voter_is_ignored_at_deadline_tally ... ok
+test tests::guards::cast_vote_rejects_when_not_pending ... ok
+test tests::precompile::dispatch_create_proposal_accepts_exact_public_bond_only ... ok
+test tests::list_proposals_and_by_status_are_paginated ... ok
+test tests::guards::proposer_can_create_after_pending_proposal_is_tallied ... ok
+test tests::list_proposals_oversized_index_does_not_panic ... ok
+test tests::precompile::custom_window_does_not_change_existing_proposal_or_quorum ... ok
+test tests::precompile::precompile_abi_compiles ... ok
+test tests::proposal_status_storage_roundtrip ... ok
+test tests::quorum_uses_two_thirds_threshold ... ok
+test tests::vote_key_depends_on_proposal_and_voter ... ok
+test tests::vote_kind_bool_roundtrip ... ok
+test tests::precompile::bond_views_return_legacy_no_bond_and_recorded_liability ... ok
+test tests::precompile::custom_window_preserves_target_bond_rules ... ok
+test tests::precompile::dispatch_cast_vote_emits_event ... ok
+test tests::precompile::dispatch_create_proposal_emits_event ... ok
+test tests::precompile::dispatch_create_proposal_rejects_non_zero_value_before_state_change ... ok
+test tests::precompile::dispatch_cast_vote_rejects_non_zero_value_before_state_change ... ok
+test tests::precompile::dispatch_rejects_non_zero_value ... ok
+test tests::precompile::dispatch_views_return_abi_shaped_data ... ok
+test tests::write_vote_appends_ordered_voters ... ok
+test tests::precompile::custom_window_persists_deadline_and_tallies_only_after_it ... ok
+test tests::precompile::custom_window_rejects_invalid_duration_overflow_and_unauthorized_creation ... ok
+test tests::error_bond::a_failure_after_every_error_finalization_mutation_rolls_back_everything ... ok
+test tests::characterization::failure_after_every_approved_finalization_mutation_rolls_back_everything ... ok
+test tests::guards::max_pending_proposals_is_enforced ... ok
+
+test result: ok. 65 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.97s
+

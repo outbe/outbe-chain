@@ -97,11 +97,12 @@ where
             OcompLifecycleActivation::Disabled
         };
         // The shared layout defines order. Block 1 always reserves mandatory OST3.
-        let kinds = expected_begin_block_kinds_for_activation(
+        let kinds = outbe_primitives::system_tx::expected_begin_block_kinds_for_publication(
             block_number,
             has_boundary_outcome,
             block_number == 1,
             ocomp_activation,
+            block_artifacts.radicle_publication.is_some(),
         );
         let mut system_txs = Vec::new();
         for kind in &kinds {
@@ -159,6 +160,14 @@ where
                 }
                 SystemTxKind::HookEvents => {
                     self.append_begin_input(&mut system_txs, *kind, || SystemTxInputV2::HookEvents)?
+                }
+                SystemTxKind::RadiclePublication => {
+                    let batch = block_artifacts.radicle_publication.clone().ok_or_else(|| {
+                        BlockValidationError::msg("missing publication header batch")
+                    })?;
+                    self.append_begin_input(&mut system_txs, *kind, || {
+                        SystemTxInputV2::RadiclePublication { batch }
+                    })?;
                 }
                 // The canonical begin plan excludes the end-zone terminal request.
                 SystemTxKind::OcompTerminalRequest => {
@@ -361,11 +370,12 @@ where
                 } else {
                     OcompLifecycleActivation::Disabled
                 };
-                let expected = expected_begin_block_kinds_for_activation(
+                let expected = outbe_primitives::system_tx::expected_begin_block_kinds_for_publication(
                     block_number,
                     has_boundary_outcome,
                     has_tee_bootstrap,
                     ocomp_activation,
+                    block_artifacts.radicle_publication.is_some(),
                 );
                 ExecutorValidationError::UnexpectedBeginSystemTx {
                     body_index,

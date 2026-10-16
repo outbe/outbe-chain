@@ -1,0 +1,10 @@
+   Compiling radicle-crypto v0.19.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-crypto)
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+   Compiling radicle-core v0.4.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-core)
+   Compiling radicle-cob v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-cob)
+   Compiling radicle-fetch v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-fetch)
+   Compiling radicle-protocol v0.9.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-protocol)
+   Compiling radicle-node v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-node)
+   Compiling outbe-radicle-runtime v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/radicle)
+   Compiling outbe-radicle-sidecar v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/bin/outbe-radicle)
+    Finished `dev` profile [unoptimized] target(s) in 7.62s

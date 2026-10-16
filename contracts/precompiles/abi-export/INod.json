@@ -173,11 +173,6 @@
             "internalType": "uint16"
           },
           {
-            "name": "floorPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "encryptedGratisAmount",
             "type": "bytes",
             "internalType": "bytes"
@@ -206,11 +201,6 @@
             "name": "settlementCostMinor",
             "type": "uint256",
             "internalType": "uint256"
-          },
-          {
-            "name": "isQualified",
-            "type": "bool",
-            "internalType": "bool"
           },
           {
             "name": "issuanceCurrency",

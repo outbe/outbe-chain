@@ -1,0 +1,210 @@
+{
+  "feature": "outbe-chain-pjz",
+  "goal_status": "blocked in goal API; current functionality work explicitly authorized by user",
+  "scope": "approved plan.md + task-specs.json + design.md only",
+  "last_periodic_report_utc": "2026-10-16T06:40:30.233178+00:00",
+  "next_periodic_report_due_utc": "2026-10-16T07:10:30.233178+00:00",
+  "period_minutes": 30,
+  "stage": "Automatic genesis bootstrap, exact-patch Vote, distributed BLS Review, Merge/BindMaterial, ordinary native BLS fetch and managed fresh-history recovery are wired. Production E2E and full task/feature acceptance remain incomplete.",
+  "decision_gate": {
+    "id": "D3-description-bound",
+    "status": "Resolved by explicit user decision: maximum256 UTF-8 bytes; implemented8f3008ae2. No approval pending.",
+    "proposal": "decisions/D3-description-bound/proposal.md",
+    "snapshot": "decisions/D3-description-bound/snapshot.json",
+    "source_sha": "a0c104079c24525bd4d5e9fd4374aedc76c57df4",
+    "proposal_sha256": "7317219def6e29c7d0d988bcf9b7215b601bd7998545bf1fcb6bbe17aad1b23f",
+    "problem": "Approved genesis description<=1024 bytes, native Heartwood Project<=255. Valid256-byte OGD1 cannot form native governments Project.",
+    "proposed_decision": "Historical proposal255 was superseded by explicit user choice256. Current approved maximum256; no truncation.",
+    "dependent_implementation": "User explicitly resumed approved implementation; native bootstrap/signing foundations progressed through837397a17.",
+    "rule": "Three independent non-authors -> concrete proposal/evidence -> wait explicit user approval; decision review is not task acceptance.",
+    "historical": "D1 approval request withdrawn; D2 explicitly excluded. Neither is reopened.",
+    "user_proposal": "decisions/D3-description-bound/user-proposal.md",
+    "user_proposal_sha256": "e875e2b093d879dfdc0abe80f4f8c2df70d708e44243f010f6a90225f9574390",
+    "user_approval": "Explicit user chose256 instead of proposed255; see user-decision-256.md. No further approval pending.",
+    "reviews": {
+      "R1": {
+        "report": "decisions/D3-description-bound/reviews/R1.md",
+        "sha256": "2c276b34ed28bbe55cbddf1776c6a99d761882ae94d84b50ccc1fe8b5f624d73",
+        "verdict": "Problem confirmed; A technically acceptable only after explicit user approval; not acceptance"
+      },
+      "R2": {
+        "report": "decisions/D3-description-bound/reviews/R2.md",
+        "sha256": "1baccee8e95359e90bc614adcaa58a26cb9f27400c6ce783c7e1092f9e65762e",
+        "verdict": "Problem confirmed; A technically acceptable only after explicit user approval; not acceptance"
+      },
+      "R3": {
+        "report": "decisions/D3-description-bound/reviews/R3.md",
+        "sha256": "750f78dcf8ace74f533f7048195c814c4dc2980e88f6b21de929a72846529806",
+        "verdict": "Problem confirmed; A technically acceptable only after explicit user approval; not acceptance"
+      }
+    },
+    "latest_explicit_question": "Resolved by user256 and explicit continue; no pending approval question."
+  },
+  "acceptance": "P0 administratively reopened during limit correction, not reclosed; P1/P5 historical closed; P2/P3 incomplete; P4/P6/P7/P8 open. No new task/feature acceptance asserted.",
+  "last_periodic_report": {
+    "completed": "3181fe773 automatic three-sidecar bootstrap/restart/native fetch;0ff4183ba fixed native Review UDS signing and accepted root archive proof, with exact evidence. Current uncommitted full Review verification/persistence/attestation/mailbox bridge targeted scenario passes.",
+    "proof": "3181fe773156tests;0ff4183ba157tests; both7consumer builds/Clippy/fmt PASS. Current full package bridge targeted UDS/native/q-1/invalid-last-attestation/no-slot/currentness/mailbox tests PASS before final source freeze; Clippy running.",
+    "tasks": "No new closures:2 historically accepted P1/P5; P0 administratively reopened; P2/P3 incomplete; P4/P6/P7/P8 open.",
+    "limitations": "Automatic Review job discovery/collection/checkpoint install, later owner-history grants, archived fresh-node delivery, BindMaterial/Merge and production E2E remain incomplete; no pending decision.",
+    "next": "Freeze current source and full affected checks/evidence, then wire automatic Review job discovery/collection/publication and accepted native installation."
+  },
+  "blocked_audit": {
+    "consecutive_goal_turns": 3,
+    "condition": "Explicit D3 description-bound approval missing; canonical native network bootstrap/root authorization is the next required production dependency.",
+    "checked_utc": "2026-10-16T01:13:21.937915+00:00",
+    "basis": "Current source still design/genesis/seeder1024 versus native Project255;3 decision reviews/proposal already complete,async approval question pending. No user answer received. No live test process remains; cannot classify conversation waiting as verified process wait.",
+    "next_step": "Continue approved plan. Old missing-D3 condition resolved; no pending approval.",
+    "threshold": "Three consecutive overall impasse audits confirmed,including original. Same missing explicit D3 decision; independent work/proof exhausted at this dependency; no live process to wait on. Eligible for blocked status,not complete or paused.",
+    "actual_goal_status": "Historical blocked audit resolved; goal API now active after user resume.",
+    "resolved_by": "Explicit256 instruction and explicit continue; old missing-decision condition no longer exists.",
+    "historical": true
+  },
+  "user_confirmed_contract": {
+    "network_repository_owner": "sole network BLS authority; no user delegation feature",
+    "decision": "only network Vote by eligible current ValidatorSet for exact patch revision",
+    "accepted_history": "accepted stays accepted; validator/material change never revokes an accepted patch",
+    "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
+    "resume_intent": "explicit; goal API active confirmed2026-10-16"
+  },
+  "source_sha": "48a542fc3cd5027d6529e7cb68279f9a4261572b",
+  "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
+  "p5_reviews": {
+    "R1": "outbe-chain-pjz.6.1",
+    "R2": "outbe-chain-pjz.6.2",
+    "R3": "outbe-chain-pjz.6.3",
+    "status": "all three full-AC PASS and reviewer-owned children closed; parent closed",
+    "R1_status": "closed PASS AC1-AC4",
+    "R2_status": "closed PASS AC1-AC4",
+    "evidence_commit": "999b0e643"
+  },
+  "p2_baseline": {
+    "source": "91644eb78148e7b81cd8e46478dfb0466d321e27",
+    "tests": "665 native lib tests PASS/0 ignored",
+    "lint": "full vendor workspace all-target Clippy -D warnings PASS",
+    "root_consumers": "sidecar/runtime/keygen/e2e-harness all-target check PASS",
+    "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
+    "acceptance": "intermediate only; P2 incomplete"
+  },
+  "current_source_changes": "48a542fc3: existing OCA1/OCQ1 package channel dispatches Bootstrap/Review; Review native/q reconstruction and all batch attestations verified before durable selection; actor freshly rechecks own authority/material and uses same one-batch mailbox, clears on material/finality/shutdown. No proposer or native git.rs changes.",
+  "p2_evidence": {
+    "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
+    "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
+    "stream_failed_probe": "evidence/outbe-chain-pjz.3/native-stream",
+    "ed_compatibility": "evidence/outbe-chain-pjz.3/ed-compatibility",
+    "all_acceptance_criteria_complete": false,
+    "native_identity": "evidence/outbe-chain-pjz.3/native-identity",
+    "native_cache": "evidence/outbe-chain-pjz.3/native-cache",
+    "local_publication": "evidence/outbe-chain-pjz.3/local-publication-r2",
+    "local_publication_failed_attempt": "evidence/outbe-chain-pjz.3/local-publication",
+    "managed_receiver": "evidence/outbe-chain-pjz.3/managed-receiver",
+    "current_ed_peers": "evidence/outbe-chain-pjz.3/local-publication-ed-compatibility"
+  },
+  "scope_control": {
+    "D2": "excluded from implementation per explicit user correction; no D2 production changes; do not investigate or dispatch reviews",
+    "next": "Only approved direct Vote -> BLS Review -> signed refs and normal announcement/synchronization; actual current-set authorization and collector per P3/P6. No D2 or additional git.rs fetch gate.",
+    "constraint": "No new architecture or deliverable outside approved P0-P8",
+    "user_correction": "Latest user accepted direct native Review flow after rollback/studying code. Do not replace ordinary Radicle synchronization or add a separate Git storage/fetch admission redesign."
+  },
+  "execution_authorization": "Explicit user continue and goal API active after user resume2026-10-16. No remaining D3 approval question.",
+  "foundation_evidence": "evidence/outbe-chain-pjz.4/native-review-foundation",
+  "foundation_checks": "Frozen26d497f4a:38 full outbe-radicle lib tests+506 full outbe-consensus lib tests(0 ignored), scoped lib+tests Clippy PASS. Earlier1341e6de4:416 native tests/vendor Clippy/fmt. Intermediate evidence only; no full-AC acceptance or reviewer PASS.",
+  "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
+  "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
+  "latest_verification": {
+    "source_sha": "48a542fc3cd5027d6529e7cb68279f9a4261572b",
+    "checks": "157 affected SDK/runtime tests, zero ignored; seven consumers all-target check; SDK/runtime/node all-target Clippy -Dwarnings; seven changed Rust files fmt PASS. Frozen source unchanged.",
+    "scenarios": "Real native bootstrap/Ed patch/UDS/actor: Review COB and refs q3 recovery, complete Review package verification/selection/attestation/mailbox; q-1 witness and invalid-last identity reject before slot/ready; repeated attestation; budgeted nonconsuming prefix; material withdrawal/restore and fresh approval replacement; finalized refresh/shutdown clear ready. Owner refs/sigrefs unchanged before checkpoint. Automatic three-sidecar bootstrap/restart/native fetch regression PASS. DKG/finality/approval fixture, not production E2E."
+  },
+  "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
+  "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
+  "review_refs_evidence": "evidence/outbe-chain-pjz.4/review-refs",
+  "public_output_evidence": "evidence/outbe-chain-pjz.4/public-output",
+  "checkpoint_preparation_evidence": "evidence/outbe-chain-pjz.4/checkpoint-preparation",
+  "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing",
+  "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
+  "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
+  "last_goal_turn_classification": "progress:48a542fc3 complete Review package local publication bridge source committed and exact157tests/build/lint/fmt evidence verified. No stage closure; goal active; no pending decision.",
+  "next_required_work": "Full-chain E2E source prepared and compiled; user will run separately. Production E2E outcome and full P0-P8/required CI acceptance remain open.",
+  "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
+  "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
+  "review_store_evidence": "evidence/outbe-chain-pjz.4/review-store-r2",
+  "review_store_superseded_candidate": "evidence/outbe-chain-pjz.4/review-store",
+  "transport_investigation": {
+    "repowise": "Worktree not indexed; no main-checkout/index changes. Earlier MCP query did not return and was terminated. Current evidence uses live source/checks.",
+    "known_sources": "bin/outbe-chain/src/launch/node/radicle.rs; integration/local.rs; manager/snapshot.rs; crates/system/radicle/src/lib.rs::PreparedSidecar",
+    "current_boundary": "Existing native Git connection/pack acquisition with generic local policy preparation. Outbe own-finalized receipts/approvals/descriptor remain the managed authority; ordinary native fetch remains independent of Outbe.",
+    "decision": "No active approval question; fixed local receipt transport realizes existing trusted-UDS requirement, no new consensus/signing policy."
+  },
+  "accepted_review_evidence": "evidence/outbe-chain-pjz.4/accepted-review",
+  "accepted_policy_evidence": "evidence/outbe-chain-pjz.4/accepted-policy",
+  "initial_dkg_source_evidence": "evidence/outbe-chain-pjz.5/initial-dkg-source",
+  "local_receipt_evidence": "evidence/outbe-chain-pjz.4/local-receipts",
+  "local_signing_state_evidence": "evidence/outbe-chain-pjz.4/local-signing-state",
+  "local_public_material_evidence": "evidence/outbe-chain-pjz.4/local-public-material",
+  "interactive_repository_signing_evidence": "evidence/outbe-chain-pjz.4/interactive-repository-signing",
+  "checkpoint_replay_store_evidence": "evidence/outbe-chain-pjz.4/checkpoint-replay-store",
+  "local_preparation_context_evidence": "evidence/outbe-chain-pjz.4/local-preparation-context",
+  "current_native_regression_evidence": "evidence/outbe-chain-pjz.3/current-native-regression",
+  "current_native_regression": {
+    "source_sha": "c383730c6b5c090beb5b3ad2cbdc229f4e947030",
+    "vendor_tree": "41ecc9e52feebe8e85d620c1f05c8f63e8e872f8",
+    "checks": "671 native library tests/10 sidecar tests/2 CLI tests,all0ignored;whole vendor workspace all-target Clippy -D warnings and vendor fmt PASS;source unchanged.",
+    "reason": "Actual12-file vendor delta since prior full regression0dbd83c40; narrower later P3 checks did not substitute for current complete required P2 run.",
+    "limits": "Rust1.96 explicit override;static/native/missing-provider scenarios,not complete managed positive Outbe flow/full cache provenance/promotion/live chain/E2E/task acceptance."
+  },
+  "managed_positive_accounting_evidence": "evidence/outbe-chain-pjz.3/managed-positive-accounting",
+  "description_bound_user_decision": {
+    "instruction": "нужпо поставить 256",
+    "maximum_utf8_bytes": 256,
+    "document": "decisions/D3-description-bound/user-decision-256.md",
+    "status": "Implemented and focused boundary checks passed at8f3008ae2389157a0019e639a5844fc44ec5f10c; extra re-review stopped on explicit user correction.",
+    "goal_api_status": "active after explicit user resume; old blocked status is historical."
+  },
+  "bootstrap_native_evidence": "evidence/outbe-chain-pjz.5/native-bootstrap",
+  "bootstrap_signing_evidence": "evidence/outbe-chain-pjz.4/bootstrap-signing",
+  "local_bootstrap_context_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-context",
+  "bootstrap_attestation_evidence": "evidence/outbe-chain-pjz.5/bootstrap-attestation",
+  "bootstrap_registry_evidence": "evidence/outbe-chain-pjz.5/bootstrap-registry",
+  "execution_status": "Active goal confirmed by API after explicit user resume; executing approved plan.",
+  "local_bootstrap_document_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-document",
+  "local_bootstrap_native_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-native",
+  "local_bootstrap_publication_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-publication",
+  "progress_audit": {
+    "previous_turn": "progress:3181fe773 automatic bootstrap and0ff4183ba fixed Review signing with complete affected evidence.",
+    "current_turn": "Automatic genesis bootstrap, exact-patch Vote, distributed BLS Review, Merge/BindMaterial, ordinary native BLS fetch and managed fresh-history recovery are wired. Production E2E and full task/feature acceptance remain incomplete.",
+    "next_action": "Full-chain E2E source prepared and compiled; user will run separately. Production E2E outcome and full P0-P8/required CI acceptance remain open."
+  },
+  "public_contribution_relay_evidence": "evidence/outbe-chain-pjz.4/public-contribution-relay",
+  "finalized_publication_progress_evidence": "evidence/outbe-chain-pjz.4/finalized-publication-progress",
+  "automatic_bootstrap_evidence": "evidence/outbe-chain-pjz.4/automatic-bootstrap",
+  "local_review_signing_evidence": "evidence/outbe-chain-pjz.4/local-review-signing",
+  "local_review_publication_evidence": "evidence/outbe-chain-pjz.4/local-review-publication",
+  "current_functionality_scope": {
+    "user_instruction": "РЕализуй необходимый функционал, e2e тесты пока делат ьне надо и их выполнять",
+    "base_sha": "6016e74c7",
+    "implementation": "Native managed fetch obtains immutable owner objects, reconstructs receipt-bound Bootstrap/Review/Merge/BindMaterial manifests, grants through existing full native verification, caches both runtime and SDK inputs. No archive transport or storage/git.rs change. Public descriptor can be reread without current/historical signing material.",
+    "validation": "Eight pure unit tests (recovery1/store6/policy1), root SDK/runtime and affected standalone Heartwood all-target Clippy, changed-source fmt and diff checks passed on the recorded source. E2E explicitly deferred; no full task/feature acceptance asserted.",
+    "source_sha256": "495e7855588116fe94448d52ce342267ea60e99f8d5348a08452aa4e97eea5d4",
+    "evidence": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.3/managed-native-recovery",
+    "reviews": "Three independent scoped PASS R1/R2/R3 on source aggregate 495e7855588116fe94448d52ce342267ea60e99f8d5348a08452aa4e97eea5d4; artifacts/review hashes retained. No full task or feature closure."
+  },
+  "current_e2e_scope": {
+    "user_instruction": "я думаю стоит дописать e2e всей цепочке, запускать я буду отдельно",
+    "implementation": "Real production genesis/DKG -> automatic governments -> independent author exact patch -> actual current validator Vote -> finalized BLS Review/Merge -> fresh activated validator catch-up without revote -> fresh ordinary native Fetch.",
+    "source_aggregate_sha256": "669e29a809e83a9762dd8ebe2bf0917ba43535054f2b9d010e01bbac36b25918",
+    "evidence": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.9/full-chain-scenario",
+    "validation": "All-target harness Clippy with ocomp-integration -Dwarnings, changed Rust fmt, diff check PASS. No E2E/test execution or artifact build.",
+    "acceptance": "Scenario source readiness only; runtime proof explicitly deferred to user; P8/feature not closed.",
+    "reviews": "Three independent read-only source PASS reviews; final8filehashes and aggregate verified. No execution claims."
+  },
+  "main_integration": {
+    "upstream_main": "25278782d82b97a847639f1270e6428f3706e9ff",
+    "merge_commit": "dc60c18271fed06f0b35befc6d142c859d600298",
+    "preserved_work": "Existing dirty tracked/untracked files restored from retained stash b289f63644c4168b4a642b4a73879ca35617f94d; backup /private/tmp/radicle-before-main-1p_9hh54.",
+    "compatibility": "Kept publication OART0x0C alongside main retirement of compressed entity root tag0x08; retained governments and Hyperlane genesis setup. Ported dirty localnet Radicle helpers into main module layout.",
+    "harness_check": "All-target check with ocomp-integration stops on3pre-existing dead_code errors in main world/localnet/committee/mod.rs: restart_validator_after_ce_reset, compressed_entities_reconstruction_path, verified_compressed_entities_reconstruction_path. File equals origin/main. No lint suppression or CE lifecycle changes.",
+    "e2e": "NOT RUN per user instruction.",
+    "prior_evidence": "Earlier E2E source hashes/reviews describe the pre-main source snapshot, not this integrated tree.",
+    "runtime_check": "PASS: cargo +1.96.0 check --offline --locked -p outbe-radicle -p outbe-radicle-runtime -p outbe-primitives --all-targets. Log /private/tmp/radicle-main-runtime-check.log. Changed source rustfmt, genesis Python syntax, diff check PASS."
+  }
+}

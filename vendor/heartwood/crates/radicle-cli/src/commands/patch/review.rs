@@ -135,7 +135,7 @@ pub fn run(
         }
         Operation::Delete => {
             crate::warning::obsolete("rad patch review --delete");
-            let name = git::refs::storage::draft::review(profile.id(), &patch_id);
+            let name = git::refs::storage::draft::review(&profile.id().into(), &patch_id);
 
             match repository.backend.find_reference(&name) {
                 Ok(mut r) => r.delete()?,

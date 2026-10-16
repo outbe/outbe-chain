@@ -120,6 +120,15 @@ markets = [
   { provider = "redstone" },
 ]
 
+[[currency_pairs]]
+base = "392"
+quote = "840"
+markets = [
+  { provider = "chainlink_eur_usd", quote = "840" },
+  { provider = "pyth", quote = "840" },
+  { provider = "redstone", quote = "840" },
+]
+
 [[deviation_thresholds]]
 base = "COEN"
 threshold = "2.0"

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cob::op::Op;
 use crate::cob::{Create, Embed, EntryId, ObjectId, TypeName, Update, Updated, Uri, Version};
+use crate::crypto::RepositoryKey;
 use crate::git;
 use crate::prelude::*;
 use crate::storage::git as storage;
@@ -15,6 +16,8 @@ use crate::storage::{HasRepoId, SignRepository};
 use crate::{cob, identity};
 
 pub mod access;
+#[cfg(test)]
+mod native_test;
 use access::WriteAs;
 
 pub trait CobAction {
@@ -103,6 +106,10 @@ pub trait CobWithType {
 /// Store error.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error(transparent)]
+    PrepareNative(#[from] radicle_cob::GitPrepareError),
+    #[error("a COB operation must contain at least one action")]
+    EmptyTransaction,
     #[error("create error: {0}")]
     Create(#[from] cob::error::Create),
     #[error("update error: {0}")]
@@ -180,7 +187,7 @@ impl<T, Repo, Access> AsRef<Repo> for Store<'_, T, Repo, Access> {
 
 impl<'a, T, Repo, Access> Store<'a, T, Repo, Access>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>,
     Access: access::Access,
 {
     pub fn open_for(
@@ -202,7 +209,7 @@ where
 
 impl<'a, T, Repo, Access> Store<'a, T, Repo, Access>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>,
     Access: access::Access,
 {
     /// Return a new store with the attached identity.
@@ -219,7 +226,7 @@ where
 impl<'a, T, Repo, Access> Store<'a, T, Repo, Access>
 where
     T: CobWithType,
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>,
     Access: access::Access,
 {
     /// Open a new generic store.
@@ -236,7 +243,7 @@ where
 impl<'a, 'b, T, Repo, Signer: crypto::Signer> Store<'a, T, Repo, WriteAs<'b, Signer>>
 where
     T: Cob + cob::Evaluate<Repo>,
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>,
 {
     #[deprecated(note = "only exists to accommodate signatures in crate::cob::identity")]
     pub(super) fn signer(&self) -> &Signer {
@@ -261,7 +268,7 @@ impl<'a, 'b, T, Repo, Signer> Store<'a, T, Repo, WriteAs<'b, Signer>>
 where
     T: Cob + cob::Evaluate<Repo>,
     T::Action: Serialize,
-    Repo: ReadRepository + SignRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + SignRepository + cob::Store<Namespace = RepositoryKey>,
     Signer: crypto::Signer,
 {
     /// Update an object.
@@ -285,7 +292,7 @@ where
                 })
             })
             .collect::<Result<_, _>>()?;
-        let namespace = self.access.signer.public_key();
+        let namespace = &RepositoryKey::from(self.access.signer.public_key());
         let updated = cob::update(
             self.repo,
             self.access.signer,
@@ -326,7 +333,7 @@ where
                 })
             })
             .collect::<Result<_, _>>()?;
-        let namespace = self.access.signer.public_key();
+        let namespace = &RepositoryKey::from(self.access.signer.public_key());
         let cob = cob::create::<T, _>(
             self.repo,
             self.access.signer,
@@ -354,7 +361,7 @@ where
 
     /// Remove an object.
     pub fn remove(&mut self, id: &ObjectId) -> Result<(), Error> {
-        let namespace = self.access.signer.public_key();
+        let namespace = &RepositoryKey::from(self.access.signer.public_key());
         let name = git::refs::storage::cob(namespace, self.scope.type_name, id);
         match self.repo.reference_oid(namespace, &name.strip_namespace()) {
             Ok(_) => {
@@ -377,7 +384,7 @@ impl<'a, T, Repo, Access> Store<'a, T, Repo, Access>
 where
     T: Cob + cob::Evaluate<Repo> + 'a,
     T::Action: Serialize,
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>,
     Access: access::Access,
 {
     /// Get an object.
@@ -473,7 +480,7 @@ where
     ) -> Result<(ObjectId, T), Error>
     where
         T::Action: Serialize + Clone,
-        Repo: ReadRepository + SignRepository + cob::Store<Namespace = NodeId>,
+        Repo: ReadRepository + SignRepository + cob::Store<Namespace = RepositoryKey>,
         Tx: From<Self>,
         Self: From<Tx>,
         F: FnOnce(&mut Tx, &Repo) -> Result<(), Error>,
@@ -493,6 +500,48 @@ impl<T, Repo> Transaction<T, Repo>
 where
     T: Cob + cob::Evaluate<Repo>,
 {
+    /// Freeze canonical action bytes and pinned parents for external native signing.
+    /// This stores only blobs/trees; attachment and policy-gated publication are separate.
+    pub fn prepare_native(
+        self,
+        repo: &Repo,
+        identity: Option<git::Oid>,
+        tips: Vec<git::Oid>,
+        message: String,
+        committer: radicle_git_metadata::author::Author,
+    ) -> Result<radicle_git_metadata::commit::bls::UnsignedCommit, Error>
+    where
+        Repo: crate::storage::WriteRepository,
+    {
+        let actions = NonEmpty::from_vec(self.actions).ok_or(Error::EmptyTransaction)?;
+        let related = actions.iter().flat_map(T::Action::parents).collect();
+        let contents = actions.try_map(encoding::encode)?;
+        let embeds = self
+            .embeds
+            .into_iter()
+            .map(|embed| {
+                Ok(Embed {
+                    name: embed.name,
+                    content: git::Oid::try_from(&embed.content).map_err(Error::EmbedUri)?,
+                })
+            })
+            .collect::<Result<_, Error>>()?;
+        Ok(radicle_cob::prepare_native(
+            repo.raw(),
+            identity,
+            related,
+            radicle_cob::change::Template {
+                type_name: self.type_name,
+                tips,
+                message,
+                embeds,
+                contents,
+            },
+            committer.clone(),
+            committer,
+        )?)
+    }
+
     /// Add an action to this transaction.
     pub fn push(&mut self, action: T::Action) -> Result<(), Error> {
         if action.produces_identifier() {
@@ -539,7 +588,7 @@ where
     ) -> Result<(T, EntryId), Error>
     where
         T::Action: Serialize + Clone,
-        Repo: ReadRepository + SignRepository + cob::Store<Namespace = NodeId>,
+        Repo: ReadRepository + SignRepository + cob::Store<Namespace = RepositoryKey>,
     {
         let actions = NonEmpty::from_vec(self.actions)
             .expect("Transaction::commit: transaction must not be empty");

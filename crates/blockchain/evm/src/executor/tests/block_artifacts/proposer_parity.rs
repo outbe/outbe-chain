@@ -423,7 +423,7 @@ fn seed_late_credit_escrow(
     seed_ctx
         .storage
         .increase_balance(REWARDS_ADDRESS, settle_fee)?;
-    outbe_accounting::record_phase1_progress(&seed_ctx, progress_marker)?;
+    outbe_cycle::record_phase1_progress(&seed_ctx, progress_marker)?;
 
     Ok(())
 }
@@ -468,6 +468,8 @@ fn signed_late_credit_artifact(
     } = *binding;
     let (aggregate_signature, signer_bitmap) = late_credit_signature(keys, binding)?;
     let artifact = OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
         execution_summary: None,
         consensus_header_artifact: None,
         timestamp_millis_part: 0,

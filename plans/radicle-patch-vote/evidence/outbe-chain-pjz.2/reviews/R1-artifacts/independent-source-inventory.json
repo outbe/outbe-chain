@@ -1,0 +1,24 @@
+{
+  "vendor_files": 817,
+  "upstream_changes": 67,
+  "prior_local_delta": 13,
+  "current_vs_stable_delta": [
+    "UPSTREAM.md",
+    "build.rs",
+    "crates/radicle-cli/Cargo.toml",
+    "crates/radicle-cli/examples/git/git-push-canonical-symbolic-ref.md",
+    "crates/radicle-node/src/control.rs",
+    "crates/radicle-node/src/runtime/handle.rs",
+    "crates/radicle-node/src/test/handle.rs",
+    "crates/radicle-node/src/tests.rs",
+    "crates/radicle-protocol/src/service.rs",
+    "crates/radicle-protocol/src/service/command.rs",
+    "crates/radicle-surf/Cargo.toml",
+    "crates/radicle/src/node.rs",
+    "crates/radicle/src/node/command.rs",
+    "crates/radicle/src/node/config.rs"
+  ],
+  "unchanged_retained": 10,
+  "upstream_tag": "7e1cb406bb935c3de008d2171e8961f57b4336ea",
+  "checks": "PASS"
+}

@@ -1,7 +1,7 @@
 use crate::system_tx::build_unsigned_system_tx;
 use crate::system_tx::build_unsigned_system_tx_with_gas_limit;
 use crate::system_tx::split_system_layout;
-use crate::system_tx::validate_system_tx_set_for_activation;
+use crate::system_tx::validate_system_tx_set_for_publication;
 use crate::system_tx::OcompLifecycleActivation;
 use crate::system_tx::SystemTxInputV2;
 use crate::system_tx::SystemTxKind;
@@ -40,11 +40,14 @@ pub(super) fn system_tx_expectations_for_block(
     block: &SealedBlock<OutbeBlock>,
     ocomp_lifecycle_activation: OcompLifecycleActivation,
 ) -> SystemTxExpectations {
-    let has_boundary_outcome =
+    let (has_boundary_outcome, has_publication) =
         match decode_outbe_block_artifacts(block.header().extra_data().as_ref()) {
-            Ok(artifacts) => matches!(
-                artifacts.consensus_header_artifact,
-                Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
+            Ok(artifacts) => (
+                matches!(
+                    artifacts.consensus_header_artifact,
+                    Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
+                ),
+                artifacts.radicle_publication.is_some(),
             ),
             Err(error) => {
                 return (
@@ -69,12 +72,13 @@ pub(super) fn system_tx_expectations_for_block(
     };
 
     let has_tee_bootstrap = layout.has_begin_kind(SystemTxKind::TeeBootstrap);
-    if let Err(error) = validate_system_tx_set_for_activation(
+    if let Err(error) = validate_system_tx_set_for_publication(
         &layout,
         block.header().number(),
         has_boundary_outcome,
         has_tee_bootstrap,
         ocomp_lifecycle_activation,
+        has_publication,
     ) {
         return (
             Vec::new(),
@@ -211,6 +215,9 @@ impl OutbeEvmConfig {
         }
         if block_number >= 1 {
             inputs.push(SystemTxInputV2::HookEvents);
+        }
+        if let Some(batch) = artifacts.radicle_publication {
+            inputs.push(SystemTxInputV2::RadiclePublication { batch });
         }
 
         let encoded_inputs = inputs

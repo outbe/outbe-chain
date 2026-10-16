@@ -1,0 +1,41 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "-p",
+    "outbe-radicle",
+    "--lib",
+    "integration::bootstrap_probe::genesis_description_range_exceeds_native_project_range",
+    "--",
+    "--nocapture"
+  ],
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4"
+  },
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "start_utc": "2026-10-16T00:08:46.805813+00:00",
+  "head": "1630a4cb333fb56cb039c14c68bd6078c6264f09",
+  "source_sha": "a0c104079c24525bd4d5e9fd4374aedc76c57df4",
+  "file_sha256": {
+    "plans/radicle-patch-vote/design.md": "dc9fd94ad85704057e284b374e0da27d7e0398546790ab1a202b2a9270e86df8",
+    "plans/radicle-patch-vote/task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+    "plans/radicle-patch-vote/plan.md": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b",
+    "crates/blockchain/primitives/src/radicle_genesis.rs": "fe561be2c78241f28150aad687399bcf17d5edd01a54a095a69b539e6b9fc27c",
+    "scripts/genesis_seed_alloc.py": "bdb443aab280091ac4ca4ebce1a57b6ad8c15cf365d98d09fedcb9b94eaeaec6",
+    "vendor/heartwood/crates/radicle/src/identity/project.rs": "c01df2a08d90b394755394de6a71cf38f6afd31bf4d46822b2023d27e5a83573",
+    "vendor/heartwood/crates/radicle/src/identity/doc.rs": "79df4fac85b21e1066f6928b56c0d7f442402f52812a1c4fc11a185f27a6fe53",
+    "crates/blockchain/radicle/src/integration/bootstrap_probe.rs": "bf02a4f456e0b9e4a638372d1714bc30b2a076657cb70c2e669a44030074eb3d",
+    "plans/radicle-patch-vote/decisions/D3-description-bound/proposal.md": "7317219def6e29c7d0d988bcf9b7215b601bd7998545bf1fcb6bbe17aad1b23f"
+  },
+  "exit_code": 0,
+  "end_utc": "2026-10-16T00:08:58.414881+00:00",
+  "log": "repro.log",
+  "log_sha256": "0a9e0e62b8e6ca6bdd6699c593f852fe71ed868e05db25f29d9513603be18dd0"
+}

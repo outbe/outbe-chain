@@ -346,12 +346,10 @@ fn send_stage_start(
     } = start;
     let mut prices = Vec::with_capacity(config.reference_prices.len());
     for row in &config.reference_prices {
-        let floor = outbe_intexfactory::marked_up(row.entry_price_minor, iparams.floor_rate)?;
         let call = outbe_intexfactory::marked_up(row.entry_price_minor, iparams.call_rate)?;
         prices.push(IOriginRouter::ReferenceCurrencyPrice {
             isoCode: row.iso_code,
             entryPriceMinor: outbe_intexfactory::to_wire_price(row.entry_price_minor)?,
-            floorPriceMinor: outbe_intexfactory::to_wire_price(floor)?,
             callPriceMinor: outbe_intexfactory::to_wire_price(call)?,
         });
     }

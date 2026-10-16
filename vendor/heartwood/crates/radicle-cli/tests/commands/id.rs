@@ -360,7 +360,7 @@ fn rad_id_collaboration() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    let mut expected = vec![alice.id, bob.id, eve.id];
+    let mut expected = vec![alice.id.into(), bob.id.into(), eve.id.into()];
     remotes.sort();
     expected.sort();
     assert_eq!(remotes, expected);
@@ -371,7 +371,7 @@ fn rad_id_collaboration() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    let mut expected = vec![alice.id, bob.id, eve.id];
+    let mut expected = vec![alice.id.into(), bob.id.into(), eve.id.into()];
     remotes.sort();
     expected.sort();
     assert_eq!(remotes, expected);

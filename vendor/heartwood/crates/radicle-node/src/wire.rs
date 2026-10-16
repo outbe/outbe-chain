@@ -51,6 +51,9 @@ pub const DEFAULT_CONNECTION_TIMEOUT: time::Duration = time::Duration::from_secs
 /// Maximum size of a peer inbox, in bytes.
 pub const MAX_INBOX_SIZE: usize = 1024 * 1024 * 2;
 
+/// Bound V2 announcements waiting for this connection to acknowledge its upgrade.
+const MAX_PENDING_UPGRADE_MESSAGES: usize = 32;
+
 /// Control message used internally between workers, users, and the service.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
@@ -189,6 +192,8 @@ enum Peer {
         nid: NodeId,
         inbox: Deserializer<MAX_INBOX_SIZE, Frame>,
         streams: Streams,
+        repository_keys: upgrade::Negotiation,
+        pending_upgrade: VecDeque<service::Message>,
     },
     /// The peer was scheduled for disconnection. Once the transport is handed over
     /// by the reactor, we can consider it disconnected.
@@ -232,6 +237,8 @@ impl Peer {
             nid,
             inbox: Deserializer::default(),
             streams: Streams::new(link),
+            repository_keys: upgrade::Negotiation::default(),
+            pending_upgrade: VecDeque::new(),
         }
     }
 }
@@ -689,6 +696,9 @@ where
                     nid,
                     inbox,
                     streams,
+                    link,
+                    repository_keys,
+                    pending_upgrade,
                     ..
                 }) = self.peers.get_mut(&token)
                 {
@@ -706,8 +716,64 @@ where
                         return;
                     }
 
+                    // An Ack queued during this read cannot authorize a pipelined V2 frame.
+                    let incoming_v2 = repository_keys.receive(2).is_ok();
                     loop {
-                        match inbox.deserialize_next() {
+                        let decoded = inbox.deserialize_negotiated(incoming_v2).and_then(|frame| {
+                            if let Some(Frame { version, data, .. }) = &frame {
+                                repository_keys.receive(version.number())?;
+                                if version.number() != 1
+                                    && matches!(
+                                        data,
+                                        FrameData::Control(
+                                            frame::Control::Upgrade { .. }
+                                                | frame::Control::UpgradeAck { .. }
+                                        )
+                                    )
+                                {
+                                    return Err(Invalid::RepositoryKeyNegotiation);
+                                }
+                            }
+                            Ok(frame)
+                        });
+                        match decoded {
+                            Ok(Some(Frame {
+                                data:
+                                    FrameData::Control(
+                                        ctrl @ (frame::Control::Upgrade { .. }
+                                        | frame::Control::UpgradeAck { .. }),
+                                    ),
+                                ..
+                            })) => match repository_keys.control(&ctrl) {
+                                Ok(reply) => {
+                                    if let Some(reply) = reply {
+                                        self.actions.push_back(Action::Send(
+                                            token,
+                                            Frame::<service::Message>::control(*link, reply)
+                                                .encode_to_vec(),
+                                        ));
+                                    }
+                                    if repository_keys.send(2).is_ok() {
+                                        let mut bytes = Vec::new();
+                                        for msg in pending_upgrade.drain(..) {
+                                            Frame::gossip(*link, msg).encode(&mut bytes);
+                                            metrics.sent_gossip_messages += 1;
+                                        }
+                                        if !bytes.is_empty() {
+                                            metrics.sent_bytes += bytes.len();
+                                            self.actions.push_back(Action::Send(token, bytes));
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    log::warn!(target: "wire", "Invalid repository-key upgrade from {nid}: {err}");
+                                    self.disconnect(
+                                        token,
+                                        DisconnectReason::Session(session::Error::Misbehavior),
+                                    );
+                                    break;
+                                }
+                            },
                             Ok(Some(Frame {
                                 data: FrameData::Control(frame::Control::Open { stream }),
                                 ..
@@ -776,6 +842,48 @@ where
                                 data: FrameData::Gossip(msg),
                                 ..
                             })) => {
+                                if let service::Message::Announcement(ann) = &msg
+                                    && ann.node == *nid
+                                    && ann.verify()
+                                    && let service::message::AnnouncementMessage::Node(node) =
+                                        &ann.message
+                                {
+                                    match repository_keys.authenticated_announcement(node.features)
+                                    {
+                                        Ok(Some(request)) => self.actions.push_back(Action::Send(
+                                            token,
+                                            Frame::<service::Message>::control(*link, request)
+                                                .encode_to_vec(),
+                                        )),
+                                        Ok(None) => {}
+                                        Err(err) => {
+                                            log::warn!(target: "wire", "Repository-key capability downgrade from {nid}: {err}");
+                                            self.disconnect(
+                                                token,
+                                                DisconnectReason::Session(
+                                                    session::Error::Misbehavior,
+                                                ),
+                                            );
+                                            break;
+                                        }
+                                    }
+                                    if repository_keys.peer_unsupported() {
+                                        for pending in pending_upgrade.drain(..) {
+                                            if let service::Message::Announcement(
+                                                service::message::Announcement {
+                                                    message:
+                                                        service::message::AnnouncementMessage::Refs(
+                                                            refs,
+                                                        ),
+                                                    ..
+                                                },
+                                            ) = pending
+                                            {
+                                                self.service.emitter().emit(radicle::node::Event::UnsupportedRepositoryKey { nid: *nid, rid: refs.rid });
+                                            }
+                                        }
+                                    }
+                                }
                                 metrics.received_gossip_messages += 1;
                                 self.service.received_message(*nid, msg);
                             }
@@ -923,8 +1031,19 @@ where
         while let Some(ev) = self.service.next() {
             match ev {
                 Io::Write(node_id, msgs) => {
-                    let (fd, link) = match self.peers.lookup(&node_id) {
-                        Some((fd, Peer::Connected { link, .. })) => (fd, *link),
+                    let (fd, link, repository_keys, pending_upgrade) = match self
+                        .peers
+                        .lookup_mut(&node_id)
+                    {
+                        Some((
+                            fd,
+                            Peer::Connected {
+                                link,
+                                repository_keys,
+                                pending_upgrade,
+                                ..
+                            },
+                        )) => (fd, *link, repository_keys, pending_upgrade),
                         Some((_, peer)) => {
                             // If the peer is disconnected by the wire protocol, the service may
                             // not be aware of this yet, and may continue to write messages to it.
@@ -941,10 +1060,50 @@ where
                     );
                     let mut data = Vec::new();
                     let metrics = self.metrics.peer(node_id);
-                    metrics.sent_gossip_messages += msgs.len();
-
                     for msg in msgs {
+                        if let Err(err) = repository_keys.send(msg.protocol_version()) {
+                            if repository_keys.peer_unsupported()
+                                || pending_upgrade.len() == MAX_PENDING_UPGRADE_MESSAGES
+                            {
+                                log::warn!(target: "wire", "Cannot send repository announcement to {node_id}: {err}");
+                                if let service::Message::Announcement(
+                                    service::message::Announcement {
+                                        message: service::message::AnnouncementMessage::Refs(refs),
+                                        ..
+                                    },
+                                ) = &msg
+                                {
+                                    self.service.emitter().emit(
+                                        radicle::node::Event::UnsupportedRepositoryKey {
+                                            nid: node_id,
+                                            rid: refs.rid,
+                                        },
+                                    );
+                                }
+                            } else {
+                                pending_upgrade.push_back(msg);
+                            }
+                            continue;
+                        }
+                        let request = if let service::Message::Announcement(ann) = &msg
+                            && ann.node == *self.secret_key.public_key()
+                            && let service::message::AnnouncementMessage::Node(node) = &ann.message
+                        {
+                            match repository_keys.sent_announcement(node.features) {
+                                Ok(request) => request,
+                                Err(err) => {
+                                    log::error!(target: "wire", "Local repository-key capability changed within a connection: {err}");
+                                    continue;
+                                }
+                            }
+                        } else {
+                            None
+                        };
                         Frame::gossip(link, msg).encode(&mut data);
+                        metrics.sent_gossip_messages += 1;
+                        if let Some(request) = request {
+                            Frame::<service::Message>::control(link, request).encode(&mut data);
+                        }
                     }
                     metrics.sent_bytes += data.len();
 
@@ -1020,8 +1179,15 @@ where
                 } => {
                     log::trace!(target: "wire", "Processing fetch for {rid} from {remote}..");
 
-                    let Some((fd, Peer::Connected { link, streams, .. })) =
-                        self.peers.lookup_mut(&remote)
+                    let Some((
+                        fd,
+                        Peer::Connected {
+                            link,
+                            streams,
+                            repository_keys,
+                            ..
+                        },
+                    )) = self.peers.lookup_mut(&remote)
                     else {
                         // Nb. It's possible that a peer is disconnected while an `Io::Fetch`
                         // is in the service's i/o buffer. Since the service may not purge the
@@ -1039,6 +1205,20 @@ where
                         );
                         continue;
                     };
+                    if refs_at
+                        .as_ref()
+                        .is_some_and(|refs| refs.iter().any(|r| r.remote.as_ed25519().is_none()))
+                        && repository_keys.send(2).is_err()
+                    {
+                        self.service.fetched(
+                            rid,
+                            remote,
+                            Err(protocol::worker::FetchError::UnsupportedRepositoryKey(
+                                remote,
+                            )),
+                        );
+                        continue;
+                    }
                     let (stream, channels) = streams.open(
                         ChannelsConfig::new(config.timeout()).with_reader_limit(reader_limit),
                     );
@@ -1428,6 +1608,130 @@ mod test {
             assert!(de.deserialize_next().unwrap().is_none());
             assert!(de.is_empty());
         }
+    }
+
+    #[test]
+    fn unnegotiated_v2_is_rejected_by_live_wire_before_payload() {
+        use crate::reactor::ReactionHandler as _;
+        let (mut wire, _, bob, addr) = wire_with_active_fetch();
+        wire.peers
+            .insert(Token(1), Peer::connected(bob, addr, Link::Outbound));
+        wire.transport_reacted(
+            Token(1),
+            SessionEvent::Data(b"rad\x02".to_vec()),
+            Instant::now(),
+        );
+        assert!(matches!(
+            wire.peers.0.get(&Token(1)),
+            Some(Peer::Disconnecting { .. })
+        ));
+    }
+
+    #[test]
+    fn upgrade_requires_connected_peers_own_verified_announcement() {
+        use crate::reactor::ReactionHandler as _;
+        use crate::test::peer::Peer as TestPeer;
+        use protocol::service::message::{AnnouncementMessage, Message};
+        let (mut wire, _, bob_id, addr) = wire_with_active_fetch();
+        let mut peer = Peer::connected(bob_id, addr, Link::Outbound);
+        let Peer::Connected {
+            repository_keys, ..
+        } = &mut peer
+        else {
+            unreachable!()
+        };
+        repository_keys
+            .sent_announcement(node::Features::REPOSITORY_KEYS)
+            .unwrap();
+        wire.peers.insert(Token(1), peer);
+        let bob = TestPeer::bob();
+        let Message::Announcement(ann) = bob.node_announcement() else {
+            unreachable!()
+        };
+        let AnnouncementMessage::Node(mut node) = ann.message else {
+            unreachable!()
+        };
+        node.features = node.features.with(node::Features::REPOSITORY_KEYS);
+        let relay_signer = crypto::SigningKey::mock(99);
+        let relayed = Message::node(node.clone(), &relay_signer);
+        wire.transport_reacted(
+            Token(1),
+            SessionEvent::Data(Frame::gossip(Link::Inbound, relayed).encode_to_vec()),
+            Instant::now(),
+        );
+        let Some(Peer::Connected {
+            repository_keys, ..
+        }) = wire.peers.0.get(&Token(1))
+        else {
+            panic!("peer connected")
+        };
+        assert!(repository_keys.send(2).is_err());
+        assert!(repository_keys.receive(2).is_err());
+        assert!(!wire.actions.iter().any(
+            |action| matches!(action, Action::Send(_, bytes) if bytes == b"rad\x01\x00\x03\x02")
+        ));
+
+        let own = Message::node(node, bob.secret_key());
+        wire.transport_reacted(
+            Token(1),
+            SessionEvent::Data(Frame::gossip(Link::Inbound, own).encode_to_vec()),
+            Instant::now(),
+        );
+        assert!(wire.actions.iter().any(
+            |action| matches!(action, Action::Send(_, bytes) if bytes == b"rad\x01\x00\x03\x02")
+        ));
+        let upgrade =
+            Frame::<Message>::control(Link::Inbound, frame::Control::Upgrade { version: 2 })
+                .encode_to_vec();
+        wire.transport_reacted(Token(1), SessionEvent::Data(upgrade), Instant::now());
+        let Some(Peer::Connected {
+            repository_keys, ..
+        }) = wire.peers.0.get(&Token(1))
+        else {
+            panic!("peer connected")
+        };
+        assert!(repository_keys.receive(2).is_ok());
+        assert!(repository_keys.send(2).is_err());
+        let ack =
+            Frame::<Message>::control(Link::Inbound, frame::Control::UpgradeAck { version: 2 })
+                .encode_to_vec();
+        wire.transport_reacted(Token(1), SessionEvent::Data(ack), Instant::now());
+        let Some(Peer::Connected {
+            repository_keys, ..
+        }) = wire.peers.0.get(&Token(1))
+        else {
+            panic!("peer connected")
+        };
+        assert!(repository_keys.send(2).is_ok());
+    }
+
+    #[test]
+    fn pipelined_v2_before_ack_send_is_rejected() {
+        use crate::reactor::ReactionHandler as _;
+        let (mut wire, _, bob, addr) = wire_with_active_fetch();
+        let mut peer = Peer::connected(bob, addr, Link::Outbound);
+        let Peer::Connected {
+            repository_keys, ..
+        } = &mut peer
+        else {
+            unreachable!()
+        };
+        repository_keys
+            .sent_announcement(node::Features::REPOSITORY_KEYS)
+            .unwrap();
+        repository_keys
+            .authenticated_announcement(node::Features::REPOSITORY_KEYS)
+            .unwrap();
+        wire.peers.insert(Token(1), peer);
+        let mut pipelined =
+            Frame::<Message>::control(Link::Inbound, frame::Control::Upgrade { version: 2 })
+                .encode_to_vec();
+        pipelined.extend_from_slice(b"rad\x02");
+        wire.transport_reacted(Token(1), SessionEvent::Data(pipelined), Instant::now());
+        assert!(matches!(
+            wire.peers.0.get(&Token(1)),
+            Some(Peer::Disconnecting { .. })
+        ));
     }
 
     // Builds a service holding an active fetch from `bob`, wrapped in a `Wire`.

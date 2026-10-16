@@ -188,6 +188,9 @@ fn dispatch_inner(
             let ctx = block_runtime_context_from_storage(storage, false)?;
             run_hook_events(&ctx)?;
         }
+        SystemTxInputV2::RadiclePublication { batch } => {
+            outbe_radicleregistry::RadicleRegistry::new(storage).apply_publication_batch(&batch)?;
+        }
         SystemTxInputV2::OcompTerminalRequest => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
             run_ocomp_terminal_request(&ctx)?;

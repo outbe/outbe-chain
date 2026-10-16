@@ -1,0 +1,143 @@
+[
+  {
+    "name": "crypto-fmt",
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "vendor/heartwood/crates/radicle-crypto/src/repository.rs",
+      "vendor/heartwood/crates/radicle-crypto/src/lib.rs"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "start_utc": "2026-10-15T12:35:46.708943+00:00",
+    "end_utc": "2026-10-15T12:35:46.757153+00:00",
+    "exit_code": 0,
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "scope": "P2 first crypto layer only, NOT stage acceptance; source not frozen/reviewed",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4"
+    }
+  },
+  {
+    "name": "crypto-tests",
+    "argv": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "-p",
+      "radicle-crypto",
+      "--all-features"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "start_utc": "2026-10-15T12:35:46.757433+00:00",
+    "end_utc": "2026-10-15T12:35:49.015489+00:00",
+    "exit_code": 0,
+    "log_sha256": "21f34ac84f9a1f5a0c236100625e7d4c07d867bbafa6fa47a4b63186381356cb",
+    "scope": "P2 first crypto layer only, NOT stage acceptance; source not frozen/reviewed",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4"
+    }
+  },
+  {
+    "name": "crypto-clippy",
+    "argv": [
+      "cargo",
+      "clippy",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "-p",
+      "radicle-crypto",
+      "--all-features",
+      "--all-targets",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "start_utc": "2026-10-15T12:37:12.766714+00:00",
+    "end_utc": "2026-10-15T12:37:12.922034+00:00",
+    "exit_code": 0,
+    "log_sha256": "1094a36867300c1838cdc4ee40efe961d83bac574665f8ee57a40d5b1e88698c",
+    "scope": "P2 first crypto layer only, NOT stage acceptance; source not frozen/reviewed",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4"
+    }
+  },
+  {
+    "name": "crypto-alloc-check",
+    "argv": [
+      "cargo",
+      "check",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "-p",
+      "radicle-crypto",
+      "--no-default-features",
+      "--features",
+      "alloc"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "start_utc": "2026-10-15T12:35:49.504892+00:00",
+    "end_utc": "2026-10-15T12:35:49.704521+00:00",
+    "exit_code": 0,
+    "log_sha256": "39de75bf7271841842d49b3c2ff69c8d15a28feb118379158c033c4eaed5455c",
+    "scope": "P2 first crypto layer only, NOT stage acceptance; source not frozen/reviewed",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4"
+    }
+  },
+  {
+    "name": "crypto-default-check",
+    "argv": [
+      "cargo",
+      "clippy",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "-p",
+      "radicle-crypto",
+      "--lib",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "start_utc": "2026-10-15T12:37:12.922140+00:00",
+    "end_utc": "2026-10-15T12:37:13.025885+00:00",
+    "exit_code": 0,
+    "log_sha256": "a11a1de8037a032bda7e33f88e31dc898d0129cfe94956add639cd289d2ce985",
+    "scope": "P2 first crypto layer only, NOT stage acceptance; source not frozen/reviewed",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4"
+    }
+  }
+]

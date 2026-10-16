@@ -1,0 +1,20 @@
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+   Compiling outbe-radicle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/radicle)
+    Finished `test` profile [unoptimized] target(s) in 9.53s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_radicle-35b1ee5a8a3e4119)
+
+running 1 test
+
+thread 'integration::review::tests::exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_accepts' (16719941) panicked at vendor/heartwood/crates/radicle/src/node.rs:354:23:
+Alias::new: alias cannot contain whitespace or control characters
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test integration::review::tests::exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_accepts ... FAILED
+
+failures:
+
+failures:
+    integration::review::tests::exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_accepts
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 52 filtered out; finished in 2.61s
+
+error: test failed, to rerun pass `-p outbe-radicle --lib`

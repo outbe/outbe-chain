@@ -1,0 +1,85 @@
+{
+  "utc": "2026-10-16T11:58:49.323651+00:00",
+  "head": "c1783bda67f8f08e0ab93ee6c0d77bd4196fcc0c",
+  "spec_hash": "0781c0d5b2f2e2f031ee68e2ffc9471a702e82fe7bb65e8ba7181aabcf6eafdc",
+  "files": {
+    "crates/system/radicle/tests/governments.rs": {
+      "actual": "41cfc3ab01ed4550c4058cea43a45c918c7781c29f595b49196dca7a43501eb4",
+      "expected": "41cfc3ab01ed4550c4058cea43a45c918c7781c29f595b49196dca7a43501eb4"
+    },
+    "plans/radicle-patch-vote/design.md": {
+      "actual": "0fb00de7c741bc51e78f95123d374a9af024422ee2820fa30338537caddb2dc6",
+      "expected": "0fb00de7c741bc51e78f95123d374a9af024422ee2820fa30338537caddb2dc6"
+    },
+    "plans/radicle-patch-vote/runbook.md": {
+      "actual": "3473e195982d1223990fab5f65c87578f37e5c00adcb56253ded1d2f5bd10740",
+      "expected": "3473e195982d1223990fab5f65c87578f37e5c00adcb56253ded1d2f5bd10740"
+    },
+    "vendor/heartwood/crates/radicle-crypto/src/repository.rs": {
+      "actual": "887f604fdd7b4f19af03bd901f296a2c2a2c38fa0c99fe7fa461eadab394ffd4",
+      "expected": "887f604fdd7b4f19af03bd901f296a2c2a2c38fa0c99fe7fa461eadab394ffd4"
+    },
+    "vendor/heartwood/crates/radicle-node/src/tests/e2e/native_bls.rs": {
+      "actual": "4e2b27ad9b89983506d3dc32bb9eb808a7b4b960d50f06bcde62716cdc99751f",
+      "expected": "4e2b27ad9b89983506d3dc32bb9eb808a7b4b960d50f06bcde62716cdc99751f"
+    },
+    "vendor/heartwood/crates/radicle/src/cob/identity.rs": {
+      "actual": "45c00b2c3d323dac7fb985d064c6a0b9c78c7fe47bb7990ff5a965469d99433a",
+      "expected": "45c00b2c3d323dac7fb985d064c6a0b9c78c7fe47bb7990ff5a965469d99433a"
+    },
+    "vendor/heartwood/crates/radicle/src/cob/store/native_test.rs": {
+      "actual": "0269c84c8ade6619515a6128e70cb55fdcd7b66d6e021c6e0feab53cec381e78",
+      "expected": "0269c84c8ade6619515a6128e70cb55fdcd7b66d6e021c6e0feab53cec381e78"
+    },
+    "vendor/heartwood/crates/radicle/src/identity/doc.rs": {
+      "actual": "a269577f1924ad3f51d545c972850fa8d68fff7763eb272909eeaf2341fe6cab",
+      "expected": "a269577f1924ad3f51d545c972850fa8d68fff7763eb272909eeaf2341fe6cab"
+    },
+    "vendor/heartwood/crates/radicle/src/storage/git/cob.rs": {
+      "actual": "56ee41843602adbc5890a05f4d8622aac68f9712063866d36a72748614fd182c",
+      "expected": "56ee41843602adbc5890a05f4d8622aac68f9712063866d36a72748614fd182c"
+    },
+    "vendor/heartwood/crates/radicle/src/storage/publication.rs": {
+      "actual": "4174ec8cce8e295383b5292b49526baa3eb1d99fb5cac8583fbe59b96d00e611",
+      "expected": "4174ec8cce8e295383b5292b49526baa3eb1d99fb5cac8583fbe59b96d00e611"
+    },
+    "vendor/heartwood/crates/radicle/src/storage/refs.rs": {
+      "actual": "23886a3c33d1b9e41818ba7370bea639c7497b0e3b9b9ee04a693af2982d6bc8",
+      "expected": "23886a3c33d1b9e41818ba7370bea639c7497b0e3b9b9ee04a693af2982d6bc8"
+    },
+    "vendor/heartwood/crates/radicle/src/storage/refs/sigrefs/read.rs": {
+      "actual": "6bb096f3a1a9a1b20583693c74f2979fef9a780f124e6f085e38c5c09d24ef1d",
+      "expected": "6bb096f3a1a9a1b20583693c74f2979fef9a780f124e6f085e38c5c09d24ef1d"
+    },
+    "vendor/heartwood/crates/radicle/src/storage/refs/sigrefs/write.rs": {
+      "actual": "0b330df41fab8add2c27c9323a198863128bb356a30f6da964080b9e8a6a698b",
+      "expected": "0b330df41fab8add2c27c9323a198863128bb356a30f6da964080b9e8a6a698b"
+    },
+    "vendor/heartwood/crates/radicle/src/storage/refs/sigrefs/write/test/native.rs": {
+      "actual": "e556be92157b53bf670832b7bb930f5f56e6324ad97c8202d71fce308720a9a1",
+      "expected": "e556be92157b53bf670832b7bb930f5f56e6324ad97c8202d71fce308720a9a1"
+    }
+  },
+  "logs": {
+    "vendor-tests.log": {
+      "actual": "a88f2c6d2f4bcee724576573152d216aa1349ddcaad7a9156ca9547687b16c95",
+      "expected": "a88f2c6d2f4bcee724576573152d216aa1349ddcaad7a9156ca9547687b16c95"
+    },
+    "outbe-tests.log": {
+      "actual": "dd8e7f12e407b8856c3ca5f221df2a41b9d8556bb80c395fbbdd515084b6143b",
+      "expected": "dd8e7f12e407b8856c3ca5f221df2a41b9d8556bb80c395fbbdd515084b6143b"
+    },
+    "vendor-clippy.log": {
+      "actual": "f4786dda12af35edf1ca7d989bd80da9155e3a8081cd6719e2549175a6ee4488",
+      "expected": "f4786dda12af35edf1ca7d989bd80da9155e3a8081cd6719e2549175a6ee4488"
+    },
+    "outbe-clippy.log": {
+      "actual": "3c38509ab62e7e9e2650bc540f11886b3e0632155a9ed9003191f1dfe2f7f79e",
+      "expected": "3c38509ab62e7e9e2650bc540f11886b3e0632155a9ed9003191f1dfe2f7f79e"
+    },
+    "governments-clippy.log": {
+      "actual": "7e2472eebeb17ce08802a3f7cfe67c7e13ac70c676c45742564291c9fe045138",
+      "expected": "7e2472eebeb17ce08802a3f7cfe67c7e13ac70c676c45742564291c9fe045138"
+    }
+  }
+}

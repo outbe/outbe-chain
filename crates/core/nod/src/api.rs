@@ -1,7 +1,6 @@
 //! Cross-module API for the Nod entity store.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::time::first_full_day;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
@@ -12,7 +11,6 @@ use crate::schema::{CallTerms, EffectiveState, NodBucketState, NodContract, NodI
 #[must_use]
 pub fn effective_state(
     item: &NodItemState,
-    qualified: bool,
     called_at: u64,
     deadline: u64,
     now: U256,
@@ -23,23 +21,9 @@ pub fn effective_state(
         EffectiveState::Forfeited
     } else if called_at != 0 {
         EffectiveState::Called
-    } else if qualified {
-        EffectiveState::Qualified
     } else {
         EffectiveState::Issued
     }
-}
-
-pub fn is_qualified(storage: &StorageHandle<'_>, bucket: &NodBucketState) -> Result<bool> {
-    let issued_at = NodContract::new(storage.clone())
-        .bucket_issued_at
-        .read(&bucket.bucket_key)?;
-    outbe_oracle::api::closed_above_floor(
-        storage.clone(),
-        bucket.reference_currency,
-        bucket.floor_price_minor()?,
-        first_full_day(issued_at),
-    )
 }
 
 /// The Nod's settlement cost: `floor(entry_price_minor * gratis_load_minor / 1e6)`.

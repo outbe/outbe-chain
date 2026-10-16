@@ -1,0 +1,184 @@
+{
+  "source_sha": "48a30d859ad79ff926614a478f97d291404abbcb",
+  "parent_sha": "27b8ddc343a14779cb8aedd62bb47f90dbd34edb",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4",
+    "PYTHONPATH": "scripts"
+  },
+  "changed_files": [
+    "crates/blockchain/radicle/src/integration/mod.rs",
+    "crates/blockchain/radicle/src/integration/publication.rs",
+    "crates/blockchain/radicle/src/integration/publication/tests.rs",
+    "crates/blockchain/radicle/src/integration/review.rs",
+    "crates/blockchain/radicle/src/integration/review/tests.rs",
+    "crates/blockchain/radicle/src/manager/mod.rs",
+    "crates/blockchain/radicle/src/manager/snapshot.rs",
+    "crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs",
+    "crates/blockchain/radicle/src/manager/types.rs",
+    "vendor/heartwood/UPSTREAM.md",
+    "vendor/heartwood/crates/radicle/src/lib.rs"
+  ],
+  "spec_sha256": {
+    "plans/radicle-patch-vote/design.md": "dc9fd94ad85704057e284b374e0da27d7e0398546790ab1a202b2a9270e86df8",
+    "plans/radicle-patch-vote/task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+    "plans/radicle-patch-vote/plan.md": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b"
+  },
+  "checks": [
+    {
+      "name": "full-libs",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "--",
+        "--nocapture"
+      ],
+      "start_utc": "2026-10-15T21:24:42.529646+00:00",
+      "log": "full-libs.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T21:24:53.397062+00:00",
+      "sha256": "5a243dea99a42b01a0c3700a698b86cf5e98f77d7f332dfa71d1eeed36756149"
+    },
+    {
+      "name": "all-consumers",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-engine",
+        "-p",
+        "outbe-chain",
+        "-p",
+        "outbe-radicle-runtime",
+        "-p",
+        "outbe-radicle-sidecar",
+        "-p",
+        "outbe-e2e-harness",
+        "-p",
+        "outbe-keygen",
+        "--all-targets"
+      ],
+      "start_utc": "2026-10-15T21:24:53.397492+00:00",
+      "log": "all-consumers.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T21:25:11.882752+00:00",
+      "sha256": "648fdd600e90a4ab1f355697854813cdc862c906a827b47ed09d2bd991431d16"
+    },
+    {
+      "name": "scoped-clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--no-deps",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "start_utc": "2026-10-15T21:25:11.883268+00:00",
+      "log": "scoped-clippy.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T21:25:18.123867+00:00",
+      "sha256": "5447278528a62f0ff179e2eed52df88167f754499e491af9628704921d945b55"
+    },
+    {
+      "name": "native-canonical",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "vendor/heartwood/Cargo.toml",
+        "-p",
+        "radicle",
+        "--lib",
+        "canonical::formatter"
+      ],
+      "start_utc": "2026-10-15T21:25:18.124252+00:00",
+      "log": "native-canonical.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T21:25:53.167676+00:00",
+      "sha256": "71e12bec17704b5dc8d4fb024ab612ac771c70443c2cf1e927b8a927b2ee1f91"
+    },
+    {
+      "name": "rustfmt",
+      "command": [
+        "rustfmt",
+        "--check",
+        "--edition",
+        "2021",
+        "--config",
+        "skip_children=true",
+        "crates/blockchain/radicle/src/integration/mod.rs",
+        "crates/blockchain/radicle/src/integration/publication.rs",
+        "crates/blockchain/radicle/src/integration/publication/tests.rs",
+        "crates/blockchain/radicle/src/integration/review.rs",
+        "crates/blockchain/radicle/src/integration/review/tests.rs",
+        "crates/blockchain/radicle/src/manager/mod.rs",
+        "crates/blockchain/radicle/src/manager/snapshot.rs",
+        "crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs",
+        "crates/blockchain/radicle/src/manager/types.rs"
+      ],
+      "start_utc": "2026-10-15T21:25:53.168107+00:00",
+      "log": "rustfmt.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T21:25:53.219159+00:00",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "native-rustfmt",
+      "command": [
+        "rustfmt",
+        "--check",
+        "--edition",
+        "2024",
+        "--config",
+        "skip_children=true",
+        "vendor/heartwood/crates/radicle/src/lib.rs"
+      ],
+      "start_utc": "2026-10-15T21:25:53.219530+00:00",
+      "log": "native-rustfmt.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T21:25:53.241861+00:00",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "acceptance": "Intermediate P3/P6 prerequisite: canonical publication manifest, exact finalized receipt reader, checkpoint owner snapshot replay and native Review preparation. Native object/witness verifier, current approval/stage gate, protected signer transport, collector/journal/bootstrap/Merge/E2E remain incomplete; no task acceptance claim.",
+  "source_dirty_after_checks": [],
+  "source_clean_check": {
+    "command": [
+      "git",
+      "diff",
+      "--name-only",
+      "--",
+      "crates",
+      "scripts",
+      "vendor",
+      "Cargo.toml",
+      "Cargo.lock"
+    ],
+    "exit_code": 0,
+    "changed_files": []
+  }
+}

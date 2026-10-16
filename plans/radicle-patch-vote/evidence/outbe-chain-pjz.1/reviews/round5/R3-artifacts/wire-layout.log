@@ -1,0 +1,4 @@
+PASS wire v1 RefsAt=54 body=184 fixed_overhead=130 frame_sha256=02865c061703f1201a17e12db22dc71ea40f2177cd3235d2480e28d83064e824
+PASS wire v2 RefsAt=119 body=249 fixed_overhead=130 frame_sha256=43d6013663903cc7574f47abf311458635b317b7f9f72bcd6f592bd3b3919120
+PASS wire v2 RefsAt=55 body=185 fixed_overhead=130 frame_sha256=3403a56b8266b4ca37f5623310bf477133c722dbb73dd13324ebecdac66da87e
+PASS legacy/V2 RID and at u16be(20) prefixes, unchanged Ed25519 transport, 549 BLS RefsAt payload bound

@@ -17,6 +17,17 @@ pub struct StorageVec<'storage, T> {
     _marker: std::marker::PhantomData<T>,
 }
 
+impl<T> Clone for StorageVec<'_, T> {
+    fn clone(&self) -> Self {
+        Self {
+            base_slot: self.base_slot,
+            address: self.address,
+            storage: self.storage.clone(),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
 impl<'storage, T: Storable> StorageVec<'storage, T> {
     pub fn new(base_slot: U256, address: Address, storage: StorageHandle<'storage>) -> Self {
         Self {

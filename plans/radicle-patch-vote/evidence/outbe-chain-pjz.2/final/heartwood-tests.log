@@ -1,0 +1,207 @@
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+   Compiling radicle-node v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-node)
+   Compiling radicle-fetch v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-fetch)
+   Compiling radicle-protocol v0.9.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-protocol)
+    Finished `test` profile [unoptimized] target(s) in 8.04s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-standalone/debug/deps/radicle_node-2cda458f01226833)
+
+running 90 tests
+test reactor::timer::tests::test_next ... ok
+test reactor::timer::tests::test_wake_exact ... ok
+test reactor::timer::tests::test_wake ... ok
+test control::tests::test_control_socket ... ok
+test fingerprint::tests::matching ... ok
+test control::tests::test_seed_unseed ... ok
+test tests::bounded_disconnect_queues_matching_outbound_disconnect ... ok
+test tests::disconnecting_unresponsive_peer ... ok
+test tests::connection_kept_alive ... ok
+test tests::bounded_disconnect_is_idempotent_for_absent_and_pending_peers ... ok
+test tests::bounded_disconnect_preserves_inbound_and_changed_address_sessions ... ok
+test tests::announcement_relay ... ok
+test tests::announcement_rebroadcast_timestamp_filtered ... ok
+test tests::announcement_rebroadcast ... ok
+test tests::announcement_rebroadcast_deduplicates ... ok
+test tests::e2e::test_block_prevents_connection ... ok
+test tests::e2e::test_block_active_connection ... ok
+test tests::e2e::test_connection_crossing ... ok
+test tests::e2e::public_to_private_to_public_replay ... ok
+test tests::e2e::test_block_prevents_fetch ... ok
+test tests::e2e::test_channel_reader_limit ... ok
+test tests::e2e::clone_without_founder_namespace ... ok
+test tests::e2e::fetch_does_not_contain_rad_sigrefs_parent ... ok
+test tests::e2e::missing_default_branch ... ok
+test tests::e2e::test_clone ... ok
+test tests::e2e::test_dont_fetch_owned_refs ... ok
+test tests::e2e::test_background_foreground_fetch ... ok
+test tests::e2e::test_catchup_on_refs_announcements ... ok
+test tests::e2e::test_fetch_emits_canonical_ref_update_partial_glob ... ok
+test tests::e2e::missing_delegate_default_branch ... ok
+test tests::e2e::test_fetch_followed_remotes ... ok
+test tests::e2e::test_fetch_unseeded ... ok
+test tests::e2e::test_fetch_preserve_owned_refs ... ok
+test tests::e2e::test_fetch_up_to_date ... ok
+test tests::e2e::test_inventory_sync_basic ... ok
+test tests::announcement_message_amplification ... ok
+test tests::e2e::test_migrated_clone ... ok
+test tests::e2e::test_missing_remote ... ok
+test tests::e2e::test_replication ... ok
+test tests::fetch_missing_inventory_on_gossip ... ok
+test tests::fetch_missing_inventory_on_schedule ... ok
+test tests::inbound_connection ... ok
+test tests::e2e::test_non_fast_forward_sigrefs ... ok
+test tests::inventory_decode ... ok
+test tests::e2e::test_multiple_offline_inits ... ok
+test tests::e2e::test_replication_invalid ... ok
+test tests::inventory_relay ... ok
+test tests::inventory_relay_bad_timestamp ... ok
+test tests::e2e::test_replication_ref_in_sigrefs ... ok
+test tests::maintain_connections_failed_attempt ... ok
+test tests::e2e::test_non_fast_forward_identity_doc ... ok
+test tests::maintain_connections_same_second_loop ... ok
+test tests::e2e::test_fetch_emits_canonical_ref_update ... ok
+test tests::maintain_connections ... ok
+test tests::maintain_connections_transient ... ok
+test tests::orphaned_fetch_blocks_repo_from_all_nodes ... ok
+test tests::outbound_connection ... ok
+test tests::persistent_peer_connect ... ok
+test tests::persistent_peer_reconnect_success ... ok
+test tests::persistent_peer_reconnect_attempt ... ok
+test tests::ping_response ... ok
+test tests::e2e::test_outdated_sigrefs ... ok
+test tests::e2e::test_outdated_delegate_sigrefs ... ok
+test tests::queued_fetch_max_capacity ... ok
+test tests::redundant_connect ... ok
+test tests::queued_fetch_from_ann_same_rid ... ok
+test tests::queued_fetch_from_command_same_rid ... ok
+test tests::refs_announcement_followed ... ok
+test tests::init_and_seed ... ok
+test tests::refs_announcement_no_subscribe ... ok
+test tests::inventory_pruning ... ok
+test tests::seed_repo_subscribe ... ok
+test tests::seeding ... ok
+test wire::test::test_inventory_ann_with_extension ... ok
+test wire::test::test_pong_message_with_extension ... ok
+test wire::test::worker_result_clears_active_when_peer_connected ... ok
+test tests::refs_synced_event ... ok
+test wire::test::worker_result_clears_active_when_peer_disconnecting ... ok
+test tests::inventory_sync ... ok
+test tests::e2e::test_large_fetch ... ok
+test tests::refs_announcement_fetch_trusted_no_inventory ... ok
+test tests::refs_announcement_offline ... ok
+test tests::refs_announcement_relay_private ... ok
+test tests::refs_announcement_relay_public ... ok
+test tests::refs_announcement_subscribe_private ... ok
+test tests::prop_inventory_exchange_dense ... ok
+test tests::e2e::test_concurrent_fetches ... ok
+test tests::e2e::test_inventory_sync_bridge ... ok
+test tests::e2e::test_inventory_sync_ring ... ok
+test tests::e2e::test_inventory_sync_star ... ok
+
+test result: ok. 90 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.19s
+
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-standalone/debug/deps/radicle_protocol-7b1cdec6d4713c1c)
+
+running 100 tests
+test deserializer::test::test_decode_next ... ok
+test fetcher::test::queue::properties::dequeue::empty_queue_returns_none ... ok
+test deserializer::test::test_unparsed ... ok
+test fetcher::service::tests::test_fetch_coalescing_different_refs ... ok
+test deserializer::test::prop_decode_next ... ok
+test fetcher::test::queue::properties::capacity::capacity_reached_returns_same_item ... ok
+test fetcher::test::queue::properties::equality::reflexive ... ok
+test fetcher::test::queue::properties::merge::different_rid_accepted ... ok
+test fetcher::test::queue::properties::fifo::ordering ... ok
+test fetcher::test::queue::properties::dequeue::enables_reenqueue ... ok
+test fetcher::test::queue::properties::merge::longer_timeout_preserved ... ok
+test fetcher::test::queue::properties::fifo::interleaved_operations ... ok
+test fetcher::test::queue::unit::capacity_takes_precedence_over_merge_for_new_items ... ok
+test fetcher::test::queue::unit::empty_refs_items_can_be_equal ... ok
+test fetcher::test::queue::unit::max_timeout_accepted ... ok
+test fetcher::test::queue::unit::merge_preserves_position_in_queue ... ok
+test fetcher::test::queue::unit::zero_timeout_accepted ... ok
+test fetcher::test::state::command::cancel::cancellation_is_isolated ... ok
+test fetcher::test::state::command::cancel::non_existent_returns_unexpected ... ok
+test fetcher::test::queue::properties::equality::symmetric ... ok
+test fetcher::test::state::command::cancel::ongoing_and_queued ... ok
+test fetcher::test::state::command::cancel::single_ongoing ... ok
+test fetcher::test::state::command::fetch::fetch_after_previous_completed ... ok
+test fetcher::test::state::command::fetch::fetch_at_capacity_enqueues ... ok
+test fetcher::test::state::command::fetch::fetch_different_repo_same_node_within_capacity ... ok
+test fetcher::test::state::command::fetch::fetch_duplicate_returns_already_fetching ... ok
+test fetcher::test::state::command::fetch::fetch_queue_merge_empty_refs_fetches_all ... ok
+test fetcher::test::state::command::fetch::fetch_queue_merge_takes_longer_timeout ... ok
+test fetcher::test::state::command::fetch::fetch_queue_merges_already_queued ... ok
+test fetcher::test::state::command::fetch::fetch_same_repo_different_nodes_queues_second ... ok
+test fetcher::test::state::command::fetch::fetch_same_repo_different_refs_enqueues ... ok
+test fetcher::test::state::command::fetch::fetch_queue_rejected_capacity_reached ... ok
+test fetcher::test::state::command::fetch::fetch_start_first_fetch_for_node ... ok
+test fetcher::test::state::command::fetched::complete_single_ongoing ... ok
+test fetcher::test::state::command::fetched::complete_one_of_multiple ... ok
+test fetcher::test::state::command::fetched::non_existent_returns_not_found ... ok
+test fetcher::test::state::command::fetched::complete_then_dequeue_fifo ... ok
+test fetcher::test::state::command::fetched::stale_from_does_not_clear_active ... ok
+test fetcher::test::state::concurrent::fetched_then_cancel ... ok
+test fetcher::test::queue::properties::merge::succeed_when_at_capacity ... ok
+test fetcher::test::state::concurrent::interleaved_operations ... ok
+test fetcher::test::state::config::min_queue_size ... ok
+test fetcher::test::state::dequeue::empty_queue_returns_none ... ok
+test fetcher::test::state::dequeue::cannot_dequeue_while_node_at_capacity ... ok
+test fetcher::test::state::invariant::queue_integrity_after_merge ... ok
+test fetcher::test::state::dequeue::maintains_fifo_order ... ok
+test service::filter::test::compatible ... ok
+test service::filter::test::test_parameters ... ok
+test fetcher::test::queue::properties::equality::transitive ... ok
+test fetcher::test::state::multinode::independent_queues ... ok
+test fetcher::test::queue::properties::merge::empty_refs_fetches_all ... ok
+test service::limiter::test::test_limiter_different_rates ... ok
+test service::limiter::test::test_limiter_multi ... ok
+test service::limiter::test::test_limiter_refill ... ok
+test fetcher::test::queue::properties::merge::does_not_increase_queue_length ... ok
+test fetcher::test::queue::properties::merge::combines_refs ... ok
+test service::gossip::store::test::test_announced ... ok
+test wire::frame::test::test_encode_git_large ... ok
+test wire::frame::test::test_stream_id ... ok
+test service::filter::test::test_sizes ... ok
+test wire::message::tests::prop_roundtrip_address ... ok
+test fetcher::test::state::multinode::high_count ... ok
+test service::message::tests::test_ref_remote_limit ... ok
+test service::message::tests::test_inventory_limit ... ok
+test fetcher::test::queue::properties::dequeue::drained_queue_returns_none ... ok
+test wire::message::tests::test_node_ann_max_size ... ok
+test wire::message::tests::test_ping_encode_size_overflow - should panic ... ok
+test wire::message::tests::test_pingpong_encode_max_size ... ok
+test wire::message::tests::test_pong_encode_size_overflow - should panic ... ok
+test fetcher::test::state::config::high_concurrency ... ok
+test wire::tests::prop_oid ... ok
+test wire::message::tests::test_inv_ann_max_size ... ok
+test wire::tests::prop_roundtrip_refs ... ok
+test wire::tests::prop_roundtrip_repoid ... ok
+test wire::tests::prop_roundtrip_u16 ... ok
+test wire::tests::prop_roundtrip_publickey ... ok
+test wire::tests::prop_roundtrip_u32 ... ok
+test wire::tests::prop_roundtrip_u64 ... ok
+test wire::tests::prop_signature ... ok
+test wire::tests::prop_roundtrip_vec ... ok
+test wire::tests::test_alias ... ok
+test wire::tests::test_bounded_vec_limit ... ok
+test wire::tests::test_filter_invalid ... ok
+test wire::tests::test_string ... ok
+test wire::varint::test::prop_roundtrip_varint ... ok
+test fetcher::test::queue::properties::capacity::bounded ... ok
+test wire::varint::test::test_encoding ... ok
+test wire::varint::test::test_encode_overflow - should panic ... ok
+test wire::tests::prop_roundtrip_filter ... ok
+test wire::tests::prop_roundtrip_tuple ... ok
+test wire::tests::prop_string ... ok
+test service::message::tests::prop_refs_announcement_signing ... ok
+test fetcher::test::queue::properties::capacity::rejection ... ok
+test fetcher::test::queue::properties::merge::same_rid_merges_anywhere_in_queue ... ok
+test wire::message::tests::prop_zero_bytes_encode_decode ... ok
+test wire::message::tests::test_refs_ann_max_size ... ok
+test fetcher::test::queue::properties::capacity::restored_after_dequeue ... ok
+test wire::message::tests::prop_roundtrip_message ... ok
+test service::message::tests::test_node_announcement_validate ... ok
+test wire::message::tests::prop_message_decoder ... ok
+
+test result: ok. 100 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+

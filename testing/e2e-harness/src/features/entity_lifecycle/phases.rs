@@ -1,5 +1,5 @@
 //! The phases every lifecycle shares, one step each with the entity as a parameter:
-//! qualification, payment, the call, the forfeit, and mining into native COEN.
+//! payment, the call, the forfeit, and mining into native COEN.
 
 use std::time::Duration;
 
@@ -17,7 +17,6 @@ use crate::world::{test_issuance, World};
 /// Seeded closed days above the call price: Nod's production threshold, which covers
 /// the DEV two-of-three that gems and Intex run under.
 pub(crate) const CALL_WINDOW_SEED_DAYS: u32 = 21;
-const QUALIFY_TIMEOUT: Duration = Duration::from_secs(180);
 const CALL_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[then(expr = "every {entity} reads Issued and carries its terms")]
@@ -25,51 +24,15 @@ fn every_entity_issued(world: &mut World, entity: Entity) {
     entity.lifecycle().assert_issued(world);
 }
 
-#[then(expr = "no {entity} can be paid before it qualifies")]
-fn unqualified_refused(world: &mut World, entity: Entity) {
-    let [first, _] = entity.lifecycle().targets(world, Phase::Qualified);
-    guards::assert_unqualified_refused(world, &first);
-}
-
 #[then(expr = "no {entity} can be transferred")]
 fn not_transferable(world: &mut World, entity: Entity) {
-    let [first, _] = entity.lifecycle().targets(world, Phase::Qualified);
+    let [first, _] = entity.lifecycle().targets(world, Phase::Issued);
     guards::assert_soulbound(world, &first);
-}
-
-/// One closed day between floor and call price qualifies without calling. A close a
-/// target chain already holds is kept, since it records a day's price once.
-#[when(expr = "the reference rate stands above the {entity} floor")]
-fn rate_above_floor(world: &mut World, entity: Entity) {
-    let lifecycle = entity.lifecycle();
-    let floor = lifecycle.floor(world);
-    let rate = lifecycle.recorded_close(world).unwrap_or_else(|| {
-        let call_price = lifecycle.call_price(world);
-        assert!(
-            floor < call_price,
-            "the {entity:?} floor must sit below its call price"
-        );
-        (floor + call_price) / U256::from(2)
-    });
-    assert!(
-        rate > floor,
-        "the reference rate {rate} must clear the {entity:?} floor"
-    );
-    seed_closed_days(world, 1, rate);
-}
-
-#[then(expr = "every {entity} qualifies")]
-fn every_entity_qualifies(world: &mut World, entity: Entity) {
-    poll_until(
-        QUALIFY_TIMEOUT,
-        || format!("not every {entity:?} qualified on the seeded day"),
-        || entity.lifecycle().qualified(world),
-    );
 }
 
 #[then(expr = "a/an {entity} payment is refused for a stale snapshot or a foreign currency")]
 fn payment_guards(world: &mut World, entity: Entity) {
-    let [_, target] = entity.lifecycle().targets(world, Phase::Qualified);
+    let [_, target] = entity.lifecycle().targets(world, Phase::Issued);
     assert_eq!(
         target.issuance_currency, MYR_ISO,
         "the guarded holding is issued in MYR"
@@ -79,11 +42,11 @@ fn payment_guards(world: &mut World, entity: Entity) {
 
 #[then(expr = "an unpaid {entity} cannot be mined")]
 fn unpaid_unminable(world: &mut World, entity: Entity) {
-    let [first, _] = entity.lifecycle().targets(world, Phase::Qualified);
+    let [first, _] = entity.lifecycle().targets(world, Phase::Issued);
     guards::assert_unpaid_unminable(world, &first);
 }
 
-#[when(expr = "a {phase} {entity} is paid in {payment_party} and another in {payment_party}")]
+#[when(expr = "a/an {phase} {entity} is paid in {payment_party} and another in {payment_party}")]
 fn pay_two(
     world: &mut World,
     phase: Phase,
@@ -164,7 +127,7 @@ fn mined_loads_land(world: &mut World) {
 
 #[then(expr = "a mined {entity} cannot be mined again")]
 fn mined_again(world: &mut World, entity: Entity) {
-    let [first, _] = entity.lifecycle().targets(world, Phase::Qualified);
+    let [first, _] = entity.lifecycle().targets(world, Phase::Issued);
     guards::assert_mined_unminable(world, &first);
 }
 

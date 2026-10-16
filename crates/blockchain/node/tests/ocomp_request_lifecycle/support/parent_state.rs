@@ -130,6 +130,8 @@ pub(in crate::lifecycle) fn prepare_parent(
     });
 
     let parent_extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
         execution_summary: Some(ExecutionSummaryArtifact {
             validator_fee_sum: U256::ZERO,
         }),

@@ -1,0 +1,75 @@
+{
+  "scope": "Intermediate P2 baseline only; not P2 acceptance",
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--manifest-path",
+        "vendor/heartwood/Cargo.toml",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+      "source_sha": "91644eb78148e7b81cd8e46478dfb0466d321e27",
+      "environment": {
+        "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "4"
+      },
+      "exit_code": 0,
+      "local_cache_escalation": false,
+      "timing": {
+        "exact_start_end_recorded": false,
+        "observed_complete_by_utc": "2026-10-15T15:49:53Z",
+        "log_mtime_utc": "2026-10-15T15:48:57.071972+00:00"
+      },
+      "log": "native-clippy.log",
+      "sha256": "2e4eac579ec640351561240964b1f34294e21c492310d2a893b42558dcaad9f3"
+    },
+    {
+      "argv": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle-sidecar",
+        "-p",
+        "outbe-radicle-runtime",
+        "-p",
+        "outbe-keygen",
+        "-p",
+        "outbe-e2e-harness",
+        "--features",
+        "outbe-e2e-harness/ocomp-integration",
+        "--all-targets"
+      ],
+      "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+      "source_sha": "91644eb78148e7b81cd8e46478dfb0466d321e27",
+      "environment": {
+        "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+        "CARGO_PROFILE_TEST_DEBUG": "0",
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "4"
+      },
+      "exit_code": 0,
+      "local_cache_escalation": true,
+      "timing": {
+        "exact_start_end_recorded": false,
+        "observed_complete_by_utc": "2026-10-15T15:49:53Z",
+        "log_mtime_utc": "2026-10-15T15:49:20.218991+00:00"
+      },
+      "log": "root-consumers.log",
+      "sha256": "566764dd10ac1efc1f442fa37bb94dd442ebd4b744e1608680b0e052960ec817"
+    }
+  ]
+}

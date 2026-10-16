@@ -1,0 +1,17 @@
+{
+  "crates/system/vote/src/precompile.rs": "f85667f3adbf6334e74ed8a3a48fa8a8e80c3cac24e751496f97a8f60b2dbde6",
+  "crates/system/vote/src/lifecycle.rs": "a313cd1e1515d9c12910b61d05e89025cba7264ec96606461625aad8c31f9cd7",
+  "crates/system/vote/src/tests/characterization.rs": "eb27e4367dd03e4a216566ec2a80e2fa65538f7d79328266715311f3a380a31f",
+  "crates/system/vote/src/tests/guards.rs": "6b2fb54dde627dd757cfeb7d8cc5580b0061b6b84fb0f867412a1cebe153b679",
+  "crates/system/vote/src/tests/mod.rs": "89957dd235716e972923d978e7fe9d882e85a5d02cc06a746acd54af9ddbf8ca",
+  "crates/system/validatorset/src/runtime/queries.rs": "b8f04cb7569c47e94533b6c38e4607271827e3cfc6da328faf1236c124ac6a2b",
+  "crates/system/validatorset/src/state_machine/adapter.rs": "eb0aea1ffd83084a0732e271ad1bf9dc3eaed81f93fa2e33c1d495ef4188375a",
+  "crates/blockchain/evm/src/executor/hooks.rs": "b76c35e59854c6dc5128c872d6d5bbc877cef98c1a18da612030b99e063486f4",
+  "crates/blockchain/evm/src/precompile_routes.rs": "91a05231276bfcee2380361844a15a7ecb93a132d9abb16537ff7e75238a6be9",
+  "crates/blockchain/primitives/src/storage/readonly.rs": "41fdbc11ae1045479af6d9a009128e4e6b5c45ed7397872cc380d9bbfd18b30d",
+  "bin/outbe-chain/src/launch/node/radicle.rs": "813c6f0c4ca529bcbd948250e5e36451fe481582429762cdecb11e752e0b11b8",
+  "crates/core/tribute/src/runtime.rs": "79b8562c938530755cba50caa9a9a542cbc0bffceafb556ef0e473bb7182f238",
+  "plans/radicle-patch-vote/design.md": "dc9fd94ad85704057e284b374e0da27d7e0398546790ab1a202b2a9270e86df8",
+  "plans/radicle-patch-vote/plan.md": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b",
+  "plans/radicle-patch-vote/task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412"
+}

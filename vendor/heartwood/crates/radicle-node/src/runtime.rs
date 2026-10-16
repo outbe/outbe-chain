@@ -84,9 +84,6 @@ pub enum Error {
         and restart the node"
     )]
     AlreadyRunning(PathBuf),
-    /// A git version error.
-    #[error("git version error: {0}")]
-    GitVersion(#[from] git::VersionError),
 }
 
 impl From<service::Error> for Error {
@@ -129,12 +126,32 @@ impl Runtime {
         secret_key: SigningKey,
     ) -> Result<Runtime, Error> {
         let id = NodeId::from(*secret_key.public_key());
-        let alias = config.alias.clone();
+        let storage = Storage::open(
+            home.storage(),
+            git::UserInfo {
+                alias: config.alias.clone(),
+                key: id,
+            },
+        )?;
+        Self::init_with_storage(home, config, socket, listen, signals, secret_key, storage)
+    }
+
+    /// Initialize with trusted storage, preserving its publication providers in all workers.
+    /// This function spawns threads.
+    pub fn init_with_storage(
+        home: Home,
+        config: radicle::node::Config,
+        socket: PathBuf,
+        listen: Vec<net::SocketAddr>,
+        signals: mpsc::Receiver<Signal>,
+        secret_key: SigningKey,
+        storage: Storage,
+    ) -> Result<Runtime, Error> {
+        let id = NodeId::from(*secret_key.public_key());
         let network = config.network;
         let rng = fastrand::Rng::new();
         let clock = LocalTime::now();
         let timestamp = clock.into();
-        let storage = Storage::open(home.storage(), git::UserInfo { alias, key: id })?;
         let policy = config.seeding_policy.into();
 
         for (key, _) in &config.extra {

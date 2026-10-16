@@ -1,0 +1,15 @@
+{
+  "heartwood-tests": {
+    "exit_code": 101,
+    "cause": "sandbox denied local socket operations EPERM: radicle-node53 passed37 failed"
+  },
+  "peer": {
+    "exit_code": 1,
+    "cause": "sidecar init EPERM before socket ready"
+  },
+  "legacy-peer": {
+    "exit_code": 1,
+    "cause": "legacy sidecar init EPERM before socket ready"
+  },
+  "disposition": "Not accepted as PASS; rerun same checks with local socket access"
+}

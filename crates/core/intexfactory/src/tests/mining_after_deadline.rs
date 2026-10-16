@@ -43,7 +43,6 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
     let (promis_minor, nonce) = StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
         runtime::issue_intex(&s, sample(7)).unwrap();
-        seed_qualifying_day(&s);
         outbe_intex::api::record_settled_units(&s, sid(7), 1).unwrap();
         outbe_intex::api::record_called(&s, sid(7), ISSUED_AT).unwrap();
         let promis_minor = outbe_intex::api::read_series(&s, sid(7))

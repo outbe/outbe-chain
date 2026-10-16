@@ -1,0 +1,18 @@
+{
+  "base_sha": "438d98034a387190fc1f381035b121343e6c5896",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "exit_code": 101,
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "-p",
+    "outbe-radicle",
+    "--lib",
+    "integration::review::tests::exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_accepts",
+    "--",
+    "--nocapture"
+  ],
+  "reason": "New fixture Alias contains whitespace; actual policy scenario did not execute."
+}

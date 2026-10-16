@@ -20,11 +20,13 @@ pub use cache::{MigrateCallback, migrate};
 pub use common::*;
 pub use op::{ActorId, Op};
 pub use radicle_cob::{
-    CollaborativeObject, Contents, Create, Embed, Entry, Evaluate, History, Manifest, ObjectId,
-    Store, TypeName, Update, Updated, Version, change, history::EntryId, object,
+    CollaborativeObject, Contents, Create, Embed, Entry, Evaluate, GitLoadError, History, Manifest,
+    ObjectId, Store, TypeName, Update, Updated, Version, change, history::EntryId, object,
     object::collaboration::error, type_name::TypeNameParse,
 };
-pub use radicle_cob::{create, get, list, remove, update};
+pub use radicle_cob::{
+    attach_native, create, get, get_at, list, load_native, prepare_native, remove, update,
+};
 
 /// The exact identifier for a particular COB.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]

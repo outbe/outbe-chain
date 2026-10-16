@@ -16,11 +16,11 @@ fn issue_enrolls_in_call_bin() {
     });
 }
 
-/// Registry index the fixtures register the qualifier pair at. The rate
+/// Registry index the fixtures register the reference pair at. The rate
 /// columns are keyed by it.
 const PAIR_ID: u32 = 1;
 
-/// List the qualifier currency in the oracle's reference registry, which the
+/// List the reference currency in the oracle's reference registry, which the
 /// scans walk to decide which currencies to price this block.
 pub(super) fn list_reference(oracle: &OracleContract) {
     if oracle.reference_currencies.len().unwrap() == 0 {
@@ -182,7 +182,6 @@ fn try_call_excludes_pre_issuance_days() {
                 issued_units: 100,
                 promis_load_minor: PROMIS_LOAD_MINOR,
                 entry_price_minor: U256::from(ENTRY_PRICE),
-                floor_price_minor: U256::from(EXPECTED_FLOOR),
                 call_price_minor: U256::from(EXPECTED_TRIGGER),
                 call_trigger: outbe_intex::IntexCallTrigger {
                     call_window_seconds: 30 * SECONDS_PER_DAY_U32,
@@ -323,7 +322,6 @@ mod call_sweep {
                 issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
-                floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
                     call_window_seconds: WINDOW_DAYS * SECONDS_PER_DAY_U32,
@@ -526,7 +524,6 @@ mod call_sweep {
                 issued_units: count,
                 promis_load_minor: LOAD,
                 entry_price_minor: trigger,
-                floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
                     call_window_seconds: WINDOW_DAYS * SECONDS_PER_DAY_U32,
@@ -568,7 +565,6 @@ mod call_sweep {
                 issued_units: 1,
                 promis_load_minor: LOAD,
                 entry_price_minor: trigger,
-                floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
                     call_window_seconds: WINDOW_DAYS * SECONDS_PER_DAY_U32,
@@ -893,7 +889,6 @@ mod call_sweep {
                 issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
-                floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
                     call_window_seconds: WINDOW_DAYS * SECONDS_PER_DAY_U32,
@@ -1066,7 +1061,6 @@ mod call_sweep {
                 issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
-                floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
                     call_window_seconds: WINDOW_DAYS * SECONDS_PER_DAY_U32,
@@ -1278,7 +1272,6 @@ mod call_sweep {
                 issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
-                floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
                     call_window_seconds: WINDOW_DAYS * SECONDS_PER_DAY_U32,
@@ -1538,7 +1531,6 @@ mod called_pstar {
                 issued_units: 100,
                 promis_load_minor: 1_000_000_000_000_000_000,
                 entry_price_minor: trigger,
-                floor_price_minor: trigger,
                 call_price_minor: trigger,
                 call_trigger: outbe_intex::IntexCallTrigger {
                     call_window_seconds: WINDOW * DAY_SECS as u32,
@@ -1556,95 +1548,6 @@ mod called_pstar {
 }
 
 #[test]
-fn a_series_qualifies_on_a_closed_day_above_its_floor_from_its_first_full_day() {
-    with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
-        let oracle = OracleContract::new(s.clone());
-        let qualified = || is_series_qualified(&s, sid(7)).unwrap();
-        let close_day = |days_after_issue: u64, vwap: u64| {
-            write_day_vwap(
-                &oracle,
-                REFERENCE_ISO,
-                PAIR_ID,
-                ISSUED_AT as u64 + days_after_issue * DAY,
-                U256::from(vwap),
-            )
-        };
-
-        assert!(!qualified(), "no finalized day yet");
-        close_day(1, EXPECTED_FLOOR * 2);
-        assert!(!qualified(), "the partial issuance day never counts");
-        close_day(2, EXPECTED_FLOOR);
-        assert!(!qualified(), "a day at the floor does not qualify");
-        close_day(3, EXPECTED_FLOOR + 1);
-        assert!(qualified());
-        close_day(4, 1);
-        assert!(qualified(), "a later low day does not undo it");
-    });
-}
-
-#[test]
-fn is_qualified_dispatch() {
-    with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
-        write_day_vwap(
-            &OracleContract::new(s.clone()),
-            REFERENCE_ISO,
-            PAIR_ID,
-            ISSUED_AT as u64 + 2 * DAY,
-            U256::from(EXPECTED_FLOOR + 1),
-        );
-        let out = outbe_intex::precompile::dispatch(
-            s.clone(),
-            &outbe_intex::precompile::IIntex::isQualifiedCall {
-                seriesId: sid(7).into(),
-            }
-            .abi_encode(),
-            owner(),
-            U256::ZERO,
-        )
-        .unwrap();
-        assert!(
-            outbe_intex::precompile::IIntex::isQualifiedCall::abi_decode_returns(&out).unwrap()
-        );
-    });
-}
-
-#[test]
-fn max_utc_day_vwap_since_dispatch() {
-    with_factory(|s| {
-        let closed_at = ISSUED_AT as u64 + 2 * DAY;
-        write_day_vwap(
-            &OracleContract::new(s.clone()),
-            REFERENCE_ISO,
-            PAIR_ID,
-            closed_at,
-            U256::from(EXPECTED_FLOOR + 1),
-        );
-        let read = |from: u32| {
-            let out = precompile::dispatch(
-                s.clone(),
-                &IIntexFactory::maxUtcDayVwapSinceCall {
-                    isoCode: REFERENCE_ISO,
-                    fromUtcDay: from,
-                }
-                .abi_encode(),
-                owner(),
-                U256::ZERO,
-            )
-            .unwrap();
-            IIntexFactory::maxUtcDayVwapSinceCall::abi_decode_returns(&out).unwrap()
-        };
-        let closed_day = previous_date_key(timestamp_to_date_key(closed_at));
-        assert_eq!(read(closed_day), U256::from(EXPECTED_FLOOR + 1));
-        assert_eq!(
-            read(outbe_primitives::time::next_date_key(closed_day)),
-            U256::ZERO
-        );
-    });
-}
-
-#[test]
 fn a_series_is_called_only_from_issued() {
     with_factory(|s| {
         outbe_intex::api::create_series(
@@ -1655,7 +1558,6 @@ fn a_series_is_called_only_from_issued() {
                 issued_units: 100,
                 promis_load_minor: PROMIS_LOAD_MINOR,
                 entry_price_minor: U256::from(ENTRY_PRICE),
-                floor_price_minor: U256::from(EXPECTED_FLOOR),
                 call_price_minor: U256::from(EXPECTED_TRIGGER),
                 call_trigger: outbe_intex::IntexCallTrigger {
                     call_window_seconds: CALL_WINDOW,

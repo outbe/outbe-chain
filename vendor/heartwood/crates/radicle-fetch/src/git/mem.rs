@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
+use radicle::crypto::RepositoryKey as PublicKey;
 use radicle::git::Oid;
 use radicle::git::fmt::{Component, Qualified, RefString};
-use radicle::prelude::PublicKey;
 
 use super::refs::{Applied, RefUpdate, Update};
 

@@ -1,0 +1,15 @@
+{
+  "README.md": "1d5e04c83a117377092a123066373ab3ac22b017384953bea7b552a4335ae60a",
+  "all-consumers.log": "13f5d7c40bbf650d8e8c9536f2db3f67668e20568c5de4052475ba298517de20",
+  "checks.json": "7d644b0d7642de18f5d2fc759afd336b998c01f16d6e095c7b1314bb1e883f3d",
+  "failed-macos-flags/metadata.json": "9200418bac72571fbfbc11ff27a1f96d0948e0401088f8608f41be2f637d9353",
+  "failed-macos-flags/test.log": "2e7fa5e0535e675dd6c464a65d16dc36c65563d0aafa7555d52daefbca8ab35d",
+  "failed-parent-fixture/candidate.patch": "c29d3dab343c4b36c1f404939e53c5d85b715dd7ea83dfb550f13f30987ae801",
+  "failed-parent-fixture/local-tests.rs": "fbc48dd20d6b6cb429412f200a1c7b5fa2411bb75a1328b26509ee998d3daf9b",
+  "failed-parent-fixture/local.rs": "8826cf48227f9514180f6f5951cd1f3fd9ee51442b687711f2326e136760c143",
+  "failed-parent-fixture/metadata.json": "8023e9539c2385931432390b140c16b0501ce3a5d0f1fbbb6fdf9774fa16b32a",
+  "failed-parent-fixture/test.log": "7449e356b796b66242c4a289ad2ac8110f37caf71c847be361cb24247c1ccb00",
+  "full-libs.log": "ef97323f31edeaf0c1f7da4fea011d10ab7f6fea8339ea340b621959e92c4721",
+  "rustfmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "scoped-clippy.log": "3dc3d346dc7d45f6e4ea1c44e4e6379029e658091eee53147eb62915d13f27de"
+}

@@ -365,6 +365,7 @@ impl ConsensusStatus {
 #[derive(Clone)]
 pub struct ConsensusExecutionBridge {
     inner: Arc<Mutex<BridgeState>>,
+    repository_publication: crate::radicle_publication::RepositoryPublicationMailbox,
 }
 
 #[derive(Default)]
@@ -427,7 +428,14 @@ impl ConsensusExecutionBridge {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(BridgeState::default())),
+            repository_publication: Default::default(),
         }
+    }
+
+    pub fn repository_publication_mailbox(
+        &self,
+    ) -> crate::radicle_publication::RepositoryPublicationMailbox {
+        self.repository_publication.clone()
     }
 
     fn lock_state(&self) -> MutexGuard<'_, BridgeState> {

@@ -392,11 +392,16 @@ where
                                 *namespaces = updated
                                     .iter()
                                     .map(|r| {
-                                        NodeId::from_namespaced(&r.name().to_namespaced().unwrap())
+                                        r.name()
+                                            .to_namespaced()
+                                            .unwrap()
+                                            .namespace()
+                                            .as_str()
+                                            .parse::<radicle::crypto::RepositoryKey>()
                                             .unwrap()
                                     })
                                     .collect();
-                                *doc = repo.identity_doc().unwrap();
+                                **doc = repo.identity_doc().unwrap();
                             }
                             Err(err) => panic!("Error fetching: {err}"),
                         }
@@ -623,7 +628,7 @@ where
                                         protocol::worker::fetch::UpdatedCanonicalRefs::default(),
                                     namespaces: HashSet::new(),
                                     clone: true,
-                                    doc: arbitrary::r#gen(1),
+                                    doc: Box::new(arbitrary::r#gen(1)),
                                 })),
                             ),
                         },

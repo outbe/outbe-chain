@@ -1,0 +1,529 @@
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+   Compiling outbe-primitives v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/primitives)
+   Compiling outbe-radicle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/radicle)
+    Finished `test` profile [unoptimized] target(s) in 15.78s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_primitives-367734d5f92e4e35)
+
+running 388 tests
+test address_pair::tests::new_coen_to_separates_pairs_sharing_an_asset ... ok
+test address_pair::tests::quoted_keeps_the_two_directions_of_one_market_distinct ... ok
+test address_pair::tests::quoted_packs_base_first_and_quote_second ... ok
+test address_pair::tests::new_coen_to_keys_on_the_zero_address_and_the_currency_code ... ok
+test address_pair::tests::quoted_packs_an_address_paired_with_itself ... ok
+test address_pair::tests::quoted_separates_pairs_sharing_an_address ... ok
+test address_pair::tests::sorted_collapses_the_two_directions_of_one_market ... ok
+test address_pair::tests::same_market_separates_markets_sharing_an_asset ... ok
+test address_pair::tests::a_pair_round_trips_through_hex ... ok
+test address_pair::tests::the_accessors_return_the_quoted_orientation ... ok
+test address_pair::tests::the_accessors_round_trip_back_into_the_same_pair ... ok
+test address_pair::tests::the_coen_iso_840_pair_derives_a_stable_registry_slot ... ok
+test address_pair::tests::the_mapping_slot_concatenates_the_forty_byte_key_with_the_base_slot ... ok
+test address_pair::tests::quoted_assets_keeps_the_order_the_assets_are_quoted_in ... ok
+test address_pair::tests::the_mapping_slot_handles_the_zero_pair_and_the_zero_base_slot ... ok
+test address_pair::tests::the_mapping_slot_ignores_the_quote_direction ... ok
+test address_pair::tests::the_mapping_slot_separates_distinct_pairs_and_distinct_base_slots ... ok
+test asset_type::tests::native_round_trips_through_the_zero_address ... ok
+test call_bins::tests::keys_are_namespaced_by_currency ... ok
+test address_pair::tests::the_zero_pair_holds_forty_zero_bytes ... ok
+test asset_type::tests::an_address_above_the_iso_range_decodes_as_erc20 ... ok
+test asset_type::tests::an_address_outside_the_marked_iso_range_decodes_as_erc20 ... ok
+test asset_type::tests::an_unmarked_currency_code_decodes_as_erc20 ... ok
+test asset_type::tests::erc20_round_trips_through_its_own_address ... ok
+test asset_type::tests::every_variant_converts_through_into ... ok
+test asset_type::tests::iso_currency_encodes_each_decimal_digit_as_a_nibble_behind_the_marker ... ok
+test asset_type::tests::iso_currency_round_trips_every_code_in_range ... ok
+test block::tests::lifecycle_end_block_can_return_an_associated_output ... ok
+test call_bins::tests::slots_and_cursors_round_trip ... ok
+test call_breach::tests::a_breach_needs_threshold_days_strictly_above_the_call_price ... ok
+test call_bins::tests::a_zero_price_sits_in_bin_zero_and_prices_ascend_by_bin ... ok
+test call_breach::tests::days_before_the_start_day_never_count ... ok
+test call_breach::tests::zero_or_inverted_terms_never_breach ... ok
+test chain::tests::compiled_default_remains_devnet ... ok
+test chain::tests::known_network_identities_are_bijective ... ok
+test chain::tests::unknown_chain_id_is_not_an_outbe_network ... ok
+test consensus::tests::randomness_status_maps_operator_flags ... ok
+test consensus::tests::bridge_reports_only_usable_active_local_threshold_share ... ok
+test consensus::tests::test_bridge_last_finalized_block_number ... ok
+test call_breach::tests::a_live_threshold_under_a_day_leaves_the_stored_one ... ok
+test consensus_p2p::tests::rejects_unknown_version_and_trailing_bytes ... ok
+test consensus_metadata::reader_tests::byte_readers_preserve_cursor_at_prefix_and_payload_failures ... ok
+test consensus_p2p::tests::asymmetric_dns_v1_round_trip ... ok
+test consensus_p2p::tests::rejects_zero_port_and_invalid_dns ... ok
+test consensus::tests::test_bridge_recovers_poisoned_lock_without_panicking ... ok
+test consensus_p2p::tests::symmetric_v1_round_trip ... ok
+test daily_sweep::tests::a_closed_day_opens_an_idle_sweep_and_waits_behind_a_running_one ... ok
+test daily_sweep::tests::a_cursor_names_its_currency_or_falls_back_to_the_head ... ok
+test daily_sweep::tests::a_day_already_walked_or_waiting_is_left_alone ... ok
+test daily_sweep::tests::a_finished_day_can_be_walked_again ... ok
+test daily_sweep::tests::a_newer_day_replaces_the_one_waiting_and_names_it ... ok
+test dispatch::payable_witness_tests::declared_payable_selector_reaches_the_handler ... ok
+test daily_sweep::tests::finishing_a_pinned_day_hands_over_the_waiting_one_or_goes_idle ... ok
+test daily_sweep::tests::a_pinned_day_stores_the_waiting_day_and_leaves_opening_to_the_caller ... ok
+test daily_sweep::tests::finishing_starts_the_waiting_day_or_goes_idle ... ok
+test dispatch::payable_witness_tests::undeclared_payable_selector_is_refused ... ok
+test dispatch::payable_witness_tests::all_command_helpers_refuse_static_before_entering_the_closure ... ok
+test dispatch::payable_witness_tests::unpublished_selector_refuses_value_on_a_payable_module ... ok
+test errors::tests::a_body_sweep_fails_the_block_on_a_corrupt_body ... ok
+test dispatch::tests::fixed_dynamic_bytes_preflight_rejects_malformed_head_without_decoding_payload ... ok
+test dispatch::tests::fixed_dynamic_bytes_preflight_accepts_only_the_required_length ... ok
+test errors::tests::sweep_failures_follow_where_the_error_comes_from ... ok
+test expiry_queue::tests::a_slot_not_yet_due_stays_queued_until_its_hour_closes ... ok
+test expiry_queue::tests::a_sweep_expires_due_entries_earliest_bucket_first_and_stops_at_an_open_one ... ok
+test expiry_queue::tests::a_refused_member_defers_its_entry_and_the_rest_go_on ... ok
+test expiry_queue::tests::an_entry_left_in_a_walked_bucket_moves_to_its_deadline_hour ... ok
+test governance_journal::tests::init_then_record_writes_lines_and_survives_reopen ... ok
+test expiry_queue::tests::a_spent_budget_resumes_at_the_cursor ... ok
+test expiry_queue::tests::an_entry_with_nothing_left_leaves_and_one_not_ready_waits ... ok
+test expiry_queue::tests::retargeting_moves_the_entry_and_keeps_its_deadline ... ok
+test expiry_queue::tests::failed_members_wider_than_the_budget_are_tried_once_per_pass ... ok
+test expiry_queue::tests::removing_the_last_entry_retires_its_bucket_and_cursor ... ok
+test governance_journal::tests::iso8601_format_shape ... ok
+test governance_journal::tests::finalization_variants_share_flat_proposal_and_tally_fields ... ok
+test governance_journal::tests::journal_path_uses_governance_filename ... ok
+test governance_journal::tests::record_serializes_to_jsonl_with_event_tag ... ok
+test governance_journal::tests::record_when_uninit_is_noop ... ok
+test header::tests::timestamp_millis_combines_seconds_and_part_from_extra_data ... ok
+test header::tests::hash_changes_when_millis_part_changes_via_extra_data ... ok
+test header::tests::header_hash_matches_standard_ethereum_hash ... ok
+test header::tests::timestamp_millis_part_defaults_to_zero_when_absent ... ok
+test hook_events::tests::partition_keeps_only_whitelisted_addresses_for_receipt ... ok
+test expiry_queue::tests::running_out_of_gas_holds_the_walk_on_its_entry ... ok
+test filesystem::tests::reports_entries_without_following_symlinks ... ok
+test header::tests::observer_compat_header_rlp_roundtrip_matches_block_hash ... ok
+test math::bit_math::tests::most_significant_bit_known_values ... ok
+test math::bit_math::tests::mask_from_known_values ... ok
+test math::constants::tests::constants_match_pancakeswap ... ok
+test math::bit_math::tests::least_significant_bit_known_values ... ok
+test markup::tests::marks_up_in_percentage_points_and_rounds_down ... ok
+test math::price_helper::tests::get_base_25bp ... ok
+test math::price_helper::tests::convert_decimal_round_trip ... ok
+test math::price_helper::tests::get_exponent_centered_at_real_id_shift ... ok
+test math::price_helper::tests::get_id_from_price_does_not_underflow ... ok
+test math::reference_price::tests::classifier_selects_every_coen_iso_orientation_and_no_generic_market ... ok
+test math::price_helper::tests::get_id_from_price_one_is_real_id_shift ... ok
+test math::tree_math::tests::add_idempotent ... ok
+test math::tree_math::tests::add_does_not_disturb_neighbours_in_same_leaf ... ok
+test math::price_helper::tests::get_id_from_price_does_not_overflow ... ok
+test math::tree_math::tests::find_first_at_max_bin_id ... ok
+test math::tree_math::tests::find_first_crosses_mid_boundary ... ok
+test math::tree_math::tests::find_first_crosses_root_boundary ... ok
+test math::tree_math::tests::remove_clears_bit ... ok
+test math::reference_price::tests::one_coen_in_any_iso_stable_unit_maps_to_the_center_bin ... ok
+test math::scaled_math::pledge_tests::pledge_quote_uses_canonical_minor6 ... ok
+test math::tree_math::tests::add_then_contains_returns_true ... ok
+test math::scaled_math::pledge_tests::pledge_rejects_invalid_scales_zeros_and_output_overflow ... ok
+test math::tree_math::tests::empty_tree_contains_returns_false ... ok
+test math::tree_math::tests::ascending_walk_yields_sorted_sequence ... ok
+test math::tree_math::tests::find_first_above_max_returns_none ... ok
+test math::tree_math::tests::find_first_empty_returns_none ... ok
+test math::tree_math::tests::find_first_inclusive_returns_self_when_set ... ok
+test math::tree_math::tests::find_first_within_same_leaf ... ok
+test math::tree_math::tests::remove_cascades_to_root_when_only_bit ... ok
+test math::uint128x128_math::tests::log2_one_is_zero ... ok
+test math::uint128x128_math::tests::log2_two_is_one_in_128x128 ... ok
+test math::uint128x128_math::tests::log2_zero_errors ... ok
+test math::uint128x128_math::tests::pow_exponent_too_large_errors ... ok
+test math::price_helper::tests::price_to_bin_monotonic_small_sample ... ok
+test math::uint128x128_math::tests::pow_one_returns_x ... ok
+test math::uint128x128_math::tests::pow_zero_exponent_returns_scale ... ok
+test math::uint128x128_math::tests::pow_base_one_returns_base_within_ulp ... ok
+test math::uint256x256_math::tests::get_mul_prods_max_squared ... ok
+test math::uint256x256_math::tests::mul_shift_round_down_matches_simple_cases ... ok
+test participation::tests::empty_committee_keeps_legacy_minimum_header_length ... ok
+test math::uint256x256_math::tests::get_mul_prods_small_cases ... ok
+test math::uint256x256_math::tests::shift_div_round_down_matches_simple_cases ... ok
+test participation::tests::optional_sections_preserve_truncation_and_validator_order ... ok
+test participation::tests::test_128_validators_with_missed ... ok
+test participation::tests::test_backward_compat_no_missed_section ... ok
+test participation::tests::test_decode_empty ... ok
+test participation::tests::test_encode_length_mismatch_returns_error ... ok
+test participation::tests::test_encode_decode_sorted_independently ... ok
+test participation::tests::test_encode_with_limit_returns_error_on_overflow ... ok
+test participation::tests::test_roundtrip_all_present ... ok
+test participation::tests::test_roundtrip_partial ... ok
+test payload::tests::outbe_withdrawals_allow_only_absent_or_empty_lists ... ok
+test journal_writer::tests::reopening_preserves_records_and_creates_parent_directory ... ok
+test payload::tests::payload_attributes_split_millis ... ok
+test payload::tests::payload_id_changes_with_millis_and_extra_data ... ok
+test participation::tests::test_empty_participation_encodes_minimal_header ... ok
+test participation::tests::test_decode_invalid_magic ... ok
+test participation::tests::test_unsorted_order_causes_mismatch ... ok
+test participation::tests::test_extended_with_missed_proposers ... ok
+test payload::tests::payload_id_changes_with_parent_metadata_and_proposer ... ok
+test profile::tests::auto_resolves_by_network_and_explicit_selectors_win ... ok
+test projection::unbudgeted::tests::error_conversion_invokes_only_the_selected_handler ... ok
+test payload::tests::payload_attributes_json_roundtrip_with_parent_metadata_and_proposer ... ok
+test projection::unbudgeted::tests::dropped_publisher_retains_channel_closed_failure ... ok
+test projection::unbudgeted::tests::exact_ready_checkpoint_succeeds ... ok
+test radicle_genesis::tests::publication_window_matches_effective_dkg_freeze_cadence ... ok
+test projection::unbudgeted::tests::projection_ahead_remains_a_distinct_failure ... ok
+test radicle_publication::tests::batch_rejects_duplicate_unsorted_count_and_trailing_or_truncated_bytes ... ok
+test radicle_genesis::tests::ogd1_matches_frozen_p0_preimage_and_hash_without_genesis_hash_or_future_key ... ok
+test projection::unbudgeted::tests::pending_wait_completes_after_exact_checkpoint_is_published ... ok
+test projection::unbudgeted::tests::fatal_failure_retains_class_and_message ... ok
+test radicle_publication::tests::bounded_batch_exact_sizes_and_all_valid_counts_roundtrip ... ok
+test radicle_publication::tests::exact_opb1_layout_and_receipt_hash ... ok
+test radicle_publication::tests::mailbox_is_bounded_nonblocking_and_preserves_proposal_retries ... ok
+test radicle_genesis::tests::descriptor_rejects_bad_version_name_branch_policy_utf8_missing_commitments_and_lengths ... ok
+test reshare_artifact::publication_tests::legacy_format_stays_byte_compatible_and_new_format_requires_explicit_mode ... ok
+test reshare_artifact::publication_tests::proposer_uses_maximum_ready_prefix_after_reserving_final_fields ... ok
+test reshare_artifact::publication_tests::full_publication_batch_fits_with_maximum_other_mandatory_records ... ok
+test radicle_publication::tests::malformed_body_and_noncanonical_lengths_reject_without_panics ... ok
+test reshare_artifact::publication_tests::publication_record_rejects_legacy_version_duplicate_record_and_bad_envelope ... ok
+test reshare_artifact::regression::duplicate_checks_precede_record_payload_validation ... ok
+test reshare_artifact::regression::late_credit_malformed_payloads_keep_caps_order_and_trailing_errors ... ok
+test reshare_artifact::publication_tests::publication_is_an_independent_record_alongside_each_consensus_artifact ... ok
+test reshare_artifact::regression::malformed_envelope_preserves_framing_error_precedence ... ok
+test reshare_artifact::regression::malformed_record_lengths_and_unknown_tags_keep_exact_errors ... ok
+test reshare_artifact::tests::boundary_rejects_duplicate_oversized_and_tampered_tee_expiry_exclusions ... ok
+test reshare_artifact::tests::boundary_roundtrip_binds_ordered_tee_expiry_exclusions ... ok
+test reshare_artifact::regression::mixed_record_wire_vectors_are_pinned ... ok
+test reshare_artifact::tests::boundary_roundtrip_carries_tee_recipient_pubkeys ... ok
+test reshare_artifact::tests::boundary_wire_ends_after_tee_expiry_exclusions ... ok
+test reshare_artifact::regression::zero_timestamp_sentinel_and_structural_ranges_are_preserved ... ok
+test reshare_artifact::tests::compressed_entities_root_has_pinned_tag_length_order_and_big_endian_bytes ... ok
+test reshare_artifact::tests::boundary_wire_rejects_data_after_tee_expiry_exclusions ... ok
+test reshare_artifact::tests::committee_preannounce_preserves_epoch_with_empty_outcome ... ok
+test reshare_artifact::tests::compressed_entities_root_decode_rejects_duplicate_wrong_lengths_and_truncation ... ok
+test reshare_artifact::tests::empty_extra_data_has_no_artifacts ... ok
+test reshare_artifact::tests::decode_rejects_legacy_tag_0x04 ... ok
+test reshare_artifact::tests::encode_rejects_artifacts_over_extra_data_budget ... ok
+test reshare_artifact::tests::late_credits_codec_roundtrip ... ok
+test reshare_artifact::tests::late_credits_coexist_with_execution_summary_and_timestamp ... ok
+test reshare_artifact::tests::late_credits_decode_rejects_more_than_k_batches ... ok
+test reshare_artifact::tests::late_credits_empty_batch_not_emitted ... ok
+test reshare_artifact::tests::late_credits_full_batch_within_64kib ... ok
+test reshare_artifact::tests::late_credits_reject_noncanonical_order_and_duplicates ... ok
+test reshare_artifact::tests::legacy_finalized_parent_header_tag_is_rejected ... ok
+test reshare_artifact::tests::post_reset_block_one_extra_data_vector_is_pinned ... ok
+test reshare_artifact::tests::roundtrip_committee_preannounce_header_artifact ... ok
+test reshare_artifact::tests::proposer_sanitization_strips_all_execution_produced_fields ... ok
+test reshare_artifact::tests::root_reservation_accepts_exact_64k_final_and_rejects_one_more_non_root_byte ... ok
+test reshare_artifact::tests::roundtrip_block_artifacts_with_execution_summary_and_boundary ... ok
+test reshare_artifact::tests::roundtrip_boundary_header_artifact_wrapper ... ok
+test reshare_artifact::tests::roundtrip_dealer_log_header_artifact ... ok
+test reshare_artifact::tests::truncated_payload_is_rejected ... ok
+test reshare_artifact::tests::unknown_non_empty_extra_data_is_rejected ... ok
+test signer::tests::default_key_path_is_sibling_to_bls_key ... ok
+test runtime_audit_v1::tests::process_instance_is_stable_within_one_process ... ok
+test signer::tests::derives_expected_address_from_known_secret ... ok
+test reshare_artifact::tests::roundtrip_matrix_summary_x_consensus_header ... ok
+test signer::tests::rejects_wrong_secret_length ... ok
+test signer::tests::debug_redacts_secret ... ok
+test slashing_journal::tests::iso8601_format_shape ... ok
+test signer::tests::eip1559_signature_matches_fixed_transaction_vector ... ok
+test slashing_journal::tests::record_serializes_to_jsonl_with_event_tag ... ok
+test slashing_journal::tests::init_then_record_writes_lines_and_survives_reopen ... ok
+test signer::tests::raw_signature_matches_fixed_prehash_vector ... ok
+test signer::tests::signed_system_tx_keeps_reserved_to_and_zero_value ... ok
+test storage::finalized_guard_ring::tests::eviction_failure_stops_before_the_entry_write ... ok
+test storage::dsl::tests::map_list_accesses_independent_lists ... ok
+test signer::tests::signs_and_recovers_expected_address ... ok
+test slashing_journal::tests::record_when_uninit_is_noop ... ok
+test stablecoin_fork::denomination_tests::stablecoin_create_bond_is_one_million_native_coen ... ok
+test storage::dsl::tests::optional_field_roundtrip ... ok
+test signer::tests::signatures_are_deterministic_for_same_unsigned_tx ... ok
+test storage::finalized_guard_ring::tests::cursor_overflow_returns_the_caller_error_after_the_entry_write ... ok
+test storage::gas::tests::refund_saturates_on_overflow ... ok
+test storage::finalized_guard_ring::tests::record_never_evicts_an_empty_entry_or_the_recorded_block ... ok
+test storage::gas::tests::deduct_past_limit_returns_out_of_gas_without_advancing ... ok
+test storage::finalized_guard_ring::tests::record_evicts_then_writes_the_entry_then_the_cursor ... ok
+test storage::gas::tests::max_limit_reports_zero_used ... ok
+test storage::gas::tests::new_starts_with_zero_used ... ok
+test storage::gas::tests::outbe_protocol_gas_values_are_stable ... ok
+test storage::gas::tests::used_is_correct_for_metered_construction ... ok
+test storage::gas::tests::used_tracks_sum_of_per_op_constants ... ok
+test storage::handle::tests::sequential_borrows_across_handles_work ... ok
+test storage::handle::tests::nested_borrow_within_single_scope_panics - should panic ... ok
+test storage::finalized_guard_ring::tests::record_retains_the_last_retain_blocks ... ok
+test storage::hashmap::metadosis_mutation_frame_tests::wrong_finish_does_not_destroy_the_test_provider_frame ... ok
+test storage::keys::tests::hashes_address_then_big_endian_value ... ok
+test storage::lysis_activation::tests::owner_cursor_is_fixed_and_one_shot ... ok
+test storage::metadosis_mutation::tests::nested_mutation_rejects_before_nested_callback ... ok
+test storage::metadosis_mutation::tests::matching_purpose_commits_and_binds_chain_and_block ... ok
+test storage::metadosis_mutation::tests::callback_error_reverts_the_entire_frame ... ok
+test storage::metadosis_mutation::tests::mismatched_purpose_rejects_before_callback ... ok
+test storage::metadosis_mutation::tests::test_provider_entitlement_is_single_use_like_production ... ok
+test storage::types::array::tests::test_get_set ... ok
+test storage::types::binary_heap::tests::test_fallible_comparator_propagates_error ... ok
+test storage::types::binary_heap::tests::test_clear_resets_length ... ok
+test storage::types::binary_heap::tests::test_empty_heap_peek_pop_return_none ... ok
+test storage::types::array::tests::test_read_write_all ... ok
+test storage::types::array::tests::test_clear ... ok
+test storage::types::binary_heap::tests::test_push_peek_is_min ... ok
+test storage::types::binary_heap::tests::test_pop_min_sequence_matches_sorted ... ok
+test storage::types::binary_heap::tests::test_custom_comparator_max_heap ... ok
+test storage::types::binary_heap::tests::test_remove_missing_returns_false ... ok
+test storage::types::bytes_like::tests::test_clear ... ok
+test storage::types::bytes_like::tests::test_empty ... ok
+test storage::types::binary_heap::tests::test_read_all_returns_heap_array_order ... ok
+test storage::types::bytes_like::tests::test_clear_zeroes_long_data_run ... ok
+test storage::types::bytes_like::tests::test_long_32_bytes ... ok
+test storage::types::bytes_like::tests::test_short_31_bytes ... ok
+test storage::types::bytes_like::tests::test_long_100_bytes ... ok
+test storage::types::bytes_like::tests::test_short_string ... ok
+test storage::types::bytes_like::tests::test_long_to_shorter_long_clears_extra_tail ... ok
+test storage::types::circular_buffer::tests::test_clear ... ok
+test storage::types::bytes_like::tests::test_shrink_clears_stale_tail ... ok
+test storage::types::bytes_like::tests::test_write_if_changed_skips_equal ... ok
+test storage::types::circular_buffer::tests::test_fill_without_eviction ... ok
+test storage::types::circular_buffer::tests::test_push_before_setup_errors ... ok
+test storage::types::deque::tests::test_at_out_of_range ... ok
+test storage::types::deque::tests::test_empty ... ok
+test storage::types::circular_buffer::tests::test_eviction_oldest_first ... ok
+test storage::types::deque::tests::test_clear_then_reuse ... ok
+test storage::types::mapping::tests::test_mapping_address_pair_occupies_two_consecutive_slots ... ok
+test storage::types::deque::tests::test_push_back_pop_front_fifo ... ok
+test storage::types::deque::tests::test_push_front_and_pop_back ... ok
+test storage::types::mapping::tests::test_mapping_address_pair_round_trip ... ok
+test storage::types::mapping::tests::test_mapping_read_write ... ok
+test storage::types::mapping::tests::test_mapping_storage_bytes_read_write ... ok
+test storage::types::mapping::tests::test_nested_mapping ... ok
+test storage::types::mapping::tests::test_mapping_slot_computation ... ok
+test storage::types::set::tests::test_empty ... ok
+test storage::types::set::tests::test_insert_contains ... ok
+test storage::types::set::tests::test_address_set ... ok
+test storage::types::vec::tests::test_clear ... ok
+test storage::types::set::tests::test_reinsert ... ok
+test storage::types::set::tests::test_read_all ... ok
+test storage::types::set::tests::test_remove_last ... ok
+test storage::types::set::tests::test_remove_nonexistent ... ok
+test storage::types::binary_heap::tests::test_remove_by_equality_restores_invariant ... ok
+test storage::types::set::tests::test_remove_middle_swap ... ok
+test storage::types::vec::tests::test_empty ... ok
+test sweep_budget::tests::a_walk_stops_when_visits_or_writes_run_out ... ok
+test storage::types::vec::tests::test_u256 ... ok
+test storage::types::vec::tests::test_push_get ... ok
+test storage::types::vec::tests::test_pop ... ok
+test storage::types::vec::tests::test_read_all ... ok
+test sweep_budget::tests::a_wide_batch_passes_whole_only_as_the_first_write ... ok
+test sweep_budget::tests::each_limit_runs_out_on_its_own ... ok
+test storage::types::vec::tests::test_set ... ok
+test sweep_budget::tests::the_block_limits_are_shared ... ok
+test system_tx::tests::binding::boundary_parity_checks_end_inputs_after_a_matching_begin_input ... ok
+test system_tx::tests::gas::visible_gas_plan_assigns_only_cycle_the_block_remainder ... ok
+test system_tx::tests::envelope::build_unsigned_system_tx_sets_deterministic_fields ... ok
+test system_tx::tests::envelope::nonce_is_block_number_times_max_plus_ordinal ... ok
+test system_tx::tests::envelope::signature_hash_is_deterministic_for_identical_inputs ... ok
+test system_tx::tests::binding::shared_diagnostics_match_original_node_snapshots ... ok
+test system_tx::tests::binding::parent_errors_carry_block_height_and_both_hashes ... ok
+test system_tx::tests::binding::boundary_rejects_the_first_failure_in_system_transaction_order ... ok
+test system_tx::tests::gas::visible_gas_plan_reserves_ocomp_terminal_ce_before_cycle_remainder ... ok
+test system_tx::tests::gas::visible_gas_plan_rejects_system_intrinsic_gas_above_the_block_limit ... ok
+test system_tx::tests::binding::layout_failures_identify_the_rejected_stage ... ok
+test system_tx::tests::gas::visible_gas_plan_reserves_one_gem_mint_for_reward_delivery ... ok
+test system_tx::tests::layout::reserved_address_does_not_collide_with_system_precompiles ... ok
+test system_tx::tests::layout::revert_fails_block_classifies_critical_begin_zone_phases ... ok
+test system_tx::tests::layout::split_accepts_block1_cycle_tick_prefix ... ok
+test system_tx::tests::layout::split_accepts_block_with_optional_boundary_prefix ... ok
+test system_tx::tests::layout::split_accepts_empty_and_user_only_layouts ... ok
+test system_tx::tests::layout::split_rejects_reserved_tx_in_wrong_suffix_zone ... ok
+test system_tx::tests::layout::split_rejects_out_of_order_prefix ... ok
+test system_tx::tests::layout::split_rejects_reserved_tx_in_middle_zone ... ok
+test system_tx::tests::phase::advance_after_commit_interleaves_optional_phase3b ... ok
+test system_tx::tests::phase::body_index_matches_for_every_begin_zone_variant ... ok
+test system_tx::tests::phase::expected_kind_returns_phase_for_each_variant ... ok
+test system_tx::tests::phase::initial_for_block_block_0_is_cycletick_placeholder ... ok
+test system_tx::tests::phase::initial_for_block_block_1_is_cycletick ... ok
+test system_tx::tests::phase::initial_for_block_block_2_is_phase1_preexecuted ... ok
+test system_tx::tests::publication::publication_cursor_advances_only_after_hooks_when_a_batch_is_present ... ok
+test system_tx::tests::publication::publication_calldata_is_bounded_and_canonical ... ok
+test system_tx::tests::witness::canonical_phase1_calldata_changes_signature_hash ... ok
+test system_tx::tests::publication::publication_layout_binds_exact_header_batch_after_hooks_and_preserves_legacy ... ok
+test system_tx::tests::witness::phase1_witness_validation_accepts_canonical_signed_tx ... ok
+test system_tx::tests::input::input_roundtrips_every_system_tx_kind ... ok
+test system_tx::tests::witness::phase1_witness_validation_rejects_noncanonical_envelope_shape ... ok
+test tee_genesis_v1::tests::dcap_policy_pins_one_role_neutral_release_measurement ... ok
+test system_tx::tests::witness::phase1_witness_validation_rejects_wrong_chain_id_and_nonce ... ok
+test tee_genesis_v1::tests::dcap_policy_rejects_zero_release_measurements ... ok
+test system_tx::tests::witness::phase1_witness_validation_rejects_wrong_calldata_or_kind ... ok
+test tee_operator_v1::tests::inconsistent_schedule_is_rejected ... ok
+test system_tx::tests::witness::recover_phase1_proposer_rejects_trailing_eip2718_bytes ... ok
+test tee_genesis_v1::tests::devnet_and_testnet_accept_both_modes_while_mainnet_requires_dcap ... ok
+test tee_genesis_v1::tests::development_field_is_canonical_but_not_hardware_evidence ... ok
+test system_tx::tests::witness::phase1_witness_validation_rejects_wrong_signer ... ok
+test tee_operator_v1::tests::schedule_pins_activation_freeze_and_forecast ... ok
+test tee_signatures::tests::invalid_recovery_id_rejects ... ok
+test test_utils::sol_interface::tests::sol_constant_reads_plain_and_separated_literals ... ok
+test test_utils::sol_interface::tests::sol_function_canonical_reads_sample_interface ... ok
+test system_tx::tests::layout::validate_active_system_tx_set_accepts_expected_membership ... ok
+test tee_signatures::tests::signer_and_public_key_round_trip ... ok
+test time::tests::date_key_roundtrip_through_timestamp ... ok
+test time::tests::date_key_to_timestamp_roundtrip_at_midnight ... ok
+test time::tests::day_number_between_pre_genesis_is_error ... ok
+test time::tests::a_midnight_issuance_keeps_its_own_day_and_a_later_one_waits ... ok
+test time::tests::day_number_between_same_day_is_zero ... ok
+test time::tests::day_number_between_walks_forward_within_year ... ok
+test time::tests::day_number_between_walks_forward_across_year ... ok
+test time::tests::display_and_parse_roundtrip ... ok
+test time::tests::is_valid_accepts_basic_valid_dates ... ok
+test time::tests::is_valid_rejects_basic_invalid_dates ... ok
+test time::tests::parse_rejects_invalid_date ... ok
+test time::tests::next_date_key_crosses_month_and_year ... ok
+test time::tests::previous_date_key_crosses_month_and_year ... ok
+test time::tests::serde_is_transparent_u32 ... ok
+test time::tests::storage_encoding_is_identical_to_the_raw_u32_day ... ok
+test time::tests::storage_key_is_big_endian_u32 ... ok
+test time::tests::storage_mapping_roundtrip_as_key_and_value ... ok
+test time::tests::storage_slot_roundtrip_is_raw_u32_word ... ok
+test time::tests::storage_word_roundtrip ... ok
+test time::tests::timestamp_to_date_key_uses_utc ... ok
+test reshare_artifact::tests::proptest_roundtrip_block_artifacts ... ok
+test time::tests::worldwide_day_to_utc_timestamp_roundtrip_known_midnight ... ok
+test time::tests::worldwide_day_uses_utc_plus_14_boundary ... ok
+test units::tests::native_coen_uses_eighteen_decimal_units_while_protocol_stays_six_decimal ... ok
+test units::tests::native_remainder_is_dropped_only_when_returning_to_protocol_precision ... ok
+test units::tests::protocol_amount_converts_to_native_coen_without_changing_protocol_precision ... ok
+test units::tests::protocol_to_native_conversion_rejects_overflow ... ok
+test units::tests::whole_coen_conversion_is_explicitly_native ... ok
+test units::tests::the_intex_codec_uses_the_same_units ... ok
+test validators::tests::validator_registration_v2_changes_when_node_id_changes ... ok
+test wwd_entity_id::tests::an_id_round_trips_through_hex ... ok
+test wwd_entity_id::tests::the_id_ignores_the_leading_four_digest_bytes ... ok
+test wwd_entity_id::tests::the_mapping_slot_handles_the_zero_id_and_the_zero_base_slot ... ok
+test validators::tests::validator_registration_v2_preimage_is_exact_and_node_id_bound ... ok
+test wwd_entity_id::tests::distinct_days_and_distinct_digests_stay_distinct ... ok
+test wwd_entity_id::tests::the_day_prefix_orders_ids_by_day_before_body ... ok
+test wwd_entity_id::tests::the_id_packs_the_day_over_the_digest_tail_and_round_trips_through_a_word ... ok
+test wwd_entity_id::tests::the_mapping_slot_needs_no_override_for_a_full_width_key ... ok
+test system_tx::tests::layout::validate_active_system_tx_set_rejects_phase3b_outside_block1 ... ok
+test system_tx::tests::layout::validate_active_system_tx_set_requires_mandatory_and_conditional_kinds ... ok
+test participation::proptests::roundtrip_participation ... ok
+test participation::proptests::encoding_deterministic ... ok
+test participation::proptests::roundtrip_extended ... ok
+test participation::proptests::wrong_validator_count_returns_none ... ok
+test participation::proptests::random_bytes_no_panic ... ok
+
+test result: ok. 388 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_radicle-99bf4ab6ab3c264f)
+
+running 71 tests
+test endpoint::actor::tests::mailbox_bound ... ok
+test endpoint::actor::tests::handle_deadline ... ok
+test integration::lifecycle::tests::unstarted_endpoint_needs_no_ack_and_cannot_start_after_drain ... ok
+test integration::lifecycle::tests::closed_ack_is_not_success_even_if_service_exits_cleanly ... ok
+test integration::lifecycle::tests::ack_then_panic_preserves_join_failure ... ok
+test integration::local::tests::actual_local_socket_returns_bound_receipts_without_fallback ... FAILED
+test integration::lifecycle::tests::ack_without_service_exit_is_aborted_and_reaped ... ok
+test integration::lifecycle::tests::completed_endpoint_retains_actual_transport_error_or_panic ... ok
+test integration::local::tests::blocking_state_reads_are_bounded_without_an_unbounded_wait_queue ... FAILED
+test integration::bootstrap_probe::genesis_description_range_matches_native_project_range ... ok
+test integration::local::tests::response_decoder_checks_exact_request_chain_and_receipt_integrity ... ok
+test integration::local::tests::malformed_oversized_and_arbitrary_signing_requests_never_reach_reader ... FAILED
+test integration::local::tests::local_signing_state_is_requested_fresh_for_the_exact_proposal ... FAILED
+test integration::network::evidence::tests::publication_remains_available_after_reader_unwinds ... ok
+test integration::local::tests::client_deadline_covers_an_authenticated_but_unresponsive_peer ... FAILED
+test integration::local::tests::private_permissions_symlinks_live_owners_and_stale_sockets_are_checked ... FAILED
+test integration::local::tests::public_output_crosses_the_socket_only_with_the_same_current_patch_context ... FAILED
+test integration::network::evidence::tests::snapshots_are_ordered_independent_copies ... ok
+test integration::network::evidence::tests::pruning_requires_live_exact_validator_peer_and_node_binding ... ok
+test integration::local::tests::public_output_codec_binds_exact_material_and_rejects_corruption_and_lengths ... ok
+test integration::network::evidence::tests::replacing_peer_preserves_previously_returned_snapshot ... ok
+test integration::network::evidence::tests::snapshot_remains_available_after_writer_unwinds ... ok
+test integration::network::shutdown_tests::actor_panic_after_ack_is_not_success ... ok
+test integration::network::shutdown_tests::closing_network_commands_reaps_actor ... ok
+test integration::network::shutdown_tests::explicit_shutdown_ack_follows_actor_cleanup ... ok
+test integration::network::shutdown_tests::shutdown_closed_mailbox_is_not_deadline ... ok
+test integration::network::shutdown_tests::network_cancellation_aborts_actor ... ok
+test integration::network::material_tests::repository_material_requests_share_the_bounded_nonblocking_local_mailbox ... ok
+test integration::network::shutdown_tests::shutdown_preserves_closed_acknowledgement ... ok
+test integration::network::shutdown_tests::transport_failure_is_preserved_and_actor_reaped ... ok
+test integration::network::shutdown_tests::shutdown_full_mailbox_waits_until_deadline ... ok
+test integration::network::shutdown_tests::stalled_actor_is_aborted_and_reaped_after_ack ... ok
+test integration::network::evidence::tests::concurrent_readers_observe_complete_signed_records ... ok
+test integration::network::shutdown_tests::actor_cancellation_panic_is_not_a_deadline ... ok
+test integration::publication::tests::canonical_manifest_has_exact_sorted_wire_bytes_and_rejects_noncanonical_inputs ... ok
+test integration::network::material_tests::repository_material_bridge_requires_matching_live_output_and_fresh_finalized_authority ... ok
+test integration::publication::tests::manifest_rejects_duplicates_bad_hex_refs_subjects_and_silent_unicode_changes ... ok
+test integration::publication::store::tests::symlinks_and_public_store_directories_fail_without_changing_the_target ... ok
+test integration::local::tests::preparation_context_codec_requires_exact_context_refs_and_sigrefs ... ok
+test integration::review::tests::review_context_matches_frozen_p0_native_vectors ... ok
+test manager::actor::shutdown_tests::cancellation_preserves_manager_destructor_panic ... ok
+test manager::actor::shutdown_tests::dropping_manager_aborts_owned_task ... ok
+test manager::actor::shutdown_tests::shutdown_bounds_both_stages_and_cleans_endpoint_after_manager_timeout ... ok
+test manager::actor::shutdown_tests::shutdown_drains_owned_manager_before_endpoint ... ok
+test manager::actor::shutdown_tests::shutdown_preserves_manager_panic ... ok
+test manager::actor::shutdown_tests::shutdown_preserves_manager_panic_and_still_cleans_endpoint ... ok
+test manager::actor::shutdown_tests::shutdown_timeout_reaps_owned_manager_before_endpoint_cleanup ... ok
+test manager::actor::shutdown_tests::unreapable_manager_returns_cancellation_deadline ... ok
+test integration::publication::tests::checkpoint_snapshot_replays_bind_material_without_losing_the_native_sigrefs ... ok
+test integration::publication::tests::checkpoint_snapshot_rejects_wrong_receipt_job_subject_owner_and_partial_refs ... ok
+test integration::publication::store::tests::atomic_artifacts_recover_uncommitted_temporary_bytes_without_overwriting_committed_data ... ok
+test integration::local::tests::preparation_socket_verifies_manifest_receipts_and_replays_after_restart ... FAILED
+test integration::publication::store::tests::selected_slot_survives_reopen_and_cannot_choose_another_body ... ok
+test integration::review::tests::pinned_git_closure_checks_code_objects_and_preserves_external_submodules ... ok
+test integration::publication::store::tests::accepted_manifest_cache_replays_exact_snapshot_after_reopen_without_selecting_package ... ok
+test integration::publication::store::tests::checkpoint_manifest_cache_rejects_corruption_missing_files_and_symlinks ... ok
+test integration::publication::store::tests::checkpoint_replay_requires_trusted_receipts_and_rejects_gaps_forks_or_foreign_target ... ok
+test manager::snapshot::tests::exact_snapshot ... ok
+test integration::local::tests::signing_state_wire_rejects_mixed_contexts_bad_bindings_and_noncanonical_frames ... ok
+test integration::local::tests::signing_state_wire_supports_the_protocol_maximum_committee ... ok
+test integration::publication::tests::manifest_enforces_the_exact_one_mib_limit_before_raw_decode ... ok
+test manager::snapshot::approval_tests::exact_finalized_state_does_not_leak_latest_approval_or_revoke_accepted_history ... ok
+test manager::snapshot::approval_tests::missing_finality_noncanonical_and_unavailable_snapshots_fail_without_fallback ... ok
+test manager::snapshot::approval_tests::publication_receipt_reader_pins_history_and_rejects_corrupt_or_future_records ... ok
+test manager::snapshot::approval_tests::repository_authority_rejects_missing_finality_noncanonical_and_unavailable_exact_state ... ok
+test manager::snapshot::approval_tests::repository_authority_uses_current_finalized_committee_and_rejects_effective_set_mismatch ... ok
+test manager::snapshot::approval_tests::local_receipt_reader_samples_own_current_finality_without_archived_fallback ... ok
+test manager::snapshot::approval_tests::publication_receipt_reader_rejects_unfinalized_noncanonical_missing_history_without_fallback ... ok
+test manager::snapshot::approval_tests::current_patch_signing_state_rejects_pending_expired_bad_binding_and_future_records ... ok
+test manager::snapshot::approval_tests::current_patch_signing_state_uses_one_exact_finalized_state_and_preserves_consumed_permission ... ok
+test integration::review::tests::exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_accepts ... ok
+
+failures:
+
+---- integration::local::tests::actual_local_socket_returns_bound_receipts_without_fallback stdout ----
+
+thread 'integration::local::tests::actual_local_socket_returns_bound_receipts_without_fallback' (18520497) panicked at crates/blockchain/radicle/src/integration/local/tests.rs:81:69:
+called `Result::unwrap()` on an `Err` value: Io(Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" })
+
+---- integration::local::tests::blocking_state_reads_are_bounded_without_an_unbounded_wait_queue stdout ----
+
+thread 'integration::local::tests::blocking_state_reads_are_bounded_without_an_unbounded_wait_queue' (18520498) panicked at crates/blockchain/radicle/src/integration/local/tests.rs:236:61:
+called `Result::unwrap()` on an `Err` value: Io(Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" })
+
+---- integration::local::tests::malformed_oversized_and_arbitrary_signing_requests_never_reach_reader stdout ----
+
+thread 'integration::local::tests::malformed_oversized_and_arbitrary_signing_requests_never_reach_reader' (18520501) panicked at crates/blockchain/radicle/src/integration/local/tests.rs:157:69:
+called `Result::unwrap()` on an `Err` value: Io(Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" })
+
+---- integration::local::tests::local_signing_state_is_requested_fresh_for_the_exact_proposal stdout ----
+
+thread 'integration::local::tests::local_signing_state_is_requested_fresh_for_the_exact_proposal' (18520500) panicked at crates/blockchain/radicle/src/integration/local/tests.rs:457:10:
+called `Result::unwrap()` on an `Err` value: Io(Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" })
+
+---- integration::local::tests::client_deadline_covers_an_authenticated_but_unresponsive_peer stdout ----
+
+thread 'integration::local::tests::client_deadline_covers_an_authenticated_but_unresponsive_peer' (18520499) panicked at crates/blockchain/radicle/src/integration/local/tests.rs:182:46:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+
+---- integration::local::tests::private_permissions_symlinks_live_owners_and_stale_sockets_are_checked stdout ----
+
+thread 'integration::local::tests::private_permissions_symlinks_live_owners_and_stale_sockets_are_checked' (18520504) panicked at crates/blockchain/radicle/src/integration/local/tests.rs:129:63:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+
+---- integration::local::tests::public_output_crosses_the_socket_only_with_the_same_current_patch_context stdout ----
+
+thread 'integration::local::tests::public_output_crosses_the_socket_only_with_the_same_current_patch_context' (18520506) panicked at crates/blockchain/radicle/src/integration/local/tests.rs:648:10:
+called `Result::unwrap()` on an `Err` value: Io(Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" })
+
+---- integration::local::tests::preparation_socket_verifies_manifest_receipts_and_replays_after_restart stdout ----
+
+thread 'integration::local::tests::preparation_socket_verifies_manifest_receipts_and_replays_after_restart' (18520503) panicked at crates/blockchain/radicle/src/integration/local/tests.rs:960:14:
+called `Result::unwrap()` on an `Err` value: Io(Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" })
+
+
+failures:
+    integration::local::tests::actual_local_socket_returns_bound_receipts_without_fallback
+    integration::local::tests::blocking_state_reads_are_bounded_without_an_unbounded_wait_queue
+    integration::local::tests::client_deadline_covers_an_authenticated_but_unresponsive_peer
+    integration::local::tests::local_signing_state_is_requested_fresh_for_the_exact_proposal
+    integration::local::tests::malformed_oversized_and_arbitrary_signing_requests_never_reach_reader
+    integration::local::tests::preparation_socket_verifies_manifest_receipts_and_replays_after_restart
+    integration::local::tests::private_permissions_symlinks_live_owners_and_stale_sockets_are_checked
+    integration::local::tests::public_output_crosses_the_socket_only_with_the_same_current_patch_context
+
+test result: FAILED. 63 passed; 8 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.43s
+
+error: test failed, to rerun pass `-p outbe-radicle --lib`

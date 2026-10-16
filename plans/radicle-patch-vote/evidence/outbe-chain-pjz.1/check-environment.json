@@ -1,0 +1,87 @@
+{
+  "timestamp_utc": "2026-10-15T10:42:30.225471+00:00",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p0-candidate2-target"
+  },
+  "checks": [
+    {
+      "command": [
+        "python3",
+        "plans/radicle-patch-vote/p0-check/audit_sources.py"
+      ],
+      "exit_code": 0,
+      "stdout": "51 checked anchors; 141 coupling candidate files; live HEAD af5f083c823325693697f790eb17a13ee3a65259; write=False\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "rustfmt",
+        "--edition",
+        "2021",
+        "--check",
+        "plans/radicle-patch-vote/p0-check/src/main.rs",
+        "plans/radicle-patch-vote/p0-check/src/publication.rs",
+        "plans/radicle-patch-vote/p0-check/src/native.rs"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "cargo",
+        "run",
+        "--offline",
+        "--locked",
+        "--quiet",
+        "--manifest-path",
+        "plans/radicle-patch-vote/p0-check/Cargo.toml"
+      ],
+      "exit_code": 0,
+      "stdout": "design-check.log",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "python3",
+        "plans/radicle-patch-vote/p0-check/verify_vectors.py"
+      ],
+      "exit_code": 0,
+      "stdout": "PASS independent byte reconstruction: DID/key wire, canonical fixture doc, actual Git OIDs, all three OPJ1/RDB1/envelope/Commonware frames, COB metadata and signature header\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "python3",
+        "plans/radicle-patch-vote/p0-check/descriptor_check.py"
+      ],
+      "exit_code": 0,
+      "stdout": "descriptor-check.log",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "python3",
+        "plans/radicle-patch-vote/p0-check/schedule_check.py"
+      ],
+      "exit_code": 0,
+      "stdout": "schedule-check.log",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2\n",
+  "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)\n",
+  "git": "git version 2.54.0 (Apple Git-157)\n"
+}

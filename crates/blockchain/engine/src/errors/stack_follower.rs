@@ -268,6 +268,9 @@ pub enum StackStartupError {
     /// Indicates that genesis config epochLengthBlocks failed deserialization.
     #[error("invalid genesis config epochLengthBlocks: {0}")]
     InvalidEpochLengthBlocks(String),
+    /// Governments descriptor or the effective publication window is invalid.
+    #[error("invalid governments genesis configuration: {0}")]
+    InvalidGovernmentsGenesis(String),
     /// Indicates that a genesis config timing key failed deserialization.
     #[error("invalid genesis config {key}: {error}")]
     InvalidGenesisTimingConfig {

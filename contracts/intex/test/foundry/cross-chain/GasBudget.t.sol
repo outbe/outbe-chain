@@ -10,7 +10,6 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
@@ -58,27 +57,6 @@ contract GasBudgetTest is CrossChainTest {
         uint256 before = gasleft();
         _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
         spent = before - gasleft();
-    }
-
-    function test_TheQuoteCoversADailyVwapAtItsWidest() public {
-        router.setVwapRegistry(address(DeployProxy.vwapRegistry(admin, address(router))));
-        for (
-            uint256 rows = 1;
-            rows <= BridgeMsgCodec.MAX_REFERENCE_PRICES;
-            rows += BridgeMsgCodec.MAX_REFERENCE_PRICES - 1
-        ) {
-            IOriginRouter.DailyVwap[] memory day = new IOriginRouter.DailyVwap[](rows);
-            for (uint256 i = 0; i < rows; ++i) {
-                day[i] = IOriginRouter.DailyVwap({isoCode: uint16(840 + i), vwapMinor: uint64(1_000_000 + i)});
-            }
-            bytes memory packet = BridgeMsgCodec.encodeDailyVwap(uint32(WORLDWIDE_DAY + rows), day);
-            uint256 before = gasleft();
-            _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
-            uint256 spent = before - gasleft();
-
-            emit log_named_uint(rows == 1 ? "daily_vwap_1row" : "daily_vwap_6rows", spent);
-            assertLt(spent, IntexGas.dailyVwap(rows), "a daily VWAP must fit the quote");
-        }
     }
 
     function _seed(bytes14[] memory batch) internal {
@@ -166,7 +144,6 @@ contract GasBudgetTest is CrossChainTest {
                     issuedUnits: 10_000,
                     promisLoadMinor: 1e6,
                     entryPriceMinor: 100e6,
-                    floorPriceMinor: 40e6,
                     callNoticePeriod: 0,
                     issuanceCurrency: 840,
                     referenceCurrency: 840,
@@ -210,7 +187,6 @@ contract GasBudgetTest is CrossChainTest {
                 issuedUnits: 10_000,
                 promisLoadMinor: 1e6,
                 entryPriceMinor: 100e6,
-                floorPriceMinor: 40e6,
                 callNoticePeriod: 0,
                 issuanceCurrency: 840,
                 referenceCurrency: 840,
@@ -438,10 +414,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
         IOriginRouter.ReferenceCurrencyPrice[] memory prices = new IOriginRouter.ReferenceCurrencyPrice[](rows);
         for (uint256 i = 0; i < rows; ++i) {
             prices[i] = IOriginRouter.ReferenceCurrencyPrice({
-                isoCode: uint16(840 + i),
-                entryPriceMinor: ENTRY_PRICE,
-                floorPriceMinor: 40e6,
-                callPriceMinor: ENTRY_PRICE
+                isoCode: uint16(840 + i), entryPriceMinor: ENTRY_PRICE, callPriceMinor: ENTRY_PRICE
             });
         }
         return BridgeMsgCodec.encodeAuctionStageStart(
@@ -677,7 +650,7 @@ contract OriginInboundGasTest is CrossChainTest {
         IOriginRouter.AuctionStageStartParams memory p;
         p.worldwideDay = WORLDWIDE_DAY;
         p.dayState = 1;
-        p.prices = ReferenceCurrencyPriceLib.one(840, ENTRY_PRICE, 40e6, ENTRY_PRICE);
+        p.prices = ReferenceCurrencyPriceLib.one(840, ENTRY_PRICE, ENTRY_PRICE);
         vm.prank(address(desis));
         originRouter.sendAuctionStageStart(p);
     }
@@ -768,16 +741,6 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
         router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.RELAYER_ROLE(), address(router));
 
-        VwapRegistry registry = DeployProxy.vwapRegistry(address(this), address(this));
-        IOriginRouter.DailyVwap[] memory row = new IOriginRouter.DailyVwap[](1);
-        for (uint32 month = 202605; month < 202607; ++month) {
-            for (uint32 dd = 1; dd < 32; ++dd) {
-                row[0] = IOriginRouter.DailyVwap({isoCode: 840, vwapMinor: uint64(30e6 + dd)});
-                registry.record(month * 100 + dd, row);
-            }
-        }
-        intex.setVwapSource(address(registry));
-
         vm.warp(ISSUED_AT);
         _deliver(OUTBE_CHAIN_ID, originPeer, address(router), _chunk(0, 0x3000));
         vm.warp(ISSUED_AT + 62 days);
@@ -802,7 +765,6 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
                 issuedUnits: 10_000,
                 promisLoadMinor: 1e6,
                 entryPriceMinor: 100e6,
-                floorPriceMinor: 40e6,
                 callNoticePeriod: 0,
                 issuanceCurrency: 840,
                 referenceCurrency: 840,

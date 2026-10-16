@@ -113,6 +113,7 @@ pub fn issue_credis(
                 asset: r.asset,
                 principalMinor: r.amount,
                 gratisMinor: r.gratis_minor,
+                callPriceMinor: opened.call_price_minor,
             }),
         )?;
         Ok((id, r.amount))

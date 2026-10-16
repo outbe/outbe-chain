@@ -1,5 +1,6 @@
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::prelude::RepoId;
 
@@ -26,7 +27,12 @@ impl TempRepository {
 
     const RANDOMNESS_LENGTH: usize = 6;
 
-    pub(super) fn new<P>(root: P, rid: RepoId, info: &UserInfo) -> Result<Self, RepositoryError>
+    pub(super) fn new<P>(
+        root: P,
+        rid: RepoId,
+        info: &UserInfo,
+        publication: Arc<crate::storage::publication::Registry>,
+    ) -> Result<Self, RepositoryError>
     where
         P: AsRef<Path>,
     {
@@ -37,7 +43,8 @@ impl TempRepository {
             .as_ref()
             .join(format!("{}.{random}", rid.canonical()))
             .with_extension(Self::EXT);
-        let repo = Repository::create(&path, rid, info)?;
+        let mut repo = Repository::create(&path, rid, info)?;
+        repo.publication = publication;
         Ok(Self { repo, path })
     }
 

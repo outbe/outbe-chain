@@ -58,7 +58,7 @@ fn reference<R: ReadRepository>(
     nid: &NodeId,
     qual: &git::fmt::Qualified,
 ) -> Result<Option<git::Oid>, git::raw::Error> {
-    match repo.reference_oid(nid, qual) {
+    match repo.reference_oid(&(*nid).into(), qual) {
         Ok(oid) => Ok(Some(oid)),
         Err(e) if e.is_not_found() => Ok(None),
         Err(e) => Err(e),

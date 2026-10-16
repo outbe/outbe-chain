@@ -1,0 +1,82 @@
+crates/blockchain/evm/src/executor/hooks.rs:77:pub fn run_outbe_pre_execution_hooks(
+crates/blockchain/evm/src/executor/hooks.rs:81:    run_outbe_pre_execution_hooks_inner(hook_ctx, genesis_validators, None)
+crates/blockchain/evm/src/executor/hooks.rs:85:pub fn run_outbe_pre_execution_hooks_with_readers(
+crates/blockchain/evm/src/executor/hooks.rs:91:    run_outbe_pre_execution_hooks_inner(hook_ctx, genesis_validators, Some((readers, scope)))
+crates/blockchain/evm/src/executor/hooks.rs:94:fn run_outbe_pre_execution_hooks_inner(
+crates/blockchain/evm/src/executor/hooks.rs:113:        crate::handlers::vote::registry(),
+crates/blockchain/evm/src/precompile_routes.rs:332:        crate::handlers::vote::registry(),
+crates/blockchain/evm/src/precompile_routes.rs:416:    RADICLE_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_radicleregistry::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_radicleregistry::precompile::PAYABLE_SELECTORS),
+crates/blockchain/evm/src/precompile_routes.rs:583:            lookup(&RADICLE_REGISTRY_ADDRESS).unwrap().reader_mode(),
+crates/blockchain/evm/src/precompile_routes.rs:590:        let route = lookup(&RADICLE_REGISTRY_ADDRESS).expect("RadicleRegistry route");
+crates/system/radicleregistry/src/tests.rs:130:        assert_eq!(registry.patch_approvals.base_slot(), U256::from(6));
+crates/system/radicleregistry/src/tests.rs:180:    let events = provider.get_events(outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS);
+crates/system/radicleregistry/src/schema.rs:3:use outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS;
+crates/system/radicleregistry/src/schema.rs:31:/// - 6..=8 patch_approvals (immutable canonical payload, height, timestamp)
+crates/system/radicleregistry/src/schema.rs:34:#[contract(addr = RADICLE_REGISTRY_ADDRESS)]
+crates/system/radicleregistry/src/schema.rs:49:    pub patch_approvals: outbe_primitives::storage::dsl::Map<U256, PatchApprovalRecord>,
+crates/system/radicleregistry/src/tests/patch_vote.rs:3:    addresses::RADICLE_REGISTRY_ADDRESS,
+crates/system/radicleregistry/src/tests/patch_vote.rs:57:        targetModule: RADICLE_REGISTRY_ADDRESS,
+crates/system/radicleregistry/src/tests/patch_vote.rs:87:        Vote::new(storage).process_begin_block(&ctx, &REGISTRY)
+crates/system/radicleregistry/src/tests/patch_vote.rs:148:        let before = registry.patch_approval(id).unwrap().unwrap();
+crates/system/radicleregistry/src/tests/patch_vote.rs:164:        assert_eq!(registry.patch_approval(id).unwrap().unwrap(), before);
+crates/system/radicleregistry/src/tests/patch_vote.rs:194:        assert_eq!(vote.eligible_validator_addresses(id).unwrap(), [A, B, C]);
+crates/system/radicleregistry/src/tests/patch_vote.rs:215:        assert_eq!(vote.eligible_validator_addresses(id).unwrap(), [A, C]);
+crates/system/radicleregistry/src/tests/patch_vote.rs:230:            .patch_approvals
+crates/system/radicleregistry/src/tests/patch_vote.rs:256:            assert_eq!(vote.eligible_validator_addresses(id).unwrap(), [A, B, C, D]);
+crates/system/radicleregistry/src/tests/patch_vote.rs:289:            .patch_approvals
+crates/system/radicleregistry/src/tests/patch_vote.rs:304:            assert!(registry.patch_approval(id).unwrap().is_none(), "{status:?}");
+crates/system/radicleregistry/src/precompile.rs:45:                    let approval = registry.patch_approval(call.proposalId)?;
+crates/system/radicleregistry/src/precompile.rs:62:                    if registry.patch_approval(call.proposalId)?.is_none() {
+crates/system/radicleregistry/src/runtime.rs:31:    pub fn patch_approval(&self, proposal_id: U256) -> Result<Option<crate::PatchApprovalRecord>> {
+crates/system/radicleregistry/src/runtime.rs:32:        let Some(approval) = self.patch_approvals.get(proposal_id)? else {
+crates/system/radicleregistry/src/runtime.rs:42:        if proposal.target_module != outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS
+crates/system/radicleregistry/src/vote_target.rs:5:    addresses::RADICLE_REGISTRY_ADDRESS, block::BlockRuntimeContext, error::Result,
+crates/system/radicleregistry/src/vote_target.rs:22:        RADICLE_REGISTRY_ADDRESS
+crates/system/radicleregistry/src/vote_target.rs:63:        if proposal.target_module != RADICLE_REGISTRY_ADDRESS
+crates/system/radicleregistry/src/vote_target.rs:82:        if let Some(existing) = registry.patch_approvals.get(proposal_id)? {
+crates/system/radicleregistry/src/vote_target.rs:88:        registry.patch_approvals.create(&PatchApprovalRecord {
+crates/system/vote/src/lifecycle.rs:17:    /// registry is `outbe_evm::handlers::vote::registry()`.
+crates/system/vote/src/lifecycle.rs:23:        governance.process_begin_block(ctx, registry)
+crates/system/vote/src/state.rs:166:pub fn calculate_vote_tally(
+crates/system/vote/src/state.rs:187:    pub fn eligible_validator_addresses(&self, proposal_id: U256) -> Result<Vec<Address>> {
+crates/system/vote/src/state.rs:221:        let active = self.eligible_validator_addresses(proposal_id)?;
+crates/system/vote/src/state.rs:222:        let state = calculate_vote_tally(self, &record, &active)?;
+crates/system/vote/src/schema.rs:190:    /// `process_begin_block` drains a legacy `Error` id from an older binary.
+crates/blockchain/radicle/src/manager/snapshot.rs:43:    pub fn read_patch_approval(
+crates/blockchain/radicle/src/manager/snapshot.rs:73:        read_patch_approval_from_storage(
+crates/blockchain/radicle/src/manager/snapshot.rs:85:fn read_patch_approval_from_storage(
+crates/blockchain/radicle/src/manager/snapshot.rs:95:        .patch_approval(proposal_id)
+crates/system/vote/src/tests/bond.rs:87:        vote.process_begin_block_test(21).unwrap();
+crates/system/vote/src/runtime.rs:20:    calculate_vote_tally, ProposalBond, ProposalStatus, ProposalSubmission, VoteKind,
+crates/system/vote/src/runtime.rs:327:            .eligible_validator_addresses(proposal_id)?
+crates/system/vote/src/runtime.rs:348:    pub fn process_begin_block(
+crates/system/vote/src/runtime.rs:408:        let active = self.eligible_validator_addresses(proposal_id)?;
+crates/system/vote/src/runtime.rs:409:        let tally = calculate_vote_tally(self, &proposal, &active)?;
+crates/system/vote/src/tests/guards.rs:10:use crate::state::{active_validator_addresses, calculate_vote_tally, VoteTally};
+crates/system/vote/src/tests/guards.rs:101:        let tally = calculate_vote_tally(&vote, &record, &active).unwrap();
+crates/system/vote/src/tests/guards.rs:127:        vote.process_begin_block_test(deadline).unwrap();
+crates/system/vote/src/tests/guards.rs:145:        vote.process_begin_block_test(deadline).unwrap();
+crates/system/vote/src/tests/guards.rs:148:        vote.process_begin_block_test(deadline + 1).unwrap();
+crates/system/vote/src/tests/guards.rs:187:        vote.process_begin_block_test(deadline).unwrap();
+crates/system/vote/src/tests/mod.rs:18:use crate::state::{calculate_vote_tally, vote_key, VoteKind, VoteTally};
+crates/system/vote/src/tests/mod.rs:321:    fn process_begin_block_test(&mut self, block_number: u64) -> Result<()>;
+crates/system/vote/src/tests/mod.rs:328:    fn process_begin_block_test(&mut self, block_number: u64) -> Result<()> {
+crates/system/vote/src/tests/mod.rs:334:        self.process_begin_block(&ctx, registry)
+crates/system/vote/src/tests/mod.rs:513:        let tally = calculate_vote_tally(governance, &record, &active).unwrap();
+crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs:4:    addresses::RADICLE_REGISTRY_ADDRESS,
+crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs:175:                    RADICLE_REGISTRY_ADDRESS,
+crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs:192:        Vote::new(s).process_begin_block(&ctx, &registry).unwrap();
+crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs:218:        .read_patch_approval(block(2), U256::ONE)
+crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs:222:        .read_patch_approval(block(3), U256::ONE)
+crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs:230:        reader.read_patch_approval(block(4), U256::ONE),
+crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs:235:        .read_patch_approval(block(4), U256::ONE)
+crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs:244:            .read_patch_approval(block(3), U256::ONE)
+crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs:263:        reader.read_patch_approval(wrong, U256::ONE),
+crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs:268:        reader.read_patch_approval(block(3), U256::ONE),
+crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs:273:        reader.read_patch_approval(block(3), U256::ONE),
+crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs:280:        reader.read_patch_approval(block(3), U256::ONE),
+crates/system/vote/src/tests/targets.rs:411:    Vote::new(storage.clone()).process_begin_block(
+crates/system/vote/src/lib.rs:28:    active_validator_addresses, calculate_vote_tally, ProposalInfo, ProposalStatus,
+crates/system/vote/src/tests/precompile.rs:77:            vote.process_begin_block(&ctx, test_vote_registry())
+crates/system/vote/src/tests/precompile.rs:84:            vote.process_begin_block(&ctx, test_vote_registry())
+crates/system/vote/src/tests/precompile.rs:125:        vote.process_begin_block(&super::block_ctx(storage, 1101), test_vote_registry())

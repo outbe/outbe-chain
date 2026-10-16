@@ -1,0 +1,12 @@
+{
+  "vendor/heartwood/Cargo.lock": "f67bb367e14c88ddfbe772e195f3648da4d076286a9ec1298a5b92aef25d2ed9",
+  "vendor/heartwood/crates/radicle-cob/src/backend/git/change.rs": "5b4bad2d4a6428cb11227b813d491a4797b733fb064688800109d5c48b098b4d",
+  "vendor/heartwood/crates/radicle-cob/src/lib.rs": "43d180e1001244b8fe5e7831265286e3cb9a4f34ea8a43963cfe2320a49a09f7",
+  "vendor/heartwood/crates/radicle-node/Cargo.toml": "c8568412597d1331b4c9e3fa33881bacf8ac6fd9fc1d42ba7f7d2eec30f16ea4",
+  "vendor/heartwood/crates/radicle-node/src/tests/e2e.rs": "8fe4c7e4b59bbe2f0f9eb090457655608c6057d4001b0fb2031c0a65d19528d8",
+  "vendor/heartwood/crates/radicle-node/src/tests/e2e/native_bls.rs": "5f2d40be5aadc9c046094ca8670576df1eea8c5834796790a2ad4827be5f18f2",
+  "vendor/heartwood/crates/radicle/src/cob.rs": "4425bb55213f0dc65cf78f53ec544ec08a95f4e0631d66fe703585a39ed4e51a",
+  "vendor/heartwood/crates/radicle/src/cob/store.rs": "6666ddd1dea0fb3f77cbf4d5f07f32945f631b13845a0d45d556403e864e92c1",
+  "vendor/heartwood/crates/radicle/src/cob/store/native_test.rs": "3eec66cc75d827907070bfcdfe777f52a1db97a6133d3a4cbcaf7f2da203dd98",
+  "vendor/heartwood/crates/radicle/src/storage/refs/sigrefs/read.rs": "5a89f70a6b9e59dd6d0714e78706d5eb1a1f94f6fb2ca338379fca3fc115b05d"
+}

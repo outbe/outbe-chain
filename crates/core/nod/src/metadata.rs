@@ -6,12 +6,11 @@ use crate::api;
 use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
 use crate::schema::{EffectiveState, NodBucketState, NodContract, NodItemState};
 
-/// The call and the sealed call terms live on the bucket, as in `getNod`. `qualified` is derived.
+/// The call and the sealed call terms live on the bucket, as in `getNod`.
 pub(crate) fn token_uri(
     nod: &NodContract<'_>,
     item: &NodItemState,
     bucket: &NodBucketState,
-    qualified: bool,
     now: U256,
 ) -> Result<String> {
     let called_at = nod.bucket_called_at.read(&item.bucket_key)?;
@@ -19,17 +18,15 @@ pub(crate) fn token_uri(
     let deadline = api::settlement_deadline_of(called_at, terms.call_notice_period_seconds);
     let call_price = terms.call_price_minor;
     let called = called_at != 0 && !item.is_settled;
-    let state = match api::effective_state(item, qualified, called_at, deadline, now) {
+    let state = match api::effective_state(item, called_at, deadline, now) {
         EffectiveState::Settled => nft_card::SETTLED,
         EffectiveState::Forfeited => nft_card::FORFEITED,
         EffectiveState::Called => nft_card::CALLED,
-        EffectiveState::Qualified => nft_card::QUALIFIED,
         EffectiveState::Issued => nft_card::ISSUED,
     };
 
     let hex = format!("{:064x}", item.nod_id.to_u256());
     let id = format!("{}-{}", item.worldwide_day, &hex[8..16]);
-    let floor_price = bucket.floor_price_minor()?;
     let mut rows = vec![
         ("Gratis Load", "Encrypted".into()),
         (
@@ -37,12 +34,6 @@ pub(crate) fn token_uri(
             nft_card::amount_grouped(bucket.entry_price_minor, PRICE_PRECISION),
         ),
     ];
-    if state == nft_card::ISSUED {
-        rows.push((
-            "Floor Price",
-            nft_card::amount_grouped(floor_price, PRICE_PRECISION),
-        ));
-    }
     rows.push((
         "Call Price",
         nft_card::amount_grouped(call_price, PRICE_PRECISION),
@@ -52,7 +43,6 @@ pub(crate) fn token_uri(
         Trait::integer("Worldwide Day", item.worldwide_day.value()),
         Trait::integer("League", item.league_id),
         Trait::amount("Entry Price", bucket.entry_price_minor, PRICE_PRECISION),
-        Trait::amount("Floor Price", floor_price, PRICE_PRECISION),
         Trait::amount("Call Price", call_price, PRICE_PRECISION),
     ];
     traits.extend(encrypted_traits(item));

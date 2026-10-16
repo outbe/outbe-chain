@@ -17,16 +17,16 @@ use crate::errors::IntexError;
 #[repr(u8)]
 pub enum IntexState {
     Issued = 0,
-    Called = 2,
-    Expired = 3,
+    Called = 1,
+    Expired = 2,
 }
 
 impl IntexState {
     pub fn from_u8(value: u8) -> Result<Self, IntexError> {
         match value {
             0 => Ok(Self::Issued),
-            2 => Ok(Self::Called),
-            3 => Ok(Self::Expired),
+            1 => Ok(Self::Called),
+            2 => Ok(Self::Expired),
             other => Err(IntexError::InvalidStateValue(other)),
         }
     }
@@ -187,10 +187,8 @@ pub struct CreateSeriesParams {
     /// PROMIS-units per Intex unit (1e6). Bounded by source `uint128`.
     pub promis_load_minor: u128,
     /// Entry price (per-unit, reference ISO stable-units, 1e6). Primary
-    /// anchor; cost/floor/call derive from it.
+    /// anchor; cost and call derive from it.
     pub entry_price_minor: U256,
-    /// Price floor in reference ISO stable-units (1e6).
-    pub floor_price_minor: U256,
     /// Call price level that arms the forced call, in reference ISO stable-units (1e6).
     pub call_price_minor: U256,
     pub call_trigger: IntexCallTrigger,
@@ -224,34 +222,31 @@ pub struct SeriesRecord {
     pub entry_price_minor: U256,
 
     #[attribute(order = 5)]
-    pub floor_price_minor: U256,
-
-    #[attribute(order = 6)]
     pub call_price_minor: U256,
 
     // call_trigger group. Storage keeps it flat (the storage DSL has no nested-struct
     // codec). `call_trigger()` exposes it nested.
-    #[attribute(order = 7)]
+    #[attribute(order = 6)]
     pub call_window_seconds: u32,
 
-    #[attribute(order = 8)]
+    #[attribute(order = 7)]
     pub call_threshold_seconds: u32,
 
-    #[attribute(order = 9)]
+    #[attribute(order = 8)]
     pub call_notice_period_seconds: u32,
 
-    #[attribute(order = 10)]
+    #[attribute(order = 9)]
     pub issued_at: u32,
 
-    #[attribute(order = 11, default = 0)]
+    #[attribute(order = 10, default = 0)]
     pub called_at: u32,
 
     /// Lifecycle state as `u8`; decode via [`IntexState::from_u8`].
-    #[attribute(order = 12)]
+    #[attribute(order = 11)]
     pub state: u8,
 
     /// Worldwide day whose tributes fed this series. It is also the id's leading digits.
-    #[attribute(order = 13, default = WorldwideDay::new(0))]
+    #[attribute(order = 12, default = WorldwideDay::new(0))]
     pub worldwide_day: WorldwideDay,
 }
 

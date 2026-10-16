@@ -64,6 +64,7 @@ pub(super) fn start(
     ),
     radicle_shutdown_token: tokio_util::sync::CancellationToken,
     shutdown: outbe_node::shutdown::NodeShutdown,
+    publication_mailbox: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
 ) -> eyre::Result<RadicleLaunch> {
     let proof_chain_id = node.chain_spec().chain().id();
     let genesis_hash = node.chain_spec().genesis_hash();
@@ -87,12 +88,13 @@ pub(super) fn start(
                 number: 0,
                 hash: genesis_hash,
             });
+        let repository_snapshots = Arc::new(outbe_radicle::manager::RethSnapshotReader::new(
+            node.provider.clone(),
+            proof_chain_id,
+            genesis_hash,
+        ));
         let raw_snapshots: Arc<dyn outbe_radicle::manager::SnapshotReader> =
-            Arc::new(outbe_radicle::manager::RethSnapshotReader::new(
-                node.provider.clone(),
-                proof_chain_id,
-                genesis_hash,
-            ));
+            repository_snapshots.clone();
         let observed_snapshots = Arc::new(outbe_radicle::integration::ObservedSnapshotReader::new(
             raw_snapshots,
             publisher.clone(),
@@ -122,6 +124,39 @@ pub(super) fn start(
             },
             radicle_status.clone(),
         );
+        let endpoint = endpoint
+            .with_repository_authority_reader(repository_snapshots.clone())
+            .with_repository_publication_mailbox(publication_mailbox);
+        let local_receipts = if node
+            .chain_spec()
+            .genesis
+            .config
+            .extra_fields
+            .contains_key(outbe_primitives::radicle_genesis::GENESIS_GOVERNMENTS_FIELD)
+        {
+            let control = args
+                .radicle_control_socket
+                .as_ref()
+                .expect("validated Radicle control socket");
+            let publications =
+                outbe_radicle::integration::publication::store::ReviewPackageStore::open(
+                    outbe_radicle::integration::local::publication_store_path(control),
+                )
+                .wrap_err("open protected Radicle publication store")?;
+            Some(
+                outbe_radicle::integration::local::LocalReceiptServer::bind(
+                    control,
+                    repository_snapshots.clone(),
+                )
+                .wrap_err("bind protected Radicle receipt socket")?
+                .with_authority_reader(repository_snapshots)
+                .with_material_resolver(resolver.clone())
+                .with_native_node_id(sidecar.node_id)
+                .with_publication_store(publications),
+            )
+        } else {
+            None
+        };
         let (local_endpoint_publisher, local_endpoint) =
             outbe_radicle::integration::LocalEndpointIdentityChannel::create(
                 outbe_radicle::integration::LocalEndpointIdentity {
@@ -185,6 +220,13 @@ pub(super) fn start(
         let observer = node.task_executor.spawn_with_graceful_shutdown_signal(async move |guard| {
                 observer_tracker.track_task("Radicle observer", async move {
                 let manager = manager;
+                let receipt_stop = observer_shutdown.clone();
+                let mut local_receipts = Box::pin(async move {
+                    match local_receipts {
+                        Some(server) => server.run(receipt_stop.cancelled_owned()).await,
+                        None => std::future::pending().await,
+                    }
+                });
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
                 let mut local_endpoint_interval = tokio::time::interval(
                     outbe_radicle::integration::PRODUCTION_REPAIR_INTERVAL,
@@ -196,13 +238,17 @@ pub(super) fn start(
                 loop {
                     tokio::select! {
                         _ = observer_shutdown.cancelled() => {
-                            if let Err(error) = outbe_radicle::integration::shutdown_bounded(
-                                std::time::Duration::from_secs(5),
-                                manager,
-                                observer_endpoint_owner.shutdown(&observer_resolver),
-                            ).await {
-                                tracing::error!(%error, "Radicle integration shutdown failed");
-                                observer_outcome.record_failure(eyre::Report::new(error).wrap_err("Radicle integration shutdown failed"));
+                            break;
+                        }
+                        result = &mut local_receipts => {
+                            match result {
+                                Err(error) => observer_outcome.record_failure(
+                                    eyre::Report::new(error).wrap_err("Radicle receipt service failed"),
+                                ),
+                                Ok(()) if !observer_shutdown.is_cancelled() => observer_outcome.record_failure(
+                                    eyre::eyre!("Radicle receipt service stopped unexpectedly"),
+                                ),
+                                Ok(()) => {},
                             }
                             break;
                         }
@@ -244,6 +290,15 @@ pub(super) fn start(
                             }
                         }
                     }
+                }
+                drop(local_receipts);
+                if let Err(error) = outbe_radicle::integration::shutdown_bounded(
+                    std::time::Duration::from_secs(5),
+                    manager,
+                    observer_endpoint_owner.shutdown(&observer_resolver),
+                ).await {
+                    tracing::error!(%error, "Radicle integration shutdown failed");
+                    observer_outcome.record_failure(eyre::Report::new(error).wrap_err("Radicle integration shutdown failed"));
                 }
                     let _ = drained_tx.send(());
                 }).await;

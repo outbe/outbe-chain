@@ -475,7 +475,7 @@ where
             // If we got here, it likely means a repo was updated while the node was stopped.
             // Therefore, we pre-load a refs announcement for this repo, so that it is included in
             // the historical gossip messages when a node connects and subscribes to this repo.
-            if let Ok((ann, _)) = self.refs_announcement_for(rid, [nid]) {
+            if let Ok((ann, _)) = self.refs_announcement_for(rid, [nid.into()]) {
                 debug!(target: "service", "Adding refs announcement for {rid} to historical gossip messages..");
                 self.db.gossip_mut().announced(&nid, &ann)?;
             }
@@ -533,7 +533,7 @@ where
         let synced_at = SyncedAt::new(refs.at, &repo)?;
 
         info.synced_at = Some(synced_at);
-        info.refs = SignedRefsInfo::Some(refs);
+        info.refs = SignedRefsInfo::Some(Box::new(refs));
 
         Ok(info)
     }
@@ -1150,7 +1150,9 @@ where
                         } else {
                             // Finally, announce the refs. This is useful for nodes to know what we've synced,
                             // beyond just knowing that we have added an item to our inventory.
-                            if let Err(e) = self.announce_refs(rid, doc.into(), namespaces, false) {
+                            if let Err(e) =
+                                self.announce_refs(rid, (*doc).into(), namespaces, false)
+                            {
                                 warn!(target: "service", "Failed to announce new refs: {e}");
                             }
                         }
@@ -1622,7 +1624,10 @@ where
                 self.seed_discovered(message.rid, *announcer, message.timestamp);
 
                 // Update sync status of announcer for this repo.
-                if let Some(refs) = refs.iter().find(|r| &r.remote == self.nid()) {
+                if let Some(refs) = refs
+                    .iter()
+                    .find(|r| r.remote.as_ed25519() == Some(self.nid()))
+                {
                     debug!(
                         target: "service",
                         "Refs announcement of {announcer} for {} contains our own remote at {} (t={})",
@@ -1948,7 +1953,8 @@ where
             },
         };
         // Remove our own remote, we don't want to fetch that.
-        refs.want.retain(|r| r.remote != *self.nid());
+        refs.want
+            .retain(|r| r.remote.as_ed25519() != Some(self.nid()));
 
         Ok(refs)
     }
@@ -2124,7 +2130,7 @@ where
     fn refs_announcement_for(
         &mut self,
         rid: RepoId,
-        remotes: impl IntoIterator<Item = NodeId>,
+        remotes: impl IntoIterator<Item = radicle::crypto::RepositoryKey>,
     ) -> Result<(Announcement, Vec<RefsAt>), Error> {
         let repo = self.storage.repository(rid)?;
         let timestamp = self.timestamp();
@@ -2144,11 +2150,12 @@ where
             }
         }
 
-        let msg = AnnouncementMessage::from(RefsAnnouncement {
-            rid,
-            refs: refs.clone(),
-            timestamp,
-        });
+        let ann = RefsAnnouncement::new(rid, refs.clone(), timestamp);
+        if ann.refs.len() != refs.len() {
+            warn!(target: "service", "refs announcement byte limit reached; announcing {} of {} namespaces", ann.refs.len(), refs.len());
+        }
+        let refs = ann.refs.clone();
+        let msg = AnnouncementMessage::from(ann);
         Ok((msg.signed(&self.secret_key), refs.into()))
     }
 
@@ -2157,7 +2164,7 @@ where
         &mut self,
         rid: RepoId,
         doc: Doc,
-        namespaces: impl IntoIterator<Item = NodeId>,
+        namespaces: impl IntoIterator<Item = radicle::crypto::RepositoryKey>,
     ) -> Result<(Vec<RefsAt>, Timestamp), Error> {
         let (refs, timestamp) = self.announce_refs(rid, doc, namespaces, true)?;
 
@@ -2192,7 +2199,7 @@ where
         &mut self,
         rid: RepoId,
         doc: Doc,
-        remotes: impl IntoIterator<Item = NodeId>,
+        remotes: impl IntoIterator<Item = radicle::crypto::RepositoryKey>,
         own: bool,
     ) -> Result<(Vec<RefsAt>, Timestamp), Error> {
         let (ann, refs) = self.refs_announcement_for(rid, remotes)?;
@@ -2201,7 +2208,10 @@ where
 
         // Update our sync status for our own refs. This is useful for determining if refs were
         // updated while the node was stopped.
-        for r in refs.iter().filter(|r| own || r.remote == ann.node) {
+        for r in refs
+            .iter()
+            .filter(|r| own || r.remote.as_ed25519() == Some(&ann.node))
+        {
             info!(
                 target: "service",
                 "Announcing refs {rid}/{r} to peers (t={timestamp})..",
@@ -2268,7 +2278,11 @@ where
         Ok(())
     }
 
-    fn seeds(&self, rid: &RepoId, namespaces: HashSet<PublicKey>) -> Result<Seeds, Error> {
+    fn seeds(
+        &self,
+        rid: &RepoId,
+        namespaces: HashSet<radicle::crypto::RepositoryKey>,
+    ) -> Result<Seeds, Error> {
         let mut seeds = Seeds::new(self.rng.clone());
 
         // First, build a list of peers that have synced refs for `namespaces`, if any.
@@ -2303,7 +2317,7 @@ where
         // These peers have announced that they seed the repository via an inventory
         // announcement, but we haven't received any ref announcements from them.
         for nid in self.db.routing().get(rid)? {
-            if namespaces.contains(&nid) {
+            if namespaces.contains(&nid.into()) {
                 continue;
             }
             if seeds.contains(&nid) {
@@ -2531,7 +2545,7 @@ where
                     continue;
                 }
             }
-            match self.seeds(&rid, [*self.nid()].into()) {
+            match self.seeds(&rid, [(*self.nid()).into()].into()) {
                 Ok(seeds) => {
                     if let Some(connected) = NonEmpty::from_vec(seeds.connected().collect()) {
                         for seed in connected {

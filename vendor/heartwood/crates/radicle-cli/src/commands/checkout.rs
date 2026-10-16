@@ -6,6 +6,7 @@ use anyhow::Context as _;
 use anyhow::anyhow;
 
 use radicle::git;
+use radicle::identity::doc::GetPayload as _;
 use radicle::node::AliasStore;
 use radicle::prelude::*;
 use radicle::storage::git::transport;
@@ -25,12 +26,24 @@ pub fn run(args: Args, ctx: impl term::Context) -> anyhow::Result<()> {
 fn execute(args: Args, profile: &Profile) -> anyhow::Result<PathBuf> {
     let storage = &profile.storage;
     let remote = args.remote.unwrap_or(profile.did());
-    let doc = storage
-        .repository(args.repo)?
-        .identity_doc()
+
+    let repo = storage
+        .repository(args.repo)
         .context("repository could not be found in local storage")?;
-    let payload = doc.project()?;
-    let path = PathBuf::from(payload.name());
+
+    let doc = repo.identity_doc()?;
+
+    let default_branch_name = doc.default_branch_name().ok();
+
+    let path = PathBuf::from(
+        doc.project()
+            .transpose()
+            .ok()
+            .flatten()
+            .as_ref()
+            .map(|project| project.name().to_string())
+            .unwrap_or_else(|| repo.id().to_string()),
+    );
 
     transport::local::register(storage.clone());
 
@@ -59,14 +72,14 @@ fn execute(args: Args, profile: &Profile) -> anyhow::Result<PathBuf> {
         .clone()
         .into_iter()
         .map(|did| *did)
-        .filter(|id| id != profile.id())
+        .filter(|id| id.as_ed25519() != Some(profile.id()))
         .collect::<Vec<_>>();
 
     // Set up remote tracking branches for project delegates.
     setup_remotes(
         project::SetupRemote {
             rid: args.repo,
-            tracking: Some(payload.default_branch().clone()),
+            tracking: default_branch_name,
             repo: &repo,
             fetch: true,
         },
@@ -80,7 +93,7 @@ fn execute(args: Args, profile: &Profile) -> anyhow::Result<PathBuf> {
 /// Set up a remote and tracking branch for each given remote.
 pub fn setup_remotes(
     setup: project::SetupRemote,
-    remotes: &[NodeId],
+    remotes: &[radicle::crypto::RepositoryKey],
     profile: &Profile,
 ) -> anyhow::Result<()> {
     let aliases = profile.aliases();
@@ -96,14 +109,14 @@ pub fn setup_remotes(
 /// Set up a remote and tracking branch for the given remote.
 pub fn setup_remote(
     setup: &project::SetupRemote,
-    remote_id: &NodeId,
+    remote_id: &radicle::crypto::RepositoryKey,
     remote_name: Option<git::fmt::RefString>,
     aliases: &impl AliasStore,
 ) -> anyhow::Result<git::fmt::RefString> {
     let remote_name = if let Some(name) = remote_name {
         name
     } else {
-        let name = if let Some(alias) = aliases.alias(remote_id) {
+        let name = if let Some(alias) = remote_id.as_ed25519().and_then(|id| aliases.alias(id)) {
             format!("{alias}@{remote_id}")
         } else {
             remote_id.to_human()
@@ -119,7 +132,7 @@ pub fn setup_remote(
         term::success!(
             "Remote-tracking branch {} created for {}",
             term::format::tertiary(branch),
-            term::format::tertiary(term::format::node_id_human(remote_id))
+            term::format::tertiary(remote_id.to_human())
         );
     }
     Ok(remote_name)

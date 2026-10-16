@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "rg",
+    "-n",
+    "process_begin_block|run_outbe_pre_execution_hooks|handlers::vote|RADICLE_REGISTRY_ADDRESS|eligible_validator_addresses|calculate_vote_tally|patch_approval|read_patch_approval",
+    "crates/blockchain/evm/src/executor/hooks.rs",
+    "crates/blockchain/evm/src/precompile_routes.rs",
+    "crates/blockchain/evm/src/handlers.rs",
+    "crates/system/vote/src",
+    "crates/system/radicleregistry/src",
+    "crates/blockchain/radicle/src/manager"
+  ],
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "exit_code": 0
+}

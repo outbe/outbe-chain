@@ -11,6 +11,7 @@ fn input_roundtrips_every_system_tx_kind() {
         SystemTxKind::TeeBootstrap,
         SystemTxKind::OracleSlashWindow,
         SystemTxKind::HookEvents,
+        SystemTxKind::RadiclePublication,
     ] {
         let input = input_for(kind);
         let encoded = input.encode().expect("input encodes");

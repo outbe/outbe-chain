@@ -8,7 +8,6 @@ use radicle::cob::Title;
 use radicle::cob::identity::{self, IdentityMut, Revision, RevisionId};
 use radicle::identity::doc::update;
 use radicle::identity::{Doc, Identity, RawDoc, doc};
-use radicle::node::NodeId;
 use radicle::storage::{ReadRepository as _, ReadStorage as _, WriteRepository};
 use radicle::{Profile, cob, crypto};
 use radicle_surf::diff::Diff;
@@ -431,7 +430,7 @@ fn print_meta(revision: &Revision, previous: &Doc, profile: &Profile) -> anyhow:
     let mut signatures = term::Table::<4, _>::default();
 
     for id in accepted {
-        let author = term::format::Author::new(&id, profile, true);
+        let author = term::format::Author::new(id, profile, true);
         signatures.push([
             term::PREFIX_SUCCESS.into(),
             id.to_string().into(),
@@ -440,7 +439,7 @@ fn print_meta(revision: &Revision, previous: &Doc, profile: &Profile) -> anyhow:
         ]);
     }
     for id in rejected {
-        let author = term::format::Author::new(&id, profile, true);
+        let author = term::format::Author::new(id, profile, true);
         signatures.push([
             term::PREFIX_ERROR.into(),
             id.to_string().into(),
@@ -508,7 +507,7 @@ fn update(
     description: Option<String>,
     doc: Doc,
     current: &mut IdentityMut<
-        impl WriteRepository + cob::Store<Namespace = NodeId>,
+        impl WriteRepository + cob::Store<Namespace = radicle::crypto::RepositoryKey>,
         impl crypto::Signer,
     >,
     profile: &Profile,
@@ -545,8 +544,8 @@ fn on_identity_err(e: identity::Error, profile: &Profile) -> anyhow::Error {
 fn on_apply_err(e: &identity::ApplyError, profile: &Profile) -> anyhow::Error {
     match e {
         e @ identity::ApplyError::NonDelegateUnauthorized { author, .. } => {
-            let nid = NodeId::from(*author);
-            let labels = Author::new(&nid, profile, false).labels();
+            let nid = author.as_key();
+            let labels = Author::new(nid, profile, false).labels();
 
             Error::with_hint(
                 anyhow!(e.to_string()),

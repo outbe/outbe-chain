@@ -1,7 +1,7 @@
 import type { Hex } from "viem";
 import type { Network } from "../net/resolver.js";
 import { epochIso, intexState, intexStatus, fromSeriesId } from "./format.js";
-import { addr, seriesQualified } from "./reads.js";
+import { addr } from "./reads.js";
 import { NFT_ABI } from "./registry.js";
 
 /** One held token id with its status and, for an Issued one, its series lifecycle. */
@@ -26,13 +26,10 @@ export async function holding(n: Network, tokenId: bigint, balance: bigint) {
     });
     const settlementDeadline =
       Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callTrigger.callNoticePeriod) : 0;
-    // Only outbe has the factory that derives it.
-    const qualified = n.isOutbe ? await seriesQualified(n, seriesHex) : undefined;
     return {
       ...base,
       series: fromSeriesId(seriesHex),
-      state: intexState(d.state === 0 && qualified ? 1 : d.state),
-      ...(qualified === undefined ? {} : { qualified }),
+      state: intexState(d.state),
       settlementDeadline: epochIso(settlementDeadline),
       expired: settlementDeadline > 0 && Math.floor(Date.now() / 1000) > settlementDeadline,
     };

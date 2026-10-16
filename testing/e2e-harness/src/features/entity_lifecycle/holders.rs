@@ -8,16 +8,16 @@ use crate::internal::eth;
 use crate::world::World;
 
 pub(crate) const HOLDERS: usize = 5;
-/// Two paid while qualified, two inside the notice, and the last one left to forfeit.
+/// Two paid while issued, two inside the notice, and the last one left to forfeit.
 pub(crate) const FORFEITED: usize = 4;
-/// The holdings left unpaid once the qualified ones are paid.
+/// The holdings left unpaid once the issued ones are paid.
 pub(crate) const UNPAID_AT_CALL: [usize; 3] = [2, 3, FORFEITED];
 const FUNDING_COEN: u64 = 10;
 
 /// The two holdings paid in `phase`, in the order the scenario names their payments.
 pub(crate) fn paid_in(phase: Phase) -> [usize; 2] {
     match phase {
-        Phase::Qualified => [0, 1],
+        Phase::Issued => [0, 1],
         Phase::Called => [2, 3],
     }
 }

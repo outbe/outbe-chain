@@ -1,0 +1,35 @@
+{
+  "source_sha": "b7ee1e16536e80ab4295ca3017303179b8371d47",
+  "created_at_utc": "2026-10-15T16:50:22.352803+00:00",
+  "source_hashes": {
+    "vendor/heartwood/crates/radicle-fetch/src/git/repository.rs": "9fc52fadab5a6f40c9cc745110a1317480c1f2d923a791c7f9095f8d78580ff4",
+    "vendor/heartwood/crates/radicle-fetch/src/state.rs": "f2c33634f668e0c9c6b17f5a6ce13113a930ab3efabb9d846d9a1661d2c98478",
+    "vendor/heartwood/crates/radicle/src/storage/publication.rs": "d8c9518a2f80a8a03fda845b1240c86e361980f23aa099a3901881f736cd331d",
+    "vendor/heartwood/crates/radicle/src/storage/git.rs": "7686a9ec218a37ac0ebb78fd05e1b0b62cd64139ec0199422cd76e645aa2b9de",
+    "vendor/heartwood/crates/radicle/src/storage/git/cob.rs": "a888478a5ff4e07e73f0406ae80abcf7f2f7e8fa15f57c2cee60fb7b54911337",
+    "vendor/heartwood/crates/radicle/src/storage/git/temp.rs": "88cb792b103680e4091959a813784cb8d7e946d8bba3369f72062e74f0fa7a08",
+    "vendor/heartwood/crates/radicle-node/src/worker.rs": "ac88de09abd762dfc136b742839a08022d880ccf61745bc9296e757696df0941",
+    "vendor/heartwood/crates/radicle-node/src/wire.rs": "dbdafea140f49aec3ea89627d262e5ac5db55b1a85f4c0fa9cfaeaaa2a4f1d29",
+    "vendor/heartwood/crates/radicle-node/src/runtime.rs": "6791ed909a079da25ae8ac902cd8af5b080c008a4c5fe8d20a53562b7aece217",
+    "vendor/heartwood/crates/radicle/src/cob/store.rs": "6666ddd1dea0fb3f77cbf4d5f07f32945f631b13845a0d45d556403e864e92c1",
+    "vendor/heartwood/crates/radicle/src/cob/stream.rs": "37d13ec064cd27884569eda82ee2d3b74fdd2d21539616e04b0fb44c7b541bd0",
+    "vendor/heartwood/crates/radicle/src/cob/patch/cache.rs": "85eae6c5d40db48966dba5c25fe8ae98f8861c80dfd8720e8179f96301680d79",
+    "vendor/heartwood/crates/radicle/src/cob/issue/cache.rs": "9f4d31a8cd31b572eeded3d0ac2784be4103a72250558bb7430ffc7ee8c61fcc",
+    "plans/radicle-patch-vote/plan.md": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b",
+    "plans/radicle-patch-vote/design.md": "dc9fd94ad85704057e284b374e0da27d7e0398546790ab1a202b2a9270e86df8",
+    "plans/radicle-patch-vote/task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412"
+  },
+  "external_primary_source_hashes": {
+    "/Users/sakor/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/git2-0.21.0/src/transaction.rs": "9b32201967cf65d826b9d70ebcb913c5425ade57be389542638a33e83bfc70ff",
+    "/Users/sakor/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libgit2-sys-0.18.8+1.9.7/libgit2/src/libgit2/transaction.c": "7d7a158835fb7b999c40cd990cd1973d44b92ea4f43534cb2a558ae56df5c0bb"
+  },
+  "artifact_hashes": {
+    "proposal.md": "91085a98369bfa644912f1bf5027f6708c70cb6975c4ee829aa87d17e3fc58e7",
+    "repro/Cargo.toml": "4252505821485aa3ad3915364a388dafa10cb9e6beef645643c20715f4933fe6",
+    "repro/Cargo.lock": "204f46433e38ba4bd0a1e586ca8967f57933c2c8cf06c10fcd512d8c18860232",
+    "repro/src/main.rs": "d4734cc3ae2a02fa48ffd34be851f32ded5526e3fe1c76bf28c8439a5cb23f02",
+    "repro-initial.log": "7a50a2dc7c03d2235f0305e9e1e33b334ea385c8ee218ecd1ba71478089b3d54"
+  },
+  "approval": "NOT APPROVED; no dependent production implementation",
+  "not_acceptance": "Primitive counterexample and reduced mechanism model only"
+}

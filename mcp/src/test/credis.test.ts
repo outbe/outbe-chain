@@ -49,8 +49,8 @@ test("credis_issue stakes the reserved collateral and returns the Credis id", as
     args: { credisId: 77n, owner: SIGNER, cca: SIGNER },
   });
   const data = encodeAbiParameters(
-    [{ type: "address" }, { type: "uint256" }, { type: "uint256" }],
-    [SIGNER, 300n, 500_000n],
+    [{ type: "address" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }],
+    [SIGNER, 300n, 500_000n, 1_640_000n],
   );
   const { out, sent } = await call("credis_issue", { reservation_id: "41" }, (chain) => {
     chain.reply("pledgeOf", [SIGNER, 500_000n]);
