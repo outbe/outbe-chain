@@ -304,27 +304,6 @@ contract IntexAuction is
     }
 
     /// @inheritdoc IIntexAuction
-    function reapAuction(uint32 worldwideDay, uint256 limit) external override {
-        IntexAuctionStorage storage $ = _s();
-        IIntexAuction.AuctionData storage a = $.auctions[worldwideDay];
-        if (a.schedule.commitEnd == 0) revert AuctionNotFound();
-
-        IIntexAuction.AuctionStage stage = _getAuctionStage(worldwideDay);
-        if (stage != IIntexAuction.AuctionStage.Completed && stage != IIntexAuction.AuctionStage.Cancelled) {
-            revert StageRequired(IIntexAuction.AuctionStage.Completed, stage);
-        }
-        if (uint32(block.timestamp) <= a.schedule.issuanceEnd) revert TooEarlyToReap();
-
-        IIntexAuction.SubmittedBidData[] storage bids = $.revealedBids[worldwideDay];
-        uint256 remaining = bids.length;
-        uint256 toPop = remaining < limit ? remaining : limit;
-        for (uint256 i = 0; i < toPop; i++) {
-            bids.pop();
-        }
-        emit AuctionReaped(worldwideDay, remaining - toPop);
-    }
-
-    /// @inheritdoc IIntexAuction
     function revealBid(
         uint32 worldwideDay,
         uint16 quantity,
@@ -398,6 +377,18 @@ contract IntexAuction is
         // A winner's payment is computed with the same formula, so it never exceeds this lock.
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the type(uint128).max check above
         $.escrowContract.lockFunds(worldwideDay, msg.sender, uint128(lockAmount), bidRate, quantity);
+    }
+
+    /// @inheritdoc IIntexAuction
+    function claimRefund(uint32 worldwideDay, address bidder) external override nonReentrant {
+        IntexAuctionStorage storage $ = _s();
+        uint256 position = $.revealedBidIndex[worldwideDay][bidder];
+        if (position == 0) revert BidNotFound();
+        (bool closed, bool finalized) = $.escrowContract.releaseRefund(worldwideDay, bidder);
+        if (closed && finalized) {
+            delete $.revealedBids[worldwideDay][position - 1];
+            delete $.revealedBidIndex[worldwideDay][bidder];
+        }
     }
 
     /// @inheritdoc IIntexAuction

@@ -360,7 +360,7 @@ library TargetInbound {
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.
     /// @dev `receiveId` is the escrow finalization tag. The handler acknowledges without effect a chunk
     ///      already applied, or one arriving after the escrow closed the day. Bidders it would have
-    ///      settled recover through the escrow's own `claimRefund` path.
+    ///      settled recover through the auction's `claimRefund` path.
     function handleRefundInstructions(
         TargetRouterStorage storage $,
         uint32 srcChainId,

@@ -21,7 +21,7 @@
     },
     {
       "type": "function",
-      "name": "claimRefund",
+      "name": "claimAbandonedRefund",
       "inputs": [
         {
           "name": "worldwideDay",
@@ -425,6 +425,35 @@
         }
       ],
       "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "releaseRefund",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "closed",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "finalized",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
       "stateMutability": "nonpayable"
     },
     {
@@ -929,6 +958,22 @@
       "type": "error",
       "name": "ProceedsRecipientNotSet",
       "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "RefundNotYetAbandoned",
+      "inputs": [
+        {
+          "name": "claimableAt",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "now_",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
     },
     {
       "type": "error",

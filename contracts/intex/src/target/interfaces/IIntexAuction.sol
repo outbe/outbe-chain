@@ -160,9 +160,6 @@ interface IIntexAuction {
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address.
     event CommitCancelled(uint32 indexed worldwideDay, address indexed bidder);
-    /// @notice A terminal auction's stored revealed-bid records were reclaimed. `remaining` is still
-    ///         to reap.
-    event AuctionReaped(uint32 indexed worldwideDay, uint256 remaining);
 
     /// @notice Emitted on `wire` after the escrow contract address is set.
     /// @param previous Escrow contract address before the update.
@@ -198,8 +195,6 @@ interface IIntexAuction {
     error ZeroValue(string f);
     /// @notice Operation requires a different stage.
     error StageRequired(AuctionStage requiredStage, AuctionStage currentStage);
-    /// @notice `reapAuction` was called before the auction passed its issuance deadline.
-    error TooEarlyToReap();
     /// @notice Commit already registered for this bidder in this auction.
     error BidAlreadyCommitted();
     /// @notice Commit not found for this bidder in this auction.
@@ -311,11 +306,6 @@ interface IIntexAuction {
     /// @param worldwideDay Worldwide day (yyyymmdd).
     function cancelCommit(uint32 worldwideDay) external;
 
-    /// @notice Reclaim a terminal, past-issuance auction's stored revealed-bid records.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param limit Maximum records to delete this call. Paginate large sets across calls.
-    function reapAuction(uint32 worldwideDay, uint256 limit) external;
-
     /// @notice Reveal a bid.
     /// @dev Returns the commit bond (if any) before locking the bid escrow, so the bond can fund
     ///      the bid in the same transaction.
@@ -338,6 +328,16 @@ interface IIntexAuction {
         uint64 chainId,
         bytes memory signature
     ) external;
+
+    /// @notice Permissionless refund. The money always goes to `bidder`.
+    ///         - A winner collects its change. Its bid stays for `issueIntex`.
+    ///         - A loser of a finalized day collects its principal and its bid is cleared.
+    ///         - A bidder whose day never finalized collects its principal after the escrow's
+    ///           delay. Its bid stays until the day finalizes, since the bids relay may still read it.
+    ///         The escrow-local `claimAbandonedRefund` is the fallback if this contract stops working.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param bidder Bidder whose refund is being claimed.
+    function claimRefund(uint32 worldwideDay, address bidder) external;
 
     /// @notice Permissionless issue of a winner's units. The units always go to `bidder`.
     ///         The escrow closes the win and pays any change still in it. Past its series'

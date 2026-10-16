@@ -502,53 +502,6 @@ contract AuctionTest is Test {
         assertEq(address(auction.escrowContract()), address(escrow2));
     }
 
-    function test_ReapAuction_ClearsRevealedBidsInPages() public {
-        uint32 worldwideDay = 20250220;
-        _start(worldwideDay, 50, 1);
-        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
-        _commit(worldwideDay, iba2, 40, 70, iba2PrivateKey);
-        IIntexAuction.AuctionSchedule memory sched = auction.getAuctionInfo(worldwideDay).schedule;
-
-        vm.warp(uint256(sched.commitEnd) + 1);
-        _reveal(worldwideDay, iba1, 30, 80, iba1PrivateKey);
-        _reveal(worldwideDay, iba2, 40, 70, iba2PrivateKey);
-
-        vm.warp(uint256(sched.revealEnd) + 1);
-        vm.startPrank(bridger);
-        auction.startClearingStage(worldwideDay);
-        auction.executeAuctionClearing(worldwideDay, 100, 75, 2);
-        vm.stopPrank();
-
-        vm.expectRevert(IIntexAuction.TooEarlyToReap.selector);
-        auction.reapAuction(worldwideDay, 10);
-
-        vm.warp(uint256(sched.issuanceEnd) + 1);
-        auction.reapAuction(worldwideDay, 1);
-        (, IIntexAuction.SubmittedBidData[] memory afterPage1) = auction.getAuctionDetails(worldwideDay);
-        assertEq(afterPage1.length, 1);
-        auction.reapAuction(worldwideDay, 10);
-        (, IIntexAuction.SubmittedBidData[] memory afterPage2) = auction.getAuctionDetails(worldwideDay);
-        assertEq(afterPage2.length, 0);
-    }
-
-    function test_ReapAuction_RevertsBeforeTerminal() public {
-        uint32 worldwideDay = 20250221;
-        _start(worldwideDay, 50, 1);
-        _commit(worldwideDay, iba1, 30, 80, iba1PrivateKey);
-        IIntexAuction.AuctionSchedule memory sched = auction.getAuctionInfo(worldwideDay).schedule;
-        vm.warp(uint256(sched.issuanceEnd) + 1);
-
-        // Green, past revealEnd, never cleared -> Issuance stage, not terminal.
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IIntexAuction.StageRequired.selector,
-                IIntexAuction.AuctionStage.Completed,
-                IIntexAuction.AuctionStage.Issuance
-            )
-        );
-        auction.reapAuction(worldwideDay, 10);
-    }
-
     function test_RevealBid_FreesCommitSlot() public {
         uint256 startTs = block.timestamp;
         uint32 worldwideDay = 20250230;

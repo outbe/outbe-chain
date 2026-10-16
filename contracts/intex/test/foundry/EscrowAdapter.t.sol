@@ -66,6 +66,11 @@ contract EscrowAdapterTest is Test {
         paymentToken.approve(address(escrow), type(uint256).max);
     }
 
+    function _refund(uint32 worldwideDay, address bidder) internal {
+        vm.prank(auction);
+        escrow.releaseRefund(worldwideDay, bidder);
+    }
+
     // --- Constructor Tests ---
     function test_Constructor() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
@@ -308,7 +313,7 @@ contract EscrowAdapterTest is Test {
         uint128 locked = _finalizeOmittingBidder1();
         uint256 balBefore = paymentToken.balanceOf(bidder1);
 
-        escrow.claimRefund(worldwideDay1, bidder1); // permissionless, and at once
+        _refund(worldwideDay1, bidder1); // at once
 
         assertEq(paymentToken.balanceOf(bidder1), balBefore + locked, "full principal refunded");
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
@@ -316,8 +321,8 @@ contract EscrowAdapterTest is Test {
         (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
         assertEq(totalLocked, 0, "totalLocked cleared (bidder2 at finalize, bidder1 on claim)");
 
-        vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
-        escrow.claimRefund(worldwideDay1, bidder1);
+        _refund(worldwideDay1, bidder1);
+        assertEq(paymentToken.balanceOf(bidder1), balBefore + locked, "a second release pays nothing");
     }
 
     function test_FinalizeAuction_FullClaim() public {
@@ -358,8 +363,7 @@ contract EscrowAdapterTest is Test {
         (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
         assertEq(totalLocked, locked - paid, "only the refund stays held");
 
-        vm.prank(outsider);
-        escrow.claimRefund(worldwideDay1, bidder1);
+        _refund(worldwideDay1, bidder1);
 
         assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore + locked - paid, "refund claimed at once");
         (,, totalLocked) = escrow.getAuctionStatus(worldwideDay1);
@@ -376,8 +380,8 @@ contract EscrowAdapterTest is Test {
         emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, worldwideDay1, locked1 + locked2 - paid, paid, 2);
         _finalize(_winners(bidder1, bidder2));
 
-        escrow.claimRefund(worldwideDay1, bidder1);
-        escrow.claimRefund(worldwideDay1, bidder2);
+        _refund(worldwideDay1, bidder1);
+        _refund(worldwideDay1, bidder2);
 
         (, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
         assertTrue(isFinalized);
@@ -417,7 +421,7 @@ contract EscrowAdapterTest is Test {
         );
         _finalize(_winners(address(0)));
 
-        // bidder1's lock is still recoverable by the bidder through claimRefund.
+        // bidder1's lock is still recoverable by the bidder through its refund.
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Locked));
     }
@@ -578,7 +582,7 @@ contract EscrowAdapterTest is Test {
 
         vm.expectEmit(true, true, true, true);
         emit IEscrowAdapter.FundsRefunded(bytes32(0), worldwideDay1, bidder1, locked - _paidAtClearing(1));
-        escrow.claimRefund(worldwideDay1, bidder1);
+        _refund(worldwideDay1, bidder1);
     }
 
     function test_Events_AuctionEscrowFinalized() public {
@@ -611,7 +615,7 @@ contract EscrowAdapterTest is Test {
         assertEq(escrow.intexAuctionContract(), newAuction);
     }
 
-    // --- claimRefund ---
+    // --- releaseRefund ---
 
     function test_ClaimRefund_AfterDelay_Succeeds() public {
         vm.prank(auction);
@@ -621,12 +625,10 @@ contract EscrowAdapterTest is Test {
 
         vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
 
-        // Permissionless caller (an outsider) triggers the refund; funds go to bidder1.
-        // claimRefund is not bridge-triggered, so the emitted receiveId is the zero sentinel.
+        // A refund is not bridge-triggered, so the emitted receiveId is the zero sentinel.
         vm.expectEmit(true, true, true, true);
         emit IEscrowAdapter.FundsRefunded(bytes32(0), worldwideDay1, bidder1, LOCK_AMOUNT);
-        vm.prank(outsider);
-        escrow.claimRefund(worldwideDay1, bidder1);
+        _refund(worldwideDay1, bidder1);
 
         assertEq(paymentToken.balanceOf(bidder1), balanceBefore + LOCK_AMOUNT);
         assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.None));
@@ -644,13 +646,13 @@ contract EscrowAdapterTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IEscrowAdapter.RefundNotYetClaimable.selector, claimableAt, claimableAt - 1)
         );
-        escrow.claimRefund(worldwideDay1, bidder1);
+        _refund(worldwideDay1, bidder1);
     }
 
     function test_ClaimRefund_NotLocked_Reverts() public {
         // No lock exists for bidder1.
         vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
-        escrow.claimRefund(worldwideDay1, bidder1);
+        _refund(worldwideDay1, bidder1);
     }
 
     function test_ClaimRefund_DoubleClaim_Reverts() public {
@@ -658,15 +660,15 @@ contract EscrowAdapterTest is Test {
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT, 1_000_000, 1);
         vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
 
-        escrow.claimRefund(worldwideDay1, bidder1);
+        _refund(worldwideDay1, bidder1);
 
         vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
-        escrow.claimRefund(worldwideDay1, bidder1);
+        _refund(worldwideDay1, bidder1);
     }
 
     function test_ClaimRefund_ZeroBidder_Reverts() public {
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "bidder"));
-        escrow.claimRefund(worldwideDay1, address(0));
+        _refund(worldwideDay1, address(0));
     }
 
     function test_ClaimRefund_ForcedWithdrawalReturnsFalse_Reverts() public {
@@ -679,7 +681,7 @@ contract EscrowAdapterTest is Test {
         compact.setForcedWithdrawalShouldFail(true);
 
         vm.expectRevert(IEscrowAdapter.ForcedWithdrawalFailed.selector);
-        escrow.claimRefund(worldwideDay1, bidder1);
+        _refund(worldwideDay1, bidder1);
     }
 
     function test_ClaimRefund_FinalizedDay_NeedsNoDelay() public {
@@ -687,7 +689,7 @@ contract EscrowAdapterTest is Test {
         _finalize(new address[](0));
 
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
-        escrow.claimRefund(worldwideDay1, bidder1);
+        _refund(worldwideDay1, bidder1);
 
         assertEq(paymentToken.balanceOf(bidder1) - balanceBefore, locked, "claimed before the unfinalized delay");
     }
@@ -699,7 +701,7 @@ contract EscrowAdapterTest is Test {
         _finalize(_winners(bidder1));
 
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
-        escrow.claimRefund(worldwideDay1, bidder1);
+        _refund(worldwideDay1, bidder1);
 
         assertEq(paymentToken.balanceOf(bidder1) - balanceBefore, locked, "full principal returned");
         (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);

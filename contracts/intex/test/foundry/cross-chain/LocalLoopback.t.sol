@@ -311,8 +311,8 @@ contract LocalLoopbackTest is Test {
 
         assertEq(uint8(escrow.getBidLock(DAY, iba1).status), uint8(IEscrowAdapter.LockStatus.Won), "iba1 not won");
         assertEq(escrow.getBidLock(DAY, iba2).quantity, 20, "iba2 partial");
-        escrow.claimRefund(DAY, iba1);
-        escrow.claimRefund(DAY, iba2);
+        auction.claimRefund(DAY, iba1);
+        auction.claimRefund(DAY, iba2);
         assertEq(wcoen.balanceOf(iba1), INITIAL_WCOEN_BALANCE - 24e18 + 3e18, "iba1 refund"); // paid 30*1*0.7
         assertEq(wcoen.balanceOf(iba2), INITIAL_WCOEN_BALANCE - 28e18 + 14e18, "iba2 refund"); // paid 20*1*0.7
         assertEq(factory.calls(), 1, "proceeds not distributed");

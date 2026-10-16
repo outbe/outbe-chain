@@ -16,9 +16,9 @@ import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {ReferenceCurrencyPriceLib} from "./helpers/ReferenceCurrencyPriceLib.sol";
 
-/// @dev A winner issues its own units: the auction reads the bid, the escrow closes the win, and the
-///      collection mints.
-contract IntexAuctionIssueTest is Test {
+/// @dev Bidders claim through the auction. A winner issues its own units: the auction reads the bid,
+///      the escrow closes the win, and the collection mints. A refund clears the bid once nothing reads it.
+contract IntexAuctionClaimsTest is Test {
     bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
         "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
     );
@@ -200,7 +200,7 @@ contract IntexAuctionIssueTest is Test {
     function test_TheChangeCanBeRefundedBeforeTheUnitsAreIssued() public {
         _bid(3, 1);
         _finalize(_winner(alice), 0, 0);
-        escrow.claimRefund(DAY, alice);
+        auction.claimRefund(DAY, alice);
         assertEq(token.balanceOf(alice), _change(3));
 
         _createSeries(0);
@@ -250,7 +250,7 @@ contract IntexAuctionIssueTest is Test {
         vm.expectRevert(bytes("reject-1155"));
         auction.issueIntex(DAY, alice);
 
-        escrow.claimRefund(DAY, alice);
+        auction.claimRefund(DAY, alice);
         assertEq(token.balanceOf(alice), _change(3));
         assertTrue(auction.revealedBidsByBidder(DAY, alice), "the win waits for a holder");
     }
@@ -280,5 +280,63 @@ contract IntexAuctionIssueTest is Test {
         vm.prank(router);
         vm.expectRevert();
         intex.issueIntex(alice, 1, CreateSeriesLib.seriesId(DAY));
+    }
+
+    function test_ALoserRefundsAndClearsItsBid() public {
+        _bid(3, 1);
+        _finalize(_winner(alice), 0, 0);
+
+        vm.prank(alice);
+        auction.claimRefund(DAY, bob);
+
+        assertEq(token.balanceOf(bob), BridgeMsgCodec.escrowAmount(1, BASIS, RATE), "the whole principal");
+        assertFalse(auction.revealedBidsByBidder(DAY, bob), "bid gone");
+        assertEq(uint8(escrow.getBidLock(DAY, bob).status), uint8(IEscrowAdapter.LockStatus.None), "lock gone");
+    }
+
+    function test_AWinnerRefundKeepsItsBidForTheIssue() public {
+        _bid(3, 1);
+        _finalize(_winner(alice), 0, 0);
+
+        auction.claimRefund(DAY, alice);
+        assertEq(token.balanceOf(alice), _change(3));
+        assertTrue(auction.revealedBidsByBidder(DAY, alice), "the bid waits for the issue");
+    }
+
+    /// @dev Before the day finalizes, the bids relay may still read the bid, so a refund leaves it.
+    function test_AnOpenDayRefundKeepsTheBidUntilTheDayFinalizes() public {
+        _bid(3, 1);
+        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
+
+        auction.claimRefund(DAY, bob);
+        assertEq(token.balanceOf(bob), BridgeMsgCodec.escrowAmount(1, BASIS, RATE), "the whole principal");
+        assertTrue(auction.revealedBidsByBidder(DAY, bob), "the bid stays");
+        IIntexAuction.SubmittedBidData[] memory bids = auction.revealedBidsSlice(DAY, 0, 2);
+        assertEq(bids[1].bidderAddress, bob, "the relay still reads the real bid");
+        assertEq(bids[1].intexQuantity, 1);
+
+        vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
+        auction.claimRefund(DAY, bob);
+
+        _finalize(new address[](0), 0, 0);
+        auction.claimRefund(DAY, bob);
+        assertFalse(auction.revealedBidsByBidder(DAY, bob), "cleared once the day finalized");
+        assertEq(token.balanceOf(bob), BridgeMsgCodec.escrowAmount(1, BASIS, RATE), "paid once");
+    }
+
+    function test_TheAuctionClearsABidTheEscrowValvePaidOut() public {
+        _bid(3, 1);
+        _finalize(_winner(alice), 0, 0);
+        vm.warp(block.timestamp + escrow.REFUND_ABANDON_DELAY());
+        escrow.claimAbandonedRefund(DAY, bob);
+
+        auction.claimRefund(DAY, bob);
+        assertFalse(auction.revealedBidsByBidder(DAY, bob), "bid gone");
+        assertEq(token.balanceOf(bob), BridgeMsgCodec.escrowAmount(1, BASIS, RATE), "paid once");
+    }
+
+    function test_ARefundNeedsABid() public {
+        vm.expectRevert(IIntexAuction.BidNotFound.selector);
+        auction.claimRefund(DAY, makeAddr("stranger"));
     }
 }

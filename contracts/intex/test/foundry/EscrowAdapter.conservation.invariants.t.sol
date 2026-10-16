@@ -66,7 +66,8 @@ contract EscrowConservationHandler is Test {
     }
 
     function claim(uint256 seriesSeed, uint256 bidderSeed) external {
-        try escrow.claimRefund(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
+        vm.prank(auction);
+        try escrow.releaseRefund(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
     }
 
     function lockBond(uint256 seriesSeed, uint256 bidderSeed, uint128 amountSeed) external {

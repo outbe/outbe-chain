@@ -40,6 +40,11 @@ contract EscrowAdapterWinnersTest is Test {
         vm.stopPrank();
     }
 
+    function _refund(uint32 worldwideDay, address bidder) internal {
+        vm.prank(auction);
+        escrow.releaseRefund(worldwideDay, bidder);
+    }
+
     function _lock(address who, uint32 bidRate, uint16 quantity) internal returns (uint128 amount) {
         amount = uint128(BridgeMsgCodec.escrowAmount(quantity, BASIS, bidRate));
         token.mint(who, amount);
@@ -191,7 +196,7 @@ contract EscrowAdapterWinnersTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IEscrowAdapter.RefundNotYetClaimable.selector, claimableAt, uint32(block.timestamp))
         );
-        escrow.claimRefund(DAY, bob);
+        _refund(DAY, bob);
     }
 
     function _close(address who) internal returns (uint16) {
@@ -221,7 +226,7 @@ contract EscrowAdapterWinnersTest is Test {
     function test_AWinRefundedFirstClosesWithoutAnotherWithdrawal() public {
         uint128 aliceLock = _lock(alice, 800_000, 3);
         _apply(_one(alice), 0, 0, true);
-        escrow.claimRefund(DAY, alice);
+        _refund(DAY, alice);
         assertEq(token.balanceOf(alice), aliceLock - _paid(3), "change refunded");
         assertEq(escrow.getBidLock(DAY, alice).quantity, 3, "the units still wait");
 
@@ -241,10 +246,10 @@ contract EscrowAdapterWinnersTest is Test {
     function test_AWinnerWithNoChangeHasNothingToRefund() public {
         _lock(alice, 800_000, 3);
         _apply(_one(alice), 0, 0, true);
-        escrow.claimRefund(DAY, alice);
+        _refund(DAY, alice);
 
         vm.expectRevert(IEscrowAdapter.NothingToRefund.selector);
-        escrow.claimRefund(DAY, alice);
+        _refund(DAY, alice);
     }
 
     function test_AClosedWinCannotCloseOrRefundAgain() public {
@@ -255,8 +260,55 @@ contract EscrowAdapterWinnersTest is Test {
         vm.prank(auction);
         vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
         escrow.closeWin(DAY, alice);
+
+        uint256 balance = token.balanceOf(alice);
+        vm.prank(auction);
+        (bool closed, bool finalized) = escrow.releaseRefund(DAY, alice);
+        assertTrue(closed && finalized, "a gone lock on a finalized day reports closed");
+        assertEq(token.balanceOf(alice), balance, "and pays nothing");
+    }
+
+    function test_AGoneLockOnAnOpenDayHasNothingToRelease() public {
+        _lock(alice, 800_000, 1);
+        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
+        _refund(DAY, alice);
+
+        vm.prank(auction);
         vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
-        escrow.claimRefund(DAY, alice);
+        escrow.releaseRefund(DAY, alice);
+    }
+
+    function test_OnlyTheAuctionReleasesARefund() public {
+        _lock(alice, 800_000, 1);
+        _apply(new address[](0), 0, 0, true);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        escrow.releaseRefund(DAY, alice);
+    }
+
+    function test_TheValveWaitsForItsDelayAndPaysOnlyMoney() public {
+        uint128 aliceLock = _lock(alice, 800_000, 3);
+        uint128 bobLock = _lock(bob, 500_000, 1);
+        _apply(_one(alice), 0, 0, true);
+
+        uint32 claimableAt = uint32(block.timestamp) + escrow.REFUND_ABANDON_DELAY();
+        vm.expectRevert(
+            abi.encodeWithSelector(IEscrowAdapter.RefundNotYetAbandoned.selector, claimableAt, uint32(block.timestamp))
+        );
+        escrow.claimAbandonedRefund(DAY, alice);
+
+        vm.warp(claimableAt);
+        escrow.claimAbandonedRefund(DAY, alice);
+        escrow.claimAbandonedRefund(DAY, bob);
+        assertEq(token.balanceOf(alice), aliceLock - _paid(3), "the winner's change");
+        assertEq(token.balanceOf(bob), bobLock, "the loser's principal");
+        assertEq(escrow.getBidLock(DAY, alice).quantity, 3, "the units stay for the auction");
+        assertEq(uint8(escrow.getBidLock(DAY, bob).status), uint8(IEscrowAdapter.LockStatus.None));
+
+        vm.expectRevert(IEscrowAdapter.NothingToRefund.selector);
+        escrow.claimAbandonedRefund(DAY, alice);
+        assertEq(_close(alice), 3, "the win still closes");
     }
 
     function test_OnlyTheAuctionClosesAWin() public {
@@ -275,7 +327,7 @@ contract EscrowAdapterWinnersTest is Test {
         _lock(bob, 900_000, 5); // a partial fill as large as the bid
         _lock(carol, 800_000, 1); // refunded in full before the chunk arrives
         vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
-        escrow.claimRefund(DAY, carol);
+        _refund(DAY, carol);
 
         address[] memory winners = new address[](3);
         winners[0] = alice;
