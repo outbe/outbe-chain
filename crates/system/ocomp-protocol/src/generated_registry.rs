@@ -416,24 +416,12 @@ impl TryFrom<u16> for ListKind {
 }
 
 pub const TRIBUTE_BODY_CODEC_DESCRIPTOR: &str = "role=TRIBUTE_BODY;version=1;wire=canonical-protobuf-payload-only;fields=1:bytes36-tribute_id-required,2:bytes20-owner-required,3:uint32-worldwide_day-omit-zero,4:bytes32-issuance_amount_minor-required-big-endian,5:uint16-issuance_currency-omit-zero,6:bytes32-nominal_amount_minor-required-big-endian,7:uint16-reference_currency-omit-zero,8:bytes32-tribute_price_minor-required-big-endian;rules=ascending-unique-fields,minimal-varints,no-unknown-fields,strict-decode-reencode,identity-day-match;commitment=CE_BODY_COMMITMENT_V1(schema_version=1,payload);stored_body_envelope=excluded";
-pub const TRIBUTE_BODY_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256::new([
-    30, 20, 32, 236, 187, 159, 192, 4, 110, 94, 183, 199, 19, 67, 56, 84, 107, 243, 101, 88, 251,
-    29, 28, 211, 26, 84, 163, 238, 23, 209, 38, 18,
-]);
+pub const TRIBUTE_BODY_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256::new([30, 20, 32, 236, 187, 159, 192, 4, 110, 94, 183, 199, 19, 67, 56, 84, 107, 243, 101, 88, 251, 29, 28, 211, 26, 84, 163, 238, 23, 209, 38, 18]);
 
 pub const FIDELITY_OPENING_CODEC_DESCRIPTOR: &str = "role=FIDELITY_OPENING;version=1;record=AuthenticatedOpeningV1(source_kind=1,subject,value,codec_id,opening);subject=u32_be(owner_count)||address20*;owner_count=1..256;owners=strict-ascending-unique;value=u32_be(slot_count)||(slot:B256||value:U256_be)*;contract=METADOSIS_ADDRESS;slots=metadosis_league_snapshot_slots_v1(base=28,key=keccak256(0x4c||u32_be(wwd)||address20),mapping=keccak256(key||slot32),one-slot-per-owner-in-subject-order);league=nonzero-u16-frozen-at-ready-preparation;opening=address20||state_root:B256||u32_be(slot_count)||(slot:B256||value:U256_be)*||u32_be(account_proof_len)||account_proof||u32_be(storage_proof_len)||storage_proof;proof=RETH_ETHEREUM_ACCOUNT_STORAGE_MPT_V1;rules=state_root_equals_checkpoint,exact-contract,exact-slot-plan,strict-decode-reencode";
-pub const FIDELITY_OPENING_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256::new([
-    142, 101, 85, 33, 177, 246, 125, 208, 6, 247, 20, 35, 110, 239, 177, 252, 155, 189, 27, 127,
-    97, 154, 181, 8, 60, 38, 214, 226, 37, 28, 238, 150,
-]);
+pub const FIDELITY_OPENING_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256::new([142, 101, 85, 33, 177, 246, 125, 208, 6, 247, 20, 35, 110, 239, 177, 252, 155, 189, 27, 127, 97, 154, 181, 8, 60, 38, 214, 226, 37, 28, 238, 150]);
 
 pub const ORACLE_OPENING_CODEC_DESCRIPTOR: &str = "role=ORACLE_OPENING;version=3;record=AuthenticatedOpeningV1(source_kind=2,subject,value,codec_id,opening);subject=u32_be(wwd)||u16_be(iso_count)||u16_be(iso)*;isos=strict-ascending-unique-nonzero-and-contains-840;value=u32_be(slot_count)||(slot:B256||value:U256_be)*;contract=ORACLE_ADDRESS;slots=oracle_utc_day_vwap_slots_v1(pair_index=10,vwap=58,pair_key=keccak256(sorted_pair40(COEN,iso)||slot32),vwap_key=(utc_day,pair_index),order=pair_index*||vwap*-registered,isos<=256);price=utc-day-vwap-of-previous-utc-day-before-logical-evaluation-time;missing-or-zero-input=unpriced;opening=address20||state_root:B256||u32_be(slot_count)||(slot:B256||value:U256_be)*||u32_be(account_proof_len)||account_proof||u32_be(storage_proof_len)||storage_proof;proof=RETH_ETHEREUM_ACCOUNT_STORAGE_MPT_V1;rules=state_root_equals_checkpoint,exact-contract,exact-slot-plan,pair-index-fits-u32,strict-decode-reencode";
-pub const ORACLE_OPENING_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256::new([
-    214, 2, 75, 33, 89, 241, 19, 29, 198, 146, 87, 62, 1, 156, 193, 92, 165, 46, 243, 138, 114,
-    127, 171, 231, 231, 181, 251, 34, 101, 81, 174, 77,
-]);
+pub const ORACLE_OPENING_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256::new([214, 2, 75, 33, 89, 241, 19, 29, 198, 146, 87, 62, 1, 156, 193, 92, 165, 46, 243, 138, 114, 127, 171, 231, 231, 181, 251, 34, 101, 81, 174, 77]);
 
-pub const OPENING_CODEC_REGISTRY_HASH: alloy_primitives::B256 = alloy_primitives::B256::new([
-    144, 92, 119, 110, 175, 111, 149, 179, 55, 253, 196, 51, 89, 236, 143, 95, 155, 164, 40, 87,
-    177, 52, 253, 177, 187, 57, 2, 98, 27, 20, 159, 214,
-]);
+pub const OPENING_CODEC_REGISTRY_HASH: alloy_primitives::B256 = alloy_primitives::B256::new([144, 92, 119, 110, 175, 111, 149, 179, 55, 253, 196, 51, 89, 236, 143, 95, 155, 164, 40, 87, 177, 52, 253, 177, 187, 57, 2, 98, 27, 20, 159, 214]);

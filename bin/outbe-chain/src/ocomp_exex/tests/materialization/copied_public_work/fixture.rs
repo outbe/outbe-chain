@@ -179,8 +179,26 @@ impl PublishedPlan {
         drop(input_refs_for_plan);
         let manifest_ref = published.manifest_ref;
 
-        let planner =
-            fixture_support::fixture_planner(bundle, job_id, &manifest_ref, &manifest, &limits);
+        // Match the installed generation's per-Nod cap of two: 2048 / 1024.
+        let planner = outbe_lysis::program_v1::planner::LysisPlannerV1::new(
+            outbe_lysis::program_v1::planner::LysisPlannerBindingsV1 {
+                protocol_bundle_hash: bundle.protocol_bundle_hash(&limits).unwrap(),
+                job_id,
+                attempt: 0,
+                input_manifest_hash: manifest.manifest_hash(&limits).unwrap(),
+                input_manifest_encoded_bytes: manifest_ref.encoded_bytes,
+                fidelity_opening_root: manifest.fidelity_opening_root,
+                oracle_opening_root: manifest.oracle_opening_root,
+                wwd: manifest.wwd,
+                lysis_limit_minor: U256::from(2048),
+                logical_evaluation_time: 1_784_765_900,
+                tribute_count: manifest.tribute_count,
+                lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
+                planner_spec_version: bundle.planner_spec_version,
+                reducer_spec_version: bundle.reducer_spec_version,
+            },
+        )
+        .unwrap();
         let plan = planner
             .commit_primary_catalog(tribute_refs.clone(), &limits)
             .unwrap();

@@ -230,10 +230,8 @@ fn static_gem_factory_command_is_denied_before_domain_validation() {
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_static(true);
     let storage = StorageHandle::new(&mut provider);
-    let world = outbe_gem::test_support::GemWorld::unopened();
     let result = crate::precompile::dispatch(
         storage,
-        world.readers(),
         &IGemFactory::issueGemPositionCall {
             sourceIntexId: alloy_primitives::FixedBytes::repeat_byte(99),
             units: U256::from(1),

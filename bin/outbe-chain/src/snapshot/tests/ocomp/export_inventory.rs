@@ -42,7 +42,10 @@ fn hash(byte: u8) -> B256 {
     B256::repeat_byte(if byte == 0 { 0xff } else { byte })
 }
 fn protocol_bundle() -> ProtocolBundleV1 {
-    outbe_ocomp_protocol::test_utils::minimal_protocol_bundle()
+    let mut bundle = outbe_ocomp_protocol::test_utils::minimal_protocol_bundle();
+    bundle.lysis_program_semantics_hash =
+        outbe_ocomp_protocol::profile::supported_lysis_v1_semantics_hash().unwrap();
+    bundle
 }
 
 fn finalized_job_spec(

@@ -25,6 +25,8 @@ pub(super) fn capacity_profile() -> CapacityProfileV1 {
 
 pub(super) fn bundle() -> ProtocolBundleV1 {
     let mut bundle = outbe_ocomp_protocol::test_utils::minimal_protocol_bundle();
+    bundle.lysis_program_semantics_hash =
+        outbe_ocomp_protocol::profile::supported_lysis_v1_semantics_hash().unwrap();
     bundle.fork_id = hash(21);
     bundle.release_gate_authority_envelope_hash = hash(22);
     bundle.release_approval_policy_hash = hash(24);
