@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-#[cfg(any(test, feature = "ocomp-integration"))]
+#[cfg(test)]
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -636,29 +636,6 @@ impl Localnet {
         Ok(status)
     }
 
-    /// Rebuild one validator's derived CE database from its preserved canonical
-    /// Reth history. This method removes only the scenario-owned CE directory,
-    /// after the owned node has stopped. Chain DB, keys, consensus state and
-    /// OCOMP state remain untouched.
-    #[cfg(feature = "ocomp-integration")]
-    pub(super) fn restart_validator_after_ce_reset(&mut self, i: usize) -> Result<()> {
-        verified_compressed_entities_reconstruction_path(&self.cfg.dir, self.committee_size(), i)?;
-        self.kill_validator(i)?;
-        let ce_dir = verified_compressed_entities_reconstruction_path(
-            &self.cfg.dir,
-            self.committee_size(),
-            i,
-        )?;
-        fs::remove_dir_all(&ce_dir)
-            .wrap_err_with(|| format!("remove test-owned CE database {}", ce_dir.display()))?;
-        ensure!(
-            !ce_dir.exists(),
-            "test-owned CE database remains after removal: {}",
-            ce_dir.display()
-        );
-        self.restart()
-    }
-
     /// Launch one committee validator as an owned child (`run-testnet.sh:317-349`):
     /// `--consensus.use-local-defaults`, signing-key + evm-key only (peers come
     /// from the on-chain ValidatorSet), no `run-supervised` wrapper.
@@ -758,7 +735,7 @@ impl Localnet {
 #[cfg(test)]
 mod owned_committee_tests;
 
-#[cfg(any(test, feature = "ocomp-integration"))]
+#[cfg(test)]
 fn compressed_entities_reconstruction_path(
     scenario_dir: &Path,
     committee_size: usize,
@@ -786,7 +763,7 @@ fn compressed_entities_reconstruction_path(
     Ok(path)
 }
 
-#[cfg(any(test, feature = "ocomp-integration"))]
+#[cfg(test)]
 fn verified_compressed_entities_reconstruction_path(
     scenario_dir: &Path,
     committee_size: usize,
