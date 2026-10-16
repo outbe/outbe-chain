@@ -647,7 +647,7 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     use commonware_codec::Encode as _;
     let directory = private_directory();
     let control = directory.path().join("control");
-    let (original, output, keys, _) = signing_fixture(4);
+    let (original, output, keys, shares) = signing_fixture(4);
     let proposal = original.approval.approval.proposal_id;
     let validator = original.authority.committee.committee[0].address;
     let reader = Arc::new(ContextReader {
@@ -697,8 +697,35 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
         output.encode().as_ref()
     );
     assert_eq!(bootstrap.state.descriptor().description.len(), 256);
+    assert!(client.sign_bootstrap_document(&bootstrap).await.is_err());
+    publisher.install_local_signer(outbe_consensus::hybrid::VrfMaterialProvider::new(
+        6,
+        output.public().clone(),
+        Some(shares[0].clone()),
+    ));
+    let partial = client.sign_bootstrap_document(&bootstrap).await.unwrap();
+    assert_eq!(partial.participant_index(), 0);
+    let mut foreign = chain();
+    foreign.genesis_hash = B256::repeat_byte(99);
+    assert!(LocalReceiptClient::new(&control, foreign)
+        .sign_bootstrap_document(&bootstrap)
+        .await
+        .is_err());
+    let wrong_request = [bootstrap::SIGN_DOCUMENT.as_slice(), &[0; 32]].concat();
+    assert_eq!(
+        client
+            .exchange(&wrong_request, bootstrap::SIGN_FRAME)
+            .await
+            .unwrap(),
+        [bootstrap::SIGN_DOCUMENT.as_slice(), &[0]].concat()
+    );
+    let mut changed = client.read_bootstrap_signing_context().await.unwrap();
+    changed.state.descriptor.description = "Other".into();
+    assert!(client.sign_bootstrap_document(&changed).await.is_err());
+
     *reader.state.lock().unwrap() = None;
     assert!(client.read_bootstrap_signing_context().await.is_err());
+    assert!(client.sign_bootstrap_document(&bootstrap).await.is_err());
     *reader.state.lock().unwrap() = Some(original.clone());
 
     let (state, material) = client.read_patch_signing_context(proposal).await.unwrap();
@@ -745,6 +772,7 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     *reader.authority.lock().unwrap() = Some(original.authority.clone());
     *reader.state.lock().unwrap() = Some(original.clone());
     publisher.publish(5, 6, None);
+    assert!(client.sign_bootstrap_document(&bootstrap).await.is_err());
     assert!(client.read_bootstrap_signing_context().await.is_err());
     assert!(matches!(
         client.read_patch_signing_context(proposal).await,
@@ -759,6 +787,7 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     ));
     *reader.state.lock().unwrap() = Some(original);
     drop(publisher);
+    assert!(client.sign_bootstrap_document(&bootstrap).await.is_err());
     assert!(client.read_bootstrap_signing_context().await.is_err());
     assert!(matches!(
         client.read_patch_signing_context(proposal).await,

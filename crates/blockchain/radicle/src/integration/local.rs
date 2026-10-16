@@ -1,4 +1,4 @@
-//! Trusted local finalized context. No secret material or signing messages cross this socket.
+//! Trusted local finalized context and fixed native jobs. Secret shares never cross this socket.
 
 mod bootstrap;
 mod material;
@@ -263,6 +263,61 @@ impl LocalReceiptClient {
     }
 
     /// A fresh local finalized snapshot for this exact approved proposal, never a cached fallback.
+    /// Ask the node to reconstruct and sign its own current genesis document, never caller bytes.
+    pub async fn sign_bootstrap_document(
+        &self,
+        context: &BootstrapSigningContext,
+    ) -> Result<super::signing::RepositoryPartial, Error> {
+        use commonware_codec::DecodeExt as _;
+        if context.state.authority().chain_id() != self.chain.chain_id
+            || context.state.authority().genesis_hash() != self.chain.genesis_hash
+        {
+            return Err(Error::Protocol);
+        }
+        let job = super::bootstrap::prepare_bootstrap_document(
+            context.state.descriptor(),
+            &context.material,
+        )
+        .map_err(|_| Error::Protocol)?;
+        let request = [
+            bootstrap::SIGN_DOCUMENT.as_slice(),
+            job.body().receipt_hash().as_slice(),
+        ]
+        .concat();
+        let response = self.exchange(&request, bootstrap::SIGN_FRAME).await?;
+        if response == [bootstrap::SIGN_DOCUMENT.as_slice(), &[0]].concat() {
+            return Err(Error::Unavailable);
+        }
+        if response.len() != bootstrap::SIGN_FRAME
+            || response.get(..5)
+                != Some(
+                    [bootstrap::SIGN_DOCUMENT.as_slice(), &[2]]
+                        .concat()
+                        .as_slice(),
+                )
+        {
+            return Err(Error::Protocol);
+        }
+        let partial = super::signing::RepositoryPartial::from_bytes(&response[5..])
+            .map_err(|_| Error::Protocol)?;
+        let member = context
+            .state
+            .authority()
+            .committee()
+            .committee
+            .get(partial.participant_index() as usize)
+            .ok_or(Error::Protocol)?;
+        let sender = commonware_cryptography::bls12381::PublicKey::decode(
+            member.consensus_pubkey.as_slice(),
+        )
+        .map_err(|_| Error::Protocol)?;
+        context
+            .material
+            .verify_bootstrap_document_partial(&job, &context.state, &sender, &partial)
+            .map_err(|_| Error::Protocol)?;
+        Ok(partial)
+    }
+
     /// Public genesis descriptor and current DKG Output; no local Share crosses the socket.
     pub async fn read_bootstrap_signing_context(&self) -> Result<BootstrapSigningContext, Error> {
         bootstrap::decode(
@@ -369,6 +424,7 @@ async fn serve(
     let magic = match (request.get(..4), request.len()) {
         (Some(magic), 12) if magic == MAGIC => MAGIC,
         (Some(magic), 4) if magic == bootstrap::MAGIC => bootstrap::MAGIC,
+        (Some(magic), 36) if magic == bootstrap::SIGN_DOCUMENT => bootstrap::SIGN_DOCUMENT,
         (Some(magic), 36) if magic == state::MAGIC => state::MAGIC,
         (Some(magic), 36) if magic == material::MAGIC => material::MAGIC,
         (Some(magic), 36) if magic == preparation::MAGIC => preparation::MAGIC,
@@ -379,6 +435,13 @@ async fn serve(
         Ok(permit) => permit,
         Err(_) => return write_frame(&mut stream, &[magic.as_slice(), &[0]].concat()).await,
     };
+    if magic == bootstrap::SIGN_DOCUMENT {
+        let response =
+            bootstrap::sign_document(authority, material, permit, B256::from_slice(&request[4..]))
+                .await
+                .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
+        return write_frame(&mut stream, &response).await;
+    }
     if magic == bootstrap::MAGIC {
         let response = bootstrap::read(authority, material, permit)
             .await

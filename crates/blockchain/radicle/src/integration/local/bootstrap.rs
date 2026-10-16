@@ -10,6 +10,8 @@ use radicle::crypto::BlsPublicKey;
 use std::sync::Arc;
 use tokio::sync::OwnedSemaphorePermit;
 
+pub(super) const SIGN_DOCUMENT: &[u8; 4] = b"OCJ1";
+pub(super) const SIGN_FRAME: usize = 5 + 268;
 pub(super) const MAGIC: &[u8; 4] = b"OCB1";
 pub(super) const MAX_FRAME: usize = 5
     + state::MAX_AUTHORITY_BYTES
@@ -28,6 +30,15 @@ pub(super) async fn read(
     resolver: Option<EndpointNetworkResolver>,
     permit: OwnedSemaphorePermit,
 ) -> Result<Vec<u8>, Error> {
+    let context = current(authority, resolver, permit).await?;
+    encode(&context.state, &context.material)
+}
+
+async fn current(
+    authority: Option<Arc<dyn RepositoryAuthorityReader>>,
+    resolver: Option<EndpointNetworkResolver>,
+    permit: OwnedSemaphorePermit,
+) -> Result<BootstrapSigningContext, Error> {
     let authority = authority.ok_or(Error::Unavailable)?;
     let resolver = resolver.ok_or(Error::Unavailable)?;
     let state = tokio::task::spawn_blocking(move || {
@@ -51,7 +62,10 @@ pub(super) async fn read(
         .repository_signing_material(owner)
         .await
         .map_err(|_| Error::Unavailable)?;
-    encode(&state, &material)
+    if material.authority() != state.authority() {
+        return Err(Error::Unavailable);
+    }
+    Ok(BootstrapSigningContext { state, material })
 }
 
 pub(super) fn encode(
@@ -122,4 +136,27 @@ pub(super) fn decode(bytes: &[u8], chain: ChainIdentity) -> Result<BootstrapSign
         },
         material,
     })
+}
+
+pub(super) async fn sign_document(
+    authority: Option<Arc<dyn RepositoryAuthorityReader>>,
+    resolver: Option<EndpointNetworkResolver>,
+    permit: OwnedSemaphorePermit,
+    expected_job: alloy_primitives::B256,
+) -> Result<Vec<u8>, Error> {
+    let signer = resolver.clone().ok_or(Error::Unavailable)?;
+    let context = current(authority, resolver, permit).await?;
+    let job = crate::integration::bootstrap::prepare_bootstrap_document(
+        context.state.descriptor(),
+        &context.material,
+    )
+    .map_err(|_| Error::Unavailable)?;
+    if job.body().receipt_hash() != expected_job {
+        return Err(Error::Unavailable);
+    }
+    let partial = signer
+        .sign_bootstrap_document(Arc::new(job))
+        .await
+        .map_err(|_| Error::Unavailable)?;
+    Ok([SIGN_DOCUMENT.as_slice(), &[2], &partial.to_bytes()].concat())
 }
