@@ -156,7 +156,7 @@ impl GemContract<'_> {
             .ok_or(GemError::TotalSupplyOverflow)?;
         self.total_supply.write(supply)?;
         self.insert_bucket_member(bucket_key, item.gem_id.to_u256())?;
-        self.insert_state_record(&StoredGem::from(item))?;
+        self.insert_state_record(item)?;
         if let Some(bucket) = new_bucket {
             self.buckets.create(&StoredGemBucket::from(&bucket))?;
         }
@@ -182,7 +182,7 @@ impl GemContract<'_> {
         item.called_at = self.bucket_called_at.read(&item.bucket_key)?;
         item.settled_at = self.storage.timestamp()?.to::<u64>();
         item.state = GemState::Settled as u8;
-        self.records.update(&StoredGem::from(&item))?;
+        self.records.update(&item)?;
         self.buckets.update(&StoredGemBucket::from(&bucket))?;
         self.emit(IGem::MetadataUpdate {
             _tokenId: item.gem_id.to_u256(),

@@ -1,8 +1,9 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::storage_record;
 use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[storage_record(exists_field = owner)]
 pub struct StoredGem {
     #[key]
@@ -13,6 +14,7 @@ pub struct StoredGem {
     pub gem_type: u8,
     #[attribute(order = 2)]
     pub promis_load_minor: U256,
+    /// Per gem: the type and the merchant source set it, not the bucket.
     #[attribute(order = 3)]
     pub floor_price_minor: U256,
     #[attribute(order = 4)]
@@ -21,12 +23,17 @@ pub struct StoredGem {
     pub reference_currency: u16,
     #[attribute(order = 6)]
     pub issued_at: u64,
+    /// `keccak(wwd ‖ entry_price ‖ reference_currency)`, see `crate::identity`.
     #[attribute(order = 7)]
     pub bucket_key: B256,
+    /// `GemState::Issued` or `GemState::Settled`. Called is the bucket's.
     #[attribute(order = 8)]
     pub state: u8,
+    /// The bucket's `called_at` copied in at settlement, so a settled gem keeps it
+    /// after its bucket is gone. `0` until then.
     #[attribute(order = 9)]
     pub called_at: u64,
+    /// Block timestamp of the settlement. `0` until Settled.
     #[attribute(order = 10)]
     pub settled_at: u64,
 }
@@ -46,44 +53,6 @@ pub struct StoredGemBucket {
     pub reference_currency: u16,
     #[attribute(order = 4)]
     pub settled_gems: u64,
-}
-
-impl From<&crate::GemItemState> for StoredGem {
-    fn from(body: &crate::GemItemState) -> Self {
-        Self {
-            gem_id: body.gem_id,
-            owner: body.owner,
-            gem_type: body.gem_type,
-            promis_load_minor: body.promis_load_minor,
-            floor_price_minor: body.floor_price_minor,
-            issuance_currency: body.issuance_currency,
-            reference_currency: body.reference_currency,
-            issued_at: body.issued_at,
-            bucket_key: body.bucket_key,
-            state: body.state,
-            called_at: body.called_at,
-            settled_at: body.settled_at,
-        }
-    }
-}
-
-impl From<StoredGem> for crate::GemItemState {
-    fn from(body: StoredGem) -> Self {
-        Self {
-            gem_id: body.gem_id,
-            owner: body.owner,
-            gem_type: body.gem_type,
-            promis_load_minor: body.promis_load_minor,
-            floor_price_minor: body.floor_price_minor,
-            issuance_currency: body.issuance_currency,
-            reference_currency: body.reference_currency,
-            issued_at: body.issued_at,
-            bucket_key: body.bucket_key,
-            state: body.state,
-            called_at: body.called_at,
-            settled_at: body.settled_at,
-        }
-    }
 }
 
 impl From<&crate::GemBucketState> for StoredGemBucket {

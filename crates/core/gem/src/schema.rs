@@ -38,27 +38,7 @@ pub struct GemAddParams {
 
 /// Runtime view of one canonical gem body. The entry price and the call terms are
 /// the bucket's, read through [`GemView`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct GemItemState {
-    pub gem_id: WwdEntityId,
-    pub owner: Address,
-    pub gem_type: u8,
-    pub promis_load_minor: U256,
-    /// Per gem: the type and the merchant source set it, not the bucket.
-    pub floor_price_minor: U256,
-    pub issuance_currency: u16,
-    pub reference_currency: u16,
-    pub issued_at: u64,
-    /// `keccak(wwd ‖ entry_price ‖ reference_currency)`, see `crate::identity`.
-    pub bucket_key: B256,
-    /// `GemState::Issued` or `GemState::Settled`. Called is the bucket's.
-    pub state: u8,
-    /// The bucket's `called_at` copied in at settlement, so a settled gem keeps it
-    /// after its bucket is gone. `0` until then.
-    pub called_at: u64,
-    /// Block timestamp of the settlement. `0` until Settled.
-    pub settled_at: u64,
-}
+pub type GemItemState = crate::storage_records::StoredGem;
 
 impl GemItemState {
     /// The worldwide day the gem was issued on. The bucket key binds this day, so a
