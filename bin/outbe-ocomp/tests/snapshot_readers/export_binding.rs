@@ -1,6 +1,4 @@
-mod support {
-    include!("../support/mod.rs");
-}
+use crate::support;
 use alloy_primitives::{Address, B256, U256};
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},

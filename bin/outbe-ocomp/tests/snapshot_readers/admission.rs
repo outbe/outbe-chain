@@ -1,6 +1,4 @@
-mod support {
-    include!("../support/mod.rs");
-}
+use crate::support;
 use alloy_primitives::B256;
 use outbe_lysis::program_v1::planner::{LysisPlanTopologyV1, PlannedUnitPositionV1};
 use outbe_ocomp::{

@@ -1,6 +1,8 @@
 #[path = "../src/test_support/common.rs"]
 mod test_support;
 
+mod support;
+
 use outbe_ocomp::{cas, control, input_artifacts, input_ref_catalog};
 #[path = "../src/test_support/snapshot.rs"]
 mod snapshot_test_support;
