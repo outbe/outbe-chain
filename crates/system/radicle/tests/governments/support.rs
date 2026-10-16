@@ -68,6 +68,46 @@ impl BlockHashReader for FinalizedProvider {
             .collect())
     }
 }
+impl reth_provider::ReceiptProvider for FinalizedProvider {
+    type Receipt = <MockEthProvider as reth_provider::ReceiptProvider>::Receipt;
+    fn receipt(&self, _: u64) -> ProviderResult<Option<Self::Receipt>> {
+        panic!("wrong receipt API")
+    }
+    fn receipt_by_hash(&self, _: B256) -> ProviderResult<Option<Self::Receipt>> {
+        panic!("wrong receipt API")
+    }
+    fn receipts_by_block(
+        &self,
+        block: alloy_eips::BlockHashOrNumber,
+    ) -> ProviderResult<Option<Vec<Self::Receipt>>> {
+        let alloy_eips::BlockHashOrNumber::Hash(hash) = block else {
+            panic!("receipts must use exact hash")
+        };
+        let states = self.0.read().unwrap();
+        let number = states
+            .canonical
+            .iter()
+            .find_map(|(n, h)| (*h == hash).then_some(*n))
+            .ok_or(ProviderError::BestBlockNotFound)?;
+        states
+            .states
+            .get(&hash)
+            .ok_or(ProviderError::BestBlockNotFound)?
+            .receipts_by_block(number.into())
+    }
+    fn receipts_by_tx_range(
+        &self,
+        _: impl std::ops::RangeBounds<u64>,
+    ) -> ProviderResult<Vec<Self::Receipt>> {
+        panic!("wrong receipt API")
+    }
+    fn receipts_by_block_range(
+        &self,
+        _: std::ops::RangeInclusive<u64>,
+    ) -> ProviderResult<Vec<Vec<Self::Receipt>>> {
+        panic!("wrong receipt API")
+    }
+}
 impl BlockNumReader for FinalizedProvider {
     fn chain_info(&self) -> ProviderResult<ChainInfo> {
         let states = self.0.read().unwrap();
