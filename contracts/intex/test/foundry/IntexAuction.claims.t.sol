@@ -349,6 +349,19 @@ contract IntexAuctionClaimsTest is Test {
         assertEq(auction.revealedBidOf(DAY, alice).bidderAddress, address(0), "cleared with the win");
     }
 
+    function test_TheCollectionStaysWhileAWinIsOpen() public {
+        _bid(3, 1);
+        _finalize(_winner(alice), 0, 0);
+
+        vm.prank(admin);
+        vm.expectRevert(IIntexAuction.EscrowHasLiveLocks.selector);
+        auction.setIntexContract(makeAddr("intex2"));
+
+        vm.prank(admin);
+        auction.setIntexContract(address(intex));
+        assertEq(address(auction.intexContract()), address(intex), "the same collection resets");
+    }
+
     function test_ARefundNeedsABid() public {
         vm.expectRevert(IIntexAuction.BidNotFound.selector);
         auction.claimRefund(DAY, makeAddr("stranger"));

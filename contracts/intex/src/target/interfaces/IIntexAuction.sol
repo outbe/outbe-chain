@@ -251,7 +251,8 @@ interface IIntexAuction {
     /// @param _escrow Escrow contract address.
     function wire(address _escrow) external;
 
-    /// @notice Set the Intex collection winners' units are issued on.
+    /// @notice Set the Intex collection winners' units are issued on. It changes only once the
+    ///         escrow has nothing left to claim, like `wire`.
     /// @param _intex Collection address.
     function setIntexContract(address _intex) external;
 

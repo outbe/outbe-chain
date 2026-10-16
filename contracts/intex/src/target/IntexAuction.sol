@@ -167,6 +167,12 @@ contract IntexAuction is
 
         IntexAuctionStorage storage $ = _s();
         IIntexNFT1155 current = $.intexContract;
+        // Open wins issue on the collection their series live on.
+        IEscrowAdapter escrow = $.escrowContract;
+        bool changing = address(current) != address(0) && _intex != address(current);
+        if (changing && address(escrow) != address(0) && escrow.hasOutstandingLocks()) {
+            revert EscrowHasLiveLocks();
+        }
         $.intexContract = IIntexNFT1155(_intex);
         emit IntexWired(address(current), _intex);
     }

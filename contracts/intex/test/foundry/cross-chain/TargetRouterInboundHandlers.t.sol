@@ -220,6 +220,8 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         bnbRouter.wire(address(auction), address(intex), makeAddr("escrow2"));
         vm.expectRevert(ITargetRouter.EscrowHasLiveLocks.selector);
         bnbRouter.wire(makeAddr("auction2"), address(intex), address(escrow));
+        vm.expectRevert(ITargetRouter.EscrowHasLiveLocks.selector);
+        bnbRouter.wire(address(auction), makeAddr("intex2"), address(escrow));
 
         bnbRouter.wire(address(auction), address(intex), address(escrow));
     }
