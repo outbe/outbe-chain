@@ -65,7 +65,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "5dc7c152152c7ab9333aee14be1133826d8172ec",
+  "source_sha": "2604f88e5",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -84,7 +84,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "Deterministic bootstrap native document/identity COB/signed refs preparation and full accepted bootstrap reconstruction using existing public q-witness verifier; exact bootstrap policy grants. No ref promotion or source git.rs change.",
+  "current_source_changes": "2604f88e5 adds sealed own-finalized unbound bootstrap permission/current DKG signing,3 typed bootstrap actor requests and public-only authenticated recovery. Prior ac8a57811 prepares/reconstructs native bootstrap and exact accepted root grants. No git.rs/fetch changes or full acceptance.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -110,10 +110,9 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "5dc7c152152c7ab9333aee14be1133826d8172ec",
-    "checks": "71 full adapter lib tests/0ignored;7 consumer all-target checks;adapter+node all-target Clippy -D warnings;6 touched Rust-file fmt PASS;source clean.",
-    "scenarios": "Actual socket+actor+private store: missing manifest denial, receipt-bound manifest cache and idempotence, wrong hash/manifest/chain rejection; exact state/public material/pinned refs/sigrefs reply; store/server drop/rebind retains snapshot; missing trusted source/corrupt manifest/withdrawn Output reject despite cache. Canonical nested frame/truncation/zero sigrefs/oversize/root refs checks; prior regressions PASS.",
-    "acceptance": "Intermediate P3/P6 node/SDK wiring,not sidecar collector or signing. Deterministic receipt/authority and threshold framing fixtures,not live chain/complete native Git bootstrap/process crash/E2E or full acceptance."
+    "source_sha": "2604f88e5",
+    "checks": "73 adapter lib tests/0ignored;7 consumers all-target check;adapter+node Clippy-Dwarnings;8 touched Rust-file fmt PASS",
+    "acceptance": "Intermediate P3/P4. Mock chain/bootstrap DKG and actor fixture; protected bootstrap context/sign request transport/collector/production automation/E2E pending."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
@@ -124,7 +123,7 @@
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
   "last_goal_turn_classification": "no progress: third consecutive verified same overall D3 impasse, explicit approval still absent; no production/spec changes or live job to await. Blocked goal status required by threshold.",
-  "next_required_work": "Verify current bootstrap factory/policy foundation; wire own finalized bootstrap state/current-material signer, then post-finality collector and existing native publication path under approved P3/P4/P6. No new design question remains for description.",
+  "next_required_work": "Connect own-current bootstrap state/material and narrow typed preparation/signing through existing protected local sidecar protocol; complete bootstrap current attestation/runtime and approved collector flow. No unresolved description decision or git.rs/fetch redesign.",
   "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
   "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
   "review_store_evidence": "evidence/outbe-chain-pjz.4/review-store-r2",
@@ -159,5 +158,7 @@
     "document": "decisions/D3-description-bound/user-decision-256.md",
     "status": "Implemented and focused boundary checks passed at8f3008ae2389157a0019e639a5844fc44ec5f10c; extra re-review stopped on explicit user correction.",
     "goal_api_status": "blocked; this instruction authorizes the concrete correction, does not assert goal resumed"
-  }
+  },
+  "bootstrap_native_evidence": "evidence/outbe-chain-pjz.5/native-bootstrap",
+  "bootstrap_signing_evidence": "evidence/outbe-chain-pjz.4/bootstrap-signing"
 }
