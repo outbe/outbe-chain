@@ -175,6 +175,16 @@ enum MergeCase {
     FastForward,
     Clean,
     Conflict,
+    TargetMoved,
+}
+impl MergeCase {
+    fn unmerged_reason(self) -> Option<&'static str> {
+        match self {
+            Self::Conflict => Some("Conflict"),
+            Self::TargetMoved => Some("TargetMoved"),
+            Self::FastForward | Self::Clean => None,
+        }
+    }
 }
 
 async fn exercise_patch_vote(
@@ -196,10 +206,15 @@ async fn exercise_patch_vote(
         .unwrap()
         .unwrap();
     let review_sequence = sequence + 1;
-    let final_sequence = sequence + if case == MergeCase::Conflict { 1 } else { 2 };
+    let final_sequence = sequence
+        + if case.unmerged_reason().is_some() {
+            1
+        } else {
+            2
+        };
     let author = SigningKey::from_seed(Seed::new([42; 32]));
     sidecars[1].stop();
-    let (patch_id, revision, target, head) = {
+    let (patch_id, revision, target, expected_target, head) = {
         let store = ReviewPackageStore::open(sidecars[1].journal().join("packages")).unwrap();
         let repo = store
             .open_checkpoint_repository(
@@ -213,17 +228,26 @@ async fn exercise_patch_vote(
             )
             .unwrap();
         let target = git::Oid::from(repo.raw().head().unwrap().target().unwrap());
-        let base = if case == MergeCase::FastForward {
+        let initial = store
+            .load_checkpoint_manifest(&root)
+            .unwrap()
+            .owner_refs()
+            .unwrap()
+            .head(git::fmt::refname!("main"))
+            .unwrap();
+        let base = if matches!(case, MergeCase::FastForward | MergeCase::TargetMoved) {
             target
         } else {
-            store
-                .load_checkpoint_manifest(&root)
-                .unwrap()
-                .owner_refs()
-                .unwrap()
-                .head(git::fmt::refname!("main"))
-                .unwrap()
+            initial
         };
+        let expected_target = if case == MergeCase::TargetMoved {
+            initial
+        } else {
+            target
+        };
+        if case == MergeCase::TargetMoved {
+            assert_ne!(target, expected_target);
+        }
         let content: &[u8] = if case == MergeCase::Conflict {
             b"Conflicting patch\n"
         } else {
@@ -237,6 +261,8 @@ async fn exercise_patch_vote(
             .unwrap();
         let file = if case == MergeCase::Clean {
             "second.txt"
+        } else if case == MergeCase::TargetMoved {
+            "third.txt"
         } else {
             "proposal.txt"
         };
@@ -276,7 +302,7 @@ async fn exercise_patch_vote(
         let id = *patch.id();
         let revision = patch.latest().0;
         repo.sign_refs(&author).unwrap();
-        (id, revision, target, head)
+        (id, revision, target, expected_target, head)
     };
     for sidecar in sidecars.iter_mut() {
         if sidecar.running.is_none() {
@@ -345,7 +371,7 @@ async fn exercise_patch_vote(
                 rid.into_sha1().unwrap().into(),
                 (*patch_id).into_sha1().unwrap().into(),
                 revision.into_inner().into_sha1().unwrap().into(),
-                target.into_sha1().unwrap().into(),
+                expected_target.into_sha1().unwrap().into(),
             )
             .encode()
             .unwrap(),
@@ -445,7 +471,7 @@ async fn exercise_patch_vote(
         if let Some(merged) = merged {
             assert_eq!(
                 merged.receipt().body.action,
-                if case == MergeCase::Conflict {
+                if case.unmerged_reason().is_some() {
                     outbe_primitives::radicle_publication::PublicationAction::Review
                 } else {
                     outbe_primitives::radicle_publication::PublicationAction::Merge
@@ -456,7 +482,7 @@ async fn exercise_patch_vote(
                 std::fs::read(s.journal().join("latest-installed")).is_ok_and(|bytes| {
                     bytes.get(..8) == Some(final_sequence.to_be_bytes().as_slice())
                 })
-            }) && (case != MergeCase::Conflict
+            }) && (case.unmerged_reason().is_none()
                 || sidecars.iter().all(|s| {
                     s.journal()
                         .join("approved-unmerged")
@@ -519,7 +545,7 @@ async fn exercise_patch_vote(
         let actual = git::Oid::from(repo.raw().head().unwrap().target().unwrap());
         match case {
             MergeCase::FastForward => assert_eq!(actual, head),
-            MergeCase::Conflict => {
+            MergeCase::Conflict | MergeCase::TargetMoved => {
                 assert_eq!(actual, target);
                 assert_eq!(
                     std::fs::read(
@@ -529,7 +555,7 @@ async fn exercise_patch_vote(
                             .join(format!("{approval_height:020}-{proposal:064x}"))
                     )
                     .unwrap(),
-                    b"Conflict"
+                    case.unmerged_reason().unwrap().as_bytes()
                 );
             }
             MergeCase::Clean => {
@@ -550,8 +576,8 @@ async fn exercise_patch_vote(
         }
         let patches = Patches::open(&repo, WriteAs::new(&author)).unwrap();
         let merged = patches.get(&patch_id).unwrap().unwrap();
-        assert_eq!(merged.is_merged(), case != MergeCase::Conflict);
-        if case == MergeCase::Conflict {
+        assert_eq!(merged.is_merged(), case.unmerged_reason().is_none());
+        if case.unmerged_reason().is_some() {
             assert!(merged.is_open());
         }
         let owner =
@@ -837,6 +863,7 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
         MergeCase::FastForward,
         MergeCase::Clean,
         MergeCase::Conflict,
+        MergeCase::TargetMoved,
     ] {
         exercise_patch_vote(
             &mut sidecars,
@@ -862,7 +889,7 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
     }
     assert_eq!(
         std::fs::read(sidecars[0].journal().join("latest-installed")).unwrap()[..8],
-        6u64.to_be_bytes(),
+        7u64.to_be_bytes(),
     );
     sidecars[1].start();
     let source = sidecars[1].node_id;
