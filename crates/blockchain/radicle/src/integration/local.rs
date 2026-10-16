@@ -1,9 +1,11 @@
 //! Trusted local finalized context. No secret material or signing messages cross this socket.
 
+mod bootstrap;
 mod material;
 mod preparation;
 mod state;
 
+pub use bootstrap::BootstrapSigningContext;
 pub use preparation::{publication_store_path, PatchPreparationContext};
 
 use super::publication::{store::ReviewPackageStore, PublicationManifest};
@@ -261,6 +263,16 @@ impl LocalReceiptClient {
     }
 
     /// A fresh local finalized snapshot for this exact approved proposal, never a cached fallback.
+    /// Public genesis descriptor and current DKG Output; no local Share crosses the socket.
+    pub async fn read_bootstrap_signing_context(&self) -> Result<BootstrapSigningContext, Error> {
+        bootstrap::decode(
+            &self
+                .exchange(bootstrap::MAGIC, bootstrap::MAX_FRAME)
+                .await?,
+            self.chain,
+        )
+    }
+
     pub async fn read_patch_signing_state(
         &self,
         proposal_id: U256,
@@ -356,6 +368,7 @@ async fn serve(
     let request = read_frame(&mut stream, MAX_REQUEST).await?;
     let magic = match (request.get(..4), request.len()) {
         (Some(magic), 12) if magic == MAGIC => MAGIC,
+        (Some(magic), 4) if magic == bootstrap::MAGIC => bootstrap::MAGIC,
         (Some(magic), 36) if magic == state::MAGIC => state::MAGIC,
         (Some(magic), 36) if magic == material::MAGIC => material::MAGIC,
         (Some(magic), 36) if magic == preparation::MAGIC => preparation::MAGIC,
@@ -366,6 +379,12 @@ async fn serve(
         Ok(permit) => permit,
         Err(_) => return write_frame(&mut stream, &[magic.as_slice(), &[0]].concat()).await,
     };
+    if magic == bootstrap::MAGIC {
+        let response = bootstrap::read(authority, material, permit)
+            .await
+            .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
+        return write_frame(&mut stream, &response).await;
+    }
     if magic == preparation::CACHE {
         let result = preparation::cache(reader, publications, permit, request).await;
         let response = [magic.as_slice(), &[if result.is_ok() { 2 } else { 0 }]].concat();

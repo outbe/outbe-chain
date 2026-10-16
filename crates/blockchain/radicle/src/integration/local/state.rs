@@ -51,19 +51,7 @@ pub(super) fn encode(state: &FinalizedPatchSigningState) -> Result<Vec<u8>, Erro
         return Err(Error::Protocol);
     }
     let mut bytes = [MAGIC.as_slice(), &[2]].concat();
-    bytes.extend(authority.block().number.to_be_bytes());
-    bytes.extend(authority.block().hash.0);
-    bytes.extend(authority.chain_id().to_be_bytes());
-    bytes.extend(authority.genesis_hash().0);
-    bytes.extend(authority.epoch().to_be_bytes());
-    bytes.extend(committee.vrf_material_version.to_be_bytes());
-    bytes.extend(committee.vrf_public_polynomial_hash.0);
-    bytes.extend(&committee.vrf_group_public_key_bytes);
-    bytes.extend((committee.committee.len() as u16).to_be_bytes());
-    for member in &committee.committee {
-        bytes.extend(member.address.as_slice());
-        bytes.extend(member.consensus_pubkey);
-    }
+    bytes.extend(encode_authority(authority)?);
     bytes.extend(approval.proposal_id.to_be_bytes::<32>());
     bytes.extend(approval.approved_height.to_be_bytes());
     bytes.extend(approval.approved_timestamp.to_be_bytes());
@@ -77,6 +65,34 @@ pub(super) fn encode(state: &FinalizedPatchSigningState) -> Result<Vec<u8>, Erro
     bytes.push(state.stage());
     bytes.extend(state.anchor().number.to_be_bytes());
     bytes.extend(state.anchor().hash.0);
+    Ok(bytes)
+}
+
+pub(super) const MAX_AUTHORITY_BYTES: usize =
+    40 + 8 + 32 + 8 + 8 + 32 + 96 + 2 + 68 * outbe_consensus::bls::MAX_VALIDATORS as usize;
+
+pub(super) fn encode_authority(authority: &FinalizedRepositoryAuthority) -> Result<Vec<u8>, Error> {
+    let committee = authority.committee();
+    if committee.committee.is_empty()
+        || committee.committee.len() > outbe_consensus::bls::MAX_VALIDATORS as usize
+        || committee.vrf_group_public_key_bytes.len() != 96
+    {
+        return Err(Error::Protocol);
+    }
+    let mut bytes = Vec::new();
+    bytes.extend(authority.block().number.to_be_bytes());
+    bytes.extend(authority.block().hash.0);
+    bytes.extend(authority.chain_id().to_be_bytes());
+    bytes.extend(authority.genesis_hash().0);
+    bytes.extend(authority.epoch().to_be_bytes());
+    bytes.extend(committee.vrf_material_version.to_be_bytes());
+    bytes.extend(committee.vrf_public_polynomial_hash.0);
+    bytes.extend(&committee.vrf_group_public_key_bytes);
+    bytes.extend((committee.committee.len() as u16).to_be_bytes());
+    for member in &committee.committee {
+        bytes.extend(member.address.as_slice());
+        bytes.extend(member.consensus_pubkey);
+    }
     Ok(bytes)
 }
 
@@ -94,41 +110,15 @@ pub(super) fn decode(
         return Err(Error::Protocol);
     }
     let mut input = Input(&bytes[5..]);
-    let block = FinalizedBlock {
-        number: input.u64()?,
-        hash: input.array::<32>()?.into(),
-    };
-    let chain_id = input.u64()?;
-    let genesis_hash = B256::from(input.array::<32>()?);
-    let epoch = input.u64()?;
-    let vrf_material_version = input.u64()?;
-    let vrf_public_polynomial_hash = B256::from(input.array::<32>()?);
-    let group = input.array::<96>()?;
-    radicle::crypto::repository::BlsPublicKey::from_bytes(group).map_err(|_| Error::Protocol)?;
-    let count = u16::from_be_bytes(input.array()?) as usize;
-    if count == 0 || count > outbe_consensus::bls::MAX_VALIDATORS as usize {
-        return Err(Error::Protocol);
-    }
-    let mut committee = Vec::with_capacity(count);
-    let mut previous = None;
-    for _ in 0..count {
-        let address = Address::from(input.array::<20>()?);
-        let consensus_pubkey = input.array::<48>()?;
-        let key = bls12381::PublicKey::decode(consensus_pubkey.as_slice())
-            .map_err(|_| Error::Protocol)?;
-        if previous.as_ref().is_some_and(|old| old >= &key)
-            || committee
-                .iter()
-                .any(|member: &CommitteeEntry| member.address == address)
-        {
-            return Err(Error::Protocol);
-        }
-        previous = Some(key);
-        committee.push(CommitteeEntry {
-            address,
-            consensus_pubkey,
-        });
-    }
+    let authority = decode_authority(&mut input, chain)?;
+    let block = authority.block();
+    let chain_id = authority.chain_id();
+    let genesis_hash = authority.genesis_hash();
+    let epoch = authority.epoch();
+    let vrf_material_version = authority.committee().vrf_material_version;
+    let vrf_public_polynomial_hash = authority.committee().vrf_public_polynomial_hash;
+    let group = authority.committee().vrf_group_public_key_bytes.as_slice();
+    let committee = &authority.committee().committee;
     let response_proposal = U256::from_be_bytes(input.array::<32>()?);
     let approved_height = input.u64()?;
     let approved_timestamp = input.u64()?;
@@ -195,18 +185,7 @@ pub(super) fn decode(
         return Err(Error::Protocol);
     }
     Ok(FinalizedPatchSigningState {
-        authority: FinalizedRepositoryAuthority {
-            block,
-            chain_id,
-            genesis_hash,
-            epoch,
-            committee: CommitteeSnapshot {
-                committee,
-                vrf_material_version,
-                vrf_group_public_key_bytes: group.to_vec(),
-                vrf_public_polynomial_hash,
-            },
-        },
+        authority,
         approval: FinalizedPatchApproval {
             block,
             approval: PatchApprovalRecord {
@@ -223,20 +202,80 @@ pub(super) fn decode(
     })
 }
 
-struct Input<'a>(&'a [u8]);
+pub(super) fn decode_authority(
+    input: &mut Input<'_>,
+    chain: ChainIdentity,
+) -> Result<FinalizedRepositoryAuthority, Error> {
+    let block = FinalizedBlock {
+        number: input.u64()?,
+        hash: input.array::<32>()?.into(),
+    };
+    let chain_id = input.u64()?;
+    let genesis_hash = B256::from(input.array::<32>()?);
+    let epoch = input.u64()?;
+    let vrf_material_version = input.u64()?;
+    let vrf_public_polynomial_hash = B256::from(input.array::<32>()?);
+    let group = input.array::<96>()?;
+    radicle::crypto::repository::BlsPublicKey::from_bytes(group).map_err(|_| Error::Protocol)?;
+    let count = u16::from_be_bytes(input.array()?) as usize;
+    if count == 0 || count > outbe_consensus::bls::MAX_VALIDATORS as usize {
+        return Err(Error::Protocol);
+    }
+    let mut committee = Vec::with_capacity(count);
+    let mut previous = None;
+    for _ in 0..count {
+        let address = Address::from(input.array::<20>()?);
+        let consensus_pubkey = input.array::<48>()?;
+        let key = bls12381::PublicKey::decode(consensus_pubkey.as_slice())
+            .map_err(|_| Error::Protocol)?;
+        if previous.as_ref().is_some_and(|old| old >= &key)
+            || committee
+                .iter()
+                .any(|member: &CommitteeEntry| member.address == address)
+        {
+            return Err(Error::Protocol);
+        }
+        previous = Some(key);
+        committee.push(CommitteeEntry {
+            address,
+            consensus_pubkey,
+        });
+    }
+    if chain_id != chain.chain_id
+        || genesis_hash != chain.genesis_hash
+        || block.hash.is_zero()
+        || vrf_public_polynomial_hash.is_zero()
+    {
+        return Err(Error::Protocol);
+    }
+    Ok(FinalizedRepositoryAuthority {
+        block,
+        chain_id,
+        genesis_hash,
+        epoch,
+        committee: CommitteeSnapshot {
+            committee,
+            vrf_material_version,
+            vrf_group_public_key_bytes: group.to_vec(),
+            vrf_public_polynomial_hash,
+        },
+    })
+}
+
+pub(super) struct Input<'a>(pub(super) &'a [u8]);
 
 impl<'a> Input<'a> {
-    fn take(&mut self, length: usize) -> Result<&'a [u8], Error> {
+    pub(super) fn take(&mut self, length: usize) -> Result<&'a [u8], Error> {
         let (head, tail) = self.0.split_at_checked(length).ok_or(Error::Protocol)?;
         self.0 = tail;
         Ok(head)
     }
 
-    fn array<const N: usize>(&mut self) -> Result<[u8; N], Error> {
+    pub(super) fn array<const N: usize>(&mut self) -> Result<[u8; N], Error> {
         self.take(N)?.try_into().map_err(|_| Error::Protocol)
     }
 
-    fn u64(&mut self) -> Result<u64, Error> {
+    pub(super) fn u64(&mut self) -> Result<u64, Error> {
         Ok(u64::from_be_bytes(self.array()?))
     }
 

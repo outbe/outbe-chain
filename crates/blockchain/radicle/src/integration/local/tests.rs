@@ -576,12 +576,42 @@ fn signing_state_wire_supports_the_protocol_maximum_committee() {
     assert!(state::decode(&oversized_count, proposal, chain()).is_err());
 }
 
+fn bootstrap_state(
+    state: &FinalizedPatchSigningState,
+) -> crate::manager::FinalizedBootstrapSigningState {
+    crate::manager::FinalizedBootstrapSigningState {
+        authority: state.authority.clone(),
+        descriptor: outbe_primitives::radicle_genesis::GovernmentsDescriptor {
+            chain_id: chain().chain_id,
+            genesis_timestamp: 1700000000,
+            description: "я".repeat(128),
+            initial_tree_oid: "0x4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+                .parse()
+                .unwrap(),
+            initial_content_manifest_sha256:
+                "0x4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+                    .parse()
+                    .unwrap(),
+        },
+    }
+}
+
 struct ContextReader {
     state: std::sync::Mutex<Option<FinalizedPatchSigningState>>,
     authority: std::sync::Mutex<Option<crate::manager::FinalizedRepositoryAuthority>>,
 }
 
 impl RepositoryAuthorityReader for ContextReader {
+    fn read_current_bootstrap_signing_state(
+        &self,
+    ) -> Result<crate::manager::FinalizedBootstrapSigningState, ManagerError> {
+        let guard = self.state.lock().unwrap();
+        let state = guard
+            .as_ref()
+            .ok_or_else(|| ManagerError::Finality("bootstrap unavailable".into()))?;
+        Ok(bootstrap_state(state))
+    }
+
     fn read_current_repository_authority(
         &self,
     ) -> Result<crate::manager::FinalizedRepositoryAuthority, ManagerError> {
@@ -657,8 +687,20 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
         client.read_patch_signing_context(proposal).await,
         Err(Error::Unavailable)
     ));
+    assert!(client.read_bootstrap_signing_context().await.is_err());
     // No signing provider/share is installed: the channel returns public Output only.
     publisher.publish(5, 6, Some(&output));
+    let bootstrap = client.read_bootstrap_signing_context().await.unwrap();
+    assert_eq!(bootstrap.state, bootstrap_state(&original));
+    assert_eq!(
+        bootstrap.material.canonical_output(),
+        output.encode().as_ref()
+    );
+    assert_eq!(bootstrap.state.descriptor().description.len(), 256);
+    *reader.state.lock().unwrap() = None;
+    assert!(client.read_bootstrap_signing_context().await.is_err());
+    *reader.state.lock().unwrap() = Some(original.clone());
+
     let (state, material) = client.read_patch_signing_context(proposal).await.unwrap();
     assert_eq!(state, original);
     assert_eq!(material.canonical_output(), output.encode().as_ref());
@@ -680,6 +722,7 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     next.material.block = next.authority.block;
     // Actor observes a new finalized head between the state and Output reads.
     *reader.authority.lock().unwrap() = Some(next.authority.clone());
+    assert!(client.read_bootstrap_signing_context().await.is_err());
     assert!(matches!(
         client.read_patch_signing_context(proposal).await,
         Err(Error::Unavailable)
@@ -702,6 +745,7 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     *reader.authority.lock().unwrap() = Some(original.authority.clone());
     *reader.state.lock().unwrap() = Some(original.clone());
     publisher.publish(5, 6, None);
+    assert!(client.read_bootstrap_signing_context().await.is_err());
     assert!(matches!(
         client.read_patch_signing_context(proposal).await,
         Err(Error::Unavailable)
@@ -715,6 +759,7 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     ));
     *reader.state.lock().unwrap() = Some(original);
     drop(publisher);
+    assert!(client.read_bootstrap_signing_context().await.is_err());
     assert!(matches!(
         client.read_patch_signing_context(proposal).await,
         Err(Error::Unavailable)
@@ -1093,4 +1138,43 @@ fn preparation_context_codec_requires_exact_context_refs_and_sigrefs() {
         snapshot.sigrefs()
     )
     .is_err());
+}
+
+#[test]
+fn bootstrap_context_codec_binds_public_material_descriptor_and_exact_chain() {
+    let (patch, output, _, _) = signing_fixture(4);
+    let state = bootstrap_state(&patch);
+    let owner =
+        radicle::crypto::BlsPublicKey::from_bytes(patch.material.receipt.body.owner_bls_public.0)
+            .unwrap();
+    let material =
+        RepositorySigningMaterial::new(state.authority().clone(), output, owner).unwrap();
+    let bytes = bootstrap::encode(&state, &material).unwrap();
+    let decoded = bootstrap::decode(&bytes, chain()).unwrap();
+    assert_eq!(decoded.state, state);
+    assert_eq!(
+        decoded.material.canonical_output(),
+        material.canonical_output()
+    );
+    let mut wrong = chain();
+    wrong.genesis_hash = B256::repeat_byte(99);
+    assert!(bootstrap::decode(&bytes, wrong).is_err());
+    for length in [0, 4, 5, 8, bytes.len() - 1] {
+        assert!(bootstrap::decode(&bytes[..length], chain()).is_err());
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(bootstrap::decode(&trailing, chain()).is_err());
+    let offset = 5 + state::encode_authority(state.authority()).unwrap().len();
+    let mut oversized = bytes.clone();
+    oversized[offset..offset + 2].copy_from_slice(&u16::MAX.to_be_bytes());
+    assert!(bootstrap::decode(&oversized, chain()).is_err());
+    let mut corrupt = bytes.clone();
+    let last = corrupt.len() - 1;
+    corrupt[last] ^= 255;
+    assert!(bootstrap::decode(&corrupt, chain()).is_err());
+    let mut changed = state.clone();
+    changed.authority.block.number += 1;
+    assert!(bootstrap::encode(&changed, &material).is_err());
+    assert!(bootstrap::decode(&vec![0; bootstrap::MAX_FRAME + 1], chain()).is_err());
 }
