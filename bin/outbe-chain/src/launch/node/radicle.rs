@@ -136,9 +136,10 @@ pub(super) fn start(
                     args.radicle_control_socket
                         .as_ref()
                         .expect("validated Radicle control socket"),
-                    repository_snapshots,
+                    repository_snapshots.clone(),
                 )
-                .wrap_err("bind protected Radicle receipt socket")?,
+                .wrap_err("bind protected Radicle receipt socket")?
+                .with_authority_reader(repository_snapshots),
             )
         } else {
             None

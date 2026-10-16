@@ -1,10 +1,15 @@
-//! Trusted local receipt delivery. No secret material or signing messages cross this socket.
+//! Trusted local finalized context. No secret material or signing messages cross this socket.
+
+mod state;
 
 use crate::{
     endpoint::ChainIdentity,
-    manager::{FinalizedBlock, FinalizedPublicationReceipt, RepositoryReceiptReader},
+    manager::{
+        FinalizedBlock, FinalizedPatchSigningState, FinalizedPublicationReceipt,
+        RepositoryAuthorityReader, RepositoryReceiptReader,
+    },
 };
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use outbe_primitives::radicle_publication::{PublicationBody, PUBLICATION_BODY_LEN};
 use outbe_radicleregistry::publication::PublicationReceipt;
 use std::{
@@ -24,7 +29,8 @@ use tokio::{
 };
 
 const MAGIC: &[u8; 4] = b"ORL1";
-const MAX_FRAME: usize = 5 + 8 + 32 + 8 + 32 + PUBLICATION_BODY_LEN;
+const RECEIPT_FRAME_LEN: usize = 5 + 8 + 32 + 8 + 32 + PUBLICATION_BODY_LEN;
+const MAX_FRAME: usize = state::MAX_FRAME;
 const MAX_CONNECTIONS: usize = 32;
 const MAX_READERS: usize = 4;
 const DEADLINE: Duration = Duration::from_secs(5);
@@ -101,6 +107,7 @@ impl Drop for SocketLease {
 pub struct LocalReceiptServer {
     listener: UnixListener,
     reader: Arc<dyn RepositoryReceiptReader>,
+    authority: Option<Arc<dyn RepositoryAuthorityReader>>,
     _lease: SocketLease,
 }
 
@@ -158,8 +165,14 @@ impl LocalReceiptServer {
         Ok(Self {
             listener: UnixListener::from_std(listener)?,
             reader,
+            authority: None,
             _lease: lease,
         })
+    }
+
+    pub fn with_authority_reader(mut self, reader: Arc<dyn RepositoryAuthorityReader>) -> Self {
+        self.authority = Some(reader);
+        self
     }
 
     /// Run outside consensus execution; blocking state readers retain their bounded permit.
@@ -177,9 +190,10 @@ impl LocalReceiptServer {
                         continue;
                     }
                     let reader = self.reader.clone();
+                    let authority = self.authority.clone();
                     let readers = readers.clone();
                     clients.spawn(async move {
-                        let _ = tokio::time::timeout(DEADLINE, serve(stream, reader, readers)).await;
+                        let _ = tokio::time::timeout(DEADLINE, serve(stream, reader, authority, readers)).await;
                     });
                 }
             }
@@ -214,14 +228,26 @@ impl LocalReceiptClient {
     }
 
     pub async fn read(&self, sequence: u64) -> Result<Option<FinalizedPublicationReceipt>, Error> {
+        let request = [MAGIC.as_slice(), &sequence.to_be_bytes()].concat();
+        decode_response(&self.exchange(&request).await?, sequence, self.chain)
+    }
+
+    /// A fresh local finalized snapshot for this exact approved proposal, never a cached fallback.
+    pub async fn read_patch_signing_state(
+        &self,
+        proposal_id: U256,
+    ) -> Result<FinalizedPatchSigningState, Error> {
+        let request = [state::MAGIC.as_slice(), &proposal_id.to_be_bytes::<32>()].concat();
+        state::decode(&self.exchange(&request).await?, proposal_id, self.chain)
+    }
+
+    async fn exchange(&self, request: &[u8]) -> Result<Vec<u8>, Error> {
         tokio::time::timeout(DEADLINE, async {
             private_socket(&self.socket)?;
             let mut stream = UnixStream::connect(&self.socket).await?;
             peer(&stream)?;
-            let request = [MAGIC.as_slice(), &sequence.to_be_bytes()].concat();
-            write_frame(&mut stream, &request).await?;
-            let response = read_frame(&mut stream).await?;
-            decode_response(&response, sequence, self.chain)
+            write_frame(&mut stream, request).await?;
+            read_frame(&mut stream).await
         })
         .await
         .map_err(|_| Error::Deadline)?
@@ -231,28 +257,48 @@ impl LocalReceiptClient {
 async fn serve(
     mut stream: UnixStream,
     reader: Arc<dyn RepositoryReceiptReader>,
+    authority: Option<Arc<dyn RepositoryAuthorityReader>>,
     readers: Arc<Semaphore>,
 ) -> Result<(), Error> {
     let request = read_frame(&mut stream).await?;
-    if request.len() != 12 || request[..4] != *MAGIC {
-        return Err(Error::Protocol);
-    }
-    let sequence = u64::from_be_bytes(request[4..].try_into().map_err(|_| Error::Protocol)?);
+    let magic = match (request.get(..4), request.len()) {
+        (Some(magic), 12) if magic == MAGIC => MAGIC,
+        (Some(magic), 36) if magic == state::MAGIC => state::MAGIC,
+        _ => return Err(Error::Protocol),
+    };
     let permit = match readers.try_acquire_owned() {
         Ok(permit) => permit,
-        Err(_) => return write_frame(&mut stream, &[MAGIC.as_slice(), &[0]].concat()).await,
+        Err(_) => return write_frame(&mut stream, &[magic.as_slice(), &[0]].concat()).await,
     };
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        reader.read_current_publication_receipt(sequence)
+        if magic == state::MAGIC {
+            let proposal_id = U256::from_be_slice(&request[4..]);
+            let current = authority
+                .ok_or(Error::Unavailable)?
+                .read_current_patch_signing_state(proposal_id)
+                .map_err(|_| Error::Unavailable)?;
+            state::encode(&current)
+        } else {
+            let sequence =
+                u64::from_be_bytes(request[4..].try_into().map_err(|_| Error::Protocol)?);
+            let receipt = reader
+                .read_current_publication_receipt(sequence)
+                .map_err(|_| Error::Unavailable)?;
+            Ok(encode_receipt(receipt.as_ref()))
+        }
     })
     .await
     .map_err(|_| Error::Unavailable)?;
+    let response = result.unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
+    write_frame(&mut stream, &response).await
+}
+
+fn encode_receipt(receipt: Option<&FinalizedPublicationReceipt>) -> Vec<u8> {
     let mut response = MAGIC.to_vec();
-    match result {
-        Err(_) => response.push(0),
-        Ok(None) => response.push(1),
-        Ok(Some(receipt)) => {
+    match receipt {
+        None => response.push(1),
+        Some(receipt) => {
             response.push(2);
             response.extend(receipt.block().number.to_be_bytes());
             response.extend(receipt.block().hash.0);
@@ -261,7 +307,7 @@ async fn serve(
             response.extend(receipt.receipt().body.to_bytes());
         }
     }
-    write_frame(&mut stream, &response).await
+    response
 }
 
 fn decode_response(
@@ -275,7 +321,7 @@ fn decode_response(
     match (response[4], response.len()) {
         (0, 5) => Err(Error::Unavailable),
         (1, 5) => Ok(None),
-        (2, MAX_FRAME) => {
+        (2, RECEIPT_FRAME_LEN) => {
             let number =
                 u64::from_be_bytes(response[5..13].try_into().map_err(|_| Error::Protocol)?);
             let hash = B256::from_slice(&response[13..45]);

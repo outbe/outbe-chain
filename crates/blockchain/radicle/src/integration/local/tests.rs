@@ -296,3 +296,258 @@ async fn response_decoder_checks_exact_request_chain_and_receipt_integrity() {
         assert!(decode_response(invalid, 1, chain()).is_err());
     }
 }
+
+fn signing_state() -> FinalizedPatchSigningState {
+    signing_state_with_members(4)
+}
+
+fn signing_state_with_members(count: u64) -> FinalizedPatchSigningState {
+    use crate::manager::{FinalizedPatchApproval, FinalizedRepositoryAuthority};
+    use alloy_primitives::Address;
+    use commonware_codec::Encode as _;
+    use commonware_cryptography::{bls12381, Signer as _};
+    use commonware_utils::TryCollect as _;
+    use outbe_radicleregistry::{payload::PatchVotePayloadV1, PatchApprovalRecord};
+    use outbe_validatorset::state::{CommitteeEntry, CommitteeSnapshot};
+
+    let mut keys: Vec<_> = (201..201 + count)
+        .map(bls12381::PrivateKey::from_seed)
+        .collect();
+    keys.sort_by_key(|key| key.public_key());
+    let dkg = outbe_consensus::bls::bootstrap_dkg_for_participants(
+        keys.iter()
+            .map(|key| key.public_key())
+            .try_collect()
+            .unwrap(),
+    )
+    .unwrap();
+    let committee = CommitteeSnapshot {
+        committee: keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| {
+                let mut address = [0; 20];
+                address[12..].copy_from_slice(&(index as u64 + 1).to_be_bytes());
+                CommitteeEntry {
+                    address: Address::from(address),
+                    consensus_pubkey: key.public_key().encode().to_vec().try_into().unwrap(),
+                }
+            })
+            .collect(),
+        vrf_material_version: 6,
+        vrf_group_public_key_bytes: dkg.polynomial.public().encode().to_vec(),
+        vrf_public_polynomial_hash: outbe_consensus::dkg_manager::public_polynomial_hash(
+            &dkg.polynomial,
+        ),
+    };
+    let mut receipt = receipt();
+    receipt.receipt.body.owner_bls_public =
+        alloy_primitives::FixedBytes::from_slice(&committee.vrf_group_public_key_bytes);
+    receipt.receipt.body.players_commitment =
+        outbe_primitives::radicle_publication::players_commitment(
+            committee
+                .committee
+                .iter()
+                .map(|member| (member.address, &member.consensus_pubkey)),
+        )
+        .unwrap();
+    receipt.receipt.receipt_hash = receipt.receipt.body.receipt_hash();
+    let payload = PatchVotePayloadV1::accept(
+        receipt.receipt.body.repo_id,
+        [21; 20].into(),
+        [22; 20].into(),
+        [23; 20].into(),
+    )
+    .encode()
+    .unwrap();
+    FinalizedPatchSigningState {
+        authority: FinalizedRepositoryAuthority {
+            block: receipt.block,
+            chain_id: chain().chain_id,
+            genesis_hash: chain().genesis_hash,
+            epoch: 5,
+            committee,
+        },
+        approval: FinalizedPatchApproval {
+            block: receipt.block,
+            approval: PatchApprovalRecord {
+                proposal_id: U256::from(19),
+                payload: String::from_utf8(payload).unwrap(),
+                approved_height: 9,
+                approved_timestamp: 1000,
+            },
+        },
+        checkpoint: receipt.clone(),
+        material: receipt,
+        stage: outbe_radicleregistry::schema::PATCH_EXECUTION_PENDING,
+        anchor: FinalizedBlock {
+            number: 10,
+            hash: B256::repeat_byte(10),
+        },
+    }
+}
+
+struct AuthorityReader {
+    state: std::sync::Mutex<FinalizedPatchSigningState>,
+    unavailable: AtomicBool,
+    calls: AtomicUsize,
+}
+
+impl RepositoryAuthorityReader for AuthorityReader {
+    fn read_current_repository_authority(
+        &self,
+    ) -> Result<crate::manager::FinalizedRepositoryAuthority, ManagerError> {
+        panic!("the signing state must come from one read, not a separate authority sample")
+    }
+
+    fn read_current_patch_signing_state(
+        &self,
+        proposal_id: U256,
+    ) -> Result<FinalizedPatchSigningState, ManagerError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let state = self.state.lock().unwrap();
+        if self.unavailable.load(Ordering::SeqCst)
+            || proposal_id != state.approval.approval.proposal_id
+        {
+            return Err(ManagerError::Finality(
+                "current signing state unavailable".into(),
+            ));
+        }
+        Ok(state.clone())
+    }
+}
+
+#[tokio::test]
+async fn local_signing_state_is_requested_fresh_for_the_exact_proposal() {
+    let directory = private_directory();
+    let control = directory.path().join("control");
+    let original = signing_state();
+    let proposal = original.approval.approval.proposal_id;
+    let authority = Arc::new(AuthorityReader {
+        state: std::sync::Mutex::new(original.clone()),
+        unavailable: AtomicBool::new(false),
+        calls: AtomicUsize::new(0),
+    });
+    let receipts = Arc::new(Reader::default());
+    let server = LocalReceiptServer::bind(&control, receipts.clone())
+        .unwrap()
+        .with_authority_reader(authority.clone());
+    let (stop, stopping) = oneshot::channel();
+    let task = tokio::spawn(server.run(async {
+        let _ = stopping.await;
+    }));
+    let client = LocalReceiptClient::new(&control, chain());
+    assert_eq!(
+        client.read_patch_signing_state(proposal).await.unwrap(),
+        original
+    );
+    assert!(matches!(
+        client
+            .read_patch_signing_state(proposal + U256::from(1))
+            .await,
+        Err(Error::Unavailable)
+    ));
+    {
+        let mut state = authority.state.lock().unwrap();
+        state.authority.block.number += 1;
+        state.authority.block.hash = B256::repeat_byte(13);
+        state.approval.block = state.authority.block;
+        state.checkpoint.block = state.authority.block;
+        state.material.block = state.authority.block;
+        state.stage = outbe_radicleregistry::schema::PATCH_EXECUTION_REVIEWED;
+    }
+    let changed = authority.state.lock().unwrap().clone();
+    assert_eq!(
+        client.read_patch_signing_state(proposal).await.unwrap(),
+        changed
+    );
+    assert!(matches!(
+        LocalReceiptClient::new(
+            &control,
+            ChainIdentity {
+                chain_id: chain().chain_id + 1,
+                ..chain()
+            }
+        )
+        .read_patch_signing_state(proposal)
+        .await,
+        Err(Error::Protocol)
+    ));
+    authority.unavailable.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        client.read_patch_signing_state(proposal).await,
+        Err(Error::Unavailable)
+    ));
+    assert_eq!(authority.calls.load(Ordering::SeqCst), 5);
+    assert_eq!(receipts.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(client.read(1).await.unwrap(), Some(receipt()));
+    stop.send(()).unwrap();
+    task.await.unwrap().unwrap();
+    // A receipt-only server does not supply signing rights or a cached signing state.
+    let server = LocalReceiptServer::bind(&control, receipts).unwrap();
+    let (stop, stopping) = oneshot::channel();
+    let task = tokio::spawn(server.run(async {
+        let _ = stopping.await;
+    }));
+    assert!(matches!(
+        client.read_patch_signing_state(proposal).await,
+        Err(Error::Unavailable)
+    ));
+    stop.send(()).unwrap();
+    task.await.unwrap().unwrap();
+}
+
+#[test]
+fn signing_state_wire_rejects_mixed_contexts_bad_bindings_and_noncanonical_frames() {
+    let original = signing_state();
+    let proposal = original.approval.approval.proposal_id;
+    let bytes = state::encode(&original).unwrap();
+    assert_eq!(state::decode(&bytes, proposal, chain()).unwrap(), original);
+    assert!(state::decode(&bytes, proposal + U256::from(1), chain()).is_err());
+    for length in 0..bytes.len() {
+        assert!(state::decode(&bytes[..length], proposal, chain()).is_err());
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(state::decode(&trailing, proposal, chain()).is_err());
+    let changes: &[fn(&mut FinalizedPatchSigningState)] = &[
+        |s| s.authority.epoch += 1,
+        |s| s.authority.committee.vrf_material_version += 1,
+        |s| s.authority.committee.vrf_public_polynomial_hash = B256::ZERO,
+        |s| s.authority.committee.committee.swap(0, 1),
+        |s| s.authority.committee.committee[1] = s.authority.committee.committee[0].clone(),
+        |s| s.approval.approval.approved_height = 99,
+        |s| s.approval.approval.payload.push(' '),
+        |s| s.checkpoint.receipt.receipt_hash = B256::ZERO,
+        |s| s.material.receipt.accepted_height = 99,
+        |s| s.stage = 0,
+        |s| s.anchor.number += 1,
+        |s| s.anchor.hash = B256::ZERO,
+    ];
+    for change in changes {
+        let mut invalid = original.clone();
+        change(&mut invalid);
+        assert!(state::decode(&state::encode(&invalid).unwrap(), proposal, chain()).is_err());
+    }
+}
+
+#[test]
+fn signing_state_wire_supports_the_protocol_maximum_committee() {
+    let current = signing_state_with_members(u64::from(outbe_consensus::bls::MAX_VALIDATORS));
+    let proposal = current.approval.approval.proposal_id;
+    let bytes = state::encode(&current).unwrap();
+    assert!(bytes.len() <= MAX_FRAME);
+    assert_eq!(state::decode(&bytes, proposal, chain()).unwrap(), current);
+    let mut oversized = current.clone();
+    oversized
+        .authority
+        .committee
+        .committee
+        .push(current.authority.committee.committee[0].clone());
+    assert!(state::encode(&oversized).is_err());
+    let mut oversized_count = bytes;
+    // Header, finalized block, chain/genesis, epoch/version, polynomial hash, group key.
+    let count_offset = 5 + 40 + 8 + 32 + 8 + 8 + 32 + 96;
+    oversized_count[count_offset..count_offset + 2].copy_from_slice(&257_u16.to_be_bytes());
+    assert!(state::decode(&oversized_count, proposal, chain()).is_err());
+}
