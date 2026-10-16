@@ -38,7 +38,6 @@ fastrand = { workspace = true, features = ["std"] }
 git2 = { workspace = true, features = ["vendored-libgit2"] }
 indexmap = { workspace = true, features = ["serde"] }
 log = { workspace = true, features = ["std"] }
-multibase = { workspace = true, features = ["std"] }
 nonempty = { workspace = true, features = ["serialize"] }
 qcheck = { workspace = true, optional = true }
 radicle-cob = { workspace = true, features = ["git2"] }

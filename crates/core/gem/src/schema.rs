@@ -289,15 +289,11 @@ pub struct GemContract {
     pub records: outbe_primitives::storage::dsl::Map<WwdEntityId, GemItemState>,
     #[attribute(order = 37)]
     pub buckets: outbe_primitives::storage::dsl::Map<B256, GemBucketState>,
-    #[attribute(order = 38)]
-    pub all_ids: outbe_primitives::storage::dsl::List<WwdEntityId>,
     #[attribute(order = 39)]
     pub owner_ids: outbe_primitives::storage::dsl::Map<
         Address,
         outbe_primitives::storage::dsl::List<WwdEntityId>,
     >,
-    #[attribute(order = 40)]
-    pub global_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
     #[attribute(order = 41)]
     pub owner_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
 }
