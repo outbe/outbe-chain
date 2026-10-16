@@ -70,7 +70,6 @@ fn canonical_next_block_fee_cap(url: &str, priority_fee: u128) -> Result<u128> {
     next_block_fee_cap(base_fee, priority_fee)
 }
 
-#[cfg(feature = "ocomp-integration")]
 fn canonical_exact_next_block_base_fee(url: &str) -> Result<u128> {
     let block = raw_json_result(
         url,
@@ -91,7 +90,6 @@ fn canonical_exact_next_block_base_fee(url: &str) -> Result<u128> {
     Ok(next_block_base_fee(base_fee, gas_used, gas_limit))
 }
 
-#[cfg(any(test, feature = "ocomp-integration"))]
 fn next_block_base_fee(base_fee: u128, gas_used: u128, gas_limit: u128) -> u128 {
     let target = gas_limit / 2;
     let next = if target == 0 || gas_used == target {
@@ -122,9 +120,9 @@ fn next_block_base_fee(base_fee: u128, gas_used: u128, gas_limit: u128) -> u128 
 mod event_abi {
     alloy_sol_types::sol!("../../contracts/precompiles/src/ITribute.sol");
     alloy_sol_types::sol!("../../contracts/precompiles/src/INodFactory.sol");
-    #[cfg(feature = "ocomp-integration")]
+
     alloy_sol_types::sol!("../../contracts/precompiles/src/IGemFactory.sol");
-    #[cfg(feature = "ocomp-integration")]
+
     alloy_sol_types::sol!("../../contracts/precompiles/src/IIntex.sol");
     alloy_sol_types::sol!("../../contracts/precompiles/src/IMetadosis.sol");
     alloy_sol_types::sol!(
@@ -132,7 +130,7 @@ mod event_abi {
         "../../contracts/precompiles/src/IStablecoinFactory.sol"
     );
 }
-#[cfg(feature = "ocomp-integration")]
+
 pub use event_abi::{IGemFactory, IIntex, INodFactory};
 pub use event_abi::{IMetadosis, IStablecoinFactory, ITribute};
 
@@ -149,18 +147,17 @@ sol!("../../contracts/precompiles/src/ITributeFactory.sol");
 sol!("../../contracts/precompiles/src/INod.sol");
 
 sol!("../../contracts/precompiles/src/IGratis.sol");
-#[cfg(feature = "ocomp-integration")]
+
 sol!("../../contracts/precompiles/src/IGratisFactory.sol");
-#[cfg(feature = "ocomp-integration")]
+
 sol!("../../contracts/precompiles/src/IPromis.sol");
-#[cfg(feature = "ocomp-integration")]
+
 sol!("../../contracts/precompiles/src/IPromisFactory.sol");
-#[cfg(feature = "ocomp-integration")]
+
 sol!("../../contracts/precompiles/src/IGem.sol");
-#[cfg(feature = "ocomp-integration")]
+
 sol!("../../contracts/precompiles/src/IIntexFactory.sol");
 
-#[cfg(feature = "ocomp-integration")]
 sol!("../../contracts/precompiles/src/IVaultRouter.sol");
 
 sol!("../../contracts/precompiles/src/IPromisLimit.sol");
@@ -172,7 +169,6 @@ sol!("../../contracts/precompiles/src/IAgentReward.sol");
 /// `claimReward` pool selector for the WAA (wallet) pool.
 pub(crate) const WAA_POOL: u8 = 0;
 /// `claimReward` pool selector for the SRA pool.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) const SRA_POOL: u8 = 1;
 /// Currency the canonical reward call names on both axes.
 const REWARD_CALL_ISO: u16 = 840;
@@ -282,26 +278,8 @@ pub(crate) fn read_call<C: SolCall>(url: &str, to: Address, call: &C) -> Option<
 where
     C::Return: Send + 'static,
 {
-    #[cfg(feature = "ocomp-integration")]
     {
         read_call_result(url, to, call).ok()
-    }
-
-    #[cfg(not(feature = "ocomp-integration"))]
-    {
-        let url = url.to_string();
-        let data = call.abi_encode();
-        block_on(async move {
-            let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
-            let tx = TransactionRequest::default()
-                .to(to)
-                .input(Bytes::from(data).into());
-            // Pin state and block context to the canonical head. Omitting the block
-            // tag lets some RPC implementations execute against `pending`, whose
-            // timestamp can cross a UTC boundary before a block is canonical.
-            let out = provider.call(tx).block(BlockId::latest()).await.ok()?;
-            C::abi_decode_returns(&out).ok()
-        })
     }
 }
 
@@ -335,7 +313,6 @@ where
 }
 
 /// A decoded return or canonical EVM Error(string) from one view request.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) enum ViewCallOutcome<T> {
     Value(T),
     Reverted(String),
@@ -343,7 +320,6 @@ pub(crate) enum ViewCallOutcome<T> {
 
 /// Preserve a canonical Error(string) revert from the same pinned request.
 /// Transport, non-revert RPC, and malformed payload errors remain failures.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn read_call_at_with_revert_reason<C: SolCall>(
     url: &str,
     to: Address,
@@ -394,7 +370,6 @@ where
 
 /// Require a typed view call to fail specifically as an EVM revert at the
 /// exact canonical block. Transport failures are not accepted as ABI evidence.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn read_call_reverts_at<C: SolCall>(
     url: &str,
     to: Address,
@@ -692,7 +667,6 @@ pub(crate) fn raw_json_result(
     })
 }
 
-#[cfg(feature = "ocomp-integration")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ConfidentialAccountKeys {
     pub view: [u8; 32],
@@ -701,7 +675,6 @@ pub(crate) struct ConfidentialAccountKeys {
 
 /// Request the caller's ledger keys through the production enclave RPC and
 /// open the sealed response with a fresh client X25519 key.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn derive_account_keys(
     url: &str,
     key: &str,
@@ -781,14 +754,8 @@ pub(crate) fn derive_account_keys(
     })
 }
 
-#[cfg(feature = "ocomp-integration")]
-pub(crate) fn derive_gratis_modify_key(url: &str, key: &str) -> Result<[u8; 32]> {
-    derive_account_keys(url, key, outbe_tee::protocol::Ledger::Gratis).map(|keys| keys.modify)
-}
-
 /// Broadcast one already signed public transaction without reconstructing or
 /// re-signing its envelope.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn send_raw_transaction(url: &str, raw_transaction: &[u8]) -> Result<String> {
     let encoded = format!("0x{}", hex::encode(raw_transaction));
     let value = raw_json_result(url, "eth_sendRawTransaction", serde_json::json!([encoded]))?;
@@ -799,7 +766,6 @@ pub(crate) fn send_raw_transaction(url: &str, raw_transaction: &[u8]) -> Result<
 }
 
 /// Public nonce from canonical chain state for one account.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn canonical_nonce(url: &str, address: Address) -> Option<u64> {
     let value = raw_json_with_params(
         url,
@@ -810,17 +776,15 @@ pub(crate) fn canonical_nonce(url: &str, address: Address) -> Option<u64> {
 }
 
 /// Public gas price used only as the restricted node signing seam input.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn gas_price(url: &str) -> Option<u128> {
     let value = raw_json(url, "eth_gasPrice")?;
     u128::from_str_radix(value.as_str()?.trim_start_matches("0x"), 16).ok()
 }
 
 /// Fetch a bounded inclusive block range with full public transactions through
-/// one shared HTTP provider. OCOMP evidence must not spend one connection
+/// one shared HTTP provider. Scenario evidence must not spend one connection
 /// setup/poll interval per block and accidentally consume the result window it
 /// is trying to observe.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn blocks_with_transactions(
     url: &str,
     from_height: u64,
@@ -983,45 +947,6 @@ pub(crate) fn deploy_bytecode(url: &str, key: &str, init_code: Vec<u8>) -> Resul
         receipt
             .contract_address
             .ok_or_else(|| eyre!("CREATE receipt omitted contract address"))
-    })
-}
-
-/// Sign and send exact calldata through the ordinary public transaction path,
-/// waiting for the mined receipt. This is used by adversarial protocol tests
-/// that must preserve a production ABI envelope while changing its payload.
-#[cfg(feature = "ocomp-integration")]
-pub(crate) fn send_calldata(
-    url: &str,
-    to: Address,
-    key: &str,
-    calldata: Vec<u8>,
-    gas_limit: u64,
-) -> Result<String> {
-    let max_fee = canonical_next_block_fee_cap(url, 0)?;
-    let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
-    let wallet = EthereumWallet::from(signer);
-    let url = url.to_string();
-    block_on(async move {
-        let provider = ProviderBuilder::new()
-            .wallet(wallet)
-            .connect_http(url.parse()?);
-        let tx = TransactionRequest::default()
-            .to(to)
-            .input(Bytes::from(calldata).into())
-            .gas_limit(gas_limit)
-            .max_fee_per_gas(max_fee)
-            .max_priority_fee_per_gas(0);
-        let pending = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            provider.send_transaction(tx),
-        )
-        .await
-        .map_err(|_| eyre!("timed out submitting public calldata transaction"))??;
-        let receipt =
-            tokio::time::timeout(std::time::Duration::from_secs(30), pending.get_receipt())
-                .await
-                .map_err(|_| eyre!("timed out waiting for public calldata receipt"))??;
-        Ok(format!("{:#x}", receipt.transaction_hash))
     })
 }
 
@@ -1361,13 +1286,12 @@ pub(crate) fn storage(url: &str, address: Address, slot: U256) -> Option<U256> {
 }
 
 mod delegation;
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) use delegation::install_delegation_for_authority;
 pub(crate) use delegation::{install_delegation, install_delegation_with_overrides};
 
 /// Only this explicit admission rejection proves that the call was not accepted.
 /// Transport failures and other RPC errors must never trigger a fresh-nonce retry.
-#[cfg(feature = "ocomp-integration")]
 fn delegated_sender_busy(code: i64, message: &str) -> bool {
     code == -32000 && message == "in-flight transaction limit reached for delegated accounts"
 }
@@ -1375,7 +1299,6 @@ fn delegated_sender_busy(code: i64, message: &str) -> bool {
 /// Submit a canonical sponsored protocol call from an already delegated signer.
 /// The live Oracle feeder shares this signer, so retry explicit slot contention
 /// with a fresh nonce, then wait for the accepted call's canonical finality.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn send_sponsored_call<C: SolCall>(
     url: &str,
     key: &str,
@@ -1460,7 +1383,6 @@ pub(crate) fn send_sponsored_call<C: SolCall>(
 /// 21k transfer. This is scenario plumbing for proving ZeroFee from an exact
 /// zero balance. It computes the deterministic next-block base fee and makes
 /// `value + fee == current_balance`.
-#[cfg(feature = "ocomp-integration")]
 pub(crate) fn drain_native_balance(
     url: &str,
     key: &str,
@@ -1554,7 +1476,7 @@ pub(crate) fn coen(amount: u64) -> U256 {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "ocomp-integration")]
+
     #[test]
     fn sponsored_retry_requires_exact_delegated_admission_rejection() {
         let message = "in-flight transaction limit reached for delegated accounts";
@@ -1707,7 +1629,7 @@ struct CallGas {
 }
 
 mod receipts;
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) use receipts::receipt_event;
 pub(crate) use receipts::{receipt_json, receipt_success};
 

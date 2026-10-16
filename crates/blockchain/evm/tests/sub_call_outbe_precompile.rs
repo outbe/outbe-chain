@@ -1,6 +1,6 @@
 //! Nested Outbe precompile dispatch, calldata forwarding and memory restoration.
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_evm::sub_call;
 use outbe_nod::precompile::INod;
@@ -181,7 +181,7 @@ fn subcall_reaches_nod_in_the_same_evm_state() {
     let owner = Address::repeat_byte(0x11);
     let day = WorldwideDay::new(20_260_715);
     let nod_id = outbe_nod::identity::generate_nod_id(owner, day).unwrap();
-    let bucket_key = B256::repeat_byte(0x42);
+    let bucket_key = outbe_nod::identity::bucket_key(day, U256::from(9), 978);
     let item = outbe_nod::test_support::item(
         outbe_nod::test_support::NodItemFixture {
             is_settled: false,

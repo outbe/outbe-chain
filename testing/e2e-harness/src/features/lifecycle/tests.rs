@@ -6,6 +6,7 @@ use super::{
     rejection::{verify_deactivation_rejection, DeactivationRejection, RejectionEvidence},
     *,
 };
+
 #[derive(Clone)]
 struct RejectionFixture {
     outcome: TxOutcome,

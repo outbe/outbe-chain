@@ -11,8 +11,6 @@ pub(super) type EngineHandle = ConsensusEngineHandle<OutbePayloadTypes>;
 pub struct ConsensusStackServices {
     pub(super) application_drain: crate::application_shutdown::ApplicationDrain,
     pub(super) follower_shutdown: Option<crate::follower_shutdown::FollowerDrain>,
-    pub(super) ocomp_readiness: Option<ProjectionReadinessHandle>,
-    pub(super) retention_selector: Arc<SharedOcompRetentionSelector>,
     pub(super) finalized_execution_barrier: Arc<dyn FinalizedExecutionBarrier>,
     pub(super) radicle_status: outbe_radicle::integration::RadicleStatusHandle,
     pub(super) radicle_endpoint: Option<(
@@ -24,10 +22,6 @@ pub struct ConsensusStackServices {
 
 /// Execution-side services shared with the node's consensus stack.
 pub struct ConsensusExecutionServices {
-    /// FullNode execution barrier; validator callers supply `None`.
-    pub ocomp_readiness: Option<ProjectionReadinessHandle>,
-    /// Selects the OCOMP bodies retained by the node.
-    pub retention_selector: Arc<SharedOcompRetentionSelector>,
     /// Proves native durable execution before acknowledging finality.
     pub finalized_execution_barrier: Arc<dyn FinalizedExecutionBarrier>,
 }
@@ -60,8 +54,6 @@ impl ConsensusStackServices {
         radicle: Option<ConsensusRadicleServices>,
     ) -> Self {
         let ConsensusExecutionServices {
-            ocomp_readiness,
-            retention_selector,
             finalized_execution_barrier,
         } = execution;
         let ConsensusShutdownServices {
@@ -83,8 +75,6 @@ impl ConsensusStackServices {
         Self {
             application_drain,
             follower_shutdown,
-            ocomp_readiness,
-            retention_selector,
             finalized_execution_barrier,
             radicle_status,
             radicle_endpoint,
@@ -94,8 +84,6 @@ impl ConsensusStackServices {
 
 /// Execution-side capabilities consumed only by the certified follower.
 pub(in crate::stack) struct FollowerStackServices {
-    pub(in crate::stack) ocomp_readiness: Option<ProjectionReadinessHandle>,
-    pub(in crate::stack) retention_selector: Arc<SharedOcompRetentionSelector>,
     pub(in crate::stack) finalized_execution_barrier: Arc<dyn FinalizedExecutionBarrier>,
     pub(in crate::stack) follower_shutdown: crate::follower_shutdown::FollowerDrain,
 }

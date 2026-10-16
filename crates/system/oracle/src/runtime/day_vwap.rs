@@ -9,7 +9,6 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
 
 use super::VwapAccumulator;
-use crate::constants::DAY_TYPE_PAIR;
 use crate::errors::OracleError;
 use crate::precompile::IOracle;
 use crate::schema::OracleContract;
@@ -83,7 +82,6 @@ impl OracleContract<'_> {
         if day_vwaps.is_empty() {
             return Ok(false);
         }
-        let next_ocomp_version = self.next_ocomp_state_version()?;
 
         self.worldwide_day_vwap_exists.write(&worldwide_day, true)?;
         self.worldwide_day_vwap_start
@@ -101,7 +99,6 @@ impl OracleContract<'_> {
             value_map.write(&self.pair_index_of(*pair)?, *vwap)?;
         }
 
-        self.commit_ocomp_state_version(next_ocomp_version)?;
         Ok(true)
     }
 
@@ -123,12 +120,8 @@ impl OracleContract<'_> {
     /// order. The method overwrites unconditionally. The caller gates
     /// re-finalization via that same watermark.
     pub fn finalize_utc_day_vwap(&mut self, utc_day: u32) -> Result<()> {
-        if self.ocomp_profile_ready.read()? {
-            let storage = self.storage.clone();
-            storage.with_checkpoint(|| self.finalize_utc_day_vwap_inner(utc_day))
-        } else {
-            self.finalize_utc_day_vwap_inner(utc_day)
-        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| self.finalize_utc_day_vwap_inner(utc_day))
     }
 
     fn finalize_utc_day_vwap_inner(&mut self, utc_day: u32) -> Result<()> {
@@ -140,17 +133,12 @@ impl OracleContract<'_> {
         let Some((pairs, vwaps, _)) = self.try_calculate_vwaps(day_start, day_end)? else {
             return Ok(());
         };
-        let next_ocomp_version = self.next_ocomp_state_version()?;
-        let profile_ready = self.ocomp_profile_ready.read()?;
 
         // Keyed by the registry index. Unwritten entries stay zero and read back
         // as "no VWAP for this pair on this day". Re-finalizing a closed day
         // recomputes over the same immutable window, so no stale entry survives.
         for (pair, vwap) in pairs.iter().copied().zip(vwaps.iter().copied()) {
             self.record_utc_day_vwap(utc_day, self.pair_index_of(pair)?, vwap)?;
-            if profile_ready && pair.same_market(&DAY_TYPE_PAIR) {
-                self.ocomp_day_type_vwap_by_utc_day.write(&utc_day, vwap)?;
-            }
             let event = IOracle::VwapCalculated {
                 utcDay: utc_day,
                 base: pair.address1(),
@@ -160,12 +148,10 @@ impl OracleContract<'_> {
             let event_result = self
                 .storage
                 .emit_event(ORACLE_ADDRESS, event.encode_log_data());
-            if next_ocomp_version.is_some() {
-                event_result?;
-            }
+            event_result?;
         }
 
-        self.commit_ocomp_state_version(next_ocomp_version)
+        Ok(())
     }
 }
 

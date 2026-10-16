@@ -12,8 +12,8 @@ use std::fmt;
 
 pub use attestation::{DcapVerifyError, FinalizedAdmissionError, GramineError};
 pub use compute::{
-    ComputeError, FidelityEnclaveError, GratisRejectReason, NodMaterializationRejectReason,
-    NodMineRejectReason, PayloadError, ProcessError, PromisRejectReason, TributeDayRejectReason,
+    ComputeError, FidelityEnclaveError, GratisRejectReason, NodMineRejectReason, PayloadError,
+    ProcessError, PromisRejectReason, TributeDayRejectReason,
 };
 pub use init::{InitError, OnboardingUploadError, RunError, SgxSealingError};
 pub use transport::{

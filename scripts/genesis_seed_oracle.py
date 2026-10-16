@@ -26,7 +26,7 @@ def seed_oracle(storage: StorageBuilder, config: dict):
       slots 12-14: exchange_rate / block / timestamp, keyed by pair_index
         (the 1-based ordinal from slot 10), not by the pair itself
       slot 15: feeder delegations
-      slots 32-33: protected validators
+      slots 32-33: retired holes (were protected validators)
       slot 43: mapping(pair_index => AddressPair), a two-word value and the only
         way to enumerate the registry. Slots 40-42, 44, 45 and 46 are retired
         settlement holes. The settlement pair is address_pair("COEN", "<iso>").
@@ -133,12 +133,11 @@ def _seed_oracle_registry(storage, config, validated_pairs):
         feeder = delegation["feeder"]
         storage.set_mapping(15, address_bytes(validator), address_as_u256(feeder))
 
-    protected = config.get("protected_validators", [])
-    if protected:
-        # config_allow_protected (macro slot 33) / protected_validator (slot 32).
-        storage.set_slot(33, 1)
-        for validator in protected:
-            storage.set_mapping(32, address_bytes(validator), 1)
+    if config.get("protected_validators"):
+        raise ValueError(
+            "oracle.protected_validators was removed: every validator follows "
+            "the same slash-window rules"
+        )
 
     if config.get("settlement_currencies"):
         raise ValueError(

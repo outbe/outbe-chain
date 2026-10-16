@@ -15,7 +15,6 @@ use crate::internal::proc::{args, ChildGuard};
 
 use super::Localnet;
 
-#[cfg(feature = "ocomp-integration")]
 mod governments;
 mod readiness;
 mod source;

@@ -78,6 +78,7 @@ fn history(world: &World, port: u16, height: u64) -> Vec<Quote> {
     quotes.into_values().collect()
 }
 
+#[cfg(test)]
 fn scale6(value: &str) -> U256 {
     let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
     assert!(!whole.is_empty() && whole.bytes().all(|v| v.is_ascii_digit()));
@@ -89,51 +90,6 @@ fn scale6(value: &str) -> U256 {
         .checked_mul(U256::from(1_000_000))
         .and_then(|v| v.checked_add(fractional))
         .expect("controlled scale6 input fits U256")
-}
-
-fn feeder_terms(world: &World) -> (U256, U256) {
-    let evidence = world.price_oracle.evidence_snapshot();
-    let mut sources = BTreeMap::new();
-    for source in &evidence.controlled_sources {
-        if source.oracle_pair != "COEN/840" {
-            continue;
-        }
-        assert_eq!(source.source_market, "mock_http:COEN/840");
-        let terms = (scale6(&source.price), scale6(&source.volume));
-        if let Some(previous) = sources.insert(source.validator_index, terms) {
-            assert_eq!(
-                previous, terms,
-                "fresh lane preserves quote across feeder restarts"
-            );
-        }
-    }
-    let cohort = world
-        .price_oracle
-        .cohort()
-        .expect("controlled feeder cohort");
-    assert_eq!(
-        sources.len(),
-        cohort.quorum,
-        "one configured source for each quorum feeder"
-    );
-    let rate = sources.values().next().expect("controlled sources").0;
-    assert!(!rate.is_zero());
-    let mut volumes: Vec<U256> = sources
-        .values()
-        .map(|(price, volume)| {
-            assert_eq!(*price, rate, "unanimous controlled price fixture");
-            assert!(!volume.is_zero(), "positive controlled source volume");
-            *volume
-        })
-        .collect();
-    volumes.sort_unstable();
-    let upper = volumes.len() / 2;
-    let volume = if volumes.len() % 2 == 1 {
-        volumes[upper]
-    } else {
-        volumes[upper - 1] + (volumes[upper] - volumes[upper - 1]) / U256::from(2u64)
-    };
-    (rate, volume)
 }
 
 fn weighted_price(quotes: &[Quote], start: u64, end: u64) -> U256 {
@@ -168,124 +124,6 @@ fn weighted_price(quotes: &[Quote], start: u64, end: u64) -> U256 {
     numerator / denominator
 }
 
-pub(crate) fn fresh_wwd_price(world: &World, height: u64) -> U256 {
-    let lifecycle = world
-        .state
-        .metadosis_fresh_lifecycle_observation
-        .as_ref()
-        .expect("singleton Nod fixture has a fresh runtime-created WWD");
-    let ports = world.validators.committee_ports();
-    world
-        .rpc
-        .wait_finalized_checkpoint(&ports, height, 120)
-        .expect("WWD input checkpoint");
-    let checkpoint = world
-        .rpc
-        .checkpoint_at(ports[0], height)
-        .expect("WWD checkpoint");
-    let genesis = world
-        .rpc
-        .checkpoint_at(ports[0], 0)
-        .expect("genesis checkpoint");
-    let seeds = history(world, ports[0], 0);
-    let observed = history(world, ports[0], height);
-    assert!(
-        observed.len() > seeds.len(),
-        "real feeder added raw observations"
-    );
-    assert_eq!(
-        &observed[..seeds.len()],
-        seeds,
-        "raw genesis observations are preserved"
-    );
-    let start = lifecycle.forming_start;
-    let end = lifecycle.forming_end;
-    let in_window = |q: &&Quote| start <= q.timestamp && q.timestamp < end;
-    let seeded: Vec<_> = seeds.iter().filter(in_window).collect();
-    assert_eq!(seeded.len(), 1, "one declared fresh-WWD seed in FORMING");
-    assert_eq!(seeded[0].timestamp, start);
-    assert_eq!(seeded[0].rate, U256::from(2));
-    assert_eq!(seeded[0].volume, U256::from(1_000_000));
-    let (rate, volume) = feeder_terms(world);
-    let fed = &observed[seeds.len()..];
-    assert!(
-        fed.iter().filter(in_window).count() > 0,
-        "at least one live feeder publication belongs to FORMING"
-    );
-    for quote in fed {
-        assert_eq!(
-            (quote.rate, quote.volume),
-            (rate, volume),
-            "raw publication matches controlled quorum source terms"
-        );
-    }
-    let expected = weighted_price(&observed, start, end);
-    let usd = outbe_primitives::asset_type::currency_address(840);
-    for &port in &ports {
-        assert_eq!(
-            world.rpc.checkpoint_at(port, 0).expect("peer genesis"),
-            genesis
-        );
-        assert_eq!(
-            history(world, port, 0),
-            seeds,
-            "seed observations on {port}"
-        );
-        assert_eq!(
-            history(world, port, height),
-            observed,
-            "raw observation population on {port}"
-        );
-        let snapshot = eth::read_call_at(
-            &world.rpc.url(port),
-            ORACLE_ADDRESS,
-            &eth::IOracle::getWorldwideDayVwapSnapshotCall {
-                worldwideDay: lifecycle.worldwide_day,
-            },
-            height,
-        )
-        .expect("stored WWD VWAP at input checkpoint");
-        assert_eq!(
-            (snapshot.startTime, snapshot.endTime),
-            (start, end),
-            "stored FORMING window"
-        );
-        assert_eq!(snapshot.bases.len(), snapshot.quotes.len());
-        assert_eq!(snapshot.bases.len(), snapshot.vwaps.len());
-        let prices: Vec<_> = snapshot
-            .bases
-            .iter()
-            .zip(&snapshot.quotes)
-            .zip(&snapshot.vwaps)
-            .filter_map(|((base, quote), price)| {
-                (*base == Address::ZERO && *quote == usd).then_some(*price)
-            })
-            .collect();
-        assert_eq!(
-            prices,
-            vec![expected],
-            "independent seeded-plus-fed WWD VWAP on {port}"
-        );
-        assert_eq!(
-            world
-                .rpc
-                .checkpoint_at(port, height)
-                .expect("recheck WWD checkpoint"),
-            checkpoint
-        );
-    }
-    eprintln!(
-        "WWD_VWAP_EXPECTATION {}",
-        serde_json::json!({
-            "worldwide_day": lifecycle.worldwide_day, "start": start, "end": end,
-            "height": height, "block_hash": checkpoint.block_hash, "state_root": checkpoint.state_root,
-            "seed_count": seeds.len(), "controlled_rate": rate, "controlled_median_volume": volume,
-            "observations": observed, "expected_vwap": expected,
-        })
-    );
-    expected
-}
-
 fn previous_day_entry_price(quotes: &[Quote], requested_at: u64) -> U256 {
     let end = requested_at / 86_400 * 86_400;
     let price = weighted_price(quotes, end.saturating_sub(86_400), end);
@@ -316,137 +154,35 @@ fn oracle_usd_price_at(world: &World, port: u16, day: u32, height: u64) -> U256 
     oracle_word_at(world, port, slots[1], height)
 }
 
-/// Recompute the USD entry price from the UTC day before the request block.
-fn request_entry_price(world: &World) -> (u32, U256) {
-    let request = world
-        .state
-        .ocomp_job_request
-        .as_ref()
-        .expect("public JobIntent");
-    let height = request.request_height;
+pub(super) fn assert_native_entry_price(
+    world: &World,
+    terms: &outbe_primitives::nod_encryption::NodTermsV2,
+    height: u64,
+) {
     let ports = world.validators.committee_ports();
-    world
+    let checkpoint = world
         .rpc
         .wait_finalized_checkpoint(&ports, height, 120)
-        .expect("price input checkpoint");
-    let checkpoint = world
+        .expect("native entry-price checkpoint");
+    let timestamp = world
         .rpc
-        .checkpoint_at(ports[0], height)
-        .expect("price checkpoint identity");
-    assert_eq!(checkpoint.block_hash, request.request_block_hash);
-    let intent = world
-        .rpc
-        .ocomp_job_record_at_on(ports[0], request.intent_id, height)
-        .expect("price input JobIntent")
-        .intent;
-    let requested_at = intent.logical_evaluation_time;
-    let day = entry_price_day(requested_at);
+        .block_timestamp(ports[0], height)
+        .expect("native evaluation time");
+    let day = entry_price_day(timestamp);
     let quotes = history(world, ports[0], height);
-    let expected = previous_day_entry_price(&quotes, requested_at);
-    for &port in &ports {
-        assert_eq!(
-            world
-                .rpc
-                .ocomp_job_record_at_on(port, request.intent_id, height)
-                .expect("peer price input JobIntent")
-                .intent,
-            intent
-        );
-        assert_eq!(
-            history(world, port, height),
-            quotes,
-            "Oracle price history on {port}"
-        );
-        assert_eq!(
-            oracle_usd_price_at(world, port, day, height),
-            expected,
-            "independent Oracle entry price on {port}"
-        );
+    let expected = previous_day_entry_price(&quotes, timestamp);
+    assert_eq!(
+        terms.entry_price_minor, expected,
+        "independent closed-day entry price"
+    );
+    for port in ports {
+        assert_eq!(history(world, port, height), quotes);
+        assert_eq!(oracle_usd_price_at(world, port, day, height), expected);
         assert_eq!(
             world
                 .rpc
                 .checkpoint_at(port, height)
-                .expect("recheck price checkpoint"),
-            checkpoint
-        );
-    }
-    eprintln!(
-        "NOD_ENTRY_PRICE_EXPECTATION {}",
-        serde_json::json!({
-            "worldwide_day": request.worldwide_day, "height": height,
-            "block_hash": checkpoint.block_hash, "state_root": checkpoint.state_root,
-            "logical_evaluation_time": requested_at, "priced_day": day,
-            "observations": quotes, "expected_entry_price": expected,
-        })
-    );
-    (day, expected)
-}
-
-pub(crate) fn entry_price(world: &World) -> U256 {
-    request_entry_price(world).1
-}
-
-#[cucumber::then("the original Nod entry price survives Oracle updates and restart")]
-fn entry_price_survives_updates(world: &mut World) {
-    let (day, expected) = request_entry_price(world);
-    let request = world
-        .state
-        .ocomp_job_request
-        .as_ref()
-        .expect("original public JobIntent");
-    let ports = world.validators.committee_ports();
-    let height = ports
-        .iter()
-        .map(|&port| {
-            world
-                .rpc
-                .finalized_result(port)
-                .expect("latest finalized snapshot checkpoint")
-        })
-        .min()
-        .expect("committee");
-    assert!(
-        height > request.request_height,
-        "check the price after its request"
-    );
-    let checkpoint = world
-        .rpc
-        .checkpoint_at(ports[0], height)
-        .expect("snapshot checkpoint");
-    let job_id = world
-        .state
-        .ocomp_certified_generation
-        .as_ref()
-        .expect("certified Nod set")
-        .job_id;
-    for (index, &port) in ports.iter().enumerate() {
-        assert!(
-            super::ocomp::result_nod_actions_on(world, index, job_id)
-                .iter()
-                .all(|action| action.entry_price_minor == expected),
-            "the original Nod keeps the closed-day entry price on {port}"
-        );
-        assert_eq!(
-            oracle_usd_price_at(world, port, day, height),
-            expected,
-            "Oracle changes must not reprice the original Nod on {port}"
-        );
-        let current = eth::read_call_at(
-            &world.rpc.url(port),
-            ORACLE_ADDRESS,
-            &eth::IOracle::getCoenExchangeRateForCall { isoCode: 840 },
-            height,
-        )
-        .expect("changed Oracle quote");
-        assert_ne!(
-            current, expected,
-            "fixture changed the Oracle price after the request"
-        );
-        assert_eq!(
-            world
-                .rpc
-                .checkpoint_at(port, height)
-                .expect("peer snapshot checkpoint"),
+                .expect("entry-price checkpoint retained"),
             checkpoint
         );
     }

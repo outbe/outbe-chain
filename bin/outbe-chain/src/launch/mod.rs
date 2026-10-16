@@ -1,5 +1,4 @@
 pub(super) mod admission;
-pub(super) mod bundles;
 pub(super) mod configuration;
 pub(super) mod identity;
 pub(super) mod node;

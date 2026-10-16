@@ -103,7 +103,7 @@ def probe_rpc() -> None:
     if payload.get("error") is not None:
         raise RuntimeError(f"local RPC returned an error: {payload['error']}")
     chain_id = int(payload["result"], 16)
-    expected_chain_id = int(required_env("OCOMP_CHAIN_ID"))
+    expected_chain_id = int(required_env("OUTBE_CHAIN_ID"))
     if chain_id != expected_chain_id:
         raise RuntimeError(
             f"local RPC chain id {chain_id} does not match {expected_chain_id}"
@@ -164,11 +164,11 @@ def verify_rocksdb_storage(path: pathlib.Path) -> None:
 
 def enclave() -> NoReturn:
     runtime = required_env("OUTBE_ENCLAVE_RUNTIME")
-    chain_id = required_env("OCOMP_CHAIN_ID")
+    chain_id = required_env("OUTBE_CHAIN_ID")
     try:
         chain_hex = f"0x{int(chain_id):064x}"
     except ValueError:
-        fail("OCOMP_CHAIN_ID must be a positive decimal integer")
+        fail("OUTBE_CHAIN_ID must be a positive decimal integer")
     arguments = [
         "--socket",
         "127.0.0.1:17000",
@@ -192,10 +192,10 @@ def enclave() -> NoReturn:
 
 
 def feeder() -> NoReturn:
-    chain_id = required_env("OCOMP_CHAIN_ID")
+    chain_id = required_env("OUTBE_CHAIN_ID")
     validator = required_env("OUTBE_VALIDATOR_ADDRESS")
     if re.fullmatch(r"[1-9][0-9]*", chain_id) is None:
-        fail("OCOMP_CHAIN_ID must be a positive decimal integer")
+        fail("OUTBE_CHAIN_ID must be a positive decimal integer")
     if re.fullmatch(r"0x[0-9a-fA-F]{40}", validator) is None:
         fail("OUTBE_VALIDATOR_ADDRESS must be a 20-byte hex address")
 

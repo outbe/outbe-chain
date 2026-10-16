@@ -17,46 +17,39 @@ pub(crate) const SLASH_ADDR: Address = address!("0x00000000000000000000000000000
 pub(crate) const TRIBUTE_ADDR: Address = address!("0x0000000000000000000000000000000000001101");
 /// Nod precompile (`totalSupply()`).
 pub(crate) const NOD_ADDR: Address = address!("0x0000000000000000000000000000000000001006");
-/// NodFactory precompile (`materializationHead`, `mineGratis`).
-#[cfg(feature = "ocomp-integration")]
+/// NodFactory precompile (`mineGratis`).
 pub(crate) const NOD_FACTORY_ADDR: Address = address!("0x0000000000000000000000000000000000001007");
 /// Confidential Gratis ledger (`opNonceOf`).
-#[cfg(feature = "ocomp-integration")]
 pub(crate) const GRATIS_ADDR: Address = address!("0x0000000000000000000000000000000000001003");
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) const GRATIS_FACTORY_ADDR: Address =
     address!("0x0000000000000000000000000000000000002003");
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) const PROMIS_ADDR: Address = address!("0x0000000000000000000000000000000000001337");
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) const PROMIS_FACTORY_ADDR: Address =
     address!("0x0000000000000000000000000000000000002337");
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) const GEM_ADDR: Address = address!("0x0000000000000000000000000000000000001013");
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) const INTEX_ADDR: Address = address!("0x0000000000000000000000000000000000001014");
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) const INTEX_FACTORY_ADDR: Address =
     address!("0x0000000000000000000000000000000000001015");
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) const GEM_FACTORY_ADDR: Address = address!("0x0000000000000000000000000000000000002013");
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) const VAULT_ROUTER_ADDR: Address =
     address!("0x0000000000000000000000000000000000001017");
 /// Metadosis worldwide-day registry (`getWorldwideDay(uint32)`).
 pub(crate) const WWD_ADDR: Address = address!("0x000000000000000000000000000000000000100E");
 /// PromiseLimit carry-over ledger (`totalUnallocated()`).
-#[cfg(feature = "ocomp-integration")]
 pub(crate) const PROMIS_LIMIT_ADDR: Address =
     address!("0x000000000000000000000000000000000000100F");
 /// Desis auction owner (`getAuctionStage(uint32)`).
-#[cfg(feature = "ocomp-integration")]
 pub(crate) const DESIS_ADDR: Address = address!("0x0000000000000000000000000000000000001016");
 /// Update precompile (protocol-version governance).
 pub(crate) const UPDATE_ADDR: Address = address!("0x000000000000000000000000000000000000EE0B");
-#[cfg(feature = "ocomp-integration")]
-pub(crate) const OCOMP_REGISTRY_ADDR: Address =
-    address!("0x000000000000000000000000000000000000EE12");
 /// Vote precompile (generic proposal/voting).
 pub(crate) const VOTE_ADDR: Address = address!("0x000000000000000000000000000000000000EE0C");
 /// EIP-7702 ZeroFee delegation target and view precompile.

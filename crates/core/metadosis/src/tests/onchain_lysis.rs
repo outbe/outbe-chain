@@ -154,7 +154,7 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
     outbe_tribute::enclave_client::test_enclave::install();
     outbe_fidelity::enclave_client::test_enclave::install();
     StorageHandle::enter(&mut provider, |storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         arm_reference_price(&storage, CLOCK);
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
@@ -162,7 +162,6 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
             .unwrap();
         metadosis.add_active_wwd(DAY).unwrap();
         let mut tribute = TributeContract::new(storage.clone());
-        tribute.initialize_fresh_ocomp_profile().unwrap();
         tribute.unseal_day(DAY).unwrap();
         for (index, amount) in amounts.iter().enumerate() {
             let owner = Address::repeat_byte(u8::try_from(index + 1).unwrap());
@@ -206,26 +205,12 @@ fn production_command_issues_encrypted_nods_and_completes_without_worker() {
             metadosis.get_wwd_status(DAY).unwrap(),
             crate::WwdStatus::Completed
         );
-        assert!(metadosis
-            .ocomp_fsm_states
-            .get_bytes(&DAY)
-            .is_empty()
-            .unwrap());
-        assert!(metadosis.ocomp_ready_index.is_empty().unwrap());
-        assert_eq!(metadosis.terminal_intent_count(DAY).unwrap(), 0);
         let receipt = metadosis.read_lysis_completion(DAY).unwrap().unwrap();
         assert_eq!(receipt.tribute_count, 3);
         assert_eq!(receipt.used + receipt.unused, U256::from(LIMIT));
         let tribute = TributeContract::new(storage.clone());
         assert_eq!(tribute.total_supply().unwrap(), 0);
         assert!(tribute.retired_days.read(&DAY).unwrap());
-        assert_eq!(
-            tribute
-                .pre_admission_projection(DAY)
-                .unwrap()
-                .source_generation,
-            1
-        );
         let nods = outbe_nod::api::list_by_owner(&storage, Address::repeat_byte(1)).unwrap();
         assert_eq!(nods.len(), 1);
         let load = outbe_tee_enclave::nod_encryption::decrypt_nod(&[0x5a; 32], &nods[0].encrypted)
@@ -233,11 +218,6 @@ fn production_command_issues_encrypted_nods_and_completes_without_worker() {
         assert_eq!(load, U256::from(LIMIT / 1024));
         assert_eq!(receipt.used, load * U256::from(3));
     });
-    let requested = IMetadosis::OffchainJobRequested::SIGNATURE_HASH;
-    assert!(provider
-        .get_events(METADOSIS_ADDRESS)
-        .iter()
-        .all(|event| event.topics().first() != Some(&requested)));
     let before = provider.storage.clone();
     let logs = provider.get_ordered_events().to_vec();
     run(&mut provider).unwrap();
@@ -309,18 +289,10 @@ fn calculation_rejection_only_fails_the_day_and_preserves_all_economic_state() {
             assert!(!metadosis.active_wwd.read_all().unwrap().contains(&DAY));
             assert!(metadosis.closed_wwd.read_all().unwrap().contains(&DAY));
             assert!(metadosis.read_terminal_receipt(DAY).unwrap().is_none());
-            assert_eq!(metadosis.terminal_intent_count(DAY).unwrap(), 0);
             let tribute = TributeContract::new(storage.clone());
             assert_eq!(tribute.total_supply().unwrap(), amounts.len() as u64);
             assert!(!tribute.retired_days.read(&DAY).unwrap());
             assert!(tribute.get_day_totals(DAY).unwrap().is_sealed);
-            assert_eq!(
-                tribute
-                    .pre_admission_projection(DAY)
-                    .unwrap()
-                    .source_generation,
-                0
-            );
             assert_eq!(
                 outbe_nod::schema::NodContract::new(storage)
                     .total_supply()

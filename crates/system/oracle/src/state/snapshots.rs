@@ -127,14 +127,8 @@ impl OracleContract<'_> {
         timestamp: u64,
         entries: &[(AddressPair, U256, U256)],
     ) -> Result<()> {
-        let requires_atomic_scale6_write =
-            entries.iter().any(|(pair, _, _)| is_coen_iso_market(*pair));
-        if self.ocomp_profile_ready.read()? || requires_atomic_scale6_write {
-            let storage = self.storage.clone();
-            storage.with_checkpoint(|| self.write_snapshot_inner(timestamp, entries))
-        } else {
-            self.write_snapshot_inner(timestamp, entries)
-        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| self.write_snapshot_inner(timestamp, entries))
     }
 
     fn write_snapshot_inner(
@@ -147,7 +141,6 @@ impl OracleContract<'_> {
             .checked_add(1)
             .ok_or(OracleError::SnapshotWriteIndexOverflow)?;
         self.require_snapshot_in_order(idx, timestamp)?;
-        let next_ocomp_version = self.next_ocomp_state_version()?;
 
         self.write_snapshot_entries(idx, timestamp, entries)?;
         self.snapshot_write_idx.write(next_snapshot_idx)?;
@@ -159,7 +152,7 @@ impl OracleContract<'_> {
         // Evict old entries beyond retention window
         self.evict_old_snapshots(timestamp)?;
 
-        self.commit_ocomp_state_version(next_ocomp_version)
+        Ok(())
     }
 
     /// Rejects a snapshot older than the newest retained one. Range reads and

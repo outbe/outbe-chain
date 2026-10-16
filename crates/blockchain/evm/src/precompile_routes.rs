@@ -337,7 +337,6 @@ define_exact_routes! {
     STABLECOIN_FACTORY_ADDRESS => (stablecoin_factory_dispatch, default_base_gas, ValuePolicy::Reject, outbe_stablecoinfactory::precompile::PAYABLE_SELECTORS),
     STABLECOIN_POLICY_REGISTRY_ADDRESS => (stablecoin_policy_dispatch, default_base_gas, ValuePolicy::Reject, outbe_stablecoinpolicy::precompile::PAYABLE_SELECTORS),
     RADICLE_REGISTRY_ADDRESS => (outbe_radicleregistry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_radicleregistry::precompile::PAYABLE_SELECTORS),
-    OCOMP_REGISTRY_ADDRESS => (outbe_ocompregistry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_ocompregistry::precompile::PAYABLE_SELECTORS),
     GOVERNANCE_ADDRESS => (outbe_governance::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_governance::precompile::PAYABLE_SELECTORS),
     VOTE_ADDRESS => (vote_dispatch, default_base_gas, ValuePolicy::Payable, outbe_vote::precompile::PAYABLE_SELECTORS),
     UPDATE_ADDRESS => (outbe_update::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_update::precompile::PAYABLE_SELECTORS),

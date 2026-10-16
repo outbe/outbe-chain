@@ -20,17 +20,10 @@ pub(crate) enum CheckName {
     Provenance,
     Headers,
     Evm,
-    Ocomp,
 }
 
 impl CheckName {
-    pub(crate) const ALL: [Self; 5] = [
-        Self::Files,
-        Self::Provenance,
-        Self::Headers,
-        Self::Evm,
-        Self::Ocomp,
-    ];
+    pub(crate) const ALL: [Self; 4] = [Self::Files, Self::Provenance, Self::Headers, Self::Evm];
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -55,9 +48,6 @@ pub(crate) struct CheckReport {
 pub(crate) struct ObservedFrontiers {
     pub(crate) h: Option<BlockIdentity>,
     pub(crate) e: Option<BlockIdentity>,
-    pub(crate) c_baseline: Option<BlockIdentity>,
-    pub(crate) c_previous: Option<BlockIdentity>,
-    pub(crate) c_current: Option<BlockIdentity>,
 }
 
 #[derive(Debug, Serialize)]
@@ -93,20 +83,6 @@ pub(crate) struct ProvenanceObservation {
     pub(crate) expected_signer_match: Option<bool>,
 }
 
-/// One independently discovered active intent and the local capabilities actually
-/// established for it. A missing finalized JobId or local pin is an observation.
-#[derive(Debug, Serialize)]
-pub(crate) struct ActiveOcompObservation {
-    pub(crate) intent_id: String,
-    pub(crate) job_id: Option<String>,
-    pub(crate) request_height: u64,
-    pub(crate) worldwide_day: u32,
-    pub(crate) canonical_status: String,
-    pub(crate) pin_stage: String,
-    pub(crate) source_verified: bool,
-    pub(crate) export_verified: bool,
-}
-
 #[derive(Debug, Serialize)]
 pub(crate) struct ValidationReport {
     /// Known source/configuration paths for safe optional report publication.
@@ -119,7 +95,6 @@ pub(crate) struct ValidationReport {
     pub(crate) required_missing: Vec<RequiredHeight>,
     pub(crate) inventory_bounds: Vec<InventoryBounds>,
     pub(crate) provenance: ProvenanceObservation,
-    pub(crate) active_ocomp: Vec<ActiveOcompObservation>,
 }
 
 impl ValidationReport {
@@ -152,7 +127,6 @@ impl ValidationReport {
             required_missing: Vec::new(),
             inventory_bounds: Vec::new(),
             provenance: ProvenanceObservation::default(),
-            active_ocomp: Vec::new(),
         }
     }
 

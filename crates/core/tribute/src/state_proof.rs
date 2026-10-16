@@ -1,5 +1,5 @@
 use alloy_primitives::{B256, U256};
-use outbe_ocomp_protocol::intent::FinalizedRequestBindingV1;
+use outbe_primitives::storage::proof::FinalizedStateCheckpoint;
 use outbe_primitives::{
     addresses::TRIBUTE_ADDRESS,
     error::{PrecompileError, Result},
@@ -16,7 +16,7 @@ use outbe_primitives::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{errors::TributeError, storage_records::StoredTributeEntryExt, TributeContract};
+use crate::{storage_records::StoredTributeEntryExt, TributeContract};
 
 pub fn retained_source_binding(
     storage: &StorageHandle<'_>,
@@ -25,30 +25,29 @@ pub fn retained_source_binding(
 ) -> Result<B256> {
     let contract = TributeContract::new(storage.clone());
     let source = crate::state_api::get_retained_record(storage, id)?
-        .ok_or(TributeError::RetainedSourceMissing)?;
+        .ok_or_else(|| invalid("retained Tribute source is missing"))?;
     let tribute = source
         .encrypted()
-        .ok_or(TributeError::RetainedSourceNotEncrypted)?;
+        .ok_or_else(|| invalid("Tribute source is not encrypted"))?;
     let position = contract.day_id_position.read(&id)?;
     if position == 0 || position > subject.tribute_count {
-        return Err(TributeError::RetainedSourcePositionMismatch.into());
+        return Err(invalid("retained Tribute source position mismatch"));
     }
     let index = position - 1;
-    let words = expected_record_words(&contract, subject, index, tribute)
-        .map_err(|error| TributeError::InvalidRetainedSource(error.to_string()))?;
+    let words = expected_record_words(&contract, subject, index, tribute)?;
     for (slot, expected) in &words {
         if storage.sload(TRIBUTE_ADDRESS, U256::from_be_bytes(slot.0))? != *expected {
-            return Err(TributeError::RetainedSourceIndexMismatch.into());
+            return Err(invalid("retained Tribute source does not match its index"));
         }
     }
     outbe_tee::tribute_source::source_binding(tribute, index, &words)
-        .map_err(|error| TributeError::InvalidRetainedSource(error.to_string()).into())
+        .map_err(|error| invalid(error.to_string()))
 }
 
 /// The caller obtains this checkpoint from verified request finality.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TributeStateProofSubject {
-    pub checkpoint: FinalizedRequestBindingV1,
+    pub checkpoint: FinalizedStateCheckpoint,
     pub chain_id: u64,
     pub worldwide_day: WorldwideDay,
     pub tribute_count: u32,
@@ -57,7 +56,7 @@ pub struct TributeStateProofSubject {
 impl From<outbe_tee::tribute_source::TributeSourceSubject> for TributeStateProofSubject {
     fn from(source: outbe_tee::tribute_source::TributeSourceSubject) -> Self {
         Self {
-            checkpoint: FinalizedRequestBindingV1 {
+            checkpoint: FinalizedStateCheckpoint {
                 block_number: source.checkpoint.block_number,
                 block_hash: source.checkpoint.block_hash,
                 state_root: source.checkpoint.state_root,
@@ -71,11 +70,12 @@ impl From<outbe_tee::tribute_source::TributeSourceSubject> for TributeStateProof
 
 impl TributeStateProofSubject {
     fn validate(&self) -> Result<()> {
-        let checkpoint = &self.checkpoint;
-        let checkpoint_complete = checkpoint.block_number != 0
-            && !checkpoint.block_hash.is_zero()
-            && !checkpoint.state_root.is_zero();
-        if self.chain_id == 0 || self.worldwide_day.value() == 0 || !checkpoint_complete {
+        if self.chain_id == 0
+            || self.worldwide_day.value() == 0
+            || self.checkpoint.block_number == 0
+            || self.checkpoint.block_hash.is_zero()
+            || self.checkpoint.state_root.is_zero()
+        {
             return Err(invalid("incomplete finalized Tribute proof subject"));
         }
         Ok(())
@@ -105,17 +105,18 @@ pub fn expected_record_words(
 ) -> Result<Vec<(B256, U256)>> {
     subject.validate()?;
     let context = &tribute.context;
-    let mismatch = || invalid("Tribute source identity does not match its subject");
-    let in_subject = day_index < subject.tribute_count
-        && (context.chain_id, context.worldwide_day) == (subject.chain_id, subject.worldwide_day);
-    if !in_subject || !tribute.has_valid_encoding() || context.owner.is_zero() {
-        return Err(mismatch());
-    }
-    if derive_poseidon_entity_id(context.owner, context.worldwide_day)
-        .map_err(|error| invalid(error.to_string()))?
-        != context.tribute_id
+    if day_index >= subject.tribute_count
+        || !tribute.has_valid_encoding()
+        || context.chain_id != subject.chain_id
+        || context.worldwide_day != subject.worldwide_day
+        || context.owner.is_zero()
+        || derive_poseidon_entity_id(context.owner, context.worldwide_day)
+            .map_err(|error| invalid(error.to_string()))?
+            != context.tribute_id
     {
-        return Err(mismatch());
+        return Err(invalid(
+            "Tribute source identity does not match its subject",
+        ));
     }
     let position = day_index
         .checked_add(1)

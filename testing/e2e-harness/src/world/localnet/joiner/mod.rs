@@ -141,13 +141,8 @@ impl Localnet {
     /// Launch a node in non-voting full-execution mode while preserving its
     /// durable Reth datadir and role-neutral NodeHost identity.
     /// The FullNode owns an enclave and NodeHost identity in its own slot. The
-    /// process receives no validator BLS key and no OCOMP voting credentials.
-    pub fn launch_joiner_full_node(
-        &mut self,
-        index: usize,
-        upstream_slot: usize,
-        ocomp_args: &[String],
-    ) -> Result<()> {
+    /// process receives no validator BLS key and no validator signing credentials.
+    pub fn launch_joiner_full_node(&mut self, index: usize, upstream_slot: usize) -> Result<()> {
         let vd = self.cfg.validator_dir(index);
         fs::create_dir_all(vd.join("data"))?;
         fs::create_dir_all(vd.join("logs"))?;
@@ -163,7 +158,6 @@ impl Localnet {
             &format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot)),
             &format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
         ));
-        process_args.extend_from_slice(ocomp_args);
         self.extend_real_sgx_startup_timeout(&mut process_args);
 
         let name = Self::joiner_full_node_name(index);
@@ -208,31 +202,6 @@ impl Localnet {
             "FullNode {index} PID {expected_pid} failed during planned stop: {status}"
         );
         Ok(status)
-    }
-
-    /// One pre-proposal node-only restart: retain the enclave, NodeHost identity,
-    /// datadir and OCOMP domain. The caller stops/restores the external clients
-    /// and proves finalized recovery before proposing the successor.
-    #[cfg(feature = "ocomp-integration")]
-    pub(crate) fn restart_keyless_full_node_preserving_enclave(
-        &mut self,
-        index: usize,
-        expected_pid: u32,
-        upstream_slot: usize,
-    ) -> Result<(std::process::ExitStatus, u32)> {
-        let enclave_pid = self.live_enclave_pid(index)?;
-        let status = self.stop_joiner_full_node_owned(index, expected_pid)?;
-        self.launch_dcap_full_node(&Self::joiner_full_node_name(index), index, upstream_slot)?;
-        eyre::ensure!(
-            self.live_enclave_pid(index)? == enclave_pid,
-            "FullNode enclave incarnation changed during node-only preload"
-        );
-        let (pid, exit) = self.owned_full_node_process(index)?;
-        eyre::ensure!(
-            exit.is_none(),
-            "FullNode preload replacement exited: {exit:?}"
-        );
-        Ok((status, pid))
     }
 
     /// Exit state for an owned role-neutral FullNode. `None` means the process
@@ -435,7 +404,7 @@ impl Localnet {
         self.join_node_enclave(index)
     }
 
-    /// Add ValidatorSet and OCOMP material to an already joined role-neutral
+    /// Add ValidatorSet identity to an already joined role-neutral
     /// NodeHost. This deliberately does not perform a second TEE join.
     pub fn provision_existing_node_as_joiner(&mut self, index: usize) -> Result<()> {
         self.provision_existing_node_as_joiner_observed(index)
@@ -448,12 +417,10 @@ impl Localnet {
         index: usize,
     ) -> Result<[TxOutcome; 2]> {
         let outcomes = self.provision_joiner_registration_observed(index)?;
-        #[cfg(feature = "ocomp-integration")]
-        crate::world::ocomp::stage_direct_joiner_domain_material(&self.cfg, index)?;
         Ok(outcomes)
     }
 
-    /// Generate and register Validator/OCOMP identity without changing the
+    /// Generate and register validator identity without changing the
     /// currently running node or enclave profile.
     pub fn provision_joiner_registration(&mut self, index: usize) -> Result<()> {
         self.provision_joiner_registration_observed(index).map(drop)
@@ -478,7 +445,6 @@ impl Localnet {
             .and_then(|value| hex::decode(value).ok())
             .map(|value| B256::from_slice(&value))
             .ok_or_else(|| eyre!("no Radicle NodeId from keygen"))?;
-        self.prepare_joiner_ocomp_identity(index, addr, &bls)?;
         let sig = self.sign_registration(&signing_key, addr, radicle_node_id)?;
         let p2p_secret = vd.join("reth-p2p-secret.hex");
         if !p2p_secret.is_file() {
@@ -505,8 +471,6 @@ impl Localnet {
         identity: &RegistrationIdentity,
     ) -> Result<()> {
         self.install_registration_identity(index, identity)?;
-        let bls = hex::encode(identity.bls_public_key());
-        self.prepare_joiner_ocomp_identity(index, identity.address(), &bls)?;
         self.register_joiner_identity(
             identity.address(),
             identity.evm_key(),
@@ -515,41 +479,6 @@ impl Localnet {
             identity.registration_signature().clone(),
         )?;
         self.join_node_enclave(index)
-    }
-
-    fn prepare_joiner_ocomp_identity(
-        &self,
-        index: usize,
-        address: Address,
-        consensus_bls: &str,
-    ) -> Result<()> {
-        let vd = self.cfg.validator_dir(index);
-        let chain_id = eth::raw_json(&self.cfg.rpc0, "eth_chainId")
-            .and_then(|value| value.as_str().map(ToOwned::to_owned))
-            .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
-            .ok_or_else(|| eyre!("cannot read chain id for joiner OCOMP registration"))?;
-        let genesis_hash = eth::raw_json_with_params(
-            &self.cfg.rpc0,
-            "eth_getBlockByNumber",
-            serde_json::json!(["0x0", false]),
-        )
-        .and_then(|block| block.get("hash").cloned())
-        .and_then(|value| value.as_str().map(ToOwned::to_owned))
-        .ok_or_else(|| eyre!("cannot read genesis hash for joiner OCOMP registration"))?;
-        self.keygen(&[
-            "ocomp",
-            "--output-dir",
-            &vd.display().to_string(),
-            "--chain-id",
-            &chain_id.to_string(),
-            "--genesis-hash",
-            &genesis_hash,
-            "--validator-address",
-            &format!("{address:#x}"),
-            "--consensus-bls-min-pk",
-            consensus_bls,
-        ])?;
-        Ok(())
     }
 
     fn register_joiner_identity(
@@ -674,8 +603,6 @@ impl Localnet {
     }
 
     fn spawn_joiner_with_args(&mut self, index: usize, a: Vec<String>) -> Result<()> {
-        #[cfg(not(feature = "ocomp-integration"))]
-        self.ensure_embedded_ocomp_validator_domain_material(index)?;
         self.start_radicle(index)?;
         let vd = self.cfg.validator_dir(index);
         let mut cmd = Command::new(&self.cfg.bin_chain);

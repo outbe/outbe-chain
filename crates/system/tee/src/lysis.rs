@@ -7,8 +7,8 @@ use outbe_primitives::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    nod_materialization::{attestation, hash},
     protocol::{EnclaveRequest, EnclaveResponse, FidelitySnapshotRequest},
+    response_auth::{attestation, hash},
     TransportError,
 };
 

@@ -168,4 +168,39 @@ contract = "0x4444444444444444444444444444444444444444"
             FeederConfig::build(toml::from_str(CHAIN_LOCAL).unwrap(), Some(sources)).unwrap_err();
         assert!(error.to_string().contains("no URL for chain 56"), "{error}");
     }
+
+    #[test]
+    fn an_omitted_market_quote_is_the_pair_market_quote() {
+        let sources = r#"
+[[currency_pairs]]
+base = "COEN"
+quote = "840"
+markets = [{ provider = "pyth" }]
+
+[[currency_pairs]]
+base = "COEN"
+quote = "978"
+cross = "840"
+markets = [{ provider = "redstone" }]
+"#;
+        let config =
+            FeederConfig::build(toml::from_str(CHAIN_LOCAL).unwrap(), Some(sources)).unwrap();
+        config.validate().unwrap();
+        assert!(config
+            .currency_pairs
+            .iter()
+            .flat_map(|pair| &pair.sources)
+            .all(|source| source.quote == "840"));
+
+        let exchange = r#"
+[[currency_pairs]]
+base = "COEN"
+quote = "840"
+markets = [{ provider = "binance" }]
+"#;
+        let config =
+            FeederConfig::build(toml::from_str(CHAIN_LOCAL).unwrap(), Some(exchange)).unwrap();
+        let error = config.validate().unwrap_err();
+        assert!(error.to_string().contains("is an ISO code"), "{error}");
+    }
 }

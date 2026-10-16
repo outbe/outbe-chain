@@ -151,49 +151,38 @@ fn revealed_inputs(
     (bids, input_height)
 }
 
-/// The canonical auction input agrees on every committee member at the request height.
+/// Read the native Desis input at the completed Lysis checkpoint, before clearing.
 fn canonical_desis_limit_minor(world: &World) -> (u32, U256) {
-    let request = world
+    let day: u32 = world
         .state
-        .ocomp_job_request
-        .as_ref()
-        .expect("auction input JobIntent");
+        .wwd
+        .as_deref()
+        .expect("offering day")
+        .parse()
+        .expect("numeric day");
+    let height = world
+        .state
+        .lysis_completion_height
+        .expect("native Lysis completion");
     let ports = world.validators.committee_ports();
-    world
+    let checkpoint = world
         .rpc
-        .wait_finalized_checkpoint(&ports, request.request_height, 120)
-        .expect("auction request common finality");
-    let input_checkpoint = world
+        .wait_finalized_checkpoint(&ports, height, 120)
+        .expect("native auction checkpoint");
+    let budget = world
         .rpc
-        .checkpoint_at(ports[0], request.request_height)
-        .expect("auction input checkpoint");
-    assert_eq!(input_checkpoint.block_hash, request.request_block_hash);
-    let input = world
-        .rpc
-        .ocomp_job_record_at_on(ports[0], request.intent_id, request.request_height)
-        .expect("canonical auction input")
-        .intent;
-    for &port in &ports {
+        .desis_limit_at(ports[0], checkpoint, day.into())
+        .expect("native auction input");
+    for port in ports {
         assert_eq!(
             world
                 .rpc
-                .ocomp_job_record_at_on(port, request.intent_id, request.request_height)
-                .expect("peer canonical auction input")
-                .intent,
-            input
-        );
-        assert_eq!(
-            world
-                .rpc
-                .checkpoint_at(port, request.request_height)
-                .expect("recheck auction input checkpoint"),
-            input_checkpoint
+                .desis_limit_at(port, checkpoint, day.into())
+                .expect("peer auction input"),
+            budget
         );
     }
-    (
-        request.worldwide_day,
-        input.frozen_metadosis_values.desis_limit_minor,
-    )
+    (day, budget)
 }
 
 fn frozen_targets(world: &World, sides: &[VenueSide], day: u32) -> Vec<u32> {

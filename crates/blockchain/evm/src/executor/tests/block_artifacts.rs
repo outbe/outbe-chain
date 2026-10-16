@@ -182,13 +182,6 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
     assert_eq!(observations[0], observations[1]);
 }
 
-fn state_with_active_proposer_and_funded_account_without_ocomp(
-    proposer: Address,
-    funded: Address,
-) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-    state_with_active_proposer_and_funded_account_fixture(proposer, funded, false)
-}
-
 #[test]
 fn pending_rpc_context_skips_consensus_hooks_and_executes_user_transactions() {
     let user_tx = test_regular_tx()

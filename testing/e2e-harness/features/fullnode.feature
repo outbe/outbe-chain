@@ -1,7 +1,7 @@
 @tee @min-validators-4
 Feature: FullNode synchronization, failover, promotion, and replay
   FullNodes verify finalized history without voting. Promotion is covered only
-  where it changes the node role; ValidatorSet/OCOMP membership is owned by the
+  where it changes the node role; ValidatorSet membership is owned by the
   validator-lifecycle suite.
 
   @pfs-008-01 @pfs-008-02 @pfs-008-03 @pfs-008-04 @pfs-008-05

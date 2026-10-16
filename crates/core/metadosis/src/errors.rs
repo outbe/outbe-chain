@@ -1,21 +1,14 @@
-mod business;
 mod caller;
 mod corruption;
 #[cfg(any(test, feature = "test-utils"))]
 mod test_support;
-
-pub use business::MetadosisBusinessError;
-pub use caller::{MetadosisCallerError, ResultVoteCarrierInvalidError};
+pub use caller::MetadosisCallerError;
 pub use corruption::MetadosisStorageCorruptionError;
 #[cfg(any(test, feature = "test-utils"))]
 pub use test_support::MetadosisTestSupportError;
 
-use alloy_primitives::{Bytes, B256, U256};
-use outbe_ocomp_protocol::abi::{
-    OCOMP_ACTIVATION_REJECTED_SELECTOR, OCOMP_RESULT_VOTE_REJECTED_SELECTOR,
-};
+use alloy_primitives::U256;
 use outbe_primitives::error::PrecompileError;
-use outbe_primitives::time::WorldwideDay;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -28,15 +21,15 @@ pub enum MetadosisError {
     VwapMustBeNonZero,
 
     #[error(
-        "Metadosis business failure: invalid OCOMP limit split: lysis limit {lysis_limit_minor} exceeds day limit {day_limit}"
+        "Metadosis business failure: invalid Lysis limit split: lysis limit {lysis_limit_minor} exceeds day limit {day_limit}"
     )]
-    InvalidOcompLimitSplit {
+    InvalidLysisLimitSplit {
         day_limit: U256,
         lysis_limit_minor: U256,
     },
 
-    #[error("existing OCOMP request limit receipt does not match the immutable day split")]
-    OcompLimitReceiptMismatch,
+    #[error("Lysis carry-over credit does not match the immutable day split")]
+    LysisLimitCreditMismatch,
 
     #[error(
         "Metadosis business failure: Desis Limit {desis_limit_minor} exceeds the {available} the Promis Limit holds"
@@ -45,52 +38,6 @@ pub enum MetadosisError {
         desis_limit_minor: U256,
         available: U256,
     },
-
-    #[error("Metadosis business failure: Desis returned a different OCOMP request brief hash")]
-    OcompDesisBriefHashMismatch,
-
-    #[error("OCOMP pre-admission state is not initialized for WWD {wwd}")]
-    OcompPreAdmissionNotInitialized { wwd: WorldwideDay },
-
-    #[error("OCOMP pre-admission envelope is already sealed for WWD {wwd}")]
-    OcompPreAdmissionAlreadySealed { wwd: WorldwideDay },
-
-    #[error("OCOMP pre-admission envelope WWD {actual} does not match state WWD {expected}")]
-    OcompPreAdmissionWwdMismatch { expected: WorldwideDay, actual: u32 },
-
-    #[error("invalid OCOMP pre-admission envelope: {reason}")]
-    InvalidOcompPreAdmissionEnvelope { reason: String },
-
-    #[error("OCOMP pre-admission envelope produced the reserved zero hash")]
-    InvalidOcompPreAdmissionEnvelopeHash,
-
-    #[error("OCOMP state version overflow for WWD {wwd}")]
-    OcompStateVersionOverflow { wwd: WorldwideDay },
-
-    #[error(
-        "existing OCOMP pre-admission state for WWD {wwd} is corrupt: initialized={initialized}, version={state_version}, hash={envelope_hash}"
-    )]
-    CorruptOcompPreAdmissionState {
-        wwd: WorldwideDay,
-        initialized: bool,
-        state_version: u64,
-        envelope_hash: B256,
-    },
-
-    #[error("cannot mark WWD {wwd} as COMPLETED from status {current} (requires READY)")]
-    InvalidTransitionToCompleted { wwd: WorldwideDay, current: u8 },
-
-    #[error("cannot mark WWD {wwd} as FAILED: day is already COMPLETED")]
-    InvalidTransitionToFailed { wwd: WorldwideDay },
-}
-
-impl MetadosisError {
-    /// Creates an invalid OCOMP pre-admission envelope error from a reason.
-    pub(crate) fn invalid_ocomp_pre_admission_envelope(reason: impl std::fmt::Display) -> Self {
-        Self::InvalidOcompPreAdmissionEnvelope {
-            reason: reason.to_string(),
-        }
-    }
 }
 
 impl From<MetadosisError> for PrecompileError {
@@ -101,130 +48,6 @@ impl From<MetadosisError> for PrecompileError {
 
 pub type MetadosisResult<T> = std::result::Result<T, MetadosisError>;
 
-pub(crate) fn is_business_failure(error: &PrecompileError) -> bool {
-    matches!(error, PrecompileError::Revert(message) if message.starts_with("Metadosis business failure: "))
-}
-
 pub(crate) fn is_vwap_overflow(error: &PrecompileError) -> bool {
     matches!(error, PrecompileError::Revert(message) if message.starts_with("VWAP overflow:"))
-}
-
-pub(crate) fn map_vote_transition_error(error: PrecompileError) -> PrecompileError {
-    if is_business_failure(&error) {
-        return error;
-    }
-    if is_deadline_passed_result_vote_revert(&error) {
-        return error;
-    }
-    match error {
-        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
-            result_vote_rejection(vote_rejection_code::PROTOCOL_VOTE)
-        }
-        other => other,
-    }
-}
-
-/// Checks whether a precompile error encodes a deadline-passed result-vote revert.
-#[must_use]
-pub fn is_deadline_passed_result_vote_revert(error: &PrecompileError) -> bool {
-    matches!(error, PrecompileError::RevertBytes(data) if is_deadline_passed_result_vote_revert_data(data))
-}
-
-/// Checks whether revert bytes match the deadline-passed result-vote rejection payload.
-#[must_use]
-pub fn is_deadline_passed_result_vote_revert_data(data: &[u8]) -> bool {
-    data == deadline_passed_result_vote_revert_data().as_ref()
-}
-
-/// Returns the canonical revert payload for a deadline-passed result vote.
-#[must_use]
-pub fn deadline_passed_result_vote_revert_data() -> Bytes {
-    let PrecompileError::RevertBytes(expected) =
-        result_vote_rejection(vote_rejection_code::DEADLINE_PASSED)
-    else {
-        unreachable!("vote_reject always returns RevertBytes");
-    };
-    expected
-}
-
-pub(crate) fn is_state_unavailable(error: &PrecompileError) -> bool {
-    matches!(
-        error,
-        PrecompileError::Storage(_)
-            | PrecompileError::BodyReadUnavailable(_)
-            | PrecompileError::BodyReadRequestDeadline
-    )
-}
-
-pub(crate) fn activation_rejection(code: u16) -> PrecompileError {
-    encoded_rejection(OCOMP_ACTIVATION_REJECTED_SELECTOR, code)
-}
-
-/// Rejects an EVM call mode that cannot execute a result-vote command.
-/// The adapter uses this before it opens a mutation frame.
-pub fn result_vote_call_mode_rejection() -> PrecompileError {
-    result_vote_rejection(vote_rejection_code::CALL_MODE)
-}
-
-pub(crate) fn result_vote_rejection(code: u16) -> PrecompileError {
-    encoded_rejection(OCOMP_RESULT_VOTE_REJECTED_SELECTOR, code)
-}
-
-fn encoded_rejection(selector: [u8; 4], code: u16) -> PrecompileError {
-    let mut encoded = Vec::with_capacity(36);
-    encoded.extend_from_slice(&selector);
-    encoded.extend_from_slice(&U256::from(code).to_be_bytes::<32>());
-    PrecompileError::RevertBytes(Bytes::from(encoded))
-}
-
-pub(crate) mod activation_rejection_code {
-    pub const LIMIT_EXCEEDED: u16 = 2;
-    pub const FORK_OR_BUNDLE_MISMATCH: u16 = 3;
-    pub const JOB_BINDING_INVALID: u16 = 9;
-    pub const COMMITTEE_SNAPSHOT_INVALID: u16 = 10;
-    pub const RESULT_DIGEST_MISMATCH: u16 = 12;
-    pub const RESULT_STRUCTURE_INVALID: u16 = 13;
-    pub const ACTIVATION_PRECONDITIONS_CHANGED: u16 = 14;
-}
-
-pub(crate) mod vote_rejection_code {
-    pub const MALFORMED_ENCODING: u16 = 1;
-    pub const LIMIT_EXCEEDED: u16 = 2;
-    pub const CALL_MODE: u16 = 3;
-    pub const PROTOCOL_VOTE: u16 = 4;
-    pub const LIFECYCLE_INACTIVE: u16 = 5;
-    pub const DEADLINE_PASSED: u16 = 6;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn durable_invariant_errors_are_revert() {
-        let wwd = WorldwideDay::new(2026_0731);
-        let errors = [
-            MetadosisError::OcompLimitReceiptMismatch,
-            MetadosisError::OcompStateVersionOverflow { wwd },
-            MetadosisError::CorruptOcompPreAdmissionState {
-                wwd,
-                initialized: true,
-                state_version: 0,
-                envelope_hash: B256::ZERO,
-            },
-        ];
-
-        for error in errors {
-            let error: PrecompileError = error.into();
-            assert!(matches!(error, PrecompileError::Revert(_)));
-        }
-    }
-
-    #[test]
-    fn deterministic_calculation_errors_are_business_failures() {
-        let error: PrecompileError = MetadosisError::VwapMustBeNonZero.into();
-
-        assert!(matches!(error, PrecompileError::Revert(_)));
-        assert!(is_business_failure(&error));
-    }
 }

@@ -3,8 +3,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-#[cfg(any(test, feature = "ocomp-integration"))]
-use std::path::Path;
+
 use std::path::PathBuf;
 use std::process::Command;
 use std::thread::sleep;
@@ -556,12 +555,10 @@ impl Localnet {
 
     /// Keep the validator process owned while its enclave is absent during a
     /// real encrypted-offer fault window.
-    #[cfg(feature = "ocomp-integration")]
     pub(crate) fn stop_validator_enclave_for_fault(&mut self, index: usize) -> Result<()> {
         self.stop_enclave_for_observation(index).map(|_| ())
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub(crate) fn restore_validator_enclave_after_fault(&mut self, index: usize) -> Result<()> {
         ensure!(
             !self.enclaves.contains_key(&index),
@@ -634,29 +631,6 @@ impl Localnet {
         let status = child.fault_and_reap()?;
         self.validators.remove(&index);
         Ok(status)
-    }
-
-    /// Rebuild one validator's derived CE database from its preserved canonical
-    /// Reth history. This method removes only the scenario-owned CE directory,
-    /// after the owned node has stopped. Chain DB, keys, consensus state and
-    /// OCOMP state remain untouched.
-    #[cfg(feature = "ocomp-integration")]
-    pub(super) fn restart_validator_after_ce_reset(&mut self, i: usize) -> Result<()> {
-        verified_compressed_entities_reconstruction_path(&self.cfg.dir, self.committee_size(), i)?;
-        self.kill_validator(i)?;
-        let ce_dir = verified_compressed_entities_reconstruction_path(
-            &self.cfg.dir,
-            self.committee_size(),
-            i,
-        )?;
-        fs::remove_dir_all(&ce_dir)
-            .wrap_err_with(|| format!("remove test-owned CE database {}", ce_dir.display()))?;
-        ensure!(
-            !ce_dir.exists(),
-            "test-owned CE database remains after removal: {}",
-            ce_dir.display()
-        );
-        self.restart()
     }
 
     /// Launch one committee validator as an owned child (`run-testnet.sh:317-349`):
@@ -757,75 +731,6 @@ impl Localnet {
 
 #[cfg(test)]
 mod owned_committee_tests;
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn compressed_entities_reconstruction_path(
-    scenario_dir: &Path,
-    committee_size: usize,
-    validator_index: usize,
-) -> Result<PathBuf> {
-    if !scenario_dir.is_absolute()
-        || scenario_dir == Path::new("/")
-        || validator_index >= committee_size
-    {
-        bail!(
-            "refuse compressed-entity reconstruction outside one exact committee validator: \
-             scenario={}, validator={validator_index}, committee={committee_size}",
-            scenario_dir.display()
-        );
-    }
-    let path = scenario_dir
-        .join(format!("validator-{validator_index}"))
-        .join("data")
-        .join("compressed_entities");
-    if !path.starts_with(scenario_dir)
-        || path.file_name().and_then(|name| name.to_str()) != Some("compressed_entities")
-    {
-        bail!("compressed-entity reconstruction path escaped its scenario owner");
-    }
-    Ok(path)
-}
-
-#[cfg(any(test, feature = "ocomp-integration"))]
-fn verified_compressed_entities_reconstruction_path(
-    scenario_dir: &Path,
-    committee_size: usize,
-    validator_index: usize,
-) -> Result<PathBuf> {
-    let path =
-        compressed_entities_reconstruction_path(scenario_dir, committee_size, validator_index)?;
-    let validator_dir = scenario_dir.join(format!("validator-{validator_index}"));
-    let data_dir = validator_dir.join("data");
-    for component in [
-        scenario_dir,
-        validator_dir.as_path(),
-        data_dir.as_path(),
-        path.as_path(),
-    ] {
-        let metadata = fs::symlink_metadata(component)
-            .wrap_err_with(|| format!("inspect CE reconstruction owner {}", component.display()))?;
-        ensure!(
-            metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
-            "CE reconstruction owner is not one real directory: {}",
-            component.display()
-        );
-    }
-    let canonical_scenario = fs::canonicalize(scenario_dir)
-        .wrap_err_with(|| format!("canonicalize scenario owner {}", scenario_dir.display()))?;
-    let canonical_target = fs::canonicalize(&path)
-        .wrap_err_with(|| format!("canonicalize CE reconstruction target {}", path.display()))?;
-    let expected = canonical_scenario
-        .join(format!("validator-{validator_index}"))
-        .join("data")
-        .join("compressed_entities");
-    ensure!(
-        canonical_target == expected && canonical_target.starts_with(&canonical_scenario),
-        "CE reconstruction target escaped its canonical scenario owner: target={}, owner={}",
-        canonical_target.display(),
-        canonical_scenario.display()
-    );
-    Ok(path)
-}
 
 #[cfg(test)]
 mod tests;

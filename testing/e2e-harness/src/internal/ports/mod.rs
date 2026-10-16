@@ -1,13 +1,8 @@
 //! Per-node port allocation for the localnet.
 //!
-//! Every node owns one **contiguous legacy block** of chain/OCOMP ports plus a
+//! Every node owns one **contiguous legacy block** of chain ports plus a
 //! separate two-port Radicle block. Keeping the allocators separate prevents a
 //! new sidecar from renumbering consensus ports embedded in existing fixtures.
-//!
-//! ```text
-//! OCOMP reserves six consecutive TCP slots at the end of each node block:
-//! Supervisor registration, Supervisor ZeroMQ, and four Worker observability ports.
-//! ```
 //!
 //! The allocator assigns blocks from a cursor that only ever moves forward. So
 //! the blocks are disjoint by construction, and no two services can collide. A
@@ -71,25 +66,12 @@ pub(crate) enum Service {
     Consensus,
     Radicle,
     RadicleStatus,
-    OcompSupervisor,
-    OcompMessage,
-    OcompWorker0,
-    OcompWorker1,
-    OcompWorker2,
-    OcompWorker3,
-    OcompSuccessorSupervisor,
-    OcompSuccessorMessage,
-    OcompSuccessorWorker0,
-    OcompSuccessorWorker1,
-    OcompSuccessorWorker2,
-    OcompSuccessorWorker3,
-    OcompSnapshotExporter,
 }
 
 impl Service {
     /// Every service known to collision and preflight checks.
     #[cfg(test)]
-    const ALL: [Service; 22] = [
+    const ALL: [Service; 9] = [
         Self::Http,
         Self::Tee,
         Self::P2p,
@@ -97,26 +79,12 @@ impl Service {
         Self::Authrpc,
         Self::Metrics,
         Self::Consensus,
-        Self::OcompSupervisor,
-        Self::OcompMessage,
-        Self::OcompWorker0,
-        Self::OcompWorker1,
-        Self::OcompWorker2,
-        Self::OcompWorker3,
-        Self::OcompSuccessorSupervisor,
-        Self::OcompSuccessorMessage,
-        Self::OcompSuccessorWorker0,
-        Self::OcompSuccessorWorker1,
-        Self::OcompSuccessorWorker2,
-        Self::OcompSuccessorWorker3,
-        Self::OcompSnapshotExporter,
         Self::Radicle,
         Self::RadicleStatus,
     ];
 
-    /// Complete chain/OCOMP runtime block. Derived OCOMP listeners must have an
-    /// explicit slot here so allocation and preflight cannot miss them.
-    const CORE: [Service; 20] = [
+    /// Native node listeners required for allocation and preflight.
+    const CORE: [Service; 7] = [
         Self::Http,
         Self::Tee,
         Self::P2p,
@@ -124,19 +92,6 @@ impl Service {
         Self::Authrpc,
         Self::Metrics,
         Self::Consensus,
-        Self::OcompSupervisor,
-        Self::OcompMessage,
-        Self::OcompWorker0,
-        Self::OcompWorker1,
-        Self::OcompWorker2,
-        Self::OcompWorker3,
-        Self::OcompSuccessorSupervisor,
-        Self::OcompSuccessorMessage,
-        Self::OcompSuccessorWorker0,
-        Self::OcompSuccessorWorker1,
-        Self::OcompSuccessorWorker2,
-        Self::OcompSuccessorWorker3,
-        Self::OcompSnapshotExporter,
     ];
 
     const RADICLE: [Service; 2] = [Self::Radicle, Self::RadicleStatus];
@@ -155,19 +110,6 @@ impl Service {
             Self::Authrpc => 4,
             Self::Metrics => 5,
             Self::Consensus => 6,
-            Self::OcompSupervisor => 7,
-            Self::OcompMessage => 8,
-            Self::OcompWorker0 => 9,
-            Self::OcompWorker1 => 10,
-            Self::OcompWorker2 => 11,
-            Self::OcompWorker3 => 12,
-            Self::OcompSuccessorSupervisor => 13,
-            Self::OcompSuccessorMessage => 14,
-            Self::OcompSuccessorWorker0 => 15,
-            Self::OcompSuccessorWorker1 => 16,
-            Self::OcompSuccessorWorker2 => 17,
-            Self::OcompSuccessorWorker3 => 18,
-            Self::OcompSnapshotExporter => 19,
             Self::Radicle => 0,
             Self::RadicleStatus => 1,
         }
@@ -327,7 +269,6 @@ impl Ports {
     /// Persistent LocalNet restores bootstrap's resolved layout so genesis and
     /// the later owner process use identical ports. This preflight prevents an
     /// old or unrelated process from being mistaken for a newly owned node.
-    #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
     pub(crate) fn ensure_available(&self, nodes: usize) -> Result<()> {
         let mut resolver = lock(&self.inner);
         for index in 0..nodes {

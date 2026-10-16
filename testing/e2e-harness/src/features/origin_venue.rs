@@ -7,12 +7,10 @@ use crate::internal::eth;
 use crate::world::venue_probes::IProceedsRoute;
 use crate::world::{origin_venue, World};
 
-#[cfg(feature = "ocomp-integration")]
 mod auction;
-#[cfg(feature = "ocomp-integration")]
+
 mod bidding;
 
-#[cfg(feature = "ocomp-integration")]
 pub(super) use auction::VenueSide;
 
 const ORIGIN_DEPLOY_FUNDING_COEN: u64 = 5_400;
@@ -50,10 +48,8 @@ fn deploy_origin_venue(world: &mut World) {
         .get(0)
         .evm_key()
         .expect("read validator-0 deploy funding key");
-    let funding_plan = origin_deploy_funding_plan(
-        &world.state.ocomp_capacity_tribute_private_keys,
-        fallback_operator_key,
-    );
+    let funding_plan =
+        origin_deploy_funding_plan(&world.state.tribute_owner_keys, fallback_operator_key);
     for (funder, amount_coen) in funding_plan {
         crate::internal::eth::send_value(
             &url,

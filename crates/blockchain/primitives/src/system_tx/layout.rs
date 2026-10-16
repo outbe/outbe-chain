@@ -1,8 +1,8 @@
 use reth_ethereum::TransactionSigned;
 
 use super::{
-    decode_system_tx_kind, is_reserved_system_tx, BodyZone, OcompLifecycleActivation,
-    SystemTxError, SystemTxKind, MAX_SYSTEM_TXS_PER_BLOCK,
+    decode_system_tx_kind, is_reserved_system_tx, BodyZone, SystemTxError, SystemTxKind,
+    MAX_SYSTEM_TXS_PER_BLOCK,
 };
 
 /// Structural split of block transactions into system begin-prefix, user middle,
@@ -105,25 +105,10 @@ pub fn expected_begin_block_kinds(
     has_boundary_outcome: bool,
     has_tee_bootstrap: bool,
 ) -> Vec<SystemTxKind> {
-    expected_begin_block_kinds_for_activation(
-        block_number,
-        has_boundary_outcome,
-        has_tee_bootstrap,
-        OcompLifecycleActivation::Disabled,
-    )
-}
-
-pub fn expected_begin_block_kinds_for_activation(
-    block_number: u64,
-    has_boundary_outcome: bool,
-    has_tee_bootstrap: bool,
-    ocomp_activation: OcompLifecycleActivation,
-) -> Vec<SystemTxKind> {
     expected_begin_block_kinds_for_publication(
         block_number,
         has_boundary_outcome,
         has_tee_bootstrap,
-        ocomp_activation,
         false,
     )
 }
@@ -132,7 +117,6 @@ pub fn expected_begin_block_kinds_for_publication(
     block_number: u64,
     has_boundary_outcome: bool,
     has_tee_bootstrap: bool,
-    ocomp_activation: OcompLifecycleActivation,
     has_publication: bool,
 ) -> Vec<SystemTxKind> {
     let mut expected = match block_number {
@@ -149,9 +133,6 @@ pub fn expected_begin_block_kinds_for_publication(
             ]
         }
     };
-    if block_number > 0 && ocomp_activation.is_active_at(block_number) {
-        expected.push(SystemTxKind::OcompLifecycleBegin);
-    }
     if block_number > 0 {
         expected.push(SystemTxKind::CycleTick);
         expected.push(SystemTxKind::RewardsGemDelivery);
@@ -172,15 +153,8 @@ pub fn expected_begin_block_kinds_for_publication(
     expected
 }
 
-pub fn expected_end_block_kinds(
-    block_number: u64,
-    ocomp_activation: OcompLifecycleActivation,
-) -> Vec<SystemTxKind> {
-    if block_number > 0 && ocomp_activation.is_active_at(block_number) {
-        vec![SystemTxKind::OcompTerminalRequest]
-    } else {
-        Vec::new()
-    }
+pub fn expected_end_block_kinds() -> Vec<SystemTxKind> {
+    Vec::new()
 }
 
 pub fn validate_active_system_tx_set(
@@ -189,28 +163,11 @@ pub fn validate_active_system_tx_set(
     has_boundary_outcome: bool,
     has_tee_bootstrap: bool,
 ) -> Result<(), SystemTxError> {
-    validate_system_tx_set_for_activation(
-        layout,
-        block_number,
-        has_boundary_outcome,
-        has_tee_bootstrap,
-        OcompLifecycleActivation::Disabled,
-    )
-}
-
-pub fn validate_system_tx_set_for_activation(
-    layout: &SystemTxLayout<'_>,
-    block_number: u64,
-    has_boundary_outcome: bool,
-    has_tee_bootstrap: bool,
-    ocomp_activation: OcompLifecycleActivation,
-) -> Result<(), SystemTxError> {
     validate_system_tx_set_for_publication(
         layout,
         block_number,
         has_boundary_outcome,
         has_tee_bootstrap,
-        ocomp_activation,
         false,
     )
 }
@@ -220,7 +177,6 @@ pub fn validate_system_tx_set_for_publication(
     block_number: u64,
     has_boundary_outcome: bool,
     has_tee_bootstrap: bool,
-    ocomp_activation: OcompLifecycleActivation,
     has_publication: bool,
 ) -> Result<(), SystemTxError> {
     let actual = layout.system_tx_count();
@@ -254,10 +210,9 @@ pub fn validate_system_tx_set_for_publication(
         block_number,
         has_boundary_outcome,
         has_tee_bootstrap,
-        ocomp_activation,
         has_publication,
     );
-    let expected_end = expected_end_block_kinds(block_number, ocomp_activation);
+    let expected_end = expected_end_block_kinds();
     let actual_begin = layout.begin_block_kinds()?;
     let actual_end = layout.end_block_kinds()?;
     if actual_begin != expected_begin || actual_end != expected_end {

@@ -23,7 +23,7 @@ mod verify;
 #[cfg(test)]
 use mock_source::mock_response;
 use mock_source::{MockPriceServer, PriceBook, PricePoint};
-#[cfg(feature = "ocomp-integration")]
+
 pub(crate) use verify::verify_price_oracle_evidence;
 #[cfg(test)]
 use verify::verify_publication_cohort;
@@ -344,7 +344,6 @@ impl PriceOracleTopology {
     }
 
     /// Quote COEN in `iso_code` at the scale-6 `rate` on every feeder started from now on.
-    #[cfg(feature = "ocomp-integration")]
     pub(crate) fn add_fixed_pair(
         &mut self,
         iso_code: u16,

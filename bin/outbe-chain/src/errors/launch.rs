@@ -1,9 +1,6 @@
 //! Typed error definitions for node launch, admission, and shutdown.
 
-use std::sync::Arc;
-
 use alloy_primitives::B256;
-use outbe_primitives::projection::ProjectionFailureClass;
 use outbe_primitives::tee_attestation_v1::AttestationMode;
 
 /// Represents errors during node launch, TEE admission, and shutdown.
@@ -92,60 +89,9 @@ pub(crate) enum LaunchError {
     /// Indicates that the TEE lease guard stopped without returning a verdict.
     #[error("TEE lease guard stopped without a verdict")]
     TeeLeaseGuardStoppedWithoutVerdict,
-    /// Indicates that the OCOMP bundle catalog is not a real directory.
-    #[error("OCOMP bundle catalog must be a real directory")]
-    BundleCatalogNotRealDirectory,
-    /// Indicates that an OCOMP bundle catalog entry is not a regular file.
-    #[error("OCOMP bundle catalog entries must be regular files")]
-    BundleCatalogEntryNotRegularFile,
-    /// Indicates that an OCOMP bundle filename is not valid UTF-8.
-    #[error("OCOMP bundle filename is not UTF-8")]
-    BundleFilenameNotUtf8,
-    /// Indicates that an OCOMP bundle filename lacks the `.ocb1` extension.
-    #[error("OCOMP bundle filename must end in .ocb1")]
-    BundleFilenameMissingExtension,
-    /// Indicates that an OCOMP bundle filename is not 64 lowercase hex characters.
-    #[error("OCOMP bundle filename must be 64 lowercase hex characters plus .ocb1")]
-    BundleFilenameInvalidHex,
-    /// Indicates that an installed OCOMP bundle filename does not match its canonical hash.
-    #[error("installed OCOMP bundle filename does not match its canonical hash")]
-    BundleFilenameHashMismatch,
-    /// Indicates conflicting installed OCOMP bundle bytes.
-    #[error("conflicting installed OCOMP bundle bytes")]
-    ConflictingBundleBytes,
-    /// Indicates that configured OCOMP bundle hashes require a populated catalog.
-    #[error("configured OCOMP bundle hashes require a populated hash-addressed catalog")]
-    ConfiguredBundlesRequirePopulatedCatalog,
-    /// Indicates that a configured OCOMP bundle hash is not installed in the catalog.
-    #[error("configured OCOMP bundle {hash} is not installed in the catalog")]
-    ConfiguredBundleNotInstalled {
-        /// Missing bundle hash.
-        hash: B256,
-    },
-    /// Indicates an unsupported number of OCOMP runtime bundles.
-    #[error("OCOMP runtime supports exactly active plus one staged/retiring bundle")]
-    InvalidRuntimeBundleCount,
-    /// Indicates that the OCOMP bundle catalog does not match `OCOMP_PROTOCOL_BUNDLE_HASHES`.
-    #[error("OCOMP bundle catalog must exactly match OCOMP_PROTOCOL_BUNDLE_HASHES")]
-    BundleCatalogMismatchEnv,
-    /// Indicates that a two-bundle catalog requires `OCOMP_PROTOCOL_BUNDLE_HASHES` for ordering.
-    #[error("OCOMP_PROTOCOL_BUNDLE_HASHES is required to order a post-genesis two-bundle catalog")]
-    TwoBundleCatalogRequiresEnvOrder,
-    /// Indicates that an OCOMP bundle hash lacks a `0x` prefix.
-    #[error("OCOMP bundle hash must have a 0x prefix")]
-    BundleHashMissingPrefix,
-    /// Indicates that an OCOMP bundle hash is not 64 lowercase hex characters after `0x`.
-    #[error("OCOMP bundle hash must be 64 lowercase hex characters after 0x")]
-    BundleHashInvalidHex,
-    /// Indicates a duplicate hash in the OCOMP bundle hash list.
-    #[error("OCOMP bundle hash list contains a duplicate")]
-    DuplicateBundleHash,
-    /// Indicates an invalid length for the OCOMP bundle hash list.
-    #[error("OCOMP bundle hash list must contain one or two adjacent authorities")]
-    InvalidBundleHashListLength,
     /// Indicates that plain EL full-node mode without `--upstream` is disabled.
     #[error(
-        "ADR-005 plain EL full-node mode is disabled: use --upstream so historical execution is gated by exact finalized-parent projection readiness"
+        "ADR-005 plain EL full-node mode is disabled: use --upstream so historical execution uses certified finality"
     )]
     PlainElFullNodeModeDisabled,
     /// Indicates an invalid Reth P2P signing key.
@@ -178,17 +124,6 @@ pub(crate) enum LaunchError {
         /// Shutdown error details.
         details: String,
     },
-    /// Indicates an embedded OCOMP runtime failure.
-    #[error("embedded OCOMP failure ({class:?}): {message}")]
-    EmbeddedOcompFailure {
-        /// Projection failure class.
-        class: ProjectionFailureClass,
-        /// Failure message.
-        message: Arc<str>,
-    },
-    /// Indicates that the embedded OCOMP exit channel closed without a verdict.
-    #[error("embedded OCOMP exit channel closed without a verdict")]
-    EmbeddedOcompExitChannelClosed,
     /// Indicates that a background task panicked during shutdown.
     #[error("{label} panicked: {details}")]
     TaskPanicked {
@@ -203,30 +138,6 @@ pub(crate) enum LaunchError {
         /// Task failure details.
         details: String,
     },
-    /// Indicates that the node data directory has no OCOMP domain parent.
-    #[error("node data directory has no OCOMP domain parent")]
-    MissingOcompDomainParent,
-    /// Indicates that the consensus port leaves no OCOMP Worker endpoint port.
-    #[error("consensus port leaves no OCOMP Worker endpoint port")]
-    MissingOcompWorkerPort,
-    /// Indicates that the OCOMP worker limit exceeds `u16`.
-    #[error("OCOMP worker limit exceeds u16")]
-    OcompWorkerLimitExceedsU16,
-    /// Indicates an overflow in the OCOMP bundle lane port stride.
-    #[error("OCOMP bundle lane port stride overflow")]
-    OcompLanePortStrideOverflow,
-    /// Indicates that the OCOMP bundle lane count exceeds `u16`.
-    #[error("OCOMP bundle lane count exceeds u16")]
-    OcompLaneCountExceedsU16,
-    /// Indicates an overflow in the OCOMP bundle lane port offset.
-    #[error("OCOMP bundle lane port offset overflow")]
-    OcompLanePortOffsetOverflow,
-    /// Indicates that an OCOMP bundle lane leaves no Worker endpoint port.
-    #[error("OCOMP bundle lane leaves no Worker endpoint port")]
-    OcompLaneMissingWorkerPort,
-    /// Indicates that validator OCOMP requires the local HTTP RPC server.
-    #[error("validator OCOMP requires the local HTTP RPC server")]
-    ValidatorOcompRequiresHttpRpc,
     /// Indicates an invalid mandatory `teeAttestationV1` ChainSpec.
     #[error("invalid mandatory teeAttestationV1 ChainSpec: {details}")]
     InvalidMandatoryTeeChainSpec {
@@ -316,68 +227,5 @@ impl LaunchError {
         Self::ConsensusStackFailedWhileReaping {
             details: format!("{error:?}"),
         }
-    }
-}
-
-/// Represents errors when building OCOMP Lysis openings over RPC.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum LysisOpeningsError {
-    /// Indicates that decoding the OCOMP openings request failed.
-    #[error("decode OCOMP openings request: {details}")]
-    DecodeRequest {
-        /// Decode failure details.
-        details: String,
-    },
-    /// Indicates that reading the finalized head failed.
-    #[error("read finalized head: {details}")]
-    ReadFinalizedHead {
-        /// Provider failure details.
-        details: String,
-    },
-    /// Indicates that the finalized head is unavailable.
-    #[error("finalized head is unavailable")]
-    FinalizedHeadUnavailable,
-    /// Indicates that reading the finalized OCOMP job failed.
-    #[error("read finalized OCOMP job: {details}")]
-    ReadFinalizedJob {
-        /// Storage read failure details.
-        details: String,
-    },
-    /// Indicates that the OCOMP job is not finalized.
-    #[error("OCOMP job is not finalized")]
-    JobNotFinalized,
-    /// Indicates that the OCOMP job is not available for calculation or replay.
-    #[error("OCOMP job is not available for calculation or replay")]
-    JobNotAvailable,
-    /// Indicates a `JobId` mismatch in the OCOMP openings request.
-    #[error("OCOMP openings request JobId mismatch")]
-    RequestJobIdMismatch,
-    /// Indicates that deriving the input lease failed.
-    #[error("derive input lease: {details}")]
-    DeriveInputLease {
-        /// Derivation failure details.
-        details: String,
-    },
-    /// Indicates that building exact OCOMP openings failed.
-    #[error("build exact OCOMP openings: {details}")]
-    BuildOpenings {
-        /// Openings build failure details.
-        details: String,
-    },
-    /// Indicates a `JobId` mismatch in the built OCOMP openings.
-    #[error("OCOMP openings JobId mismatch")]
-    OpeningsJobIdMismatch,
-    /// Indicates that encoding the OCOMP openings failed.
-    #[error("encode OCOMP openings: {details}")]
-    EncodeOpenings {
-        /// Encoding failure details.
-        details: String,
-    },
-}
-
-impl LysisOpeningsError {
-    /// Converts this openings error into an RPC error string.
-    pub(crate) fn into_rpc_error(self) -> std::string::String {
-        self.to_string()
     }
 }

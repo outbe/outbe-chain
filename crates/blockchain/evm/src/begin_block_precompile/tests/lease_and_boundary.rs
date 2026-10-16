@@ -1,57 +1,6 @@
-use super::super::cycle::{enforce_tee_lease_deadlines, run_ocomp_recovery_sweep};
+use super::super::cycle::enforce_tee_lease_deadlines;
 use super::*;
 use outbe_primitives::time::SECONDS_PER_DAY;
-
-#[test]
-fn mandatory_cycle_tick_sweep_closes_due_ocomp_recovery_when_lifecycle_is_disabled() {
-    let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS_HASH);
-    provider.set_block_number(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        validators.config_owner.write(OWNER).unwrap();
-        validators.set_config_max_validators(1).unwrap();
-        validators
-            .register_validator(OWNER, VALIDATOR, &[0x41; 48])
-            .unwrap();
-        validators
-            .test_activate_validator_canonically(
-                VALIDATOR,
-                outbe_validatorset::StakeProjection::new(U256::from(1_000), None),
-                U256::from(1_000),
-            )
-            .unwrap();
-
-        let mut staking = outbe_staking::contract::Staking::new(storage.clone());
-        staking.config_min_stake.write(U256::from(1_000)).unwrap();
-        staking
-            .stake_amount
-            .write(&VALIDATOR, U256::from(1_000))
-            .unwrap();
-        staking.total_staked.write(U256::from(1_000)).unwrap();
-        storage
-            .set_balance(
-                outbe_primitives::addresses::STAKING_ADDRESS,
-                U256::from(1_000),
-            )
-            .unwrap();
-        staking.record_ocomp_miss(VALIDATOR).unwrap();
-    });
-
-    provider.set_block_number(43_201);
-    StorageHandle::enter(&mut provider, |storage| {
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(43_201, 1_000, CHAIN_ID),
-            storage.clone(),
-        );
-        run_ocomp_recovery_sweep(&ctx).unwrap();
-        assert!(matches!(
-            outbe_validatorset::contract::ValidatorSet::new(storage)
-                .validator_lifecycle(VALIDATOR)
-                .unwrap(),
-            outbe_validatorset::ValidatorLifecycle::JailRetained(_)
-        ));
-    });
-}
 
 fn install_validator_lease(provider: &mut HashMapStorageProvider, valid_until: u64) {
     provider.enter(|storage| {

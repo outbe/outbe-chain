@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use crate::env::Environment;
 use crate::internal::{config::Config, proc::ChildGuard};
 
-use super::{has_required_signing_share, read_required_node_log, validator_slot_node_log_path};
+use super::has_required_signing_share;
 
 #[test]
 fn canonical_header_capture_preserves_both_streams_and_nonzero_exit() {
@@ -255,27 +255,4 @@ fn dangling_or_non_file_share_is_an_observation_error() {
         .unwrap_err()
         .to_string()
         .contains("not a regular file"));
-}
-
-#[test]
-fn follower_trace_path_uses_its_owned_validator_slot() {
-    let root = Path::new("/run/scenario-1");
-    assert_eq!(
-        validator_slot_node_log_path(root, 14),
-        root.join("validator-14/node.log")
-    );
-    assert_ne!(
-        validator_slot_node_log_path(root, 14),
-        root.join("follower/node.log")
-    );
-}
-
-#[test]
-fn missing_owned_follower_trace_log_is_an_error() {
-    let root = tempfile::tempdir().unwrap();
-    let path = validator_slot_node_log_path(root.path(), 14);
-    let error = read_required_node_log(&path, "follower").unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("read OCOMP runtime trace for follower from owned log"));
 }

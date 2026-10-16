@@ -1,4 +1,6 @@
-use outbe_ocomp_protocol::test_utils::{account_mpt_with_proofs as account_trie, storage_trie};
+use outbe_primitives::test_utils::state_proof::{
+    account_mpt_with_proofs as account_trie, storage_trie,
+};
 #[path = "../../../../testing/support/block_num_reader.rs"]
 mod block_num_reader;
 
@@ -6,7 +8,7 @@ use alloy_consensus::{Header, Sealable as _};
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{BlockHash, BlockNumber, Bytes, B256, U256};
 use alloy_trie::{TrieAccount, KECCAK_EMPTY};
-use outbe_node::ocomp::finality::{PublicAccountProofV1, PublicStorageProofV1};
+use outbe_node::state_proof::{PublicAccountProofV1, PublicStorageProofV1};
 use outbe_node::tee_remote_session::{
     admit_anchored_remote_session_v1, admit_local_finalized_remote_session_v1,
     authorize_local_finalized_remote_session_v1,

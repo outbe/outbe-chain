@@ -73,7 +73,6 @@ pub fn issue_encrypted(storage: &StorageHandle<'_>, body: &EncryptedTributeV2) -
             return Err(TributeError::TributeAlreadyExists.into());
         }
         contract.bump_day_bucket_record(&record, true)?;
-        contract.update_pre_admission_for_tribute(&record, true)?;
         let supply = contract
             .total_supply
             .read()?
@@ -126,7 +125,6 @@ pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result
             ));
         }
         contract.bump_day_bucket_record(&record, false)?;
-        contract.update_pre_admission_for_tribute(&record, false)?;
         let supply = contract
             .total_supply
             .read()?

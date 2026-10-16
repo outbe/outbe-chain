@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
@@ -432,12 +432,24 @@ fn dispatch_auction_brief_records_a_red_day() {
     });
 }
 
+fn strict_auction_brief(
+    storage: StorageHandle<'_>,
+    brief: crate::api::AuctionBrief,
+    logical_anchor: u64,
+) -> outbe_primitives::error::Result<crate::api::AuctionBriefReceipt> {
+    crate::api::dispatch_auction_brief(
+        storage,
+        brief,
+        logical_anchor,
+        crate::api::BriefOverflowPolicy::Reject,
+    )
+}
+
 #[test]
 fn strict_request_desis_limit_commits_the_exact_green_brief() {
     with_storage(|s| {
-        let digest = crate::ocomp_limits::apply_request_desis_limit(
+        let receipt = strict_auction_brief(
             s.clone(),
-            B256::repeat_byte(0x41),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
@@ -447,7 +459,7 @@ fn strict_request_desis_limit_commits_the_exact_green_brief() {
         )
         .expect("strict request brief");
 
-        assert_ne!(digest, B256::ZERO);
+        assert_eq!(receipt, AuctionBriefReceipt::Accepted);
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
@@ -473,9 +485,8 @@ fn strict_request_desis_limit_commits_the_exact_green_brief() {
 #[test]
 fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
     with_storage(|s| {
-        crate::ocomp_limits::apply_request_desis_limit(
+        strict_auction_brief(
             s.clone(),
-            B256::repeat_byte(0x41),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
@@ -485,9 +496,8 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
         )
         .unwrap();
 
-        assert!(crate::ocomp_limits::apply_request_desis_limit(
+        assert!(strict_auction_brief(
             s.clone(),
-            B256::repeat_byte(0x41),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::from(9 * PROMIS_LOAD_MINOR),
@@ -512,9 +522,8 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
 #[test]
 fn strict_request_desis_limit_rejects_an_oversized_limit_without_state() {
     with_storage(|s| {
-        assert!(crate::ocomp_limits::apply_request_desis_limit(
+        assert!(strict_auction_brief(
             s.clone(),
-            B256::repeat_byte(0x41),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::MAX,
@@ -570,9 +579,8 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
     let mutation_count = {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         let result = StorageHandle::enter(&mut provider, |storage| {
-            crate::ocomp_limits::apply_request_desis_limit(
+            strict_auction_brief(
                 storage,
-                B256::repeat_byte(0x41),
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
@@ -593,9 +601,8 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         provider.fail_after_mutation_at(operation);
         let result = StorageHandle::enter(&mut provider, |storage| {
-            crate::ocomp_limits::apply_request_desis_limit(
+            strict_auction_brief(
                 storage,
-                B256::repeat_byte(0x41),
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
@@ -619,9 +626,8 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
 #[test]
 fn strict_request_desis_limit_never_tops_up_a_live_auction() {
     with_storage(|storage| {
-        crate::ocomp_limits::apply_request_desis_limit(
+        strict_auction_brief(
             storage.clone(),
-            B256::repeat_byte(0x41),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::from(7 * LOAD_MINOR),
@@ -640,9 +646,8 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
         let config = before.read_auction_config(WORLDWIDE_DAY).unwrap();
         let anchor = before.auction_at.read(&WORLDWIDE_DAY).unwrap();
 
-        assert!(crate::ocomp_limits::apply_request_desis_limit(
+        assert!(strict_auction_brief(
             storage.clone(),
-            B256::repeat_byte(0x41),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
                 desis_limit_minor: U256::from(9 * LOAD_MINOR),
@@ -1068,10 +1073,9 @@ fn a_late_day_is_cancelled_only_once_its_red_start_is_sent() {
 }
 
 #[cfg(not(feature = "e2e-test"))]
-fn ocomp_brief_at_now(s: &StorageHandle) {
-    crate::ocomp_limits::apply_request_desis_limit(
+fn native_brief_at_now(s: &StorageHandle) {
+    strict_auction_brief(
         s.clone(),
-        B256::repeat_byte(0x41),
         crate::api::AuctionBrief {
             worldwide_day: WORLDWIDE_DAY,
             desis_limit_minor: U256::from(10 * LOAD_MINOR),
@@ -1082,13 +1086,13 @@ fn ocomp_brief_at_now(s: &StorageHandle) {
     .expect("strict request brief");
 }
 
-/// An OCOMP brief carries its request time. A quorum that lands hours into the day
+/// A native brief carries its calculation time. A calculation hours into the day
 /// therefore still anchors to its midnight. The start therefore measures what is left of
 /// the window.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
-fn a_late_ocomp_brief_cancels_its_day() {
-    let outcome = start_at(ANCHOR + 9 * 3600, true, ocomp_brief_at_now);
+fn a_late_native_brief_cancels_its_day() {
+    let outcome = start_at(ANCHOR + 9 * 3600, true, native_brief_at_now);
     assert_eq!(
         outcome,
         (AuctionStage::Cancelled, U256::from(10 * LOAD_MINOR), true)
@@ -1100,7 +1104,7 @@ fn a_late_ocomp_brief_cancels_its_day() {
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_brief_past_the_issuance_window_is_still_a_late_start() {
-    let outcome = start_at(ANCHOR + 3 * SECONDS_PER_DAY, true, ocomp_brief_at_now);
+    let outcome = start_at(ANCHOR + 3 * SECONDS_PER_DAY, true, native_brief_at_now);
     assert_eq!(
         outcome,
         (AuctionStage::Cancelled, U256::from(10 * LOAD_MINOR), true)
@@ -1112,7 +1116,7 @@ fn a_brief_past_the_issuance_window_is_still_a_late_start() {
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_briefed_day_the_router_never_takes_is_retired_past_its_issuance_window() {
-    let outcome = start_at(ANCHOR + 3 * SECONDS_PER_DAY, false, ocomp_brief_at_now);
+    let outcome = start_at(ANCHOR + 3 * SECONDS_PER_DAY, false, native_brief_at_now);
     assert_eq!(
         outcome,
         (AuctionStage::Cancelled, U256::from(10 * LOAD_MINOR), false)

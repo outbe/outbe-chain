@@ -76,7 +76,6 @@ fn input_for(kind: SystemTxKind) -> SystemTxInputV2 {
         SystemTxKind::LateFinalizeCredits => SystemTxInputV2::LateFinalizeCredits {
             artifact: outbe_primitives::reshare_artifact::LateFinalizeCreditsArtifact::default(),
         },
-        SystemTxKind::OcompLifecycleBegin => SystemTxInputV2::OcompLifecycleBegin,
         SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
         SystemTxKind::RewardsGemDelivery => SystemTxInputV2::RewardsGemDelivery,
         SystemTxKind::BoundaryOutcome => SystemTxInputV2::BoundaryOutcome {
@@ -109,7 +108,6 @@ fn input_for(kind: SystemTxKind) -> SystemTxInputV2 {
         SystemTxKind::RadiclePublication => SystemTxInputV2::RadiclePublication {
             batch: outbe_primitives::test_utils::sample_radicle_publication_batch(1),
         },
-        SystemTxKind::OcompTerminalRequest => SystemTxInputV2::OcompTerminalRequest,
     }
 }
 

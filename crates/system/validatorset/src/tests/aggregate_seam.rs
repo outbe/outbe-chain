@@ -295,47 +295,6 @@ fn complete_unbonding_finishes_only_unbonding_validators() {
     });
 }
 
-#[test]
-fn ocomp_bonded_slash_checks_the_window_then_the_lifecycle_then_mirrors_stake() {
-    let open_window = |vs: &ValidatorSet| {
-        vs.val_ocomp_recovery_deadline
-            .write(&VALIDATOR, 500)
-            .unwrap();
-    };
-    let slash = |storage: &mut HashMapStorageProvider| {
-        storage.enter(|storage| {
-            ValidatorSet::new(storage).record_ocomp_bonded_slash(VALIDATOR, U256::from(900))
-        })
-    };
-
-    let mut closed = active_with_bonded(1_000);
-    assert_eq!(
-        error_text(slash(&mut closed)),
-        "Revert: OCOMP bonded slash requires an open recovery window"
-    );
-
-    let mut registered = two_registered();
-    registered.enter(|storage| open_window(&ValidatorSet::new(storage)));
-    assert_eq!(
-        error_text(slash(&mut registered)),
-        "Revert: OCOMP bonded slash requires an active validator"
-    );
-
-    let mut active = active_with_bonded(1_000);
-    active.enter(|storage| open_window(&ValidatorSet::new(storage)));
-    active.clear_mutation_failure();
-    slash(&mut active).unwrap();
-    assert_eq!(active.clear_mutation_failure(), 1, "only the stake mirror");
-    active.enter(|storage| {
-        let vs = ValidatorSet::new(storage);
-        assert_eq!(vs.val_stake.read(&VALIDATOR).unwrap(), U256::from(900));
-        assert!(matches!(
-            vs.validator_lifecycle(VALIDATOR).unwrap(),
-            ValidatorLifecycle::Active(_)
-        ));
-    });
-}
-
 /// The five history counters of VALIDATOR, in persistence order.
 fn history_columns(provider: &mut HashMapStorageProvider) -> [u64; 5] {
     provider.enter(|storage| {

@@ -157,9 +157,6 @@ pub(crate) enum TributeError {
 /// Errors for the `validator` subcommand.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ValidatorError {
-    /// The OCOMP registration file is empty.
-    #[error("OCOMP registration file is empty")]
-    EmptyOcompRegistration,
     /// The caller combined `--symmetric` with asymmetric P2P options.
     #[error("--symmetric cannot be combined with asymmetric ingress/egress options")]
     SymmetricWithAsymmetricOptions,

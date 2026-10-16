@@ -17,16 +17,10 @@ clap.workspace = true
 eyre.workspace = true
 filetime.workspace = true
 hex.workspace = true
-k256.workspace = true
-outbe-chain-constants.workspace = true
-outbe-metadosis.workspace = true
-outbe-node.workspace = true
-outbe-ocomp-protocol.workspace = true
 outbe-consensus.workspace = true
 outbe-evm.workspace = true
 outbe-primitives.workspace = true
 outbe-tee.workspace = true
-reth-chainspec.workspace = true
 reth-ethereum.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -37,7 +31,6 @@ walkdir.workspace = true
 tar.workspace = true
 
 [dev-dependencies]
-outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

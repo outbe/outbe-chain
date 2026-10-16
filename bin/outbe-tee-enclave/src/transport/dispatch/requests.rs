@@ -59,8 +59,6 @@ pub(in crate::transport) fn dispatch_with_initialization(
     match req {
         req @ (EnclaveRequest::CreateNodForTestV2 { .. }
         | EnclaveRequest::ExecuteLysis { .. }
-        | EnclaveRequest::PrepareStateNods { .. }
-        | EnclaveRequest::OpenStateNods { .. }
         | EnclaveRequest::MineEncryptedNodV2 { .. }
         | EnclaveRequest::ReadNodAmountV2 { .. }
         | EnclaveRequest::NodTransferChunkV2 { .. }

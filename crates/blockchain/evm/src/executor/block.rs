@@ -31,9 +31,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub(super) validate_execution_summary: bool,
     /// Hash of the block being validated, when execution is for an existing block.
     pub(super) block_hash: Option<B256>,
-    /// State root committed by the block being validated. It is cached with the
-    /// execution summary so the immediate child can bind OCOMP finality even
-    /// during the Reth in-memory-tree/provider visibility window.
+    /// State root committed by the validated block, cached with its execution summary.
     block_state_root: Option<B256>,
     /// Hash of this block's parent header.
     pub(super) parent_hash: B256,
@@ -47,12 +45,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// Validator-mode signer used by proposer path to sign system-tx artifacts.
     pub(super) evm_signer: Option<SharedOutbeEvmSigner>,
     pub(super) expected_begin_system_txs: Vec<Recovered<TransactionSigned>>,
-    pub(super) expected_end_system_txs: Vec<Recovered<TransactionSigned>>,
-    pub(super) ocomp_lifecycle_active: bool,
-    pub(super) ocomp_terminal_request_consumed: bool,
-    /// Standard Ethereum post-execution output captured before
-    /// OSR2. Active OCOMP blocks must not call the inner executor's `finish`
-    /// afterward because that would create semantic writes after OSR2.
+    /// Standard Ethereum post-execution output used to assemble the final result.
     pub(super) ethereum_post_execution_requests: Option<Requests>,
     pub(super) system_layout_error: Option<crate::errors::SystemTxExpectationError>,
     pub(super) parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
@@ -121,13 +114,11 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             system_plan:
                 BlockSystemPlan {
                     expected_begin_system_txs,
-                    expected_end_system_txs,
                     system_layout_error,
                     proposer_evm_address,
                     execute_outbe_block_hooks,
                     prebuilt_phase1_tx,
                     pending_tee_bootstrap,
-                    ocomp_lifecycle_active,
                 },
             parent_accounting:
                 ParentAccountingInputs {
@@ -153,9 +144,6 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             system_tx_execution_gas: 0,
             evm_signer,
             expected_begin_system_txs,
-            expected_end_system_txs,
-            ocomp_lifecycle_active,
-            ocomp_terminal_request_consumed: false,
             ethereum_post_execution_requests: None,
             system_layout_error,
             parent_consensus_metadata,
@@ -277,27 +265,9 @@ where
         f: impl FnOnce(&Self::Result) -> CommitChanges,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
         let (tx_env, recovered) = tx.into_parts();
-        if self.ocomp_terminal_request_consumed {
-            return Err(
-                crate::errors::ExecutorValidationError::TransactionFollowsTerminalOcompSystemTx
-                    .into(),
-            );
-        }
-        let is_ocomp_terminal_request = is_reserved_system_tx(recovered.tx())
-            && matches!(
-                SystemTxInputV2::decode(recovered.tx().input().as_ref()),
-                Ok(SystemTxInputV2::OcompTerminalRequest)
-            );
-        if is_ocomp_terminal_request {
-            return self.execute_ocomp_terminal_request(recovered, f);
-        }
         let outcome = (|| {
             if is_reserved_system_tx(recovered.tx()) {
                 return self.execute_reserved_system_tx(recovered, f);
-            }
-            let candidate = self.ocomp_system_carrier_candidate(&recovered)?;
-            if let Some(candidate) = candidate {
-                return self.execute_ocomp_system_carrier(candidate, tx_env, recovered, f);
             }
             self.route_user_transaction(tx_env, recovered, f)
         })();
@@ -326,23 +296,13 @@ where
     }
 
     fn finish(mut self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
-        if self.ocomp_lifecycle_active && !self.ocomp_terminal_request_consumed {
-            return Err(
-                crate::errors::ExecutorValidationError::MissingActiveOcompTerminalSystemTx.into(),
-            );
-        }
         let current_summary = self.current_execution_summary();
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let block_timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
         let block_artifacts =
             artifacts::validate_finish_artifacts(&self, block_number, current_summary)?;
 
-        // OCOMP completes ordinary state changes before its terminal request.
-        // The normal path applies the same phase here. Neither path passes
-        // withdrawals to the upstream Ethereum Gwei-to-wei conversion.
-        if !self.ocomp_lifecycle_active {
-            self.apply_outbe_ethereum_post_execution()?;
-        }
+        self.apply_outbe_ethereum_post_execution()?;
         let requests = self
             .ethereum_post_execution_requests
             .take()

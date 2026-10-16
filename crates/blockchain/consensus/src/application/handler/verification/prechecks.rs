@@ -65,7 +65,6 @@ impl ApplicationShared {
             },
             HeaderArtifactValidationDeps {
                 chain_id: self.chain_id,
-                ocomp_lifecycle_activation: self.ocomp_lifecycle_activation,
                 certificate_scheme_provider: &self.certificate_scheme_provider,
                 committee_provider: &self.committee_provider,
                 dkg_manager: &self.dkg_manager,

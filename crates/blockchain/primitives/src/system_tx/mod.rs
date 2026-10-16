@@ -6,43 +6,12 @@
 //! `transact_system_call` with `SYSTEM_ADDRESS` as the EVM caller. The signed
 //! transaction authenticates the proposer and fixes receipt/tx ordering.
 //!
-//! Begin-zone system transactions run before user transactions in this order:
-//!
-//! 1. [`SystemTxKind::CertifiedParentAccounting`] for block `>= 2`.
-//! 2. [`SystemTxKind::LateFinalizeCredits`] for block `>= 2` (mandatory
-//!    inclusion-window phase: records late finalize credits and settles the
-//!    matured `N+K` fee escrow).
-//! 3. [`SystemTxKind::OcompLifecycleBegin`] once the OCOMP lifecycle is active.
-//! 4. [`SystemTxKind::CycleTick`] for block `>= 1`.
-//! 5. [`SystemTxKind::RewardsGemDelivery`] for block `>= 1`.
-//! 6. [`SystemTxKind::BoundaryOutcome`] iff the header carries a BoundaryOutcome
-//!    (mandatory at block `1` under V2 for the genesis bootstrap).
-//! 7. [`SystemTxKind::TeeBootstrap`] in the one-time bootstrap block.
-//! 8. [`SystemTxKind::OracleSlashWindow`] for block `>= 1`.
-//! 9. [`SystemTxKind::HookEvents`] for block `>= 1` (receipt container for
-//!    whitelisted pre-exec hook logs, with no lifecycle re-execution).
-//! 10. [`SystemTxKind::RadiclePublication`] iff the header carries a publication batch.
-//!
-//! Once active, [`SystemTxKind::OcompTerminalRequest`] is the sole end-zone
-//! transaction. It follows every user transaction.
-//!
-//! ## V2 codec
-//!
-//! This module ships the V2 wire codec exclusively. It rejects V1 system-tx
-//! input bytes (selectors `OSF1`/`OSC1`/`OSB1`/`OSO1` with version byte `1`)
-//! at every height. Rewards adds `OSG2`. OCOMP adds `OSE2` and `OSR2`. None of
-//! them changes the V2 version byte. Greenfield rollout.
-//!
-//! The split helper below is structural-only. It rejects:
-//! - reserved-address transactions outside the contiguous system zones
-//! - wrong-zone or out-of-order system tx kinds
-//!
-//! [`validate_system_tx_set_for_activation`] performs the separate membership
-//! check for a concrete block number, BoundaryOutcome and TeeBootstrap presence,
-//! and the OCOMP lifecycle activation. The node uses it through
-//! `binding::validate_system_layout`. [`validate_active_system_tx_set`] fixes
-//! the activation to `Disabled`, so it rejects every block that carries the
-//! OCOMP phases.
+//! Begin-zone order: parent accounting, late credits, Cycle, reward delivery,
+//! boundary outcome, TEE bootstrap, Oracle slash window, hook events,
+//! and optional Radicle publication.
+//! Block height and header artifacts select the mandatory phases.
+//! User transactions follow the complete begin-zone prefix.
+//! The signed envelopes use the existing version-2 codec.
 
 use crate::error::PrecompileError;
 
@@ -62,15 +31,14 @@ pub use input::SystemTxInputV2;
 
 pub use kind::{
     decode_system_tx_kind, is_reserved_system_tx, selector_from_input,
-    system_tx_kind_from_selector, BodyZone, OcompLifecycleActivation, SystemTxKind,
+    system_tx_kind_from_selector, BodyZone, SystemTxKind,
 };
 
 pub use phase::SystemTxPhase;
 
 pub use layout::{
-    expected_begin_block_kinds, expected_begin_block_kinds_for_activation,
-    expected_begin_block_kinds_for_publication, expected_end_block_kinds, split_system_layout,
-    validate_active_system_tx_set, validate_system_tx_set_for_activation,
+    expected_begin_block_kinds, expected_begin_block_kinds_for_publication,
+    expected_end_block_kinds, split_system_layout, validate_active_system_tx_set,
     validate_system_tx_set_for_publication, SystemTxLayout,
 };
 
@@ -107,10 +75,6 @@ pub const ORACLE_SLASH_WINDOW_SELECTOR: [u8; 4] = *b"OSO2";
 pub const TEE_BOOTSTRAP_SELECTOR: [u8; 4] = *b"OST3";
 /// Selector for [`SystemTxKind::LateFinalizeCredits`].
 pub const LATE_FINALIZE_CREDITS_SELECTOR: [u8; 4] = *b"OSL2";
-/// Selector for [`SystemTxKind::OcompLifecycleBegin`] (V2 OSE2).
-pub const OCOMP_LIFECYCLE_BEGIN_SELECTOR: [u8; 4] = *b"OSE2";
-/// Selector for [`SystemTxKind::OcompTerminalRequest`] (V2 OSR2).
-pub const OCOMP_TERMINAL_REQUEST_SELECTOR: [u8; 4] = *b"OSR2";
 /// Selector for [`SystemTxKind::HookEvents`] (V2 OSH2).
 pub const HOOK_EVENTS_SELECTOR: [u8; 4] = *b"OSH2";
 pub const RADICLE_PUBLICATION_SELECTOR: [u8; 4] = *b"OSP2";
@@ -123,7 +87,7 @@ pub const MAX_SYSTEM_TXS_PER_BLOCK: u8 = 16;
 /// `n >= GENESIS_BOOTSTRAP_BLOCK_NUMBER + 1`. This constant is `1`, so
 /// Phase 1 begins at block `2`. Block `1` still carries the genesis
 /// `BoundaryOutcome` as a begin-zone system transaction. It comes after
-/// `OcompLifecycleBegin` (when the OCOMP lifecycle is active), `CycleTick`, and
+/// `CycleTick` and
 /// `RewardsGemDelivery`.
 pub const GENESIS_BOOTSTRAP_BLOCK_NUMBER: u64 = 1;
 

@@ -10,7 +10,6 @@
 //! `mrenclave` means no enclave update. The decoder rejects unknown fields.
 
 use alloy_primitives::B256;
-use outbe_ocompregistry::{poc_schema_limits, OcompSuccessorV1};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -35,8 +34,6 @@ pub struct ScheduleUpdatePayload {
         skip_serializing_if = "Option::is_none"
     )]
     pub mrenclave: Option<B256>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ocomp_successor: Option<String>,
 }
 
 /// Empty optional UI fields do not request a code change. A supplied measurement
@@ -59,20 +56,7 @@ impl ScheduleUpdatePayload {
             activation_height,
             info: info.into(),
             mrenclave: None,
-            ocomp_successor: None,
         }
-    }
-
-    /// Adds one exact predecessor-bound OCOMP successor to this Update.
-    pub fn with_ocomp_successor(
-        mut self,
-        successor: &OcompSuccessorV1,
-    ) -> std::result::Result<Self, UpdateError> {
-        let canonical = successor
-            .encode_canonical(&poc_schema_limits())
-            .map_err(|_| UpdateError::InvalidOcompSuccessor)?;
-        self.ocomp_successor = Some(hex::encode(canonical));
-        Ok(self)
     }
 
     pub fn from_value(payload: &Value) -> std::result::Result<Self, UpdateError> {
@@ -81,30 +65,6 @@ impl ScheduleUpdatePayload {
 
     pub fn protocol_version(&self) -> std::result::Result<ProtocolVersion, UpdateError> {
         Self::parse_version(&self.version)
-    }
-
-    pub fn ocomp_successor(&self) -> std::result::Result<Option<OcompSuccessorV1>, UpdateError> {
-        let Some(encoded) = self.ocomp_successor.as_deref() else {
-            return Ok(None);
-        };
-        let maximum_hex_len = poc_schema_limits()
-            .codec
-            .max_allocation_bytes
-            .checked_mul(2)
-            .ok_or(UpdateError::InvalidOcompSuccessor)?;
-        if encoded.is_empty() || encoded.len() > maximum_hex_len || encoded.len() % 2 != 0 {
-            return Err(UpdateError::InvalidOcompSuccessor);
-        }
-        if !encoded
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return Err(UpdateError::InvalidOcompSuccessor);
-        }
-        let canonical = hex::decode(encoded).map_err(|_| UpdateError::InvalidOcompSuccessor)?;
-        OcompSuccessorV1::decode_canonical(&canonical, &poc_schema_limits())
-            .map(Some)
-            .map_err(|_| UpdateError::InvalidOcompSuccessor)
     }
 
     pub fn validate(
@@ -123,14 +83,6 @@ impl ScheduleUpdatePayload {
         self.validate_measurement_upgrade()?;
         if self.mrenclave.is_some() && self.activation_height <= current_height {
             return Err(UpdateError::HeightInPast);
-        }
-        if let Some(successor) = self.ocomp_successor()? {
-            if successor.authority.request_profile.chain_id != chain_id {
-                return Err(UpdateError::OcompSuccessorChainIdentityMismatch);
-            }
-            if successor.activation_height != self.activation_height {
-                return Err(UpdateError::OcompSuccessorActivationMismatch);
-            }
         }
         Ok(())
     }

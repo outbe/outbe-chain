@@ -201,7 +201,7 @@ fn production_validator_set_selector_allow_list_is_exact() {
         "setP2pAddress(address,uint8,bytes)",
         "getP2pAddress(address)",
         "deactivateValidator(address)",
-        "confirmValidatorReady(bytes)",
+        "confirmValidatorReady()",
     ];
     let mut expected = signatures.map(|signature| {
         let digest = keccak256(signature);

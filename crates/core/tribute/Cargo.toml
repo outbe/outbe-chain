@@ -9,7 +9,6 @@ publish.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
 outbe-tee.workspace = true
-outbe-ocomp-protocol.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-sol-types.workspace = true
 serde.workspace = true
@@ -21,7 +20,6 @@ outbe-tee-enclave = { workspace = true, optional = true }
 
 [dev-dependencies]
 alloy-consensus.workspace = true
-outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 outbe-tribute = { path = ".", features = ["test-enclave"] }
 outbe-tee-enclave.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }

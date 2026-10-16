@@ -190,11 +190,10 @@ fn stays_pending(world: &mut World) {
 
 #[when("the joiner confirms readiness")]
 fn joiner_confirms(world: &mut World) {
-    let index = world.validators.joiner_index();
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let outcome = world
         .rpc
-        .confirm_ready_outcome(&key, index)
+        .confirm_ready_outcome(&key)
         .expect("explicit readiness transaction");
     let ports = dkg_ports(world, &[0, 1, 2, 3, 4]).expect("same five owners before confirmation");
     let point = world

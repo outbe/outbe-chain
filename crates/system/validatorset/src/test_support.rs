@@ -8,14 +8,6 @@
 //! semantic fixture seams without receiving raw storage-slot handles.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
-use outbe_ocomp_protocol::{
-    committee::{
-        validator_identity_hash_v1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
-        POC_KEY_EPOCH, RESULT_SIGNATURE_PURPOSE_BITMAP,
-    },
-    profile::poc_schema_limits,
-};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -31,114 +23,6 @@ use crate::{
     state_machine::{self, StakeProjection, ValidatorHistory, ValidatorLifecycle},
     EpochSnapshot,
 };
-
-const TEST_OCOMP_KEY_DOMAIN: &[u8] = b"OUTBE_TEST_OCOMP_KEY_V1";
-
-fn test_ocomp_signing_key(identity: B256) -> Result<SigningKey> {
-    let mut preimage = Vec::with_capacity(TEST_OCOMP_KEY_DOMAIN.len() + 32);
-    preimage.extend_from_slice(TEST_OCOMP_KEY_DOMAIN);
-    preimage.extend_from_slice(identity.as_slice());
-    let mut candidate = keccak256(preimage).0;
-    for _ in 0..16 {
-        if let Ok(key) = SigningKey::from_bytes((&candidate).into()) {
-            return Ok(key);
-        }
-        candidate = keccak256(candidate).0;
-    }
-    Err(ValidatorSetError::TestOcompSigningKeyDerivationFailed.into())
-}
-
-fn test_ocomp_registration(
-    validator: Address,
-    consensus_pubkey: &[u8; 48],
-    chain_id: u64,
-    genesis_hash: B256,
-) -> Result<Vec<u8>> {
-    let identity = validator_identity_hash_v1(validator, consensus_pubkey).map_err(|error| {
-        ValidatorSetError::CannotDeriveTestValidatorIdentity {
-            reason: error.to_string(),
-        }
-    })?;
-    let signing_key = test_ocomp_signing_key(identity)?;
-    test_signed_ocomp_registration(
-        validator,
-        consensus_pubkey,
-        &signing_key,
-        (chain_id, genesis_hash),
-    )
-    .map(|(_, encoded)| encoded)
-}
-
-/// The canonical OCOMP registration of `validator` for the chain
-/// `(chain_id, genesis_hash)`, signed with the test key whose secret scalar is
-/// `key_seed` in every byte. Returns the registration and its encoding.
-pub fn test_seeded_ocomp_registration(
-    validator: Address,
-    consensus_pubkey: &[u8; 48],
-    key_seed: u8,
-    chain: (u64, B256),
-) -> Result<(OcompKeyRegistrationV1, Vec<u8>)> {
-    let signing_key = SigningKey::from_bytes((&[key_seed; 32]).into()).map_err(|error| {
-        ValidatorSetError::TestOcompSeedKeyInvalid {
-            reason: error.to_string(),
-        }
-    })?;
-    test_signed_ocomp_registration(validator, consensus_pubkey, &signing_key, chain)
-}
-
-/// A canonical OCOMP key registration of `validator` for the chain
-/// `(chain_id, genesis_hash)`, with a proof of possession by `signing_key`.
-/// Returns the registration and its canonical encoding.
-fn test_signed_ocomp_registration(
-    validator: Address,
-    consensus_pubkey: &[u8; 48],
-    signing_key: &SigningKey,
-    (chain_id, genesis_hash): (u64, B256),
-) -> Result<(OcompKeyRegistrationV1, Vec<u8>)> {
-    let identity = validator_identity_hash_v1(validator, consensus_pubkey).map_err(|error| {
-        ValidatorSetError::CannotDeriveTestValidatorIdentity {
-            reason: error.to_string(),
-        }
-    })?;
-    let mut registration = OcompKeyRegistrationV1 {
-        core: OcompKeyRegistrationCoreV1 {
-            chain_id,
-            genesis_hash,
-            validator_identity_hash: identity,
-            ocomp_public_key_sec1: signing_key
-                .verifying_key()
-                .to_encoded_point(true)
-                .as_bytes()
-                .try_into()
-                .map_err(|_| ValidatorSetError::TestOcompSec1KeyWrongLength)?,
-            key_epoch: POC_KEY_EPOCH,
-            allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-        },
-        proof_of_possession: [0; 64],
-    };
-    let limits = poc_schema_limits();
-    let digest = registration
-        .proof_of_possession_digest(&limits)
-        .map_err(|error| ValidatorSetError::TestOcompPopDigestFailed {
-            reason: error.to_string(),
-        })?;
-    let signature: Signature = signing_key
-        .sign_prehash(digest.as_slice())
-        .map_err(|error| ValidatorSetError::TestOcompPopSigningFailed {
-            reason: error.to_string(),
-        })?;
-    registration.proof_of_possession = signature
-        .normalize_s()
-        .unwrap_or(signature)
-        .to_bytes()
-        .into();
-    let encoded = registration.encode_canonical(&limits).map_err(|error| {
-        ValidatorSetError::TestOcompRegistrationEncodeFailed {
-            reason: error.to_string(),
-        }
-    })?;
-    Ok((registration, encoded))
-}
 
 /// Move one registered test validator through the real admission transitions,
 /// stopping at confirmed PENDING so a separately-constructed boundary artifact
@@ -161,22 +45,7 @@ pub fn admit_validator_for_boundary(
     if validators.val_status.read(&validator)? == status::PENDING
         && !validators.val_join_confirmed.read(&validator)?
     {
-        let encoded = match validators.ocomp_registration(validator)? {
-            Some(registration) => registration
-                .encode_canonical(&poc_schema_limits())
-                .map_err(
-                    |error| ValidatorSetError::StoredTestOcompRegistrationEncodeFailed {
-                        reason: error.to_string(),
-                    },
-                )?,
-            None => test_ocomp_registration(
-                validator,
-                &record.consensus_pubkey,
-                validators.storage.chain_id()?,
-                validators.storage.genesis_hash()?,
-            )?,
-        };
-        validators.confirm_validator_ready(validator, &encoded)?;
+        validators.confirm_validator_ready(validator)?;
     }
     Ok(())
 }

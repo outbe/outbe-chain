@@ -1,5 +1,5 @@
 //! Oracle business logic: vote submission, VWAP/TWAP computation, WorldwideDay
-//! and UTC-day finalization, and the OCOMP projection profile.
+//! and UTC-day finalization.
 
 mod day_vwap;
 mod raw_snapshots;
@@ -8,8 +8,7 @@ mod vote;
 mod vwap;
 mod window_vwap;
 
-use crate::constants::DAY_TYPE_PAIR;
-use crate::errors::{OracleError, OracleOcompError};
+use crate::errors::OracleError;
 use crate::schema::OracleContract;
 use alloy_primitives::U256;
 use outbe_primitives::address_pair::AddressPair;
@@ -68,54 +67,6 @@ impl VwapAccumulator {
 }
 
 impl OracleContract<'_> {
-    /// Initializes the fixed OCOMP Oracle projection for a fresh devnet.
-    pub fn initialize_fresh_ocomp_profile(&mut self) -> Result<()> {
-        let storage = self.storage.clone();
-        storage.with_checkpoint(|| {
-            if self.pair_index_of(DAY_TYPE_PAIR)? == 0 {
-                return Err(OracleOcompError::DayTypePairNotRegistered.into());
-            }
-
-            if self.ocomp_profile_ready.read()? {
-                if self.ocomp_state_version.read()? == 0 {
-                    return Err(OracleOcompError::ProfileReadyWithZeroVersion.into());
-                }
-                return Ok(());
-            }
-            if self.ocomp_state_version.read()? != 0 {
-                return Err(OracleOcompError::PartialPreForkState.into());
-            }
-
-            self.ocomp_state_version.write(1)?;
-            self.ocomp_profile_ready.write(true)
-        })
-    }
-
-    /// Reserves the next OCOMP-visible Oracle version before its owner writes.
-    ///
-    /// Returning `None` keeps every historical pre-fork mutation byte-for-byte
-    /// inert. Overflow is rejected before any related owner state changes.
-    pub(crate) fn next_ocomp_state_version(&self) -> Result<Option<u64>> {
-        if !self.ocomp_profile_ready.read()? {
-            return Ok(None);
-        }
-        let current = self.ocomp_state_version.read()?;
-        if current == 0 {
-            return Err(OracleOcompError::StateVersionZero.into());
-        }
-        current
-            .checked_add(1)
-            .map(Some)
-            .ok_or_else(|| OracleOcompError::StateVersionOverflow.into())
-    }
-
-    pub(crate) fn commit_ocomp_state_version(&self, next: Option<u64>) -> Result<()> {
-        if let Some(version) = next {
-            self.ocomp_state_version.write(version)?;
-        }
-        Ok(())
-    }
-
     /// Evaluates `value_of` for every vote-target pair in registry order and
     /// keeps each pair that has a value.
     fn vote_target_values(

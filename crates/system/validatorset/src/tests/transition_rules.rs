@@ -6,7 +6,6 @@
 use super::*;
 use crate::precompile::IValidatorSet;
 use alloy_sol_types::SolEvent;
-use outbe_ocomp_protocol::committee::OcompKeyRegistrationV1;
 use outbe_primitives::addresses::VALIDATOR_SET_ADDRESS;
 use outbe_primitives::error::Result;
 
@@ -69,19 +68,6 @@ fn seeded_on(
         let mut vs = ValidatorSet::new(storage);
         setup(&mut vs)?;
         vs.test_set_pending_set_change(false)
-    })?;
-    Ok(storage)
-}
-
-/// Configured storage like [`configured_storage`] for another chain identity.
-fn storage_for_chain(chain_id: u64, genesis_hash: B256) -> Result<HashMapStorageProvider> {
-    let mut storage = HashMapStorageProvider::new_with_chain_identity(chain_id, genesis_hash);
-    storage.set_block_number(1);
-    storage.enter(|storage| {
-        let mut vs = ValidatorSet::new(storage);
-        vs.config_owner.write(OWNER)?;
-        vs.set_config_max_validators(10)?;
-        vs.config_epoch_length_blocks.write(10)
     })?;
     Ok(storage)
 }
@@ -336,225 +322,26 @@ fn unjail_and_tee_expiry_reject_ineligible_validators_without_effect() -> Result
     Ok(())
 }
 
-fn registration_of(
-    vs: &ValidatorSet<'_>,
-    validator: Address,
-    key_seed: u8,
-) -> Result<(OcompKeyRegistrationV1, Vec<u8>)> {
-    let consensus_pubkey = vs
-        .get_validator(validator)?
-        .ok_or_else(|| PrecompileError::Fatal(format!("fixture validator {validator} is absent")))?
-        .consensus_pubkey;
-    Ok(ocomp_registration(validator, &consensus_pubkey, key_seed))
-}
-
 #[test]
-fn readiness_checks_lifecycle_then_encoding_then_chain_binding() -> Result<()> {
+fn readiness_checks_lifecycle_before_effects() -> Result<()> {
     assert_without_effect(
         &mut seeded(|_| Ok(()))?,
-        |vs| vs.confirm_validator_ready(FIRST, &[0xff]),
+        |vs| vs.confirm_validator_ready(FIRST),
         "Revert: validator not registered",
     );
     assert_without_effect(
         &mut seeded(|vs| participant(vs, FIRST))?,
-        |vs| vs.confirm_validator_ready(FIRST, &[0xff]),
+        |vs| vs.confirm_validator_ready(FIRST),
         "Revert: confirmValidatorReady requires PENDING status, got 2",
     );
-    let Err(decode_error) = OcompKeyRegistrationV1::decode_canonical(
-        &[0xff],
-        &outbe_ocomp_protocol::profile::poc_schema_limits(),
-    ) else {
-        return Err(PrecompileError::Fatal(
-            "0xff decodes as a registration".into(),
-        ));
-    };
-    assert_without_effect(
-        &mut seeded(|vs| waiting_for_readiness(vs, FIRST))?,
-        |vs| vs.confirm_validator_ready(FIRST, &[0xff]),
-        &format!("Revert: invalid OCOMP registration: {decode_error}"),
-    );
-    let other_genesis = B256::repeat_byte(0x99);
-    for (chain_id, genesis_hash, expected) in [
-        (
-            CHAIN_ID + 1,
-            other_genesis,
-            "Revert: OCOMP registration chain id mismatch",
-        ),
-        (
-            CHAIN_ID,
-            other_genesis,
-            "Revert: OCOMP registration genesis hash mismatch",
-        ),
-    ] {
-        let mut storage = seeded_on(storage_for_chain(chain_id, genesis_hash)?, |vs| {
-            waiting_for_readiness(vs, FIRST)
-        })?;
-        let encoded = storage
-            .enter(|storage| registration_of(&ValidatorSet::new(storage), FIRST, 0x41))?
-            .1;
-        assert_without_effect(
-            &mut storage,
-            |vs| vs.confirm_validator_ready(FIRST, &encoded),
-            expected,
-        );
-    }
-    Ok(())
-}
-
-#[test]
-fn readiness_checks_identity_then_key_pin_then_key_owner() -> Result<()> {
-    let mut storage = seeded(|vs| {
-        waiting_for_readiness(vs, FIRST)?;
-        waiting_for_readiness(vs, SECOND)
-    })?;
-    let (first, second_with_first_key, wrong_identity, first_rotated) =
-        storage.enter(|storage| {
-            let vs = ValidatorSet::new(storage);
-            Ok::<_, PrecompileError>((
-                registration_of(&vs, FIRST, 0x41)?.1,
-                registration_of(&vs, SECOND, 0x41)?.1,
-                ocomp_registration(FIRST, &dummy_consensus_pubkey(0x77), 0x42).1,
-                registration_of(&vs, FIRST, 0x43)?.1,
-            ))
-        })?;
-    assert_without_effect(
-        &mut storage,
-        |vs| vs.confirm_validator_ready(FIRST, &wrong_identity),
-        "Revert: OCOMP registration validator identity mismatch",
-    );
-    let effect = call_effect(&mut storage, |vs| vs.confirm_validator_ready(FIRST, &first));
-    assert_eq!(
-        (effect.outcome.as_str(), effect.events.len()),
-        ("Ok(())", 0)
-    );
-    assert_without_effect(
-        &mut storage,
-        |vs| vs.confirm_validator_ready(FIRST, &first_rotated),
-        "Revert: OCOMP public key is immutable in key_epoch 1",
-    );
-    assert_without_effect(
-        &mut storage,
-        |vs| vs.confirm_validator_ready(SECOND, &second_with_first_key),
-        "Revert: OCOMP public key already registered by another validator",
-    );
+    let mut storage = seeded(|vs| waiting_for_readiness(vs, FIRST))?;
+    storage.enter(|storage| ValidatorSet::new(storage).confirm_validator_ready(FIRST))?;
     storage.enter(|storage| -> Result<()> {
         let vs = ValidatorSet::new(storage);
-        assert!(matches!(
-            vs.validator_lifecycle(FIRST)?,
-            ValidatorLifecycle::Joining(_)
-        ));
         assert!(vs.val_join_confirmed.read(&FIRST)?);
-        assert_eq!(vs.val_ocomp_registration.get_bytes(&FIRST).read()?, first);
         assert!(vs.has_pending_set_change()?);
         Ok(())
     })
-}
-
-/// Two founders, FIRST then SECOND, both ACTIVE without OCOMP registrations.
-fn founders(vs: &mut ValidatorSet<'_>) -> Result<()> {
-    participant(vs, FIRST)?;
-    participant(vs, SECOND)
-}
-
-fn founder_registrations(
-    storage: &mut HashMapStorageProvider,
-    seeds: [(Address, u8); 2],
-) -> Result<Vec<OcompKeyRegistrationV1>> {
-    storage.enter(|storage| {
-        let vs = ValidatorSet::new(storage);
-        let mut registrations = Vec::with_capacity(seeds.len());
-        for (validator, key_seed) in seeds {
-            registrations.push(registration_of(&vs, validator, key_seed)?.0);
-        }
-        Ok(registrations)
-    })
-}
-
-#[test]
-fn founder_import_checks_cover_proof_binding_identity_and_uniqueness_in_order() -> Result<()> {
-    let mut storage = seeded(founders)?;
-    let valid = founder_registrations(&mut storage, [(FIRST, 0x51), (SECOND, 0x52)])?;
-    assert_without_effect(
-        &mut storage,
-        |vs| vs.initialize_founder_ocomp_registrations(&valid[..1]),
-        "Revert: OCOMP founder registrations must exactly cover ACTIVE ValidatorSet: 1 registrations for 2 validators",
-    );
-    let mut tampered = valid.clone();
-    tampered[0].proof_of_possession[0] ^= 1;
-    let Err(proof_error) = tampered[0]
-        .validate_proof_of_possession(&outbe_ocomp_protocol::profile::poc_schema_limits())
-    else {
-        return Err(PrecompileError::Fatal(
-            "tampered proof still verifies".into(),
-        ));
-    };
-    assert_without_effect(
-        &mut storage,
-        |vs| vs.initialize_founder_ocomp_registrations(&tampered),
-        &format!("Revert: invalid OCOMP founder proof of possession: {proof_error}"),
-    );
-    let swapped = vec![valid[1].clone(), valid[0].clone()];
-    assert_without_effect(
-        &mut storage,
-        |vs| vs.initialize_founder_ocomp_registrations(&swapped),
-        &format!("Revert: OCOMP founder registration identity mismatch for {FIRST}"),
-    );
-    let shared_key = founder_registrations(&mut storage, [(FIRST, 0x51), (SECOND, 0x51)])?;
-    assert_without_effect(
-        &mut storage,
-        |vs| vs.initialize_founder_ocomp_registrations(&shared_key),
-        "Revert: OCOMP founder registrations contain duplicate identity or key",
-    );
-    let mut other_chain = seeded_on(
-        storage_for_chain(CHAIN_ID, B256::repeat_byte(0x99))?,
-        founders,
-    )?;
-    let unbound = founder_registrations(&mut other_chain, [(FIRST, 0x51), (SECOND, 0x52)])?;
-    assert_without_effect(
-        &mut other_chain,
-        |vs| vs.initialize_founder_ocomp_registrations(&unbound),
-        "Revert: OCOMP founder registration chain binding mismatch",
-    );
-    Ok(())
-}
-
-#[test]
-fn founder_import_is_atomic_exactly_replayable_and_rejects_partial_state() -> Result<()> {
-    let mut storage = seeded(founders)?;
-    let valid = founder_registrations(&mut storage, [(FIRST, 0x51), (SECOND, 0x52)])?;
-    let effect = call_effect(&mut storage, |vs| {
-        vs.initialize_founder_ocomp_registrations(&valid)
-    });
-    assert_eq!(
-        (effect.outcome.as_str(), effect.events.len()),
-        ("Ok(())", 0)
-    );
-    assert!(effect.mutations > 0);
-    assert_without_effect(
-        &mut storage,
-        |vs| vs.initialize_founder_ocomp_registrations(&valid),
-        "Ok(())",
-    );
-
-    let second_key_hash = keccak256(valid[1].core.ocomp_public_key_sec1);
-    storage.enter(|storage| -> Result<()> {
-        let vs = ValidatorSet::new(storage);
-        vs.val_ocomp_registration.get_bytes(&SECOND).clear()?;
-        vs.ocomp_key_hash_to_validator
-            .write(&second_key_hash, Address::ZERO)
-    })?;
-    assert_without_effect(
-        &mut storage,
-        |vs| vs.initialize_founder_ocomp_registrations(&valid),
-        "Revert: partial OCOMP founder registration import is fatal",
-    );
-    let conflicting = founder_registrations(&mut storage, [(FIRST, 0x53), (SECOND, 0x52)])?;
-    assert_without_effect(
-        &mut storage,
-        |vs| vs.initialize_founder_ocomp_registrations(&conflicting),
-        &format!("Revert: partial or conflicting OCOMP founder state for {FIRST}"),
-    );
-    Ok(())
 }
 
 #[test]

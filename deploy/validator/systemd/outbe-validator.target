@@ -4,11 +4,8 @@ Wants=outbe-enclave.service
 Wants=outbe-radicle.service
 Wants=outbe-validator.service
 Wants=outbe-feeder.service
-Wants=outbe-ocomp-exporter.service
-Wants=outbe-ocomp-worker@0.service
 After=outbe-enclave.service outbe-radicle.service
 After=outbe-validator.service outbe-feeder.service
-After=outbe-ocomp-exporter.service outbe-ocomp-worker@0.service
 
 [Install]
 WantedBy=multi-user.target

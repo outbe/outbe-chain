@@ -63,7 +63,7 @@ fn issue_nod_with_cost(
         || terms.chain_id != storage.chain_id()?
         || !encrypted.has_valid_encoding()
     {
-        return Err(NodFactoryError::InvalidMaterializationProof.into());
+        return Err(NodFactoryError::InvalidEncryptedNod.into());
     }
     if nod_api::get_item(storage, nod_id)?.is_some() {
         return Err(NodFactoryError::NodAlreadyExists.into());
@@ -291,12 +291,6 @@ fn load_nod(
     nod_id: WwdEntityId,
 ) -> Result<(LoadedNodItem, LoadedNodBucket)> {
     let item = nod_api::load_item(storage, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
-    if NodContract::new(storage.clone())
-        .ocomp_certified_generation(item.body().worldwide_day)?
-        .is_some_and(|generation| generation.next_nod_ordinal < generation.nod_count)
-    {
-        return Err(NodFactoryError::NodGenerationNotMaterialized.into());
-    }
     let bucket = nod_api::load_bucket(storage, item.body().bucket_key)?
         .ok_or(NodFactoryError::BucketNotFound)?;
     Ok((item, bucket))

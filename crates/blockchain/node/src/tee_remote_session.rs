@@ -31,7 +31,7 @@ use reth_storage_api::StateProvider;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::ocomp::finality::{verify_public_account_proof, PublicAccountProofV1};
+use crate::state_proof::{verify_public_account_proof, PublicAccountProofV1};
 
 /// Exact consensus-finalized number/hash read inside one node-owned Registry
 /// operation. It is deliberately private so callers cannot retain a once-valid

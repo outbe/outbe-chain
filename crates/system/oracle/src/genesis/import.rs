@@ -32,7 +32,6 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
     import_aggregate_votes(oracle, &config.aggregate_votes)?;
     import_snapshots(oracle, &config.snapshots)?;
     import_scurve_entries(oracle, &config.scurve_entries)?;
-    import_protected_validators(oracle, &config.protected_validators)?;
 
     oracle.config_enabled.write(true)?;
     oracle.config_is_initialized.write(true)?;
@@ -225,20 +224,6 @@ fn import_scurve_entries(
     for entry in scurve_entries {
         let pair = oracle.require_pair_from(entry.base, entry.quote)?;
         crate::scurve::store_scurve_entry(oracle, pair, entry.peak_day, entry.peak_price)?;
-    }
-    Ok(())
-}
-
-/// A nonempty list also turns on protected-validator handling.
-fn import_protected_validators(
-    oracle: &mut OracleContract,
-    protected_validators: &[Address],
-) -> Result<()> {
-    if !protected_validators.is_empty() {
-        oracle.config_allow_protected.write(true)?;
-        for validator in protected_validators {
-            oracle.protected_validator.write(validator, true)?;
-        }
     }
     Ok(())
 }

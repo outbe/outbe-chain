@@ -1067,7 +1067,7 @@ fn recovered_nodes_resume(world: &mut World) {
     );
     let ready = world
         .rpc
-        .confirm_ready_outcome(&validator_key, MISSED_VALIDATOR)
+        .confirm_ready_outcome(&validator_key)
         .expect("submit readiness after TEE rejoin");
     assert!(ready.success, "readiness confirmation failed");
     let readiness = world

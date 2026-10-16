@@ -19,7 +19,7 @@ pub fn proof_limits() -> StateProofLimits {
     StateProofLimits {
         max_slots: 32,
         max_nodes: 33 * crate::finalized_admission::MAX_MPT_PROOF_NODES,
-        max_bytes: outbe_ocomp_protocol::profile::poc_schema_limits().max_bounded_bytes,
+        max_bytes: 2 * 1024 * 1024,
     }
 }
 
@@ -114,7 +114,7 @@ pub fn source_binding(
     day_index: u32,
     expected_words: &[(B256, U256)],
 ) -> Result<B256, TransportError> {
-    crate::nod_materialization::hash(
+    crate::response_auth::hash(
         b"outbe/tribute/state-source-binding",
         &(tribute, day_index, expected_words),
     )
@@ -122,5 +122,5 @@ pub fn source_binding(
 }
 
 fn rejected(error: impl std::fmt::Display) -> TransportError {
-    TransportError::NodMaterializationRejected(error.to_string())
+    TransportError::TributeSourceRejected(error.to_string())
 }

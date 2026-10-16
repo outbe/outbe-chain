@@ -28,11 +28,18 @@ use super::Incomplete;
 use crate::errors::SnapshotError;
 
 pub(crate) struct VerifiedState {
-    pub db: DatabaseEnv,
+    _db: DatabaseEnv,
     pub header: OutbeHeader,
     #[cfg(all(test, feature = "snapshot-integration"))]
     pub state_root: B256,
     _directory: tempfile::TempDir,
+}
+
+#[cfg(all(test, feature = "snapshot-integration"))]
+impl VerifiedState {
+    pub(crate) fn scratch_db(&self) -> &DatabaseEnv {
+        &self._db
+    }
 }
 
 pub(crate) fn verify_current_evm(
@@ -84,7 +91,7 @@ pub(crate) fn verify_current_evm(
     scratch.commit()?;
     drop(source);
     Ok(VerifiedState {
-        db,
+        _db: db,
         header,
         #[cfg(all(test, feature = "snapshot-integration"))]
         state_root,

@@ -232,36 +232,6 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
     }
 }
 
-/// The seeder writes the Nod FIFO bounds as raw slots. This test reads them back through
-/// the schema.
-#[test]
-fn seeded_nod_fifo_reads_back_through_the_schema() {
-    use outbe_primitives::addresses::NOD_ADDRESS;
-
-    let (_tmp, genesis, _raw) = run_seed_genesis(
-        FIXTURE_GENESIS,
-        FIXTURE_SEED,
-        FIXTURE_VALIDATORS_4_PUBLIC_ONLY,
-    );
-    let entry = alloc_entry(&genesis, &alloy_primitives::hex::encode(NOD_ADDRESS));
-    let mut provider = HashMapStorageProvider::new(1);
-    for (key, value) in entry["storage"].as_object().expect("seeded Nod storage") {
-        provider.storage.insert(
-            (NOD_ADDRESS, key.parse().expect("storage key")),
-            value
-                .as_str()
-                .expect("hex value")
-                .parse()
-                .expect("storage value"),
-        );
-    }
-    StorageHandle::enter(&mut provider, |storage| {
-        let nod = outbe_nod::NodContract::new(storage);
-        assert_eq!(nod.ocomp_materialization_head_sequence.read().unwrap(), 1);
-        assert_eq!(nod.ocomp_materialization_tail_sequence.read().unwrap(), 1);
-    });
-}
-
 /// Cross-checks all sources of the EIP-161 preservation contract. Every
 /// stateful dispatch-registered precompile must survive state-root computation
 /// through either the executor's runtime `0xEF` marker list or genesis `0xEF`

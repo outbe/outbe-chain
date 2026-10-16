@@ -20,14 +20,10 @@ pub fn store_scurve_entry(
     peak_day: u64,
     peak_price: U256,
 ) -> Result<()> {
-    if oracle.ocomp_profile_ready.read()? {
-        let storage = oracle.storage.clone();
-        storage
-            .with_checkpoint(|| store_scurve_entry_inner(oracle, pair, peak_day, peak_price))
-            .map(|_| ())
-    } else {
-        store_scurve_entry_inner(oracle, pair, peak_day, peak_price).map(|_| ())
-    }
+    let storage = oracle.storage.clone();
+    storage
+        .with_checkpoint(|| store_scurve_entry_inner(oracle, pair, peak_day, peak_price))
+        .map(|_| ())
 }
 
 fn store_scurve_entry_inner(
@@ -56,20 +52,16 @@ fn store_scurve_entry_inner(
             return Ok(false);
         }
 
-        let next_ocomp_version = oracle.next_ocomp_state_version()?;
         oracle.scurve_peak_day.write(&idx, peak_day)?;
         oracle.scurve_peak_price.write(&idx, peak_price)?;
-        oracle.commit_ocomp_state_version(next_ocomp_version)?;
         return Ok(true);
     }
 
     let idx = count;
-    let next_ocomp_version = oracle.next_ocomp_state_version()?;
     oracle.scurve_pair.write_pair(&idx, pair)?;
     oracle.scurve_peak_day.write(&idx, peak_day)?;
     oracle.scurve_peak_price.write(&idx, peak_price)?;
     oracle.scurve_count.write(next_idx)?;
-    oracle.commit_ocomp_state_version(next_ocomp_version)?;
     Ok(true)
 }
 
@@ -91,12 +83,8 @@ pub fn process_daily_scurve(
     pair: AddressPair,
     timestamp: u64,
 ) -> Result<()> {
-    if oracle.ocomp_profile_ready.read()? {
-        let storage = oracle.storage.clone();
-        storage.with_checkpoint(|| process_daily_scurve_inner(oracle, pair, timestamp))
-    } else {
-        process_daily_scurve_inner(oracle, pair, timestamp)
-    }
+    let storage = oracle.storage.clone();
+    storage.with_checkpoint(|| process_daily_scurve_inner(oracle, pair, timestamp))
 }
 
 fn process_daily_scurve_inner(
@@ -141,9 +129,7 @@ fn process_daily_scurve_inner(
         let event_result = oracle
             .storage
             .emit_event(ORACLE_ADDRESS, event.encode_log_data());
-        if oracle.ocomp_profile_ready.read()? {
-            event_result?;
-        }
+        event_result?;
     }
 
     Ok(())

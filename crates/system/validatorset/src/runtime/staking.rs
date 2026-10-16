@@ -10,7 +10,7 @@ impl ValidatorSet<'_> {
     /// REGISTERED -> PENDING threshold transition when required.
     ///
     /// Staking owns the authoritative balance.
-    /// `record_unstake`, `record_stake_slash`, `record_ocomp_bonded_slash`,
+    /// `record_unstake`, `record_stake_slash`,
     /// and `complete_unbonding` also write the mirror and its lifecycle fields.
     pub fn record_stake_increase(
         &mut self,

@@ -92,9 +92,8 @@ pub fn decode_stored(bytes: &[u8]) -> Result<TributeRecord, CanonicalBodyError> 
     decode_payload(stored.schema_version(), stored.payload())
 }
 
-/// Both canonical payload encodings are strict and disjoint: the V1 amount
-/// is 32 bytes, while the V2 packed amount ciphertext is 88 bytes. This
-/// preserves the original OCOMP chunk bytes and their authenticated digest.
+/// Canonical payload encodings are strict and disjoint.
+/// The plain amount is 32 bytes. The packed amount ciphertext is 88 bytes.
 pub fn decode_canonical(payload: &[u8]) -> Result<TributeRecord, CanonicalBodyError> {
     outbe_primitives::entity_codec::decode_tribute_v2(payload)
         .map(from_encrypted)

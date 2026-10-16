@@ -32,8 +32,6 @@ members = [
     "crates/system/radicle",
     "crates/system/update",
     "crates/system/vote",
-    "crates/system/ocomp-protocol",
-    "crates/system/ocompregistry",
     "crates/system/hyperlanecontroller",
     # core outbe
     "crates/core/gratis",
@@ -70,7 +68,6 @@ members = [
     "bin/outbe-cli",
     "bin/outbe-feeder",
     "bin/outbe-hyperlane-attester",
-    "bin/outbe-ocomp",
     "bin/outbe-radicle",
     "bin/outbe-tee-enclave",
     # testing
@@ -138,9 +135,6 @@ outbe-hyperlanecontroller = { path = "crates/system/hyperlanecontroller" }
 outbe-radicleregistry = { path = "crates/system/radicleregistry" }
 outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }
-outbe-ocomp-protocol = { path = "crates/system/ocomp-protocol" }
-outbe-ocompregistry = { path = "crates/system/ocompregistry" }
-outbe-ocomp = { path = "bin/outbe-ocomp" }
 outbe-radicle-runtime = { path = "crates/system/radicle" }
 radicle = { path = "vendor/heartwood/crates/radicle" }
 radicle-crypto = { path = "vendor/heartwood/crates/radicle-crypto" }
@@ -183,7 +177,6 @@ alloy-primitives = { version = "=1.6.1", default-features = false }
 alloy-sol-types = { version = "=1.6.1", default-features = false }
 alloy-rlp = { version = "0.3.13", default-features = false }
 alloy-trie = { version = "0.9.5" }
-axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 log = "0.4.17"
 
 # Alloy - high-level (alloy-rs/alloy): 2.4.x, pinned to match reth v2.6.0
@@ -303,7 +296,6 @@ rand-core-commonware = { package = "rand_core", version = "0.10.1" }
 rand_core = { version = "0.6", features = ["getrandom"] }
 bytes = "1"
 metrics = "0.24"
-metrics-exporter-prometheus = { version = "0.18.1", default-features = false }
 
 # TEE node <-> enclave transport (Noise-IK over UDS)
 snow = "0.9"
@@ -330,7 +322,6 @@ eyre = "0.6"
 hex = "0.4"
 libc = "0.2"
 rustix = { version = "1.1.4", features = ["fs", "process"] }
-salvo = { version = "0.95.1", default-features = false, features = ["server", "server-handle", "http1", "affix-state", "size-limiter", "timeout", "request-id"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 parking_lot = "0.12"
@@ -339,10 +330,8 @@ futures = "0.3"
 time = "0.3"
 filetime = "0.2"
 sha2 = "0.10"
-sha3 = "0.10"
 walkdir = "2"
 tar = "0.4"
-zeromq = { version = "0.6.0", default-features = false, features = ["tokio-runtime", "tcp-transport"] }
 
 [profile.dev]
 debug = "line-tables-only"
