@@ -14,7 +14,6 @@ use outbe_engine::bridge::ConsensusExecutionBridge;
 use outbe_engine::finalization::{RethDurableExecutionState, RethFinalizationBarrier};
 use outbe_evm::OutbeEvmSigner;
 use outbe_node::{
-    ocomp::retention::SharedOcompRetentionSelector,
     state_persistence::{validate_state_persistence_runtime_config, StatePersistenceRuntimeConfig},
     OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
 };
@@ -22,9 +21,6 @@ use outbe_operator::tee::{
     inspect_upgrade_journal_v1, read_finalized_registry_view_v1, record_upgrade_finalized_v1,
     record_upgrade_missed_cutoff_v1, record_upgrade_promoted_v1, NodeBindingSelectorV1,
     UpgradeJournalStateV1,
-};
-use outbe_primitives::projection::{
-    projection_readiness, ProjectionCheckpoint, ProjectionReadinessHandle, ProjectionStatus,
 };
 use outbe_primitives::OutbeHeader;
 use reth_chainspec::{ChainSpec, EthChainSpec};
@@ -34,7 +30,6 @@ use reth_node_builder::NodeHandle;
 use reth_provider::{BlockIdReader, HeaderProvider, StateProviderFactory};
 use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, RpcModuleValidator};
 use std::{
-    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::Arc,
     thread,
@@ -47,8 +42,6 @@ mod cli;
 pub(crate) mod errors;
 mod execution_runtime;
 mod launch;
-mod ocomp_exex;
-mod ocomp_genesis;
 mod tee_genesis;
 
 mod snapshot;
@@ -71,8 +64,6 @@ use launch::admission::{
     validator_admission_anchor_from_durable_v1, validator_recovery_startup_admission_rejection,
     TeeLeaseGuardGateV1,
 };
-
-use launch::bundles::load_installed_ocomp_bundles;
 
 use launch::configuration::{
     configure_outbe_engine_args, outbe_default_rpc_values, outbe_default_txpool_values,
@@ -105,12 +96,6 @@ use cli::dkg::{parse_dkg_key_backend, DkgCli};
 use launch::admission::LocalTeeAdmissionAnchorV1;
 
 #[cfg(test)]
-use launch::bundles::{ordered_installed_ocomp_bundle_hashes, parse_ocomp_bundle_hashes};
-
-#[cfg(test)]
-use launch::node::ocomp_job_available_for_calculation;
-
-#[cfg(test)]
 use launch::shutdown::abort_and_wait_supervised;
 
 fn main() -> eyre::Result<()> {
@@ -121,9 +106,6 @@ fn main() -> eyre::Result<()> {
     }
     if args.len() > 1 && args[1] == "tee" {
         return tee_genesis::run(&args);
-    }
-    if args.len() > 1 && args[1] == "ocomp" {
-        return ocomp_genesis::run(&args);
     }
     if args.len() > 1 && args[1] == "snapshot" {
         return cli::snapshot::run(&args);

@@ -233,26 +233,6 @@ pub struct OracleContract {
     // Slot 60 held annual policy rates while they were incorrectly coupled to
     // reference-currency membership. It is retired. Do not reuse.
 
-    // === OCOMP PoC pre-admission projection (slots 61, 63-64) ===
-    // These trailing fields are inert until the fresh-devnet fork handler sets
-    // `ocomp_profile_ready`. Existing pre-fork Oracle writes therefore keep
-    // their exact historical state footprint.
-    #[slot(61)]
-    pub ocomp_profile_ready: Slot<bool>,
-    // Slot 62 (`ocomp_day_type_pair_id`) is a retired hole. The day-type pair is
-    // the compile-time `DAY_TYPE_PAIR`, so pinning its ordinal in storage
-    // bought nothing once pairs stopped being identified by ordinal.
-    // Do not reuse.
-    // slot 63: direct O(1) lookup for the single fork-fixed auction-entry pair.
-    // The canonical UTC-day finalizer is its only mutation owner.
-    #[slot(63)]
-    pub ocomp_day_type_vwap_by_utc_day: Mapping<u32, U256>,
-    // Advances for every Oracle mutation visible to OCOMP pre-admission.
-    pub ocomp_state_version: Slot<u64>,
-    // Slots 65-69 held the `quote` half of the five pair columns above, back
-    // when a pair needed two parallel `Address` mappings. They are trailing
-    // retired holes. Do not reuse.
-
     // === Exact WorldwideDay edge aggregates (slots 70-73) ===
     // A WorldwideDay formation window starts at 10:00 UTC on the preceding
     // calendar day and ends at 12:00 UTC on the following calendar day. These

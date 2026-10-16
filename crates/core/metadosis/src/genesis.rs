@@ -225,7 +225,6 @@ const fn status_tag(value: WwdStatus) -> u8 {
         WwdStatus::Offering => status::OFFERING,
         WwdStatus::Waiting => status::WAITING,
         WwdStatus::Ready => status::READY,
-        WwdStatus::OffchainPending => status::OFFCHAIN_PENDING,
         WwdStatus::Completed => status::COMPLETED,
         WwdStatus::Failed => status::FAILED,
     }

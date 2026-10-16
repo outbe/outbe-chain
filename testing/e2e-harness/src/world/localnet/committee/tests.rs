@@ -1,7 +1,6 @@
 use super::{
-    cargo_package_version, committee_signal_args, compressed_entities_reconstruction_path,
-    reap_stopped_committee, replacement_chain_build_args, rewrite_workspace_version,
-    unix_time_offset_arg, verified_compressed_entities_reconstruction_path,
+    cargo_package_version, committee_signal_args, reap_stopped_committee,
+    replacement_chain_build_args, rewrite_workspace_version, unix_time_offset_arg,
 };
 use clap::Parser;
 use std::{collections::HashMap, process::Command};
@@ -122,37 +121,4 @@ example = { version = "9.9.9" }
     let rewritten = rewrite_workspace_version(manifest, "3.0.0").unwrap();
     assert!(rewritten.contains("[workspace.package]\nversion = \"3.0.0\""));
     assert!(rewritten.contains("example = { version = \"9.9.9\" }"));
-}
-
-#[test]
-fn ce_reconstruction_path_is_exact_and_committee_bounded() {
-    let scenario = std::path::Path::new("/tmp/outbe-e2e/scenario-1");
-    assert_eq!(
-        compressed_entities_reconstruction_path(scenario, 4, 2).unwrap(),
-        scenario.join("validator-2/data/compressed_entities")
-    );
-    assert!(compressed_entities_reconstruction_path(scenario, 4, 4).is_err());
-    assert!(compressed_entities_reconstruction_path(std::path::Path::new("/"), 4, 0).is_err());
-}
-
-#[test]
-fn ce_reconstruction_target_rejects_an_intermediate_symlink() {
-    let root = tempfile::tempdir().unwrap();
-    let scenario = root.path().join("scenario-1");
-    let outside = root.path().join("outside-validator");
-    std::fs::create_dir_all(outside.join("data/compressed_entities")).unwrap();
-    std::fs::create_dir_all(&scenario).unwrap();
-    std::os::unix::fs::symlink(&outside, scenario.join("validator-0")).unwrap();
-
-    assert!(
-        verified_compressed_entities_reconstruction_path(&scenario, 4, 0).is_err(),
-        "an intermediate symlink must never authorize recursive CE deletion"
-    );
-
-    std::fs::remove_file(scenario.join("validator-0")).unwrap();
-    std::fs::create_dir_all(scenario.join("validator-0/data/compressed_entities")).unwrap();
-    assert_eq!(
-        verified_compressed_entities_reconstruction_path(&scenario, 4, 0).unwrap(),
-        scenario.join("validator-0/data/compressed_entities")
-    );
 }

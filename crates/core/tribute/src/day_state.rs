@@ -6,21 +6,29 @@ use outbe_primitives::{
 };
 use outbe_tee::tribute_day::{TributeDayOpRequestV2, TributeDayOperationV2};
 
-use crate::{
-    day_schema::{StoredDayPreAdmission, StoredDayTotals},
-    DayPreAdmission, DayTotals, TributeContract,
-};
+use crate::{day_schema::StoredDayTotals, DayTotals, TributeContract};
 
 impl TributeContract<'_> {
-    pub(crate) fn freeze_day_nominal(&self, admission: &DayPreAdmission) -> Result<()> {
+    pub(crate) fn freeze_day_nominal(&self, totals: &DayTotals) -> Result<()> {
+        if self
+            .day_amount_record(totals.worldwide_day, true)?
+            .is_some()
+        {
+            if self.day_nominal_amount(totals.worldwide_day, true)?
+                != totals.tribute_nominal_total_minor
+            {
+                return Err(
+                    crate::errors::TributeError::SealedDayMetadataDiffersFromEncryptedAmount.into(),
+                );
+            }
+            return Ok(());
+        }
         let mut context = b"outbe/tribute/day-freeze/v2".to_vec();
-        context.extend_from_slice(&admission.sealed_tribute_count.to_be_bytes());
-        context.extend_from_slice(&admission.canonical_body_bytes.to_be_bytes());
-        context.extend_from_slice(&admission.distinct_owner_count.to_be_bytes());
-        context.extend_from_slice(&admission.distinct_reference_currency_count.to_be_bytes());
-        context.extend_from_slice(&admission.source_generation.to_be_bytes());
+        context.extend_from_slice(&totals.worldwide_day.value().to_be_bytes());
+        context.extend_from_slice(&totals.tribute_count.to_be_bytes());
+        context.push(u8::from(totals.is_sealed));
         self.apply_day_amount(
-            admission.worldwide_day,
+            totals.worldwide_day,
             TributeDayOperationV2::Freeze,
             keccak256(context),
         )
@@ -104,27 +112,6 @@ impl TributeContract<'_> {
         )
     }
 
-    pub(crate) fn read_day_pre_admission(&self, day: WorldwideDay) -> Result<DayPreAdmission> {
-        let stored = self
-            .day_pre_admission
-            .get(day)?
-            .unwrap_or_else(|| StoredDayPreAdmission::with_key(day));
-        let mut view = DayPreAdmission::with_key(day);
-        view.initialized = stored.initialized;
-        view.is_sealed = stored.is_sealed;
-        view.sealed_tribute_count = stored.sealed_tribute_count;
-        view.sealed_tribute_nominal_total_minor = if stored.is_sealed {
-            self.day_nominal_amount(day, true)?
-        } else {
-            U256::ZERO
-        };
-        view.canonical_body_bytes = stored.canonical_body_bytes;
-        view.distinct_owner_count = stored.distinct_owner_count;
-        view.distinct_reference_currency_count = stored.distinct_reference_currency_count;
-        view.source_generation = stored.source_generation;
-        Ok(view)
-    }
-
     pub(crate) fn set_day_sealed(&mut self, day: WorldwideDay, is_sealed: bool) -> Result<()> {
         let mut stored = self
             .day_totals
@@ -148,22 +135,6 @@ impl TributeContract<'_> {
             self.day_totals.update(&stored)
         } else {
             self.day_totals.create(&stored)
-        }
-    }
-
-    pub(crate) fn store_pre_admission_metadata(&mut self, view: &DayPreAdmission) -> Result<()> {
-        let mut stored = StoredDayPreAdmission::with_key(view.worldwide_day);
-        stored.initialized = view.initialized;
-        stored.is_sealed = view.is_sealed;
-        stored.sealed_tribute_count = view.sealed_tribute_count;
-        stored.canonical_body_bytes = view.canonical_body_bytes;
-        stored.distinct_owner_count = view.distinct_owner_count;
-        stored.distinct_reference_currency_count = view.distinct_reference_currency_count;
-        stored.source_generation = view.source_generation;
-        if self.day_pre_admission.exists(view.worldwide_day)? {
-            self.day_pre_admission.update(&stored)
-        } else {
-            self.day_pre_admission.create(&stored)
         }
     }
 }

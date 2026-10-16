@@ -6,11 +6,10 @@ use outbe_primitives::erc::{
     ERC721_METADATA_INTERFACE_ID,
 };
 use outbe_primitives::error::Result;
-use outbe_primitives::time::WorldwideDay;
 
 use crate::api;
 use crate::errors::NodError;
-use crate::schema::{NodBucketState, NodCertifiedGenerationProjection, NodContract, NodItemState};
+use crate::schema::{NodBucketState, NodContract, NodItemState};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -58,8 +57,7 @@ pub fn dispatch(
             | tokenURI(_)
             | tokenByIndex(_)
             | tokenOfOwnerByIndex(_)
-            | getNod(_)
-            | certifiedGeneration(_)) => dispatch_entity(storage, &nod, call),
+            | getNod(_)) => dispatch_entity(storage, &nod, call),
         }
     })
 }
@@ -120,13 +118,6 @@ fn dispatch_entity(
                 api::get_bucket(&storage, item.bucket_key)?.ok_or(NodError::BucketNotFound)?;
             to_abi_data(&storage, &item, &bucket)
         }),
-        certifiedGeneration(c) => view(c, |c| {
-            let worldwide_day = WorldwideDay::new(c.worldwideDay);
-            Ok(to_abi_certified_generation(
-                worldwide_day,
-                nod.ocomp_certified_generation(worldwide_day)?,
-            ))
-        }),
         _ => unreachable!("entity route requires an entity call"),
     }
 }
@@ -172,40 +163,4 @@ fn to_abi_data(
         callNoticePeriod: terms.call_notice_period_seconds,
         settlementDeadline: deadline,
     })
-}
-
-fn to_abi_certified_generation(
-    worldwide_day: WorldwideDay,
-    generation: Option<NodCertifiedGenerationProjection>,
-) -> INod::CertifiedGenerationData {
-    match generation {
-        Some(generation) => INod::CertifiedGenerationData {
-            exists: true,
-            worldwideDay: generation.worldwide_day.into(),
-            generation: generation.generation,
-            nodRoot: generation.nod_root,
-            bucketRoot: generation.bucket_root,
-            outputManifestRoot: generation.output_manifest_root,
-            tributeCount: generation.tribute_count,
-            nodCount: generation.nod_count,
-            bucketCount: generation.bucket_count,
-            totalSettlementCostMinor: generation.nod_amount_total,
-            lysisAllocationMinor: generation.lysis_allocation_minor,
-            issuedAt: generation.issued_at,
-        },
-        None => INod::CertifiedGenerationData {
-            exists: false,
-            worldwideDay: worldwide_day.into(),
-            generation: 0,
-            nodRoot: Default::default(),
-            bucketRoot: Default::default(),
-            outputManifestRoot: Default::default(),
-            tributeCount: 0,
-            nodCount: 0,
-            bucketCount: 0,
-            totalSettlementCostMinor: U256::ZERO,
-            lysisAllocationMinor: U256::ZERO,
-            issuedAt: 0,
-        },
-    }
 }

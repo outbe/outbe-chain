@@ -1,20 +1,18 @@
 //! Uses the same Outbe dispatch for nested calls as for top-level calls.
 use super::{
     dispatch::{outbe_ctx_dispatch, OutbeDispatchRuntime},
-    OcompActivationBlockMeter, OutbePrecompileExecutionContext, OutbePrecompileRuntime,
+    OutbePrecompileExecutionContext, OutbePrecompileRuntime,
 };
 use crate::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, B256};
 use core::{fmt::Debug, marker::PhantomData};
-use outbe_metadosis::api::OcompFinalizedIntentAuthority;
 use revm::{
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, InterpreterResult},
     primitives::hardfork::SpecId,
     Database,
 };
-use std::sync::Arc;
 
 /// Precompile provider for the borrow-mode sub-call `Evm`
 /// (`CTX = &mut EthEvmContext<DB>`), used by [`crate::sub_call`].
@@ -22,7 +20,6 @@ use std::sync::Arc;
 /// Mirrors the top-level [`alloy_evm::precompiles::PrecompilesMap`] dispatch path.
 /// Outbe stateful precompiles dispatch through [`outbe_ctx_dispatch`]. The
 /// runtime inputs are not identical to a top-level call:
-/// - the nested dispatch carries no OCOMP fork install (`ocomp_fork_install: None`).
 /// - the TEE attestation ChainSpec state comes from the sub-call execution
 ///   context. `CtxStorageProvider::sub_call` builds that context as `Unbound`.
 ///
@@ -39,9 +36,6 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
 
     abort_bridge: super::ExecutionAbortBridge,
 
-    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
-    ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
-    ocomp_lifecycle_active: bool,
     _db: PhantomData<fn() -> DB>,
 }
 
@@ -49,27 +43,19 @@ impl<DB> OutbeSubCallPrecompiles<DB> {
     pub(crate) fn new(
         execution_context: OutbePrecompileExecutionContext,
         runtime: OutbePrecompileRuntime,
-        ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
     ) -> Self {
         let OutbePrecompileExecutionContext {
             spec,
             genesis_hash,
             tee_attestation_v1,
         } = execution_context;
-        let OutbePrecompileRuntime {
-            abort_bridge,
-            ocomp_finality_authority,
-            ocomp_lifecycle_active,
-        } = runtime;
+        let OutbePrecompileRuntime { abort_bridge } = runtime;
         Self {
             eth: EthPrecompiles::new(spec),
             spec,
             genesis_hash,
             tee_attestation_v1,
             abort_bridge,
-            ocomp_finality_authority,
-            ocomp_activation_block_meter,
-            ocomp_lifecycle_active,
             _db: PhantomData,
         }
     }
@@ -106,11 +92,6 @@ where
                 spec: self.spec,
                 genesis_hash: self.genesis_hash,
                 tee_attestation_v1: &self.tee_attestation_v1,
-
-                ocomp_finality_authority: self.ocomp_finality_authority.clone(),
-                ocomp_activation_block_meter: self.ocomp_activation_block_meter.clone(),
-                ocomp_lifecycle_active: self.ocomp_lifecycle_active,
-                ocomp_fork_install: None,
             },
         )
         .map_err(String::from)?

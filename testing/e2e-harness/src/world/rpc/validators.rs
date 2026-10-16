@@ -566,30 +566,12 @@ impl Rpc {
     }
 
     /// Direct typed stale-join confirmation, including a reverted receipt.
-    pub fn confirm_ready_outcome(&self, key: &str, validator_index: usize) -> Result<TxOutcome> {
-        let registration_path = self
-            .cfg
-            .validator_dir(validator_index)
-            .join("ocomp-registration-v1.ocb1");
-        let registration = std::fs::read(&registration_path).wrap_err_with(|| {
-            format!(
-                "read validator-{validator_index} canonical OCOMP registration {}",
-                registration_path.display()
-            )
-        })?;
-        if registration.is_empty() {
-            return Err(eyre!(
-                "validator-{validator_index} canonical OCOMP registration is empty: {}",
-                registration_path.display()
-            ));
-        }
+    pub fn confirm_ready_outcome(&self, key: &str) -> Result<TxOutcome> {
         eth::send_call_outcome(
             &self.cfg.rpc0,
             addresses::VS_ADDR,
             key,
-            &IValidatorSet::confirmValidatorReadyCall {
-                registration: registration.into(),
-            },
+            &IValidatorSet::confirmValidatorReadyCall {},
             None,
         )
         .map(Into::into)
@@ -724,10 +706,6 @@ impl Rpc {
 
     /// Confirm a PENDING joiner is synced/ready (stale-join guard).
     pub fn confirm_ready(&self, key: &str) -> Result<String> {
-        let registration = self
-            .cfg
-            .validator_dir(self.cfg.validators)
-            .join("ocomp-registration-v1.ocb1");
         let out = self.sh().cli([
             "--private-key",
             key,
@@ -735,8 +713,6 @@ impl Rpc {
             self.cfg.rpc0.as_str(),
             "validator",
             "confirm-ready",
-            "--registration",
-            &registration.display().to_string(),
         ])?;
         let tx_hash = parse::extract_tx_hash(&out)
             .ok_or_else(|| eyre!("no tx hash in confirm-ready output:\n{out}"))?;

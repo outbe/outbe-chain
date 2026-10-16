@@ -391,8 +391,6 @@ fn full_node_runtime_does_not_load_separately_provisioned_role_keys() {
         "--validator",
         "--consensus.signing-key",
         "--validator.evm-key",
-        "--ocomp-key",
-        "--ocomp-evm-key",
     ] {
         assert!(!args.iter().any(|arg| arg == forbidden), "{forbidden}");
     }

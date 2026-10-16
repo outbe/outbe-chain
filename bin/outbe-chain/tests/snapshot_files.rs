@@ -11,8 +11,7 @@ use std::{
 
 use alloy_consensus::{Header, Sealable};
 use alloy_primitives::B256;
-use outbe_ocomp::discovery_spool::inspect_closure_checkpoint;
-use outbe_primitives::{projection::ProjectionCheckpoint, OutbeHeader, OutbePrimitives};
+use outbe_primitives::{OutbeHeader, OutbePrimitives};
 use outbe_snapshot::{
     archive::read_archive_index,
     manifest::{DomainKind, EntryKind, NativeRoot, SnapshotManifestV1},
@@ -43,7 +42,7 @@ use snapshot::{binary, fingerprint, run, stopped_fixture, transcript, StoppedFix
 fn conventional_transfer_preserves_native_files_and_opens_without_donor_or_sidecars() {
     let producer = snapshot::physical_tempdir();
     let fixture = stopped_fixture(&producer.path().join("donor"));
-    let materialization_paths = add_portability_records(&fixture);
+    add_portability_records(&fixture);
     let before = fingerprint(&fixture.donor);
     let archive = producer.path().join("snapshot.tar");
     let created = run(binary()
@@ -69,6 +68,7 @@ fn conventional_transfer_preserves_native_files_and_opens_without_donor_or_sidec
     )
     .unwrap();
     let manifest = &index.manifest;
+    assert_eq!(manifest.genesis_hash, format!("{:x}", fixture.genesis_hash));
     let extracted = incoming.join("unpacked");
     fs::create_dir(&extracted).unwrap();
 
@@ -114,54 +114,23 @@ fn conventional_transfer_preserves_native_files_and_opens_without_donor_or_sidec
             }
         }
     }
-    for relative in &materialization_paths {
-        assert!(roots.ocomp.join(relative).is_file());
-    }
-    let empty = roots
-        .ocomp
-        .join(format!("supervisor-v1/jobs/{}/admissions", "33".repeat(32)));
-    assert!(empty.is_dir());
-    assert_eq!(fs::read_dir(&empty).unwrap().count(), 0);
-    assert!(roots
-        .ocomp
-        .join(format!(
-            "exporter-v1/input-refs/{}/catalog.lock",
-            "11".repeat(32)
-        ))
-        .is_file());
-    assert!(roots
-        .ocomp
-        .join("exporter-v1/discovery/closure-checkpoint-v1/.lock")
-        .is_file());
-    let local = roots.ocomp.join("node-v1/local-results");
-    assert_eq!(fs::metadata(&local).unwrap().mode() & 0o777, 0o700);
-    let result = fs::metadata(roots.ocomp.join(&fixture.pending_result)).unwrap();
-    assert_eq!(result.mode() & 0o777, 0o600);
-    assert_eq!(result.uid(), fs::metadata(&roots.chain).unwrap().uid());
     assert_protected(&protected);
 
     // Explicit file-check glue must reject partial placement. This is not a restore protocol.
-    let missing = roots.ocomp.join(&materialization_paths[0]);
-    fs::remove_file(&missing).unwrap();
-    let error = check_files(manifest, &roots).unwrap_err();
-    assert!(
-        error.to_string().contains(&materialization_paths[0]),
-        "{error}"
-    );
     let domain = manifest
         .domains
         .iter()
-        .find(|domain| domain.kind == DomainKind::MaterializationReferences)
+        .find(|domain| domain.kind == DomainKind::ParentCertificates)
         .unwrap();
+    let relative = "finalized_parent_certs/100";
+    let missing = roots.consensus.join(relative);
+    fs::remove_file(&missing).unwrap();
+    let error = check_files(manifest, &roots).unwrap_err();
+    assert!(error.to_string().contains(relative), "{error}");
     successful(
         Command::new("cp")
             .args(["-p", "--no-preserve=ownership", "--"])
-            .arg(
-                extracted
-                    .join("payload")
-                    .join(&domain.id)
-                    .join(&materialization_paths[0]),
-            )
+            .arg(extracted.join("payload").join(&domain.id).join(relative))
             .arg(&missing),
     );
     check_files(manifest, &roots).unwrap();
@@ -212,7 +181,7 @@ fn assert_same_bytes(left: &Path, right: &Path) {
     }
 }
 
-fn add_portability_records(fixture: &StoppedFixture) -> Vec<String> {
+fn add_portability_records(fixture: &StoppedFixture) {
     let db = open_db_read_only(
         fixture.chain.join("db"),
         DatabaseArguments::new(ClientVersion::default()),
@@ -254,50 +223,6 @@ fn add_portability_records(fixture: &StoppedFixture) -> Vec<String> {
         .unwrap();
     drop(execution);
 
-    let ocomp = fixture.donor.join("ocomp/domain-v1");
-    let mut nested = Vec::new();
-    for (job, ordinal) in [
-        ("11".repeat(32), 17),
-        ("11".repeat(32), 23),
-        ("22".repeat(32), 5),
-    ] {
-        let name = format!("supervisor-v1/materialization-references/{job}/{ordinal}/{job}.materialization-refs-v1.json");
-        let path = ocomp.join(&name);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(
-            &path,
-            format!("{{\"fixture_job\":\"{job}\",\"fixture_ordinal\":{ordinal}}}\n"),
-        )
-        .unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-        nested.push(name);
-    }
-    // Owner-native temporary filename uses with_extension("tmp"), not .json.tmp.
-    let pending = Path::new(&nested[0]).with_extension("tmp");
-    fs::write(ocomp.join(&pending), b"unfinished reference fixture").unwrap();
-    fs::set_permissions(ocomp.join(&pending), fs::Permissions::from_mode(0o600)).unwrap();
-    nested.push(pending.to_str().unwrap().to_owned());
-    let admissions = ocomp.join(format!("supervisor-v1/jobs/{}/admissions", "33".repeat(32)));
-    fs::create_dir_all(&admissions).unwrap();
-    fs::set_permissions(&admissions, fs::Permissions::from_mode(0o700)).unwrap();
-    let lock = ocomp.join(format!(
-        "exporter-v1/input-refs/{}/catalog.lock",
-        "11".repeat(32)
-    ));
-    fs::create_dir_all(lock.parent().unwrap()).unwrap();
-    fs::write(&lock, []).unwrap();
-    fs::set_permissions(lock, fs::Permissions::from_mode(0o600)).unwrap();
-    fs::set_permissions(
-        ocomp.join("node-v1/local-results"),
-        fs::Permissions::from_mode(0o700),
-    )
-    .unwrap();
-    fs::set_permissions(
-        ocomp.join(&fixture.pending_result),
-        fs::Permissions::from_mode(0o600),
-    )
-    .unwrap();
-
     let consensus = fixture.chain.join("consensus");
     fs::create_dir_all(consensus.join("finalized_parent_certs")).unwrap();
     fs::write(
@@ -308,20 +233,15 @@ fn add_portability_records(fixture: &StoppedFixture) -> Vec<String> {
     for path in [
         consensus.join("outbe-simplex-3/vote"),
         consensus.join("dkg_share.hex"),
-        ocomp.join("supervisor-v1/sign-once/signed"),
-        ocomp.join("supervisor-v1/vote-submissions/signed"),
-        ocomp.join("supervisor-v1/materialization-submissions/signed"),
     ] {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, b"donor authority must not transfer").unwrap();
     }
-    nested
 }
 
 struct RecipientRoots {
     chain: PathBuf,
     consensus: PathBuf,
-    ocomp: PathBuf,
     static_files: PathBuf,
     execution: PathBuf,
 }
@@ -331,15 +251,12 @@ impl RecipientRoots {
         let roots = Self {
             chain: base.join("network-a/chain"),
             consensus: base.join("consensus-b/data"),
-            // Ordinary embedded OCOMP is derived from the chain directory's parent.
-            ocomp: base.join("network-a/ocomp/domain-v1"),
             static_files: base.join("headers-d/data"),
             execution: base.join("evm-e/data"),
         };
         for kind in [
             NativeRoot::Chain,
             NativeRoot::Consensus,
-            NativeRoot::Ocomp,
             NativeRoot::StaticFiles,
             NativeRoot::ExecutionRocksDb,
         ] {
@@ -352,7 +269,6 @@ impl RecipientRoots {
         match kind {
             NativeRoot::Chain => &self.chain,
             NativeRoot::Consensus => &self.consensus,
-            NativeRoot::Ocomp => &self.ocomp,
             NativeRoot::StaticFiles => &self.static_files,
             NativeRoot::ExecutionRocksDb => &self.execution,
         }
@@ -368,14 +284,6 @@ fn provision_recipient(roots: &RecipientRoots) -> BTreeMap<PathBuf, (Vec<u8>, u3
         roots.chain.join("reth.toml"),
         roots.consensus.join("dkg_share.hex"),
         roots.consensus.join("outbe-simplex-3/vote"),
-        roots.ocomp.join("ocomp-evm-key.hex"),
-        roots.ocomp.join("ocomp-key-v1.hex"),
-        roots.ocomp.join("supervisor-v1/sign-once/signed"),
-        roots.ocomp.join("supervisor-v1/vote-submissions/signed"),
-        roots
-            .ocomp
-            .join("supervisor-v1/materialization-submissions/signed"),
-        roots.ocomp.join("node-v1/fatal-evidence/sticky-fatal-v1"),
     ] {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let bytes = format!("recipient-owned: {}", path.display()).into_bytes();
@@ -496,19 +404,6 @@ fn open_native_stores(roots: &RecipientRoots, fixture: &StoppedFixture) {
     );
     drop(execution);
 
-    let closure = inspect_closure_checkpoint(
-        roots
-            .ocomp
-            .join("exporter-v1/discovery/closure-checkpoint-v1"),
-        ProjectionCheckpoint {
-            block_number: 0,
-            block_hash: fixture.genesis_hash,
-        },
-    )
-    .unwrap();
-    assert_eq!(closure.current.block_number, 97);
-    assert_eq!(closure.current.block_hash, B256::repeat_byte(97));
-    assert_eq!(closure.previous.block_number, 0);
     assert_eq!(
         fs::read(roots.consensus.join("finalized_parent_certs/100")).unwrap(),
         b"public certificate fixture"

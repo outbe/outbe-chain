@@ -35,7 +35,6 @@
 //! The integration-level pin for this stateless contract is
 //! `crates/blockchain/node/tests/consensus_stateless.rs`.
 
-use outbe_evm::system_tx::OcompLifecycleActivation;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS, OutbeBlock, OutbeBlockBody, OutbeHeader, OutbePrimitives,
     OutbeReceipt,
@@ -94,7 +93,6 @@ where
             policy: OutbeConsensusPolicy {
                 chain_spec,
                 skip_gas_limit_ramp_check: false,
-                ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
             },
         }
     }
@@ -126,13 +124,6 @@ where
     /// Disables the requests hash check in post-execution validation.
     pub fn with_skip_requests_hash_check(mut self, skip: bool) -> Self {
         self.inner = self.inner.with_skip_requests_hash_check(skip);
-        self
-    }
-
-    /// Installs structural OCOMP lifecycle activation. Normal construction is
-    /// inert until OCM-26 wires the canonical fresh-devnet schedule.
-    pub fn with_ocomp_lifecycle_activation(mut self, activation: OcompLifecycleActivation) -> Self {
-        self.policy.ocomp_lifecycle_activation = activation;
         self
     }
 
@@ -234,38 +225,13 @@ pub fn validate_system_tx_consensus_boundary(
     body: &OutbeBlockBody,
     header: &OutbeHeader,
 ) -> Result<(), ConsensusError> {
-    validate_system_tx_consensus_boundary_for_activation(
-        body,
-        header,
-        OcompLifecycleActivation::Disabled,
-    )
-}
-
-pub fn validate_system_tx_consensus_boundary_for_activation(
-    body: &OutbeBlockBody,
-    header: &OutbeHeader,
-    ocomp_lifecycle_activation: OcompLifecycleActivation,
-) -> Result<(), ConsensusError> {
-    policy::validate_system_transactions(body, header, ocomp_lifecycle_activation)
+    policy::validate_system_transactions(body, header)
 }
 
 /// Consensus builder that produces `OutbeBeaconConsensus` with increased extra_data limit.
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
-pub struct OutbeConsensusBuilder {
-    ocomp_lifecycle_activation: OcompLifecycleActivation,
-}
-
-impl OutbeConsensusBuilder {
-    #[must_use]
-    pub const fn with_ocomp_lifecycle_activation(
-        mut self,
-        activation: OcompLifecycleActivation,
-    ) -> Self {
-        self.ocomp_lifecycle_activation = activation;
-        self
-    }
-}
+pub struct OutbeConsensusBuilder;
 
 impl<Node> ConsensusBuilder<Node> for OutbeConsensusBuilder
 where
@@ -281,8 +247,7 @@ where
     async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
         Ok(Arc::new(
             OutbeBeaconConsensus::new(ctx.chain_spec())
-                .with_max_extra_data_size(OUTBE_MAX_EXTRA_DATA_SIZE)
-                .with_ocomp_lifecycle_activation(self.ocomp_lifecycle_activation),
+                .with_max_extra_data_size(OUTBE_MAX_EXTRA_DATA_SIZE),
         ))
     }
 }
@@ -292,7 +257,7 @@ mod tests {
     mod adapter;
 
     use super::*;
-    use alloy_consensus::{BlockHeader as _, Header};
+    use alloy_consensus::Header;
     use alloy_eips::eip4895::{Withdrawal, Withdrawals};
     use alloy_primitives::{Address, Bloom, B256, B64, U256};
     use outbe_primitives::consensus::{

@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_ocompregistry::{poc_schema_limits, OcompRegistry};
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
@@ -19,8 +18,8 @@ use crate::state::ScheduledUpdateInfo;
 use crate::ProtocolVersion;
 
 use super::{
-    block_ctx, ocomp_authority, ocomp_successor, schedule_update, scheduled_status,
-    scheduled_update_provider, with_scheduled_update, PV,
+    block_ctx, schedule_update, scheduled_status, scheduled_update_provider, with_scheduled_update,
+    PV,
 };
 
 static EMPTY_UPGRADE_HANDLER_REGISTRY: UpgradeHandlerRegistry = UpgradeHandlerRegistry::new(&[]);
@@ -152,54 +151,6 @@ fn software_update_activation_promotes_its_staged_tee_policy() {
             TeeRegistry::new(storage).active_policy_v1().unwrap(),
             successor
         );
-    });
-}
-
-#[test]
-fn software_update_activation_promotes_ocomp_and_keeps_the_predecessor_readable() {
-    let genesis_hash = B256::repeat_byte(0x70);
-    let proposal_id = U256::from(21);
-    let activation = 101;
-    let current = ocomp_authority(genesis_hash);
-    let successor = ocomp_successor(genesis_hash, activation);
-    let limits = poc_schema_limits();
-    let mut provider = HashMapStorageProvider::new_with_chain_identity(TEST_CHAIN_ID, genesis_hash);
-    provider.set_block_number(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut registry = OcompRegistry::new(storage.clone());
-        registry
-            .initialize_genesis_authority(&current, B256::repeat_byte(0x71), 1, 1, &limits)
-            .unwrap();
-        registry
-            .stage_successor(proposal_id, &successor, &limits)
-            .unwrap();
-        schedule_update(
-            &mut Update::new(storage),
-            proposal_id,
-            crate::ScheduleUpdatePayload::new(PV, activation, "OCOMP release"),
-            1,
-        )
-        .unwrap();
-    });
-
-    provider.set_block_number(activation);
-    StorageHandle::enter(&mut provider, |storage| {
-        let ctx = block_ctx(storage.clone(), activation);
-        Update::new(storage.clone())
-            .process_begin_block_with_handlers(&ctx, &EMPTY_UPGRADE_HANDLER_REGISTRY)
-            .unwrap();
-        let registry = OcompRegistry::new(storage);
-        assert_eq!(
-            registry.active_authority(&limits).unwrap(),
-            Some(successor.authority.clone())
-        );
-        assert_eq!(
-            registry
-                .authority_by_bundle_hash(current.request_profile.protocol_bundle_hash, &limits)
-                .unwrap(),
-            Some(current)
-        );
-        assert_eq!(registry.staged_successor(&limits).unwrap(), None);
     });
 }
 

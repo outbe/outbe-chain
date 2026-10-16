@@ -1,12 +1,4 @@
-use alloy_primitives::{B256, U256};
-use outbe_ocomp_protocol::{
-    profile::ProtocolBundleV1,
-    test_utils::{minimal_capacity_profile, minimal_protocol_bundle},
-};
-use outbe_ocompregistry::{
-    poc_schema_limits, OcompProtocolAuthorityV1, OcompRequestProfile, OcompSuccessorV1,
-};
-
+use alloy_primitives::U256;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -67,59 +59,6 @@ pub(super) fn block_ctx(storage: StorageHandle, block_number: u64) -> BlockRunti
 
 pub(super) fn min_activation(current: u64) -> u64 {
     current.saturating_add(MIN_ACTIVATION_BUFFER)
-}
-
-pub(super) fn ocomp_authority(genesis_hash: B256) -> OcompProtocolAuthorityV1 {
-    let hash = B256::repeat_byte;
-    let protocol_bundle = ProtocolBundleV1 {
-        fork_id: hash(21),
-        release_gate_authority_envelope_hash: hash(22),
-        release_approval_policy_hash: hash(24),
-        release_validator_command_artifact_hash: hash(25),
-        migration_manifest_hash: hash(26),
-        required_upgrade_handler_set_hash: hash(27),
-        ..minimal_protocol_bundle()
-    };
-    let protocol_bundle_hash = protocol_bundle
-        .protocol_bundle_hash(&poc_schema_limits())
-        .unwrap();
-    OcompProtocolAuthorityV1 {
-        request_profile: OcompRequestProfile {
-            chain_id: TEST_CHAIN_ID,
-            genesis_hash,
-            fork_id: protocol_bundle.fork_id,
-            protocol_bundle_hash,
-            correctness_profile_id: protocol_bundle.correctness_profile_id,
-            capacity_profile: minimal_capacity_profile(),
-            source_availability_policy_id: hash(44),
-        },
-        protocol_bundle,
-    }
-}
-
-pub(super) fn ocomp_successor(genesis_hash: B256, activation_height: u64) -> OcompSuccessorV1 {
-    let predecessor = ocomp_authority(genesis_hash);
-    let mut protocol_bundle = predecessor.protocol_bundle.clone();
-    protocol_bundle.protocol_version += 1;
-    protocol_bundle.fork_id = B256::repeat_byte(61);
-    protocol_bundle.request_semantics_version += 1;
-    protocol_bundle.lysis_program_semantics_hash = B256::repeat_byte(62);
-    let protocol_bundle_hash = protocol_bundle
-        .protocol_bundle_hash(&poc_schema_limits())
-        .unwrap();
-    OcompSuccessorV1 {
-        activation_height,
-        predecessor_protocol_bundle_hash: predecessor.request_profile.protocol_bundle_hash,
-        authority: OcompProtocolAuthorityV1 {
-            request_profile: OcompRequestProfile {
-                fork_id: protocol_bundle.fork_id,
-                protocol_bundle_hash,
-                correctness_profile_id: protocol_bundle.correctness_profile_id,
-                ..predecessor.request_profile
-            },
-            protocol_bundle,
-        },
-    }
 }
 
 /// The block height from which most tests schedule an update.

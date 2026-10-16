@@ -279,18 +279,6 @@ pub(in crate::stack) fn validate_testnet_only_flags(
     Ok(())
 }
 
-pub(in crate::stack) fn ocomp_p2p_namespace(install_hash: Option<B256>) -> Vec<u8> {
-    let base = commonware_utils::union_unique(&config::outbe_app_namespace(), b"_P2P");
-    let Some(install_hash) = install_hash else {
-        return base;
-    };
-    let mut preimage = Vec::with_capacity(b"OUTBE_OCOMP_P2P_NAMESPACE_V1".len() + base.len() + 32);
-    preimage.extend_from_slice(b"OUTBE_OCOMP_P2P_NAMESPACE_V1");
-    preimage.extend_from_slice(&base);
-    preimage.extend_from_slice(install_hash.as_slice());
-    alloy_primitives::keccak256(preimage).to_vec()
-}
-
 /// Build a P2P peer map from a validator set and bootnode entries.
 ///
 /// Registry/config P2P address takes priority. Bootnodes fill missing gaps.

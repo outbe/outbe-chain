@@ -1,5 +1,3 @@
-#![cfg(any(not(feature = "release-sgx-e2e"), feature = "ocomp-integration"))]
-
 //! Rust cucumber harness for the outbe-chain e2e suite.
 //!
 //! The scenarios live as Gherkin fixtures under `features/`. The step code
@@ -21,11 +19,6 @@ pub mod artifacts;
 pub mod env;
 pub mod features;
 pub mod localnet_driver;
-pub mod metadosis_evidence;
-pub mod metadosis_p0;
-pub mod metadosis_process;
-pub mod ocomp_capacity;
-pub mod ocomp_evidence;
 pub mod release_dcap;
 pub mod release_sgx;
 pub mod verification_ledger;

@@ -7,7 +7,7 @@ use eyre::{Result, WrapErr as _};
 use outbe_primitives::consensus_p2p::{
     decode_versioned, encode_v1, P2pAddress, P2pIngress, P2P_ADDRESS_VERSION_V1,
 };
-use std::{net::SocketAddr, path::PathBuf};
+use std::net::SocketAddr;
 
 use crate::abi::{self, IValidatorSet};
 use crate::errors::ValidatorError;
@@ -51,11 +51,7 @@ pub enum ValidatorCmd {
     /// Confirm that your PENDING validator reached the head and is ready for
     /// inclusion in the next DKG reshare target (stale-join guard). Send only
     /// after `outbe-cli monitor` / `outbe_syncStatus` shows the node at tip.
-    ConfirmReady {
-        /// Canonical binary OcompKeyRegistrationV1 produced for this validator.
-        #[arg(long, value_name = "PATH")]
-        registration: PathBuf,
-    },
+    ConfirmReady,
     /// Assign a role-scoped operational key to this validator.
     Delegate {
         /// Operational role granted to the delegate.
@@ -120,9 +116,7 @@ impl ValidatorCmd {
                 bls_sig,
             } => register(client, private_key, pubkey, radicle_node_id, bls_sig).await,
             Self::Deactivate => deactivate(client, private_key).await,
-            Self::ConfirmReady { registration } => {
-                confirm_ready(client, private_key, registration).await
-            }
+            Self::ConfirmReady => confirm_ready(client, private_key).await,
             Self::Delegate {
                 role,
                 delegate: delegate_address,
@@ -155,14 +149,12 @@ impl ValidatorCmd {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum ValidatorDelegateRoleArg {
     Oracle,
-    Ocomp,
 }
 
 impl ValidatorDelegateRoleArg {
     const fn id(self) -> u8 {
         match self {
             Self::Oracle => 1,
-            Self::Ocomp => 2,
         }
     }
 }
@@ -358,25 +350,9 @@ async fn deactivate(client: &(impl Rpc + Sync), private_key: Option<&str>) -> Re
     .await
 }
 
-async fn confirm_ready(
-    client: &(impl Rpc + Sync),
-    private_key: Option<&str>,
-    registration_path: PathBuf,
-) -> Result<()> {
+async fn confirm_ready(client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
     send_validator_set_tx(client, private_key, |_| {
-        let registration = std::fs::read(&registration_path).wrap_err_with(|| {
-            format!(
-                "failed to read canonical OCOMP registration {}",
-                registration_path.display()
-            )
-        })?;
-        if registration.is_empty() {
-            return Err(ValidatorError::EmptyOcompRegistration.into());
-        }
-        Ok(IValidatorSet::confirmValidatorReadyCall {
-            registration: registration.into(),
-        }
-        .abi_encode())
+        Ok(IValidatorSet::confirmValidatorReadyCall {}.abi_encode())
     })
     .await
 }
@@ -863,30 +839,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_confirm_ready_sends_exact_registration_file_bytes() {
-        use std::io::Write as _;
-
-        let registration = vec![0x4f, 0x43, 0x4f, 0x4d, 0x50, 0x01, 0xaa, 0xbb];
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-        file.write_all(&registration).unwrap();
-        let data = IValidatorSet::confirmValidatorReadyCall {
-            registration: registration.clone().into(),
-        }
-        .abi_encode();
+    async fn test_confirm_ready_sends_native_selector() {
+        let data = IValidatorSet::confirmValidatorReadyCall {}.abi_encode();
         let mock =
             recording_send_tx_rpc(TEST_KEY, abi::VALIDATOR_SET_ADDR, data, U256::ZERO).unwrap();
-
-        confirm_ready(&mock, Some(TEST_KEY), file.path().to_path_buf())
-            .await
-            .unwrap();
+        confirm_ready(&mock, Some(TEST_KEY)).await.unwrap();
         mock.assert_done();
     }
 
     #[tokio::test]
-    async fn test_delegate_ocomp_sends_role_scoped_transaction() {
+    async fn test_delegate_oracle_sends_role_scoped_transaction() {
         let delegate_address = Address::repeat_byte(0x22);
         let data = IValidatorSet::setDelegateCall {
-            role: ValidatorDelegateRoleArg::Ocomp.id(),
+            role: ValidatorDelegateRoleArg::Oracle.id(),
             delegate: delegate_address,
         }
         .abi_encode();
@@ -896,7 +861,7 @@ mod tests {
         delegate(
             &mock,
             Some(TEST_KEY),
-            ValidatorDelegateRoleArg::Ocomp,
+            ValidatorDelegateRoleArg::Oracle,
             delegate_address,
         )
         .await
@@ -907,7 +872,6 @@ mod tests {
     #[test]
     fn validator_delegate_role_ids_are_protocol_stable() {
         assert_eq!(ValidatorDelegateRoleArg::Oracle.id(), 1);
-        assert_eq!(ValidatorDelegateRoleArg::Ocomp.id(), 2);
     }
 
     #[test]

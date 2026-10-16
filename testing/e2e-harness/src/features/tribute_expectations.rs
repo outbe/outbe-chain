@@ -5,6 +5,7 @@ use outbe_primitives::{addresses::ORACLE_ADDRESS, time::WorldwideDay};
 
 use crate::{internal::eth, world::World};
 
+#[cfg(test)]
 pub(crate) fn amount_minor(base: &str, remainder: &str) -> U256 {
     let base: u64 = base.parse().expect("fixture whole amount");
     let remainder: u64 = remainder.parse().expect("fixture six-decimal remainder");

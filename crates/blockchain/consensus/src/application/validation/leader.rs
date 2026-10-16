@@ -7,9 +7,7 @@ use commonware_cryptography::certificate::Scheme as _;
 use commonware_utils::ordered::Quorum as _;
 use outbe_primitives::system_tx::binding;
 use outbe_primitives::{
-    reshare_artifact::OutbeBlockArtifacts,
-    system_tx::{OcompLifecycleActivation, SystemTxLayout},
-    OutbeBlockBody, OutbeHeader,
+    reshare_artifact::OutbeBlockArtifacts, system_tx::SystemTxLayout, OutbeBlockBody, OutbeHeader,
 };
 use reth_ethereum::primitives::SignedTransaction as _;
 
@@ -147,10 +145,8 @@ pub(super) fn validate_signers(
 pub(super) fn validate_layout<'a>(
     body: &'a OutbeBlockBody,
     header: &OutbeHeader,
-    activation: OcompLifecycleActivation,
 ) -> Result<(SystemTxLayout<'a>, OutbeBlockArtifacts), BlockValidationError> {
-    binding::validate_system_layout(body, header, activation)
-        .map_err(BlockValidationError::from_layout_binding)
+    binding::validate_system_layout(body, header).map_err(BlockValidationError::from_layout_binding)
 }
 
 #[cfg(test)]

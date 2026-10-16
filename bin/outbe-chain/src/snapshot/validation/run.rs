@@ -17,7 +17,7 @@ impl CheckSelection {
         use CheckName::*;
         let mut checks = BTreeSet::new();
         if requested == "all" {
-            checks.extend([Headers, Evm, Ocomp]);
+            checks.extend([Headers, Evm]);
             if has_artifact_metadata {
                 checks.extend([Files, Provenance]);
             }
@@ -28,7 +28,6 @@ impl CheckSelection {
                     "provenance" => Provenance,
                     "headers" => Headers,
                     "evm" => Evm,
-                    "ocomp" => Ocomp,
                     _ => {
                         return Err(crate::errors::SnapshotError::UnknownSnapshotCheck {
                             name: name.to_owned(),
@@ -40,9 +39,6 @@ impl CheckSelection {
         }
         if has_expected_signer || checks.contains(&Files) {
             checks.insert(Provenance);
-        }
-        if checks.contains(&Ocomp) {
-            checks.insert(Evm);
         }
         if checks.contains(&Evm) {
             checks.insert(Headers);
@@ -121,7 +117,7 @@ fn resolve_validation_layout(
             Some(layout)
         }
         Err(error) => {
-            fail_selected(report, &[Files, Headers, Evm, Ocomp], &error);
+            fail_selected(report, &[Files, Headers, Evm], &error);
             None
         }
     }
@@ -152,7 +148,7 @@ fn create_validation_scratch(
     match result {
         Ok(scratch) => Some(scratch),
         Err(error) => {
-            fail_selected(report, &[Evm, Ocomp], &error);
+            fail_selected(report, &[Evm], &error);
             None
         }
     }
@@ -179,7 +175,7 @@ pub(crate) fn validate_snapshot_with_node(
             .chain(&inputs.archive)
             .cloned(),
     );
-    let native_requested = [Headers, Evm, Ocomp]
+    let native_requested = [Headers, Evm]
         .iter()
         .any(|name| selection.checks.contains(name));
     let (metadata, files_ready) = run_artifact_phase(inputs, &selection, &mut report);
@@ -190,7 +186,7 @@ pub(crate) fn validate_snapshot_with_node(
     let node = match parse_node() {
         Ok(node) => node,
         Err(error) => {
-            fail_selected(&mut report, &[Files, Headers, Evm, Ocomp], &error);
+            fail_selected(&mut report, &[Files, Headers, Evm], &error);
             return Ok(report);
         }
     };
@@ -215,9 +211,7 @@ pub(crate) fn validate_snapshot_with_node(
         return Ok(report);
     }
 
-    let needs_work = [Evm, Ocomp]
-        .iter()
-        .any(|name| selection.checks.contains(name));
+    let needs_work = [Evm].iter().any(|name| selection.checks.contains(name));
     let scratch = needs_work
         .then(|| create_validation_scratch(inputs, &layout, scratch_parent, &mut report))
         .flatten();
@@ -231,7 +225,7 @@ pub(crate) fn validate_snapshot_with_node(
     if let Some(scratch) = scratch {
         if let Err(source) = scratch.close() {
             let error = crate::errors::SnapshotError::RemoveValidationScratch { source }.into();
-            fail_selected(&mut report, &[Evm, Ocomp], &error);
+            fail_selected(&mut report, &[Evm], &error);
         }
     }
     // No unused selected check is silently promoted. Pending means Incomplete.
@@ -267,7 +261,6 @@ fn validation_protected(
     protected.0.extend([
         layout.chain_root.clone(),
         layout.consensus_root.clone(),
-        layout.ocomp_root.clone(),
         layout.static_files_root.clone(),
         layout.execution_rocksdb_root.clone(),
     ]);

@@ -327,15 +327,3 @@ fn validate_timing_rejects_invalid_combinations() {
 fn validate_timing_accepts_defaults() {
     assert!(validate_timing(2000, 4000, 8000).is_ok());
 }
-
-#[test]
-fn ocomp_manifest_hash_separates_p2p_before_consensus_participation() {
-    let legacy = ocomp_p2p_namespace(None);
-    let first = ocomp_p2p_namespace(Some(B256::repeat_byte(0x11)));
-    let replay = ocomp_p2p_namespace(Some(B256::repeat_byte(0x11)));
-    let different = ocomp_p2p_namespace(Some(B256::repeat_byte(0x12)));
-
-    assert_eq!(first, replay);
-    assert_ne!(first, legacy);
-    assert_ne!(first, different);
-}

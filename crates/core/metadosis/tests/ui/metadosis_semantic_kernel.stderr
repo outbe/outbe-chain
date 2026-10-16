@@ -1,11 +1,5 @@
-error[E0603]: module `kernel` is private
+error[E0432]: unresolved import `outbe_metadosis::test_support::kernel`
  --> tests/ui/metadosis_semantic_kernel.rs:1:36
   |
 1 | use outbe_metadosis::test_support::kernel::ActivationKernel;
-  |                                    ^^^^^^ private module
-  |
-note: the module `kernel` is defined here
- --> src/test_support.rs
-  |
-  | mod kernel {
-  | ^^^^^^^^^^
+  |                                    ^^^^^^ could not find `kernel` in `test_support`

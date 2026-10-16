@@ -18,7 +18,7 @@ pub enum RetirementOutcome {
     Requested,
 }
 
-/// Constant-size owner receipt for a sealed Tribute generation forfeited by
+/// Constant-size owner receipt for a sealed Tribute partition forfeited by
 /// Metadosis retained-cap policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TributeForfeitureReceipt {
@@ -51,33 +51,21 @@ impl TributeContract<'_> {
         storage.require_metadosis_process_ready()?;
         storage.with_checkpoint(|| {
             let totals = self.get_day_totals(day)?;
-            let mut admission = self.read_day_pre_admission(day)?;
-            if !self.ocomp_profile_ready.read()?
-                || self.retired_days.read(&day)?
-                || admission.source_generation != 0
+            if self.retired_days.read(&day)?
                 || !totals.initialized
                 || !totals.is_sealed
                 || verified_count == 0
                 || totals.tribute_count != verified_count
                 || totals.tribute_nominal_total_minor != verified_nominal
-                || (admission.is_sealed
-                    && (admission.sealed_tribute_count != verified_count
-                        || admission.sealed_tribute_nominal_total_minor != verified_nominal))
             {
                 return Err(TributeError::LysisInputMismatch.into());
             }
-            admission.initialized = true;
-            admission.is_sealed = true;
-            admission.sealed_tribute_count = verified_count;
-            admission.sealed_tribute_nominal_total_minor = verified_nominal;
-            self.store_day_pre_admission(&admission)?;
+            self.freeze_day_nominal(&totals)?;
             self.consume_lysis_partition_inner(day, verified_count, verified_nominal)?;
             let retirement_outcome = self.retire_completed_partition_inner(day)?;
             if retirement_outcome != RetirementOutcome::Requested {
                 return Err(TributeError::LysisInputMismatch.into());
             }
-            admission.source_generation = 1;
-            self.store_day_pre_admission(&admission)?;
             Ok(TributeLysisReceipt {
                 worldwide_day: day,
                 consumed_count: verified_count,
@@ -97,9 +85,6 @@ impl TributeContract<'_> {
         verified_count: u32,
         verified_nominal: alloy_primitives::U256,
     ) -> Result<()> {
-        if self.ocomp_profile_ready.read()? {
-            return Err(TributeError::PopulatedOcompInputRequiresCertifiedRetirement.into());
-        }
         self.consume_lysis_partition_inner(day, verified_count, verified_nominal)
     }
 
@@ -131,14 +116,6 @@ impl TributeContract<'_> {
 
     /// Retires a sealed empty day in the same state checkpoint as completion.
     pub fn retire_completed_partition(&mut self, day: WorldwideDay) -> Result<RetirementOutcome> {
-        if self.ocomp_profile_ready.read()?
-            && self
-                .day_pre_admission
-                .get(day)?
-                .is_some_and(|admission| admission.is_sealed && admission.sealed_tribute_count != 0)
-        {
-            return Err(TributeError::PopulatedOcompInputRequiresCertifiedRetirement.into());
-        }
         let storage = self.storage_handle();
         storage.with_checkpoint(|| self.retire_completed_partition_inner(day))
     }
@@ -162,7 +139,7 @@ impl TributeContract<'_> {
         })
     }
 
-    /// Forfeits one sealed generation from its frozen state aggregates.
+    /// Forfeits one sealed partition from its frozen state aggregates.
     /// The operation retains all ciphertext records and indexes.
     pub fn forfeit_sealed_partition(
         &mut self,
@@ -222,12 +199,8 @@ impl TributeContract<'_> {
     }
 
     pub fn unseal_day(&mut self, day: WorldwideDay) -> Result<()> {
-        if self
-            .day_pre_admission
-            .get(day)?
-            .is_some_and(|admission| admission.is_sealed)
-        {
-            return Err(TributeError::PreAdmissionSealed.into());
+        if self.retired_days.read(&day)? || self.day_amount_record(day, true)?.is_some() {
+            return Err(TributeError::WorldwideDaySealed.into());
         }
         self.set_day_sealed(day, false)?;
         self.emit(ITribute::TributeWorldwideDaySealed {
@@ -235,33 +208,5 @@ impl TributeContract<'_> {
             isSealed: false,
         })?;
         Ok(())
-    }
-
-    /// Freezes the Tribute aggregates after the day is sealed.
-    /// Callers cannot replace an already sealed value.
-    pub fn seal_pre_admission(
-        &mut self,
-        day: WorldwideDay,
-    ) -> Result<crate::TributePreAdmissionProjection> {
-        let storage = self.storage_handle();
-        storage.with_checkpoint(|| {
-            if !self.ocomp_profile_ready.read()? {
-                return Err(TributeError::OcompProfileNotReady.into());
-            }
-            let totals = self.get_day_totals(day)?;
-            if !totals.initialized || !totals.is_sealed {
-                return Err(TributeError::WorldwideDaySealed.into());
-            }
-            let mut admission = self.read_day_pre_admission(day)?;
-            if admission.is_sealed {
-                return Err(TributeError::PreAdmissionSealed.into());
-            }
-            admission.initialized = true;
-            admission.is_sealed = true;
-            admission.sealed_tribute_count = totals.tribute_count;
-            admission.sealed_tribute_nominal_total_minor = totals.tribute_nominal_total_minor;
-            self.store_day_pre_admission(&admission)?;
-            self.pre_admission_projection(day)
-        })
     }
 }

@@ -94,28 +94,6 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
         self.assertEqual(node_balances.count("0xd3c21bcecceda1000000"), 21)
         self.assertEqual(set(node_balances), {"0x0", "0xd3c21bcecceda1000000"})
 
-        fixture_root = REPO_ROOT / "testing/e2e-harness/fixtures/ocomp-final-v1"
-        base = json.loads((fixture_root / "base/genesis.json").read_text())
-        final = json.loads((fixture_root / "artifacts/genesis-final.json").read_text())
-        self.assertEqual(base["config"]["epochLengthBlocks"], 300)
-        self.assertNotIn("ocompForkInstallV1", base["config"])
-        self.assertIn("ocompForkInstallV1", final["config"])
-        self.assertEqual(base["alloc"], final["alloc"])
-
-        balances = [entry["balance"] for entry in base["alloc"].values()]
-        self.assertEqual(balances.count("0x21e19e0c9bab2400000"), 4)
-        self.assertEqual(balances.count("0x3635c9adc5dea00000"), 2)
-        self.assertEqual(balances.count("0x54b40b1f852bda000000"), 1)
-        self.assertEqual(
-            set(balances),
-            {
-                "0x0",
-                "0x21e19e0c9bab2400000",
-                "0x3635c9adc5dea00000",
-                "0x54b40b1f852bda000000",
-            },
-        )
-
         release = json.loads((REPO_ROOT / "release/testnet-genesis.json").read_text())
         self.assertEqual(release["alloc"], {})
 
@@ -185,7 +163,7 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
         profile = {
             "schemaVersion": 1,
             "metadosis": {"formingPeriodSeconds": 60},
-            "ocomp": {"computeVoteWindowBlocks": 120},
+            "governance": {"votingWindowBlocks": 120},
         }
 
         seed_genesis.seed_protocol_constants(genesis, {"protocol_constants": profile})

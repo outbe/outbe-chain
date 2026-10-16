@@ -209,31 +209,6 @@ impl From<FidelityEnclaveError> for crate::errors::TeeError {
     }
 }
 
-/// Rejection reasons for protected NOD materialization.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum NodMaterializationRejectReason {
-    #[error("stale materialization authority")]
-    StaleAuthority,
-    #[error("materialization ciphertext mismatch")]
-    CiphertextMismatch,
-    #[error("NOD source count mismatch")]
-    SourceCountMismatch,
-    #[error("NOD league fraction")]
-    LeagueFraction,
-    #[error("NOD Tribute identity mismatch")]
-    TributeIdentityMismatch,
-    #[error("invalid Tribute proof encoding")]
-    InvalidTributeProofEncoding,
-    #[error("NOD gratis load")]
-    GratisLoad,
-}
-
-impl From<NodMaterializationRejectReason> for crate::errors::TeeError {
-    fn from(err: NodMaterializationRejectReason) -> Self {
-        Self::TributeOfferReject(err.to_string())
-    }
-}
-
 /// Rejection reasons for encrypted Tribute day operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum TributeDayRejectReason {

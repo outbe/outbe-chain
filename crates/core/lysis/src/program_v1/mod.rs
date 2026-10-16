@@ -1,16 +1,9 @@
 //! Storage-independent Lysis V1 semantic program.
 //!
-//! The program consumes request-pinned logical observations and emits typed
-//! actions. Artifact and result modules use the OCOMP protocol codec.
+//! The program consumes logical observations and emits typed actions.
 //! The program owns no storage, node, process, or worker dependency.
 
-pub mod artifacts;
 mod execute;
-pub mod finalizer;
-pub mod phases;
-pub mod planner;
-pub mod reducers;
-pub mod result;
 mod types;
 
 #[cfg(test)]

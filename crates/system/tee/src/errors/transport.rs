@@ -68,13 +68,13 @@ pub enum TransportError {
     #[error("enclave returned error: {0}")]
     EnclaveError(String),
 
-    /// Enclave rejected a protected NOD materialization request.
-    #[error("NOD materialization rejected: {0}")]
-    NodMaterializationRejected(String),
+    /// Tribute source verification rejected the supplied record.
+    #[error("Tribute source rejected: {0}")]
+    TributeSourceRejected(String),
 
-    /// Protected NOD materialization request exceeded the capacity bound.
-    #[error("NOD materialization capacity exceeded: {0}")]
-    NodMaterializationCapacityExceeded(String),
+    /// NOD multipart transfer exceeded the capacity bound.
+    #[error("NOD transfer capacity exceeded: {0}")]
+    NodTransferCapacityExceeded(String),
 
     /// Enclave rejected an encrypted NOD mint request.
     #[error("encrypted NOD mint rejected: {0}")]
@@ -205,8 +205,8 @@ impl TransportError {
             Self::FidelityAttestation(_) => "fidelity_attestation",
             Self::UnexpectedResponse => "unexpected_response",
             Self::EnclaveError(_) => "enclave_error",
-            Self::NodMaterializationRejected(_) => "nod_materialization_rejected",
-            Self::NodMaterializationCapacityExceeded(_) => "nod_materialization_capacity",
+            Self::TributeSourceRejected(_) => "tribute_source_rejected",
+            Self::NodTransferCapacityExceeded(_) => "nod_transfer_capacity",
             Self::NodMintRejected(_) => "nod_mint_rejected",
             Self::IdentityMismatch(_) => "identity_mismatch",
             Self::SessionRevoked(_) => "session_revoked",

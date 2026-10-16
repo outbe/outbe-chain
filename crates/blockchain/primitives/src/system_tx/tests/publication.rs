@@ -48,13 +48,7 @@ fn publication_layout_binds_exact_header_batch_after_hooks_and_preserves_legacy(
         extra_data: encode_outbe_block_artifacts(&artifacts).unwrap(),
         ..Default::default()
     });
-    let kinds = expected_begin_block_kinds_for_publication(
-        2,
-        false,
-        false,
-        OcompLifecycleActivation::Disabled,
-        true,
-    );
+    let kinds = expected_begin_block_kinds_for_publication(2, false, false, true);
     assert_eq!(
         &kinds[kinds.len() - 2..],
         &[SystemTxKind::HookEvents, SystemTxKind::RadiclePublication]
@@ -77,16 +71,16 @@ fn publication_layout_binds_exact_header_batch_after_hooks_and_preserves_legacy(
             .collect(),
         ..Default::default()
     };
-    assert!(validate_system_layout(&body, &header, OcompLifecycleActivation::Disabled).is_ok());
+    assert!(validate_system_layout(&body, &header).is_ok());
     let accepted = body.transactions.pop().unwrap();
-    assert!(validate_system_layout(&body, &header, OcompLifecycleActivation::Disabled).is_err());
+    assert!(validate_system_layout(&body, &header).is_err());
     let mut different = batch(32);
     different.body.package_manifest_hash = B256::repeat_byte(99);
     body.transactions.push(transaction(
         SystemTxInputV2::RadiclePublication { batch: different },
         body.transactions.len(),
     ));
-    assert!(validate_system_layout(&body, &header, OcompLifecycleActivation::Disabled).is_err());
+    assert!(validate_system_layout(&body, &header).is_err());
     *body.transactions.last_mut().unwrap() = accepted;
     let mut no_batch = header.clone();
     no_batch.inner.extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
@@ -94,21 +88,21 @@ fn publication_layout_binds_exact_header_batch_after_hooks_and_preserves_legacy(
         ..Default::default()
     })
     .unwrap();
-    assert!(validate_system_layout(&body, &no_batch, OcompLifecycleActivation::Disabled).is_err());
+    assert!(validate_system_layout(&body, &no_batch).is_err());
     body.transactions.pop();
-    assert!(validate_system_layout(&body, &no_batch, OcompLifecycleActivation::Disabled).is_ok());
+    assert!(validate_system_layout(&body, &no_batch).is_ok());
     no_batch.inner.extra_data = Bytes::new();
-    assert!(validate_system_layout(&body, &no_batch, OcompLifecycleActivation::Disabled).is_ok());
+    assert!(validate_system_layout(&body, &no_batch).is_ok());
 }
 
 #[test]
 fn publication_cursor_advances_only_after_hooks_when_a_batch_is_present() {
     let hooks = SystemTxPhase::HookEvents { body_index: 8 };
     assert_eq!(
-        hooks.advance_after_commit_with_ocomp(false, false, false),
+        hooks.advance_after_commit(false, false),
         SystemTxPhase::UserTxs
     );
-    let publication = hooks.advance_after_commit_with_publication(false, false, false, true);
+    let publication = hooks.advance_after_commit_with_publication(false, false, true);
     assert_eq!(
         publication,
         SystemTxPhase::RadiclePublication { body_index: 9 }
@@ -118,7 +112,7 @@ fn publication_cursor_advances_only_after_hooks_when_a_batch_is_present() {
         Some(SystemTxKind::RadiclePublication)
     );
     assert_eq!(
-        publication.advance_after_commit_with_publication(false, false, false, true),
+        publication.advance_after_commit_with_publication(false, false, true),
         SystemTxPhase::UserTxs
     );
 }

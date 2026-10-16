@@ -9,12 +9,12 @@ use outbe_primitives::{
         StorageHandle,
     },
 };
-use std::{cell::RefCell, collections::BTreeMap};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 struct RpcStateReader {
     url: String,
     block_hash: B256,
-    slots: RefCell<BTreeMap<(Address, B256), U256>>,
+    slots: Rc<RefCell<BTreeMap<(Address, B256), U256>>>,
 }
 impl StorageReader for RpcStateReader {
     fn read_storage(&self, address: Address, key: B256) -> StorageResult<U256> {
@@ -50,18 +50,67 @@ impl Rpc {
         let chain_id = self
             .chain_id(port)
             .ok_or_else(|| eyre!("missing chain identity on port {port}"))?;
+        let observed_slots = Rc::new(RefCell::new(BTreeMap::new()));
         let reader = RpcStateReader {
             url: self.url(port),
             block_hash: checkpoint.block_hash,
-            slots: RefCell::new(BTreeMap::new()),
+            slots: Rc::clone(&observed_slots),
         };
         let mut provider =
             ReadOnlyStorageProvider::new_with_chain_identity(reader, chain_id, B256::ZERO);
-        StorageHandle::enter(&mut provider, read).map_err(|error| {
+        let result = StorageHandle::enter(&mut provider, read).map_err(|error| {
             eyre!(
                 "read entity state at {} on port {port}: {error}",
                 checkpoint.height
             )
+        })?;
+        let slots = observed_slots.borrow();
+        let mut accounts = BTreeMap::<Address, Vec<B256>>::new();
+        for &(address, key) in slots.keys() {
+            accounts.entry(address).or_default().push(key);
+        }
+        for (address, keys) in accounts {
+            let value = eth::raw_json_result(
+                &self.url(port),
+                "eth_getProof",
+                serde_json::json!([
+                    address, keys, {"blockHash": checkpoint.block_hash, "requireCanonical": true},
+                ]),
+            )?;
+            let proof = decode_account_proof(value)?;
+            ensure!(
+                proof.slots.iter().map(|slot| slot.slot).collect::<Vec<_>>() == keys,
+                "native state proof opens a different slot set"
+            );
+            let verified = proof.verify(
+                address,
+                checkpoint.state_root,
+                outbe_primitives::storage::proof::StateProofLimits {
+                    max_slots: 512,
+                    max_nodes: 16_384,
+                    max_bytes: 4 * 1024 * 1024,
+                },
+            )?;
+            for key in keys {
+                ensure!(
+                    verified.read_storage(address, key)? == slots[&(address, key)],
+                    "native state word differs from its MPT proof"
+                );
+            }
+        }
+        Ok(result)
+    }
+
+    pub fn desis_limit_at(
+        &self,
+        port: u16,
+        checkpoint: FinalizedCheckpoint,
+        day: WorldwideDay,
+    ) -> Result<U256> {
+        self.read_state_at(port, checkpoint, |storage| {
+            outbe_desis::schema::DesisContract::new(storage)
+                .pending_desis_limit_minor
+                .read(&day)
         })
     }
 
@@ -153,7 +202,6 @@ impl Rpc {
         Ok(proof.tribute)
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub fn nod_state_at(
         &self,
         port: u16,
@@ -173,7 +221,6 @@ impl Rpc {
         })
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub fn nod_bucket_state_at(
         &self,
         port: u16,
@@ -186,7 +233,6 @@ impl Rpc {
         })
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub fn gem_state_at(
         &self,
         port: u16,
@@ -204,7 +250,6 @@ impl Rpc {
     }
 }
 
-#[cfg(feature = "ocomp-integration")]
 fn snapshot_nod_bucket(body: &outbe_nod::NodBucketState) -> outbe_nod::NodBucketState {
     outbe_nod::NodBucketState {
         bucket_key: body.bucket_key,
@@ -213,4 +258,33 @@ fn snapshot_nod_bucket(body: &outbe_nod::NodBucketState) -> outbe_nod::NodBucket
         reference_currency: body.reference_currency,
         settled_nods: body.settled_nods,
     }
+}
+
+fn decode_account_proof(
+    value: serde_json::Value,
+) -> Result<outbe_primitives::storage::proof::AccountStorageProof> {
+    use outbe_primitives::storage::proof::{AccountStorageProof, StorageSlotProof};
+    let mut slots = value["storageProof"]
+        .as_array()
+        .ok_or_else(|| eyre!("missing native storage proof"))?
+        .iter()
+        .map(|slot| {
+            let key: U256 = serde_json::from_value(slot["key"].clone())?;
+            Ok(StorageSlotProof {
+                slot: B256::from(key),
+                value: serde_json::from_value(slot["value"].clone())?,
+                nodes: serde_json::from_value(slot["proof"].clone())?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    slots.sort_by_key(|slot| slot.slot);
+    Ok(AccountStorageProof {
+        address: serde_json::from_value(value["address"].clone())?,
+        nonce: u64::try_from(serde_json::from_value::<U256>(value["nonce"].clone())?)?,
+        balance: serde_json::from_value(value["balance"].clone())?,
+        code_hash: serde_json::from_value(value["codeHash"].clone())?,
+        storage_root: serde_json::from_value(value["storageHash"].clone())?,
+        account_nodes: serde_json::from_value(value["accountProof"].clone())?,
+        slots,
+    })
 }

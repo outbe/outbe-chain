@@ -2,7 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use outbe_ocomp_protocol::intent::DayType;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -18,7 +17,7 @@ use outbe_tribute::TributeContract;
 use crate::{
     aggregate::{WwdDayType, WwdProjection},
     commit::commit_outer_transition,
-    ocomp_limits::{apply_auction_brief, apply_fresh_request_limit_effect, RequestLimitEffect},
+    limits::{apply_auction_brief, apply_lysis_limit, LysisLimitInput},
     precompile::IMetadosis,
     reducer::{reduce_outer_wwd, OuterWwdEvent, ReadyDisposition},
     schema::MetadosisContract,
@@ -126,23 +125,19 @@ pub(crate) fn execute(
         .lysis_limit_minor
         .checked_sub(result.unused_lysis_limit_minor)
         .ok_or_else(mismatch)?;
-    let profile = crate::runtime::require_active_ocomp_profile(metadosis)?;
     let carry_before = PromisLimitContract::new(storage.clone()).get_total_unallocated()?;
-    let split = apply_fresh_request_limit_effect(
+    let green = match current.day_type {
+        WwdDayType::Green => true,
+        WwdDayType::Red => false,
+        WwdDayType::Unknown => return Err(mismatch()),
+    };
+    let split = apply_lysis_limit(
         storage.clone(),
-        RequestLimitEffect {
-            protocol_bundle_hash: profile.protocol_bundle_hash,
-            wwd: day.value(),
-            pending_nonce: 0,
-            day_type: match current.day_type {
-                WwdDayType::Green => DayType::Green,
-                WwdDayType::Red => DayType::Red,
-                WwdDayType::Unknown => return Err(mismatch()),
-            },
-            day_limit: current.metadosis_limit_minor,
+        LysisLimitInput {
+            base_limit: current.metadosis_limit_minor,
             lysis_limit_minor: calculation.lysis_limit_minor,
             nominal_total: result.total_nominal_minor,
-            logical_anchor: ctx.block.timestamp,
+            green,
         },
     )?;
     if used
@@ -167,7 +162,7 @@ pub(crate) fn execute(
     if credit.credited != result.unused_lysis_limit_minor {
         return Err(mismatch());
     }
-    apply_auction_brief(storage.clone(), &split)?;
+    apply_auction_brief(storage.clone(), day, &split, green, ctx.block.timestamp)?;
     let carry_after = PromisLimitContract::new(storage).get_total_unallocated()?;
     let transition = reduce_outer_wwd(
         Some(current),

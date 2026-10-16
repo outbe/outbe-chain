@@ -1,22 +1,15 @@
 //! Typed errors for snapshot creation and validation.
 
 use alloy_primitives::B256;
-use outbe_primitives::error::PrecompileError;
 use outbe_snapshot::manifest::DomainKind;
 use thiserror::Error;
 
 /// Errors that occur during snapshot creation and core validation.
 #[derive(Debug, Error)]
 pub(crate) enum SnapshotError {
-    #[cfg(all(test, feature = "snapshot-integration"))]
-    #[error("Lysis terminal receipt intent or job binding differs")]
-    LysisTerminalReceiptMismatch,
     /// Native CLI inputs do not describe a node.
     #[error("snapshot native inputs must describe a node")]
     InputsNotNode,
-    /// The node data directory has no parent for OCOMP.
-    #[error("node data directory has no OCOMP parent")]
-    MissingOcompParent,
     /// The snapshot output path already exists.
     #[error("snapshot output already exists: {path}")]
     OutputAlreadyExists {
@@ -200,26 +193,6 @@ pub(crate) enum SnapshotError {
     /// Native file inventory totals differ from the manifest.
     #[error("native file inventory totals differ")]
     FileInventoryTotalsDiffer,
-    /// Reading canonical owner state failed at an execution height.
-    #[error("canonical owner state at E={number}: {error}")]
-    CanonicalOwnerState {
-        /// Execution block number.
-        number: u64,
-        /// Underlying precompile error.
-        error: PrecompileError,
-    },
-    /// Canonical Metadosis job intent or day binding differs.
-    #[error("canonical Metadosis job intent/day binding differs")]
-    MetadosisJobIntentDayMismatch,
-    /// Canonical Metadosis job identifier binding differs.
-    #[error("canonical Metadosis JobId binding differs")]
-    MetadosisJobIdMismatch,
-    /// Canonical Metadosis request binding differs from the retained header.
-    #[error("canonical Metadosis request binding differs from retained header B={number}")]
-    MetadosisRequestBindingMismatch {
-        /// Request block number.
-        number: u64,
-    },
     /// The execution header does not match the canonical identity.
     #[error("execution header does not match the observed canonical identity")]
     ExecutionHeaderIdentityMismatch,
@@ -412,32 +385,4 @@ pub(crate) enum SnapshotError {
         #[source]
         source: std::io::Error,
     },
-}
-
-/// Precompile storage errors raised while reading canonical snapshot state.
-#[derive(Debug, Error)]
-pub(crate) enum CanonicalStatePrecompileError {
-    /// Reading verified storage failed.
-    #[error("read verified storage: {details}")]
-    ReadVerifiedStorage {
-        /// Error details.
-        details: String,
-    },
-    /// Reading a verified retained header failed.
-    #[error("read verified retained header {number}: {details}")]
-    ReadVerifiedRetainedHeader {
-        /// Block number.
-        number: u64,
-        /// Error details.
-        details: String,
-    },
-    /// Decoding an active generation record failed.
-    #[error("{0}")]
-    ActiveGenerationDecode(#[from] outbe_ocomp_protocol::ProtocolError),
-}
-
-impl From<CanonicalStatePrecompileError> for PrecompileError {
-    fn from(error: CanonicalStatePrecompileError) -> Self {
-        Self::Fatal(error.to_string())
-    }
 }

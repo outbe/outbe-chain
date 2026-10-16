@@ -1,5 +1,4 @@
 use super::*;
-use crate::test_support::test_seeded_ocomp_registration;
 use outbe_primitives::error::Result;
 
 pub(super) const CHAIN_ID: u64 = 1;
@@ -78,30 +77,8 @@ pub(super) fn dummy_consensus_pubkey(seed: u8) -> [u8; 48] {
     pk
 }
 
-/// The canonical OCOMP registration of `validator` signed with the seed key
-/// `key_seed` for this test chain.
-pub(super) fn ocomp_registration(
-    validator: Address,
-    consensus_pubkey: &[u8; 48],
-    key_seed: u8,
-) -> (OcompKeyRegistrationV1, Vec<u8>) {
-    test_seeded_ocomp_registration(
-        validator,
-        consensus_pubkey,
-        key_seed,
-        (CHAIN_ID, B256::ZERO),
-    )
-    .unwrap()
-}
-
-pub(super) fn confirm_ready(vs: &mut ValidatorSet<'_>, validator: Address, key_seed: u8) {
-    let consensus_pubkey = vs
-        .get_validator(validator)
-        .unwrap()
-        .unwrap()
-        .consensus_pubkey;
-    let (_, encoded) = ocomp_registration(validator, &consensus_pubkey, key_seed);
-    vs.confirm_validator_ready(validator, &encoded).unwrap();
+pub(super) fn confirm_ready(vs: &mut ValidatorSet<'_>, validator: Address, _seed: u8) {
+    vs.confirm_validator_ready(validator).unwrap();
 }
 
 /// Registers each `(validator, key seed)` pair through the owner, in order.

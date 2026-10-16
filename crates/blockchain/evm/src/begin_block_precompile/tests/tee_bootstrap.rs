@@ -269,7 +269,6 @@ fn run_bootstrap_v1(provider: &mut HashMapStorageProvider, payload: TeeBootstrap
             SYSTEM_ADDRESS,
             U256::ZERO,
             DispatchAuthorities {
-                ocomp_fork_install: None,
                 tee_attestation_v1: &activation,
             },
         )

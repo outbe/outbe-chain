@@ -531,8 +531,8 @@ mod tests {
         use alloy_primitives::{keccak256, Bytes};
         use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles, TrieAccount};
         use outbe_consensus::finalized_admission_test_utils::FinalityCommitteeFixture;
-        use outbe_ocomp_protocol::test_utils::{proof_nodes_for_target, storage_trie};
         use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
+        use outbe_primitives::test_utils::state_proof::{proof_nodes_for_target, storage_trie};
 
         fn account_trie(account: TrieAccount) -> (B256, Vec<Bytes>) {
             let target = Nibbles::unpack(keccak256(TEE_REGISTRY_ADDRESS));

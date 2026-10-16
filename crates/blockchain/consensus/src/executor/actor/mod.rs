@@ -20,7 +20,6 @@ use commonware_consensus::types::Height;
 use commonware_runtime::{Clock, Handle, Metrics, Spawner};
 use commonware_utils::channel::oneshot;
 use futures::StreamExt;
-use outbe_primitives::projection::ProjectionReadinessHandle;
 use outbe_primitives::OutbePayloadTypes;
 use reth_node_builder::ConsensusEngineHandle;
 use tracing::error;
@@ -50,7 +49,6 @@ pub struct ExecutorActor<E> {
     // with no timer/spawn dependency. It is runtime-agnostic, so it does not pull
     // the tokio reactor onto the executor's deterministic-capable path.
     execution_finalized_height_tx: Option<tokio::sync::mpsc::UnboundedSender<u64>>,
-    ocomp_readiness: Option<ProjectionReadinessHandle>,
     finalized_execution_barrier: Option<Arc<dyn FinalizedExecutionBarrier>>,
     ancestry_readiness: Option<AncestryReadiness>,
     fcu_heartbeat_interval: Duration,
@@ -94,7 +92,6 @@ where
             state,
             mailbox_rx: rx,
             execution_finalized_height_tx,
-            ocomp_readiness: None,
             finalized_execution_barrier: None,
             ancestry_readiness: None,
             fcu_heartbeat_interval,
@@ -107,14 +104,6 @@ where
 
     pub fn with_ancestry_readiness(mut self, readiness: AncestryReadiness) -> Self {
         self.ancestry_readiness = Some(readiness);
-        self
-    }
-
-    /// Installs the FullNode-only OCOMP replay barrier. Validators deliberately
-    /// leave this unset, preserving their existing execution path.
-    #[must_use]
-    pub fn with_ocomp_readiness(mut self, readiness: ProjectionReadinessHandle) -> Self {
-        self.ocomp_readiness = Some(readiness);
         self
     }
 
@@ -351,7 +340,7 @@ mod forkchoice;
 use forkchoice::{next_deadline, LastCanonicalized, MaybeBuild};
 
 mod readiness;
-use readiness::{wait_for_optional_ocomp_parent, HeadOrFinalized};
+use readiness::HeadOrFinalized;
 
 mod recovery;
 pub use recovery::RecoveredForkchoiceAttempt;

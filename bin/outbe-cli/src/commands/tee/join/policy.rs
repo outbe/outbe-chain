@@ -144,7 +144,7 @@ pub(in super::super) fn classify_join_offer_key_state(
             offer_key_ready: true,
             ..
         } => Ok(JoinOfferKeyState::ReadyMismatch),
-        other => Err(TeeJoinError::UnexpectedPublicKeysResponse(other)),
+        other => Err(TeeJoinError::UnexpectedPublicKeysResponse(Box::new(other))),
     }
 }
 

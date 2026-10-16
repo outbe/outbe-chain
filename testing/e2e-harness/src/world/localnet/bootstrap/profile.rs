@@ -22,7 +22,6 @@ pub struct BootstrapProfile {
     pub(super) validator_balance_coen: Option<u64>,
     pub(super) metadosis_forming_seconds: Option<u64>,
     pub(super) metadosis_offering_seconds: u64,
-    pub(super) ocomp_vote_window_blocks: u64,
     pub(super) governance_voting_window_blocks: u64,
     pub(super) governments: bool,
     pub(super) oracle_pairs: Option<Vec<(String, String, String)>>,
@@ -48,7 +47,6 @@ impl Default for BootstrapProfile {
             validator_balance_coen: None,
             metadosis_forming_seconds: None,
             metadosis_offering_seconds: LOCALNET_METADOSIS_OFFERING_SECONDS,
-            ocomp_vote_window_blocks: LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS,
             governance_voting_window_blocks: 6,
             governments: false,
             oracle_pairs: None,
@@ -66,7 +64,6 @@ impl BootstrapProfile {
     }
 
     /// Fund only this scenario's actors and seed its user's mineable Gem.
-    #[cfg(any(test, feature = "ocomp-integration"))]
     pub(crate) fn with_credis_accounts(
         mut self,
         user: alloy_primitives::Address,
@@ -239,9 +236,6 @@ impl BootstrapProfile {
                 }
                 "TESTNET_METADOSIS_OFFERING_SECONDS" => {
                     profile.metadosis_offering_seconds = parsed()?;
-                }
-                "TESTNET_OCOMP_VOTE_WINDOW_BLOCKS" => {
-                    profile.ocomp_vote_window_blocks = parsed()?;
                 }
                 other => {
                     bail!("unsupported localnet tuning key {other}");

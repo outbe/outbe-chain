@@ -86,9 +86,8 @@ Gratis root, preventing account discovery by comparing ciphertext updates.
 Rust helpers live in `outbe_tee::confidential`; MCP helpers live in `crypto.ts`.
 
 The source is hidden during collateral execution, private storage access and
-balance queries. **Existing public OCOMP owner/league snapshots are preserved by
-explicit scope choice. They, public amounts and other public economic activity
-can still support correlation; this is not a claim of complete unlinkability.**
+balance queries. Public economic activity can still support correlation;
+this is not a claim of complete unlinkability.
 Owner-authorized Fidelity queries and runtime league consumers keep their existing
 disclosures. TEE CPU/cache/page-fault side channels are outside this boundary.
 

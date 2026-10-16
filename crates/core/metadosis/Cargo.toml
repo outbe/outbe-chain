@@ -8,38 +8,29 @@ publish.workspace = true
 [dependencies]
 outbe-chain-constants.workspace = true
 outbe-macros.workspace = true
-outbe-consensus.workspace = true
-outbe-ocomp-protocol.workspace = true
-outbe-ocompregistry.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-desis.workspace = true
 outbe-fidelity.workspace = true
 outbe-tribute.workspace = true
-outbe-validatorset.workspace = true
 outbe-nod.workspace = true
 outbe-nodfactory.workspace = true
 outbe-promislimit.workspace = true
-outbe-lysis.workspace = true
 outbe-tee.workspace = true
 outbe-oracle.workspace = true
-outbe-staking.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-k256 = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
 outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-tee-enclave.workspace = true
-outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 outbe-nod = { workspace = true, features = ["test-enclave"] }
 outbe-tribute = { workspace = true, features = ["test-enclave"] }
 k256.workspace = true
 num-bigint.workspace = true
 outbe-offchain-storage.workspace = true
-outbe-validatorset = { workspace = true, features = ["test-utils"] }
 proptest.workspace = true
 trybuild = "1"
 # Drive the confidential Fidelity league snapshot in tests via the in-process engine.
@@ -48,7 +39,7 @@ outbe-fidelity = { workspace = true, features = ["test-enclave"] }
 [features]
 default = []
 bench-utils = []
-test-utils = ["dep:k256", "outbe-validatorset/test-utils", "outbe-tribute/test-enclave", "outbe-ocomp-protocol/test-utils"]
+test-utils = ["outbe-tribute/test-enclave"]
 
 [lints]
 workspace = true

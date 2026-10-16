@@ -41,7 +41,6 @@ EXPECTED_ARTIFACTS = (
     "outbe-keygen",
     "outbe-feeder",
     "outbe-tee-enclave",
-    "outbe-ocomp",
 )
 
 

@@ -1,95 +1,9 @@
-//! Ingress classification for the public `submitLysisResult` selector.
-//!
-//! The view dispatcher must never `Fatal` on caller-supplied calldata. A
-//! `Fatal` from this selector aborts the whole payload build for a transaction
-//! that any external account can submit. The command path (active OCOMP lifecycle)
-//! keeps its own machine-readable rejection codes.
-
 use super::*;
 use crate::schema::terminal_outcome;
 use crate::terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt};
-use crate::{
-    errors::vote_rejection_code::LIFECYCLE_INACTIVE, ocomp::vote::dispatch_public_result_vote,
-};
-use outbe_ocomp_protocol::abi::OCOMP_RESULT_VOTE_REJECTED_SELECTOR;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::time::WorldwideDay as WwdKey;
 use outbe_tribute::runtime::RetirementOutcome;
-
-const REJECT_CALL_MODE_CODE: u16 = 3;
-
-fn reject_bytes(code: u16) -> alloy_primitives::Bytes {
-    let mut encoded = Vec::with_capacity(36);
-    encoded.extend_from_slice(&OCOMP_RESULT_VOTE_REJECTED_SELECTOR);
-    encoded.extend_from_slice(&U256::from(code).to_be_bytes::<32>());
-    alloy_primitives::Bytes::from(encoded)
-}
-
-#[test]
-fn submit_lysis_result_reverts_when_ocomp_lifecycle_is_inactive() {
-    // The rejection code is part of the external ABI surface; pin its value.
-    assert_eq!(LIFECYCLE_INACTIVE, 5);
-
-    with_storage(|storage| {
-        let call = IMetadosis::submitLysisResultCall {
-            resultVoteV1: alloy_primitives::Bytes::from(vec![0_u8; 8]),
-        };
-        let err = metadosis_dispatch(storage, &call.abi_encode(), Address::ZERO, U256::ZERO)
-            .expect_err("inactive lifecycle must reject the vote selector");
-        assert!(
-            !matches!(err, PrecompileError::Fatal(_)),
-            "caller-supplied calldata must never produce Fatal, got {err:?}"
-        );
-        match err {
-            PrecompileError::RevertBytes(bytes) => {
-                assert_eq!(bytes, reject_bytes(LIFECYCLE_INACTIVE));
-            }
-            other => panic!("expected RevertBytes rejection, got {other:?}"),
-        }
-    });
-}
-
-#[test]
-fn active_lifecycle_still_routes_lysis_vote_to_the_command_path() {
-    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
-    let calldata = fixture.calldata();
-
-    // The view dispatcher never executes votes, even for a production-valid
-    // vote. With the lifecycle active, the EVM dispatcher decides the routing to
-    // the command path, and the view arm keeps rejecting.
-    let view_err = StorageHandle::enter(&mut fixture.provider, |storage| {
-        metadosis_dispatch(storage, calldata.as_ref(), Address::ZERO, U256::ZERO)
-    })
-    .expect_err("view dispatcher must not execute votes");
-    match view_err {
-        PrecompileError::RevertBytes(bytes) => {
-            assert_eq!(bytes, reject_bytes(LIFECYCLE_INACTIVE));
-        }
-        other => panic!("expected RevertBytes rejection, got {other:?}"),
-    }
-
-    // The same calldata succeeds through the command path.
-    assert_eq!(fixture.apply().unwrap(), alloy_primitives::Bytes::new());
-}
-
-#[test]
-fn static_or_valued_lysis_call_rejects_with_call_mode_code_when_active() {
-    with_storage(|storage| {
-        for (value, is_static) in [(U256::from(1_u8), false), (U256::ZERO, true)] {
-            let err = dispatch_public_result_vote(storage.clone(), &[], value, is_static)
-                .expect_err("static or valued vote call must be rejected");
-            match err {
-                PrecompileError::RevertBytes(bytes) => {
-                    // Call-mode rejection keeps its own code; it must not
-                    // collide with the lifecycle-inactive code.
-                    assert_eq!(bytes, reject_bytes(REJECT_CALL_MODE_CODE));
-                    assert_ne!(REJECT_CALL_MODE_CODE, LIFECYCLE_INACTIVE);
-                }
-                other => panic!("expected RevertBytes rejection, got {other:?}"),
-            }
-        }
-    });
-}
 
 #[test]
 fn terminal_receipt_view_stays_fatal_on_unknown_stored_outcome() {

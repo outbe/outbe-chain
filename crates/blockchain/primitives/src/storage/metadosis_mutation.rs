@@ -14,9 +14,6 @@ use crate::{
 pub enum MetadosisMutationPurposeTag {
     CycleLifecycle = 0,
     CertifiedFinality = 1,
-    ForkProfile = 2,
-    OcompLifecycle = 3,
-    VerifiedResultVote = 4,
 }
 
 /// Compact executor-owned set of purposes admitted by one authenticated
@@ -26,14 +23,14 @@ const MAX_EXACT_BINDINGS_PER_PURPOSE: usize = 4;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct MetadosisMutationEntitlements {
-    unbound_counts: [u8; 5],
-    exact_bindings: [[Option<B256>; MAX_EXACT_BINDINGS_PER_PURPOSE]; 5],
+    unbound_counts: [u8; 2],
+    exact_bindings: [[Option<B256>; MAX_EXACT_BINDINGS_PER_PURPOSE]; 2],
 }
 
 impl MetadosisMutationEntitlements {
     pub const NONE: Self = Self {
-        unbound_counts: [0; 5],
-        exact_bindings: [[None; MAX_EXACT_BINDINGS_PER_PURPOSE]; 5],
+        unbound_counts: [0; 2],
+        exact_bindings: [[None; MAX_EXACT_BINDINGS_PER_PURPOSE]; 2],
     };
 
     #[must_use]
@@ -46,21 +43,21 @@ impl MetadosisMutationEntitlements {
     /// small, statically bounded sequence of distinct Metadosis commands.
     #[must_use]
     pub const fn repeated(purpose: MetadosisMutationPurposeTag, count: u8) -> Self {
-        let mut counts = [0; 5];
+        let mut counts = [0; 2];
         counts[purpose as usize] = count;
         Self {
             unbound_counts: counts,
-            exact_bindings: [[None; MAX_EXACT_BINDINGS_PER_PURPOSE]; 5],
+            exact_bindings: [[None; MAX_EXACT_BINDINGS_PER_PURPOSE]; 2],
         }
     }
 
     /// Grants one exact command identity for a provider-authenticated route.
     #[must_use]
     pub const fn exact(purpose: MetadosisMutationPurposeTag, binding: B256) -> Self {
-        let mut exact_bindings = [[None; MAX_EXACT_BINDINGS_PER_PURPOSE]; 5];
+        let mut exact_bindings = [[None; MAX_EXACT_BINDINGS_PER_PURPOSE]; 2];
         exact_bindings[purpose as usize][0] = Some(binding);
         Self {
-            unbound_counts: [0; 5],
+            unbound_counts: [0; 2],
             exact_bindings,
         }
     }
@@ -130,82 +127,6 @@ const fn has_exact_binding(bindings: [Option<B256>; MAX_EXACT_BINDINGS_PER_PURPO
     false
 }
 
-/// Exact certificate-derived data accepted by the Metadosis finality command.
-///
-/// This value is not authority by itself. The EVM provider independently derives
-/// and installs the same binding from its verified certificate and preloaded
-/// finalized-parent summary. The provider does this before the command can enter
-/// its mutation frame.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MetadosisCertifiedFinalityBinding {
-    chain_id: u64,
-    current_block_number: u64,
-    finalized_block_number: u64,
-    finalized_block_hash: B256,
-    finalized_state_root: B256,
-    binding: B256,
-}
-
-impl MetadosisCertifiedFinalityBinding {
-    #[must_use]
-    pub fn new(
-        chain_id: u64,
-        current_block_number: u64,
-        finalized_block_number: u64,
-        finalized_block_hash: B256,
-        finalized_state_root: B256,
-    ) -> Self {
-        let binding = metadosis_command_binding(
-            b"METADOSIS_CERTIFIED_FINALITY_V1",
-            &[
-                &chain_id.to_be_bytes(),
-                &current_block_number.to_be_bytes(),
-                &finalized_block_number.to_be_bytes(),
-                finalized_block_hash.as_slice(),
-                finalized_state_root.as_slice(),
-            ],
-        );
-        Self {
-            chain_id,
-            current_block_number,
-            finalized_block_number,
-            finalized_block_hash,
-            finalized_state_root,
-            binding,
-        }
-    }
-
-    #[must_use]
-    pub const fn chain_id(&self) -> u64 {
-        self.chain_id
-    }
-
-    #[must_use]
-    pub const fn current_block_number(&self) -> u64 {
-        self.current_block_number
-    }
-
-    #[must_use]
-    pub const fn finalized_block_number(&self) -> u64 {
-        self.finalized_block_number
-    }
-
-    #[must_use]
-    pub const fn finalized_block_hash(&self) -> B256 {
-        self.finalized_block_hash
-    }
-
-    #[must_use]
-    pub const fn finalized_state_root(&self) -> B256 {
-        self.finalized_state_root
-    }
-
-    #[must_use]
-    pub const fn binding(&self) -> B256 {
-        self.binding
-    }
-}
-
 #[must_use]
 pub fn metadosis_init_genesis_binding(chain_id: u64, block_number: u64, timestamp: u64) -> B256 {
     metadosis_block_binding(
@@ -257,43 +178,6 @@ pub fn metadosis_late_settlement_binding(chain_id: u64, block_number: u64, times
         chain_id,
         block_number,
         timestamp,
-    )
-}
-
-#[must_use]
-pub fn metadosis_ocomp_lifecycle_begin_binding(
-    chain_id: u64,
-    block_number: u64,
-    timestamp: u64,
-) -> B256 {
-    metadosis_block_binding(
-        b"METADOSIS_OCOMP_LIFECYCLE_BEGIN_V1",
-        chain_id,
-        block_number,
-        timestamp,
-    )
-}
-
-#[must_use]
-pub fn metadosis_ocomp_terminal_request_binding(
-    chain_id: u64,
-    block_number: u64,
-    timestamp: u64,
-) -> B256 {
-    metadosis_block_binding(
-        b"METADOSIS_OCOMP_TERMINAL_REQUEST_V1",
-        chain_id,
-        block_number,
-        timestamp,
-    )
-}
-
-#[must_use]
-pub fn metadosis_verified_vote_binding(data: &[u8]) -> B256 {
-    let data_hash = keccak256(data);
-    metadosis_command_binding(
-        b"METADOSIS_VERIFIED_RESULT_VOTE_V1",
-        &[data_hash.as_slice()],
     )
 }
 
@@ -353,9 +237,6 @@ macro_rules! define_purpose {
 
 define_purpose!(MetadosisCycleLifecycle, CycleLifecycle);
 define_purpose!(MetadosisCertifiedFinality, CertifiedFinality);
-define_purpose!(MetadosisForkProfile, ForkProfile);
-define_purpose!(MetadosisOcompLifecycle, OcompLifecycle);
-define_purpose!(MetadosisVerifiedResultVote, VerifiedResultVote);
 
 /// Non-cloneable, non-serializable, closure-bounded authority for exactly one
 /// Metadosis command class.
@@ -481,7 +362,7 @@ mod tests {
     use super::*;
     use crate::{
         error::PrecompileError,
-        storage::{hashmap::HashMapStorageProvider, MetadosisVerifiedResultVote},
+        storage::{hashmap::HashMapStorageProvider, MetadosisCertifiedFinality},
     };
 
     const OWNER: alloy_primitives::Address = address!("0x0000000000000000000000000000000000001003");
@@ -535,7 +416,7 @@ mod tests {
         let called = Cell::new(false);
 
         let result = provider.enter(|storage| {
-            storage.with_metadosis_mutation::<MetadosisVerifiedResultVote, _>(
+            storage.with_metadosis_mutation::<MetadosisCertifiedFinality, _>(
                 B256::repeat_byte(0x33),
                 || {
                     called.set(true);

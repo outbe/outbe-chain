@@ -1,7 +1,6 @@
-//! Reserved begin-zone system transactions and OCOMP system carriers.
+//! Reserved begin-zone system transactions.
 
 use super::super::*;
-use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
 
 struct ValidatedReservedSystemTx {
     body_index: usize,
@@ -171,7 +170,6 @@ where
                 .advance_after_commit_with_publication(
                     has_boundary_outcome,
                     has_tee_bootstrap,
-                    self.ocomp_lifecycle_active,
                     block_artifacts.radicle_publication.is_some(),
                 );
         }
@@ -209,7 +207,6 @@ where
                 .advance_after_commit_with_publication(
                     has_boundary_outcome,
                     has_tee_bootstrap,
-                    self.ocomp_lifecycle_active,
                     has_publication,
                 );
         }
@@ -298,7 +295,6 @@ where
             .advance_after_commit_with_publication(
                 has_boundary_outcome,
                 has_tee_bootstrap,
-                self.ocomp_lifecycle_active,
                 has_publication,
             );
         Ok(Some(gas_output))
@@ -336,7 +332,6 @@ where
                     .advance_after_commit_with_publication(
                         has_boundary_outcome,
                         has_tee_bootstrap,
-                        self.ocomp_lifecycle_active,
                         block_artifacts.radicle_publication.is_some(),
                     );
                 // Returning true makes the caller skip a further commit: pre-exec
@@ -430,129 +425,6 @@ where
             .into());
         }
         Ok(())
-    }
-
-    /// `Ok(None)` is an ordinary transaction. A classified carrier is authorized
-    /// here, before execution changes its fee fields.
-    pub(in crate::executor) fn ocomp_system_carrier_candidate<R>(
-        &mut self,
-        recovered: &R,
-    ) -> Result<Option<OcompSystemCarrierCandidate>, BlockExecutionError>
-    where
-        R: RecoveredTx<TransactionSigned>,
-    {
-        use crate::errors::ExecutorValidationError;
-
-        let tx = recovered.tx();
-        let signer = *recovered.signer();
-        let Some(candidate) = classify_ocomp_system_carrier(
-            OcompSystemCarrierView {
-                is_eip1559: tx.tx_type() == alloy_consensus::TxType::Eip1559,
-                call: TransactionCallFields::from_transaction(tx),
-            },
-            &outbe_ocomp_protocol::profile::poc_schema_limits(),
-        )
-        .map_err(ExecutorValidationError::invalid_ocomp_system_carrier)?
-        else {
-            return Ok(None);
-        };
-        if !self.ocomp_lifecycle_active {
-            return Err(ExecutorValidationError::OcompSystemCarrierNotActive.into());
-        }
-        let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-        let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
-        let chain_id = self.inner.evm.chain_id();
-        let proposer = self.inner.evm.block().beneficiary();
-        let authorized = {
-            let db = self.inner.evm.db_mut();
-            let ctx =
-                BlockContext::new_with_genesis_hash(outbe_primitives::block::BlockContextInput {
-                    block_number,
-                    timestamp,
-                    chain_id,
-                    genesis_hash: self.genesis_hash,
-                    proposer,
-                    validators: Vec::new(),
-                });
-            let mut provider = DirectStorageProvider::new(db, ctx);
-            let storage = StorageHandle::new(&mut provider);
-            match candidate {
-                OcompSystemCarrierCandidate::ResultVote { prefix } => {
-                    outbe_metadosis::resolve_historical_result_vote_carrier_signer(
-                        storage,
-                        &prefix,
-                        signer,
-                        &outbe_ocomp_protocol::profile::poc_schema_limits(),
-                    )
-                }
-                OcompSystemCarrierCandidate::NodMaterialization { .. } => {
-                    outbe_validatorset::contract::ValidatorSet::new(storage)
-                        .resolve_validator_for_role(
-                            signer,
-                            outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp,
-                        )
-                }
-            }
-        }
-        .map_err(|error| {
-            if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
-                BlockExecutionError::other(error)
-            } else {
-                ExecutorValidationError::ocomp_system_carrier_authorization_failed(error).into()
-            }
-        })?;
-        if authorized.is_none() {
-            return Err(ExecutorValidationError::OcompSystemCarrierSignerNotAuthorized.into());
-        }
-        Ok(Some(candidate))
-    }
-
-    pub(in crate::executor) fn execute_ocomp_system_carrier<R, F>(
-        &mut self,
-        candidate: OcompSystemCarrierCandidate,
-        mut tx_env: TxEnv,
-        recovered: R,
-        f: F,
-    ) -> Result<Option<GasOutput>, BlockExecutionError>
-    where
-        R: RecoveredTx<TransactionSigned>,
-        F: FnOnce(&EthTxResult<E::HaltReason, reth_ethereum::TxType>) -> CommitChanges,
-    {
-        let tx = recovered.tx();
-        let signed_gas_limit = tx.gas_limit();
-        let tx_type = tx.tx_type();
-        let snapshot = self.inner.evm.enable_zero_fee_overrides();
-        tx_env.gas_limit = OCOMP_SYSTEM_CARRIER_INTERNAL_GAS_LIMIT;
-        tx_env.gas_price = 0;
-        tx_env.gas_priority_fee = Some(0);
-        let execution = self.inner.execute_transaction_without_commit(WithTxEnv {
-            tx_env,
-            tx: Arc::new(recovered),
-        });
-        self.inner.evm.restore_zero_fee_overrides(snapshot);
-        let output = execution?;
-        let allowed_failed_receipt = match candidate {
-            OcompSystemCarrierCandidate::ResultVote { .. } => {
-                is_ocomp_deadline_passed_revert(&output.result.result)
-            }
-            OcompSystemCarrierCandidate::NodMaterialization { .. } => {
-                is_nod_materialization_soft_revert(&output.result.result)
-            }
-        };
-        if !output.result.result.is_success() && !allowed_failed_receipt {
-            return Err(
-                crate::errors::ExecutorValidationError::ocomp_system_carrier_did_not_succeed(
-                    &output.result.result,
-                )
-                .into(),
-            );
-        }
-        if !f(&output).should_commit() {
-            return Ok(None);
-        }
-        debug_assert_eq!(output.tx_type, tx_type);
-        self.commit_system_transaction(output, 0, 0, signed_gas_limit)
-            .map(Some)
     }
 }
 

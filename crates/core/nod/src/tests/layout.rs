@@ -9,7 +9,7 @@ fn config_profile_slot_matches_seeder_layout() {
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
             NodContract::new(storage).config_profile.slot(),
-            U256::from(44)
+            U256::from(27)
         );
     });
 }
@@ -46,13 +46,6 @@ fn nod_contract_slot_layout_is_pinned() {
         for (index, actual) in [
             nod.total_supply.slot(),
             nod.bucket_worldwide_day.base_slot(),
-            nod.ocomp_target_generation.base_slot(),
-            nod.ocomp_namespace_root.base_slot(),
-            nod.ocomp_bucket_root.base_slot(),
-            nod.ocomp_output_manifest_root.base_slot(),
-            nod.ocomp_generation_metadata.base_slot(),
-            nod.ocomp_nod_amount_total.base_slot(),
-            nod.ocomp_lysis_allocation_minor.base_slot(),
         ]
         .into_iter()
         .enumerate()

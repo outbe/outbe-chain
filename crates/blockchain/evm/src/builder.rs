@@ -221,7 +221,7 @@ mod tests {
     use alloy_evm::{block::CommitChanges, RecoveredTx};
     use alloy_primitives::{address, Address, Bytes, StorageKey, StorageValue, B256, U256};
     use outbe_primitives::addresses::REWARDS_ADDRESS;
-    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+    use outbe_primitives::block::BlockContext;
     use outbe_primitives::consensus::ConsensusExecutionBridge;
     use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
     use outbe_primitives::reshare_artifact::{
@@ -229,8 +229,7 @@ mod tests {
         ExecutionSummaryArtifact, OutbeBlockArtifacts,
     };
     use outbe_primitives::storage::{
-        direct::DirectStorageProvider, hashmap::HashMapStorageProvider,
-        MetadosisMutationPurposeTag, StorageHandle,
+        direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle,
     };
     use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
     use outbe_primitives::OutbeHeader;
@@ -589,15 +588,6 @@ mod tests {
                 (validator, consensus_key)
             })
             .collect::<Vec<_>>();
-        let install = outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
-            1,
-            chain_spec.chain().id(),
-            chain_spec.genesis_hash(),
-        )
-        .unwrap()
-        .with_founder_validators(&founders)
-        .unwrap()
-        .into_install();
         let mut metadosis_genesis = HashMapStorageProvider::new_with_chain_identity(
             chain_spec.chain().id(),
             chain_spec.genesis_hash(),
@@ -610,16 +600,11 @@ mod tests {
             vs.config_epoch_length_blocks.write(60).unwrap();
             vs.config_is_initialized.write(true).unwrap();
 
-            for ((validator, consensus_key), registration) in
-                founders.iter().zip(&install.founder_registrations)
-            {
+            for (validator, consensus_key) in &founders {
                 vs.register_validator(Address::ZERO, *validator, consensus_key)
                     .unwrap();
                 vs.mark_pending(*validator).unwrap();
-                let encoded = registration
-                    .encode_canonical(&outbe_metadosis::config::poc_schema_limits())
-                    .unwrap();
-                vs.confirm_validator_ready(*validator, &encoded).unwrap();
+                vs.confirm_validator_ready(*validator).unwrap();
                 vs.activate_validator_via_boundary_for_test(*validator)
                     .unwrap();
             }
@@ -631,14 +616,6 @@ mod tests {
                 0,
             )
             .unwrap();
-        });
-        metadosis_genesis.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
-        metadosis_genesis.enter(|storage| {
-            let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(1, 1_700_000_001, chain_spec.chain().id()),
-                storage,
-            );
-            outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
         });
         for ((address, slot), value) in metadosis_genesis.storage {
             db.insert_account_storage(address, slot, value)
@@ -667,14 +644,6 @@ mod tests {
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code.clone()),
-                ..Default::default()
-            },
-        );
-        db.insert_account_info(
-            outbe_primitives::addresses::OCOMP_REGISTRY_ADDRESS,
-            AccountInfo {
-                code_hash: marker_code.hash_slow(),
-                code: Some(marker_code),
                 ..Default::default()
             },
         );

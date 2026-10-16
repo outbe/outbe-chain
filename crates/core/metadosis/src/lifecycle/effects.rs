@@ -90,16 +90,7 @@ fn prepare_capacity_forfeiture(
                 .into(),
         );
     }
-    if !metadosis
-        .ocomp_fsm_states
-        .get_bytes(&effect.current.worldwide_day)
-        .is_empty()?
-    {
-        return Err(
-            crate::errors::MetadosisStorageCorruptionError::CapacityForfeitureVictimAlreadyHasOcompState
-                .into(),
-        );
-    }
+
     if metadosis
         .read_capacity_forfeiture_receipt(effect.current.worldwide_day)?
         .is_some()

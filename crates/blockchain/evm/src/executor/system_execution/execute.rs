@@ -29,28 +29,6 @@ pub(crate) fn system_tx_failure_code_for_result(result: &ExecutionResult<HaltRea
     }
 }
 
-pub(in crate::executor) fn is_ocomp_deadline_passed_revert(
-    result: &ExecutionResult<HaltReason>,
-) -> bool {
-    matches!(
-        result,
-        ExecutionResult::Revert { output, .. }
-            if outbe_metadosis::is_deadline_passed_result_vote_revert_data(output.as_ref())
-    )
-}
-
-pub(in crate::executor) fn is_nod_materialization_soft_revert(
-    result: &ExecutionResult<HaltReason>,
-) -> bool {
-    matches!(
-        result,
-        ExecutionResult::Revert { output, .. }
-            if outbe_nodfactory::materialization::is_soft_materialization_revert_data(
-                output.as_ref()
-            )
-    )
-}
-
 #[allow(private_bounds)]
 impl<DB, E> OutbeBlockExecutor<'_, E>
 where

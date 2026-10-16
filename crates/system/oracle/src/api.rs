@@ -4,7 +4,7 @@
 //! currency support, without going through the precompile dispatch.
 
 use crate::constants::FX_RATE_MAX_AGE_SECONDS;
-use crate::errors::{OracleError, OracleOcompError};
+use crate::errors::OracleError;
 use crate::schema::{OracleContract, PairIndex};
 use crate::scurve;
 
@@ -18,26 +18,6 @@ use alloy_primitives::{Address, U256};
 
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
-
-/// Bounded Oracle projection captured before the terminal OCOMP request.
-///
-/// `oracle_state_version` is the `ocomp_state_version` counter.
-/// It is not the snapshot-stream index.
-/// It advances on snapshots, WorldwideDay VWAP writes, UTC-day finalization,
-/// and S-curve writes. It advances only after the profile is ready.
-/// It does not advance on every snapshot.
-/// The WWD and S-curve counters identify the derived collections for this day.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OcompOraclePreAdmissionProjection {
-    pub profile_ready: bool,
-    pub oracle_state_version: u64,
-    /// Registered pairs, i.e. the upper bound on the day-VWAP entries an
-    /// opening proof can be asked to cover. The registry index now keys the
-    /// WorldwideDay VWAP column, so the registry size *is* that bound. There is
-    /// no separate per-day entry count to read.
-    pub wwd_pair_entries: u32,
-    pub active_scurve_entries: u32,
-}
 
 /// Validates that `iso_code` is registered as a reference currency.
 ///
@@ -379,9 +359,7 @@ pub fn priced_reference_currencies(
     let oracle = OracleContract::new(storage);
     let mut priced = Vec::new();
     // The day-type currency is priced from the same per-pair day VWAP as every
-    // other currency. The OCOMP mirror of it is a copy, written only once the
-    // profile is installed, and is not the price source. This function reads it
-    // from its own pair, so the day-type price does not depend on 840's registry entry.
+    // other currency. Each price comes from its own registered pair.
     let day_type_index = oracle.pair_index_of(DAY_TYPE_PAIR)?;
     if day_type_index != 0 {
         if let Some(vwap) = oracle
@@ -408,35 +386,6 @@ pub fn priced_reference_currencies(
     }
     priced.sort_by_key(|(iso_code, _)| *iso_code);
     Ok(priced)
-}
-
-/// Reads the authenticated collection counts. It never invokes calculation.
-pub fn ocomp_pre_admission_projection(
-    storage: StorageHandle,
-) -> Result<OcompOraclePreAdmissionProjection> {
-    let oracle = OracleContract::new(storage);
-    let scurve_count = oracle.scurve_count.read()?;
-    let scurve_oldest = oracle.scurve_oldest_idx.read()?;
-    let active_scurve_entries = scurve_count
-        .checked_sub(scurve_oldest)
-        .ok_or(OracleOcompError::ScurveOldestExceedsWriteCount)?;
-
-    Ok(OcompOraclePreAdmissionProjection {
-        profile_ready: oracle.ocomp_profile_ready.read()?,
-        oracle_state_version: oracle.ocomp_state_version.read()?,
-        wwd_pair_entries: oracle.pair_count.read()?,
-        active_scurve_entries,
-    })
-}
-
-/// Initializes the fixed Oracle projection on the fresh-devnet OCOMP fork.
-///
-/// The genesis-bound OCOMP lifecycle is the sole production caller. The
-/// initialization is idempotent only when the configured pair and version
-/// already match exactly.
-pub fn initialize_fresh_ocomp_profile(storage: StorageHandle) -> Result<()> {
-    let mut oracle = OracleContract::new(storage);
-    oracle.initialize_fresh_ocomp_profile()
 }
 
 /// Stored WorldwideDay VWAP for the [`DAY_TYPE_PAIR`] (`COEN/840`), or `None`

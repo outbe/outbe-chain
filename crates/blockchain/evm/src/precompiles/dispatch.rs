@@ -2,11 +2,10 @@
 use super::{
     call_authority::{
         is_protocol_cycle_call, metadosis_mutation_entitlements, MetadosisMutationCall,
-        ResultVoteCall,
     },
     outcome::map_outbe_precompile_result_with_refund,
     value_policy::{classify_boundary_value, BoundaryValue},
-    ExecutionAbortBridge, OcompActivationBlockMeter,
+    ExecutionAbortBridge,
 };
 use crate::{
     gas::SubcallGasMeter,
@@ -17,10 +16,9 @@ use crate::{
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Bytes, B256, U256};
 use core::fmt::Debug;
-use outbe_metadosis::{api::OcompFinalizedIntentAuthority, config::OcompForkInstallV1};
 use outbe_primitives::error::{PrecompileError, Result as DomainResult};
 use outbe_primitives::{
-    addresses::{FIDELITY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS},
+    addresses::OUTBE_SYSTEM_TX_ADDRESS,
     storage::{gas::PRECOMPILE_BASE_GAS, StorageHandle},
 };
 use revm::{
@@ -29,7 +27,6 @@ use revm::{
     primitives::hardfork::SpecId,
     Database,
 };
-use std::sync::Arc;
 
 /// Executor-owned runtime authorities carried into one Outbe dispatch.
 pub(super) struct OutbeDispatchRuntime<'a> {
@@ -37,11 +34,6 @@ pub(super) struct OutbeDispatchRuntime<'a> {
     pub(super) spec: SpecId,
     pub(super) genesis_hash: B256,
     pub(super) tee_attestation_v1: &'a TeeAttestationChainSpecStateV1,
-
-    pub(super) ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
-    pub(super) ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
-    pub(super) ocomp_lifecycle_active: bool,
-    pub(super) ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
 }
 
 /// Captures the frame and consensus inputs before borrowing the context for storage.
@@ -57,7 +49,6 @@ struct DispatchCall<'a> {
 
 struct CallAdmission {
     value: U256,
-    result_vote: ResultVoteCall,
     protocol_cycle_call: bool,
 }
 
@@ -123,19 +114,9 @@ impl DispatchCall<'_> {
         Ok(())
     }
 
-    fn admit_value(&self, ocomp_lifecycle_active: bool) -> DomainResult<CallAdmission> {
+    fn admit_value(&self) -> DomainResult<CallAdmission> {
         let address = self.inputs.bytecode_address;
         let caller = self.inputs.caller;
-        let block_number = self.block_number;
-        if caller == METADOSIS_ADDRESS && matches!(address, FIDELITY_ADDRESS | ORACLE_ADDRESS) {
-            let selector = self.data.get(..4).map(alloy_primitives::hex::encode);
-            tracing::warn!(
-                target: "outbe::ocomp::trace",
-                "OCOMP_TRACE_V1 kind=forbidden_calculation_entry block={block_number} \
-                 target={address:#x} selector={}",
-                selector.as_deref().unwrap_or("missing")
-            );
-        }
         let value = match classify_boundary_value(self.route.value_policy(), &self.inputs.value) {
             BoundaryValue::Credited(v) => v,
             BoundaryValue::Rejected(reason) => {
@@ -145,26 +126,14 @@ impl DispatchCall<'_> {
                 );
             }
         };
-        let result_vote = ResultVoteCall::classify(
-            address,
-            self.data.as_ref(),
-            self.inputs.is_static,
-            value,
-            ocomp_lifecycle_active,
-        );
-        if result_vote == ResultVoteCall::WrongMode {
-            return Err(outbe_metadosis::errors::result_vote_call_mode_rejection());
-        }
         Ok(CallAdmission {
             value,
-            result_vote,
             protocol_cycle_call: is_protocol_cycle_call(address, caller, self.data.as_ref()),
         })
     }
 
     fn mutation_call<'a>(
         &'a self,
-        runtime: &'a OutbeDispatchRuntime<'_>,
         admission: &CallAdmission,
         cycle_active_utc_day: Option<u32>,
     ) -> MetadosisMutationCall<'a> {
@@ -174,15 +143,10 @@ impl DispatchCall<'_> {
             caller: self.inputs.caller,
             is_static: self.inputs.is_static,
             value: admission.value,
-            ocomp_lifecycle_active: runtime.ocomp_lifecycle_active,
-            result_vote: admission.result_vote,
             chain_id: self.chain_id,
             block_number: self.block_number,
             timestamp: self.timestamp,
             cycle_active_utc_day,
-            preloaded_certified_state_root:
-                crate::begin_block_precompile::preloaded_certified_parent_state_root(),
-            ocomp_fork_install: runtime.ocomp_fork_install.as_deref(),
         }
     }
 
@@ -201,12 +165,8 @@ impl DispatchCall<'_> {
 
             abort_bridge: runtime.abort_bridge.clone(),
 
-            ocomp_finality_authority: runtime.ocomp_finality_authority.clone(),
-            ocomp_activation_block_meter: runtime.ocomp_activation_block_meter.clone(),
-            ocomp_lifecycle_active: runtime.ocomp_lifecycle_active,
-            lysis_activation_entitled: admission.result_vote == ResultVoteCall::Entitled,
             metadosis_mutation_entitlements: metadosis_mutation_entitlements(
-                self.mutation_call(runtime, admission, None),
+                self.mutation_call(admission, None),
             ),
         }
     }
@@ -230,7 +190,7 @@ impl DispatchCall<'_> {
             let Some(_reentrancy) = ReentrancyStack::try_enter(address) else {
                 return Err(crate::errors::OutbePrecompileDispatchError::ReentrancyDenied.into());
             };
-            let admission = self.admit_value(runtime.ocomp_lifecycle_active)?;
+            let admission = self.admit_value()?;
             let gas_budget = self.inputs.gas_limit - self.base_gas;
             let gas_meter = SubcallGasMeter::new(gas_budget);
             let base_gas = self.base_gas;
@@ -257,14 +217,6 @@ impl DispatchCall<'_> {
                     }
                     other => other,
                 };
-            }
-            if result.is_ok() && admission.result_vote == ResultVoteCall::Entitled {
-                let block_number = self.block_number;
-                let caller = self.inputs.caller;
-                tracing::info!(
-                    target: "outbe::ocomp::trace",
-                    "OCOMP_TRACE_V1 kind=result_vote_committed block={block_number} caller={caller:#x}"
-                );
             }
             let storage_gas = gas_budget.saturating_sub(provider.gas.remaining());
             actual_gas = base_gas + storage_gas;
@@ -308,22 +260,14 @@ impl DispatchCall<'_> {
                     .read()?
             };
             provider.replace_metadosis_mutation_entitlements(metadosis_mutation_entitlements(
-                self.mutation_call(runtime, admission, Some(active_utc_day)),
+                self.mutation_call(admission, Some(active_utc_day)),
             ));
         }
         let storage = StorageHandle::new(provider);
-        if admission.result_vote == ResultVoteCall::Entitled {
-            outbe_metadosis::commands::submit_verified_result_vote(
-                storage,
-                self.data.as_ref(),
-                admission.value,
-                self.inputs.is_static,
-            )
-        } else if self.inputs.bytecode_address == OUTBE_SYSTEM_TX_ADDRESS {
+        if self.inputs.bytecode_address == OUTBE_SYSTEM_TX_ADDRESS {
             crate::begin_block_precompile::dispatch_with_runtime(
                 storage,
                 crate::begin_block_precompile::SystemTxRuntime {
-                    ocomp_fork_install: runtime.ocomp_fork_install.as_deref(),
                     tee_attestation_v1: runtime.tee_attestation_v1,
                 },
                 self.data.as_ref(),

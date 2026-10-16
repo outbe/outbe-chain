@@ -74,7 +74,6 @@ pub(crate) fn validate_outbe_chain_spec(chain_spec: &ChainSpec<OutbeHeader>) -> 
     .map_err(|error| CliError::InvalidMandatoryTeeChainSpec {
         details: display_error(error),
     })?;
-    outbe_node::ocomp::fork::require_startup_ocomp_fork_install(chain_spec)?;
     outbe_chain_constants::initialize(
         chain_spec
             .genesis
