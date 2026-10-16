@@ -5,7 +5,7 @@
   "last_periodic_report_utc": "2026-10-16T05:15:36Z",
   "next_periodic_report_due_utc": "2026-10-16T05:45:36Z",
   "period_minutes": 30,
-  "stage": "P2/P3 incomplete. Bootstrap typed signing and complete-package verify/persist/attest/queue path now wired to actual node block mailbox. Sidecar distributed collector/automatic bootstrap/install/recovery remain incomplete.",
+  "stage": "P2/P3 incomplete. Complete local bootstrap package->attestation->shared mailbox and bounded current public partial/attestation relay now verified. Automatic sidecar collector/journal/bootstrap/install/recovery still incomplete.",
   "decision_gate": {
     "id": "D3-description-bound",
     "status": "Resolved by explicit user decision: maximum256 UTF-8 bytes; implemented8f3008ae2. No approval pending.",
@@ -66,7 +66,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; goal API active confirmed2026-10-16"
   },
-  "source_sha": "409bbe3813455278f34bb4dc3e3ee32689e412d3",
+  "source_sha": "645ebf4d47516261505e5fad57f97c4054979f7b",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -85,7 +85,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "409bbe381: complete bootstrap publication requests through protected local socket; fresh own-state verification and durable selection before actor identity attestation; full bounded batch verification before shared block mailbox; invalidation on finalized refresh/material changes/withdrawal/shutdown; production node bridge wired.",
+  "current_source_changes": "645ebf4d4: bounded OSIG contribution frames on existing Outbe peer channel; own-current material/sender filtering,4*n deduplicated inbox, generation/withdrawal handling and protected OCG1/OCT1 bridge. Native subject/polynomial checks preserved separately from relay authentication.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -111,9 +111,9 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "409bbe3813455278f34bb4dc3e3ee32689e412d3",
-    "checks": "74 adapter tests/0ignored; seven consumer all-target builds; adapter+node all-target Clippy -Dwarnings; ten changed Rust files fmt PASS.",
-    "scenarios": "Actual socket/actor/Git package recovery -> native/q verification -> durable selected package -> actor identity attestation -> same node shared bounded mailbox. Bad last entry/truncation/trailing/q-1/artifact/context negatives; queued invalidation on finalized refresh/generation/withdrawal/drop. Fixture state/DKG and additional attesters; not live production E2E."
+    "source_sha": "645ebf4d47516261505e5fad57f97c4054979f7b",
+    "checks": "75 adapter tests/0ignored; seven consumers all-target build; adapter+node Clippy -Dwarnings; eight touched Rust files fmt PASS.",
+    "scenarios": "Actual UDS and actor, CheckedSender recording to three current recipients, authenticated receive-fixture negatives and exact valid delivery. Four providers, repeated messages occupy16 slots; canonical codecs/rotation/withdrawal negatives. Fixture DKG/state/transport; not live distributed collector/E2E."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
@@ -171,7 +171,8 @@
   "local_bootstrap_publication_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-publication",
   "progress_audit": {
     "previous_interrupted_turn": "no progress: read-only inspection before user resumed goal; no live process was waiting.",
-    "current_turn": "progress: production state changed at409bbe381, actual behavioral evidence recorded for full local publication path and shared mailbox.",
-    "next_action": "Implement bounded public partial/attestation exchange for sidecar collectors using existing Outbe peer transport and protected local bridge, with actual multi-actor tests."
-  }
+    "current_turn": "Progress at409bbe381 and645ebf4d4: local complete package->durable attestation->shared mailbox, and authenticated bounded contribution transport/UDS bridge implemented and fully scoped checks passed.",
+    "next_action": "Connect sidecar automatic collector and durable partial journal; add own-finalized pending attester progress needed to advance >32 signatures across blocks, then native install/announcement, Review/Merge and E2E."
+  },
+  "public_contribution_relay_evidence": "evidence/outbe-chain-pjz.4/public-contribution-relay"
 }
