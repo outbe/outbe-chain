@@ -97,8 +97,9 @@ pub(super) async fn sign(
         let repo = store
             .lock()
             .map_err(|_| Error::Unavailable)?
-            .open_bootstrap_repository(
+            .open_checkpoint_repository(
                 reader.as_ref(),
+                context.state.checkpoint(),
                 &request.path,
                 git::UserInfo {
                     alias: radicle::node::Alias::new("outbe"),
@@ -176,8 +177,9 @@ pub(super) async fn publish(
         let store = store.ok_or(Error::Unavailable)?;
         let mut store = store.lock().map_err(|_| Error::Unavailable)?;
         let repo = store
-            .open_bootstrap_repository(
+            .open_checkpoint_repository(
                 reader.as_ref(),
+                context.state.checkpoint(),
                 &request.path,
                 git::UserInfo {
                     alias: radicle::node::Alias::new("outbe"),

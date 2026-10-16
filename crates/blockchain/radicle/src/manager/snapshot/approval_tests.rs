@@ -799,6 +799,34 @@ fn exact_finalized_state_does_not_leak_latest_approval_or_revoke_accepted_histor
 }
 
 #[test]
+fn archive_reader_uses_current_finality_without_revoking_an_accepted_vote() {
+    use crate::manager::RepositoryReceiptReader as _;
+    let (mut reader, _) = fixture();
+    let accepted = reader
+        .read_current_patch_approval(U256::ONE)
+        .unwrap()
+        .unwrap();
+    assert_eq!(accepted.block, block(3));
+    assert_eq!(*reader.provider.reads.lock().unwrap(), [block(3).hash]);
+    reader.provider.finalized = Some(BlockNumHash::new(4, block(4).hash));
+    let later = reader
+        .read_current_patch_approval(U256::ONE)
+        .unwrap()
+        .unwrap();
+    assert_eq!(later.block, block(4));
+    assert_eq!(later.approval, accepted.approval);
+    assert_eq!(
+        *reader.provider.reads.lock().unwrap(),
+        [block(3).hash, block(4).hash]
+    );
+    reader.provider.finalized = None;
+    assert!(matches!(
+        reader.read_current_patch_approval(U256::ONE),
+        Err(ManagerError::Finality(_))
+    ));
+}
+
+#[test]
 fn missing_finality_noncanonical_and_unavailable_snapshots_fail_without_fallback() {
     let (mut reader, _) = fixture();
     let wrong = FinalizedBlock {

@@ -64,6 +64,12 @@ impl<P: StateProviderFactory + Send + Sync> super::RepositoryAuthorityReader
 impl<P: StateProviderFactory + Send + Sync + 'static> super::RepositoryReceiptReader
     for RethSnapshotReader<P>
 {
+    fn read_current_patch_approval(
+        &self,
+        proposal_id: U256,
+    ) -> Result<Option<FinalizedPatchApproval>, ManagerError> {
+        self.read_patch_approval(self.current_finalized_block()?, proposal_id)
+    }
     fn read_current_publication_progress(
         &self,
         body: &outbe_primitives::radicle_publication::PublicationBody,

@@ -38,6 +38,14 @@ impl FinalizedPublicationReceipt {
 
 /// Only this node's current finalized state may supply an accepted receipt.
 pub trait RepositoryReceiptReader: Send + Sync + 'static {
+    fn read_current_patch_approval(
+        &self,
+        _: alloy_primitives::U256,
+    ) -> Result<Option<FinalizedPatchApproval>, ManagerError> {
+        Err(ManagerError::Snapshot(
+            "patch approval archive unavailable".into(),
+        ))
+    }
     fn read_current_publication_progress(
         &self,
         _: &outbe_primitives::radicle_publication::PublicationBody,

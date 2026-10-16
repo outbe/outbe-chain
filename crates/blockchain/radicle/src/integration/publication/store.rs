@@ -348,11 +348,12 @@ impl ReviewPackageStore {
         Ok((descriptor, content))
     }
 
-    /// Rebuild root read authorization from this node's receipt and archived q-proof.
-    /// This does not promote refs or authorize any subsequent owner operation.
-    pub fn open_bootstrap_repository(
+    /// Rebuild read grants through the requested accepted checkpoint from own receipts/q-proofs.
+    /// Historical grants do not promote refs or authorize a new operation.
+    pub fn open_checkpoint_repository(
         &self,
         reader: &dyn RepositoryReceiptReader,
+        target: &FinalizedPublicationReceipt,
         path: &Path,
         info: git::UserInfo,
     ) -> Result<Repository, Error> {
@@ -388,7 +389,8 @@ impl ReviewPackageStore {
             &package.witness,
         )
         .map_err(|_| Error::Corrupt)?;
-        let snapshot = CheckpointOwnerSnapshot::bootstrap(checkpoint.clone(), &package.manifest)?;
+        let mut snapshot =
+            CheckpointOwnerSnapshot::bootstrap(checkpoint.clone(), &package.manifest)?;
         let policy = Arc::new(
             super::policy::AcceptedRepositoryPolicy::new(&snapshot).map_err(|_| Error::Corrupt)?,
         );
@@ -398,9 +400,48 @@ impl ReviewPackageStore {
         let owner = radicle::crypto::BlsPublicKey::from_bytes(body.owner_bls_public.0)
             .map_err(|_| Error::Corrupt)?;
         storage
-            .manage_repository(id, owner.into(), policy)
+            .manage_repository(id, owner.into(), policy.clone())
             .map_err(|_| Error::Corrupt)?;
-        storage.repository(id).map_err(|_| Error::Corrupt)
+        let repo = storage.repository(id).map_err(|_| Error::Corrupt)?;
+        for sequence in 2..=target.receipt().body.sequence {
+            let checkpoint = reader
+                .read_current_publication_receipt(sequence)?
+                .ok_or(Error::MissingCheckpoint(sequence))?;
+            let package = self
+                .load_selected(review_slot_key(&checkpoint.receipt().body), &repo)?
+                .ok_or(Error::Corrupt)?;
+            if package.body != checkpoint.receipt().body || package.body.sequence != sequence {
+                return Err(Error::Corrupt);
+            }
+            let verifier =
+                super::super::signing::accepted::AcceptedPublicationVerifier::from_receipt(
+                    checkpoint.clone(),
+                    package.manifest.clone(),
+                    package.witness.public_output(),
+                )?;
+            match package.body.action {
+                PublicationAction::Review => {
+                    let approval = reader
+                        .read_current_patch_approval(package.body.proposal_id)?
+                        .ok_or(Error::Corrupt)?;
+                    let proof = super::review::verify_accepted_review_publication(
+                        &repo,
+                        &approval,
+                        &snapshot,
+                        &verifier,
+                        &package.witness,
+                    )
+                    .map_err(|_| Error::Corrupt)?;
+                    policy.accept_review(&proof).map_err(|_| Error::Corrupt)?;
+                }
+                _ => return Err(Error::Corrupt),
+            }
+            snapshot.advance(checkpoint, &package.manifest)?;
+        }
+        if snapshot.checkpoint().receipt() != target.receipt() {
+            return Err(Error::Corrupt);
+        }
+        Ok(repo)
     }
 
     pub fn load_selected(

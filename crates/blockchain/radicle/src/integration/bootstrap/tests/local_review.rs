@@ -31,13 +31,36 @@ use tokio::sync::{mpsc, oneshot};
 struct Reader {
     state: Mutex<Option<FinalizedPatchSigningState>>,
     root: FinalizedPublicationReceipt,
+    accepted: Mutex<Vec<FinalizedPublicationReceipt>>,
+    approval: Mutex<Option<FinalizedPatchApproval>>,
 }
 impl RepositoryReceiptReader for Reader {
+    fn read_current_patch_approval(
+        &self,
+        proposal: U256,
+    ) -> Result<Option<FinalizedPatchApproval>, ManagerError> {
+        Ok(self
+            .approval
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|a| a.approval.proposal_id == proposal)
+            .cloned())
+    }
     fn read_current_publication_receipt(
         &self,
         sequence: u64,
     ) -> Result<Option<FinalizedPublicationReceipt>, ManagerError> {
-        Ok((sequence == 1).then(|| self.root.clone()))
+        Ok(if sequence == 1 {
+            Some(self.root.clone())
+        } else {
+            self.accepted
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|r| r.receipt().body.sequence == sequence)
+                .cloned()
+        })
     }
 }
 impl RepositoryAuthorityReader for Reader {
@@ -158,6 +181,8 @@ pub(super) async fn assert_review_socket(
     let reader = Arc::new(Reader {
         state: Mutex::new(Some(state.clone())),
         root,
+        accepted: Mutex::new(vec![]),
+        approval: Mutex::new(None),
     });
     let directory = tempfile::tempdir_in("/private/tmp").unwrap();
     std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -462,4 +487,106 @@ pub(super) async fn assert_review_socket(
     resolver.shutdown().await.unwrap();
     actor.await.unwrap().unwrap();
     assert!(mailbox.ready_prefix(usize::MAX).is_none());
+
+    let archive = ReviewPackageStore::open(store_path).unwrap();
+    let accepted = FinalizedPublicationReceipt {
+        block: crate::manager::FinalizedBlock {
+            number: 19,
+            hash: B256::repeat_byte(19),
+        },
+        receipt: outbe_radicleregistry::publication::PublicationReceipt {
+            body: package.body().clone(),
+            receipt_hash: package.body().receipt_hash(),
+            accepted_height: 18,
+        },
+    };
+    let reopen = || {
+        archive.open_checkpoint_repository(
+            reader.as_ref(),
+            &accepted,
+            repo.raw().path(),
+            git::UserInfo {
+                alias: radicle::node::Alias::new("Reopened"),
+                key: *author.public_key(),
+            },
+        )
+    };
+    let owner =
+        RepositoryKey::from(BlsPublicKey::from_bytes(package.body().owner_bls_public.0).unwrap());
+    let before = repo.references_of(&owner).unwrap();
+    assert!(
+        reopen().is_err(),
+        "a local package alone does not confer read grants"
+    );
+    reader.accepted.lock().unwrap().push(accepted.clone());
+    assert!(
+        reopen().is_err(),
+        "the exact own-chain approval is also required"
+    );
+    let mut changed = context.state.approval().clone();
+    changed.approval.approved_timestamp += 1;
+    *reader.approval.lock().unwrap() = Some(changed);
+    assert!(reopen().is_err());
+    *reader.approval.lock().unwrap() = Some(context.state.approval().clone());
+    // Accepted read history remains valid without any current signing permission.
+    *reader.state.lock().unwrap() = None;
+    let reopened = reopen().unwrap();
+    let review = package
+        .manifest()
+        .refs()
+        .iter()
+        .find(|r| r.name != radicle::storage::refs::SIGREFS_BRANCH.as_str())
+        .unwrap();
+    let review: git::Oid = review.new.parse().unwrap();
+    assert_eq!(
+        cob::change::Storage::load(&reopened, review).unwrap().id,
+        review
+    );
+    let sigrefs: git::Oid = package
+        .manifest()
+        .refs()
+        .iter()
+        .find(|r| r.name == radicle::storage::refs::SIGREFS_BRANCH.as_str())
+        .unwrap()
+        .new
+        .parse()
+        .unwrap();
+    assert!(
+        radicle::storage::refs::SignedRefs::load_at(sigrefs, owner, &reopened)
+            .unwrap()
+            .is_some()
+    );
+    let mut next_snapshot = context.snapshot.clone();
+    next_snapshot
+        .advance(accepted.clone(), package.manifest())
+        .unwrap();
+    let mut next_approval = context.state.approval().clone();
+    next_approval.block = accepted.block();
+    next_approval.approval.proposal_id = U256::from(6);
+    next_approval.approval.approved_height = 19;
+    next_approval.approval.approved_timestamp = 1700000019;
+    next_approval.approval.payload = String::from_utf8(
+        PatchVotePayloadV1::accept(
+            repo.id().into_sha1().unwrap().into(),
+            (*patch_id).into_sha1().unwrap().into(),
+            later_revision.into_inner().into_sha1().unwrap().into(),
+            base.into_sha1().unwrap().into(),
+        )
+        .encode()
+        .unwrap(),
+    )
+    .unwrap();
+    let next_signing = context
+        .material
+        .review_context(accepted.receipt().receipt_hash.0);
+    assert!(prepare_patch_review_from_checkpoint(
+        repo,
+        &next_approval,
+        &next_snapshot,
+        &next_signing
+    )
+    .is_err());
+    prepare_patch_review_from_checkpoint(&reopened, &next_approval, &next_snapshot, &next_signing)
+        .unwrap();
+    assert_eq!(repo.references_of(&owner).unwrap(), before);
 }
