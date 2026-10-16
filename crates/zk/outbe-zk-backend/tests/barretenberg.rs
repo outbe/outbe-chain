@@ -16,7 +16,7 @@ use outbe_zk::protocol::key::{NftSecret, Signer};
 use outbe_zk::protocol::zk::{ProofGenerator, ProofVerifier};
 use outbe_zk::Fr;
 use outbe_zk::INCLUSION_DEPTH;
-use outbe_zk_backend::barretenberg::Barretenberg;
+use outbe_zk_backend::barretenberg::{init_crs, verify_circuit, Barretenberg, BarretenbergHandler};
 
 struct TestNft {
     id: Fr,
@@ -69,7 +69,60 @@ fn demo_tribute_prove_verify_round_trip() {
         "valid demo tribute proof must verify"
     );
 
+    // Mix native verification and statistics on the same retained owner.
+    let acir = {
+        use base64::Engine;
+        use outbe_zk::CircuitId;
+        use std::io::Read;
+        let compressed = base64::engine::general_purpose::STANDARD
+            .decode(DemoTribute::BYTECODE_B64)
+            .unwrap();
+        let mut raw = Vec::new();
+        flate2::read::GzDecoder::new(compressed.as_slice())
+            .read_to_end(&mut raw)
+            .unwrap();
+        raw
+    };
+    std::thread::scope(|scope| {
+        let verify = scope.spawn(|| {
+            for _ in 0..2 {
+                assert!(ProofVerifier::<DemoTribute>::verify(
+                    &Barretenberg::default(),
+                    &public,
+                    &proof
+                )
+                .unwrap());
+            }
+        });
+        let stats = scope.spawn(|| {
+            let info = BarretenbergHandler::global()
+                .unwrap()
+                .circuit_stats(
+                    barretenberg_rs::generated_types::CircuitInput {
+                        name: String::new(),
+                        bytecode: acir,
+                        verification_key: Vec::new(),
+                    },
+                    false,
+                    barretenberg_rs::generated_types::ProofSystemSettings {
+                        ipa_accumulation: false,
+                        oracle_hash_type: "keccak".into(),
+                        disable_zk: false,
+                        optimized_solidity_verifier: false,
+                    },
+                )
+                .unwrap();
+            assert!(info.num_gates_dyadic > 0);
+        });
+        verify.join().unwrap();
+        stats.join().unwrap();
+    });
+    init_crs().unwrap();
     let combined = demo_tribute::encode_combined_proof(public.clone(), proof.proof).unwrap();
+    assert!(verify_circuit::<DemoTribute>(&combined).unwrap());
+    let mut tampered = combined.clone();
+    tampered[4..36].fill(0);
+    assert!(!verify_circuit::<DemoTribute>(&tampered).unwrap());
     assert_eq!(combined.len(), demo_tribute::COMBINED_LEN);
     let decoded = demo_tribute::decode_public_inputs(&combined).unwrap();
     assert_eq!(decoded.derived_owner, owner);

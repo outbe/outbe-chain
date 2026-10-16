@@ -4,14 +4,12 @@
 //! For each canonical circuit it computes the SRS point count bb actually needs
 //! (`circuit_stats` → dyadic domain `+ 1`; no proving, so it's fast) and the
 //! SHA-256 of that G1 prefix from the local Aztec CRS, printing ready-to-paste
-//! pin entries. Ignored by default (needs the local CRS + libbb); run with:
+//! pin entries. Ignored by default (needs valid local CRS + libbb); run with:
 //!   cargo test -p outbe-zk-backend --test srs_pins -- --ignored --nocapture
 //! then paste the printed `(points, [..])` rows into `PINNED_G1_SHA256`.
 
 use std::io::Read;
 
-use barretenberg_rs::api::BarretenbergApi;
-use barretenberg_rs::backends::FfiBackend;
 use barretenberg_rs::generated_types::{CircuitInput, ProofSystemSettings};
 use base64::Engine;
 use flate2::read::GzDecoder;
@@ -20,6 +18,7 @@ use sha2::{Digest, Sha256};
 use outbe_zk::noir::demo_tribute::DemoTribute;
 use outbe_zk::noir::niflheim_tribute::NiflheimTribute;
 use outbe_zk::CircuitId;
+use outbe_zk_backend::barretenberg::BarretenbergHandler;
 
 const G1_POINT_SIZE: usize = 64;
 
@@ -56,13 +55,13 @@ fn cache_path() -> std::path::PathBuf {
     std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".bb-crs/bn254_g1.dat")
 }
 
-fn num_points(api: &mut BarretenbergApi<FfiBackend>, acir: &[u8]) -> u32 {
+fn num_points(handler: &BarretenbergHandler, acir: &[u8]) -> u32 {
     let circuit = CircuitInput {
         name: String::new(),
         bytecode: acir.to_vec(),
         verification_key: Vec::new(),
     };
-    let info = api
+    let info = handler
         .circuit_stats(circuit, false, keccak_settings())
         .unwrap();
     info.num_gates_dyadic.max(next_pow2(info.num_gates)) + 1
@@ -81,29 +80,28 @@ fn pin_row(label: &str, n: u32) -> String {
 }
 
 #[test]
-#[ignore = "regen helper: needs local CRS + libbb; run with --ignored --nocapture"]
+#[ignore = "regen helper: needs valid local CRS + libbb; run with --ignored --nocapture"]
 fn print_srs_pins() {
-    let backend = FfiBackend::new().unwrap();
-    let mut api = BarretenbergApi::new(backend);
+    let handler = BarretenbergHandler::global().unwrap();
     let circuits: &[(&str, &str)] = &[
         ("demo tribute", DemoTribute::BYTECODE_B64),
         ("niflheim tribute", NiflheimTribute::BYTECODE_B64),
     ];
     println!("\n--- paste into PINNED_G1_SHA256 ---");
     for (label, b64) in circuits {
-        let n = num_points(&mut api, &acir(b64));
+        let n = num_points(handler, &acir(b64));
         println!("{}", pin_row(label, n));
     }
     println!("--- end ---\n");
 }
 
-fn gate_counts(api: &mut BarretenbergApi<FfiBackend>, acir: &[u8]) -> (u32, u32) {
+fn gate_counts(handler: &BarretenbergHandler, acir: &[u8]) -> (u32, u32) {
     let circuit = CircuitInput {
         name: String::new(),
         bytecode: acir.to_vec(),
         verification_key: Vec::new(),
     };
-    let info = api
+    let info = handler
         .circuit_stats(circuit, false, keccak_settings())
         .unwrap();
     (info.num_gates, info.num_gates_dyadic)
@@ -113,10 +111,9 @@ fn gate_counts(api: &mut BarretenbergApi<FfiBackend>, acir: &[u8]) -> (u32, u32)
 /// Capture before/after a hash swap to measure the complexity delta:
 ///   cargo test -p outbe-zk-backend --test srs_pins print_circuit_complexity -- --ignored --nocapture
 #[test]
-#[ignore = "complexity capture: needs libbb; run with --ignored --nocapture"]
+#[ignore = "complexity capture: needs valid local CRS + libbb; run with --ignored --nocapture"]
 fn print_circuit_complexity() {
-    let backend = FfiBackend::new().unwrap();
-    let mut api = BarretenbergApi::new(backend);
+    let handler = BarretenbergHandler::global().unwrap();
     let circuits: &[(&str, &str)] = &[
         ("demo tribute", DemoTribute::BYTECODE_B64),
         ("niflheim tribute", NiflheimTribute::BYTECODE_B64),
@@ -125,7 +122,7 @@ fn print_circuit_complexity() {
     println!("| circuit | num_gates | dyadic (2^k) |");
     println!("|---|---|---|");
     for (label, b64) in circuits {
-        let (g, d) = gate_counts(&mut api, &acir(b64));
+        let (g, d) = gate_counts(handler, &acir(b64));
         println!("| {label} | {g} | {d} |");
     }
     println!("--- end ---\n");

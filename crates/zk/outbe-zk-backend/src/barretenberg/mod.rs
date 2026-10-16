@@ -17,22 +17,21 @@
 //! `circuit_verify`. Pinned to `barretenberg-rs` =5.0.0-nightly.20260522,
 //! matching the `bb` that writes the committed VKs (`-t evm-no-zk`).
 
-use std::io::Read;
-use std::sync::{Mutex, MutexGuard, OnceLock};
-
-use barretenberg_rs::api::BarretenbergApi;
-use barretenberg_rs::backends::FfiBackend;
 use barretenberg_rs::generated_types::{CircuitInput, ProofSystemSettings};
 use base64::Engine;
 use flate2::read::GzDecoder;
+use std::io::Read;
 
 use outbe_zk::error::Error;
 use outbe_zk::protocol::zk::{Circuit, CircuitId, ProofGenerator, ProofVerifier};
 
-use crate::errors::{BackendProofError, CrsInitError};
+use crate::errors::BackendProofError;
 use crate::witness;
 
+mod handler;
 mod srs;
+
+pub use handler::BarretenbergHandler;
 
 /// Point the SRS loader at an explicit G1 `.dat` (e.g. a mobile wallet's bundled
 /// SRS asset). Call once before proving; required when built without
@@ -46,18 +45,6 @@ pub use srs::set_srs_path;
 /// smaller (2^14 domain); PayNote merge uses a 2^15 domain.
 pub const CANONICAL_SRS_POINTS: u32 = (1 << 16) + 1;
 
-/// Barretenberg's CRS factory, low-memory globals, and prover are **process-
-/// global** C++ state, and the API is not reentrant — so every bb operation
-/// (SRS init through prove/verify) must be serialized. This lock makes the
-/// backend safe to call from multiple threads: concurrent callers block here
-/// instead of racing the global CRS. Poison is recovered (a panicked prior call
-/// leaves the global state to be reset by the next `setup_srs` anyway).
-static BB_LOCK: Mutex<()> = Mutex::new(());
-
-fn bb_lock() -> MutexGuard<'static, ()> {
-    BB_LOCK.lock().unwrap_or_else(|poison| poison.into_inner())
-}
-
 /// Pre-initialize bb's (one-shot, process-global) CRS to `num_points` G1 points.
 /// Call once at startup with the largest circuit's size when a process proves
 /// circuits of *different* sizes — otherwise the first, smaller circuit fixes
@@ -65,9 +52,7 @@ fn bb_lock() -> MutexGuard<'static, ()> {
 /// [`CANONICAL_SRS_POINTS`] (`(1 << 16) + 1`). Single-circuit callers can skip
 /// this; the first prove reserves at least the canonical set's capacity.
 pub fn preinit_srs(num_points: u32) -> Result<(), Error> {
-    let _bb = bb_lock();
-    let mut api = Barretenberg::api()?;
-    srs::ensure_srs(&mut api, num_points)
+    Ok(BarretenbergHandler::initialize(num_points)?.ensure_capacity(num_points)?)
 }
 
 /// Initialize the process-global CRS once for every canonical circuit.
@@ -75,23 +60,7 @@ pub fn preinit_srs(num_points: u32) -> Result<(), Error> {
 /// `OUTBE_BB_SRS_PATH`, when set, selects a pre-staged G1 SRS file. Panics from
 /// the FFI boundary become proof errors so startup callers can fail cleanly.
 pub fn init_crs() -> Result<(), Error> {
-    static INIT: OnceLock<Result<(), CrsInitError>> = OnceLock::new();
-    Ok(INIT
-        .get_or_init(|| {
-            let srs_path = std::env::var("OUTBE_BB_SRS_PATH").ok();
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                if let Some(path) = srs_path {
-                    set_srs_path(path.into());
-                }
-                preinit_srs(CANONICAL_SRS_POINTS)
-            }));
-            match outcome {
-                Ok(Ok(())) => Ok(()),
-                Ok(Err(error)) => Err(CrsInitError::from(error)),
-                Err(_) => Err(CrsInitError::Panicked),
-            }
-        })
-        .clone()?)
+    preinit_srs(CANONICAL_SRS_POINTS)
 }
 
 /// Verify a decoded combined proof against its compile-time circuit identity.
@@ -147,6 +116,8 @@ fn acir_buffer_uncompressed<C: CircuitId>() -> Result<Vec<u8>, Error> {
 /// The barretenberg prover/verifier. Carries the proof-mode knobs the reference
 /// exposes: `disable_zk` (off by default — keep ZK for secret-bearing witnesses)
 /// and `low_memory` (+ optional storage budget) for on-device proving.
+/// This is only a settings facade, not an engine. All native operations block
+/// through the same process-wide [`BarretenbergHandler`].
 #[derive(Clone, Copy, Debug)]
 pub struct Barretenberg {
     /// Disable zero-knowledge blinding (faster, but not ZK — only for
@@ -172,13 +143,6 @@ impl Default for Barretenberg {
     }
 }
 
-impl Barretenberg {
-    fn api() -> Result<BarretenbergApi<FfiBackend>, Error> {
-        let backend = FfiBackend::new().map_err(|e| BackendProofError::BbInit(e.to_string()))?;
-        Ok(BarretenbergApi::new(backend))
-    }
-}
-
 impl<C> ProofGenerator<C> for Barretenberg
 where
     C: Circuit + CircuitId,
@@ -190,26 +154,16 @@ where
         witness: &C::Witness,
         public: &C::PublicInputs,
     ) -> Result<Self::Proof, Error> {
-        // Pure (ACVM solve + decode) — no bb global state, so outside the lock.
+        // Pure ACVM solving and decoding stay outside the native worker.
         let solved = witness::solved_witness::<C>(witness, public)?;
         let acir = acir_buffer_uncompressed::<C>()?;
-        let settings = settings_ultra_honk_keccak(self.disable_zk);
-
-        // Everything below touches bb's process-global CRS / memory / prover.
-        let _bb = bb_lock();
-        configure_memory(self.low_memory, self.max_storage_usage);
-        let mut api = Self::api()?;
-        srs::ensure_srs_for(&mut api, &acir, &settings)?;
         let circuit = CircuitInput {
             name: C::LABEL.to_string(),
             bytecode: acir,
             verification_key: C::VK_BYTES.to_vec(),
         };
-        let response = api
-            .circuit_prove(circuit, &solved, settings)
-            .map_err(|e| BackendProofError::BbProve(e.to_string()))?;
         Ok(Proof {
-            proof: response.proof,
+            proof: BarretenbergHandler::global()?.prove(circuit, solved, *self)?,
         })
     }
 }
@@ -225,14 +179,13 @@ where
         let acir = acir_buffer_uncompressed::<C>()?;
         let settings = settings_ultra_honk_keccak(self.disable_zk);
 
-        // bb's global CRS / prover — serialize against concurrent prove/verify.
-        let _bb = bb_lock();
-        let mut api = Self::api()?;
-        srs::ensure_srs_for(&mut api, &acir, &settings)?;
-        let response = api
-            .circuit_verify(C::VK_BYTES, public_inputs, proof.proof.clone(), settings)
-            .map_err(|e| BackendProofError::BbVerify(e.to_string()))?;
-        Ok(response.verified)
+        Ok(BarretenbergHandler::global()?.verify(
+            C::VK_BYTES.to_vec(),
+            public_inputs,
+            proof.proof.clone(),
+            Some(acir),
+            settings,
+        )?)
     }
 }
 
@@ -272,10 +225,13 @@ impl RawVerifier for Barretenberg {
         let header = combined_proof
             .get(..4)
             .ok_or(BackendProofError::CombinedProofHeaderTooShort)?;
-        let num_public = u32::from_be_bytes(header.try_into().expect("4 bytes")) as usize;
+        let num_public = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as usize;
 
         // [4 .. 4 + 32·N] public-input words.
-        let pub_end = 4 + num_public * 32;
+        let pub_end = num_public
+            .checked_mul(32)
+            .and_then(|n| n.checked_add(4))
+            .ok_or(BackendProofError::CombinedProofTruncatedPublicInputs)?;
         let pub_bytes = combined_proof
             .get(4..pub_end)
             .ok_or(BackendProofError::CombinedProofTruncatedPublicInputs)?;
@@ -300,13 +256,13 @@ impl RawVerifier for Barretenberg {
 
         let settings = settings_ultra_honk_keccak(self.disable_zk);
 
-        // bb's global CRS / prover — serialize against concurrent prove/verify.
-        let _bb = bb_lock();
-        let mut api = Self::api()?;
-        let response = api
-            .circuit_verify(vk_bytes, public_inputs, proof, settings)
-            .map_err(|e| BackendProofError::BbRawVerify(e.to_string()))?;
-        Ok(response.verified)
+        Ok(BarretenbergHandler::initialized()?.verify(
+            vk_bytes.to_vec(),
+            public_inputs,
+            proof,
+            None,
+            settings,
+        )?)
     }
 }
 

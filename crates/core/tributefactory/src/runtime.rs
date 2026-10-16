@@ -384,24 +384,47 @@ mod tests {
     }
 
     #[test]
-    fn treats_backend_rejection_as_fatal_after_public_inputs_match() {
-        let public = public_inputs();
+    fn uninitialized_verifier_is_unavailable_after_public_inputs_match() {
+        use outbe_zk_backend::errors::HandlerError;
+
+        const CHILD: &str = "OUTBE_TRIBUTE_ZK_UNINITIALIZED_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // Keep the singleton uninitialized even when other tests use a real CRS.
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "runtime::tests::uninitialized_verifier_is_unavailable_after_public_inputs_match",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "isolated test failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("running 1 test"));
+            return;
+        }
+
+        let proof = include_bytes!(
+            "../../../../testing/protocol-benchmarks/fixtures/tribute_demo_tribute_v1.bin"
+        );
+        let public = decode_zk_public_inputs(proof, verification_key()).unwrap();
         let expected = TributeZkExpectedHashes {
             nft_hash: public.nft_hash,
             binding_hash: public.binding_hash,
         };
 
-        let error = validate_zk_result(
-            &dummy_proof(public),
-            verification_key(),
-            public,
-            Some(&expected),
-        )
-        .unwrap_err();
-        assert!(
-            matches!(error, PrecompileError::Revert(_)),
-            "unexpected error: {error}"
-        );
+        let error =
+            validate_zk_result(proof, verification_key(), public, Some(&expected)).unwrap_err();
+        let backend_error = outbe_zk::error::Error::from(HandlerError::NotInitialized);
+        let unavailable = TributeFactoryError::zk_verifier_unavailable(backend_error).to_string();
+        // Matching public fields must reach the verifier, not fail an earlier gate
+        // or classify an infrastructure fault as InvalidZkProof.
+        assert!(matches!(error, PrecompileError::Revert(message) if message == unavailable));
     }
 
     #[test]
