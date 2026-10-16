@@ -1,14 +1,15 @@
-//! Durable immutable Review packages and one selected body per local attestation slot.
+//! Durable publication commitments, immutable Review packages and local attestation selection.
 
 use super::{
-    review::VerifiedReviewPublication, ObjectKind, PublicationManifest, MAX_MANIFEST_BYTES,
+    review::VerifiedReviewPublication, CheckpointOwnerSnapshot, ObjectKind, PublicationManifest,
+    MAX_MANIFEST_BYTES,
 };
 use crate::{
     integration::signing::{
         witness::{RepositoryWitnessBundle, MAX_WITNESS_BYTES},
         RepositorySigningMaterial,
     },
-    manager::FinalizedPatchSigningState,
+    manager::{FinalizedPatchSigningState, FinalizedPublicationReceipt, RepositoryReceiptReader},
 };
 use alloy_primitives::B256;
 use commonware_cryptography::{Hasher as _, Sha256};
@@ -39,6 +40,10 @@ pub enum Error {
     Manifest(#[from] super::Error),
     #[error(transparent)]
     Witness(#[from] crate::integration::signing::Error),
+    #[error(transparent)]
+    Authority(#[from] crate::manager::ManagerError),
+    #[error("accepted publication checkpoint {0} is unavailable")]
+    MissingCheckpoint(u64),
     #[error("publication store is already owned or cannot be locked: {0}")]
     Ownership(String),
     #[error("invalid or corrupt persisted Review package")]
@@ -127,6 +132,74 @@ impl ReviewPackageStore {
             root,
             _ownership: ownership,
         })
+    }
+
+    /// Cache only commitments already bound to a local finalized receipt. This creates neither
+    /// a ready package/selection nor native entry grants; those require complete verification.
+    pub fn persist_checkpoint_manifest(
+        &mut self,
+        checkpoint: &FinalizedPublicationReceipt,
+        manifest: &PublicationManifest,
+    ) -> Result<(), Error> {
+        let receipt = checkpoint.receipt();
+        if receipt.receipt_hash != receipt.body.receipt_hash() {
+            return Err(Error::Corrupt);
+        }
+        manifest.bind_receipt(&receipt.body)?;
+        let directory = self.package_dir(receipt.receipt_hash);
+        private_dir(&directory)?;
+        write_once(&directory.join("body"), &receipt.body.to_bytes())?;
+        write_once(&directory.join("manifest"), &manifest.to_bytes()?)
+    }
+
+    pub fn load_checkpoint_manifest(
+        &self,
+        checkpoint: &FinalizedPublicationReceipt,
+    ) -> Result<PublicationManifest, Error> {
+        let receipt = checkpoint.receipt();
+        let directory = self.package_dir(receipt.receipt_hash);
+        reject_symlink(&directory)?;
+        if receipt.receipt_hash != receipt.body.receipt_hash()
+            || read(&directory.join("body"), PUBLICATION_BODY_LEN)? != receipt.body.to_bytes()
+        {
+            return Err(Error::Corrupt);
+        }
+        let manifest = PublicationManifest::from_bytes(&read(
+            &directory.join("manifest"),
+            MAX_MANIFEST_BYTES,
+        )?)?;
+        manifest.bind_receipt(&receipt.body)?;
+        Ok(manifest)
+    }
+
+    /// Rebuild preparation refs in receipt order on a blocking worker. Durable bytes alone never
+    /// confer authority: every row is reread from this node's canonical finalized state.
+    pub fn replay_checkpoint_snapshot(
+        &self,
+        reader: &dyn RepositoryReceiptReader,
+        target: &FinalizedPublicationReceipt,
+    ) -> Result<CheckpointOwnerSnapshot, Error> {
+        let sequence = target.receipt().body.sequence;
+        if sequence == 0 {
+            return Err(Error::Corrupt);
+        }
+        let mut snapshot: Option<CheckpointOwnerSnapshot> = None;
+        for expected in 1..=sequence {
+            let checkpoint = reader
+                .read_current_publication_receipt(expected)?
+                .ok_or(Error::MissingCheckpoint(expected))?;
+            if checkpoint.receipt().body.sequence != expected
+                || (expected == sequence && checkpoint.receipt() != target.receipt())
+            {
+                return Err(Error::Corrupt);
+            }
+            let manifest = self.load_checkpoint_manifest(&checkpoint)?;
+            match &mut snapshot {
+                None => snapshot = Some(CheckpointOwnerSnapshot::bootstrap(checkpoint, &manifest)?),
+                Some(snapshot) => snapshot.advance(checkpoint, &manifest)?,
+            }
+        }
+        snapshot.ok_or(Error::Corrupt)
     }
 
     /// Persist the complete verified package before making its body eligible for attestation.
@@ -381,6 +454,218 @@ fn write_once(path: &Path, bytes: &[u8]) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manager::{FinalizedBlock, ManagerError};
+    use outbe_primitives::radicle_publication::PublicationAction;
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+
+    struct ReceiptSource {
+        rows: BTreeMap<u64, FinalizedPublicationReceipt>,
+        reads: Mutex<Vec<u64>>,
+        unavailable: bool,
+    }
+
+    impl RepositoryReceiptReader for ReceiptSource {
+        fn read_current_publication_receipt(
+            &self,
+            sequence: u64,
+        ) -> Result<Option<FinalizedPublicationReceipt>, ManagerError> {
+            self.reads.lock().unwrap().push(sequence);
+            if self.unavailable {
+                Err(ManagerError::Finality(
+                    "local finalized state unavailable".into(),
+                ))
+            } else {
+                Ok(self.rows.get(&sequence).cloned())
+            }
+        }
+    }
+
+    // Canonical manifest/receipt commitments, not a complete native Git package or chain fixture.
+    fn checkpoint_chain() -> Vec<(FinalizedPublicationReceipt, PublicationManifest)> {
+        let (mut body, initial) = super::super::tests::bootstrap_fixture();
+        let mut rows = vec![];
+        for sequence in 1..=4 {
+            let manifest = if sequence == 1 {
+                initial.clone()
+            } else {
+                body.action = PublicationAction::BindMaterial;
+                body.epoch += 1;
+                body.material_version += 1;
+                body.material_hash = B256::repeat_byte(sequence as u8);
+                PublicationManifest::new(vec![], vec![], vec![], initial.owner_snapshot().to_vec())
+                    .unwrap()
+            };
+            body.sequence = sequence;
+            body.package_manifest_hash = manifest.hash().unwrap();
+            let checkpoint = FinalizedPublicationReceipt {
+                block: FinalizedBlock {
+                    number: 20,
+                    hash: B256::repeat_byte(20),
+                },
+                receipt: outbe_radicleregistry::publication::PublicationReceipt {
+                    body: body.clone(),
+                    accepted_height: sequence,
+                    receipt_hash: body.receipt_hash(),
+                },
+            };
+            body.previous_receipt_hash = checkpoint.receipt().receipt_hash;
+            rows.push((checkpoint, manifest));
+        }
+        rows
+    }
+
+    fn receipt_source(
+        rows: &[(FinalizedPublicationReceipt, PublicationManifest)],
+    ) -> ReceiptSource {
+        ReceiptSource {
+            rows: rows
+                .iter()
+                .map(|(r, _)| (r.receipt().body.sequence, r.clone()))
+                .collect(),
+            reads: Mutex::new(vec![]),
+            unavailable: false,
+        }
+    }
+
+    #[test]
+    fn accepted_manifest_cache_replays_exact_snapshot_after_reopen_without_selecting_package() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("archive");
+        let rows = checkpoint_chain();
+        let mut store = ReviewPackageStore::open(&root).unwrap();
+        for index in [3, 1, 0, 2, 0] {
+            store
+                .persist_checkpoint_manifest(&rows[index].0, &rows[index].1)
+                .unwrap();
+        }
+        let target = &rows[3].0;
+        assert!(store
+            .selection(review_slot_key(&target.receipt().body))
+            .unwrap()
+            .is_none());
+        assert!(!store
+            .package_dir(target.receipt().receipt_hash)
+            .join("ready")
+            .exists());
+        let expected = rows[1..].iter().fold(
+            CheckpointOwnerSnapshot::bootstrap(rows[0].0.clone(), &rows[0].1).unwrap(),
+            |mut snapshot, (receipt, manifest)| {
+                snapshot.advance(receipt.clone(), manifest).unwrap();
+                snapshot
+            },
+        );
+        drop(store);
+        let reopened = ReviewPackageStore::open(&root).unwrap();
+        let source = receipt_source(&rows);
+        let actual = reopened
+            .replay_checkpoint_snapshot(&source, target)
+            .unwrap();
+        assert_eq!(actual.checkpoint(), expected.checkpoint());
+        assert_eq!(actual.owner_refs(), expected.owner_refs());
+        assert_eq!(actual.sigrefs(), expected.sigrefs());
+        assert_eq!(*source.reads.lock().unwrap(), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn checkpoint_replay_requires_trusted_receipts_and_rejects_gaps_forks_or_foreign_target() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = ReviewPackageStore::open(directory.path().join("archive")).unwrap();
+        let rows = checkpoint_chain();
+        for (receipt, manifest) in &rows {
+            store
+                .persist_checkpoint_manifest(receipt, manifest)
+                .unwrap();
+        }
+        let target = &rows[3].0;
+        let mut source = receipt_source(&rows);
+        source.unavailable = true;
+        assert!(matches!(
+            store.replay_checkpoint_snapshot(&source, target),
+            Err(Error::Authority(_))
+        ));
+        source.unavailable = false;
+        let missing = source.rows.remove(&2).unwrap();
+        assert!(matches!(
+            store.replay_checkpoint_snapshot(&source, target),
+            Err(Error::MissingCheckpoint(2))
+        ));
+        source.rows.insert(2, rows[2].0.clone());
+        assert!(matches!(
+            store.replay_checkpoint_snapshot(&source, target),
+            Err(Error::Corrupt)
+        ));
+        let mut fork = missing;
+        fork.receipt.body.previous_receipt_hash = B256::repeat_byte(99);
+        fork.receipt.receipt_hash = fork.receipt.body.receipt_hash();
+        store
+            .persist_checkpoint_manifest(&fork, &rows[1].1)
+            .unwrap();
+        source.rows.insert(2, fork);
+        assert!(store.replay_checkpoint_snapshot(&source, target).is_err());
+        source = receipt_source(&rows);
+        let mut wrong_target = target.clone();
+        wrong_target.receipt.body.genesis_hash = B256::repeat_byte(99);
+        wrong_target.receipt.receipt_hash = wrong_target.receipt.body.receipt_hash();
+        assert!(store
+            .replay_checkpoint_snapshot(&source, &wrong_target)
+            .is_err());
+        wrong_target.receipt.body.sequence = 0;
+        assert!(store
+            .replay_checkpoint_snapshot(&source, &wrong_target)
+            .is_err());
+    }
+
+    #[test]
+    fn checkpoint_manifest_cache_rejects_corruption_missing_files_and_symlinks() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = ReviewPackageStore::open(directory.path().join("archive")).unwrap();
+        let rows = checkpoint_chain();
+        for (receipt, manifest) in &rows {
+            store
+                .persist_checkpoint_manifest(receipt, manifest)
+                .unwrap();
+        }
+        let checkpoint = &rows[1].0;
+        let package = store.package_dir(checkpoint.receipt().receipt_hash);
+        let manifest_path = package.join("manifest");
+        let bytes = rows[1].1.to_bytes().unwrap();
+        fs::remove_file(&manifest_path).unwrap();
+        assert!(store
+            .replay_checkpoint_snapshot(&receipt_source(&rows), &rows[3].0)
+            .is_err());
+        fs::write(&manifest_path, vec![0; MAX_MANIFEST_BYTES + 1]).unwrap();
+        assert!(matches!(
+            store.load_checkpoint_manifest(checkpoint),
+            Err(Error::Corrupt)
+        ));
+        fs::write(&manifest_path, &bytes).unwrap();
+        fs::write(package.join("body"), b"corrupt").unwrap();
+        assert!(matches!(
+            store.load_checkpoint_manifest(checkpoint),
+            Err(Error::Corrupt)
+        ));
+        fs::write(package.join("body"), checkpoint.receipt().body.to_bytes()).unwrap();
+        let mut wrong = rows[1].1.clone();
+        wrong.owner_snapshot[0].oid = "99".repeat(20);
+        fs::write(&manifest_path, wrong.to_bytes().unwrap()).unwrap();
+        assert!(store.load_checkpoint_manifest(checkpoint).is_err());
+        fs::write(&manifest_path, b"{}").unwrap();
+        assert!(store.load_checkpoint_manifest(checkpoint).is_err());
+        fs::remove_file(&manifest_path).unwrap();
+        let outside = directory.path().join("untouched");
+        fs::write(&outside, &bytes).unwrap();
+        std::os::unix::fs::symlink(&outside, &manifest_path).unwrap();
+        assert!(matches!(
+            store.load_checkpoint_manifest(checkpoint),
+            Err(Error::Corrupt)
+        ));
+        assert_eq!(fs::read(&outside).unwrap(), bytes);
+        assert!(store
+            .persist_checkpoint_manifest(checkpoint, &rows[0].1)
+            .is_err());
+        assert_eq!(fs::read(&outside).unwrap(), bytes);
+    }
 
     #[test]
     fn selected_slot_survives_reopen_and_cannot_choose_another_body() {
