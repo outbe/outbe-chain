@@ -36,7 +36,7 @@ use bstr::BString;
 use either::Either;
 use gix_protocol::handshake::Ref;
 use nonempty::NonEmpty;
-use radicle::crypto::PublicKey;
+use radicle::crypto::RepositoryKey as PublicKey;
 use radicle::git::fmt::{Component, Namespaced, Qualified, refname};
 use radicle::storage::ReadRepository;
 use radicle::storage::git::Repository;
@@ -51,7 +51,7 @@ use crate::transport::WantsHaves;
 use crate::{policy, refs};
 
 pub mod error {
-    use radicle::crypto::PublicKey;
+    use radicle::crypto::RepositoryKey as PublicKey;
     use radicle::git::fmt::RefString;
     use thiserror::Error;
 
@@ -101,6 +101,8 @@ pub(crate) enum RefPrefix {
     NamespacedRadId { namespace: PublicKey },
     /// Represents `"refs/namespaces/<namespace>/refs/rad/sigrefs"`.
     NamespacedRadSigrefs { namespace: PublicKey },
+    /// Represents all references in one locally pinned owner's namespace.
+    Namespace { namespace: PublicKey },
     /// Represents `"refs/namespaces"`
     AllNamespaces,
 }
@@ -121,6 +123,9 @@ impl RefPrefix {
                     .into()
             }
             RefPrefix::AllNamespaces => "refs/namespaces".into(),
+            RefPrefix::Namespace { namespace } => {
+                format!("refs/namespaces/{namespace}/refs/").into()
+            }
         }
     }
 }

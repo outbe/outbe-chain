@@ -248,13 +248,58 @@ fn status_server_enforces_connection_and_request_deadline_bounds() {
     assert!(rejected, "the 33rd concurrent connection must be rejected");
     drop(held);
 
+    let released = Instant::now() + Duration::from_secs(2);
+    while !request(server.address(), "/healthz").starts_with("HTTP/1.1 200") {
+        assert!(
+            Instant::now() < released,
+            "closed connections must release capacity"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+
     let mut stalled = TcpStream::connect(server.address()).unwrap();
+    stalled
+        .set_read_timeout(Some(Duration::from_secs(7)))
+        .unwrap();
     stalled.write_all(b"GET /healthz HTTP/1.1\r\n").unwrap();
     let started = Instant::now();
     let mut response = Vec::new();
     stalled.read_to_end(&mut response).unwrap();
     assert!(started.elapsed() >= Duration::from_secs(4));
     assert!(started.elapsed() < Duration::from_secs(7));
+}
+
+#[test]
+fn status_request_deadline_is_not_extended_by_partial_reads() {
+    let server = StatusServer::start(
+        "127.0.0.1:0".parse().unwrap(),
+        Availability {
+            repositories: BTreeSet::new(),
+        },
+    )
+    .unwrap();
+    let mut stream = TcpStream::connect(server.address()).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(7)))
+        .unwrap();
+    stream.write_all(b"GET /healthz HTTP/1.1\r\n").unwrap();
+    let mut writer = stream.try_clone().unwrap();
+    let trickle = thread::spawn(move || {
+        for _ in 0..14 {
+            thread::sleep(Duration::from_millis(450));
+            if writer.write_all(b"x").is_err() {
+                break;
+            }
+        }
+    });
+    let started = Instant::now();
+    let mut response = Vec::new();
+    let result = stream.read_to_end(&mut response);
+    assert!(result.is_ok() || result.unwrap_err().kind() == std::io::ErrorKind::ConnectionReset);
+    assert!(response.is_empty());
+    assert!(started.elapsed() >= Duration::from_secs(4));
+    assert!(started.elapsed() < Duration::from_secs(7));
+    trickle.join().unwrap();
 }
 
 #[test]

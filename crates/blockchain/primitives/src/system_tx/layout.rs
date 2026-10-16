@@ -119,6 +119,22 @@ pub fn expected_begin_block_kinds_for_activation(
     has_tee_bootstrap: bool,
     ocomp_activation: OcompLifecycleActivation,
 ) -> Vec<SystemTxKind> {
+    expected_begin_block_kinds_for_publication(
+        block_number,
+        has_boundary_outcome,
+        has_tee_bootstrap,
+        ocomp_activation,
+        false,
+    )
+}
+
+pub fn expected_begin_block_kinds_for_publication(
+    block_number: u64,
+    has_boundary_outcome: bool,
+    has_tee_bootstrap: bool,
+    ocomp_activation: OcompLifecycleActivation,
+    has_publication: bool,
+) -> Vec<SystemTxKind> {
     let mut expected = match block_number {
         0 => Vec::new(),
         1 => Vec::new(),
@@ -149,6 +165,9 @@ pub fn expected_begin_block_kinds_for_activation(
     if block_number > 0 {
         expected.push(SystemTxKind::OracleSlashWindow);
         expected.push(SystemTxKind::HookEvents);
+        if has_publication {
+            expected.push(SystemTxKind::RadiclePublication);
+        }
     }
     expected
 }
@@ -186,6 +205,24 @@ pub fn validate_system_tx_set_for_activation(
     has_tee_bootstrap: bool,
     ocomp_activation: OcompLifecycleActivation,
 ) -> Result<(), SystemTxError> {
+    validate_system_tx_set_for_publication(
+        layout,
+        block_number,
+        has_boundary_outcome,
+        has_tee_bootstrap,
+        ocomp_activation,
+        false,
+    )
+}
+
+pub fn validate_system_tx_set_for_publication(
+    layout: &SystemTxLayout<'_>,
+    block_number: u64,
+    has_boundary_outcome: bool,
+    has_tee_bootstrap: bool,
+    ocomp_activation: OcompLifecycleActivation,
+    has_publication: bool,
+) -> Result<(), SystemTxError> {
     let actual = layout.system_tx_count();
     if actual > usize::from(MAX_SYSTEM_TXS_PER_BLOCK) {
         return Err(SystemTxError::TooManySystemTxs {
@@ -213,11 +250,12 @@ pub fn validate_system_tx_set_for_activation(
         });
     }
 
-    let expected_begin = expected_begin_block_kinds_for_activation(
+    let expected_begin = expected_begin_block_kinds_for_publication(
         block_number,
         has_boundary_outcome,
         has_tee_bootstrap,
         ocomp_activation,
+        has_publication,
     );
     let expected_end = expected_end_block_kinds(block_number, ocomp_activation);
     let actual_begin = layout.begin_block_kinds()?;

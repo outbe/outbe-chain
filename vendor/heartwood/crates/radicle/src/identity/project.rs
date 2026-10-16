@@ -14,6 +14,9 @@ use crate::identity::doc::Payload;
 
 pub use crypto::VerifyingKey;
 
+/// Maximum UTF-8 byte length of a project description in the Outbe fork.
+pub const MAX_DESCRIPTION_BYTES: usize = 256;
+
 /// A project-related error.
 #[derive(Debug, Error)]
 pub enum ProjectError {
@@ -186,7 +189,7 @@ impl Project {
     /// # Validation Rules
     ///
     ///   * `name`'s length must not be empty and must not exceed 255.
-    ///   * `description`'s length must not exceed 255.
+    ///   * `description`'s length must not exceed 256 bytes.
     ///   * `default_branch`'s length must not be empty and must not exceed 255.
     pub fn new(
         name: ProjectName,
@@ -195,9 +198,9 @@ impl Project {
     ) -> Result<Self, Vec<ProjectError>> {
         let mut errs = Vec::new();
 
-        if description.len() > doc::MAX_STRING_LENGTH {
+        if description.len() > MAX_DESCRIPTION_BYTES {
             errs.push(ProjectError::Description(
-                "description cannot exceed 255 bytes",
+                "description cannot exceed 256 bytes",
             ));
         }
 
@@ -251,6 +254,10 @@ impl Project {
         &self.description
     }
 
+    /// Return the default branch of the project.
+    ///
+    /// To obtain the default branch of the repository, prefer
+    /// [`super::Doc::default_branch_name`].
     #[inline]
     pub fn default_branch(&self) -> &BranchName {
         &self.default_branch
@@ -277,6 +284,65 @@ impl From<Project> for Payload {
 mod test {
     use super::*;
     use crate::assert_matches;
+
+    #[test]
+    fn description_byte_limit_applies_to_constructor_update_and_deserialization() {
+        for description in [
+            "".into(),
+            "x".repeat(255),
+            "x".repeat(256),
+            "я".repeat(128),
+            format!("{}x", "я".repeat(127)),
+        ] {
+            let project = Project::new(
+                "governments".parse().unwrap(),
+                description.clone(),
+                crate::git::fmt::refname!("main"),
+            )
+            .unwrap();
+            let encoded = serde_json::to_vec(&project).unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Project>(&encoded).unwrap(),
+                project
+            );
+            assert_eq!(
+                project
+                    .clone()
+                    .update(None, description.clone(), None)
+                    .unwrap()
+                    .description(),
+                description
+            );
+        }
+        for description in ["x".repeat(257), format!("{}x", "я".repeat(128))] {
+            assert!(
+                Project::new(
+                    "governments".parse().unwrap(),
+                    description.clone(),
+                    crate::git::fmt::refname!("main")
+                )
+                .is_err()
+            );
+            let project = Project::new(
+                "governments".parse().unwrap(),
+                String::new(),
+                crate::git::fmt::refname!("main"),
+            )
+            .unwrap();
+            assert!(project.update(None, description.clone(), None).is_err());
+            let encoded = serde_json::json!({"name":"governments", "description":description, "defaultBranch":"main"});
+            assert!(serde_json::from_value::<Project>(encoded).is_err());
+        }
+        assert!("x".repeat(256).parse::<ProjectName>().is_err());
+        assert!(
+            Project::new(
+                "governments".parse().unwrap(),
+                String::new(),
+                BranchName::try_from("x".repeat(256)).unwrap()
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn test_project_name() {

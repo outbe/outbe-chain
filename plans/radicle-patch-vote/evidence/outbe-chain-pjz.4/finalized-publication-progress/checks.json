@@ -1,0 +1,133 @@
+{
+  "source_sha": "eef60c359756ed88e723d5294790cf29714f5fac",
+  "base_sha": "d74fab1787a9fe7efd5fe2c13c25efe1e3cba0d8",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4",
+    "PYTHONPATH": "scripts"
+  },
+  "changed_files": [
+    "crates/blockchain/radicle/src/integration/local.rs",
+    "crates/blockchain/radicle/src/integration/local/progress.rs",
+    "crates/blockchain/radicle/src/integration/local/tests.rs",
+    "crates/blockchain/radicle/src/manager/mod.rs",
+    "crates/blockchain/radicle/src/manager/snapshot.rs",
+    "crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs",
+    "crates/blockchain/radicle/src/manager/types.rs",
+    "crates/system/radicleregistry/src/publication.rs",
+    "crates/system/radicleregistry/src/tests/publication.rs"
+  ],
+  "spec_sha256": {
+    "plans/radicle-patch-vote/design.md": "93be4a659ee70b9ac6fdf12d0447ff948b7aa0f6160e9ccf6428ca493dd20025",
+    "plans/radicle-patch-vote/task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+    "plans/radicle-patch-vote/plan.md": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b"
+  },
+  "checks": [
+    {
+      "name": "full-libs",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-radicleregistry",
+        "--lib",
+        "--",
+        "--nocapture"
+      ],
+      "start_utc": "2026-10-16T05:36:15.694012+00:00",
+      "end_utc": "2026-10-16T05:37:55.194709+00:00",
+      "exit_code": 0,
+      "log": "full-libs.log",
+      "sha256": "91b1b17566ff1dbc08ec017d73cf35112ec9f79100e8ecc103d36123c03cf614"
+    },
+    {
+      "name": "all-consumers",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-engine",
+        "-p",
+        "outbe-chain",
+        "-p",
+        "outbe-radicle-runtime",
+        "-p",
+        "outbe-radicle-sidecar",
+        "-p",
+        "outbe-e2e-harness",
+        "-p",
+        "outbe-keygen",
+        "--all-targets"
+      ],
+      "start_utc": "2026-10-16T05:37:55.195159+00:00",
+      "end_utc": "2026-10-16T05:38:13.528477+00:00",
+      "exit_code": 0,
+      "log": "all-consumers.log",
+      "sha256": "0408bef9a0d1945cc020bd11a5eb2a0b92ddadd3d09fb7cdabf788323aa17f25"
+    },
+    {
+      "name": "scoped-clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--no-deps",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-radicleregistry",
+        "-p",
+        "outbe-chain",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "start_utc": "2026-10-16T05:38:13.529116+00:00",
+      "end_utc": "2026-10-16T05:38:27.500911+00:00",
+      "exit_code": 0,
+      "log": "scoped-clippy.log",
+      "sha256": "af82d67effc29c5f23fed216a4f5122271d73bc327b7a970ba7c26bbcefdfcbb"
+    },
+    {
+      "name": "rustfmt",
+      "command": [
+        "rustfmt",
+        "--check",
+        "--edition",
+        "2021",
+        "--config",
+        "skip_children=true",
+        "crates/blockchain/radicle/src/integration/local.rs",
+        "crates/blockchain/radicle/src/integration/local/progress.rs",
+        "crates/blockchain/radicle/src/integration/local/tests.rs",
+        "crates/blockchain/radicle/src/manager/mod.rs",
+        "crates/blockchain/radicle/src/manager/snapshot.rs",
+        "crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs",
+        "crates/blockchain/radicle/src/manager/types.rs",
+        "crates/system/radicleregistry/src/publication.rs",
+        "crates/system/radicleregistry/src/tests/publication.rs"
+      ],
+      "start_utc": "2026-10-16T05:38:27.501270+00:00",
+      "end_utc": "2026-10-16T05:38:27.565273+00:00",
+      "exit_code": 0,
+      "log": "rustfmt.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

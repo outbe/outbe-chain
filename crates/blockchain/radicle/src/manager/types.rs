@@ -15,6 +15,229 @@ pub struct FinalizedBlock {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedPatchApproval {
+    pub block: FinalizedBlock,
+    pub approval: outbe_radicleregistry::PatchApprovalRecord,
+}
+
+/// A receipt read from an exact local canonical finalized state, not a peer certificate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedPublicationReceipt {
+    pub(crate) block: FinalizedBlock,
+    pub(crate) receipt: outbe_radicleregistry::publication::PublicationReceipt,
+}
+
+impl FinalizedPublicationReceipt {
+    pub fn block(&self) -> FinalizedBlock {
+        self.block
+    }
+    pub fn receipt(&self) -> &outbe_radicleregistry::publication::PublicationReceipt {
+        &self.receipt
+    }
+}
+
+/// Only this node's current finalized state may supply an accepted receipt.
+pub trait RepositoryReceiptReader: Send + Sync + 'static {
+    fn read_governments_descriptor(
+        &self,
+    ) -> Result<Option<outbe_primitives::radicle_genesis::GovernmentsDescriptor>, ManagerError>
+    {
+        Err(ManagerError::Snapshot(
+            "genesis descriptor unavailable".into(),
+        ))
+    }
+    fn read_finalized_vote_page(
+        &self,
+        _: u64,
+        _: u32,
+    ) -> Result<Option<FinalizedVotePage>, ManagerError> {
+        Err(ManagerError::Snapshot(
+            "finalized Vote events unavailable".into(),
+        ))
+    }
+    fn read_current_patch_approval(
+        &self,
+        _: alloy_primitives::U256,
+    ) -> Result<Option<FinalizedPatchApproval>, ManagerError> {
+        Err(ManagerError::Snapshot(
+            "patch approval archive unavailable".into(),
+        ))
+    }
+    fn read_current_publication_progress(
+        &self,
+        _: &outbe_primitives::radicle_publication::PublicationBody,
+    ) -> Result<FinalizedPublicationProgress, ManagerError> {
+        Err(ManagerError::Snapshot(
+            "publication progress unavailable".into(),
+        ))
+    }
+    fn read_current_publication_receipt(
+        &self,
+        sequence: u64,
+    ) -> Result<Option<FinalizedPublicationReceipt>, ManagerError>;
+}
+
+/// Bounded observations of existing Approved Vote events, never permission to sign.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedVotePage {
+    pub chain_id: u64,
+    pub genesis_hash: B256,
+    pub block: FinalizedBlock,
+    pub next_offset: Option<u32>,
+    pub proposals: Vec<alloy_primitives::U256>,
+}
+
+pub const MAX_VOTE_PAGE: usize = 32;
+
+/// Delivery observations from one own canonical finalized state, never permission to publish.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedPublicationProgress {
+    pub(crate) block: FinalizedBlock,
+    pub(crate) body_hash: B256,
+    pub(crate) attesters: Vec<u32>,
+    pub(crate) receipt: Option<FinalizedPublicationReceipt>,
+}
+
+impl FinalizedPublicationProgress {
+    pub fn block(&self) -> FinalizedBlock {
+        self.block
+    }
+    pub fn body_hash(&self) -> B256 {
+        self.body_hash
+    }
+    pub fn attesters(&self) -> &[u32] {
+        &self.attesters
+    }
+    pub fn receipt(&self) -> Option<&FinalizedPublicationReceipt> {
+        self.receipt.as_ref()
+    }
+}
+
+/// Seeded descriptor and current signing set sampled from one canonical finalized state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedBootstrapSigningState {
+    pub(crate) authority: FinalizedRepositoryAuthority,
+    pub(crate) descriptor: outbe_primitives::radicle_genesis::GovernmentsDescriptor,
+}
+
+impl FinalizedBootstrapSigningState {
+    pub fn authority(&self) -> &FinalizedRepositoryAuthority {
+        &self.authority
+    }
+    pub fn descriptor(&self) -> &outbe_primitives::radicle_genesis::GovernmentsDescriptor {
+        &self.descriptor
+    }
+}
+
+/// All fields come from one current local finalized state used for a signing request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedPatchSigningState {
+    pub(crate) authority: FinalizedRepositoryAuthority,
+    pub(crate) approval: FinalizedPatchApproval,
+    pub(crate) checkpoint: FinalizedPublicationReceipt,
+    pub(crate) material: FinalizedPublicationReceipt,
+    pub(crate) stage: u8,
+    pub(crate) anchor: FinalizedBlock,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedMaterialSigningState {
+    pub(crate) authority: FinalizedRepositoryAuthority,
+    pub(crate) checkpoint: FinalizedPublicationReceipt,
+    pub(crate) material: FinalizedPublicationReceipt,
+    pub(crate) anchor: FinalizedBlock,
+}
+impl FinalizedMaterialSigningState {
+    pub fn authority(&self) -> &FinalizedRepositoryAuthority {
+        &self.authority
+    }
+    pub fn checkpoint(&self) -> &FinalizedPublicationReceipt {
+        &self.checkpoint
+    }
+    pub fn material(&self) -> &FinalizedPublicationReceipt {
+        &self.material
+    }
+    pub fn anchor(&self) -> FinalizedBlock {
+        self.anchor
+    }
+}
+
+impl FinalizedPatchSigningState {
+    pub fn authority(&self) -> &FinalizedRepositoryAuthority {
+        &self.authority
+    }
+    pub fn approval(&self) -> &FinalizedPatchApproval {
+        &self.approval
+    }
+    pub fn checkpoint(&self) -> &FinalizedPublicationReceipt {
+        &self.checkpoint
+    }
+    pub fn material(&self) -> &FinalizedPublicationReceipt {
+        &self.material
+    }
+    pub fn stage(&self) -> u8 {
+        self.stage
+    }
+    pub fn anchor(&self) -> FinalizedBlock {
+        self.anchor
+    }
+}
+
+/// Constructed from this node's current canonical finalized state, not peer metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedRepositoryAuthority {
+    pub(crate) block: FinalizedBlock,
+    pub(crate) chain_id: u64,
+    pub(crate) genesis_hash: B256,
+    pub(crate) epoch: u64,
+    pub(crate) committee: outbe_validatorset::state::CommitteeSnapshot,
+}
+
+impl FinalizedRepositoryAuthority {
+    pub fn block(&self) -> FinalizedBlock {
+        self.block
+    }
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+    pub fn genesis_hash(&self) -> B256 {
+        self.genesis_hash
+    }
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+    pub fn committee(&self) -> &outbe_validatorset::state::CommitteeSnapshot {
+        &self.committee
+    }
+}
+
+/// Samples this node's current finalized authority; callers cannot choose a historic set.
+pub trait RepositoryAuthorityReader: Send + Sync {
+    fn read_current_material_signing_state(
+        &self,
+    ) -> Result<FinalizedMaterialSigningState, ManagerError> {
+        Err(ManagerError::Snapshot(
+            "material binding state unavailable".into(),
+        ))
+    }
+    fn read_current_bootstrap_signing_state(
+        &self,
+    ) -> Result<FinalizedBootstrapSigningState, ManagerError> {
+        Err(ManagerError::Snapshot(
+            "bootstrap signing state unavailable".into(),
+        ))
+    }
+
+    fn read_current_repository_authority(
+        &self,
+    ) -> Result<FinalizedRepositoryAuthority, ManagerError>;
+    fn read_current_patch_signing_state(
+        &self,
+        proposal_id: alloy_primitives::U256,
+    ) -> Result<FinalizedPatchSigningState, ManagerError>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinalizedValidator {
     pub address: Address,
     pub peer: PeerId,

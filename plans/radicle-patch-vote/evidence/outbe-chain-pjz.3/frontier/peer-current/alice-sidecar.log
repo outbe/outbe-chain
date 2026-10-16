@@ -1,0 +1,21 @@
+2026-10-15T17:33:53.343+04:00 INFO  node     Opening policy database..
+2026-10-15T17:33:53.346+04:00 INFO  node     Default seeding policy set to 'block (all)'
+2026-10-15T17:33:53.346+04:00 INFO  node     Initializing service (Outbe)..
+2026-10-15T17:33:53.346+04:00 INFO  node     Opening node database..
+2026-10-15T17:33:53.348+04:00 INFO  service  Empty refs database, populating from storage..
+2026-10-15T17:33:53.348+04:00 INFO  reactor  Entering reactor event loop
+2026-10-15T17:33:53.348+04:00 INFO  node     Listening on 127.0.0.1:59613..
+2026-10-15T17:33:53.349+04:00 INFO  node     Binding control socket /tmp/ob-p1-apwvr709/alice/node/control.sock..
+2026-10-15T17:33:53.349+04:00 INFO  node     Running node z6MkwPcJ4QvQVtFLekBLq8QhhC6cQTe8RfWJa8cCsigFjvgD in /private/tmp/ob-p1-apwvr709/alice..
+2026-10-15T17:33:53.350+04:00 INFO  service  Received command QueryState(..)
+2026-10-15T17:33:53.369+04:00 INFO  service  Received command QueryState(..)
+2026-10-15T17:33:53.370+04:00 INFO  service  Received command ListenAddrs
+2026-10-15T17:33:53.370+04:00 INFO  service  Received command Config
+2026-10-15T17:33:53.771+04:00 INFO  service  Received command Seed(rad:z52SSVRbgHXDQHhgiqsdCnSVqyMh, all)
+2026-10-15T17:33:53.772+04:00 INFO  service  Received command AddInventory(rad:z52SSVRbgHXDQHhgiqsdCnSVqyMh)
+2026-10-15T17:33:53.775+04:00 INFO  service  Received command QueryState(..)
+2026-10-15T17:33:53.924+04:00 INFO  service  Connected to z6MkqKUfZ6P86KvN34hP6s4H2kM7kqZyhmNzE6TXy9jtTjAH (127.0.0.1:59617) (Inbound)
+2026-10-15T17:33:54.106+04:00 INFO  wire     Peer z6MkqKUfZ6P86KvN34hP6s4H2kM7kqZyhmNzE6TXy9jtTjAH fetched rad:z52SSVRbgHXDQHhgiqsdCnSVqyMh from us successfully
+2026-10-15T17:33:54.425+04:00 INFO  node     Termination signal received; shutting down..
+2026-10-15T17:33:54.425+04:00 INFO  reactor::controller Initiating reactor shutdown…
+2026-10-15T17:33:54.425+04:00 INFO  reactor  Shutdown

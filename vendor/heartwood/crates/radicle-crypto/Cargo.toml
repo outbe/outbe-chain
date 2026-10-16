@@ -23,6 +23,8 @@ std = ["alloc", "ed25519-dalek/std", "getrandom?/std", "multibase?/std", "schema
 test = ["alloc", "qcheck"]
 
 [dependencies]
+blst.workspace = true
+sha2.workspace = true
 cyphernet = { workspace = true, features = ["ed25519"], optional = true }
 getrandom = { workspace = true, optional = true }
 radicle-git-ref-format = { workspace = true, optional = true }
@@ -44,6 +46,7 @@ ed25519-dalek = { version = "2", default-features = false, features = ["zeroize"
 winpipe = { workspace = true }
 
 [dev-dependencies]
+serde_json.workspace = true
 qcheck = { workspace = true }
 qcheck-macros = { workspace = true }
 tempfile = { workspace = true }

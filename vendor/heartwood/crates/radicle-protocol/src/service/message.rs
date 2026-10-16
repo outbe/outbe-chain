@@ -167,6 +167,51 @@ pub struct RefsAnnouncement {
     pub refs: BoundedVec<RefsAt, REF_REMOTE_LIMIT>,
     /// Time of announcement.
     pub timestamp: Timestamp,
+    /// Preserve the signed key encoding when relaying V2 Ed-only announcements.
+    pub(crate) encoding: u8,
+}
+
+impl RefsAnnouncement {
+    /// Keep the longest prefix that fits the existing gossip message byte/count limits.
+    pub fn new(
+        rid: RepoId,
+        refs: BoundedVec<RefsAt, REF_REMOTE_LIMIT>,
+        timestamp: Timestamp,
+    ) -> Self {
+        let encoding = if refs.iter().any(|r| r.remote.as_ed25519().is_none()) {
+            2
+        } else {
+            1
+        };
+        // Message tag, transport key/signature, RID, count, and timestamp occupy 130 bytes, including the RID OID length.
+        let mut remaining = wire::Size::MAX as usize - 130;
+        let refs = BoundedVec::collect_from(refs.into_iter().take_while(|r| {
+            let size = match (encoding, r.remote.as_ed25519()) {
+                (1, _) => 54,
+                (2, Some(_)) => 55,
+                _ => 119,
+            };
+            if size > remaining {
+                return false;
+            }
+            remaining -= size;
+            true
+        }));
+        Self {
+            rid,
+            refs,
+            timestamp,
+            encoding,
+        }
+    }
+
+    pub(crate) fn encoding(&self) -> u8 {
+        if self.refs.iter().any(|r| r.remote.as_ed25519().is_none()) {
+            2
+        } else {
+            self.encoding
+        }
+    }
 }
 
 /// Track the status of `RefsAt` within a given repository.
@@ -492,6 +537,7 @@ impl Message {
                     rid,
                     refs,
                     timestamp,
+                    ..
                 }) => format!(
                     "{verb} refs announcement of {node} for {rid} with {} remote(s) {prep} {remote} (t={timestamp})",
                     refs.len()
@@ -616,11 +662,11 @@ impl qcheck::Arbitrary for Message {
             .into(),
             2 => Announcement {
                 node: NodeId::arbitrary(g),
-                message: RefsAnnouncement {
-                    rid: RepoId::arbitrary(g),
-                    refs: BoundedVec::arbitrary(g),
-                    timestamp: Timestamp::arbitrary(g),
-                }
+                message: RefsAnnouncement::new(
+                    RepoId::arbitrary(g),
+                    BoundedVec::arbitrary(g),
+                    Timestamp::arbitrary(g),
+                )
                 .into(),
                 signature: crypto::Signature::from(<[u8; 64]>::arbitrary(g)),
             }
@@ -692,6 +738,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bls_announcements_respect_existing_byte_limit() {
+        use radicle::test::fixtures;
+        let refs = BoundedVec::collect_from((0..REF_REMOTE_LIMIT).map(|_| RefsAt {
+            remote: fixtures::bls_repository_key(),
+            at: git::Oid::ZERO_SHA1,
+        }));
+        let ann = RefsAnnouncement::new(arbitrary::r#gen(1), refs, arbitrary::r#gen(1));
+        assert_eq!(ann.refs.len(), 549);
+        assert_eq!(ann.encoding(), 2);
+        let message = Message::from(AnnouncementMessage::Refs(ann).signed(&SigningKey::mock(35)));
+        let bytes = message.encode_to_vec();
+        assert_eq!(bytes.len(), 130 + 119 * 549);
+        assert!(bytes.len() <= wire::Size::MAX as usize);
+    }
+
+    #[test]
     fn test_ref_remote_limit() {
         let mut refs = BoundedVec::<_, REF_REMOTE_LIMIT>::new();
         let signer = SigningKey::mock(18);
@@ -701,17 +763,17 @@ mod tests {
 
         for _ in 0..refs.capacity() {
             refs.push(RefsAt {
-                remote: *signer.public_key(),
+                remote: signer.public_key().into(),
                 at,
             })
             .unwrap();
         }
 
-        let msg: Message = AnnouncementMessage::from(RefsAnnouncement {
-            rid: arbitrary::r#gen(1),
+        let msg: Message = AnnouncementMessage::from(RefsAnnouncement::new(
+            arbitrary::r#gen(1),
             refs,
-            timestamp: LocalTime::now().into(),
-        })
+            LocalTime::now().into(),
+        ))
         .signed(&crypto::SigningKey::mock(93))
         .into();
 
@@ -756,16 +818,12 @@ mod tests {
         let at = git::Oid::ZERO_SHA1;
         let refs = BoundedVec::collect_from(
             &mut [RefsAt {
-                remote: *secret_key.public_key(),
+                remote: secret_key.public_key().into(),
                 at,
             }]
             .into_iter(),
         );
-        let message = AnnouncementMessage::Refs(RefsAnnouncement {
-            rid,
-            refs,
-            timestamp,
-        });
+        let message = AnnouncementMessage::Refs(RefsAnnouncement::new(rid, refs, timestamp));
         let ann = message.signed(&secret_key);
 
         assert!(ann.verify());

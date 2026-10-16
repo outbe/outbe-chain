@@ -91,9 +91,6 @@ interface IOriginRouter {
     /// @param seriesId Series identifier.
     event MarkCalledSent(bytes32 indexed sendId, bytes14 indexed seriesId);
 
-    /// @notice `sendId` is 0 when the leg parked.
-    event DailyVwapSent(bytes32 indexed sendId, uint32 indexed dstChainId, uint32 indexed utcDay);
-
     /// @notice Emitted when `wire` updates the `desis` and `intexFactory` dependencies and rotates their roles.
     /// @param desisOld Previous `desis` (zero on first wiring).
     /// @param desisNew New `desis` granted `DESIS_ROLE`.
@@ -141,18 +138,11 @@ interface IOriginRouter {
         bytes payload;
     }
 
-    /// @notice Entry, floor and call price of one reference currency for a day.
+    /// @notice Entry and call price of one reference currency for a day.
     struct ReferenceCurrencyPrice {
         uint16 isoCode;
         uint64 entryPriceMinor;
-        uint64 floorPriceMinor;
         uint64 callPriceMinor;
-    }
-
-    /// @notice The Oracle's finalized VWAP of COEN in one reference currency for a UTC day (six decimals).
-    struct DailyVwap {
-        uint16 isoCode;
-        uint64 vwapMinor;
     }
 
     /// @notice Auction stage start parameters. The struct groups them so that the calldata layout
@@ -169,7 +159,7 @@ interface IOriginRouter {
         uint128 promisLoadMinor;
         /// @notice Minimum acceptable bid rate (`1e6` fixed-point, % of the escrow basis).
         uint32 minIntexBidRate;
-        /// @notice Entry, floor and call price of every currency the day can clear in.
+        /// @notice Entry and call price of every currency the day can clear in.
         ReferenceCurrencyPrice[] prices;
         /// @notice Called->deadline window in seconds (0 = default).
         uint32 callNoticePeriod;
@@ -198,7 +188,6 @@ interface IOriginRouter {
         uint32 issuedUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
-        uint64 floorPriceMinor;
         /// @notice Duration in seconds for the Called -> deadline window (0 = default).
         uint32 callNoticePeriod;
         uint16 issuanceCurrency;
@@ -323,10 +312,6 @@ interface IOriginRouter {
     ///         Restricted to `INTEX_FACTORY_ROLE`.
     /// @dev `calledAt` is the origin's own stamp, so delivery lag never lengthens a target's deadline.
     function sendMarkCalled(uint32 worldwideDay, uint32 calledAt, bytes14[] calldata seriesIds) external payable;
-
-    /// @notice Sends one finalized day to every registered target but this chain, whose NFT reads the IntexFactory.
-    /// @return legs Legs sent or parked.
-    function sendDailyVwap(uint32 utcDay, DailyVwap[] calldata rows) external payable returns (uint256 legs);
 
     /// @notice Permissionless flush of a parked outbound leg.
     function resendParkedMessage(uint256 idx) external;

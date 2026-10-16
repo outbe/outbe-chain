@@ -128,6 +128,8 @@ fn genesis_boundary_artifacts(proposer: alloy_primitives::Address) -> (Bytes, B2
     };
     let committee_snapshot_hash = outbe_validatorset::committee_set_hash_v2(0, &snapshot);
     let artifacts = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
         execution_summary: None,
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(
             DkgBoundaryArtifact {

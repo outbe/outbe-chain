@@ -3,8 +3,8 @@ use outbe_primitives::time::{SECONDS_PER_DAY, SECONDS_PER_DAY_U32};
 pub const TOKEN_NAME: &str = "Gem";
 pub const TOKEN_SYMBOL: &str = "GEM";
 pub const TOKEN_DESCRIPTION: &str = concat!(
-    "Gem is a mining right on the Outbe network. Once qualified, its owner pays the settlement cost ",
-    "at the fixed entry price, and the settled right is exercised to mine its Promis load. ",
+    "Gem is a mining right on the Outbe network. Its owner pays the settlement cost at the fixed ",
+    "entry price, and the settled right is exercised to mine its Promis load. ",
     "A called Gem must be settled by its settlement deadline, otherwise it is forfeited. ",
     "A Gem is never transferable."
 );
@@ -25,9 +25,6 @@ pub const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 /// GemPosition validity period: an Intex in the Gem Factory expires this long after
 /// `issued_at`. No new gems may be issued afterward. 1 year.
 pub const POSITION_VALIDITY_SECONDS: u64 = 365 * SECONDS_PER_DAY;
-
-/// Floor-price markup rate: floor = `entry x (100 + FLOOR_RATE_PCT) / 100`.
-pub const FLOOR_RATE_PCT: u16 = 8;
 
 /// Call-price markup rate: call price = `entry x (100 + CALL_RATE_PCT) / 100`.
 /// Its breach arms a Call Event.

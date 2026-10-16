@@ -3,6 +3,24 @@ use thiserror::Error;
 
 use crate::storage::refs::sigrefs::git::{object, reference};
 
+#[derive(Debug, Error)]
+pub enum Native {
+    #[error(
+        "BLS refs require an identity root, a BLS authority and no caller-supplied sigrefs parent"
+    )]
+    InvalidRefs,
+    #[error(transparent)]
+    Signature(#[from] crypto::repository::Error),
+    #[error(transparent)]
+    Tree(#[from] object::error::WriteTree),
+    #[error(transparent)]
+    Write(#[from] object::error::WriteCommit),
+    #[error(transparent)]
+    Read(#[from] super::read::error::Commit),
+    #[error(transparent)]
+    Verify(#[from] super::read::error::Verify),
+}
+
 // TODO: use commit NID (and RID?) for traceability
 #[derive(Debug, Error)]
 #[non_exhaustive]

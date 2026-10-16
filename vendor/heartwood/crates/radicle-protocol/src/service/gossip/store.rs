@@ -104,10 +104,10 @@ impl Store for Database {
             "Timestamp of {ann:?} must not be zero"
         );
         let mut stmt = self.db.prepare(
-            "INSERT INTO `announcements` (node, repo, type, message, signature, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO `announcements` (node, repo, type, message, signature, timestamp, wire_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT DO UPDATE
-             SET message = ?4, signature = ?5, timestamp = ?6
+             SET message = ?4, signature = ?5, timestamp = ?6, wire_version = ?7
              WHERE timestamp < ?6
              RETURNING rowid",
         )?;
@@ -132,6 +132,11 @@ impl Store for Database {
         }
         stmt.bind((5, sql::Value::Binary(ann.signature.to_vec())))?;
         stmt.bind((6, &ann.message.timestamp()))?;
+        let version = match &ann.message {
+            AnnouncementMessage::Refs(msg) => msg.encoding(),
+            _ => 1,
+        };
+        stmt.bind((7, version as i64))?;
 
         if let Some(row) = stmt.into_iter().next() {
             let row = row?;
@@ -161,7 +166,7 @@ impl Store for Database {
             "UPDATE announcements
              SET relay = ?1
              WHERE relay IS ?2
-             RETURNING rowid, node, type, message, signature, timestamp",
+             RETURNING rowid, node, type, message, signature, timestamp, wire_version",
         )?;
         stmt.bind((1, RelayStatus::RelayedAt(now)))?;
         stmt.bind((2, RelayStatus::Relay))?;
@@ -188,7 +193,7 @@ impl Store for Database {
         to: Timestamp,
     ) -> Result<Box<dyn Iterator<Item = Result<Announcement, Error>> + 'a>, Error> {
         let mut stmt = self.db.prepare(
-            "SELECT rowid, node, type, message, signature, timestamp
+            "SELECT rowid, node, type, message, signature, timestamp, wire_version
              FROM announcements
              WHERE timestamp >= ?1 and timestamp < ?2
              ORDER BY timestamp, node, type",
@@ -347,7 +352,24 @@ mod parse {
         let gt = row.try_read::<GossipType, _>("type")?;
         let message = match gt {
             GossipType::Refs => {
-                let ann = row.try_read::<RefsAnnouncement, _>("message")?;
+                let version = row.try_read::<i64, _>("wire_version")?;
+                let sql::Value::Binary(bytes) = row.take("message") else {
+                    return Err(sql::Error {
+                        code: None,
+                        message: Some("invalid refs announcement cache bytes".to_owned()),
+                    }
+                    .into());
+                };
+                let mut reader = io::Cursor::new(&bytes);
+                let ann = RefsAnnouncement::decode_version(&mut reader, version as u8)
+                    .map_err(sql::Error::from)?;
+                if reader.position() as usize != bytes.len() {
+                    return Err(sql::Error {
+                        code: None,
+                        message: Some("trailing refs announcement cache bytes".to_owned()),
+                    }
+                    .into());
+                }
                 AnnouncementMessage::Refs(ann)
             }
             GossipType::Inventory => {
@@ -405,18 +427,86 @@ mod test {
     use radicle::test::arbitrary;
 
     #[test]
+    fn legacy_database_upgrade_and_v2_cache_reopen_preserve_signatures() {
+        use radicle::crypto::{RepositoryKey, Signer as _};
+        use radicle::storage::refs::RefsAt;
+        use radicle::test::{fixtures, setup};
+        let fixture = setup::Node::default();
+        let path = fixture.root.join("gossip-version-test.db");
+        let signer = SigningKey::mock(42);
+        let mut db = Database::open(&path, Default::default()).unwrap();
+        let timestamp = LocalTime::now().into();
+        let ed = RepositoryKey::from(signer.public_key());
+        let legacy = AnnouncementMessage::Refs(RefsAnnouncement::new(
+            arbitrary::r#gen(1),
+            Some(RefsAt {
+                remote: ed,
+                at: radicle::git::Oid::ZERO_SHA1,
+            })
+            .into(),
+            timestamp,
+        ))
+        .signed(&signer);
+        db.announced(signer.public_key(), &legacy).unwrap().unwrap();
+        db.db
+            .execute("ALTER TABLE announcements DROP COLUMN wire_version; PRAGMA user_version = 9;")
+            .unwrap();
+        drop(db);
+
+        let mut db = Database::open(&path, Default::default()).unwrap();
+        assert_eq!(db.version().unwrap(), 10);
+        let loaded = db
+            .filtered(&Filter::default(), Timestamp::MIN, Timestamp::MAX)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(loaded, vec![legacy]);
+        assert!(loaded[0].verify());
+
+        for (index, key) in [fixtures::bls_repository_key(), ed].into_iter().enumerate() {
+            let rid = RepoId::from(
+                format!("{:040x}", index + 20)
+                    .parse::<radicle::git::Oid>()
+                    .unwrap(),
+            );
+            let mut refs = RefsAnnouncement::new(
+                rid,
+                Some(RefsAt {
+                    remote: key,
+                    at: radicle::git::Oid::ZERO_SHA1,
+                })
+                .into(),
+                timestamp,
+            );
+            refs.encoding = 2;
+            let ann = AnnouncementMessage::Refs(refs).signed(&signer);
+            db.announced(signer.public_key(), &ann).unwrap().unwrap();
+            drop(db);
+            db = Database::open(&path, Default::default()).unwrap();
+            let loaded = db
+                .filtered(&Filter::default(), Timestamp::MIN, Timestamp::MAX)
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            let actual = loaded.iter().find(|a| **a == ann).unwrap();
+            assert!(actual.verify());
+            let AnnouncementMessage::Refs(refs) = &actual.message else {
+                panic!("refs expected")
+            };
+            assert_eq!(refs.encoding(), 2);
+        }
+    }
+
+    #[test]
     fn test_announced() {
         let mut db = Database::memory().unwrap();
         let nid = arbitrary::r#gen::<NodeId>(1);
         let rid = arbitrary::r#gen::<RepoId>(1);
         let timestamp = LocalTime::now().into();
         let secret_key = SigningKey::mock(100);
-        let refs = AnnouncementMessage::Refs(RefsAnnouncement {
-            rid,
-            refs: BoundedVec::new(),
-            timestamp,
-        })
-        .signed(&secret_key);
+        let refs =
+            AnnouncementMessage::Refs(RefsAnnouncement::new(rid, BoundedVec::new(), timestamp))
+                .signed(&secret_key);
         let inv = AnnouncementMessage::Inventory(InventoryAnnouncement {
             inventory: BoundedVec::new(),
             timestamp,

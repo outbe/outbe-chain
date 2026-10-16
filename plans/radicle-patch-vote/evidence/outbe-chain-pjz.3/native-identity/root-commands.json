@@ -1,0 +1,64 @@
+{
+  "scope": "Intermediate P2 direct native identity verification only, not P2 acceptance",
+  "source_sha": "b7ee1e16536e80ab4295ca3017303179b8371d47",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "toolchain": {
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)"
+  },
+  "environment": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4",
+    "CARGO_NET_OFFLINE": "true",
+    "RUSTUP_TOOLCHAIN": "1.96.0"
+  },
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle-sidecar",
+        "-p",
+        "outbe-radicle-runtime",
+        "-p",
+        "outbe-keygen",
+        "-p",
+        "outbe-e2e-harness",
+        "--features",
+        "outbe-e2e-harness/ocomp-integration",
+        "--all-targets"
+      ],
+      "started_at_utc": "2026-10-15T16:39:25.277206+00:00",
+      "ended_at_utc": "2026-10-15T16:39:48.426160+00:00",
+      "exit_code": 0,
+      "log": "root-consumers.log",
+      "sha256": "62520d135e4b0e197c4829ecff42150b6eddc6878a5a8bda5a45d836a74605a8"
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle-runtime",
+        "--test",
+        "sidecar",
+        "--",
+        "--nocapture"
+      ],
+      "started_at_utc": "2026-10-15T16:39:48.426847+00:00",
+      "ended_at_utc": "2026-10-15T16:40:03.817261+00:00",
+      "exit_code": 0,
+      "log": "sidecar-tests.log",
+      "sha256": "9c5c0f8420b8cd1e0343a91c48e6dddcc4a7062f37da8af2c5154f800e4b529e"
+    }
+  ]
+}

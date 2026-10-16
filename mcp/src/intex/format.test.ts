@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { intexState } from "./format.js";
 
-test("Intex lifecycle decoder keeps Qualified and terminal numeric codes", () => {
-  for (const [code, name] of ["Issued", "Qualified", "Called", "Expired"].entries()) {
+test("Intex lifecycle decoder keeps the terminal numeric codes", () => {
+  for (const [code, name] of ["Issued", "Called", "Expired"].entries()) {
     assert.deepEqual(intexState(code), { code, name });
     assert.deepEqual(intexState(BigInt(code)), { code, name });
   }

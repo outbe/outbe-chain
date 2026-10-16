@@ -33,6 +33,8 @@ pub enum VoteError {
     InvalidProposalStatus,
     #[error("invalid vote kind")]
     InvalidVoteKind,
+    #[error("invalid stored proposal electorate")]
+    InvalidElectorate,
     #[error("invalid proposal bond settlement")]
     InvalidBondSettlement,
     #[error("proposal counter is exhausted")]

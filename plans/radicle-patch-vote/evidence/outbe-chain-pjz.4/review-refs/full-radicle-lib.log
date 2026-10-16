@@ -1,0 +1,69 @@
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+   Compiling outbe-radicle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/radicle)
+    Finished `test` profile [unoptimized] target(s) in 9.95s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_radicle-35b1ee5a8a3e4119)
+
+running 38 tests
+test endpoint::actor::tests::mailbox_bound ... ok
+test integration::lifecycle::tests::unstarted_endpoint_needs_no_ack_and_cannot_start_after_drain ... ok
+
+thread 'integration::lifecycle::tests::ack_then_panic_preserves_join_failure' (14738757) panicked at crates/blockchain/radicle/src/integration/lifecycle.rs:223:13:
+panic after service ack
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'integration::network::shutdown_tests::actor_panic_after_ack_is_not_success' (14738769) panicked at crates/blockchain/radicle/src/integration/network.rs:649:13:
+actor panic after ack witness
+
+thread 'integration::network::shutdown_tests::actor_cancellation_panic_is_not_a_deadline' (14738768) panicked at crates/blockchain/radicle/src/integration/network.rs:690:17:
+actor cancellation panic witness
+test endpoint::actor::tests::handle_deadline ... ok
+test integration::lifecycle::tests::ack_without_service_exit_is_aborted_and_reaped ... ok
+
+thread 'integration::lifecycle::tests::completed_endpoint_retains_actual_transport_error_or_panic' (14738760) panicked at crates/blockchain/radicle/src/integration/lifecycle.rs:165:21:
+endpoint panic witness
+test integration::lifecycle::tests::closed_ack_is_not_success_even_if_service_exits_cleanly ... ok
+test integration::lifecycle::tests::ack_then_panic_preserves_join_failure ... ok
+test integration::network::shutdown_tests::actor_panic_after_ack_is_not_success ... ok
+test integration::network::shutdown_tests::closing_network_commands_reaps_actor ... ok
+test integration::network::shutdown_tests::actor_cancellation_panic_is_not_a_deadline ... ok
+test integration::network::shutdown_tests::explicit_shutdown_ack_follows_actor_cleanup ... ok
+test integration::lifecycle::tests::completed_endpoint_retains_actual_transport_error_or_panic ... ok
+test integration::network::shutdown_tests::shutdown_closed_mailbox_is_not_deadline ... ok
+test integration::network::shutdown_tests::network_cancellation_aborts_actor ... ok
+test integration::network::shutdown_tests::shutdown_preserves_closed_acknowledgement ... ok
+test integration::network::shutdown_tests::shutdown_full_mailbox_waits_until_deadline ... ok
+test integration::network::shutdown_tests::stalled_actor_is_aborted_and_reaped_after_ack ... ok
+test integration::network::shutdown_tests::transport_failure_is_preserved_and_actor_reaped ... ok
+
+thread 'manager::actor::shutdown_tests::cancellation_preserves_manager_destructor_panic' (14738780) panicked at crates/blockchain/radicle/src/manager/actor.rs:545:17:
+manager cancellation panic witness
+test manager::actor::shutdown_tests::dropping_manager_aborts_owned_task ... ok
+test manager::actor::shutdown_tests::shutdown_drains_owned_manager_before_endpoint ... ok
+
+thread 'manager::actor::shutdown_tests::shutdown_preserves_manager_panic' (14738785) panicked at crates/blockchain/radicle/src/manager/actor.rs:457:51:
+manager panic witness
+
+thread 'manager::actor::shutdown_tests::shutdown_preserves_manager_panic_and_still_cleans_endpoint' (14738786) panicked at crates/blockchain/radicle/src/manager/actor.rs:520:51:
+manager panic witness
+test integration::network::evidence::tests::publication_remains_available_after_reader_unwinds ... ok
+test manager::actor::shutdown_tests::cancellation_preserves_manager_destructor_panic ... ok
+test manager::actor::shutdown_tests::shutdown_bounds_both_stages_and_cleans_endpoint_after_manager_timeout ... ok
+test manager::actor::shutdown_tests::shutdown_preserves_manager_panic_and_still_cleans_endpoint ... ok
+test manager::actor::shutdown_tests::shutdown_preserves_manager_panic ... ok
+test manager::actor::shutdown_tests::shutdown_timeout_reaps_owned_manager_before_endpoint_cleanup ... ok
+test integration::review::tests::review_context_matches_frozen_p0_native_vectors ... ok
+test integration::network::evidence::tests::replacing_peer_preserves_previously_returned_snapshot ... ok
+test manager::actor::shutdown_tests::unreapable_manager_returns_cancellation_deadline ... ok
+test integration::network::evidence::tests::snapshot_remains_available_after_writer_unwinds ... ok
+test integration::network::evidence::tests::pruning_requires_live_exact_validator_peer_and_node_binding ... ok
+test integration::network::evidence::tests::snapshots_are_ordered_independent_copies ... ok
+test manager::snapshot::tests::exact_snapshot ... ok
+test integration::network::evidence::tests::concurrent_readers_observe_complete_signed_records ... ok
+test integration::review::tests::exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_accepts ... ok
+test manager::snapshot::approval_tests::missing_finality_noncanonical_and_unavailable_snapshots_fail_without_fallback ... ok
+test manager::snapshot::approval_tests::exact_finalized_state_does_not_leak_latest_approval_or_revoke_accepted_history ... ok
+test manager::snapshot::approval_tests::repository_authority_rejects_missing_finality_noncanonical_and_unavailable_exact_state ... ok
+test manager::snapshot::approval_tests::repository_authority_uses_current_finalized_committee_and_rejects_effective_set_mismatch ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+

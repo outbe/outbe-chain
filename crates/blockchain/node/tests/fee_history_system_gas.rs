@@ -76,7 +76,7 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
         ),
     )?;
     // Seed the COEN/840 oracle pair + a 1.0 rate (scale 1e6). The begin-block
-    // NOD/GEM/INTEX floor-price promotion then reads a registered pair instead of
+    // NOD/GEM/INTEX call scans then read a registered pair instead of
     // reverting "pair not registered". That revert would abort pre-execution and
     // leave every payload empty. Production genesis always seeds oracle pairs.
     // The oracle itself is left uninitialized so its own begin-block
@@ -190,6 +190,8 @@ fn boundary_for_single_validator(proposer: Address) -> DkgBoundaryArtifact {
 
 fn payload_attributes(timestamp: u64, proposer: Address) -> OutbePayloadAttributes {
     let extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
         execution_summary: None,
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(
             boundary_for_single_validator(proposer),

@@ -11,7 +11,7 @@ pub(super) struct EndpointReceiveContext<'a, S> {
 
 impl EndpointNetworkState {
     pub(super) async fn receive<S>(
-        &self,
+        &mut self,
         context: EndpointReceiveContext<'_, S>,
         received: (bls12381::PublicKey, IoBuf),
     ) -> Result<(), ManagerError>
@@ -19,6 +19,10 @@ impl EndpointNetworkState {
         S: LimitedSender<PublicKey = bls12381::PublicKey>,
     {
         let (sender_key, bytes) = received;
+        if bytes.as_ref().get(..4) == Some(super::gossip::MAGIC.as_slice()) {
+            let _ = self.receive_gossip(sender_key, bytes.as_ref());
+            return Ok(());
+        }
         let peer = PeerId::from_public_key(&sender_key);
         match EndpointFrame::decode(bytes.as_ref()) {
             Ok(EndpointFrame::Request(request)) => self.respond_to_request(context, peer, request),

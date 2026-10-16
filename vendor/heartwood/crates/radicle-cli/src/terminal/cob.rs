@@ -6,7 +6,7 @@ use radicle::{
         store::access::{ReadOnly, WriteAs},
     },
     crypto,
-    prelude::NodeId,
+    crypto::RepositoryKey,
     profile,
     storage::ReadRepository,
 };
@@ -65,7 +65,7 @@ pub fn patches<'a, Repo>(
     repository: &'a Repo,
 ) -> Result<cob::patch::Cache<'a, Repo, ReadOnly, cob::cache::StoreReader>, anyhow::Error>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>,
 {
     profile.patches(repository).map_err(with_hint)
 }
@@ -79,7 +79,7 @@ pub fn patches_mut<'a, 'b, Repo, Signer: crypto::Signer>(
     signer: &'b Signer,
 ) -> Result<cob::patch::Cache<'a, Repo, WriteAs<'b, Signer>, cob::cache::StoreWriter>, anyhow::Error>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>,
 {
     profile.patches_mut(repository, signer).map_err(with_hint)
 }
@@ -90,7 +90,7 @@ pub fn issues<'a, Repo>(
     repository: &'a Repo,
 ) -> Result<cob::issue::Cache<'a, Repo, ReadOnly, cob::cache::StoreReader>, anyhow::Error>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>,
 {
     profile.issues(repository).map_err(with_hint)
 }
@@ -104,7 +104,7 @@ pub fn issues_mut<'a, 'b, Repo, Signer: crypto::Signer>(
     signer: &'b Signer,
 ) -> Result<cob::issue::Cache<'a, Repo, WriteAs<'b, Signer>, cob::cache::StoreWriter>, anyhow::Error>
 where
-    Repo: ReadRepository + cob::Store<Namespace = NodeId>,
+    Repo: ReadRepository + cob::Store<Namespace = RepositoryKey>,
 {
     profile.issues_mut(repository, signer).map_err(with_hint)
 }

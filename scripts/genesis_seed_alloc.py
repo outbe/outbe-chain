@@ -1,9 +1,15 @@
 """Validate reserved namespaces and install external contract allocations."""
 
 from __future__ import annotations
+
+import hashlib
 import json
 import os
 
+from genesis_network import (
+    DEFAULT_DKG_PREPARE_WINDOW_BLOCKS,
+    DEFAULT_EPOCH_LENGTH_BLOCKS,
+)
 from genesis_seed_codec import (
     MARKER_CODE,
     PROFILE_SELECTORS,
@@ -14,7 +20,9 @@ from genesis_seed_codec import (
     StorageBuilder,
     address_bytes,
     hex32,
+    parse_header_timestamp,
     parse_int,
+    write_storage_bytes,
 )
 
 
@@ -102,6 +110,80 @@ def seed_radicle_registry(storage: StorageBuilder, config: dict):
             "radicle_registry.max_repositories must be -1 or in 1..=4294967294"
         )
     storage.set_slot(5, maximum)
+
+
+def seed_governments_descriptor(genesis: dict, storage: StorageBuilder, config: dict):
+    """Commit the pre-genesis OGD1 artifact without a future RID or group key."""
+    if "governments" not in config:
+        return
+    governments = config["governments"]
+    fields = {"description", "initial_tree_oid", "initial_content_manifest_sha256"}
+    if not isinstance(governments, dict) or set(governments) != fields:
+        raise ValueError(
+            "radicle_registry.governments requires exactly " + ", ".join(sorted(fields))
+        )
+    description = governments["description"]
+    if not isinstance(description, str) or "\r" in description or "\0" in description:
+        raise ValueError("invalid governments description")
+    description_bytes = description.encode("utf-8")
+    if len(description_bytes) > 256:
+        raise ValueError("governments description exceeds 256 UTF-8 bytes")
+
+    def commitment(field, size):
+        value = governments[field]
+        if (
+            not isinstance(value, str)
+            or not value.startswith("0x")
+            or len(value) != 2 + size * 2
+        ):
+            raise ValueError(f"governments {field} must contain {size} hex bytes")
+        try:
+            raw = bytes.fromhex(value[2:])
+        except ValueError as error:
+            raise ValueError(f"invalid governments {field}") from error
+        if len(raw) != size or not any(raw):
+            raise ValueError(f"governments {field} must be nonzero")
+        return raw
+
+    chain = genesis.setdefault("config", {})
+    chain_id = parse_int(chain["chainId"])
+    timestamp = parse_header_timestamp(genesis)
+    if (
+        not 0 <= chain_id <= 0xFFFFFFFFFFFFFFFF
+        or not 0 <= timestamp <= 0xFFFFFFFFFFFFFFFF
+    ):
+        raise ValueError("governments chain ID/timestamp must fit u64")
+    epoch = parse_int(chain.get("epochLengthBlocks", DEFAULT_EPOCH_LENGTH_BLOCKS))
+    prepare = parse_int(
+        chain.get("dkgPrepareWindowBlocks", DEFAULT_DKG_PREPARE_WINDOW_BLOCKS)
+    )
+    if epoch <= 0 or prepare < 0 or epoch - min(prepare, epoch) < 64:
+        raise ValueError(
+            "governments requires at least 64 blocks before the next DKG freeze"
+        )
+    descriptor = b"".join(
+        (
+            b"OGD1",
+            (1).to_bytes(2, "big"),
+            chain_id.to_bytes(8, "big"),
+            timestamp.to_bytes(8, "big"),
+            (11).to_bytes(2, "big"),
+            b"governments",
+            (4).to_bytes(2, "big"),
+            b"main",
+            len(description_bytes).to_bytes(2, "big"),
+            description_bytes,
+            commitment("initial_tree_oid", 20),
+            commitment("initial_content_manifest_sha256", 32),
+            b"\x01\x01",
+        )
+    )
+    encoded = "0x" + descriptor.hex()
+    if "radicleGovernments" in chain and chain["radicleGovernments"] != encoded:
+        raise ValueError("conflicting radicleGovernments genesis descriptor")
+    storage.set_raw_slot_hex(10, "0x" + hashlib.sha256(descriptor).hexdigest())
+    write_storage_bytes(storage, 11, descriptor)
+    chain["radicleGovernments"] = encoded
 
 
 def seed_external_contracts(alloc, contracts_list, contracts_dir):

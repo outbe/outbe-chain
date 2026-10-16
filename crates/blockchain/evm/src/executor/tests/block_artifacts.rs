@@ -62,7 +62,6 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
                         .unwrap(),
                         remaining_capacity_minor: U256::from(2_000_000),
                         source_entry_price_minor: U256::from(1_000_000),
-                        source_floor_price_minor: U256::from(50_000),
                         issuance_currency: 840,
                         reference_currency: 840,
                         issued_at: block_ts - 1,
@@ -244,6 +243,8 @@ fn finish_uses_final_extra_data_setter_for_summary_validation() {
         fixtures::executor_inputs_from_ctx(&ctx, None, true),
     );
     let final_extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
         execution_summary: Some(ExecutionSummaryArtifact {
             validator_fee_sum: U256::ZERO,
         }),

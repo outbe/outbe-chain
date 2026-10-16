@@ -24,7 +24,7 @@ contract BridgeMsgCodecGoldenTest is Test {
             0xDDEEFF00,
             0x0102030405060708090A0B0C0D0E0F10,
             0x1A2B3C4D,
-            ReferenceCurrencyPriceLib.one(0xD1D2, 0x1122334455667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4E5F60718),
+            ReferenceCurrencyPriceLib.one(0xD1D2, 0x1122334455667788, 0xA1B2C3D4E5F60718),
             0xCAFEBABE,
             0x5678,
             0x9ABC,
@@ -34,7 +34,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         );
         assertEq(
             encoded,
-            hex"0103112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f101a2b3c4dcafebabe0000567800009abcabcdf1f2f3f4f5f6f7f8f9fafbfcfdfeff010101d1d2112233445566778899aabbccddeeff00a1b2c3d4e5f60718"
+            hex"0103112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f101a2b3c4dcafebabe0000567800009abcabcdf1f2f3f4f5f6f7f8f9fafbfcfdfeff010101d1d21122334455667788a1b2c3d4e5f60718"
         );
         assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START + BridgeMsgCodec.REFERENCE_PRICE_LEN);
     }
@@ -42,7 +42,7 @@ contract BridgeMsgCodecGoldenTest is Test {
     function test_Golden_BidsRemaining() public pure {
         assertEq(
             BridgeMsgCodec.encodeBidsRemaining(0x0A0B0C0D, 0x01020304, 0x0011, 0x0022),
-            hex"010a0a0b0c0d0102030400110022"
+            hex"01090a0b0c0d0102030400110022"
         );
     }
 
@@ -98,7 +98,7 @@ contract BridgeMsgCodecGoldenTest is Test {
                 0xDDEEFF00,
                 0x0102030405060708090A0B0C0D0E0F10,
                 0x1A2B3C4D,
-                ReferenceCurrencyPriceLib.one(0xD1D2, 0x1122334455667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4E5F60718),
+                ReferenceCurrencyPriceLib.one(0xD1D2, 0x1122334455667788, 0xA1B2C3D4E5F60718),
                 0xCAFEBABE,
                 0x5678,
                 0x9ABC,
@@ -116,7 +116,6 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(params.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
         assertEq(params.minIntexBidRate, 0x1A2B3C4D, "minIntexBidRate");
         assertEq(params.prices[0].entryPriceMinor, 0x1122334455667788, "entryPrice");
-        assertEq(params.prices[0].floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");
         assertEq(params.prices[0].callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");
         assertEq(params.callTrigger.callNoticePeriod, 0xCAFEBABE, "callNoticePeriod");
         assertEq(params.callTrigger.callWindow, 0x5678, "callWindow");
@@ -235,7 +234,6 @@ contract BridgeMsgCodecGoldenTest is Test {
         p.issuedUnits = 0x55667788;
         p.promisLoadMinor = 0x0102030405060708090A0B0C0D0E0F10;
         p.entryPriceMinor = 0x0A0B0C0D0E0F1011;
-        p.floorPriceMinor = 0x99AABBCCDDEEFF00;
         p.callNoticePeriod = 0xCAFEBABE;
         p.issuanceCurrency = 840;
         p.referenceCurrency = 978;
@@ -255,7 +253,6 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(d.issuedUnits, 0x55667788, "issuedUnits");
         assertEq(d.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
         assertEq(d.entryPriceMinor, 0x0A0B0C0D0E0F1011, "entryPriceMinor");
-        assertEq(d.floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");
         assertEq(d.callNoticePeriod, 0xCAFEBABE, "callNoticePeriod");
         assertEq(d.issuanceCurrency, 840, "issuanceCurrency");
         assertEq(d.referenceCurrency, 978, "referenceCurrency");

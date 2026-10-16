@@ -1,0 +1,16 @@
+# P3/P6 checkpoint preparation archive/replay
+
+Intermediate source `3c132829a895762574f36320fea30aef631e1859`; base `cc466515a9ef9f0cf14b270610e46aacb3cc5cd5`.
+
+The existing ReviewPackageStore can durably cache a public body/manifest bound to a sealed local finalized receipt. Loading requires that receipt again, exact body bytes/hash, bounded canonical manifest and commitment binding. Snapshot replay reads each sequence1..target from RepositoryReceiptReader, checks exact sequence/target receipt and rebuilds CheckpointOwnerSnapshot through existing bootstrap/advance continuity/scope/CAS rules. BindMaterial keeps native refs and sigrefs. This reconstructs preparation inputs only: no ready package marker, slot selection, native proof/grant or permission to sign is created. Actual signer/publisher must still recheck its current state, and actual native packages/witnesses still require their existing verifiers.
+
+| Contribution | Source in integration/publication/store.rs | Behavioral evidence in full-libs.log |
+| --- | --- | --- |
+| Durable accepted manifest cache | persist_checkpoint_manifest/load_checkpoint_manifest | accepted_manifest_cache_replays_exact_snapshot_after_reopen_without_selecting_package: out-of-order insert/idempotence, drop/reopen, exact final refs/sigrefs/receipt restored; no ready marker or selected slot |
+| Trusted receipt chain replay | replay_checkpoint_snapshot | same test observes ordered reads1,2,3,4; checkpoint_replay_requires_trusted_receipts_and_rejects_gaps_forks_or_foreign_target rejects unavailable authority despite complete cached data, missing sequence, wrong returned sequence, previous-hash fork, foreign target and zero sequence |
+| Bounded/corrupt filesystem handling | existing read/write_once + new manifest load | checkpoint_manifest_cache_rejects_corruption_missing_files_and_symlinks: missing intermediate manifest, oversized/corrupt body, valid canonical but wrong manifest, malformed JSON and symlink target all fail; outside target remains unchanged |
+| Existing selected Review package behavior | unchanged persist_and_select/load/selection | prior durable selected-body/original-witness corruption, restoration/native Review reconstruction, accepted-history policy, protected socket/Output/current context tests remain passing |
+
+All69 full adapter lib tests passed/0ignored. Seven consumer packages passed all-target check; adapter+node all-target Clippy -D warnings and one touched Rust-file fmt passed. Exact argv/cwd/toolchain/platform/environment/times/exits/spec/log hashes are in checks.json; source hashes in source-scope.json; bundle hashes in sha256.json.
+
+Limitations: new unit fixtures contain real canonical threshold envelope/manifest commitments but are not complete native Git packages or live canonical chain receipts. Reader is a deterministic local fixture, and restart is store drop/reopen, not a SIGKILL/power-loss/full-node lifecycle test. This is a public SDK component not yet called by production collector/control runtime. No automatic bootstrap implementation or bound change, no current signing permission, native q-witness proof, ref promotion, Merge or production E2E/task acceptance claim. All P0-P8 deliverables and mandated reviews remain required. D3 description limit proposal remains pending explicit user approval; dependent bootstrap unchanged.

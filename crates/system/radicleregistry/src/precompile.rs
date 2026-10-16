@@ -41,6 +41,29 @@ pub fn dispatch(
                 }
                 registryGeneration(call) => view(call, |_| registry.registry_generation.read()),
                 maxRepositories(call) => view(call, |_| registry.config_max_repositories.read()),
+                getPatchApproval(call) => view(call, |call| {
+                    let approval = registry.patch_approval(call.proposalId)?;
+                    Ok(match approval {
+                        Some(approval) => IRadicleRegistry::PatchApprovalInfo {
+                            approved: true,
+                            payload: approval.payload,
+                            approvedHeight: approval.approved_height,
+                            approvedTimestamp: approval.approved_timestamp,
+                        },
+                        None => IRadicleRegistry::PatchApprovalInfo {
+                            approved: false,
+                            payload: String::new(),
+                            approvedHeight: 0,
+                            approvedTimestamp: 0,
+                        },
+                    })
+                }),
+                patchExecutionStage(call) => view(call, |call| {
+                    if registry.patch_approval(call.proposalId)?.is_none() {
+                        return Ok(0u8);
+                    }
+                    registry.patch_execution_stage.read(&call.proposalId)
+                }),
             }
         },
     )

@@ -329,7 +329,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "floorPriceMinor",
+        "name": "callPriceMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

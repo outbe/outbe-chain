@@ -62,7 +62,7 @@ contract MarkBatchWireTest is CrossChainTest {
     /// @dev Freeze the day's target snapshot, which every mark broadcast goes out over.
     function _freezeSnapshot() internal {
         IOriginRouter.AuctionStageStartParams memory p;
-        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.worldwideDay = WORLDWIDE_DAY;
         p.dayState = 1;
         vm.prank(address(desis));

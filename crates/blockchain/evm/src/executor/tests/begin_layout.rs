@@ -20,6 +20,27 @@ struct Scenario {
     hint: Option<AccountedParentArtifact>,
 }
 
+#[test]
+fn publication_begin_inputs_match_signed_proposer_and_verifier_after_hooks() {
+    for height in [1, 2] {
+        for active in [false, true] {
+            let mut scenario = Scenario::new(height).with_boundary();
+            scenario.active = active;
+            scenario.artifacts.radicle_publication_enabled = true;
+            scenario.artifacts.radicle_publication =
+                Some(outbe_primitives::test_utils::sample_radicle_publication_batch(32));
+            let proposer = scenario.resolve().unwrap();
+            let body = scenario.signed_body();
+            assert_signed_begin_body(&scenario, &proposer, &body);
+            assert_eq!(proposer[proposer.len() - 2].0, SystemTxKind::HookEvents);
+            assert_eq!(proposer.last().unwrap().0, SystemTxKind::RadiclePublication);
+            scenario.body = body;
+            let verifier = scenario.resolve().unwrap();
+            assert_eq!(proposer, verifier);
+        }
+    }
+}
+
 impl Scenario {
     fn new(height: u64) -> Self {
         let parent = B256::with_last_byte(0xA5);

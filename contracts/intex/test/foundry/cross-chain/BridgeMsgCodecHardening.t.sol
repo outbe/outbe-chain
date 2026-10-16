@@ -117,7 +117,6 @@ contract BridgeMsgCodecHardeningTest is Test {
             issuedUnits: 1,
             promisLoadMinor: 1,
             entryPriceMinor: 1,
-            floorPriceMinor: 1,
             callNoticePeriod: 0,
             issuanceCurrency: 840,
             referenceCurrency: 840,

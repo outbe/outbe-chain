@@ -1,0 +1,47 @@
+[
+  {
+    "argv": [
+      "bd",
+      "--sandbox",
+      "--actor",
+      "/root/p0_review_2",
+      "comments",
+      "add",
+      "outbe-chain-pjz.6.2",
+      "Independent full-AC P5 R2 PASS: AC1/AC2/AC3/AC4 PASS, no open findings. Non-author /root/p0_review_2, peer reports unread. Report plans/radicle-patch-vote/evidence/outbe-chain-pjz.6/reviews/R2.md SHA256 58fa5f8e696c0beeef50de75d810b4b1317b4b0aba7db8b6aedd7edd0f97574a. Source91644eb78148e7b81cd8e46478dfb0466d321e27; base8fe62b5dd0e625cd65297479cfa687e3e648ad41; task-specs SHA2565d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412; exact P5 spec.json SHA2566989338f54b923a0d74a7508ad67e406a28ec631d04faa991c6ecb3bc08b33d5; live parent description SHA256e266ca4cf57b3ff94bf349ad8bdb04336a8cf4580e197e31b346a98e3c3ea775. Independently reproduced505 Rust/13 genesis PASS, fmt+ABI+scoped all-target Clippy PASS. Broad Clippy FAIL101 at byte-identical pre-existing Tribute runtime.rs:99; explicit limitation, not relabelled green. All27 source/15 artifact hashes verified before/after. Only this review child may close; parent untouched."
+    ],
+    "exit_code": 0,
+    "stdout": "Comment added to outbe-chain-pjz.6.2\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "bd",
+      "--sandbox",
+      "--actor",
+      "/root/p0_review_2",
+      "update",
+      "outbe-chain-pjz.6.2",
+      "--notes",
+      "Independent full-AC P5 R2 PASS: AC1/AC2/AC3/AC4 PASS, no open findings. Non-author /root/p0_review_2, peer reports unread. Report plans/radicle-patch-vote/evidence/outbe-chain-pjz.6/reviews/R2.md SHA256 58fa5f8e696c0beeef50de75d810b4b1317b4b0aba7db8b6aedd7edd0f97574a. Source91644eb78148e7b81cd8e46478dfb0466d321e27; base8fe62b5dd0e625cd65297479cfa687e3e648ad41; task-specs SHA2565d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412; exact P5 spec.json SHA2566989338f54b923a0d74a7508ad67e406a28ec631d04faa991c6ecb3bc08b33d5; live parent description SHA256e266ca4cf57b3ff94bf349ad8bdb04336a8cf4580e197e31b346a98e3c3ea775. Independently reproduced505 Rust/13 genesis PASS, fmt+ABI+scoped all-target Clippy PASS. Broad Clippy FAIL101 at byte-identical pre-existing Tribute runtime.rs:99; explicit limitation, not relabelled green. All27 source/15 artifact hashes verified before/after. Only this review child may close; parent untouched."
+    ],
+    "exit_code": 0,
+    "stdout": "\u2713 Updated issue: outbe-chain-pjz.6.2 \u2014 R2 P5: \u043d\u0435\u0437\u0430\u0432\u0438\u0441\u0438\u043c\u043e \u043f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c \u043f\u043e\u043b\u043d\u043e\u0435 \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0435 outbe-chain-pjz.6\n",
+    "stderr": "warning: outbe-chain-pjz.6.2: --notes replaced existing notes (use --append-notes to preserve history)\n"
+  },
+  {
+    "argv": [
+      "bd",
+      "--sandbox",
+      "--actor",
+      "/root/p0_review_2",
+      "close",
+      "outbe-chain-pjz.6.2",
+      "--reason",
+      "Full independent P5 R2 PASS all AC, no findings; report reviews/R2.md SHA256 58fa5f8e696c0beeef50de75d810b4b1317b4b0aba7db8b6aedd7edd0f97574a; source91644eb7/spec6989338f. Broad unchanged dependency lint limitation recorded."
+    ],
+    "exit_code": 0,
+    "stdout": "\u2713 Closed outbe-chain-pjz.6.2 \u2014 R2 P5: \u043d\u0435\u0437\u0430\u0432\u0438\u0441\u0438\u043c\u043e \u043f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c \u043f\u043e\u043b\u043d\u043e\u0435 \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0435 outbe-chain-pjz.6: Full independent P5 R2 PASS all AC, no findings; report reviews/R2.md SHA256 58fa5f8e696c0beeef50de75d810b4b1317b4b0aba7db8b6aedd7edd0f97574a; source91644eb7/spec6989338f. Broad unchanged dependency lint limitation recorded.\n",
+    "stderr": ""
+  }
+]

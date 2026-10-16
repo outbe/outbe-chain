@@ -1,0 +1,16 @@
+# Ordinary BLS reader acceptance
+
+Scope: user-authorized ordinary Radicle fetch automatically verifies Ed25519 patch/revisions and BLS network identity/Review/Merge/sigrefs. The reader did not participate in Vote and has no Outbe receipts, private signing share or DKG Output. This scoped evidence does not close P2/P8 or the complete feature.
+
+Reviewed source: `c1783bda67f8f08e0ab93ee6c0d77bd4196fcc0c`; base: `bdf0d66cf`.
+
+- AC1: Ordinary native fetch receives a BLS repository with nonzero signed application context and an Ed25519 author patch, without a reader receipt provider. `radicle-node/src/tests/e2e/native_bls.rs::ordinary_reader_fetches_network_bls_history_without_receipts` uses a locally managed source and an unmanaged receiver with no accepted receipt entries.
+- AC2: BLS identity action and containing COB verify their actual bytes with distinct nonzero contexts. `radicle/src/cob/store/native_test.rs::prepare_and_attach_initial_bls_identity_without_ed_owner_or_ref_changes` verifies direct read, evaluation and reopen; tampered metadata, wrong repository document signature and changed document bytes fail.
+- AC3: Ordinary native fetch receives BLS Review Accept and signed refs; patch cache read/rebuild/reopen succeeds. Same ordinary-reader test checks all paths, and rejects tampered refs while preserving the accepted state.
+- AC4: Real threshold-generated governments history after cryptographic reshare reaches a new ordinary client through native fetch with no SDK server. `crates/system/radicle/tests/governments.rs::automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_restarts` checks identical native head/sole BLS delegate/sigrefs, all accepted Reviews and Merges through sequence 8, validation and repeated fetch. Finality and chain transport are integration fixtures, not a production localnet.
+- AC5: Local managed-owner authorization remains strict. Context from a trusted receipt is never replaced by a peer envelope; missing provider/receipt and mismatched native context still fail. Existing managed runtime/direct identity/sigrefs tests remain green, including an unmanaged receiver succeeding alongside a managed receiver refusing absent admission.
+- AC6: Existing Ed25519 identity/patch/sigrefs workflows remain valid. Full six-library Heartwood regression suite passes alongside native BLS tests.
+- AC7: Ordinary fetch uses the existing native path. No fetch transport/stage changes, no new archive delivery or history jobs, no storage/git.rs changes, and no Outbe chain dependency added to generic crypto verification.
+- AC8: All callers of the signature-context resolver are updated: direct identity document, identity evaluator/init/accept/revision, COB loader, signed-ref reader/writer and tests. Heartwood workspace all-target Clippy and Outbe SDK/runtime all-target Clippy pass.
+
+Known limits: upstream unmodified Ed25519-only clients cannot parse this BLS format; actual standalone CLI process invocation was not separately exercised, but its native fetch/control/backend and all CLI targets were checked. Full production SGX/localnet E2E and managed fresh-node package recovery remain outside this scoped completion. No push or deployment.

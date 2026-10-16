@@ -1,0 +1,1062 @@
+
+crates/system/radicle/src/collector.rs
+250:     async fn step(&mut self, client: &LocalReceiptClient) -> Result<Outcome> {
+251:         if client.chain_identity() != self.journal.chain {
+252:             return Err("collector node changed chain identity".into());
+253:         }
+254:         if let Some(receipt) = client.read(1).await? {
+255:             let result = self.install(client, receipt).await?;
+256:             return match result {
+257:                 Outcome::Announced | Outcome::CatchingUp => self.review_step(client).await,
+258:                 other => Ok(other),
+259:             };
+260:         }
+261:         let context = client.read_bootstrap_signing_context().await?;
+262:         let document =
+263:             bootstrap::prepare_bootstrap_document(context.state.descriptor(), &context.material)?;
+264:         let directory = self
+265:             .journal
+266:             .select(document.body(), context.state.descriptor())?;
+267:         if self.active != Some(document.body().receipt_hash().0) {
+268:             self.own = [None, None, None];
+269:             self.active = Some(document.body().receipt_hash().0);
+270:         }
+271:         let id = document.repository_id();
+272:         if self.policy.is_none() {
+273:             let policy = Arc::new(AcceptedRepositoryPolicy::pending_bootstrap(&document)?);
+274:             let owner = RepositoryKey::from(BlsPublicKey::from_bytes(
+275:                 document.body().owner_bls_public.0,
+276:             )?);
+277:             self.storage.manage_repository(id, owner, policy.clone())?;
+278:             self.policy = Some((id, policy));
+279:         }
+280:         let repo = self.repository(id)?;
+281:         let descriptor = context.state.descriptor();
+282:         let artifact_path = self.journal.root.join("initial-content.manifest");
+562:     async fn install(
+563:         &mut self,
+564:         client: &LocalReceiptClient,
+565:         receipt: FinalizedPublicationReceipt,
+566:     ) -> Result<Outcome> {
+567:         if self.snapshot.is_some() {
+568:             return Ok(Outcome::Announced);
+569:         }
+570:         let id = git::Oid::from_sha1(receipt.receipt().body.repo_id.0).into();
+571:         let owner = RepositoryKey::from(BlsPublicKey::from_bytes(
+572:             receipt.receipt().body.owner_bls_public.0,
+573:         )?);
+574:         let policy = match &self.policy {
+575:             Some((repository, policy)) if *repository == id => policy.clone(),
+576:             Some(_) => return Err("accepted bootstrap repository changed".into()),
+577:             None => Arc::new(AcceptedRepositoryPolicy::pending_receipt(&receipt)?),
+578:         };
+579:         self.storage.manage_repository(id, owner, policy.clone())?;
+580:         self.policy = Some((id, policy.clone()));
+581:         let repo = self.repository(id)?;
+582:         let Some(package) = self
+583:             .journal
+584:             .packages
+585:             .load_selected(review_slot_key(&receipt.receipt().body), &repo)?
+586:         else {
+587:             return Ok(Outcome::AwaitingAcceptedPackage);
+588:         };
+589:         if package.body != receipt.receipt().body {
+590:             return Err("accepted bootstrap differs from persisted selection".into());
+591:         }
+592:         let (descriptor, content) = self.journal.packages.load_bootstrap_inputs(&receipt)?;
+593:         let verifier = AcceptedPublicationVerifier::from_receipt(
+594:             receipt.clone(),
+595:             package.manifest.clone(),
+596:             package.witness.public_output(),
+597:         )?;
+598:         let proof = bootstrap::verify_accepted_bootstrap(
+599:             &repo,
+600:             &descriptor,
+601:             &content,
+602:             &verifier,
+603:             &package.witness,
+604:         )?;
+605:         let snapshot = CheckpointOwnerSnapshot::bootstrap(receipt.clone(), &package.manifest)?;
+606:         policy.accept_bootstrap(&proof)?;
+607:         client
+608:             .cache_checkpoint_manifest(&receipt, &package.manifest)
+609:             .await?;
+610:         self.snapshot = Some(snapshot);
+611:         if client.read(2).await?.is_some() {
+612:             return Ok(Outcome::CatchingUp);
+613:         }
+614:         proof.install(&repo)?;
+615:         put(
+616:             &self.journal.root.join("installed"),
+617:             receipt.receipt().receipt_hash.as_slice(),
+618:             false,
+619:         )?;
+620:         self.handle.seed(id, radicle::node::policy::Scope::All)?;
+621:         self.handle.add_inventory(id)?;
+622:         self.handle.announce_refs_for(id, [owner])?;
+623:         self.handle.announce_inventory()?;
+624:         put(
+625:             &self.journal.root.join("announced"),
+626:             receipt.receipt().receipt_hash.as_slice(),
+627:             false,
+628:         )?;
+629:         self.announced = Some(receipt.receipt().receipt_hash.0);
+630:         Ok(Outcome::Announced)
+631:     }
+632: }
+633: 
+634: fn participant(material: &RepositorySigningMaterial, index: usize) -> Result<bls12381::PublicKey> {
+635:     Ok(bls12381::PublicKey::decode(
+636:         material
+637:             .authority()
+
+crates/system/radicle/src/collector/review.rs
+340:     async fn sync_accepted_reviews(
+341:         &mut self,
+342:         client: &LocalReceiptClient,
+343:     ) -> Result<Option<Outcome>> {
+344:         for _ in 0..32 {
+345:             let snapshot = self
+346:                 .snapshot
+347:                 .as_ref()
+348:                 .ok_or("accepted snapshot missing")?
+349:                 .clone();
+350:             let next = snapshot
+351:                 .checkpoint()
+352:                 .receipt()
+353:                 .body
+354:                 .sequence
+355:                 .checked_add(1)
+356:                 .ok_or("publication sequence overflow")?;
+357:             let Some(receipt) = client.read(next).await? else {
+358:                 self.promote_snapshot(&snapshot)?;
+359:                 return Ok(None);
+360:             };
+361:             let repo =
+362:                 self.repository(git::Oid::from_sha1(receipt.receipt().body.repo_id.0).into())?;
+363:             let Some(package) = self
+364:                 .journal
+365:                 .packages
+366:                 .load_selected(review_slot_key(&receipt.receipt().body), &repo)?
+367:             else {
+368:                 return Ok(Some(Outcome::AwaitingAcceptedPackage));
+369:             };
+370:             if package.body != receipt.receipt().body {
+371:                 return Err("accepted Review selection differs".into());
+372:             }
+373:             let approval = if package.body.action
+374:                 == outbe_primitives::radicle_publication::PublicationAction::BindMaterial
+375:             {
+376:                 None
+377:             } else {
+378:                 Some(
+379:                     client
+380:                         .read_patch_approval(package.body.proposal_id)
+381:                         .await?
+382:                         .ok_or("accepted patch approval missing")?,
+383:                 )
+384:             };
+385:             let verifier = AcceptedPublicationVerifier::from_receipt(
+386:                 receipt.clone(),
+387:                 package.manifest.clone(),
+388:                 package.witness.public_output(),
+389:             )?;
+390:             let policy = &self.policy.as_ref().ok_or("accepted policy missing")?.1;
+391:             match package.body.action {
+392:                 outbe_primitives::radicle_publication::PublicationAction::Review => {
+393:                     let proof = verify_accepted_review_publication(
+394:                         &repo,
+395:                         approval.as_ref().ok_or("patch approval missing")?,
+396:                         &snapshot,
+397:                         &verifier,
+398:                         &package.witness,
+399:                     )?;
+400:                     policy.accept_review(&proof)?;
+401:                 }
+402:                 outbe_primitives::radicle_publication::PublicationAction::Merge => {
+403:                     let review = self
+404:                         .accepted_review(
+405:                             client,
+406:                             &repo,
+407:                             package.body.proposal_id,
+408:                             snapshot.checkpoint().receipt().body.sequence,
+409:                         )
+410:                         .await?;
+411:                     let proof = outbe_radicle::integration::publication::merge::verify_accepted_merge_publication(&repo, approval.as_ref().ok_or("patch approval missing")?, &snapshot, &review, &verifier, &package.witness)?;
+412:                     policy.accept_merge(&proof)?;
+413:                 }
+414:                 outbe_primitives::radicle_publication::PublicationAction::BindMaterial => {
+415:                     let proof = outbe_radicle::integration::publication::binding::verify_accepted_material_publication(&snapshot, &verifier, &package.witness)?;
+416:                     policy.accept_material(&proof)?;
+417:                 }
+418:                 _ => return Err("unsupported accepted patch action".into()),
+419:             }
+420:             let mut snapshot = snapshot;
+421:             snapshot.advance(receipt.clone(), &package.manifest)?;
+422:             client
+423:                 .cache_checkpoint_manifest(&receipt, &package.manifest)
+424:                 .await?;
+425:             self.snapshot = Some(snapshot);
+426:         }
+
+crates/blockchain/radicle/src/integration/publication/store.rs
+331:     fn persist(
+332:         &mut self,
+333:         repo: &Repository,
+334:         body: &PublicationBody,
+335:         manifest: &PublicationManifest,
+336:         expected_witness_hash: B256,
+337:         witness: &RepositoryWitnessBundle,
+338:         bootstrap: Option<(&GovernmentsDescriptor, &[u8])>,
+339:     ) -> Result<(), Error> {
+340:         let body_hash = body.receipt_hash();
+341:         let witness_bytes = witness.to_bytes()?;
+342:         let witness_hash: B256 = Sha256::hash(&[&witness_bytes]).0.into();
+343:         if witness_hash != expected_witness_hash {
+344:             return Err(Error::Corrupt);
+345:         }
+346:         let slot = review_slot_key(body);
+347:         if let Some((body, witness)) = self.selection(slot)? {
+348:             if body != body_hash {
+349:                 return Err(Error::SlotConflict);
+350:             }
+351:             // The durable pointer keeps its original witness even if a new valid subset arrives.
+352:             self.load(body, witness, repo)?;
+353:         }
+354:         let directory = self.package_dir(body_hash);
+355:         private_dir(&directory)?;
+356:         for child in ["objects", "witnesses", "ready"] {
+357:             private_dir(&directory.join(child))?;
+358:         }
+359:         write_once(&directory.join("body"), &body.to_bytes())?;
+360:         write_once(&directory.join("manifest"), &manifest.to_bytes()?)?;
+361:         if let Some((descriptor, content)) = bootstrap {
+362:             validate_bootstrap_inputs(body, descriptor, content)?;
+363:             write_once(
+364:                 &directory.join("descriptor"),
+365:                 &descriptor.to_bytes().map_err(|_| Error::Corrupt)?,
+366:             )?;
+367:             write_once(&directory.join("initial-content.manifest"), content)?;
+368:         }
+369:         let odb = repo.raw().odb()?;
+370:         for row in manifest.objects() {
+371:             let oid: git::Oid = row.oid.parse().map_err(|_| Error::Corrupt)?;
+372:             let (size, kind) = odb.read_header(oid.into())?;
+373:             if size > MAX_OBJECT_BYTES || kind != object_type(row.kind) {
+374:                 return Err(Error::Corrupt);
+375:             }
+376:             let object = odb.read(oid.into())?;
+377:             if object.kind() != object_type(row.kind)
+378:                 || object.data().len() > MAX_OBJECT_BYTES
+379:                 || hex::encode(Sha256::hash(&[object.data()]).0) != row.sha256
+380:                 || git::raw::Oid::hash_object(object.kind(), object.data())? != oid.into()
+381:             {
+382:                 return Err(Error::Corrupt);
+383:             }
+384:             write_once(&directory.join("objects").join(&row.sha256), object.data())?;
+385:         }
+386:         write_once(
+387:             &directory.join("witnesses").join(hex::encode(witness_hash)),
+388:             &witness_bytes,
+389:         )?;
+390:         write_once(
+391:             &directory.join("ready").join(hex::encode(witness_hash)),
+392:             READY,
+393:         )?;
+394:         self.select(slot, body_hash, witness_hash)?;
+395:         Ok(())
+396:     }
+397: 
+398:     /// Historical reconstruction inputs are authenticated by this node's accepted checkpoint.
+399:     pub fn load_bootstrap_inputs(
+592:     pub fn load_selected(
+593:         &self,
+594:         slot: B256,
+595:         repo: &Repository,
+596:     ) -> Result<Option<StoredReviewPackage>, Error> {
+597:         let Some((body, witness)) = self.selection(slot)? else {
+598:             return Ok(None);
+599:         };
+600:         self.load(body, witness, repo).map(Some)
+601:     }
+602: 
+603:     fn load(
+604:         &self,
+605:         body_hash: B256,
+606:         witness_hash: B256,
+607:         repo: &Repository,
+608:     ) -> Result<StoredReviewPackage, Error> {
+609:         let directory = self.package_dir(body_hash);
+610:         if read(
+611:             &directory.join("ready").join(hex::encode(witness_hash)),
+612:             READY.len(),
+613:         )? != READY
+614:         {
+615:             return Err(Error::Corrupt);
+616:         }
+617:         let body =
+618:             PublicationBody::from_bytes(&read(&directory.join("body"), PUBLICATION_BODY_LEN)?)
+619:                 .map_err(|_| Error::Corrupt)?;
+620:         if body.receipt_hash() != body_hash {
+621:             return Err(Error::Corrupt);
+622:         }
+623:         let manifest = PublicationManifest::from_bytes(&read(
+624:             &directory.join("manifest"),
+625:             MAX_MANIFEST_BYTES,
+626:         )?)?;
+627:         if manifest.hash()? != body.package_manifest_hash {
+628:             return Err(Error::Corrupt);
+629:         }
+630:         let bytes = read(
+631:             &directory.join("witnesses").join(hex::encode(witness_hash)),
+632:             MAX_WITNESS_BYTES,
+633:         )?;
+634:         if B256::from(Sha256::hash(&[&bytes]).0) != witness_hash {
+635:             return Err(Error::Corrupt);
+636:         }
+637:         let witness = RepositoryWitnessBundle::from_bytes(&bytes)?;
+638:         let odb = repo.raw().odb()?;
+639:         for row in manifest.objects() {
+640:             let bytes = read(
+641:                 &directory.join("objects").join(&row.sha256),
+642:                 MAX_OBJECT_BYTES,
+643:             )?;
+644:             let oid: git::Oid = row.oid.parse().map_err(|_| Error::Corrupt)?;
+645:             let kind = object_type(row.kind);
+646:             if hex::encode(Sha256::hash(&[&bytes]).0) != row.sha256
+647:                 || git::raw::Oid::hash_object(kind, &bytes)? != oid.into()
+648:             {
+649:                 return Err(Error::Corrupt);
+650:             }
+651:             if odb.write(kind, &bytes)? != oid.into() {
+652:                 return Err(Error::Corrupt);
+653:             }
+654:         }
+655:         Ok(StoredReviewPackage {
+656:             body,
+657:             manifest,
+658:             witness,
+659:         })
+660:     }
+661: 
+
+crates/blockchain/radicle/src/integration/review.rs
+153: pub(crate) fn prepare_patch_review_with_objects(
+154:     repo: &Repository,
+155:     approval: &FinalizedPatchApproval,
+156:     snapshot: &CheckpointOwnerSnapshot,
+157:     context: &ReviewSigningContext,
+158: ) -> Result<(CheckpointPreparedReview, BTreeSet<git::Oid>), Error> {
+159:     let receipt = snapshot.checkpoint().receipt();
+160:     let body = &receipt.body;
+161:     if context.chain_id != body.chain_id
+162:         || context.genesis_hash != body.genesis_hash.0
+163:         || context.epoch != body.epoch
+164:         || context.material_version != body.material_version
+165:         || context.material_hash != body.material_hash.0
+166:         || context.previous_receipt_hash != receipt.receipt_hash.0
+167:         || repo.id().into_sha1() != Some(body.repo_id.0)
+168:     {
+169:         return Err(Error::Snapshot);
+170:     }
+171:     let identity = snapshot
+172:         .owner_refs()
+173:         .get(&radicle::storage::refs::IDENTITY_ROOT)
+174:         .ok_or(Error::Snapshot)?;
+175:     let owner: RepositoryKey =
+176:         radicle::crypto::BlsPublicKey::from_bytes(body.owner_bls_public.0)?.into();
+177:     let decision = PatchVotePayloadV1::decode(approval.approval.payload.as_bytes())
+178:         .map_err(|_| Error::Approval)?;
+179:     let patch: patch::PatchId = git::Oid::from_sha1(decision.patch_id.0).into();
+180:     let name =
+181:         git::refs::storage::cob(&owner, &patch::TYPENAME, &patch).strip_namespace_recursive();
+182:     let previous = snapshot.owner_refs().get(&name);
+183:     let review = prepare_patch_review(repo, approval, identity, previous, context)?;
+184:     if review.owner() != owner {
+185:         return Err(Error::Authority);
+186:     }
+187:     let mut roots: Vec<_> = snapshot.owner_refs().iter().map(|(_, oid)| *oid).collect();
+188:     roots.push(snapshot.sigrefs());
+189:     roots.extend_from_slice(&review.dependencies);
+190:     let objects = object_closure(repo.raw(), roots, true)?;
+191:     Ok((
+192:         CheckpointPreparedReview {
+193:             review,
+194:             snapshot: snapshot.clone(),
+195:             approval: approval.approval.clone(),
+196:         },
+197:         objects,
+198:     ))
+199: }
+389:         || doc.threshold() != 1
+390:         || doc.default_branch().map_err(|_| Error::Authority)?.as_str() != "refs/heads/main"
+391:     {
+392:         return Err(Error::Authority);
+393:     }
+394:     let patch: patch::PatchId = git::Oid::from_sha1(decision.patch_id.0).into();
+395:     let revision: patch::RevisionId = git::Oid::from_sha1(decision.revision_id.0).into();
+396:     let mut tips = vec![merge.map_or(*revision, |(review, _)| review)];
+397:     tips.extend(previous_owner_tip);
+398:     tips.sort_unstable();
+399:     tips.dedup();
+400:     let name = git::refs::storage::cob(&owner, &patch::TYPENAME, &patch);
+401:     let pinned = object::Objects::from(
+402:         tips.iter()
+403:             .map(|id| object::Reference {
+404:                 name: name.to_ref_string(),
+405:                 target: object::Commit { id: *id },
+406:             })
+407:             .collect::<Vec<_>>(),
+408:     );
+409:     let object = cob::get_at::<patch::Patch, _>(repo, &patch::TYPENAME, &patch, &pinned)?
+410:         .ok_or(Error::Revision)?;
+411:     // The evaluator can prune invalid branches; every pinned tip must survive evaluation.
+412:     if tips.iter().any(|tip| !object.history.graph().contains(tip))
+413:         || object.object.revision(&revision).is_none()
+414:     {
+415:         return Err(Error::Revision);
+416:     }
+417:     match object.object.target() {
+418:         patch::MergeTarget::Delegates => (),
+419:         patch::MergeTarget::Branch(branch) if branch.as_str() == "refs/heads/main" => (),
+420:         _ => return Err(Error::Target),
+421:     }
+422:     let revision_state = object.object.revision(&revision).ok_or(Error::Revision)?;
+423:     if merge.is_some()
+424:         && revision_state.review_by(&owner).and_then(|r| r.verdict())
+425:             != Some(patch::Verdict::Accept)
+426:     {
+427:         return Err(Error::Revision);
+428:     }
+429:     let content = [
+430:         *revision_state.base(),
+431:         revision_state.head(),
+432:         git::Oid::from_sha1(decision.expected_target_head.0),
+433:     ];
+434:     for id in content {
+435:         repo.raw().find_commit(id.into())?;
+436:     }
+437:     let mut dependencies = tips.clone();
+438:     dependencies.push(identity);
+439:     dependencies.extend(content);
+440:     if let Some((_, result)) = merge {
+441:         dependencies.push(result);
+442:     }
+443:     dependencies.sort_unstable();
+444:     dependencies.dedup();
+490: pub(crate) fn object_closure(
+491:     repo: &git::raw::Repository,
+492:     mut pending: Vec<git::Oid>,
+493:     parents: bool,
+494: ) -> Result<BTreeSet<git::Oid>, Error> {
+495:     let mut seen = BTreeSet::new();
+496:     let odb = repo.odb()?;
+497:     while let Some(id) = pending.pop() {
+498:         if !seen.insert(id) {
+499:             continue;
+500:         }
+501:         let object = odb.read(id.into())?;
+502:         if git::raw::Oid::hash_object(object.kind(), object.data())? != id.into() {
+503:             return Err(Error::Object);
+504:         }
+505:         match object.kind() {
+506:             git::raw::ObjectType::Commit => {
+507:                 let commit = repo.find_commit(id.into())?;
+508:                 pending.push(commit.tree_id().into());
+509:                 if parents {
+510:                     pending.extend(commit.parent_ids().map(git::Oid::from));
+511:                 }
+512:             }
+513:             git::raw::ObjectType::Tree => {
+514:                 for entry in repo.find_tree(id.into())?.iter() {
+515:                     match entry.kind() {
+516:                         Some(git::raw::ObjectType::Blob | git::raw::ObjectType::Tree) => {
+517:                             pending.push(entry.id().into())
+518:                         }
+519:                         Some(git::raw::ObjectType::Commit) if entry.filemode() == 0o160000 => (),
+520:                         _ => return Err(Error::Object),
+521:                     }
+522:                 }
+523:             }
+524:             git::raw::ObjectType::Blob => (),
+525:             _ => return Err(Error::Object),
+526:         }
+527:     }
+528:     Ok(seen)
+529: }
+
+crates/blockchain/radicle/src/integration/network/gossip.rs
+114:     fn gossip_material(&self) -> Result<signing::RepositorySigningMaterial, signing::Error> {
+115:         let authority = self
+116:             .repository_authority
+117:             .as_ref()
+118:             .ok_or(signing::Error::Unavailable)?
+119:             .read_current_repository_authority()?;
+120:         if authority.chain_id() != self.chain.chain_id
+121:             || authority.genesis_hash() != self.chain.genesis_hash
+122:         {
+123:             return Err(signing::Error::Material);
+124:         }
+125:         let owner = radicle::crypto::BlsPublicKey::from_bytes(
+126:             authority
+127:                 .committee()
+128:                 .vrf_group_public_key_bytes
+129:                 .as_slice()
+130:                 .try_into()
+131:                 .map_err(|_| signing::Error::Material)?,
+132:         )?;
+133:         self.repository_material.current(authority, owner)
+134:     }
+135: 
+136:     pub(super) fn receive_gossip(
+137:         &mut self,
+138:         sender: bls12381::PublicKey,
+139:         bytes: &[u8],
+140:     ) -> Result<(), signing::Error> {
+141:         let message = RepositoryGossipMessage::from_bytes(bytes)?;
+142:         let material = self.gossip_material()?;
+143:         message.verify_sender(&material, &sender)?;
+144:         self.sync_gossip_material(&material);
+145:         // At most Doc/COB/refs + one attestation per authenticated current participant.
+146:         self.repository_inbox
+147:             .insert((PeerId::from_public_key(&sender), message.slot()), message);
+148:         Ok(())
+149:     }
+150: 
+151:     pub(super) fn drain_gossip(
+152:         &mut self,
+153:     ) -> Result<Vec<ReceivedRepositoryMessage>, signing::Error> {
+154:         let material = match self.gossip_material() {
+155:             Ok(material) => material,
+156:             Err(error) => {
+157:                 self.repository_inbox.clear();
+158:                 self.repository_inbox_material = None;
+159:                 return Err(error);
+160:             }
+161:         };
+162:         self.sync_gossip_material(&material);
+163:         std::mem::take(&mut self.repository_inbox)
+164:             .into_iter()
+165:             .map(|((peer, _), message)| {
+166:                 Ok(ReceivedRepositoryMessage {
+167:                     sender: peer
+168:                         .to_public_key()
+169:                         .map_err(|_| signing::Error::Participant)?,
+170:                     message,
+171:                 })
+172:             })
+173:             .collect()
+174:     }
+180:         }
+181:     }
+182: 
+183:     pub(super) fn gossip<S>(
+184:         &self,
+185:         sender: &mut S,
+186:         identity: &bls12381::PrivateKey,
+187:         message: &RepositoryGossipMessage,
+188:     ) -> Result<usize, signing::Error>
+189:     where
+190:         S: LimitedSender<PublicKey = bls12381::PublicKey>,
+191:     {
+192:         let material = self.gossip_material()?;
+193:         message.verify_sender(&material, &identity.public_key())?;
+194:         let bytes = message.to_bytes()?;
+195:         let own = PeerId::from_public_key(&identity.public_key());
+196:         Ok(material
+197:             .authority()
+198:             .committee()
+199:             .committee
+200:             .iter()
+201:             .filter(|member| {
+202:                 let Ok(key) = bls12381::PublicKey::decode(member.consensus_pubkey.as_slice())
+203:                 else {
+204:                     return false;
+205:                 };
+206:                 let peer = PeerId::from_public_key(&key);
+207:                 peer != own && send(sender, peer, bytes.clone())
+208:             })
+209:             .count())
+210:     }
+211: }
+212: 
+213: #[cfg(test)]
+214: mod tests {
+215:     use super::*;
+
+crates/blockchain/radicle/src/integration/network/receive.rs
+13:     pub(super) async fn receive<S>(
+14:         &mut self,
+15:         context: EndpointReceiveContext<'_, S>,
+16:         received: (bls12381::PublicKey, IoBuf),
+17:     ) -> Result<(), ManagerError>
+18:     where
+19:         S: LimitedSender<PublicKey = bls12381::PublicKey>,
+20:     {
+21:         let (sender_key, bytes) = received;
+22:         if bytes.as_ref().get(..4) == Some(super::gossip::MAGIC.as_slice()) {
+23:             let _ = self.receive_gossip(sender_key, bytes.as_ref());
+24:             return Ok(());
+25:         }
+26:         let peer = PeerId::from_public_key(&sender_key);
+27:         match EndpointFrame::decode(bytes.as_ref()) {
+28:             Ok(EndpointFrame::Request(request)) => self.respond_to_request(context, peer, request),
+29:             Ok(EndpointFrame::Response(response)) => {
+30:                 self.receive_response(context, peer, *response).await
+31:             }
+32:             Err(_) => Ok(()),
+33:         }
+34:     }
+35:     fn respond_to_request<S>(
+36:         &self,
+37:         context: EndpointReceiveContext<'_, S>,
+45:             sender,
+46:             signer,
+47:             local,
+48:             snapshot,
+49:             ..
+50:         } = context;
+51: 
+52:         if self.status.snapshot().voting_gate != RadicleVotingGate::SignerAllowed {
+53:             return Ok(());
+54:         }
+55:         let Some(local) = local.current() else {
+56:             return Ok(());
+57:         };
+58:         let Some(snapshot) = snapshot else {
+59:             return Ok(());
+60:         };
+61:         let Some(validator) = snapshot.validators.iter().find(|validator| {
+62:             validator.address == local.validator
+63:                 && validator.peer == PeerId::from_public_key(&signer.public_key())
+
+crates/blockchain/radicle/src/integration/network.rs
+813:                     material_updates = changed.is_ok();
+814:                     self.refresh_publication_queue();
+815:                 }
+816:                 joined = actor.join_next() => {
+817:                     break Err(match joined {
+818:                         Some(Err(error)) => ManagerError::Task(format!("endpoint actor: {error}")),
+819:                         _ => ManagerError::Endpoint("endpoint actor stopped unexpectedly".into()),
+820:                     });
+821:                 }
+822:                 command = self.commands.recv() => {
+823:                     match command {
+824:                         Some(NetworkCommand::Gossip {message,result})=>{
+825:                             let _ = result.send(self.gossip(&mut sender,&signer,&message));
+826:                         }
+827:                         Some(NetworkCommand::DrainGossip {result})=>{
+828:                             let _ = result.send(self.drain_gossip());
+829:                         }
+830:                         Some(NetworkCommand::QueueBootstrapPublication {publication,batch,result})=>{
+831:                             let _ = result.send(self.queue_bootstrap_publication(publication,*batch));
+832:                         }
+833:                         Some(NetworkCommand::QueueReviewPublication {publication,batch,result})=>{
+834:                             let _ = result.send(self.queue_review_publication(publication,*batch));
+835:                         }
+836:                         Some(NetworkCommand::RepositoryReviewAttestation {publication,result})=>{
+837:                             let _=result.send(self.review_attestation(&publication,&signer,local.validator));
+838:                         }
+839:                         Some(NetworkCommand::RepositoryBootstrapAttestation {publication,result})=>{
+840:                             let attestation = self.bootstrap_attestation(&publication,&signer,local.validator);
+841:                             let _ = result.send(attestation);
+842:                         }
+843:                         Some(NetworkCommand::RepositoryBootstrapPartial {job,result})=>{
+844:                             let partial = self.bootstrap_partial(&job,&signer,local.validator);
+845:                             let _ = result.send(partial);
+846:                         }
+847:                         Some(NetworkCommand::RepositoryReviewPartial {job,result})=>{
+848:                             let _=result.send(self.review_partial(&job,&signer,local.validator));
+849:                         }
+850:                         Some(NetworkCommand::RepositoryMaterial { owner, result }) => {
+851:                             let material = self.current_repository_material(owner);
+852:                             let _ = result.send(material);
+853:                         }
+854:                         Some(NetworkCommand::Refresh { snapshot, result }) => {
+855:                             self.refresh_publication_queue();
+856:                             let refreshed = self.refresh(
+857:                                 &mut sender,
+858:                                 EndpointRefresh { local_validator: local.validator, snapshot: &snapshot, queued: &mut queued },
+859:                             ).await;
+860:                             current = Some(snapshot);
+861:                             let _ = result.send(refreshed);
+862:                         }
+863:                         Some(NetworkCommand::Shutdown { result }) => {
+864:                             shutdown_ack = Some(result);
+865:                             break Ok(());
+866:                         }
+867:                         None => break Ok(()),
+868:                     }
+869:                 }
+870:                 received = receiver.recv() => {
+948:         self.evidence.prune(snapshot);
+949: 
+950:         for validator in snapshot
+951:             .validators
+952:             .iter()
+953:             .filter(|validator| validator.address != local_validator && validator.node_id.is_some())
+954:         {
+955:             let request = match self.handle.request(validator.peer, now).await {
+956:                 Ok(request) => request,
+957:                 Err(_) => continue,
+958:             };
+959:             let request_id = match EndpointFrame::decode(&request) {
+960:                 Ok(EndpointFrame::Request(request)) => request.request_id(),
+961:                 _ => continue,
+962:             };
+963:             if !send(sender, validator.peer, request) {
+964:                 let _ = self.handle.send_failed(validator.peer, request_id).await;
+965:             }
+966:         }
+967:         Ok(self
+968:             .evidence
+969:             .snapshot()
+970:             .into_iter()
+971:             .map(|proof| verified_from_response(proof.peer, &proof.response))
+972:             .collect())
+973:     }
+974: 
+975:     fn publish(&self, peer: PeerId, response: SignedEndpointResponse, _verified: VerifiedEndpoint) {
+976:         let encoded_frame = EndpointFrame::Response(Box::new(response.clone())).encode();
+977:         self.evidence.publish(SignedEndpointEvidence {
+978:             peer,
+979:             response,
+980:             encoded_frame,
+1072: fn send<S>(sender: &mut S, peer: PeerId, bytes: Vec<u8>) -> bool
+1073: where
+1074:     S: LimitedSender<PublicKey = bls12381::PublicKey>,
+1075: {
+1076:     let Ok(public_key) = peer.to_public_key() else {
+1077:         return false;
+1078:     };
+1079:     sender
+1080:         .check(Recipients::One(public_key))
+1081:         .map(|checked| checked.send(bytes, false).accepted())
+1082:         .unwrap_or(false)
+1083: }
+1084: 
+1085: fn now_millis() -> u64 {
+1086:     SystemTime::now()
+1087:         .duration_since(UNIX_EPOCH)
+
+crates/blockchain/engine/src/stack/epoch/transport.rs
+155:     if !bootnode_map.is_empty() {
+156:         info!(count = bootnode_map.len(), "parsed bootnode entries");
+157:     }
+158: 
+159:     // Build peer set from validator config + bootnodes.
+160:     let peer_map = build_peer_map(validator_set, &bootnode_map);
+161:     let admitted_set =
+162:         validators::read_admitted_non_consensus_at_block(&node.provider, initial_peer_hash)
+163:             .wrap_err("failed to read startup non-consensus P2P admission")?;
+164:     let initial_peers = commonware_p2p::AddressableTrackedPeers::new(
+165:         peer_map,
+166:         build_peer_map(&admitted_set, &bootnode_map),
+167:     );
+168:     let resolved_count = initial_peers.primary.len();
+169:     if oracle.track(0, initial_peers.clone()) != commonware_actor::Feedback::Ok {
+170:         return Err(crate::errors::StackEpochError::P2pOracleClosedDuringStartupAdmission.into());
+171:     }
+172:     info!(
+173:         total = validator_set.public_keys.len(),
+174:         resolved = resolved_count,
+175:         bootnodes = bootnode_map.len(),
+176:         "P2P peer set registered with oracle"
+177:     );
+178: 
+179:     // -- 4. Start P2P network (needed before DKG can run) ---------------
+180:     let network_handle = network.start();
+181:     info!("P2P network started");
+182: 
+183:     if let (Some((endpoint, local, owner)), Some((sender, receiver))) =
+184:         (radicle_endpoint, radicle_channel)
+185:     {
+186:         let signer = signing_key.clone();
+187:         if !owner.start(async move {
+195:                 tracing::warn!(%error, "Radicle endpoint actor stopped");
+196:             }
+197:             result
+198:         })? {
+199:             return Ok(None);
+200:         }
+201:     }
+202: 
+203:     // -- 5. Create Muxers from physical channels ------------------------
+204:     // The Muxers split consensus channels by epoch. Each engine restart
+205:     // gets fresh sub-channels, which prevents message interference.
+206:     let (vote_muxer, vote_mux) = Muxer::new(ctx.child("vote_mux"), votes.0, votes.1, MUXER_MAILBOX);
+207:     vote_muxer.start();
+208: 
+209:     let (cert_muxer, cert_mux) = Muxer::new(
+210:         ctx.child("cert_mux"),
+211:         certificates.0,
+212:         certificates.1,
+213:         MUXER_MAILBOX,
+214:     );
+215:     cert_muxer.start();
+216: 
+
+crates/blockchain/radicle/src/integration/local.rs
+51: const MAX_REQUEST: usize = publication::MAX_REQUEST;
+52: const MAX_FRAME: usize = if preparation::MAX_FRAME > MAX_REQUEST {
+53:     preparation::MAX_FRAME
+54: } else {
+55:     MAX_REQUEST
+56: };
+57: const MAX_CONNECTIONS: usize = 32;
+58: const MAX_READERS: usize = 4;
+59: const DEADLINE: Duration = Duration::from_secs(5);
+60: 
+87:         || metadata.permissions().mode() & 0o777 != 0o700
+88:     {
+89:         return Err(Error::Untrusted);
+90:     }
+91:     Ok(())
+92: }
+93: 
+94: fn private_socket(path: &Path) -> Result<fs::Metadata, Error> {
+95:     private_parent(path)?;
+96:     let metadata = fs::symlink_metadata(path)?;
+97:     if !metadata.file_type().is_socket()
+98:         || metadata.uid() != rustix::process::geteuid().as_raw()
+99:         || metadata.permissions().mode() & 0o777 != 0o600
+100:     {
+101:         return Err(Error::Untrusted);
+102:     }
+103:     Ok(metadata)
+104: }
+105: 
+106: fn peer(stream: &UnixStream) -> Result<(), Error> {
+107:     if stream.peer_cred()?.uid() != rustix::process::geteuid().as_raw() {
+108:         return Err(Error::Untrusted);
+109:     }
+110:     Ok(())
+111: }
+112: 
+113: struct SocketLease {
+585:     let request = read_frame(&mut stream, MAX_REQUEST).await?;
+586:     let magic = match (request.get(..4), request.len()) {
+587:         (Some(magic), 4) if magic == SCOPE => SCOPE,
+588:         (Some(magic), length) if magic == progress::MAGIC && length == 4 + PUBLICATION_BODY_LEN => {
+589:             progress::MAGIC
+590:         }
+591:         (Some(magic), 4) if magic == gossip::TAKE => gossip::TAKE,
+592:         (Some(magic), length) if magic == gossip::SEND && length > 4 => gossip::SEND,
+593:         (Some(magic), 12) if magic == MAGIC => MAGIC,
+594:         (Some(magic), 16) if magic == vote::MAGIC => vote::MAGIC,
+595:         (Some(magic), 36) if magic == approval::MAGIC => approval::MAGIC,
+596:         (Some(magic), length) if magic == publication::ATTEST && length > 4 => publication::ATTEST,
+597:         (Some(magic), length) if magic == publication::QUEUE && length > 4 => publication::QUEUE,
+598:         (Some(magic), 4) if magic == bootstrap::MAGIC => bootstrap::MAGIC,
+599:         (Some(magic), 4) if magic == binding::MAGIC => binding::MAGIC,
+600:         (Some(magic), 36) if magic == bootstrap::SIGN_DOCUMENT => bootstrap::SIGN_DOCUMENT,
+601:         (Some(magic), length) if magic == bootstrap::SIGN_IDENTITY && length > 36 => {
+602:             bootstrap::SIGN_IDENTITY
+603:         }
+604:         (Some(magic), length) if magic == bootstrap::SIGN_REFS && length > 36 => {
+605:             bootstrap::SIGN_REFS
+
+crates/blockchain/radicle/src/integration/local/preparation.rs
+20: 
+21: pub(super) const CACHE: &[u8; 4] = b"OCW1";
+22: pub(super) const MAGIC: &[u8; 4] = b"OCP1";
+23: pub(super) const MAX_FRAME: usize = 5 + 4 + material::MAX_FRAME + 4 + MAX_MANIFEST_BYTES + 20;
+24: 
+25: pub fn publication_store_path(control: &Path) -> PathBuf {
+26:     let mut path = control.as_os_str().to_os_string();
+27:     path.push(".outbe.packages");
+28:     path.into()
+29: }
+30: 
+31: pub struct PatchPreparationContext {
+
+crates/system/radicle/src/collector/journal.rs
+35:             ]
+36:             .concat(),
+37:             false,
+38:         )?;
+39:         let packages = ReviewPackageStore::open(root.join("packages"))?;
+40:         Ok(Self {
+41:             root,
+42:             chain,
+43:             packages,
+
+vendor/heartwood/crates/radicle-node/src/worker/fetch.rs
+42:     ) -> Result<Self, error::Handle> {
+43:         let exists = storage.contains(&rid)?;
+44:         if exists {
+45:             let repo = storage.repository(rid)?;
+46:             let handle = fetch::Handle::new(local, repo, follow, blocked, channels)?;
+47:             Ok(Handle::Pull {
+48:                 handle,
+49:                 notifications,
+50:             })
+51:         } else {
+52:             let repo = storage.temporary_repository(rid)?;
+53:             let handle = fetch::Handle::new(local, repo, follow, blocked, channels)?;
+54:             Ok(Handle::Clone { handle })
+55:         }
+56:     }
+57: 
+58:     pub fn fetch<D: node::refs::Store>(
+59:         self,
+60:         rid: RepoId,
+61:         storage: &Storage,
+62:         cache: &mut cob::cache::StoreWriter,
+63:         refsdb: &mut D,
+64:         config: fetch::Config,
+65:         remote: PublicKey,
+66:         refs_at: Option<Vec<RefsAt>>,
+67:     ) -> Result<FetchResult, error::Fetch> {
+68:         let (result, clone, notifs) = match self {
+69:             Self::Clone { mut handle } => {
+70:                 log::debug!(target: "worker", "{} cloning from {remote}", handle.local());
+71:                 match fetch::clone(&mut handle, config, remote) {
+72:                     Err(err) => {
+73:                         handle.into_inner().cleanup();
+74:                         return Err(err.into());
+75:                     }
+76:                     Ok(result) => {
+77:                         if result.is_success() {
+78:                             handle.into_inner().mv(storage.path_of(&rid))?;
+79:                         } else {
+80:                             handle.into_inner().cleanup();
+81:                         }
+82:                         (result, true, None)
+83:                     }
+84:                 }
+85:             }
+86:             Self::Pull {
+87:                 mut handle,
+88:                 notifications,
+89:             } => {
+90:                 log::debug!(target: "worker", "{} pulling from {remote}", handle.local());
+91:                 let result = fetch::pull(&mut handle, config, remote, refs_at)?;
+92:                 (result, false, Some(notifications))
+93:             }
+94:         };
+
+vendor/heartwood/crates/radicle-fetch/src/state.rs
+25: /// The data size limit, 5Mb, while fetching the special refs,
+26: /// i.e. `rad/id` and `rad/sigrefs`.
+27: pub const DEFAULT_FETCH_SPECIAL_REFS_LIMIT: u64 = 1024 * 1024 * 5;
+28: /// The data size limit, 5Gb, while fetching the data refs,
+29: /// i.e. `refs/heads`, `refs/tags`, `refs/cobs`, etc.
+30: pub const DEFAULT_FETCH_DATA_REFS_LIMIT: u64 = 1024 * 1024 * 1024 * 5;
+31: 
+
+crates/system/radicle/tests/governments.rs
+1080:     // A fresh receiver has trusted receipts but no package: ordinary fetch must stay closed.
+1081:     let mut fresh = Sidecar::new(74);
+1082:     let store = ReviewPackageStore::open(fresh.home.node().join("node-publications")).unwrap();
+1083:     let server = LocalReceiptServer::bind(&fresh.control, reader.clone())
+1084:         .unwrap()
+1085:         .with_authority_reader(reader.clone())
+1086:         .with_native_node_id(fresh.node_id.into_inner())
+1087:         .with_publication_store(store);
+1088:     let (stop_fresh, stopped) = oneshot::channel();
+1089:     let serving = tokio::spawn(server.run(async {
+1090:         let _ = stopped.await;
+1091:     }));
+1092:     let deadline = Instant::now() + HANDLE_DEADLINE * 4;
+1093:     while !fresh.home.storage().join(rid.canonical()).is_dir() {
+1094:         assert!(
+1095:             Instant::now() < deadline,
+1096:             "fresh collector did not read its accepted receipt"
+1097:         );
+1098:         tokio::time::sleep(Duration::from_millis(100)).await;
+1099:     }
+1100:     // A direct reopen has no in-memory provider; the persisted owner pin must still deny access.
+1101:     {
+1102:         use radicle::storage::ReadRepository as _;
+1103:         let repository = radicle::storage::git::Repository::open(
+1104:             fresh.home.storage().join(rid.canonical()),
+1105:             rid,
+1106:         )
+1107:         .unwrap();
+1108:         let source_repository =
+1109:             git::raw::Repository::open_bare(sidecars[1].home.storage().join(rid.canonical()))
+1110:                 .unwrap();
+1111:         let identity = source_repository
+1112:             .refname_to_id("refs/rad/id")
+1113:             .unwrap()
+1114:             .into();
+1115:         for kind in [
+1116:             radicle::crypto::SubjectKind::Identity,
+1117:             radicle::crypto::SubjectKind::Cob,
+1118:             radicle::crypto::SubjectKind::SignedRefs,
+1119:         ] {
+1120:             assert!(matches!(
+1121:                 repository.authorize_entry(owner, identity, kind),
+1122:                 Err(radicle::storage::publication::Error::Unavailable)
+1123:             ));
+1124:         }
+1125:     }
+1126:     fresh
+1127:         .node
+1128:         .seed(rid, radicle::node::policy::Scope::All)
+1129:         .unwrap();
+1130:     let address = sidecars[1].node.listen_addrs().unwrap()[0].into();
+1131:     fresh
+1132:         .node
+1133:         .connect(
+1134:             source,
+1135:             address,
+1136:             radicle::node::ConnectOptions {
+1137:                 persistent: false,
+1138:                 timeout: HANDLE_DEADLINE,
+1139:             },
+1140:         )
+1141:         .unwrap();
+1142:     let fetched = fresh
+1143:         .node
+1144:         .fetch(rid, source, HANDLE_DEADLINE, None)
+1145:         .unwrap();
+1146:     match fetched {
+1147:         // Native fetch checks the empty local identity before requesting the missing package.
+1148:         radicle::node::FetchResult::Failed { reason } => {
+1149:             assert_eq!(reason, "missing identity document")
+1150:         }
+1151:         other => panic!("fresh receiver accepted owner entries without its package: {other:?}"),
+1152:     }
+1153:     let empty =
+1154:         git::raw::Repository::open_bare(fresh.home.storage().join(rid.canonical())).unwrap();
+1155:     assert!(empty.head().is_err());
+1156:     assert!(empty
+1157:         .references_glob(&format!("refs/namespaces/{owner}/refs/*"))
+1158:         .unwrap()
+1159:         .next()
+1160:         .is_none());
+1161:     fresh.stop();
+1162:     stop_fresh.send(()).unwrap();
+
+plans/radicle-patch-vote/design.md
+228: Manifest перечисляет exact Git object type/OID/SHA256(bytes), desired ref updates
+229: с old/new OIDs, native subjects/envelopes и canonical metadata. **Manifest не включает
+230: interchangeable contribution witnesses**: public DKG proof и q indexed partial frames
+231: передаются в отдельном witness bundle. Bundle обязан сопоставляться с body material hash
+232: и exact native subjects; каждая partial проверяется до recovery/attestation. Receiver
+233: также проверяет q current frames для каждого subject независимо от owner signature.
+234: Разные valid q-subsets разрешены и дают один manifest/body; witness substitution допустима
+235: только при повторной полной проверке. Witness bytes не являются Git objects/refs и не
+236: влияют на owner state. Identity attestations также не входят в manifest.
+237: Manifest содержит ровно newly created native objects и deterministic desired owner refs
+238: snapshot (§6), не произвольные extra reachable author objects; content closure доставляется
+239: отдельно и проверяется по OIDs. Objects сортированы по kind/OID, refs по имени,
+240: subjects по ordinal; duplicates запрещены.
+241: Witness frames отсортированы по subject ordinal/index, duplicates запрещены, отдельный
+320: adapter читает receipt из exact finalized state своего node и передаёт Heartwood ticket
+321: для exact manifest/expected previous refs. Gate повторно проверяет ticket при CAS/promotion.
+322: Удалённый peer не может создать ticket; missing/mismatched proof/cache entry fail closed.
+323: Ticket/cache содержит finalized block hash и монотонный receipt sequence; conflicting
+324: block hash на принятой finalized высоте локально запрещает managed writes.
+325: Archive и Promote различаются: старый accepted receipt разрешает immutable historical
+326: objects, но не rollback canonical refs. Promote принимает только latest committed
+327: complete signed refs snapshot из exact trusted view, с sequence не меньше локального
+328: принятого. Fresh/lagging receiver может установить latest snapshot после проверки его
+329: полного reachable object closure и receipts, не проигрывая все промежуточные ref deltas.
+330: Local CAS сравнивает actual local refs root, захваченный перед install; global previous
+331: receipt hash остаётся precondition chain execution, а не требованием, что локальная
+332: реплика уже была на этом predecessor. Same-sequence different snapshot запрещён.
+333: До получения latest snapshot реплика не объявляется current/ready для signing.
+334: 

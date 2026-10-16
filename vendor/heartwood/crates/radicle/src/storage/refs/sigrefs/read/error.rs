@@ -1,7 +1,8 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use radicle_core::{NodeId, RepoId};
+use crypto::RepositoryKey;
+use radicle_core::RepoId;
 use radicle_git_metadata::commit;
 use radicle_oid::Oid;
 use thiserror::Error;
@@ -18,7 +19,7 @@ pub enum Read {
     #[error(transparent)]
     FindReference(reference::error::FindReference),
     #[error("failed to find `refs/namespaces/{namespace}/refs/rad/sigrefs`")]
-    MissingSigrefs { namespace: NodeId },
+    MissingSigrefs { namespace: RepositoryKey },
     #[error(transparent)]
     Verify(Verify),
     #[error("failed to find a valid set of signed references starting from {head}")]
@@ -81,7 +82,7 @@ pub enum Tree {
     #[error(transparent)]
     ParseRefs(canonical::Error),
     #[error(transparent)]
-    ParseSignature(crypto::signature::Error),
+    ParseSignature(crypto::repository::Error),
     #[error(transparent)]
     MissingBlobs(#[from] MissingBlobs),
 }
@@ -112,6 +113,10 @@ pub enum IdentityRoot {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Verify {
+    #[error(transparent)]
+    Publication(crate::storage::publication::Error),
+    #[error(transparent)]
+    NativeSignature(crypto::repository::Error),
     #[error("failed to verify signature over signed references")]
     Signature(crypto::signature::Error),
     #[error(

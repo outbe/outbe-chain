@@ -85,7 +85,7 @@ fn sync_status(
     const SYMBOL_STATE_UNKNOWN: &str = "•";
 
     let mut table = Table::<5, term::Label>::new(TableOptions::bordered());
-    let mut seeds: Vec<_> = node.seeds_for(rid, [*profile.did()])?.into();
+    let mut seeds: Vec<_> = node.seeds_for(rid, [(*profile.id()).into()])?.into();
     let local_nid = node.nid()?;
     let aliases = profile.aliases();
 
@@ -134,7 +134,7 @@ fn sync_status(
             None => return None,
         };
 
-        let (alias, nid) = Author::new(&seed.nid, profile, verbose).labels();
+        let (alias, nid) = Author::new(seed.nid, profile, verbose).labels();
 
         Some([
             nid,
@@ -196,7 +196,7 @@ fn announce_refs(
             "nothing to announce, repository {rid} is not available locally"
         ));
     };
-    if let Err(e) = repo.remote(profile.id()) {
+    if let Err(e) = repo.remote(&profile.id().into()) {
         if e.is_not_found() {
             term::println(term::format::italic(
                 "Nothing to announce, you don't have a fork of this repository.",
@@ -263,7 +263,7 @@ pub fn fetch(
         None => {
             // We push nodes that are in our seed list in attempt to fulfill the
             // replicas, if needed.
-            let seeds = node.seeds_for(rid, [*profile.did()])?;
+            let seeds = node.seeds_for(rid, [(*profile.id()).into()])?;
             let (connected, disconnected) = seeds.partition();
             let candidates = connected
                 .into_iter()
@@ -574,7 +574,13 @@ fn display_fetch_result(result: &sync::FetcherResult, verbose: bool) {
 }
 
 fn display_success<'a>(
-    results: impl Iterator<Item = (&'a NodeId, &'a [RefUpdate], HashSet<NodeId>)>,
+    results: impl Iterator<
+        Item = (
+            &'a NodeId,
+            &'a [RefUpdate],
+            HashSet<radicle::crypto::RepositoryKey>,
+        ),
+    >,
     verbose: bool,
 ) {
     for (node, updates, _) in results {

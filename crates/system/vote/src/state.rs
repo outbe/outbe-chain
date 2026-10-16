@@ -6,6 +6,7 @@ use tracing::warn;
 
 use crate::constants::MAX_PAGE_SIZE;
 use crate::errors::VoteError;
+use crate::handlers::TargetElectorate;
 use crate::schema::{decode_stored_u8, BondSettlement, ProposalRecord, Vote, VoteRecord};
 
 pub use crate::schema::ProposalStatus;
@@ -182,6 +183,20 @@ pub fn calculate_vote_tally(
 }
 
 impl<'storage> Vote<'storage> {
+    /// Reads one current electorate for cast eligibility, tally and ABI views.
+    pub fn eligible_validator_addresses(&self, proposal_id: U256) -> Result<Vec<Address>> {
+        let policy = TargetElectorate::from_stored(self.proposal_electorate.read(&proposal_id)?)?;
+        if policy == TargetElectorate::Active {
+            return active_validator_addresses(self.storage.clone());
+        }
+        let effective = ValidatorSet::new(self.storage.clone()).get_active_consensus_set()?;
+        Ok(effective
+            .into_iter()
+            .filter(|v| v.status == outbe_validatorset::runtime::status::ACTIVE)
+            .map(|v| v.validator_address)
+            .collect())
+    }
+
     /// Returns the next proposal id without incrementing the counter.
     pub fn peek_next_proposal_id(&self) -> Result<U256> {
         let current = self.proposal_count.read()?;
@@ -203,7 +218,7 @@ impl<'storage> Vote<'storage> {
         let Some(record) = self.proposals.get(proposal_id)? else {
             return Ok(None);
         };
-        let active = active_validator_addresses(self.storage.clone())?;
+        let active = self.eligible_validator_addresses(proposal_id)?;
         let state = calculate_vote_tally(self, &record, &active)?;
         let status = record.proposal_status()?;
         let voters_count = self.proposal_voters.list(&proposal_id).len()? as u64;

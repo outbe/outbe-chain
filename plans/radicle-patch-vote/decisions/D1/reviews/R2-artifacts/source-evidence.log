@@ -1,0 +1,774 @@
+### vendor/heartwood/crates/radicle/src/storage/git/cob.rs:41-70
+41: fn load_entry<R: ReadRepository>(
+42:     repo: &R,
+43:     raw: &git::raw::Repository,
+44:     id: Oid,
+45: ) -> Result<cob::Entry, LoadError> {
+46:     match raw.load(id) {
+47:         Ok(entry) => Ok(entry),
+48:         Err(NativeLoadError::NativeContextRequired) => {
+49:             let odb = raw.odb().map_err(NativeLoadError::from)?;
+50:             let object = odb.read(id.into()).map_err(NativeLoadError::from)?;
+51:             let signed = radicle_git_metadata::commit::bls::SignedCommit::parse(object.data())
+52:                 .map_err(NativeLoadError::from)?;
+53:             let envelope =
+54:                 crypto::BlsEnvelope::from_hex(signed.envelope()).map_err(NativeLoadError::from)?;
+55:             let authorization =
+56:                 repo.authorize_entry(envelope.key().into(), id, crypto::SubjectKind::Cob)?;
+57:             let repository = repo
+58:                 .id()
+59:                 .into_sha1()
+60:                 .ok_or(NativeLoadError::NativeSignature(
+61:                     crypto::repository::Error::InvalidSubject,
+62:                 ))?;
+63:             cob::load_native(raw, id, repository, authorization.context()).map_err(Into::into)
+64:         }
+65:         Err(error) => Err(error.into()),
+66:     }
+67: }
+68: 
+69: #[derive(Error, Debug)]
+70: pub enum ObjectsError {
+
+### vendor/heartwood/crates/radicle-cob/src/backend/git/change.rs:249-285
+249: ) -> Result<Entry, error::Load> {
+250:     let timestamp = commit.committer().time.seconds() as u64;
+251:     let trailers = parse_trailers(commit.trailers())?;
+252:     let (resources, related): (Vec<_>, Vec<_>) = trailers.iter().partition(|t| match t {
+253:         CommitTrailer::Resource(_) => true,
+254:         CommitTrailer::Related(_) => false,
+255:     });
+256:     let mut resources = resources.into_iter().map(|r| r.oid()).collect::<Vec<_>>();
+257:     let related = related.into_iter().map(|r| r.oid()).collect::<Vec<_>>();
+258:     let parents = commit
+259:         .parents()
+260:         .map(Oid::from)
+261:         .filter(|p| !resources.contains(p) && !related.contains(p))
+262:         .collect();
+263:     if resources.len() > 1 {
+264:         return Err(error::Load::TooManyResources(id));
+265:     };
+266: 
+267:     let tree = repo.find_tree(*commit.tree())?;
+268:     let manifest = load_manifest(repo, &tree)?;
+269:     let contents = load_contents(repo, &tree)?;
+270: 
+271:     Ok(Entry {
+272:         id,
+273:         revision: tree.id().into(),
+274:         signature,
+275:         resource: resources.pop(),
+276:         related,
+277:         parents,
+278:         manifest,
+279:         contents,
+280:         timestamp,
+281:     })
+282: }
+283: 
+284: fn parse_trailers<'a>(
+285:     trailers: impl Iterator<Item = &'a OwnedTrailer>,
+
+### vendor/heartwood/crates/radicle-cob/src/change_graph.rs:33-95
+33:     pub(crate) fn load<'a, S>(
+34:         storage: &S,
+35:         tip_refs: impl Iterator<Item = &'a object::Reference> + 'a,
+36:         typename: &TypeName,
+37:         oid: &ObjectId,
+38:     ) -> Option<ChangeGraph>
+39:     where
+40:         S: change::Storage<
+41:                 ObjectId = Oid,
+42:                 Parent = Oid,
+43:                 PublicKey = crypto::RepositoryKey,
+44:                 Signature = crate::change::EntrySignature,
+45:             >,
+46:     {
+47:         let tip_refs = tip_refs.collect::<Vec<_>>();
+48: 
+49:         if log::log_enabled!(log::Level::Debug) {
+50:             log::debug!(target: "cob", "Loading object of type {typename} at {oid}.");
+51:         } else if log::log_enabled!(log::Level::Trace) {
+52:             log::trace!(target: "cob", "Loading object of type {typename} at {oid} from tips {}.", tip_refs.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", "));
+53:         }
+54: 
+55:         let mut graph: Dag<Oid, Entry> = Dag::new();
+56: 
+57:         // Populate the initial set of node ids from the refs we have
+58:         let mut child_ids = Vec::from_iter(tip_refs.into_iter().map(|r| r.target.id));
+59:         let mut edges_to_add = Vec::new();
+60: 
+61:         while let Some(child_id) = child_ids.pop() {
+62:             // Skip if we already processed this node.
+63:             if graph.contains(&child_id) {
+64:                 continue;
+65:             }
+66: 
+67:             match storage.load(child_id) {
+68:                 Ok(change) => {
+69:                     for parent_id in &change.parents {
+70:                         edges_to_add.push((child_id, *parent_id));
+71:                         child_ids.push(*parent_id);
+72:                         debug_assert_ne!(Some(*parent_id), change.resource);
+73:                     }
+74:                     graph.node(child_id, change);
+75:                 }
+76:                 Err(e) => {
+77:                     log::warn!(
+78:                         target: "cob",
+79:                         "Unable to load change tree from commit {child_id}: {e}",
+80:                     );
+81:                 }
+82:             }
+83:         }
+84: 
+85:         // The Dag::dependency() function implicitly assumes that both nodes already exist in the graph.
+86:         // Therefore, we add the edges only after successfully processing all nodes.
+87:         for (child_id, parent_id) in edges_to_add {
+88:             graph.dependency(child_id, parent_id);
+89:         }
+90: 
+91:         graph.roots().next()?;
+92: 
+93:         Some(ChangeGraph {
+94:             object_id: *oid,
+95:             graph,
+
+### vendor/heartwood/crates/radicle/src/cob/stream/iter.rs:157-182
+157:     pub(super) fn new(walk: WalkIter<'a>, typename: TypeName) -> Self {
+158:         Self {
+159:             walk,
+160:             typename,
+161:             action: PhantomData,
+162:         }
+163:     }
+164: 
+165:     /// Load the `Op` for the given `entry`, ensuring that manifest matches with
+166:     /// the expected manifest.
+167:     fn load(&self, entry: crate::git::Oid) -> Result<Option<Op<A>>, error::Ops>
+168:     where
+169:         A: for<'de> Deserialize<'de>,
+170:     {
+171:         let manifest = Op::<A>::manifest_of(self.walk.repo, &entry)
+172:             .map_err(|err| error::Ops::Manifest { source: err })?;
+173:         if manifest.type_name == self.typename {
+174:             let op =
+175:                 Op::load(self.walk.repo, entry).map_err(|err| error::Ops::Load { source: err })?;
+176:             Ok(Some(op))
+177:         } else {
+178:             Ok(None)
+179:         }
+180:     }
+181: }
+
+### vendor/heartwood/crates/radicle/src/storage/publication.rs:186-227
+186:         Ok(())
+187:     }
+188: 
+189:     pub(crate) fn authorize(&self, request: EntryRequest) -> Result<EntryAuthorization, Error> {
+190:         if request.authority.as_ed25519().is_some() {
+191:             return Ok(EntryAuthorization::native(request));
+192:         }
+193:         let provider = self
+194:             .providers
+195:             .read()
+196:             .map_err(|_| Error::Unavailable)?
+197:             .get(&request.repository)
+198:             .cloned();
+199:         let Some(record) = self.record(request.repository)? else {
+200:             return if provider.is_some() {
+201:                 Err(Error::Configuration)
+202:             } else {
+203:                 Ok(EntryAuthorization::native(request))
+204:             };
+205:         };
+206:         if record.owner != request.authority {
+207:             return Ok(EntryAuthorization::native(request));
+208:         }
+209:         let provider = provider.ok_or(Error::Unavailable)?;
+210:         if provider.id() != record.policy {
+211:             return Err(Error::Configuration);
+212:         }
+213:         let authorization = provider.authorize_entry(&request)?;
+214:         if authorization.request != request
+215:             || authorization.context == [0; 32]
+216:             || authorization.receipt.is_none()
+217:         {
+218:             return Err(Error::InvalidAuthorization);
+219:         }
+220:         Ok(authorization)
+221:     }
+222: }
+
+### vendor/heartwood/crates/radicle/src/cob/patch/cache.rs:311-376
+311: impl<'a, Repo, Access, C> cache::Update<Patch> for Cache<'a, Repo, Access, C>
+312: where
+313:     C: cache::Update<Patch>,
+314: {
+315:     type Out = <C as cache::Update<Patch>>::Out;
+316:     type UpdateError = <C as cache::Update<Patch>>::UpdateError;
+317: 
+318:     fn update(
+319:         &mut self,
+320:         rid: &RepoId,
+321:         id: &radicle_cob::ObjectId,
+322:         object: &Patch,
+323:     ) -> Result<Self::Out, Self::UpdateError> {
+324:         self.cache.update(rid, id, object)
+325:     }
+326: }
+327: 
+328: impl<'a, Repo, Access, C> cache::Remove<Patch> for Cache<'a, Repo, Access, C>
+329: where
+330:     C: cache::Remove<Patch>,
+331: {
+332:     type Out = <C as cache::Remove<Patch>>::Out;
+333:     type RemoveError = <C as cache::Remove<Patch>>::RemoveError;
+334: 
+335:     fn remove(&mut self, id: &ObjectId) -> Result<Self::Out, Self::RemoveError> {
+336:         self.cache.remove(id)
+337:     }
+338: 
+339:     fn remove_all(&mut self, rid: &RepoId) -> Result<Self::Out, Self::RemoveError> {
+340:         self.cache.remove_all(rid)
+341:     }
+342: }
+343: 
+344: #[derive(Debug, Error)]
+345: pub enum UpdateError {
+346:     #[error(transparent)]
+347:     Json(#[from] serde_json::Error),
+348:     #[error(transparent)]
+349:     Sql(#[from] sql::Error),
+350: }
+351: 
+352: impl Update<Patch> for StoreWriter {
+353:     type Out = bool;
+354:     type UpdateError = UpdateError;
+355: 
+356:     fn update(
+357:         &mut self,
+358:         rid: &RepoId,
+359:         id: &ObjectId,
+360:         object: &Patch,
+361:     ) -> Result<Self::Out, Self::UpdateError> {
+362:         let mut stmt = self.db.prepare(
+363:             "INSERT INTO patches (id, repo, patch)
+364:              VALUES (?1, ?2, ?3)
+365:              ON CONFLICT DO UPDATE
+366:              SET patch = (?3)",
+367:         )?;
+368: 
+369:         stmt.bind((1, sql::Value::String(id.to_string())))?;
+370:         stmt.bind((2, rid))?;
+371:         stmt.bind((3, sql::Value::String(serde_json::to_string(&object)?)))?;
+372:         stmt.next()?;
+373: 
+374:         Ok(self.db.change_count() > 0)
+375:     }
+376: }
+
+### vendor/heartwood/crates/radicle/src/cob/patch/cache.rs:447-476
+447: impl<'a, Repo, Access> Patches for Cache<'a, Repo, Access, StoreReader>
+448: where
+449:     Repo: HasRepoId,
+450: {
+451:     type Error = Error;
+452:     type Iter<'b>
+453:         = PatchesIter<'b>
+454:     where
+455:         Self: 'b;
+456: 
+457:     fn get(&self, id: &PatchId) -> Result<Option<Patch>, Self::Error> {
+458:         query::get(&self.cache.db, &self.rid(), id)
+459:     }
+460: 
+461:     fn find_by_revision(&self, id: &RevisionId) -> Result<Option<ByRevision>, Error> {
+462:         query::find_by_revision(&self.cache.db, &self.rid(), id)
+463:     }
+464: 
+465:     fn list(&self) -> Result<Self::Iter<'_>, Self::Error> {
+466:         query::list(&self.cache.db, &self.rid())
+467:     }
+468: 
+469:     fn list_by_status(&self, status: &Status) -> Result<Self::Iter<'_>, Self::Error> {
+470:         query::list_by_status(&self.cache.db, &self.rid(), status)
+471:     }
+472: 
+473:     fn counts(&self) -> Result<PatchCounts, Self::Error> {
+474:         query::counts(&self.cache.db, &self.rid())
+475:     }
+476: }
+
+### vendor/heartwood/crates/radicle/src/cob/patch/cache.rs:540-573
+540: impl<'a, Repo, Access> Patches for Cache<'a, Repo, Access, StoreWriter>
+541: where
+542:     Repo: HasRepoId + cob::Store<Namespace = crate::crypto::RepositoryKey>,
+543:     Access: store::access::Access,
+544: {
+545:     type Error = Error;
+546:     type Iter<'b>
+547:         = PatchesIter<'b>
+548:     where
+549:         Self: 'b;
+550: 
+551:     fn get(&self, id: &PatchId) -> Result<Option<Patch>, Self::Error> {
+552:         query::get(&self.cache.db, &self.rid(), id)
+553:     }
+554: 
+555:     fn find_by_revision(&self, id: &RevisionId) -> Result<Option<ByRevision>, Error> {
+556:         query::find_by_revision(&self.cache.db, &self.rid(), id)
+557:     }
+558: 
+559:     fn list(&self) -> Result<Self::Iter<'_>, Self::Error> {
+560:         query::list(&self.cache.db, &self.rid())
+561:     }
+562: 
+563:     fn list_by_status(&self, status: &Status) -> Result<Self::Iter<'_>, Self::Error> {
+564:         query::list_by_status(&self.cache.db, &self.rid(), status)
+565:     }
+566: 
+567:     fn counts(&self) -> Result<PatchCounts, Self::Error> {
+568:         query::counts(&self.cache.db, &self.rid())
+569:     }
+570: }
+571: 
+572: /// Helper SQL queries for [ `Patches`] trait implementations.
+573: mod query {
+
+### vendor/heartwood/crates/radicle/src/cob/issue/cache.rs:468-520
+468: impl<'a, Repo, Access> Issues for Cache<'a, Repo, Access, StoreWriter>
+469: where
+470:     Repo: HasRepoId,
+471: {
+472:     type Error = Error;
+473:     type Iter<'b>
+474:         = IssuesIter<'b>
+475:     where
+476:         Self: 'b;
+477: 
+478:     fn get(&self, id: &IssueId) -> Result<Option<Issue>, Self::Error> {
+479:         query::get(&self.cache.db, &self.rid(), id)
+480:     }
+481: 
+482:     fn list(&self) -> Result<Self::Iter<'_>, Self::Error> {
+483:         query::list(&self.cache.db, &self.rid())
+484:     }
+485: 
+486:     fn list_by_status(&self, status: &State) -> Result<Self::Iter<'_>, Self::Error> {
+487:         query::list_by_status(&self.cache.db, &self.rid(), status)
+488:     }
+489: 
+490:     fn counts(&self) -> Result<IssueCounts, Self::Error> {
+491:         query::counts(&self.cache.db, &self.rid())
+492:     }
+493: }
+494: 
+495: impl<'a, Repo, Access> Issues for Cache<'a, Repo, Access, StoreReader>
+496: where
+497:     Repo: HasRepoId,
+498: {
+499:     type Error = Error;
+500:     type Iter<'b>
+501:         = IssuesIter<'b>
+502:     where
+503:         Self: 'b;
+504: 
+505:     fn get(&self, id: &IssueId) -> Result<Option<Issue>, Self::Error> {
+506:         query::get(&self.cache.db, &self.rid(), id)
+507:     }
+508: 
+509:     fn list(&self) -> Result<Self::Iter<'_>, Self::Error> {
+510:         query::list(&self.cache.db, &self.rid())
+511:     }
+512: 
+513:     fn list_by_status(&self, status: &State) -> Result<Self::Iter<'_>, Self::Error> {
+514:         query::list_by_status(&self.cache.db, &self.rid(), status)
+515:     }
+516: 
+517:     fn counts(&self) -> Result<IssueCounts, Self::Error> {
+518:         query::counts(&self.cache.db, &self.rid())
+519:     }
+520: }
+
+### vendor/heartwood/crates/radicle/src/profile.rs:789-856
+789:     pub fn issues<'a, Repo>(
+790:         &self,
+791:         repository: &'a Repo,
+792:     ) -> Result<cob::issue::Cache<'a, Repo, ReadOnly, cob::cache::StoreReader>, Error>
+793:     where
+794:         Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
+795:     {
+796:         let db = self.cobs_db()?;
+797: 
+798:         let store = cob::issue::Issues::open(repository, ReadOnly)?;
+799: 
+800:         db.check_version()?;
+801: 
+802:         Ok(cob::issue::Cache::reader(store, db))
+803:     }
+804: 
+805:     /// Return a read-write handle for the issues cache.
+806:     pub fn issues_mut<'a, 'b, Repo, Signer: crypto::Signer>(
+807:         &self,
+808:         repository: &'a Repo,
+809:         signer: &'b Signer,
+810:     ) -> Result<cob::issue::Cache<'a, Repo, WriteAs<'b, Signer>, cob::cache::StoreWriter>, Error>
+811:     where
+812:         Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
+813:     {
+814:         let db = self.cobs_db_mut()?;
+815:         let store = cob::issue::Issues::open(repository, WriteAs::new(signer))?;
+816: 
+817:         db.check_version()?;
+818: 
+819:         Ok(cob::issue::Cache::open(store, db))
+820:     }
+821: 
+822:     /// Return a read-only handle for the patches cache.
+823:     pub fn patches<'a, Repo>(
+824:         &self,
+825:         repository: &'a Repo,
+826:     ) -> Result<cob::patch::Cache<'a, Repo, ReadOnly, cob::cache::StoreReader>, Error>
+827:     where
+828:         Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
+829:     {
+830:         let db = self.cobs_db()?;
+831:         let store = cob::patch::Patches::open(repository, ReadOnly)?;
+832: 
+833:         db.check_version()?;
+834: 
+835:         Ok(cob::patch::Cache::reader(store, db))
+836:     }
+837: 
+838:     /// Return a read-write handle for the patches cache.
+839:     pub fn patches_mut<'a, 'b, Repo, Signer: crypto::Signer>(
+840:         &self,
+841:         repository: &'a Repo,
+842:         signer: &'b Signer,
+843:     ) -> Result<cob::patch::Cache<'a, Repo, WriteAs<'b, Signer>, cob::cache::StoreWriter>, Error>
+844:     where
+845:         Repo: ReadRepository + cob::Store<Namespace = crate::crypto::RepositoryKey>,
+846:     {
+847:         let db = self.cobs_db_mut()?;
+848:         let store = cob::patch::Patches::open(repository, WriteAs::new(signer))?;
+849: 
+850:         db.check_version()?;
+851: 
+852:         Ok(cob::patch::Cache::open(store, db))
+853:     }
+854: }
+855: 
+856: // Private methods.
+
+### vendor/heartwood/crates/radicle-fetch/src/state.rs:585-693
+585:                             // We see signed references for this non-delegate for the first time.
+586:                         }
+587:                     }
+588: 
+589:                     let cache = self.as_cached(handle);
+590:                     if let Some(warns) = sigrefs::validate(&cache, refs)?.as_mut() {
+591:                         log::debug!(
+592:                             "Pruning non-delegate {remote} tips, due to validation failures"
+593:                         );
+594:                         self.prune(&remote);
+595:                         failures.append(warns);
+596:                     } else {
+597:                         remotes.insert(remote);
+598:                     }
+599:                 }
+600:                 (Ok(Some(refs)), true) => {
+601:                     let level_reachable = refs.feature_level();
+602: 
+603:                     match SignedRefs::load(remote, handle.repository()) {
+604:                         Ok(Some(SignedRefs { at, .. })) => {
+605:                             let ancestry = repository::ancestry(handle.repository(), at, refs.at)?;
+606:                             if matches!(ancestry, repository::Ancestry::Behind) {
+607:                                 log::trace!(
+608:                                     "Advertised `rad/sigrefs` {} is behind {at} for {remote}",
+609:                                     refs.at
+610:                                 );
+611:                                 self.prune(&remote);
+612:                                 continue;
+613:                             } else if matches!(ancestry, repository::Ancestry::Diverged) {
+614:                                 return Err(error::Protocol::Diverged {
+615:                                     remote: Box::new(remote),
+616:                                     current: at,
+617:                                     received: refs.at,
+618:                                 });
+619:                             }
+620:                         }
+621:                         Err(radicle::storage::refs::sigrefs::read::error::Read::Downgrade {
+622:                             levels,
+623:                             actual,
+624:                             ..
+625:                         }) => {
+626:                             let level_required = levels.max();
+627:                             if level_reachable >= level_required {
+628:                                 log::info!(
+629:                                     "Delegate {remote} has downgraded history, currently stuck at '{actual}', expects to be upgraded to '{level_required}' and will be upgraded to '{level_reachable}'."
+630:                                 )
+631:                             } else {
+632:                                 log::info!(
+633:                                     "Delegate {remote} has downgraded history, currently stuck at '{actual}', expects to be upgraded to '{level_required}' but only level '{level_reachable}' was advertised."
+634:                                 );
+635:                                 self.prune(&remote);
+636:                                 continue;
+637:                             }
+638:                         }
+639:                         Err(err) => return Err(error::Protocol::Refs(err)),
+640:                         Ok(None) => {
+641:                             // We see signed references for this delegate for the first time.
+642:                         }
+643:                     }
+644: 
+645:                     let cache = self.as_cached(handle);
+646:                     let mut fails =
+647:                         sigrefs::validate(&cache, refs)?.unwrap_or(Validations::default());
+648:                     if !fails.is_empty() {
+649:                         log::debug!("Pruning delegate {remote} tips, due to validation failures");
+650:                         self.prune(&remote);
+651:                         valid_delegates.remove(&remote);
+652:                         failed_delegates.insert(remote);
+653:                         failures.append(&mut fails)
+654:                     } else {
+655:                         valid_delegates.insert(remote);
+656:                         remotes.insert(remote);
+657:                     }
+658: 
+659:                     if level_reachable < FeatureLevel::LATEST {
+660:                         log::warn!(
+661:                             "Delegate {remote} is on feature level '{level_reachable}' which is lower than '{}', they should consider upgrading Radicle.",
+662:                             FeatureLevel::LATEST
+663:                         )
+664:                     }
+665:                 }
+666:             }
+667:         }
+668:         log::debug!(
+669:             "Validated {} remote(s) ({}ms)",
+670:             remotes.len(),
+671:             start.elapsed().as_millis()
+672:         );
+673: 
+674:         // N.b. only apply to Git repository if there are enough valid
+675:         // delegates that pass the threshold.
+676:         if valid_delegates.len() >= threshold {
+677:             let applied = repository::update(
+678:                 handle.repository(),
+679:                 self.tips
+680:                     .clone()
+681:                     .into_values()
+682:                     .flat_map(|ups| ups.into_iter()),
+683:             )?;
+684:             log::debug!("Applied updates ({}ms)", start.elapsed().as_millis());
+685:             Ok(FetchResult::Success {
+686:                 applied,
+687:                 remotes,
+688:                 validations: failures,
+689:             })
+690:         } else {
+691:             log::debug!(
+692:                 "Fetch failed: {} failure(s) ({}ms)",
+693:                 failures.len(),
+
+### vendor/heartwood/crates/radicle-fetch/src/state.rs:823-879
+823: 
+824: impl<R, S> ValidateRepository for Cached<'_, R, S>
+825: where
+826:     R: AsRef<Repository>,
+827: {
+828:     // N.b. we don't verify the `rad/id` of each remote since they may
+829:     // not have a reference to the COB if they have not interacted
+830:     // with it.
+831:     fn validate_remote(&self, remote: &Remote) -> Result<Validations, storage::Error> {
+832:         // Contains a copy of the signed refs of this remote.
+833:         let mut signed = BTreeMap::from((*remote.refs).clone());
+834:         let mut validations = Validations::default();
+835:         let mut has_sigrefs = false;
+836: 
+837:         // Check all repository references, making sure they are present in the signed refs map.
+838:         for (refname, oid) in self.state.refs.references_of(&remote.id()) {
+839:             // Skip validation of the signed refs branch, as it is not part of `Remote`.
+840:             if refname == storage::refs::SIGREFS_BRANCH.to_ref_string() {
+841:                 has_sigrefs = true;
+842:                 continue;
+843:             }
+844:             if let Some(signed_oid) = signed.remove(&refname) {
+845:                 if oid != signed_oid {
+846:                     validations.push(Validation::MismatchedRef {
+847:                         remote: remote.id(),
+848:                         refname,
+849:                         expected: signed_oid,
+850:                         actual: oid,
+851:                     });
+852:                 }
+853:             } else {
+854:                 validations.push(Validation::UnsignedRef(refname));
+855:             }
+856:         }
+857: 
+858:         if !has_sigrefs {
+859:             validations.push(Validation::MissingRadSigRefs(remote.id()));
+860:         }
+861: 
+862:         // The refs that are left in the map, are ones that were signed, but are not
+863:         // in the repository. If any are left, bail.
+864:         for (name, _) in signed.into_iter() {
+865:             validations.push(Validation::MissingRef {
+866:                 refname: name,
+867:                 remote: remote.id(),
+868:             });
+869:         }
+870: 
+871:         Ok(validations)
+872:     }
+873: }
+
+### vendor/heartwood/crates/radicle/src/storage/git.rs:698-738
+698: impl ValidateRepository for Repository {
+699:     fn validate_remote(&self, remote: &Remote) -> Result<Validations, Error> {
+700:         // Contains a copy of the signed refs of this remote.
+701:         let mut signed = BTreeMap::from((*remote.refs).clone());
+702:         let mut failures = Validations::default();
+703:         let mut has_sigrefs = false;
+704: 
+705:         // Check all repository references, making sure they are present in the signed refs map.
+706:         for (refname, oid) in self.references_of(&remote.id())? {
+707:             // Skip validation of the signed refs branch, as it is not part of `Remote`.
+708:             if refname == refs::SIGREFS_BRANCH.to_ref_string() {
+709:                 has_sigrefs = true;
+710:                 continue;
+711:             }
+712:             if let Some(signed_oid) = signed.remove(&refname) {
+713:                 if oid != signed_oid {
+714:                     failures.push(Validation::MismatchedRef {
+715:                         remote: remote.id(),
+716:                         refname,
+717:                         expected: signed_oid,
+718:                         actual: oid,
+719:                     });
+720:                 }
+721:             } else {
+722:                 failures.push(Validation::UnsignedRef(refname));
+723:             }
+724:         }
+725: 
+726:         if !has_sigrefs {
+727:             failures.push(Validation::MissingRadSigRefs(remote.id()));
+728:         }
+729: 
+730:         // The refs that are left in the map, are ones that were signed, but are not
+731:         // in the repository. If any are left, bail.
+732:         if let Some((name, _)) = signed.into_iter().next() {
+733:             failures.push(Validation::MissingRef {
+734:                 refname: name,
+735:                 remote: remote.id(),
+736:             });
+737:         }
+738: 
+
+### vendor/heartwood/crates/radicle-cli/src/commands/cob.rs:356-380
+356: 
+357: fn operations<A>(
+358:     typename: &cob::TypeName,
+359:     oid: cob::ObjectId,
+360:     from: Option<git::Oid>,
+361:     until: Option<git::Oid>,
+362:     repo: &storage::git::Repository,
+363:     format: Format,
+364: ) -> anyhow::Result<()>
+365: where
+366:     A: serde::Serialize,
+367:     A: for<'de> serde::Deserialize<'de>,
+368: {
+369:     let history = cob::stream::CobRange::new(typename, &oid);
+370:     let stream = cob::stream::Stream::<A>::new(&repo.backend, history, typename.clone());
+371:     let iter = match (from, until) {
+372:         (None, None) => stream.all()?,
+373:         (None, Some(until)) => stream.until(until)?,
+374:         (Some(from), None) => stream.since(from)?,
+375:         (Some(from), Some(until)) => stream.range(from, until)?,
+376:     };
+377: 
+378:     // Reverse
+379:     let iter = iter.collect::<Vec<_>>().into_iter().rev();
+380: 
+
+### vendor/heartwood/crates/radicle-cob/src/object/collaboration/update.rs:108-132
+108:     let head = entry.id;
+109:     let parents = entry.parents.to_vec();
+110: 
+111:     // Try to apply this change to our object. This prevents storing invalid updates.
+112:     // Note that if this returns with an error, we are left with an unreachable
+113:     // commit object created above. This is fine, as it will eventually get
+114:     // garbage-collected by Git.
+115:     object
+116:         .object
+117:         .apply(&entry, iter::empty(), storage)
+118:         .map_err(error::Update::evaluate)?;
+119:     object.history.extend(entry);
+120: 
+121:     // Here we actually update the references to point to the new update.
+122:     storage
+123:         .update(identifier, typename, &object_id, &head)
+124:         .map_err(|err| error::Update::Refs { err: Box::new(err) })?;
+125: 
+126:     Ok(Updated {
+127:         object,
+128:         head,
+129:         parents,
+130:     })
+131: }
+
+### plans/radicle-patch-vote/design.md:25-39
+25: validating Outbe node. Внутри Heartwood нет ветки `if Vote Approved` или OutbeNetwork DID.
+26: 
+27: Policy gate охватывает **действия managed owner**, включая их использование через
+28: чужой namespace, при local writes, fetch, identity/refs promotion и чтении/rebuild cache.
+29: Обычный Ed25519 автор может создать, изменить и реплицировать patch/revision до Vote:
+30: его собственные COB entries и sigrefs проходят existing native signature/authorization
+31: правила без publication checkpoint. Они доступны evaluator и exact revision lookup.
+32: Это не разрешает автору подписываться за owner, менять delegate identity/owner refs
+33: или включать неразрешённые owner entries как родителей своего COB. Каждая reachable
+34: owner-signed entry требует exact accepted receipt независимо от доставившего namespace.
+35: Смешанный graph проверяется по entry, не по внешнему transport/remote key; чужая ссылка
+36: на forged owner Review/Merge не легализует его. Неразрешённые owner entries и зависимые
+37: updates quarantined; чистые author updates не блокируются. Кэш хранит receipt provenance
+38: owner entries; direct lookup, reopen и rebuild применяют тот же predicate до evaluation.
+39: Нельзя проверить только честный collector: получатель с пустым storage обязан применять
+
+### plans/radicle-patch-vote/design.md:319-351
+319: Новый canonical write публикуется **после** finality этого checkpoint. Receiver Outbe
+320: adapter читает receipt из exact finalized state своего node и передаёт Heartwood ticket
+321: для exact manifest/expected previous refs. Gate повторно проверяет ticket при CAS/promotion.
+322: Удалённый peer не может создать ticket; missing/mismatched proof/cache entry fail closed.
+323: Ticket/cache содержит finalized block hash и монотонный receipt sequence; conflicting
+324: block hash на принятой finalized высоте локально запрещает managed writes.
+325: Archive и Promote различаются: старый accepted receipt разрешает immutable historical
+326: objects, но не rollback canonical refs. Promote принимает только latest committed
+327: complete signed refs snapshot из exact trusted view, с sequence не меньше локального
+328: принятого. Fresh/lagging receiver может установить latest snapshot после проверки его
+329: полного reachable object closure и receipts, не проигрывая все промежуточные ref deltas.
+330: Local CAS сравнивает actual local refs root, захваченный перед install; global previous
+331: receipt hash остаётся precondition chain execution, а не требованием, что локальная
+332: реплика уже была на этом predecessor. Same-sequence different snapshot запрещён.
+333: До получения latest snapshot реплика не объявляется current/ready для signing.
+334: 
+335: ### Security argument и границы гарантии
+336: 
+337: - Stale group signature сама по себе остаётся valid, что подтверждает executable check.
+338: - Для нового checkpoint нужны q **current identity** keys. Старые identity keys или
+339:   self-asserted current list не проходят state-derived mapping. При ≤f current Byzantine
+340:   каждый accepted quorum содержит honest participants, проверивших exact approved package
+341:   и current partials. Подделка публикации требует нарушения BLS/ECDLP/hash assumptions
+342:   либо компрометации достаточного current quorum; постоянный owner scalar сам по себе
+343:   такого права не даёт.
+344: - Certificate, собранный до membership transition, но включённый после, stale и не
+345:   создаёт receipt. Пересборка использует новую generation и то же неизменяемое approval.
+346: - Checkpoint, принятый **до** transition, является уже разрешённой историей: его точный
+347:   package можно доставить позднее. Это не новая операция retired participants. Любое
+348:   изменение package/sequence/prev hash требует нового current quorum.
+349: - Историческая проверка читает immutable chain receipt/commitments и native signatures;
+350:   она не принимает произвольные backdated certificates от old quorum. Cached crypto-valid
+351:   objects без receipt не повышаются до authoritative history.

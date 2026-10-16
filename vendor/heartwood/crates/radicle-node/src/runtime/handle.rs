@@ -14,7 +14,7 @@ use uds_windows::UnixStream;
 use protocol::service;
 use protocol::service::QueryState;
 use protocol::wire::StreamId;
-use radicle::crypto::PublicKey;
+use radicle::crypto::RepositoryKey as PublicKey;
 use radicle::identity::RepoId;
 use radicle::node::events::{Event, Events};
 use radicle::node::policy;

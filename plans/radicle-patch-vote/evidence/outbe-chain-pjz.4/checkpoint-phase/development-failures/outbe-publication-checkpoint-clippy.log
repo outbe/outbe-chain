@@ -1,0 +1,25 @@
+    Checking outbe-primitives v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/primitives)
+    Checking outbe-ocomp-protocol v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/ocomp-protocol)
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+    Checking outbe-consensus v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/consensus)
+    Checking outbe-chain-constants v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/constants)
+    Checking outbe-validatorset v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/validatorset)
+    Checking outbe-vote v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/vote)
+    Checking outbe-radicleregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/radicleregistry)
+error: useless conversion to the same type: `u64`
+   --> crates/system/radicleregistry/src/publication.rs:265:21
+    |
+265 | /                     ValidatorSet::new(self.storage.clone())
+266 | |                         .epoch_snapshot()?
+267 | |                         .start_block
+268 | |                         .try_into()
+    | |___________________________________^
+    |
+    = help: consider removing `.try_into()`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#useless_conversion
+    = note: `-D clippy::useless-conversion` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::useless_conversion)]`
+
+error: could not compile `outbe-radicleregistry` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `outbe-radicleregistry` (lib test) due to 1 previous error

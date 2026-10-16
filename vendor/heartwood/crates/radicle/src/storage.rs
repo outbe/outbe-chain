@@ -1,4 +1,5 @@
 pub mod git;
+pub mod publication;
 pub mod refs;
 
 use std::collections::{HashSet, hash_map};
@@ -11,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use crate::git::Oid;
-use crypto::PublicKey;
+use crypto::RepositoryKey as PublicKey;
 pub use git::{Validation, Validations};
 
 use crate::cob;
@@ -35,7 +36,7 @@ pub enum SignedRefsInfo {
     /// Repositories with this set to `None` are ones that are seeded but not forked.
     None,
     /// Local signed refs, if any.
-    Some(refs::SignedRefs),
+    Some(Box<refs::SignedRefs>),
     NeedsMigration,
 }
 
@@ -47,7 +48,7 @@ impl SignedRefsInfo {
             Ok(Some(refs))
                 if refs.feature_level() >= FeatureLevel::LATEST && refs.parent().is_some() =>
             {
-                SignedRefsInfo::Some(refs)
+                SignedRefsInfo::Some(Box::new(refs))
             }
             Ok(Some(_)) => SignedRefsInfo::NeedsMigration,
             Ok(None) => SignedRefsInfo::None,
@@ -65,7 +66,7 @@ pub struct RepositoryInfo {
     /// Repository identifier.
     pub rid: RepoId,
     /// Head of default branch.
-    pub head: Oid,
+    pub head: Option<Oid>,
     /// Identity document.
     pub doc: Doc,
     /// Information about local signed references.
@@ -182,6 +183,8 @@ impl RepositoryError {
 /// Storage error.
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error(transparent)]
+    Publication(#[from] publication::Error),
     #[error("invalid git reference")]
     InvalidRef,
     #[error("identity doc: {0}")]
@@ -230,7 +233,7 @@ pub enum FetchError {
     Repository(#[from] RepositoryError),
 }
 
-pub type RemoteId = PublicKey;
+pub type RemoteId = crypto::RepositoryKey;
 
 /// An update to a reference.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -483,11 +486,37 @@ pub trait WriteStorage: ReadStorage {
 /// Anything can return the [`RepoId`] that it is associated with.
 pub trait HasRepoId {
     fn rid(&self) -> RepoId;
+    fn authorize_entry(
+        &self,
+        authority: crypto::RepositoryKey,
+        entry: Oid,
+        kind: crypto::SubjectKind,
+    ) -> Result<publication::EntryAuthorization, publication::Error> {
+        if authority.as_ed25519().is_none() {
+            return Err(publication::Error::Unavailable);
+        }
+        Ok(publication::EntryAuthorization::native(
+            publication::EntryRequest {
+                repository: self.rid(),
+                authority,
+                entry,
+                kind,
+            },
+        ))
+    }
 }
 
 impl<T: ReadRepository> HasRepoId for T {
     fn rid(&self) -> RepoId {
         ReadRepository::id(self)
+    }
+    fn authorize_entry(
+        &self,
+        authority: crypto::RepositoryKey,
+        entry: Oid,
+        kind: crypto::SubjectKind,
+    ) -> Result<publication::EntryAuthorization, publication::Error> {
+        ReadRepository::authorize_entry(self, authority, entry, kind)
     }
 }
 
@@ -495,6 +524,25 @@ impl<T: ReadRepository> HasRepoId for T {
 pub trait ReadRepository: Sized + ValidateRepository {
     /// Return the repository id.
     fn id(&self) -> RepoId;
+
+    fn authorize_entry(
+        &self,
+        authority: crypto::RepositoryKey,
+        entry: Oid,
+        kind: crypto::SubjectKind,
+    ) -> Result<publication::EntryAuthorization, publication::Error> {
+        if authority.as_ed25519().is_none() {
+            return Err(publication::Error::Unavailable);
+        }
+        Ok(publication::EntryAuthorization::native(
+            publication::EntryRequest {
+                repository: self.id(),
+                authority,
+                entry,
+                kind,
+            },
+        ))
+    }
 
     /// Returns `true` if there are no references in the repository.
     fn is_empty(&self) -> Result<bool, crate::git::raw::Error>;
@@ -521,7 +569,8 @@ pub trait ReadRepository: Sized + ValidateRepository {
     fn head(&self) -> Result<(Qualified<'_>, Oid), RepositoryError>;
 
     /// Gets the qualified reference name of the default branch of self,
-    /// according to the project payload in the identity document.
+    /// according to the identity document.
+    #[deprecated]
     fn default_branch(&self) -> Result<Qualified<'_>, RepositoryError> {
         Ok(self.identity_doc()?.default_branch()?.to_owned())
     }
@@ -544,9 +593,6 @@ pub trait ReadRepository: Sized + ValidateRepository {
 
     /// Get the root commit of the canonical identity branch.
     fn identity_root(&self) -> Result<Oid, RepositoryError>;
-
-    /// Get the root commit of the identity branch of a specific remote.
-    fn identity_root_of(&self, remote: &RemoteId) -> Result<Oid, RepositoryError>;
 
     /// Load the identity history.
     fn identity(&self) -> Result<Identity, RepositoryError>

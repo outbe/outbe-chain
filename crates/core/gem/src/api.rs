@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{first_full_day, timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::{timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::schema::{
@@ -26,7 +26,6 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         owner: params.owner,
         gem_type: params.gem_type,
         promis_load_minor: params.promis_load_minor,
-        floor_price_minor: params.floor_price_minor,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
         issued_at: params.issued_at,
@@ -133,20 +132,7 @@ pub fn balance_of(storage: &StorageHandle<'_>, owner: Address) -> Result<u32> {
 
 /// One owner's gems, with the block's own mutations folded in.
 pub fn list_by_owner(storage: &StorageHandle<'_>, owner: Address) -> Result<Vec<GemItemState>> {
-    GemContract::new(storage.clone())
-        .state_records(owner)
-        .map(|records| records.into_iter().map(Into::into).collect())
-}
-
-/// A gem is qualified once a finalized daily VWAP closed above its own floor. A zero
-/// floor clears on the first eligible full day, because every positive price exceeds it.
-pub fn is_qualified(storage: &StorageHandle<'_>, item: &GemItemState) -> Result<bool> {
-    outbe_oracle::api::closed_above_floor(
-        storage.clone(),
-        item.reference_currency,
-        item.floor_price_minor,
-        first_full_day(item.issued_at),
-    )
+    GemContract::new(storage.clone()).state_records(owner)
 }
 
 /// Timestamp by which a called bucket must be settled, or `0` while it is not called.

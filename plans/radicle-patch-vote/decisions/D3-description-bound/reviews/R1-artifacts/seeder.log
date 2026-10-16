@@ -1,0 +1,4 @@
+description_bytes=255 seeder_accepts=True descriptor_bytes=352
+description_bytes=256 seeder_accepts=True descriptor_bytes=353
+description_bytes=1024 seeder_accepts=True descriptor_bytes=1121
+description_bytes=1025 seeder_accepts=False error=governments description exceeds 1024 UTF-8 bytes storage_empty=True

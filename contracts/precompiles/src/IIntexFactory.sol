@@ -11,8 +11,8 @@ pragma solidity ^0.8.30;
 interface IIntexFactory {
     /// @notice Settle `units` Issued Intexes of `seriesId` held by
     ///         `owner`, paying the cost in `asset`. Any caller may pay. The
-    ///         settled units stay with the owner. Allowed once qualified (voluntary,
-    ///         see `IIntex.isQualified`) and once called (forced, until the deadline).
+    ///         settled units stay with the owner. Allowed while uncalled (voluntary)
+    ///         and once called (forced, until the deadline).
     /// @dev Approve IntexFactory for the `quoteSettlement` amount before calling.
     ///      Payment is deposited into the reserve vault through VaultRouter.
     /// @param asset Token registered with the vault router under either of the
@@ -34,10 +34,6 @@ interface IIntexFactory {
         external
         view
         returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
-
-    /// @notice The origin's `IVwapSource`: the highest finalized daily VWAP from `fromUtcDay`
-    ///         on, 0 when none.
-    function maxUtcDayVwapSince(uint16 isoCode, uint32 fromUtcDay) external view returns (uint256);
 
     /// @notice Burn settled Intexes and mint confidential Promis, gated by
     ///         off-chain proof of work. Any caller may submit. The units burn from
@@ -78,7 +74,9 @@ interface IIntexFactory {
     function ownerBalances(bytes14 seriesId, address owner) external view returns (OwnerBalances memory);
 
     /// @notice A new series was created from a cleared auction.
-    event IntexSeriesIssued(bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPriceMinor);
+    event IntexSeriesIssued(
+        bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPriceMinor, uint256 callPriceMinor
+    );
 
     /// @notice `units` Issued Intexes of `seriesId` were settled.
     event IntexSettled(bytes14 indexed seriesId, address indexed owner, uint256 units);

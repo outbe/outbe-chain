@@ -1,7 +1,6 @@
 use crate::errors::GemError;
 use crate::precompile::IGem;
 use crate::schema::{CallTerms, GemBucketState, GemContract, GemItemState};
-use crate::storage_records::{StoredGem, StoredGemBucket};
 use crate::GemState;
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
@@ -12,26 +11,26 @@ use outbe_primitives::{
 
 pub struct LoadedGem {
     body: GemItemState,
-    current: StoredGem,
+    current: GemItemState,
 }
 impl LoadedGem {
     pub const fn body(&self) -> &GemItemState {
         &self.body
     }
-    pub(crate) fn into_parts(self) -> (GemItemState, StoredGem) {
+    pub(crate) fn into_parts(self) -> (GemItemState, GemItemState) {
         (self.body, self.current)
     }
 }
 
 pub struct LoadedGemBucket {
     body: GemBucketState,
-    current: StoredGemBucket,
+    current: GemBucketState,
 }
 impl LoadedGemBucket {
     pub const fn body(&self) -> &GemBucketState {
         &self.body
     }
-    pub(crate) fn into_parts(self) -> (GemBucketState, StoredGemBucket) {
+    pub(crate) fn into_parts(self) -> (GemBucketState, GemBucketState) {
         (self.body, self.current)
     }
 }
@@ -43,7 +42,7 @@ pub fn load_item(storage: &StorageHandle<'_>, id: WwdEntityId) -> Result<Option<
         .get(id)?
         .map(|current| {
             Ok(LoadedGem {
-                body: current.clone().into(),
+                body: current.clone(),
                 current,
             })
         })
@@ -56,7 +55,7 @@ pub fn load_bucket(storage: &StorageHandle<'_>, key: B256) -> Result<Option<Load
         .get(key)?
         .map(|current| {
             Ok(LoadedGemBucket {
-                body: current.clone().into(),
+                body: current.clone(),
                 current,
             })
         })
@@ -93,8 +92,8 @@ pub fn remove_item(
 fn check_loaded(
     contract: &GemContract<'_>,
     item: &GemItemState,
-    current: &StoredGem,
-    bucket: &StoredGemBucket,
+    current: &GemItemState,
+    bucket: &GemBucketState,
 ) -> Result<()> {
     if item.bucket_key != bucket.bucket_key
         || contract.records.get(item.gem_id)?.as_ref() != Some(current)
@@ -158,7 +157,7 @@ impl GemContract<'_> {
         self.insert_bucket_member(bucket_key, item.gem_id.to_u256())?;
         self.insert_state_record(item)?;
         if let Some(bucket) = new_bucket {
-            self.buckets.create(&StoredGemBucket::from(&bucket))?;
+            self.buckets.create(&bucket)?;
         }
         self.emit(IGem::Transfer {
             from: Address::ZERO,
@@ -183,7 +182,7 @@ impl GemContract<'_> {
         item.settled_at = self.storage.timestamp()?.to::<u64>();
         item.state = GemState::Settled as u8;
         self.records.update(&item)?;
-        self.buckets.update(&StoredGemBucket::from(&bucket))?;
+        self.buckets.update(&bucket)?;
         self.emit(IGem::MetadataUpdate {
             _tokenId: item.gem_id.to_u256(),
         })
@@ -217,7 +216,7 @@ impl GemContract<'_> {
             self.close_bucket(item.bucket_key)?;
             self.buckets.delete(bucket.bucket_key)?;
         } else if item.is_settled() {
-            self.buckets.update(&StoredGemBucket::from(&bucket))?;
+            self.buckets.update(&bucket)?;
         }
         self.emit(IGem::Transfer {
             from: item.owner,
@@ -242,7 +241,6 @@ mod tests {
                 owner: Address::repeat_byte(1),
                 gem_type: 0,
                 promis_load_minor: U256::from(5_000_000),
-                floor_price_minor: U256::ZERO,
                 issuance_currency: 840,
                 reference_currency: 840,
                 issued_at: day.start_timestamp(),
@@ -295,7 +293,6 @@ mod tests {
                 owner: Address::ZERO,
                 gem_type: 0,
                 promis_load_minor: U256::from(5_000_000),
-                floor_price_minor: U256::ZERO,
                 issuance_currency: 840,
                 reference_currency: 840,
                 issued_at: day.start_timestamp(),

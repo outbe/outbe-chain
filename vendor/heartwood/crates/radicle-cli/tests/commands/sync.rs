@@ -184,7 +184,7 @@ fn test_replication_via_seed() {
     seed.storage
         .repository(rid)
         .unwrap()
-        .remote(&bob.id)
+        .remote(&bob.id.into())
         .unwrap();
 
     // Seed should send Bob's ref announcement to Alice, after the fetch.
@@ -192,6 +192,6 @@ fn test_replication_via_seed() {
         .storage
         .repository(rid)
         .unwrap()
-        .remote(&bob.id)
+        .remote(&bob.id.into())
         .unwrap();
 }

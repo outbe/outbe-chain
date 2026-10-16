@@ -1,0 +1,53 @@
+{
+  "source_sha": "914c6e2a467a23f277b845d85059c3cf8c81dcb8",
+  "base_sha": "e9740b06ee66300ae92ced278da8c0c189d488f6",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4"
+  },
+  "changed_files": [
+    "Cargo.lock",
+    "crates/blockchain/radicle/Cargo.toml",
+    "crates/blockchain/radicle/src/integration/local.rs",
+    "crates/blockchain/radicle/src/integration/local/vote.rs",
+    "crates/blockchain/radicle/src/manager/mod.rs",
+    "crates/blockchain/radicle/src/manager/snapshot.rs",
+    "crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs",
+    "crates/blockchain/radicle/src/manager/snapshot/vote.rs",
+    "crates/blockchain/radicle/src/manager/types.rs"
+  ],
+  "spec_sha256": {
+    "plans/radicle-patch-vote/design.md": "93be4a659ee70b9ac6fdf12d0447ff948b7aa0f6160e9ccf6428ca493dd20025",
+    "plans/radicle-patch-vote/task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+    "plans/radicle-patch-vote/plan.md": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b"
+  },
+  "checks": [
+    {
+      "name": "full-affected-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-radicle-runtime",
+        "--all-targets",
+        "--",
+        "--nocapture"
+      ],
+      "start_utc": "2026-10-16T07:11:31.134717+00:00",
+      "log": "full-affected-tests.log",
+      "end_utc": "2026-10-16T07:11:45.618944+00:00",
+      "exit_code": 101,
+      "sha256": "d5310068816b08e41fa1c60a858bc6ea5e97e0bba6fc1ba1cfa606de0d46280a"
+    }
+  ]
+}

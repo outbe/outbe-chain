@@ -1,0 +1,214 @@
+[
+  {
+    "name": "metadata-heartwood",
+    "argv": [
+      "cargo",
+      "metadata",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "--format-version",
+      "1"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "start_utc": "2026-10-15T11:36:42.597553+00:00",
+    "end_utc": "2026-10-15T11:36:42.843421+00:00",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4"
+    },
+    "unset_env": [],
+    "exit_code": 0,
+    "stdout_sha256": "bd0e06cb97a7938dff34a2836ad10dec8e9043d3547c2062adba2a782297b210",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "local_heartwood_packages": 22,
+    "old_fork_sources": 0
+  },
+  {
+    "name": "fmt-heartwood",
+    "argv": [
+      "cargo",
+      "fmt",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "start_utc": "2026-10-15T11:36:42.856766+00:00",
+    "end_utc": "2026-10-15T11:36:43.349212+00:00",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4"
+    },
+    "unset_env": [],
+    "exit_code": 0,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "name": "standalone-check",
+    "argv": [
+      "cargo",
+      "check",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "-p",
+      "radicle-cli",
+      "-p",
+      "radicle-remote-helper",
+      "--bins"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "start_utc": "2026-10-15T11:36:43.349635+00:00",
+    "end_utc": "2026-10-15T11:36:43.638686+00:00",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4"
+    },
+    "unset_env": [],
+    "exit_code": 0,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "0c27bed0ddbb48eea172769617d880c7f83b7e6a6ba04e5bc4679bea741f1fb2"
+  },
+  {
+    "name": "heartwood-clippy",
+    "argv": [
+      "cargo",
+      "clippy",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "-p",
+      "radicle",
+      "-p",
+      "radicle-node",
+      "-p",
+      "radicle-protocol",
+      "-p",
+      "radicle-cli",
+      "-p",
+      "radicle-remote-helper",
+      "--all-targets",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "start_utc": "2026-10-15T11:36:43.639094+00:00",
+    "end_utc": "2026-10-15T11:36:43.983420+00:00",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4"
+    },
+    "unset_env": [],
+    "exit_code": 0,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "f1d0e587f4eaf9c5f6803d3e9210c0e1b536942252f03191c763f7b78b97cc4a"
+  },
+  {
+    "name": "heartwood-tests",
+    "argv": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "-p",
+      "radicle-protocol",
+      "-p",
+      "radicle-node",
+      "--lib"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "start_utc": "2026-10-15T11:36:43.983853+00:00",
+    "end_utc": "2026-10-15T11:36:54.641993+00:00",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4"
+    },
+    "unset_env": [],
+    "exit_code": 0,
+    "stdout_sha256": "d10e7635f290aa1885ff60bdb5442ae3cc043fed6e301e061362b3cab2e2c442",
+    "stderr_sha256": "46ec5e23f0436446d6cc4325c2f41b624bbeecd5f2ecce7e52975e8db9636122"
+  },
+  {
+    "name": "radicle-tests",
+    "argv": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "-p",
+      "radicle",
+      "--lib"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "start_utc": "2026-10-15T11:36:54.642441+00:00",
+    "end_utc": "2026-10-15T11:37:13.053029+00:00",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4"
+    },
+    "unset_env": [],
+    "exit_code": 0,
+    "stdout_sha256": "abe2007ebc483c4eb928a5deeb288ca685a848ca6d414d4c5a4e98a1b2bcb6a2",
+    "stderr_sha256": "108e8d13a34c049c36ca56fbc2ec86f76ddd02458781f85282f9a6694fc3dfc5"
+  },
+  {
+    "name": "cli-build",
+    "argv": [
+      "cargo",
+      "build",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "-p",
+      "radicle-cli",
+      "-p",
+      "radicle-remote-helper",
+      "--bins"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "start_utc": "2026-10-15T11:37:13.053952+00:00",
+    "end_utc": "2026-10-15T11:37:13.324406+00:00",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4"
+    },
+    "unset_env": [],
+    "exit_code": 0,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "968694eb2dcf057f0b793892b3309e93c43d784f6c9588d49e7b6eeeaad76702"
+  }
+]

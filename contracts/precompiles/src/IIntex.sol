@@ -12,13 +12,12 @@ interface IIntex {
         bytes14 seriesId;
         uint256 promisLoadMinor;
         uint256 entryPriceMinor;
-        uint256 floorPriceMinor;
         uint32 issuedUnits;
         uint32 callWindow;
         uint32 callThreshold;
         uint256 callPriceMinor;
-        /// @notice Read-time state: 0 Issued, 1 Qualified (derived, never stored), 2 Called,
-        ///         3 Expired (a Called series past its notice period).
+        /// @notice Read-time state: 0 Issued, 1 Called, 2 Expired (a Called series past its
+        ///         notice period).
         uint8 state;
         uint32 issuedAt;
         uint32 calledAt;
@@ -39,9 +38,6 @@ interface IIntex {
     /// @notice Full identity + lifecycle record for a series. Reverts if the
     ///         series does not exist.
     function getIntexSeries(bytes14 seriesId) external view returns (SeriesData memory);
-
-    /// @notice Derived from finalized daily VWAPs on every call, never stored.
-    function isQualified(bytes14 seriesId) external view returns (bool);
 
     /// @notice The classes an issued unit can be in. Disjoint: they sum to
     ///         `issuedUnits`. `activeUnits` is what is still unpaid while the series

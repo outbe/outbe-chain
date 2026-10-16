@@ -4,14 +4,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use crypto::PublicKey;
+use crypto::RepositoryKey as PublicKey;
 
 use crate::crypto::ExtendedSignature;
 pub use crate::git;
 use crate::git::fmt;
 
 use crate::identity::doc::{Doc, DocAt, DocError, RawDoc, RepoId};
-use crate::node::NodeId;
 
 pub use crate::storage::*;
 
@@ -100,7 +99,7 @@ impl ReadStorage for MockStorage {
             .iter()
             .map(|(rid, r)| RepositoryInfo {
                 rid: *rid,
-                head: r.head().unwrap().1,
+                head: Some(r.head().unwrap().1),
                 doc: r.doc.clone().into(),
                 refs: SignedRefsInfo::None,
                 synced_at: None,
@@ -134,7 +133,7 @@ impl WriteStorage for MockStorage {
 pub struct MockRepository {
     pub id: RepoId,
     pub doc: DocAt,
-    pub remotes: HashMap<NodeId, refs::SignedRefs>,
+    pub remotes: HashMap<RemoteId, refs::SignedRefs>,
 }
 
 impl MockRepository {
@@ -327,10 +326,6 @@ impl ReadRepository for MockRepository {
         Ok(self.doc.commit)
     }
 
-    fn identity_root_of(&self, _remote: &RemoteId) -> Result<Oid, RepositoryError> {
-        Ok(self.doc.commit)
-    }
-
     fn canonical_identity_head(&self) -> Result<Oid, RepositoryError> {
         Ok(self.doc.commit)
     }
@@ -403,7 +398,7 @@ impl radicle_cob::object::Storage for MockRepository {
     type UpdateError = Infallible;
     type RemoveError = Infallible;
 
-    type Namespace = crypto::PublicKey;
+    type Namespace = crypto::RepositoryKey;
 
     fn objects(
         &self,
@@ -449,8 +444,8 @@ impl radicle_cob::change::Storage for MockRepository {
     type ObjectId = Oid;
     type Parent = Oid;
 
-    type PublicKey = crypto::PublicKey;
-    type Signature = crypto::Signature;
+    type PublicKey = crypto::RepositoryKey;
+    type Signature = radicle_cob::change::EntrySignature;
 
     fn store(
         &self,

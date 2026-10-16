@@ -24,15 +24,35 @@ where
     S: crate::change::Storage<
             ObjectId = crate::object::Oid,
             Parent = crate::object::Oid,
-            PublicKey = crypto::PublicKey,
-            Signature = crypto::Signature,
+            PublicKey = crypto::RepositoryKey,
+            Signature = crate::change::EntrySignature,
         >,
 {
     let tip_refs = storage
         .objects(typename, oid)
         .map_err(|err| error::Retrieve::Refs { err: Box::new(err) })?;
 
-    ChangeGraph::load(storage, tip_refs.iter(), typename, oid)
+    get_at(storage, typename, oid, &tip_refs)
+}
+
+/// Evaluate the existing COB graph at explicitly pinned references.
+pub fn get_at<T, S>(
+    storage: &S,
+    typename: &TypeName,
+    oid: &ObjectId,
+    tips: &crate::object::Objects,
+) -> Result<Option<CollaborativeObject<T>>, error::Retrieve>
+where
+    T: Evaluate<S>,
+    S: crate::object::Storage,
+    S: crate::change::Storage<
+            ObjectId = crate::object::Oid,
+            Parent = crate::object::Oid,
+            PublicKey = crypto::RepositoryKey,
+            Signature = crate::change::EntrySignature,
+        >,
+{
+    ChangeGraph::load(storage, tips.iter(), typename, oid)
         .map(|graph| graph.evaluate(storage).map_err(error::Retrieve::evaluate))
         .transpose()
 }

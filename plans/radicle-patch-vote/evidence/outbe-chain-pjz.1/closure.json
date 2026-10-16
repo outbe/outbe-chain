@@ -1,0 +1,45 @@
+{
+  "task_id": "outbe-chain-pjz.1",
+  "status": "accepted",
+  "review_round": 5,
+  "reviewed_sha": "4139bd9ef23c3320b6ac599c65e6123824131e07",
+  "evidence_sha": "6dcea234af6d9018f1661232490a115f5d0cf77f",
+  "spec_hash": "a0e36f17d4d4f8410f8e6c67668bab71857306569df154b8237b49bf6b172232",
+  "timestamp_utc": "2026-10-15T13:55:43.734600+00:00",
+  "candidate_manifest": "review-candidate-r5.json",
+  "candidate_manifest_sha256": "7c133b279ce218ce84f5b794d5ba49cbca0722c64f866372c7e95c8cd8d13582",
+  "artifact_hashes_verified": 38,
+  "source_paths_verified": 17,
+  "reviews": [
+    {
+      "id": "outbe-chain-pjz.1.1",
+      "reviewer": "/root/p0_review_1",
+      "report": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/reviews/round5/R1.md",
+      "sha256": "88f4be2268bf5fdd053083a42c4d42f83272a2feafe7f5b5c01c0f996927f116",
+      "status": "closed",
+      "verdict": "PASS AC1-AC5",
+      "commands_sha256": "d2755408457a297a85429555d5bf852f50b89607fcca8cfb406a6391a14fd1dd"
+    },
+    {
+      "id": "outbe-chain-pjz.1.2",
+      "reviewer": "/root/p0_review_2",
+      "report": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/reviews/round5/R2.md",
+      "sha256": "cfb9f41189fb61437bf3b2201a15779ac28d3ac0bac030f1bc76cfe6c1bf9fb0",
+      "status": "closed",
+      "verdict": "PASS AC1-AC5",
+      "commands_sha256": "668b0fca36b8e1751779cf772a1ee0a02df9256175e042c82b7a6641507a26ea"
+    },
+    {
+      "id": "outbe-chain-pjz.1.3",
+      "reviewer": "/root/p0_review_3",
+      "report": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/reviews/round5/R3.md",
+      "sha256": "d0e92e6c28f777e58bbb04227e79dfbdb2c6d76d61e537dbcc36b76e090a1171",
+      "status": "closed",
+      "verdict": "PASS AC1-AC5",
+      "commands_sha256": "8db4f35cc89e2a68fd3c170933077079ffb8cbd02bd481cf09be0161a976c299"
+    }
+  ],
+  "verdict": "All five P0 AC PASS, three independent full-AC reviews, no open findings. P1 accepted separately; P2 partial; P3-P8 not implemented.",
+  "candidate_progress_note": "Candidate artifact hashes bind immutable evidence commit; this closure and later progress record subsequent review completion.",
+  "historical_closure": "closure-round4.json; superseded due corrected legacy OID wire contract"
+}

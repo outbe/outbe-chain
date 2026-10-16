@@ -1,5 +1,6 @@
 pub mod frame;
 pub mod message;
+pub mod upgrade;
 pub mod varint;
 
 pub use frame::StreamId;
@@ -18,13 +19,12 @@ use cypheraddr::i2p;
 #[cfg(feature = "tor")]
 use cypheraddr::tor;
 
-use radicle::crypto::{PublicKey, PublicKeyBytes, Signature};
+use radicle::crypto::{PublicKey, PublicKeyBytes, RepositoryKey, Signature};
 use radicle::git;
 use radicle::git::fmt;
 use radicle::identity::RepoId;
 use radicle::node;
 use radicle::node::Alias;
-use radicle::node::NodeId;
 use radicle::node::Timestamp;
 use radicle::node::UserAgent;
 use radicle::storage::refs::Refs;
@@ -81,6 +81,17 @@ pub enum Invalid {
     #[error("invalid info message type: {actual:x}")]
     InfoMessageType { actual: u16 },
 
+    #[error(transparent)]
+    RepositoryKey(#[from] radicle::crypto::repository::Error),
+
+    #[error("invalid repository-key version negotiation")]
+    RepositoryKeyNegotiation,
+    #[error("UnsupportedRepositoryKey: peer has not acknowledged repository key V2")]
+    UnsupportedRepositoryKey,
+
+    #[error("payload length {actual} exceeds limit {limit}")]
+    PayloadSize { actual: u64, limit: usize },
+
     // Protocol version handling
     #[error("invalid protocol version string: {actual:x?}")]
     ProtocolVersion { actual: [u8; 4] },
@@ -118,6 +129,11 @@ pub trait Encode {
     /// Encode self by writing it to the given buffer.
     fn encode(&self, buffer: &mut impl BufMut);
 
+    /// Frame version required by this payload.
+    fn protocol_version(&self) -> u8 {
+        1
+    }
+
     /// A convenience wrapper around [`Encode::encode`]
     /// that allocates a [`Vec`].
     fn encode_to_vec(&self) -> Vec<u8> {
@@ -130,6 +146,11 @@ pub trait Encode {
 /// Things that can be decoded from binary.
 pub trait Decode: Sized {
     fn decode(buffer: &mut impl Buf) -> Result<Self, Error>;
+
+    /// Decode a payload in the enclosing frame version.
+    fn decode_version(buffer: &mut impl Buf, _version: u8) -> Result<Self, Error> {
+        Self::decode(buffer)
+    }
 
     /// A convenience wrapper around [`Decode::decode`] to decode
     /// from a slice exactly.
@@ -495,15 +516,43 @@ impl Decode for filter::Filter {
 }
 
 impl Encode for RefsAt {
+    fn protocol_version(&self) -> u8 {
+        2
+    }
+
     fn encode(&self, buf: &mut impl BufMut) {
-        self.remote.encode(buf);
+        buf.put_slice(&self.remote.to_tagged_bytes());
         self.at.encode(buf);
     }
 }
 
 impl Decode for RefsAt {
+    fn decode_version(buf: &mut impl Buf, version: u8) -> Result<Self, Error> {
+        match version {
+            1 => Ok(Self {
+                remote: PublicKey::decode(buf)?.into(),
+                at: git::Oid::decode(buf)?,
+            }),
+            2 => Self::decode(buf),
+            actual => Err(Invalid::ProtocolVersionUnsupported { actual }.into()),
+        }
+    }
+
     fn decode(buf: &mut impl Buf) -> Result<Self, Error> {
-        let remote = NodeId::decode(buf)?;
+        let tag = u8::decode(buf)?;
+        let size = match tag {
+            0 => 32,
+            1 => 96,
+            _ => {
+                return Err(Invalid::RepositoryKey(
+                    radicle::crypto::repository::Error::UnsupportedKey,
+                )
+                .into());
+            }
+        };
+        let mut key = vec![tag; size + 1];
+        buf.try_copy_to_slice(&mut key[1..])?;
+        let remote = RepositoryKey::from_tagged_bytes(&key).map_err(Invalid::from)?;
         let at = git::Oid::decode(buf)?;
         Ok(Self { remote, at })
     }

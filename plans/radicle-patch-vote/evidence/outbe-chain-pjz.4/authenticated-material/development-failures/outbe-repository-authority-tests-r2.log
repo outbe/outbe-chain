@@ -1,0 +1,24 @@
+   Compiling outbe-radicle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/radicle)
+    Finished `test` profile [unoptimized] target(s) in 3.00s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_radicle-f6bb523241959efd)
+
+running 2 tests
+
+thread 'manager::snapshot::approval_tests::repository_authority_uses_current_finalized_committee_and_rejects_effective_set_mismatch' (12475061) panicked at crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs:171:52:
+called `Result::unwrap()` on an `Err` value: Revert("active validator 0x0101010101010101010101010101010101010101 has no admitted OCOMP registration")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'manager::snapshot::approval_tests::repository_authority_rejects_missing_finality_noncanonical_and_unavailable_exact_state' (12475060) panicked at crates/blockchain/radicle/src/manager/snapshot/approval_tests.rs:171:52:
+called `Result::unwrap()` on an `Err` value: Revert("active validator 0x0101010101010101010101010101010101010101 has no admitted OCOMP registration")
+test manager::snapshot::approval_tests::repository_authority_rejects_missing_finality_noncanonical_and_unavailable_exact_state ... FAILED
+test manager::snapshot::approval_tests::repository_authority_uses_current_finalized_committee_and_rejects_effective_set_mismatch ... FAILED
+
+failures:
+
+failures:
+    manager::snapshot::approval_tests::repository_authority_rejects_missing_finality_noncanonical_and_unavailable_exact_state
+    manager::snapshot::approval_tests::repository_authority_uses_current_finalized_committee_and_rejects_effective_set_mismatch
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 36 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p outbe-radicle --lib`

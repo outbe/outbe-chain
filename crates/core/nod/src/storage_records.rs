@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::storage_record;
+use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
 use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,23 +34,6 @@ pub struct StoredNod {
     pub encrypted_creator_public_key: Vec<u8>,
     #[attribute(order = 12)]
     pub encrypted_gratis_amount: Vec<u8>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[storage_record(exists_field = present)]
-pub struct StoredNodBucket {
-    #[key]
-    pub bucket_key: B256,
-    #[attribute(order = 0)]
-    pub present: bool,
-    #[attribute(order = 1)]
-    pub worldwide_day: WorldwideDay,
-    #[attribute(order = 2)]
-    pub entry_price_minor: U256,
-    #[attribute(order = 3)]
-    pub reference_currency: u16,
-    #[attribute(order = 4)]
-    pub settled_nods: u64,
 }
 
 impl From<&crate::NodItemState> for StoredNod {
@@ -104,32 +88,7 @@ impl From<StoredNod> for crate::NodItemState {
     }
 }
 
-impl From<&crate::schema::NodBucketState> for StoredNodBucket {
-    fn from(bucket: &crate::schema::NodBucketState) -> Self {
-        Self {
-            bucket_key: bucket.bucket_key,
-            present: true,
-            worldwide_day: bucket.worldwide_day,
-            entry_price_minor: bucket.entry_price_minor,
-            reference_currency: bucket.reference_currency,
-            settled_nods: bucket.settled_nods,
-        }
-    }
-}
-
-impl From<StoredNodBucket> for crate::schema::NodBucketState {
-    fn from(bucket: StoredNodBucket) -> Self {
-        Self {
-            bucket_key: bucket.bucket_key,
-            worldwide_day: bucket.worldwide_day,
-            entry_price_minor: bucket.entry_price_minor,
-            reference_currency: bucket.reference_currency,
-            settled_nods: bucket.settled_nods,
-        }
-    }
-}
-
-impl crate::NodContract<'_> {
+impl<'storage> crate::NodContract<'storage> {
     pub fn state_records(
         &self,
         owner: Option<Address>,
@@ -163,39 +122,22 @@ impl crate::NodContract<'_> {
             .collect()
     }
 
-    pub fn insert_state_record(&self, record: &StoredNod) -> outbe_primitives::error::Result<()> {
-        use outbe_primitives::storage::indexed_list::IndexedList;
-        let storage = self.records.storage();
-        storage.with_checkpoint(|| {
-            self.records.create(record)?;
+    fn record_indexes(&self, record: &StoredNod) -> [IndexedList<'storage, WwdEntityId>; 2] {
+        [
             IndexedList::new(
-                &self.owner_ids.list(&record.owner),
+                self.owner_ids.list(&record.owner),
                 self.owner_id_position.clone(),
-            )
-            .insert(record.nod_id)?;
-            IndexedList::new(&self.all_ids, self.global_id_position.clone())
-                .insert(record.nod_id)?;
-            Ok(())
-        })
+            ),
+            IndexedList::new(self.all_ids.clone(), self.global_id_position.clone()),
+        ]
+    }
+
+    pub fn insert_state_record(&self, record: &StoredNod) -> outbe_primitives::error::Result<()> {
+        create_indexed(&self.records, record, self.record_indexes(record))
     }
 
     pub fn delete_state_record(&self, id: WwdEntityId) -> outbe_primitives::error::Result<()> {
-        use outbe_primitives::storage::indexed_list::IndexedList;
-        let storage = self.records.storage();
-        storage.with_checkpoint(|| {
-            let record = self.records.get(id)?.ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::fatal(
-                    "state record is absent from its index",
-                )
-            })?;
-            IndexedList::new(
-                &self.owner_ids.list(&record.owner),
-                self.owner_id_position.clone(),
-            )
-            .remove(id)?;
-            IndexedList::new(&self.all_ids, self.global_id_position.clone()).remove(id)?;
-            self.records.delete(id)
-        })
+        delete_indexed(&self.records, id, |record| self.record_indexes(record))
     }
 }
 
@@ -260,8 +202,7 @@ mod tests {
         StorageHandle::enter(&mut provider, |storage| {
             let contract = crate::NodContract::new(storage);
             let key = B256::repeat_byte(2);
-            let mut record = StoredNodBucket::with_key(key);
-            record.present = true;
+            let mut record = crate::schema::NodBucketState::with_key(key);
             record.worldwide_day = WorldwideDay::new(20261015);
             contract.buckets.create(&record).unwrap();
             assert_eq!(contract.buckets.get(key).unwrap(), Some(record));

@@ -15,7 +15,6 @@ fn create_then_read_round_trip() {
         // u128 -> U256 widening preserved.
         assert_eq!(r.promis_load_minor, U256::from(PROMIS_LOAD_MINOR));
         assert_eq!(r.entry_price_minor, U256::from(ENTRY_PRICE_MINOR));
-        assert_eq!(r.floor_price_minor, U256::from(FLOOR_PRICE_MINOR));
         assert_eq!(r.issued_units, 100);
         assert_eq!(
             r.call_trigger(),
@@ -94,11 +93,10 @@ fn dense_enumeration_tracks_created_series() {
 #[test]
 fn intex_state_encoding_matches_solidity() {
     assert_eq!(IntexState::Issued as u8, 0);
-    assert_eq!(IntexState::Called as u8, 2);
-    assert_eq!(IntexState::Expired as u8, 3);
+    assert_eq!(IntexState::Called as u8, 1);
+    assert_eq!(IntexState::Expired as u8, 2);
     assert_eq!(IntexState::from_u8(0).unwrap(), IntexState::Issued);
-    assert!(IntexState::from_u8(1).is_err());
-    assert_eq!(IntexState::from_u8(2).unwrap(), IntexState::Called);
-    assert_eq!(IntexState::from_u8(3).unwrap(), IntexState::Expired);
-    assert!(IntexState::from_u8(4).is_err());
+    assert_eq!(IntexState::from_u8(1).unwrap(), IntexState::Called);
+    assert_eq!(IntexState::from_u8(2).unwrap(), IntexState::Expired);
+    assert!(IntexState::from_u8(3).is_err());
 }

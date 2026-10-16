@@ -1,0 +1,28 @@
+{
+  "result": "PASS",
+  "chain_revision": "0dbd83c40ace71773a0e358809bd2f1876c18f37",
+  "repo": "rad:z2if32qo4riu76LJxe5gLNKimZu3E",
+  "commit": "f33e7b05c8275f69c07c44a813b1874f76bcf0a2",
+  "binaries": {
+    "rad": {
+      "path": "/private/tmp/outbe-radicle-p1-standalone/debug/rad",
+      "sha256": "3d0f74e83ce8931e43a72a1f17219c60332f8c1453cb808a2c2090d1562ca30a"
+    },
+    "helper": {
+      "path": "/private/tmp/outbe-radicle-p1-standalone/debug/git-remote-rad",
+      "sha256": "761d2f8be0f8394d6601faa260cfde43f829c97b2f43417ade5e1ade52fe565c"
+    },
+    "sidecar": {
+      "path": "/private/tmp/outbe-radicle-p1-target/debug/outbe-radicle",
+      "sha256": "ef1f01ae8291326d221347772bf79a5503e236eab8cc7d7fe96cd642dd34551e"
+    },
+    "legacy_rad": {
+      "path": "/private/tmp/outbe-radicle-p1-legacy/debug/rad",
+      "sha256": "27f67c61e9e3999ff8b73fded2f39bc9f2c0ef006fe3f302e5e11c252377c278"
+    },
+    "legacy_sidecar": {
+      "path": "/private/tmp/outbe-radicle-p1-legacy/debug/outbe-radicle",
+      "sha256": "3d649a195e12e9c7a0de29eae1790c2427ca4bd5adf43881924180ee488b7322"
+    }
+  }
+}

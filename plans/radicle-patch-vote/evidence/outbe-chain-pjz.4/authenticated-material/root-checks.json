@@ -1,0 +1,78 @@
+{
+  "source_sha": "26d497f4a2bd5f31582587130bf81cd9a8651eab",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4"
+  },
+  "spec_sha256": {
+    "plans/radicle-patch-vote/design.md": "dc9fd94ad85704057e284b374e0da27d7e0398546790ab1a202b2a9270e86df8",
+    "plans/radicle-patch-vote/task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+    "plans/radicle-patch-vote/plan.md": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b"
+  },
+  "checks": [
+    {
+      "name": "full-radicle",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "--lib"
+      ],
+      "start_utc": "2026-10-15T18:56:13.276200+00:00",
+      "end_utc": "2026-10-15T18:56:21.869350+00:00",
+      "exit_code": 0,
+      "log": "full-radicle.log",
+      "sha256": "b0e039d3d1f1cbb4fff76a3929a751bfe97bcced4d4c6e2e894a93b11bb77551"
+    },
+    {
+      "name": "root-clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-consensus",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "start_utc": "2026-10-15T18:56:21.869918+00:00",
+      "end_utc": "2026-10-15T18:56:27.709649+00:00",
+      "exit_code": 0,
+      "log": "root-clippy.log",
+      "sha256": "f51ff9f30e72d29407f2355eae45487ac3caa29e74e63ca8159082b930d18a04"
+    },
+    {
+      "name": "full-consensus",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-consensus",
+        "--lib"
+      ],
+      "start_utc": "2026-10-15T18:55:35.421360+00:00",
+      "end_utc": "2026-10-15T18:56:13.942057+00:00",
+      "time_basis": "raw log birth/last-write filesystem timestamps; process terminal exit0 verified via exec session72078",
+      "exit_code": 0,
+      "log": "full-consensus.log",
+      "sha256": "81d706c31c62c9215a1745737821a1aa71d548ae53ad78001614aae480f4d775"
+    }
+  ]
+}

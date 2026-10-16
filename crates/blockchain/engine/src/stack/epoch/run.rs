@@ -57,7 +57,7 @@ where
         retention_selector,
         finalized_execution_barrier,
         radicle_status,
-        radicle_endpoint,
+        mut radicle_endpoint,
     } = services;
     let radicle_updates = radicle_status.subscribe();
 
@@ -65,6 +65,26 @@ where
     // follower must fail closed too, even when it does not currently consume
     // these options.
     let chain_id = node.chain_spec().chain().id();
+    let repository_publication_enabled =
+        super::super::startup::repository_publication_enabled_from_genesis(&node)?;
+    let repository_material_publisher = if repository_publication_enabled {
+        radicle_endpoint
+            .as_mut()
+            .and_then(|(endpoint, _, _)| endpoint.take_repository_material_publisher())
+    } else {
+        None
+    };
+    let epoch_length_blocks = epoch_length_blocks_from_genesis(&node)?;
+    let dkg_rotation_params = DkgRotationParams::from_genesis(&node, epoch_length_blocks);
+    if repository_publication_enabled {
+        outbe_primitives::radicle_genesis::validate_publication_window(
+            dkg_rotation_params.epoch_length_blocks,
+            dkg_rotation_params.prepare_window_blocks,
+        )
+        .map_err(|error| {
+            crate::errors::StackStartupError::InvalidGovernmentsGenesis(error.to_string())
+        })?;
+    }
     let ocomp_fork_install =
         outbe_node::ocomp::fork::require_startup_ocomp_fork_install(node.chain_spec().as_ref())?;
     let ocomp_lifecycle_activation =
@@ -166,8 +186,6 @@ where
     // formation. Local execution height 0 alone is not sufficient for a fresh
     // datadir joining an already-running network.
     let genesis_hash = genesis_hash(&node)?;
-    let epoch_length_blocks = epoch_length_blocks_from_genesis(&node)?;
-    let dkg_rotation_params = DkgRotationParams::from_genesis(&node, epoch_length_blocks);
 
     // -- 5b. Pre-compute page cache (shared across marshal + epochs) -----
     let page_cache = CacheRef::from_pooler(
@@ -266,6 +284,9 @@ where
         polynomial.clone(),
         signing_share.clone(),
     );
+    if let Some(publisher) = &repository_material_publisher {
+        publisher.install_local_signer(vrf_materials.clone());
+    }
     bridge.set_local_threshold_share_present(signing_share.is_some());
     // The active boundary tuple height is the ACTIVATION ANCHOR (the height the
     // live committee anchored its rotation schedule on). It is NOT the commit
@@ -721,6 +742,8 @@ where
         genesis_hash,
         validators: validator_set.clone(),
         chain_id: node.chain_spec().chain().id(),
+        repository_publication_enabled,
+        repository_publication: bridge.repository_publication_mailbox(),
         ocomp_lifecycle_activation,
         marshal_mailbox: marshal_mailbox.clone(),
         publication: application.publication(),
@@ -868,6 +891,7 @@ where
         dkg_rotation_params,
         dkg_manager,
         vrf_materials,
+        repository_material_publisher,
         vrf_safety,
         application_epoch_fence,
         certificate_scheme_provider,

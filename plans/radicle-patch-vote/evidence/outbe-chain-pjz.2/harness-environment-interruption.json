@@ -1,0 +1,10 @@
+{
+  "test_pid": 65355,
+  "reason": "Environment::default -> resolve_sudo -> OnceLock docker info waited indefinitely for local Docker Desktop; stack sample confirms; no test assertion executed in blocked methods. Stop this attempt, rerun artifact-only unit checks with explicit unavailable DOCKER_HOST. No required peer/container scenario replaced.",
+  "stopped_children": [
+    {
+      "pid": 65394,
+      "command": "docker"
+    }
+  ]
+}

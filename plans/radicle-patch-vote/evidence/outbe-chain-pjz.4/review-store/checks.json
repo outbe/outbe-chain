@@ -1,0 +1,124 @@
+{
+  "source_sha": "4d74923f7ee8d35a59124841d956a24d5feb2514",
+  "parent_sha": "0ebfc4b2faa1b5c0d6c01949441bda50bbbb9a49",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4",
+    "PYTHONPATH": "scripts"
+  },
+  "changed_files": [
+    "crates/blockchain/radicle/src/integration/network.rs",
+    "crates/blockchain/radicle/src/integration/network/material_tests.rs",
+    "crates/blockchain/radicle/src/integration/publication.rs",
+    "crates/blockchain/radicle/src/integration/publication/review.rs",
+    "crates/blockchain/radicle/src/integration/publication/store.rs",
+    "crates/blockchain/radicle/src/integration/review/tests.rs"
+  ],
+  "spec_sha256": {
+    "plans/radicle-patch-vote/design.md": "dc9fd94ad85704057e284b374e0da27d7e0398546790ab1a202b2a9270e86df8",
+    "plans/radicle-patch-vote/task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+    "plans/radicle-patch-vote/plan.md": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b"
+  },
+  "checks": [
+    {
+      "name": "full-libs",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "--",
+        "--nocapture"
+      ],
+      "start_utc": "2026-10-15T22:46:39.140601+00:00",
+      "log": "full-libs.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T22:46:51.707451+00:00",
+      "sha256": "d33b0e32abc7f48e21a6c0b1242135bc9c00f310be6607fa90354539862e75ab"
+    },
+    {
+      "name": "all-consumers",
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-engine",
+        "-p",
+        "outbe-chain",
+        "-p",
+        "outbe-radicle-runtime",
+        "-p",
+        "outbe-radicle-sidecar",
+        "-p",
+        "outbe-e2e-harness",
+        "-p",
+        "outbe-keygen",
+        "--all-targets"
+      ],
+      "start_utc": "2026-10-15T22:46:51.707858+00:00",
+      "log": "all-consumers.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T22:47:08.076041+00:00",
+      "sha256": "f800bf6dd8c22c0e081334be5823296e731aaf9fae9821e07271cfe08573a7f0"
+    },
+    {
+      "name": "scoped-clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--no-deps",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "start_utc": "2026-10-15T22:47:08.076420+00:00",
+      "log": "scoped-clippy.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T22:47:14.143731+00:00",
+      "sha256": "3253f4d1e9f0d38ec9100a65f833d08db06c44885bb985cb7d3c0f1ff3584f6c"
+    },
+    {
+      "name": "rustfmt",
+      "command": [
+        "rustfmt",
+        "--check",
+        "--edition",
+        "2021",
+        "--config",
+        "skip_children=true",
+        "crates/blockchain/radicle/src/integration/network.rs",
+        "crates/blockchain/radicle/src/integration/network/material_tests.rs",
+        "crates/blockchain/radicle/src/integration/publication.rs",
+        "crates/blockchain/radicle/src/integration/publication/review.rs",
+        "crates/blockchain/radicle/src/integration/publication/store.rs",
+        "crates/blockchain/radicle/src/integration/review/tests.rs"
+      ],
+      "start_utc": "2026-10-15T22:47:14.144118+00:00",
+      "log": "rustfmt.log",
+      "exit_code": 0,
+      "end_utc": "2026-10-15T22:47:14.193386+00:00",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "acceptance": "Intermediate P3/P6: durable complete Review package storage and immutable per-material/sequence local body selection, required selected token before identity attestation; reopen/restore/integrity/ownership tests. Full collector FSM/scheduler, protected UDS/distributed collection/checkpoint/bootstrap/Merge/live E2E incomplete; no task acceptance claim.",
+  "source_dirty_after_checks": []
+}

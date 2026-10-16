@@ -8,7 +8,7 @@ use outbe_primitives::error::Result;
 
 use crate::api;
 use crate::errors::GemError;
-use crate::schema::{GemContract, GemState, GemView};
+use crate::schema::{GemContract, GemView};
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -53,8 +53,7 @@ pub fn dispatch(
             | ownerOf(_)
             | tokenURI(_)
             | tokenOfOwnerByIndex(_)
-            | getGem(_)
-            | isQualified(_)) => dispatch_entity(&storage, call),
+            | getGem(_)) => dispatch_entity(&storage, call),
         }
     })
 }
@@ -91,9 +90,8 @@ fn dispatch_entity(
         }),
         tokenURI(c) => view(c, |c| {
             let gem = api::get_view(storage, c.gemId)?.ok_or(GemError::GemNotFound)?;
-            let qualified = !gem.item.is_settled() && api::is_qualified(storage, &gem.item)?;
             let now = storage.timestamp()?.to::<u64>();
-            Ok(crate::metadata::token_uri(&gem, qualified, now))
+            Ok(crate::metadata::token_uri(&gem, now))
         }),
         tokenOfOwnerByIndex(c) => view(c, |c| {
             let idx = usize::try_from(c.index).map_err(|_| GemError::IndexOutOfBounds)?;
@@ -104,15 +102,7 @@ fn dispatch_entity(
         }),
         getGem(c) => view(c, |c| {
             let gem = api::get_view(storage, c.gemId)?.ok_or(GemError::GemNotFound)?;
-            let mut data = to_abi_data(&gem, storage.timestamp()?.to::<u64>());
-            if data.state == GemState::Issued as u8 && api::is_qualified(storage, &gem.item)? {
-                data.state = 1;
-            }
-            Ok(data)
-        }),
-        isQualified(c) => view(c, |c| {
-            let item = api::get_item(storage, c.gemId)?.ok_or(GemError::GemNotFound)?;
-            api::is_qualified(storage, &item)
+            Ok(to_abi_data(&gem, storage.timestamp()?.to::<u64>()))
         }),
         _ => Err(crate::errors::GemFatalError::EntityRouteMetadataCall.into()),
     }
@@ -126,7 +116,6 @@ fn to_abi_data(gem: &GemView, now: u64) -> IGem::GemData {
         state: gem.effective_state(now),
         promisLoadMinor: gem.item.promis_load_minor,
         entryPriceMinor: gem.bucket.entry_price_minor,
-        floorPriceMinor: gem.item.floor_price_minor,
         issuanceCurrency: gem.item.issuance_currency,
         referenceCurrency: gem.item.reference_currency,
         issuedAt: gem.item.issued_at,

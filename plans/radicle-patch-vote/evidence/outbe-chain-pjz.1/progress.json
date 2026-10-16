@@ -1,0 +1,26 @@
+{
+  "task_id": "outbe-chain-pjz.1",
+  "status": "accepted_round5_three_independent_full_ac_pass",
+  "review_round": 5,
+  "reviewed_source_sha": "4139bd9ef23c3320b6ac599c65e6123824131e07",
+  "source_base": "42d08693a06a7fdc088cf452b582c2d18596ed9a",
+  "timestamp_utc": "2026-10-15T13:45:16.773398+00:00",
+  "spec_hash": "a0e36f17d4d4f8410f8e6c67668bab71857306569df154b8237b49bf6b172232",
+  "spec_hash_algorithm": "SHA256(Beads parent description UTF-8 bytes), no added newline/title/JSON",
+  "previous_candidate": "44bd1a8f9ce6e26b87841774a7cd659978b3b889",
+  "previous_review_verdicts": {
+    "R1": "round4 PASS invalidated by corrected legacy OID wire contract",
+    "R2": "round4 PASS invalidated by corrected legacy OID wire contract",
+    "R3": "round4 PASS invalidated by corrected legacy OID wire contract"
+  },
+  "independent_reviews": {
+    "R1": "PASS AC1-AC5, no open findings",
+    "R2": "PASS AC1-AC5, no open findings",
+    "R3": "PASS AC1-AC5, no open findings"
+  },
+  "commands": "round5/commands.json",
+  "scope": "P0 design/spike only; P1 stable update accepted separately, P2 incomplete, P3-P8 not implemented",
+  "claimed_ac_coverage": "README.md AC1-AC5 matrix and Round5 section",
+  "historical_acceptance": "closure-round4.json superseded; Round5 accepted by closure.json",
+  "closure": "closure.json"
+}
