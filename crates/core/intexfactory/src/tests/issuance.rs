@@ -155,8 +155,9 @@ fn shape(
 
 #[test]
 fn a_chains_series_travel_together_up_to_the_message_cap() {
-    // Nine series on one chain: the series cap splits them.
-    let legs: Vec<_> = (1..=9u32).map(|s| leg(10, 1, s)).collect();
+    // One series past the cap on one chain: the series cap splits them.
+    let over = MAX_SERIES_PER_MESSAGE as u32 + 1;
+    let legs: Vec<_> = (1..=over).map(|s| leg(10, 1, s)).collect();
     assert_eq!(
         shape(&runtime::pack_issuance_messages(legs)),
         vec![(10, MAX_SERIES_PER_MESSAGE), (10, 1)]
@@ -208,9 +209,10 @@ fn run_shape(runs: &[runtime::IssuanceRun]) -> Vec<((u32, u32), Vec<usize>)> {
 #[test]
 fn a_chains_chunks_form_one_run_even_when_another_chain_interleaves() {
     // One day, one chain, series spanning two messages, with another chain's message in between.
-    let mut legs: Vec<_> = (1..=8u32).map(|s| leg(10, 1, s)).collect();
+    let full = MAX_SERIES_PER_MESSAGE as u32;
+    let mut legs: Vec<_> = (1..=full).map(|s| leg(10, 1, s)).collect();
     legs.push(leg(20, 1, 1));
-    legs.push(leg(10, 1, 9));
+    legs.push(leg(10, 1, full + 1));
     let runs = runtime::chunk_issuance_messages(runtime::pack_issuance_messages(legs));
     assert_eq!(
         run_shape(&runs),

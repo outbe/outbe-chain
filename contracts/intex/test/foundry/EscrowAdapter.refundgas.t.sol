@@ -230,6 +230,19 @@ contract RefundClaimFinalizedGasTest is RefundGasBase {
         escrow.releaseRefund(DAY, _bidder(2));
         emit log_named_uint("claim_finalized_loser", before - gasleft());
     }
+
+    function test_CloseAWinWithItsChange() public {
+        uint256 before = gasleft();
+        escrow.closeWin(DAY, _bidder(0));
+        emit log_named_uint("close_win_with_change", before - gasleft());
+    }
+
+    function test_CloseAWinWhoseChangeWasRefunded() public {
+        escrow.releaseRefund(DAY, _bidder(0));
+        uint256 before = gasleft();
+        escrow.closeWin(DAY, _bidder(0));
+        emit log_named_uint("close_win_without_change", before - gasleft());
+    }
 }
 
 /// @notice A day of 200 bidders that reaches a target chain in one chunk. The chunk carries its

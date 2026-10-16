@@ -33,7 +33,7 @@ pub const MAX_VWAP_DAYS_PER_FIRING: u32 = 8;
 pub const MAX_VWAP_ROWS: usize = 6;
 
 /// Series one ISSUANCE_INSTRUCTIONS message may carry. Mirrors `MAX_SERIES_PER_ISSUANCE`.
-pub const MAX_SERIES_PER_MESSAGE: usize = 8;
+pub const MAX_SERIES_PER_MESSAGE: usize = 20;
 
 /// The general cross-chain array cap, mirroring `MAX_PAYLOAD_ARRAY_LEN`. Refund chunks use it.
 pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;

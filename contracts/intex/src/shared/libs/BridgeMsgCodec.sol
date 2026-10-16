@@ -44,7 +44,8 @@ library BridgeMsgCodec {
     uint16 internal constant MAX_PAYLOAD_ARRAY_LEN = 64;
 
     /// @notice Series one ISSUANCE_INSTRUCTIONS message may carry. A wider day spans several messages.
-    uint16 internal constant MAX_SERIES_PER_ISSUANCE = 8;
+    /// @dev A series encodes to 416 bytes, so the 10_000-byte send cap fits 23. This keeps headroom.
+    uint16 internal constant MAX_SERIES_PER_ISSUANCE = 20;
 
     /// @notice Series one MARK_CALLED message may carry. A batch is one day's series called
     ///         together.

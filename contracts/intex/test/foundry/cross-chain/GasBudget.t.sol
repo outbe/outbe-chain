@@ -160,7 +160,8 @@ contract GasBudgetTest is CrossChainTest {
                 entryPriceMinor: 100e6,
                 floorPriceMinor: 40e6,
                 callNoticePeriod: 0,
-                issuanceCurrency: 840,
+                // A day's series are distinct currency pairs.
+                issuanceCurrency: uint16(100 + s),
                 referenceCurrency: 840,
                 callWindow: 0,
                 callThreshold: 0,
@@ -743,7 +744,7 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
                 entryPriceMinor: 100e6,
                 floorPriceMinor: 40e6,
                 callNoticePeriod: 0,
-                issuanceCurrency: 840,
+                issuanceCurrency: uint16(100 + s),
                 referenceCurrency: 840,
                 callWindow: 0,
                 callThreshold: 0,

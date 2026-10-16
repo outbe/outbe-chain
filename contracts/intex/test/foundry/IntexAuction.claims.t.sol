@@ -352,4 +352,29 @@ contract IntexAuctionClaimsTest is Test {
         vm.expectRevert(IIntexAuction.BidNotFound.selector);
         auction.claimRefund(DAY, makeAddr("stranger"));
     }
+
+    function test_GasOfTheClaims() public {
+        _bid(3, 1);
+        _createSeries(0);
+        _finalize(_winner(alice), 0, 0);
+
+        uint256 before = gasleft();
+        auction.claimRefund(DAY, bob);
+        emit log_named_uint("auction_claim_refund_loser", before - gasleft());
+
+        before = gasleft();
+        auction.issueIntex(DAY, alice);
+        emit log_named_uint("auction_issue_intex_with_change", before - gasleft());
+    }
+
+    function test_GasOfAnIssueWithoutChange() public {
+        _bid(3, 1);
+        _createSeries(0);
+        _finalize(_winner(alice), 0, 0);
+        auction.claimRefund(DAY, alice);
+
+        uint256 before = gasleft();
+        auction.issueIntex(DAY, alice);
+        emit log_named_uint("auction_issue_intex_without_change", before - gasleft());
+    }
 }
