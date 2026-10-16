@@ -9,12 +9,12 @@ import { AUCTION_ABI, ESCROW_ABI } from "../../intex/registry.js";
 import { commitHash, revealBidTypedData } from "../../intex/bid.js";
 import { toBidRate, wcoenLockAmount } from "../../intex/units.js";
 import { addr } from "../../intex/reads.js";
-import { accountArg, bidUnitsArg, issuanceCurrencyArg, rateArg, referenceCurrencyArg, worldwideDayArg } from "./args.js";
+import { accountArg, bidQuantityArg, issuanceCurrencyArg, rateArg, referenceCurrencyArg, worldwideDayArg } from "./args.js";
 import type { IntexDeps } from "./deps.js";
 
 interface Bid {
   worldwideDay: number;
-  units: number;
+  quantity: number;
   bidRate: bigint;
   issuanceCurrency: number;
   referenceCurrency: number;
@@ -26,7 +26,7 @@ async function signReveal(n: Network, account: Account, bid: Bid): Promise<Hex> 
     verifyingContract: addr(n, "auction"),
     worldwideDay: bid.worldwideDay,
     bidder: account.address,
-    units: bid.units,
+    quantity: bid.quantity,
     bidRate: Number(bid.bidRate),
     issuanceCurrency: bid.issuanceCurrency,
     referenceCurrency: bid.referenceCurrency,
@@ -44,18 +44,18 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
       "hash (no separate salt). When the auction carries an entry bond (commitBondMinor > 0), commitBid pulls " +
       "it into escrow in the same transaction - the tool auto-approves the escrow if the allowance is short. " +
       "The bond returns at reveal/cancel; a green-day no-reveal locks it for 24 hours past revealEnd " +
-      "(intex_claim_commit_bond). IMPORTANT: save your (worldwideDay, units, rate, currencies); you must repeat " +
+      "(intex_claim_commit_bond). IMPORTANT: save your (worldwideDay, quantity, rate, currencies); you must repeat " +
       "them to reveal, they can't be recovered on-chain, and are only remembered this session. Requires OUTBE_PRIVATE_KEY.",
     {
       worldwideDay: worldwideDayArg,
-      units: bidUnitsArg,
+      quantity: bidQuantityArg,
       rate: rateArg,
       issuanceCurrency: issuanceCurrencyArg,
       referenceCurrency: referenceCurrencyArg,
       network: networkName.optional(),
       wait: waitFlag,
     },
-    handler(async ({ worldwideDay, units, rate, issuanceCurrency, referenceCurrency, network, wait }) => {
+    handler(async ({ worldwideDay, quantity, rate, issuanceCurrency, referenceCurrency, network, wait }) => {
       const n = await target(network);
       const account = requireAccount(ctx);
       const bidRate = toBidRate(rate);
@@ -84,14 +84,14 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
           `A green-day no-reveal keeps it locked until 24 hours past revealEnd (intex_claim_commit_bond).`;
       }
 
-      const signature = await signReveal(n, account, { worldwideDay, units, bidRate, issuanceCurrency, referenceCurrency });
+      const signature = await signReveal(n, account, { worldwideDay, quantity, bidRate, issuanceCurrency, referenceCurrency });
       const hash = commitHash(signature);
       const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "commitBid", args: [worldwideDay, hash] });
       const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
       return ok({
         network: n.name,
         worldwideDay,
-        units,
+        quantity,
         rate,
         bidRate: bidRate.toString(),
         issuanceCurrency,
@@ -102,7 +102,7 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
         note,
         ...receipt,
         reminder:
-          `Record worldwideDay=${worldwideDay}, units=${units}, rate=${rate} - required to reveal, ` +
+          `Record worldwideDay=${worldwideDay}, quantity=${quantity}, rate=${rate} - required to reveal, ` +
           `not recoverable on-chain, remembered only this session.`,
       });
     }),
@@ -110,20 +110,20 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
 
   server.tool(
     "auction_bid_reveal",
-    "Reveal a committed Intex bid: re-derives the same signature from (worldwideDay, units, rate, currencies) " +
-    "and submits revealBid; the escrow calculates units * protocol-6 PROMIS load * rate / 1e6, then converts " +
+    "Reveal a committed Intex bid: re-derives the same signature from (worldwideDay, quantity, rate, currencies) " +
+    "and submits revealBid; the escrow calculates quantity * protocol-6 PROMIS load * rate / 1e6, then converts " +
       "that result by 1e12 into native-18 WCOEN for the lock. The reference currency must be one the day prices, the issuance currency any " +
       "1..999 code. Auto-approves the escrow first if the allowance is short. Requires OUTBE_PRIVATE_KEY.",
     {
       worldwideDay: worldwideDayArg,
-      units: bidUnitsArg,
+      quantity: bidQuantityArg,
       rate: rateArg,
       issuanceCurrency: issuanceCurrencyArg,
       referenceCurrency: referenceCurrencyArg,
       network: networkName.optional(),
       wait: waitFlag,
     },
-    handler(async ({ worldwideDay, units, rate, issuanceCurrency, referenceCurrency, network, wait }) => {
+    handler(async ({ worldwideDay, quantity, rate, issuanceCurrency, referenceCurrency, network, wait }) => {
       const n = await target(network);
       const account = requireAccount(ctx);
       const { decimals: dec, symbol } = await paymentMeta(n);
@@ -138,7 +138,7 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
         args: [worldwideDay],
       });
       const strike = info.params.promisLoadMinor;
-      const lockAmount = wcoenLockAmount(BigInt(units), strike, bidRate);
+      const lockAmount = wcoenLockAmount(BigInt(quantity), strike, bidRate);
       const lockHuman = formatUnits(lockAmount, dec);
       const approval = await ensureAllowance(ctx, n, {
         token: (await paymentMeta(n)).token,
@@ -148,21 +148,21 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
       const autoApprove = approval ? { txHash: approval, amount: lockAmount.toString() } : null;
       let note: string;
       if (approval) {
-        note = `Reveal locks ${lockHuman} ${symbol} (${units} x strike x ${rate}) in escrow. Allowance was short, so the escrow was approved for ${lockHuman} ${symbol} first, then the bid was revealed.`;
+        note = `Reveal locks ${lockHuman} ${symbol} (${quantity} x strike x ${rate}) in escrow. Allowance was short, so the escrow was approved for ${lockHuman} ${symbol} first, then the bid was revealed.`;
       } else {
-        note = `Reveal locks ${lockHuman} ${symbol} (${units} x strike x ${rate}) in escrow; allowance already covered it, no approval needed.`;
+        note = `Reveal locks ${lockHuman} ${symbol} (${quantity} x strike x ${rate}) in escrow; allowance already covered it, no approval needed.`;
       }
       if (info.params.commitBondMinor > 0n) {
         note += ` The ${formatUnits(info.params.commitBondMinor, dec)} ${symbol} entry bond returns within the same transaction (released before the bid lock, so it can fund the bid).`;
       }
 
-      const signature = await signReveal(n, account, { worldwideDay, units, bidRate, issuanceCurrency, referenceCurrency });
+      const signature = await signReveal(n, account, { worldwideDay, quantity, bidRate, issuanceCurrency, referenceCurrency });
       const data = encodeFunctionData({
         abi: AUCTION_ABI,
         functionName: "revealBid",
         args: [
           worldwideDay,
-          units,
+          quantity,
           Number(bidRate),
           issuanceCurrency,
           referenceCurrency,
@@ -171,7 +171,7 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
         ],
       });
       const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
-      return ok({ network: n.name, worldwideDay, units, rate, bidRate: bidRate.toString(), locked: lockHuman, autoApprove, note, ...receipt });
+      return ok({ network: n.name, worldwideDay, quantity, rate, bidRate: bidRate.toString(), locked: lockHuman, autoApprove, note, ...receipt });
     }),
   );
 

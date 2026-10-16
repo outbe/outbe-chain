@@ -5,7 +5,7 @@ import type { FakeChain } from "../test/fake-chain.js";
 import { startHarness } from "../test/harness.js";
 
 const BSC = { name: "bsc-testnet", isOutbe: false };
-const COMMIT = { worldwideDay: 20261009, units: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 };
+const COMMIT = { worldwideDay: 20261009, quantity: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 };
 
 async function commit(prepare: (chain: FakeChain) => void) {
   const harness = await startHarness((chain) => {

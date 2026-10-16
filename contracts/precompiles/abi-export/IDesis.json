@@ -458,7 +458,19 @@
         "internalType": "uint128"
       },
       {
-        "name": "coenUsdRateMinor",
+        "name": "isoCode",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "rateMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "referenceMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

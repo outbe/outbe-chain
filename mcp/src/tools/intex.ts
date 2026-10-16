@@ -7,7 +7,7 @@ import { intexDeps } from "./intex/deps.js";
 import { registerFundingTools } from "./intex/funding.js";
 import { registerHoldingsTools } from "./intex/holdings.js";
 import { registerSeriesTools } from "./intex/series.js";
-import { registerSettlementTools } from "./intex/settlement.js";
+import { registerPromisTools, registerSettlementTools } from "./intex/settlement.js";
 
 export { wcoenLockAmount } from "../intex/units.js";
 
@@ -22,4 +22,5 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   registerFundingTools(server, deps);
   registerBridgeTools(server, deps);
   registerSettlementTools(server, deps);
+  registerPromisTools(server, deps);
 }

@@ -43,7 +43,7 @@ export const CONTRACTS: Record<string, ContractEntry> = {
 
   gratis: {
     address: A("0x0000000000000000000000000000000000001003"),
-    note: "Gratis - confidential (TEE-encrypted) balances; balanceOf returns the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveGratisKeys).",
+    note: "Gratis - confidential (TEE-encrypted) balances; balanceOf returns the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveKeys; gratis_balance opens the signer's).",
     abi: ABI.IGratis,
   },
 
@@ -71,6 +71,18 @@ export const CONTRACTS: Record<string, ContractEntry> = {
     abi: ABI.IGem,
   },
 
+  promisfactory: {
+    address: A("0x0000000000000000000000000000000000002337"),
+    note: "Promis factory (mine COEN or Gratis from Promis)",
+    abi: ABI.IPromisFactory,
+  },
+
+  nodfactory: {
+    address: A("0x0000000000000000000000000000000000001007"),
+    note: "Nod factory (settle, mine Gratis)",
+    abi: ABI.INodFactory,
+  },
+
   gemfactory: {
     address: A("0x0000000000000000000000000000000000002013"),
     note: "Gem factory",
@@ -87,6 +99,12 @@ export const CONTRACTS: Record<string, ContractEntry> = {
     address: A("0x0000000000000000000000000000000000001009"),
     note: "Credis factory (issue, settle)",
     abi: ABI.ICredisFactory,
+  },
+
+  ccaregistry: {
+    address: A("0x0000000000000000000000000000000000001011"),
+    note: "CCA registry (bond, unbond)",
+    abi: ABI.ICcaRegistry,
   },
 
   vaultrouter: {

@@ -114,14 +114,12 @@ pub fn run_in_pinned_linux_container(
         .wrap_err("decode Docker image inspection")?;
     let resolved_image_id = inspected_image_id(&image_inspect, image)?;
 
-    let create_args = create_args(
-        &repo,
-        &output_parent,
-        &target_path,
-        &docker_socket,
-        image,
-        &inner_argv,
-    )?;
+    let mounts = ContainerMounts {
+        repo: &repo,
+        output_parent: &output_parent,
+        target: &target_path,
+    };
+    let create_args = create_args(&mounts, &docker_socket, image, &inner_argv)?;
     let created = docker_output(create_args.iter().map(String::as_str))?;
     ensure_success(&created, "create pinned Metadosis evidence container")?;
     let container_id = String::from_utf8(created.stdout)
@@ -188,7 +186,7 @@ pub fn run_in_pinned_linux_container(
     cleanup.remove()?;
     let finalize_argv = finalizer_argv(&repo, &index, &output);
     let finalized = docker_output(
-        run_args(&repo, &output_parent, &target_path, image, &finalize_argv)?
+        run_args(&mounts, image, &finalize_argv)?
             .iter()
             .map(String::as_str),
     )?;
@@ -282,14 +280,7 @@ pub fn validate_provenance_documents(
     );
     validate_image_id(&provenance.resolved_image_id)?;
     validate_container_id(&provenance.container_id)?;
-    validate_inner_argv(
-        &provenance.inner_argv,
-        &provenance.requested_digest,
-        &provenance.launcher_nonce,
-        runner.repo,
-        runner.index,
-        runner.bundle_root,
-    )?;
+    validate_inner_argv(&provenance.inner_argv, &runner)?;
     let target_path = Path::new(&provenance.target_path);
     let docker_socket_path = Path::new(&provenance.docker_socket_path);
     ensure!(
@@ -401,16 +392,19 @@ fn cargo_prefix() -> Vec<String> {
     .to_vec()
 }
 
+struct ContainerMounts<'a> {
+    repo: &'a Path,
+    output_parent: &'a Path,
+    target: &'a Path,
+}
+
 fn create_args(
-    repo: &Path,
-    output_parent: &Path,
-    target: &Path,
+    mounts: &ContainerMounts<'_>,
     docker_socket: &Path,
     image: &str,
     inner_argv: &[String],
 ) -> Result<Vec<String>> {
-    let mut args =
-        docker_container_prefix("create", repo, output_parent, target, Some(docker_socket))?;
+    let mut args = docker_container_prefix("create", mounts, Some(docker_socket))?;
     args.extend([
         "--entrypoint".to_owned(),
         "cargo".to_owned(),
@@ -421,13 +415,11 @@ fn create_args(
 }
 
 fn run_args(
-    repo: &Path,
-    output_parent: &Path,
-    target: &Path,
+    mounts: &ContainerMounts<'_>,
     image: &str,
     inner_argv: &[String],
 ) -> Result<Vec<String>> {
-    let mut args = docker_container_prefix("run", repo, output_parent, target, None)?;
+    let mut args = docker_container_prefix("run", mounts, None)?;
     args.push("--rm".to_owned());
     args.extend([
         "--entrypoint".to_owned(),
@@ -440,11 +432,14 @@ fn run_args(
 
 fn docker_container_prefix(
     operation: &str,
-    repo: &Path,
-    output_parent: &Path,
-    target: &Path,
+    mounts: &ContainerMounts<'_>,
     docker_socket: Option<&Path>,
 ) -> Result<Vec<String>> {
+    let ContainerMounts {
+        repo,
+        output_parent,
+        target,
+    } = *mounts;
     let repo_mount = bind_mount(repo, path(repo)?, true)?;
     let evidence_mount = bind_mount(output_parent, path(output_parent)?, false)?;
     let target_mount = bind_mount(target, path(target)?, false)?;
@@ -677,16 +672,15 @@ fn exact_image_digest(image: &str) -> Result<&str> {
     Ok(digest)
 }
 
-fn validate_inner_argv(
-    argv: &[String],
-    digest: &str,
-    nonce: &str,
-    repo: &Path,
-    index: &Path,
-    output: &Path,
-) -> Result<()> {
+fn validate_inner_argv(argv: &[String], runner: &RunnerBinding<'_>) -> Result<()> {
     ensure!(
-        argv == runner_argv(repo, index, output, digest, nonce),
+        argv == runner_argv(
+            runner.repo,
+            runner.index,
+            runner.bundle_root,
+            runner.linux_image_digest,
+            runner.launcher_nonce
+        ),
         "container runner argv differs from the fixed evidence command"
     );
     Ok(())

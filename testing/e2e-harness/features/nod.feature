@@ -1,4 +1,4 @@
-@tee @min-validators-4
+@tee @min-validators-4 @ocomp
 Feature: Nod from issuance to Gratis and COEN
   # The Nod half of the shared lifecycle. Lysis over a certified generation is covered
   # by the OCOMP scenario; here the Nods are issued straight to five owners in one

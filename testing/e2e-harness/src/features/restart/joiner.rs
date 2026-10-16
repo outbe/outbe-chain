@@ -100,8 +100,18 @@ fn joiner_completes_dkg_before_activation(world: &mut World) {
         .checked_sub(1)
         .expect("incoming DKG epoch");
     for &port in &ports {
-        pending_assert_membership(&world.rpc, port, &addr, before.height, 1, false, old_epoch)
-            .expect("joiner must remain PENDING at the common finalized checkpoint");
+        pending_assert_membership(
+            &world.rpc,
+            port,
+            &addr,
+            before.height,
+            ExpectedMembership {
+                status: 1,
+                participant: false,
+                epoch: old_epoch,
+            },
+        )
+        .expect("joiner must remain PENDING at the common finalized checkpoint");
     }
     let original_pids = world
         .localnet
@@ -146,15 +156,24 @@ fn pending_finalize_transaction(
     )
 }
 
+struct ExpectedMembership {
+    status: u8,
+    participant: bool,
+    epoch: u64,
+}
+
 fn pending_assert_membership(
     rpc: &Rpc,
     port: u16,
     addr: &str,
     height: u64,
-    status: u8,
-    participant: bool,
-    epoch: u64,
+    expected: ExpectedMembership,
 ) -> Result<()> {
+    let ExpectedMembership {
+        status,
+        participant,
+        epoch,
+    } = expected;
     let record = rpc.validator_record_at(port, addr, height).ok_or_else(|| {
         eyre!("cannot observe validator record at finalized h{height} on RPC {port}")
     })?;
@@ -215,14 +234,16 @@ fn restart_joiner_before_activation(world: &mut World) {
         primary,
         &addr,
         height,
-        1,
-        false,
-        state
-            .checkpoint
-            .artifact
-            .epoch
-            .checked_sub(1)
-            .expect("incoming epoch"),
+        ExpectedMembership {
+            status: 1,
+            participant: false,
+            epoch: state
+                .checkpoint
+                .artifact
+                .epoch
+                .checked_sub(1)
+                .expect("incoming epoch"),
+        },
     )
     .expect("finalized state must still be pending immediately before stop");
     assert_eq!(
@@ -299,31 +320,72 @@ fn restart_joiner_before_activation(world: &mut World) {
     world.state.pending_dkg_restart = Some(state);
 }
 
-/// Startup must restore the pending boundary/material, activate at the planned
-/// epoch exactly once, and leave every validator on one live committee state.
-#[then("the recovered pending DKG activates once and consensus continues")]
-fn pending_dkg_recovers_and_activates(world: &mut World) {
+fn find_pending_boundary(
+    rpc: &Rpc,
+    primary: u16,
+    state: &PendingDkgRestartState,
+    next_height: &mut u64,
+    finalized: u64,
+) -> Option<u64> {
+    while *next_height <= finalized {
+        if let Some(artifact) = pending_boundary_at(rpc, primary, *next_height)
+            .expect("decode canonical finalized boundary")
+        {
+            assert_eq!(
+                artifact, state.checkpoint.artifact,
+                "finalized a different boundary instead of the recovered pending DKG"
+            );
+            return Some(*next_height);
+        }
+        *next_height = next_height.checked_add(1).expect("boundary scan height");
+    }
+    None
+}
+
+fn observe_promotion(
+    world: &World,
+    state: &PendingDkgRestartState,
+    joiner_port: u16,
+    activation: u64,
+) -> std::result::Result<Option<u64>, String> {
+    let local_height = world
+        .rpc
+        .finalized_result(joiner_port)
+        .expect("replacement finalized height during promotion");
+    if local_height < activation {
+        return Ok(None);
+    }
+    assert_eq!(
+        world
+            .rpc
+            .checkpoint_at(joiner_port, activation)
+            .expect("replacement boundary checkpoint"),
+        world
+            .rpc
+            .checkpoint_at(world.validators.primary_port(), activation)
+            .expect("canonical boundary checkpoint")
+    );
+    state
+        .checkpoint
+        .verify_active(&state.keys_dir, &state.consensus_public_key)
+        .map(|()| Some(local_height))
+        .map_err(|error| error.to_string())
+}
+
+fn wait_pending_promotion(
+    world: &mut World,
+    state: &PendingDkgRestartState,
+    expected_pids: (u32, u32),
+) -> (u64, u64) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
     let joiner_port = world.validators.http_port(idx);
-    let addr = world.state.joiner_addr.clone().expect("joiner address");
-    let mut state = world
-        .state
-        .pending_dkg_restart
-        .take()
-        .expect("pending DKG checkpoint");
-    let replacement = state.replacement.as_mut().expect("replacement processes");
-    let expected_pids = (replacement.node_pid, replacement.enclave_pid);
-    let expected_epoch = state.checkpoint.artifact.epoch;
-    let mut ports = world.validators.committee_ports();
-    ports.push(joiner_port);
     let mut next_height = state
         .before
         .height
         .checked_add(1)
         .expect("boundary scan start");
     let mut activation = None;
-    let mut promoted_at = None;
     let mut promotion_error = None;
     for _ in 0..60 {
         assert_eq!(
@@ -338,95 +400,26 @@ fn pending_dkg_recovers_and_activates(world: &mut World) {
             .rpc
             .finalized_result(primary)
             .expect("observe finalized boundary head");
-        while activation.is_none() && next_height <= finalized {
-            if let Some(artifact) = pending_boundary_at(&world.rpc, primary, next_height)
-                .expect("decode canonical finalized boundary")
-            {
-                assert_eq!(
-                    artifact, state.checkpoint.artifact,
-                    "finalized a different boundary instead of the recovered pending DKG"
-                );
-                activation = Some(next_height);
-                break;
-            }
-            next_height = next_height.checked_add(1).expect("boundary scan height");
+        if activation.is_none() {
+            activation =
+                find_pending_boundary(&world.rpc, primary, state, &mut next_height, finalized);
         }
         if let Some(height) = activation {
-            let local_height = world
-                .rpc
-                .finalized_result(joiner_port)
-                .expect("replacement finalized height during promotion");
-            if local_height >= height {
-                assert_eq!(
-                    world
-                        .rpc
-                        .checkpoint_at(joiner_port, height)
-                        .expect("replacement boundary checkpoint"),
-                    world
-                        .rpc
-                        .checkpoint_at(primary, height)
-                        .expect("canonical boundary checkpoint")
-                );
-                match state
-                    .checkpoint
-                    .verify_active(&state.keys_dir, &state.consensus_public_key)
-                {
-                    Ok(()) => {
-                        promoted_at = Some(local_height);
-                        break;
-                    }
-                    Err(error) => promotion_error = Some(error.to_string()),
-                }
+            match observe_promotion(world, state, joiner_port, height) {
+                Ok(Some(promoted_at)) => return (height, promoted_at),
+                Ok(None) => {}
+                Err(error) => promotion_error = Some(error),
             }
         }
         sleep(Duration::from_secs(10));
     }
-    let activation =
-        activation.expect("restarted joiner never finalized its exact pending DKG boundary");
-    let promoted_at = promoted_at.unwrap_or_else(|| panic!(
-        "matching active material/pending retirement not observed within recovery allowance: {promotion_error:?}"));
-    world
-        .state
-        .restart_observations
-        .push(json!({"phase": "pending_promoted",
-        "slot": idx, "activation_height": activation, "observed_finalized_height": promoted_at,
-        "epoch": expected_epoch, "dkg_cycle": state.checkpoint.artifact.dkg_cycle,
-        "outcome_hash": alloy_primitives::keccak256(&state.checkpoint.artifact.outcome)}));
-    assert!(
-        activation >= state.checkpoint.artifact.planned_activation_height,
-        "boundary activated before its planned height"
-    );
-    world
-        .rpc
-        .wait_finalized_checkpoint(&ports, activation, 60)
-        .expect("all five nodes must finalize the recovered boundary");
-    let boundary = world
-        .rpc
-        .checkpoint_at(primary, activation)
-        .expect("activation checkpoint");
-    for &port in &ports {
-        assert_eq!(
-            world
-                .rpc
-                .checkpoint_at(port, activation)
-                .expect("peer activation checkpoint"),
-            boundary
-        );
-        pending_assert_membership(&world.rpc, port, &addr, activation, 2, true, expected_epoch)
-            .expect("finalized activation must have exactly the incoming epoch and ACTIVE joiner");
-        let active = eth::read_call_at_result(
-            &world.rpc.url(port),
-            addresses::VS_ADDR,
-            &eth::IValidatorSet::activeValidatorCountCall {},
-            activation,
-        )
-        .expect("read active count at exact finalized activation");
-        assert_eq!(
-            u64::from(active),
-            5,
-            "finalized activation must have all five validators"
-        );
-    }
+    activation.expect("restarted joiner never finalized its exact pending DKG boundary");
+    panic!(
+        "matching active material/pending retirement not observed within recovery allowance: {promotion_error:?}"
+    )
+}
+
+fn assert_recovered_replacement_logs(replacement: &mut RestartIncarnation) {
     let node_log = replacement
         .node_log
         .read()
@@ -452,6 +445,112 @@ fn pending_dkg_recovers_and_activates(world: &mut World) {
         enclave_log.contains("unsealed offer key + group signature"),
         "replacement enclave did not unseal the same sealed state"
     );
+}
+
+fn assert_activation_membership(
+    world: &World,
+    ports: &[u16],
+    addr: &str,
+    activation: u64,
+    expected_epoch: u64,
+) -> FinalizedCheckpoint {
+    let boundary = world
+        .rpc
+        .checkpoint_at(world.validators.primary_port(), activation)
+        .expect("activation checkpoint");
+    for &port in ports {
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(port, activation)
+                .expect("peer activation checkpoint"),
+            boundary
+        );
+        pending_assert_membership(
+            &world.rpc,
+            port,
+            addr,
+            activation,
+            ExpectedMembership {
+                status: 2,
+                participant: true,
+                epoch: expected_epoch,
+            },
+        )
+        .expect("finalized activation must have exactly the incoming epoch and ACTIVE joiner");
+        let active = eth::read_call_at_result(
+            &world.rpc.url(port),
+            addresses::VS_ADDR,
+            &eth::IValidatorSet::activeValidatorCountCall {},
+            activation,
+        )
+        .expect("read active count at exact finalized activation");
+        assert_eq!(
+            u64::from(active),
+            5,
+            "finalized activation must have all five validators"
+        );
+    }
+    boundary
+}
+
+/// Later legitimate rotations do not invalidate this exact pinned activation.
+/// What must never recur is this SAME completed ceremony's boundary.
+fn assert_no_repeat_activation(
+    world: &World,
+    state: &PendingDkgRestartState,
+    activation: u64,
+    through: u64,
+) {
+    let primary = world.validators.primary_port();
+    let artifact = &state.checkpoint.artifact;
+    for height in activation.checked_add(1).expect("post-activation height")..=through {
+        if let Some(observed) = pending_boundary_at(&world.rpc, primary, height)
+            .expect("observe post-recovery finalized boundaries")
+        {
+            assert!(
+                observed.epoch != artifact.epoch || observed.dkg_cycle != artifact.dkg_cycle,
+                "the recovered completed ceremony activated more than once"
+            );
+        }
+    }
+}
+
+/// Startup must restore the pending boundary/material, activate at the planned
+/// epoch exactly once, and leave every validator on one live committee state.
+#[then("the recovered pending DKG activates once and consensus continues")]
+fn pending_dkg_recovers_and_activates(world: &mut World) {
+    let idx = world.validators.joiner_index();
+    let addr = world.state.joiner_addr.clone().expect("joiner address");
+    let mut state = world
+        .state
+        .pending_dkg_restart
+        .take()
+        .expect("pending DKG checkpoint");
+    let replacement = state.replacement.as_ref().expect("replacement processes");
+    let expected_pids = (replacement.node_pid, replacement.enclave_pid);
+    let expected_epoch = state.checkpoint.artifact.epoch;
+    let mut ports = world.validators.committee_ports();
+    ports.push(world.validators.http_port(idx));
+    let (activation, promoted_at) = wait_pending_promotion(world, &state, expected_pids);
+    world
+        .state
+        .restart_observations
+        .push(json!({"phase": "pending_promoted",
+        "slot": idx, "activation_height": activation, "observed_finalized_height": promoted_at,
+        "epoch": expected_epoch, "dkg_cycle": state.checkpoint.artifact.dkg_cycle,
+        "outcome_hash": alloy_primitives::keccak256(&state.checkpoint.artifact.outcome)}));
+    assert!(
+        activation >= state.checkpoint.artifact.planned_activation_height,
+        "boundary activated before its planned height"
+    );
+    world
+        .rpc
+        .wait_finalized_checkpoint(&ports, activation, 60)
+        .expect("all five nodes must finalize the recovered boundary");
+    let boundary = assert_activation_membership(world, &ports, &addr, activation, expected_epoch);
+    let replacement = state.replacement.as_mut().expect("replacement processes");
+    assert_recovered_replacement_logs(replacement);
     // The test observed promotion/retirement before it waited for slow peers. A later
     // legitimate DKG cycle may now write its own pending files.
     let target = world
@@ -462,19 +561,7 @@ fn pending_dkg_recovers_and_activates(world: &mut World) {
         .rpc
         .wait_finalized_checkpoint(&ports, target, 60)
         .expect("five nodes must make new exact finalized hash/root progress after activation");
-    // Later legitimate rotations do not invalidate this exact pinned activation.
-    // What must never recur is this SAME completed ceremony's boundary.
-    for height in activation.checked_add(1).expect("post-activation height")..=after.height {
-        if let Some(artifact) = pending_boundary_at(&world.rpc, primary, height)
-            .expect("observe post-recovery finalized boundaries")
-        {
-            assert!(
-                artifact.epoch != expected_epoch
-                    || artifact.dkg_cycle != state.checkpoint.artifact.dkg_cycle,
-                "the recovered completed ceremony activated more than once"
-            );
-        }
-    }
+    assert_no_repeat_activation(world, &state, activation, after.height);
     assert_eq!(
         world
             .localnet
@@ -489,8 +576,8 @@ fn pending_dkg_recovers_and_activates(world: &mut World) {
         "slot": idx, "epoch": expected_epoch, "activation_height": activation,
         "activation_hash": boundary.block_hash, "activation_state_root": boundary.state_root,
         "progress_height": after.height, "progress_hash": after.block_hash,
-        "progress_state_root": after.state_root, "node_pid": replacement.node_pid,
-        "enclave_pid": replacement.enclave_pid, "pending_material_retired": true}));
+        "progress_state_root": after.state_root, "node_pid": expected_pids.0,
+        "enclave_pid": expected_pids.1, "pending_material_retired": true}));
     world.state.pending_dkg_restart = Some(state);
 }
 

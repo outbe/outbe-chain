@@ -14,7 +14,7 @@ import { lazy, toOptional } from "../../scripts/shared/taskUtils.js";
 
 interface GenerateCommitHashTaskArgs {
   worldwideDay?: string;
-  units?: string;
+  quantity?: string;
   bidRate?: string;
   issuanceCurrency?: string;
   referenceCurrency?: string;
@@ -40,7 +40,7 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
   // that keys the auction; it falls back to today's date when omitted.
   const worldwideDay = resolveWorldwideDay(toOptional(args.worldwideDay));
   const bidder = account.address;
-  const units = BigInt(toOptional(args.units) || "5");
+  const quantity = BigInt(toOptional(args.quantity) || "5");
   const bidRate = BigInt(toOptional(args.bidRate) || "800000");
   const issuanceCurrency = Number(toOptional(args.issuanceCurrency) || "840");
   const referenceCurrency = Number(toOptional(args.referenceCurrency) || "840");
@@ -61,7 +61,7 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
   console.log("\n=== Generating Commit Hash (EIP-712) ===");
   console.log("worldwideDay:", worldwideDay);
   console.log("bidder:", bidder);
-  console.log("units:", units.toString());
+  console.log("quantity:", quantity.toString());
   console.log("bidRate:", bidRate.toString());
   console.log("issuanceCurrency:", issuanceCurrency);
   console.log("referenceCurrency:", referenceCurrency);
@@ -81,7 +81,7 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
       RevealBid: [
         { name: "worldwideDay", type: "uint32" },
         { name: "bidder", type: "address" },
-        { name: "units", type: "uint16" },
+        { name: "quantity", type: "uint16" },
         { name: "bidRate", type: "uint32" },
         { name: "issuanceCurrency", type: "uint16" },
         { name: "referenceCurrency", type: "uint16" },
@@ -91,7 +91,7 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
     message: {
       worldwideDay,
       bidder,
-      units: Number(units),
+      quantity: Number(quantity),
       bidRate: Number(bidRate),
       issuanceCurrency,
       referenceCurrency,
@@ -105,7 +105,7 @@ const generateCommitHashAction = async (args: GenerateCommitHashTaskArgs) => {
 
   console.log("\n=== FOR REVEAL ===");
   console.log(`worldwideDay: ${worldwideDay}`);
-  console.log(`units: ${units}`);
+  console.log(`quantity: ${quantity}`);
   console.log(`bidRate: ${bidRate}`);
   console.log(`issuanceCurrency: ${issuanceCurrency}`);
   console.log(`referenceCurrency: ${referenceCurrency}`);
@@ -126,7 +126,7 @@ const generateCommitHash = task(
     description: "Worldwide day in yyyymmdd format (e.g. 20260501). Resolves to the uint32 auction key; defaults to today.",
     defaultValue: "",
   })
-  .addOption({ name: "units", description: "Intex units", defaultValue: "5" })
+  .addOption({ name: "quantity", description: "Intex quantity", defaultValue: "5" })
   .addOption({ name: "bidRate", description: "Bid rate (1e6 fixed-point, % of strike)", defaultValue: "800000" })
   .addOption({ name: "issuanceCurrency", description: "Issuance ISO currency code", defaultValue: "840" })
   .addOption({ name: "referenceCurrency", description: "Priced reference ISO currency code", defaultValue: "840" })

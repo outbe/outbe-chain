@@ -44,6 +44,25 @@ export function addr(n: Network, key: keyof IntexAddresses): Address {
   return intexAddress(n, key);
 }
 
+const LOG_PAGE = 50_000n;
+
+/** How many times `owner` has mined Promis from `series`: the PoW sequence of the next mine. Pages
+ *  the log scan when the node limits the block range. */
+export async function exerciseCount(n: Network, series: Hex, owner: Address): Promise<number> {
+  const query = { address: addr(n, "factory"), event: INTEX_EXERCISED_EVENT, args: { seriesId: series, owner } };
+  try {
+    return (await n.client.getLogs({ ...query, fromBlock: 0n, toBlock: "latest" })).length;
+  } catch {
+    const latest = await n.client.getBlockNumber();
+    let count = 0;
+    for (let from = 0n; from <= latest; from += LOG_PAGE) {
+      const to = from + LOG_PAGE - 1n < latest ? from + LOG_PAGE - 1n : latest;
+      count += (await n.client.getLogs({ ...query, fromBlock: from, toBlock: to })).length;
+    }
+    return count;
+  }
+}
+
 /** Token ids the address holds now: candidates from inbound transfer logs, then a live balance read,
  *  since ERC-1155 has no owner enumeration. */
 export async function ownedWithBalances(n: Network, owner: Address): Promise<[bigint[], bigint[]]> {

@@ -186,73 +186,45 @@ impl Rpc {
     }
 
     /// Submit a Stablecoin Factory proposal through the production operator CLI.
-    #[allow(clippy::too_many_arguments)]
     pub fn stablecoin_propose(
         &self,
         key: &str,
-        name: &str,
-        ticker: &str,
-        iso4217: u16,
-        supply_cap: U256,
-        policy_id: U256,
+        proposal: &StablecoinProposal<'_>,
     ) -> Result<String> {
-        let iso4217 = iso4217.to_string();
-        let supply_cap = supply_cap.to_string();
-        let policy_id = policy_id.to_string();
-        let out = self.sh().cli([
-            "--private-key",
-            key,
-            "--rpc-url",
-            self.cfg.rpc0.as_str(),
-            "stablecoin",
-            "propose",
-            "--name",
-            name,
-            "--ticker",
-            ticker,
-            "--iso4217",
-            iso4217.as_str(),
-            "--supply-cap",
-            supply_cap.as_str(),
-            "--policy-id",
-            policy_id.as_str(),
-        ])?;
+        let out = self.sh().cli(self.stablecoin_propose_args(key, proposal))?;
         parse::extract_tx_hash(&out)
             .ok_or_else(|| eyre!("no tx hash in stablecoin propose output:\n{out}"))
     }
 
     /// Submit a Stablecoin Factory proposal expected to fail during RPC preflight.
-    #[allow(clippy::too_many_arguments)]
     pub fn stablecoin_propose_rejection(
         &self,
         key: &str,
-        name: &str,
-        ticker: &str,
-        iso4217: u16,
-        supply_cap: U256,
-        policy_id: U256,
+        proposal: &StablecoinProposal<'_>,
     ) -> Result<String> {
-        let iso4217 = iso4217.to_string();
-        let supply_cap = supply_cap.to_string();
-        let policy_id = policy_id.to_string();
-        self.sh().cli_expected_failure([
+        self.sh()
+            .cli_expected_failure(self.stablecoin_propose_args(key, proposal))
+    }
+
+    fn stablecoin_propose_args(&self, key: &str, proposal: &StablecoinProposal<'_>) -> Vec<String> {
+        crate::internal::proc::args![
             "--private-key",
             key,
             "--rpc-url",
-            self.cfg.rpc0.as_str(),
+            self.cfg.rpc0,
             "stablecoin",
             "propose",
             "--name",
-            name,
+            proposal.name,
             "--ticker",
-            ticker,
+            proposal.ticker,
             "--iso4217",
-            iso4217.as_str(),
+            proposal.iso4217,
             "--supply-cap",
-            supply_cap.as_str(),
+            proposal.supply_cap,
             "--policy-id",
-            policy_id.as_str(),
-        ])
+            proposal.policy_id,
+        ]
     }
 
     fn proposal_event_blocks(
@@ -444,4 +416,13 @@ impl Rpc {
         }
         self.active_version_on(port)
     }
+}
+
+/// One Stablecoin Factory proposal as the operator CLI submits it.
+pub struct StablecoinProposal<'a> {
+    pub name: &'a str,
+    pub ticker: &'a str,
+    pub iso4217: u16,
+    pub supply_cap: U256,
+    pub policy_id: U256,
 }

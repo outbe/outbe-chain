@@ -87,11 +87,16 @@ interface IDesis {
     event UnusedDesisLimitReported(uint32 indexed worldwideDay, uint256 unusedDesisLimitMinor);
     /// @notice The day dropped a reference currency because `takenBy` already claimed
     /// the letter a series id spells it with. No bid may price in it for this day.
-    /// @notice The day's PROMIS load moved to a new decade of the COEN/USD ladder.
-    ///         Emitted only on a step: never while the deadband holds, and never
-    ///         when the ladder takes its first position on a fresh chain.
+    /// @notice The day's PROMIS load stepped because `isoCode` moved tenfold from the
+    ///         price it was captured at. Never emitted when the ladder takes its first
+    ///         position on a fresh chain.
     event PromisLoadStepped(
-        uint32 indexed worldwideDay, uint128 previousLoadMinor, uint128 newLoadMinor, uint256 coenUsdRateMinor
+        uint32 indexed worldwideDay,
+        uint128 previousLoadMinor,
+        uint128 newLoadMinor,
+        uint16 isoCode,
+        uint256 rateMinor,
+        uint256 referenceMinor
     );
 
     event ReferenceCurrencyLetterTaken(uint32 indexed worldwideDay, uint16 indexed isoCode, uint16 indexed takenBy);
