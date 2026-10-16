@@ -109,7 +109,7 @@ fn run_begin_block_with_chain_id(
         BlockContext::empty_for_tests(block_number, timestamp, chain_id),
         storage,
     );
-    (|| crate::commands::start_metadosis(&ctx))().unwrap();
+    crate::commands::start_metadosis(&ctx).unwrap();
 }
 
 fn run_begin_block(storage: StorageHandle, block_number: u64, timestamp: u64) {

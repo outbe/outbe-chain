@@ -343,7 +343,7 @@ fn request_activation_preconditions(
     let sealed_tribute_projection = admitted.tribute;
     let nod_target = &admitted.nod_target;
     let envelope_projection = admitted.envelope_projection;
-    let activation_preconditions = ActivationPreconditionsV1 {
+    ActivationPreconditionsV1 {
         tribute: TributeInputBindingV1 {
             wwd: wwd.value(),
             source_generation: sealed_tribute_projection.source_generation,
@@ -362,8 +362,7 @@ fn request_activation_preconditions(
             expected_status: MetadosisExpectedStatus::OffchainPending,
             state_version: envelope_projection.state_version,
         },
-    };
-    activation_preconditions
+    }
 }
 
 fn build_request_intent(

@@ -272,6 +272,45 @@ fn materialization_failure(
     })
 }
 
+pub(super) fn execute_lysis(
+    keys: &EnclaveKeys,
+    offer: &SharedTributeOfferKey,
+    chain: B256,
+    request: &outbe_tee::lysis::LysisRequest,
+) -> EnclaveResponse {
+    response((|| -> EnclaveResult<EnclaveResponse> {
+        let key = offer
+            .get()
+            .ok_or(TransportDispatchError::NoResidentNetworkKey)?;
+        if request.chain_id != resident_chain_id(chain)? {
+            return Err(TransportDispatchError::NodMaterializationChainMismatch.into());
+        }
+        let fidelity = crate::fidelity::derive_fidelity_state_key(key.group_sig(), chain, 0)
+            .map_err(|_| TransportDispatchError::FidelityKeyUnavailable)?;
+        let inputs = outbe_tee::lysis::inputs_hash(request)
+            .map_err(|_| TransportDispatchError::InvalidNodPrepareInputs)?;
+        let result = match crate::lysis::execute(key.secret(), &fidelity, request) {
+            Ok(result) => result,
+            Err(TeeError::LysisCalculationRejected) => {
+                return Ok(EnclaveResponse::LysisRejected {
+                    inputs_canonical_hash: inputs,
+                    attestation_tag: keys
+                        .sign_attestation(&outbe_tee::lysis::rejection_preimage(inputs))
+                        .to_vec(),
+                });
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let preimage = outbe_tee::lysis::result_preimage(inputs, &result)
+            .map_err(|_| TransportDispatchError::InvalidNodPrepareResult)?;
+        Ok(EnclaveResponse::LysisExecuted {
+            result: Box::new(result),
+            inputs_canonical_hash: inputs,
+            attestation_tag: keys.sign_attestation(&preimage).to_vec(),
+        })
+    })())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,42 +538,4 @@ mod tests {
             response => panic!("expected signed proof rejection, received {response:?}"),
         }
     }
-}
-pub(super) fn execute_lysis(
-    keys: &EnclaveKeys,
-    offer: &SharedTributeOfferKey,
-    chain: B256,
-    request: &outbe_tee::lysis::LysisRequest,
-) -> EnclaveResponse {
-    response((|| -> EnclaveResult<EnclaveResponse> {
-        let key = offer
-            .get()
-            .ok_or(TransportDispatchError::NoResidentNetworkKey)?;
-        if request.chain_id != resident_chain_id(chain)? {
-            return Err(TransportDispatchError::NodMaterializationChainMismatch.into());
-        }
-        let fidelity = crate::fidelity::derive_fidelity_state_key(key.group_sig(), chain, 0)
-            .map_err(|_| TransportDispatchError::FidelityKeyUnavailable)?;
-        let inputs = outbe_tee::lysis::inputs_hash(request)
-            .map_err(|_| TransportDispatchError::InvalidNodPrepareInputs)?;
-        let result = match crate::lysis::execute(key.secret(), &fidelity, request) {
-            Ok(result) => result,
-            Err(TeeError::LysisCalculationRejected) => {
-                return Ok(EnclaveResponse::LysisRejected {
-                    inputs_canonical_hash: inputs,
-                    attestation_tag: keys
-                        .sign_attestation(&outbe_tee::lysis::rejection_preimage(inputs))
-                        .to_vec(),
-                });
-            }
-            Err(error) => return Err(error.into()),
-        };
-        let preimage = outbe_tee::lysis::result_preimage(inputs, &result)
-            .map_err(|_| TransportDispatchError::InvalidNodPrepareResult)?;
-        Ok(EnclaveResponse::LysisExecuted {
-            result: Box::new(result),
-            inputs_canonical_hash: inputs,
-            attestation_tag: keys.sign_attestation(&preimage).to_vec(),
-        })
-    })())
 }

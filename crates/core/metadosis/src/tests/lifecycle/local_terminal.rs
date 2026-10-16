@@ -180,7 +180,6 @@ fn exercise_local_terminal_fault_matrix(
         mutation_count >= 7,
         "local terminal command must include transition, domain effects, retirement and events"
     );
-    if outcome == ReadyOutcome::Completed {}
     assert_ready_outcome(&mut probe, wwd, outcome, expected_promis);
     let clean_storage = probe.storage.clone();
     let clean_events = probe.events.clone();

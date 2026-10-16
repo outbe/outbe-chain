@@ -206,9 +206,7 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
             BlockContext::empty_for_tests(2, scheduled + SECONDS_PER_HOUR, CHAIN_ID),
             storage.clone(),
         );
-        (|| {
-            assert!(crate::commands::start_metadosis(&ctx).is_err());
-        })();
+        assert!(crate::commands::start_metadosis(&ctx).is_err());
 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), WwdStatus::Waiting);
@@ -249,7 +247,7 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
             storage.clone(),
         );
         crate::emission_sink::apply(&ctx, U256::from(10u64)).unwrap();
-        (|| crate::commands::start_metadosis(&ctx))().unwrap();
+        crate::commands::start_metadosis(&ctx).unwrap();
     });
 
     let events = storage.get_events(contract_addr);
