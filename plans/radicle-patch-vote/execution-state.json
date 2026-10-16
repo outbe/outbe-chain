@@ -5,7 +5,7 @@
   "last_periodic_report_utc": "2026-10-16T00:38:14Z",
   "next_periodic_report_due_utc": "2026-10-16T01:08:14Z",
   "period_minutes": 30,
-  "stage": "P2/P3 intermediate plus P6 input foundation: accepted manifest cache/replay verified3c132829a. Prior public context and interactive DKG proofs retained. P4 bootstrap remains stopped at pending D3 decision.",
+  "stage": "P2/P3 intermediate with protected node preparation context verified5dc7c1521: accepted manifest cache uploads and own-reader pinned refs replay/current state/public Output response; P4 bootstrap remains stopped at pending D3.",
   "decision_gate": {
     "id": "D3-description-bound",
     "status": "all three independent decision checks complete; user approval pending; dependent bootstrap implementation stopped",
@@ -50,7 +50,7 @@
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
-    "reset": "Approved P3/P6 preparation component implementation and exact-SHA evidence made progress; D3 dependent work still stopped."
+    "reset": "Protected preparation node wiring and exact-SHA proof made progress. D3-dependent bootstrap remains stopped; no goal completion/overall blocked claim."
   },
   "user_confirmed_contract": {
     "network_repository_owner": "sole network BLS authority; no user delegation feature",
@@ -59,7 +59,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "3c132829a895762574f36320fea30aef631e1859",
+  "source_sha": "5dc7c152152c7ab9333aee14be1133826d8172ec",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -78,7 +78,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "3c132829a adds accepted body/manifest cache and trusted receipt-chain preparation snapshot replay to existing package store, with reopen/corruption/fresh-reader tests. No native policy grants,ready selection,consensus/genesis/spec changes or signer runtime wiring.",
+  "current_source_changes": "5dc7c1521 connects accepted manifest store/replay to protected node local control through OCW1/OCP1 and typed preparation SDK; opt-in node store lifetime. Private local snapshot decoder, bounded framing/workers; no signer/Share/native grants/consensus/genesis/spec changes.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -104,10 +104,10 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "3c132829a895762574f36320fea30aef631e1859",
-    "checks": "69 full adapter lib tests/0ignored;7 consumer all-target checks;adapter+node all-target Clippy -D warnings;1 touched Rust-file fmt PASS;source clean.",
-    "scenarios": "Actual private package store persistence/drop-reopen;out-of-order manifest cache and exact ordered receipt replay;BindMaterial preserves refs/sigrefs;unavailable/missing/wrong sequence/fork/foreign target rejected despite cache;bounded body/manifest integrity/canonical mismatch/symlinks rejected;no ready package/slot selection created. Existing complete Review/witness/socket regressions included.",
-    "acceptance": "Intermediate SDK-only P3/P6 preparation input. Deterministic receipt/manifest fixtures,not complete native bootstrap package/live chain/SIGKILL or production runtime integration. Signer-control,collector,automatic bootstrap,promotion,Merge,full E2E/task acceptance incomplete."
+    "source_sha": "5dc7c152152c7ab9333aee14be1133826d8172ec",
+    "checks": "71 full adapter lib tests/0ignored;7 consumer all-target checks;adapter+node all-target Clippy -D warnings;6 touched Rust-file fmt PASS;source clean.",
+    "scenarios": "Actual socket+actor+private store: missing manifest denial, receipt-bound manifest cache and idempotence, wrong hash/manifest/chain rejection; exact state/public material/pinned refs/sigrefs reply; store/server drop/rebind retains snapshot; missing trusted source/corrupt manifest/withdrawn Output reject despite cache. Canonical nested frame/truncation/zero sigrefs/oversize/root refs checks; prior regressions PASS.",
+    "acceptance": "Intermediate P3/P6 node/SDK wiring,not sidecar collector or signing. Deterministic receipt/authority and threshold framing fixtures,not live chain/complete native Git bootstrap/process crash/E2E or full acceptance."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
@@ -117,8 +117,8 @@
   "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing",
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
-  "last_goal_turn_classification": "progress:3c132829a accepted manifest cache/trusted receipt-chain preparation snapshot replay added and69tests/7consumers/Clippy/fmt exact-SHA proof recorded. D3 explicit approval question pending; no task closure.",
-  "next_required_work": "Connect approved narrow typed Review signer/control to trusted replay/current state/public Output; shares remain in provider, no arbitrary message/namespace and no grant from cached manifests. Continue remaining P0-P8. Wait explicit D3 answer before description contract/dependent bootstrap changes.",
+  "last_goal_turn_classification": "progress: protected node preparation cache/replay/current context now connected in5dc7c1521;71tests/7consumers/Clippy/fmt exact-SHA evidence recorded. D3 explicit response still pending, no task closure.",
+  "next_required_work": "Implement approved narrow exact Review signer/control and sidecar collector using protected context; do not bypass missing native bootstrap/grant verification or expose raw message/namespace/Share. Explicit D3 approval remains required before description/bootstrap changes. Remaining P0-P8 production E2E and acceptance gates unchanged.",
   "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
   "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
   "review_store_evidence": "evidence/outbe-chain-pjz.4/review-store-r2",
@@ -136,5 +136,6 @@
   "local_signing_state_evidence": "evidence/outbe-chain-pjz.4/local-signing-state",
   "local_public_material_evidence": "evidence/outbe-chain-pjz.4/local-public-material",
   "interactive_repository_signing_evidence": "evidence/outbe-chain-pjz.4/interactive-repository-signing",
-  "checkpoint_replay_store_evidence": "evidence/outbe-chain-pjz.4/checkpoint-replay-store"
+  "checkpoint_replay_store_evidence": "evidence/outbe-chain-pjz.4/checkpoint-replay-store",
+  "local_preparation_context_evidence": "evidence/outbe-chain-pjz.4/local-preparation-context"
 }
