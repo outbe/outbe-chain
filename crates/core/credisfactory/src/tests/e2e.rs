@@ -275,6 +275,41 @@ fn false_token_return_rolls_back_credis_and_pledged_collateral() {
 }
 
 #[test]
+fn a_token_that_moves_less_than_owed_rolls_back_credis_and_pledged_collateral() {
+    let mut provider = env();
+    let (id, record, pledged, liquid) = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let id = open(&storage, 1);
+        let record = CredisContract::new(storage.clone()).get_credis(id).unwrap();
+        let pledged = outbe_gratis::api::pledged_ct(storage.clone(), alice()).unwrap();
+        let liquid = outbe_gratis::api::balance_ct(storage, alice()).unwrap();
+        (id, record, pledged, liquid)
+    });
+    provider.stub_sub_call_sequence_at_selector(
+        settlement_asset(),
+        crate::sol_ext::IERC20::balanceOfCall::SELECTOR,
+        [U256::ZERO, U256::ONE].map(|balance| Bytes::from(balance.to_be_bytes::<32>().to_vec())),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        let err = runtime::settle_credis(storage.clone(), bob(), id, pledge_stables()).unwrap_err();
+        assert!(err.to_string().contains("unexpected amount"), "{err}");
+        assert_eq!(
+            CredisContract::new(storage.clone()).get_credis(id).unwrap(),
+            record
+        );
+        assert_eq!(
+            outbe_gratis::api::pledged_ct(storage.clone(), alice()).unwrap(),
+            pledged
+        );
+        assert_eq!(
+            outbe_gratis::api::balance_ct(storage, alice()).unwrap(),
+            liquid
+        );
+    });
+    teardown();
+}
+
+#[test]
 fn forfeit_burns_only_remaining_credis_backing_and_leaves_fidelity_untouched() {
     let mut provider = env();
     StorageHandle::enter(&mut provider, |storage| {
