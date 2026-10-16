@@ -130,14 +130,13 @@ pub struct OracleContract {
     // slot 31: mapping(snapshot_idx => mapping(pair_index => volume))
     pub snapshot_volume: Mapping<u64, Mapping<PairIndex, U256>>,
 
-    // === Protected Validators (slots 32-33) ===
-    // slot 32: mapping(validator => is_protected)
-    pub protected_validator: Mapping<Address, bool>,
-    // slot 33: allow protected validators flag
-    pub config_allow_protected: Slot<bool>,
+    // Slots 32 (`protected_validator`) and 33 (`config_allow_protected`) are
+    // retired holes. Do not reuse them.
 
     // === S-Curve Active Entries (slots 34-39) ===
-    // slot 34: number of active S-curve entries
+    // slot 34 - pinned: without this anchor the running slot counter would
+    // slide it down into the retired 32-33 hole.
+    #[slot(34)]
     pub scurve_count: Slot<u32>,
     // slot 35: mapping(entry_idx => pair) for which pair
     pub scurve_pair: Mapping<u32, AddressPair>,

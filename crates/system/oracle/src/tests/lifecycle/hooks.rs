@@ -181,29 +181,6 @@ fn slash_window_rolls_back_the_forced_exit_when_slashing_fails() {
 }
 
 #[test]
-fn slash_window_never_force_exits_a_protected_validator() {
-    with_oracle(|storage, oracle| {
-        oracle.config_allow_protected.write(true).unwrap();
-
-        let v1 = register_voter(&storage);
-
-        // Mark as protected
-        oracle.protected_validator.write(&v1, true).unwrap();
-
-        // Simulate many misses
-        for _ in 0..20 {
-            oracle.increment_miss(&v1).unwrap();
-        }
-
-        crate::tally::slash_and_reset_counters(oracle, 10000).unwrap();
-
-        // Counters reset but validator NOT force-exited
-        assert_eq!(oracle.penalty_miss_count.read(&v1).unwrap(), 0);
-        let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        assert!(vs.validator_lifecycle(v1).unwrap().is_active_status());
-    });
-}
-#[test]
 fn begin_block_scurve_hook_records_the_daily_peak() {
     with_oracle(|storage, oracle| {
         oracle.reference_currencies.push(840).unwrap();
