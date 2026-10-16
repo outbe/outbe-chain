@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
 bytes.workspace = true
 commonware-codec.workspace = true
 commonware-cryptography.workspace = true
@@ -22,6 +23,7 @@ multibase.workspace = true
 outbe-primitives.workspace = true
 outbe-consensus.workspace = true
 outbe-radicleregistry.workspace = true
+outbe-vote.workspace = true
 outbe-validatorset.workspace = true
 parking_lot.workspace = true
 rand_core.workspace = true
@@ -39,7 +41,6 @@ tokio.workspace = true
 metrics.workspace = true
 
 [dev-dependencies]
-outbe-vote.workspace = true
 alloy-eips.workspace = true
 reth-chainspec.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }

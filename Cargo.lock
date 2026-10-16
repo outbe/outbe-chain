@@ -9594,6 +9594,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
+ "alloy-sol-types",
  "bytes",
  "commonware-actor",
  "commonware-codec",

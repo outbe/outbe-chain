@@ -38,6 +38,15 @@ impl FinalizedPublicationReceipt {
 
 /// Only this node's current finalized state may supply an accepted receipt.
 pub trait RepositoryReceiptReader: Send + Sync + 'static {
+    fn read_finalized_vote_page(
+        &self,
+        _: u64,
+        _: u32,
+    ) -> Result<Option<FinalizedVotePage>, ManagerError> {
+        Err(ManagerError::Snapshot(
+            "finalized Vote events unavailable".into(),
+        ))
+    }
     fn read_current_patch_approval(
         &self,
         _: alloy_primitives::U256,
@@ -59,6 +68,18 @@ pub trait RepositoryReceiptReader: Send + Sync + 'static {
         sequence: u64,
     ) -> Result<Option<FinalizedPublicationReceipt>, ManagerError>;
 }
+
+/// Bounded observations of existing Approved Vote events, never permission to sign.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedVotePage {
+    pub chain_id: u64,
+    pub genesis_hash: B256,
+    pub block: FinalizedBlock,
+    pub next_offset: Option<u32>,
+    pub proposals: Vec<alloy_primitives::U256>,
+}
+
+pub const MAX_VOTE_PAGE: usize = 32;
 
 /// Delivery observations from one own canonical finalized state, never permission to publish.
 #[derive(Clone, Debug, PartialEq, Eq)]

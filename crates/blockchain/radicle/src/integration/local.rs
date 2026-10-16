@@ -8,6 +8,7 @@ mod progress;
 mod publication;
 mod review;
 mod state;
+mod vote;
 
 pub use bootstrap::BootstrapSigningContext;
 pub use preparation::{publication_store_path, PatchPreparationContext};
@@ -587,6 +588,7 @@ async fn serve(
         (Some(magic), 4) if magic == gossip::TAKE => gossip::TAKE,
         (Some(magic), length) if magic == gossip::SEND && length > 4 => gossip::SEND,
         (Some(magic), 12) if magic == MAGIC => MAGIC,
+        (Some(magic), 16) if magic == vote::MAGIC => vote::MAGIC,
         (Some(magic), length) if magic == publication::ATTEST && length > 4 => publication::ATTEST,
         (Some(magic), length) if magic == publication::QUEUE && length > 4 => publication::QUEUE,
         (Some(magic), 4) if magic == bootstrap::MAGIC => bootstrap::MAGIC,
@@ -613,6 +615,14 @@ async fn serve(
         Ok(permit) => permit,
         Err(_) => return write_frame(&mut stream, &[magic.as_slice(), &[0]].concat()).await,
     };
+    if magic == vote::MAGIC {
+        let height = u64::from_be_bytes(request[4..12].try_into().map_err(|_| Error::Protocol)?);
+        let offset = u32::from_be_bytes(request[12..16].try_into().map_err(|_| Error::Protocol)?);
+        let response = vote::read(reader, permit, height, offset)
+            .await
+            .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
+        return write_frame(&mut stream, &response).await;
+    }
     if magic == review::COB || magic == review::REFS {
         let result = async {
             let request = review::Request::parse(&request, native_node)?;

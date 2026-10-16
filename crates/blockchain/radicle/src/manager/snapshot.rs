@@ -22,6 +22,8 @@ use reth_storage_api::StateProvider;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+mod vote;
+
 #[derive(Clone)]
 pub struct RethSnapshotReader<P> {
     provider: P,
@@ -61,9 +63,16 @@ impl<P: StateProviderFactory + Send + Sync> super::RepositoryAuthorityReader
     }
 }
 
-impl<P: StateProviderFactory + Send + Sync + 'static> super::RepositoryReceiptReader
-    for RethSnapshotReader<P>
+impl<P: StateProviderFactory + reth_provider::ReceiptProvider + Send + Sync + 'static>
+    super::RepositoryReceiptReader for RethSnapshotReader<P>
 {
+    fn read_finalized_vote_page(
+        &self,
+        height: u64,
+        offset: u32,
+    ) -> Result<Option<super::FinalizedVotePage>, ManagerError> {
+        RethSnapshotReader::read_finalized_vote_page(self, height, offset)
+    }
     fn read_current_patch_approval(
         &self,
         proposal_id: U256,

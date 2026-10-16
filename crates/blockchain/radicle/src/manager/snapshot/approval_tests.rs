@@ -35,6 +35,44 @@ impl BlockHashReader for ApprovalProvider {
             .collect())
     }
 }
+impl reth_provider::ReceiptProvider for ApprovalProvider {
+    type Receipt = <MockEthProvider as reth_provider::ReceiptProvider>::Receipt;
+    fn receipt(&self, _: u64) -> ProviderResult<Option<Self::Receipt>> {
+        panic!("wrong receipt API")
+    }
+    fn receipt_by_hash(&self, _: B256) -> ProviderResult<Option<Self::Receipt>> {
+        panic!("wrong receipt API")
+    }
+    fn receipts_by_block(
+        &self,
+        block: alloy_eips::BlockHashOrNumber,
+    ) -> ProviderResult<Option<Vec<Self::Receipt>>> {
+        let alloy_eips::BlockHashOrNumber::Hash(hash) = block else {
+            panic!("receipts must use exact hash")
+        };
+        let number = self
+            .canonical
+            .iter()
+            .find_map(|(n, h)| (*h == hash).then_some(*n))
+            .unwrap();
+        self.states
+            .get(&hash)
+            .unwrap()
+            .receipts_by_block(number.into())
+    }
+    fn receipts_by_tx_range(
+        &self,
+        _: impl std::ops::RangeBounds<u64>,
+    ) -> ProviderResult<Vec<Self::Receipt>> {
+        panic!("wrong receipt API")
+    }
+    fn receipts_by_block_range(
+        &self,
+        _: std::ops::RangeInclusive<u64>,
+    ) -> ProviderResult<Vec<Vec<Self::Receipt>>> {
+        panic!("wrong receipt API")
+    }
+}
 impl BlockNumReader for ApprovalProvider {
     fn chain_info(&self) -> ProviderResult<ChainInfo> {
         let (&best_number, &best_hash) = self.canonical.last_key_value().unwrap();
@@ -796,6 +834,108 @@ fn exact_finalized_state_does_not_leak_latest_approval_or_revoke_accepted_histor
         *reader.provider.reads.lock().unwrap(),
         [block(2).hash, block(3).hash, block(4).hash, block(3).hash]
     );
+}
+
+#[test]
+fn finalized_vote_pages_are_bounded_canonical_and_tied_to_immutable_patch_approval() {
+    use crate::manager::MAX_VOTE_PAGE;
+    use alloy_sol_types::SolEvent as _;
+    use outbe_vote::precompile::IVote;
+    let (mut reader, _) = fixture();
+    let event = |id| {
+        IVote::ProposalApproved {
+            proposalId: U256::from(id),
+            state: IVote::VoteTally { yes: 3, no: 0 },
+        }
+        .encode_log_data()
+    };
+    let mut logs: Vec<_> = (1..=65)
+        .rev()
+        .map(|id| alloy_primitives::Log {
+            address: outbe_primitives::addresses::VOTE_ADDRESS,
+            data: event(id),
+        })
+        .collect();
+    logs.push(logs.last().unwrap().clone());
+    logs.push(alloy_primitives::Log {
+        address: Address::repeat_byte(99),
+        data: event(0),
+    });
+    let receipts = vec![alloy_consensus::EthereumReceipt {
+        tx_type: alloy_consensus::TxType::Legacy,
+        success: true,
+        cumulative_gas_used: 1,
+        logs,
+    }];
+    reader
+        .provider
+        .states
+        .get(&block(3).hash)
+        .unwrap()
+        .add_receipts(3, receipts.clone());
+    let first = reader.read_finalized_vote_page(3, 0).unwrap().unwrap();
+    assert_eq!(first.block, block(3));
+    assert_eq!(first.proposals, [U256::ONE]);
+    assert_eq!(first.next_offset, Some(MAX_VOTE_PAGE as u32));
+    let second = reader.read_finalized_vote_page(3, 32).unwrap().unwrap();
+    assert!(second.proposals.is_empty());
+    assert_eq!(second.next_offset, Some(64));
+    let last = reader.read_finalized_vote_page(3, 64).unwrap().unwrap();
+    assert!(last.proposals.is_empty());
+    assert_eq!(last.next_offset, None);
+    assert!(reader.read_finalized_vote_page(3, 66).is_err());
+    assert!(reader.read_finalized_vote_page(4, 0).unwrap().is_none());
+    assert!(
+        reader.read_finalized_vote_page(2, 0).is_err(),
+        "missing receipts cannot skip a block"
+    );
+    reader
+        .provider
+        .states
+        .get(&block(2).hash)
+        .unwrap()
+        .add_receipts(2, receipts);
+    assert!(
+        reader.read_finalized_vote_page(2, 0).is_err(),
+        "wrong approval height must reject"
+    );
+    reader.provider.finalized = Some(BlockNumHash::new(4, block(4).hash));
+    assert_eq!(
+        reader
+            .read_finalized_vote_page(3, 0)
+            .unwrap()
+            .unwrap()
+            .proposals,
+        [U256::ONE]
+    );
+    let mut malformed = event(1);
+    malformed.data = Default::default();
+    reader
+        .provider
+        .states
+        .get(&block(3).hash)
+        .unwrap()
+        .add_receipts(
+            3,
+            vec![alloy_consensus::EthereumReceipt {
+                tx_type: alloy_consensus::TxType::Legacy,
+                success: true,
+                cumulative_gas_used: 1,
+                logs: vec![alloy_primitives::Log {
+                    address: outbe_primitives::addresses::VOTE_ADDRESS,
+                    data: malformed,
+                }],
+            }],
+        );
+    assert!(
+        reader.read_finalized_vote_page(3, 0).is_err(),
+        "malformed Approved ABI must reject"
+    );
+    reader.provider.canonical.insert(4, B256::repeat_byte(99));
+    assert!(matches!(
+        reader.read_finalized_vote_page(3, 0),
+        Err(ManagerError::Finality(_))
+    ));
 }
 
 #[test]
