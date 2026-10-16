@@ -65,7 +65,7 @@ library IntexGas {
     uint256 internal constant BIDS_PER_ITEM = 17_700;
 
     /// @dev A chunk creates the series it carries. Winners issue their own units. Measured: 292k for
-    ///      one series, 3.13M for 20, so ~143k base and ~149k a series.
+    ///      one series, 3.78M for 24, so ~143k base and ~151k a series.
     uint256 internal constant ISSUANCE_BASE = 250_000;
     uint256 internal constant ISSUANCE_PER_SERIES = 230_000;
 

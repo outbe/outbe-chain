@@ -42,7 +42,7 @@ library BridgeMsgCodec {
 
     /// @notice Series one ISSUANCE_INSTRUCTIONS message may carry. A wider day spans several messages.
     /// @dev A series encodes to 384 bytes, so the 10_000-byte send cap fits 25. This keeps headroom.
-    uint16 internal constant MAX_SERIES_PER_ISSUANCE = 20;
+    uint16 internal constant MAX_SERIES_PER_ISSUANCE = 24;
 
     /// @notice Series one MARK_CALLED message may carry. A batch is one day's series called
     ///         together.

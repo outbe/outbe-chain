@@ -26,7 +26,7 @@ pub const MAX_PARKED_CALLS_PER_FIRING: u32 = 16;
 pub const MAX_PARKED_FAILURES_PER_FIRING: u32 = 3;
 
 /// Series one ISSUANCE_INSTRUCTIONS message may carry. Mirrors `MAX_SERIES_PER_ISSUANCE`.
-pub const MAX_SERIES_PER_MESSAGE: usize = 20;
+pub const MAX_SERIES_PER_MESSAGE: usize = 24;
 
 /// The general cross-chain array cap, mirroring `MAX_PAYLOAD_ARRAY_LEN`. Refund chunks use it.
 pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
