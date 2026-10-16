@@ -527,6 +527,7 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         #[cfg(not(feature = "e2e-test"))]
         EnclaveRequest::CreateNodForTestV2 { .. } => CommandClass::Never,
         EnclaveRequest::ProcessTributeOfferBatch { .. }
+        | EnclaveRequest::ExecuteLysis { .. }
         | EnclaveRequest::PrepareStateNods { .. }
         | EnclaveRequest::OpenStateNods { .. }
         | EnclaveRequest::MineEncryptedNodV2 { .. }

@@ -10,9 +10,7 @@ pub fn floor_price_minor(entry_price_minor: U256) -> Option<U256> {
 }
 
 /// Whether the floor and the call price at any `u16` call rate fit `U256` for this entry.
-pub fn is_issuable_entry(entry_price_minor: U256) -> bool {
-    marked_up(entry_price_minor, u16::MAX).is_some()
-}
+pub use outbe_primitives::nod_rules::is_issuable_entry;
 
 /// Inverse of `call_bins::price_to_bin`: returns the lower edge of bin `bin_id` in
 /// six-decimal minor units. Diagnostic-only. `bin_to_price_floor` may

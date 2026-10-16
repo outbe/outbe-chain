@@ -398,7 +398,7 @@ fn validate_amount_run(run: &AmountRunV1) -> Result<(), LysisArtifactErrorV1> {
                 "amount run record order",
             ));
         }
-        if !outbe_nod::pricing::is_issuable_entry(record.entry_price_minor) {
+        if !outbe_primitives::nod_rules::is_issuable_entry(record.entry_price_minor) {
             return Err(LysisArtifactErrorV1::InvalidEncoding(
                 "amount run Nod entry price bound",
             ));
@@ -438,7 +438,7 @@ fn validate_finalized_output_run(run: &FinalizedOutputRunV1) -> Result<(), Lysis
             || previous_tribute.is_some_and(|previous| previous >= nod.source_tribute_id);
         let has_zero_field = nod.owner.is_zero() || nod.worldwide_day.value() == 0;
         let has_invalid_price = nod.entry_price_minor.is_zero()
-            || !outbe_nod::pricing::is_issuable_entry(nod.entry_price_minor)
+            || !outbe_primitives::nod_rules::is_issuable_entry(nod.entry_price_minor)
             || nod.reference_currency == 0;
         if out_of_order
             || has_zero_field

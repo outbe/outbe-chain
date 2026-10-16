@@ -11,6 +11,9 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
         ..
     } = context;
     match req {
+        EnclaveRequest::ExecuteLysis { request } => {
+            super::nod::execute_lysis(keys, offer_key, chain_id, &request)
+        }
         EnclaveRequest::PrepareStateNods { request } => {
             super::nod::prepare_state(keys, offer_key, chain_id, &request)
         }

@@ -37,6 +37,7 @@ pub mod terminal_outcome {
     pub const MISSED_OFFERING: u8 = 1;
     pub const CAPACITY_FORFEITURE: u8 = 2;
     pub const METADOSIS_FAILURE: u8 = 3;
+    pub const LYSIS_COMPLETED: u8 = 4;
 }
 
 /// Canonical Tribute partition-retirement result recorded by a terminal receipt.

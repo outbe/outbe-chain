@@ -13,6 +13,7 @@ mod live_index;
 mod profile;
 pub mod request;
 pub mod schema;
+#[cfg(test)]
 mod snapshot;
 pub mod state;
 mod store;

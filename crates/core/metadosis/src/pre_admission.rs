@@ -221,6 +221,7 @@ impl MetadosisContract<'_> {
     /// Initialize the day's OCOMP state when READY-day processing prepares it for OCOMP.
     /// Repeating the exact initialization is idempotent.
     /// This method rejects any non-canonical partial record.
+    #[cfg(any(test, feature = "test-utils"))]
     pub(crate) fn initialize_ocomp_pre_admission(
         &mut self,
         wwd: WorldwideDay,

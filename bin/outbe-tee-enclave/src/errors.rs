@@ -80,6 +80,9 @@ impl From<DkgSeamOrderError> for TeeError {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum TeeError {
+    #[error("Lysis calculation rejected")]
+    LysisCalculationRejected,
+
     /// The nonce size is not 12 bytes.
     #[error("invalid nonce size: expected 12 bytes, got {0}")]
     InvalidNonce(usize),

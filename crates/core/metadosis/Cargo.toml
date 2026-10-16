@@ -20,6 +20,7 @@ outbe-nod.workspace = true
 outbe-nodfactory.workspace = true
 outbe-promislimit.workspace = true
 outbe-lysis.workspace = true
+outbe-tee.workspace = true
 outbe-oracle.workspace = true
 outbe-staking.workspace = true
 alloy-primitives.workspace = true
@@ -29,6 +30,9 @@ tracing.workspace = true
 k256 = { workspace = true, optional = true }
 
 [dev-dependencies]
+serde_json.workspace = true
+outbe-tee = { workspace = true, features = ["test-utils"] }
+outbe-tee-enclave.workspace = true
 outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 outbe-nod = { workspace = true, features = ["test-enclave"] }
 outbe-tribute = { workspace = true, features = ["test-enclave"] }

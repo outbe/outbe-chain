@@ -32,6 +32,28 @@ pub(crate) fn issue_nod_at(
     encrypted: &EncryptedNodV2,
     issued_at: u64,
 ) -> Result<WwdEntityId> {
+    issue_nod_with_cost(storage, encrypted, issued_at, None)
+}
+
+pub fn issue_lysis_nod(
+    storage: &StorageHandle<'_>,
+    verified: &outbe_tee::lysis::VerifiedLysisNod,
+) -> Result<WwdEntityId> {
+    storage.require_metadosis_process_ready()?;
+    issue_nod_with_cost(
+        storage,
+        verified.nod(),
+        storage.timestamp()?.to::<u64>(),
+        Some(verified.settlement_cost_minor()),
+    )
+}
+
+fn issue_nod_with_cost(
+    storage: &StorageHandle<'_>,
+    encrypted: &EncryptedNodV2,
+    issued_at: u64,
+    verified_cost: Option<U256>,
+) -> Result<WwdEntityId> {
     let terms = &encrypted.terms;
     if terms.owner.is_zero() {
         return Err(NodFactoryError::InvalidOwner.into());
@@ -68,10 +90,13 @@ pub(crate) fn issue_nod_at(
         issued_at,
     };
     // Existing settlement pricing remains public in this privacy stage.
-    let settlement_cost_minor = nod_api::settlement_cost_minor(
-        terms.entry_price_minor,
-        nod_api::calculation_amount(&item)?,
-    )?;
+    let settlement_cost_minor = match verified_cost {
+        Some(cost) => cost,
+        None => nod_api::settlement_cost_minor(
+            terms.entry_price_minor,
+            nod_api::calculation_amount(&item)?,
+        )?,
+    };
     let call_terms = call_terms(storage, terms.entry_price_minor, terms.reference_currency)?;
     nod_api::add_nod(storage, &item, terms.entry_price_minor, call_terms)?;
     emit_event(

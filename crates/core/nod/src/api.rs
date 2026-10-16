@@ -1,9 +1,7 @@
 //! Cross-module API for the Nod entity store.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::math::scaled_math::checked_mul_div_floor;
 use outbe_primitives::time::first_full_day;
-use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
@@ -52,14 +50,7 @@ pub fn is_qualified(storage: &StorageHandle<'_>, bucket: &NodBucketState) -> Res
 /// The cost is derived rather than stored. The entry price lives on the Nod's
 /// bucket and the load lives on the Nod itself. Lysis mints the Nod from exactly
 /// this formula.
-pub fn settlement_cost_minor(entry_price_minor: U256, gratis_load_minor: U256) -> Result<U256> {
-    let cost = checked_mul_div_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)?;
-    if !entry_price_minor.is_zero() && !gratis_load_minor.is_zero() {
-        Ok(cost.max(U256::ONE))
-    } else {
-        Ok(cost)
-    }
-}
+pub use outbe_primitives::nod_rules::settlement_cost_minor;
 
 /// Timestamp by which a called bucket must be settled, or `0` while it is not
 /// called at all.

@@ -131,6 +131,7 @@ mod ocomp_request;
 mod ocomp_semantic_migrations;
 mod ocomp_snapshot_views;
 mod ocomp_storage;
+mod onchain_lysis;
 mod pre_admission;
 mod precompile;
 mod reducer;

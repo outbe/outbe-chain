@@ -35,7 +35,7 @@ pub fn date_key_to_timestamp(date_key: u32) -> u64 {
 /// 1. bootstrap (block 1 only).
 /// 2. `create_worldwide_day_if_needed`.
 /// 3. exhaustive reducer advancement for active WWDs.
-/// 4. one closed local terminal outcome, or OCOMP pre-admission for a READY WWD.
+/// 4. one local settlement or confidential Lysis for a READY WWD.
 ///
 /// Old name: `run_begin_block` (Phase 5.1 of the Cycle epic). Before the
 /// Cycle epic, a dedicated `MetadosisLifecycle::begin_block` lifecycle hook

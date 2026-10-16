@@ -873,6 +873,9 @@ pub enum EnclaveRequest {
     ReadTributeDayAmountV2 {
         record: outbe_primitives::tribute_day_encryption::EncryptedTributeDayAmountV2,
     },
+    ExecuteLysis {
+        request: Box<crate::lysis::LysisRequest>,
+    },
     PrepareStateNods {
         request: Box<crate::nod_state_materialization::PrepareStateNodsRequest>,
     },
@@ -888,6 +891,7 @@ impl EnclaveRequest {
     pub const fn label(&self) -> &'static str {
         match self {
             Self::CreateNodForTestV2 { .. } => "create_nod_for_test_v2",
+            Self::ExecuteLysis { .. } => "execute_lysis",
             Self::PrepareStateNods { .. } => "prepare_state_nods",
             Self::OpenStateNods { .. } => "open_state_nods",
             Self::MineEncryptedNodV2 { .. } => "mine_encrypted_nod_v2",
@@ -969,6 +973,7 @@ impl EnclaveRequest {
         match self {
             Self::CreateNodForTestV2 { .. } => true,
             Self::GetQuote { .. }
+            | Self::ExecuteLysis { .. }
             | Self::PrepareStateNods { .. }
             | Self::OpenStateNods { .. }
             | Self::MineEncryptedNodV2 { .. }
@@ -1439,6 +1444,15 @@ pub enum EnclaveResponse {
     },
     EncryptedNodMintRejectedV2 {
         reason: String,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    LysisRejected {
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    LysisExecuted {
+        result: Box<crate::lysis::LysisResult>,
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },

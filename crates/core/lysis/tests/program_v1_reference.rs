@@ -319,7 +319,7 @@ fn the_nod_floor_follows_the_entry_price_not_the_tribute_price() {
     .map(|price| {
         input.tributes[0].tribute.tribute_price_minor = price;
         let result = execute(input.clone()).unwrap();
-        outbe_nod::pricing::floor_price_minor(result.nod_actions[0].entry_price_minor).unwrap()
+        outbe_primitives::markup::marked_up(result.nod_actions[0].entry_price_minor, 8).unwrap()
     });
     assert_eq!(floors[0], U256::from(2_160_000u64));
     assert!(floors.iter().all(|floor| *floor == floors[0]));
