@@ -30,13 +30,13 @@ pub fn encode_gem_v1(body: &GemBodyV1) -> Result<Vec<u8>, CanonicalBodyError> {
     encode_bytes_field(2, body.owner.as_slice(), &mut output);
     encode_optional_varint_field(3, u64::from(body.gem_type), &mut output);
     encode_bytes_field(4, &body.promis_load_minor.to_be_bytes::<32>(), &mut output);
-    encode_optional_varint_field(6, u64::from(body.issuance_currency), &mut output);
-    encode_optional_varint_field(7, u64::from(body.reference_currency), &mut output);
-    encode_optional_varint_field(8, body.issued_at, &mut output);
-    encode_bytes_field(9, body.bucket_key.as_slice(), &mut output);
-    encode_optional_varint_field(10, u64::from(body.state), &mut output);
-    encode_optional_varint_field(11, body.called_at, &mut output);
-    encode_optional_varint_field(12, body.settled_at, &mut output);
+    encode_optional_varint_field(5, u64::from(body.issuance_currency), &mut output);
+    encode_optional_varint_field(6, u64::from(body.reference_currency), &mut output);
+    encode_optional_varint_field(7, body.issued_at, &mut output);
+    encode_bytes_field(8, body.bucket_key.as_slice(), &mut output);
+    encode_optional_varint_field(9, u64::from(body.state), &mut output);
+    encode_optional_varint_field(10, body.called_at, &mut output);
+    encode_optional_varint_field(11, body.settled_at, &mut output);
     Ok(output)
 }
 
@@ -46,13 +46,13 @@ pub fn decode_gem_v1(bytes: &[u8]) -> Result<GemBodyV1, CanonicalBodyError> {
     let owner = Address::from(fixed_bytes::<20>(required_bytes(&mut fields, 2)?, 2)?);
     let gem_type = optional_u32(&mut fields, 3)?;
     let promis_load_minor = decode_u256(required_bytes(&mut fields, 4)?, 4)?;
-    let issuance_currency = optional_u16(&mut fields, 6)?;
-    let reference_currency = optional_u16(&mut fields, 7)?;
-    let issued_at = optional_varint(&mut fields, 8)?;
-    let bucket_key = B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 9)?, 9)?);
-    let state = optional_u32(&mut fields, 10)?;
-    let called_at = optional_varint(&mut fields, 11)?;
-    let settled_at = optional_varint(&mut fields, 12)?;
+    let issuance_currency = optional_u16(&mut fields, 5)?;
+    let reference_currency = optional_u16(&mut fields, 6)?;
+    let issued_at = optional_varint(&mut fields, 7)?;
+    let bucket_key = B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 8)?, 8)?);
+    let state = optional_u32(&mut fields, 9)?;
+    let called_at = optional_varint(&mut fields, 10)?;
+    let settled_at = optional_varint(&mut fields, 11)?;
     fields.finish()?;
     let body = GemBodyV1 {
         gem_id,
@@ -106,7 +106,7 @@ pub fn encode_gem_bucket_v1(body: &GemBucketBodyV1) -> Result<Vec<u8>, Canonical
 }
 
 pub fn decode_gem_bucket_v1(bytes: &[u8]) -> Result<GemBucketBodyV1, CanonicalBodyError> {
-    let fields = decode_bucket_fields(bytes, 3)?;
+    let fields = decode_bucket_fields(bytes)?;
     let body = GemBucketBodyV1 {
         bucket_key: fields.bucket_key,
         worldwide_day: fields.worldwide_day,
@@ -124,7 +124,7 @@ pub fn decode_stored_gem_bucket_v1(bytes: &[u8]) -> Result<GemBucketBodyV1, Cano
 
 fn validate_gem_state(state: u32) -> Result<(), CanonicalBodyError> {
     if state != 0 && state != 2 {
-        return Err(CanonicalBodyError::IntegerOutOfRange { field: 10 });
+        return Err(CanonicalBodyError::IntegerOutOfRange { field: 9 });
     }
     Ok(())
 }

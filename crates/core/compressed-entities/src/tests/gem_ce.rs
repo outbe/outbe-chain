@@ -31,20 +31,6 @@ pub(super) fn bucket() -> GemBucketBodyV1 {
 }
 
 #[test]
-fn a_gem_body_carrying_the_retired_floor_field_is_rejected() {
-    let mut payload = encode_gem_v1(&gem()).unwrap();
-    // Fields 1-4: the id, owner, type and load, then the retired field 5 in its place.
-    let at = 34 + 22 + 2 + 34;
-    let mut floor = vec![0x2a, 0x20];
-    floor.extend_from_slice(&U256::from(12).to_be_bytes::<32>());
-    payload.splice(at..at, floor);
-    assert!(matches!(
-        decode_gem_v1(&payload),
-        Err(CanonicalBodyError::UnknownField { field: 5 })
-    ));
-}
-
-#[test]
 fn gem_and_bucket_encode_one_canonical_protobuf_and_reject_schema_2() {
     let item = gem();
     let group = bucket();
@@ -61,7 +47,7 @@ fn gem_and_bucket_encode_one_canonical_protobuf_and_reject_schema_2() {
             "0a20ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
             "121422222222222222222222222222222222222222221802",
             "2220000000000000000000000000000000000000000000000000000000000000000b",
-            "30c80638d207407b4a203333333333333333333333333333333333333333333333333333333333333333"
+            "28c80630d207387b42203333333333333333333333333333333333333333333333333333333333333333"
         )
     );
     let group_payload = encode_gem_bucket_v1(&group).unwrap();
@@ -92,7 +78,7 @@ fn gem_and_bucket_encode_one_canonical_protobuf_and_reject_schema_2() {
             .is_err());
         }
     }
-    for suffix in [vec![0x50, 0], vec![0x68, 1], vec![0x10, 1]] {
+    for suffix in [vec![0x48, 0], vec![0x60, 1], vec![0x10, 1]] {
         assert!(decode_gem_v1(&[payload.clone(), suffix].concat()).is_err());
     }
     let mut invalid = item.clone();

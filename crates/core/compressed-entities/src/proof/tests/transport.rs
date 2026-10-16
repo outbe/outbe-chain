@@ -187,28 +187,28 @@ fn present_golden_packages_cover_every_closed_domain() {
                 "a975d4736ef74939d9eca29e329d6ab1aa2aad157cc971d6315e3dc1bdf5fe9b"
             ),
             alloy_primitives::b256!(
-                "d093bdb2f07dd1e6dc521d72e023373b1ff7cd3abb56161cece628603db6167d"
+                "eaeec6127b20c19534a48db9eaf1e4a9e2b48f5b2242bf42f53b6041df7110db"
             ),
             alloy_primitives::b256!(
-                "52635bacaffd36df9aefffeff2b52fa58919a646f682fa78011999dff8db8b8c"
+                "7c91e407da67b01d541fc8248588debc69778f12f28a04d0790db5f3d3065449"
             ),
             alloy_primitives::b256!(
                 "d4382908cd4da41da05e5df6cbe86c130c0609e7818077c7d38184b87d127748"
             ),
             alloy_primitives::b256!(
-                "2c90c1c2a7a101694eefbef18d3bc790a5ad76eb7dcab4667cdf29e8f6f4c72a"
+                "b829d9d9147ce6376543fc096b5d0b1126d6ec89c0a3a8f97915c0b0700510f0"
             ),
             alloy_primitives::b256!(
-                "c6ece55406f799b0747036035d5d80c01ca975a57243a60058b12c217d3dc0f0"
+                "d19268b1318c94beeb6846cb1b51082d6075f6eb09ae4d04fef895287424c2c0"
             ),
             alloy_primitives::b256!(
                 "c401b4fc8759510f0def36b6a90258d98bb4317347ecc84395a776fd5968b18f"
             ),
             alloy_primitives::b256!(
-                "ff2fc5f57debedf4ae1068b91a1644fc1dd8ecc84e0555192fc11170e28c9901"
+                "fdae443cb344aef36ffa440f747f89bf5b9b6e8b5dec3416c34060ca58fc5626"
             ),
             alloy_primitives::b256!(
-                "ee5ebceab732fe14b47e847a89167165ad6ef688c32014d3b01a8aa39a9737c2"
+                "6fac92ac50f4d1d9a9a7282f6414b23b6604d0d17a881ee857e6ed7e79e47be7"
             ),
             alloy_primitives::b256!(
                 "44a889b4fe93736c601b2b608dc3d0c85b11f63706157b6c0460888dedb7595c"

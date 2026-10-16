@@ -148,11 +148,11 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
         "1a200000000000000000000000000000000000000000000000000000000000000001",
         "2001",
         "2802",
-        "3a20",
+        "3220",
         "3333333333333333333333333333333333333333333333333333333333333333",
-        "48c806",
-        "50d207",
-        "5805"
+        "38c806",
+        "40d207",
+        "4805"
     ))
     .unwrap();
 
@@ -179,88 +179,18 @@ fn settled_nod_body_round_trips_without_changing_legacy_encoding() {
     let payload = encode_nod_item_v1(&body).unwrap();
     assert!(decode_nod_item_v1(&payload).is_ok());
 
-    // `0x60, 0x01` is field 12, varint wire type, value 1 — the settled marker.
+    // `0x50, 0x01` is field 10, varint wire type, value 1 — the settled marker.
     let mut settled = payload.clone();
-    settled.extend_from_slice(&[0x60, 0x01]);
+    settled.extend_from_slice(&[0x50, 0x01]);
     let decoded = decode_nod_item_v1(&settled).unwrap();
     assert!(decoded.is_settled);
     assert_eq!(encode_nod_item_v1(&decoded).unwrap(), settled);
     let mut explicit_zero = payload.clone();
-    explicit_zero.extend_from_slice(&[0x60, 0]);
+    explicit_zero.extend_from_slice(&[0x50, 0]);
     assert!(decode_nod_item_v1(&explicit_zero).is_err());
     let mut invalid_bool = payload;
-    invalid_bool.extend_from_slice(&[0x60, 2]);
+    invalid_bool.extend_from_slice(&[0x50, 2]);
     assert!(decode_nod_item_v1(&invalid_bool).is_err());
-}
-
-/// Field 8 carried the Nod's cost until it became a derivation from the
-/// bucket's entry price and the Nod's gratis load. Every body wrote it, so
-/// retiring it is a deliberate wire break. A body that still carries it states
-/// a cost this schema no longer owns. The decoder must refuse that body, not
-/// decode it and drop the value.
-#[test]
-fn a_nod_item_carrying_the_retired_cost_field_is_rejected() {
-    // Field 8 sits in its canonical position between `bucket_key` and `issuance_currency`.
-    let with_cost = hex::decode(concat!(
-        "0a2000000001",
-        "11111111111111111111111111111111111111111111111111111111",
-        "1214",
-        "2222222222222222222222222222222222222222",
-        "1a200000000000000000000000000000000000000000000000000000000000000001",
-        "2001",
-        "2802",
-        "3a20",
-        "3333333333333333333333333333333333333333333333333333333333333333",
-        "42200000000000000000000000000000000000000000000000000000000000000003",
-        "48c806",
-        "50d207",
-        "5805"
-    ))
-    .unwrap();
-
-    assert!(matches!(
-        decode_nod_item_v1(&with_cost),
-        Err(CanonicalBodyError::UnknownField { field: 8 })
-    ));
-}
-
-/// A body carrying the retired floor field is refused.
-#[test]
-fn a_nod_body_carrying_the_retired_floor_field_is_rejected() {
-    let item_with_floor = hex::decode(concat!(
-        "0a2000000001",
-        "11111111111111111111111111111111111111111111111111111111",
-        "1214",
-        "2222222222222222222222222222222222222222",
-        "1a200000000000000000000000000000000000000000000000000000000000000001",
-        "2001",
-        "2802",
-        "32200000000000000000000000000000000000000000000000000000000000000002",
-        "3a20",
-        "3333333333333333333333333333333333333333333333333333333333333333",
-        "48c806",
-        "50d207",
-        "5805"
-    ))
-    .unwrap();
-    assert!(matches!(
-        decode_nod_item_v1(&item_with_floor),
-        Err(CanonicalBodyError::UnknownField { field: 6 })
-    ));
-
-    let bucket_with_floor = hex::decode(concat!(
-        "0a20",
-        "3333333333333333333333333333333333333333333333333333333333333333",
-        "1001",
-        "1a200000000000000000000000000000000000000000000000000000000000000001",
-        "32200000000000000000000000000000000000000000000000000000000000000003",
-        "38c806"
-    ))
-    .unwrap();
-    assert!(matches!(
-        decode_nod_bucket_v1(&bucket_with_floor),
-        Err(CanonicalBodyError::UnknownField { field: 3 })
-    ));
 }
 
 #[test]
@@ -276,8 +206,8 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
         "0a20",
         "3333333333333333333333333333333333333333333333333333333333333333",
         "1001",
-        "32200000000000000000000000000000000000000000000000000000000000000003",
-        "38c806"
+        "1a200000000000000000000000000000000000000000000000000000000000000003",
+        "20c806"
     ))
     .unwrap();
 
@@ -290,14 +220,14 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
         ..body.clone()
     };
     let mut expected_settled = expected.clone();
-    expected_settled.extend_from_slice(&[0x40, 1]);
+    expected_settled.extend_from_slice(&[0x28, 1]);
     assert_eq!(encode_nod_bucket_v1(&settled).unwrap(), expected_settled);
     assert_eq!(decode_nod_bucket_v1(&expected_settled).unwrap(), settled);
     let mut explicit_settled_zero = expected.clone();
-    explicit_settled_zero.extend_from_slice(&[0x40, 0]);
+    explicit_settled_zero.extend_from_slice(&[0x28, 0]);
     assert!(decode_nod_bucket_v1(&explicit_settled_zero).is_err());
 
-    // Field 7 is omitted on zero; the reserved member-count field is never emitted.
+    // Field 4 is omitted on zero.
     let unpriced = NodBucketBodyV1 {
         reference_currency: 0,
         ..body.clone()
@@ -307,23 +237,17 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
     assert_eq!(
         decode_nod_bucket_v1(&unpriced_payload).unwrap(),
         unpriced,
-        "a body without field 7 must decode to reference_currency 0"
+        "a body without field 4 must decode to reference_currency 0"
     );
 
     // An explicitly-encoded zero is a second encoding of the same body. The
     // strict re-encode check must reject it.
     let mut explicit_zero = unpriced_payload.clone();
-    explicit_zero.extend_from_slice(&[0x38, 0x00]);
+    explicit_zero.extend_from_slice(&[0x20, 0x00]);
     assert!(matches!(
         decode_nod_bucket_v1(&explicit_zero),
-        Err(CanonicalBodyError::ExplicitDefault { field: 7 })
+        Err(CanonicalBodyError::ExplicitDefault { field: 4 })
     ));
-
-    // Legacy counts must not be silently stripped and authenticated as a different body.
-    let mut counted = payload.clone();
-    let entry_price_offset = counted.len() - 37;
-    counted.splice(entry_price_offset..entry_price_offset, [0x28, 0x02]);
-    assert!(decode_nod_bucket_v1(&counted).is_err());
 }
 
 #[test]

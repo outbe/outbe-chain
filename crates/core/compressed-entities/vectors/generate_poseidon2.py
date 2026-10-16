@@ -106,9 +106,9 @@ def generate():
     tribute_payload = (bfield(1, tribute) + bfield(2, bytes([0x42])*20) + vfield(3, 0x01020304)
                        + amount(4,1) + vfield(5,840) + amount(6,2) + vfield(7,978) + amount(8,3))
     nod_payload = (bfield(1,nod) + bfield(2,bytes([0x24])*20) + amount(3,1) + vfield(4,0x0a0b0c0d)
-                   + vfield(5,2) + bfield(7,bytes([0x33])*32)
-                   + vfield(9,840) + vfield(10,978) + vfield(11,5))
-    bucket_payload = bfield(1,bytes([0x33])*32) + vfield(2,0xffffffff) + amount(6,1) + vfield(7,840)
+                   + vfield(5,2) + bfield(6,bytes([0x33])*32)
+                   + vfield(7,840) + vfield(8,978) + vfield(9,5))
+    bucket_payload = bfield(1,bytes([0x33])*32) + vfield(2,0xffffffff) + amount(3,1) + vfield(4,840)
     vectors['bodies'] = [{"kind": entry['kind'], "identity_hex": entry['identity_hex'], "schema_version":1,
                           "payload_hex": payload.hex(), "stored_body_hex": (vfield(1,1)+bfield(2,payload)).hex(),
                           "leaf": word(leaf(bytes.fromhex(entry['identity_hex']),payload))}
