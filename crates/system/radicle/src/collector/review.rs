@@ -360,6 +360,14 @@ impl Collector {
             };
             let repo =
                 self.repository(git::Oid::from_sha1(receipt.receipt().body.repo_id.0).into())?;
+            let policy = self
+                .policy
+                .as_ref()
+                .ok_or("accepted policy missing")?
+                .1
+                .clone();
+            self.recover_history(client, &receipt, &repo, &policy)
+                .await?;
             let Some(package) = self.journal.packages.load_accepted(&receipt, &repo)? else {
                 return Ok(Some(Outcome::AwaitingAcceptedPackage));
             };

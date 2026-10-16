@@ -607,3 +607,322 @@ fn admit_bootstrap(
     });
     accepted
 }
+
+#[test]
+fn accepted_native_history_recovers_without_local_packages_or_signing_material() {
+    use crate::integration::publication::{
+        history::AcceptedHistory, policy::AcceptedRepositoryPolicy, store::ReviewPackageStore,
+    };
+    use commonware_cryptography::bls12381::primitives::{
+        group::{Private, Scalar},
+        ops,
+        variant::MinSig,
+    };
+    use radicle::crypto::SubjectKind;
+    use radicle::storage::publication::{EntryRequest, PublicationPolicy as _};
+    use radicle::storage::ReadStorage as _;
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    // Only this unit fixture owns a whole secret; recovery itself receives public native objects.
+    let secret = Private::new(Scalar::from_u64(42));
+    let owner = BlsPublicKey::from_bytes(
+        ops::compute_public::<MinSig>(&secret)
+            .encode()
+            .as_ref()
+            .try_into()
+            .unwrap(),
+    )
+    .unwrap();
+    let sign = |subject: &RepositorySubject| {
+        let signature = ops::sign_message::<MinSig>(
+            &secret,
+            radicle::crypto::repository::DOMAIN,
+            subject.as_bytes(),
+        );
+        BlsEnvelope::attach(
+            subject.clone(),
+            owner,
+            signature.encode().as_ref().try_into().unwrap(),
+        )
+        .unwrap()
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let author = radicle::crypto::SigningKey::from_seed(radicle::crypto::Seed::new([41; 32]));
+    let storage = radicle::Storage::open(
+        temp.path().join("storage"),
+        git::UserInfo {
+            alias: radicle::node::Alias::new("Recovery"),
+            key: *author.public_key(),
+        },
+    )
+    .unwrap();
+    let mut descriptor = GovernmentsDescriptor {
+        chain_id: 2026,
+        genesis_timestamp: 1700000000,
+        description: "Network policy".into(),
+        initial_tree_oid: Default::default(),
+        initial_content_manifest_sha256: Sha256::hash(&[b"[]"]).0.into(),
+    };
+    let (blob, _) = encode_document(&descriptor, owner).unwrap();
+    let repo = storage.create(blob.into()).unwrap();
+    let mut body = PublicationBody {
+        chain_id: 2026,
+        genesis_hash: B256::repeat_byte(7),
+        repo_id: blob.into_sha1().unwrap().into(),
+        descriptor_hash: B256::ZERO,
+        owner_bls_public: (*owner.as_bytes()).into(),
+        players_commitment: B256::repeat_byte(9),
+        epoch: 2,
+        material_version: 7,
+        material_hash: B256::repeat_byte(10),
+        finalized_anchor_height: 0,
+        finalized_anchor_hash: B256::repeat_byte(7),
+        sequence: 1,
+        previous_receipt_hash: B256::ZERO,
+        action: PublicationAction::Bootstrap,
+        proposal_id: Default::default(),
+        patch_id: Default::default(),
+        revision_id: Default::default(),
+        expected_target_head: Default::default(),
+        package_manifest_hash: B256::ZERO,
+    };
+    let document_signature = sign(&RepositorySubject::identity(
+        body.repo_id.0,
+        native_policy_context(&body, 0),
+        body.repo_id.0,
+    ));
+    // A copied valid envelope in ordinary source content must never participate in signature discovery.
+    let decoy = repo.raw().blob(&document_signature.to_bytes()).unwrap();
+    let mut tree = repo.raw().treebuilder(None).unwrap();
+    tree.insert("source.bin", decoy, 0o100644).unwrap();
+    descriptor.initial_tree_oid =
+        alloy_primitives::FixedBytes::from_slice(tree.write().unwrap().as_bytes());
+    body.descriptor_hash = descriptor.hash().unwrap();
+    let document = accepted_document(&descriptor, &body).unwrap();
+    let identity = document.attach(&repo, &document_signature, b"[]").unwrap();
+    let identity_signature = sign(identity.subject());
+    let refs = identity.attach(&repo, &identity_signature).unwrap();
+    let refs_signature = sign(refs.subject());
+    let (body, expected) = refs.attach(&repo, &refs_signature).unwrap();
+    let checkpoint = crate::manager::FinalizedPublicationReceipt {
+        block: crate::manager::FinalizedBlock {
+            number: 20,
+            hash: B256::repeat_byte(20),
+        },
+        receipt: outbe_radicleregistry::publication::PublicationReceipt {
+            accepted_height: 18,
+            receipt_hash: body.receipt_hash(),
+            body,
+        },
+    };
+    let policy = Arc::new(AcceptedRepositoryPolicy::pending_receipt(&checkpoint).unwrap());
+    storage
+        .manage_repository(repo.id(), owner.into(), policy.clone())
+        .unwrap();
+    let entry = expected.owner_refs().unwrap().get(&IDENTITY_ROOT).unwrap();
+    let request = EntryRequest {
+        repository: repo.id(),
+        authority: owner.into(),
+        entry,
+        kind: SubjectKind::Cob,
+    };
+    assert!(policy.authorize_entry(&request).is_err());
+    let owner_key: RepositoryKey = owner.into();
+    let advertised = vec![(
+        git::refs::storage::sigrefs(&owner_key).into(),
+        expected
+            .refs()
+            .iter()
+            .find(|r| r.name == SIGREFS_BRANCH.as_str())
+            .unwrap()
+            .new
+            .parse()
+            .unwrap(),
+    )];
+    policy
+        .prepare_history(AcceptedHistory {
+            descriptor: descriptor.clone(),
+            receipts: vec![checkpoint.clone()],
+            approvals: BTreeMap::new(),
+        })
+        .unwrap();
+    let mut wrong_tip = advertised.clone();
+    wrong_tip[0].1 = entry;
+    assert!(policy.prepare_fetch(&repo, &wrong_tip).is_err());
+    assert!(policy.authorize_entry(&request).is_err());
+    policy.prepare_fetch(&repo, &advertised).unwrap();
+    assert_eq!(policy.recovered_manifests().unwrap()[0].1, expected);
+    assert!(policy.authorize_entry(&request).is_ok());
+    assert!(repo.raw().references().unwrap().next().is_none());
+    let mut store = ReviewPackageStore::open(temp.path().join("packages")).unwrap();
+    store
+        .persist_accepted_descriptor(&checkpoint, &descriptor)
+        .unwrap();
+    assert!(store.load_accepted(&checkpoint, &repo).unwrap().is_none());
+    store
+        .persist_checkpoint_manifest(&checkpoint, &expected)
+        .unwrap();
+    assert_eq!(
+        store
+            .load_accepted(&checkpoint, &repo)
+            .unwrap()
+            .unwrap()
+            .manifest,
+        expected
+    );
+    assert_eq!(
+        store.load_accepted_descriptor(&checkpoint).unwrap(),
+        descriptor
+    );
+
+    struct LocalHistory(
+        crate::manager::FinalizedPublicationReceipt,
+        GovernmentsDescriptor,
+    );
+    impl crate::manager::RepositoryReceiptReader for LocalHistory {
+        fn read_governments_descriptor(
+            &self,
+        ) -> Result<Option<GovernmentsDescriptor>, crate::manager::ManagerError> {
+            Ok(Some(self.1.clone()))
+        }
+        fn read_current_publication_receipt(
+            &self,
+            sequence: u64,
+        ) -> Result<Option<crate::manager::FinalizedPublicationReceipt>, crate::manager::ManagerError>
+        {
+            Ok((sequence == 1).then(|| self.0.clone()))
+        }
+    }
+    // A manifest-only SDK cache repairs its public descriptor from the same local chain reader.
+    std::fs::remove_file(
+        temp.path()
+            .join("packages/packages")
+            .join(hex::encode(checkpoint.receipt().receipt_hash))
+            .join("descriptor"),
+    )
+    .unwrap();
+    let reopened = store
+        .open_checkpoint_repository(
+            &LocalHistory(checkpoint.clone(), descriptor.clone()),
+            &checkpoint,
+            repo.raw().path(),
+            git::UserInfo {
+                alias: radicle::node::Alias::new("Recovery"),
+                key: *author.public_key(),
+            },
+        )
+        .unwrap();
+    assert!(reopened.identity_doc_at(entry).is_ok());
+    assert_eq!(
+        store.load_accepted_descriptor(&checkpoint).unwrap(),
+        descriptor
+    );
+    let empty_storage = radicle::Storage::open(
+        temp.path().join("empty"),
+        git::UserInfo {
+            alias: radicle::node::Alias::new("Empty"),
+            key: *author.public_key(),
+        },
+    )
+    .unwrap();
+    let empty = empty_storage.create(repo.id()).unwrap();
+    assert!(store.load_accepted(&checkpoint, &empty).unwrap().is_none());
+
+    // A present tip with a missing reachable blob requests one complete native fetch.
+    let tip = repo.raw().find_commit(advertised[0].1.into()).unwrap();
+    let signature_oid = tip
+        .tree()
+        .unwrap()
+        .get_name(radicle::storage::refs::SIGNATURE_BLOB_PATH)
+        .unwrap()
+        .id();
+    let signature_bytes = repo
+        .raw()
+        .find_blob(signature_oid)
+        .unwrap()
+        .content()
+        .to_vec();
+    let hash = signature_oid.to_string();
+    std::fs::remove_file(
+        repo.raw()
+            .path()
+            .join("objects")
+            .join(&hash[..2])
+            .join(&hash[2..]),
+    )
+    .unwrap();
+    let incomplete = storage.repository(repo.id()).unwrap();
+    assert!(incomplete
+        .raw()
+        .odb()
+        .unwrap()
+        .exists(advertised[0].1.into()));
+    assert!(store
+        .load_accepted(&checkpoint, &incomplete)
+        .unwrap()
+        .is_none());
+    let repair = AcceptedRepositoryPolicy::pending_receipt(&checkpoint).unwrap();
+    repair
+        .prepare_history(AcceptedHistory {
+            descriptor: descriptor.clone(),
+            receipts: vec![checkpoint.clone()],
+            approvals: BTreeMap::new(),
+        })
+        .unwrap();
+    assert!(matches!(
+        repair.prepare_fetch(&incomplete, &advertised),
+        Err(radicle::storage::publication::Error::MissingObjects)
+    ));
+    assert!(repair.authorize_entry(&request).is_err());
+    assert_eq!(
+        incomplete.raw().blob(&signature_bytes).unwrap(),
+        signature_oid
+    );
+    repair.prepare_fetch(&incomplete, &advertised).unwrap();
+    assert!(repair.authorize_entry(&request).is_ok());
+
+    let mut bad = checkpoint.clone();
+    bad.receipt.body.package_manifest_hash = B256::repeat_byte(42);
+    bad.receipt.receipt_hash = bad.receipt.body.receipt_hash();
+    let denied = AcceptedRepositoryPolicy::pending_receipt(&bad).unwrap();
+    denied
+        .prepare_history(AcceptedHistory {
+            descriptor: descriptor.clone(),
+            receipts: vec![bad],
+            approvals: BTreeMap::new(),
+        })
+        .unwrap();
+    assert!(denied.prepare_fetch(&repo, &advertised).is_err());
+    assert!(denied.authorize_entry(&request).is_err());
+
+    let mut next = checkpoint.clone();
+    next.receipt.body.sequence = 2;
+    next.receipt.body.previous_receipt_hash = checkpoint.receipt().receipt_hash;
+    next.receipt.body.action = PublicationAction::BindMaterial;
+    next.receipt.body.material_version += 1;
+    let manifest =
+        PublicationManifest::new(vec![], vec![], vec![], expected.owner_snapshot().to_vec())
+            .unwrap();
+    next.receipt.body.package_manifest_hash = manifest.hash().unwrap();
+    next.receipt.receipt_hash = next.receipt.body.receipt_hash();
+    assert!(policy
+        .prepare_history(AcceptedHistory {
+            descriptor: descriptor.clone(),
+            receipts: vec![checkpoint.clone(), next.clone()],
+            approvals: BTreeMap::new()
+        })
+        .unwrap());
+    policy.prepare_fetch(&repo, &advertised).unwrap();
+    assert_eq!(policy.recovered_manifests().unwrap().len(), 2);
+    let mut conflict = next;
+    conflict.receipt.body.material_version += 1;
+    conflict.receipt.receipt_hash = conflict.receipt.body.receipt_hash();
+    assert!(policy
+        .prepare_history(AcceptedHistory {
+            descriptor,
+            receipts: vec![checkpoint, conflict],
+            approvals: BTreeMap::new()
+        })
+        .is_err());
+}

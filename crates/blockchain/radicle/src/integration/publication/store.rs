@@ -209,6 +209,30 @@ impl ReviewPackageStore {
         write_once(&directory.join("manifest"), &manifest.to_bytes()?)
     }
 
+    pub fn persist_accepted_descriptor(
+        &self,
+        checkpoint: &FinalizedPublicationReceipt,
+        descriptor: &GovernmentsDescriptor,
+    ) -> Result<(), Error> {
+        let body = &checkpoint.receipt().body;
+        descriptor
+            .validate(body.chain_id, descriptor.genesis_timestamp)
+            .map_err(|_| Error::Corrupt)?;
+        if body.action != PublicationAction::Bootstrap
+            || body.sequence != 1
+            || checkpoint.receipt().receipt_hash != body.receipt_hash()
+            || descriptor.hash().map_err(|_| Error::Corrupt)? != body.descriptor_hash
+        {
+            return Err(Error::Corrupt);
+        }
+        let directory = self.package_dir(checkpoint.receipt().receipt_hash);
+        private_dir(&directory)?;
+        write_once(
+            &directory.join("descriptor"),
+            &descriptor.to_bytes().map_err(|_| Error::Corrupt)?,
+        )
+    }
+
     pub fn load_checkpoint_manifest(
         &self,
         checkpoint: &FinalizedPublicationReceipt,
@@ -449,7 +473,17 @@ impl ReviewPackageStore {
         if package.body != *body {
             return Err(Error::Corrupt);
         }
-        let descriptor = self.load_accepted_descriptor(&checkpoint)?;
+        let descriptor = match self.load_accepted_descriptor(&checkpoint) {
+            Ok(descriptor) => descriptor,
+            Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                let descriptor = reader
+                    .read_governments_descriptor()?
+                    .ok_or(Error::Corrupt)?;
+                self.persist_accepted_descriptor(&checkpoint, &descriptor)?;
+                descriptor
+            }
+            Err(error) => return Err(error),
+        };
         let verifier = super::super::signing::accepted::AcceptedPublicationVerifier::from_receipt(
             checkpoint.clone(),
             package.manifest.clone(),
@@ -577,7 +611,7 @@ impl ReviewPackageStore {
     ) -> Result<Option<StoredAcceptedPackage>, Error> {
         let directory = self.package_dir(checkpoint.receipt().receipt_hash);
         reject_symlink(&directory)?;
-        if !directory.exists() {
+        if !directory.exists() || !directory.join("manifest").try_exists()? {
             return Ok(None);
         }
         let manifest = self.load_checkpoint_manifest(checkpoint)?;
@@ -592,10 +626,18 @@ impl ReviewPackageStore {
                     }
                     odb.read(oid.into())?.data().to_vec()
                 }
-                Err(error) if error.code() == git::raw::ErrorCode::NotFound => read(
-                    &directory.join("objects").join(&row.sha256),
-                    MAX_OBJECT_BYTES,
-                )?,
+                Err(error) if error.code() == git::raw::ErrorCode::NotFound => {
+                    match read(
+                        &directory.join("objects").join(&row.sha256),
+                        MAX_OBJECT_BYTES,
+                    ) {
+                        Ok(bytes) => bytes,
+                        Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                            return Ok(None)
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
                 Err(error) => return Err(error.into()),
             };
             if hex::encode(Sha256::hash(&[&bytes]).0) != row.sha256

@@ -38,6 +38,14 @@ impl FinalizedPublicationReceipt {
 
 /// Only this node's current finalized state may supply an accepted receipt.
 pub trait RepositoryReceiptReader: Send + Sync + 'static {
+    fn read_governments_descriptor(
+        &self,
+    ) -> Result<Option<outbe_primitives::radicle_genesis::GovernmentsDescriptor>, ManagerError>
+    {
+        Err(ManagerError::Snapshot(
+            "genesis descriptor unavailable".into(),
+        ))
+    }
     fn read_finalized_vote_page(
         &self,
         _: u64,

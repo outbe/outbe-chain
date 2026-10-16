@@ -47,6 +47,7 @@ use tokio::{
 
 const MAGIC: &[u8; 4] = b"ORL1";
 const SCOPE: &[u8; 4] = b"OCN1";
+const DESCRIPTOR: &[u8; 4] = b"OGD1";
 const RECEIPT_FRAME_LEN: usize = 5 + 8 + 32 + 8 + 32 + PUBLICATION_BODY_LEN;
 const MAX_REQUEST: usize = publication::MAX_REQUEST;
 const MAX_FRAME: usize = if preparation::MAX_FRAME > MAX_REQUEST {
@@ -312,6 +313,30 @@ impl LocalReceiptClient {
             sequence,
             self.chain,
         )
+    }
+
+    /// Read public genesis configuration from the local finalized state, without signing material.
+    pub async fn read_governments_descriptor(
+        &self,
+    ) -> Result<outbe_primitives::radicle_genesis::GovernmentsDescriptor, Error> {
+        use outbe_primitives::radicle_genesis::{
+            GovernmentsDescriptor, MAX_GOVERNMENTS_DESCRIPTOR_BYTES,
+        };
+        let response = self
+            .exchange(DESCRIPTOR, 5 + MAX_GOVERNMENTS_DESCRIPTOR_BYTES)
+            .await?;
+        if response == [DESCRIPTOR.as_slice(), &[0]].concat() {
+            return Err(Error::Unavailable);
+        }
+        if response.get(..5) != Some([DESCRIPTOR.as_slice(), &[2]].concat().as_slice()) {
+            return Err(Error::Protocol);
+        }
+        let descriptor =
+            GovernmentsDescriptor::from_bytes(&response[5..]).map_err(|_| Error::Protocol)?;
+        descriptor
+            .validate(self.chain.chain_id, descriptor.genesis_timestamp)
+            .map_err(|_| Error::Protocol)?;
+        Ok(descriptor)
     }
 
     /// Ask the node to verify, durably select, then attest a complete native bootstrap package.
@@ -585,6 +610,7 @@ async fn serve(
     let request = read_frame(&mut stream, MAX_REQUEST).await?;
     let magic = match (request.get(..4), request.len()) {
         (Some(magic), 4) if magic == SCOPE => SCOPE,
+        (Some(magic), 4) if magic == DESCRIPTOR => DESCRIPTOR,
         (Some(magic), length) if magic == progress::MAGIC && length == 4 + PUBLICATION_BODY_LEN => {
             progress::MAGIC
         }
@@ -634,6 +660,18 @@ async fn serve(
         Ok(permit) => permit,
         Err(_) => return write_frame(&mut stream, &[magic.as_slice(), &[0]].concat()).await,
     };
+    if magic == DESCRIPTOR {
+        let response = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let descriptor = reader.read_governments_descriptor().ok().flatten()?;
+            Some([DESCRIPTOR.as_slice(), &[2], &descriptor.to_bytes().ok()?].concat())
+        })
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| [DESCRIPTOR.as_slice(), &[0]].concat());
+        return write_frame(&mut stream, &response).await;
+    }
     if magic == vote::MAGIC {
         let height = u64::from_be_bytes(request[4..12].try_into().map_err(|_| Error::Protocol)?);
         let offset = u32::from_be_bytes(request[12..16].try_into().map_err(|_| Error::Protocol)?);

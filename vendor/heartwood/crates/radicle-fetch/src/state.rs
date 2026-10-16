@@ -51,6 +51,8 @@ pub mod error {
     #[derive(Debug, Error)]
     pub enum Protocol {
         #[error(transparent)]
+        Publication(#[from] radicle::storage::publication::Error),
+        #[error(transparent)]
         Ancestry(#[from] repository::error::Ancestry),
         #[error(transparent)]
         Canonical(#[from] Canonical),
@@ -393,6 +395,63 @@ impl FetchState {
         S: transport::ConnectionStream,
     {
         let start = Instant::now();
+        if let Some((owner, policy)) = storage::publication::fetch_preparation(handle.repository())?
+        {
+            let advertised = handle
+                .transport
+                .ls_refs(
+                    [stage::RefPrefix::Namespace { namespace: owner }],
+                    handshake,
+                )
+                .map_err(error::Step::from)?;
+            let mut refs = Vec::new();
+            for reference in advertised {
+                if matches!(reference, gix_protocol::handshake::Ref::Unborn { .. }) {
+                    continue;
+                }
+                let (name, oid) =
+                    refs::unpack_ref(reference).map_err(|_| storage::publication::Error::Denied)?;
+                if matches!(&name, refs::ReceivedRefname::Namespaced { remote, .. } if *remote == owner)
+                {
+                    refs.push((name.to_qualified(), oid));
+                }
+            }
+            let mut wants = transport::WantsHaves::default();
+            wants
+                .add(
+                    handle.repository(),
+                    refs.iter().map(|(name, oid)| (name.clone(), *oid)),
+                )
+                .map_err(stage::error::WantsHaves::from)
+                .map_err(error::Step::from)?;
+            if !wants.wants.is_empty() {
+                let pack = handle
+                    .transport
+                    .fetch(wants, handle.interrupt.clone(), handshake)
+                    .map_err(error::Step::from)?;
+                self.keepfiles.extend(pack);
+            }
+            // No refs or caches are updated by this object-only acquisition.
+            match policy.prepare_fetch(handle.repository(), &refs) {
+                Err(storage::publication::Error::MissingObjects) => {
+                    // A received tip alone does not prove its closure is complete. Retry once
+                    // without haves so an interrupted or incomplete pack cannot pin that state.
+                    let mut wants = transport::WantsHaves::default();
+                    for (_, oid) in &refs {
+                        wants.want(*oid);
+                    }
+                    if !wants.wants.is_empty() {
+                        let pack = handle
+                            .transport
+                            .fetch(wants, handle.interrupt.clone(), handshake)
+                            .map_err(error::Step::from)?;
+                        self.keepfiles.extend(pack);
+                    }
+                    policy.prepare_fetch(handle.repository(), &refs)?;
+                }
+                result => result?,
+            }
+        }
         // N.b. we always fetch the `rad/id` since our delegate set
         // might be further ahead than theirs, e.g. we are the
         // deciding vote on adding a delegate.

@@ -570,47 +570,10 @@ pub fn verify_accepted_bootstrap(
 ) -> Result<AcceptedBootstrapPublication, Error> {
     let receipt = verifier.receipt();
     let body = &receipt.receipt().body;
-    descriptor
-        .validate(body.chain_id, descriptor.genesis_timestamp)
-        .map_err(|_| Error::Descriptor)?;
-    if body.action != PublicationAction::Bootstrap
-        || body.sequence != 1
-        || !body.previous_receipt_hash.is_zero()
-        || !body.proposal_id.is_zero()
-        || !body.patch_id.is_zero()
-        || !body.revision_id.is_zero()
-        || !body.expected_target_head.is_zero()
-        || body.finalized_anchor_height != 0
-        || body.finalized_anchor_hash != body.genesis_hash
-        || body.descriptor_hash != descriptor.hash().map_err(|_| Error::Descriptor)?
-        || verifier.manifest().subjects().len() != 3
-    {
+    if verifier.manifest().subjects().len() != 3 {
         return Err(Error::Descriptor);
     }
-    let owner = BlsPublicKey::from_bytes(body.owner_bls_public.0)?;
-    let (blob, document) = encode_document(descriptor, owner)?;
-    if blob.into_sha1() != Some(body.repo_id.0) {
-        return Err(Error::Descriptor);
-    }
-    i64::try_from(descriptor.genesis_timestamp).map_err(|_| Error::Descriptor)?;
-    let subject = RepositorySubject::identity(
-        body.repo_id.0,
-        native_policy_context(body, 0),
-        body.repo_id.0,
-    );
-    let metadata = format!(
-        "Outbe Network <network@outbe.invalid> {} +0000",
-        descriptor.genesis_timestamp
-    )
-    .parse()
-    .map_err(|_| Error::Descriptor)?;
-    let job = PreparedBootstrapDocument {
-        descriptor: descriptor.clone(),
-        body: body.clone(),
-        document,
-        subject,
-        metadata,
-    };
+    let job = accepted_document(descriptor, body)?;
 
     let signatures = verifier
         .manifest()
@@ -631,6 +594,69 @@ pub fn verify_accepted_bootstrap(
     Ok(AcceptedBootstrapPublication {
         receipt: receipt.clone(),
         manifest,
+    })
+}
+
+pub(super) fn recover_bootstrap_manifest(
+    repo: &Repository,
+    descriptor: &GovernmentsDescriptor,
+    body: &PublicationBody,
+    signatures: [&BlsEnvelope; 3],
+) -> Result<PublicationManifest, Error> {
+    let (_, manifest) = reconstruct_bootstrap(
+        repo,
+        accepted_document(descriptor, body)?,
+        None,
+        signatures,
+        |_| Ok(()),
+    )?;
+    manifest.bind_receipt(body)?;
+    Ok(manifest)
+}
+
+fn accepted_document(
+    descriptor: &GovernmentsDescriptor,
+    body: &PublicationBody,
+) -> Result<PreparedBootstrapDocument, Error> {
+    descriptor
+        .validate(body.chain_id, descriptor.genesis_timestamp)
+        .map_err(|_| Error::Descriptor)?;
+    if body.action != PublicationAction::Bootstrap
+        || body.sequence != 1
+        || !body.previous_receipt_hash.is_zero()
+        || !body.proposal_id.is_zero()
+        || !body.patch_id.is_zero()
+        || !body.revision_id.is_zero()
+        || !body.expected_target_head.is_zero()
+        || body.finalized_anchor_height != 0
+        || body.finalized_anchor_hash != body.genesis_hash
+        || body.descriptor_hash != descriptor.hash().map_err(|_| Error::Descriptor)?
+    {
+        return Err(Error::Descriptor);
+    }
+    let owner = BlsPublicKey::from_bytes(body.owner_bls_public.0)?;
+    let (blob, document) = encode_document(descriptor, owner)?;
+    if blob.into_sha1() != Some(body.repo_id.0) {
+        return Err(Error::Descriptor);
+    }
+    i64::try_from(descriptor.genesis_timestamp).map_err(|_| Error::Descriptor)?;
+    let subject = RepositorySubject::identity(
+        body.repo_id.0,
+        native_policy_context(body, 0),
+        body.repo_id.0,
+    );
+    let metadata = format!(
+        "Outbe Network <network@outbe.invalid> {} +0000",
+        descriptor.genesis_timestamp
+    )
+    .parse()
+    .map_err(|_| Error::Descriptor)?;
+    Ok(PreparedBootstrapDocument {
+        descriptor: descriptor.clone(),
+        body: body.clone(),
+        document,
+        subject,
+        metadata,
     })
 }
 

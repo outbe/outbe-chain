@@ -130,7 +130,7 @@ pub fn verify_merge_publication(
     Ok(expected)
 }
 
-fn reconstruct(
+pub(super) fn reconstruct(
     repo: &Repository,
     approval: &FinalizedPatchApproval,
     snapshot: &CheckpointOwnerSnapshot,

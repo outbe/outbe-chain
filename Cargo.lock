@@ -8360,6 +8360,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-radicle",
+ "outbe-radicleregistry",
  "outbe-slashindicator",
  "outbe-tee",
  "outbe-tee-enclave",

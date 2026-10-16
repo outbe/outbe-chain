@@ -72,6 +72,26 @@ impl<P: StateProviderFactory + Send + Sync> super::RepositoryAuthorityReader
 impl<P: StateProviderFactory + reth_provider::ReceiptProvider + Send + Sync + 'static>
     super::RepositoryReceiptReader for RethSnapshotReader<P>
 {
+    fn read_governments_descriptor(
+        &self,
+    ) -> Result<Option<outbe_primitives::radicle_genesis::GovernmentsDescriptor>, ManagerError>
+    {
+        let block = self.current_finalized_block()?;
+        let state = self
+            .provider
+            .state_by_block_hash(block.hash)
+            .map_err(ManagerError::provider)?;
+        let mut storage = ReadOnlyStorageProvider::new_with_chain_identity(
+            RethStateReader {
+                state: state.as_ref(),
+            },
+            self.chain_id,
+            self.genesis_hash,
+        );
+        RadicleRegistry::new(StorageHandle::new(&mut storage))
+            .governments_descriptor()
+            .map_err(snapshot_error)
+    }
     fn read_finalized_vote_page(
         &self,
         height: u64,

@@ -65,10 +65,49 @@ impl EntryAuthorization {
 pub trait PublicationPolicy: std::fmt::Debug + Send + Sync {
     fn id(&self) -> &str;
     fn authorize_entry(&self, request: &EntryRequest) -> Result<EntryAuthorization, Error>;
+
+    /// Fetch immutable owner objects before entry admission when local receipts need replay.
+    fn needs_fetch_preparation(&self) -> bool {
+        false
+    }
+
+    /// Advertised tips are untrusted hints. This must verify local authority before granting entries.
+    fn prepare_fetch(
+        &self,
+        _repo: &super::git::Repository,
+        _refs: &[(crate::git::fmt::Qualified<'_>, Oid)],
+    ) -> Result<(), Error> {
+        Err(Error::Unavailable)
+    }
+}
+
+/// Only locally registered managed policies can request object acquisition before admission.
+pub type FetchPreparation = (RepositoryKey, Arc<dyn PublicationPolicy>);
+
+pub fn fetch_preparation(repo: &super::git::Repository) -> Result<Option<FetchPreparation>, Error> {
+    let Some(record) = repo.publication.record(repo.id)? else {
+        return Ok(None);
+    };
+    let provider = repo
+        .publication
+        .providers
+        .read()
+        .map_err(|_| Error::Unavailable)?
+        .get(&repo.id)
+        .cloned()
+        .ok_or(Error::Unavailable)?;
+    if provider.id() != record.policy {
+        return Err(Error::Configuration);
+    }
+    Ok(provider
+        .needs_fetch_preparation()
+        .then_some((record.owner, provider)))
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("repository publication needs missing reachable Git objects")]
+    MissingObjects,
     #[error("managed repository publication policy is unavailable")]
     Unavailable,
     #[error("repository entry has no accepted publication receipt")]

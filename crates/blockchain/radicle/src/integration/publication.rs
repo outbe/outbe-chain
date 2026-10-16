@@ -1,6 +1,7 @@
 //! Canonical publication commitments. Native objects and partial witnesses are verified separately.
 
 pub mod binding;
+pub mod history;
 pub mod merge;
 pub mod policy;
 pub mod review;

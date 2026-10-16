@@ -40,18 +40,20 @@ impl Handle {
         channels: ChannelsFlush,
         notifications: node::notifications::StoreWriter,
     ) -> Result<Self, error::Handle> {
-        let exists = storage.contains(&rid)?;
-        if exists {
-            let repo = storage.repository(rid)?;
-            let handle = fetch::Handle::new(local, repo, follow, blocked, channels)?;
-            Ok(Handle::Pull {
-                handle,
-                notifications,
-            })
-        } else {
-            let repo = storage.temporary_repository(rid)?;
-            let handle = fetch::Handle::new(local, repo, follow, blocked, channels)?;
-            Ok(Handle::Clone { handle })
+        match storage.repository(rid) {
+            Ok(repo) => {
+                let handle = fetch::Handle::new(local, repo, follow, blocked, channels)?;
+                Ok(Handle::Pull {
+                    handle,
+                    notifications,
+                })
+            }
+            Err(error) if error.is_not_found() => {
+                let repo = storage.temporary_repository(rid)?;
+                let handle = fetch::Handle::new(local, repo, follow, blocked, channels)?;
+                Ok(Handle::Clone { handle })
+            }
+            Err(error) => Err(error.into()),
         }
     }
 

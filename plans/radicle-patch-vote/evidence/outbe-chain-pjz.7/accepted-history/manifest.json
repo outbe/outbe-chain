@@ -1,0 +1,44 @@
+{
+  "source_commit": "bdf0d66cfa55f663d6b7caf0b31c8680f489075c",
+  "base_commit": "6f86ccf68030a71f56242e53174d25bb7ed56ae3",
+  "timestamp_utc": "2026-10-16T10:33:53.486316+00:00",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "toolchain": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "environment": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4"
+  },
+  "commands": [
+    {
+      "argv": "cargo +1.96.0 test --offline --locked -p outbe-radicle --lib integration::",
+      "exit": 0,
+      "observed": "59 passed",
+      "log": "sdk-integration.log"
+    },
+    {
+      "argv": "cargo +1.96.0 test --offline --locked -p outbe-radicle-runtime --test governments",
+      "exit": 0,
+      "observed": "1 passed; 69.29 seconds",
+      "log": "governments.log"
+    },
+    {
+      "argv": "cargo +1.96.0 clippy --offline --locked -p outbe-radicle -p outbe-radicle-runtime --all-targets -- -D warnings",
+      "exit": 0,
+      "log": "clippy.log"
+    }
+  ],
+  "hashes_sha256": {
+    "sdk-integration.log": "0ff5c2238765726de3f0ebebd57ed75ff28d9185dcd5f033b9ff9ca62fa88895",
+    "governments.log": "eca1b598cc3b8f0da83d3b8c22cbb34ed8e4b5c936edcb3edf78777f34bd882b",
+    "clippy.log": "afa41563d904dfa47bf1ceb2c4a93758bc943935bfcb5a16b5d5476d161137fc"
+  },
+  "limits": [
+    "Tests ran on the implementation working tree before the local source commit; native-prefetch exploration was then parked, leaving the checked historical-read implementation.",
+    "This is partial implementation evidence, not complete P6/P8 or feature acceptance.",
+    "Fresh empty-store native synchronization remains pending; no full production localnet/SGX run or feature acceptance reviews claimed."
+  ]
+}

@@ -210,7 +210,7 @@ pub(super) fn patch_body(
     Ok(body)
 }
 
-fn reconstruct_review(
+pub(super) fn reconstruct_review(
     repo: &Repository,
     approval: &FinalizedPatchApproval,
     snapshot: &CheckpointOwnerSnapshot,

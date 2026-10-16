@@ -145,7 +145,7 @@ impl Refs {
     }
 
     /// Create refs from a canonical representation.
-    fn from_canonical(bytes: &[u8]) -> Result<Self, canonical::Error> {
+    pub fn from_canonical(bytes: &[u8]) -> Result<Self, canonical::Error> {
         let reader = BufReader::new(bytes);
         let mut refs = BTreeMap::new();
 
@@ -167,7 +167,8 @@ impl Refs {
         Ok(Self(refs))
     }
 
-    fn canonical(&self) -> Vec<u8> {
+    /// Return the deterministic wire encoding of these references.
+    pub fn canonical(&self) -> Vec<u8> {
         let mut buf = String::new();
 
         for (name, oid) in self.0.iter() {

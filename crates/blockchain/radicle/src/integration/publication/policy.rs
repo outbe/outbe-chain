@@ -56,9 +56,82 @@ struct AcceptedEntries {
 pub struct AcceptedRepositoryPolicy {
     scope: Scope,
     accepted: RwLock<AcceptedEntries>,
+    recovery: RwLock<super::history::Recovery>,
 }
 
 impl AcceptedRepositoryPolicy {
+    pub fn prepare_history(&self, history: super::history::AcceptedHistory) -> Result<bool, Error> {
+        let mut recovery = self.recovery.write().map_err(|_| Error::Unavailable)?;
+        let mut previous = alloy_primitives::B256::ZERO;
+        for (index, receipt) in history.receipts.iter().enumerate() {
+            let body = &receipt.receipt().body;
+            if self.scope != Scope::from_body(body)?
+                || body.sequence != index as u64 + 1
+                || body.previous_receipt_hash != previous
+                || receipt.receipt().receipt_hash != body.receipt_hash()
+                || receipt.receipt().accepted_height > receipt.block().number
+                || (index == 0
+                    && body.action
+                        != outbe_primitives::radicle_publication::PublicationAction::Bootstrap)
+            {
+                return Err(Error::Configuration);
+            }
+            previous = receipt.receipt().receipt_hash;
+        }
+        if history.receipts.is_empty()
+            || history
+                .descriptor
+                .hash()
+                .map_err(|_| Error::Configuration)?
+                != self.scope.descriptor
+        {
+            return Err(Error::Configuration);
+        }
+        if let Some(old) = &recovery.plan {
+            if old
+                .receipts
+                .iter()
+                .zip(&history.receipts)
+                .any(|(old, new)| old.receipt() != new.receipt())
+            {
+                return Err(Error::Configuration);
+            }
+            if history.receipts.len() <= old.receipts.len() {
+                return Ok(false);
+            }
+        }
+        recovery.plan = Some(history);
+        Ok(true)
+    }
+
+    pub fn recovered_manifests(
+        &self,
+    ) -> Result<
+        Vec<(
+            crate::manager::FinalizedPublicationReceipt,
+            super::PublicationManifest,
+        )>,
+        Error,
+    > {
+        let recovery = self.recovery.read().map_err(|_| Error::Unavailable)?;
+        Ok(recovery
+            .plan
+            .iter()
+            .flat_map(|plan| &plan.receipts)
+            .filter_map(|receipt| {
+                recovery
+                    .manifests
+                    .get(&receipt.receipt().receipt_hash)
+                    .map(|manifest| (receipt.clone(), manifest.clone()))
+            })
+            .collect())
+    }
+
+    pub fn finish_history(&self) -> Result<(), Error> {
+        *self.recovery.write().map_err(|_| Error::Unavailable)? =
+            super::history::Recovery::default();
+        Ok(())
+    }
     /// Install the complete latest verified snapshot, including on a lagging local replica.
     pub fn install_snapshot(
         &self,
@@ -102,6 +175,7 @@ impl AcceptedRepositoryPolicy {
         Ok(Self {
             scope: Scope::from_body(job.body())?,
             accepted: RwLock::new(AcceptedEntries::default()),
+            recovery: RwLock::default(),
         })
     }
     /// A fresh receiver pins the trusted owner while the accepted package is still unavailable.
@@ -120,6 +194,7 @@ impl AcceptedRepositoryPolicy {
         Ok(Self {
             scope: Scope::from_body(&root.body)?,
             accepted: RwLock::new(AcceptedEntries::default()),
+            recovery: RwLock::default(),
         })
     }
     /// Pin the managed repository before any native owner entry is authorized.
@@ -137,6 +212,7 @@ impl AcceptedRepositoryPolicy {
         Ok(Self {
             scope,
             accepted: RwLock::new(accepted),
+            recovery: RwLock::default(),
         })
     }
 
@@ -274,6 +350,35 @@ impl AcceptedRepositoryPolicy {
 }
 
 impl PublicationPolicy for AcceptedRepositoryPolicy {
+    fn needs_fetch_preparation(&self) -> bool {
+        self.recovery
+            .read()
+            .map_or(true, |recovery| recovery.plan.is_some())
+    }
+
+    fn prepare_fetch(
+        &self,
+        repo: &radicle::storage::git::Repository,
+        refs: &[(git::fmt::Qualified<'_>, git::Oid)],
+    ) -> Result<(), Error> {
+        let mut recovery = self.recovery.write().map_err(|_| Error::Unavailable)?;
+        let super::history::Recovery { plan, manifests } = &mut *recovery;
+        let plan = plan.as_ref().ok_or(Error::Unavailable)?;
+        plan.recover(repo, refs, self, manifests).map_err(|error| {
+            let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(error.as_ref());
+            while let Some(current) = cause {
+                if current
+                    .downcast_ref::<git::raw::Error>()
+                    .is_some_and(|e| e.code() == git::raw::ErrorCode::NotFound)
+                {
+                    return Error::MissingObjects;
+                }
+                cause = current.source();
+            }
+            // Preserve the cause for node logs while keeping the native policy fail-closed.
+            Error::Io(std::io::Error::other(error))
+        })
+    }
     fn id(&self) -> &str {
         "outbe.chain.publication.v1"
     }

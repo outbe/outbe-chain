@@ -101,6 +101,8 @@ pub(crate) enum RefPrefix {
     NamespacedRadId { namespace: PublicKey },
     /// Represents `"refs/namespaces/<namespace>/refs/rad/sigrefs"`.
     NamespacedRadSigrefs { namespace: PublicKey },
+    /// Represents all references in one locally pinned owner's namespace.
+    Namespace { namespace: PublicKey },
     /// Represents `"refs/namespaces"`
     AllNamespaces,
 }
@@ -121,6 +123,9 @@ impl RefPrefix {
                     .into()
             }
             RefPrefix::AllNamespaces => "refs/namespaces".into(),
+            RefPrefix::Namespace { namespace } => {
+                format!("refs/namespaces/{namespace}/refs/").into()
+            }
         }
     }
 }

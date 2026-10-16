@@ -7,6 +7,19 @@ Feature: Validator-managed Radicle storage
     Given a fresh four-validator governments localnet
     Then every validator has the same finalized governments bootstrap and native owner refs
 
+  @governments-patch-vote
+  Scenario: The network votes to merge an exact governments patch and new peers verify its history
+    Given a fresh four-validator governments patch-vote localnet
+    Then every validator has the same finalized governments bootstrap and native owner refs
+    And the governments validators form the signed mesh
+    When an independent author publishes a governments patch
+    Then every validator sees the exact author revision while governments main remains unchanged
+    When the current validators vote to accept that governments revision
+    Then every validator verifies the finalized BLS Review and Merge for that revision
+    When a fresh validator joins after the governments merge
+    Then the fresh validator verifies the accepted governments history without voting again
+    And a fresh ordinary Radicle reader fetches the merged governments history
+
   Scenario: A public repository survives topology and process changes
     Given a fresh four-validator Radicle localnet
     Then Radicle genesis and the signed validator mesh are ready

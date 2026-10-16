@@ -3,7 +3,52 @@
 Статус: рабочий runbook реализации, не release acceptance. На source `8987e23ae`
 проверен локальный сценарий с native sidecars, настоящими BLS partials и
 криптографической reshare, но fixture delivery/finality. Production E2E,
-положительный fresh catch-up managed Outbe узла и финальный комплект CI/evidence ещё не выполнены.
+положительный сетевой E2E fresh catch-up managed Outbe узла и финальный комплект CI/evidence ещё не выполнены.
+Функциональный путь fresh catch-up подключён; текущая проверка ограничена unit tests и сборкой.
+Полный сценарий `@governments-patch-vote` написан; его сетевой запуск оставлен пользователю.
+
+## Отдельный запуск полного E2E
+
+В `testing/e2e-harness/features/radicle.feature` сценарий с тегом
+`@governments-patch-vote` проходит production genesis/initial DKG → автоматическое
+создание governments → обычный Ed25519 author patch → реальные Vote transactions
+четырёх текущих validators → finalized approval точной revision → автоматические
+BLS Review Accept и Merge → получение принятой истории новым validator после DKG
+activation → обычный native Fetch в пустой независимый Radicle home.
+До Vote проверяются open patch и неизменный main; после — exact revision/head,
+единственный BLS owner, native signatures, собственные finalized receipts каждого
+validator и одинаковые signed refs. Новый validator не голосует повторно.
+Проверяющий код не устанавливает refs и не создаёт отсутствующий managed owner pin.
+
+Команды ниже **подготовлены для отдельного запуска, здесь не выполнялись**.
+Выполнять из этого worktree на Linux-хосте с уже настроенным SGX/Gramine и Docker,
+как остальные сценарии `@radicle @sgx-no-attest`. Используется существующий
+artifact build lane: сначала собрать согласованный набор binaries и manifest,
+затем запустить только этот сценарий. Manifest хранится вне source tree.
+
+```sh
+cargo +1.96.0 run --locked -p outbe-e2e-harness --bin outbe-e2e-build -- \
+  --lane radicle-sgx --output /tmp/outbe-governments-artifacts.json
+
+./target/release/outbe-e2e \
+  --artifact-manifest /tmp/outbe-governments-artifacts.json \
+  --input testing/e2e-harness/features/radicle.feature \
+  --tags '@governments-patch-vote' \
+  --validators 4 --tee sgx-no-attest --sudo --all --no-cleanup
+```
+
+Сценарий использует DKG cadence 96/15 с grace 20 и voting window 24 blocks:
+81 block до prepare обеспечивает требуемое publication окно ≥64. Существующий
+joiner helper использует те же prepare/grace. Он запускает пятый узел через
+FullNode → shareless validator → настоящий DKG/activation, без копирования shares
+или готовых publication packages.
+
+Штатный `scenario-*.json` сохраняет `radicle.public_path.governments_patch`:
+RID/revision/base/head, proposal/vote transaction hashes, finalized approval,
+проверенные receipt/manifest bytes и наблюдения четырёх validators, нового validator
+и ordinary reader. `--no-cleanup` оставляет native stores и process logs.
+До выполнения сценария это **не runtime PASS и не закрытие P8**; отрицательные
+сценарии и обязательный CI полного плана этим happy-path не заменяются.
 
 ## Genesis
 
@@ -95,11 +140,18 @@ receipts, проверяет сохранённые packages и устанавл
 через existing CAS. Удалять journal/owner requirements или вручную двигать refs
 для обхода ошибки нельзя: это уничтожает данные проверки вместо восстановления.
 
-Свежий managed Outbe узел с receipt, но без локального accepted package пока сообщает
-`AwaitingAcceptedPackage`. Это отдельный незавершённый путь сетевого узла; обычный
-Radicle пользователь без managed-конфигурации получает repo штатным fetch. Предложение
-D4 о новом archive transport не реализуется. Старые partial/Output и local attestation
-slots не являются условием чтения уже принятой истории.
+Свежий managed Outbe узел читает descriptor, receipts и patch approvals из собственного
+finalized состояния. Существующий native fetch получает immutable Git objects владельца;
+до обычной проверки identity локальная policy восстанавливает manifests из конкретных
+sigrefs/COB/identity signature containers. Только совпадение manifest hash с собственным
+receipt и полная native BLS проверка создают grants. Prefetch сам не применяет refs/cache.
+Collector сохраняет manifests, а SDK восстанавливает отсутствующий публичный descriptor
+из собственного chain reader. Если peer опережает собственную finality, fetch ждёт её
+продвижения; recovery plan принимает только продолжение того же immutable receipt prefix.
+Без доступных objects узел остаётся в `AwaitingAcceptedPackage` и повторяет обычный fetch.
+Обычный Radicle пользователь без managed-конфигурации получает repo штатным fetch.
+Предложение D4 о новом archive transport не реализуется. Старые partial/Output и local
+attestation slots не являются условием чтения уже принятой истории.
 
 ## Сборка и граница совместимости
 
