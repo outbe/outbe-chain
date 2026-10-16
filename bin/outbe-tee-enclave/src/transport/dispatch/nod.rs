@@ -33,50 +33,58 @@ pub(super) fn prepare_state(
         let inputs = nod_materialization::hash(b"outbe/nod/state-prepare-inputs", request)
             .map_err(|_| TransportDispatchError::InvalidNodPrepareInputs)?;
         if request.sources.is_empty() {
-            let lookup = match crate::nod_state_materialization::request_sources(request) {
-                Ok(lookup) => lookup,
-                Err(error) => return materialization_failure(keys, inputs, error),
-            };
-            let preimage = nod_materialization::attestation(
-                b"outbe/nod/state-source-request",
-                inputs,
-                &lookup,
-            )
-            .map_err(|_| TransportDispatchError::InvalidNodPrepareResult)?;
-            return Ok(EnclaveResponse::TributeSourcesRequested {
-                lookup,
-                inputs_canonical_hash: inputs,
-                attestation_tag: keys.sign_attestation(&preimage).to_vec(),
-            });
+            return request_state_sources(keys, inputs, request);
         }
-        let carrier = match crate::nod_state_materialization::prepare(key.secret(), request) {
-            Ok(carrier) => carrier,
-            Err(error) => return materialization_failure(keys, inputs, error),
-        };
-        let carrier = match carrier.encode_canonical(&poc_schema_limits()) {
-            Ok(carrier) => carrier,
-            Err(outbe_ocomp_protocol::error::ProtocolError::CapacityExceeded {
-                what,
-                limit,
-                actual,
-            }) => {
-                return materialization_capacity(
-                    keys,
-                    inputs,
-                    format!("{what}: {actual} > {limit}"),
-                );
-            }
-            Err(_) => return Err(TransportDispatchError::InvalidProtectedNodCarrier.into()),
-        };
-        let preimage =
-            nod_materialization::attestation(b"outbe/nod/state-prepare-result", inputs, &carrier)
-                .map_err(|_| TransportDispatchError::InvalidNodPrepareResult)?;
-        Ok(EnclaveResponse::EncryptedNodsPreparedV2 {
-            carrier,
-            inputs_canonical_hash: inputs,
-            attestation_tag: keys.sign_attestation(&preimage).to_vec(),
-        })
+        match crate::nod_state_materialization::prepare(key.secret(), request) {
+            Ok(carrier) => prepared_state_carrier(keys, inputs, &carrier),
+            Err(error) => materialization_failure(keys, inputs, error),
+        }
     })())
+}
+
+fn request_state_sources(
+    keys: &EnclaveKeys,
+    inputs: B256,
+    request: &PrepareStateNodsRequest,
+) -> EnclaveResult<EnclaveResponse> {
+    let lookup = match crate::nod_state_materialization::request_sources(request) {
+        Ok(lookup) => lookup,
+        Err(error) => return materialization_failure(keys, inputs, error),
+    };
+    let preimage =
+        nod_materialization::attestation(b"outbe/nod/state-source-request", inputs, &lookup)
+            .map_err(|_| TransportDispatchError::InvalidNodPrepareResult)?;
+    Ok(EnclaveResponse::TributeSourcesRequested {
+        lookup,
+        inputs_canonical_hash: inputs,
+        attestation_tag: keys.sign_attestation(&preimage).to_vec(),
+    })
+}
+
+fn prepared_state_carrier(
+    keys: &EnclaveKeys,
+    inputs: B256,
+    carrier: &ProtectedNodMaterializationV2,
+) -> EnclaveResult<EnclaveResponse> {
+    let carrier = match carrier.encode_canonical(&poc_schema_limits()) {
+        Ok(carrier) => carrier,
+        Err(outbe_ocomp_protocol::error::ProtocolError::CapacityExceeded {
+            what,
+            limit,
+            actual,
+        }) => {
+            return materialization_capacity(keys, inputs, format!("{what}: {actual} > {limit}"));
+        }
+        Err(_) => return Err(TransportDispatchError::InvalidProtectedNodCarrier.into()),
+    };
+    let preimage =
+        nod_materialization::attestation(b"outbe/nod/state-prepare-result", inputs, &carrier)
+            .map_err(|_| TransportDispatchError::InvalidNodPrepareResult)?;
+    Ok(EnclaveResponse::EncryptedNodsPreparedV2 {
+        carrier,
+        inputs_canonical_hash: inputs,
+        attestation_tag: keys.sign_attestation(&preimage).to_vec(),
+    })
 }
 
 pub(super) fn open_state(
