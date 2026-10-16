@@ -8004,19 +8004,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-accounting"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "outbe-evm",
- "outbe-macros",
- "outbe-primitives",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
 name = "outbe-agentreward"
 version = "0.1.0"
 dependencies = [
@@ -8267,7 +8254,6 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-accounting",
  "outbe-agentreward",
  "outbe-ccaregistry",
  "outbe-chain-constants",
@@ -8479,7 +8465,6 @@ dependencies = [
  "eyre",
  "hex",
  "k256 0.13.4",
- "outbe-accounting",
  "outbe-agentreward",
  "outbe-ccaregistry",
  "outbe-chain-constants",
