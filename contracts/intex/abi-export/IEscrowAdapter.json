@@ -21,7 +21,7 @@
     },
     {
       "type": "function",
-      "name": "claimRefund",
+      "name": "claimAbandonedRefund",
       "inputs": [
         {
           "name": "worldwideDay",
@@ -35,6 +35,30 @@
         }
       ],
       "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "closeWin",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "units",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ],
       "stateMutability": "nonpayable"
     },
     {
@@ -405,6 +429,35 @@
     },
     {
       "type": "function",
+      "name": "releaseRefund",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "closed",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "finalized",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "setProceedsRecipient",
       "inputs": [
         {
@@ -678,6 +731,31 @@
     },
     {
       "type": "event",
+      "name": "WinClosed",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "units",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "Wired",
       "inputs": [
         {
@@ -809,7 +887,17 @@
     },
     {
       "type": "error",
+      "name": "LocksOutstanding",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "NoDeposits",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NothingToRefund",
       "inputs": []
     },
     {
@@ -875,6 +963,22 @@
       "type": "error",
       "name": "ProceedsRecipientNotSet",
       "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "RefundNotYetAbandoned",
+      "inputs": [
+        {
+          "name": "claimableAt",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "now_",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
     },
     {
       "type": "error",

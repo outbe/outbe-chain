@@ -21,7 +21,6 @@ import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
-import {RevertingERC1155Receiver} from "@test-mocks/RevertingERC1155Receiver.sol";
 import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 /// @dev End-to-end traversal of the five `TargetRouter` inbound handlers. These handlers
@@ -74,7 +73,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
 
         bnbRouter.wire(address(auction), address(intex), address(escrow));
 
-        // The router drives auction lifecycle (RELAYER_ROLE), creates/mints IntexNFT1155
+        // The router drives auction lifecycle (RELAYER_ROLE), creates IntexNFT1155 series
         // (RELAYER_ROLE), and finalizes escrow (RELAYER_ROLE). Each downstream contract gates
         // mutations on its own RELAYER_ROLE which only the wired router should hold.
         auction.grantRole(auction.RELAYER_ROLE(), address(bnbRouter));
@@ -136,11 +135,9 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         localRouter.wire(address(auction), address(intex), address(escrow));
         intex.grantRole(intex.RELAYER_ROLE(), address(localRouter));
 
-        address[] memory recipients = new address[](1);
-        recipients[0] = bidder;
-        uint256[] memory quantities = new uint256[](1);
-        quantities[0] = 5;
-        _deliver(local, localOrigin, address(localRouter), _issuancePacket(recipients, quantities));
+        _deliver(local, localOrigin, address(localRouter), _issuancePacket());
+        intex.grantRole(intex.AUCTION_ROLE(), admin);
+        intex.issueIntex(bidder, 5, SERIES_ID);
 
         uint256 tokenId = intex.issuedTokenId(SERIES_ID);
         assertEq(intex.balanceOf(bidder, tokenId), 5);
@@ -163,13 +160,8 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         }
     }
 
-    // --- _handleIssuanceInstructions: createSeries + per-recipient mint on local IntexNFT1155 ---
-    function test_handleIssuanceInstructions_createsSeriesAndIssues() public {
-        address[] memory recipients = new address[](1);
-        recipients[0] = bidder;
-        uint256[] memory quantities = new uint256[](1);
-        quantities[0] = 5;
-
+    // --- _handleIssuanceInstructions: createSeries on local IntexNFT1155, no mint ---
+    function test_handleIssuanceInstructions_createsSeriesOnly() public {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.IssuanceInstructionsPayload({
             seriesId: SERIES_ID,
             worldwideDay: WORLDWIDE_DAY,
@@ -182,24 +174,17 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             referenceCurrency: REFERENCE_CURRENCY,
             callWindow: 30,
             callThreshold: 5,
-            callPriceMinor: 25e6,
-            recipients: recipients,
-            units: quantities
+            callPriceMinor: 25e6
         });
         bytes memory packet =
             BridgeMsgCodec.encodeIssuanceInstructions(WORLDWIDE_DAY, 0, 1, IssuanceBatchLib.one(payload));
         _deliver(packet);
 
-        uint256 tokenId = intex.issuedTokenId(SERIES_ID);
-        assertEq(intex.balanceOf(bidder, tokenId), 5, "bidder crosschainMinted 5 Issued tokens");
-        assertEq(intex.totalSupply(tokenId), 5, "totalSupply == minted amount");
+        assertTrue(intex.seriesExists(SERIES_ID), "series created");
+        assertEq(intex.totalSupply(intex.issuedTokenId(SERIES_ID)), 0, "winners issue their own units");
     }
 
-    function _issuancePacket(address[] memory recipients, uint256[] memory quantities)
-        internal
-        view
-        returns (bytes memory)
-    {
+    function _issuancePacket() internal view returns (bytes memory) {
         return BridgeMsgCodec.encodeIssuanceInstructions(
             WORLDWIDE_DAY,
             0,
@@ -217,58 +202,25 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
                     referenceCurrency: REFERENCE_CURRENCY,
                     callWindow: 30,
                     callThreshold: 5,
-                    callPriceMinor: 25e6,
-                    recipients: recipients,
-                    units: quantities
+                    callPriceMinor: 25e6
                 })
             )
         );
     }
 
-    function test_handleIssuanceInstructions_RevertingRecipient_OthersIssued() public {
-        RevertingERC1155Receiver bad = new RevertingERC1155Receiver();
-        address[] memory recipients = new address[](2);
-        recipients[0] = bidder;
-        recipients[1] = address(bad);
-        uint256[] memory quantities = new uint256[](2);
-        quantities[0] = 5;
-        quantities[1] = 3;
+    /// @dev A day in flight finalizes on the escrow that took its locks, so the venue stays put.
+    function test_wire_keepsTheVenueWhileTheEscrowHoldsLocks() public {
+        vm.prank(admin);
+        escrow.lockFunds(WORLDWIDE_DAY, bidder, 1e6, 1_000_000, 1);
 
-        _deliver(_issuancePacket(recipients, quantities));
+        vm.expectRevert(ITargetRouter.EscrowHasLiveLocks.selector);
+        bnbRouter.wire(address(auction), address(intex), makeAddr("escrow2"));
+        vm.expectRevert(ITargetRouter.EscrowHasLiveLocks.selector);
+        bnbRouter.wire(makeAddr("auction2"), address(intex), address(escrow));
+        vm.expectRevert(ITargetRouter.EscrowHasLiveLocks.selector);
+        bnbRouter.wire(address(auction), makeAddr("intex2"), address(escrow));
 
-        uint256 tokenId = intex.issuedTokenId(SERIES_ID);
-        assertEq(intex.balanceOf(bidder, tokenId), 5, "good recipient minted");
-        assertEq(intex.balanceOf(address(bad), tokenId), 0, "reverting recipient not minted");
-        assertEq(bnbRouter.parkedIssuanceCount(), 1, "one mint parked");
-        (bytes14 s, address r, uint256 q, bool exists, bool done) = bnbRouter.parkedIssuance(0);
-        assertEq(s, SERIES_ID);
-        assertEq(r, address(bad));
-        assertEq(q, 3);
-        assertTrue(exists);
-        assertFalse(done);
-    }
-
-    function test_applyParkedIssuance_afterFix() public {
-        RevertingERC1155Receiver bad = new RevertingERC1155Receiver();
-        address[] memory recipients = new address[](2);
-        recipients[0] = bidder;
-        recipients[1] = address(bad);
-        uint256[] memory quantities = new uint256[](2);
-        quantities[0] = 5;
-        quantities[1] = 3;
-        _deliver(_issuancePacket(recipients, quantities));
-
-        // The recipient stops reverting. Any caller can retry the parked mint.
-        bad.setReject(false);
-        bnbRouter.applyParkedIssuance(0);
-
-        uint256 tokenId = intex.issuedTokenId(SERIES_ID);
-        assertEq(intex.balanceOf(address(bad), tokenId), 3, "parked mint delivered on flush");
-        (,,,, bool done) = bnbRouter.parkedIssuance(0);
-        assertTrue(done);
-
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyResolved.selector, uint256(0)));
-        bnbRouter.applyParkedIssuance(0);
+        bnbRouter.wire(address(auction), address(intex), address(escrow));
     }
 
     // --- _handleRefundInstructions: forwarded to EscrowAdapter.finalizeAuction ---

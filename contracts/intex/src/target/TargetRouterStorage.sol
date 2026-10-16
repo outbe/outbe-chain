@@ -14,16 +14,6 @@ struct BidsRelayProgress {
     bool done;
 }
 
-/// @notice An issuance parked because a recipient's ERC-1155 receiver hook reverted.
-///         `applyParkedIssuance` retries it.
-struct ParkedIssuance {
-    bytes14 seriesId;
-    address recipient;
-    uint256 units;
-    bool exists;
-    bool done;
-}
-
 /// @notice Progress of a day's chunk run: the declared span and the number of chunks that landed.
 struct ChunkProgress {
     uint16 totalChunks;
@@ -54,16 +44,9 @@ struct TargetRouterStorage {
     /// @dev Issuance-run progress for a day on this chain: the span the first applied chunk declared and
     ///      how many landed. Four bytes, so one slot rather than two.
     mapping(uint32 worldwideDay => ChunkProgress) issuanceProgress;
-    /// @dev Bit per applied issuance chunk, so a repeat neither issues nor counts. Mirrors
+    /// @dev Bit per applied issuance chunk, so a repeat is not counted twice. Mirrors
     ///      `refundChunksApplied`. One word covers `MAX_CHUNKS`.
     mapping(uint32 worldwideDay => uint256 bitmap) issuanceChunksApplied;
-    /// @dev Winners already issued their allocation of a series. The router ignores a repeated
-    ///      instruction for the pair.
-    mapping(bytes14 seriesId => mapping(address recipient => bool issued)) issued;
-    /// @dev Parked issuances awaiting permissionless retry, keyed by enqueue index.
-    mapping(uint256 idx => ParkedIssuance) parkedIssuance;
-    /// @dev Next index to assign in `parkedIssuance`. It is also the count ever enqueued.
-    uint256 nextParkedIssuanceIdx;
     /// @dev Origin's call time of a Called mark waiting for its series to land here (0 = none), so a slot
     ///      applied later derives the same deadline.
     mapping(bytes14 seriesId => uint32 calledAt) parkedMarks;

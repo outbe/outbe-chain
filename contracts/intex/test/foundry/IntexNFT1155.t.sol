@@ -122,6 +122,21 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.seriesIdsByWorldwideDay(SERIES_ID_2_DAY)[0], SERIES_ID_2);
     }
 
+    function test_CreateSeries_IndexesTheDayCurrencyPair() public {
+        IIntexNFT1155.CreateSeriesParams memory lira = CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0);
+        lira.seriesId = "20250505-TRY-U";
+        lira.issuanceCurrency = 949;
+        vm.startPrank(bridger);
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0));
+        nft.createSeries(lira);
+        vm.stopPrank();
+
+        assertEq(nft.seriesIdOf(SERIES_ID_1_DAY, 840, 840), SERIES_ID_1);
+        assertEq(nft.seriesIdOf(SERIES_ID_1_DAY, 949, 840), lira.seriesId);
+        assertEq(nft.seriesIdOf(SERIES_ID_1_DAY, 840, 949), bytes14(0), "the pair is ordered");
+        assertEq(nft.seriesIdOf(SERIES_ID_2_DAY, 840, 840), bytes14(0), "another day has no series");
+    }
+
     /// @dev The contract stores the day verbatim and does not infer it from `seriesId`. The test
     ///      proves this with distinct values, so that a future composite seriesId (many series per
     ///      day) records the real day. Fails if provenance reads `params.seriesId`.

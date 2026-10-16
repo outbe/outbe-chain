@@ -145,6 +145,24 @@
     },
     {
       "type": "function",
+      "name": "claimRefund",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "commitBid",
       "inputs": [
         {
@@ -539,7 +557,7 @@
     },
     {
       "type": "function",
-      "name": "reapAuction",
+      "name": "issueIntex",
       "inputs": [
         {
           "name": "worldwideDay",
@@ -547,9 +565,9 @@
           "internalType": "uint32"
         },
         {
-          "name": "limit",
-          "type": "uint256",
-          "internalType": "uint256"
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
         }
       ],
       "outputs": [],
@@ -680,6 +698,19 @@
     },
     {
       "type": "function",
+      "name": "setIntexContract",
+      "inputs": [
+        {
+          "name": "_intex",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "startClearingStage",
       "inputs": [
         {
@@ -725,25 +756,6 @@
           "type": "uint32",
           "indexed": false,
           "internalType": "uint32"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "AuctionReaped",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "remaining",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
         }
       ],
       "anonymous": false
@@ -886,6 +898,87 @@
       "anonymous": false
     },
     {
+      "type": "event",
+      "name": "IntexWired",
+      "inputs": [
+        {
+          "name": "previous",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "current",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "WinExpired",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "indexed": true,
+          "internalType": "bytes14"
+        },
+        {
+          "name": "units",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "WinIssued",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "indexed": true,
+          "internalType": "bytes14"
+        },
+        {
+          "name": "units",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
+        }
+      ],
+      "anonymous": false
+    },
+    {
       "type": "error",
       "name": "AuctionAlreadyExists",
       "inputs": []
@@ -981,6 +1074,11 @@
     },
     {
       "type": "error",
+      "name": "EscrowHasLiveLocks",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "InvalidCommitHash",
       "inputs": []
     },
@@ -1044,6 +1142,27 @@
     },
     {
       "type": "error",
+      "name": "SeriesNotCreated",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "issuanceCurrency",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "referenceCurrency",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "StageRequired",
       "inputs": [
         {
@@ -1057,11 +1176,6 @@
           "internalType": "enum IIntexAuction.AuctionStage"
         }
       ]
-    },
-    {
-      "type": "error",
-      "name": "TooEarlyToReap",
-      "inputs": []
     },
     {
       "type": "error",

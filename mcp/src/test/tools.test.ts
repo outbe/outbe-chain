@@ -224,6 +224,7 @@ const TOOLS: Case[] = [
   ["auction_bid_cancel", { worldwideDay: 20261009 }],
   ["intex_claim_commit_bond", { worldwideDay: 20261009, bidder: OTHER }],
   ["auction_claim_refund", { worldwideDay: 20261009, wait: false }],
+  ["auction_issue_intex", { worldwideDay: 20261009, wait: false }],
   ["intex_payment_allowance", {}],
   ["intex_payment_approve", { amount: "100" }],
   ["intex_payment_approve", { max: true, wait: false }],

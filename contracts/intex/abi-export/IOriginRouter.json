@@ -427,16 +427,6 @@
               "name": "callPriceMinor",
               "type": "uint64",
               "internalType": "uint64"
-            },
-            {
-              "name": "recipients",
-              "type": "address[]",
-              "internalType": "address[]"
-            },
-            {
-              "name": "units",
-              "type": "uint256[]",
-              "internalType": "uint256[]"
             }
           ]
         }
@@ -890,7 +880,7 @@
           "internalType": "bytes14"
         },
         {
-          "name": "recipientsCount",
+          "name": "seriesCount",
           "type": "uint256",
           "indexed": false,
           "internalType": "uint256"
@@ -1124,11 +1114,6 @@
         }
       ],
       "anonymous": false
-    },
-    {
-      "type": "error",
-      "name": "ArrayLengthMismatch",
-      "inputs": []
     },
     {
       "type": "error",
