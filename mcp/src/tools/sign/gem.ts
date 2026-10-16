@@ -8,7 +8,7 @@ import { contextNetwork } from "../../net/resolver.js";
 import { requireAccount } from "../../net/tx.js";
 import { grindMiningNonce } from "../../pow.js";
 import { ownedTokenIds, view } from "../../read.js";
-import { resolveContract } from "../../registry.js";
+import { GEM_STATE, resolveContract } from "../../registry.js";
 import { seriesArg } from "../intex/args.js";
 import { address, rawAmount, waitFlag } from "../schemas.js";
 import { handler, ok } from "../util.js";
@@ -16,7 +16,7 @@ import { eventId } from "./events.js";
 import { settleRight } from "./settle.js";
 import { submit } from "./submit.js";
 
-const GEM_SETTLED = 3;
+const GEM_SETTLED = GEM_STATE.indexOf("Settled");
 
 /** The proof-of-work difficulty every right mines at, read from the chain. */
 export async function powDifficulty(ctx: Ctx): Promise<number> {

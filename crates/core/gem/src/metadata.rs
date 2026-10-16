@@ -3,7 +3,7 @@ use outbe_common::nft_card::{self, Card, Trait, AMOUNT_PRECISION, PRICE_PRECISIO
 use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
 use crate::schema::{GemState, GemView};
 
-pub(crate) fn token_uri(view: &GemView, qualified: bool, now: u64) -> String {
+pub(crate) fn token_uri(view: &GemView, now: u64) -> String {
     let item = &view.item;
     let id = nft_card::short_id(item.gem_id.to_u256());
     let settled = item.is_settled();
@@ -13,7 +13,6 @@ pub(crate) fn token_uri(view: &GemView, qualified: bool, now: u64) -> String {
         s if s == GemState::Forfeited as u8 => nft_card::FORFEITED,
         s if s == GemState::Called as u8 => nft_card::CALLED,
         s if s == GemState::Settled as u8 => nft_card::SETTLED,
-        _ if qualified => nft_card::QUALIFIED,
         _ => nft_card::ISSUED,
     };
 
@@ -27,12 +26,6 @@ pub(crate) fn token_uri(view: &GemView, qualified: bool, now: u64) -> String {
             nft_card::amount_grouped(view.bucket.entry_price_minor, PRICE_PRECISION),
         ),
     ];
-    if state == nft_card::ISSUED {
-        rows.push((
-            "Floor Price",
-            nft_card::amount_grouped(item.floor_price_minor, PRICE_PRECISION),
-        ));
-    }
     rows.push((
         "Call Price",
         nft_card::amount_grouped(view.terms.call_price_minor, PRICE_PRECISION),
@@ -45,7 +38,6 @@ pub(crate) fn token_uri(view: &GemView, qualified: bool, now: u64) -> String {
             view.bucket.entry_price_minor,
             PRICE_PRECISION,
         ),
-        Trait::amount("Floor Price", item.floor_price_minor, PRICE_PRECISION),
         Trait::amount("Call Price", view.terms.call_price_minor, PRICE_PRECISION),
         Trait::amount("Promis Load", item.promis_load_minor, AMOUNT_PRECISION),
         Trait::integer("Issuance Currency", item.issuance_currency),
@@ -76,12 +68,11 @@ pub(crate) fn token_uri(view: &GemView, qualified: bool, now: u64) -> String {
 // Mirrors `outbe_gemfactory::schema::GemTypes`, which this crate cannot depend on.
 fn gem_type(gem_type: u8) -> Trait {
     let label = match gem_type {
-        0 => "Genesis",
-        1 => "Validator",
-        2 => "SRA",
-        3 => "Wallet",
-        4 => "CCA",
-        5 => "Merchant",
+        0 => "Validator",
+        1 => "SRA",
+        2 => "Wallet",
+        3 => "CCA",
+        4 => "Merchant",
         other => return Trait::integer("Gem Type", other),
     };
     Trait::text("Gem Type", label)

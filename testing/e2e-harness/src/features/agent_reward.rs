@@ -507,8 +507,7 @@ fn claim_gem_and_assert_gas_only_cost(
             gemType: gem.gemType,
             owner: beneficiary,
             promisLoadMinor: expected_load,
-            entryPriceMinor: terms.0,
-            floorPriceMinor: terms.1,
+            entryPriceMinor: terms,
             issuanceCurrency: issuance_currency,
             referenceCurrency: reference_currency,
             issuedAt: timestamp,
@@ -607,10 +606,9 @@ fn gem_inventory(world: &World, port: u16, owner: Address) -> Result<Vec<U256>, 
     Ok(ids)
 }
 
-/// Read inputs, not Gem output: Oracle's closed-day watermark and the genesis
-/// Gem profile. The full reward scenario deliberately requires a closed day in
-/// the claimed reference currency.
-fn claim_gem_terms_at(url: &str, height: u64, reference_currency: u16) -> (U256, U256) {
+/// Read inputs, not Gem output: Oracle's closed-day watermark. The full reward
+/// scenario deliberately requires a closed day in the claimed reference currency.
+fn claim_gem_terms_at(url: &str, height: u64, reference_currency: u16) -> U256 {
     let word = |address: Address, slot: u64| -> U256 {
         serde_json::from_value(
             eth::raw_json_with_params(
@@ -627,7 +625,6 @@ fn claim_gem_terms_at(url: &str, height: u64, reference_currency: u16) -> (U256,
         .expect("input slot quantity")
     };
     // Oracle schema slots 58/59 are UTC-day VWAP values/watermark.
-    // Gem profile is slot 34 (the preceding record spans multiple slots).
     let day: u32 = word(outbe_primitives::addresses::ORACLE_ADDRESS, 59)
         .try_into()
         .expect("UTC date key");
@@ -647,32 +644,13 @@ fn claim_gem_terms_at(url: &str, height: u64, reference_currency: u16) -> (U256,
     )
     .expect("independent closed UTC-day claim price");
     assert!(!price.is_zero());
-    let profile: u8 = word(addresses::GEM_ADDR, 34)
-        .try_into()
-        .expect("Gem profile byte");
-    let chain_id: U256 = serde_json::from_value(
-        eth::raw_json_with_params(url, "eth_chainId", serde_json::json!([]))
-            .expect("Gem profile chain"),
-    )
-    .expect("chain quantity");
-    let production = match profile {
-        0 => outbe_primitives::chain::is_mainnet(chain_id.try_into().expect("chain id u64")),
-        1 => false,
-        2 => true,
-        _ => panic!("unknown Gem profile {profile}"),
-    };
-    let markup = if production { 108u64 } else { 105u64 };
-    let floor = price
-        .checked_mul(U256::from(markup))
-        .expect("Gem floor numerator")
-        / U256::from(100);
-    (price, floor)
+    price
 }
 
 fn assert_claimed_gem(gem: &eth::IGem::GemData, pool: u8, expected: &eth::IGemFactory::GemIssued) {
     let kind = match pool {
-        WAA_POOL => 3,
-        SRA_POOL => 2,
+        WAA_POOL => 2,
+        SRA_POOL => 1,
         _ => panic!("unknown reward pool"),
     };
     assert_eq!(gem.owner, expected.owner);
@@ -680,7 +658,6 @@ fn assert_claimed_gem(gem: &eth::IGem::GemData, pool: u8, expected: &eth::IGemFa
     assert_eq!(gem.state, 0, "agent reward Gem must be born Issued");
     assert_eq!(gem.promisLoadMinor, expected.promisLoadMinor);
     assert_eq!(gem.entryPriceMinor, expected.entryPriceMinor);
-    assert_eq!(gem.floorPriceMinor, expected.floorPriceMinor);
     assert_eq!(gem.issuanceCurrency, expected.issuanceCurrency);
     assert_eq!(gem.referenceCurrency, expected.referenceCurrency);
     assert_eq!(gem.issuedAt, expected.issuedAt);
@@ -814,11 +791,10 @@ mod claim_tests {
         eth::IGem::GemData {
             gemId: U256::from(7),
             owner: Address::repeat_byte(1),
-            gemType: 3,
+            gemType: 2,
             state: 0,
             promisLoadMinor: U256::from(123),
             entryPriceMinor: U256::from(1_000_001),
-            floorPriceMinor: U256::from(1_050_001),
             issuanceCurrency: 840,
             referenceCurrency: 840,
             issuedAt: 100,
@@ -838,7 +814,6 @@ mod claim_tests {
             owner: Address::repeat_byte(1),
             promisLoadMinor: U256::from(123),
             entryPriceMinor: U256::from(1_000_001),
-            floorPriceMinor: U256::from(1_050_001),
             issuanceCurrency: 840,
             referenceCurrency: 840,
             issuedAt: 100,
@@ -853,18 +828,17 @@ mod claim_tests {
 
     #[test]
     fn agent_claim_oracle_rejects_wrong_recipient_load_pool_and_price() {
-        let expected = issued_gem(3);
+        let expected = issued_gem(2);
         let check = |gem: &eth::IGem::GemData| assert_claimed_gem(gem, WAA_POOL, &expected);
         check(&wallet_gem());
-        for mutation in 0..7 {
+        for mutation in 0..6 {
             let mut gem = wallet_gem();
             match mutation {
                 0 => gem.owner = Address::repeat_byte(2),
                 1 => gem.promisLoadMinor += U256::ONE,
-                2 => gem.gemType = 2,
+                2 => gem.gemType = 1,
                 3 => gem.entryPriceMinor += U256::ONE,
-                4 => gem.floorPriceMinor += U256::ONE,
-                5 => gem.state = 1,
+                4 => gem.state = 1,
                 _ => gem.referenceCurrency = 978,
             }
             assert!(
@@ -873,7 +847,7 @@ mod claim_tests {
             );
         }
         let mut sra = wallet_gem();
-        sra.gemType = 2;
-        assert_claimed_gem(&sra, SRA_POOL, &issued_gem(2));
+        sra.gemType = 1;
+        assert_claimed_gem(&sra, SRA_POOL, &issued_gem(1));
     }
 }

@@ -8610,7 +8610,6 @@ dependencies = [
  "hex",
  "outbe-common",
  "outbe-macros",
- "outbe-oracle",
  "outbe-primitives",
  "serde",
  "serde_json",
@@ -8733,7 +8732,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-macros",
- "outbe-oracle",
  "outbe-primitives",
  "thiserror 2.0.18",
 ]

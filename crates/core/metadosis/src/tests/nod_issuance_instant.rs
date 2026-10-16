@@ -27,8 +27,8 @@ fn certified_issued_at(activation_height: u64, activation_time: u64) -> u64 {
     fixture.semantic_snapshot().nod.issued_at
 }
 
-/// The request instant also fixes the entry price, so a late request cannot qualify a Nod on
-/// days that closed before its price.
+/// The request instant also fixes the entry price, so a late request cannot count call days
+/// that closed before its price.
 #[test]
 fn certified_nod_issued_at_is_the_request_instant() {
     let early = certified_issued_at(20, EARLY_ACTIVATION);
@@ -43,7 +43,7 @@ fn certified_nod_issued_at_is_the_request_instant() {
     assert_eq!(first_full_day(early), 20_240_104);
     assert!(
         first_full_day(early) > outbe_nod::openings::entry_price_day(REQUEST_AT),
-        "qualification starts after the priced day"
+        "the call window starts after the priced day"
     );
     assert_ne!(first_full_day(early), first_full_day(SCHEDULED_AT));
     assert_ne!(first_full_day(early), first_full_day(LATE_ACTIVATION));

@@ -52,7 +52,7 @@ async function run(tool: string, args: Record<string, unknown>, prepare: (chain:
 
 test("gem_promis_mine sends the owner's proof of work and Promis Mint authorization over the load", async () => {
   const { text, isError, sent } = await run("gem_promis_mine", { gem_id: "9" }, (chain) => {
-    chain.reply("getGem", struct("gem", "getGem", { owner: SIGNER, state: 3, promisLoadMinor: 4_000_000n }));
+    chain.reply("getGem", struct("gem", "getGem", { owner: SIGNER, state: 2, promisLoadMinor: 4_000_000n }));
     chain.reply("opNonceOf", 7n, CONTRACTS.promis.address);
   });
   assert(!isError, text);
@@ -69,7 +69,7 @@ test("gem_promis_mine sends the owner's proof of work and Promis Mint authorizat
 
 test("gem_promis_mine refuses another owner's Gem and an unsettled one", async () => {
   const other = await run("gem_promis_mine", { gem_id: "9" }, (chain) =>
-    chain.reply("getGem", struct("gem", "getGem", { owner: ASSET, state: 3 })),
+    chain.reply("getGem", struct("gem", "getGem", { owner: ASSET, state: 2 })),
   );
   assert.match(other.text, /gem 9 belongs to 0x2222222222222222222222222222222222222222, not the signer/);
   const issued = await run("gem_promis_mine", { gem_id: "9" }, (chain) =>

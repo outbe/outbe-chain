@@ -8,7 +8,8 @@ interface ICredisFactory {
         address indexed cca,
         address asset,
         uint256 principalMinor,
-        uint256 gratisMinor
+        uint256 gratisMinor,
+        uint256 callPriceMinor
     );
     /// A newer closed day replaced `skippedDay` while `inFlightDay` was still being swept.
     event SweepDaySkipped(uint8 indexed sweep, uint32 skippedDay, uint32 inFlightDay);

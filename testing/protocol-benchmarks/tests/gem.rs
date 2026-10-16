@@ -9,7 +9,6 @@ const CONFIG: RunConfig = RunConfig {
 #[test]
 fn every_direct_gem_creation_branch_has_a_canonical_postcondition() {
     for gem_type in [
-        GemTypes::Genesis,
         GemTypes::Validator,
         GemTypes::Sra,
         GemTypes::Wallet,

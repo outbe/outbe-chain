@@ -10,7 +10,7 @@ test("a base64 metadata document decodes and keeps only the size of its inline i
   const document = {
     name: "Gem 0x3fa2b1...9c0e",
     image: `data:image/svg+xml;base64,${encode(svg)}`,
-    attributes: [{ trait_type: "State", value: "Qualified" }],
+    attributes: [{ trait_type: "State", value: "Issued" }],
   };
   const parsed = parseDataUri(`data:application/json;base64,${encode(JSON.stringify(document))}`);
   assert.deepEqual(parsed, {
@@ -36,8 +36,8 @@ test("a lifecycle state is named by the contract whose struct carries it", () =>
       } as AbiParameter,
       { state: code },
     );
-  assert.deepEqual(state("struct IGem.GemData", 2), { state: { code: 2, name: "Called" } });
-  assert.deepEqual(state("struct IGem.GemData", 4), { state: { code: 4, name: "Forfeited" } });
+  assert.deepEqual(state("struct IGem.GemData", 1), { state: { code: 1, name: "Called" } });
+  assert.deepEqual(state("struct IGem.GemData", 3), { state: { code: 3, name: "Forfeited" } });
   assert.deepEqual(state("struct ICredis.Credis", 3), { state: { code: 3, name: "Forfeited" } });
   assert.deepEqual(state("struct IOther.Data", 3), { state: { code: 3 } });
   assert.deepEqual(

@@ -94,7 +94,7 @@ contract LoopbackRelayRoundTest is CrossChainTest {
         vm.deal(address(target), 100 ether);
 
         IOriginRouter.AuctionStageStartParams memory p;
-        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.worldwideDay = DAY;
         p.dayState = 1;
         vm.prank(desis);

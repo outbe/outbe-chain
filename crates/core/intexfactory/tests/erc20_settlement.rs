@@ -6,11 +6,10 @@ use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
-use outbe_oracle::test_support::record_finalized_day_vwap;
 use outbe_primitives::{
     addresses::{INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS},
     storage::StorageHandle,
-    time::{first_full_day, WorldwideDay},
+    time::WorldwideDay,
 };
 use outbe_vaultrouter::api::IVaultRouter::StablesSource;
 use settlement::{Quote, Rail, World, ASSET, OWNER, TIMESTAMP};
@@ -34,14 +33,6 @@ impl Rail for Intex {
     const EXTRA_COUNTERPARTIES: &'static [Address] = &[INTEX_NFT1155_ADDRESS];
 
     fn seed(self, storage: &StorageHandle<'_>, issuance_currency: u16) -> (U256, u64) {
-        // A finalized day above the floor qualifies the series.
-        record_finalized_day_vwap(
-            storage,
-            840,
-            first_full_day(TIMESTAMP),
-            U256::from(2_160_001),
-        )
-        .unwrap();
         outbe_intex::api::create_series(
             storage,
             CreateSeriesParams {
@@ -50,7 +41,6 @@ impl Rail for Intex {
                 issued_units: 10,
                 promis_load_minor: 1_500_000,
                 entry_price_minor: U256::from(2_000_000),
-                floor_price_minor: U256::from(2_160_000),
                 call_price_minor: U256::from(4_560_000),
                 call_trigger: IntexCallTrigger {
                     call_window_seconds: 1,

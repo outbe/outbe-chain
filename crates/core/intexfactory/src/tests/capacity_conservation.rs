@@ -37,7 +37,6 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
                 issued_units: 10,
                 promis_load_minor: LOAD,
                 entry_price_minor: U256::from(1_000_000),
-                floor_price_minor: U256::from(1_080_000),
                 call_price_minor: U256::from(2_280_000),
                 call_trigger: IntexCallTrigger {
                     call_window_seconds: 28 * SECONDS_PER_DAY_U32,

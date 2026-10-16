@@ -48,7 +48,6 @@ impl PreparedBatchLiveState {
 pub(super) fn require_identical_reward_gem_batch_replay(
     rewards: &Rewards<'_>,
     summary: &PreparedRewardGemBatch,
-    gem_type: u8,
     recipients: &[(Address, U256)],
 ) -> Result<()> {
     let utc_day = summary.reward_utc_day;
@@ -59,13 +58,12 @@ pub(super) fn require_identical_reward_gem_batch_replay(
             RewardGemRetryableReason::PreparationReplayContradictsUtcDay { utc_day },
         ));
     }
-    require_prepared_reward_gem_batch_replay_consistency(rewards, utc_day, gem_type, recipients)
+    require_prepared_reward_gem_batch_replay_consistency(rewards, utc_day, recipients)
 }
 
 fn require_prepared_reward_gem_batch_replay_consistency(
     rewards: &Rewards<'_>,
     utc_day: u32,
-    expected_gem_type: u8,
     expected_recipients: &[(Address, U256)],
 ) -> Result<()> {
     let state = PreparedBatchLiveState::read(rewards, utc_day)?;
@@ -76,7 +74,7 @@ fn require_prepared_reward_gem_batch_replay_consistency(
     let expected_count = u32::try_from(expected_recipients.len()).map_err(|_| {
         reward_gem_retryable_error(RewardGemRetryableReason::RecipientCountOverflow)
     })?;
-    require_replay_metadata(rewards, utc_day, expected_gem_type)?;
+    require_replay_metadata(rewards, utc_day)?;
     if state.is_settled {
         return state.require_delivered(utc_day);
     }
@@ -84,13 +82,8 @@ fn require_prepared_reward_gem_batch_replay_consistency(
     require_replay_recipients(rewards, utc_day, expected_recipients)
 }
 
-fn require_replay_metadata(
-    rewards: &Rewards<'_>,
-    utc_day: u32,
-    expected_gem_type: u8,
-) -> Result<()> {
-    if rewards.reward_gem_type.read(&utc_day)? != expected_gem_type
-        || rewards.reward_gem_issuance_currency.read(&utc_day)? != REWARD_GEM_CURRENCY
+fn require_replay_metadata(rewards: &Rewards<'_>, utc_day: u32) -> Result<()> {
+    if rewards.reward_gem_issuance_currency.read(&utc_day)? != REWARD_GEM_CURRENCY
         || rewards.reward_gem_reference_currency.read(&utc_day)? != REWARD_GEM_CURRENCY
     {
         return Err(reward_gem_retryable_error(

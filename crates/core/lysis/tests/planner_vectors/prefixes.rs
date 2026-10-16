@@ -4,7 +4,6 @@ use super::*;
 fn an_entry_beyond_the_call_price_bound_is_never_certified() {
     let day = WorldwideDay::new(20_260_724);
     let entry = U256::MAX / U256::from(100 + u32::from(u16::MAX)) + U256::from(1);
-    assert!(outbe_primitives::markup::marked_up(entry, 8).is_some());
     let mut item = observed(1, day, 100, 1);
     item.entry_price_minor = ObservationValueV1::Value(entry);
     let tributes = vec![item];

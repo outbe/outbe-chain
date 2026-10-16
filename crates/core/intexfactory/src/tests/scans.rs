@@ -227,7 +227,6 @@ fn seed_issued_at(s: &StorageHandle<'_>, id: u32, issued_at: u32) {
             issued_units: 100,
             promis_load_minor: PROMIS_LOAD_MINOR,
             entry_price_minor: U256::from(ENTRY_PRICE),
-            floor_price_minor: U256::from(EXPECTED_FLOOR),
             call_price_minor: U256::from(EXPECTED_TRIGGER),
             call_trigger: outbe_intex::IntexCallTrigger {
                 call_window_seconds: 30 * SECONDS_PER_DAY_U32,
@@ -335,38 +334,6 @@ fn call_survives_router_failure() {
     });
 }
 
-/// A series priced in the second reference currency.
-fn eur_series(worldwide_day: u32) -> IssuanceParams {
-    IssuanceParams {
-        series_id: SeriesId::pack(WorldwideDay::new(worldwide_day), *b"EUR", b'E').unwrap(),
-        reference_currency: EUR_ISO,
-        issuance_currency: EUR_ISO,
-        ..sample(worldwide_day)
-    }
-}
-
-#[test]
-fn a_currency_rate_never_qualifies_another_currency_series() {
-    with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
-        runtime::issue_intex(&s, eur_series(8)).unwrap();
-
-        let oracle = OracleContract::new(s.clone());
-        let above = U256::from(EXPECTED_FLOOR) + U256::from(1);
-        let below = U256::from(EXPECTED_FLOOR) - U256::from(1);
-        write_day_vwap(&oracle, REFERENCE_ISO, PAIR_ID, MATURE_TS, above);
-        write_day_vwap(&oracle, EUR_ISO, EUR_PAIR_ID, MATURE_TS, below);
-
-        // Both carry the same floor. Only the euro's own day price decides for it.
-        let eur_id = eur_series(8).series_id;
-        assert!(is_series_qualified(&s, sid(7)).unwrap());
-        assert!(!is_series_qualified(&s, eur_id).unwrap());
-
-        write_day_vwap(&oracle, EUR_ISO, EUR_PAIR_ID, MATURE_TS, above);
-        assert!(is_series_qualified(&s, eur_id).unwrap());
-    });
-}
-
 #[test]
 fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
     let currencies = [840u16, 978u16];
@@ -451,7 +418,6 @@ fn called_series(s: &StorageHandle<'_>, worldwide_day: u32) -> SeriesId {
             issued_units: 1,
             promis_load_minor: PROMIS_LOAD_MINOR,
             entry_price_minor: U256::from(ENTRY_PRICE),
-            floor_price_minor: U256::from(ENTRY_PRICE),
             call_price_minor: U256::from(ENTRY_PRICE),
             call_trigger: outbe_intex::schema::IntexCallTrigger {
                 call_window_seconds: (28 * DAY) as u32,
@@ -861,60 +827,6 @@ fn block_at<'s>(s: &StorageHandle<'s>, number: u64, ts: u64) -> BlockRuntimeCont
         BlockContext::empty_for_tests(number, ts, CHAIN_ID),
         s.clone(),
     )
-}
-
-/// A spike inside the day that leaves the day's VWAP at the floor qualifies nothing,
-/// however high and fresh the live rate stands.
-#[test]
-fn a_spike_the_day_price_does_not_share_qualifies_nothing() {
-    with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
-        let oracle = OracleContract::new(s.clone());
-        write_rate(
-            &oracle,
-            REFERENCE_ISO,
-            PAIR_ID,
-            U256::from(EXPECTED_FLOOR * 10),
-        );
-        oracle
-            .exchange_rate_timestamp
-            .write(&PAIR_ID, MATURE_TS)
-            .unwrap();
-        write_day_vwap(
-            &oracle,
-            REFERENCE_ISO,
-            PAIR_ID,
-            MATURE_TS,
-            U256::from(EXPECTED_FLOOR),
-        );
-
-        assert!(!is_series_qualified(&s, sid(7)).unwrap());
-    });
-}
-
-/// The issuance day counts only when the clearing fell on midnight: a series issued a
-/// second later waits for the next day's price.
-#[test]
-fn the_issue_day_qualifies_only_a_series_issued_at_midnight() {
-    let day = previous_date_key(timestamp_to_date_key(MATURE_TS));
-    let midnight = date_key_to_utc_timestamp(day) as u32;
-    for (issued_at, expected) in [(midnight, true), (midnight + 1, false)] {
-        with_factory(|s| {
-            seed_issued_at(&s, 7, issued_at);
-            write_day_vwap(
-                &OracleContract::new(s.clone()),
-                REFERENCE_ISO,
-                PAIR_ID,
-                MATURE_TS,
-                U256::from(EXPECTED_FLOOR + 1),
-            );
-            assert_eq!(
-                is_series_qualified(&s, sid(7)).unwrap(),
-                expected,
-                "issued at {issued_at}"
-            );
-        });
-    }
 }
 
 /// The Called sweep reports a currency it cannot price: the day's window price is out

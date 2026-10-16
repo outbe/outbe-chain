@@ -230,7 +230,6 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
                     issued_units: 1,
                     promis_load_minor: 1_000_000,
                     entry_price_minor: U256::from(1_000_000),
-                    floor_price_minor: U256::ONE,
                     call_price_minor: U256::ZERO,
                     call_trigger: Default::default(),
                     issued_at: 1_700_000_000,

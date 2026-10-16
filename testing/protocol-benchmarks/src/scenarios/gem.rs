@@ -71,7 +71,6 @@ pub struct PreparedGem {
 
 fn branch_name(gem_type: GemTypes) -> &'static str {
     match gem_type {
-        GemTypes::Genesis => "genesis",
         GemTypes::Validator => "validator",
         GemTypes::Sra => "sra",
         GemTypes::Wallet => "wallet",
@@ -123,7 +122,6 @@ fn seed_series(storage: &StorageHandle<'_>) -> Result<(), String> {
             issued_units: PARK_UNITS as u32,
             promis_load_minor: SCALE_1E6_U128,
             entry_price_minor: six_decimal_unit(),
-            floor_price_minor: six_decimal_unit(),
             call_price_minor: U256::ZERO,
             call_trigger: outbe_intex::IntexCallTrigger::default(),
             issued_at: T_NOW as u32,
