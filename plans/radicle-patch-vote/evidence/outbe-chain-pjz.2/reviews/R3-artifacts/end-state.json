@@ -1,8 +1,0 @@
-{
-  "end_reviewed_sha": "eb834f31ccd027d7af604ba1393498491cc133e6",
-  "end_live_spec_hash": "2e495135b803ae4054d2a236e80aa8d3f75a3d712a13bb1998a2b9aa3fa3f30d",
-  "candidate_artifact_hashes_verified": 54,
-  "timestamp_utc": "2026-10-15T11:41:05.864434+00:00",
-  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
-  "all_candidate_artifacts_unchanged": true
-}

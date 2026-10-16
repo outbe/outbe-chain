@@ -7932,7 +7932,6 @@ dependencies = [
  "outbe-evm",
  "outbe-node",
  "outbe-nodfactory",
- "outbe-offchain-storage",
  "outbe-operator",
  "outbe-primitives",
  "outbe-radicle",
@@ -8127,7 +8126,6 @@ dependencies = [
  "outbe-metadosis",
  "outbe-nod",
  "outbe-nodfactory",
- "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
@@ -8338,7 +8336,6 @@ dependencies = [
  "outbe-nod",
  "outbe-node",
  "outbe-nodfactory",
- "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promis",
@@ -8464,7 +8461,6 @@ dependencies = [
  "outbe-gem",
  "outbe-intex",
  "outbe-macros",
- "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promis",
@@ -8701,7 +8697,6 @@ dependencies = [
  "outbe-macros",
  "outbe-nod",
  "outbe-nodfactory",
- "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
@@ -8829,7 +8824,6 @@ dependencies = [
  "outbe-gratis",
  "outbe-gratisfactory",
  "outbe-nod",
- "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
@@ -8839,20 +8833,6 @@ dependencies = [
  "revm",
  "thiserror 2.0.18",
  "tracing",
-]
-
-[[package]]
-name = "outbe-offchain-storage"
-version = "0.1.0"
-dependencies = [
- "parking_lot",
- "postcard",
- "rocksdb",
- "serde",
- "sha2 0.10.9",
- "tempfile",
- "thiserror 2.0.18",
- "toml 0.8.23",
 ]
 
 [[package]]
@@ -9166,7 +9146,6 @@ dependencies = [
  "outbe-gemfactory",
  "outbe-macros",
  "outbe-metadosis",
- "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
@@ -9190,7 +9169,6 @@ dependencies = [
  "hex",
  "jsonrpsee",
  "outbe-gem",
- "outbe-offchain-storage",
  "outbe-primitives",
  "outbe-radicle",
  "outbe-rewards",
