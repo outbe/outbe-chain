@@ -123,6 +123,14 @@ pub fn view_of(
     })
 }
 
+/// How many gems one owner holds, read from the owner index alone.
+pub fn balance_of(storage: &StorageHandle<'_>, owner: Address) -> Result<u32> {
+    GemContract::new(storage.clone())
+        .owner_ids
+        .list(&owner)
+        .len()
+}
+
 /// One owner's gems, with the block's own mutations folded in.
 pub fn list_by_owner(storage: &StorageHandle<'_>, owner: Address) -> Result<Vec<GemItemState>> {
     GemContract::new(storage.clone())

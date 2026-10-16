@@ -434,3 +434,52 @@ fn seed_public_lifecycle(
         .unwrap();
     (item, bucket_id)
 }
+
+#[test]
+fn balance_counts_owned_nods_through_settlement_until_removal() {
+    use crate::precompile::{dispatch, INod};
+    use alloy_sol_types::SolCall;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_production_nod_genesis(&storage);
+        let item = item(Address::repeat_byte(0x87), U256::from(20), USD);
+        let balance = || {
+            let out = dispatch(
+                storage.clone(),
+                &INod::balanceOfCall { owner: item.owner }.abi_encode(),
+                item.owner,
+                U256::ZERO,
+            )
+            .unwrap();
+            INod::balanceOfCall::abi_decode_returns(&out).unwrap()
+        };
+        assert_eq!(balance(), U256::ZERO);
+        api::add_nod(
+            &storage,
+            &item,
+            U256::from(20),
+            crate::test_support::sealed_terms(&storage, &item, U256::from(20)),
+        )
+        .unwrap();
+        assert_eq!(balance(), U256::from(1));
+        api::record_settled(
+            &storage,
+            api::load_item(&storage, item.nod_id).unwrap().unwrap(),
+            api::load_bucket(&storage, item.bucket_key)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(balance(), U256::from(1));
+        api::remove_nod(
+            &storage,
+            api::load_item(&storage, item.nod_id).unwrap().unwrap(),
+            api::load_bucket(&storage, item.bucket_key)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(balance(), U256::ZERO);
+    });
+}

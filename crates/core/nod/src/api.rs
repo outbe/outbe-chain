@@ -128,6 +128,14 @@ pub fn list_all(storage: &StorageHandle<'_>) -> Result<Vec<NodItemState>> {
         .map(|records| records.into_iter().map(Into::into).collect())
 }
 
+/// How many Nods one owner holds, read from the owner index alone.
+pub fn balance_of(storage: &StorageHandle<'_>, owner: Address) -> Result<u32> {
+    NodContract::new(storage.clone())
+        .owner_ids
+        .list(&owner)
+        .len()
+}
+
 /// Loads one owner's Nod collection with overlay-correct membership.
 pub fn list_by_owner(storage: &StorageHandle<'_>, owner: Address) -> Result<Vec<NodItemState>> {
     NodContract::new(storage.clone())

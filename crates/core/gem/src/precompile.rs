@@ -83,10 +83,7 @@ fn dispatch_entity(
 ) -> Result<Bytes> {
     use IGem::IGemCalls::*;
     match call {
-        balanceOf(c) => view(c, |c| {
-            let count = api::list_by_owner(storage, c.owner)?.len();
-            Ok(U256::from(count))
-        }),
+        balanceOf(c) => view(c, |c| api::balance_of(storage, c.owner).map(U256::from)),
         ownerOf(c) => view(c, |c| {
             Ok(api::get_item(storage, c.gemId)?
                 .ok_or(GemError::GemNotFound)?
