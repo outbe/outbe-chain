@@ -828,3 +828,73 @@ fn missing_finality_noncanonical_and_unavailable_snapshots_fail_without_fallback
     ));
     assert_eq!(*reader.provider.reads.lock().unwrap(), [block(3).hash]);
 }
+
+#[test]
+fn bootstrap_permission_uses_one_current_finalized_state_and_stops_after_binding() {
+    let (mut storage, _) = repository_authority_storage();
+    let seeded: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../system/radicleregistry/tests/fixtures/governments-genesis-storage.json"
+    ))
+    .unwrap();
+    for (slot, value) in seeded["storage"].as_object().unwrap() {
+        storage.storage.insert(
+            (RADICLE_REGISTRY_ADDRESS, slot.parse().unwrap()),
+            value.as_str().unwrap().parse().unwrap(),
+        );
+    }
+    let mut states = BTreeMap::from([(block(3).hash, snapshot(&storage))]);
+    let slots = [
+        (10u64, U256::ZERO),
+        (10, U256::from(1)),
+        (12, U256::from(1)),
+        (13, U256::from(1)),
+        (14, U256::from(1)),
+        (15, U256::from(1)),
+    ];
+    for (index, (slot, value)) in slots.into_iter().enumerate() {
+        let original = storage
+            .storage
+            .insert((RADICLE_REGISTRY_ADDRESS, U256::from(slot)), value);
+        states.insert(block(index as u64 + 4).hash, snapshot(&storage));
+        match original {
+            Some(value) => {
+                storage
+                    .storage
+                    .insert((RADICLE_REGISTRY_ADDRESS, U256::from(slot)), value);
+            }
+            None => {
+                storage
+                    .storage
+                    .remove(&(RADICLE_REGISTRY_ADDRESS, U256::from(slot)));
+            }
+        }
+    }
+    let provider = ApprovalProvider {
+        states,
+        canonical: (3..10).map(|i| (i, block(i).hash)).collect(),
+        finalized: Some(BlockNumHash::new(3, block(3).hash)),
+        reads: Mutex::new(vec![]),
+    };
+    let mut reader = RethSnapshotReader::new(provider, 2026, B256::repeat_byte(7));
+    let state = reader.read_current_bootstrap_signing_state().unwrap();
+    assert_eq!(state.authority().block(), block(3));
+    assert_eq!(state.authority().epoch(), 2);
+    assert_eq!(state.descriptor().description, "Network governance");
+    assert_eq!(
+        reader.provider.reads.lock().unwrap().as_slice(),
+        &[block(3).hash]
+    );
+    for i in 4..10 {
+        reader.provider.finalized = Some(BlockNumHash::new(i, block(i).hash));
+        assert!(
+            reader.read_current_bootstrap_signing_state().is_err(),
+            "state {i} accepted"
+        );
+    }
+    reader.provider.finalized = None;
+    assert!(reader.read_current_bootstrap_signing_state().is_err());
+    assert_eq!(reader.provider.reads.lock().unwrap().len(), 7);
+    reader.provider.finalized = Some(BlockNumHash::new(3, B256::repeat_byte(99)));
+    assert!(reader.read_current_bootstrap_signing_state().is_err());
+    assert_eq!(reader.provider.reads.lock().unwrap().len(), 7);
+}

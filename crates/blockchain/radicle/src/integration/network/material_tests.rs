@@ -538,3 +538,115 @@ async fn repository_material_requests_share_the_bounded_nonblocking_local_mailbo
         Err(signing::Error::Unavailable)
     ));
 }
+
+struct BootstrapReader(Mutex<Option<crate::manager::FinalizedBootstrapSigningState>>);
+
+impl RepositoryAuthorityReader for BootstrapReader {
+    fn read_current_bootstrap_signing_state(
+        &self,
+    ) -> Result<crate::manager::FinalizedBootstrapSigningState, ManagerError> {
+        self.0.lock().clone().ok_or_else(|| {
+            ManagerError::Snapshot("bootstrap already accepted or unavailable".into())
+        })
+    }
+    fn read_current_repository_authority(
+        &self,
+    ) -> Result<FinalizedRepositoryAuthority, ManagerError> {
+        Ok(self
+            .read_current_bootstrap_signing_state()?
+            .authority()
+            .clone())
+    }
+    fn read_current_patch_signing_state(
+        &self,
+        _: alloy_primitives::U256,
+    ) -> Result<FinalizedPatchSigningState, ManagerError> {
+        Err(ManagerError::Snapshot("no patch permission".into()))
+    }
+}
+
+pub(crate) async fn bootstrap_partials(
+    job: RepositoryBootstrapJob,
+    state: &crate::manager::FinalizedBootstrapSigningState,
+    output: &Output<MinSig, bls12381::PublicKey>,
+    providers: &[VrfMaterialProvider<MinSig>],
+    keys: &[bls12381::PrivateKey],
+) -> Vec<signing::RepositoryPartial> {
+    async fn request(
+        resolver: &EndpointNetworkResolver,
+        job: &RepositoryBootstrapJob,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        match job {
+            RepositoryBootstrapJob::Document(job) => {
+                resolver.sign_bootstrap_document(job.clone()).await
+            }
+            RepositoryBootstrapJob::Identity(job) => {
+                resolver.sign_bootstrap_identity(job.clone()).await
+            }
+            RepositoryBootstrapJob::Refs(job) => resolver.sign_bootstrap_refs(job.clone()).await,
+        }
+    }
+    let mut frames = vec![];
+    for (index, (provider, key)) in providers.iter().zip(keys).enumerate() {
+        let reader = Arc::new(BootstrapReader(Mutex::new(Some(state.clone()))));
+        let validator = state.authority().committee().committee[index].address;
+        let (_, status) = RadicleStatusChannel::enabled(validator, [1; 32]);
+        let (service, resolver, _) = EndpointNetwork::build(
+            ChainIdentity {
+                chain_id: state.authority().chain_id(),
+                genesis_hash: state.authority().genesis_hash(),
+            },
+            status,
+        );
+        let mut service = service.with_repository_authority_reader(reader.clone());
+        let publisher = service.take_repository_material_publisher().unwrap();
+        let (_, local) = LocalEndpointIdentityChannel::create(LocalEndpointIdentity {
+            validator,
+            node_id: [1; 32],
+            addresses: vec![EndpointAddress::dns("local.example", 8776).unwrap()],
+        });
+        let (_incoming, receiver) = mpsc::unbounded_channel();
+        let task = tokio::spawn(service.run(
+            EndpointTransport {
+                sender: NoSend,
+                receiver: TestReceiver(receiver),
+            },
+            EndpointSigningIdentity {
+                signer: key.clone(),
+                local,
+            },
+        ));
+        assert!(request(&resolver, &job).await.is_err());
+        publisher.publish(
+            state.authority().epoch(),
+            state.authority().committee().vrf_material_version,
+            Some(output),
+        );
+        assert!(request(&resolver, &job).await.is_err());
+        publisher.install_local_signer(provider.clone());
+        let frame = request(&resolver, &job).await.unwrap();
+        assert_eq!(frame.participant_index(), index as u32);
+        frames.push(frame);
+        let mut changed = state.clone();
+        changed.descriptor.description.push('!');
+        *reader.0.lock() = Some(changed);
+        assert!(matches!(
+            request(&resolver, &job).await,
+            Err(signing::Error::Context)
+        ));
+        *reader.0.lock() = None;
+        assert!(request(&resolver, &job).await.is_err());
+        *reader.0.lock() = Some(state.clone());
+        publisher.publish(
+            state.authority().epoch() + 1,
+            state.authority().committee().vrf_material_version + 1,
+            Some(output),
+        );
+        assert!(request(&resolver, &job).await.is_err());
+        drop(publisher);
+        assert!(request(&resolver, &job).await.is_err());
+        resolver.shutdown().await.unwrap();
+        task.await.unwrap().unwrap();
+    }
+    frames
+}

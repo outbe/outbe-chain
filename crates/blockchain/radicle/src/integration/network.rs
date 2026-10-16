@@ -151,6 +151,10 @@ struct EndpointRefresh<'a> {
 }
 
 enum NetworkCommand {
+    RepositoryBootstrapPartial {
+        job: RepositoryBootstrapJob,
+        result: oneshot::Sender<Result<signing::RepositoryPartial, signing::Error>>,
+    },
     RepositoryReviewAttestation {
         publication: Arc<SelectedReviewPublication>,
         result: oneshot::Sender<Result<PublicationAttestation, PublicationError>>,
@@ -170,6 +174,12 @@ enum NetworkCommand {
     Shutdown {
         result: oneshot::Sender<Result<(), ManagerError>>,
     },
+}
+
+pub(crate) enum RepositoryBootstrapJob {
+    Document(Arc<super::bootstrap::PreparedBootstrapDocument>),
+    Identity(Arc<super::bootstrap::PreparedBootstrapIdentity>),
+    Refs(Arc<super::bootstrap::PreparedBootstrapRefs>),
 }
 
 enum RepositoryReviewJob {
@@ -243,6 +253,41 @@ impl EndpointNetworkResolver {
     ) -> Result<signing::RepositoryPartial, signing::Error> {
         self.review_partial(RepositoryReviewJob::Refs(job)).await
     }
+    pub async fn sign_bootstrap_document(
+        &self,
+        job: Arc<super::bootstrap::PreparedBootstrapDocument>,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        self.bootstrap_partial(RepositoryBootstrapJob::Document(job))
+            .await
+    }
+    pub async fn sign_bootstrap_identity(
+        &self,
+        job: Arc<super::bootstrap::PreparedBootstrapIdentity>,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        self.bootstrap_partial(RepositoryBootstrapJob::Identity(job))
+            .await
+    }
+    pub async fn sign_bootstrap_refs(
+        &self,
+        job: Arc<super::bootstrap::PreparedBootstrapRefs>,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        self.bootstrap_partial(RepositoryBootstrapJob::Refs(job))
+            .await
+    }
+    async fn bootstrap_partial(
+        &self,
+        job: RepositoryBootstrapJob,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::RepositoryBootstrapPartial { job, result })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
+
     async fn review_partial(
         &self,
         job: RepositoryReviewJob,
@@ -371,6 +416,45 @@ impl EndpointNetworkState {
         })
     }
 
+    fn bootstrap_partial(
+        &self,
+        job: &RepositoryBootstrapJob,
+        signer: &bls12381::PrivateKey,
+        validator: Address,
+    ) -> Result<signing::RepositoryPartial, signing::Error> {
+        let body = match job {
+            RepositoryBootstrapJob::Document(job) => job.body(),
+            RepositoryBootstrapJob::Identity(job) => job.body(),
+            RepositoryBootstrapJob::Refs(job) => job.body(),
+        };
+        let owner = radicle::crypto::BlsPublicKey::from_bytes(body.owner_bls_public.0)?;
+        let state = self
+            .repository_authority
+            .as_ref()
+            .ok_or(signing::Error::Unavailable)?
+            .read_current_bootstrap_signing_state()?;
+        if state.authority().chain_id() != self.chain.chain_id
+            || state.authority().genesis_hash() != self.chain.genesis_hash
+        {
+            return Err(signing::Error::Material);
+        }
+        let material = self
+            .repository_material
+            .current(state.authority().clone(), owner)?;
+        let provider = self.repository_material.local_signer()?;
+        match job {
+            RepositoryBootstrapJob::Document(job) => {
+                material.sign_bootstrap_document(&provider, job, &state, validator, signer)
+            }
+            RepositoryBootstrapJob::Identity(job) => {
+                material.sign_bootstrap_identity(&provider, job, &state, validator, signer)
+            }
+            RepositoryBootstrapJob::Refs(job) => {
+                material.sign_bootstrap_refs(&provider, job, &state, validator, signer)
+            }
+        }
+    }
+
     fn review_partial(
         &self,
         job: &RepositoryReviewJob,
@@ -460,6 +544,10 @@ impl EndpointNetworkState {
                     match command {
                         Some(NetworkCommand::RepositoryReviewAttestation {publication,result})=>{
                             let _=result.send(self.review_attestation(&publication,&signer,local.validator));
+                        }
+                        Some(NetworkCommand::RepositoryBootstrapPartial {job,result})=>{
+                            let partial = self.bootstrap_partial(&job,&signer,local.validator);
+                            let _ = result.send(partial);
                         }
                         Some(NetworkCommand::RepositoryReviewPartial {job,result})=>{
                             let _=result.send(self.review_partial(&job,&signer,local.validator));

@@ -6,8 +6,8 @@ use outbe_consensus::{bls::bootstrap_dkg_for_participants, hybrid::VrfMaterialPr
 use radicle::identity::doc::GetPayload as _;
 use radicle::{crypto::Signer as _, storage::WriteStorage as _};
 
-#[test]
-fn independent_collectors_prepare_identical_bootstrap_without_promoting_refs() {
+#[tokio::test]
+async fn independent_collectors_prepare_identical_bootstrap_without_promoting_refs() {
     let mut keys: Vec<_> = (101..105).map(bls12381::PrivateKey::from_seed).collect();
     keys.sort_by_key(|key| key.public_key());
     let dkg = bootstrap_dkg_for_participants(
@@ -109,6 +109,24 @@ fn independent_collectors_prepare_identical_bootstrap_without_promoting_refs() {
             .unwrap(),
         initial_content_manifest_sha256: Sha256::hash(&[b"[]"]).0.into(),
     };
+    let public_recovery = VrfMaterialProvider::new(7, dkg.polynomial.clone(), None);
+    let contributions = |frames: &[super::super::signing::RepositoryPartial]| {
+        frames
+            .iter()
+            .map(|frame| {
+                (
+                    keys[frame.participant_index() as usize].public_key(),
+                    frame.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let state = crate::manager::FinalizedBootstrapSigningState {
+        authority: authority.clone(),
+        descriptor: descriptor.clone(),
+    };
+    use super::super::network::{material_tests::bootstrap_partials, RepositoryBootstrapJob};
+    use std::sync::Arc;
     let mut results = Vec::new();
     for first in [0, 1] {
         let temp = tempfile::tempdir().unwrap();
@@ -125,8 +143,65 @@ fn independent_collectors_prepare_identical_bootstrap_without_promoting_refs() {
         let repo = storage.create(document.repository_id()).unwrap();
         let tree = repo.raw().treebuilder(None).unwrap().write().unwrap();
         assert_eq!(tree.as_bytes(), descriptor.initial_tree_oid.as_slice());
-        let document_frames = frames(document.subject(), first);
-        let document_signature = sign(document.subject(), first);
+        let document = Arc::new(document);
+        let actual = bootstrap_partials(
+            RepositoryBootstrapJob::Document(document.clone()),
+            &state,
+            &dkg.output,
+            &providers,
+            &keys,
+        )
+        .await;
+        let document_frames = actual[first..first + 3].to_vec();
+        assert_eq!(
+            document_frames
+                .iter()
+                .map(|p| p.to_bytes())
+                .collect::<Vec<_>>(),
+            frames(document.subject(), first)
+                .iter()
+                .map(|p| p.to_bytes())
+                .collect::<Vec<_>>()
+        );
+        let document = Arc::try_unwrap(document).ok().unwrap();
+        let document_contributions = contributions(&document_frames);
+        assert!(material
+            .recover_bootstrap_document(
+                &public_recovery,
+                &document,
+                &state,
+                &document_contributions[..2]
+            )
+            .is_err());
+        let document_signature = material
+            .recover_bootstrap_document(
+                &public_recovery,
+                &document,
+                &state,
+                &document_contributions,
+            )
+            .unwrap();
+        assert_eq!(document_signature, sign(document.subject(), first));
+        let mut wrong = state.clone();
+        wrong.descriptor.description.push('!');
+        assert!(material
+            .sign_bootstrap_document(
+                &providers[0],
+                &document,
+                &wrong,
+                authority.committee.committee[0].address,
+                &keys[0]
+            )
+            .is_err());
+        assert!(material
+            .sign_bootstrap_document(
+                &providers[0],
+                &document,
+                &state,
+                alloy_primitives::Address::repeat_byte(99),
+                &keys[0]
+            )
+            .is_err());
         assert!(document_signature
             .verify(document.subject(), owner.into())
             .is_ok());
@@ -139,11 +214,47 @@ fn independent_collectors_prepare_identical_bootstrap_without_promoting_refs() {
             .unwrap()
             .attach(&repo, &sign(identity.subject(), first), b"[]")
             .is_err());
-        let identity_frames = frames(identity.subject(), first);
-        let identity_signature = sign(identity.subject(), first);
+        let identity = Arc::new(identity);
+        let actual = bootstrap_partials(
+            RepositoryBootstrapJob::Identity(identity.clone()),
+            &state,
+            &dkg.output,
+            &providers,
+            &keys,
+        )
+        .await;
+        let identity_frames = actual[first..first + 3].to_vec();
+        let identity = Arc::try_unwrap(identity).ok().unwrap();
+        let identity_signature = material
+            .recover_bootstrap_identity(
+                &public_recovery,
+                &identity,
+                &state,
+                &contributions(&identity_frames),
+            )
+            .unwrap();
+        assert_eq!(identity_signature, sign(identity.subject(), first));
         let refs = identity.attach(&repo, &identity_signature).unwrap();
-        let refs_frames = frames(refs.subject(), first);
-        let refs_signature = sign(refs.subject(), first);
+        let refs = Arc::new(refs);
+        let actual = bootstrap_partials(
+            RepositoryBootstrapJob::Refs(refs.clone()),
+            &state,
+            &dkg.output,
+            &providers,
+            &keys,
+        )
+        .await;
+        let refs_frames = actual[first..first + 3].to_vec();
+        let refs = Arc::try_unwrap(refs).ok().unwrap();
+        let refs_signature = material
+            .recover_bootstrap_refs(
+                &public_recovery,
+                &refs,
+                &state,
+                &contributions(&refs_frames),
+            )
+            .unwrap();
+        assert_eq!(refs_signature, sign(refs.subject(), first));
         let (body, manifest) = refs.attach(&repo, &refs_signature).unwrap();
         assert_eq!(repo.raw().references().unwrap().count(), 0);
         assert_eq!(body.descriptor_hash, descriptor.hash().unwrap());

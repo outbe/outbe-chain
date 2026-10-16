@@ -1,7 +1,8 @@
 use super::types::{
-    BoxFuture, FinalizedBlock, FinalizedFeed, FinalizedPatchApproval, FinalizedPatchSigningState,
-    FinalizedPublicationReceipt, FinalizedRepositoryAuthority, FinalizedSnapshot,
-    FinalizedValidator, ManagerError, SnapshotReader,
+    BoxFuture, FinalizedBlock, FinalizedBootstrapSigningState, FinalizedFeed,
+    FinalizedPatchApproval, FinalizedPatchSigningState, FinalizedPublicationReceipt,
+    FinalizedRepositoryAuthority, FinalizedSnapshot, FinalizedValidator, ManagerError,
+    SnapshotReader,
 };
 use crate::endpoint::PeerId;
 use alloy_primitives::{Address, B256, U256};
@@ -42,6 +43,11 @@ impl<P> RethSnapshotReader<P> {
 impl<P: StateProviderFactory + Send + Sync> super::RepositoryAuthorityReader
     for RethSnapshotReader<P>
 {
+    fn read_current_bootstrap_signing_state(
+        &self,
+    ) -> Result<FinalizedBootstrapSigningState, ManagerError> {
+        RethSnapshotReader::read_current_bootstrap_signing_state(self)
+    }
     fn read_current_repository_authority(
         &self,
     ) -> Result<FinalizedRepositoryAuthority, ManagerError> {
@@ -89,7 +95,68 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
         })
     }
 
-    /// One exact current state for committee, terminal permission, stage and checkpoint.
+    /// Genesis descriptor and unbound bootstrap permission from one current finalized state.
+    pub fn read_current_bootstrap_signing_state(
+        &self,
+    ) -> Result<FinalizedBootstrapSigningState, ManagerError> {
+        let block = self.current_finalized_block()?;
+        let state = self
+            .provider
+            .state_by_block_hash(block.hash)
+            .map_err(ManagerError::provider)?;
+        let authority = read_repository_authority_from_storage(
+            RethStateReader {
+                state: state.as_ref(),
+            },
+            self.chain_id,
+            self.genesis_hash,
+            block,
+        )?;
+        let mut storage = ReadOnlyStorageProvider::new_with_chain_identity(
+            RethStateReader {
+                state: state.as_ref(),
+            },
+            self.chain_id,
+            self.genesis_hash,
+        );
+        let registry = RadicleRegistry::new(StorageHandle::new(&mut storage));
+        if !registry
+            .network_repository
+            .read()
+            .map_err(snapshot_error)?
+            .is_zero()
+            || registry
+                .publication_sequence
+                .read()
+                .map_err(snapshot_error)?
+                != 0
+            || registry
+                .publication_material_sequence
+                .read()
+                .map_err(snapshot_error)?
+                != 0
+            || !registry
+                .publication_receipt_hash
+                .read()
+                .map_err(snapshot_error)?
+                .is_zero()
+        {
+            return Err(ManagerError::Snapshot(
+                "network bootstrap has already been accepted".into(),
+            ));
+        }
+        let descriptor = registry
+            .governments_descriptor()
+            .map_err(snapshot_error)?
+            .ok_or_else(|| {
+                ManagerError::Snapshot("governments genesis descriptor is disabled".into())
+            })?;
+        Ok(FinalizedBootstrapSigningState {
+            authority,
+            descriptor,
+        })
+    }
+
     pub fn read_current_patch_signing_state(
         &self,
         proposal_id: U256,

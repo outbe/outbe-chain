@@ -44,6 +44,22 @@ pub trait RepositoryReceiptReader: Send + Sync + 'static {
     ) -> Result<Option<FinalizedPublicationReceipt>, ManagerError>;
 }
 
+/// Seeded descriptor and current signing set sampled from one canonical finalized state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedBootstrapSigningState {
+    pub(crate) authority: FinalizedRepositoryAuthority,
+    pub(crate) descriptor: outbe_primitives::radicle_genesis::GovernmentsDescriptor,
+}
+
+impl FinalizedBootstrapSigningState {
+    pub fn authority(&self) -> &FinalizedRepositoryAuthority {
+        &self.authority
+    }
+    pub fn descriptor(&self) -> &outbe_primitives::radicle_genesis::GovernmentsDescriptor {
+        &self.descriptor
+    }
+}
+
 /// All fields come from one current local finalized state used for a signing request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinalizedPatchSigningState {
@@ -106,6 +122,14 @@ impl FinalizedRepositoryAuthority {
 
 /// Samples this node's current finalized authority; callers cannot choose a historic set.
 pub trait RepositoryAuthorityReader: Send + Sync {
+    fn read_current_bootstrap_signing_state(
+        &self,
+    ) -> Result<FinalizedBootstrapSigningState, ManagerError> {
+        Err(ManagerError::Snapshot(
+            "bootstrap signing state unavailable".into(),
+        ))
+    }
+
     fn read_current_repository_authority(
         &self,
     ) -> Result<FinalizedRepositoryAuthority, ManagerError>;

@@ -112,6 +112,99 @@ impl RepositorySigningMaterial {
         Ok(())
     }
 
+    fn authorize_bootstrap(
+        &self,
+        state: &crate::manager::FinalizedBootstrapSigningState,
+        body: &outbe_primitives::radicle_publication::PublicationBody,
+    ) -> Result<(), Error> {
+        use outbe_primitives::radicle_publication::PublicationAction;
+        if state.authority() != &self.authority
+            || body.chain_id != self.authority.chain_id()
+            || body.genesis_hash != self.authority.genesis_hash()
+            || body.epoch != self.authority.epoch()
+            || body.material_version != self.authority.committee().vrf_material_version
+            || body.owner_bls_public.as_slice() != self.owner.as_bytes()
+            || body.material_hash.0 != self.material_hash
+            || body.players_commitment.0 != self.players_commitment
+            || body.descriptor_hash != state.descriptor().hash().map_err(|_| Error::Context)?
+            || body.action != PublicationAction::Bootstrap
+            || body.sequence != 1
+            || !body.previous_receipt_hash.is_zero()
+        {
+            return Err(Error::Context);
+        }
+        Ok(())
+    }
+
+    pub fn sign_bootstrap_document(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        job: &super::bootstrap::PreparedBootstrapDocument,
+        state: &crate::manager::FinalizedBootstrapSigningState,
+        validator: Address,
+        identity: &bls12381::PrivateKey,
+    ) -> Result<RepositoryPartial, Error> {
+        self.authorize_bootstrap(state, job.body())?;
+        self.sign_subject(provider, job.subject(), validator, identity)
+    }
+
+    pub fn sign_bootstrap_identity(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        job: &super::bootstrap::PreparedBootstrapIdentity,
+        state: &crate::manager::FinalizedBootstrapSigningState,
+        validator: Address,
+        identity: &bls12381::PrivateKey,
+    ) -> Result<RepositoryPartial, Error> {
+        self.authorize_bootstrap(state, job.body())?;
+        self.sign_subject(provider, job.subject(), validator, identity)
+    }
+
+    pub fn sign_bootstrap_refs(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        job: &super::bootstrap::PreparedBootstrapRefs,
+        state: &crate::manager::FinalizedBootstrapSigningState,
+        validator: Address,
+        identity: &bls12381::PrivateKey,
+    ) -> Result<RepositoryPartial, Error> {
+        self.authorize_bootstrap(state, job.body())?;
+        self.sign_subject(provider, job.subject(), validator, identity)
+    }
+
+    pub fn recover_bootstrap_document(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        job: &super::bootstrap::PreparedBootstrapDocument,
+        state: &crate::manager::FinalizedBootstrapSigningState,
+        contributions: &[(bls12381::PublicKey, RepositoryPartial)],
+    ) -> Result<BlsEnvelope, Error> {
+        self.authorize_bootstrap(state, job.body())?;
+        self.recover_subject(provider, job.subject(), contributions)
+    }
+
+    pub fn recover_bootstrap_identity(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        job: &super::bootstrap::PreparedBootstrapIdentity,
+        state: &crate::manager::FinalizedBootstrapSigningState,
+        contributions: &[(bls12381::PublicKey, RepositoryPartial)],
+    ) -> Result<BlsEnvelope, Error> {
+        self.authorize_bootstrap(state, job.body())?;
+        self.recover_subject(provider, job.subject(), contributions)
+    }
+
+    pub fn recover_bootstrap_refs(
+        &self,
+        provider: &VrfMaterialProvider<MinSig>,
+        job: &super::bootstrap::PreparedBootstrapRefs,
+        state: &crate::manager::FinalizedBootstrapSigningState,
+        contributions: &[(bls12381::PublicKey, RepositoryPartial)],
+    ) -> Result<BlsEnvelope, Error> {
+        self.authorize_bootstrap(state, job.body())?;
+        self.recover_subject(provider, job.subject(), contributions)
+    }
+
     pub fn sign_current_review(
         &self,
         provider: &VrfMaterialProvider<MinSig>,
