@@ -31,6 +31,8 @@ pub enum CycleError {
     AllocationDisagreesWithMetadosisReceipt,
     #[error("ProtocolCycle active UTC day is not initialized in genesis")]
     ActiveUtcDayNotInitialized,
+    #[error("last_accounted_block_number regression: current={current}, attempted={attempted}")]
+    BlockNumberRegression { current: u64, attempted: u64 },
 }
 
 impl From<CycleError> for PrecompileError {
@@ -47,7 +49,8 @@ impl From<CycleError> for PrecompileError {
             | CycleError::ValidatorRewardGemPlanExceedsAllocation
             | CycleError::AllocationWithoutMetadosisReceipt
             | CycleError::AllocationDisagreesWithMetadosisReceipt
-            | CycleError::ActiveUtcDayNotInitialized => PrecompileError::Revert(err.to_string()),
+            | CycleError::ActiveUtcDayNotInitialized
+            | CycleError::BlockNumberRegression { .. } => PrecompileError::Revert(err.to_string()),
         }
     }
 }
@@ -86,6 +89,10 @@ mod tests {
             CycleError::AllocationWithoutMetadosisReceipt,
             CycleError::AllocationDisagreesWithMetadosisReceipt,
             CycleError::ActiveUtcDayNotInitialized,
+            CycleError::BlockNumberRegression {
+                current: 10,
+                attempted: 9,
+            },
         ] {
             let msg = err.to_string();
             assert!(matches!(

@@ -186,7 +186,7 @@ fn prepare_deadline_state(
     let state = state_with_active_validators_seeded_at_block(validators, OPEN_HEIGHT, |storage| {
         seed_deadline_stake(storage.clone(), committee);
         seed_deadline_bindings(storage.clone(), committee);
-        outbe_accounting::schema::Accounting::new(storage)
+        outbe_cycle::schema::Accounting::new(storage)
             .last_accounted_block_number
             .write(DEADLINE - 2)
             .unwrap();
