@@ -44,6 +44,7 @@ impl Owned for TestNft {
 
 #[test]
 fn demo_tribute_prove_verify_round_trip() {
+    init_crs().expect("launch initializes the handler before proof generation");
     let mut rng = ark_std::test_rng();
     let (sk, pk) = signature::keypair(&mut rng);
     let nonce = Fr::rand(&mut rng);

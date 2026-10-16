@@ -10,14 +10,15 @@ use barretenberg_rs::backends::FfiBackend;
 use barretenberg_rs::generated_types::{CircuitInfoResponse, CircuitInput, ProofSystemSettings};
 use outbe_zk::error::Error;
 
-use super::{configure_memory, srs, Barretenberg, CANONICAL_SRS_POINTS};
+use super::{configure_memory, srs, Barretenberg};
 use crate::errors::{BackendProofError, CrsInitError, HandlerError};
 
 #[cfg(test)]
 mod tests;
 
-static HANDLER: OnceLock<Result<BarretenbergHandler, HandlerError>> = OnceLock::new();
-
+static HANDLER: OnceLock<BarretenbergHandler> = OnceLock::new();
+// Serialize startup attempts before the handler and its native mutex exist.
+static INITIALIZATION: Mutex<()> = Mutex::new(());
 /// A process-wide interface to one native API.
 ///
 /// Methods execute on the calling thread. A mutex serializes complete native operations.
@@ -39,53 +40,48 @@ static HANDLER: OnceLock<Result<BarretenbergHandler, HandlerError>> = OnceLock::
 /// Measure verification throughput to determine the effect.
 /// This setting does not permit concurrent dispatcher calls or parallel execution of Rust Poseidon2.
 ///
-/// Restart the process after initialization failure or a panic during a native operation.
+/// Initialization must complete during launch, before proof operations start.
+/// Restart the process after a panic during a native operation.
 /// Another reference to this interface does not create an independent engine or reset native state.
 pub struct BarretenbergHandler {
     api: Mutex<BarretenbergApi<FfiBackend>>,
+    crs: srs::Crs,
 }
 
 impl BarretenbergHandler {
-    /// Initialize the canonical capacity if necessary. Wait until initialization completes.
+    /// Return the handler installed during launch. This method never initializes CRS data.
     pub fn global() -> Result<&'static Self, HandlerError> {
-        Self::initialize(CANONICAL_SRS_POINTS)
-    }
-
-    /// Return an initialized handler. Do not load or download CRS data.
-    pub fn initialized() -> Result<&'static Self, HandlerError> {
-        HANDLER
-            .get()
-            .ok_or(HandlerError::NotInitialized)?
-            .as_ref()
-            .map_err(Clone::clone)
+        HANDLER.get().ok_or(HandlerError::NotInitialized)
     }
 
     pub(super) fn initialize(points: u32) -> Result<&'static Self, HandlerError> {
-        HANDLER
-            .get_or_init(|| {
-                catch_unwind(AssertUnwindSafe(|| {
-                    if let Ok(path) = std::env::var("OUTBE_BB_SRS_PATH") {
-                        srs::set_srs_path(path.into());
-                    }
-                    let backend = FfiBackend::new().map_err(|error| {
-                        HandlerError::Initialization(CrsInitError::Failed(error.to_string()))
-                    })?;
-                    let mut api = BarretenbergApi::new(backend);
-                    srs::ensure_srs(&mut api, points)
-                        .map_err(|error| HandlerError::Initialization(error.into()))?;
-                    Ok(Self {
-                        api: Mutex::new(api),
-                    })
-                }))
-                .unwrap_or(Err(HandlerError::Initialization(CrsInitError::Panicked)))
-            })
-            .as_ref()
-            .map_err(Clone::clone)
+        catch_unwind(AssertUnwindSafe(|| {
+            let _initialization = INITIALIZATION.lock().map_err(|_| HandlerError::Terminal)?;
+            if let Some(handler) = HANDLER.get() {
+                handler.ensure_capacity(points)?;
+                return Ok(handler);
+            }
+            if let Ok(path) = std::env::var("OUTBE_BB_SRS_PATH") {
+                srs::set_srs_path(path.into());
+            }
+            let backend = FfiBackend::new().map_err(|error| {
+                HandlerError::Initialization(CrsInitError::Failed(error.to_string()))
+            })?;
+            let mut api = BarretenbergApi::new(backend);
+            let crs = srs::Crs::initialize(&mut api, points)
+                .map_err(|error| HandlerError::Initialization(error.into()))?;
+            let _ = HANDLER.set(Self {
+                api: Mutex::new(api),
+                crs,
+            });
+            Self::global()
+        }))
+        .unwrap_or(Err(HandlerError::Initialization(CrsInitError::Panicked)))
     }
 
     /// Check the fixed native CRS capacity. This method cannot increase the capacity.
     pub fn ensure_capacity(&self, points: u32) -> Result<(), HandlerError> {
-        execute(&self.api, |api| srs::ensure_srs(api, points))
+        self.crs.ensure_capacity(points).map_err(command_error)
     }
 
     /// Calculate native circuit statistics on the calling thread.
@@ -112,7 +108,8 @@ impl BarretenbergHandler {
         execute(&self.api, |api| {
             configure_memory(options.low_memory, options.max_storage_usage);
             let settings = super::settings_ultra_honk_keccak(options.disable_zk);
-            srs::ensure_srs_for(api, &circuit.bytecode, &settings)?;
+            self.crs
+                .validate_circuit(api, &circuit.bytecode, &settings)?;
             let result = api
                 .circuit_prove(circuit, &witness, settings)
                 .map_err(|error| BackendProofError::BbProve(error.to_string()))?;
@@ -125,20 +122,17 @@ impl BarretenbergHandler {
         vk: Vec<u8>,
         public: Vec<Vec<u8>>,
         proof: Vec<Vec<u8>>,
-        acir: Option<Vec<u8>>,
+        raw: bool,
         settings: ProofSystemSettings,
     ) -> Result<bool, HandlerError> {
         execute(&self.api, |api| {
-            if let Some(acir) = &acir {
-                srs::ensure_srs_for(api, acir, &settings)?;
-            }
             let result = api
                 .circuit_verify(&vk, public, proof, settings)
                 .map_err(|error| {
-                    if acir.is_some() {
-                        BackendProofError::BbVerify(error.to_string())
-                    } else {
+                    if raw {
                         BackendProofError::BbRawVerify(error.to_string())
+                    } else {
+                        BackendProofError::BbVerify(error.to_string())
                     }
                 })?;
             Ok(result.verified)
@@ -152,11 +146,15 @@ fn execute<T, R>(
 ) -> Result<R, HandlerError> {
     catch_unwind(AssertUnwindSafe(|| {
         let mut state = state.lock().map_err(|_| HandlerError::Terminal)?;
-        operation(&mut state).map_err(|error| match error {
-            // Do not repeat the generic proof error's display prefix during conversion.
-            Error::Proof(message) => HandlerError::Command(message),
-            other => HandlerError::Command(other.to_string()),
-        })
+        operation(&mut state).map_err(command_error)
     }))
     .unwrap_or(Err(HandlerError::Terminal))
+}
+
+fn command_error(error: Error) -> HandlerError {
+    match error {
+        // Do not repeat the generic proof error's display prefix during conversion.
+        Error::Proof(message) => HandlerError::Command(message),
+        other => HandlerError::Command(other.to_string()),
+    }
 }

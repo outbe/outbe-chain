@@ -58,7 +58,7 @@ mod test_utils;
 
 use cli::chain_spec::{validate_outbe_chain_spec, OutbeChainSpecParser, OutbeRpcModuleValidator};
 
-use cli::defaults::{apply_outbe_gas_price_oracle_defaults, initialize_crs_for_command};
+use cli::defaults::{apply_outbe_gas_price_oracle_defaults, command_requires_crs};
 
 use cli::dkg::run_dkg_command;
 
@@ -94,9 +94,6 @@ use launch::upgrade::{
     run_upgrade_promotion_worker_v1, UpgradePromotionWorkerConfigV1, TEE_UPGRADE_CRITICAL_BLOCKS,
     TEE_UPGRADE_POLL_SECS, TEE_UPGRADE_WARNING_BLOCKS,
 };
-
-#[cfg(test)]
-use cli::defaults::command_requires_crs;
 
 #[cfg(test)]
 use cli::dkg::{parse_dkg_key_backend, DkgCli};

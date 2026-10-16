@@ -7,10 +7,10 @@ use thiserror::Error;
 /// Restart the process after a terminal failure.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum HandlerError {
-    /// Native initialization failed. The singleton retains this failure.
+    /// Native initialization failed. Launch must stop before proof processing starts.
     #[error("Barretenberg initialization failed: {0}")]
     Initialization(CrsInitError),
-    /// Raw verification requires an initialized handler. It cannot initialize or download CRS data.
+    /// Proof operations require the handler installed during launch.
     #[error("Barretenberg handler is not initialized")]
     NotInitialized,
     /// A native operation panicked. Do not reuse the native state.

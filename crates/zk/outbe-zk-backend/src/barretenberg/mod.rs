@@ -33,7 +33,7 @@ pub use handler::BarretenbergHandler;
 
 /// Select an explicit G1 `.dat` file for the SRS loader.
 /// For example, a mobile wallet can select its bundled SRS file.
-/// Call once before proof generation.
+/// Call once before handler initialization.
 /// Builds without `with-network-srs` require this setting because they cannot download SRS data.
 /// See [`srs::set_srs_path`].
 pub use srs::set_srs_path;
@@ -50,10 +50,10 @@ pub const CANONICAL_SRS_POINTS: u32 = (1 << 16) + 1;
 /// Otherwise, a smaller initial capacity prevents larger circuits from generating proofs.
 /// The canonical circuits require [`CANONICAL_SRS_POINTS`] (`(1 << 16) + 1`).
 ///
-/// Callers that use one circuit can omit this call.
-/// The first proof operation reserves at least the canonical capacity.
+/// Call during launch, before any proof operation. Proof operations never initialize CRS data.
 pub fn preinit_srs(num_points: u32) -> Result<(), Error> {
-    Ok(BarretenbergHandler::initialize(num_points)?.ensure_capacity(num_points)?)
+    BarretenbergHandler::initialize(num_points)?;
+    Ok(())
 }
 
 /// Initialize the process-global CRS once for every canonical circuit.
@@ -181,14 +181,13 @@ where
 
     fn verify(&self, public: &C::PublicInputs, proof: &Self::Proof) -> Result<bool, Error> {
         let public_inputs = witness::public_inputs::<C>(public);
-        let acir = acir_buffer_uncompressed::<C>()?;
         let settings = settings_ultra_honk_keccak(self.disable_zk);
 
         Ok(BarretenbergHandler::global()?.verify(
             C::VK_BYTES.to_vec(),
             public_inputs,
             proof.proof.clone(),
-            Some(acir),
+            false,
             settings,
         )?)
     }
@@ -263,11 +262,11 @@ impl RawVerifier for Barretenberg {
 
         let settings = settings_ultra_honk_keccak(self.disable_zk);
 
-        Ok(BarretenbergHandler::initialized()?.verify(
+        Ok(BarretenbergHandler::global()?.verify(
             vk_bytes.to_vec(),
             public_inputs,
             proof,
-            None,
+            true,
             settings,
         )?)
     }
