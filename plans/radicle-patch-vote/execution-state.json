@@ -5,7 +5,7 @@
   "last_periodic_report_utc": "2026-10-16T06:10:29.466993+00:00",
   "next_periodic_report_due_utc": "2026-10-16T06:40:29.466993+00:00",
   "period_minutes": 30,
-  "stage": "P2/P3/P4 incomplete. Automatic sidecar bootstrap/journal/accepted install/announce and restart now verified across three real sidecars with one offline committee member; fixture DKG/finality/Commonware transport, not production E2E.",
+  "stage": "P2/P3/P4/P6 incomplete. Automatic bootstrap verified on three real sidecars. Fixed Review COB/refs protected UDS signing now verified with real native Ed patch, root archive proof and node actor; automatic Review collection/publication and production E2E remain incomplete.",
   "decision_gate": {
     "id": "D3-description-bound",
     "status": "Resolved by explicit user decision: maximum256 UTF-8 bytes; implemented8f3008ae2. No approval pending.",
@@ -66,7 +66,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; goal API active confirmed2026-10-16"
   },
-  "source_sha": "3181fe773e85710412e7927a3ab82692d673f315",
+  "source_sha": "0ff4183ba7ad059971b2fa35f8bc5462be0be088",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -85,7 +85,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "3181fe773: automatic bootstrap worker and durable partial journal, protected local chain discovery, public-only threshold recovery, pending/accepted native policy, exact accepted refs install and normal native announcement.",
+  "current_source_changes": "0ff4183ba: fixed OCR1/OCV1 Review signer reconstructs own-current approved revision and exact accepted preparation snapshot; client public polynomial verification; archived receipt-bound descriptor/content; fresh Storage root policy restored from archived native/q proof; launcher supplies existing public transport NodeId. No native git.rs changes.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -111,9 +111,9 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "3181fe773e85710412e7927a3ab82692d673f315",
-    "checks": "156 affected SDK/runtime tests, zero ignored; seven consumers all-target check; SDK/runtime/node all-target Clippy -Dwarnings; eleven touched Rust files fmt PASS. Frozen source unchanged.",
-    "scenarios": "Actual three-sidecar/four-member bootstrap: two shares produce no batch; third signer reaches q3 with fourth offline; collector restarts before quorum and after acceptance; equal heads/live availability; native Noise connection and BLS namespace fetch. Journal ownership/chain/symlink/size/conflict negatives. DKG/finality/Commonware transport remain fixtures."
+    "source_sha": "0ff4183ba7ad059971b2fa35f8bc5462be0be088",
+    "checks": "157 affected SDK/runtime tests, zero ignored; seven consumers all-target check; SDK/runtime/node all-target Clippy -Dwarnings; eleven changed Rust files fmt PASS. Frozen source unchanged.",
+    "scenarios": "Actual native BLS bootstrap/Ed patch -> protected UDS Review COB partial -> q3 public recovery -> protected refs partial. Later unapproved author revision does not change job; fresh approval replacement rejects cached old job; missing provider, withdrawn permission, wrong genesis, wrong native envelope and malformed frame reject; exact owner refs/sigrefs unchanged. Descriptor/content archive reopen and tamper/missing tests. Automatic three-sidecar bootstrap/restart/Noise/fetch regression passes. Fixture DKG/finality/approval/Commonware relay; not production E2E."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
@@ -123,8 +123,8 @@
   "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing",
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
-  "last_goal_turn_classification": "progress:3181fe773 source committed and full affected exact-SHA tests/build/lint/fmt PASS; automatic multi-node bootstrap no longer an untested claim. Goal remains active; no acceptance closure.",
-  "next_required_work": "Run automatic bootstrap integration with actual sidecars and actual protected SDK services across validators; verify accepted install/announcement/restart, complete accepted-package catch-up and remaining Review/Merge/E2E requirements of the approved plan.",
+  "last_goal_turn_classification": "progress:3181fe773 automatic bootstrap and0ff4183ba local fixed Review signing committed with complete affected exact-SHA checks/evidence. No task closures; goal active; no pending decision.",
+  "next_required_work": "Implement complete Review package verification/persistence/attestation/ready-mailbox bridge over existing protected local channel, then actual automatic approved-job collection/publication. Complete later-history grants, fresh-node archived delivery, BindMaterial, separate Merge, production E2E and all full-AC acceptance reviews.",
   "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
   "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
   "review_store_evidence": "evidence/outbe-chain-pjz.4/review-store-r2",
@@ -132,7 +132,7 @@
   "transport_investigation": {
     "repowise": "Worktree not indexed; no main-checkout/index changes. Earlier MCP query did not return and was terminated. Current evidence uses live source/checks.",
     "known_sources": "bin/outbe-chain/src/launch/node/radicle.rs; integration/local.rs; manager/snapshot.rs; crates/system/radicle/src/lib.rs::PreparedSidecar",
-    "current_boundary": "Protected same-UID ORL1 receipt server installed only for governments-enabled validator observer. SDK client checked on actual sockets but sidecar collector consumption/signing control not yet wired; no current signing rights granted by receipt channel.",
+    "current_boundary": "Protected node interface now provides exact contexts, public material, fixed bootstrap and Review COB/refs partials, bounded public relay, bootstrap package attestation/mailbox and own-finalized progress. Automatic runtime currently only bootstraps. Complete Review publication control and automatic execution remain incomplete.",
     "decision": "No active approval question; fixed local receipt transport realizes existing trusted-UDS requirement, no new consensus/signing policy."
   },
   "accepted_review_evidence": "evidence/outbe-chain-pjz.4/accepted-review",
@@ -170,11 +170,12 @@
   "local_bootstrap_native_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-native",
   "local_bootstrap_publication_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-publication",
   "progress_audit": {
-    "previous_turn": "progress: runtime worker/journal implemented, targeted journal/bootstrap/sidecar checks passed.",
-    "current_turn": "progress: actual three-sidecar bootstrap/restart/native fetch test implemented and passed; exact source3181fe773 with156 tests and all consumers/lint/fmt verified.",
-    "next_action": "Continue approved native Review local signing/publication wiring and collector execution; complete accepted package fresh-node catch-up, BindMaterial, Merge, production E2E and full acceptance."
+    "previous_turn": "progress: automatic worker/journal and targeted checks; no multi-node automatic proof yet.",
+    "current_turn": "progress:3181fe773 automatic three-sidecar bootstrap/restart/native fetch with156 tests;0ff4183ba fixed Review UDS/root-archive proof with157 tests; all consumers/lint/fmt PASS on both frozen sources.",
+    "next_action": "Implement complete Review package verification/persistence/attestation/ready-mailbox bridge over existing protected local channel, then actual automatic approved-job collection/publication. Complete later-history grants, fresh-node archived delivery, BindMaterial, separate Merge, production E2E and all full-AC acceptance reviews."
   },
   "public_contribution_relay_evidence": "evidence/outbe-chain-pjz.4/public-contribution-relay",
   "finalized_publication_progress_evidence": "evidence/outbe-chain-pjz.4/finalized-publication-progress",
-  "automatic_bootstrap_evidence": "evidence/outbe-chain-pjz.4/automatic-bootstrap"
+  "automatic_bootstrap_evidence": "evidence/outbe-chain-pjz.4/automatic-bootstrap",
+  "local_review_signing_evidence": "evidence/outbe-chain-pjz.4/local-review-signing"
 }
