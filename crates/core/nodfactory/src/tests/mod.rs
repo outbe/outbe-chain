@@ -150,7 +150,7 @@ impl World {
     }
 
     fn enter<R>(&mut self, call: impl FnOnce(StorageHandle<'_>) -> R) -> R {
-        StorageHandle::enter(&mut self.provider, |storage| call(storage))
+        StorageHandle::enter(&mut self.provider, call)
     }
 
     fn issue(&mut self, input: &NodIssueParams) -> WwdEntityId {

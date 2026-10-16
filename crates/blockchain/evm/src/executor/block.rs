@@ -326,13 +326,10 @@ where
     }
 
     fn finish(mut self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
-        if self.ocomp_lifecycle_active {
-            if !self.ocomp_terminal_request_consumed {
-                return Err(
-                    crate::errors::ExecutorValidationError::MissingActiveOcompTerminalSystemTx
-                        .into(),
-                );
-            }
+        if self.ocomp_lifecycle_active && !self.ocomp_terminal_request_consumed {
+            return Err(
+                crate::errors::ExecutorValidationError::MissingActiveOcompTerminalSystemTx.into(),
+            );
         }
         let current_summary = self.current_execution_summary();
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();

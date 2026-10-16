@@ -177,7 +177,7 @@ fn certified_fixture(count: usize) -> Result<CertifiedFixture, String> {
             };
             sources.protect(
                 &outbe_tee::nod_state_materialization::StateNodAuthority {
-                    source: sources.subject.clone(),
+                    source: sources.subject,
                     head: head.encode_canonical(&limits).map_err(|e| e.to_string())?,
                     subtree_height: SUBTREE_HEIGHT as u8,
                     source_bindings: Vec::new(),

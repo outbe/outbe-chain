@@ -173,7 +173,7 @@ pub(super) fn account_parent(ctx: &BlockRuntimeContext, block_number: u64) {
 }
 
 pub(super) fn dispatch_triggers(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
-    (|| crate::runtime::dispatch_triggers(ctx))()
+    crate::runtime::dispatch_triggers(ctx)
 }
 
 pub(super) fn run_cycle_lifecycle(
@@ -186,17 +186,15 @@ pub(super) fn run_cycle_lifecycle_at_activation(
     ctx: &BlockRuntimeContext,
     metadosis_genesis_activation_height: u64,
 ) -> outbe_primitives::error::Result<()> {
-    (|| {
-        let lifecycle = CycleLifecycleContext::new(ctx.clone())
-            .with_metadosis_genesis_activation_height(metadosis_genesis_activation_height);
-        <CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)
-    })()
+    let lifecycle = CycleLifecycleContext::new(ctx.clone())
+        .with_metadosis_genesis_activation_height(metadosis_genesis_activation_height);
+    <CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)
 }
 
 pub(super) fn run_emission_limit_daily(
     ctx: &BlockRuntimeContext,
 ) -> outbe_primitives::error::Result<()> {
-    (|| crate::handler::run_emission_limit_daily(ctx))()
+    crate::handler::run_emission_limit_daily(ctx)
 }
 
 pub(super) fn advance_metadosis_only(
@@ -207,7 +205,7 @@ pub(super) fn advance_metadosis_only(
     storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
     StorageHandle::enter(storage, |handle| {
         let ctx = BlockRuntimeContext::new(block_ctx(block_number, timestamp), handle);
-        (|| outbe_metadosis::commands::advance_active_worldwide_days(&ctx))()
+        outbe_metadosis::commands::advance_active_worldwide_days(&ctx)
     })
 }
 

@@ -249,7 +249,7 @@ fn verify_archive_contents(
     let mut index = open_regular_readonly(&root.join(STATE_INDEX))?;
     let index_len = index
         .metadata()
-        .map_err(|e| io_error("stat state proof index", &root, e))?
+        .map_err(|e| io_error("stat state proof index", root, e))?
         .len();
     if index_len != u64::from(subject.tribute_count) * 32
         || digest_file_observing(&root.join(STATE_INDEX), on_progress)? != header.index_digest
@@ -259,7 +259,7 @@ fn verify_archive_contents(
     let canonical = open_regular_readonly(&root.join(CANONICAL_INDEX))?;
     if canonical
         .metadata()
-        .map_err(|e| io_error("stat canonical source index", &root, e))?
+        .map_err(|e| io_error("stat canonical source index", root, e))?
         .len()
         != u64::from(subject.tribute_count) * 32
         || digest_file_observing(&root.join(CANONICAL_INDEX), on_progress)?
@@ -274,9 +274,9 @@ fn verify_archive_contents(
         let mut id = [0; 32];
         index
             .read_exact(&mut id)
-            .map_err(|e| io_error("read state proof index", &root, e))?;
+            .map_err(|e| io_error("read state proof index", root, e))?;
         let id = WwdEntityId::from(B256::from(id));
-        let proof = load_record(&root, id)?;
+        let proof = load_record(root, id)?;
         verifier.verify_next(&proof, limits()).map_err(|_| {
             TributeInventoryError::Authority("state archive source proof or physical order")
         })?;

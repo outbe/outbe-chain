@@ -217,6 +217,7 @@ const fn kind_name(kind: SystemTxKind) -> &'static str {
         SystemTxKind::TeeBootstrap => "tee-bootstrap",
         SystemTxKind::OracleSlashWindow => "oracle-slash-window",
         SystemTxKind::HookEvents => "hook-events",
+        SystemTxKind::RadiclePublication => "radicle-publication",
         SystemTxKind::OcompTerminalRequest => "ocomp-terminal-request",
     }
 }
@@ -240,6 +241,9 @@ fn input_for(kind: SystemTxKind) -> Result<SystemTxInputV2, String> {
         },
         SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
         SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
+        SystemTxKind::RadiclePublication => {
+            return Err("radicle publication has no benchmark input".to_owned())
+        }
         SystemTxKind::OcompTerminalRequest => SystemTxInputV2::OcompTerminalRequest,
     })
 }
