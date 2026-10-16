@@ -146,7 +146,8 @@ export function registerAuctionTools(server: McpServer, deps: IntexDeps): void {
     "Your commit/reveal status across recent auctions, closed days included, plus your escrow money on that " +
       "chain: the commit bond (held from commit until reveal/cancel) and the bid lock (held from reveal until " +
       "you claim). Every bid ends in a claim - a winner's change, a loser's whole principal - so the lock " +
-      "reports what auction_claim_refund pays and from when. Pass worldwideDay to check just one.",
+      "reports what auction_claim_refund pays and from when, and a win the units auction_issue_intex " +
+      "still has to issue with the series deadline. Pass worldwideDay to check just one.",
     { account: accountArg, worldwideDay: worldwideDayArg.optional(), network: networkName.optional() },
     handler(async ({ account, worldwideDay, network }) => {
       const n = await target(network);

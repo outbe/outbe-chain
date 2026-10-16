@@ -127,6 +127,20 @@ contract IntexAuction is
         return _s().revealedBidIndex[worldwideDay][bidder] != 0;
     }
 
+    /// @notice A bidder's revealed bid for a day, all zero when it has none.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param bidder Bidder address.
+    /// @return bid The revealed bid.
+    function revealedBidOf(uint32 worldwideDay, address bidder)
+        external
+        view
+        returns (IIntexAuction.SubmittedBidData memory bid)
+    {
+        IntexAuctionStorage storage $ = _s();
+        uint256 position = $.revealedBidIndex[worldwideDay][bidder];
+        if (position != 0) bid = $.revealedBids[worldwideDay][position - 1];
+    }
+
     /// @notice Intex collection winners' units are issued on.
     /// @return The wired collection.
     function intexContract() external view returns (IIntexNFT1155) {

@@ -14,7 +14,7 @@ export function registerHoldingsTools(server: McpServer, deps: IntexDeps): void 
     "intex_holdings_by_owner",
     "Intex NFT holdings for an address: owned token ids, balances, decoded status (Issued/Settled), and " +
       "for Issued ones the series lifecycle with its settlementDeadline and, on outbe, whether it has qualified. " +
-      "Defaults to the remote target where won NFTs land (bsc-testnet when the origin router serves it); pass " +
+      "Defaults to the remote target where winners issue their NFTs (bsc-testnet when the origin router serves it); pass " +
       "network to read another chain. A holding away from outbe cannot be settled where it sits - bridge " +
       "it over with intex_bridge_send before the deadline shown here.",
     { account: accountArg, network: networkName.optional() },

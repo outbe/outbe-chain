@@ -335,6 +335,19 @@ contract IntexAuctionClaimsTest is Test {
         assertEq(token.balanceOf(bob), BridgeMsgCodec.escrowAmount(1, BASIS, RATE), "paid once");
     }
 
+    function test_TheRevealedBidIsReadableUntilItIsCleared() public {
+        _bid(3, 1);
+        IIntexAuction.SubmittedBidData memory bid = auction.revealedBidOf(DAY, alice);
+        assertEq(bid.bidderAddress, alice);
+        assertEq(bid.intexQuantity, 3);
+        assertEq(bid.issuanceCurrency, USD);
+
+        _createSeries(0);
+        _finalize(_winner(alice), 0, 0);
+        auction.issueIntex(DAY, alice);
+        assertEq(auction.revealedBidOf(DAY, alice).bidderAddress, address(0), "cleared with the win");
+    }
+
     function test_ARefundNeedsABid() public {
         vm.expectRevert(IIntexAuction.BidNotFound.selector);
         auction.claimRefund(DAY, makeAddr("stranger"));

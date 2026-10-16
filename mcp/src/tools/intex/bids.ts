@@ -5,7 +5,7 @@ import { requireAccount } from "../../net/tx.js";
 import { networkName, waitFlag } from "../schemas.js";
 import { ensureAllowance } from "../../net/erc20.js";
 import { handler, ok } from "../util.js";
-import { AUCTION_ABI, ESCROW_ABI } from "../../intex/registry.js";
+import { AUCTION_ABI } from "../../intex/registry.js";
 import { commitHash, revealBidTypedData } from "../../intex/bid.js";
 import { toBidRate, wcoenLockAmount } from "../../intex/units.js";
 import { addr } from "../../intex/reads.js";
@@ -35,7 +35,7 @@ async function signReveal(n: Network, account: Account, bid: Bid): Promise<Hex> 
   return account.signTypedData(typedData);
 }
 
-/** Sealed bid commit, reveal and the escrow claims. */
+/** Sealed bid commit, reveal and the claims a bid ends in. */
 export function registerBidTools(server: McpServer, deps: IntexDeps): void {
   const { ctx, submit, paymentMeta, target } = deps;
   server.tool(
@@ -206,18 +206,35 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
 
   server.tool(
     "auction_claim_refund",
-    "Collect what a bid lock still holds and close it: a winner's change over the clearing price, a loser's " +
-      "whole principal once its day closed, or the whole principal 72h after the lock when no refund " +
-      "instructions reached this chain (e.g. it missed the clearing deadline). Read the amount and the date " +
-      "first with auction_bids_by_owner. Permissionless and always pays the stored bidder. Requires " +
-      "OUTBE_PRIVATE_KEY.",
+    "Collect the money a bid lock still holds: a winner's change over the clearing price (its Intex stays " +
+      "for auction_issue_intex), a loser's whole principal once its day closed, or the whole principal 72h " +
+      "after the lock when no refund instructions reached this chain (e.g. it missed the clearing deadline). " +
+      "Read the amount and the date first with auction_bids_by_owner. Permissionless and always pays the " +
+      "stored bidder. Requires OUTBE_PRIVATE_KEY.",
     { worldwideDay: worldwideDayArg, bidder: accountArg, network: networkName.optional(), wait: waitFlag },
     handler(async ({ worldwideDay, bidder, network, wait }) => {
       const n = await target(network);
       const account = requireAccount(ctx);
       const who = bidder ? getAddress(bidder) : account.address;
-      const data = encodeFunctionData({ abi: ESCROW_ABI, functionName: "claimRefund", args: [worldwideDay, who] });
-      const receipt = await submit(n, addr(n, "escrow"), data, 0n, wait);
+      const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "claimRefund", args: [worldwideDay, who] });
+      const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
+      return ok({ network: n.name, worldwideDay, bidder: who, ...receipt });
+    }),
+  );
+
+  server.tool(
+    "auction_issue_intex",
+    "Issue the Intex a winning bid won, on the chain it bid on, and return any change still in its lock. " +
+      "Winners issue their own units: nothing is minted for them. Needs the day's series on that chain; " +
+      "past the series settlementDeadline the win closes without units. Read what is waiting with " +
+      "auction_bids_by_owner. Permissionless and always issues to the stored bidder. Requires OUTBE_PRIVATE_KEY.",
+    { worldwideDay: worldwideDayArg, bidder: accountArg, network: networkName.optional(), wait: waitFlag },
+    handler(async ({ worldwideDay, bidder, network, wait }) => {
+      const n = await target(network);
+      const account = requireAccount(ctx);
+      const who = bidder ? getAddress(bidder) : account.address;
+      const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "issueIntex", args: [worldwideDay, who] });
+      const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
       return ok({ network: n.name, worldwideDay, bidder: who, ...receipt });
     }),
   );

@@ -1,9 +1,12 @@
 import type { Address } from "viem";
 import type { Network } from "../net/resolver.js";
 import { DEFAULT_DAYS_AHEAD, DEFAULT_DAYS_BACK, todayYmd, ymdShift } from "./dates.js";
-import { auctionStage, epochIso, isActiveStage, lockStatus } from "./format.js";
+import { auctionStage, epochIso, fromSeriesId, isActiveStage, lockStatus } from "./format.js";
 import { addr, auctionStageOf, discoverByDate } from "./reads.js";
-import { AUCTION_ABI, ESCROW_ABI } from "./registry.js";
+import { AUCTION_ABI, ESCROW_ABI, NFT_ABI } from "./registry.js";
+
+/** Lock status of a win whose payment left with the day's proceeds. */
+const WON = 2;
 
 export interface BidStatus {
   worldwideDay: number;
@@ -63,8 +66,39 @@ export async function bidStatus(n: Network, who: Address, wwd: number): Promise<
           : "no refund instructions reached this chain; claim the full lock via auction_claim_refund from claimableAt",
       );
     }
+    if (lock.status === WON) {
+      escrow.unitsWon = lock.quantity;
+      hints.push(await issueHint(n, who, wwd, lock.quantity));
+    }
     out.escrow = escrow;
   }
   if (hints.length > 0) out.hints = hints;
   return out;
+}
+
+/** What a win still has to do: the series to issue into and the deadline it closes at. */
+async function issueHint(n: Network, who: Address, wwd: number, units: number): Promise<string> {
+  const bid = await n.client.readContract({
+    address: addr(n, "auction"),
+    abi: AUCTION_ABI,
+    functionName: "revealedBidOf",
+    args: [wwd, who],
+  });
+  const seriesId = await n.client.readContract({
+    address: addr(n, "nft"),
+    abi: NFT_ABI,
+    functionName: "seriesIdOf",
+    args: [wwd, bid.issuanceCurrency, bid.referenceCurrency],
+  });
+  if (/^0x0*$/.test(seriesId)) {
+    return `${units} won units wait for their series to reach this chain; issue them via auction_issue_intex once it lands`;
+  }
+  const d = await n.client.readContract({ address: addr(n, "nft"), abi: NFT_ABI, functionName: "readData", args: [seriesId] });
+  const deadline = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callTrigger.callNoticePeriod) : 0;
+  const series = fromSeriesId(seriesId);
+  if (deadline > 0 && Math.floor(Date.now() / 1000) > deadline) {
+    return `series ${series} expired: auction_issue_intex closes the win without units and returns any change`;
+  }
+  const until = deadline > 0 ? ` before ${epochIso(deadline)?.iso}` : "";
+  return `issue ${units} units of ${series} via auction_issue_intex${until}`;
 }
