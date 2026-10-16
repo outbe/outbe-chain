@@ -42,7 +42,7 @@ contract BridgeMsgCodecGoldenTest is Test {
     function test_Golden_BidsRemaining() public pure {
         assertEq(
             BridgeMsgCodec.encodeBidsRemaining(0x0A0B0C0D, 0x01020304, 0x0011, 0x0022),
-            hex"010a0a0b0c0d0102030400110022"
+            hex"01090a0b0c0d0102030400110022"
         );
     }
 

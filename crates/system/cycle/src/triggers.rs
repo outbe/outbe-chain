@@ -30,8 +30,6 @@ pub enum TriggerId {
     NodCallDaily = 8,
     GemPositionDaily = 9,
     IntexDrainParked = 10,
-    /// Reserved historical identifier. No active trigger uses it.
-    IntexVwapPush = 11,
 }
 
 impl TriggerId {

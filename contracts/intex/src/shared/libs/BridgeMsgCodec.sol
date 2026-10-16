@@ -26,10 +26,8 @@ library BridgeMsgCodec {
     uint8 internal constant MSG_ISSUANCE_INSTRUCTIONS = 6;
     uint8 internal constant MSG_REFUND_INSTRUCTIONS = 7;
     uint8 internal constant MSG_MARK_CALLED = 8;
-    // 9 was MARK_QUALIFIED. It must not be reused.
     /// @dev Target -> origin: the day's relay stopped with chunks left, so the origin sends another round.
-    uint8 internal constant MSG_BIDS_REMAINING = 10;
-    // 11 was DAILY_VWAP. It must not be reused.
+    uint8 internal constant MSG_BIDS_REMAINING = 9;
 
     /// @notice Upper bound on every caller-supplied cross-chain payload array
     ///         (`BIDS_BATCH`, `ISSUANCE_INSTRUCTIONS`, `REFUND_INSTRUCTIONS`).

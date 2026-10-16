@@ -4,7 +4,6 @@ pragma solidity 0.8.30;
 import {IIntexAuction} from "../interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../../shared/interfaces/IIntexNFT1155.sol";
 import {ITargetRouter} from "../interfaces/ITargetRouter.sol";
-import {IOriginRouter} from "../../origin/interfaces/IOriginRouter.sol";
 import {BridgeMsgCodec} from "../../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../../shared/libs/IntexGas.sol";
 import {LowLevelCall} from "@openzeppelin/contracts/utils/LowLevelCall.sol";

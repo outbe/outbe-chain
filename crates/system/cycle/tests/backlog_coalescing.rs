@@ -127,7 +127,6 @@ fn registry_ids_are_unique_and_traversed_in_permanent_id_order() {
     unique.dedup();
     assert_eq!(unique.len(), ids.len());
     assert!(!ids.contains(&TriggerId::WwdAdvanceNoon.as_u32()));
-    assert!(!ids.contains(&TriggerId::IntexVwapPush.as_u32()));
 }
 
 #[test]

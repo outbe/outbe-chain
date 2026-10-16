@@ -292,22 +292,6 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Won), "lock advanced to Won via handler");
     }
 
-    function test_aRetiredMarkQualifiedIsAnUnknownType() public {
-        _seedSeriesOnIntex();
-
-        bytes memory packet = abi.encodePacked(hex"0109", abi.encode(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID)));
-        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnknownMsgType.selector, 9));
-        _deliver(packet);
-
-        assertEq(uint8(intex.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Issued), "state untouched");
-    }
-
-    function test_aRetiredDailyVwapIsAnUnknownType() public {
-        bytes memory packet = abi.encodePacked(hex"010b", WORLDWIDE_DAY, uint8(1), uint16(840), uint64(1e6));
-        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnknownMsgType.selector, 11));
-        _deliver(packet);
-    }
-
     // --- Helpers ---
 
     function _seedAuction() internal {

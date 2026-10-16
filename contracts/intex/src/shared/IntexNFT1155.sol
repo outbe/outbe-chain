@@ -8,7 +8,6 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IIntexNFT1155} from "./interfaces/IIntexNFT1155.sol";
 import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
 import {IntexMetadata} from "./libs/IntexMetadata.sol";
-import {DateKey} from "./libs/DateKey.sol";
 
 /**
  * @title IntexNFT1155
