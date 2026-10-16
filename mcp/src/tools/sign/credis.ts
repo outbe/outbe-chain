@@ -1,29 +1,18 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { type Address, type TransactionReceipt, parseEventLogs, zeroAddress } from "viem";
+import { type Address, type Hex, getAddress, zeroAddress } from "viem";
 import { z } from "zod";
 import { type Ctx, parseNativeAmount, readView } from "../../chain.js";
+import { type Authorization, withAuthorization } from "../../confidential/authorize.js";
+import { OP } from "../../confidential/mac.js";
 import { NATIVE_UNITS_PER_PROTOCOL_UNIT } from "../../intex/units.js";
 import { ensureAllowance } from "../../net/erc20.js";
 import { contextNetwork } from "../../net/resolver.js";
+import { requireAccount } from "../../net/tx.js";
 import { resolveContract } from "../../registry.js";
-import { HEX32, address, coenAmount, waitFlag } from "../schemas.js";
+import { HEX32, address, coenAmount, rawAmount, waitFlag } from "../schemas.js";
 import { handler } from "../util.js";
+import { eventArgs } from "./events.js";
 import { submit } from "./submit.js";
-
-const rawAmount = z
-  .string()
-  .regex(/^(0|[1-9][0-9]*)$/)
-  .refine((value) => BigInt(value) < 1n << 256n, "amount exceeds uint256")
-  .describe("Amount in raw token units");
-
-/** The first `event` emitted by `contract` in `receipt`, or undefined. */
-function eventArgs(receipt: TransactionReceipt, contract: string, event: string): Record<string, unknown> | undefined {
-  const entry = resolveContract(contract);
-  const [log] = parseEventLogs({ abi: entry.abi, logs: receipt.logs, eventName: event }).filter(
-    (l) => l.address.toLowerCase() === entry.address.toLowerCase(),
-  );
-  return log?.args as Record<string, unknown> | undefined;
-}
 
 /** The native COEN stake `issueCredis` requires: the reserved Gratis collateral, one for one by value. */
 async function issueStake(ctx: Ctx, reservationId: bigint): Promise<bigint> {
@@ -72,21 +61,40 @@ export function registerCredisTools(server: McpServer, ctx: Ctx): void {
   );
   server.tool(
     "gratis_pledge",
-    "Pledge the reservation's Gratis from the caller, its source. The mac binds Pledge and the reservation's gratisMinor.",
+    "Pledge the reservation's Gratis from the caller, its source. The Gratis modify authorization over Pledge and " +
+      "the reservation's gratisMinor is computed here and the call waits for its receipt; pass mac and op_nonce " +
+      "together to send your own.",
     {
       reservation_id: rawAmount,
-      mac: z.string().regex(HEX32),
-      op_nonce: rawAmount.refine((v) => BigInt(v) < 1n << 64n),
+      mac: z.string().regex(HEX32).optional(),
+      op_nonce: rawAmount.refine((v) => BigInt(v) < 1n << 64n).optional(),
       wait: waitFlag,
     },
-    handler(async ({ reservation_id, mac, op_nonce, wait }) =>
-      submit(ctx, {
-        contract: "gratisfactory",
-        method: "pledgeGratis",
-        args: [BigInt(reservation_id), { mac, opNonce: BigInt(op_nonce) }],
-        wait,
-      }),
-    ),
+    handler(async ({ reservation_id, mac, op_nonce, wait }) => {
+      const reservationId = BigInt(reservation_id);
+      const pledge = (auth: Authorization, waitForReceipt: boolean | undefined, simulate = false) =>
+        submit(ctx, {
+          contract: "gratisfactory",
+          method: "pledgeGratis",
+          args: [reservationId, { mac: auth.mac, opNonce: auth.opNonce }],
+          wait: waitForReceipt,
+          simulate,
+        });
+      if (mac !== undefined || op_nonce !== undefined) {
+        if (mac === undefined || op_nonce === undefined) throw new Error("pass mac and op_nonce together, or neither");
+        return pledge({ mac: mac as Hex, opNonce: BigInt(op_nonce) }, wait);
+      }
+      const { result } = await readView(ctx, resolveContract("vaultrouter"), "reservationOf", [reservationId]);
+      const reservation = result as { source: Address; gratisMinor: bigint; expiresAt: bigint };
+      const signer = requireAccount(ctx).address;
+      if (getAddress(reservation.source) !== signer) {
+        throw new Error(`reservation ${reservationId} is pledged by ${reservation.source}, not the signer ${signer}`);
+      }
+      const now = (await ctx.publicClient.getBlock()).timestamp;
+      if (now > BigInt(reservation.expiresAt)) throw new Error(`reservation ${reservationId} has expired`);
+      const write = { ledger: "Gratis" as const, op: OP.Gratis.Pledge, amount: reservation.gratisMinor };
+      return withAuthorization(ctx, contextNetwork(ctx), [write], ([auth]) => pledge(auth, true, true));
+    }),
   );
   server.tool(
     "gratis_cancel_pledge",
