@@ -102,11 +102,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "floorPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "issuanceCurrency",
             "type": "uint16",
             "internalType": "uint16"
@@ -169,25 +164,6 @@
         "name": "operator",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isQualified",
-    "inputs": [
-      {
-        "name": "gemId",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [

@@ -329,12 +329,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "floorPriceMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
         "name": "encryptedGratisAmount",
         "type": "bytes",
         "indexed": false,

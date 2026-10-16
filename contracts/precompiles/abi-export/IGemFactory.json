@@ -60,11 +60,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "sourceFloorPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "issuanceCurrency",
             "type": "uint16",
             "internalType": "uint16"
@@ -411,12 +406,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "floorPriceMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
         "name": "issuanceCurrency",
         "type": "uint16",
         "indexed": false,
@@ -534,12 +523,6 @@
       },
       {
         "name": "sourceEntryPriceMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "sourceFloorPriceMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
