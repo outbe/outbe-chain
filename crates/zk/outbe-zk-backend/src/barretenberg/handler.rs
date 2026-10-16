@@ -1,5 +1,6 @@
-//! Single native owner: the dispatcher and CRS are process-global, not reentrant.
-//! Never bypass this module with another FFI backend or a second native worker.
+//! One worker owns the native API. The dispatcher and CRS share process-global state.
+//! The dispatcher does not support concurrent native calls.
+//! Do not bypass this module with another FFI backend or a second native worker.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,8 +25,9 @@ struct Envelope<Q, R> {
     reply: mpsc::SyncSender<Result<R, HandlerError>>,
 }
 
-// Shared by production and fake-executor tests; the executor itself never leaves
-// its OS thread, so neither it nor the native API needs to implement Send.
+// Production code and tests with fake executors use this worker.
+// The executor remains on its OS thread.
+// Neither the executor nor the native API needs to implement Send.
 struct Worker<Q, R> {
     sender: mpsc::SyncSender<Envelope<Q, R>>,
     failed: Arc<AtomicBool>,
@@ -63,8 +65,8 @@ impl<Q: Send + 'static, R: Send + 'static> Worker<Q, R> {
                     match catch_unwind(AssertUnwindSafe(|| execute(envelope.request))) {
                         Ok(result) => {
                             let _ = envelope.reply.send(result.map_err(|error| match error {
-                                // Preserve the existing generic proof-error boundary without
-                                // adding its display prefix again when the facade converts back.
+                                // Preserve the existing generic proof error.
+                                // Do not repeat its display prefix when the facade converts the error.
                                 Error::Proof(message) => HandlerError::Command(message),
                                 other => HandlerError::Command(other.to_string()),
                             }));
@@ -72,7 +74,7 @@ impl<Q: Send + 'static, R: Send + 'static> Worker<Q, R> {
                         Err(_) => {
                             worker_failed.store(true, Ordering::Release);
                             let _ = envelope.reply.send(Err(HandlerError::Terminal));
-                            // Dropping the receiver releases queued and blocked callers.
+                            // The receiver's destructor releases callers that wait in or for the queue.
                             return;
                         }
                     }
@@ -134,37 +136,41 @@ enum Response {
     Capacity,
 }
 
-/// Process-wide facade for one retained native API on a dedicated OS thread.
+/// A process-wide interface to one native API on a dedicated OS thread.
 ///
-/// All methods block, including queue backpressure and readiness. Async callers
-/// should use their runtime's blocking-task facility. The 32-entry queue does
-/// not bound memory held by blocked producers. Concurrent submissions serialize
-/// complete operations; they do not run native verification concurrently.
-/// Mutable API borrowing protects one object; the singleton prevents independent
-/// objects from racing the native dispatcher's global state.
+/// Methods block while they wait for initialization, queue capacity, or results.
+/// Async callers should use their runtime's facility for blocking tasks.
+/// The queue holds 32 pending requests. It does not limit the memory that blocked callers retain.
+/// Callers can submit requests concurrently. The worker executes one complete operation at a time.
+/// The worker does not execute native verification concurrently.
 ///
-/// Configure CRS path/capacity and `HARDWARE_CONCURRENCY` before initialization.
-/// For example, launch with `HARDWARE_CONCURRENCY=8` (a positive integer within
-/// native bounds). The pinned native implementation caches concurrency per
-/// thread, defaults to `min(32, detected concurrency)`, and uses one CPU in
-/// `NO_MULTITHREADING` builds. More threads may help proving kernels or hurt
-/// performance; verification throughput requires measurement. This does not
-/// make the dispatcher reentrant or parallelize Rust Poseidon2. Never change
-/// this environment variable while requests are running.
+/// A mutable API borrow protects only one Rust object.
+/// The singleton prevents independent objects from accessing the native dispatcher's global state concurrently.
 ///
-/// Initialization failure or worker panic requires process restart. Obtaining
-/// another facade never constructs an independent engine or resets native state.
+/// Set the CRS path before initialization. Set the CRS capacity before initialization.
+/// Set `HARDWARE_CONCURRENCY` before initialization, for example `HARDWARE_CONCURRENCY=8`.
+/// Use a positive integer within the limits that the native implementation supports.
+/// Do not change this environment variable while the worker processes requests.
+///
+/// The pinned native implementation caches concurrency for each thread.
+/// Its default is `min(32, detected concurrency)`. Builds with `NO_MULTITHREADING` use one CPU.
+/// More threads may improve proving performance or decrease performance.
+/// Measure verification throughput to determine the effect.
+/// This setting does not permit concurrent dispatcher calls or parallel execution of Rust Poseidon2.
+///
+/// Restart the process after initialization failure or a worker panic.
+/// Another reference to this interface does not create an independent engine or reset native state.
 pub struct BarretenbergHandler {
     worker: Worker<Request, Response>,
 }
 
 impl BarretenbergHandler {
-    /// Initialize the canonical capacity if needed and wait for readiness.
+    /// Initialize the canonical capacity if necessary. Wait until initialization completes.
     pub fn global() -> Result<&'static Self, HandlerError> {
         Self::initialize(CANONICAL_SRS_POINTS)
     }
 
-    /// Obtain an initialized handler without loading or downloading CRS.
+    /// Return an initialized handler. Do not load or download CRS data.
     pub fn initialized() -> Result<&'static Self, HandlerError> {
         HANDLER
             .get()
@@ -194,7 +200,7 @@ impl BarretenbergHandler {
             .map_err(Clone::clone)
     }
 
-    /// Validate the fixed native CRS capacity. This cannot grow it.
+    /// Check the fixed native CRS capacity. This method cannot increase the capacity.
     pub fn ensure_capacity(&self, points: u32) -> Result<(), HandlerError> {
         match self.worker.call(Request::Capacity(points))? {
             Response::Capacity => Ok(()),
@@ -202,8 +208,8 @@ impl BarretenbergHandler {
         }
     }
 
-    /// Run native circuit statistics on the same owner as proving/verification.
-    /// This blocks and requires successful CRS initialization, even for diagnostics.
+    /// Calculate native circuit statistics on the worker that generates and verifies proofs.
+    /// This method blocks. It requires successful CRS initialization, including for diagnostic calls.
     pub fn circuit_stats(
         &self,
         circuit: CircuitInput,

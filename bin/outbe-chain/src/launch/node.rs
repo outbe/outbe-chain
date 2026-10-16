@@ -24,8 +24,8 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     // execution. Tribute admission is consensus-critical, so a node that
     // cannot initialize the verifier must not start. Database and other
     // operator commands never execute proofs and must remain offline.
-    // The handler's dedicated OS worker performs blocking CRS initialization;
-    // this call waits for readiness before starting the execution runtime.
+    // The handler's dedicated OS worker initializes the CRS with blocking operations.
+    // This call waits until initialization completes before the execution runtime starts.
     initialize_crs_for_command(&cli.command, || {
         let srs_path = std::env::var("OUTBE_BB_SRS_PATH").ok();
         outbe_zk_backend::barretenberg::init_crs().map_err(eyre::Report::from)?;

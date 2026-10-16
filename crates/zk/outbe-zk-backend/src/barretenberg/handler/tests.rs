@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use super::{Arc, CrsInitError, Envelope, Error, HandlerError, OnceLock, Ordering, Worker};
 
-// Timeouts detect a stuck test; ordering is established by channels and barriers.
+// Timeouts detect a test that cannot complete. Channels and barriers control the execution order.
 fn receive<T>(receiver: &mpsc::Receiver<T>) -> T {
     receiver
         .recv_timeout(Duration::from_secs(10))
@@ -30,7 +30,7 @@ fn concurrent_calls_share_one_owner_and_keep_setup_and_prove_atomic() {
             move || {
                 attempts.fetch_add(1, Ordering::SeqCst);
                 let owner = thread::current().id();
-                // This state cannot be sent to another executor thread.
+                // The executor cannot send this state to another thread.
                 let configured = Rc::new(Cell::new(None));
                 let mut completed = 0;
                 Ok(move |request: usize| {

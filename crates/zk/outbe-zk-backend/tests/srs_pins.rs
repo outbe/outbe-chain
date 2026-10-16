@@ -1,12 +1,16 @@
-#![allow(clippy::print_stdout)] // diagnostic #[ignore]d tests that print pin/complexity tables
+#![allow(clippy::print_stdout)] // Ignored diagnostic tests print checksum and complexity tables.
 //! Regenerate the `PINNED_G1_SHA256` table in `barretenberg/srs.rs`.
 //!
-//! For each canonical circuit it computes the SRS point count bb actually needs
-//! (`circuit_stats` → dyadic domain `+ 1`; no proving, so it's fast) and the
-//! SHA-256 of that G1 prefix from the local Aztec CRS, printing ready-to-paste
-//! pin entries. Ignored by default (needs valid local CRS + libbb); run with:
-//!   cargo test -p outbe-zk-backend --test srs_pins -- --ignored --nocapture
-//! then paste the printed `(points, [..])` rows into `PINNED_G1_SHA256`.
+//! For each canonical circuit, `circuit_stats` supplies the dyadic domain size.
+//! The required SRS capacity is that size plus one G1 point.
+//! These tests calculate the SHA-256 checksum of each required prefix from the local Aztec CRS.
+//! They print entries for the checksum table without generating proofs.
+//!
+//! The tests require valid local CRS data and `libbb`. The test runner ignores them by default.
+//! To regenerate the table:
+//! 1. Run `cargo test -p outbe-zk-backend --test srs_pins -- --ignored --nocapture`.
+//! 2. Copy the printed `(points, [..])` rows.
+//! 3. Insert the rows into `PINNED_G1_SHA256`.
 
 use std::io::Read;
 
@@ -22,8 +26,9 @@ use outbe_zk_backend::barretenberg::BarretenbergHandler;
 
 const G1_POINT_SIZE: usize = 64;
 
-/// UltraHonk + keccak, ZK on — matches `Barretenberg::default()` / the prover,
-/// so the gate count (and thus point count) matches what proving actually sizes.
+/// Return UltraHonk settings with the keccak oracle hash and zero knowledge enabled.
+/// These settings match `Barretenberg::default()` and the prover.
+/// Thus, the gate count and point count match the requirements for proof generation.
 fn keccak_settings() -> ProofSystemSettings {
     ProofSystemSettings {
         ipa_accumulation: false,
@@ -107,9 +112,12 @@ fn gate_counts(handler: &BarretenbergHandler, acir: &[u8]) -> (u32, u32) {
     (info.num_gates, info.num_gates_dyadic)
 }
 
-/// Print a markdown table of each circuit's gate count (UltraHonkKeccak, ZK on).
-/// Capture before/after a hash swap to measure the complexity delta:
-///   cargo test -p outbe-zk-backend --test srs_pins print_circuit_complexity -- --ignored --nocapture
+/// Print a Markdown table of gate counts with UltraHonkKeccak and zero knowledge enabled.
+/// Record the table before a hash change. Record it again after the change to measure the difference.
+/// Use this command:
+/// ```sh
+/// cargo test -p outbe-zk-backend --test srs_pins print_circuit_complexity -- --ignored --nocapture
+/// ```
 #[test]
 #[ignore = "complexity capture: needs valid local CRS + libbb; run with --ignored --nocapture"]
 fn print_circuit_complexity() {

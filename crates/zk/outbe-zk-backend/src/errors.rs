@@ -3,19 +3,20 @@
 use outbe_zk::error::Error;
 use thiserror::Error;
 
-/// Failures of the process-wide native owner. Terminal failures require restart.
+/// Failures of the native worker for this process.
+/// Restart the process after a terminal failure.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum HandlerError {
-    /// The operating system could not start the owner.
+    /// The operating system could not start the worker.
     #[error("Barretenberg worker spawn failed: {0}")]
     Spawn(String),
-    /// Initial native setup failed; the singleton retains this failure.
+    /// Native initialization failed. The singleton retains this failure.
     #[error("Barretenberg worker initialization failed: {0}")]
     Initialization(CrsInitError),
-    /// Raw verification cannot initialize or download CRS.
+    /// Raw verification requires an initialized handler. It cannot initialize or download CRS data.
     #[error("Barretenberg handler is not initialized")]
     NotInitialized,
-    /// The worker stopped after a panic; native state must not be reused.
+    /// The worker stopped after a panic. Do not reuse the native state.
     #[error("Barretenberg worker failed; process restart required")]
     Terminal,
     /// The request queue disconnected.
@@ -24,7 +25,7 @@ pub enum HandlerError {
     /// The worker did not deliver a response.
     #[error("Barretenberg worker response channel disconnected")]
     ResponseDisconnected,
-    /// An ordinary command failed without terminating the owner.
+    /// A command failed. The worker continues to process requests.
     #[error("{0}")]
     Command(String),
 }

@@ -389,7 +389,7 @@ mod tests {
 
         const CHILD: &str = "OUTBE_TRIBUTE_ZK_UNINITIALIZED_CHILD";
         if std::env::var_os(CHILD).is_none() {
-            // Keep the singleton uninitialized even when other tests use a real CRS.
+            // Use a separate process to keep the singleton uninitialized while other tests use a real CRS.
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
@@ -422,8 +422,8 @@ mod tests {
             validate_zk_result(proof, verification_key(), public, Some(&expected)).unwrap_err();
         let backend_error = outbe_zk::error::Error::from(HandlerError::NotInitialized);
         let unavailable = TributeFactoryError::zk_verifier_unavailable(backend_error).to_string();
-        // Matching public fields must reach the verifier, not fail an earlier gate
-        // or classify an infrastructure fault as InvalidZkProof.
+        // Matching public fields must pass the earlier checks and reach the verifier.
+        // Report an infrastructure fault as ZkVerifierUnavailable, not InvalidZkProof.
         assert!(matches!(error, PrecompileError::Revert(message) if message == unavailable));
     }
 

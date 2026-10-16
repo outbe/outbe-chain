@@ -1,4 +1,4 @@
-//! Separate test process: raw verification must never initialize or fetch CRS.
+//! This test uses a separate process. Raw verification must not initialize or download CRS data.
 
 use outbe_zk_backend::barretenberg::{Barretenberg, BarretenbergHandler, RawVerifier};
 use outbe_zk_backend::errors::HandlerError;

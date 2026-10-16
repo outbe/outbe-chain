@@ -1,8 +1,8 @@
-//! Real barretenberg prove→verify round-trips.
+//! These tests generate and verify real Barretenberg proofs.
 //!
-//! Generates actual UltraHonkKeccak proofs from genuine witnesses and verifies
-//! them through the FFI backend — the full on-device path. Run with
-//! `cargo test -p outbe-zk-backend --test barretenberg`.
+//! They generate UltraHonkKeccak proofs from genuine witnesses and verify them through the FFI backend.
+//! They execute the complete proof flow on the device.
+//! Run `cargo test -p outbe-zk-backend --test barretenberg`.
 
 use ark_ff::UniformRand;
 
@@ -69,7 +69,7 @@ fn demo_tribute_prove_verify_round_trip() {
         "valid demo tribute proof must verify"
     );
 
-    // Mix native verification and statistics on the same retained owner.
+    // Submit native verification and statistics requests to the same worker concurrently.
     let acir = {
         use base64::Engine;
         use outbe_zk::CircuitId;

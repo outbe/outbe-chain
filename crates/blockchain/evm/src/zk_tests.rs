@@ -32,7 +32,7 @@ fn demo_tribute_without_initialized_handler_returns_backend_error() {
 
     const CHILD: &str = "OUTBE_EVM_ZK_UNINITIALIZED_CHILD";
     if std::env::var_os(CHILD).is_none() {
-        // Other tests may initialize the process-wide handler, even with one test thread.
+        // Other tests may initialize the handler, even if the test runner uses one thread.
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -58,7 +58,7 @@ fn demo_tribute_without_initialized_handler_returns_backend_error() {
     let input = abi_encode(&DemoTribute::CIRCUIT_HASH, proof);
     let backend_error = outbe_zk::error::Error::from(HandlerError::NotInitialized);
     let expected = format!("zk verification backend failed: {backend_error}");
-    // Infrastructure failure must not become the zero word used for an invalid proof.
+    // Return an infrastructure error, not the zero word that indicates an invalid proof.
     assert!(matches!(
         zk_verify(&input),
         Err(PrecompileError::Revert(message)) if message == expected
