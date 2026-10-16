@@ -26,7 +26,6 @@ outbe-snapshot.workspace = true
 outbe-evm.workspace = true
 outbe-rpc.workspace = true
 outbe-node.workspace = true
-outbe-offchain-storage.workspace = true
 outbe-consensus.workspace = true
 outbe-engine.workspace = true
 outbe-primitives.workspace = true

@@ -68,7 +68,7 @@ pub(crate) fn assert_unpaid_unminable(world: &World, target: &Target) {
     refuse_mining(
         world,
         target,
-        &GemFactoryError::InvalidState,
+        &GemFactoryError::GemNotSettled,
         &IntexFactoryError::InsufficientSettled,
         &NodFactoryError::NodNotSettled,
     );

@@ -15,6 +15,7 @@ use outbe_primitives::{
 };
 use outbe_tee::protocol::GratisOp;
 use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 use crate::{
     api,
@@ -190,14 +191,14 @@ impl World {
 
     /// Settles by ERC20 in the reference currency; a free Nod moves no tokens.
     fn settle(&mut self, nod_id: WwdEntityId, caller: Address) -> Result<(), PrecompileError> {
-        self.register_reference_currency_asset(PAYMENT_ASSET);
+        self.register_reference_currency_asset(SETTLEMENT_ASSET);
         self.enter(|storage| {
             api::settle_nod(
                 &storage,
-                api::SettleNodRequest {
-                    caller,
-                    nod_id,
-                    asset: PAYMENT_ASSET,
+                nod_id,
+                SettlementPayment {
+                    payer: caller,
+                    asset: SETTLEMENT_ASSET,
                     snapshot_id: U256::ZERO,
                 },
             )
@@ -298,8 +299,8 @@ impl World {
 
 const CHAIN_ID: u64 = 1;
 
-const PAYMENT_ASSET: Address = Address::new([0x71; 20]);
-const EUR_ASSET: Address = Address::new([0x72; 20]);
+const SETTLEMENT_ASSET: Address = Address::new([0x71; 20]);
+const SETTLEMENT_ASSET_EUR: Address = Address::new([0x72; 20]);
 
 fn public_nod_data(world: &mut World, nod_id: WwdEntityId) -> INod::NodData {
     world.enter(|storage| {
@@ -373,9 +374,9 @@ fn settle_erc20(
     world.enter(|storage| {
         api::settle_nod(
             &storage,
-            api::SettleNodRequest {
-                caller: owner,
-                nod_id,
+            nod_id,
+            SettlementPayment {
+                payer: owner,
                 asset,
                 snapshot_id: snapshot,
             },

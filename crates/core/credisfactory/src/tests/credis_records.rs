@@ -60,7 +60,7 @@ fn cca() -> Address {
     address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
 }
 
-fn asset() -> Address {
+fn settlement_asset() -> Address {
     address!("0x0000000000000000000000000000000000000888")
 }
 
@@ -126,7 +126,7 @@ fn params(owner: Address) -> IssueCredisParams {
         owner,
         cca: cca(),
         source: source(),
-        asset: asset(),
+        asset: settlement_asset(),
         issuance_currency: 840,
         reference_currency: 978,
         policy_rate: policy_rate(),
@@ -171,7 +171,7 @@ fn at(day: u64) -> u64 {
 #[test]
 fn credis_id_matches_keccak_and_binds_every_field() {
     let block_number = 0x0102_0304_0506_0708;
-    let id = CredisContract::credis_id(cca(), alice(), asset(), block_number);
+    let id = CredisContract::credis_id(cca(), alice(), settlement_asset(), block_number);
     // Fixed packed-address/u64 vector, independently computed with `cast keccak`.
     assert_eq!(
         id,
@@ -180,12 +180,12 @@ fn credis_id_matches_keccak_and_binds_every_field() {
         )
     );
     for other in [
-        CredisContract::credis_id(bob(), alice(), asset(), block_number),
-        CredisContract::credis_id(cca(), bob(), asset(), block_number),
+        CredisContract::credis_id(bob(), alice(), settlement_asset(), block_number),
+        CredisContract::credis_id(cca(), bob(), settlement_asset(), block_number),
         CredisContract::credis_id(cca(), alice(), bob(), block_number),
-        CredisContract::credis_id(cca(), alice(), asset(), block_number + 1),
-        CredisContract::credis_id(cca(), alice(), asset(), 0x0506_0708),
-        CredisContract::credis_id(cca(), alice(), asset(), u64::MAX),
+        CredisContract::credis_id(cca(), alice(), settlement_asset(), block_number + 1),
+        CredisContract::credis_id(cca(), alice(), settlement_asset(), 0x0506_0708),
+        CredisContract::credis_id(cca(), alice(), settlement_asset(), u64::MAX),
     ] {
         assert_ne!(id, other);
     }
@@ -1424,7 +1424,7 @@ fn precompile_get_credis_returns_the_full_record() {
         assert_eq!(decoded.credisId, id);
         assert_eq!(decoded.owner, alice());
         assert_eq!(decoded.cca, cca());
-        assert_eq!(decoded.asset, asset());
+        assert_eq!(decoded.asset, settlement_asset());
         assert_eq!(decoded.issuanceCurrency, 840);
         assert_eq!(decoded.referenceCurrency, 978);
         assert_eq!(decoded.principalMinor, U256::from(PRINCIPAL));

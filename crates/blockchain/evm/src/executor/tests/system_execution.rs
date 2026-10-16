@@ -344,7 +344,7 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
     let hook_events_tx = system_txs
         .next()
         .expect("HookEvents system tx should be present");
-    let rewards_visible_gas = rewards_tx.tx().gas_limit();
+    let rewards_signed_gas = rewards_tx.tx().gas_limit();
     let rewards_intrinsic_gas =
         outbe_primitives::system_tx::system_tx_intrinsic_gas(rewards_tx.tx().input())
             .expect("RewardsGemDelivery intrinsic gas computes");
@@ -360,11 +360,11 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
         .execute_transaction(rewards_tx)
         .expect("RewardsGemDelivery revert should soft-fail")
         .tx_gas_used();
-    // A failure receipt publishes the visible base plus the state-operation gas actually spent,
-    // never the unused state-operation reserve of the signed envelope.
-    assert!(
-        (rewards_intrinsic_gas..rewards_visible_gas).contains(&revert_gas),
-        "GAS-11: reverted delivery charges {revert_gas}, expected within [{rewards_intrinsic_gas}, {rewards_visible_gas})"
+    // The delivery envelope signs only its intrinsic gas, and its failure receipt charges exactly that.
+    assert_eq!(rewards_signed_gas, rewards_intrinsic_gas);
+    assert_eq!(
+        revert_gas, rewards_intrinsic_gas,
+        "GAS-11: reverted delivery charges {revert_gas}, expected {rewards_intrinsic_gas}"
     );
     let failure_receipt = executor
         .receipts()

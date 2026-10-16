@@ -1,8 +1,8 @@
 use alloy_primitives::Bytes;
 
 use super::{
-    SystemTxError, SystemTxInputV2, SystemTxKind, REWARD_GEM_DELIVERY_GAS_RESERVE,
-    SYSTEM_TX_NON_ZERO_BYTE_GAS, SYSTEM_TX_VISIBLE_GAS_FLOOR, SYSTEM_TX_ZERO_BYTE_GAS,
+    SystemTxError, SystemTxInputV2, SystemTxKind, SYSTEM_TX_NON_ZERO_BYTE_GAS,
+    SYSTEM_TX_VISIBLE_GAS_FLOOR, SYSTEM_TX_ZERO_BYTE_GAS,
 };
 
 /// Ethereum-compatible visible gas limit for a system tx envelope.
@@ -43,8 +43,7 @@ struct SystemTxVisibleGasEntry {
 /// Deterministic visible-gas allocation for the complete begin-system zone.
 ///
 /// System envelopes reserve intrinsic gas plus any schedule-hashed protocol
-/// precharge and phase-specific execution budget. `CycleTick` receives
-/// the remaining block gas while preserving every mandatory phase reserve.
+/// precharge. `CycleTick` receives the remaining block gas.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemTxVisibleGasPlan {
     entries: Vec<SystemTxVisibleGasEntry>,
@@ -74,14 +73,12 @@ impl SystemTxVisibleGasPlan {
             }
             let intrinsic_gas = system_tx_intrinsic_gas(calldata)?;
             let protocol_precharge = system_tx_protocol_precharge(&decoded)?;
-            let execution_gas_reserve = system_tx_execution_gas_reserve(*kind);
-            let gas_limit = intrinsic_gas
-                .checked_add(protocol_precharge)
-                .and_then(|gas| gas.checked_add(execution_gas_reserve))
-                .ok_or(SystemTxError::VisibleGasPlanExceedsBlock {
+            let gas_limit = intrinsic_gas.checked_add(protocol_precharge).ok_or(
+                SystemTxError::VisibleGasPlanExceedsBlock {
                     required_gas: u64::MAX,
                     block_gas_limit,
-                })?;
+                },
+            )?;
             required_total = required_total.checked_add(gas_limit).ok_or(
                 SystemTxError::VisibleGasPlanExceedsBlock {
                     required_gas: u64::MAX,
@@ -149,13 +146,6 @@ impl SystemTxVisibleGasPlan {
     #[must_use]
     pub const fn total_envelope_gas(&self) -> u64 {
         self.total_envelope_gas
-    }
-}
-
-const fn system_tx_execution_gas_reserve(kind: SystemTxKind) -> u64 {
-    match kind {
-        SystemTxKind::RewardsGemDelivery => REWARD_GEM_DELIVERY_GAS_RESERVE,
-        _ => 0,
     }
 }
 

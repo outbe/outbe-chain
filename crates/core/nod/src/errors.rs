@@ -78,12 +78,6 @@ pub enum NodError {
     #[error("Nod settled count overflow")]
     SettledCountOverflow,
 
-    #[error("loaded Nod bucket {loaded} does not match item bucket {expected}")]
-    LoadedBucketMismatch {
-        loaded: WwdEntityId,
-        expected: WwdEntityId,
-    },
-
     #[error("Nod bucket {bucket_key} member index overflow")]
     BucketMemberIndexOverflow { bucket_key: B256 },
 

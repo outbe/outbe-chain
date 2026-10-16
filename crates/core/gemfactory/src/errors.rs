@@ -12,11 +12,17 @@ pub enum GemFactoryError {
     #[error("gem not found")]
     GemNotFound,
 
-    #[error("invalid state for action")]
-    InvalidState,
+    #[error("gem is already settled")]
+    GemAlreadySettled,
 
-    #[error("call notice period expired")]
-    DeadlineExpired,
+    #[error("gem is not settled")]
+    GemNotSettled,
+
+    #[error("gem bucket is not called")]
+    GemNotCalled,
+
+    #[error("settlement deadline has passed")]
+    SettlementDeadlinePassed,
 
     #[error("unsupported gem type")]
     UnsupportedGemType,

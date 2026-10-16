@@ -122,9 +122,17 @@ pub fn view_of(
     })
 }
 
+/// How many gems one owner holds, read from the owner index alone.
+pub fn balance_of(storage: &StorageHandle<'_>, owner: Address) -> Result<u32> {
+    GemContract::new(storage.clone())
+        .owner_ids
+        .list(&owner)
+        .len()
+}
+
 /// One owner's gems, with the block's own mutations folded in.
 pub fn list_by_owner(storage: &StorageHandle<'_>, owner: Address) -> Result<Vec<GemItemState>> {
-    GemContract::new(storage.clone()).state_records(Some(owner))
+    GemContract::new(storage.clone()).state_records(owner)
 }
 
 /// Timestamp by which a called bucket must be settled, or `0` while it is not called.
@@ -138,10 +146,7 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, bucket_key: B256) -> Res
     Ok(settlement_deadline_of(called_at, notice))
 }
 
-/// The deadline a call at `called_at` sets under `notice_period`.
-pub fn settlement_deadline_of(called_at: u64, notice_period: u32) -> u64 {
-    called_at.saturating_add(u64::from(notice_period))
-}
+pub use outbe_primitives::settlement::settlement_deadline_of;
 
 /// Records a loaded gem paid for. GemFactory decides the settlement and takes the payment.
 pub fn record_settled(

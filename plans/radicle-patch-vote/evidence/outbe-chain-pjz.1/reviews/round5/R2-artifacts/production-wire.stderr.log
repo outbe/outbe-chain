@@ -1,5 +1,0 @@
-   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
-   Compiling radicle-fetch v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-fetch)
-   Compiling radicle-protocol v0.9.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-protocol)
-    Finished `test` profile [unoptimized] target(s) in 6.69s
-     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-standalone/debug/deps/radicle_protocol-137004f42e12aa9e)
