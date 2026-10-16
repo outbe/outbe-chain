@@ -1,4 +1,5 @@
 use super::*;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 #[test]
 fn a_position_reports_its_full_terms() {
@@ -53,10 +54,10 @@ fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
 
         let error = runtime::settle_gem(
             storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
-                asset: STABLE,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
+                asset: SETTLEMENT_ASSET,
                 snapshot_id: U256::ZERO,
             },
         )
@@ -87,10 +88,10 @@ fn settle_rejects_wrong_settlement_currency() {
         // currencies, so it reverts before any vault interaction.
         let res = runtime::settle_gem(
             storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
-                asset: STABLE_EUR,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
+                asset: SETTLEMENT_ASSET_EUR,
                 snapshot_id: U256::ZERO,
             },
         );

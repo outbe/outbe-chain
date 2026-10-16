@@ -51,11 +51,7 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, bucket_key: B256) -> Res
     Ok(settlement_deadline_of(called_at, notice))
 }
 
-/// The deadline rule itself, for callers that already hold both values.
-#[must_use]
-pub fn settlement_deadline_of(called_at: u64, notice_period: u32) -> u64 {
-    called_at.saturating_add(u64::from(notice_period))
-}
+pub use outbe_primitives::settlement::settlement_deadline_of;
 
 pub use crate::state_api::{LoadedNodBucket, LoadedNodItem};
 

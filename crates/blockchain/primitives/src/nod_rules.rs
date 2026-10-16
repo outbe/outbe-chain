@@ -3,8 +3,11 @@
 use alloy_primitives::{keccak256, B256, U256};
 
 use crate::{
-    error::Result, math::scaled_math::checked_mul_div_floor, storage::types::StorageKey,
-    time::WorldwideDay, units::SCALE_1E6_U256,
+    error::Result,
+    settlement::{settlement_cost_units, SettlementCost},
+    storage::types::StorageKey,
+    time::WorldwideDay,
+    units::PROTOCOL_AMOUNT_DECIMALS,
 };
 
 pub fn bucket_key(day: WorldwideDay, entry: U256, currency: u16) -> B256 {
@@ -19,11 +22,17 @@ pub fn is_issuable_entry(entry: U256) -> bool {
     crate::markup::marked_up(entry, u16::MAX).is_some()
 }
 
+/// One Nod's cost in reference-currency minor units, by the settlement cost rule.
 pub fn settlement_cost_minor(entry: U256, load: U256) -> Result<U256> {
-    let cost = checked_mul_div_floor(entry, load, SCALE_1E6_U256)?;
-    Ok(if !entry.is_zero() && !load.is_zero() {
-        cost.max(U256::ONE)
-    } else {
-        cost
-    })
+    let cost = SettlementCost {
+        entry_price_minor: entry,
+        load_minor: load,
+        units: U256::ONE,
+        cost_rate_pct: 100,
+    };
+    Ok(settlement_cost_units(
+        &cost,
+        None,
+        PROTOCOL_AMOUNT_DECIMALS,
+    )?)
 }

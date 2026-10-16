@@ -54,17 +54,17 @@ pub struct IssueCredisParams {
 /// `total_paid` from the payer into the vault. It releases `gratis_returned_minor` to
 /// the pledger, never to the payer.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Settlement {
+pub struct Repayment {
     /// Interest collected, in full, before any principal.
     pub interest: U256,
     /// Principal covered by this payment.
     pub principal_paid: U256,
-    /// `interest + principal_paid` - what the payer owes for this settlement.
+    /// `interest + principal_paid` - what the payer owes for this repayment.
     pub total_paid: U256,
     /// Collateral freed and owed back to the pledger.
     pub gratis_returned_minor: U256,
     pub asset: Address,
-    /// True when this settlement drove the outstanding principal to zero.
+    /// True when this repayment drove the outstanding principal to zero.
     pub closed: bool,
 }
 
@@ -207,7 +207,7 @@ pub fn mark_called(credis: &mut CredisContract<'_>, credis_id: U256, now: u64) -
 /// - Called Credis accept repayment through deadline equality.
 /// - The function rejects a payment below the accrued interest outright.
 /// - The function consumes only what the Credis needs, so it does not
-///   over-pull an over-payment. The caller charges `Settlement::total_paid`.
+///   over-pull an over-payment. The caller charges `Repayment::total_paid`.
 /// - Collateral release is principal-proportional, rounded up and capped by
 ///   the locked remainder. Final settlement releases exactly what is left.
 pub fn settle(
@@ -215,7 +215,7 @@ pub fn settle(
     credis_id: U256,
     amount: U256,
     now: u64,
-) -> Result<Settlement> {
+) -> Result<Repayment> {
     let mut record = credis.load_credis(credis_id)?;
     let state_before = record.lifecycle_state()?;
     match state_before {
@@ -306,7 +306,7 @@ pub fn settle(
         _tokenId: credis_id,
     })?;
 
-    Ok(Settlement {
+    Ok(Repayment {
         interest,
         principal_paid,
         total_paid: interest

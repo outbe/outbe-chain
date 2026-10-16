@@ -9515,7 +9515,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-ccaregistry",
- "outbe-common",
  "outbe-evm",
  "outbe-macros",
  "outbe-oracle",

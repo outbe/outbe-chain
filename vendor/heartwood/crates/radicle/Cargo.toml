@@ -75,3 +75,6 @@ radicle-cob = { workspace = true, features = ["stable-commit-ids", "test"] }
 radicle-core = {workspace = true, features = ["qcheck"] }
 radicle-crypto = { workspace = true, features = ["test"] }
 tempfile = { workspace = true }
+
+[package.metadata.cargo-machete]
+ignored = ["multibase"]

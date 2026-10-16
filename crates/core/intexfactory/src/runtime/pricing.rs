@@ -1,5 +1,5 @@
 use super::*;
-use outbe_vaultrouter::settlement::{Currencies, Obligation};
+use outbe_vaultrouter::settlement::{Currencies, SettlementCost};
 
 pub(crate) fn currencies(series: &outbe_intex::SeriesRecord) -> Currencies {
     Currencies {
@@ -9,13 +9,13 @@ pub(crate) fn currencies(series: &outbe_intex::SeriesRecord) -> Currencies {
 }
 
 /// `units` of a series: its entry price times its Promis load per unit.
-pub(crate) fn obligation(series: &outbe_intex::SeriesRecord, units: U256) -> Obligation {
-    series_obligation(series.entry_price_minor, series.promis_load_minor, units)
+pub(crate) fn settlement_cost(series: &outbe_intex::SeriesRecord, units: U256) -> SettlementCost {
+    series_cost(series.entry_price_minor, series.promis_load_minor, units)
 }
 
 /// `units` at an entry price and Promis load per unit, at cost.
-fn series_obligation(entry_price_minor: U256, load_minor: U256, units: U256) -> Obligation {
-    Obligation {
+fn series_cost(entry_price_minor: U256, load_minor: U256, units: U256) -> SettlementCost {
+    SettlementCost {
         entry_price_minor,
         load_minor,
         units,
@@ -29,10 +29,10 @@ pub(crate) fn settlement_units(
     product: U256,
     units: U256,
     rate: Option<(U256, U256)>,
-    payment_decimals: u8,
+    asset_decimals: u8,
 ) -> Result<U256> {
-    let obligation = series_obligation(product, U256::ONE, units);
-    outbe_common::settlement::obligation_units(&obligation, rate, payment_decimals)
+    let cost = series_cost(product, U256::ONE, units);
+    outbe_primitives::settlement::settlement_cost_units(&cost, rate, asset_decimals)
         .map_err(|e| settlement::SettlementError::Rounding(e).into())
 }
 
@@ -51,7 +51,7 @@ pub fn quote_settlement(
         storage,
         asset,
         currencies(&series),
-        &obligation(&series, units),
+        &settlement_cost(&series, units),
     )?;
     Ok((
         quote.settlement_currency,

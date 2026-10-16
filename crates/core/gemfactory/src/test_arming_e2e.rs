@@ -80,7 +80,7 @@ fn backdate(storage: &StorageHandle<'_>, gem_id: U256, issued_at: u64) -> Result
     let (item, bucket) =
         gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     if item.body().is_settled() {
-        return Err(GemFactoryError::InvalidState.into());
+        return Err(GemFactoryError::GemAlreadySettled.into());
     }
     let mut reissued = item.body().clone();
     let entry_price_minor = bucket.body().entry_price_minor;
@@ -107,7 +107,7 @@ fn requeue_called(storage: &StorageHandle<'_>, gem_id: U256, deadline: u64) -> R
     let mut gem = GemContract::new(storage.clone());
     let bucket = item.bucket_key;
     if gem.called_deadline.read(&bucket)? == 0 {
-        return Err(GemFactoryError::InvalidState.into());
+        return Err(GemFactoryError::GemNotCalled.into());
     }
     gem.remove_called(bucket)?;
     gem.push_called(bucket, deadline)

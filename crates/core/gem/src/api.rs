@@ -146,10 +146,7 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, bucket_key: B256) -> Res
     Ok(settlement_deadline_of(called_at, notice))
 }
 
-/// The deadline a call at `called_at` sets under `notice_period`.
-pub fn settlement_deadline_of(called_at: u64, notice_period: u32) -> u64 {
-    called_at.saturating_add(u64::from(notice_period))
-}
+pub use outbe_primitives::settlement::settlement_deadline_of;
 
 /// Records a loaded gem paid for. GemFactory decides the settlement and takes the payment.
 pub fn record_settled(

@@ -15,8 +15,8 @@ pub enum GemError {
     #[error("gem not found")]
     GemNotFound,
 
-    #[error("invalid state transition")]
-    InvalidState,
+    #[error("gem is already settled")]
+    AlreadySettled,
 
     #[error("index out of bounds")]
     IndexOutOfBounds,

@@ -54,7 +54,7 @@ fn mine_promis_rejects_non_settled() {
             crate::schema::GemMiningProof { gem_id, nonce: 0 },
             no_auth(),
         );
-        assert!(err_msg(res).contains("invalid state"));
+        assert!(err_msg(res).contains("gem is not settled"));
     });
 }
 
