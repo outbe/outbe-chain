@@ -118,8 +118,8 @@ def generate():
     amounts_blob = (1).to_bytes(8,'big') + bytes([0x66])*80
     encrypted_tribute = (bfield(1,tribute) + bfield(2,bytes([0x42])*20) + vfield(3,0x01020304)
                          + bfield(4,amounts_blob) + vfield(5,840) + bfield(6,public_key_blob)
-                         + vfield(7,978) + amount(8,3) + vfield(10,99)
-                         + bfield(11,bytes([0x77])*32))
+                         + vfield(7,978) + amount(8,3) + vfield(9,99)
+                         + bfield(10,bytes([0x77])*32))
     encrypted_nod = (bfield(1,nod) + bfield(2,bytes([0x24])*20) + bfield(3,public_key_blob)
                      + bfield(4,public_key_blob) + vfield(5,99) + vfield(6,0x0a0b0c0d)
                      + vfield(7,2) + amount(8,3) + vfield(9,840) + vfield(10,978)
