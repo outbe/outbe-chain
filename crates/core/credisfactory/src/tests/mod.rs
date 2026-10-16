@@ -369,19 +369,61 @@ pub fn advance_to(storage: &StorageHandle<'_>, timestamp: u64) {
     storage.set_block_timestamp(U256::from(timestamp)).unwrap();
 }
 
+/// Has the settlement asset's `balanceOf` answer the shared collector as a token that
+/// moves `amount`, capped at what `credis_id` owes: before the pull, after it, and after
+/// the vault deposit.
+pub fn stub_payment(provider: &mut HashMapStorageProvider, credis_id: U256, amount: U256) {
+    let owed = StorageHandle::enter(provider, |storage| {
+        runtime::quote_settlement(&storage, credis_id).unwrap()
+    });
+    let moved = amount.min(owed);
+    provider.stub_sub_call_sequence_at_selector(
+        settlement_asset(),
+        crate::sol_ext::IERC20::balanceOfCall::SELECTOR,
+        [U256::ZERO, moved, U256::ZERO]
+            .map(|balance| Bytes::from(balance.to_be_bytes::<32>().to_vec())),
+    );
+}
+
+/// Runs `pay` against a token that moves `amount` towards `credis_id`.
+pub fn paying<R>(
+    provider: &mut HashMapStorageProvider,
+    credis_id: U256,
+    amount: U256,
+    pay: impl FnOnce(StorageHandle<'_>) -> R,
+) -> R {
+    stub_payment(provider, credis_id, amount);
+    let out = StorageHandle::enter(provider, pay);
+    provider.stub_sub_call_sequence_at_selector(
+        settlement_asset(),
+        crate::sol_ext::IERC20::balanceOfCall::SELECTOR,
+        [],
+    );
+    out
+}
+
+/// The accrued interest plus `principal` of the outstanding balance.
+pub fn interest_plus(storage: &StorageHandle<'_>, credis_id: U256, principal: U256) -> U256 {
+    let record = CredisContract::new(storage.clone())
+        .get_credis(credis_id)
+        .unwrap();
+    CredisContract::accrued_interest(&record, now_of(storage)).unwrap() + principal
+}
+
 /// Settles exactly the accrued interest plus `principal` of the outstanding
 /// balance, and returns the `(principal, interest)` the settlement reported.
 pub fn settle_principal(
-    storage: &StorageHandle<'_>,
+    provider: &mut HashMapStorageProvider,
     payer: Address,
     credis_id: U256,
     principal: U256,
 ) -> (U256, U256) {
-    let record = CredisContract::new(storage.clone())
-        .get_credis(credis_id)
-        .unwrap();
-    let interest = CredisContract::accrued_interest(&record, now_of(storage)).unwrap();
-    runtime::settle_credis(storage.clone(), payer, credis_id, interest + principal).unwrap()
+    let amount = StorageHandle::enter(provider, |storage| {
+        interest_plus(&storage, credis_id, principal)
+    });
+    paying(provider, credis_id, amount, |storage| {
+        runtime::settle_credis(storage, payer, credis_id, amount).unwrap()
+    })
 }
 
 /// ABI-encoded `uint16` return for the asset's `isoCode()` static sub-call.

@@ -53,10 +53,6 @@ pub enum CredisFactoryError {
     CoenStakeOverflow,
     #[error("Credis changed during issuance")]
     CredisChangedDuringIssuance,
-    #[error("ERC20 transfer failed")]
-    Erc20TransferFailed,
-    #[error("ERC20 approval failed")]
-    Erc20ApprovalFailed,
     #[error("collateral increased")]
     CollateralIncreased,
     #[error("collateral release mismatch")]

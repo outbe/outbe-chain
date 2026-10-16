@@ -143,7 +143,7 @@ fn a_cancelled_pledge_cannot_back_an_issue() {
 #[test]
 fn a_source_backs_another_owner_and_repayments_return_to_the_source() {
     let mut provider = env();
-    StorageHandle::enter(&mut provider, |storage| {
+    let credis_id = StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());
         let id = seed_reservation(&storage, bob(), alice(), pledge_stables());
         let err = outbe_gratisfactory::runtime::pledge_gratis(
@@ -166,7 +166,10 @@ fn a_source_backs_another_owner_and_repayments_return_to_the_source() {
             .get_credis(credis_id)
             .unwrap();
         assert_eq!((record.owner, record.source), (bob(), alice()));
-        settle_principal(&storage, bob(), credis_id, pledge_stables());
+        credis_id
+    });
+    settle_principal(&mut provider, bob(), credis_id, pledge_stables());
+    StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(view_balance(&storage, alice()), pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(view_balance(&storage, bob()), U256::ZERO);
@@ -177,7 +180,7 @@ fn a_source_backs_another_owner_and_repayments_return_to_the_source() {
 #[test]
 fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing() {
     let mut provider = env();
-    StorageHandle::enter(&mut provider, |storage| {
+    let (credis_id, fidelity, interest) = StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());
         let credis_id = open(&storage, 1);
         let fidelity = fidelity_of(&storage, alice());
@@ -187,19 +190,38 @@ fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing(
             .unwrap();
         let interest = CredisContract::accrued_interest(&record, CREATED_AT + DAY).unwrap();
         assert!(!interest.is_zero());
-        runtime::settle_credis(storage.clone(), bob(), credis_id, interest).unwrap();
+        (credis_id, fidelity, interest)
+    });
+    paying(&mut provider, credis_id, interest, |storage| {
+        runtime::settle_credis(storage, bob(), credis_id, interest).unwrap()
+    });
+    StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
+    });
 
-        let half = pledge_cost() / U256::from(2);
-        settle_principal(&storage, bob(), credis_id, pledge_stables() / U256::from(2));
+    let half = pledge_cost() / U256::from(2);
+    settle_principal(
+        &mut provider,
+        bob(),
+        credis_id,
+        pledge_stables() / U256::from(2),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(view_balance(&storage, alice()), half);
         assert_eq!(view_pledged(&storage, alice()), pledge_cost() - half);
         assert_eq!(
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
             pledge_cost() - half
         );
-        settle_principal(&storage, bob(), credis_id, pledge_stables() / U256::from(2));
+    });
+    settle_principal(
+        &mut provider,
+        bob(),
+        credis_id,
+        pledge_stables() / U256::from(2),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(view_balance(&storage, alice()), pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(view_balance(&storage, bob()), U256::ZERO);
