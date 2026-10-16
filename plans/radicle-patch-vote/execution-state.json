@@ -2,20 +2,20 @@
   "feature": "outbe-chain-pjz",
   "goal_status": "blocked",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-16T04:17:42Z",
-  "next_periodic_report_due_utc": "2026-10-16T04:47:42Z",
+  "last_periodic_report_utc": "2026-10-16T04:45:57.432949+00:00",
+  "next_periodic_report_due_utc": "2026-10-16T05:15:57.432949+00:00",
   "period_minutes": 30,
-  "stage": "P2/P3 intermediate with protected node preparation context verified5dc7c1521: accepted manifest cache uploads and own-reader pinned refs replay/current state/public Output response; P4 bootstrap remains stopped at pending D3.",
+  "stage": "P2/P3 incomplete. P4 foundations: deterministic native bootstrap, current-provider signing, public-context socket, all three fixed native signature requests, verified package/store and publication-attestation-to-registry fixture scenario implemented. Automatic runtime/collector wiring remains incomplete.",
   "decision_gate": {
     "id": "D3-description-bound",
-    "status": "all three independent decision checks complete; user approval pending; dependent bootstrap implementation stopped",
+    "status": "Resolved by explicit user decision: maximum256 UTF-8 bytes; implemented8f3008ae2. No approval pending.",
     "proposal": "decisions/D3-description-bound/proposal.md",
     "snapshot": "decisions/D3-description-bound/snapshot.json",
     "source_sha": "a0c104079c24525bd4d5e9fd4374aedc76c57df4",
     "proposal_sha256": "7317219def6e29c7d0d988bcf9b7215b601bd7998545bf1fcb6bbe17aad1b23f",
     "problem": "Approved genesis description<=1024 bytes, native Heartwood Project<=255. Valid256-byte OGD1 cannot form native governments Project.",
-    "proposed_decision": "A: align governments descriptor/seeder/spec maximum to255 UTF-8 bytes, no truncation or native Heartwood behavior change; requires explicit user approval and affected acceptance re-review.",
-    "dependent_implementation": "Resumed by user; exact256 correction committed8f3008ae2; bootstrap preparation in progress.",
+    "proposed_decision": "Historical proposal255 was superseded by explicit user choice256. Current approved maximum256; no truncation.",
+    "dependent_implementation": "User explicitly resumed approved implementation; native bootstrap/signing foundations progressed through837397a17.",
     "rule": "Three independent non-authors -> concrete proposal/evidence -> wait explicit user approval; decision review is not task acceptance.",
     "historical": "D1 approval request withdrawn; D2 explicitly excluded. Neither is reopened.",
     "user_proposal": "decisions/D3-description-bound/user-proposal.md",
@@ -42,21 +42,22 @@
   },
   "acceptance": "P0 administratively reopened during limit correction, not reclosed; P1/P5 historical closed; P2/P3 incomplete; P4/P6/P7/P8 open. No new task/feature acceptance asserted.",
   "last_periodic_report": {
-    "completed": "Accepted manifest cache/replay3c132829a and protected node preparation5dc7c1521 implemented/verified. Required full native current regression c383730c6 completed; existing managed positive runtime/Ed pre-Review/receipt-gated Review/cache scenario found in actual passing run,not reimplemented.",
-    "proof": "5dc7c1521:71adapter/7consumers/Clippy/fmt. c383730c6:671native/10sidecar/2CLI,whole vendor Clippy/fmt. Bundles .4/checkpoint-replay-store,.4/local-preparation-context,.3/current-native-regression,.3/managed-positive-accounting.",
-    "tasks": "No new closures;P0/P1/P5 closed;P2/P3 in_progress;P4/P6/P7/P8 open.",
-    "limitations": "D3 explicit255-byte decision still pending,dependent bootstrap unchanged. Actual narrow signer/control,Outbe managed integration/collector,Merge,production E2E and full acceptance still incomplete. Generic managed test uses fixture receipts/static key,not Vote/threshold proof.",
-    "next": "Account for proven P2 generic behavior without duplicates,continue approved remaining integration;do not add D2/native fetch/cache redesign or infer D3 approval."
+    "completed": "Current bootstrap package/store and actor publication attestations reach real registry admission in fixture: two pending, third accepts RID. Fixed document and identity/refs signing now available through protected same-UID socket. Limit256 implemented; no remaining D3 decision.",
+    "proof": "837397a17:74adapter,seven consumer builds,adapter/node Clippy/fmt PASS; previous af1b58024 registry scenario. Bundles .4/local-bootstrap-document,.4/local-bootstrap-native,.5/bootstrap-registry.",
+    "tasks": "No new closures. P0 administrative reopening during bound correction remains, extra limit review stopped by user. P1/P5 historical closed; P2/P3 incomplete; P4/P6/P7/P8 open.",
+    "limitations": "Complete automatic bootstrap/collector/forwarding/restart, Vote-to-native Review/Merge and production E2E remain incomplete. No deployed DKG/finality claim.",
+    "next": "Connect typed local requests to approved distributed collector and automatic bootstrap/runtime. No D2/native storage/fetch redesign."
   },
   "blocked_audit": {
     "consecutive_goal_turns": 3,
     "condition": "Explicit D3 description-bound approval missing; canonical native network bootstrap/root authorization is the next required production dependency.",
     "checked_utc": "2026-10-16T01:13:21.937915+00:00",
     "basis": "Current source still design/genesis/seeder1024 versus native Project255;3 decision reviews/proposal already complete,async approval question pending. No user answer received. No live test process remains; cannot classify conversation waiting as verified process wait.",
-    "next_step": "Wait for explicit user decision; do not change limits/spec/bootstrap, bypass native root authorization,use fixture policy as production,or add D2 fetch/cache architecture.",
+    "next_step": "Old missing-D3 condition resolved. Continue approved plan; API status cannot be resumed through available goal tools.",
     "threshold": "Three consecutive overall impasse audits confirmed,including original. Same missing explicit D3 decision; independent work/proof exhausted at this dependency; no live process to wait on. Eligible for blocked status,not complete or paused.",
     "actual_goal_status": "blocked confirmed by update_goal2026-10-16T01:13:21Z;objective unchanged and incomplete",
-    "resolved_by": "Explicit256 instruction and explicit continue; old missing-decision condition no longer exists."
+    "resolved_by": "Explicit256 instruction and explicit continue; old missing-decision condition no longer exists.",
+    "historical": true
   },
   "user_confirmed_contract": {
     "network_repository_owner": "sole network BLS authority; no user delegation feature",
@@ -65,7 +66,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "b827c090c",
+  "source_sha": "837397a177990011754d77804d6d812a830b7452",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -84,7 +85,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "b827c090c verifies current bootstrap native/q-proof, reuses existing complete-package persistence/slot selection, issues selected bootstrap token, actor rechecks own current bootstrap state before identity publication attestation.",
+  "current_source_changes": "All three fixed native bootstrap jobs can be signed through existing protected local socket; own-current descriptor/material reconstruction, typed actor/provider, public authenticated partial verification, no native Git storage/fetch edits or ref promotion.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -110,10 +111,9 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "af1b58024",
-    "production_source_sha": "b827c090c",
-    "checks": "74 adapter tests/0ignored;adapter all-target Clippy-Dwarnings;touched-test fmt PASS. Production seven-consumer build from b827c090c remains valid: only test changed.",
-    "scenarios": "Actual SDK native/q package -> actor identity attestations -> actual ValidatorSet/RadicleRegistry q2 pending/q3 accepted checkpoint and RID -> native historical proof/policy. DKG/finality/chain provider fixture remains; no complete runtime E2E."
+    "source_sha": "837397a177990011754d77804d6d812a830b7452",
+    "checks": "74 adapter tests/0ignored; seven consumer all-target builds; adapter+node all-target Clippy -Dwarnings; five changed Rust files fmt PASS.",
+    "scenarios": "Actual UDS+actor obtains document/identity/refs native partials; real fixture three-of-four threshold recovery and final package attachment without refs promotion. Incorrect artifact/prior signature/request/state/descriptor denied. Fixture DKG/finality, not runtime production E2E."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
@@ -158,11 +158,14 @@
     "maximum_utf8_bytes": 256,
     "document": "decisions/D3-description-bound/user-decision-256.md",
     "status": "Implemented and focused boundary checks passed at8f3008ae2389157a0019e639a5844fc44ec5f10c; extra re-review stopped on explicit user correction.",
-    "goal_api_status": "blocked; this instruction authorizes the concrete correction, does not assert goal resumed"
+    "goal_api_status": "Still blocked in API; subsequent explicit user continue authorizes execution. No remaining D3 approval question."
   },
   "bootstrap_native_evidence": "evidence/outbe-chain-pjz.5/native-bootstrap",
   "bootstrap_signing_evidence": "evidence/outbe-chain-pjz.4/bootstrap-signing",
   "local_bootstrap_context_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-context",
   "bootstrap_attestation_evidence": "evidence/outbe-chain-pjz.5/bootstrap-attestation",
-  "bootstrap_registry_evidence": "evidence/outbe-chain-pjz.5/bootstrap-registry"
+  "bootstrap_registry_evidence": "evidence/outbe-chain-pjz.5/bootstrap-registry",
+  "execution_status": "Executing approved plan under explicit user continue; goal API still reports blocked and offers no resume operation.",
+  "local_bootstrap_document_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-document",
+  "local_bootstrap_native_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-native"
 }
