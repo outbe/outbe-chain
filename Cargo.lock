@@ -10829,7 +10829,6 @@ dependencies = [
  "indexmap 2.14.0",
  "libc",
  "log",
- "multibase",
  "nonempty 0.9.0",
  "qcheck",
  "radicle-cob",
