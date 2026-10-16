@@ -78,6 +78,26 @@ impl SelectedReviewPublication {
     }
 }
 
+pub struct SelectedBootstrapPublication {
+    publication: Arc<crate::integration::bootstrap::VerifiedBootstrapPublication>,
+}
+
+impl SelectedBootstrapPublication {
+    pub fn body(&self) -> &PublicationBody {
+        self.publication.body()
+    }
+    pub fn manifest(&self) -> &PublicationManifest {
+        self.publication.manifest()
+    }
+    pub fn authorize_current(
+        &self,
+        state: &crate::manager::FinalizedBootstrapSigningState,
+        material: &RepositorySigningMaterial,
+    ) -> Result<(), crate::integration::bootstrap::Error> {
+        self.publication.authorize_current(state, material)
+    }
+}
+
 /// Loaded bytes still require native package verification or an authenticated accepted receipt.
 pub struct StoredReviewPackage {
     pub body: PublicationBody,
@@ -209,13 +229,47 @@ impl ReviewPackageStore {
         publication: Arc<VerifiedReviewPublication>,
         witness: &RepositoryWitnessBundle,
     ) -> Result<SelectedReviewPublication, Error> {
-        let body_hash = publication.body().receipt_hash();
+        self.persist(
+            repo,
+            publication.body(),
+            publication.manifest(),
+            publication.witness_hash(),
+            witness,
+        )?;
+        Ok(SelectedReviewPublication { publication })
+    }
+
+    pub fn persist_and_select_bootstrap(
+        &mut self,
+        repo: &Repository,
+        publication: Arc<crate::integration::bootstrap::VerifiedBootstrapPublication>,
+        witness: &RepositoryWitnessBundle,
+    ) -> Result<SelectedBootstrapPublication, Error> {
+        self.persist(
+            repo,
+            publication.body(),
+            publication.manifest(),
+            publication.witness_hash(),
+            witness,
+        )?;
+        Ok(SelectedBootstrapPublication { publication })
+    }
+
+    fn persist(
+        &mut self,
+        repo: &Repository,
+        body: &PublicationBody,
+        manifest: &PublicationManifest,
+        expected_witness_hash: B256,
+        witness: &RepositoryWitnessBundle,
+    ) -> Result<(), Error> {
+        let body_hash = body.receipt_hash();
         let witness_bytes = witness.to_bytes()?;
         let witness_hash: B256 = Sha256::hash(&[&witness_bytes]).0.into();
-        if witness_hash != publication.witness_hash() {
+        if witness_hash != expected_witness_hash {
             return Err(Error::Corrupt);
         }
-        let slot = review_slot_key(publication.body());
+        let slot = review_slot_key(body);
         if let Some((body, witness)) = self.selection(slot)? {
             if body != body_hash {
                 return Err(Error::SlotConflict);
@@ -228,13 +282,10 @@ impl ReviewPackageStore {
         for child in ["objects", "witnesses", "ready"] {
             private_dir(&directory.join(child))?;
         }
-        write_once(&directory.join("body"), &publication.body().to_bytes())?;
-        write_once(
-            &directory.join("manifest"),
-            &publication.manifest().to_bytes()?,
-        )?;
+        write_once(&directory.join("body"), &body.to_bytes())?;
+        write_once(&directory.join("manifest"), &manifest.to_bytes()?)?;
         let odb = repo.raw().odb()?;
-        for row in publication.manifest().objects() {
+        for row in manifest.objects() {
             let oid: git::Oid = row.oid.parse().map_err(|_| Error::Corrupt)?;
             let (size, kind) = odb.read_header(oid.into())?;
             if size > MAX_OBJECT_BYTES || kind != object_type(row.kind) {
@@ -259,7 +310,7 @@ impl ReviewPackageStore {
             READY,
         )?;
         self.select(slot, body_hash, witness_hash)?;
-        Ok(SelectedReviewPublication { publication })
+        Ok(())
     }
 
     pub fn load_selected(

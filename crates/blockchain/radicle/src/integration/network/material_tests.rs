@@ -650,3 +650,109 @@ pub(crate) async fn bootstrap_partials(
     }
     frames
 }
+
+pub(crate) async fn bootstrap_attestations(
+    publication: Arc<super::super::publication::store::SelectedBootstrapPublication>,
+    state: &crate::manager::FinalizedBootstrapSigningState,
+    output: &Output<MinSig, bls12381::PublicKey>,
+    keys: &[bls12381::PrivateKey],
+) -> Vec<PublicationAttestation> {
+    let outsider = bls12381::PrivateKey::from_seed(9999);
+    let mut cases: Vec<_> = keys.iter().enumerate().map(|(i, k)| (i, k, true)).collect();
+    cases.push((0, &outsider, false));
+    let mut attestations = vec![];
+    for (index, key, eligible) in cases {
+        let reader = Arc::new(BootstrapReader(Mutex::new(Some(state.clone()))));
+        let validator = state.authority().committee().committee[index].address;
+        let (_, status) = RadicleStatusChannel::enabled(validator, [1; 32]);
+        let (service, resolver, _) = EndpointNetwork::build(
+            ChainIdentity {
+                chain_id: state.authority().chain_id(),
+                genesis_hash: state.authority().genesis_hash(),
+            },
+            status,
+        );
+        let mut service = service.with_repository_authority_reader(reader.clone());
+        let publisher = service.take_repository_material_publisher().unwrap();
+        let (_, local) = LocalEndpointIdentityChannel::create(LocalEndpointIdentity {
+            validator,
+            node_id: [1; 32],
+            addresses: vec![EndpointAddress::dns("local.example", 8776).unwrap()],
+        });
+        let (_incoming, receiver) = mpsc::unbounded_channel();
+        let task = tokio::spawn(service.run(
+            EndpointTransport {
+                sender: NoSend,
+                receiver: TestReceiver(receiver),
+            },
+            EndpointSigningIdentity {
+                signer: key.clone(),
+                local,
+            },
+        ));
+        assert!(resolver
+            .attest_bootstrap(publication.clone())
+            .await
+            .is_err());
+        // Publication attestation uses the validator identity, not a local threshold Share.
+        publisher.publish(
+            state.authority().epoch(),
+            state.authority().committee().vrf_material_version,
+            Some(output),
+        );
+        let result = resolver.attest_bootstrap(publication.clone()).await;
+        if !eligible {
+            assert!(matches!(
+                result,
+                Err(super::super::bootstrap::Error::Signing(
+                    signing::Error::Participant
+                ))
+            ));
+        } else {
+            let attestation = result.unwrap();
+            assert_eq!(attestation.participant_index, index as u32);
+            let signature = bls12381::Signature::decode(attestation.signature.as_slice()).unwrap();
+            assert!(key.public_key().verify(
+                PUBLICATION_NAMESPACE,
+                &publication.body().to_bytes(),
+                &signature
+            ));
+            assert!(!key.public_key().verify(
+                b"outbe.radicle.partial.v1",
+                &publication.body().to_bytes(),
+                &signature
+            ));
+            attestations.push(attestation);
+            let mut changed = state.clone();
+            changed.descriptor.description.push('!');
+            *reader.0.lock() = Some(changed);
+            assert!(resolver
+                .attest_bootstrap(publication.clone())
+                .await
+                .is_err());
+            *reader.0.lock() = None;
+            assert!(resolver
+                .attest_bootstrap(publication.clone())
+                .await
+                .is_err());
+            *reader.0.lock() = Some(state.clone());
+            publisher.publish(
+                state.authority().epoch() + 1,
+                state.authority().committee().vrf_material_version + 1,
+                Some(output),
+            );
+            assert!(resolver
+                .attest_bootstrap(publication.clone())
+                .await
+                .is_err());
+            drop(publisher);
+            assert!(resolver
+                .attest_bootstrap(publication.clone())
+                .await
+                .is_err());
+        }
+        resolver.shutdown().await.unwrap();
+        task.await.unwrap().unwrap();
+    }
+    attestations
+}

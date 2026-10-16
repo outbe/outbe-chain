@@ -311,6 +311,61 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
             vec![document_frames[..2].to_vec(), identity_frames, refs_frames],
         )
         .unwrap();
+        let verified = Arc::new(
+            verify_bootstrap_publication(
+                &repo, &state, &material, b"[]", &body, &manifest, &witness,
+            )
+            .unwrap(),
+        );
+        let store_path = temp.path().join("publication-store");
+        let mut store =
+            super::super::publication::store::ReviewPackageStore::open(&store_path).unwrap();
+        assert!(store
+            .persist_and_select_bootstrap(&repo, verified.clone(), &short)
+            .is_err());
+        let selected = Arc::new(
+            store
+                .persist_and_select_bootstrap(&repo, verified, &witness)
+                .unwrap(),
+        );
+        assert_eq!(
+            super::super::network::material_tests::bootstrap_attestations(
+                selected,
+                &state,
+                &dkg.output,
+                &keys
+            )
+            .await
+            .len(),
+            4
+        );
+        let slot = super::super::publication::store::review_slot_key(&body);
+        drop(store);
+        let store =
+            super::super::publication::store::ReviewPackageStore::open(&store_path).unwrap();
+        let replay_storage = radicle::Storage::open(
+            temp.path().join("replay"),
+            git::UserInfo {
+                alias: radicle::node::Alias::new("Replay"),
+                key: *author.public_key(),
+            },
+        )
+        .unwrap();
+        let replay_repo = replay_storage.create(repo.id()).unwrap();
+        let loaded = store.load_selected(slot, &replay_repo).unwrap().unwrap();
+        assert_eq!(loaded.body, body);
+        assert_eq!(loaded.manifest, manifest);
+        verify_bootstrap_publication(
+            &replay_repo,
+            &state,
+            &material,
+            b"[]",
+            &loaded.body,
+            &loaded.manifest,
+            &loaded.witness,
+        )
+        .unwrap();
+        assert_eq!(replay_repo.raw().references().unwrap().count(), 0);
         assert!(verify_accepted_bootstrap(&repo, &descriptor, b"[]", &verifier, &short).is_err());
         assert!(
             verify_accepted_bootstrap(&repo, &descriptor, b"[]\n", &verifier, &witness).is_err()

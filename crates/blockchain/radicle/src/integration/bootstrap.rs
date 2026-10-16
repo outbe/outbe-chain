@@ -383,6 +383,112 @@ impl PreparedBootstrapRefs {
     }
 }
 
+/// Full native/q-proof checked package, still requiring current permission and durable selection.
+pub struct VerifiedBootstrapPublication {
+    body: PublicationBody,
+    manifest: PublicationManifest,
+    witness_hash: B256,
+}
+
+impl VerifiedBootstrapPublication {
+    pub fn body(&self) -> &PublicationBody {
+        &self.body
+    }
+    pub fn manifest(&self) -> &PublicationManifest {
+        &self.manifest
+    }
+    pub(crate) fn witness_hash(&self) -> B256 {
+        self.witness_hash
+    }
+    pub fn authorize_current(
+        &self,
+        state: &crate::manager::FinalizedBootstrapSigningState,
+        material: &RepositorySigningMaterial,
+    ) -> Result<(), Error> {
+        if material.authority() != state.authority() {
+            return Err(Error::Descriptor);
+        }
+        let mut expected = prepare_bootstrap_document(state.descriptor(), material)?.body;
+        expected.package_manifest_hash = self.manifest.hash()?;
+        if expected != self.body {
+            return Err(Error::Descriptor);
+        }
+        Ok(())
+    }
+}
+
+pub fn prepare_bootstrap_publication(
+    repo: &Repository,
+    state: &crate::manager::FinalizedBootstrapSigningState,
+    material: &RepositorySigningMaterial,
+    content_manifest: &[u8],
+    signatures: [&BlsEnvelope; 3],
+    witness: &super::signing::witness::RepositoryWitnessBundle,
+) -> Result<VerifiedBootstrapPublication, Error> {
+    if material.authority() != state.authority() {
+        return Err(Error::Descriptor);
+    }
+    let job = prepare_bootstrap_document(state.descriptor(), material)?;
+    let (body, manifest) =
+        reconstruct_bootstrap(repo, job, content_manifest, signatures, |actual| {
+            witness.verify(material, actual)
+        })?;
+    Ok(VerifiedBootstrapPublication {
+        body,
+        manifest,
+        witness_hash: Sha256::hash(&[&witness.to_bytes()?]).0.into(),
+    })
+}
+
+/// Reverify a persisted/received candidate; commitments alone do not authorize publication.
+pub fn verify_bootstrap_publication(
+    repo: &Repository,
+    state: &crate::manager::FinalizedBootstrapSigningState,
+    material: &RepositorySigningMaterial,
+    content_manifest: &[u8],
+    body: &PublicationBody,
+    manifest: &PublicationManifest,
+    witness: &super::signing::witness::RepositoryWitnessBundle,
+) -> Result<VerifiedBootstrapPublication, Error> {
+    manifest.bind_receipt(body)?;
+    if manifest.subjects().len() != 3 {
+        return Err(Error::Descriptor);
+    }
+    let signatures = manifest
+        .subjects()
+        .iter()
+        .map(|entry| BlsEnvelope::from_hex(&entry.envelope))
+        .collect::<Result<Vec<_>, _>>()?;
+    let expected = prepare_bootstrap_publication(
+        repo,
+        state,
+        material,
+        content_manifest,
+        [&signatures[0], &signatures[1], &signatures[2]],
+        witness,
+    )?;
+    if expected.body != *body || expected.manifest != *manifest {
+        return Err(Error::Descriptor);
+    }
+    Ok(expected)
+}
+
+fn reconstruct_bootstrap(
+    repo: &Repository,
+    job: PreparedBootstrapDocument,
+    content_manifest: &[u8],
+    signatures: [&BlsEnvelope; 3],
+    verify: impl FnOnce(&[(RepositorySubject, BlsEnvelope)]) -> Result<(), super::signing::Error>,
+) -> Result<(PublicationBody, PublicationManifest), Error> {
+    let mut actual = vec![(job.subject().clone(), signatures[0].clone())];
+    let identity = job.attach(repo, signatures[0], content_manifest)?;
+    actual.push((identity.subject().clone(), signatures[1].clone()));
+    let refs = identity.attach(repo, signatures[1])?;
+    actual.push((refs.subject().clone(), signatures[2].clone()));
+    verify(&actual)?;
+    refs.attach(repo, signatures[2])
+}
+
 /// Exact accepted bootstrap only; cannot authorize a new signature or a different root.
 pub struct AcceptedBootstrapPublication {
     receipt: crate::manager::FinalizedPublicationReceipt,
@@ -456,13 +562,13 @@ pub fn verify_accepted_bootstrap(
         .iter()
         .map(|subject| BlsEnvelope::from_hex(&subject.envelope))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut actual = vec![(job.subject().clone(), signatures[0].clone())];
-    let identity = job.attach(repo, &signatures[0], content_manifest)?;
-    actual.push((identity.subject().clone(), signatures[1].clone()));
-    let refs = identity.attach(repo, &signatures[1])?;
-    actual.push((refs.subject().clone(), signatures[2].clone()));
-    witness.verify_accepted(verifier, &actual)?;
-    let (expected, manifest) = refs.attach(repo, &signatures[2])?;
+    let (expected, manifest) = reconstruct_bootstrap(
+        repo,
+        job,
+        content_manifest,
+        [&signatures[0], &signatures[1], &signatures[2]],
+        |actual| witness.verify_accepted(verifier, actual),
+    )?;
     if expected != *body || manifest != *verifier.manifest() {
         return Err(Error::Descriptor);
     }

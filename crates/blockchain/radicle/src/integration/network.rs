@@ -151,6 +151,10 @@ struct EndpointRefresh<'a> {
 }
 
 enum NetworkCommand {
+    RepositoryBootstrapAttestation {
+        publication: Arc<super::publication::store::SelectedBootstrapPublication>,
+        result: oneshot::Sender<Result<PublicationAttestation, super::bootstrap::Error>>,
+    },
     RepositoryBootstrapPartial {
         job: RepositoryBootstrapJob,
         result: oneshot::Sender<Result<signing::RepositoryPartial, signing::Error>>,
@@ -253,6 +257,23 @@ impl EndpointNetworkResolver {
     ) -> Result<signing::RepositoryPartial, signing::Error> {
         self.review_partial(RepositoryReviewJob::Refs(job)).await
     }
+    pub async fn attest_bootstrap(
+        &self,
+        publication: Arc<super::publication::store::SelectedBootstrapPublication>,
+    ) -> Result<PublicationAttestation, super::bootstrap::Error> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::RepositoryBootstrapAttestation {
+                publication,
+                result,
+            })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
+
     pub async fn sign_bootstrap_document(
         &self,
         job: Arc<super::bootstrap::PreparedBootstrapDocument>,
@@ -383,6 +404,39 @@ impl EndpointNetworkService {
 }
 
 impl EndpointNetworkState {
+    fn bootstrap_attestation(
+        &self,
+        publication: &super::publication::store::SelectedBootstrapPublication,
+        identity: &bls12381::PrivateKey,
+        validator: Address,
+    ) -> Result<PublicationAttestation, super::bootstrap::Error> {
+        let state = self
+            .repository_authority
+            .as_ref()
+            .ok_or(signing::Error::Unavailable)?
+            .read_current_bootstrap_signing_state()
+            .map_err(signing::Error::from)?;
+        if state.authority().chain_id() != self.chain.chain_id
+            || state.authority().genesis_hash() != self.chain.genesis_hash
+        {
+            return Err(super::bootstrap::Error::Descriptor);
+        }
+        let owner =
+            radicle::crypto::BlsPublicKey::from_bytes(publication.body().owner_bls_public.0)?;
+        let material = self
+            .repository_material
+            .current(state.authority().clone(), owner)?;
+        publication.authorize_current(&state, &material)?;
+        let index = material.participant_for(validator, identity)?;
+        let signature = identity
+            .sign(PUBLICATION_NAMESPACE, &publication.body().to_bytes())
+            .encode();
+        Ok(PublicationAttestation {
+            participant_index: index.get(),
+            signature: alloy_primitives::FixedBytes::from_slice(signature.as_ref()),
+        })
+    }
+
     fn review_attestation(
         &self,
         publication: &SelectedReviewPublication,
@@ -544,6 +598,10 @@ impl EndpointNetworkState {
                     match command {
                         Some(NetworkCommand::RepositoryReviewAttestation {publication,result})=>{
                             let _=result.send(self.review_attestation(&publication,&signer,local.validator));
+                        }
+                        Some(NetworkCommand::RepositoryBootstrapAttestation {publication,result})=>{
+                            let attestation = self.bootstrap_attestation(&publication,&signer,local.validator);
+                            let _ = result.send(attestation);
                         }
                         Some(NetworkCommand::RepositoryBootstrapPartial {job,result})=>{
                             let partial = self.bootstrap_partial(&job,&signer,local.validator);
