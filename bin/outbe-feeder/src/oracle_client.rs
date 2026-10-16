@@ -133,6 +133,18 @@ impl OracleClient {
         let bytes: Bytes = serde_json::from_value(result)?;
         Ok(C::abi_decode_returns(&bytes)?)
     }
+    /// The node's feeder sources TOML at `height`.
+    pub async fn sources(&self, height: u64) -> Result<String> {
+        let call = IOracle::getSourcesCall {};
+        let result = self
+            .rpc(
+                "eth_call",
+                json!([{"to":ORACLE_ADDRESS,"data":Bytes::from(call.abi_encode())},format!("{height:#x}")]),
+            )
+            .await?;
+        let bytes: Bytes = serde_json::from_value(result)?;
+        Ok(IOracle::getSourcesCall::abi_decode_returns(&bytes)?)
+    }
     pub async fn preflight(
         &self,
         head: &Head,

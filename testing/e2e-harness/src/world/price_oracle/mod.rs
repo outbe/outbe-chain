@@ -775,7 +775,7 @@ struct FeederConfigInput<'a> {
 
 fn write_feeder_config(path: &Path, input: &FeederConfigInput<'_>) -> Result<()> {
     let mut config = format!(
-        "[chain]\nrpc_endpoint = \"{}\"\nchain_id = {}\ngasless_oracle_votes = true\n\n[account]\nprivate_key = \"{}\"\nvalidator_address = \"{}\"\n\n[oracle]\nvote_period = {}\npoll_interval_secs = 1\n\n[health]\nenabled = false\n",
+        "[chain]\nrpc_endpoint = \"{}\"\nchain_id = {}\ngasless_oracle_votes = true\n\n[account]\nprivate_key = \"{}\"\nvalidator_address = \"{}\"\n\n[oracle]\nvote_period = {}\npoll_interval_secs = 1\nsources = \"local\"\n\n[health]\nenabled = false\n",
         input.rpc_url,
         input.chain_id,
         input.private_key,

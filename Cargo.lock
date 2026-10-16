@@ -9180,6 +9180,7 @@ dependencies = [
  "outbe-macros",
  "outbe-primitives",
  "outbe-staking",
+ "outbe-update",
  "outbe-validatorset",
  "serde_json",
  "thiserror 2.0.18",
