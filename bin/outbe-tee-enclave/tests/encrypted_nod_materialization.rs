@@ -131,7 +131,7 @@ fn materialization_binds_current_authority_and_exact_authenticated_source() {
         .as_object_mut()
         .unwrap()
         .remove("nod_gratis_load_max");
-    assert!(serde_json::from_value::<NodMaterializationAuthorityV2>(old_authority).is_err());
+    assert!(serde_json::from_value::<StateNodAuthority>(old_authority).is_err());
     let mut stale = authority.clone();
     stale.source.checkpoint.state_root = B256::repeat_byte(99);
     assert!(open(&secret, &stale, &carrier).is_err());
