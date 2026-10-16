@@ -5,7 +5,6 @@ use outbe_compressed_entities::{
     ExecutionReaders, ExecutionScope, ParentBodySource, VerifiedBody, WwdEntityId,
 };
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
-use outbe_primitives::time::first_full_day;
 use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
@@ -16,7 +15,6 @@ use crate::schema::{CallTerms, EffectiveState, NodBucketState, NodContract, NodI
 #[must_use]
 pub fn effective_state(
     item: &NodItemState,
-    qualified: bool,
     called_at: u64,
     deadline: u64,
     now: U256,
@@ -27,23 +25,9 @@ pub fn effective_state(
         EffectiveState::Forfeited
     } else if called_at != 0 {
         EffectiveState::Called
-    } else if qualified {
-        EffectiveState::Qualified
     } else {
         EffectiveState::Issued
     }
-}
-
-pub fn is_qualified(storage: &StorageHandle<'_>, bucket: &NodBucketState) -> Result<bool> {
-    let issued_at = NodContract::new(storage.clone())
-        .bucket_issued_at
-        .read(&bucket.bucket_key)?;
-    outbe_oracle::api::closed_above_floor(
-        storage.clone(),
-        bucket.reference_currency,
-        bucket.floor_price_minor()?,
-        first_full_day(issued_at),
-    )
 }
 
 /// The Nod's settlement cost: `floor(entry_price_minor * gratis_load_minor / 1e6)`.

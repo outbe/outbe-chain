@@ -54,7 +54,7 @@ fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<()>) -> Re
 }
 
 /// Issue one Nod straight to its owner. A non-zero `issuedAt` restamps the bucket,
-/// since calls and qualification count only days after it.
+/// since calls count only days after it.
 fn issue(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,

@@ -5,7 +5,6 @@ fn quote_prices_both_rails() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xa2));
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.register_settlement_asset(PAYMENT_ASSET, 840);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
@@ -56,7 +55,6 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xa9));
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.register_settlement_asset(PAYMENT_ASSET, 840);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
@@ -99,7 +97,6 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xab));
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
@@ -143,7 +140,6 @@ fn a_snapshot_of_another_policy_is_rejected() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xaa));
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
@@ -188,7 +184,6 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xa3));
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
@@ -245,7 +240,6 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
     let mut world = World::new();
     let input = params(Address::repeat_byte(0xa4));
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.register_reference_currency_asset(PAYMENT_ASSET);
     world.provider.stub_sub_call_at_selector(
         outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
@@ -284,7 +278,6 @@ fn issuance_rail_rejects_a_leg_the_window_never_priced() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xa5));
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
     // The euro trades live, but the window it converts at holds no euro price.
@@ -316,7 +309,6 @@ fn issuance_rail_rejects_a_missing_cross_rate() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xa6));
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
 
@@ -367,7 +359,6 @@ fn issuance_rail_rejects_a_window_whose_prices_fail_coverage() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xac));
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_spot(840, U256::from(2 * SCALE_1E6_U64));
     world.publish_coen_spot(978, U256::from(SCALE_1E6_U64));

@@ -4,12 +4,7 @@ use outbe_primitives::call_bins::BIN_STEP_BP;
 use outbe_primitives::markup::marked_up;
 use outbe_primitives::{error::Result, math::reference_price};
 
-/// Calculates the floor from the entry price. Returns `None` on overflow.
-pub fn floor_price_minor(entry_price_minor: U256) -> Option<U256> {
-    marked_up(entry_price_minor, crate::constants::FLOOR_RATE_PCT)
-}
-
-/// Whether the floor and the call price at any `u16` call rate fit `U256` for this entry.
+/// Whether the call price at any `u16` call rate fits `U256` for this entry.
 pub fn is_issuable_entry(entry_price_minor: U256) -> bool {
     marked_up(entry_price_minor, u16::MAX).is_some()
 }

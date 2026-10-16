@@ -7,7 +7,6 @@ interface INodFactory {
         uint256 nodId,
         uint256 worldwideDay,
         uint256 leagueId,
-        uint256 floorPriceMinor,
         bytes encryptedGratisAmount,
         uint256 entryPriceMinor,
         uint256 settlementCostMinor
@@ -63,7 +62,7 @@ interface INodFactory {
         bytes32 stateEventDigest
     );
 
-    /// @notice Pay a qualified Nod, or a called one at or before its settlement
+    /// @notice Pay an uncalled Nod, or a called one at or before its settlement
     /// deadline, in ERC20 base units of `asset`. Any caller may pay. The Nod stays
     /// with its owner. Approve NodFactory for the `quoteSettlement` amount first.
     /// The asset must have a reserve vault and report the Nod's reference or

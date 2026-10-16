@@ -102,8 +102,7 @@ fn dispatch_entity(
             let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
             let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
                 .ok_or(NodError::BucketNotFound)?;
-            let qualified = api::is_qualified(&storage, &bucket)?;
-            crate::metadata::token_uri(nod, &item, &bucket, qualified, storage.timestamp()?)
+            crate::metadata::token_uri(nod, &item, &bucket, storage.timestamp()?)
         }),
         tokenByIndex(c) => view(c, |c| {
             let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
@@ -152,14 +151,12 @@ fn to_abi_data(
     } else {
         api::settlement_deadline_of(called_at, terms.call_notice_period_seconds)
     };
-    let qualified = api::is_qualified(storage, bucket)?;
-    let state = api::effective_state(item, qualified, called_at, deadline, storage.timestamp()?);
+    let state = api::effective_state(item, called_at, deadline, storage.timestamp()?);
     Ok(INod::NodData {
         nodId: item.nod_id.to_u256(),
         owner: item.owner,
         worldwideDay: item.worldwide_day.into(),
         leagueId: item.league_id,
-        floorPriceMinor: bucket.floor_price_minor()?,
         encryptedGratisAmount: item.encrypted.encrypted_gratis_amount.clone().into(),
         encryptedCreatorPublicKey: item.encrypted.encrypted_creator_public_key.clone().into(),
         encryptionBinding: item.encrypted.encryption_binding,
@@ -169,7 +166,6 @@ fn to_abi_data(
             bucket.entry_price_minor,
             api::calculation_amount(item)?,
         )?,
-        isQualified: qualified,
         issuanceCurrency: item.issuance_currency,
         referenceCurrency: item.reference_currency,
         issuedAt: item.issued_at,

@@ -318,42 +318,6 @@ impl World {
     fn set_timestamp(&mut self, timestamp: u64) {
         self.provider.set_timestamp(U256::from(timestamp));
     }
-
-    /// Closes the bucket's first full day above its floor, which qualifies it.
-    fn qualify(&mut self, nod_id: WwdEntityId) {
-        self.enter(|storage, scope, parent| {
-            let item = nod_api::get_item(&storage, scope, parent, nod_id)
-                .unwrap()
-                .unwrap();
-            let floor = nod_api::get_bucket(
-                &storage,
-                scope,
-                parent,
-                WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0),
-            )
-            .unwrap()
-            .unwrap()
-            .floor_price_minor()
-            .unwrap();
-            let issued_at = NodContract::new(storage.clone())
-                .bucket_issued_at
-                .read(&item.bucket_key)
-                .unwrap();
-            let pair = outbe_oracle::api::AddressPair::new_coen_to(item.reference_currency);
-            let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-            let mut index = oracle.pair_index_of(pair).unwrap();
-            if index == 0 {
-                index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
-            }
-            let day = outbe_primitives::time::first_full_day(issued_at);
-            oracle
-                .record_utc_day_vwap(day, index, floor + U256::from(1))
-                .unwrap();
-            if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
-                oracle.utc_day_vwap_last_finalized.write(day).unwrap();
-            }
-        });
-    }
 }
 
 const CHAIN_ID: u64 = 1;

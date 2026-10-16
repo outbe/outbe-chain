@@ -8,15 +8,14 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_compressed_entities::{ExecutionScope, WwdEntityId};
 use outbe_gratis::enclave_client::test_enclave;
-use outbe_nod::{precompile::INod, NodContract, NodIssueParams};
+use outbe_nod::{precompile::INod, NodIssueParams};
 use outbe_nodfactory::precompile::INodFactory;
 use outbe_offchain_storage::MemoryStorage;
-use outbe_oracle::test_support::record_finalized_day_vwap;
 use outbe_primitives::{
     addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     chain::CHAIN_ID,
     storage::{StorageHandle, SubCallStatus},
-    time::{first_full_day, WorldwideDay},
+    time::WorldwideDay,
 };
 use outbe_tee::protocol::GratisOp;
 use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
@@ -62,16 +61,6 @@ impl Rail for Nod {
             &outbe_nod::test_support::encrypted_fixture(&params, CHAIN_ID),
         )
         .unwrap();
-        // A finalized day above the floor qualifies the Nod's bucket.
-        let floor = outbe_nod::pricing::floor_price_minor(params.entry_price_minor).unwrap();
-        let bucket =
-            outbe_nod::identity::bucket_key(params.worldwide_day, params.entry_price_minor, 840);
-        let issued_at = NodContract::new(storage.clone())
-            .bucket_issued_at
-            .read(&bucket)
-            .unwrap();
-        record_finalized_day_vwap(storage, 840, first_full_day(issued_at), floor + U256::ONE)
-            .unwrap();
         (nod.to_u256(), 0)
     }
 

@@ -191,7 +191,6 @@ fn failed_authorization_preserves_the_loaded_nod() {
     let mut world = World::new();
     let input = free(Address::repeat_byte(0x33));
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.settle(nod_id, input.owner).unwrap();
     let nonce = world.pow_nonce(nod_id);
     world
@@ -221,7 +220,6 @@ fn invalid_gratis_mac_rolls_back_the_nod_burn() {
     let mut world = World::new();
     let input = free(Address::repeat_byte(0x45));
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.settle(nod_id, input.owner).unwrap();
     let nonce = world.pow_nonce(nod_id);
 
@@ -247,11 +245,10 @@ fn invalid_gratis_mac_rolls_back_the_nod_burn() {
 }
 
 #[test]
-fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
+fn mining_deletes_item_and_last_bucket_then_emits_burn() {
     let mut world = World::new();
     let input = free(Address::repeat_byte(0x55));
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.provider.clear_events(NOD_ADDRESS);
     world.provider.clear_events(NOD_FACTORY_ADDRESS);
     world.settle(nod_id, input.owner).unwrap();
@@ -306,15 +303,11 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
     );
 }
 
-/// Mining stays available to a Nod that qualified after issuance, with a
-/// payment step after qualification.
 #[test]
 fn a_nod_qualifying_after_issuance_still_mines() {
     let mut world = World::new();
     let input = free(Address::repeat_byte(0x5a));
     let nod_id = world.issue(&input);
-
-    world.qualify(nod_id);
 
     world.settle(nod_id, input.owner).unwrap();
     let nonce = world.pow_nonce(nod_id);
@@ -364,7 +357,6 @@ fn a_stranger_can_mine_with_the_owners_auth() {
     let mut world = World::new();
     let input = free(Address::repeat_byte(0x6a));
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.settle(nod_id, input.owner).unwrap();
     let nonce = world.pow_nonce(nod_id);
     let stranger = Address::repeat_byte(0x6b);

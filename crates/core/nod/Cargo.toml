@@ -11,7 +11,6 @@ outbe-tee.workspace = true
 outbe-macros.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-primitives.workspace = true
-outbe-oracle = { path = "../../system/oracle" }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-sol-types.workspace = true
 outbe-offchain-storage.workspace = true
@@ -24,6 +23,7 @@ x25519-dalek = { workspace = true, optional = true }
 
 [dev-dependencies]
 outbe-nod = { path = ".", features = ["test-enclave"] }
+outbe-oracle = { path = "../../system/oracle" }
 outbe-tee-enclave.workspace = true
 x25519-dalek.workspace = true
 outbe-compressed-entities = { workspace = true, features = ["test-utils"] }

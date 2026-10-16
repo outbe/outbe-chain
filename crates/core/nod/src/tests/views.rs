@@ -27,7 +27,6 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
             crate::test_support::sealed_terms(&storage, &item, U256::from(20)),
         )
         .unwrap();
-        qualify(&storage, &item, U256::from(20));
         let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
         api::record_settled(
             &storage,
@@ -88,15 +87,14 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
     use crate::precompile::{dispatch, INod};
     use alloy_sol_types::SolCall;
 
-    // qualified, paid, called_at, notice, now, expected state, expected deadline
-    for (qualified, paid, called_at, notice, now, state, deadline) in [
-        (false, false, 0, 17, 118, 0, 0),
-        (true, false, 0, 17, 118, 1, 0),
-        (true, false, 100, 17, 116, 2, 117),
-        (true, false, 100, 17, 117, 2, 117),
-        (true, false, 100, 17, 118, 4, 117),
-        (true, true, 100, 17, 118, 3, 117),
-        (true, false, u64::MAX - 1, 17, u64::MAX, 2, u64::MAX),
+    // paid, called_at, notice, now, expected state, expected deadline
+    for (paid, called_at, notice, now, state, deadline) in [
+        (false, 0, 17, 118, 0, 0),
+        (false, 100, 17, 116, 1, 117),
+        (false, 100, 17, 117, 1, 117),
+        (false, 100, 17, 118, 3, 117),
+        (true, 100, 17, 118, 2, 117),
+        (false, u64::MAX - 1, 17, u64::MAX, 1, u64::MAX),
     ] {
         let mut provider = HashMapStorageProvider::new(1);
         provider.set_timestamp(U256::from(now));
@@ -108,7 +106,6 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
                 &scope,
                 &parent,
                 PublicLifecycle {
-                    qualified,
                     paid,
                     called_at,
                     notice,
@@ -130,7 +127,6 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
             .unwrap();
             let data = INod::getNodCall::abi_decode_returns(&bytes).unwrap();
             assert_eq!(data.effectiveState, state);
-            assert_eq!(data.isQualified, qualified);
             assert_eq!(data.isSettled, paid);
             assert_eq!(data.calledAt, called_at);
             assert_eq!(data.settlementDeadline, deadline);
@@ -207,7 +203,7 @@ fn assert_lifecycle_metadata(uri: &str, state: u8, called_at: u64, paid: bool, d
             .unwrap(),
     )
     .unwrap();
-    let label = ["Issued", "Qualified", "Called", "Settled", "Forfeited"][usize::from(state)];
+    let label = ["Issued", "Called", "Settled", "Forfeited"][usize::from(state)];
     let mut expected = vec![
         format!(r#"{{"trait_type":"State","value":"{label}"}}"#),
         r#"{"trait_type":"Call Price","value":0.000937,"display_type":"number"}"#.to_string(),
@@ -226,7 +222,7 @@ fn assert_lifecycle_metadata(uri: &str, state: u8, called_at: u64, paid: bool, d
 }
 
 #[test]
-fn qualification_announces_nothing_and_settlement_updates_the_nod() {
+fn settlement_updates_only_the_settled_nod() {
     use crate::precompile::INod;
     use alloy_sol_types::SolEvent;
 
@@ -251,13 +247,6 @@ fn qualification_announces_nothing_and_settlement_updates_the_nod() {
             )
             .unwrap();
         }
-        close_day_above(
-            &storage,
-            USD,
-            crate::pricing::floor_price_minor(U256::from(600_000)).unwrap(),
-            first_full_day(first.issued_at),
-        );
-
         let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, first.bucket_key);
         api::record_settled(
             &storage,
@@ -283,7 +272,7 @@ fn qualification_announces_nothing_and_settlement_updates_the_nod() {
         .filter_map(|log| INod::MetadataUpdate::decode_log_data(log).ok())
         .map(|event| event._tokenId)
         .collect();
-    assert!(batches.is_empty(), "a derived qualification writes nothing");
+    assert!(batches.is_empty(), "a settlement announces no batch");
     assert_eq!(updates, vec![first.nod_id.to_u256()]);
 }
 
@@ -359,21 +348,17 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         assert!(svg.contains(">ISSUED</text>"));
         let row = |label: &str| svg.find(&format!(">{label}</text>")).unwrap();
         assert!(row("Gratis Load") < row("Entry Price"));
-        assert!(row("Entry Price") < row("Floor Price"));
-        assert!(row("Floor Price") < row("Call Price"));
+        assert!(row("Entry Price") < row("Call Price"));
 
-        qualify(&storage, &body, U256::from(400_000));
-        let (json, svg) = read();
         let hex = format!("{:064x}", body.nod_id.to_u256());
         let id = format!("{}-{}", body.worldwide_day, &hex[8..16]);
         assert_eq!(json["name"], format!("Nod {id}"));
         assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
         assert!(!json.to_string().contains("https://"));
-        assert_eq!(value(&json, "State").unwrap(), "Qualified");
         assert_eq!(value(&json, "Worldwide Day").unwrap(), 20_260_715);
         assert_eq!(value(&json, "League").unwrap(), 4);
         assert_eq!(value(&json, "Entry Price").unwrap(), 0.4);
-        assert_eq!(value(&json, "Floor Price").unwrap(), 0.432);
+        assert!(value(&json, "Floor Price").is_none());
         assert_eq!(value(&json, "Call Price").unwrap(), 1.424);
         assert_eq!(
             value(&json, "Encrypted Gratis Load").unwrap(),
@@ -384,7 +369,6 @@ fn token_uri_renders_the_nod_image_and_metadata() {
 
         assert!(svg.contains(">NOD</text>"));
         assert!(svg.contains(&format!(">{id}</text>")));
-        assert!(svg.contains(">QUALIFIED</text>"));
         assert!(svg.contains(">1.424</text>"));
         assert!(svg.contains(">Encrypted</text>"));
         assert!(!svg.contains("1,250.12"));
@@ -432,7 +416,6 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
             },
         )
         .unwrap();
-        qualify(&storage, &item, U256::from(20));
         let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
         api::record_settled(
             &storage,
@@ -475,7 +458,6 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
 }
 
 struct PublicLifecycle {
-    qualified: bool,
     paid: bool,
     called_at: u64,
     notice: u32,
@@ -489,7 +471,6 @@ fn seed_public_lifecycle(
 ) -> (NodItemState, WwdEntityId) {
     use crate::schema::CallTerms;
     let PublicLifecycle {
-        qualified,
         paid,
         called_at,
         notice,
@@ -518,9 +499,6 @@ fn seed_public_lifecycle(
         },
     )
     .unwrap();
-    if qualified {
-        qualify(storage, &item, U256::from(20));
-    }
     let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
     if paid {
         api::record_settled(
