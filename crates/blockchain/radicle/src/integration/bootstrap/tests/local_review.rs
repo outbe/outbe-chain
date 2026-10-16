@@ -4,8 +4,12 @@ use crate::{
     integration::{
         local::{LocalReceiptClient, LocalReceiptServer},
         network::shutdown_tests::{NoSend, TestReceiver},
-        publication::store::ReviewPackageStore,
+        publication::{
+            review::prepare_review_publication,
+            store::{review_slot_key, ReviewPackageStore},
+        },
         review::prepare_patch_review_from_checkpoint,
+        signing::witness::RepositoryWitnessBundle,
         EndpointNetwork, EndpointSigningIdentity, EndpointTransport, LocalEndpointIdentity,
         LocalEndpointIdentityChannel, RadicleStatusChannel,
     },
@@ -63,13 +67,14 @@ impl RepositoryAuthorityReader for Reader {
 
 pub(super) async fn assert_review_socket(
     repo: &Repository,
-    store: ReviewPackageStore,
+    archive: (ReviewPackageStore, &std::path::Path),
     mut root: FinalizedPublicationReceipt,
     material: &RepositorySigningMaterial,
     keys: &[bls12381::PrivateKey],
     providers: &[VrfMaterialProvider<MinSig>],
     output: &Output<MinSig, bls12381::PublicKey>,
 ) {
+    let (store, store_path) = archive;
     let author = radicle::crypto::SigningKey::from_seed(radicle::crypto::Seed::new([42; 32]));
     let base = repo.head().unwrap().1;
     let blob = repo.raw().blob(b"proposed code").unwrap();
@@ -165,7 +170,10 @@ pub(super) async fn assert_review_socket(
     let validator = authority.committee().committee[0].address;
     let (_, status) = RadicleStatusChannel::enabled(validator, node_id);
     let (service, resolver, _) = EndpointNetwork::build(chain, status);
-    let mut service = service.with_repository_authority_reader(reader.clone());
+    let mailbox = outbe_primitives::radicle_publication::RepositoryPublicationMailbox::default();
+    let mut service = service
+        .with_repository_authority_reader(reader.clone())
+        .with_repository_publication_mailbox(mailbox.clone());
     let publisher = service.take_repository_material_publisher().unwrap();
     publisher.publish(authority.epoch(), 7, Some(output));
     let (_, local) = LocalEndpointIdentityChannel::create(LocalEndpointIdentity {
@@ -252,6 +260,132 @@ pub(super) async fn assert_review_socket(
         .await
         .unwrap();
     assert_eq!(partial.participant_index(), 0);
+    let refs_contributions: Vec<_> = (0..3)
+        .map(|i| {
+            (
+                keys[i].public_key(),
+                if i == 0 {
+                    partial.clone()
+                } else {
+                    context
+                        .material
+                        .sign_current_review_refs(
+                            &providers[i],
+                            &refs,
+                            &state,
+                            authority.committee().committee[i].address,
+                            &keys[i],
+                        )
+                        .unwrap()
+                },
+            )
+        })
+        .collect();
+    let refs_signature = context
+        .material
+        .recover_review_refs(&public, &refs, &refs_contributions)
+        .unwrap();
+    let witness = RepositoryWitnessBundle::new(
+        context.material.canonical_output(),
+        vec![
+            contributions.iter().map(|(_, p)| p.clone()).collect(),
+            refs_contributions.iter().map(|(_, p)| p.clone()).collect(),
+        ],
+    )
+    .unwrap();
+    let package = prepare_review_publication(
+        repo,
+        &context.state,
+        &context.snapshot,
+        &context.material,
+        [&signature, &refs_signature],
+        &witness,
+    )
+    .unwrap();
+    let slot = store_path
+        .join("slots")
+        .join(hex::encode(review_slot_key(package.body())));
+    assert!(!slot.exists());
+    let short = RepositoryWitnessBundle::new(
+        context.material.canonical_output(),
+        vec![
+            contributions[..2].iter().map(|(_, p)| p.clone()).collect(),
+            refs_contributions.iter().map(|(_, p)| p.clone()).collect(),
+        ],
+    )
+    .unwrap();
+    assert!(client
+        .attest_review_publication(&context, repo, &package, &short)
+        .await
+        .is_err());
+    assert!(!slot.exists());
+    use outbe_primitives::radicle_publication::{
+        PublicationAttestation, PublicationBatch, PUBLICATION_BODY_LEN, PUBLICATION_NAMESPACE,
+    };
+    let batch = PublicationBatch {
+        body: package.body().clone(),
+        attestations: (0..3)
+            .map(|i| PublicationAttestation {
+                participant_index: i as u32,
+                signature: alloy_primitives::FixedBytes::from_slice(
+                    keys[i]
+                        .sign(PUBLICATION_NAMESPACE, &package.body().to_bytes())
+                        .encode()
+                        .as_ref(),
+                ),
+            })
+            .collect(),
+    };
+    let mut bad_last = batch.clone();
+    bad_last.attestations[2].signature.0[0] ^= 1;
+    assert!(client
+        .queue_review_publication(repo, &package, &witness, &bad_last)
+        .await
+        .is_err());
+    assert!(!slot.exists());
+    assert!(mailbox.ready_prefix(usize::MAX).is_none());
+    let own_attestation = client
+        .attest_review_publication(&context, repo, &package, &witness)
+        .await
+        .unwrap();
+    assert_eq!(own_attestation, batch.attestations[0]);
+    assert!(slot.is_file());
+    assert_eq!(
+        client
+            .attest_review_publication(&context, repo, &package, &witness)
+            .await
+            .unwrap(),
+        own_attestation
+    );
+    client
+        .queue_review_publication(repo, &package, &witness, &batch)
+        .await
+        .unwrap();
+    assert_eq!(mailbox.ready_prefix(usize::MAX), Some(batch.clone()));
+    assert_eq!(
+        mailbox
+            .ready_prefix(PUBLICATION_BODY_LEN + 1 + 100)
+            .unwrap()
+            .attestations,
+        batch.attestations[..1]
+    );
+    publisher.publish(authority.epoch(), 8, None);
+    tokio::time::timeout(crate::endpoint::HANDLE_DEADLINE, async {
+        while mailbox.ready_prefix(usize::MAX).is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(client
+        .attest_review_publication(&context, repo, &package, &witness)
+        .await
+        .is_err());
+    publisher.publish(authority.epoch(), 7, Some(output));
+    client
+        .queue_review_publication(repo, &package, &witness, &batch)
+        .await
+        .unwrap();
     let mut replacement = state.clone();
     replacement.approval.approval.payload = String::from_utf8(
         PatchVotePayloadV1::accept(
@@ -269,6 +403,25 @@ pub(super) async fn assert_review_socket(
         .sign_review(&context, repo, &prepare())
         .await
         .is_err());
+    assert!(client
+        .attest_review_publication(&context, repo, &package, &witness)
+        .await
+        .is_err());
+    assert!(client
+        .queue_review_publication(repo, &package, &witness, &batch)
+        .await
+        .is_err());
+    use crate::manager::EndpointResolver as _;
+    resolver
+        .refresh(&crate::manager::FinalizedSnapshot {
+            block: authority.block(),
+            validators: vec![],
+            registry_generation: 1,
+            repositories: vec![],
+        })
+        .await
+        .unwrap();
+    assert!(mailbox.ready_prefix(usize::MAX).is_none());
     *reader.state.lock().unwrap() = Some(state.clone());
     assert!(client
         .sign_review_refs(&context, repo, &refs, &wrong_signature)
@@ -299,8 +452,14 @@ pub(super) async fn assert_review_socket(
         .unwrap(),
         expected_refs
     );
+    client
+        .queue_review_publication(repo, &package, &witness, &batch)
+        .await
+        .unwrap();
+    assert_eq!(mailbox.ready_prefix(usize::MAX), Some(batch));
     stop.send(()).unwrap();
     socket.await.unwrap().unwrap();
     resolver.shutdown().await.unwrap();
     actor.await.unwrap().unwrap();
+    assert!(mailbox.ready_prefix(usize::MAX).is_none());
 }

@@ -329,7 +329,8 @@ impl LocalReceiptClient {
             publication::ATTEST,
             repo,
             content_manifest,
-            package,
+            package.body(),
+            package.manifest(),
             witness,
         )?;
         let response = self.exchange(&request, publication::ATTEST_FRAME).await?;
@@ -366,8 +367,14 @@ impl LocalReceiptClient {
         {
             return Err(Error::Protocol);
         }
-        let mut request =
-            publication::request(publication::QUEUE, repo, content_manifest, package, witness)?;
+        let mut request = publication::request(
+            publication::QUEUE,
+            repo,
+            content_manifest,
+            package.body(),
+            package.manifest(),
+            witness,
+        )?;
         request.extend(batch.to_bytes().map_err(|_| Error::Protocol)?);
         let response = self.exchange(&request, 5).await?;
         if response == [publication::QUEUE.as_slice(), &[2]].concat() {
@@ -638,10 +645,37 @@ async fn serve(
         return write_frame(&mut stream, &response).await;
     }
     if magic == publication::ATTEST || magic == publication::QUEUE {
-        let response =
-            publication::publish(authority, material, publications, readers, permit, request)
-                .await
-                .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
+        let result = async {
+            let request = publication::Request::parse(&request, native_node)?;
+            match request.body.action {
+                outbe_primitives::radicle_publication::PublicationAction::Bootstrap => {
+                    publication::publish(
+                        authority,
+                        material,
+                        publications,
+                        readers,
+                        permit,
+                        request,
+                    )
+                    .await
+                }
+                outbe_primitives::radicle_publication::PublicationAction::Review => {
+                    review::publish(
+                        reader,
+                        authority,
+                        material,
+                        publications,
+                        readers,
+                        permit,
+                        request,
+                    )
+                    .await
+                }
+                _ => Err(Error::Protocol),
+            }
+        }
+        .await;
+        let response = result.unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
         return write_frame(&mut stream, &response).await;
     }
     if magic == bootstrap::SIGN_IDENTITY || magic == bootstrap::SIGN_REFS {

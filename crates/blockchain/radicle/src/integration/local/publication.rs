@@ -1,16 +1,17 @@
-//! Complete bootstrap packages are verified and persisted before attesting or forwarding.
+//! Complete native packages are verified and persisted before attesting or forwarding.
 
 use super::{bootstrap, state, EndpointNetworkResolver, Error, ReviewPackageStore};
 use crate::{
     integration::{
-        bootstrap::{verify_bootstrap_publication, VerifiedBootstrapPublication},
+        bootstrap::verify_bootstrap_publication,
         publication::{PublicationManifest, MAX_MANIFEST_BYTES},
         signing::witness::{RepositoryWitnessBundle, MAX_WITNESS_BYTES},
     },
     manager::RepositoryAuthorityReader,
 };
 use outbe_primitives::radicle_publication::{
-    PublicationBatch, PublicationBody, MAX_PUBLICATION_BATCH_LEN, PUBLICATION_BODY_LEN,
+    PublicationAction, PublicationBatch, PublicationBody, MAX_PUBLICATION_BATCH_LEN,
+    PUBLICATION_BODY_LEN,
 };
 use radicle::{
     git,
@@ -41,27 +42,23 @@ pub(super) fn request(
     magic: &[u8; 4],
     repo: &Repository,
     content_manifest: git::Oid,
-    publication: &VerifiedBootstrapPublication,
+    body: &PublicationBody,
+    manifest: &PublicationManifest,
     witness: &RepositoryWitnessBundle,
 ) -> Result<Vec<u8>, Error> {
-    if repo.id().into_sha1() != Some(publication.body().repo_id.0)
-        || !repo.raw().path().is_absolute()
-    {
+    if repo.id().into_sha1() != Some(body.repo_id.0) || !repo.raw().path().is_absolute() {
         return Err(Error::Protocol);
     }
     let path = repo.raw().path().as_os_str().as_bytes();
     let length = u16::try_from(path.len()).map_err(|_| Error::Protocol)?;
-    let manifest = publication
-        .manifest()
-        .to_bytes()
-        .map_err(|_| Error::Protocol)?;
+    let manifest = manifest.to_bytes().map_err(|_| Error::Protocol)?;
     let witness = witness.to_bytes().map_err(|_| Error::Protocol)?;
     Ok([
         magic.as_slice(),
         &length.to_be_bytes(),
         path,
         &content_manifest.into_sha1().ok_or(Error::Protocol)?,
-        &publication.body().to_bytes(),
+        &body.to_bytes(),
         &(manifest.len() as u32).to_be_bytes(),
         &manifest,
         &(witness.len() as u32).to_be_bytes(),
@@ -70,49 +67,90 @@ pub(super) fn request(
     .concat())
 }
 
+pub(super) struct Request {
+    pub path: PathBuf,
+    pub content_manifest: git::Oid,
+    pub body: PublicationBody,
+    pub manifest: PublicationManifest,
+    pub witness: RepositoryWitnessBundle,
+    pub batch: Option<PublicationBatch>,
+    pub node: Option<[u8; 32]>,
+}
+impl Request {
+    pub fn parse(request: &[u8], node: Option<[u8; 32]>) -> Result<Self, Error> {
+        let queue = match request.get(..4) {
+            Some(magic) if magic == QUEUE => true,
+            Some(magic) if magic == ATTEST => false,
+            _ => return Err(Error::Protocol),
+        };
+        let mut input = state::Input(&request[4..]);
+        let length = usize::from(u16::from_be_bytes(input.array()?));
+        let path = PathBuf::from(std::ffi::OsString::from_vec(input.take(length)?.to_vec()));
+        if !path.is_absolute() {
+            return Err(Error::Protocol);
+        }
+        let content_manifest = git::Oid::from_sha1(input.array()?);
+        let body = PublicationBody::from_bytes(input.take(PUBLICATION_BODY_LEN)?)
+            .map_err(|_| Error::Protocol)?;
+        let length = u32::from_be_bytes(input.array()?) as usize;
+        if length > MAX_MANIFEST_BYTES {
+            return Err(Error::Protocol);
+        }
+        let manifest =
+            PublicationManifest::from_bytes(input.take(length)?).map_err(|_| Error::Protocol)?;
+        let length = u32::from_be_bytes(input.array()?) as usize;
+        if length > MAX_WITNESS_BYTES {
+            return Err(Error::Protocol);
+        }
+        let witness = RepositoryWitnessBundle::from_bytes(input.take(length)?)
+            .map_err(|_| Error::Protocol)?;
+        let batch = if queue {
+            let batch = PublicationBatch::from_bytes(input.0).map_err(|_| Error::Protocol)?;
+            if batch.body != body {
+                return Err(Error::Protocol);
+            }
+            Some(batch)
+        } else {
+            if !input.0.is_empty() {
+                return Err(Error::Protocol);
+            }
+            None
+        };
+        match body.action {
+            PublicationAction::Bootstrap => {}
+            PublicationAction::Review if content_manifest.is_zero() && node.is_some() => {}
+            _ => return Err(Error::Protocol),
+        }
+        Ok(Self {
+            path,
+            content_manifest,
+            body,
+            manifest,
+            witness,
+            batch,
+            node,
+        })
+    }
+}
+
 pub(super) async fn publish(
     authority: Option<Arc<dyn RepositoryAuthorityReader>>,
     resolver: Option<EndpointNetworkResolver>,
     store: Option<Arc<Mutex<ReviewPackageStore>>>,
     readers: Arc<Semaphore>,
     permit: OwnedSemaphorePermit,
-    request: Vec<u8>,
+    request: Request,
 ) -> Result<Vec<u8>, Error> {
-    let queue = request.get(..4) == Some(QUEUE.as_slice());
+    let Request {
+        path,
+        content_manifest,
+        body,
+        manifest,
+        witness,
+        batch,
+        ..
+    } = request;
     let store = store.ok_or(Error::Unavailable)?;
-    let mut input = state::Input(&request[4..]);
-    let length = usize::from(u16::from_be_bytes(input.array()?));
-    let path = PathBuf::from(std::ffi::OsString::from_vec(input.take(length)?.to_vec()));
-    if !path.is_absolute() {
-        return Err(Error::Protocol);
-    }
-    let content_manifest = git::Oid::from_sha1(input.array()?);
-    let body = PublicationBody::from_bytes(input.take(PUBLICATION_BODY_LEN)?)
-        .map_err(|_| Error::Protocol)?;
-    let length = u32::from_be_bytes(input.array()?) as usize;
-    if length > MAX_MANIFEST_BYTES {
-        return Err(Error::Protocol);
-    }
-    let manifest =
-        PublicationManifest::from_bytes(input.take(length)?).map_err(|_| Error::Protocol)?;
-    let length = u32::from_be_bytes(input.array()?) as usize;
-    if length > MAX_WITNESS_BYTES {
-        return Err(Error::Protocol);
-    }
-    let witness =
-        RepositoryWitnessBundle::from_bytes(input.take(length)?).map_err(|_| Error::Protocol)?;
-    let batch = if queue {
-        let batch = PublicationBatch::from_bytes(input.0).map_err(|_| Error::Protocol)?;
-        if batch.body != body {
-            return Err(Error::Protocol);
-        }
-        Some(batch)
-    } else {
-        if !input.0.is_empty() {
-            return Err(Error::Protocol);
-        }
-        None
-    };
     let signer = resolver.clone().ok_or(Error::Unavailable)?;
     let context = bootstrap::current(authority, resolver, permit).await?;
     let permit = readers

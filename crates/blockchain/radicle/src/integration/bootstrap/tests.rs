@@ -469,7 +469,7 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
         if first == 0 {
             local_review::assert_review_socket(
                 &repo,
-                store,
+                (store, store_path.as_path()),
                 proof.receipt().clone(),
                 &material,
                 &keys,

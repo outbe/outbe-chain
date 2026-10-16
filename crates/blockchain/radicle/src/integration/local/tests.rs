@@ -1146,8 +1146,15 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
         .load_selected(slot, &repo)
         .unwrap()
         .is_none());
-    let request =
-        publication::request(publication::ATTEST, &repo, manifest, &package, &witness).unwrap();
+    let request = publication::request(
+        publication::ATTEST,
+        &repo,
+        manifest,
+        package.body(),
+        package.manifest(),
+        &witness,
+    )
+    .unwrap();
     for malformed in [
         request[..5].to_vec(),
         request[..request.len() - 1].to_vec(),

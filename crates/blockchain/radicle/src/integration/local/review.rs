@@ -1,6 +1,7 @@
 //! Fixed Review jobs reconstructed from this node's finalized permission and archive.
 use super::*;
 use crate::integration::{
+    publication::review::{verify_review_publication, VerifiedReviewPublication},
     review::{
         prepare_patch_review_from_checkpoint, CheckpointPreparedReview,
         CheckpointPreparedReviewRefs,
@@ -147,6 +148,91 @@ pub(super) async fn sign(
     Ok([magic.as_slice(), &[2], &partial.to_bytes()].concat())
 }
 
+pub(super) async fn publish(
+    reader: Arc<dyn RepositoryReceiptReader>,
+    authority: Option<Arc<dyn RepositoryAuthorityReader>>,
+    resolver: Option<EndpointNetworkResolver>,
+    store: Option<Arc<Mutex<ReviewPackageStore>>>,
+    readers: Arc<Semaphore>,
+    permit: OwnedSemaphorePermit,
+    request: publication::Request,
+) -> Result<Vec<u8>, Error> {
+    let signer = resolver.clone().ok_or(Error::Unavailable)?;
+    let context = preparation::current(
+        reader.clone(),
+        authority,
+        resolver,
+        store.clone(),
+        readers.clone(),
+        permit,
+        request.body.proposal_id,
+    )
+    .await?;
+    let permit = readers
+        .try_acquire_owned()
+        .map_err(|_| Error::Unavailable)?;
+    let (selected, batch) = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let store = store.ok_or(Error::Unavailable)?;
+        let mut store = store.lock().map_err(|_| Error::Unavailable)?;
+        let repo = store
+            .open_bootstrap_repository(
+                reader.as_ref(),
+                &request.path,
+                git::UserInfo {
+                    alias: radicle::node::Alias::new("outbe"),
+                    key: radicle::crypto::PublicKey::from_bytes(
+                        request.node.ok_or(Error::Unavailable)?,
+                    ),
+                },
+            )
+            .map_err(|_| Error::Unavailable)?;
+        let verified = verify_review_publication(
+            &repo,
+            &context.state,
+            &context.snapshot,
+            &context.material,
+            &request.body,
+            &request.manifest,
+            &request.witness,
+        )
+        .map_err(|_| Error::Unavailable)?;
+        if let Some(batch) = &request.batch {
+            for attestation in &batch.attestations {
+                context
+                    .material
+                    .verify_publication_attestation(&batch.body, attestation)
+                    .map_err(|_| Error::Protocol)?;
+            }
+        }
+        let selected = store
+            .persist_and_select(&repo, Arc::new(verified), &request.witness)
+            .map_err(|_| Error::Unavailable)?;
+        Ok::<_, Error>((Arc::new(selected), request.batch))
+    })
+    .await
+    .map_err(|_| Error::Unavailable)??;
+    if let Some(batch) = batch {
+        signer
+            .queue_review_publication(selected, batch)
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        Ok([publication::QUEUE.as_slice(), &[2]].concat())
+    } else {
+        let attestation = signer
+            .attest_review(selected.clone())
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        let batch = outbe_primitives::radicle_publication::PublicationBatch {
+            body: selected.body().clone(),
+            attestations: vec![attestation],
+        }
+        .to_bytes()
+        .map_err(|_| Error::Protocol)?;
+        Ok([publication::ATTEST.as_slice(), &[2], &batch].concat())
+    }
+}
+
 fn request(
     magic: &[u8; 4],
     chain: ChainIdentity,
@@ -184,6 +270,79 @@ fn request(
 }
 
 impl LocalReceiptClient {
+    pub async fn attest_review_publication(
+        &self,
+        context: &PatchPreparationContext,
+        repo: &Repository,
+        package: &VerifiedReviewPublication,
+        witness: &super::super::signing::witness::RepositoryWitnessBundle,
+    ) -> Result<outbe_primitives::radicle_publication::PublicationAttestation, Error> {
+        if package.body().chain_id != self.chain.chain_id
+            || package.body().genesis_hash != self.chain.genesis_hash
+        {
+            return Err(Error::Protocol);
+        }
+        let request = publication::request(
+            publication::ATTEST,
+            repo,
+            git::Oid::ZERO_SHA1,
+            package.body(),
+            package.manifest(),
+            witness,
+        )?;
+        let bytes = self.exchange(&request, publication::ATTEST_FRAME).await?;
+        if bytes == [publication::ATTEST.as_slice(), &[0]].concat() {
+            return Err(Error::Unavailable);
+        }
+        if bytes.get(..5) != Some([publication::ATTEST.as_slice(), &[2]].concat().as_slice()) {
+            return Err(Error::Protocol);
+        }
+        let mut batch =
+            outbe_primitives::radicle_publication::PublicationBatch::from_bytes(&bytes[5..])
+                .map_err(|_| Error::Protocol)?;
+        if batch.body != *package.body() || batch.attestations.len() != 1 {
+            return Err(Error::Protocol);
+        }
+        let attestation = batch.attestations.pop().ok_or(Error::Protocol)?;
+        context
+            .material
+            .verify_publication_attestation(&batch.body, &attestation)
+            .map_err(|_| Error::Protocol)?;
+        Ok(attestation)
+    }
+
+    pub async fn queue_review_publication(
+        &self,
+        repo: &Repository,
+        package: &VerifiedReviewPublication,
+        witness: &super::super::signing::witness::RepositoryWitnessBundle,
+        batch: &outbe_primitives::radicle_publication::PublicationBatch,
+    ) -> Result<(), Error> {
+        if batch.body != *package.body()
+            || batch.body.chain_id != self.chain.chain_id
+            || batch.body.genesis_hash != self.chain.genesis_hash
+        {
+            return Err(Error::Protocol);
+        }
+        let mut request = publication::request(
+            publication::QUEUE,
+            repo,
+            git::Oid::ZERO_SHA1,
+            package.body(),
+            package.manifest(),
+            witness,
+        )?;
+        request.extend(batch.to_bytes().map_err(|_| Error::Protocol)?);
+        let response = self.exchange(&request, 5).await?;
+        if response == [publication::QUEUE.as_slice(), &[2]].concat() {
+            Ok(())
+        } else if response == [publication::QUEUE.as_slice(), &[0]].concat() {
+            Err(Error::Unavailable)
+        } else {
+            Err(Error::Protocol)
+        }
+    }
+
     pub async fn sign_review(
         &self,
         context: &PatchPreparationContext,
