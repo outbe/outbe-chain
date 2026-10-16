@@ -48,9 +48,6 @@ pub(crate) struct Config {
     pub dir: PathBuf,
     /// `outbe-chain` node binary (`--chain-bin`).
     pub bin_chain: PathBuf,
-    /// `outbe-ocomp` role binary (`--ocomp-bin`).
-    #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
-    pub bin_ocomp: PathBuf,
     /// Production Oracle price feeder (`--feeder-bin`).
     pub bin_feeder: PathBuf,
     /// Newer node binary (`--upgraded-chain-bin`) for operator replacement E2E.
@@ -119,7 +116,6 @@ impl Config {
             repo: env.repo.clone(),
             dir: env.data_dir.clone(),
             bin_chain: env.chain_bin.clone(),
-            bin_ocomp: env.ocomp_bin.clone(),
             bin_feeder: env.feeder_bin.clone(),
             bin_chain_upgraded: env.upgraded_chain_bin.clone(),
             bin_cli: env.cli_bin.clone(),
@@ -209,25 +205,6 @@ impl Config {
     /// Loopback read-only `outbe-radicle` status port for validator index `i`.
     pub fn radicle_status_port(&self, i: usize) -> u16 {
         self.ports.port(Service::RadicleStatus, i)
-    }
-
-    /// Loopback HTTP port where validator `i`'s OCOMP Supervisor accepts workers.
-    #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
-    pub fn ocomp_endpoint_port(&self, i: usize) -> u16 {
-        self.ports.port(Service::OcompSupervisor, i)
-    }
-
-    /// Salvo observability endpoint for one of validator `i`'s OCOMP Workers.
-    #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
-    pub fn ocomp_worker_port(&self, i: usize, worker_ordinal: u32) -> u16 {
-        let service = match worker_ordinal {
-            0 => Service::OcompWorker0,
-            1 => Service::OcompWorker1,
-            2 => Service::OcompWorker2,
-            3 => Service::OcompWorker3,
-            _ => panic!("OCOMP worker ordinal must be below 4"),
-        };
-        self.ports.port(service, i)
     }
 
     /// TEE enclave socket port for validator index `i`.
@@ -368,7 +345,6 @@ mod tests {
         assert_eq!(cfg.tee_port(joiner), cfg.http_port(joiner) + 1);
         assert!(cfg.http_port(14) > cfg.http_port(joiner));
         assert!(cfg.consensus_port(15) > cfg.http_port(14));
-        assert_eq!(cfg.ocomp_endpoint_port(15), cfg.consensus_port(15) + 1);
 
         // The committee size never moves, however many nodes are added.
         assert_eq!(cfg.validators, env.validators);

@@ -18,7 +18,7 @@
 //!   committee hash itself, even when they share the same `(epoch, hash)`
 //!   inputs.
 //!
-//! A snapshot record spans slots 31..=40, slot 44, slot 47, and slots 52..=58
+//! A snapshot record spans slots 31..=40, slot 44, and slot 47
 //! (see [`schema::ValidatorSet`](crate::schema::ValidatorSet)).
 //! Writes are field-by-field and end with the `exists` flag.
 //! A partial write from a rolled-back checkpoint is not readable.
@@ -26,9 +26,6 @@
 
 use alloy_primitives::{Address, B256};
 
-use outbe_ocomp_protocol::committee::{
-    validator_identity_hash_v1, POC_KEY_EPOCH, RESULT_SIGNATURE_PURPOSE_BITMAP,
-};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
@@ -83,77 +80,6 @@ fn join_pubkey(lo: B256, hi: B256) -> [u8; 48] {
 /// Changing it is a hard fork (it changes which slots are zero -> the state root).
 pub const COMMITTEE_SNAPSHOT_RETAIN_EPOCHS: u64 = 8;
 
-/// Domain separator for the historical OCOMP-key binding attached to an
-/// otherwise unchanged consensus committee snapshot.
-pub const OUTBE_OCOMP_SNAPSHOT_BINDING_V1_DOMAIN: &[u8] = b"OUTBE_OCOMP_SNAPSHOT_BINDING_V1";
-
-/// OCOMP metadata stored alongside a consensus committee snapshot.
-///
-/// This is an extension, not part of [`CommitteeSnapshot`], so adding or
-/// rotating an OCOMP key cannot alter `committee_set_hash_v2` or any finality
-/// proof that is bound to it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OcompSnapshotExtensionV1 {
-    pub epoch: u64,
-    pub committee_set_hash: B256,
-    pub ocomp_binding_hash: B256,
-    pub member_count: u16,
-}
-
-/// OCOMP material for one validator at its consensus-snapshot index.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OcompSnapshotMemberV1 {
-    pub validator_address: Address,
-    pub ocomp_public_key_sec1: [u8; 33],
-    pub key_epoch: u64,
-}
-
-/// Hash the ordered OCOMP extension for one historical consensus snapshot.
-#[must_use]
-pub fn ocomp_binding_hash_v1(
-    epoch: u64,
-    committee_set_hash: B256,
-    members: &[OcompSnapshotMemberV1],
-) -> B256 {
-    let mut preimage = Vec::with_capacity(
-        OUTBE_OCOMP_SNAPSHOT_BINDING_V1_DOMAIN.len() + 8 + 32 + 8 + members.len() * (20 + 33 + 8),
-    );
-    preimage.extend_from_slice(OUTBE_OCOMP_SNAPSHOT_BINDING_V1_DOMAIN);
-    preimage.extend_from_slice(&epoch.to_be_bytes());
-    preimage.extend_from_slice(committee_set_hash.as_slice());
-    preimage.extend_from_slice(&(members.len() as u64).to_be_bytes());
-    for member in members {
-        preimage.extend_from_slice(member.validator_address.as_slice());
-        preimage.extend_from_slice(&member.ocomp_public_key_sec1);
-        preimage.extend_from_slice(&member.key_epoch.to_be_bytes());
-    }
-    alloy_primitives::keccak256(preimage)
-}
-
-fn split_ocomp_public_key(public_key: &[u8; 33]) -> (B256, B256) {
-    let lo = B256::from_slice(&public_key[..32]);
-    let mut hi = [0u8; 32];
-    hi[0] = public_key[32];
-    (lo, B256::from(hi))
-}
-
-fn join_ocomp_public_key(lo: B256, hi: B256) -> Result<[u8; 33]> {
-    if hi.0[1..].iter().any(|byte| *byte != 0) {
-        return Err(ValidatorSetError::NonZeroOcompSnapshotPubkeyPadding.into());
-    }
-    let mut public_key = [0u8; 33];
-    public_key[..32].copy_from_slice(lo.as_slice());
-    public_key[32] = hi.0[0];
-    Ok(public_key)
-}
-
-/// Zeroes every slot of the committee snapshot at `key` and reclaims its EVM
-/// storage. This is the inverse of [`write_committee_snapshot`]. A slot set to
-/// its default is empty in the state trie. The function reads all loop bounds
-/// before it clears `exists`. Otherwise the guard needed to discover them could
-/// turn the clear into a no-op. The flag is cleared only after every field is
-/// reclaimed. Callers evict inside the enclosing boundary checkpoint, so
-/// failure cannot commit a half-clear. No-op if absent.
 pub fn clear_committee_snapshot(storage: StorageHandle, key: B256) -> Result<()> {
     let vs = ValidatorSet::new(storage);
     if !vs.committee_snapshot_exists.read(&key)? {
@@ -161,7 +87,6 @@ pub fn clear_committee_snapshot(storage: StorageHandle, key: B256) -> Result<()>
     }
     let committee_len = vs.committee_snapshot_len.read(&key)?;
     let vrf_pk_len = vs.committee_snapshot_vrf_group_public_key_len.read(&key)?;
-    let ocomp_member_count = vs.committee_snapshot_ocomp_member_count.read(&key)?;
 
     for i in 0..committee_len {
         vs.committee_snapshot_address_at
@@ -194,23 +119,6 @@ pub fn clear_committee_snapshot(storage: StorageHandle, key: B256) -> Result<()>
     vs.committee_snapshot_vrf_public_polynomial_hash
         .write(&key, B256::ZERO)?;
 
-    for i in 0..ocomp_member_count {
-        vs.committee_snapshot_ocomp_key_lo_at
-            .get_nested(&key)
-            .write(&i, B256::ZERO)?;
-        vs.committee_snapshot_ocomp_key_hi_at
-            .get_nested(&key)
-            .write(&i, B256::ZERO)?;
-        vs.committee_snapshot_ocomp_key_epoch_at
-            .get_nested(&key)
-            .write(&i, 0)?;
-    }
-    vs.committee_snapshot_ocomp_epoch.write(&key, 0)?;
-    vs.committee_snapshot_ocomp_consensus_hash
-        .write(&key, B256::ZERO)?;
-    vs.committee_snapshot_ocomp_binding_hash
-        .write(&key, B256::ZERO)?;
-    vs.committee_snapshot_ocomp_member_count.write(&key, 0)?;
     vs.committee_snapshot_exists.write(&key, false)
 }
 
@@ -236,22 +144,8 @@ pub fn write_committee_snapshot(
 
     let vs = ValidatorSet::new(storage.clone());
 
-    // Resolve and validate the full extension before the first mutation. A
-    // consensus member without admitted OCOMP material is a broken state
-    // invariant and must not leave a partially-written snapshot behind.
-    let ocomp_members = resolve_ocomp_members(&vs, snapshot)?;
-    let member_count: u16 = ocomp_members.len().try_into().map_err(|_| {
-        PrecompileError::from(ValidatorSetError::OcompSnapshotMemberCountExceedsU16)
-    })?;
-    let extension = OcompSnapshotExtensionV1 {
-        epoch,
-        committee_set_hash: hash,
-        ocomp_binding_hash: ocomp_binding_hash_v1(epoch, hash, &ocomp_members),
-        member_count,
-    };
-
     if vs.committee_snapshot_exists.read(&key)? {
-        ensure_snapshot_replay_matches(storage, key, snapshot, &extension, &ocomp_members)?;
+        ensure_snapshot_replay_matches(storage, key, snapshot)?;
         return Ok((hash, key));
     }
 
@@ -264,7 +158,6 @@ pub fn write_committee_snapshot(
     }
 
     write_consensus_snapshot_fields(&vs, key, snapshot, &header)?;
-    write_ocomp_snapshot_fields(&vs, key, &extension, &ocomp_members)?;
 
     // Prune ring: retain only the last COMMITTEE_SNAPSHOT_RETAIN_EPOCHS epochs.
     // A boundary writes outgoing(epoch-1) + incoming(epoch) - distinct epochs ->
@@ -306,76 +199,16 @@ impl SnapshotHeader {
     }
 }
 
-/// The admitted OCOMP member of every committee entry, in committee order.
-/// Each entry needs a current registration bound to its consensus identity.
-fn resolve_ocomp_members(
-    vs: &ValidatorSet<'_>,
-    snapshot: &CommitteeSnapshot,
-) -> Result<Vec<OcompSnapshotMemberV1>> {
-    let mut ocomp_members = Vec::with_capacity(snapshot.committee.len());
-    for entry in &snapshot.committee {
-        let registration = vs.ocomp_registration(entry.address)?.ok_or_else(|| {
-            PrecompileError::from(ValidatorSetError::ActiveValidatorMissingOcompRegistration {
-                validator: entry.address,
-            })
-        })?;
-        let expected_identity = validator_identity_hash_v1(entry.address, &entry.consensus_pubkey)
-            .map_err(|error| {
-                ValidatorSetError::cannot_derive_ocomp_identity_for_active(entry.address, error)
-            })?;
-        if registration.core.validator_identity_hash != expected_identity
-            || registration.core.key_epoch != POC_KEY_EPOCH
-            || registration.core.allowed_purpose_bitmap != RESULT_SIGNATURE_PURPOSE_BITMAP
-        {
-            return Err(
-                ValidatorSetError::ActiveValidatorStaleOrInvalidOcompRegistration {
-                    validator: entry.address,
-                }
-                .into(),
-            );
-        }
-        ocomp_members.push(OcompSnapshotMemberV1 {
-            validator_address: entry.address,
-            ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
-            key_epoch: registration.core.key_epoch,
-        });
-    }
-    Ok(ocomp_members)
-}
-
-/// Accepts a replayed snapshot write only when the stored consensus snapshot
-/// equals `snapshot`. If only the validator's current OCOMP registration changed
-/// during the epoch, the existing stored snapshot and OCOMP extension are preserved.
+/// Requires a replay to contain the same complete consensus snapshot.
 fn ensure_snapshot_replay_matches(
     storage: StorageHandle,
     key: B256,
     snapshot: &CommitteeSnapshot,
-    expected_extension: &OcompSnapshotExtensionV1,
-    ocomp_members: &[OcompSnapshotMemberV1],
 ) -> Result<()> {
-    let stored_snapshot = read_committee_snapshot(storage.clone(), key)?
+    let stored = read_committee_snapshot(storage, key)?
         .ok_or_else(|| PrecompileError::from(ValidatorSetError::SnapshotExistsFlagWithoutRecord))?;
-    if stored_snapshot != *snapshot {
+    if stored != *snapshot {
         return Err(ValidatorSetError::CommitteeSnapshotReplayMismatch { key }.into());
-    }
-    let stored_extension = read_ocomp_snapshot_extension(storage.clone(), key)?;
-    let mut members_match = stored_extension.as_ref() == Some(expected_extension);
-    if members_match {
-        for (index, expected_member) in ocomp_members.iter().enumerate() {
-            let index = index as u16;
-            if read_ocomp_snapshot_member_at(storage.clone(), key, index)?.as_ref()
-                != Some(expected_member)
-            {
-                members_match = false;
-                break;
-            }
-        }
-    }
-    if !members_match {
-        // The consensus snapshot under (epoch, hash) is identical, and only the
-        // validator's current OCOMP registration changed during the epoch;
-        // preserve the existing stored snapshot and OCOMP extension.
-        return Ok(());
     }
     Ok(())
 }
@@ -421,173 +254,6 @@ fn write_consensus_snapshot_fields(
             .write(&idx, B256::from(buf))?;
     }
     Ok(())
-}
-
-/// Writes the OCOMP extension of a snapshot: epoch, consensus hash, binding
-/// hash, member count, then each member key and key epoch.
-fn write_ocomp_snapshot_fields(
-    vs: &ValidatorSet<'_>,
-    key: B256,
-    extension: &OcompSnapshotExtensionV1,
-    ocomp_members: &[OcompSnapshotMemberV1],
-) -> Result<()> {
-    vs.committee_snapshot_ocomp_epoch
-        .write(&key, extension.epoch)?;
-    vs.committee_snapshot_ocomp_consensus_hash
-        .write(&key, extension.committee_set_hash)?;
-    vs.committee_snapshot_ocomp_binding_hash
-        .write(&key, extension.ocomp_binding_hash)?;
-    vs.committee_snapshot_ocomp_member_count
-        .write(&key, u64::from(extension.member_count))?;
-    for (index, member) in ocomp_members.iter().enumerate() {
-        let index = index as u64;
-        let (lo, hi) = split_ocomp_public_key(&member.ocomp_public_key_sec1);
-        vs.committee_snapshot_ocomp_key_lo_at
-            .get_nested(&key)
-            .write(&index, lo)?;
-        vs.committee_snapshot_ocomp_key_hi_at
-            .get_nested(&key)
-            .write(&index, hi)?;
-        vs.committee_snapshot_ocomp_key_epoch_at
-            .get_nested(&key)
-            .write(&index, member.key_epoch)?;
-    }
-    Ok(())
-}
-
-/// Read OCOMP metadata attached to `snapshot_key` without decoding the full
-/// committee. The consensus `exists` flag gates the extension as well.
-pub fn read_ocomp_snapshot_extension(
-    storage: StorageHandle,
-    snapshot_key: B256,
-) -> Result<Option<OcompSnapshotExtensionV1>> {
-    let vs = ValidatorSet::new(storage);
-    if !vs.committee_snapshot_exists.read(&snapshot_key)? {
-        return Ok(None);
-    }
-    let member_count = vs
-        .committee_snapshot_ocomp_member_count
-        .read(&snapshot_key)?;
-    let member_count: u16 = member_count.try_into().map_err(|_| {
-        PrecompileError::from(ValidatorSetError::StoredOcompSnapshotMemberCountExceedsU16)
-    })?;
-    Ok(Some(OcompSnapshotExtensionV1 {
-        epoch: vs.committee_snapshot_ocomp_epoch.read(&snapshot_key)?,
-        committee_set_hash: vs
-            .committee_snapshot_ocomp_consensus_hash
-            .read(&snapshot_key)?,
-        ocomp_binding_hash: vs
-            .committee_snapshot_ocomp_binding_hash
-            .read(&snapshot_key)?,
-        member_count,
-    }))
-}
-
-/// Strictly resolve an OCOMP extension by all three historical bindings.
-/// A prune-ring collision or stale key is reported as missing, never replaced
-/// with the current committee.
-pub fn read_ocomp_snapshot_extension_for_binding(
-    storage: StorageHandle,
-    epoch: u64,
-    committee_set_hash: B256,
-    ocomp_binding_hash: B256,
-) -> Result<Option<OcompSnapshotExtensionV1>> {
-    let key = committee_snapshot_key(epoch, committee_set_hash);
-    let Some(extension) = read_ocomp_snapshot_extension(storage, key)? else {
-        return Ok(None);
-    };
-    if extension.epoch != epoch
-        || extension.committee_set_hash != committee_set_hash
-        || extension.ocomp_binding_hash != ocomp_binding_hash
-    {
-        return Ok(None);
-    }
-    Ok(Some(extension))
-}
-
-/// Resolves the one canonical snapshot retained for `epoch` from the bounded
-/// ring and validates both its consensus and OCOMP bindings. A missing,
-/// evicted or colliding record returns `None`. It is never substituted with a
-/// snapshot from another epoch.
-pub fn read_ocomp_snapshot_extension_at_epoch(
-    storage: StorageHandle,
-    epoch: u64,
-) -> Result<Option<(B256, OcompSnapshotExtensionV1)>> {
-    let Some(retained) = retained_snapshot_at_epoch(storage.clone(), epoch)? else {
-        return Ok(None);
-    };
-    let Some(extension) =
-        read_ocomp_snapshot_extension(storage.clone(), retained.key)?.filter(|extension| {
-            extension.epoch == epoch
-                && extension.committee_set_hash == retained.committee_set_hash
-                && usize::from(extension.member_count) == retained.snapshot.committee.len()
-        })
-    else {
-        return Ok(None);
-    };
-    let Some(members) = read_ocomp_snapshot_members(storage, retained.key, extension.member_count)?
-    else {
-        return Ok(None);
-    };
-    let bound = ocomp_binding_hash_v1(epoch, retained.committee_set_hash, &members)
-        == extension.ocomp_binding_hash;
-    Ok(bound.then_some((retained.key, extension)))
-}
-
-/// Every stored OCOMP member of `snapshot_key` in index order, or `None` when
-/// one of the first `member_count` members is missing.
-fn read_ocomp_snapshot_members(
-    storage: StorageHandle,
-    snapshot_key: B256,
-    member_count: u16,
-) -> Result<Option<Vec<OcompSnapshotMemberV1>>> {
-    let mut members = Vec::with_capacity(usize::from(member_count));
-    for index in 0..member_count {
-        let Some(member) = read_ocomp_snapshot_member_at(storage.clone(), snapshot_key, index)?
-        else {
-            return Ok(None);
-        };
-        members.push(member);
-    }
-    Ok(Some(members))
-}
-
-/// Read one OCOMP member at the consensus committee's stable ordered index.
-pub fn read_ocomp_snapshot_member_at(
-    storage: StorageHandle,
-    snapshot_key: B256,
-    index: u16,
-) -> Result<Option<OcompSnapshotMemberV1>> {
-    let vs = ValidatorSet::new(storage);
-    if !vs.committee_snapshot_exists.read(&snapshot_key)? {
-        return Ok(None);
-    }
-    let member_count = vs
-        .committee_snapshot_ocomp_member_count
-        .read(&snapshot_key)?;
-    if u64::from(index) >= member_count {
-        return Ok(None);
-    }
-    let index = u64::from(index);
-    let lo = vs
-        .committee_snapshot_ocomp_key_lo_at
-        .get_nested(&snapshot_key)
-        .read(&index)?;
-    let hi = vs
-        .committee_snapshot_ocomp_key_hi_at
-        .get_nested(&snapshot_key)
-        .read(&index)?;
-    Ok(Some(OcompSnapshotMemberV1 {
-        validator_address: vs
-            .committee_snapshot_address_at
-            .get_nested(&snapshot_key)
-            .read(&index)?,
-        ocomp_public_key_sec1: join_ocomp_public_key(lo, hi)?,
-        key_epoch: vs
-            .committee_snapshot_ocomp_key_epoch_at
-            .get_nested(&snapshot_key)
-            .read(&index)?,
-    }))
 }
 
 /// Reads a previously-written committee snapshot from the store, or returns
@@ -691,11 +357,8 @@ pub fn read_committee_snapshot_for_epoch(
     Ok(retained_snapshot_at_epoch(storage, epoch)?.map(|retained| retained.snapshot))
 }
 
-/// The snapshot that the prune ring retains for `epoch`, with its key and
-/// canonical committee hash.
+/// The snapshot that the prune ring retains for `epoch`.
 struct RetainedSnapshot {
-    key: B256,
-    committee_set_hash: B256,
     snapshot: CommitteeSnapshot,
 }
 
@@ -717,12 +380,8 @@ fn retained_snapshot_at_epoch(
     let Some(snapshot) = read_committee_snapshot(storage, key)? else {
         return Ok(None);
     };
-    let (committee_set_hash, expected_key) = snapshot_identity(epoch, &snapshot);
-    Ok((key == expected_key).then_some(RetainedSnapshot {
-        key,
-        committee_set_hash,
-        snapshot,
-    }))
+    let (_, expected_key) = snapshot_identity(epoch, &snapshot);
+    Ok((key == expected_key).then_some(RetainedSnapshot { snapshot }))
 }
 
 /// Pre-computes `(committee_set_hash, snapshot_key)` without touching storage.

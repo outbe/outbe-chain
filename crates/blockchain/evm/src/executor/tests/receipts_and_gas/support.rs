@@ -62,7 +62,6 @@ pub(super) fn seed_retained_capacity_days(
     );
     outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx)?;
     let mut tribute = TributeContract::new(storage.clone());
-    tribute.initialize_fresh_ocomp_profile()?;
     let retained = (0..outbe_metadosis::constants::MAX_RETAINED_WWDS)
         .map(|offset| -> eyre::Result<_> {
             let days_before = outbe_metadosis::constants::MAX_RETAINED_WWDS - offset;

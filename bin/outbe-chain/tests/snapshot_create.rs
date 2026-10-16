@@ -107,14 +107,9 @@ fn stopped_native_files_create_a_portable_signed_archive_without_rewriting_progr
             .partial_state_trie,
         99
     );
-    assert_eq!(manifest.progress.ocomp_current.number, 97);
-    assert_eq!(manifest.progress.ocomp_previous.number, 0);
-    assert_eq!(
-        manifest.progress.ocomp_baseline.hash,
-        hex::encode(fixture.genesis_hash)
-    );
-    assert_eq!(manifest.domains.len(), 21);
-    for kind in [DomainKind::ExecutionDb, DomainKind::ClosureCheckpoint] {
+    assert_eq!(manifest.domains.len(), 8);
+    {
+        let kind = DomainKind::ExecutionDb;
         assert!(manifest.domains.iter().any(|domain| domain.kind == kind
             && domain
                 .entries
@@ -124,17 +119,8 @@ fn stopped_native_files_create_a_portable_signed_archive_without_rewriting_progr
     assert!(manifest
         .domains
         .iter()
-        .any(|domain| domain.kind == DomainKind::LocalResults
-            && domain
-                .entries
-                .iter()
-                .any(|entry| entry.path == fixture.pending_result)));
-    assert!(manifest
-        .domains
-        .iter()
         .flat_map(|domain| &domain.entries)
         .all(|entry| !entry.path.ends_with("private.hex")
-            && !entry.path.ends_with("ocomp-evm-key.hex")
             && !entry.path.ends_with("snapshot-signing-key.hex")));
     assert_eq!(
         index

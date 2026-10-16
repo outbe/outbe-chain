@@ -171,7 +171,6 @@ pub(super) fn input_for(kind: SystemTxKind) -> SystemTxInputV2 {
         SystemTxKind::LateFinalizeCredits => SystemTxInputV2::LateFinalizeCredits {
             artifact: LateFinalizeCreditsArtifact::default(),
         },
-        SystemTxKind::OcompLifecycleBegin => SystemTxInputV2::OcompLifecycleBegin,
         SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
         SystemTxKind::RewardsGemDelivery => SystemTxInputV2::RewardsGemDelivery,
         SystemTxKind::BoundaryOutcome => SystemTxInputV2::BoundaryOutcome {
@@ -182,6 +181,5 @@ pub(super) fn input_for(kind: SystemTxKind) -> SystemTxInputV2 {
         },
         SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
         SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
-        SystemTxKind::OcompTerminalRequest => SystemTxInputV2::OcompTerminalRequest,
     }
 }

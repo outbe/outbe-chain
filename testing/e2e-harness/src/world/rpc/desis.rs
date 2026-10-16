@@ -1,7 +1,6 @@
 use crate::world::rpc::*;
 
 impl Rpc {
-    #[cfg(feature = "ocomp-integration")]
     pub fn desis_auction_stage_on(
         &self,
         port: u16,

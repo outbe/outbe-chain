@@ -4,7 +4,7 @@
 # Usage:
 #   ./scripts/bootstrap-testnet.sh 4 OUTPUT_DIR [SEED_FILE]
 #
-# OCOMP V1 fixes the founding committee at four members. This wrapper retains
+# The bootstrap profile uses four founding validators. This wrapper retains
 # the localnet environment variables used by run-testnet.sh while delegating all
 # genesis/key/command generation to prepare_network.py. There is intentionally
 # no second genesis implementation here.
@@ -19,7 +19,7 @@ readonly STORAGE_TEMPLATE="${4:-}"
 readonly SEED_FILE="${3:-$SCRIPT_DIR/seed-testnet.json}"
 
 if [[ "$NUM_VALIDATORS" != "4" ]]; then
-  echo "Error: OCOMP V1 requires exactly 4 founding validators, got $NUM_VALIDATORS" >&2
+  echo "Error: Bootstrap profile requires exactly 4 founding validators, got $NUM_VALIDATORS" >&2
   exit 2
 fi
 if [[ "$SEED_FILE" == "none" ]]; then

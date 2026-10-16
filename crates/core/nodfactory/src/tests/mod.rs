@@ -150,7 +150,7 @@ impl World {
     }
 
     fn enter<R>(&mut self, call: impl FnOnce(StorageHandle<'_>) -> R) -> R {
-        StorageHandle::enter(&mut self.provider, |storage| call(storage))
+        StorageHandle::enter(&mut self.provider, call)
     }
 
     fn issue(&mut self, input: &NodIssueParams) -> WwdEntityId {
@@ -330,8 +330,6 @@ const CHAIN_ID: u64 = 1;
 const PAYMENT_ASSET: Address = Address::new([0x71; 20]);
 const EUR_ASSET: Address = Address::new([0x72; 20]);
 
-mod materialization;
-
 fn public_nod_data(world: &mut World, nod_id: WwdEntityId) -> INod::NodData {
     world.enter(|storage| {
         let bytes = outbe_nod::precompile::dispatch(
@@ -414,7 +412,6 @@ fn settle_erc20(
     })
 }
 
-mod certified;
 mod costs;
 mod currency_snapshots;
 mod direct_fx_admission;

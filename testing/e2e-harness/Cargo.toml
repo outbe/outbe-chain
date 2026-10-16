@@ -7,31 +7,6 @@ publish.workspace = true
 
 [features]
 default = []
-ocomp-finality-fixture = [
-    "dep:alloy-consensus",
-    "dep:alloy-rlp",
-    "dep:k256",
-    "dep:outbe-common",
-    "dep:outbe-metadosis",
-    "dep:outbe-nod",
-    "dep:outbe-node",
-    "dep:outbe-ocompregistry",
-    "dep:reth-chainspec",
-]
-ocomp-integration = [
-    "ocomp-finality-fixture",
-    "outbe-ocomp-protocol/test-utils",
-    "dep:outbe-ocomp",
-    "dep:k256",
-    "outbe-metadosis/test-utils",
-    "dep:outbe-gem",
-    "dep:outbe-gemfactory",
-    "dep:outbe-intexfactory",
-    "dep:outbe-nodfactory",
-    "dep:outbe-vaultrouter",
-    "dep:outbe-tee-enclave",
-    "dep:reth-provider",
-]
 release-sgx-e2e = []
 
 # e2e harness. The scenarios are Gherkin fixtures under `features/`; the step
@@ -59,7 +34,6 @@ sha2.workspace = true
 x25519-dalek.workspace = true
 walkdir.workspace = true
 tempfile.workspace = true
-tar.workspace = true
 hex.workspace = true
 multibase.workspace = true
 libc.workspace = true
@@ -75,26 +49,21 @@ outbe-slashindicator = { workspace = true, features = ["test-utils"] }
 radicle.workspace = true
 outbe-tee.workspace = true
 outbe-zk-backend.workspace = true
-outbe-common = { workspace = true, optional = true }
+outbe-common = { workspace = true }
 outbe-consensus.workspace = true
-outbe-gem = { workspace = true, optional = true }
-outbe-gemfactory = { workspace = true, optional = true }
-outbe-intexfactory = { workspace = true, optional = true }
-outbe-metadosis = { workspace = true, optional = true }
-outbe-nod = { workspace = true, optional = true }
-outbe-nodfactory = { workspace = true, optional = true }
-outbe-node = { workspace = true, optional = true }
-outbe-ocomp = { workspace = true, optional = true }
-outbe-ocomp-protocol.workspace = true
-outbe-ocompregistry = { workspace = true, optional = true }
+outbe-desis.workspace = true
+outbe-gem = { workspace = true }
+outbe-gemfactory = { workspace = true }
+outbe-intexfactory = { workspace = true }
+outbe-metadosis = { workspace = true, features = ["test-utils"] }
+outbe-nod = { workspace = true }
+outbe-nodfactory = { workspace = true }
 outbe-oracle = { workspace = true }
 outbe-tribute.workspace = true
-outbe-vaultrouter = { workspace = true, optional = true }
-outbe-tee-enclave = { workspace = true, optional = true }
+outbe-vaultrouter = { workspace = true }
+outbe-tee-enclave = { workspace = true }
 rand.workspace = true
-reth-chainspec = { workspace = true, optional = true }
 reth-ethereum.workspace = true
-reth-provider = { workspace = true, features = ["test-utils"], optional = true }
 # Genesis `genesisTime` ISO-8601 formatting (bootstrap glue ported from `date -u`).
 time = { workspace = true, features = ["formatting", "parsing"] }
 
@@ -102,8 +71,6 @@ time = { workspace = true, features = ["formatting", "parsing"] }
 # Mirrors the canonical provider client in `bin/outbe-feeder`.
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-eips.workspace = true
-alloy-consensus = { workspace = true, optional = true }
-alloy-rlp = { workspace = true, optional = true }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-provider.workspace = true
 alloy-signer.workspace = true
@@ -121,7 +88,7 @@ commonware-consensus.workspace = true
 commonware-cryptography.workspace = true
 commonware-utils.workspace = true
 blst.workspace = true
-k256 = { workspace = true, optional = true }
+k256 = { workspace = true }
 rand_core.workspace = true
 rand-commonware.workspace = true
 rustix.workspace = true
@@ -131,7 +98,6 @@ rustix.workspace = true
 [dev-dependencies]
 commonware-parallel.workspace = true
 outbe-nod = { workspace = true, features = ["test-enclave"] }
-outbe-ocomp = { workspace = true, features = ["test-utils"] }
 
 [[bin]]
 name = "outbe-e2e"
@@ -151,17 +117,8 @@ name = "outbe-release-dcap-evidence"
 path = "src/bin/outbe-release-dcap-evidence.rs"
 
 [[bin]]
-name = "outbe-e2e-evidence"
-path = "src/bin/outbe-e2e-evidence.rs"
-
-[[bin]]
 name = "outbe-verification-ledger"
 path = "src/bin/outbe-verification-ledger.rs"
-
-[[bin]]
-name = "outbe-metadosis-evidence"
-path = "src/bin/outbe-metadosis-evidence.rs"
-required-features = ["ocomp-integration"]
 
 [lints]
 workspace = true

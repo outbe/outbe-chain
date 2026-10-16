@@ -38,45 +38,6 @@ fn missing_receipts_have_canonical_empty_abi_returns() {
     });
 }
 
-#[test]
-fn missing_ocomp_artifacts_revert_with_their_record_identity() {
-    with_storage(|storage| {
-        for (call, expected) in [
-            (
-                IMetadosis::getOffchainJobCall {
-                    intentId: B256::repeat_byte(1),
-                }
-                .abi_encode(),
-                "OcompJobRecordV1 not found",
-            ),
-            (
-                IMetadosis::getOffchainVoteAccountabilityCall {
-                    jobId: B256::repeat_byte(2),
-                }
-                .abi_encode(),
-                "OcompVoteAccountabilityV1 not found",
-            ),
-            (
-                IMetadosis::getActiveLysisGenerationCall { wwd: 20270101 }.abi_encode(),
-                "ActiveGenerationV1 not found",
-            ),
-            (
-                IMetadosis::getLysisTerminalReceiptCall {
-                    intentId: B256::repeat_byte(1),
-                }
-                .abi_encode(),
-                "OcompJobRecordV1 not found",
-            ),
-        ] {
-            let error =
-                metadosis_dispatch(storage.clone(), &call, Address::ZERO, U256::ZERO).unwrap_err();
-            assert!(
-                matches!(error, outbe_primitives::error::PrecompileError::Revert(message) if message == expected)
-            );
-        }
-    });
-}
-
 #[cfg(feature = "test-utils")]
 #[test]
 fn worldwide_day_abi_preserves_genesis_windows_rates_and_membership() {

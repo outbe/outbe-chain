@@ -14,10 +14,11 @@ const PAYER_KEY: &str = "0x77777777777777777777777777777777777777777777777777777
 fn third_party_settles_and_mines(world: &mut World) {
     let day = world
         .state
-        .ocomp_successor_job_request
-        .as_ref()
-        .expect("successor JobIntent")
-        .worldwide_day;
+        .wwd
+        .as_deref()
+        .expect("offering day")
+        .parse::<u32>()
+        .expect("numeric offering day");
     run_relayed_mining(world, 1, day, false);
 }
 

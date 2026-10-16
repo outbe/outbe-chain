@@ -13,16 +13,7 @@ pub(super) fn run_cycle_tick_at_activation(
     let lifecycle = outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone())
         .with_metadosis_genesis_activation_height(metadosis_genesis_activation_height);
     <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)?;
-    run_ocomp_recovery_sweep(ctx)
-}
-
-/// Resolve due OCOMP recovery windows in the mandatory per-block `CycleTick`.
-/// `CycleTick` is consensus-critical, so every accepted block at height >= 1
-/// has executed this sweep successfully.
-pub(super) fn run_ocomp_recovery_sweep(ctx: &BlockRuntimeContext) -> Result<()> {
-    outbe_staking::contract::Staking::new(ctx.storage.clone())
-        .close_due_ocomp_recovery_windows()
-        .map(|_| ())
+    Ok(())
 }
 
 /// Applies the canonical post-bootstrap TEE lease deadline to the bounded ACTIVE
@@ -95,23 +86,4 @@ pub(crate) fn run_hyperlane_liveness_window(ctx: &BlockRuntimeContext) {
 /// pre-exec hook logs to this phase's receipt without re-running hooks.
 pub(crate) fn run_hook_events(_ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
-}
-
-/// Reserved OCOMP expiry/reset slot. OCM-08 wires the bounded Metadosis
-/// lifecycle handler into this already receipt-visible phase.
-pub(crate) fn run_ocomp_lifecycle_begin(
-    ctx: &BlockRuntimeContext,
-    fork_install: Option<&outbe_metadosis::config::OcompForkInstallV1>,
-) -> Result<()> {
-    if let Some(install) = fork_install {
-        if ctx.block.block_number == install.activation_height {
-            outbe_metadosis::commands::install_fork_profile(ctx, install)?;
-        }
-    }
-    outbe_metadosis::commands::run_ocomp_lifecycle_begin_with_scope(ctx)
-}
-
-/// Freezes day inputs in EVM state for the finalized terminal request.
-pub(crate) fn run_ocomp_terminal_request(ctx: &BlockRuntimeContext) -> Result<()> {
-    outbe_metadosis::commands::run_ocomp_terminal_request(ctx)
 }

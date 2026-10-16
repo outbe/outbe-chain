@@ -8,7 +8,7 @@ use crate::{
     signer::OutbeEvmSigner,
     system_tx::{
         build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, system_tx_intrinsic_gas,
-        OcompLifecycleActivation, SystemTxInputV2, SystemTxKind,
+        SystemTxInputV2, SystemTxKind,
     },
 };
 use alloy_consensus::{TxEip1559, TxEip7702, TxReceipt as _};
@@ -21,17 +21,14 @@ use alloy_sol_types::{SolCall, SolEvent};
 use fixtures::{
     begin_system_txs_for_test, block_one_execution_ctx, boundary_with, boundary_with_epoch,
     cache_db_from_storage, dummy_pubkey, execution_ctx, execution_ctx_with_tee_bootstrap,
-    metadata_with, numbered_test_address, post_state_root,
-    register_and_activate_with_ocomp_registration, sample_tee_bootstrap_payload,
-    sample_tee_bootstrap_payload_at, sample_tee_bootstrap_payload_for, seed_cycle_tick_genesis,
-    seed_previous_day_vwap, seed_registered_active_validator, seed_test_committee_snapshot,
-    seed_test_ocomp_profile, signer_balance, state_with_active_proposer,
-    state_with_active_proposer_and_funded_account,
-    state_with_active_proposer_and_funded_account_fixture,
-    state_with_active_proposer_without_ocomp, state_with_active_validators_seeded,
-    state_with_active_validators_seeded_at_block,
+    metadata_with, numbered_test_address, post_state_root, register_and_activate_native,
+    sample_tee_bootstrap_payload, sample_tee_bootstrap_payload_at,
+    sample_tee_bootstrap_payload_for, seed_cycle_tick_genesis, seed_previous_day_vwap,
+    seed_registered_active_validator, seed_test_committee_snapshot, signer_balance,
+    state_with_active_proposer, state_with_active_proposer_and_funded_account,
+    state_with_active_validators_seeded, state_with_active_validators_seeded_at_block,
     state_with_active_validators_seeded_at_block_with_cycle_frames, test_chain_spec, test_evm_env,
-    test_evm_signer, test_metadata, test_ocomp_fork_install, test_oracle_submit_vote_tx,
+    test_evm_signer, test_metadata, test_oracle_submit_vote_tx,
     test_oracle_submit_vote_tx_with_gas_limit, test_register_active, test_register_waiting,
     test_regular_tx, BeginBlockFixture, BootstrapFixture, CHAIN_ID, OWNER,
     TEST_BLOCK_TIMESTAMP_BASE,
@@ -62,7 +59,7 @@ use outbe_primitives::{
 use outbe_stablecoin::StablecoinContract;
 use outbe_stablecoinfactory::{precompile::IStablecoinFactory, StablecoinFactoryContract};
 use outbe_tribute::{TributeContract, TributeData};
-use outbe_validatorset::{HistoryCounters, ValidatorHistory, ValidatorLifecycle};
+use outbe_validatorset::{HistoryCounters, ValidatorHistory};
 use outbe_vote::{
     constants::VOTING_WINDOW_BLOCKS,
     precompile::IVote,
@@ -81,7 +78,7 @@ use revm::{
     primitives::hardfork::SpecId,
     state::{AccountInfo, Bytecode},
 };
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 mod accounting;
 mod begin_layout;

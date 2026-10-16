@@ -4,7 +4,7 @@ Feature: Tribute admission, projection, and proofs
   absence proofs, and duplicate protection. Rejected ingress stays separate to
   prove that registration and ZK verification are mandatory.
 
-  @pfs-001-01 @pfs-001-02 @pfs-001-03 @pfs-001-05 @ocomp
+  @pfs-001-01 @pfs-001-02 @pfs-001-03 @pfs-001-05
   Scenario: One public Tribute has complete projection and duplicate protection
     Given a fresh localnet with cross-currency Tribute pricing and a 6-block voting window
     Then every validator reads an unknown Tribute day absent from EVM state

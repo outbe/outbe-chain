@@ -11,7 +11,6 @@ use outbe_primitives::{
     sweep_budget::SweepBudget,
 };
 
-use crate::called::materializing;
 use crate::precompile::INodFactory;
 use crate::runtime::emit_event;
 use outbe_nod::state::ExpiryHours;
@@ -55,11 +54,8 @@ struct NodExpiry<'a, 's> {
 impl ExpiryHandler<B256> for NodExpiry<'_, '_> {
     type Member = WwdEntityId;
 
-    /// A bucket whose Nods are still landing waits for the next hour.
+    /// Checks whether a native bucket has unpaid members.
     fn due(&mut self, bucket_key: B256) -> Result<Due> {
-        if materializing(&self.nod, bucket_key)? {
-            return Ok(Due::Wait);
-        }
         Ok(match self.nod.bucket_nod_count.read(&bucket_key)? {
             0 => Due::Drop,
             _ => Due::Expire,

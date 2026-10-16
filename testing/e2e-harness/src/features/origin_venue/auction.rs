@@ -47,8 +47,8 @@ fn jump_committee_past_window(world: &mut World, target_stage: u8) {
     if now >= target {
         return;
     }
-    let (_, _, height, pending) =
-        crate::features::ocomp::restart_committee_at_logical_time(world, target);
+    let (height, pending) =
+        crate::features::common::restart_committee_at_logical_time(world, target);
     for peer in world.validators.committee_ports() {
         assert!(
             world.rpc.wait_finalized_at_least(peer, height, 240),

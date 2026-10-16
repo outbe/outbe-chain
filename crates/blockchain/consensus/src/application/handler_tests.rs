@@ -453,7 +453,6 @@ fn finalizer_test_shared(
             p2p_addresses: Vec::new(),
         },
         chain_id: outbe_primitives::chain::CHAIN_ID,
-        ocomp_lifecycle_activation: outbe_primitives::system_tx::OcompLifecycleActivation::Disabled,
         marshal_mailbox,
         publication: crate::application::publication::ProposalPublication::new(
             context.child("publication"),

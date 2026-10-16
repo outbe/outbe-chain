@@ -7,11 +7,7 @@ use outbe_primitives::time::{
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::schema::MetadosisContract;
-use crate::{
-    aggregate::ValidatedWwdAggregate, lifecycle,
-    ocomp::schema::require_active_ocomp_profile as load_active_ocomp_profile,
-    settlement::process_ocomp_ready_candidate,
-};
+use crate::{aggregate::ValidatedWwdAggregate, lifecycle, settlement::process_ready_candidate};
 
 /// Converts a unix timestamp to a yyyymmdd date key (UTC).
 #[cfg(test)]
@@ -47,7 +43,6 @@ pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
     let timestamp = ctx.block.timestamp;
     lifecycle::validate_metadosis_timestamp(timestamp)?;
-    require_active_ocomp_profile(&metadosis)?;
 
     if ctx.block.block_number == 1 {
         lifecycle::init_genesis_day_inner(&mut metadosis, ctx)?;
@@ -58,16 +53,9 @@ pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
     lifecycle::advance_active_worldwide_days(ctx)?;
 
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
-    let schema_limits = crate::ocomp::schema::poc_schema_limits();
 
-    for current in aggregate.ready_records() {
-        let wwd = current.worldwide_day;
-        if !metadosis.ocomp_fsm_states.get_bytes(&wwd).is_empty()? {
-            metadosis.ocomp_fsm_state(wwd, &schema_limits)?;
-            continue;
-        }
-        process_ocomp_ready_candidate(&mut metadosis, ctx, current)?;
-        break;
+    if let Some(current) = aggregate.ready_records().next() {
+        process_ready_candidate(&mut metadosis, ctx, current)?;
     }
 
     // `MetadosisContract::commit_retire_terminal_wwd` places terminal days in `closed_wwd`.
@@ -75,12 +63,6 @@ pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
     // scan.
 
     Ok(())
-}
-
-pub(crate) fn require_active_ocomp_profile(
-    metadosis: &MetadosisContract<'_>,
-) -> Result<crate::ocomp::schema::OcompRequestProfile> {
-    load_active_ocomp_profile(metadosis)
 }
 
 pub fn advance_active_worldwide_days(ctx: &BlockRuntimeContext) -> Result<()> {

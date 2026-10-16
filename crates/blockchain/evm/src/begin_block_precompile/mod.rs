@@ -21,7 +21,6 @@ mod finalization;
 mod late_credits;
 mod tee_bootstrap;
 
-pub(super) use context::preloaded_certified_parent_state_root;
 use context::{
     block_runtime_context_from_storage, current_preloaded_system_tx_context,
     read_preloaded_finalized_summary,
@@ -39,10 +38,7 @@ pub(crate) use late_credits::authenticate_late_credit;
 pub(crate) use late_credits::run_late_finalize_credits;
 
 use cycle::run_cycle_tick_at_activation;
-pub(crate) use cycle::{
-    run_hook_events, run_hyperlane_liveness_window, run_ocomp_lifecycle_begin,
-    run_ocomp_terminal_request, run_oracle_slash_window,
-};
+pub(crate) use cycle::{run_hook_events, run_hyperlane_liveness_window, run_oracle_slash_window};
 
 pub(crate) use boundary::run_boundary_outcome;
 
@@ -64,7 +60,6 @@ pub fn dispatch(
         caller,
         value,
         DispatchAuthorities {
-            ocomp_fork_install: None,
             tee_attestation_v1:
                 &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
         },
@@ -85,16 +80,12 @@ pub fn dispatch_with_tee_attestation(
         data,
         caller,
         value,
-        DispatchAuthorities {
-            ocomp_fork_install: None,
-            tee_attestation_v1,
-        },
+        DispatchAuthorities { tee_attestation_v1 },
     )
 }
 
 /// Immutable chain-manifest authorities for system-transaction execution.
 pub(crate) struct SystemTxRuntime<'a> {
-    pub(crate) ocomp_fork_install: Option<&'a outbe_metadosis::config::OcompForkInstallV1>,
     pub(crate) tee_attestation_v1:
         &'a crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
 }
@@ -106,19 +97,13 @@ pub(crate) fn dispatch_with_runtime(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    let SystemTxRuntime {
-        ocomp_fork_install,
-        tee_attestation_v1,
-    } = runtime;
+    let SystemTxRuntime { tee_attestation_v1 } = runtime;
     dispatch_inner(
         storage,
         data,
         caller,
         value,
-        DispatchAuthorities {
-            ocomp_fork_install,
-            tee_attestation_v1,
-        },
+        DispatchAuthorities { tee_attestation_v1 },
     )
 }
 
@@ -131,10 +116,7 @@ fn dispatch_inner(
     value: U256,
     authorities: DispatchAuthorities<'_>,
 ) -> Result<Bytes> {
-    let DispatchAuthorities {
-        ocomp_fork_install,
-        tee_attestation_v1,
-    } = authorities;
+    let DispatchAuthorities { tee_attestation_v1 } = authorities;
     if caller != SYSTEM_ADDRESS {
         return Err(crate::errors::BeginBlockPrecompileError::InvalidSystemCaller.into());
     }
@@ -155,16 +137,9 @@ fn dispatch_inner(
             let ctx = block_runtime_context_from_storage(storage, false)?;
             run_late_finalize_credits(&ctx, &artifact)?;
         }
-        SystemTxInputV2::OcompLifecycleBegin => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
-            run_ocomp_lifecycle_begin(&ctx, ocomp_fork_install)?;
-        }
         SystemTxInputV2::CycleTick => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
-            let metadosis_genesis_activation_height = ocomp_fork_install
-                .map(|install| install.activation_height)
-                .unwrap_or(1);
-            run_cycle_tick_at_activation(&ctx, metadosis_genesis_activation_height)?;
+            run_cycle_tick_at_activation(&ctx, 1)?;
         }
         SystemTxInputV2::RewardsGemDelivery => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
@@ -187,10 +162,6 @@ fn dispatch_inner(
         SystemTxInputV2::HookEvents => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
             run_hook_events(&ctx)?;
-        }
-        SystemTxInputV2::OcompTerminalRequest => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
-            run_ocomp_terminal_request(&ctx)?;
         }
     }
 

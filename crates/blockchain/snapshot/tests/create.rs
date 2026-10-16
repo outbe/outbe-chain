@@ -22,9 +22,7 @@ fn manifest_template() -> SnapshotManifestV1 {
         "version":1,"chain_id":54322345,"genesis_hash":"22".repeat(32),
         "created_at_unix":1789940000_u64,"creator":"test creator","source":null,
         "progress":{"finalized":block(100),"execution":block(101),"execution_stage":101,
-            "finish_stage":100,"partial_state_trie":null,"unwind":null,"storage_version":2,
-            "ce":block(100),"projection":block(98),"ocomp_baseline":block(0),
-            "ocomp_previous":block(90),"ocomp_current":block(97)},
+            "finish_stage":100,"partial_state_trie":null,"unwind":null,"storage_version":2},
         "domains":[{"id":"native","kind":"execution-db","native_root":"chain","native_path":"db","mode":448,
             "entries":[{"path":"z.data","kind":"file","size":0,"sha256":null,"mode":0},
                        {"path":"a.empty","kind":"directory","size":0,"sha256":null,"mode":0}]}],
@@ -380,7 +378,7 @@ fn creation_preserves_wire_bytes_and_checks_inventory_after_streaming_before_pub
     assert_eq!(bytes, archive_fixture());
     assert_eq!(
         hex::encode(Sha256::digest(&bytes)),
-        "e9163ffb3d29e7bbddc467e423043660d9ffbcd40b5e3df0ec45179b1eeffe8e"
+        "741d7da62e94587b4bdca30a72ceccca833965adef9e9d1ec803f93e24462fe9"
     );
 }
 
@@ -425,7 +423,6 @@ fn signed_archive_is_portable_and_contains_unchanged_native_bytes() {
     let moved = temp.path().join("received.tar");
     fs::rename(output, &moved).unwrap();
     let index = read_archive_index(fs::File::open(&moved).unwrap(), None).unwrap();
-    assert_eq!(index.manifest.progress.ocomp_current.number, 97);
     assert_eq!(index.manifest.file_count, 1);
     assert_eq!(index.manifest.total_bytes, data.len() as u64);
     let mut damaged = fs::read(&moved).unwrap();

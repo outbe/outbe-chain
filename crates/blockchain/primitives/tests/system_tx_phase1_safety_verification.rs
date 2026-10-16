@@ -19,7 +19,7 @@ use outbe_primitives::system_tx::{SystemTxKind, SystemTxPhase, GENESIS_BOOTSTRAP
 use proptest::prelude::*;
 
 /// The full set of `SystemTxPhase` variants must equal the V2 contract:
-/// 10 variants, no more, no fewer. A drift here is a protocol incompatibility.
+/// 9 variants, no more, no fewer. A drift here is a protocol incompatibility.
 #[test]
 fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
     // Construct one of each variant. If someone adds a new variant without
@@ -32,7 +32,6 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
             receipt_index: 0,
         },
         SystemTxPhase::LateFinalizeCredits { body_index: 0 },
-        SystemTxPhase::OcompLifecycleBegin { body_index: 0 },
         SystemTxPhase::CycleTick { body_index: 0 },
         SystemTxPhase::RewardsGemDelivery { body_index: 0 },
         SystemTxPhase::BoundaryOutcomeOptional { body_index: 0 },
@@ -47,7 +46,6 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
         match variant {
             SystemTxPhase::Phase1Preexecuted { .. } => {}
             SystemTxPhase::LateFinalizeCredits { .. } => {}
-            SystemTxPhase::OcompLifecycleBegin { .. } => {}
             SystemTxPhase::CycleTick { .. } => {}
             SystemTxPhase::RewardsGemDelivery { .. } => {}
             SystemTxPhase::BoundaryOutcomeOptional { .. } => {}
@@ -57,7 +55,7 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
             SystemTxPhase::UserTxs => {}
         }
     }
-    assert_eq!(variants.len(), 10, "V2 SystemTxPhase contract: 10 variants");
+    assert_eq!(variants.len(), 9, "V2 SystemTxPhase contract: 9 variants");
 }
 
 /// Block 0 is the genesis block: no begin-zone system txs. The cursor must

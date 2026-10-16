@@ -6,8 +6,8 @@ mod cases;
 fn binding_diagnostics_match_pre_refactor_snapshots() {
     cases::assert_diagnostics(
         true,
-        |body, header, activation| {
-            super::validate_layout(body, header, activation)
+        |body, header| {
+            super::validate_layout(body, header)
                 .map(|_| ())
                 .map_err(|error| error.to_string())
         },

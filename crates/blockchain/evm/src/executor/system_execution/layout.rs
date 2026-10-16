@@ -91,18 +91,10 @@ where
             block_artifacts.consensus_header_artifact,
             Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
         );
-        let ocomp_activation = if self.ocomp_lifecycle_active {
-            OcompLifecycleActivation::at_block(0)
-        } else {
-            OcompLifecycleActivation::Disabled
-        };
+
         // The shared layout defines order. Block 1 always reserves mandatory OST3.
-        let kinds = expected_begin_block_kinds_for_activation(
-            block_number,
-            has_boundary_outcome,
-            block_number == 1,
-            ocomp_activation,
-        );
+        let kinds =
+            expected_begin_block_kinds(block_number, has_boundary_outcome, block_number == 1);
         let mut system_txs = Vec::new();
         for kind in &kinds {
             let ordinal = system_txs.len();
@@ -132,11 +124,6 @@ where
                         }
                     })?
                 }
-                SystemTxKind::OcompLifecycleBegin => {
-                    self.append_begin_input(&mut system_txs, *kind, || {
-                        SystemTxInputV2::OcompLifecycleBegin
-                    })?
-                }
                 SystemTxKind::CycleTick => {
                     self.append_begin_input(&mut system_txs, *kind, || SystemTxInputV2::CycleTick)?
                 }
@@ -159,14 +146,6 @@ where
                 }
                 SystemTxKind::HookEvents => {
                     self.append_begin_input(&mut system_txs, *kind, || SystemTxInputV2::HookEvents)?
-                }
-                // The canonical begin plan excludes the end-zone terminal request.
-                SystemTxKind::OcompTerminalRequest => {
-                    return Err(ExecutorValidationError::UnexpectedBeginSystemTx {
-                        body_index: ordinal,
-                        expected: kinds.clone(),
-                    }
-                    .into());
                 }
             }
         }
@@ -310,7 +289,7 @@ where
         use crate::errors::ExecutorValidationError;
 
         let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
-        let mut gas_inputs = system_txs
+        let gas_inputs = system_txs
             .iter()
             .map(|(kind, input, _)| {
                 input.encode().map(|calldata| (*kind, calldata)).map_err(
@@ -320,16 +299,6 @@ where
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        if self.ocomp_lifecycle_active {
-            let terminal = SystemTxInputV2::OcompTerminalRequest;
-            gas_inputs.push((
-                terminal.kind(),
-                terminal.encode().map_err(|error| -> BlockExecutionError {
-                    ExecutorValidationError::encode_terminal_system_tx_for_visible_gas_plan(error)
-                        .into()
-                })?,
-            ));
-        }
         let gas_plan = SystemTxVisibleGasPlan::new(self.inner.evm.block().gas_limit(), &gas_inputs)
             .map_err(|error| -> BlockExecutionError {
                 ExecutorValidationError::plan_visible_system_tx_gas(error).into()
@@ -356,16 +325,11 @@ where
                     Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
                 );
                 let has_tee_bootstrap = self.block_has_tee_bootstrap();
-                let ocomp_activation = if self.ocomp_lifecycle_active {
-                    OcompLifecycleActivation::at_block(0)
-                } else {
-                    OcompLifecycleActivation::Disabled
-                };
-                let expected = expected_begin_block_kinds_for_activation(
+
+                let expected = expected_begin_block_kinds(
                     block_number,
                     has_boundary_outcome,
                     has_tee_bootstrap,
-                    ocomp_activation,
                 );
                 ExecutorValidationError::UnexpectedBeginSystemTx {
                     body_index,

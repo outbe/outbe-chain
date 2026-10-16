@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use eyre::{ensure, Result, WrapErr};
 
 use super::{
-    ensure_matches, process_identity, read_bootstrap, read_state, remove_state, state_is_live,
-    LocalnetCli, LocalnetStateV1, STOP_TIMEOUT,
+    ensure_matches, read_bootstrap, read_state, remove_state, state_is_live, LocalnetCli,
+    LocalnetStateV1, STOP_TIMEOUT,
 };
 use crate::internal::config::Config;
 use crate::world::localnet::Localnet;
@@ -20,7 +20,6 @@ pub(super) fn stop(cli: &LocalnetCli) -> Result<()> {
     };
     ensure_matches(cli, &state)?;
     if !state_is_live(&state) {
-        cleanup_stale_owner(cli, &state)?;
         cleanup_run_scoped(cli)?;
         remove_state(&cli.data_dir)?;
         println!("Removed stale LocalNet resources and owner record");
@@ -85,28 +84,6 @@ fn signal_process_group(group: u32, signal: &str) -> Result<()> {
         status.success(),
         "failed to signal LocalNet process group {group}"
     );
-    Ok(())
-}
-
-pub(super) fn cleanup_stale_owner(_cli: &LocalnetCli, state: &LocalnetStateV1) -> Result<()> {
-    for process in &state.ocomp_processes {
-        if process_identity(process.pid).as_deref() == Some(&process.process_identity) {
-            signal_pid(process.pid, "TERM")?;
-        }
-    }
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while Instant::now() < deadline
-        && state.ocomp_processes.iter().any(|process| {
-            process_identity(process.pid).as_deref() == Some(&process.process_identity)
-        })
-    {
-        sleep(Duration::from_millis(100));
-    }
-    for process in &state.ocomp_processes {
-        if process_identity(process.pid).as_deref() == Some(&process.process_identity) {
-            signal_pid(process.pid, "KILL")?;
-        }
-    }
     Ok(())
 }
 

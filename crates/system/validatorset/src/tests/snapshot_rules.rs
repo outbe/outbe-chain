@@ -1,12 +1,7 @@
-//! Characterization of the committee snapshot store: the exact rejection of a
-//! committee without admitted OCOMP material, the replay comparison, the
-//! write order that keeps a partial snapshot unreadable, and the strict
-//! epoch lookup of the OCOMP extension.
-
 use super::*;
 use crate::state::{
-    read_committee_snapshot, read_ocomp_snapshot_extension_at_epoch, read_ocomp_snapshot_member_at,
-    write_committee_snapshot, CommitteeEntry, CommitteeSnapshot, COMMITTEE_SNAPSHOT_RETAIN_EPOCHS,
+    read_committee_snapshot, write_committee_snapshot, CommitteeEntry, CommitteeSnapshot,
+    COMMITTEE_SNAPSHOT_RETAIN_EPOCHS,
 };
 use outbe_primitives::error::Result;
 
@@ -24,7 +19,7 @@ fn outcome_text<T: std::fmt::Debug>(result: Result<T>) -> String {
     }
 }
 
-/// A PENDING validator with an admitted OCOMP key.
+/// A PENDING validator that confirmed readiness.
 fn admitted(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
     let seed = validator.as_slice()[19];
     vs.register_validator(OWNER, validator, &dummy_consensus_pubkey(seed))?;
@@ -78,32 +73,7 @@ fn assert_fatal_without_writes<T: std::fmt::Debug>(
 }
 
 #[test]
-fn snapshot_write_requires_bound_ocomp_material_for_each_member_in_order() -> Result<()> {
-    let mut storage = snapshot_storage(|vs| {
-        vs.register_validator(OWNER, FIRST, &dummy_consensus_pubkey(0xA7))?;
-        vs.register_validator(OWNER, SECOND, &dummy_consensus_pubkey(0xA8))
-    })?;
-    let snapshot = snapshot_of(&[FIRST, SECOND], 96);
-    assert_fatal_without_writes(
-        &mut storage,
-        |storage| write_committee_snapshot(storage, EPOCH, &snapshot),
-        &format!("Revert: active validator {FIRST} has no admitted OCOMP registration"),
-    );
-
-    let mut storage = snapshot_storage(both_admitted)?;
-    let mut rekeyed = snapshot_of(&[FIRST, SECOND], 96);
-    rekeyed.committee[1].consensus_pubkey = dummy_consensus_pubkey(0x01);
-    assert_fatal_without_writes(
-        &mut storage,
-        |storage| write_committee_snapshot(storage, EPOCH, &rekeyed),
-        &format!("Revert: active validator {SECOND} has stale or invalid OCOMP registration"),
-    );
-    Ok(())
-}
-
-#[test]
-fn snapshot_replay_rejects_consensus_collision_and_preserves_ocomp_extension_on_rekey() -> Result<()>
-{
+fn snapshot_replay_rejects_consensus_collision() -> Result<()> {
     let snapshot = snapshot_of(&[FIRST, SECOND], 96);
     let mut storage = snapshot_storage(both_admitted)?;
     let (_, key) = storage.enter(|storage| write_committee_snapshot(storage, EPOCH, &snapshot))?;
@@ -125,57 +95,6 @@ fn snapshot_replay_rejects_consensus_collision_and_preserves_ocomp_extension_on_
         &format!("Fatal: committee snapshot replay mismatch for key {key}"),
     );
 
-    // When the consensus snapshot matches and only OCOMP extension/member differs
-    // (e.g. validator OCOMP registration changed during the epoch), replay
-    // preserves the existing stored snapshot and OCOMP extension without Fatal.
-    let ocomp_mutations: [fn(&ValidatorSet<'_>, B256) -> Result<()>; 2] = [
-        |vs, key| {
-            vs.committee_snapshot_ocomp_binding_hash
-                .write(&key, B256::repeat_byte(0x01))
-        },
-        |vs, key| {
-            vs.committee_snapshot_ocomp_key_lo_at
-                .get_nested(&key)
-                .write(&1, B256::repeat_byte(0x01))
-        },
-    ];
-    for mutate in ocomp_mutations {
-        let mut storage = snapshot_storage(both_admitted)?;
-        let (_, key) =
-            storage.enter(|storage| write_committee_snapshot(storage, EPOCH, &snapshot))?;
-        storage.enter(|storage| mutate(&ValidatorSet::new(storage), key))?;
-        let preserved_binding = storage.enter(|storage| {
-            ValidatorSet::new(storage)
-                .committee_snapshot_ocomp_binding_hash
-                .read(&key)
-        })?;
-        let preserved_key_lo = storage.enter(|storage| {
-            ValidatorSet::new(storage)
-                .committee_snapshot_ocomp_key_lo_at
-                .get_nested(&key)
-                .read(&1)
-        })?;
-        assert_eq!(
-            outcome_text(
-                storage.enter(|storage| write_committee_snapshot(storage, EPOCH, &snapshot))
-            ),
-            format!("Ok(({:?}, {key:?}))", committee_set_hash_of(&snapshot)),
-            "same-epoch replay with identical consensus snapshot must not be Fatal",
-        );
-        let after_binding = storage.enter(|storage| {
-            ValidatorSet::new(storage)
-                .committee_snapshot_ocomp_binding_hash
-                .read(&key)
-        })?;
-        let after_key_lo = storage.enter(|storage| {
-            ValidatorSet::new(storage)
-                .committee_snapshot_ocomp_key_lo_at
-                .get_nested(&key)
-                .read(&1)
-        })?;
-        assert_eq!(after_binding, preserved_binding);
-        assert_eq!(after_key_lo, preserved_key_lo);
-    }
     Ok(())
 }
 
@@ -254,64 +173,5 @@ fn stored_vrf_key_round_trips_across_chunk_boundaries() -> Result<()> {
             "VRF key of {vrf_key_len} bytes"
         );
     }
-    Ok(())
-}
-
-#[test]
-fn epoch_extension_lookup_is_strict() -> Result<()> {
-    let snapshot = snapshot_of(&[FIRST, SECOND], 96);
-    let mut storage = snapshot_storage(both_admitted)?;
-    let (_, key) = storage.enter(|storage| write_committee_snapshot(storage, EPOCH, &snapshot))?;
-    let found = storage.enter(|storage| read_ocomp_snapshot_extension_at_epoch(storage, EPOCH))?;
-    assert_eq!(found.as_ref().map(|(found_key, _)| *found_key), Some(key));
-    let lookup_after = |storage: &mut HashMapStorageProvider,
-                        corrupt: fn(&ValidatorSet<'_>, B256) -> Result<()>| {
-        storage.enter(|storage| -> Result<bool> {
-            corrupt(&ValidatorSet::new(storage.clone()), key)?;
-            Ok(read_ocomp_snapshot_extension_at_epoch(storage, EPOCH)?.is_some())
-        })
-    };
-    let mut wrong_count = snapshot_storage(both_admitted)?;
-    wrong_count.enter(|storage| write_committee_snapshot(storage, EPOCH, &snapshot))?;
-    assert!(!lookup_after(&mut wrong_count, |vs, key| vs
-        .committee_snapshot_ocomp_member_count
-        .write(&key, 3))?);
-    let mut wrong_member = snapshot_storage(both_admitted)?;
-    wrong_member.enter(|storage| write_committee_snapshot(storage, EPOCH, &snapshot))?;
-    assert!(!lookup_after(&mut wrong_member, |vs, key| {
-        vs.committee_snapshot_ocomp_key_epoch_at
-            .get_nested(&key)
-            .write(&0, 7)
-    })?);
-    let colliding = EPOCH + COMMITTEE_SNAPSHOT_RETAIN_EPOCHS;
-    storage.enter(|storage| write_committee_snapshot(storage, colliding, &snapshot))?;
-    let (old_epoch, new_epoch) = storage.enter(|storage| -> Result<(bool, bool)> {
-        Ok((
-            read_ocomp_snapshot_extension_at_epoch(storage.clone(), EPOCH)?.is_some(),
-            read_ocomp_snapshot_extension_at_epoch(storage, colliding)?.is_some(),
-        ))
-    })?;
-    assert_eq!((old_epoch, new_epoch), (false, true));
-    Ok(())
-}
-
-#[test]
-fn stored_ocomp_key_padding_must_be_zero() -> Result<()> {
-    let snapshot = snapshot_of(&[FIRST], 96);
-    let mut storage = snapshot_storage(|vs| admitted(vs, FIRST))?;
-    let result = storage.enter(|storage| {
-        let (_, key) = write_committee_snapshot(storage.clone(), EPOCH, &snapshot)?;
-        let mut padded = [0u8; 32];
-        padded[1] = 1;
-        ValidatorSet::new(storage.clone())
-            .committee_snapshot_ocomp_key_hi_at
-            .get_nested(&key)
-            .write(&0, B256::from(padded))?;
-        read_ocomp_snapshot_member_at(storage, key, 0)
-    });
-    assert_eq!(
-        outcome_text(result),
-        "Revert: stored OCOMP snapshot public-key padding is non-zero"
-    );
     Ok(())
 }

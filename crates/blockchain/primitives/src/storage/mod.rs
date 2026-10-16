@@ -7,22 +7,17 @@ pub mod handle;
 pub mod hashmap;
 pub mod indexed_list;
 pub mod keys;
-pub mod lysis_activation;
-mod metadosis_mutation;
+pub mod metadosis_mutation;
 pub mod proof;
 pub mod readonly;
 pub mod types;
 
 pub use handle::StorageHandle;
-pub use lysis_activation::CertifiedLysisActivation;
 pub use metadosis_mutation::{
     metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
     metadosis_init_genesis_binding, metadosis_late_settlement_binding,
-    metadosis_ocomp_lifecycle_begin_binding, metadosis_ocomp_terminal_request_binding,
-    metadosis_process_ready_binding, metadosis_verified_vote_binding, MetadosisCertifiedFinality,
-    MetadosisCertifiedFinalityBinding, MetadosisCycleLifecycle, MetadosisForkProfile,
+    metadosis_process_ready_binding, MetadosisCertifiedFinality, MetadosisCycleLifecycle,
     MetadosisMutationEntitlements, MetadosisMutationPurpose, MetadosisMutationPurposeTag,
-    MetadosisOcompLifecycle, MetadosisVerifiedResultVote,
 };
 pub use revm::state::{AccountInfo, Bytecode};
 pub use types::{Mapping, Slot, Storable, StorableType, StorageKey, StorageOps};
@@ -235,26 +230,6 @@ pub trait PrecompileStorageProvider {
         _completed: bool,
     ) -> Result<()> {
         Err(crate::error::PrimitivesStorageError::MetadosisMutationFrameUnavailable.into())
-    }
-
-    /// Opens the private execution lease for one certified Lysis activation.
-    ///
-    /// Providers deny this by default. The production EVM execution context
-    /// grants the lease only from the fork-pinned activation dispatch.
-    fn begin_lysis_activation_frame(&mut self, _activation_call_id: B256) -> Result<()> {
-        Err(crate::error::PrimitivesStorageError::CertifiedLysisActivationFrameUnavailable.into())
-    }
-
-    /// Closes a previously granted Lysis activation lease.
-    ///
-    /// `completed` is true only after the fixed Nod, carry-over, Tribute
-    /// and terminal cursor has been consumed in order.
-    fn finish_lysis_activation_frame(
-        &mut self,
-        _activation_call_id: B256,
-        _completed: bool,
-    ) -> Result<()> {
-        Err(crate::error::PrimitivesStorageError::CertifiedLysisActivationFrameUnavailable.into())
     }
 
     /// Returns the chain ID.

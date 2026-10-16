@@ -19,7 +19,6 @@ snapshot-integration = []
 # Internal
 outbe-consensus.workspace = true
 outbe-evm.workspace = true
-outbe-ocomp-protocol.workspace = true
 outbe-node.workspace = true
 outbe-primitives.workspace = true
 outbe-radicle.workspace = true

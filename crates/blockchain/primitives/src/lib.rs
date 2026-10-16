@@ -55,6 +55,7 @@ pub mod tee_test_utils;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 pub mod time;
+pub mod transaction_call;
 pub mod tribute_day_encryption;
 pub mod tribute_encryption;
 pub mod units;

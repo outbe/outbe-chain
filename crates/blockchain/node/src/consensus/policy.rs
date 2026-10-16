@@ -1,7 +1,6 @@
 //! Stateless Outbe rules composed by the Reth consensus adapter.
 use super::system_transactions;
 use alloy_consensus::BlockHeader as _;
-use outbe_evm::system_tx::OcompLifecycleActivation;
 use outbe_primitives::consensus::{
     MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS, MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS, OUTBE_MAX_BLOCK_SIZE,
 };
@@ -23,7 +22,6 @@ const MILLIS_PER_SECOND: u64 = 1000;
 pub(super) struct OutbeConsensusPolicy<ChainSpec> {
     pub(super) chain_spec: Arc<ChainSpec>,
     pub(super) skip_gas_limit_ramp_check: bool,
-    pub(super) ocomp_lifecycle_activation: OcompLifecycleActivation,
 }
 
 impl<ChainSpec> OutbeConsensusPolicy<ChainSpec>
@@ -72,7 +70,7 @@ where
         header: &OutbeHeader,
     ) -> Result<(), ConsensusError> {
         validate_outbe_body_withdrawals(body)?;
-        validate_system_transactions(body, header, self.ocomp_lifecycle_activation)
+        validate_system_transactions(body, header)
     }
 
     pub(super) fn validate_block_pre_execution(
@@ -81,22 +79,16 @@ where
     ) -> Result<(), ConsensusError> {
         validate_outbe_body_withdrawals(block.body())?;
         validate_block_transport_size(block)?;
-        validate_system_transactions(
-            block.body(),
-            block.header(),
-            self.ocomp_lifecycle_activation,
-        )
+        validate_system_transactions(block.body(), block.header())
     }
 }
 
 pub(super) fn validate_system_transactions(
     body: &OutbeBlockBody,
     header: &OutbeHeader,
-    ocomp_lifecycle_activation: OcompLifecycleActivation,
 ) -> Result<(), ConsensusError> {
     system_transactions::validate_beneficiary(header)?;
-    let (layout, artifacts) =
-        system_transactions::validate_layout(body, header, ocomp_lifecycle_activation)?;
+    let (layout, artifacts) = system_transactions::validate_layout(body, header)?;
     system_transactions::validate_parent_accounting(&layout, header)?;
     system_transactions::validate_boundary_outcome(&layout, &artifacts)?;
     system_transactions::validate_late_credits(&layout, &artifacts)

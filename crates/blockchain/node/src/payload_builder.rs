@@ -11,7 +11,7 @@ use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig,
 };
-use reth_chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec};
+use reth_chainspec::{ChainSpec, ChainSpecProvider};
 use reth_errors::BlockExecutionError;
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_evm::{execute::BlockBuilder, ConfigureEvm, Evm};
@@ -26,15 +26,12 @@ use reth_transaction_pool::{
 use revm::context_interface::Block as _;
 use tracing::{debug, warn};
 
-mod carrier_admission;
 mod execution;
 mod finalization;
 mod preparation;
 mod selection;
 mod size_budget;
 mod transaction_error;
-
-use carrier_admission::CarrierBlock;
 
 #[derive(Debug, Clone)]
 pub struct OutbePayloadBuilder<Pool, Provider> {
@@ -190,29 +187,12 @@ where
             &self.builder_config,
             block_gas_limit,
             base_fee,
-            &system_txs.end,
         )?;
         if state.execute_begin(&mut builder, system_txs.begin, &cancel)?
             == execution::StageOutcome::Cancelled
         {
             return Ok(BuildOutcome::Cancelled);
         }
-        // The builder checks result-vote carriers on the exact in-progress block
-        // state before execution. See `carrier_admission`.
-        let carrier_block = self
-            .evm_config
-            .ocomp_lifecycle_active_at(block_number)
-            .then(|| {
-                let block = builder.evm_mut().block();
-                CarrierBlock {
-                    number: block_number,
-                    timestamp: block.timestamp().saturating_to::<u64>(),
-                    chain_id: chain_spec.chain().id(),
-                    genesis_hash: chain_spec.genesis_hash(),
-                    beneficiary: block.beneficiary(),
-                }
-            });
-
         if block_number != GENESIS_BOOTSTRAP_BLOCK_NUMBER {
             let mut selection = selection::UserTransactions {
                 pool: &self.pool,
@@ -220,7 +200,6 @@ where
                 state: &mut state,
                 cancel: &cancel,
                 payload_id,
-                carrier_block,
             };
             if selection.execute(&mut builder)? == execution::StageOutcome::Cancelled {
                 return Ok(BuildOutcome::Cancelled);
@@ -232,11 +211,6 @@ where
                 fees: state.total_fees,
                 cached_reads,
             });
-        }
-        if state.execute_end(&mut builder, system_txs.end, &cancel)?
-            == execution::StageOutcome::Cancelled
-        {
-            return Ok(BuildOutcome::Cancelled);
         }
         let outcome = if let Some(mut handle) = state_root_handle {
             // Deliver all EVM state changes before the parallel root is frozen.

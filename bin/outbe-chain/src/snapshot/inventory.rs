@@ -73,74 +73,6 @@ pub(crate) fn enumerate_native_files(layout: &NativeLayout) -> eyre::Result<Nati
             &layout.consensus_root,
             "finalized_parent_certs",
         ),
-        (
-            OcompRetention,
-            NativeRoot::Consensus,
-            &layout.consensus_root,
-            "ocomp_retention",
-        ),
-        (
-            ClosureCheckpoint,
-            NativeRoot::Ocomp,
-            &layout.ocomp_root,
-            "exporter-v1/discovery/closure-checkpoint-v1",
-        ),
-        (Discovery, NativeRoot::Ocomp, &layout.ocomp_root, ""),
-        (
-            ProtocolBundles,
-            NativeRoot::Ocomp,
-            &layout.ocomp_root,
-            "protocol-bundles-v1",
-        ),
-        (
-            CasObjects,
-            NativeRoot::Ocomp,
-            &layout.ocomp_root,
-            "cas-v1/objects",
-        ),
-        (
-            InputReferences,
-            NativeRoot::Ocomp,
-            &layout.ocomp_root,
-            "exporter-v1/input-refs",
-        ),
-        (
-            ExportReceipts,
-            NativeRoot::Ocomp,
-            &layout.ocomp_root,
-            "exporter-v1/receipts",
-        ),
-        (
-            ExportBindings,
-            NativeRoot::Ocomp,
-            &layout.ocomp_root,
-            "supervisor-v1/export-bindings",
-        ),
-        (JobPublicRecords, NativeRoot::Ocomp, &layout.ocomp_root, ""),
-        (
-            MaterializationReferences,
-            NativeRoot::Ocomp,
-            &layout.ocomp_root,
-            "supervisor-v1/materialization-references",
-        ),
-        (
-            LocalResults,
-            NativeRoot::Ocomp,
-            &layout.ocomp_root,
-            "node-v1/local-results",
-        ),
-        (
-            ExexCheckpoint,
-            NativeRoot::Ocomp,
-            &layout.ocomp_root,
-            "node-v1/exex-checkpoint",
-        ),
-        (
-            FatalEvidence,
-            NativeRoot::Ocomp,
-            &layout.ocomp_root,
-            "node-v1/fatal-evidence",
-        ),
     ];
     let mut domains = Vec::new();
     let mut selected_roots = Vec::new();
@@ -174,19 +106,6 @@ pub(crate) fn enumerate_native_files(layout: &NativeLayout) -> eyre::Result<Nati
                         })
                 })
                 .collect(),
-            Discovery => children(&root.join("exporter-v1/discovery"))?
-                .into_iter()
-                .filter(|name| name != Path::new("closure-checkpoint-v1"))
-                .map(|name| PathBuf::from("exporter-v1/discovery").join(name))
-                .collect(),
-            JobPublicRecords => children(&root.join("supervisor-v1/jobs"))?
-                .into_iter()
-                .flat_map(|job| {
-                    ["admissions"]
-                        .into_iter()
-                        .map(move |name| PathBuf::from("supervisor-v1/jobs").join(&job).join(name))
-                })
-                .collect(),
             _ => vec![PathBuf::from(path)],
         };
         let mut members = Vec::new();
@@ -201,7 +120,7 @@ pub(crate) fn enumerate_native_files(layout: &NativeLayout) -> eyre::Result<Nati
                     walk(root, &path, &mut members)?;
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    if matches!(kind, ExecutionDb | ClosureCheckpoint) {
+                    if matches!(kind, ExecutionDb) {
                         return Err(crate::errors::SnapshotError::MissingRequiredDomain {
                             path: source.display().to_string(),
                         }
@@ -273,15 +192,6 @@ fn protected_native_paths(layout: &NativeLayout) -> eyre::Result<ProtectedPaths>
         "dkg_player_retry.hex",
     ] {
         protected.0.push(layout.consensus_root.join(name));
-    }
-    for name in [
-        "ocomp-evm-key.hex",
-        "ocomp-key-v1.hex",
-        "supervisor-v1/sign-once",
-        "supervisor-v1/vote-submissions",
-        "supervisor-v1/materialization-submissions",
-    ] {
-        protected.0.push(layout.ocomp_root.join(name));
     }
     Ok(protected)
 }

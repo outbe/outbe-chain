@@ -13,7 +13,6 @@ outbe-primitives.workspace = true
 outbe-oracle = { path = "../../system/oracle" }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-sol-types.workspace = true
-outbe-ocomp-protocol.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 

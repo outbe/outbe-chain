@@ -521,7 +521,7 @@ fn promote(world: &mut World) {
     let index = world.validators.joiner_index();
     world
         .localnet
-        .launch_joiner_full_node(index, 0, &[])
+        .launch_joiner_full_node(index, 0)
         .expect("launch role-neutral full node");
     wait_until("full-node Radicle disabled status", 60, || {
         world

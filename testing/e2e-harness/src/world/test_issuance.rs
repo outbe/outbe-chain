@@ -196,7 +196,6 @@ pub fn issue_series(
 }
 
 /// A nonce that passes IntexFactory's proof-of-work check.
-#[cfg(feature = "ocomp-integration")]
 pub fn mine_nonce(
     owner: Address,
     promis_amount: U256,

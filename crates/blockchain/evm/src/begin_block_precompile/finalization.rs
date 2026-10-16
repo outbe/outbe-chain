@@ -24,26 +24,6 @@ pub(crate) fn run_finalization_and_slashing(
         },
     )?;
 
-    // OCOMP finality is derived only from an actual consensus finalization
-    // certificate for the exact request parent. Certified notarization remains
-    // sufficient for ordinary parent accounting, but cannot create a JobId or
-    // open a result-vote window.
-    if metadata.proof_kind
-        == outbe_primitives::consensus_metadata::ParentParticipationProof::Finalization
-    {
-        let finalized_state_root = finalized
-            .state_root
-            .ok_or(crate::errors::BeginBlockPrecompileError::MissingVerifiedParentStateRoot)?;
-        let certified = outbe_primitives::storage::MetadosisCertifiedFinalityBinding::new(
-            ctx.block.chain_id,
-            ctx.block.block_number,
-            metadata.finalized_block_number,
-            metadata.finalized_block_hash,
-            finalized_state_root,
-        );
-        outbe_metadosis::commands::record_certified_parent_finality(ctx, &certified)?;
-    }
-
     // the V3 Rewards fingerprint binds the canonical VRF proof
     // hash from the verified parent certificate. The executor's Phase 1
     // preflight (`apply_pre_execution_changes::verify_phase1_in_preexec`)

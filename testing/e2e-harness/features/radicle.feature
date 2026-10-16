@@ -1,4 +1,4 @@
-@radicle @ocomp @tee @sgx-no-attest @sudo @min-validators-4
+@radicle @tee @sgx-no-attest @sudo @min-validators-4
 Feature: Validator-managed Radicle storage
   Validators discover one another from finalized chain identity and replicate a
   permissionlessly registered public repository without joining public Radicle.

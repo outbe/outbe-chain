@@ -131,7 +131,7 @@ fn complete_current_evm_tail_uses_authoritative_v1_and_v2_without_history() {
         assert_eq!(view.progress.finalized.number, 100);
         assert_eq!(
             verified
-                .db
+                .scratch_db()
                 .tx()
                 .unwrap()
                 .get::<tables::HashedAccounts>(keccak256(Address::repeat_byte(0x11)))
@@ -140,7 +140,6 @@ fn complete_current_evm_tail_uses_authoritative_v1_and_v2_without_history() {
                 .balance,
             U256::from(900)
         );
-        assert!(!layout.ocomp_root.exists());
         assert!(!layout.chain_root.join("rocksdb-secondary-tmp").exists());
     }
 }
@@ -231,7 +230,7 @@ fn derived_source_tries_do_not_replace_authoritative_state() {
         assert_eq!(verified.state_root, expected);
         assert_eq!(
             verified
-                .db
+                .scratch_db()
                 .tx()
                 .unwrap()
                 .entries::<tables::AccountsTrie>()
@@ -593,7 +592,6 @@ fn execution_selection_requires_only_the_native_layout() {
                 .state_root,
             expected
         );
-        assert!(!layout.ocomp_root.exists());
         assert!(!source.path().join("configuration/offchain.toml").exists());
     }
 }

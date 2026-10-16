@@ -1,4 +1,3 @@
-pub mod certified;
 pub mod codec;
 pub mod day_schema;
 mod day_state;
@@ -16,8 +15,7 @@ pub mod storage_records;
 
 pub use record::{TributeMetadata, TributeRecord};
 pub use runtime::LoadedTribute;
-pub use schema::{DayPreAdmission, DayTotals, TributeContract, TributeData};
-pub use state::TributePreAdmissionProjection;
+pub use schema::{DayTotals, TributeContract, TributeData};
 
 #[cfg(test)]
 mod tests;

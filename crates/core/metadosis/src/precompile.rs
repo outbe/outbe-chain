@@ -50,41 +50,6 @@ pub fn dispatch(
             getCapacityForfeitureReceipt(c) => {
                 view(c, |c| queries::capacity_forfeiture_receipt(&metadosis, c))
             }
-            getOffchainJob(c) => view(c, |c| {
-                crate::ocomp::views::get_offchain_job(metadosis.storage.clone(), c.intentId)
-                    .map(Bytes::from)
-            }),
-            getOffchainVoteAccountability(c) => view(c, |c| {
-                crate::ocomp::views::get_offchain_vote_accountability(
-                    metadosis.storage.clone(),
-                    c.jobId,
-                )
-                .map(Bytes::from)
-            }),
-            getActiveLysisGeneration(c) => view(c, |c| {
-                crate::ocomp::views::get_active_lysis_generation(
-                    metadosis.storage.clone(),
-                    c.wwd.into(),
-                )
-                .map(Bytes::from)
-            }),
-            getLysisTerminalReceipt(c) => view(c, |c| {
-                crate::ocomp::views::get_lysis_terminal_receipt(
-                    metadosis.storage.clone(),
-                    c.intentId,
-                )
-                .map(Bytes::from)
-            }),
-            // Arbitrary calldata can reach this arm whenever the OCOMP lifecycle
-            // is inactive. The EVM dispatcher routes this selector to
-            // `commands::submit_verified_result_vote` only while
-            // `ocomp_lifecycle_active` is true. With the lifecycle active, this
-            // arm is structurally unreachable. Caller-supplied ingress must
-            // revert, never `Fatal`. A `Fatal` here aborts the whole payload
-            // build for a transaction any external account can submit.
-            submitLysisResult(_) => Err(crate::errors::result_vote_rejection(
-                crate::errors::vote_rejection_code::LIFECYCLE_INACTIVE,
-            )),
         }
     })
 }

@@ -13,7 +13,6 @@ use alloy_provider::{Provider, ProviderBuilder};
 use eyre::{bail, Context};
 use outbe_chain_constants::GenesisProtocolParametersV1;
 use outbe_evm::OutbeEvmSigner;
-use outbe_metadosis::test_support::ForkInstallScenario;
 use outbe_node::OutbeNode;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
@@ -250,13 +249,6 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         )
         .expect("GramineDirectDev OST3 bootstrap payload is canonical"),
     );
-    let ocomp_fork_install = Arc::new(
-        ForkInstallScenario::measurement_at(1, DEVNET_CHAIN_ID, genesis_hash)
-            .expect("fresh-devnet OCOMP install fixture is canonical")
-            .with_founder_validators(&[(proposer, genesis_validator_pubkey())])
-            .expect("OCOMP founder registration matches the seeded validator")
-            .into_install(),
-    );
     let runtime = Runtime::test();
 
     let network_config = NetworkArgs {
@@ -281,8 +273,6 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         shutdown: Default::default(),
         bridge: Some(bridge),
         evm_signer: Some(signer),
-
-        ocomp_fork_install: Some(ocomp_fork_install),
     };
     let NodeHandle {
         node,

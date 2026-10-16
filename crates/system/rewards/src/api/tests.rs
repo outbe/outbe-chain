@@ -571,7 +571,6 @@ fn second_recipient_uses_the_bucket_persisted_by_the_previous_block() {
         );
     });
 
-    let mut provider = provider.clone();
     provider.set_block_number(2);
     provider.set_timestamp(U256::from(GENESIS_TS + 120));
     StorageHandle::enter(&mut provider, |handle| {

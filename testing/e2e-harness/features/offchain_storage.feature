@@ -1,36 +1,18 @@
-@ocomp @tee @price-oracle @min-validators-4 @offchain-storage-e2e
-Feature: RocksDB storage through the complete OCOMP path
-  Run this scenario with durable RocksDB storage. The same public
-  Tribute and OCOMP contracts must hold before and after process restart.
-
-  # E2E uses RocksDB only. The removed external MongoDB service-pause test has
-  # no equivalent here: disk I/O failure and full-disk faults are not exercised
-  # by process restart and are separate operational fault coverage.
-
-  Scenario: The configured datasource supports Tribute, OCOMP, FullNode proofs, and durable restart
-    Given a fresh four-validator Metadosis capacity localnet at FORMING
-    Then the fresh capacity day is created in FORMING by finalized block 1
-    And the controlled COEN USD quote is finalized through the real price feeder
-    And every OCOMP transaction signer is distinct and scoped only to the OCOMP role
+@tee @price-oracle @min-validators-4 @offchain-storage-e2e
+Feature: EVM state persists through confidential Lysis and restart
+  Scenario: Native Tribute and Nod state survives validator restart
+    Given a fresh four-validator native Lysis localnet
+    Then the controlled COEN USD quote is finalized through the real price feeder
     When an L2 network is registered through governance with an inbox contract and no pinned key
-    When the committee logical clock reaches the fresh capacity OFFERING window
-    Then the same fresh capacity day advances through LOOKBACK to OFFERING
-    When a user of the registered L2 submits an encrypted Tribute with ZKP and WAA and SRA beneficiaries
+    And a user of the registered L2 submits an encrypted Tribute with ZKP and WAA and SRA beneficiaries
     Then the tribute transaction succeeds and supply becomes one
     And every validator stores the same Tribute and indexes in EVM state
     And every validator verifies the same Tribute against finalized EVM state
-    When a fifth node syncs as a non-voting FullNode
-    Then the fifth node has canonical state parity without OCOMP vote capability
-    # Hold workers during processing until all four current nodes have accepted
-    # their exact exports and dispatched computation, then release them together.
-    When the committee logical clock reaches the fresh capacity processing time
-    Then the same fresh capacity day advances through WAITING and READY
-    And Metadosis creates one finalized JobIntent from that public Tribute
-    When the production OCOMP domains process that finalized JobIntent
-    Then three matching validator domains atomically apply Lysis and create the Nod
-    And the keyless FullNode verifies the same finalized Nod body through its local proof path
-    And all four OCOMP domains run their node-facing production roles
-    And each OCOMP domain retains isolated deterministic worker artifacts for that JobIntent
-    When validator 0 SnapshotExporter restarts with its committed export intact
-    And all validator nodes and OCOMP node-facing processes restart with preserved data
-    Then the completed generation and exact vote replay remain identical
+    When a production FullNode with its own enclave syncs from the committee
+    Then the follower reaches the committee finalized checkpoint with matching hash and state root
+    When the committee logical clock reaches the native Lysis processing time
+    Then Metadosis completes confidential Lysis and stores ready Nods on every validator
+    And the encrypted NOD matches its canonical body, public views and native issuance event
+    And the FullNode verifies the same encrypted Nod against finalized EVM state
+    When all validator nodes restart with preserved EVM state
+    Then the encrypted NOD matches its canonical body, public views and native issuance event

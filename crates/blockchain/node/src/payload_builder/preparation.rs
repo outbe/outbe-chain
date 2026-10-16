@@ -148,11 +148,9 @@ pub(super) fn apply_pre_execution_changes(
     Ok(())
 }
 
-/// Both zones are planned before any begin transaction executes so the user
-/// selection budget can reserve the complete terminal zone.
+/// Signed begin phases planned before transaction execution.
 pub(super) struct SystemTransactions {
     pub(super) begin: Vec<Recovered<OutbeTxEnvelope>>,
-    pub(super) end: Vec<Recovered<OutbeTxEnvelope>>,
 }
 
 impl SystemTransactions {
@@ -183,28 +181,15 @@ impl SystemTransactions {
                 inputs.prebuilt_phase1_tx,
                 // The same bootstrap payload the executor branch above received,
                 // so the injected body matches the expected begin-zone order
-                // (TeeBootstrap at begin_order 6, before OracleSlashWindow).
+                // (TeeBootstrap after BoundaryOutcome, before OracleSlashWindow).
                 inputs.pending_tee_bootstrap,
             )
             .map_err(|err| {
                 warn!(target: "payload_builder", %err, "failed to build begin system transactions");
                 PayloadBuilderError::Internal(err.into())
             })?;
-        let begin_system_tx_count = begin_system_txs.len();
-        let end_system_txs = evm_config
-            .build_end_system_txs(
-                block_number,
-                chain_spec.chain().id(),
-                begin_system_tx_count,
-                attributes.proposer_evm_address(),
-            )
-            .map_err(|err| {
-                warn!(target: "payload_builder", %err, "failed to build end system transactions");
-                PayloadBuilderError::Internal(err.into())
-            })?;
         Ok(Self {
             begin: begin_system_txs,
-            end: end_system_txs,
         })
     }
 }

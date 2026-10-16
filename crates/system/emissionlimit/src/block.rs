@@ -12,7 +12,7 @@
 //!
 //! This file is intentionally tiny. It owns the purpose-bound terminal dispatch calls that
 //! Cycle and late fee settlement use. Keeping them distinct prevents a non-daily residue from
-//! becoming an OCOMP base-limit producer.
+//! becoming a daily base-limit producer.
 
 use alloy_primitives::U256;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
@@ -47,9 +47,8 @@ pub fn dispatch_terminal_remainder_at(
 /// Recycles a late fee-settlement residue into terminal Metadosis headroom.
 ///
 /// This function is deliberately distinct from [`dispatch_terminal_remainder_at`].
-/// The genesis-active OCOMP profile permits only the daily Cycle amount to form
-/// a base day limit. Late residues accumulate as carry-over for the next
-/// unformed limit. Startup rejects a missing profile before either path runs.
+/// Only the daily Cycle allocation forms a base day limit. Late residues
+/// accumulate as carry-over for the next unformed limit.
 pub fn dispatch_late_settlement_residue_at(
     ctx: &BlockRuntimeContext,
     amount: U256,

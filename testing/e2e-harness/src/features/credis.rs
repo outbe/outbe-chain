@@ -531,8 +531,8 @@ fn repay(world: &mut World) {
         let p = before.record.as_ref().expect("Credis before payment");
         // An hour of slack keeps transaction inclusion well away from the next day boundary.
         let target = p.lastSettledAt + DAY + 3_600;
-        let (_, _, _, pending) =
-            crate::features::ocomp::restart_committee_at_logical_time(world, target);
+        let (_, pending) =
+            crate::features::common::restart_committee_at_logical_time(world, target);
         let deadline = Instant::now() + Duration::from_secs(300);
         loop {
             let time_ready = world

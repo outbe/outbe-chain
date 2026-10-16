@@ -295,11 +295,6 @@ fn exiting_validator_with_residue(world: &mut World) {
         .localnet
         .provision_joiner_with_identity(index, &identity)
         .expect("provision retained joiner identity");
-    #[cfg(feature = "ocomp-integration")]
-    world
-        .ocomp
-        .stage_joiner_domain_material(u8::try_from(index).expect("joiner index fits u8"))
-        .expect("stage retained joiner OCOMP validator key");
     world
         .localnet
         .launch_caught_up_joiner(index, &[])

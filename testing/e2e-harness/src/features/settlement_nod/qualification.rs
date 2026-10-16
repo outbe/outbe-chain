@@ -110,8 +110,8 @@ fn close_qualification_day(
         .and_then(|v| v.checked_add(1))
         .expect("next UTC boundary");
     let closed_day = outbe_primitives::time::timestamp_to_date_key(now);
-    let (_, _, height, pending) =
-        crate::features::ocomp::restart_committee_at_logical_time(world, target);
+    let (height, pending) =
+        crate::features::common::restart_committee_at_logical_time(world, target);
     for &peer in ports {
         assert!(world.rpc.wait_finalized_at_least(peer, height, 240));
     }

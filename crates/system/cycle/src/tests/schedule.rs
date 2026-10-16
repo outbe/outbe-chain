@@ -84,7 +84,6 @@ fn block_1_begin_block_creates_genesis_worldwide_day() {
         let ctx = genesis_block(handle, block_ts);
 
         // Sanity: no worldwide day exists before begin_block.
-        assert!(outbe_metadosis::api::has_active_ocomp_profile(ctx.storage.clone()).unwrap());
         assert!(
             outbe_metadosis::api::worldwide_days(ctx.storage.clone())
                 .unwrap()
@@ -116,20 +115,6 @@ fn block_1_begin_block_creates_genesis_worldwide_day() {
             0,
             "daily settlement must not fire on block 1"
         );
-    });
-}
-
-#[test]
-fn block_1_begin_block_rejects_missing_genesis_ocomp_profile_without_partial_state() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
-    storage.enter(|handle| {
-        genesis_block(handle, GENESIS_TS + 60);
-    });
-
-    assert_storage_unchanged(&mut storage, |handle| {
-        let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
-        assert!(run_cycle_lifecycle(&ctx).is_err());
     });
 }
 

@@ -16,11 +16,7 @@ pub const DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS: u64 = 502 * 60 * 60;
 pub const DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS: u64 = 50 * 60 * 60;
 pub const DEFAULT_METADOSIS_WAITING_PERIOD_SECONDS: u64 = 12 * 60 * 60;
 pub const DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS: u64 = 60 * 60;
-pub const DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS: u64 = 1_800;
 pub const DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS: u64 = 86_400;
-pub const DEFAULT_NOD_MATERIALIZATION_BATCH_SUBTREE_HEIGHT: u8 = 3;
-pub const DEFAULT_NOD_MATERIALIZATION_RETRY_INTERVAL_BLOCKS: u64 = 30;
-pub const DEFAULT_NOD_MATERIALIZATION_MAX_ATTEMPTS_PER_BLOCK: u16 = 1;
 pub const DEFAULT_VWAP_LOOKBACK_SECONDS: u64 = 8 * 60 * 60;
 pub const DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS: u64 = 60 * 60;
 pub const DEFAULT_VWAP_POLICY_VERSION: u32 = 1;
@@ -33,10 +29,6 @@ pub struct GenesisProtocolParametersV1 {
     pub metadosis_offering_period_seconds: u64,
     pub metadosis_waiting_period_seconds: u64,
     pub metadosis_advance_interval_seconds: u64,
-    pub ocomp_compute_vote_window_blocks: u64,
-    pub nod_materialization_batch_subtree_height: u8,
-    pub nod_materialization_retry_interval_blocks: u64,
-    pub nod_materialization_max_attempts_per_block: u16,
     pub vwap_lookback_seconds: u64,
     pub vwap_update_interval_seconds: u64,
     pub vwap_policy_version: u32,
@@ -49,70 +41,10 @@ const DEFAULTS: GenesisProtocolParametersV1 = GenesisProtocolParametersV1 {
     metadosis_offering_period_seconds: DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS,
     metadosis_waiting_period_seconds: DEFAULT_METADOSIS_WAITING_PERIOD_SECONDS,
     metadosis_advance_interval_seconds: DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS,
-    ocomp_compute_vote_window_blocks: DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
-    nod_materialization_batch_subtree_height: DEFAULT_NOD_MATERIALIZATION_BATCH_SUBTREE_HEIGHT,
-    nod_materialization_retry_interval_blocks: DEFAULT_NOD_MATERIALIZATION_RETRY_INTERVAL_BLOCKS,
-    nod_materialization_max_attempts_per_block: DEFAULT_NOD_MATERIALIZATION_MAX_ATTEMPTS_PER_BLOCK,
     vwap_lookback_seconds: DEFAULT_VWAP_LOOKBACK_SECONDS,
     vwap_update_interval_seconds: DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS,
     vwap_policy_version: DEFAULT_VWAP_POLICY_VERSION,
 };
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct NodMaterializationProfileV1 {
-    pub batch_subtree_height: u8,
-    pub retry_interval_blocks: u64,
-    pub max_attempts_per_block: u16,
-}
-
-impl Default for NodMaterializationProfileV1 {
-    fn default() -> Self {
-        Self {
-            batch_subtree_height: DEFAULT_NOD_MATERIALIZATION_BATCH_SUBTREE_HEIGHT,
-            retry_interval_blocks: DEFAULT_NOD_MATERIALIZATION_RETRY_INTERVAL_BLOCKS,
-            max_attempts_per_block: DEFAULT_NOD_MATERIALIZATION_MAX_ATTEMPTS_PER_BLOCK,
-        }
-    }
-}
-
-impl NodMaterializationProfileV1 {
-    pub fn batch_capacity(self) -> Result<usize, ProtocolConstantsError> {
-        1_usize
-            .checked_shl(u32::from(self.batch_subtree_height))
-            .ok_or(ProtocolConstantsError::InvalidValue {
-                field: "nodMaterialization.batchSubtreeHeight",
-                requirement: "produce a capacity in 1..=256",
-                actual: u64::from(self.batch_subtree_height),
-            })
-    }
-
-    fn validate(self) -> Result<(), ProtocolConstantsError> {
-        let capacity = self.batch_capacity()?;
-        if capacity == 0 || capacity > 256 {
-            return Err(ProtocolConstantsError::InvalidValue {
-                field: "nodMaterialization.batchSubtreeHeight",
-                requirement: "produce a capacity in 1..=256",
-                actual: u64::from(self.batch_subtree_height),
-            });
-        }
-        if self.retry_interval_blocks == 0 {
-            return Err(ProtocolConstantsError::InvalidValue {
-                field: "nodMaterialization.retryIntervalBlocks",
-                requirement: "be non-zero",
-                actual: 0,
-            });
-        }
-        if self.max_attempts_per_block == 0 {
-            return Err(ProtocolConstantsError::InvalidValue {
-                field: "nodMaterialization.maxAttemptsPerBlock",
-                requirement: "be non-zero",
-                actual: 0,
-            });
-        }
-        Ok(())
-    }
-}
 
 impl Default for GenesisProtocolParametersV1 {
     fn default() -> Self {
@@ -130,10 +62,6 @@ struct GenesisProtocolOverridesV1 {
     #[serde(default)]
     metadosis: MetadosisOverridesV1,
     #[serde(default)]
-    ocomp: OcompOverridesV1,
-    #[serde(default)]
-    nod_materialization: NodMaterializationOverridesV1,
-    #[serde(default)]
     oracle: OracleOverridesV1,
 }
 
@@ -147,26 +75,12 @@ struct OracleOverridesV1 {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct NodMaterializationOverridesV1 {
-    batch_subtree_height: Option<u8>,
-    retry_interval_blocks: Option<u64>,
-    max_attempts_per_block: Option<u16>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct MetadosisOverridesV1 {
     forming_period_seconds: Option<u64>,
     lookback_delay_seconds: Option<u64>,
     offering_period_seconds: Option<u64>,
     waiting_period_seconds: Option<u64>,
     advance_interval_seconds: Option<u64>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct OcompOverridesV1 {
-    compute_vote_window_blocks: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -213,22 +127,6 @@ impl GenesisProtocolParametersV1 {
                 .metadosis
                 .advance_interval_seconds
                 .unwrap_or(defaults.metadosis_advance_interval_seconds),
-            ocomp_compute_vote_window_blocks: overrides
-                .ocomp
-                .compute_vote_window_blocks
-                .unwrap_or(defaults.ocomp_compute_vote_window_blocks),
-            nod_materialization_batch_subtree_height: overrides
-                .nod_materialization
-                .batch_subtree_height
-                .unwrap_or(defaults.nod_materialization_batch_subtree_height),
-            nod_materialization_retry_interval_blocks: overrides
-                .nod_materialization
-                .retry_interval_blocks
-                .unwrap_or(defaults.nod_materialization_retry_interval_blocks),
-            nod_materialization_max_attempts_per_block: overrides
-                .nod_materialization
-                .max_attempts_per_block
-                .unwrap_or(defaults.nod_materialization_max_attempts_per_block),
             vwap_lookback_seconds: overrides
                 .oracle
                 .vwap_lookback_seconds
@@ -257,12 +155,6 @@ impl GenesisProtocolParametersV1 {
             self.metadosis_forming_period_seconds,
             DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS,
         )?;
-        NodMaterializationProfileV1 {
-            batch_subtree_height: self.nod_materialization_batch_subtree_height,
-            retry_interval_blocks: self.nod_materialization_retry_interval_blocks,
-            max_attempts_per_block: self.nod_materialization_max_attempts_per_block,
-        }
-        .validate()?;
         validate_at_most(
             "metadosis.lookbackDelaySeconds",
             self.metadosis_lookback_delay_seconds,
@@ -282,11 +174,6 @@ impl GenesisProtocolParametersV1 {
             "metadosis.advanceIntervalSeconds",
             self.metadosis_advance_interval_seconds,
             DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS,
-        )?;
-        validate_nonzero_at_most(
-            "ocomp.computeVoteWindowBlocks",
-            self.ocomp_compute_vote_window_blocks,
-            DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
         )?;
         validate_nonzero_at_most(
             "oracle.vwapLookbackSeconds",
@@ -433,24 +320,8 @@ pub fn get_metadosis_advance_interval_seconds() -> u64 {
     parameters().metadosis_advance_interval_seconds
 }
 
-pub fn get_ocomp_compute_vote_window_blocks() -> u64 {
-    parameters().ocomp_compute_vote_window_blocks
-}
-
 pub fn get_governance_voting_window_blocks() -> u64 {
     parameters().governance_voting_window_blocks
-}
-
-pub fn get_nod_materialization_batch_subtree_height() -> u8 {
-    parameters().nod_materialization_batch_subtree_height
-}
-
-pub fn get_nod_materialization_retry_interval_blocks() -> u64 {
-    parameters().nod_materialization_retry_interval_blocks
-}
-
-pub fn get_nod_materialization_max_attempts_per_block() -> u16 {
-    parameters().nod_materialization_max_attempts_per_block
 }
 
 pub fn get_vwap_lookback_seconds() -> u64 {
@@ -542,11 +413,9 @@ mod tests {
         for blocks in [1, 6, 20, 86_400] {
             let resolved = GenesisProtocolParametersV1::resolve(Some(&json!({
                 "governance": { "votingWindowBlocks": blocks },
-                "ocomp": { "computeVoteWindowBlocks": 120 }
             })))
             .unwrap();
             assert_eq!(resolved.governance_voting_window_blocks, blocks);
-            assert_eq!(resolved.ocomp_compute_vote_window_blocks, 120);
         }
         for blocks in [
             json!(0),
@@ -597,7 +466,6 @@ mod tests {
                 "waitingPeriodSeconds": 30,
                 "advanceIntervalSeconds": 10
             },
-            "ocomp": { "computeVoteWindowBlocks": 120 }
         })))
         .unwrap();
 
@@ -606,7 +474,6 @@ mod tests {
         assert_eq!(resolved.metadosis_offering_period_seconds, 120);
         assert_eq!(resolved.metadosis_waiting_period_seconds, 30);
         assert_eq!(resolved.metadosis_advance_interval_seconds, 10);
-        assert_eq!(resolved.ocomp_compute_vote_window_blocks, 120);
     }
 
     #[test]
@@ -619,24 +486,18 @@ mod tests {
             "metadosis": { "formingPeriodSeconds": 0 }
         })))
         .is_err());
-        assert!(GenesisProtocolParametersV1::resolve(Some(&json!({
-            "ocomp": { "computeVoteWindowBlocks": 1801 }
-        })))
-        .is_err());
     }
 
     #[test]
     fn genesis_reader_resolves_config_without_alloc_state() {
         let expected = GenesisProtocolParametersV1::resolve(Some(&json!({
             "metadosis": { "formingPeriodSeconds": 60 },
-            "ocomp": { "computeVoteWindowBlocks": 120 }
         })))
         .unwrap();
         let genesis = json!({
             "config": {
                 "outbeProtocol": {
                     "metadosis": { "formingPeriodSeconds": 60 },
-                    "ocomp": { "computeVoteWindowBlocks": 120 }
                 }
             }
         });

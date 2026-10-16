@@ -29,7 +29,6 @@ pub enum SystemTxInputV2 {
     LateFinalizeCredits {
         artifact: LateFinalizeCreditsArtifact,
     },
-    OcompLifecycleBegin,
     CycleTick,
     RewardsGemDelivery,
     BoundaryOutcome {
@@ -40,7 +39,6 @@ pub enum SystemTxInputV2 {
     },
     OracleSlashWindow,
     HookEvents,
-    OcompTerminalRequest,
 }
 
 impl SystemTxInputV2 {
@@ -48,14 +46,12 @@ impl SystemTxInputV2 {
         match self {
             Self::CertifiedParentAccounting { .. } => SystemTxKind::CertifiedParentAccounting,
             Self::LateFinalizeCredits { .. } => SystemTxKind::LateFinalizeCredits,
-            Self::OcompLifecycleBegin => SystemTxKind::OcompLifecycleBegin,
             Self::CycleTick => SystemTxKind::CycleTick,
             Self::RewardsGemDelivery => SystemTxKind::RewardsGemDelivery,
             Self::BoundaryOutcome { .. } => SystemTxKind::BoundaryOutcome,
             Self::TeeBootstrap { .. } => SystemTxKind::TeeBootstrap,
             Self::OracleSlashWindow => SystemTxKind::OracleSlashWindow,
             Self::HookEvents => SystemTxKind::HookEvents,
-            Self::OcompTerminalRequest => SystemTxKind::OcompTerminalRequest,
         }
     }
 
@@ -74,12 +70,10 @@ impl SystemTxInputV2 {
                         .as_ref(),
                 );
             }
-            Self::OcompLifecycleBegin
-            | Self::CycleTick
+            Self::CycleTick
             | Self::RewardsGemDelivery
             | Self::OracleSlashWindow
-            | Self::HookEvents
-            | Self::OcompTerminalRequest => {}
+            | Self::HookEvents => {}
             Self::LateFinalizeCredits { artifact } => {
                 // Empty batches encode to empty bytes. The mandatory tx then
                 // carries an empty body and still drives the window-close settle.
@@ -128,9 +122,6 @@ impl SystemTxInputV2 {
                     .map_err(SystemTxError::from_precompile)?
                     .unwrap_or_default(),
             }),
-            SystemTxKind::OcompLifecycleBegin => {
-                Self::decode_empty_body(kind, body, Self::OcompLifecycleBegin)
-            }
             SystemTxKind::CycleTick => Self::decode_empty_body(kind, body, Self::CycleTick),
             SystemTxKind::RewardsGemDelivery => {
                 Self::decode_empty_body(kind, body, Self::RewardsGemDelivery)
@@ -139,9 +130,6 @@ impl SystemTxInputV2 {
                 Self::decode_empty_body(kind, body, Self::OracleSlashWindow)
             }
             SystemTxKind::HookEvents => Self::decode_empty_body(kind, body, Self::HookEvents),
-            SystemTxKind::OcompTerminalRequest => {
-                Self::decode_empty_body(kind, body, Self::OcompTerminalRequest)
-            }
             SystemTxKind::BoundaryOutcome => {
                 let Some(artifact) =
                     decode_boundary_artifact(body).map_err(SystemTxError::from_precompile)?

@@ -62,16 +62,6 @@ pub(crate) struct DowntimeState {
     pub event: Option<DowntimeFelonyEvent>,
 }
 
-/// Observations armed before restarting the held validator worker.
-#[cfg(feature = "ocomp-integration")]
-#[derive(Debug)]
-pub(crate) struct LateValidatorResultObservation {
-    pub node_pid: u32,
-    pub worker_pid: u32,
-    pub node_log: crate::internal::launch_log::LaunchLog,
-    pub canonical_result: Vec<u8>,
-}
-
 /// Owned replacement processes and their launch-scoped observations.
 #[derive(Debug)]
 pub(crate) struct RestartIncarnation {
@@ -191,111 +181,11 @@ pub struct RadicleScenarioEvidenceV1 {
     pub final_seed_scope_all_validators: Vec<usize>,
 }
 
-/// Exact public-chain measurements for the q-forming S+1 capacity block.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct OcompPublicCapacityObservationV1 {
-    pub job_id: alloy_primitives::B256,
-    pub result_digest: alloy_primitives::B256,
-    pub q_forming_transaction_hash: alloy_primitives::B256,
-    pub q_forming_block_number: u64,
-    pub q_forming_block_hash: alloy_primitives::B256,
-    pub q_forming_receipt_success: bool,
-    pub q_forming_receipt_sha256: String,
-    pub q_forming_validator_receipt_sha256: Vec<String>,
-    pub q_forming_state_root: alloy_primitives::B256,
-    pub q_forming_validator_commitments: Vec<crate::world::rpc::BlockCommitmentV1>,
-    pub canonical_import_validator_count: u8,
-    pub canonical_import_verified: bool,
-    pub finalized_block_number: u64,
-    pub finalized_block_hash: alloy_primitives::B256,
-    pub tribute_count: u64,
-    pub nod_count: u64,
-    pub worker_shard_count: u64,
-    pub transaction_bytes: u64,
-    pub block_bytes: u64,
-    pub gas: u64,
-    pub internal_work: u64,
-}
-
-/// Exact native state and business results retained across one owned restart.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct OcompNativeRestartObservationV1 {
-    pub validator_index: u8,
-    pub previous_pid: u32,
-    pub restarted_pid: u32,
-    pub anchor_height: u64,
-    pub anchor_hash: alloy_primitives::B256,
-    pub anchor_state_root: alloy_primitives::B256,
-    pub finalized_after_restart: u64,
-    pub elapsed_micros: u64,
-    pub recovered_result_digest: alloy_primitives::B256,
-    pub recovered_generation: crate::world::rpc::OcompCertifiedGenerationV1,
-}
-
-/// One canonical finalized point observed by a validator around a controlled
-/// testnet logical-time restart.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct MetadosisFinalizedPointV1 {
-    pub validator_index: u8,
-    pub block_number: u64,
-    pub block_hash: alloy_primitives::B256,
-    pub block_timestamp: u64,
-}
-
-/// Exact evidence for one committee-wide logical-time epoch. The restart changes
-/// only the existing testnet time source; genesis, datadirs and chain history
-/// remain continuous.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct MetadosisTimeControlEpochV1 {
-    pub requested_timestamp: u64,
-    pub unix_time_offset_secs: i64,
-    pub before_restart: Vec<MetadosisFinalizedPointV1>,
-    pub after_restart: Vec<MetadosisFinalizedPointV1>,
-}
-
-/// Same-chain lifecycle evidence for the fresh Metadosis process lane.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct MetadosisFreshLifecycleObservationV1 {
-    pub worldwide_day: u32,
-    pub genesis_hash: alloy_primitives::B256,
-    pub initial_timestamp: u64,
-    pub initial_unix_time_offset_secs: i64,
-    pub forming_start: u64,
-    pub forming_end: u64,
-    pub lookback_end: u64,
-    pub offering_end: u64,
-    pub scheduled_process_time: u64,
-    pub started: crate::world::rpc::MetadosisWorldwideDayStartedV1,
-    pub status_changes: Vec<crate::world::rpc::MetadosisWorldwideDayStatusChangeV1>,
-    pub time_control_epochs: Vec<MetadosisTimeControlEpochV1>,
-    pub created_validator_count: u8,
-    pub unknown_status_revert_validator_count: u8,
-    pub offering_validator_count: u8,
-    pub ready_validator_count: u8,
-    pub completed_validator_count: u8,
-}
-
-/// Runtime proof that proposal, canonical import and late historical replay
-/// exercised the same OCOMP boundaries without entering legacy calculation
-/// precompiles.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct OcompExecutionTraceObservationV1 {
-    pub request_height: u64,
-    pub q_forming_height: u64,
-    pub proposal_request_nodes: Vec<String>,
-    pub canonical_request_nodes: Vec<String>,
-    pub canonical_q_vote_nodes: Vec<String>,
-    pub historical_replay_node: String,
-    pub historical_request_observed: bool,
-    pub historical_q_vote_observed: bool,
-    pub forbidden_calculation_entries: u64,
-}
-
-/// Public AgentReward observations attached to the full OCOMP production-path
+/// Public AgentReward observations attached to the native Lysis production-path
 /// scenario. Beneficiary private keys remain deterministic harness constants
 /// and are deliberately excluded from scenario evidence.
 #[derive(Clone, Debug, Serialize)]
-pub struct OcompAgentRewardObservationV1 {
+pub struct AgentRewardObservationV1 {
     pub waa_beneficiary: alloy_primitives::Address,
     pub sra_beneficiary: alloy_primitives::Address,
     pub offer_execution_block_number: Option<u64>,
@@ -331,62 +221,13 @@ pub struct AgentRewardEconomicCheckV1 {
     pub validator_ports: Vec<u16>,
 }
 
-/// Public-path observations retained after behavioral assertions complete.
-///
-/// This is evidence, not a control surface. Every field comes from finalized
-/// public RPC data or from the result of a transaction that a Cucumber step
-/// exercised.
-#[derive(Clone, Debug, Default, Serialize)]
-pub struct OcompPublicScenarioEvidenceV1 {
-    pub job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
-    pub followup_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
-    pub followup_completed_finality: Option<u64>,
-    pub activation: Option<crate::world::rpc::OcompPublicActivationV1>,
-    pub certified_generation: Option<crate::world::rpc::OcompCertifiedGenerationV1>,
-    pub result_vote_transactions: Vec<crate::world::rpc::OcompPublicResultVoteTransactionV1>,
-    pub vote_accountability: Option<crate::world::rpc::OcompPublicVoteAccountabilityV1>,
-    pub agent_reward: Option<OcompAgentRewardObservationV1>,
-    pub validator_balances_before: Vec<(alloy_primitives::Address, alloy_primitives::U256)>,
-    pub validator_balances_after: Vec<(alloy_primitives::Address, alloy_primitives::U256)>,
-    pub atomic_quorum_apply_verified: bool,
-    pub exact_completed_retry_succeeded: Option<bool>,
-    pub changed_completed_binding_reverted: Option<bool>,
-    pub completed_state_unchanged: Option<bool>,
-    pub non_quorum_changed_binding_reverted: Option<bool>,
-    pub non_quorum_state_unchanged: Option<bool>,
-    pub expired_without_nod: Option<bool>,
-    pub expired_release_had_export: Option<bool>,
-    pub worker_outage: Option<crate::internal::ocomp_worker_outage::WorkerOutageEvidence>,
-    pub held_late_vote_hash: Option<alloy_primitives::B256>,
-    pub late_vote_reverted: Option<bool>,
-    pub late_vote_inclusion_height: Option<u64>,
-    pub capacity_resources: Option<crate::ocomp_capacity::OcompCapacityResourceObservationV1>,
-    pub capacity_public_path: Option<OcompPublicCapacityObservationV1>,
-    pub capacity_native_restart: Option<OcompNativeRestartObservationV1>,
-    pub metadosis_fresh_lifecycle: Option<MetadosisFreshLifecycleObservationV1>,
-    pub execution_trace: Option<OcompExecutionTraceObservationV1>,
-    pub restart_replay_verified: Option<bool>,
-    pub replay_receipts: Vec<serde_json::Value>,
-    pub full_node_deadline_barrier_height: Option<u64>,
-    pub full_node_resumed_finalized_height: Option<u64>,
-    pub full_node_local_first_digest: Option<alloy_primitives::B256>,
-    pub full_node_mismatch_job_id: Option<alloy_primitives::B256>,
-    pub full_node_mismatch_evidence_files: Vec<String>,
-}
-
 /// Per-scenario state accumulated as the steps run.
 #[derive(Debug)]
 pub struct FixtureState {
-    #[cfg(feature = "ocomp-integration")]
     pub(crate) credis: Option<crate::world::credis::CredisFixture>,
-    #[cfg(feature = "ocomp-integration")]
+
     pub(crate) hyperlane_controller:
         Option<crate::features::hyperlane_controller::HyperlaneFixture>,
-    #[cfg(feature = "ocomp-integration")]
-    pub(crate) offline_snapshot: Option<OfflineSnapshotEvidence>,
-    #[cfg(feature = "ocomp-integration")]
-    pub(crate) offline_snapshot_worker_inventory:
-        Option<crate::features::ocomp::SnapshotWorkerBeforeRequest>,
     pub(crate) tee_observability: Option<crate::features::tee_observability::TeeObservation>,
     pub tee_lease: TeeLeaseEvidenceV1,
     /// Public restart measurements saved before process teardown.
@@ -435,6 +276,7 @@ pub struct FixtureState {
     pub promoted_validator_pid: Option<u32>,
     /// The chain's worldwide-day key used for tribute offers.
     pub wwd: Option<String>,
+    pub lysis_completion_height: Option<u64>,
     /// A height captured by one step for a later assertion (kill/restart/exit).
     pub marker_height: Option<u64>,
     pub(crate) chained_handoff: Option<crate::internal::certified_handoff::PinnedHandoff>,
@@ -467,112 +309,15 @@ pub struct FixtureState {
     pub slash_stake_after: Option<alloy_primitives::U256>,
     /// Hash of the encrypted tribute transaction under projection verification.
     pub tribute_tx_hash: Option<String>,
-    /// WAA/SRA public-path observations for the full OCOMP Tribute.
-    pub ocomp_agent_reward: Option<OcompAgentRewardObservationV1>,
-    /// Private keys of deterministic genesis-funded owners used only by the
-    /// OCM-26 maximum-shaped public capacity fixture. They are never emitted
-    /// into scenario evidence.
-    pub ocomp_capacity_tribute_private_keys: Vec<String>,
-    /// Public transaction hashes submitted by those capacity owners.
-    pub ocomp_capacity_tribute_tx_hashes: Vec<String>,
-    /// Public canonical NOD materialization evidence captured before restart.
-    pub ocomp_nod_materialization: Option<crate::world::rpc::NodMaterializationObservationV1>,
+    pub tribute_owner_keys: Vec<String>,
+    pub tribute_transactions: Vec<String>,
+    /// WAA/SRA public-path observations for the native Tribute.
+    pub agent_reward: Option<AgentRewardObservationV1>,
     /// Hash of a duplicate logical offer expected to be rejected without state changes.
     pub duplicate_tribute_tx_hash: Option<String>,
     /// Exact primary/owner/day logical records before a duplicate offer.
     pub tribute_projection_before_duplicate:
         Option<crate::world::projection::TributeProjectionSnapshot>,
-    /// Finalized height immediately before one typed OCOMP process fault.
-    pub ocomp_finality_before_fault: Option<u64>,
-    #[cfg(feature = "ocomp-integration")]
-    pub(crate) ocomp_late_validator_result: Option<LateValidatorResultObservation>,
-    /// Immutable activation height loaded from the scenario's prepared genesis
-    /// install. Fresh Measurement activates at block 1.
-    pub ocomp_activation_height: Option<u64>,
-    pub ocomp_pending_v1_workers_held: bool,
-    /// Public, finalized Metadosis request observed identically on every
-    /// validator. This is evidence only; the harness cannot create the job.
-    pub ocomp_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
-    /// Independently authenticated OFFERING inputs, retained before processing
-    /// retires their current Tribute projection and point-read domain.
-    pub ocomp_nod_input_bodies: Option<Vec<outbe_primitives::entity_codec::TributeBodyV1>>,
-    /// Successor activation evidence captured while a V1 job remains live.
-    pub ocomp_successor_bundle_hash: Option<alloy_primitives::B256>,
-    pub ocomp_successor_activation_height: Option<u64>,
-    pub ocomp_successor_node_pids_before_activation: Vec<u32>,
-    pub ocomp_successor_node_pids_after_activation: Vec<u32>,
-    /// Fresh post-activation request pinned to and completed by the successor.
-    pub ocomp_successor_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
-    /// Deterministic predecessor retention deadline observed after V1 release.
-    pub ocomp_predecessor_retention_until: Option<u64>,
-    /// Finalized request for a later, independent WorldwideDay after a fault recovers.
-    pub ocomp_followup_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
-    /// Finalized height observed after that independent job completes.
-    pub ocomp_followup_completed_finality: Option<u64>,
-    /// Whether the released terminal journal record retained an authenticated
-    /// export authority. `false` is the canonical no-ACK exporter-outage path.
-    pub ocomp_expired_release_had_export: Option<bool>,
-    pub ocomp_worker_outage: Option<crate::internal::ocomp_worker_outage::WorkerOutageEvidence>,
-    /// The two independently scheduled WWDs and processing timestamps used by
-    /// the dynamic-membership overlap scenario.
-    pub ocomp_dynamic_worldwide_days: Vec<u32>,
-    pub ocomp_dynamic_processing_times: Vec<u64>,
-    /// Public Tribute transaction hashes for those WWDs, in schedule order.
-    pub ocomp_dynamic_tribute_tx_hashes: Vec<String>,
-    /// Public finalized requests for job A and job B, in that order.
-    pub ocomp_dynamic_job_requests: Vec<crate::world::rpc::OcompPublicJobRequestV1>,
-    /// Canonical accountability slots populated for job A and job B.
-    pub ocomp_dynamic_vote_slots: Vec<Vec<u16>>,
-    /// Public activation event observed identically on all validators.
-    pub ocomp_activation: Option<crate::world::rpc::OcompPublicActivationV1>,
-    /// Cross-owner proof authority read at the exact finalized activation block.
-    pub ocomp_certified_generation: Option<crate::world::rpc::OcompCertifiedGenerationV1>,
-    /// Four public result-vote transactions observed from finalized block and
-    /// receipt RPC data, never from Supervisor-local journals.
-    pub ocomp_result_vote_transactions: Vec<crate::world::rpc::OcompPublicResultVoteTransactionV1>,
-    /// Finalized four-slot accountability state observed identically on every
-    /// validator after the late fourth vote.
-    pub ocomp_vote_accountability: Option<crate::world::rpc::OcompPublicVoteAccountabilityV1>,
-    /// Validator EVM balances captured before public result-vote submission.
-    pub ocomp_validator_balances_before: Vec<(alloy_primitives::Address, alloy_primitives::U256)>,
-    /// Same validator balances after all four ZeroFee result votes.
-    pub ocomp_validator_balances_after: Vec<(alloy_primitives::Address, alloy_primitives::U256)>,
-    /// Behavioral public-path outcomes retained for independent evidence
-    /// aggregation after the scenario.
-    pub ocomp_atomic_quorum_apply_verified: bool,
-    pub ocomp_exact_completed_retry_succeeded: Option<bool>,
-    pub ocomp_changed_completed_binding_reverted: Option<bool>,
-    pub ocomp_completed_state_unchanged: Option<bool>,
-    pub ocomp_non_quorum_changed_binding_reverted: Option<bool>,
-    pub ocomp_non_quorum_state_unchanged: Option<bool>,
-    pub ocomp_expired_without_nod: Option<bool>,
-    /// A locally signed OCOMP transaction held by the deadline scenario until the
-    /// exclusive boundary. Raw bytes are never published as scenario evidence.
-    pub ocomp_held_late_vote_raw: Option<Vec<u8>>,
-    pub ocomp_held_late_vote_hash: Option<alloy_primitives::B256>,
-    pub ocomp_late_vote_reverted: Option<bool>,
-    pub ocomp_late_vote_inclusion_height: Option<u64>,
-    pub ocomp_capacity_observation: Option<OcompPublicCapacityObservationV1>,
-    pub ocomp_native_restart_observation: Option<OcompNativeRestartObservationV1>,
-    pub metadosis_fresh_lifecycle_observation: Option<MetadosisFreshLifecycleObservationV1>,
-    pub metadosis_fresh_initial_timestamp: Option<u64>,
-    pub metadosis_fresh_initial_unix_time_offset_secs: Option<i64>,
-    pub ocomp_execution_trace_observation: Option<OcompExecutionTraceObservationV1>,
-    pub ocomp_restart_replay_verified: Option<bool>,
-    pub ocomp_replay_receipts: Vec<serde_json::Value>,
-    /// FullNode-only lifecycle evidence captured by the Citadel closure lane.
-    pub ocomp_full_node_deadline_barrier_height: Option<u64>,
-    pub ocomp_full_node_resumed_finalized_height: Option<u64>,
-    pub ocomp_full_node_local_result_before_restart: Option<Vec<u8>>,
-    pub ocomp_full_node_local_first_digest: Option<alloy_primitives::B256>,
-    pub ocomp_full_node_mismatch_job_id: Option<alloy_primitives::B256>,
-    pub ocomp_full_node_mismatch_evidence_files: Vec<String>,
-    /// Public pre-activation `submitLysisResult` outcome: inclusion evidence
-    /// that the selector reverts (never aborts payload building) while the
-    /// OCOMP lifecycle is inactive.
-    pub metadosis_inactive_lysis_vote_hash: Option<String>,
-    pub metadosis_inactive_lysis_vote_block: Option<u64>,
-    pub metadosis_inactive_lysis_reject_code: Option<u64>,
 
     // ---- L2Registry zk-gate scenarios (PFS-001-10 / -11) ----
     /// Hash of an offer expected to be rejected by the zk signature gate.
@@ -637,7 +382,6 @@ pub struct FixtureState {
     /// The Nod lifecycle's Nods, one per owner, in owner order.
     pub lifecycle_nods: Vec<alloy_primitives::U256>,
     /// What the shared lifecycle phases recorded.
-    #[cfg(feature = "ocomp-integration")]
     pub entity_lifecycle: crate::features::entity_lifecycle::LifecycleLedger,
     /// The series the lifecycle scenario issued, in the order it issued them.
     pub lifecycle_series: Vec<alloy_primitives::FixedBytes<14>>,
@@ -649,7 +393,6 @@ pub struct FixtureState {
     /// The worldwide day the lifecycle series were issued into; the called group's key.
     pub lifecycle_day: Option<u32>,
     /// Every settlement currency a lifecycle scenario registered, by ISO code.
-    #[cfg(feature = "ocomp-integration")]
     pub currencies:
         std::collections::BTreeMap<u16, crate::world::settlement_currency::SettlementCurrency>,
     /// The issuance currency a lifecycle scenario prices besides USD, chosen by its tag.
@@ -663,9 +406,6 @@ pub struct FixtureState {
     pub resilience_target_slot: Option<usize>,
     pub resilience_disconnected_height: Option<u64>,
     pub resilience_follower_pid: Option<u32>,
-    pub ocomp_equivocation_job_id: Option<alloy_primitives::B256>,
-    pub ocomp_equivocation_first_digest: Option<alloy_primitives::B256>,
-    pub ocomp_equivocation_conflicting_digest: Option<alloy_primitives::B256>,
 }
 
 #[derive(Debug)]
@@ -691,14 +431,9 @@ pub struct StablecoinFixture {
 impl Default for FixtureState {
     fn default() -> Self {
         Self {
-            #[cfg(feature = "ocomp-integration")]
             credis: None,
-            #[cfg(feature = "ocomp-integration")]
+
             hyperlane_controller: None,
-            #[cfg(feature = "ocomp-integration")]
-            offline_snapshot: None,
-            #[cfg(feature = "ocomp-integration")]
-            offline_snapshot_worker_inventory: None,
             radicle: RadicleScenarioEvidenceV1::default(),
             tee_lease: TeeLeaseEvidenceV1::default(),
             tee_observability: None,
@@ -708,14 +443,14 @@ impl Default for FixtureState {
             pending_dkg_restart: None,
             committee_restart: Vec::new(),
             downtime: None,
-            #[cfg(feature = "ocomp-integration")]
+
             currencies: std::collections::BTreeMap::new(),
             issuance_market: None,
             gem_source_series: None,
             gem_position: None,
             lifecycle_gems: Vec::new(),
             lifecycle_nods: Vec::new(),
-            #[cfg(feature = "ocomp-integration")]
+
             entity_lifecycle: Default::default(),
             lifecycle_series: Vec::new(),
             expiring_series: None,
@@ -735,6 +470,7 @@ impl Default for FixtureState {
             joiner_addr: None,
             promoted_validator_pid: None,
             wwd: None,
+            lysis_completion_height: None,
             marker_height: None,
             chained_handoff: None,
             marker_count: None,
@@ -753,68 +489,11 @@ impl Default for FixtureState {
             slash_count_before: None,
             slash_stake_after: None,
             tribute_tx_hash: None,
-            ocomp_agent_reward: None,
-            ocomp_capacity_tribute_private_keys: Vec::new(),
-            ocomp_capacity_tribute_tx_hashes: Vec::new(),
-            ocomp_nod_materialization: None,
+            tribute_owner_keys: Vec::new(),
+            tribute_transactions: Vec::new(),
+            agent_reward: None,
             duplicate_tribute_tx_hash: None,
             tribute_projection_before_duplicate: None,
-            ocomp_finality_before_fault: None,
-            #[cfg(feature = "ocomp-integration")]
-            ocomp_late_validator_result: None,
-            ocomp_activation_height: None,
-            ocomp_pending_v1_workers_held: false,
-            ocomp_job_request: None,
-            ocomp_nod_input_bodies: None,
-            ocomp_successor_bundle_hash: None,
-            ocomp_successor_activation_height: None,
-            ocomp_successor_node_pids_before_activation: Vec::new(),
-            ocomp_successor_node_pids_after_activation: Vec::new(),
-            ocomp_successor_job_request: None,
-            ocomp_predecessor_retention_until: None,
-            ocomp_followup_job_request: None,
-            ocomp_followup_completed_finality: None,
-            ocomp_expired_release_had_export: None,
-            ocomp_worker_outage: None,
-            ocomp_dynamic_worldwide_days: Vec::new(),
-            ocomp_dynamic_processing_times: Vec::new(),
-            ocomp_dynamic_tribute_tx_hashes: Vec::new(),
-            ocomp_dynamic_job_requests: Vec::new(),
-            ocomp_dynamic_vote_slots: Vec::new(),
-            ocomp_activation: None,
-            ocomp_certified_generation: None,
-            ocomp_result_vote_transactions: Vec::new(),
-            ocomp_vote_accountability: None,
-            ocomp_validator_balances_before: Vec::new(),
-            ocomp_validator_balances_after: Vec::new(),
-            ocomp_atomic_quorum_apply_verified: false,
-            ocomp_exact_completed_retry_succeeded: None,
-            ocomp_changed_completed_binding_reverted: None,
-            ocomp_completed_state_unchanged: None,
-            ocomp_non_quorum_changed_binding_reverted: None,
-            ocomp_non_quorum_state_unchanged: None,
-            ocomp_expired_without_nod: None,
-            ocomp_held_late_vote_raw: None,
-            ocomp_held_late_vote_hash: None,
-            ocomp_late_vote_reverted: None,
-            ocomp_late_vote_inclusion_height: None,
-            metadosis_inactive_lysis_vote_hash: None,
-            metadosis_inactive_lysis_vote_block: None,
-            metadosis_inactive_lysis_reject_code: None,
-            ocomp_capacity_observation: None,
-            ocomp_native_restart_observation: None,
-            metadosis_fresh_lifecycle_observation: None,
-            metadosis_fresh_initial_timestamp: None,
-            metadosis_fresh_initial_unix_time_offset_secs: None,
-            ocomp_execution_trace_observation: None,
-            ocomp_restart_replay_verified: None,
-            ocomp_replay_receipts: Vec::new(),
-            ocomp_full_node_deadline_barrier_height: None,
-            ocomp_full_node_resumed_finalized_height: None,
-            ocomp_full_node_local_result_before_restart: None,
-            ocomp_full_node_local_first_digest: None,
-            ocomp_full_node_mismatch_job_id: None,
-            ocomp_full_node_mismatch_evidence_files: Vec::new(),
             l2_rejected_offer_tx_hash: None,
             l2_next_governed_chain_id: 57_005,
             zerofee_key: None,
@@ -856,299 +535,24 @@ impl Default for FixtureState {
             resilience_target_slot: None,
             resilience_disconnected_height: None,
             resilience_follower_pid: None,
-            ocomp_equivocation_job_id: None,
-            ocomp_equivocation_first_digest: None,
-            ocomp_equivocation_conflicting_digest: None,
         }
     }
 }
 
-impl FixtureState {
-    #[must_use]
-    pub fn ocomp_public_scenario_evidence(&self) -> OcompPublicScenarioEvidenceV1 {
-        OcompPublicScenarioEvidenceV1 {
-            job_request: self.ocomp_job_request.clone(),
-            followup_job_request: self.ocomp_followup_job_request.clone(),
-            followup_completed_finality: self.ocomp_followup_completed_finality,
-            activation: self.ocomp_activation.clone(),
-            certified_generation: self.ocomp_certified_generation.clone(),
-            result_vote_transactions: self.ocomp_result_vote_transactions.clone(),
-            vote_accountability: self.ocomp_vote_accountability.clone(),
-            agent_reward: self.ocomp_agent_reward.clone(),
-            validator_balances_before: self.ocomp_validator_balances_before.clone(),
-            validator_balances_after: self.ocomp_validator_balances_after.clone(),
-            atomic_quorum_apply_verified: self.ocomp_atomic_quorum_apply_verified,
-            exact_completed_retry_succeeded: self.ocomp_exact_completed_retry_succeeded,
-            changed_completed_binding_reverted: self.ocomp_changed_completed_binding_reverted,
-            completed_state_unchanged: self.ocomp_completed_state_unchanged,
-            non_quorum_changed_binding_reverted: self.ocomp_non_quorum_changed_binding_reverted,
-            non_quorum_state_unchanged: self.ocomp_non_quorum_state_unchanged,
-            expired_without_nod: self.ocomp_expired_without_nod,
-            expired_release_had_export: self.ocomp_expired_release_had_export,
-            worker_outage: self.ocomp_worker_outage.clone(),
-            held_late_vote_hash: self.ocomp_held_late_vote_hash,
-            late_vote_reverted: self.ocomp_late_vote_reverted,
-            late_vote_inclusion_height: self.ocomp_late_vote_inclusion_height,
-            capacity_resources: None,
-            capacity_public_path: self.ocomp_capacity_observation.clone(),
-            capacity_native_restart: self.ocomp_native_restart_observation.clone(),
-            metadosis_fresh_lifecycle: self.metadosis_fresh_lifecycle_observation.clone(),
-            execution_trace: self.ocomp_execution_trace_observation.clone(),
-            restart_replay_verified: self.ocomp_restart_replay_verified,
-            replay_receipts: self.ocomp_replay_receipts.clone(),
-            full_node_deadline_barrier_height: self.ocomp_full_node_deadline_barrier_height,
-            full_node_resumed_finalized_height: self.ocomp_full_node_resumed_finalized_height,
-            full_node_local_first_digest: self.ocomp_full_node_local_first_digest,
-            full_node_mismatch_job_id: self.ocomp_full_node_mismatch_job_id,
-            full_node_mismatch_evidence_files: self.ocomp_full_node_mismatch_evidence_files.clone(),
-        }
-    }
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SnapshotBlock {
+    pub number: u64,
+    /// Native manifest/report spelling: lowercase 64 hex digits, no 0x.
+    pub hash: String,
 }
 
-#[cfg(feature = "ocomp-integration")]
-pub(crate) use snapshot::*;
-
-#[cfg(feature = "ocomp-integration")]
-mod snapshot {
-    // Time fields are Unix milliseconds, matching existing owned-process records.
-    // They are observed bounds, never inferred exact internal execution timestamps.
-
-    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-    pub(crate) struct SnapshotBlock {
-        pub number: u64,
-        /// Native manifest/report spelling: lowercase 64 hex digits, no 0x.
-        pub hash: String,
-    }
-
-    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-    pub(crate) struct SnapshotUnwind {
-        pub finish_block_number: u64,
-        pub partial_state_trie: u64,
-    }
-
-    /// Exact public NativeProgress field names. No normalization and no DB reader.
-    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-    pub(crate) struct SnapshotNativeProgress {
-        pub finalized: SnapshotBlock,
-        pub execution: SnapshotBlock,
-        pub execution_stage: Option<u64>,
-        pub finish_stage: Option<u64>,
-        pub partial_state_trie: Option<u64>,
-        pub unwind: Option<SnapshotUnwind>,
-        pub storage_version: u32,
-        pub ocomp_baseline: SnapshotBlock,
-        pub ocomp_previous: SnapshotBlock,
-        pub ocomp_current: SnapshotBlock,
-    }
-
-    /// Deserialized projection of signed manifest bytes, NOT manifest validation.
-    #[derive(Clone, Debug, serde::Deserialize)]
-    pub(crate) struct SnapshotManifestObservation {
-        pub version: u32,
-        pub chain_id: u64,
-        pub progress: SnapshotNativeProgress,
-    }
-
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) struct SnapshotCommandObservation {
-        pub argv: Vec<String>,
-        pub started: u64,
-        pub ended: u64,
-        pub exit_code: Option<i32>,
-        pub signal: Option<i32>,
-        pub stdout: Vec<u8>,
-        pub stderr: Vec<u8>,
-    }
-
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) struct SnapshotNativeObservation {
-        /// Collect while all native writers are stopped; never RPC head alone.
-        pub progress: SnapshotNativeProgress,
-        pub sources: Vec<std::path::PathBuf>,
-        pub observed: u64,
-    }
-
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) struct SnapshotPlacementObservation {
-        pub completed: u64,
-        pub native: SnapshotNativeObservation,
-    }
-
-    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-    pub(crate) struct SnapshotFingerprint {
-        pub sha256: String,
-        pub mode: u32,
-    }
-
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) enum SnapshotValidationObservation {
-        /// Variant choice is backed by the complete placement's command history.
-        NotRun,
-        /// Preserve raw stdout JSON even for a nonzero validation exit.
-        Run(SnapshotCommandObservation),
-    }
-
-    /// Bytes from an incarnation-bounded LaunchLog or auxiliary worker log.
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) struct SnapshotLogSlice {
-        pub path: std::path::PathBuf,
-        pub device: u64,
-        pub inode: u64,
-        pub start: u64,
-        pub end: u64,
-        pub bytes: Vec<u8>,
-    }
-
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) struct SnapshotRecoveryObservation {
-        pub pid: u32,
-        pub incarnation_started: u64,
-        pub observed: u64,
-        pub log: SnapshotLogSlice,
-        /// Parsed from the existing certified follower startup recovery barrier record.
-        pub marshal_processed: u64,
-        pub anchor: SnapshotBlock,
-        /// provider.last_block_number(), NOT the exact Execution-stage frontier.
-        pub last_execution_height: u64,
-        /// Independent canonical upstream identity at the emitted anchor height.
-        pub canonical: SnapshotBlock,
-    }
-
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) struct SnapshotLaunchObservation {
-        pub slot: u8,
-        pub started: u64,
-        pub pid: u32,
-        pub argv: Vec<String>,
-        /// Independently read with all writers stopped. All handles are dropped before spawn.
-        pub before_launch: SnapshotNativeObservation,
-        pub recovery: SnapshotRecoveryObservation,
-    }
-
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) struct SnapshotExitObservation {
-        pub pid: u32,
-        pub reaped: u64,
-        pub code: Option<i32>,
-        pub signal: Option<i32>,
-    }
-
-    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-    pub(crate) struct SnapshotResultObservation {
-        pub job_id: String,
-        pub digest: String,
-    }
-
-    /// Existing process record plus its configured observability endpoint/bundle lane.
-    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-    pub(crate) struct SnapshotWorkerOwner {
-        pub process: crate::world::ocomp::OcompProcessRecordV1,
-        pub endpoint: String,
-        /// Actual configured bundle-lane inbox, shared by this lane's workers.
-        pub inbox_root: std::path::PathBuf,
-        pub bundle_hash: alloy_primitives::B256,
-    }
-
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) struct SnapshotWorkerHttpObservation {
-        pub owner: SnapshotWorkerOwner,
-        pub observed: u64,
-        /// Actual successful HTTP response body, unmodified (status JSON or metrics).
-        pub body: Vec<u8>,
-    }
-
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) struct SnapshotFileRead {
-        pub path: std::path::PathBuf,
-        pub observed: u64,
-        /// None is an actual NotFound observation. Permission/IO errors must fail collection.
-        pub bytes: Option<Vec<u8>>,
-    }
-
-    /// Raw relative names from a complete bounded traversal of this exact owned root.
-    /// The collector's actual NotFound result represents an absent root as an empty listing.
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) struct SnapshotDirectoryListing {
-        pub root: std::path::PathBuf,
-        /// Actual (device, inode). None only for a root observed as NotFound.
-        pub directory_identity: Option<(u64, u64)>,
-        pub started: u64,
-        pub completed: u64,
-        pub entries: Vec<std::path::PathBuf>,
-    }
-
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) enum SnapshotPriorFileObservation {
-        /// Normal new-job route: the future JobId/UnitId need not be known yet.
-        DirectoryListing(SnapshotDirectoryListing),
-    }
-
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) enum SnapshotWorkerAttribution {
-        /// Complete owned-worker history for this interval, including stopped processes.
-        /// The collector must retain every overlapping writer in this shared bundle inbox.
-        SingleOwnedProducer {
-            inventory_from: u64,
-            inventory_through: u64,
-            workers: Vec<SnapshotWorkerOwner>,
-        },
-    }
-
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) struct SnapshotWorkerExecution {
-        pub owner: SnapshotWorkerOwner,
-        pub before: SnapshotWorkerHttpObservation,
-        pub after: SnapshotWorkerHttpObservation,
-        pub attribution: SnapshotWorkerAttribution,
-        pub artifact_before: SnapshotPriorFileObservation,
-        pub artifact_after: SnapshotFileRead,
-        /// Read from THIS job's independent admission catalog/verified CAS.
-        pub admission_catalog: std::path::PathBuf,
-        pub canonical_unit_spec: Vec<u8>,
-        pub admitted_artifact_len: u64,
-        pub admitted_artifact_keccak256: alloy_primitives::B256,
-        /// Auxiliary only: successful workers may produce no log bytes.
-        pub log: Option<SnapshotLogSlice>,
-    }
-
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) struct SnapshotNewJobObservation {
-        pub requested: u64,
-        pub request: SnapshotBlock,
-        pub job_id: String,
-        pub worker: SnapshotWorkerExecution,
-        pub local_before: SnapshotPriorFileObservation,
-        pub local_after: SnapshotFileRead,
-        pub local_result_root: std::path::PathBuf,
-        /// Checked against raw canonical local bytes and the independent public result.
-        pub local_result: SnapshotResultObservation,
-        pub canonical_result: SnapshotResultObservation,
-        pub canonical_result_at: SnapshotBlock,
-    }
-
-    #[derive(Clone, Debug, serde::Serialize)]
-    pub(crate) struct OfflineSnapshotEvidence {
-        pub create: Option<SnapshotCommandObservation>,
-        /// Exact bytes retained before native runtime mutations. They are not reserialized.
-        pub manifest_bytes: Vec<u8>,
-        pub archive_sha256: String,
-        pub transferred_archive_sha256: String,
-        pub transfer: Option<SnapshotCommandObservation>,
-        pub placement: Option<SnapshotPlacementObservation>,
-        pub validation: SnapshotValidationObservation,
-        /// Independent upstream finalized identity at the stopped cut.
-        pub cut_canonical: SnapshotBlock,
-        /// Complete predeclared protected path inventory, independently collected each time.
-        pub identity_before: std::collections::BTreeMap<std::path::PathBuf, SnapshotFingerprint>,
-        pub identity_placed: std::collections::BTreeMap<std::path::PathBuf, SnapshotFingerprint>,
-        pub identity_at_k: std::collections::BTreeMap<std::path::PathBuf, SnapshotFingerprint>,
-        pub identity_restarted: std::collections::BTreeMap<std::path::PathBuf, SnapshotFingerprint>,
-        pub first_start: Option<SnapshotLaunchObservation>,
-        pub copied_result: SnapshotResultObservation,
-        pub new_job: Option<SnapshotNewJobObservation>,
-        pub before_restart: Option<SnapshotNativeObservation>,
-        pub k_canonical: Option<SnapshotBlock>,
-        pub first_exit: Option<SnapshotExitObservation>,
-        pub second_start: Option<SnapshotLaunchObservation>,
-    }
+#[derive(Clone, Debug, serde::Serialize)]
+pub(crate) struct SnapshotCommandObservation {
+    pub argv: Vec<String>,
+    pub started: u64,
+    pub ended: u64,
+    pub exit_code: Option<i32>,
+    pub signal: Option<i32>,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
 }

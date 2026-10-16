@@ -139,9 +139,18 @@ pub(in crate::stack::tests) fn recover_native(
     );
     let provider = open_native(root);
     let forkchoice = read_reth_recovery_forkchoice(&provider.canonical_in_memory_state())?;
-    assert_eq!(forkchoice.head.block_number, target);
-    assert_eq!(forkchoice.safe.unwrap().block_number, target);
-    assert_eq!(forkchoice.finalized.unwrap().block_number, target);
+    eyre::ensure!(
+        forkchoice.head.block_number == target,
+        "native recovery head does not match target"
+    );
+    eyre::ensure!(
+        forkchoice.safe.unwrap().block_number == target,
+        "native recovery safe block does not match target"
+    );
+    eyre::ensure!(
+        forkchoice.finalized.unwrap().block_number == target,
+        "native recovery finalized block does not match target"
+    );
     let checkpoint = ProjectionCheckpoint {
         block_number: target,
         block_hash: forkchoice.finalized.unwrap().block_hash,

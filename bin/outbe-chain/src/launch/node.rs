@@ -1,6 +1,6 @@
 use crate::*;
+mod authority;
 mod consensus;
-mod ocomp;
 mod radicle;
 mod tee;
 type LaunchConfig = reth_node_builder::NodeConfig<ChainSpec<OutbeHeader>>;
@@ -67,22 +67,12 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     // Thread 1 (main): Reth execution layer.
     let bridge_for_evm = bridge.clone();
     let components = move |spec: Arc<ChainSpec<OutbeHeader>>| {
-        let fork_install =
-            outbe_node::ocomp::fork::require_startup_ocomp_fork_install(spec.as_ref())
-                .expect("chain spec parser validated OCOMP fork install");
-        let activation = outbe_primitives::system_tx::OcompLifecycleActivation::at_block(
-            fork_install.activation_height,
-        );
-        let mut evm =
-            outbe_evm::OutbeEvmConfig::new_with_bridge(spec.clone(), bridge_for_evm.clone())
-                .with_ocomp_lifecycle_activation(activation);
-        evm = evm.with_ocomp_fork_install(fork_install);
+        let evm = outbe_evm::OutbeEvmConfig::new_with_bridge(spec.clone(), bridge_for_evm.clone());
         (
             evm,
             Arc::new(
                 OutbeBeaconConsensus::new(spec)
-                    .with_max_extra_data_size(outbe_node::consensus::OUTBE_MAX_EXTRA_DATA_SIZE)
-                    .with_ocomp_lifecycle_activation(activation),
+                    .with_max_extra_data_size(outbe_node::consensus::OUTBE_MAX_EXTRA_DATA_SIZE),
             ),
         )
     };
@@ -108,13 +98,11 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                 outbe_chain_constants::get_metadosis_advance_interval_seconds(),
             "effective genesis protocol parameters"
         );
-        let ocomp::StartupChainAuthority {
+        let authority::StartupChainAuthority {
             initial_tee_policy,
             dkg_prepare_window_blocks,
             minimum_block_time_millis,
-            ocomp_fork_install,
-            ocomp_install_hash,
-        } = ocomp::validate_startup_authority_and_pruning(builder.config())?;
+        } = authority::validate_startup_authority_and_pruning(builder.config())?;
 
         let node_data_dir = builder
             .config()
@@ -125,11 +113,6 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             ))
             .data_dir()
             .to_path_buf();
-        let ocomp::OcompBootstrap { config: ocomp_exex_config, retention_selector, readiness_publisher: ocomp_readiness_publisher, readiness: ocomp_readiness } =
-            ocomp::prepare(builder.config(), &args, &node_data_dir, &ocomp_fork_install, ocomp_install_hash)?;
-        let ocomp_readiness_for_consensus =
-            args.upstream.is_some().then(|| ocomp_readiness.clone());
-        let (ocomp_exit_tx, mut ocomp_exit_rx) = tokio::sync::mpsc::unbounded_channel();
         let (evm_signer, local_tee_identity, tee_admission_anchor) =
             tee::prepare(builder.config(), &args, node_data_dir.clone(), &initial_tee_policy).await?;
 
@@ -139,7 +122,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
         let outbe_node = build_outbe_node(
             bridge.clone(),
             evm_signer,
-            (ocomp_fork_install, shutdown.clone()),
+            shutdown.clone(),
         );
         let radicle_status_for_rpc = radicle_status.clone();
         // Canary-fed enclave health. The tee-canary worker (spawned after node launch)
@@ -152,19 +135,6 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             node_exit_future,
         } = builder
             .node(outbe_node)
-            .install_exex("outbe-finalized", move |ctx| {
-                let config = ocomp_exex_config.clone();
-                let readiness = ocomp_readiness_publisher.clone();
-                let exit = ocomp_exit_tx.clone();
-                async move {
-                    Ok(ocomp_exex::run_ocomp_exex(
-                        ctx,
-                        config,
-                        readiness,
-                        exit,
-                    ))
-                }
-            })
             .apply(|mut builder| {
                 configure_outbe_engine_args(&mut builder.config_mut().engine);
                 let discovery = &mut builder.config_mut().network.discovery;
@@ -204,7 +174,6 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                         dkg_prepare_window_blocks,
                         minimum_block_time_millis,
                     )
-                    .with_ocomp_lysis_openings(ocomp::lysis_openings_runtime(Arc::clone(&provider)))
                     .with_radicle_status(radicle_status.clone())
                     .with_tee_enclave_health(tee_enclave_health.clone());
                     ctx.modules.merge_if_module_configured(
@@ -272,8 +241,6 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             let _ = node_tx.send((
                 node,
                 args,
-                ocomp_readiness_for_consensus,
-                retention_selector,
                 finalized_execution_barrier,
                 radicle_consensus,
                 radicle_drained,
@@ -282,7 +249,6 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             let exit_cause = super::shutdown::wait_for_launcher_exit(
                 &shutdown,
                 Some(&mut consensus_dead_rx),
-                &mut ocomp_exit_rx,
                 &upgrade_promotion,
                 &mut tee_lease_exit_rx,
             ).await;
@@ -293,7 +259,6 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             let _ = super::shutdown::wait_for_launcher_exit(
                 &shutdown,
                 None,
-                &mut ocomp_exit_rx,
                 &upgrade_promotion,
                 &mut tee_lease_exit_rx,
             ).await;
@@ -349,18 +314,13 @@ fn runtime_config_for_command(
 fn build_outbe_node(
     bridge: ConsensusExecutionBridge,
     evm_signer: Option<Arc<OutbeEvmSigner>>,
-    (ocomp_fork_install, shutdown): (
-        Arc<outbe_metadosis::config::OcompForkInstallV1>,
-        outbe_node::shutdown::NodeShutdown,
-    ),
+    shutdown: outbe_node::shutdown::NodeShutdown,
 ) -> OutbeNode {
     let outbe_node = match evm_signer {
         Some(signer) => OutbeNode::with_bridge_and_evm_signer(bridge, signer),
         None => OutbeNode::with_bridge(bridge),
     };
-    outbe_node
-        .with_ocomp_fork_install(ocomp_fork_install)
-        .with_shutdown(shutdown)
+    outbe_node.with_shutdown(shutdown)
 }
 
 fn create_outbe_rpc_handler<P>(
@@ -388,14 +348,4 @@ fn log_consensus_launch_mode(is_validator: bool, has_upstream: bool) -> bool {
         info!("outbe node launched in FULL NODE mode - no consensus thread spawned");
         false
     }
-}
-
-pub(crate) fn ocomp_job_available_for_calculation(
-    status: outbe_ocomp_protocol::state::OcompJobStatus,
-) -> bool {
-    matches!(
-        status,
-        outbe_ocomp_protocol::state::OcompJobStatus::VotingOpen
-            | outbe_ocomp_protocol::state::OcompJobStatus::Completed
-    )
 }

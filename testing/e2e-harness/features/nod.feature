@@ -1,8 +1,8 @@
-@tee @min-validators-4 @ocomp
+@tee @min-validators-4
 Feature: Nod from issuance to Gratis and COEN
   # The Nod half of the shared lifecycle. Lysis over a certified generation is covered
-  # by the OCOMP scenario; here the Nods are issued straight to five owners in one
-  # bucket, so the phases every entity shares run on one chain and without OCOMP.
+  # by the Lysis scenario; here the Nods are issued straight to five owners in one
+  # bucket, so the phases every entity shares run on one chain and directly in EVM state.
   #
   # Every Nod is issued in MYR against a USD reference. Two are paid while qualified
   # and two inside the call notice, one by its owner and one by a third party, in

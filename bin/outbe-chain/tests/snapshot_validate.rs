@@ -1,8 +1,4 @@
-//! Real offline validate CLI coverage using stopped native files and conventional placement.
-//!
-//! The shared task01 fixture intentionally contains incomplete EVM progress and opaque
-//! unfinished OCOMP bytes. Only prepare_evm_authority below establishes a valid current-E
-//! fixture. These tests do not claim OCOMP all-check acceptance or node startup.
+//! Offline native snapshot validation and file placement acceptance.
 
 use std::{
     fs,
@@ -274,7 +270,6 @@ impl Placed {
         match kind {
             NativeRoot::Chain => self.base.join("chain"),
             NativeRoot::Consensus => self.base.join("chain/consensus"),
-            NativeRoot::Ocomp => self.base.join("ocomp/domain-v1"),
             NativeRoot::StaticFiles => self.base.join("chain/static_files"),
             NativeRoot::ExecutionRocksDb => self.base.join("chain/rocksdb"),
         }
@@ -348,11 +343,6 @@ fn signed_transfer_and_conventional_placement_do_not_mask_semantic_state_corrupt
         let recipient_key = placed.root(NativeRoot::Chain).join("keys/recipient.hex");
         fs::create_dir_all(recipient_key.parent().unwrap()).unwrap();
         fs::write(&recipient_key, b"independent recipient authority").unwrap();
-        // Opaque task01 OCOMP input remains copied. This makes no claim that OCOMP is valid.
-        assert!(placed
-            .root(NativeRoot::Ocomp)
-            .join(&fixture.pending_result)
-            .is_file());
         producer.close().unwrap();
         assert!(!fixture.donor.exists());
         assert!(!archive.exists());
@@ -379,9 +369,7 @@ fn signed_transfer_and_conventional_placement_do_not_mask_semantic_state_corrupt
             if corrupt { "failed" } else { "passed" },
             "{report:#}"
         );
-        for unselected in ["ce", "bodies", "ocomp"] {
-            assert_eq!(status(&report, unselected), "not_requested");
-        }
+
         assert_eq!(report["provenance"]["signature_valid"], true);
         assert_eq!(report["provenance"]["expected_signer_match"], true);
         assert_eq!(report["observed"]["h"]["number"], 100);

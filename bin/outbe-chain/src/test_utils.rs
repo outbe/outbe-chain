@@ -48,17 +48,9 @@ pub(crate) fn in_isolated_process(case: &str) -> bool {
     }
 }
 
-/// Writes a genesis bound to the current canonical OCOMP and storage profiles.
+/// Write a native genesis without protocol fixtures.
 pub(crate) fn write_base_genesis(path: &Path, chain_id: u64) -> eyre::Result<()> {
-    use outbe_metadosis::{
-        proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH, test_support::ForkInstallScenario,
-    };
-    use outbe_node::ocomp::fork::{
-        METADOSIS_STORAGE_LAYOUT_GENESIS_KEY, OCOMP_FORK_INSTALL_GENESIS_KEY,
-    };
-    use outbe_ocomp_protocol::profile::poc_schema_limits;
-    use reth_ethereum::chainspec::EthChainSpec as _;
-    let mut genesis = serde_json::json!({
+    let genesis = serde_json::json!({
         "config": {
             "chainId": chain_id,
             "epochLengthBlocks": 300,
@@ -88,30 +80,6 @@ pub(crate) fn write_base_genesis(path: &Path, chain_id: u64) -> eyre::Result<()>
         "coinbase": "0x0000000000000000000000000000000000000000",
         "alloc": {}
     });
-    fs::write(path, serde_json::to_vec_pretty(&genesis)?)?;
-    let path_text = path
-        .to_str()
-        .ok_or_else(|| eyre::eyre!("test genesis path is not valid UTF-8"))?;
-    let parsed = reth_ethereum::cli::chainspec::chain_value_parser(path_text)?;
-    let install =
-        ForkInstallScenario::measurement_at(1, chain_id, parsed.genesis_hash())?.into_install();
-    let limits = poc_schema_limits();
-    let canonical_bytes = install.encode_canonical(&limits)?;
-    let install_hash = install.install_hash(&limits)?;
-    let config = genesis["config"]
-        .as_object_mut()
-        .ok_or_else(|| eyre::eyre!("test genesis config is not an object"))?;
-    config.insert(
-        OCOMP_FORK_INSTALL_GENESIS_KEY.to_owned(),
-        serde_json::json!({
-            "canonicalBytes": format!("0x{}", hex::encode(canonical_bytes)),
-            "installHash": install_hash,
-        }),
-    );
-    config.insert(
-        METADOSIS_STORAGE_LAYOUT_GENESIS_KEY.to_owned(),
-        serde_json::json!({ "layoutHash": METADOSIS_STORAGE_LAYOUT_V1_HASH }),
-    );
     fs::write(path, serde_json::to_vec_pretty(&genesis)?)?;
     Ok(())
 }

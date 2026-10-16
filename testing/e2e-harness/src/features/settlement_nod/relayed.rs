@@ -82,9 +82,7 @@ fn wait_materialized_nod(
     let materialization_deadline =
         Instant::now() + Duration::from_secs(MATERIALIZED_NOD_TIMEOUT_SECS);
     loop {
-        let observed = stable_live_read(world, port, 0, || {
-            world.rpc.materialized_nod_for_owner(port, owner)
-        });
+        let observed = stable_live_read(world, port, 0, || world.rpc.nod_for_owner(port, owner));
         if let Some(nod) = observed {
             return nod;
         }

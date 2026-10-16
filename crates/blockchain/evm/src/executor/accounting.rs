@@ -68,8 +68,7 @@ pub struct AccountedParentArtifact {
     pub timestamp: u64,
     /// State root committed by the same exact parent header.
     ///
-    /// Legacy/test bridge entries may omit it. An OCOMP finality transition
-    /// requires this value and fails closed when it is unavailable.
+    /// Legacy/test bridge entries may omit this value.
     pub state_root: Option<B256>,
 }
 

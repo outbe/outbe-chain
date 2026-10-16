@@ -76,9 +76,6 @@ pub struct HashMapStorageProvider {
     /// ahead of the fixed stubs. Models a view whose answer changes between
     /// calls, such as a balance around a transfer.
     sub_call_selector_sequences: HashMap<(Address, [u8; 4]), VecDeque<Bytes>>,
-    lysis_activation_entitled: bool,
-    lysis_activation_attempted: bool,
-    lysis_activation_call_id: Option<B256>,
     metadosis_mutation_entitlements: MetadosisMutationEntitlements,
     metadosis_mutation_active: Option<(MetadosisMutationPurposeTag, B256, u64, u64)>,
     #[cfg(feature = "bench-utils")]
@@ -132,9 +129,6 @@ impl HashMapStorageProvider {
             sub_call_stubs: HashMap::new(),
             sub_call_selector_stubs: HashMap::new(),
             sub_call_selector_sequences: HashMap::new(),
-            lysis_activation_entitled: false,
-            lysis_activation_attempted: false,
-            lysis_activation_call_id: None,
             metadosis_mutation_entitlements: MetadosisMutationEntitlements::NONE,
             metadosis_mutation_active: None,
             #[cfg(feature = "bench-utils")]
@@ -191,19 +185,6 @@ impl HashMapStorageProvider {
         );
         self.metadosis_mutation_entitlements =
             MetadosisMutationEntitlements::repeated(purpose, count);
-    }
-
-    /// Grants one production-shaped certified Lysis activation lease.
-    ///
-    /// Tests must opt in once per simulated EVM call. The capability cursor
-    /// and every owner mutation remain the production implementations.
-    pub fn enable_lysis_activation_frame(&mut self) {
-        assert!(
-            self.lysis_activation_call_id.is_none(),
-            "cannot reset an active Lysis activation lease"
-        );
-        self.lysis_activation_entitled = true;
-        self.lysis_activation_attempted = false;
     }
 
     /// Opts the provider into stubbing `sub_call`: every dispatched sub-call
@@ -510,32 +491,6 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             return Err(PrimitivesStorageError::TestProviderMetadosisLeaseIdentityMismatch.into());
         }
         self.metadosis_mutation_active = None;
-        Ok(())
-    }
-
-    fn begin_lysis_activation_frame(&mut self, activation_call_id: B256) -> Result<()> {
-        if !self.lysis_activation_entitled
-            || self.lysis_activation_attempted
-            || self.lysis_activation_call_id.is_some()
-        {
-            return Err(PrimitivesStorageError::TestProviderNoCertifiedLysisActivationLease.into());
-        }
-        self.lysis_activation_attempted = true;
-        self.lysis_activation_call_id = Some(activation_call_id);
-        Ok(())
-    }
-
-    fn finish_lysis_activation_frame(
-        &mut self,
-        activation_call_id: B256,
-        _completed: bool,
-    ) -> Result<()> {
-        if self.lysis_activation_call_id.take() != Some(activation_call_id) {
-            return Err(
-                PrimitivesStorageError::TestProviderLysisActivationLeaseIdentityMismatch.into(),
-            );
-        }
-        self.lysis_activation_entitled = false;
         Ok(())
     }
 

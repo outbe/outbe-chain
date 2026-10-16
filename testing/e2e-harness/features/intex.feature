@@ -1,10 +1,10 @@
-@ocomp @tee @sgx-no-attest @sudo @min-validators-4
+@tee @sgx-no-attest @sudo @min-validators-4
 Feature: Intex from auction to Promis
   # An Intex has two halves of a life, and this feature owns both: the auction
   # that brings a series into existence, and everything the series is for once
   # it exists - qualifying, being settled by its owner, and burning into Promis.
 
-  # Applying the day's OCOMP result hands Desis its brief, and a later schedule
+  # Completing native Lysis hands Desis its brief, and a later schedule
   # tick dispatches AUCTION_STAGE_START to the origin router, which routes it to
   # every registered target. The committee is registered as its own target, so
   # the whole path runs on one chain: a day whose result lands must end with an
@@ -24,7 +24,7 @@ Feature: Intex from auction to Promis
   # would floor the monetary cost to zero without one.
   @intex-auction
   Scenario: A settled green day runs its auction through to an issued Intex
-    Given a fresh four-validator OCOMP public capacity localnet
+    Given a fresh four-validator native Lysis localnet
     When a local target chain is started
     And the intex venue is deployed on the target chain
     And the intex venue is wired
@@ -34,11 +34,9 @@ Feature: Intex from auction to Promis
     When a relay carries messages between the two chains
     When 33 capacity owners submit one encrypted Tribute each at no more than two per block
     Then all validators observe exactly 33 public Tributes for the capacity day
-    When the committee logical clock reaches the public capacity processing time
+    When the committee logical clock reaches the native Lysis processing time
     And the committee clock settles after the jump
-    Then Metadosis creates one finalized JobIntent from that public Tribute
-    When the production OCOMP domains process that finalized JobIntent
-    Then three matching validator domains atomically apply Lysis and create the Nod
+    Then Metadosis completes confidential Lysis and stores ready Nods on every validator
     And the auction for that day opens on every chain it named
     When two bidders commit their bids on every chain
     When those bidders reveal their bids once the venues are revealing
@@ -63,7 +61,7 @@ Feature: Intex from auction to Promis
   #
   # Time is seeded rather than lived through. A worldwide day sits in Forming
   # until its offering window closes, and stepping past that window on a day
-  # OCOMP never formed is a fatal MissedOffering - forming one costs the whole
+  # Metadosis never formed is a fatal MissedOffering - forming one costs the whole
   # tribute path this scenario exists to avoid. So the days the Called sweep
   # reads are filled in and issuance is stamped behind them, exactly as this
   # module's own unit tests do. The sweep still walks its index, checks the
@@ -76,7 +74,7 @@ Feature: Intex from auction to Promis
   # them and which carries its own message encoding.
   @intex-lifecycle @myr-issuance
   Scenario: Four Intex series qualify as one group, two are paid by the owner and a third party in both currencies, two run out, and the paid ones end in COEN
-    Given a fresh four-validator OCOMP public capacity localnet
+    Given a fresh four-validator native Lysis localnet
     When a local target chain is started
     And the intex venue is deployed on the target chain
     And the intex venue is wired

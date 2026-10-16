@@ -266,7 +266,7 @@ impl ValidatorSet<'_> {
     ///
     /// The checks run in this order: INACTIVE status, kept Radicle NodeId,
     /// consistent reverse binding, cooldown, consensus key, transition, and
-    /// no open OCOMP recovery window.
+    /// the configured cooldown.
     fn reregistered_state(
         &self,
         request: &RegistrationRequest<'_>,
@@ -295,9 +295,6 @@ impl ValidatorSet<'_> {
             target.block_number,
         )?);
         let after = existing_state.clone().with_lifecycle(lifecycle)?;
-        if self.val_ocomp_recovery_deadline.read(&validator_addr)? != 0 {
-            return Err(ValidatorSetError::CannotReregisterDuringOpenOcompWindow.into());
-        }
         Ok((after, old_pk_hash))
     }
 

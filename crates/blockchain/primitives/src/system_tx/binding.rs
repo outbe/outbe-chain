@@ -1,7 +1,7 @@
 //! Pure system-transaction layout and header/body bindings.
 use super::{
-    split_system_layout, validate_system_tx_set_for_activation, OcompLifecycleActivation,
-    SystemTxError, SystemTxInputV2, SystemTxKind, SystemTxLayout,
+    split_system_layout, validate_active_system_tx_set, SystemTxError, SystemTxInputV2,
+    SystemTxKind, SystemTxLayout,
 };
 use crate::{
     error::PrecompileError,
@@ -53,7 +53,6 @@ pub enum BoundaryBindingError {
 pub fn validate_system_layout<'a>(
     body: &'a OutbeBlockBody,
     header: &OutbeHeader,
-    activation: OcompLifecycleActivation,
 ) -> Result<(SystemTxLayout<'a>, OutbeBlockArtifacts), LayoutBindingError> {
     let artifacts = decode_outbe_block_artifacts(header.extra_data().as_ref())
         .map_err(LayoutBindingError::Artifacts)?;
@@ -63,12 +62,11 @@ pub fn validate_system_layout<'a>(
         Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
     );
     let has_tee_bootstrap = layout.has_begin_kind(SystemTxKind::TeeBootstrap);
-    validate_system_tx_set_for_activation(
+    validate_active_system_tx_set(
         &layout,
         header.number(),
         has_boundary_outcome,
         has_tee_bootstrap,
-        activation,
     )
     .map_err(LayoutBindingError::Set)?;
     Ok((layout, artifacts))

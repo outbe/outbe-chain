@@ -5,7 +5,6 @@
 //! process for `mise run localnet-*`. The hardware SGX lane deliberately has a
 //! command surface but remains fail-closed until its separate implementation.
 
-use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write as _;
@@ -23,17 +22,6 @@ use serde::{Deserialize, Serialize};
 use crate::env::{EnvCli, Environment, TeeMode};
 use crate::internal::{config::Config, eth, ports::Ports, proc};
 use crate::world::localnet::Localnet;
-#[cfg(feature = "ocomp-integration")]
-use crate::world::ocomp::{OcompRuntimeCountsV1, OcompTopology};
-
-#[cfg(not(feature = "ocomp-integration"))]
-struct OcompRuntimeCountsV1 {
-    supervisors: usize,
-    snapshot_exporters: usize,
-    workers: usize,
-    registered_workers: usize,
-    connected_workers: usize,
-}
 
 const STATE_FILE: &str = "localnet-state-v1.json";
 const BOOTSTRAP_FILE: &str = "localnet-bootstrap-v1.json";
@@ -129,21 +117,6 @@ struct LocalnetStateV1 {
     port_blocks: Vec<u16>,
     rpc_ports: Vec<u16>,
     heights: Vec<u64>,
-    ocomp_supervisors: usize,
-    ocomp_snapshot_exporters: usize,
-    ocomp_workers: usize,
-    ocomp_registered_workers: usize,
-    ocomp_connected_workers: usize,
-    ocomp_processes: Vec<OwnedOcompProcessV1>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-struct OwnedOcompProcessV1 {
-    validator_index: Option<u8>,
-    role: String,
-    worker_ordinal: Option<u32>,
-    pid: u32,
-    process_identity: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -215,9 +188,7 @@ impl LocalnetCli {
             evidence_dir: None,
             artifact_manifest: None,
             scenario_timeout_secs: None,
-            metadosis_p0_case: None,
             chain_bin: Some(self.repo.join("target/release/outbe-chain")),
-            ocomp_bin: Some(self.repo.join("target/release/outbe-ocomp")),
             feeder_bin: Some(self.repo.join("target/release/outbe-feeder")),
             upgraded_chain_bin: None,
             cli_bin: Some(self.repo.join("target/release/outbe-cli")),
@@ -295,7 +266,6 @@ fn bootstrap(cli: &LocalnetCli) -> Result<()> {
 }
 
 fn start(cli: &LocalnetCli) -> Result<()> {
-    require_ocomp_integration_build()?;
     println!("LocalNet enclave profile: {}", enclave_profile_banner());
     let receipt = read_bootstrap(cli)?;
     let _start_lock = StartLock::acquire(&cli.data_dir)?;
@@ -308,7 +278,6 @@ fn start(cli: &LocalnetCli) -> Result<()> {
             }
             return wait_for_existing_start(cli, &receipt, state.owner_pid);
         }
-        cleanup_stale_owner(cli, &state)?;
         cleanup_run_scoped(cli)?;
         remove_state(&cli.data_dir)?;
     }
@@ -353,14 +322,10 @@ fn start(cli: &LocalnetCli) -> Result<()> {
                     state.port_blocks == receipt.port_blocks,
                     "running LocalNet service-port layout differs from bootstrap"
                 );
-                verify_running_state(cli, &state)?;
+                verify_running_state(&state)?;
                 println!(
-                    "LocalNet running (pid {}, heights {:?}, OCOMP supervisors {}, workers {}/{})",
-                    state.owner_pid,
-                    state.heights,
-                    state.ocomp_supervisors,
-                    state.ocomp_connected_workers,
-                    state.ocomp_workers
+                    "LocalNet running (pid {}, heights {:?})",
+                    state.owner_pid, state.heights
                 );
                 print_funded_accounts(cli, &state.rpc_ports);
                 return Ok(());
@@ -379,7 +344,6 @@ fn start(cli: &LocalnetCli) -> Result<()> {
 }
 
 fn status(cli: &LocalnetCli) -> Result<()> {
-    require_ocomp_integration_build()?;
     let state = read_state(&cli.data_dir)?
         .ok_or_else(|| eyre!("LocalNet is not running at {}", cli.data_dir.display()))?;
     ensure_matches(cli, &state)?;
@@ -388,42 +352,20 @@ fn status(cli: &LocalnetCli) -> Result<()> {
         "LocalNet state is stale (former pid {})",
         state.owner_pid
     );
-    let (heights, counts) = verify_running_state(cli, &state)?;
+    let heights = verify_running_state(&state)?;
     println!(
-        "LocalNet {:?} (pid {}): RPC ports {:?}, heights {:?}; OCOMP supervisors {}, snapshot exporters {}, workers {}, registered {}, connected {}",
-        state.phase,
-        state.owner_pid,
-        state.rpc_ports,
-        heights,
-        counts.supervisors,
-        counts.snapshot_exporters,
-        counts.workers,
-        counts.registered_workers,
-        counts.connected_workers
+        "LocalNet {:?} (pid {}): RPC ports {:?}, heights {:?}",
+        state.phase, state.owner_pid, state.rpc_ports, heights
     );
     Ok(())
 }
 
-fn verify_running_state(
-    cli: &LocalnetCli,
-    state: &LocalnetStateV1,
-) -> Result<(Vec<u64>, OcompRuntimeCountsV1)> {
+fn verify_running_state(state: &LocalnetStateV1) -> Result<Vec<u64>> {
     ensure!(
         state.phase == DriverPhase::Running,
         "LocalNet owner has not published running readiness"
     );
-    ensure_exact_ocomp_processes_live(state)?;
-    let heights = observe_advancing_heights(&state.rpc_ports, Duration::from_secs(5))?;
-    let counts = observe_ocomp_runtime(cli, &state.port_blocks)?;
-    ensure!(
-        counts.supervisors == state.ocomp_supervisors
-            && counts.snapshot_exporters == state.ocomp_snapshot_exporters
-            && counts.workers == state.ocomp_workers
-            && counts.registered_workers == state.ocomp_registered_workers
-            && counts.connected_workers == state.ocomp_connected_workers,
-        "LocalNet OCOMP runtime differs from the owner readiness record"
-    );
-    Ok((heights, counts))
+    observe_advancing_heights(&state.rpc_ports, Duration::from_secs(5))
 }
 
 fn observe_advancing_heights(ports: &[u16], timeout: Duration) -> Result<Vec<u64>> {
@@ -449,57 +391,6 @@ fn observe_advancing_heights(ports: &[u16], timeout: Duration) -> Result<Vec<u64
     }
 }
 
-fn ensure_exact_ocomp_processes_live(state: &LocalnetStateV1) -> Result<()> {
-    let counts = OcompRuntimeCountsV1 {
-        supervisors: state.ocomp_supervisors,
-        snapshot_exporters: state.ocomp_snapshot_exporters,
-        workers: state.ocomp_workers,
-        registered_workers: state.ocomp_registered_workers,
-        connected_workers: state.ocomp_connected_workers,
-    };
-    ensure_ocomp_process_inventory(&state.ocomp_processes, counts)?;
-    for process in &state.ocomp_processes {
-        ensure!(
-            process_identity(process.pid).as_deref() == Some(&process.process_identity),
-            "validator-{:?} OCOMP {} pid {} is missing or was reused",
-            process.validator_index,
-            process.role,
-            process.pid
-        );
-    }
-    Ok(())
-}
-
-fn ensure_ocomp_process_inventory(
-    processes: &[OwnedOcompProcessV1],
-    counts: OcompRuntimeCountsV1,
-) -> Result<()> {
-    let mut pids = BTreeSet::new();
-    let mut snapshot_exporters = 0usize;
-    let mut workers = 0usize;
-    for process in processes {
-        ensure!(
-            pids.insert(process.pid),
-            "duplicate OCOMP pid {}",
-            process.pid
-        );
-        match process.role.as_str() {
-            "snapshot_exporter" => snapshot_exporters += 1,
-            "worker" => workers += 1,
-            role => {
-                bail!("unexpected persistent LocalNet OCOMP role {role}");
-            }
-        }
-    }
-    ensure!(
-        counts.supervisors == counts.snapshot_exporters
-            && snapshot_exporters == counts.snapshot_exporters
-            && workers == counts.workers,
-        "exact OCOMP process inventory differs from readiness counts"
-    );
-    Ok(())
-}
-
 fn wait_for_existing_start(
     cli: &LocalnetCli,
     receipt: &LocalnetBootstrapV1,
@@ -523,7 +414,7 @@ fn wait_for_existing_start(
                 state.port_blocks == receipt.port_blocks,
                 "running service-port layout differs"
             );
-            verify_running_state(cli, &state)?;
+            verify_running_state(&state)?;
             println!("LocalNet running (pid {})", state.owner_pid);
             print_funded_accounts(cli, &state.rpc_ports);
             return Ok(());
@@ -544,30 +435,6 @@ fn observe_heights(ports: &[u16]) -> Option<Vec<u64>> {
         .collect()
 }
 
-fn require_ocomp_integration_build() -> Result<()> {
-    #[cfg(feature = "ocomp-integration")]
-    {
-        Ok(())
-    }
-    #[cfg(not(feature = "ocomp-integration"))]
-    {
-        bail!(
-            "persistent LocalNet requires outbe-e2e built with --features ocomp-integration so OCOMP Supervisors and Workers are mandatory"
-        );
-    }
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn observe_ocomp_runtime(cli: &LocalnetCli, port_blocks: &[u16]) -> Result<OcompRuntimeCountsV1> {
-    let env = cli.environment(Some(port_blocks))?;
-    OcompTopology::new(Config::resolve(&env)).observe_baseline_runtime(1)
-}
-
-#[cfg(not(feature = "ocomp-integration"))]
-fn observe_ocomp_runtime(_cli: &LocalnetCli, _port_blocks: &[u16]) -> Result<OcompRuntimeCountsV1> {
-    unreachable!("require_ocomp_integration_build rejects this build")
-}
-
 #[cfg(test)]
 mod tests;
 
@@ -575,9 +442,9 @@ mod serve;
 mod state;
 mod stop;
 use serve::serve;
-#[cfg(any(test, feature = "ocomp-integration"))]
+
 use state::state_path;
-#[cfg(feature = "ocomp-integration")]
+
 use state::StateGuard;
 use state::{
     bootstrap_path, enclave_profile_banner, ensure_matches, ensure_not_running, localnet_tee_mode,
@@ -585,4 +452,4 @@ use state::{
     resolve_existing_path, resolve_maybe_missing_path, rpc_ports, state_is_live, validate_data_dir,
     write_json_atomic, StartLock,
 };
-use stop::{cleanup_run_scoped, cleanup_stale_owner, stop, terminate_startup_owner};
+use stop::{cleanup_run_scoped, stop, terminate_startup_owner};

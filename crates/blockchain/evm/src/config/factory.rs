@@ -3,10 +3,7 @@ use crate::executor::{
     ParentAccountingInputs,
 };
 use crate::{executor::OutbeBlockExecutor, factory::OutbeEvmFactory};
-use alloy_evm::{
-    block::{BlockExecutorFactory, StateDB},
-    Evm,
-};
+use alloy_evm::block::{BlockExecutorFactory, StateDB};
 use reth_ethereum::evm::revm::inspector::Inspector;
 use reth_ethereum::Receipt;
 use reth_ethereum::TransactionSigned;
@@ -65,23 +62,19 @@ impl BlockExecutorFactory for OutbeEvmConfig {
         let block_hash = ctx.block_hash;
         let parent_hash = ctx.inner.parent_hash;
         let expected_begin_system_txs = ctx.expected_begin_system_txs.clone();
-        let expected_end_system_txs = ctx.expected_end_system_txs.clone();
         let system_layout_error = ctx.system_layout_error.clone();
         let parent_consensus_metadata = ctx.parent_consensus_metadata.clone();
         let proposer_evm_address = ctx.proposer_evm_address;
         let execute_outbe_block_hooks = ctx.execute_outbe_block_hooks;
         let prebuilt_phase1_tx = ctx.prebuilt_phase1_tx.clone();
         let parent_artifact_hint = ctx.parent_artifact_hint;
-        let block_number = evm.block().number.saturating_to::<u64>();
         let system_plan = BlockSystemPlan {
             expected_begin_system_txs,
-            expected_end_system_txs,
             system_layout_error,
             proposer_evm_address,
             execute_outbe_block_hooks,
             prebuilt_phase1_tx,
             pending_tee_bootstrap: ctx.pending_tee_bootstrap.clone(),
-            ocomp_lifecycle_active: self.ocomp_lifecycle_active_at(block_number),
         };
 
         {

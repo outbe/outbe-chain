@@ -661,7 +661,7 @@ impl FinalizedParentCertStore {
 
     /// Return every persisted finalization record for one exact block identity.
     ///
-    /// OCOMP proof construction accepts exactly one record and treats zero or
+    /// Native checkpoint proof construction accepts exactly one record and treats zero or
     /// multiple records as local abstention. Returning the complete,
     /// deterministically ordered set keeps that policy outside the consensus
     /// store and prevents this adapter from silently choosing among proofs.

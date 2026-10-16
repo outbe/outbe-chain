@@ -1,9 +1,8 @@
 use alloy_primitives::Bytes;
 
 use super::{
-    SystemTxError, SystemTxInputV2, SystemTxKind, OCOMP_LIFECYCLE_GAS_RESERVE,
-    REWARD_GEM_DELIVERY_GAS_RESERVE, SYSTEM_TX_NON_ZERO_BYTE_GAS, SYSTEM_TX_VISIBLE_GAS_FLOOR,
-    SYSTEM_TX_ZERO_BYTE_GAS,
+    SystemTxError, SystemTxInputV2, SystemTxKind, REWARD_GEM_DELIVERY_GAS_RESERVE,
+    SYSTEM_TX_NON_ZERO_BYTE_GAS, SYSTEM_TX_VISIBLE_GAS_FLOOR, SYSTEM_TX_ZERO_BYTE_GAS,
 };
 
 /// Ethereum-compatible visible gas limit for a system tx envelope.
@@ -155,7 +154,6 @@ impl SystemTxVisibleGasPlan {
 
 const fn system_tx_execution_gas_reserve(kind: SystemTxKind) -> u64 {
     match kind {
-        SystemTxKind::OcompLifecycleBegin => OCOMP_LIFECYCLE_GAS_RESERVE,
         SystemTxKind::RewardsGemDelivery => REWARD_GEM_DELIVERY_GAS_RESERVE,
         _ => 0,
     }

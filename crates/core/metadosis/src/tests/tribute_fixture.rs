@@ -14,7 +14,6 @@ pub(super) fn issue_sealed_tribute(tribute: &mut TributeContract<'_>, input: Fix
         wwd,
         nominal,
     } = input;
-    tribute.initialize_fresh_ocomp_profile().unwrap();
     tribute.unseal_day(wwd).unwrap();
     tribute
         .issue(&TributeData {

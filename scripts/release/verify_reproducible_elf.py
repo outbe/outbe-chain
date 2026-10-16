@@ -21,7 +21,6 @@ EXPECTED_ARTIFACTS = (
     "outbe-keygen",
     "outbe-feeder",
     "outbe-tee-enclave",
-    "outbe-ocomp",
 )
 FORBIDDEN_PATHS = (b"/workspace", b"/usr/local/cargo", b"/usr/local/rustup")
 # This list is deliberately independent of the manifest generator's copy. The

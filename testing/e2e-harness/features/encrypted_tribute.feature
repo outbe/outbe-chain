@@ -1,4 +1,4 @@
-@tee @sgx-no-attest @sudo @min-validators-4 @ocomp @encrypted-tribute-v2
+@tee @sgx-no-attest @sudo @min-validators-4 @encrypted-tribute-v2
 Feature: Encrypted Tribute creation and repeated key derivation
   The creator owns a Tribute independently of the transaction caller. Public
   bodies, events and attributes retain ciphertext. Readers rederive amount keys.

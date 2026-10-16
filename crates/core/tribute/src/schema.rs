@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use outbe_primitives::time::WorldwideDay;
@@ -46,33 +46,6 @@ pub struct DayTotals {
     pub is_sealed: bool,
 }
 
-/// Bounded, incrementally maintained Tribute inputs used by OCOMP
-/// pre-admission. The live accumulator is frozen exactly once after the
-/// Tribute WWD is sealed.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DayPreAdmission {
-    pub worldwide_day: WorldwideDay,
-
-    pub initialized: bool,
-
-    pub is_sealed: bool,
-
-    pub sealed_tribute_count: u32,
-
-    pub sealed_tribute_nominal_total_minor: U256,
-
-    pub canonical_body_bytes: u64,
-
-    pub distinct_owner_count: u32,
-
-    pub distinct_reference_currency_count: u16,
-
-    /// Certified source generation. A sealed, unconsumed Tribute partition is
-    /// generation 0; OCM-20 advances it exactly once on logical retirement.
-    /// This is owner state, not an OCOMP reservation.
-    pub source_generation: u64,
-}
-
 impl DayTotals {
     pub fn with_key(worldwide_day: WorldwideDay) -> Self {
         Self {
@@ -81,22 +54,6 @@ impl DayTotals {
             tribute_count: 0,
             tribute_nominal_total_minor: U256::ZERO,
             is_sealed: false,
-        }
-    }
-}
-
-impl DayPreAdmission {
-    pub fn with_key(worldwide_day: WorldwideDay) -> Self {
-        Self {
-            worldwide_day,
-            initialized: false,
-            is_sealed: false,
-            sealed_tribute_count: 0,
-            sealed_tribute_nominal_total_minor: U256::ZERO,
-            canonical_body_bytes: 0,
-            distinct_owner_count: 0,
-            distinct_reference_currency_count: 0,
-            source_generation: 0,
         }
     }
 }
@@ -111,17 +68,6 @@ pub struct TributeContract {
     pub day_totals:
         outbe_primitives::storage::dsl::Map<WorldwideDay, crate::day_schema::StoredDayTotals>,
 
-    #[attribute(order = 3)]
-    pub day_pre_admission:
-        outbe_primitives::storage::dsl::Map<WorldwideDay, crate::day_schema::StoredDayPreAdmission>,
-
-    #[attribute(order = 5)]
-    pub day_reference_currency_refcount: outbe_primitives::storage::dsl::Map<B256, u32>,
-
-    /// Set only by the genesis-bound OCOMP lifecycle. When false, all
-    /// historical Tribute mutations keep their pre-activation storage footprint.
-    #[attribute(order = 6)]
-    pub ocomp_profile_ready: outbe_primitives::storage::dsl::Value<bool>,
     #[attribute(order = 7)]
     pub day_nominal_ct:
         outbe_primitives::storage::dsl::Map<WorldwideDay, outbe_primitives::storage::dsl::Bytes>,

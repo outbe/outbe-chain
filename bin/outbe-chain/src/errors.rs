@@ -3,16 +3,12 @@
 pub(crate) mod cli;
 pub(crate) mod genesis;
 pub(crate) mod launch;
-pub(crate) mod ocomp_exex;
 pub(crate) mod snapshot;
-pub(crate) mod snapshot_ocomp;
 
 pub(crate) use cli::CliError;
-pub(crate) use genesis::{OcompGenesisError, TeeGenesisError};
-pub(crate) use launch::{LaunchError, LysisOpeningsError};
-pub(crate) use ocomp_exex::{OcompExExError, OcompExExStateReadError};
-pub(crate) use snapshot::{CanonicalStatePrecompileError, SnapshotError};
-pub(crate) use snapshot_ocomp::{SnapshotIncompleteError, SnapshotOcompError};
+pub(crate) use genesis::TeeGenesisError;
+pub(crate) use launch::LaunchError;
+pub(crate) use snapshot::SnapshotError;
 
 /// Formats any displayable error as a string.
 pub(crate) fn display_error<E: std::fmt::Display>(error: E) -> String {

@@ -25,9 +25,7 @@ interface IValidatorSet {
     /// PENDING (then ACTIVE via the next reshare).
     event ValidatorUnjailed(address indexed validator, uint64 atHeight);
 
-    /// Emitted when an OCOMP recovery deadline is resolved. outcome:
-    /// 1 = restored, 2 = jailed, 3 = lifecycle already non-active.
-    event OcompRecoveryResolved(address indexed validator, uint64 recoveryDeadline, uint256 bondedStake, uint8 outcome);
+
 
     /// Emitted on epoch transition.
     event EpochTransition(uint256 indexed newEpochNumber, uint64 timestamp, uint32 activeValidatorCount);
@@ -87,7 +85,7 @@ interface IValidatorSet {
     function getEpochNumber() external view returns (uint256);
     function getEpochStartTimestamp() external view returns (uint64);
     function getEpochStartBlock() external view returns (uint64);
-    /// Stable role ids: 1 = ORACLE, 2 = OCOMP. Unknown ids revert.
+    /// Stable role id: 1 = ORACLE. Unknown ids revert.
     function setDelegate(uint8 role, address delegate) external;
     function revokeDelegate(uint8 role) external;
     function getDelegate(address validator, uint8 role) external view returns (address);
@@ -107,5 +105,5 @@ interface IValidatorSet {
     /// caught up to head and may be frozen into the next DKG reshare target.
     /// Caller must be the validator itself and currently PENDING. Until called,
     /// a staked joiner stays PENDING and is excluded from the reshare target.
-    function confirmValidatorReady(bytes calldata registration) external;
+    function confirmValidatorReady() external;
 }

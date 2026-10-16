@@ -10,10 +10,9 @@ use crate::{
     shutdown::{NodeShutdown, OutbePayloadServiceBuilder},
 };
 use outbe_evm::{OutbeExecutorBuilder, SharedOutbeEvmSigner};
-use outbe_metadosis::config::OcompForkInstallV1;
 use outbe_primitives::{
-    consensus::ConsensusExecutionBridge, system_tx::OcompLifecycleActivation, OutbeHeader,
-    OutbePayloadTypes, OutbePrimitives, OutbeTxEnvelope,
+    consensus::ConsensusExecutionBridge, OutbeHeader, OutbePayloadTypes, OutbePrimitives,
+    OutbeTxEnvelope,
 };
 use outbe_txpool::OutbePoolBuilder;
 use reth_chainspec::{ChainSpec, EthChainSpec};
@@ -49,8 +48,6 @@ pub struct OutbeNode {
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Optional validator EVM signer for proposer-side system tx artifacts.
     pub evm_signer: Option<SharedOutbeEvmSigner>,
-    /// Immutable consensus binding loaded from the selected chain manifest.
-    pub ocomp_fork_install: Option<std::sync::Arc<OcompForkInstallV1>>,
 }
 
 impl std::fmt::Debug for OutbeNode {
@@ -60,13 +57,6 @@ impl std::fmt::Debug for OutbeNode {
             .field(
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
-            )
-            .field(
-                "ocomp_fork_activation_height",
-                &self
-                    .ocomp_fork_install
-                    .as_ref()
-                    .map(|install| install.activation_height),
             )
             .finish()
     }
@@ -79,7 +69,6 @@ impl OutbeNode {
             shutdown: NodeShutdown::default(),
             bridge: Some(bridge),
             evm_signer: None,
-            ocomp_fork_install: None,
         }
     }
 
@@ -91,19 +80,12 @@ impl OutbeNode {
             shutdown: NodeShutdown::default(),
             bridge: Some(bridge),
             evm_signer: Some(evm_signer),
-            ocomp_fork_install: None,
         }
     }
 
     #[must_use]
     pub fn with_shutdown(mut self, shutdown: NodeShutdown) -> Self {
         self.shutdown = shutdown;
-        self
-    }
-
-    #[must_use]
-    pub fn with_ocomp_fork_install(mut self, install: std::sync::Arc<OcompForkInstallV1>) -> Self {
-        self.ocomp_fork_install = Some(install);
         self
     }
 }
@@ -137,12 +119,6 @@ where
     >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
-        let ocomp_activation = self
-            .ocomp_fork_install
-            .as_ref()
-            .map_or(OcompLifecycleActivation::Disabled, |install| {
-                OcompLifecycleActivation::at_block(install.activation_height)
-            });
         let executor = match &self.bridge {
             Some(bridge) => OutbeExecutorBuilder::with_bridge(bridge.clone()),
             None => OutbeExecutorBuilder::default(),
@@ -151,24 +127,13 @@ where
             Some(signer) => executor.with_evm_signer(signer.clone()),
             None => executor,
         };
-        let executor = executor
-            .with_ocomp_lifecycle_activation(ocomp_activation)
-            .with_ocomp_finality_authority(std::sync::Arc::new(
-                crate::ocomp::finality::ProductionOcompFinalizedIntentAuthority,
-            ));
-        let executor = match &self.ocomp_fork_install {
-            Some(install) => executor.with_ocomp_fork_install(install.clone()),
-            None => executor,
-        };
         ComponentsBuilder::default()
             .node_types::<N>()
-            .pool(OutbePoolBuilder::default().with_ocomp_lifecycle_activation(ocomp_activation))
+            .pool(OutbePoolBuilder)
             .executor(executor)
             .payload(OutbePayloadServiceBuilder::new(self.shutdown.clone()))
             .network(EthereumNetworkBuilder::default())
-            .consensus(
-                OutbeConsensusBuilder::default().with_ocomp_lifecycle_activation(ocomp_activation),
-            )
+            .consensus(OutbeConsensusBuilder::default())
     }
 
     fn add_ons(&self) -> Self::AddOns {

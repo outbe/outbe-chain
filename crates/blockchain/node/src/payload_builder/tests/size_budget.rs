@@ -64,7 +64,7 @@ fn candidate_is_rejected_when_finalized_extra_data_would_not_fit() {
     // Fits a 1 KiB header allowance exactly, but the finalized header may still
     // carry up to `OUTBE_MAX_EXTRA_DATA_SIZE` bytes of artifacts.
     let candidate = OUTBE_MAX_BLOCK_SIZE - 1024;
-    let budget = BlockSizeBudget::new(0, 0, false);
+    let budget = BlockSizeBudget::new(0, false);
 
     assert_eq!(
         budget.admit(candidate).map_err(|rejection| rejection.limit),
@@ -89,7 +89,7 @@ fn estimate_bounds_the_sealed_block_with_the_widest_header() {
     ]);
     let (last, recorded) = transactions.split_last().expect("fixture has transactions");
 
-    let mut budget = BlockSizeBudget::new(0, withdrawals.length(), false);
+    let mut budget = BlockSizeBudget::new(withdrawals.length(), false);
     for tx in recorded {
         budget.record(tx.length());
     }
@@ -114,7 +114,7 @@ fn estimate_bounds_the_sealed_block_with_the_widest_header() {
 
 #[test]
 fn estimate_overflow_rejects_instead_of_wrapping() {
-    let mut budget = BlockSizeBudget::new(0, 0, false);
+    let mut budget = BlockSizeBudget::new(0, false);
     budget.record(usize::MAX);
 
     assert_eq!(
@@ -128,7 +128,7 @@ fn estimate_overflow_rejects_instead_of_wrapping() {
 
 #[test]
 fn transport_cap_is_inclusive_at_the_exact_boundary() {
-    let mut budget = BlockSizeBudget::new(0, 0, false);
+    let mut budget = BlockSizeBudget::new(0, false);
     budget.record(1000);
     let overhead = budget
         .estimate(0)

@@ -220,13 +220,6 @@ pub const STABLECOIN_POLICY_REGISTRY_ADDRESS: Address =
 pub const RADICLE_REGISTRY_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE11");
 
-/// OCOMP protocol authority registry precompile.
-///
-/// Owns the genesis, active, staged, and retiring protocol bundles. OCOMP
-/// consumers such as Metadosis pin work to an authority exposed here rather
-/// than storing a private copy of the protocol policy.
-pub const OCOMP_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE12");
-
 /// HyperlaneController precompile address (stateful).
 ///
 /// Governance-owned controller of the Hyperlane bridge. It owns the Outbe

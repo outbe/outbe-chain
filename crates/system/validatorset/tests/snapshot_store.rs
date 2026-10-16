@@ -8,19 +8,15 @@
 //! visible to readers.
 
 use alloy_primitives::{address, b256, Address, B256, U256};
-use outbe_ocomp_protocol::committee::OcompKeyRegistrationV1;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::hooks::{activate_boundary_atomic, BoundaryActivationInputs};
-use outbe_validatorset::test_support::{
-    activate_validator_via_boundary, test_seeded_ocomp_registration,
-};
+use outbe_validatorset::test_support::activate_validator_via_boundary;
 use outbe_validatorset::{
     clear_committee_snapshot, committee_set_hash_v2, committee_snapshot_key,
-    read_committee_snapshot, read_committee_snapshot_for_epoch, read_ocomp_snapshot_extension,
-    read_ocomp_snapshot_extension_for_binding, read_ocomp_snapshot_member_at, snapshot_identity,
+    read_committee_snapshot, read_committee_snapshot_for_epoch, snapshot_identity,
     write_committee_snapshot, CommitteeEntry, CommitteeSnapshot,
 };
 
@@ -39,27 +35,6 @@ const CHAIN_ID: u64 = 1;
 
 fn pubkey_filled(byte: u8) -> [u8; 48] {
     [byte; 48]
-}
-
-fn admit_ocomp_key(
-    vs: &mut ValidatorSet<'_>,
-    validator: Address,
-    consensus_pubkey: &[u8; 48],
-    key_seed: u8,
-) -> OcompKeyRegistrationV1 {
-    let owner = vs.config_owner.read().unwrap();
-    vs.register_validator(owner, validator, consensus_pubkey)
-        .unwrap();
-    vs.mark_pending(validator).unwrap();
-    let (registration, encoded) = test_seeded_ocomp_registration(
-        validator,
-        consensus_pubkey,
-        key_seed,
-        (CHAIN_ID, B256::ZERO),
-    )
-    .unwrap();
-    vs.confirm_validator_ready(validator, &encoded).unwrap();
-    registration
 }
 
 /// Hand-rolled legacy `hash_active_set` (addresses-only). It is a verbatim copy of
@@ -119,162 +94,20 @@ fn validator_operational_key_slots_48_and_49_are_append_only() {
 }
 
 #[test]
-fn radicle_node_id_slots_59_and_60_are_append_only() {
+fn radicle_node_id_uses_native_slots_50_and_51() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let vs = ValidatorSet::new(storage);
-        assert_eq!(vs.val_radicle_node_id.base_slot(), U256::from(59u64));
+        assert_eq!(vs.val_radicle_node_id.base_slot(), U256::from(50u64));
         assert_eq!(
             vs.radicle_node_id_to_validator.base_slot(),
-            U256::from(60u64)
+            U256::from(51u64)
         );
     });
 }
 
 #[test]
-fn ocomp_recovery_slots_61_and_62_are_append_only() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        let vs = ValidatorSet::new(storage);
-        assert_eq!(vs.val_ocomp_miss_count.base_slot(), U256::from(61u64));
-        assert_eq!(
-            vs.val_ocomp_recovery_deadline.base_slot(),
-            U256::from(62u64)
-        );
-    });
-}
-
-#[test]
-fn committee_snapshot_persists_separate_strict_ocomp_extension() {
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut provider, |storage| {
-        let first = Address::repeat_byte(0x61);
-        let second = Address::repeat_byte(0x62);
-        let first_bls = pubkey_filled(0x71);
-        let second_bls = pubkey_filled(0x72);
-        let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(Address::ZERO).unwrap();
-        vs.set_config_max_validators(128).unwrap();
-        let first_registration = admit_ocomp_key(&mut vs, first, &first_bls, 0x11);
-        let second_registration = admit_ocomp_key(&mut vs, second, &second_bls, 0x12);
-        let snapshot = CommitteeSnapshot {
-            committee: vec![
-                CommitteeEntry {
-                    address: first,
-                    consensus_pubkey: first_bls,
-                },
-                CommitteeEntry {
-                    address: second,
-                    consensus_pubkey: second_bls,
-                },
-            ],
-            vrf_material_version: 3,
-            vrf_group_public_key_bytes: vec![0x73; 96],
-            vrf_public_polynomial_hash: B256::repeat_byte(0x74),
-        };
-        let epoch = 9;
-        let expected_consensus_hash = committee_set_hash_v2(epoch, &snapshot);
-
-        let (consensus_hash, snapshot_key) =
-            write_committee_snapshot(storage.clone(), epoch, &snapshot).unwrap();
-
-        assert_eq!(consensus_hash, expected_consensus_hash);
-        let extension = read_ocomp_snapshot_extension(storage.clone(), snapshot_key)
-            .unwrap()
-            .expect("OCOMP extension");
-        assert_eq!(extension.epoch, epoch);
-        assert_eq!(extension.committee_set_hash, consensus_hash);
-        assert_eq!(extension.member_count, 2);
-        assert_ne!(extension.ocomp_binding_hash, B256::ZERO);
-        assert_eq!(
-            read_ocomp_snapshot_member_at(storage.clone(), snapshot_key, 0)
-                .unwrap()
-                .unwrap()
-                .ocomp_public_key_sec1,
-            first_registration.core.ocomp_public_key_sec1
-        );
-        assert_eq!(
-            read_ocomp_snapshot_member_at(storage.clone(), snapshot_key, 1)
-                .unwrap()
-                .unwrap()
-                .ocomp_public_key_sec1,
-            second_registration.core.ocomp_public_key_sec1
-        );
-        assert_eq!(
-            read_ocomp_snapshot_extension_for_binding(
-                storage,
-                epoch,
-                consensus_hash,
-                extension.ocomp_binding_hash,
-            )
-            .unwrap(),
-            Some(extension)
-        );
-    });
-}
-
-#[test]
-fn committee_snapshot_exact_replay_survives_rejected_ocomp_key_replacement() {
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut provider, |storage| {
-        let validator = Address::repeat_byte(0x63);
-        let consensus_pubkey = pubkey_filled(0x73);
-        let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(Address::ZERO).unwrap();
-        vs.set_config_max_validators(128).unwrap();
-        admit_ocomp_key(&mut vs, validator, &consensus_pubkey, 0x13);
-        let snapshot = CommitteeSnapshot {
-            committee: vec![CommitteeEntry {
-                address: validator,
-                consensus_pubkey,
-            }],
-            vrf_material_version: 4,
-            vrf_group_public_key_bytes: vec![0x75; 96],
-            vrf_public_polynomial_hash: B256::repeat_byte(0x76),
-        };
-        let epoch = 10;
-
-        let identity = write_committee_snapshot(storage.clone(), epoch, &snapshot).unwrap();
-        let original_extension = read_ocomp_snapshot_extension(storage.clone(), identity.1)
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(
-            write_committee_snapshot(storage.clone(), epoch, &snapshot).unwrap(),
-            identity,
-            "byte-identical replay must be idempotent",
-        );
-
-        let (_, replacement) = test_seeded_ocomp_registration(
-            validator,
-            &consensus_pubkey,
-            0x14,
-            (CHAIN_ID, B256::ZERO),
-        )
-        .unwrap();
-        let error = vs
-            .confirm_validator_ready(validator, &replacement)
-            .expect_err("key_epoch 1 cannot replace the pinned OCOMP key");
-        assert!(error.to_string().contains("OCOMP public key is immutable"));
-        drop(vs);
-
-        assert_eq!(
-            write_committee_snapshot(storage.clone(), epoch, &snapshot).unwrap(),
-            identity,
-            "rejected key replacement cannot introduce snapshot binding drift",
-        );
-        assert_eq!(
-            read_ocomp_snapshot_extension(storage, identity.1)
-                .unwrap()
-                .unwrap(),
-            original_extension,
-            "rejected key replacement must not mutate the committed extension",
-        );
-    });
-}
-
-#[test]
-fn clear_committee_snapshot_zeroes_consensus_and_ocomp_extension() {
+fn clear_committee_snapshot_removes_native_consensus_snapshot() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {
         let validator = Address::repeat_byte(0x64);
@@ -282,7 +115,7 @@ fn clear_committee_snapshot_zeroes_consensus_and_ocomp_extension() {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(Address::ZERO).unwrap();
         vs.set_config_max_validators(128).unwrap();
-        admit_ocomp_key(&mut vs, validator, &consensus_pubkey, 0x15);
+        admit_validator(&mut vs, validator, &consensus_pubkey);
         drop(vs);
         let snapshot = CommitteeSnapshot {
             committee: vec![CommitteeEntry {
@@ -298,51 +131,7 @@ fn clear_committee_snapshot_zeroes_consensus_and_ocomp_extension() {
         clear_committee_snapshot(storage.clone(), key).unwrap();
 
         assert_eq!(read_committee_snapshot(storage.clone(), key).unwrap(), None);
-        assert_eq!(
-            read_ocomp_snapshot_extension(storage.clone(), key).unwrap(),
-            None
-        );
-        assert_eq!(
-            read_ocomp_snapshot_member_at(storage.clone(), key, 0).unwrap(),
-            None
-        );
         let vs = ValidatorSet::new(storage);
-        assert_eq!(vs.committee_snapshot_ocomp_epoch.read(&key).unwrap(), 0);
-        assert_eq!(
-            vs.committee_snapshot_ocomp_consensus_hash
-                .read(&key)
-                .unwrap(),
-            B256::ZERO
-        );
-        assert_eq!(
-            vs.committee_snapshot_ocomp_binding_hash.read(&key).unwrap(),
-            B256::ZERO
-        );
-        assert_eq!(
-            vs.committee_snapshot_ocomp_member_count.read(&key).unwrap(),
-            0
-        );
-        assert_eq!(
-            vs.committee_snapshot_ocomp_key_lo_at
-                .get_nested(&key)
-                .read(&0)
-                .unwrap(),
-            B256::ZERO
-        );
-        assert_eq!(
-            vs.committee_snapshot_ocomp_key_hi_at
-                .get_nested(&key)
-                .read(&0)
-                .unwrap(),
-            B256::ZERO
-        );
-        assert_eq!(
-            vs.committee_snapshot_ocomp_key_epoch_at
-                .get_nested(&key)
-                .read(&0)
-                .unwrap(),
-            0
-        );
         assert_eq!(
             vs._reserved_committee_snapshot_slot_40.read().unwrap(),
             B256::ZERO
@@ -377,13 +166,6 @@ fn shared_test_activation_helper_drives_production_boundary_hook() {
                 address: validator,
                 consensus_pubkey,
             }]
-        );
-        assert_eq!(
-            read_ocomp_snapshot_extension(storage, snapshot_key)
-                .unwrap()
-                .unwrap()
-                .member_count,
-            1
         );
     });
 }
@@ -657,7 +439,7 @@ fn boundary_block_writes_both_outgoing_and_incoming_snapshots_atomically() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_block_number(1);
     StorageHandle::enter(&mut storage, |storage| {
-        // Admit OCOMP material for both validators before a production
+        // Admit both validators before a production
         // committee snapshot can represent either one. Then recreate the
         // real outgoing-exit/incoming-join rotation shape.
         let mut vs = ValidatorSet::new(storage.clone());
@@ -665,8 +447,8 @@ fn boundary_block_writes_both_outgoing_and_incoming_snapshots_atomically() {
             .write(address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"))
             .unwrap();
         vs.set_config_max_validators(10).unwrap();
-        admit_ocomp_key(&mut vs, outgoing_addr, &pubkey_filled(0xAA), 0x21);
-        admit_ocomp_key(&mut vs, incoming_addr, &pubkey_filled(0xBB), 0x22);
+        admit_validator(&mut vs, outgoing_addr, &pubkey_filled(0xAA));
+        admit_validator(&mut vs, incoming_addr, &pubkey_filled(0xBB));
         vs.activate_validator(outgoing_addr).unwrap();
         let owner = vs.config_owner.read().unwrap();
         vs.deactivate_validator(owner, outgoing_addr)
@@ -764,9 +546,9 @@ fn outgoing_epoch_snapshot_remains_available_after_reshare_activation() {
             .write(address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"))
             .unwrap();
         vs.set_config_max_validators(10).unwrap();
-        admit_ocomp_key(&mut vs, val_a, &pubkey_filled(0x11), 0x31);
-        admit_ocomp_key(&mut vs, val_b, &pubkey_filled(0x22), 0x32);
-        admit_ocomp_key(&mut vs, val_c, &pubkey_filled(0x33), 0x33);
+        admit_validator(&mut vs, val_a, &pubkey_filled(0x11));
+        admit_validator(&mut vs, val_b, &pubkey_filled(0x22));
+        admit_validator(&mut vs, val_c, &pubkey_filled(0x33));
         let owner = vs.config_owner.read().unwrap();
         vs.activate_validator(val_a).unwrap();
         vs.activate_validator(val_b).unwrap();
@@ -963,13 +745,8 @@ fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() 
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(Address::ZERO).unwrap();
         vs.set_config_max_validators(128).unwrap();
-        for (index, entry) in snapshot.committee.iter().enumerate() {
-            admit_ocomp_key(
-                &mut vs,
-                entry.address,
-                &entry.consensus_pubkey,
-                0x41 + index as u8,
-            );
+        for entry in &snapshot.committee {
+            admit_validator(&mut vs, entry.address, &entry.consensus_pubkey);
         }
         drop(vs);
         let (_hash, key) = write_committee_snapshot(storage.clone(), 0, &snapshot).unwrap();
@@ -1045,7 +822,7 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
             .write(address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"))
             .unwrap();
         vs.set_config_max_validators(10).unwrap();
-        admit_ocomp_key(&mut vs, known_addr, &pubkey_filled(0x11), 0x51);
+        admit_validator(&mut vs, known_addr, &pubkey_filled(0x11));
         vs.activate_validator(known_addr).unwrap();
         let before_lifecycle = vs.validator_lifecycle(known_addr).unwrap();
         let before_active_set_hash = vs.active_consensus_set_hash().unwrap();
@@ -1133,11 +910,10 @@ fn committee_snapshot_prune_ring_retains_recent_and_clears_old_epochs() {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(Address::ZERO).unwrap();
         vs.set_config_max_validators(128).unwrap();
-        admit_ocomp_key(
+        admit_validator(
             &mut vs,
             snap.committee[0].address,
             &snap.committee[0].consensus_pubkey,
-            0x61,
         );
         drop(vs);
         let retain = outbe_validatorset::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS;
@@ -1189,7 +965,7 @@ fn committee_snapshot_epoch_lookup_rejects_a_newer_colliding_ring_entry() {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(Address::ZERO).unwrap();
         vs.set_config_max_validators(128).unwrap();
-        admit_ocomp_key(&mut vs, validator, &consensus_pubkey, 0x61);
+        admit_validator(&mut vs, validator, &consensus_pubkey);
         drop(vs);
 
         let snapshot = CommitteeSnapshot {
@@ -1219,4 +995,12 @@ fn committee_snapshot_epoch_lookup_rejects_a_newer_colliding_ring_entry() {
             "the actual retained epoch must remain readable"
         );
     });
+}
+
+fn admit_validator(vs: &mut ValidatorSet<'_>, validator: Address, consensus_pubkey: &[u8; 48]) {
+    let owner = vs.config_owner.read().unwrap();
+    vs.register_validator(owner, validator, consensus_pubkey)
+        .unwrap();
+    vs.mark_pending(validator).unwrap();
+    vs.confirm_validator_ready(validator).unwrap();
 }

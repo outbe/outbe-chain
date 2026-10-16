@@ -87,14 +87,6 @@ pub enum ValidatorSetError {
     #[error("BLS signature conversion failed")]
     BlsSignatureConversionFailed,
 
-    /// Stored OCOMP snapshot public key padding contains non-zero bytes.
-    #[error("stored OCOMP snapshot public-key padding is non-zero")]
-    NonZeroOcompSnapshotPubkeyPadding,
-
-    /// The OCOMP snapshot member count exceeds `u16::MAX`.
-    #[error("OCOMP snapshot member count exceeds u16")]
-    OcompSnapshotMemberCountExceedsU16,
-
     /// The committee snapshot length exceeds `u64::MAX`.
     #[error("committee snapshot length exceeds u64")]
     CommitteeSnapshotLengthExceedsU64,
@@ -102,29 +94,6 @@ pub enum ValidatorSetError {
     /// The VRF group public key byte length exceeds `u64::MAX`.
     #[error("vrf group pk bytes length exceeds u64")]
     VrfGroupPkBytesLengthExceedsU64,
-
-    /// An active validator lacks an admitted OCOMP registration.
-    #[error("active validator {validator} has no admitted OCOMP registration")]
-    ActiveValidatorMissingOcompRegistration {
-        /// Validator address.
-        validator: Address,
-    },
-
-    /// Derivation of the OCOMP identity for an active validator failed.
-    #[error("cannot derive OCOMP identity for active validator {validator}: {reason}")]
-    CannotDeriveOcompIdentityForActiveValidator {
-        /// Validator address.
-        validator: Address,
-        /// Underlying error text.
-        reason: String,
-    },
-
-    /// An active validator has a stale or invalid OCOMP registration.
-    #[error("active validator {validator} has stale or invalid OCOMP registration")]
-    ActiveValidatorStaleOrInvalidOcompRegistration {
-        /// Validator address.
-        validator: Address,
-    },
 
     /// A committee snapshot exists flag has no readable snapshot record.
     #[error("committee snapshot exists flag has no readable record")]
@@ -136,10 +105,6 @@ pub enum ValidatorSetError {
         /// Snapshot storage key.
         key: B256,
     },
-
-    /// The stored OCOMP snapshot member count exceeds `u16::MAX`.
-    #[error("stored OCOMP snapshot member count exceeds u16")]
-    StoredOcompSnapshotMemberCountExceedsU16,
 
     /// The stored VRF group public key length exceeds `usize::MAX`.
     #[error("vrf group pk length exceeds usize")]
@@ -204,13 +169,6 @@ pub enum ValidatorSetError {
     /// The active set count exceeds `u32::MAX`.
     #[error("active set count exceeds u32")]
     ActiveSetCountExceedsU32,
-
-    /// The certified active set contains a validator without OCOMP admission.
-    #[error("certified active set contains validator {address} without OCOMP admission")]
-    CertifiedActiveValidatorWithoutOcomp {
-        /// Validator address.
-        address: Address,
-    },
 
     /// A validated boundary retained a validator that exited before the freeze height.
     #[error(
@@ -377,30 +335,6 @@ pub enum ValidatorSetError {
     #[error("slash count overflow")]
     SlashCountOverflow,
 
-    /// Recording an OCOMP miss requires an active validator.
-    #[error("OCOMP miss requires an active validator")]
-    OcompMissRequiresActiveValidator,
-
-    /// The OCOMP miss counter overflowed `u64`.
-    #[error("OCOMP miss count overflow")]
-    OcompMissCountOverflow,
-
-    /// Computation of the OCOMP recovery deadline overflowed `u64`.
-    #[error("OCOMP recovery deadline overflow")]
-    OcompRecoveryDeadlineOverflow,
-
-    /// Recording an OCOMP bonded slash requires an open recovery window.
-    #[error("OCOMP bonded slash requires an open recovery window")]
-    OcompBondedSlashRequiresOpenWindow,
-
-    /// Recording an OCOMP bonded slash requires an active validator.
-    #[error("OCOMP bonded slash requires an active validator")]
-    OcompBondedSlashRequiresActiveValidator,
-
-    /// The OCOMP recovery resolution deadline does not match the stored deadline.
-    #[error("OCOMP recovery resolution deadline mismatch")]
-    OcompRecoveryResolutionDeadlineMismatch,
-
     /// The block proposer is not a current consensus participant.
     #[error("proposer is not a current consensus participant: {addr}")]
     ProposerNotConsensusParticipant {
@@ -493,21 +427,6 @@ pub enum ValidatorSetError {
     #[error("ValidatorSet.epoch_number exceeds u64")]
     EpochNumberExceedsU64,
 
-    /// Decoding of an OCOMP registration failed.
-    #[error("invalid OCOMP registration: {reason}")]
-    InvalidOcompRegistration {
-        /// Underlying decode error text.
-        reason: String,
-    },
-
-    /// The OCOMP registration chain ID does not match the storage chain ID.
-    #[error("OCOMP registration chain id mismatch")]
-    OcompRegistrationChainIdMismatch,
-
-    /// The OCOMP registration genesis hash does not match the storage genesis hash.
-    #[error("OCOMP registration genesis hash mismatch")]
-    OcompRegistrationGenesisHashMismatch,
-
     /// A registered validator is missing its consensus pubkey.
     #[error("registered validator is missing consensus pubkey")]
     RegisteredValidatorMissingConsensusPubkey,
@@ -519,101 +438,11 @@ pub enum ValidatorSetError {
         reason: String,
     },
 
-    /// The OCOMP registration validator identity hash does not match the validator.
-    #[error("OCOMP registration validator identity mismatch")]
-    OcompRegistrationIdentityMismatch,
-
-    /// A validator attempted to change its OCOMP public key in key epoch 1.
-    #[error("OCOMP public key is immutable in key_epoch 1")]
-    OcompPublicKeyImmutableInEpoch1,
-
-    /// The OCOMP key reservation for a validator is inconsistent.
-    #[error("OCOMP key reservation for {caller} is inconsistent")]
-    InconsistentOcompKeyReservation {
-        /// Validator address.
-        caller: Address,
-    },
-
-    /// Another validator already registered this OCOMP public key.
-    #[error("OCOMP public key already registered by another validator")]
-    OcompPublicKeyAlreadyRegistered,
-
-    /// Founder OCOMP registrations do not match the active validator count.
-    #[error(
-        "OCOMP founder registrations must exactly cover ACTIVE ValidatorSet: {registrations} registrations for {validators} validators"
-    )]
-    FounderOcompRegistrationsCountMismatch {
-        /// Provided registration count.
-        registrations: usize,
-        /// Active validator count.
-        validators: usize,
-    },
-
-    /// Memory allocation for the OCOMP founder import failed.
-    #[error("allocate OCOMP founder import")]
-    AllocateOcompFounderImport,
-
-    /// A partial OCOMP founder registration import exists in storage.
-    #[error("partial OCOMP founder registration import is fatal")]
-    PartialOcompFounderRegistrationImport,
-
-    /// Stored OCOMP founder state conflicts with the import.
-    #[error("partial or conflicting OCOMP founder state for {validator}")]
-    PartialOrConflictingOcompFounderState {
-        /// Validator address.
-        validator: Address,
-    },
-
     /// Readiness confirmation requires a pending validator.
     #[error("confirmValidatorReady requires PENDING status, got {status}")]
     ConfirmValidatorReadyRequiresPending {
         /// Stored status code.
         status: u8,
-    },
-
-    /// Validation of the OCOMP founder proof of possession failed.
-    #[error("invalid OCOMP founder proof of possession: {reason}")]
-    InvalidOcompFounderPop {
-        /// Underlying error text.
-        reason: String,
-    },
-
-    /// The OCOMP founder registration chain binding does not match storage.
-    #[error("OCOMP founder registration chain binding mismatch")]
-    OcompFounderChainBindingMismatch,
-
-    /// Derivation of the OCOMP founder validator identity failed.
-    #[error("derive OCOMP founder validator identity: {reason}")]
-    DeriveOcompFounderIdentity {
-        /// Underlying error text.
-        reason: String,
-    },
-
-    /// The OCOMP founder registration identity does not match the validator.
-    #[error("OCOMP founder registration identity mismatch for {validator}")]
-    OcompFounderIdentityMismatch {
-        /// Validator address.
-        validator: Address,
-    },
-
-    /// Founder OCOMP registrations contain a duplicate identity or key.
-    #[error("OCOMP founder registrations contain duplicate identity or key")]
-    DuplicateOcompFounderIdentityOrKey,
-
-    /// Canonical encoding of a founder OCOMP registration failed.
-    #[error("encode canonical OCOMP founder registration: {reason}")]
-    EncodeCanonicalOcompFounderRegistration {
-        /// Underlying error text.
-        reason: String,
-    },
-
-    /// A stored OCOMP registration failed canonical decoding.
-    #[error("stored OCOMP registration for {addr} is invalid: {reason}")]
-    StoredOcompRegistrationInvalid {
-        /// Validator address.
-        addr: Address,
-        /// Underlying decode error text.
-        reason: String,
     },
 
     /// A validator registry index exceeds `validator_count`.
@@ -731,10 +560,6 @@ pub enum ValidatorSetError {
     /// The Radicle NodeId reverse binding does not match the registered validator.
     #[error("registered validator has inconsistent Radicle NodeId reverse binding")]
     InconsistentRadicleNodeIdReverseBinding,
-
-    /// A validator attempted to re-register while an OCOMP recovery window is open.
-    #[error("cannot re-register while an OCOMP recovery window is open")]
-    CannotReregisterDuringOpenOcompWindow,
 
     /// Computation of the re-registration cooldown height overflowed `u64`.
     #[error("re-registration cooldown height overflow")]
@@ -868,45 +693,9 @@ pub enum ValidatorSetError {
         status: u8,
     },
 
-    /// Deterministic derivation of a test OCOMP signing key failed.
-    #[error("failed to derive deterministic test OCOMP signing key")]
-    TestOcompSigningKeyDerivationFailed,
-
     /// Derivation of a test validator identity hash failed.
     #[error("cannot derive test validator identity: {reason}")]
     CannotDeriveTestValidatorIdentity {
-        /// Underlying error text.
-        reason: String,
-    },
-
-    /// Construction of a seeded test OCOMP signing key failed.
-    #[error("test OCOMP seed key: {reason}")]
-    TestOcompSeedKeyInvalid {
-        /// Underlying error text.
-        reason: String,
-    },
-
-    /// Encoded test OCOMP SEC1 public key is not 33 bytes.
-    #[error("test OCOMP SEC1 key is not 33 bytes")]
-    TestOcompSec1KeyWrongLength,
-
-    /// Computation of a test OCOMP proof-of-possession digest failed.
-    #[error("test OCOMP PoP digest: {reason}")]
-    TestOcompPopDigestFailed {
-        /// Underlying error text.
-        reason: String,
-    },
-
-    /// Signing of a test OCOMP proof-of-possession digest failed.
-    #[error("test OCOMP PoP signing: {reason}")]
-    TestOcompPopSigningFailed {
-        /// Underlying error text.
-        reason: String,
-    },
-
-    /// Canonical encoding of a test OCOMP registration failed.
-    #[error("test OCOMP registration encode: {reason}")]
-    TestOcompRegistrationEncodeFailed {
         /// Underlying error text.
         reason: String,
     },
@@ -920,13 +709,6 @@ pub enum ValidatorSetError {
     TestBoundaryCannotAdmitStatus {
         /// Stored status code.
         status: u8,
-    },
-
-    /// Canonical encoding of a stored test OCOMP registration failed.
-    #[error("stored test OCOMP registration encode: {reason}")]
-    StoredTestOcompRegistrationEncodeFailed {
-        /// Underlying error text.
-        reason: String,
     },
 
     /// A test validator disappeared during boundary activation setup.
@@ -975,83 +757,10 @@ impl ValidatorSetError {
             self,
             Self::CommitteeSnapshotReplayMismatch { .. }
                 | Self::RegisteredValidatorMissingStakeProjection
-                | Self::TestOcompSigningKeyDerivationFailed
                 | Self::CannotDeriveTestValidatorIdentity { .. }
-                | Self::TestOcompSeedKeyInvalid { .. }
-                | Self::TestOcompSec1KeyWrongLength
-                | Self::TestOcompPopDigestFailed { .. }
-                | Self::TestOcompPopSigningFailed { .. }
-                | Self::TestOcompRegistrationEncodeFailed { .. }
-                | Self::StoredTestOcompRegistrationEncodeFailed { .. }
                 | Self::TestValidatorDisappeared
                 | Self::TestFixtureHistoryRequiresRegisteredValidator
         )
-    }
-
-    /// Builds a fatal error when OCOMP identity derivation fails for an active validator.
-    pub fn cannot_derive_ocomp_identity_for_active(
-        validator: Address,
-        error: impl std::fmt::Display,
-    ) -> PrecompileError {
-        Self::CannotDeriveOcompIdentityForActiveValidator {
-            validator,
-            reason: error.to_string(),
-        }
-        .into()
-    }
-
-    /// Builds a revert error for an invalid OCOMP registration.
-    pub fn invalid_ocomp_registration(error: impl std::fmt::Display) -> PrecompileError {
-        Self::InvalidOcompRegistration {
-            reason: error.to_string(),
-        }
-        .into()
-    }
-
-    /// Builds a fatal error when validator identity hash computation fails.
-    pub fn validator_identity_hash_error(error: impl std::fmt::Display) -> PrecompileError {
-        Self::ValidatorIdentityHashError {
-            reason: error.to_string(),
-        }
-        .into()
-    }
-
-    /// Builds a fatal error for an invalid OCOMP founder proof of possession.
-    pub fn invalid_ocomp_founder_pop(error: impl std::fmt::Display) -> PrecompileError {
-        Self::InvalidOcompFounderPop {
-            reason: error.to_string(),
-        }
-        .into()
-    }
-
-    /// Builds a fatal error when founder validator identity derivation fails.
-    pub fn derive_ocomp_founder_identity(error: impl std::fmt::Display) -> PrecompileError {
-        Self::DeriveOcompFounderIdentity {
-            reason: error.to_string(),
-        }
-        .into()
-    }
-
-    /// Builds a fatal error when canonical encoding of a founder registration fails.
-    pub fn encode_canonical_ocomp_founder_registration(
-        error: impl std::fmt::Display,
-    ) -> PrecompileError {
-        Self::EncodeCanonicalOcompFounderRegistration {
-            reason: error.to_string(),
-        }
-        .into()
-    }
-
-    /// Builds a fatal error when a stored OCOMP registration is invalid.
-    pub fn stored_ocomp_registration_invalid(
-        addr: Address,
-        error: impl std::fmt::Display,
-    ) -> PrecompileError {
-        Self::StoredOcompRegistrationInvalid {
-            addr,
-            reason: error.to_string(),
-        }
-        .into()
     }
 
     /// Builds a revert error for an invalid P2P address payload.

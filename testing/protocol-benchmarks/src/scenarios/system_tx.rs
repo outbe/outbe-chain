@@ -33,18 +33,16 @@ pub struct PreparedSystemTx {
 
 impl SystemTxScenario {
     #[must_use]
-    pub const fn all() -> [Self; 10] {
+    pub const fn all() -> [Self; 8] {
         [
             Self::new(SystemTxKind::CertifiedParentAccounting),
             Self::new(SystemTxKind::LateFinalizeCredits),
-            Self::new(SystemTxKind::OcompLifecycleBegin),
             Self::new(SystemTxKind::CycleTick),
             Self::new(SystemTxKind::RewardsGemDelivery),
             Self::new(SystemTxKind::BoundaryOutcome),
             Self::new(SystemTxKind::TeeBootstrap),
             Self::new(SystemTxKind::OracleSlashWindow),
             Self::new(SystemTxKind::HookEvents),
-            Self::new(SystemTxKind::OcompTerminalRequest),
         ]
     }
 
@@ -210,14 +208,12 @@ const fn kind_name(kind: SystemTxKind) -> &'static str {
     match kind {
         SystemTxKind::CertifiedParentAccounting => "certified-parent-accounting",
         SystemTxKind::LateFinalizeCredits => "late-finalize-credits",
-        SystemTxKind::OcompLifecycleBegin => "ocomp-lifecycle-begin",
         SystemTxKind::CycleTick => "cycle-tick",
         SystemTxKind::RewardsGemDelivery => "rewards-gem-delivery",
         SystemTxKind::BoundaryOutcome => "boundary-outcome",
         SystemTxKind::TeeBootstrap => "tee-bootstrap",
         SystemTxKind::OracleSlashWindow => "oracle-slash-window",
         SystemTxKind::HookEvents => "hook-events",
-        SystemTxKind::OcompTerminalRequest => "ocomp-terminal-request",
     }
 }
 
@@ -229,7 +225,6 @@ fn input_for(kind: SystemTxKind) -> Result<SystemTxInputV2, String> {
         SystemTxKind::LateFinalizeCredits => SystemTxInputV2::LateFinalizeCredits {
             artifact: LateFinalizeCreditsArtifact::default(),
         },
-        SystemTxKind::OcompLifecycleBegin => SystemTxInputV2::OcompLifecycleBegin,
         SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
         SystemTxKind::RewardsGemDelivery => SystemTxInputV2::RewardsGemDelivery,
         SystemTxKind::BoundaryOutcome => SystemTxInputV2::BoundaryOutcome {
@@ -240,7 +235,6 @@ fn input_for(kind: SystemTxKind) -> Result<SystemTxInputV2, String> {
         },
         SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
         SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
-        SystemTxKind::OcompTerminalRequest => SystemTxInputV2::OcompTerminalRequest,
     })
 }
 

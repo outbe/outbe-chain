@@ -257,94 +257,6 @@ fn certified_delayed_boundary_atomically_advances_epoch_and_snapshot() {
         let slash_after = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
         assert_eq!(slash_after.proposer_miss_count.read(&validator).unwrap(), 0);
         assert_eq!(slash_after.voter_miss_count.read(&validator).unwrap(), 0);
-        let (_, extension) = outbe_validatorset::read_ocomp_snapshot_extension_at_epoch(storage, 1)
-            .unwrap()
-            .expect("activated epoch must publish its OCOMP snapshot");
-        assert_eq!(extension.epoch, 1);
-        assert_eq!(extension.committee_set_hash, boundary.committee_set_hash);
-    });
-}
-
-#[test]
-fn failed_boundary_snapshot_write_rolls_back_epoch_membership_and_counters() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut storage, |storage| {
-        let validator = address!("0x1111111111111111111111111111111111111111");
-        let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
-        vs.set_config_max_validators(128).unwrap();
-        vs.config_is_initialized.write(true).unwrap();
-        vs.register_validator(OWNER, validator, &dummy_pubkey(0xA1))
-            .unwrap();
-        vs.activate_validator_via_boundary_for_test(validator)
-            .unwrap();
-        let mut epoch = vs.epoch_snapshot().unwrap();
-        epoch.number = U256::ZERO;
-        epoch.start_block = 1;
-        epoch.start_timestamp = TEST_BLOCK_TIMESTAMP_BASE;
-        vs.test_set_epoch_snapshot(epoch).unwrap();
-        let record = vs.get_validator(validator).unwrap().unwrap();
-        vs.test_set_history(
-            validator,
-            ValidatorHistory::new(
-                record.joined_at_height,
-                (record.deactivated_at_height != 0).then_some(record.deactivated_at_height),
-                HistoryCounters {
-                    slash_count: record.slash_count,
-                    missed_blocks: 7,
-                    missed_votes: record.missed_votes,
-                    blocks_proposed: record.blocks_proposed,
-                },
-            ),
-        )
-        .unwrap();
-        let active_hash_before = vs.active_consensus_set_hash().unwrap();
-        // Force the incoming snapshot writer to fail after the boundary
-        // transition has started. The enclosing activation checkpoint must
-        // restore every earlier epoch/set/counter write.
-        vs.val_ocomp_registration
-            .get_bytes(&validator)
-            .clear()
-            .unwrap();
-        drop(vs);
-        let slash = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
-        slash.proposer_miss_count.write(&validator, 10).unwrap();
-
-        let boundary = boundary_with_epoch(1, false, vec![(validator, dummy_pubkey(0xA1))]);
-        let block_guard = storage.checkpoint_guard();
-        super::super::prepare_boundary_epoch_counters(storage.clone(), &boundary, 301)
-            .expect("certified boundary must prepare outgoing counters");
-        let error = super::super::apply_boundary_outcome(
-            storage.clone(),
-            &boundary,
-            301,
-            TEST_BLOCK_TIMESTAMP_BASE + 600,
-        )
-        .expect_err("missing OCOMP registration must reject incoming snapshot");
-        assert!(error.to_string().contains("no admitted OCOMP registration"));
-        drop(block_guard);
-
-        let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        let epoch = vs_after.epoch_snapshot().unwrap();
-        assert_eq!(epoch.number, U256::ZERO);
-        assert_eq!(epoch.start_block, 1);
-        assert_eq!(epoch.start_timestamp, TEST_BLOCK_TIMESTAMP_BASE);
-        assert_eq!(
-            vs_after.active_consensus_set_hash().unwrap(),
-            active_hash_before
-        );
-        assert_eq!(vs_after.participation(validator).unwrap().missed_blocks, 7);
-        let slash_after = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
-        assert_eq!(
-            slash_after.proposer_miss_count.read(&validator).unwrap(),
-            10
-        );
-        assert!(
-            outbe_validatorset::read_ocomp_snapshot_extension_at_epoch(storage, 1)
-                .unwrap()
-                .is_none(),
-            "failed activation must not expose an epoch-1 snapshot"
-        );
     });
 }
 
@@ -381,11 +293,6 @@ fn boundary_rejects_skipped_epoch_without_mutating_current_state() {
         let epoch = vs_after.epoch_snapshot().unwrap();
         assert_eq!(epoch.number, U256::ZERO);
         assert_eq!(epoch.start_block, 1);
-        assert!(
-            outbe_validatorset::read_ocomp_snapshot_extension_at_epoch(storage, 2)
-                .unwrap()
-                .is_none()
-        );
     });
 }
 

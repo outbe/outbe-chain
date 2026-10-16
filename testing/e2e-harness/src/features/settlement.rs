@@ -707,7 +707,7 @@ fn wait_for_materialized_nod(
 ) -> (Vec<u8>, crate::internal::eth::INod::NodData) {
     let deadline = Instant::now() + Duration::from_secs(MATERIALIZED_NOD_TIMEOUT_SECS);
     loop {
-        match world.rpc.materialized_nod_for_owner(port, owner) {
+        match world.rpc.nod_for_owner(port, owner) {
             Ok(Some(nod)) => return nod,
             Ok(None) if Instant::now() < deadline => {}
             Err(_) if Instant::now() < deadline => {}

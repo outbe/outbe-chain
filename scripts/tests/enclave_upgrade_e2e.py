@@ -171,18 +171,6 @@ class Network:
         self.run([self.args.new_node, "tee", "network-descriptor", "--genesis", self.network / "genesis.json",
                   "--output", self.network / "network-descriptor.bin"], "descriptor")
         self.validators = json.loads((self.network / "validators.json").read_text())
-        for i in range(4):
-            directory = self.node_dir(i)
-            domain = directory / "ocomp/domain-v1"
-            domain.mkdir(parents=True, mode=0o700)
-            for source, name in [(directory / "evm-key.hex", "ocomp-evm-key.hex"),
-                                 (directory / "ocomp-key-v1.hex", "ocomp-key-v1.hex")]:
-                shutil.copy2(source, domain / name)
-                (domain / name).chmod(0o600)
-            shutil.copy2(self.network / "protocol-bundle-v1.ocb1", domain / "protocol-bundle-v1.ocb1")
-            if (self.network / "protocol-bundles-v1").exists():
-                shutil.copytree(self.network / "protocol-bundles-v1", domain / "protocol-bundles-v1")
-
         self.genesis_digest = hashlib.sha256((self.network / "genesis.json").read_bytes()).hexdigest()
         self.report["genesis_sha256"] = self.genesis_digest
 
@@ -564,8 +552,8 @@ def main():
     parser.add_argument("--cross-epoch", action="store_true", help="Run upgrade after the first DKG boundary and continue beyond the second")
     parser.add_argument("--inject-proof-faults", action="store_true", help="Local RPC proxy injects proof-window expiry and missing direct admission certificates")
     args = parser.parse_args()
-    if args.epoch_length_blocks < 267:
-        parser.error("epoch length must satisfy the default OCOMP retention horizon: 7 * epoch > 1868 blocks")
+    if args.epoch_length_blocks <= 30:
+        parser.error("epoch length must exceed the 30-block DKG prepare window")
     args.transition_node = args.transition_node or args.new_node
     for name in ("old_node", "new_node", "transition_node", "cli", "keygen", "enclave", "radicle"):
         path = getattr(args,name).resolve()

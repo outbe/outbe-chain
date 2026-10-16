@@ -5,7 +5,6 @@ use std::fs;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 
-use alloy_primitives::B256;
 use eyre::{Result, WrapErr};
 use serde_json::{json, Value};
 
@@ -16,7 +15,6 @@ mod deadlines;
 mod discovery;
 mod lease_full_node;
 mod lease_guard;
-mod ocomp_mismatch;
 mod sidecar_outage;
 mod typed_events;
 mod update_dkg;
@@ -28,7 +26,6 @@ use discovery::is_runtime_log;
 use discovery::{collect_logs, fatal_at_runtime_severity, unexpected_log_line};
 use lease_full_node::expected_tee_lease_full_node_shutdown_records;
 use lease_guard::expected_tee_lease_guard_shutdown_records;
-use ocomp_mismatch::expected_ocomp_full_node_mismatch_records;
 use sidecar_outage::expected_tee_sidecar_outage_records;
 use typed_events::TypedPayloadEvents;
 use update_dkg::{exact_expected_update_fatal, unsupported_version_fragment, ExpectationTally};
@@ -71,7 +68,6 @@ impl Localnet {
         &self,
         unsupported_version: Option<u64>,
         expected_dkg_reveal: Option<&str>,
-        expected_ocomp_full_node_mismatch: Option<B256>,
         expected_tee_failures: ExpectedTeeFailures<'_>,
     ) -> Result<LogAudit> {
         let result = audit_runtime_logs(
@@ -80,7 +76,6 @@ impl Localnet {
                 validators: self.cfg.validators,
                 unsupported_version,
                 expected_dkg_reveal,
-                expected_ocomp_full_node_mismatch,
                 expected_tee_lease_guard_shutdown_validator: expected_tee_failures
                     .lease_guard_validator,
                 expected_tee_sidecar_outage: expected_tee_failures.sidecar_outage,
@@ -109,7 +104,6 @@ struct LogCounts {
     expected_update_fatal: usize,
     expected_dkg_reveal: usize,
     expected_request_deadline_cancellation: usize,
-    expected_ocomp_full_node_mismatch: usize,
     expected_tee_lease_guard_shutdown_fatal: usize,
     expected_tee_sidecar_outage_fatal: usize,
 }
@@ -143,7 +137,6 @@ impl LogCounts {
             "expected_update_fatal": self.expected_update_fatal,
             "expected_dkg_reveal": self.expected_dkg_reveal,
             "expected_request_deadline_cancellation": self.expected_request_deadline_cancellation,
-            "expected_ocomp_full_node_mismatch": self.expected_ocomp_full_node_mismatch,
             "expected_tee_lease_guard_shutdown_fatal": self.expected_tee_lease_guard_shutdown_fatal,
             "expected_tee_sidecar_outage_fatal": self.expected_tee_sidecar_outage_fatal,
         })
@@ -220,7 +213,7 @@ fn audit_runtime_logs(root: &Path, expectations: AuditExpectations<'_>) -> Resul
 
 #[cfg(test)]
 fn audit_loaded_logs(logs: &[(PathBuf, String)]) -> LogAudit {
-    audit_loaded_logs_with_expectations(logs, usize::MAX, None, None, None)
+    audit_loaded_logs_with_expectations(logs, usize::MAX, None, None)
 }
 
 #[cfg(test)]
@@ -229,7 +222,6 @@ fn audit_loaded_logs_with_expectations(
     validators: usize,
     unsupported_version: Option<u64>,
     expected_dkg_reveal: Option<&str>,
-    expected_ocomp_full_node_mismatch: Option<B256>,
 ) -> LogAudit {
     audit_loaded_logs_with_all_expectations(
         logs,
@@ -237,7 +229,6 @@ fn audit_loaded_logs_with_expectations(
             validators,
             unsupported_version,
             expected_dkg_reveal,
-            expected_ocomp_full_node_mismatch,
             expected_tee_lease_guard_shutdown_validator: None,
             expected_tee_sidecar_outage: None,
             expected_tee_lease_guard_shutdown_full_node: None,
@@ -253,7 +244,6 @@ fn audit_validator_shutdown(logs: &[(PathBuf, String)], validator: usize) -> Log
             validators: 4,
             unsupported_version: None,
             expected_dkg_reveal: None,
-            expected_ocomp_full_node_mismatch: None,
             expected_tee_lease_guard_shutdown_validator: Some(validator),
             expected_tee_sidecar_outage: None,
             expected_tee_lease_guard_shutdown_full_node: None,
@@ -269,7 +259,6 @@ fn audit_full_node_shutdown(logs: &[(PathBuf, String)], proof: &TeeLeaseShutdown
             validators: 4,
             unsupported_version: None,
             expected_dkg_reveal: None,
-            expected_ocomp_full_node_mismatch: None,
             expected_tee_lease_guard_shutdown_validator: None,
             expected_tee_sidecar_outage: None,
             expected_tee_lease_guard_shutdown_full_node: Some(proof),
@@ -281,7 +270,6 @@ struct AuditExpectations<'a> {
     validators: usize,
     unsupported_version: Option<u64>,
     expected_dkg_reveal: Option<&'a str>,
-    expected_ocomp_full_node_mismatch: Option<B256>,
     expected_tee_lease_guard_shutdown_validator: Option<usize>,
     expected_tee_sidecar_outage: Option<(usize, &'a str)>,
     expected_tee_lease_guard_shutdown_full_node: Option<&'a TeeLeaseShutdownV1>,
@@ -291,7 +279,6 @@ struct AuditExpectations<'a> {
 struct ExpectedRecords {
     legacy_deadlines: LogRecords,
     legacy_deadline_cancellations: usize,
-    ocomp_mismatch: LogRecords,
     tee_lease_shutdown: LogRecords,
     tee_sidecar_outage: LogRecords,
 }
@@ -304,12 +291,6 @@ impl ExpectedRecords {
     ) -> Self {
         let validators = expectations.validators;
         let legacy = legacy_request_deadline_cancellations(logs, validators);
-        let ocomp_mismatch = records_or_finding(
-            expectations
-                .expected_ocomp_full_node_mismatch
-                .map(|job_id| expected_ocomp_full_node_mismatch_records(logs, validators, job_id)),
-            findings,
-        );
         let mut tee_lease_shutdown = records_or_finding(
             expectations
                 .expected_tee_lease_guard_shutdown_validator
@@ -337,7 +318,6 @@ impl ExpectedRecords {
         Self {
             legacy_deadlines: legacy.accepted_fatal_records,
             legacy_deadline_cancellations: legacy.cancellations,
-            ocomp_mismatch,
             tee_lease_shutdown,
             tee_sidecar_outage,
         }
@@ -361,7 +341,6 @@ struct LineVerdict {
     legacy_deadline: bool,
     update: bool,
     reveal: bool,
-    ocomp_mismatch: bool,
     tee_lease_shutdown: bool,
     tee_sidecar_outage: bool,
 }
@@ -372,7 +351,6 @@ impl LineVerdict {
             self.legacy_deadline,
             self.update,
             self.reveal,
-            self.ocomp_mismatch,
             self.tee_lease_shutdown,
             self.tee_sidecar_outage,
         ]
@@ -382,7 +360,6 @@ impl LineVerdict {
     fn count(&self, counts: &mut LogCounts) {
         counts.expected_update_fatal += usize::from(self.update);
         counts.expected_dkg_reveal += usize::from(self.reveal);
-        counts.expected_ocomp_full_node_mismatch += usize::from(self.ocomp_mismatch);
         counts.expected_tee_lease_guard_shutdown_fatal += usize::from(self.tee_lease_shutdown);
         counts.expected_tee_sidecar_outage_fatal += usize::from(self.tee_sidecar_outage);
     }
@@ -409,7 +386,6 @@ fn audit_loaded_logs_with_all_expectations(
                 legacy_deadline: expected.legacy_deadlines.contains(&record),
                 update: tally.accept_update(path, line),
                 reveal: tally.accept_reveal(path, line),
-                ocomp_mismatch: expected.ocomp_mismatch.contains(&record),
                 tee_lease_shutdown: expected.tee_lease_shutdown.contains(&record),
                 tee_sidecar_outage: expected.tee_sidecar_outage.contains(&record),
             };
