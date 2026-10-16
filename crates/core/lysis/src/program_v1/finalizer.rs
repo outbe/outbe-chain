@@ -728,7 +728,7 @@ impl<'a> ResultChunkStreamV1<'a> {
                 ));
             }
             self.previous_tribute = Some(action.tribute_id);
-            if !outbe_nod::pricing::is_issuable_entry(action.entry_price_minor) {
+            if !outbe_primitives::nod_rules::is_issuable_entry(action.entry_price_minor) {
                 return Err(LysisFinalizationErrorV1::Authority("Nod entry price bound"));
             }
             let record = action.encode_canonical_record(self.limits)?;

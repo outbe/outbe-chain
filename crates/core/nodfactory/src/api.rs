@@ -8,7 +8,7 @@ use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::runtime;
 
-pub use crate::runtime::{MineGratisRequest, SettleNodRequest};
+pub use crate::runtime::{issue_lysis_nod, MineGratisRequest, SettleNodRequest};
 
 pub use crate::certified::{install_certified_generation, CertifiedNodGenerationV1};
 #[cfg(any(test, feature = "test-utils"))]

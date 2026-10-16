@@ -120,6 +120,7 @@ pub(super) fn run_start_command(
     timestamp: u64,
 ) -> outbe_primitives::error::Result<()> {
     provider.set_block_number(block_number);
+    provider.set_timestamp(U256::from(timestamp));
     provider.enable_metadosis_mutation_frame(
         outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
     );

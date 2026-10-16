@@ -340,6 +340,22 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
             .begin(purpose, binding, chain_id, block_number)
     }
 
+    fn require_metadosis_mutation_frame(
+        &mut self,
+        purpose: MetadosisMutationPurposeTag,
+        binding: B256,
+        chain_id: u64,
+        block_number: u64,
+    ) -> outbe_primitives::error::Result<()> {
+        if self.dispatch_frames.metadosis.active != Some((purpose, binding, chain_id, block_number))
+        {
+            return Err(
+                crate::errors::CtxStorageError::MetadosisMutationFrameIdentityMismatch.into(),
+            );
+        }
+        Ok(())
+    }
+
     fn finish_metadosis_mutation_frame(
         &mut self,
         purpose: MetadosisMutationPurposeTag,

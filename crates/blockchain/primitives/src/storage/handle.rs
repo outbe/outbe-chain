@@ -95,6 +95,21 @@ impl<'storage> StorageHandle<'storage> {
         f(&mut **provider)
     }
 
+    pub fn require_metadosis_process_ready(&self) -> Result<()> {
+        let chain_id = self.chain_id()?;
+        let block_number = self.block_number()?;
+        let timestamp = self.timestamp()?.to::<u64>();
+        let binding = super::metadosis_process_ready_binding(chain_id, block_number, timestamp);
+        self.with_provider(|provider| {
+            provider.require_metadosis_mutation_frame(
+                super::MetadosisMutationPurposeTag::CycleLifecycle,
+                binding,
+                chain_id,
+                block_number,
+            )
+        })
+    }
+
     pub fn chain_id(&self) -> Result<u64> {
         self.with_provider(|provider| Ok(provider.chain_id()))
     }

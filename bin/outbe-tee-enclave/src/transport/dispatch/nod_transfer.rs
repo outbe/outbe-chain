@@ -136,6 +136,9 @@ fn dispatch_request(
         Err(_) => return Err(TransportDispatchError::NodTransferRequestEncoding.into()),
     };
     match request {
+        EnclaveRequest::ExecuteLysis { request } => {
+            Ok(super::nod::execute_lysis(keys, offer, chain, &request))
+        }
         EnclaveRequest::PrepareStateNods { request } => {
             Ok(super::nod::prepare_state(keys, offer, chain, &request))
         }

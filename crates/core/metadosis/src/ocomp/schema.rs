@@ -2,10 +2,14 @@ use outbe_ocomp_protocol::{intent::PreAdmissionEnvelopeV1, SchemaLimits};
 use outbe_primitives::error::Result;
 use outbe_primitives::time::WorldwideDay;
 
-use crate::schema::{MetadosisContract, WorldwideDayEntryExt};
-use crate::{aggregate::WwdStatus, errors::MetadosisStorageCorruptionError};
+use crate::errors::MetadosisStorageCorruptionError;
+use crate::schema::MetadosisContract;
+#[cfg(any(test, feature = "test-utils"))]
+use crate::{aggregate::WwdStatus, schema::WorldwideDayEntryExt};
 
-use super::state::{JobFsmCommand, JobFsmState};
+use super::state::JobFsmCommand;
+#[cfg(any(test, feature = "test-utils"))]
+use super::state::JobFsmState;
 
 pub(crate) use super::authority::require_active_ocomp_profile;
 use super::codec::{max_canonical_object_bytes, read_canonical_optional};
@@ -18,6 +22,7 @@ pub use super::profile::{poc_schema_limits, OcompRequestProfile};
 impl MetadosisContract<'_> {
     /// Inserts one bounded ordered READY key without scanning active
     /// WorldwideDays. Repeating the exact enqueue is idempotent.
+    #[cfg(any(test, feature = "test-utils"))]
     pub(crate) fn enqueue_ocomp_ready(
         &mut self,
         wwd: WorldwideDay,

@@ -67,6 +67,7 @@ required-features = ["sgx-sealing-probe"]
 
 [dependencies]
 outbe-tee.workspace = true
+outbe-lysis.workspace = true
 outbe-ocomp-protocol.workspace = true
 postcard.workspace = true
 # Already in the enclave build graph transitively via `outbe-tee` (so no MRENCLAVE
