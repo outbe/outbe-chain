@@ -69,7 +69,7 @@ fn externally_signed_refs_bind_actual_repository_parent_and_per_commit_context()
     let parent = prepared.attach(raw, signature.clone()).unwrap();
     let parent_id = *parent.commit().oid();
     assert_eq!(parent.commit().refs(), &refs);
-    let reader = read::RepositoryVerifier::new(authority, |at| {
+    let reader = read::RepositoryVerifier::new(authority, |at, _| {
         assert_eq!(at, parent_id);
         Ok([0; 32])
     });
@@ -100,7 +100,7 @@ fn externally_signed_refs_bind_actual_repository_parent_and_per_commit_context()
     assert_eq!(child.commit().parent(), Some(&parent_id));
     assert_eq!(child.commit().refs(), &refs);
     let read = |repository, owner, context| {
-        let verifier = read::RepositoryVerifier::new(owner, |at| {
+        let verifier = read::RepositoryVerifier::new(owner, |at, _| {
             assert_eq!(at, child_id);
             Ok(context)
         });
@@ -119,7 +119,7 @@ fn externally_signed_refs_bind_actual_repository_parent_and_per_commit_context()
     let other = min_sig::SecretKey::key_gen(&[43; 32], &[]).unwrap();
     let other = BlsPublicKey::from_bytes(other.sk_to_pk().to_bytes()).unwrap();
     assert!(read(repo.id, other.into(), context).is_err());
-    let unavailable = read::RepositoryVerifier::new(authority, |_| {
+    let unavailable = read::RepositoryVerifier::new(authority, |_, _| {
         Err(crate::storage::publication::Error::Unavailable)
     });
     assert!(
@@ -150,7 +150,7 @@ fn externally_signed_refs_bind_actual_repository_parent_and_per_commit_context()
         .unwrap()
         .write(git2::ObjectType::Commit, changed.as_bytes())
         .unwrap();
-    let verifier = read::RepositoryVerifier::new(authority, |_| Ok(context));
+    let verifier = read::RepositoryVerifier::new(authority, |_, _| Ok(context));
     assert!(
         SignedRefsReader::new(repo.id, read::Tip::Commit(id.into()), raw, &verifier)
             .read()

@@ -42,7 +42,7 @@ fn prepare_and_attach_initial_bls_identity_without_ed_owner_or_ref_changes() {
     let repo = storage::Repository::open(&path, rid).unwrap();
     let document_signature = sign(
         &key,
-        RepositorySubject::identity(rid.into_sha1().unwrap(), [0; 32], blob.into_sha1().unwrap()),
+        RepositorySubject::identity(rid.into_sha1().unwrap(), [7; 32], blob.into_sha1().unwrap()),
     );
     let action = Action::Revision {
         title: cob::Title::new("Initial revision").unwrap(),
@@ -71,7 +71,7 @@ fn prepare_and_attach_initial_bls_identity_without_ed_owner_or_ref_changes() {
         .unwrap();
     let subject = RepositorySubject::cob(
         rid.into_sha1().unwrap(),
-        [0; 32],
+        [8; 32],
         prepared.tree(),
         prepared.as_bytes(),
     );
@@ -80,7 +80,7 @@ fn prepare_and_attach_initial_bls_identity_without_ed_owner_or_ref_changes() {
         repo.raw(),
         prepared,
         rid.into_sha1().unwrap(),
-        [0; 32],
+        [8; 32],
         &signature,
     )
     .unwrap();
@@ -115,7 +115,7 @@ fn prepare_and_attach_initial_bls_identity_without_ed_owner_or_ref_changes() {
     assert_eq!(Doc::load_at(entry.id, &repo).unwrap().doc, doc);
     let wrong_document_signature = sign(
         &key,
-        RepositorySubject::identity([42; 20], [0; 32], blob.into_sha1().unwrap()),
+        RepositorySubject::identity([42; 20], [7; 32], blob.into_sha1().unwrap()),
     );
     let changed_document = String::from_utf8(bytes.clone())
         .unwrap()
@@ -151,7 +151,7 @@ fn prepare_and_attach_initial_bls_identity_without_ed_owner_or_ref_changes() {
             &key,
             RepositorySubject::cob(
                 rid.into_sha1().unwrap(),
-                [0; 32],
+                [8; 32],
                 prepared.tree(),
                 prepared.as_bytes(),
             ),
@@ -160,7 +160,7 @@ fn prepare_and_attach_initial_bls_identity_without_ed_owner_or_ref_changes() {
             repo.raw(),
             prepared,
             rid.into_sha1().unwrap(),
-            [0; 32],
+            [8; 32],
             &signature,
         )
         .unwrap();

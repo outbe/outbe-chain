@@ -89,7 +89,13 @@ pub(crate) fn load_entry<R: ReadRepository>(
                 .ok_or(NativeLoadError::NativeSignature(
                     crypto::repository::Error::InvalidSubject,
                 ))?;
-            cob::load_native(raw, id, repository, authorization.context()).map_err(Into::into)
+            cob::load_native(
+                raw,
+                id,
+                repository,
+                authorization.signature_context(&envelope.into()),
+            )
+            .map_err(Into::into)
         }
         Err(error) => Err(error.into()),
     }

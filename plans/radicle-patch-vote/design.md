@@ -46,6 +46,14 @@ RPC ответ или self-signed public key не создают publication aut
 обычный Heartwood клиент может проверить BLS, но без Outbe policy не доказывает current-set
 authorization. Второй независимый проверяющий в E2E — другой validating node + sidecar.
 
+Обычный пользователь читает governments штатным clone/fetch BLS-совместимого Heartwood.
+Участие в Vote, signing share, public DKG Output, witness bundle и локальные chain receipts
+для этого не нужны. Native verifier берёт подписанный application context из BLS envelope,
+восстанавливает subject из фактических repository/object/parent/refs и проверяет подпись.
+У локально managed repo context по-прежнему задаёт trusted publication policy; peer envelope
+не заменяет её и не отключает требования принятия новых сетевых публикаций.
+
+
 ## 2. Алгоритмы, ключи и signing bytes
 
 Используется pinned Commonware `d476a2361ce6840d2b9d0aa6fb30a924429046d4`, MinSig:

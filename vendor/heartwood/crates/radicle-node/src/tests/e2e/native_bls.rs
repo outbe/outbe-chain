@@ -226,15 +226,20 @@ fn assert_cached_patch(
 
 #[test_log::test]
 fn two_runtime_nodes_fetch_bls_identity_ed_patch_and_external_bls_review() {
-    fetch_native_repository(false);
+    fetch_native_repository(false, false);
 }
 
 #[test_log::test]
 fn managed_runtime_nodes_require_receipts_for_bls_owner_but_not_ed_patch() {
-    fetch_native_repository(true);
+    fetch_native_repository(true, true);
 }
 
-fn fetch_native_repository(managed: bool) {
+#[test_log::test]
+fn ordinary_reader_fetches_network_bls_history_without_receipts() {
+    fetch_native_repository(true, false);
+}
+
+fn fetch_native_repository(source_managed: bool, receiver_managed: bool) {
     #[derive(Debug)]
     struct MissingReceipts;
     impl PublicationPolicy for MissingReceipts {
@@ -252,7 +257,7 @@ fn fetch_native_repository(managed: bool) {
     let mut alice = Node::init(tmp.path(), config::relay("bls-source"), 13);
     let bob = Node::init(tmp.path(), config::relay("bls-receiver"), 37);
     let mut guarded = Node::init(tmp.path(), config::relay("managed-receiver"), 57);
-    let context = if managed { [3; 32] } else { [0; 32] };
+    let context = if source_managed { [3; 32] } else { [0; 32] };
     let source_receipts = std::sync::Arc::new(Receipts::new(context));
     let receiver_receipts = std::sync::Arc::new(Receipts::new(context));
     let key = min_sig::SecretKey::key_gen(&[73; 32], &[]).unwrap();
@@ -276,11 +281,13 @@ fn fetch_native_repository(managed: bool) {
     assert!(!guarded.storage.contains(&rid).unwrap());
     let info = guarded.storage.info().clone();
     guarded.storage = radicle::Storage::open(guarded.storage.path(), info).unwrap();
-    if managed {
+    if source_managed {
         alice
             .storage
             .manage_repository(rid, owner, source_receipts.clone())
             .unwrap();
+    }
+    if receiver_managed {
         bob.storage
             .manage_repository(rid, owner, receiver_receipts.clone())
             .unwrap();
@@ -384,7 +391,7 @@ fn fetch_native_repository(managed: bool) {
     println!("managed_receiver_without_policy={denied:?} canonical_repository_absent=true");
     bob.connect(&alice);
     bob.handle.seed(rid, Scope::All).unwrap();
-    if managed {
+    if receiver_managed {
         let denied = bob
             .handle
             .fetch(rid, alice.id, time::Duration::from_secs(10), None)
@@ -396,9 +403,11 @@ fn fetch_native_repository(managed: bool) {
         assert!(!bob.storage.path_of(&rid).exists());
         println!("managed_bootstrap_without_receipt={denied:?}");
     }
-    receiver_receipts.accept(identity, SubjectKind::Cob);
-    receiver_receipts.accept(identity, SubjectKind::Identity);
-    receiver_receipts.accept(first_refs, SubjectKind::SignedRefs);
+    if receiver_managed {
+        receiver_receipts.accept(identity, SubjectKind::Cob);
+        receiver_receipts.accept(identity, SubjectKind::Identity);
+        receiver_receipts.accept(first_refs, SubjectKind::SignedRefs);
+    }
     let result = bob
         .handle
         .fetch(rid, alice.id, time::Duration::from_secs(10), None)
@@ -434,7 +443,7 @@ fn fetch_native_repository(managed: bool) {
     let at = signed_refs(&repo, owner, &key, Some(first_refs), context);
     source_receipts.accept(at, SubjectKind::SignedRefs);
     alice.handle.announce_refs_for(rid, [owner]).unwrap();
-    if managed {
+    if receiver_managed {
         let denied = bob
             .handle
             .fetch(rid, alice.id, time::Duration::from_secs(10), None)
@@ -456,8 +465,10 @@ fn fetch_native_repository(managed: bool) {
         assert_cached_patch(&unchanged, patch_id, &fetched, &cache_path);
         println!("managed_review_without_receipt={denied:?} preserved_sigrefs={first_refs}");
     }
-    receiver_receipts.accept(review.id, SubjectKind::Cob);
-    receiver_receipts.accept(at, SubjectKind::SignedRefs);
+    if receiver_managed {
+        receiver_receipts.accept(review.id, SubjectKind::Cob);
+        receiver_receipts.accept(at, SubjectKind::SignedRefs);
+    }
     let result = bob
         .handle
         .fetch(rid, alice.id, time::Duration::from_secs(10), None)
@@ -546,7 +557,9 @@ fn fetch_native_repository(managed: bool) {
             "tampered static BLS refs fixture",
         )
         .unwrap();
-    receiver_receipts.accept(forged.into(), SubjectKind::SignedRefs);
+    if receiver_managed {
+        receiver_receipts.accept(forged.into(), SubjectKind::SignedRefs);
+    }
     let result = bob
         .handle
         .fetch(rid, alice.id, time::Duration::from_secs(10), None)

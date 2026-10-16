@@ -114,7 +114,7 @@ impl PreparedSignedRefs {
             vec![],
         );
         let oid = repo.write_commit(commit.to_string().as_bytes())?;
-        let verifier = read::RepositoryVerifier::new(self.authority, |_| Ok(self.context));
+        let verifier = read::RepositoryVerifier::new(self.authority, |_, _| Ok(self.context));
         CommitReader::new(oid, repo)
             .read()?
             .verify(self.repository, &verifier)

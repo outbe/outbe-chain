@@ -56,21 +56,27 @@ impl<V: signature::Verifier<crypto::Signature>> Verify for V {
     }
 }
 
-/// The context resolver uses trusted local policy for each actual history commit.
-/// A static BLS repository explicitly resolves to zero; an envelope is never a resolver.
+/// Local admission supplies the context for managed entries; ordinary readers use signed context.
 pub struct RepositoryVerifier<F> {
     authority: RepositoryKey,
     context: F,
 }
 
-impl<F> RepositoryVerifier<F> {
+impl<F> RepositoryVerifier<F>
+where
+    F: Fn(
+        Oid,
+        &crypto::RepositorySignature,
+    ) -> Result<[u8; 32], crate::storage::publication::Error>,
+{
     pub fn new(authority: RepositoryKey, context: F) -> Self {
         Self { authority, context }
     }
 }
 
-impl<F: Fn(Oid) -> Result<[u8; 32], crate::storage::publication::Error>> Verify
-    for RepositoryVerifier<F>
+impl<
+    F: Fn(Oid, &crypto::RepositorySignature) -> Result<[u8; 32], crate::storage::publication::Error>,
+> Verify for RepositoryVerifier<F>
 {
     fn verify(
         &self,
@@ -91,7 +97,7 @@ impl<F: Fn(Oid) -> Result<[u8; 32], crate::storage::publication::Error>> Verify
                 crypto::repository::Error::InvalidSubject,
             ));
         }
-        let context = (self.context)(commit).map_err(error::Verify::Publication)?;
+        let context = (self.context)(commit, signature).map_err(error::Verify::Publication)?;
         signature
             .verify_signed_refs(
                 self.authority,

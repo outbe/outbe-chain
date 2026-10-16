@@ -447,9 +447,9 @@ impl SignedRefs {
     {
         let root = repo.rid();
 
-        let verifier = sigrefs::read::RepositoryVerifier::new(remote, |commit| {
+        let verifier = sigrefs::read::RepositoryVerifier::new(remote, |commit, signature| {
             repo.authorize_entry(remote, commit, crypto::SubjectKind::SignedRefs)
-                .map(|authorization| authorization.context())
+                .map(|authorization| authorization.signature_context(signature))
         });
 
         match sigrefs::SignedRefsReader::new(root, tip, repo, &verifier).read() {

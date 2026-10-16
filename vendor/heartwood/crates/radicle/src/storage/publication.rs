@@ -41,6 +41,14 @@ impl EntryAuthorization {
     pub fn context(&self) -> [u8; 32] {
         self.context
     }
+    /// Ordinary readers verify the signed context; managed entries must match local admission.
+    pub fn signature_context(&self, signature: &crypto::RepositorySignature) -> [u8; 32] {
+        match (self.receipt, signature) {
+            (None, crypto::RepositorySignature::Bls12381G2(envelope)) => envelope.context(),
+            _ => self.context,
+        }
+    }
+
     pub fn receipt(&self) -> Option<[u8; 32]> {
         self.receipt
     }

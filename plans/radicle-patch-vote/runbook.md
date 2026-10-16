@@ -3,7 +3,7 @@
 Статус: рабочий runbook реализации, не release acceptance. На source `8987e23ae`
 проверен локальный сценарий с native sidecars, настоящими BLS partials и
 криптографической reshare, но fixture delivery/finality. Production E2E,
-положительный fresh catch-up и финальный комплект CI/evidence ещё не выполнены.
+положительный fresh catch-up managed Outbe узла и финальный комплект CI/evidence ещё не выполнены.
 
 ## Genesis
 
@@ -52,7 +52,7 @@ socket с суффиксом `.outbe`; вручную выдавать чере�
 
 1. Готовит одинаковые genesis/native objects и собирает threshold contributions.
 2. Передаёт bounded publication attestations через существующий node mailbox.
-3. Дожидается принятого chain receipt, проверяет native/q proof, устанавливает
+3. Дожидается принятого chain receipt, проверяет exact native objects/signatures, устанавливает
    accepted snapshot и вызывает штатный seed/announce.
 
 Для наблюдения используются existing RPC `outbe_radicleStatus`,
@@ -78,6 +78,15 @@ repo/patch/revision/expected target; later author revision не заменяет
 history остаётся читаемой без current share/quorum. `WaitingForWindow` означает,
 что collector не начал действие в недостаточном текущем окне; consensus не ждёт его.
 
+## Обычный пользователь
+
+BLS-совместимый Radicle выполняет обычный clone/fetch governments. Ed25519 author
+patch/revision и BLS network identity/Review/Merge/signed refs проверяются автоматически.
+Пользователю не нужны участие в Vote, share, DKG Output, witness archive или chain receipts.
+Подписанный context не заменяет проверку фактических native bytes, repository key и parents.
+В CLI Heartwood 1.10.3 штатная команда обновления — `rad sync --fetch`; новый transport
+или отдельная пользовательская команда проверки не вводятся.
+
 ## Перезапуск и доступность archive
 
 Сохраняются native Git storage, managed-publication requirements и private collector/
@@ -86,12 +95,11 @@ receipts, проверяет сохранённые packages и устанавл
 через existing CAS. Удалять journal/owner requirements или вручную двигать refs
 для обхода ошибки нельзя: это уничтожает данные проверки вместо восстановления.
 
-В текущем source свежий узел с receipt, но без package сообщает
-`AwaitingAcceptedPackage`. Положительная peer-доставка отдельного witness/manifest
-ещё не реализована: [D4 proposal](decisions/D4-accepted-package-delivery/proposal.md)
-проходит gate решения. Не считать Git fetch копированием этих файлов и не выдавать
-временные owner grants. Команды production catch-up и его финальная проверка должны
-быть добавлены после согласования и реального E2E.
+Свежий managed Outbe узел с receipt, но без локального accepted package пока сообщает
+`AwaitingAcceptedPackage`. Это отдельный незавершённый путь сетевого узла; обычный
+Radicle пользователь без managed-конфигурации получает repo штатным fetch. Предложение
+D4 о новом archive transport не реализуется. Старые partial/Output и local attestation
+slots не являются условием чтения уже принятой истории.
 
 ## Сборка и граница совместимости
 

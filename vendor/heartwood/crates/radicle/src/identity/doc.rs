@@ -1094,7 +1094,7 @@ impl Doc {
             let authority = *entry.author();
             let context = repo
                 .authorize_entry(authority, commit, crypto::SubjectKind::Identity)?
-                .context();
+                .signature_context(&signature);
             signature.verify_identity(
                 authority,
                 repo.id()

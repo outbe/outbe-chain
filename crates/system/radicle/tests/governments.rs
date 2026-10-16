@@ -1092,6 +1092,106 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    // An ordinary Radicle client has no Outbe reader, signing share or receipt archive.
+    let mut ordinary = Sidecar::new(75);
+    ordinary
+        .node
+        .seed(rid, radicle::node::policy::Scope::All)
+        .unwrap();
+    ordinary
+        .node
+        .connect(
+            source,
+            sidecars[1].node.listen_addrs().unwrap()[0].into(),
+            radicle::node::ConnectOptions {
+                persistent: false,
+                timeout: HANDLE_DEADLINE,
+            },
+        )
+        .unwrap();
+    let fetched = ordinary
+        .node
+        .fetch(rid, source, HANDLE_DEADLINE, None)
+        .unwrap();
+    assert!(fetched.is_success(), "ordinary BLS clone: {fetched:?}");
+    assert!(fetched.success().unwrap().1.contains(&owner));
+    assert!(!ordinary.journal().join("packages/packages").exists());
+    {
+        use radicle::storage::{
+            ReadRepository as _, RemoteRepository as _, ValidateRepository as _,
+        };
+        let repository = radicle::storage::git::Repository::open(
+            ordinary.home.storage().join(rid.canonical()),
+            rid,
+        )
+        .unwrap();
+        let source_repository =
+            git::raw::Repository::open_bare(sidecars[1].home.storage().join(rid.canonical()))
+                .unwrap();
+        assert_eq!(
+            repository
+                .identity_doc()
+                .unwrap()
+                .doc
+                .delegates()
+                .first()
+                .as_key(),
+            &owner
+        );
+        assert_eq!(
+            repository.raw().head().unwrap().target(),
+            source_repository.head().unwrap().target()
+        );
+        assert!(repository.validate().unwrap().is_empty());
+        let patches = Patches::open(&repository, radicle::cob::store::access::ReadOnly).unwrap();
+        for sequence in 2..=8 {
+            let receipt = reader
+                .read_current_publication_receipt(sequence)
+                .unwrap()
+                .unwrap();
+            let body = &receipt.receipt().body;
+            if !matches!(
+                body.action,
+                outbe_primitives::radicle_publication::PublicationAction::Review
+                    | outbe_primitives::radicle_publication::PublicationAction::Merge
+            ) {
+                continue;
+            }
+            let patch_id = git::Oid::from_sha1(body.patch_id.0).into();
+            let revision = git::Oid::from_sha1(body.revision_id.0).into();
+            let patch = patches.get(&patch_id).unwrap().unwrap();
+            assert_eq!(
+                patch
+                    .revision(&revision)
+                    .unwrap()
+                    .review_by(&owner)
+                    .unwrap()
+                    .verdict(),
+                Some(patch::Verdict::Accept)
+            );
+            if body.action == outbe_primitives::radicle_publication::PublicationAction::Merge {
+                assert!(patch.is_merged());
+            }
+        }
+        assert_eq!(
+            repository.remote(&owner).unwrap().refs.at,
+            git::Oid::from(
+                source_repository
+                    .refname_to_id(&format!("refs/namespaces/{owner}/refs/rad/sigrefs"),)
+                    .unwrap()
+            )
+        );
+    }
+    let fetched = ordinary
+        .node
+        .fetch(rid, source, HANDLE_DEADLINE, None)
+        .unwrap();
+    assert!(
+        fetched.is_success(),
+        "ordinary repeated BLS fetch: {fetched:?}"
+    );
+    ordinary.stop();
+
     // A fresh receiver has trusted receipts but no package: ordinary fetch must stay closed.
     let mut fresh = Sidecar::new(74);
     let store = ReviewPackageStore::open(fresh.home.node().join("node-publications")).unwrap();
@@ -1105,7 +1205,9 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
         let _ = stopped.await;
     }));
     let deadline = Instant::now() + HANDLE_DEADLINE * 4;
-    while !fresh.home.storage().join(rid.canonical()).is_dir() {
+    while radicle::storage::git::Repository::open(fresh.home.storage().join(rid.canonical()), rid)
+        .is_err()
+    {
         assert!(
             Instant::now() < deadline,
             "fresh collector did not read its accepted receipt"

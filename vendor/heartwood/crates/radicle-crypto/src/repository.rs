@@ -418,6 +418,13 @@ impl BlsEnvelope {
         bytes
     }
 
+    /// Signed application context; verification still reconstructs the actual native subject.
+    pub fn context(&self) -> [u8; 32] {
+        let mut context = [0; 32];
+        context.copy_from_slice(&self.subject.as_bytes()[25..57]);
+        context
+    }
+
     pub fn key(&self) -> BlsPublicKey {
         self.key
     }

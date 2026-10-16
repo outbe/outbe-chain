@@ -442,7 +442,7 @@ impl store::Cob for Identity {
         // we verify it against itself.
         let context = repo
             .authorize_entry(**founder, op.id, crypto::SubjectKind::Identity)?
-            .context();
+            .signature_context(&signature);
         if root
             .verify_signature(founder, &signature, root.blob, repo.id(), context)
             .is_err()
@@ -559,7 +559,7 @@ impl Identity {
 
                                 let context = repo
                                     .authorize_entry(author, id, crypto::SubjectKind::Identity)?
-                                    .context();
+                                    .signature_context(&signature);
                                 parent
                                     .verify_signature(
                                         &author,
@@ -680,7 +680,7 @@ impl Identity {
                 // Verify signature over new blob, using trusted delegates.
                 let context = repo
                     .authorize_entry(author, id, crypto::SubjectKind::Identity)?
-                    .context();
+                    .signature_context(&signature);
                 if parent
                     .verify_signature(&author, &signature, blob, repo.id(), context)
                     .is_err()
