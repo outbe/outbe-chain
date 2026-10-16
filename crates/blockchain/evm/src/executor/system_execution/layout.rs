@@ -370,13 +370,14 @@ where
                 } else {
                     OcompLifecycleActivation::Disabled
                 };
-                let expected = outbe_primitives::system_tx::expected_begin_block_kinds_for_publication(
-                    block_number,
-                    has_boundary_outcome,
-                    has_tee_bootstrap,
-                    ocomp_activation,
-                    block_artifacts.radicle_publication.is_some(),
-                );
+                let expected =
+                    outbe_primitives::system_tx::expected_begin_block_kinds_for_publication(
+                        block_number,
+                        has_boundary_outcome,
+                        has_tee_bootstrap,
+                        ocomp_activation,
+                        block_artifacts.radicle_publication.is_some(),
+                    );
                 ExecutorValidationError::UnexpectedBeginSystemTx {
                     body_index,
                     expected,
