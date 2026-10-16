@@ -595,6 +595,132 @@ async fn exercise_patch_vote(
     }
 }
 
+fn owner_refs(
+    sidecar: &Sidecar,
+    rid: RepoId,
+    owner: radicle::crypto::RepositoryKey,
+) -> BTreeMap<String, String> {
+    let repo =
+        git::raw::Repository::open_bare(sidecar.home.storage().join(rid.canonical())).unwrap();
+    repo.references_glob(&format!("refs/namespaces/{owner}/refs/*"))
+        .unwrap()
+        .map(|reference| {
+            let reference = reference.unwrap();
+            (
+                reference.name().unwrap().to_owned(),
+                reference
+                    .symbolic_target()
+                    .unwrap()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| reference.target().unwrap().to_string()),
+            )
+        })
+        .collect()
+}
+
+async fn exercise_material_binding(
+    sidecars: &mut [Sidecar],
+    reader: &RethSnapshotReader<FinalizedProvider>,
+    provider: &FinalizedProvider,
+    state: &mut HashMapStorageProvider,
+    mailboxes: &[RepositoryPublicationMailbox],
+    height: &mut u64,
+) {
+    use outbe_primitives::radicle_publication::PublicationAction;
+    let sequence = state
+        .enter(|s| RadicleRegistry::new(s).publication_sequence.read())
+        .unwrap();
+    let before = reader
+        .read_current_publication_receipt(sequence)
+        .unwrap()
+        .unwrap();
+    let owner = radicle::crypto::BlsPublicKey::from_bytes(before.receipt().body.owner_bls_public.0)
+        .unwrap()
+        .into();
+    let rid = git::Oid::from_sha1(before.receipt().body.repo_id.0).into();
+    let native: Vec<_> = sidecars
+        .iter()
+        .map(|sidecar| owner_refs(sidecar, rid, owner))
+        .collect();
+    for sidecar in sidecars.iter_mut() {
+        sidecar.start();
+    }
+    let next = sequence + 1;
+    let mut accounted = BTreeSet::new();
+    let deadline = Instant::now() + HANDLE_DEADLINE * 8;
+    loop {
+        for mailbox in mailboxes {
+            let Some(batch) = mailbox.ready_prefix(MAX_PUBLICATION_BATCH_LEN) else {
+                continue;
+            };
+            if batch.body.action != PublicationAction::BindMaterial
+                || batch.body.sequence != next
+                || batch
+                    .attestations
+                    .iter()
+                    .all(|a| accounted.contains(&a.participant_index))
+            {
+                continue;
+            }
+            *height += 1;
+            state.set_block_number(*height);
+            state
+                .enter(|s| RadicleRegistry::new(s).apply_publication_batch(&batch))
+                .unwrap();
+            accounted.extend(batch.attestations.iter().map(|a| a.participant_index));
+            provider.finalize(*height, state);
+        }
+        if let Some(receipt) = reader.read_current_publication_receipt(next).unwrap() {
+            assert_eq!(
+                receipt.receipt().body.action,
+                PublicationAction::BindMaterial
+            );
+            assert_eq!(
+                receipt.receipt().body.owner_bls_public,
+                before.receipt().body.owner_bls_public
+            );
+            assert_ne!(
+                receipt.receipt().body.material_hash,
+                before.receipt().body.material_hash
+            );
+            assert_eq!(receipt.receipt().body.material_version, 8);
+            if sidecars.iter().all(|s| {
+                std::fs::read(s.journal().join("latest-installed"))
+                    .is_ok_and(|bytes| bytes.get(..8) == Some(next.to_be_bytes().as_slice()))
+            }) {
+                break;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "automatic BindMaterial did not complete"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(accounted.len(), 3);
+    for (sidecar, original) in sidecars.iter_mut().zip(native) {
+        sidecar.stop();
+        assert_eq!(owner_refs(sidecar, rid, owner), original);
+        let store = ReviewPackageStore::open(sidecar.journal().join("packages")).unwrap();
+        let bound = reader
+            .read_current_publication_receipt(next)
+            .unwrap()
+            .unwrap();
+        let manifest = store.load_checkpoint_manifest(&bound).unwrap();
+        assert!(manifest.objects().is_empty());
+        assert!(manifest.subjects().is_empty());
+        assert!(manifest.refs().is_empty());
+        assert_eq!(
+            manifest.owner_refs().unwrap(),
+            store
+                .load_checkpoint_manifest(&before)
+                .unwrap()
+                .owner_refs()
+                .unwrap()
+        );
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_restarts() {
     let _ = log::set_logger(&TestLogger);
@@ -676,6 +802,7 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
     let mut services = Vec::new();
     let mut actors = Vec::new();
     let mut mailboxes = Vec::new();
+    let mut signers = Vec::new();
     let mut delayed = None;
     for (index, receiver) in receivers.into_iter().enumerate() {
         let member = &committee.committee[index];
@@ -688,11 +815,10 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
             .with_repository_publication_mailbox(mailbox.clone());
         let publisher = service.take_repository_material_publisher().unwrap();
         publisher.publish(2, 7, Some(&dkg.output));
-        publisher.install_local_signer(VrfMaterialProvider::new(
-            7,
-            dkg.polynomial.clone(),
-            Some(dkg.shares[index].clone()),
-        ));
+        let signer =
+            VrfMaterialProvider::new(7, dkg.polynomial.clone(), Some(dkg.shares[index].clone()));
+        publisher.install_local_signer(signer.clone());
+        signers.push(signer);
         let (_, local) = LocalEndpointIdentityChannel::create(LocalEndpointIdentity {
             validator: member.address,
             node_id,
@@ -875,9 +1001,39 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
             case,
         )
         .await;
+        if case == MergeCase::FastForward {
+            let refreshed = support::reshare(&keys, &dkg);
+            let mut committee = committee.clone();
+            committee.vrf_material_version = 8;
+            committee.vrf_public_polynomial_hash =
+                outbe_consensus::dkg_manager::public_polynomial_hash(&refreshed.polynomial);
+            height += 1;
+            state.set_block_number(height);
+            state
+                .enter(|s| write_committee_snapshot(s, 2, &committee))
+                .unwrap();
+            provider.finalize(height, &mut state);
+            for (index, (_, publisher, _, _)) in services.iter().enumerate() {
+                signers[index].activate(
+                    8,
+                    refreshed.polynomial.clone(),
+                    Some(refreshed.shares[index].clone()),
+                );
+                publisher.publish(2, 8, Some(&refreshed.output));
+            }
+            exercise_material_binding(
+                &mut sidecars,
+                &reader,
+                &provider,
+                &mut state,
+                &mailboxes,
+                &mut height,
+            )
+            .await;
+        }
     }
     // Accepted history must reopen even when the local current DKG output is unavailable.
-    services[0].1.publish(2, 7, None);
+    services[0].1.publish(2, 8, None);
     sidecars[0].start();
     let deadline = Instant::now() + HANDLE_DEADLINE * 4;
     while !sidecars[0].available(rid) {
@@ -889,7 +1045,7 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
     }
     assert_eq!(
         std::fs::read(sidecars[0].journal().join("latest-installed")).unwrap()[..8],
-        7u64.to_be_bytes(),
+        8u64.to_be_bytes(),
     );
     sidecars[1].start();
     let source = sidecars[1].node_id;
@@ -921,6 +1077,90 @@ async fn automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_r
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    // A fresh receiver has trusted receipts but no package: ordinary fetch must stay closed.
+    let mut fresh = Sidecar::new(74);
+    let store = ReviewPackageStore::open(fresh.home.node().join("node-publications")).unwrap();
+    let server = LocalReceiptServer::bind(&fresh.control, reader.clone())
+        .unwrap()
+        .with_authority_reader(reader.clone())
+        .with_native_node_id(fresh.node_id.into_inner())
+        .with_publication_store(store);
+    let (stop_fresh, stopped) = oneshot::channel();
+    let serving = tokio::spawn(server.run(async {
+        let _ = stopped.await;
+    }));
+    let deadline = Instant::now() + HANDLE_DEADLINE * 4;
+    while !fresh.home.storage().join(rid.canonical()).is_dir() {
+        assert!(
+            Instant::now() < deadline,
+            "fresh collector did not read its accepted receipt"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    // A direct reopen has no in-memory provider; the persisted owner pin must still deny access.
+    {
+        use radicle::storage::ReadRepository as _;
+        let repository = radicle::storage::git::Repository::open(
+            fresh.home.storage().join(rid.canonical()),
+            rid,
+        )
+        .unwrap();
+        let source_repository =
+            git::raw::Repository::open_bare(sidecars[1].home.storage().join(rid.canonical()))
+                .unwrap();
+        let identity = source_repository
+            .refname_to_id("refs/rad/id")
+            .unwrap()
+            .into();
+        for kind in [
+            radicle::crypto::SubjectKind::Identity,
+            radicle::crypto::SubjectKind::Cob,
+            radicle::crypto::SubjectKind::SignedRefs,
+        ] {
+            assert!(matches!(
+                repository.authorize_entry(owner, identity, kind),
+                Err(radicle::storage::publication::Error::Unavailable)
+            ));
+        }
+    }
+    fresh
+        .node
+        .seed(rid, radicle::node::policy::Scope::All)
+        .unwrap();
+    let address = sidecars[1].node.listen_addrs().unwrap()[0].into();
+    fresh
+        .node
+        .connect(
+            source,
+            address,
+            radicle::node::ConnectOptions {
+                persistent: false,
+                timeout: HANDLE_DEADLINE,
+            },
+        )
+        .unwrap();
+    let fetched = fresh
+        .node
+        .fetch(rid, source, HANDLE_DEADLINE, None)
+        .unwrap();
+    match fetched {
+        // Native fetch checks the empty local identity before requesting the missing package.
+        radicle::node::FetchResult::Failed { reason } => {
+            assert_eq!(reason, "missing identity document")
+        }
+        other => panic!("fresh receiver accepted owner entries without its package: {other:?}"),
+    }
+    let empty =
+        git::raw::Repository::open_bare(fresh.home.storage().join(rid.canonical())).unwrap();
+    assert!(empty.head().is_err());
+    assert!(empty
+        .references_glob(&format!("refs/namespaces/{owner}/refs/*"))
+        .unwrap()
+        .next()
+        .is_none());
+    fresh.stop();
+    stop_fresh.send(()).unwrap();
+    serving.await.unwrap().unwrap();
     for sidecar in &mut sidecars {
         sidecar.stop();
     }

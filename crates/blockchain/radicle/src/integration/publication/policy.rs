@@ -104,6 +104,24 @@ impl AcceptedRepositoryPolicy {
             accepted: RwLock::new(AcceptedEntries::default()),
         })
     }
+    /// A fresh receiver pins the trusted owner while the accepted package is still unavailable.
+    pub fn pending_receipt(
+        receipt: &crate::manager::FinalizedPublicationReceipt,
+    ) -> Result<Self, Error> {
+        let root = receipt.receipt();
+        if root.body.action != outbe_primitives::radicle_publication::PublicationAction::Bootstrap
+            || root.body.sequence != 1
+            || !root.body.previous_receipt_hash.is_zero()
+            || root.receipt_hash != root.body.receipt_hash()
+            || root.accepted_height > receipt.block().number
+        {
+            return Err(Error::Configuration);
+        }
+        Ok(Self {
+            scope: Scope::from_body(&root.body)?,
+            accepted: RwLock::new(AcceptedEntries::default()),
+        })
+    }
     /// Pin the managed repository before any native owner entry is authorized.
     pub fn new(checkpoint: &CheckpointOwnerSnapshot) -> Result<Self, Error> {
         let receipt = checkpoint.checkpoint();
@@ -274,5 +292,49 @@ impl PublicationPolicy for AcceptedRepositoryPolicy {
             grant.context,
             grant.receipt,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manager::{FinalizedBlock, FinalizedPublicationReceipt};
+    use outbe_radicleregistry::publication::PublicationReceipt;
+
+    #[test]
+    fn trusted_bootstrap_without_package_pins_owner_but_grants_no_entries() {
+        let (body, _) = crate::integration::publication::tests::bootstrap_fixture();
+        let mut receipt = FinalizedPublicationReceipt {
+            block: FinalizedBlock {
+                number: 10,
+                hash: B256::repeat_byte(10),
+            },
+            receipt: PublicationReceipt {
+                accepted_height: 9,
+                receipt_hash: body.receipt_hash(),
+                body,
+            },
+        };
+        let policy = AcceptedRepositoryPolicy::pending_receipt(&receipt).unwrap();
+        let owner = BlsPublicKey::from_bytes(receipt.receipt.body.owner_bls_public.0)
+            .unwrap()
+            .into();
+        for kind in [
+            SubjectKind::Identity,
+            SubjectKind::Cob,
+            SubjectKind::SignedRefs,
+        ] {
+            assert!(policy
+                .authorize_entry(&EntryRequest {
+                    repository: git::Oid::from_sha1(receipt.receipt.body.repo_id.0).into(),
+                    authority: owner,
+                    entry: git::Oid::from_sha1([5; 20]),
+                    kind,
+                })
+                .is_err());
+        }
+        receipt.receipt.body.sequence = 2;
+        receipt.receipt.receipt_hash = receipt.receipt.body.receipt_hash();
+        assert!(AcceptedRepositoryPolicy::pending_receipt(&receipt).is_err());
     }
 }

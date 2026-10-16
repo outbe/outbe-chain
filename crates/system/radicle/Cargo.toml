@@ -28,12 +28,15 @@ alloy-sol-types.workspace = true
 bytes.workspace = true
 commonware-actor.workspace = true
 commonware-p2p.workspace = true
+commonware-parallel.workspace = true
 commonware-runtime.workspace = true
 commonware-utils.workspace = true
-outbe-consensus.workspace = true
+outbe-consensus = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 outbe-vote.workspace = true
 radicle = { workspace = true, features = ["test"] }
+rand-commonware.workspace = true
+rand-core-commonware.workspace = true
 reth-chainspec.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 serde_json.workspace = true

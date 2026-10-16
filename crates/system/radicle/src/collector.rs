@@ -568,6 +568,16 @@ impl Collector {
             return Ok(Outcome::Announced);
         }
         let id = git::Oid::from_sha1(receipt.receipt().body.repo_id.0).into();
+        let owner = RepositoryKey::from(BlsPublicKey::from_bytes(
+            receipt.receipt().body.owner_bls_public.0,
+        )?);
+        let policy = match &self.policy {
+            Some((repository, policy)) if *repository == id => policy.clone(),
+            Some(_) => return Err("accepted bootstrap repository changed".into()),
+            None => Arc::new(AcceptedRepositoryPolicy::pending_receipt(&receipt)?),
+        };
+        self.storage.manage_repository(id, owner, policy.clone())?;
+        self.policy = Some((id, policy.clone()));
         let repo = self.repository(id)?;
         let Some(package) = self
             .journal
@@ -593,15 +603,7 @@ impl Collector {
             &package.witness,
         )?;
         let snapshot = CheckpointOwnerSnapshot::bootstrap(receipt.clone(), &package.manifest)?;
-        let policy = match &self.policy {
-            Some((repository, policy)) if *repository == id => policy.clone(),
-            Some(_) => return Err("accepted bootstrap repository changed".into()),
-            None => Arc::new(AcceptedRepositoryPolicy::new(&snapshot)?),
-        };
         policy.accept_bootstrap(&proof)?;
-        let owner = RepositoryKey::from(BlsPublicKey::from_bytes(package.body.owner_bls_public.0)?);
-        self.storage.manage_repository(id, owner, policy.clone())?;
-        self.policy = Some((id, policy));
         client
             .cache_checkpoint_manifest(&receipt, &package.manifest)
             .await?;

@@ -247,3 +247,92 @@ impl Receiver for RoutedReceiver {
         })
     }
 }
+
+/// Real cryptographic resharing with fixture delivery; no chain DKG actor/finality is simulated here.
+pub fn reshare(
+    keys: &[commonware_cryptography::bls12381::PrivateKey],
+    previous: &outbe_consensus::bls::ParticipantDkgBootstrapResult,
+) -> outbe_consensus::bls::ParticipantDkgBootstrapResult {
+    use commonware_codec::Encode as _;
+    use commonware_cryptography::bls12381::{
+        dkg::feldman_desmedt::{Dealer, Info, Logs, Player, Reveal},
+        primitives::{sharing::Mode, variant::MinSig},
+    };
+    use commonware_cryptography::{bls12381, Signer as _};
+    use commonware_parallel::Sequential;
+    use commonware_utils::{N3f1, TryCollect as _};
+    let participants = keys
+        .iter()
+        .map(|key| key.public_key())
+        .try_collect()
+        .unwrap();
+    let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
+        &outbe_consensus::config::outbe_app_namespace(),
+        1,
+        Some(previous.output.clone()),
+        Mode::NonZeroCounter,
+        Reveal::V1,
+        participants,
+        previous.output.players().clone(),
+    )
+    .unwrap();
+    let mut dealers = Vec::new();
+    let mut public_messages = Vec::new();
+    let mut private_messages = Vec::new();
+    for (index, key) in keys.iter().enumerate() {
+        let (dealer, public, private) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+            info.clone(),
+            key.clone(),
+            Some(previous.shares[index].clone()),
+        )
+        .unwrap();
+        dealers.push(dealer);
+        public_messages.push(public);
+        private_messages.push(private);
+    }
+    let mut players: Vec<_> = keys
+        .iter()
+        .map(|key| Player::new(info.clone(), key.clone()).unwrap())
+        .collect();
+    outbe_consensus::test_harness::acknowledge_fixture_dealings(
+        keys,
+        outbe_consensus::test_harness::FixtureDealings {
+            public_messages: &public_messages,
+            private_messages: &private_messages,
+        },
+        &mut dealers,
+        &mut players,
+    );
+    let mut logs = BTreeMap::new();
+    for dealer in dealers {
+        let (key, log) = dealer.finalize::<N3f1>().check(&info).unwrap();
+        logs.insert(key, log);
+    }
+    let mut results = players.into_iter().map(|player| {
+        let mut selected = Logs::<MinSig, bls12381::PublicKey, N3f1>::new(info.clone());
+        for (key, log) in logs.clone() {
+            selected.record(key, log);
+        }
+        player
+            .finalize::<N3f1, bls12381::Batch>(
+                &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+                selected,
+                &Sequential,
+            )
+            .unwrap()
+    });
+    let (output, first) = results.next().unwrap();
+    let mut shares = vec![first];
+    for (other, share) in results {
+        assert_eq!(other.encode(), output.encode());
+        shares.push(share);
+    }
+    assert_eq!(output.public().public(), previous.output.public().public());
+    assert_ne!(output.public(), previous.output.public());
+    outbe_consensus::bls::ParticipantDkgBootstrapResult {
+        polynomial: output.public().clone(),
+        output,
+        shares,
+    }
+}
