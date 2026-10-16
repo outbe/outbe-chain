@@ -248,6 +248,51 @@ fn publication_generation_drops_pending_slots_and_preserves_accepted_history() {
 }
 
 #[test]
+fn pending_attesters_advance_to_the_next_batch_without_repeating_the_first_prefix() {
+    let mut fixture = Fixture::new(49);
+    let body = fixture.body.clone();
+    assert!(fixture
+        .provider
+        .enter(|s| RadicleRegistry::new(s).pending_publication_attesters(&body))
+        .unwrap()
+        .is_empty());
+    let first = (0..32).collect::<Vec<_>>();
+    assert!(fixture.apply(&body, &first).unwrap().receipt.is_none());
+    let seen = fixture
+        .provider
+        .enter(|s| RadicleRegistry::new(s).pending_publication_attesters(&body))
+        .unwrap();
+    assert_eq!(seen, (0..32).collect::<Vec<_>>());
+    assert!(fixture.apply(&body, &first).unwrap().receipt.is_none());
+    let mut other = body.clone();
+    other.package_manifest_hash = B256::repeat_byte(41);
+    assert!(fixture
+        .provider
+        .enter(|s| RadicleRegistry::new(s).pending_publication_attesters(&other))
+        .unwrap()
+        .is_empty());
+    let next = (0..33)
+        .filter(|i| !seen.contains(i))
+        .map(|i| i as usize)
+        .collect::<Vec<_>>();
+    assert_eq!(next, vec![32]);
+    assert!(fixture.apply(&body, &next).unwrap().receipt.is_some());
+    fixture.advance_material();
+    assert!(fixture
+        .provider
+        .enter(|s| RadicleRegistry::new(s).pending_publication_attesters(&body))
+        .is_err());
+    let mut current = body;
+    current.epoch = 1;
+    current.material_version = 2;
+    assert!(fixture
+        .provider
+        .enter(|s| RadicleRegistry::new(s).pending_publication_attesters(&current))
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn publication_every_write_failure_rolls_back_pending_binding_receipt_and_event() {
     let fixture = Fixture::new(4);
     let batch = fixture.signed(&fixture.body, &[0, 1, 2]);

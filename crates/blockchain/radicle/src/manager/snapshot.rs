@@ -1,8 +1,8 @@
 use super::types::{
     BoxFuture, FinalizedBlock, FinalizedBootstrapSigningState, FinalizedFeed,
-    FinalizedPatchApproval, FinalizedPatchSigningState, FinalizedPublicationReceipt,
-    FinalizedRepositoryAuthority, FinalizedSnapshot, FinalizedValidator, ManagerError,
-    SnapshotReader,
+    FinalizedPatchApproval, FinalizedPatchSigningState, FinalizedPublicationProgress,
+    FinalizedPublicationReceipt, FinalizedRepositoryAuthority, FinalizedSnapshot,
+    FinalizedValidator, ManagerError, SnapshotReader,
 };
 use crate::endpoint::PeerId;
 use alloy_primitives::{Address, B256, U256};
@@ -64,6 +64,12 @@ impl<P: StateProviderFactory + Send + Sync> super::RepositoryAuthorityReader
 impl<P: StateProviderFactory + Send + Sync + 'static> super::RepositoryReceiptReader
     for RethSnapshotReader<P>
 {
+    fn read_current_publication_progress(
+        &self,
+        body: &outbe_primitives::radicle_publication::PublicationBody,
+    ) -> Result<FinalizedPublicationProgress, ManagerError> {
+        RethSnapshotReader::read_current_publication_progress(self, body)
+    }
     fn read_current_publication_receipt(
         &self,
         sequence: u64,
@@ -73,6 +79,54 @@ impl<P: StateProviderFactory + Send + Sync + 'static> super::RepositoryReceiptRe
 }
 
 impl<P: StateProviderFactory> RethSnapshotReader<P> {
+    pub fn read_current_publication_progress(
+        &self,
+        body: &outbe_primitives::radicle_publication::PublicationBody,
+    ) -> Result<FinalizedPublicationProgress, ManagerError> {
+        if body.chain_id != self.chain_id || body.genesis_hash != self.genesis_hash {
+            return Err(ManagerError::Snapshot(
+                "publication progress belongs to another chain".into(),
+            ));
+        }
+        let block = self.current_finalized_block()?;
+        let state = self
+            .provider
+            .state_by_block_hash(block.hash)
+            .map_err(ManagerError::provider)?;
+        let mut storage = ReadOnlyStorageProvider::new_with_chain_identity(
+            RethStateReader {
+                state: state.as_ref(),
+            },
+            self.chain_id,
+            self.genesis_hash,
+        );
+        let registry = RadicleRegistry::new(StorageHandle::new(&mut storage));
+        let receipt = registry
+            .publication_receipt(body.sequence)
+            .map_err(snapshot_error)?;
+        let (attesters, receipt) = if let Some(receipt) = receipt {
+            if receipt.body != *body || receipt.accepted_height > block.number {
+                return Err(ManagerError::Snapshot(
+                    "publication progress receipt does not match".into(),
+                ));
+            }
+            (vec![], Some(FinalizedPublicationReceipt { block, receipt }))
+        } else {
+            (
+                registry
+                    .pending_publication_attesters(body)
+                    .map_err(snapshot_error)?,
+                None,
+            )
+        };
+        Ok(FinalizedPublicationProgress {
+            block,
+            body_hash: body.receipt_hash(),
+            attesters,
+            receipt,
+        })
+    }
+
     fn current_finalized_block(&self) -> Result<FinalizedBlock, ManagerError> {
         let head = self
             .provider

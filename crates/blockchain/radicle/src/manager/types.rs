@@ -38,10 +38,42 @@ impl FinalizedPublicationReceipt {
 
 /// Only this node's current finalized state may supply an accepted receipt.
 pub trait RepositoryReceiptReader: Send + Sync + 'static {
+    fn read_current_publication_progress(
+        &self,
+        _: &outbe_primitives::radicle_publication::PublicationBody,
+    ) -> Result<FinalizedPublicationProgress, ManagerError> {
+        Err(ManagerError::Snapshot(
+            "publication progress unavailable".into(),
+        ))
+    }
     fn read_current_publication_receipt(
         &self,
         sequence: u64,
     ) -> Result<Option<FinalizedPublicationReceipt>, ManagerError>;
+}
+
+/// Delivery observations from one own canonical finalized state, never permission to publish.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedPublicationProgress {
+    pub(crate) block: FinalizedBlock,
+    pub(crate) body_hash: B256,
+    pub(crate) attesters: Vec<u32>,
+    pub(crate) receipt: Option<FinalizedPublicationReceipt>,
+}
+
+impl FinalizedPublicationProgress {
+    pub fn block(&self) -> FinalizedBlock {
+        self.block
+    }
+    pub fn body_hash(&self) -> B256 {
+        self.body_hash
+    }
+    pub fn attesters(&self) -> &[u32] {
+        &self.attesters
+    }
+    pub fn receipt(&self) -> Option<&FinalizedPublicationReceipt> {
+        self.receipt.as_ref()
+    }
 }
 
 /// Seeded descriptor and current signing set sampled from one canonical finalized state.

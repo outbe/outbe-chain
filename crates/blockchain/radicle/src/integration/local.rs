@@ -4,6 +4,7 @@ mod bootstrap;
 mod gossip;
 mod material;
 mod preparation;
+mod progress;
 mod publication;
 mod state;
 
@@ -530,6 +531,9 @@ async fn serve(
 ) -> Result<(), Error> {
     let request = read_frame(&mut stream, MAX_REQUEST).await?;
     let magic = match (request.get(..4), request.len()) {
+        (Some(magic), length) if magic == progress::MAGIC && length == 4 + PUBLICATION_BODY_LEN => {
+            progress::MAGIC
+        }
         (Some(magic), 4) if magic == gossip::TAKE => gossip::TAKE,
         (Some(magic), length) if magic == gossip::SEND && length > 4 => gossip::SEND,
         (Some(magic), 12) if magic == MAGIC => MAGIC,
@@ -553,6 +557,13 @@ async fn serve(
         Ok(permit) => permit,
         Err(_) => return write_frame(&mut stream, &[magic.as_slice(), &[0]].concat()).await,
     };
+    if magic == progress::MAGIC {
+        let body = PublicationBody::from_bytes(&request[4..]).map_err(|_| Error::Protocol)?;
+        let response = progress::read(reader, permit, body)
+            .await
+            .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
+        return write_frame(&mut stream, &response).await;
+    }
     if magic == gossip::SEND || magic == gossip::TAKE {
         let response = gossip::relay(material, &request)
             .await

@@ -11,6 +11,85 @@ fn private_directory() -> tempfile::TempDir {
     directory
 }
 
+struct ProgressReader(std::sync::Mutex<crate::manager::FinalizedPublicationProgress>);
+impl RepositoryReceiptReader for ProgressReader {
+    fn read_current_publication_receipt(
+        &self,
+        _: u64,
+    ) -> Result<Option<FinalizedPublicationReceipt>, ManagerError> {
+        Ok(None)
+    }
+    fn read_current_publication_progress(
+        &self,
+        _: &PublicationBody,
+    ) -> Result<crate::manager::FinalizedPublicationProgress, ManagerError> {
+        Ok(self.0.lock().unwrap().clone())
+    }
+}
+
+#[tokio::test]
+async fn publication_progress_socket_binds_exact_body_pending_indices_and_accepted_receipt() {
+    use crate::manager::FinalizedPublicationProgress;
+    let accepted = receipt();
+    let body = accepted.receipt().body.clone();
+    let pending = FinalizedPublicationProgress {
+        block: accepted.block(),
+        body_hash: body.receipt_hash(),
+        attesters: (0..256).collect(),
+        receipt: None,
+    };
+    let bytes = progress::encode(&pending, &body).unwrap();
+    assert_eq!(bytes.len(), progress::MAX_FRAME);
+    assert_eq!(progress::decode(&bytes, &body, chain()).unwrap(), pending);
+    for malformed in [
+        bytes[..4].to_vec(),
+        bytes[..bytes.len() - 1].to_vec(),
+        [bytes.clone(), vec![0]].concat(),
+    ] {
+        assert!(progress::decode(&malformed, &body, chain()).is_err());
+    }
+    let mut duplicate = bytes.clone();
+    let last = duplicate.len() - 4;
+    duplicate[last..].copy_from_slice(&254u32.to_be_bytes());
+    assert!(progress::decode(&duplicate, &body, chain()).is_err());
+    duplicate[last..].copy_from_slice(&256u32.to_be_bytes());
+    assert!(progress::decode(&duplicate, &body, chain()).is_err());
+    let mut other = body.clone();
+    other.package_manifest_hash = B256::repeat_byte(99);
+    assert!(progress::decode(&bytes, &other, chain()).is_err());
+    let directory = private_directory();
+    let control = directory.path().join("control");
+    let reader = Arc::new(ProgressReader(std::sync::Mutex::new(pending.clone())));
+    let server = LocalReceiptServer::bind(&control, reader.clone()).unwrap();
+    let (stop, stopping) = oneshot::channel();
+    let task = tokio::spawn(server.run(async {
+        let _ = stopping.await;
+    }));
+    let client = LocalReceiptClient::new(&control, chain());
+    assert_eq!(
+        client.read_publication_progress(&body).await.unwrap(),
+        pending
+    );
+    assert!(client.read_publication_progress(&other).await.is_err());
+    *reader.0.lock().unwrap() = FinalizedPublicationProgress {
+        block: accepted.block(),
+        body_hash: body.receipt_hash(),
+        attesters: vec![],
+        receipt: Some(accepted.clone()),
+    };
+    let complete = client.read_publication_progress(&body).await.unwrap();
+    assert_eq!(complete.receipt(), Some(&accepted));
+    assert!(complete.attesters().is_empty());
+    let mut wrong = chain();
+    wrong.genesis_hash = B256::repeat_byte(99);
+    assert!(LocalReceiptClient::new(&control, wrong)
+        .read_publication_progress(&body)
+        .await
+        .is_err());
+    stop.send(()).unwrap();
+    task.await.unwrap().unwrap();
+}
+
 fn receipt() -> FinalizedPublicationReceipt {
     let body = PublicationBody {
         chain_id: 2026,

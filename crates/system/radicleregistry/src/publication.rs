@@ -37,7 +37,41 @@ pub struct PublicationProgress {
     pub receipt: Option<PublicationReceipt>,
 }
 
+fn pending_generation(body: &PublicationBody, committee: &CommitteeSnapshot) -> B256 {
+    Sha256::hash(&[
+        b"OPG1",
+        &body.epoch.to_be_bytes(),
+        &body.material_version.to_be_bytes(),
+        committee.vrf_public_polynomial_hash.as_slice(),
+        body.players_commitment.as_slice(),
+        &body.sequence.to_be_bytes(),
+    ])
+    .0
+    .into()
+}
+
 impl RadicleRegistry<'_> {
+    /// Read current-generation delivery progress only; this grants no publication permission.
+    pub fn pending_publication_attesters(&self, body: &PublicationBody) -> Result<Vec<u32>> {
+        if body.chain_id != self.storage.chain_id()?
+            || body.genesis_hash != self.storage.genesis_hash()?
+        {
+            return Err(InvalidPublication("progress chain identity").into());
+        }
+        let committee = self.publication_committee(body)?;
+        let generation = pending_generation(body, &committee);
+        let hash = body.receipt_hash();
+        let mut indices = Vec::new();
+        for index in 0..committee.committee.len() as u32 {
+            if self.publication_pending_generation.read(&index)? == generation
+                && self.publication_pending_body_hash.read(&index)? == hash
+            {
+                indices.push(index);
+            }
+        }
+        Ok(indices)
+    }
+
     pub fn publication_receipt(&self, sequence: u64) -> Result<Option<PublicationReceipt>> {
         let entry = self.publication_receipts.entry(sequence);
         if entry.accepted_height().read()? == 0 {
@@ -78,16 +112,7 @@ impl RadicleRegistry<'_> {
         let committee = self.publication_committee(body)?;
         self.validate_publication_body(body)?;
         let body_hash = body.receipt_hash();
-        let generation: B256 = Sha256::hash(&[
-            b"OPG1",
-            &body.epoch.to_be_bytes(),
-            &body.material_version.to_be_bytes(),
-            committee.vrf_public_polynomial_hash.as_slice(),
-            body.players_commitment.as_slice(),
-            &body.sequence.to_be_bytes(),
-        ])
-        .0
-        .into();
+        let generation = pending_generation(body, &committee);
         let encoded = body.to_bytes();
         let mut fresh = Vec::with_capacity(batch.attestations.len());
         for contribution in &batch.attestations {
