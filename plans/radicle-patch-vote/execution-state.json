@@ -50,7 +50,7 @@
   },
   "blocked_audit": {
     "consecutive_goal_turns": 0,
-    "reset": "Protected preparation node wiring and exact-SHA proof made progress. D3-dependent bootstrap remains stopped; no goal completion/overall blocked claim."
+    "reset": "P2 current-source verification gap closed; independent approved generic managed positive scenario remains available. D3 dependent bootstrap stopped."
   },
   "user_confirmed_contract": {
     "network_repository_owner": "sole network BLS authority; no user delegation feature",
@@ -117,8 +117,8 @@
   "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing",
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
-  "last_goal_turn_classification": "progress: protected node preparation cache/replay/current context now connected in5dc7c1521;71tests/7consumers/Clippy/fmt exact-SHA evidence recorded. D3 explicit response still pending, no task closure.",
-  "next_required_work": "Implement approved narrow exact Review signer/control and sidecar collector using protected context; do not bypass missing native bootstrap/grant verification or expose raw message/namespace/Share. Explicit D3 approval remains required before description/bootstrap changes. Remaining P0-P8 production E2E and acceptance gates unchanged.",
+  "last_goal_turn_classification": "progress: actual required P2 current-source regression gap from12 vendor changes verified on c383730c6;671native+10sidecar+2CLI tests,full vendor Clippy/fmt exact-SHA evidence recorded. No source edits/task closure.",
+  "next_required_work": "Independent P2 generic managed positive BLS owner/ordinary Ed patch behavioral scenario using existing PublicationPolicy,without D2/fetch architecture or bootstrap changes. Narrow signer/control+collector remain incomplete. D3 explicit255-byte answer required before changing genesis description contract/dependent bootstrap; remaining P0-P8 production evidence/reviews unchanged.",
   "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
   "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
   "review_store_evidence": "evidence/outbe-chain-pjz.4/review-store-r2",
@@ -137,5 +137,13 @@
   "local_public_material_evidence": "evidence/outbe-chain-pjz.4/local-public-material",
   "interactive_repository_signing_evidence": "evidence/outbe-chain-pjz.4/interactive-repository-signing",
   "checkpoint_replay_store_evidence": "evidence/outbe-chain-pjz.4/checkpoint-replay-store",
-  "local_preparation_context_evidence": "evidence/outbe-chain-pjz.4/local-preparation-context"
+  "local_preparation_context_evidence": "evidence/outbe-chain-pjz.4/local-preparation-context",
+  "current_native_regression_evidence": "evidence/outbe-chain-pjz.3/current-native-regression",
+  "current_native_regression": {
+    "source_sha": "c383730c6b5c090beb5b3ad2cbdc229f4e947030",
+    "vendor_tree": "41ecc9e52feebe8e85d620c1f05c8f63e8e872f8",
+    "checks": "671 native library tests/10 sidecar tests/2 CLI tests,all0ignored;whole vendor workspace all-target Clippy -D warnings and vendor fmt PASS;source unchanged.",
+    "reason": "Actual12-file vendor delta since prior full regression0dbd83c40; narrower later P3 checks did not substitute for current complete required P2 run.",
+    "limits": "Rust1.96 explicit override;static/native/missing-provider scenarios,not complete managed positive Outbe flow/full cache provenance/promotion/live chain/E2E/task acceptance."
+  }
 }
