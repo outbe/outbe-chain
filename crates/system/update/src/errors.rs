@@ -32,12 +32,6 @@ pub enum UpdateError {
     TeePolicyChainIdentityMismatch,
     #[error("successor TEE policy activation height does not match the update")]
     TeePolicyActivationMismatch,
-    #[error("invalid canonical OCOMP successor authority")]
-    InvalidOcompSuccessor,
-    #[error("successor OCOMP authority chain identity does not match the update")]
-    OcompSuccessorChainIdentityMismatch,
-    #[error("successor OCOMP authority activation height does not match the update")]
-    OcompSuccessorActivationMismatch,
     #[error("active Outbe protocol version does not fit the canonical u32 codec")]
     ActiveVersionDoesNotFitU32,
     #[error(
@@ -53,8 +47,6 @@ pub enum UpdateError {
     UpgradeHandlerFailed { label: String, reason: String },
     #[error("staged TEE policy references missing Update proposal {proposal_id}")]
     StagedTeePolicyMissingProposal { proposal_id: U256 },
-    #[error("staged OCOMP successor references missing Update proposal {proposal_id}")]
-    StagedOcompSuccessorMissingProposal { proposal_id: U256 },
     #[error("TEE policy activation for Update proposal {proposal_id} failed: {reason}")]
     TeePolicyActivationFailed { proposal_id: U256, reason: String },
     #[error("stored Update proposal payload is invalid: {0}")]
@@ -63,8 +55,6 @@ pub enum UpdateError {
     EnclaveRolloutRequiresExclusiveScheduledUpgrade,
     #[error("invalid active TEE policy: {0}")]
     InvalidActiveTeePolicy(String),
-    #[error("stored Update OCOMP successor is invalid: {0}")]
-    StoredOcompSuccessorInvalid(String),
     #[error("Update Vote target invariant failure: {0}")]
     VoteTargetInvariantFailure(String),
     #[error("unexpected applied Update classification")]
@@ -140,11 +130,6 @@ impl UpdateError {
     /// Maps an active TEE policy error into a fatal precompile error.
     pub fn invalid_active_tee_policy(error: impl std::fmt::Display) -> PrecompileError {
         Self::InvalidActiveTeePolicy(error.to_string()).into()
-    }
-
-    /// Maps a stored OCOMP successor error into a fatal precompile error.
-    pub fn stored_ocomp_successor_invalid(error: impl std::fmt::Display) -> PrecompileError {
-        Self::StoredOcompSuccessorInvalid(error.to_string()).into()
     }
 }
 

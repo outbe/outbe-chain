@@ -53,8 +53,6 @@ where
     let ConsensusStackServices {
         application_drain,
         follower_shutdown,
-        ocomp_readiness,
-        retention_selector,
         finalized_execution_barrier,
         radicle_status,
         mut radicle_endpoint,
@@ -85,11 +83,6 @@ where
             crate::errors::StackStartupError::InvalidGovernmentsGenesis(error.to_string())
         })?;
     }
-    let ocomp_fork_install =
-        outbe_node::ocomp::fork::require_startup_ocomp_fork_install(node.chain_spec().as_ref())?;
-    let ocomp_lifecycle_activation =
-        OcompLifecycleActivation::at_block(ocomp_fork_install.activation_height);
-    let ocomp_install_hash = Some(ocomp_fork_install.install_hash(&poc_schema_limits())?);
     validate_testnet_only_flags(
         args.trust_el_head,
         args.testnet_unix_time_offset_secs,
@@ -109,8 +102,6 @@ where
                 upstream,
             },
             services::FollowerStackServices {
-                ocomp_readiness,
-                retention_selector,
                 finalized_execution_barrier,
                 follower_shutdown: follower_shutdown
                     .ok_or(crate::errors::StackEpochError::FollowerPreStopHandshakeNotInstalled)?,
@@ -157,7 +148,6 @@ where
             signing_key: &signing_key,
             validator_set: &validator_set,
             initial_peer_hash,
-            ocomp_install_hash,
         },
         radicle_endpoint,
     )
@@ -693,26 +683,6 @@ where
         finalized_parent_cert_store.clone(),
     );
 
-    let ocomp_storage_root = args
-        .storage_dir
-        .as_ref()
-        .expect("storage_dir was required above");
-    let ocomp_retention_dir = ocomp_storage_root.join("ocomp_retention");
-    let ocomp_proof_source = Arc::new(
-        outbe_node::ocomp::retention::RethFinalizedInputProofSource::new(
-            node.provider.clone(),
-            finalized_parent_cert_store.clone(),
-        ),
-    );
-    let ocomp_retention_coordinator = Arc::new(
-        outbe_node::ocomp::retention::OcompRetentionCoordinator::open(
-            ocomp_retention_dir,
-            ocomp_proof_source,
-        ),
-    );
-    retention_selector
-        .install(Arc::clone(&ocomp_retention_coordinator))
-        .wrap_err("failed to install validator OCOMP retention selector")?;
     // Resolve consensus-sync block timings from genesis (timing.rs fallbacks,
     // no CLI override) once, before the handler ctor and the epoch loop.
     let bt = block_timing_from_genesis(&node)?;
@@ -744,7 +714,6 @@ where
         chain_id: node.chain_spec().chain().id(),
         repository_publication_enabled,
         repository_publication: bridge.repository_publication_mailbox(),
-        ocomp_lifecycle_activation,
         marshal_mailbox: marshal_mailbox.clone(),
         publication: application.publication(),
         certificate_scheme_provider: certificate_scheme_provider.clone(),
@@ -776,8 +745,8 @@ where
     // -- 13. Spawn persistent actors (survive engine restarts) -----------
 
     let execution_height_fanout = execution_finalized_height_tx.clone();
-    let _ocomp_execution_ready_worker =
-        ctx.child("ocomp_execution_ready")
+    let _execution_finality_worker =
+        ctx.child("execution_finality")
             .spawn(move |_ctx| async move {
                 while let Some(height) = executor_finalized_height_rx.recv().await {
                     let _ = execution_height_fanout.send(height);

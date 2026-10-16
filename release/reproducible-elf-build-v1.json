@@ -39,14 +39,6 @@
       "name": "outbe-tee-enclave",
       "package": "outbe-tee-enclave",
       "role": "tee-enclave"
-    },
-    {
-      "classification": "production",
-      "features": [],
-      "install_profiles": ["validator"],
-      "name": "outbe-ocomp",
-      "package": "outbe-ocomp",
-      "role": "operator-sidecar"
     }
   ],
   "builder": {
@@ -97,8 +89,6 @@
     "Cargo.lock",
     "Cargo.toml",
     "Dockerfile.project-toolchain",
-    "crates/core/compressed-entities/vendor/sparse-merkle-tree/UPSTREAM.sha256",
-    "crates/core/compressed-entities/vendor/sparse-merkle-tree/VENDORED.sha256",
     "release/apt/ubuntu.sources",
     "release/release-manifest-v1.schema.json",
     "release/reproducible-elf-candidate-gates-v1.json",

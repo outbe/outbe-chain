@@ -319,7 +319,6 @@ mod tests {
         use alloy_consensus::{SignableTransaction as _, TxEip1559};
         use alloy_primitives::{Signature, TxKind, U256};
         use futures::stream;
-        use outbe_primitives::system_tx::OcompLifecycleActivation;
         use reth_ethereum::{evm::EthEvmConfig, EthPrimitives, TransactionSigned};
         use reth_primitives_traits::SignedTransaction as _;
         use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
@@ -357,8 +356,7 @@ mod tests {
         let blob_store = InMemoryBlobStore::default();
         let inner = EthTransactionValidatorBuilder::new(provider.clone(), EthEvmConfig::mainnet())
             .build(blob_store.clone());
-        let validator =
-            crate::OutbeTransactionValidator::new(inner, OcompLifecycleActivation::at_block(1));
+        let validator = crate::OutbeTransactionValidator::new(inner);
         let pool = Pool::new(
             validator,
             crate::OutbeTransactionOrdering::default(),

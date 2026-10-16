@@ -20,7 +20,6 @@ fn closed_wwd_tags_cover_every_byte_and_reject_unknown_storage() {
                 | status::READY
                 | status::COMPLETED
                 | status::FAILED
-                | status::OFFCHAIN_PENDING
         );
         assert_eq!(decoded_status.is_ok(), known_status, "status byte {byte}");
         if let Ok(status) = decoded_status {
@@ -70,13 +69,33 @@ fn fresh_devnet_sentinel_probe_is_test_only_and_checks_per_day_residue() {
         );
 
         MetadosisContract::new(storage.clone())
-            .ocomp_fsm_states
+            .worldwide_day_terminal_receipts
             .get_bytes(&sentinel)
             .write(&[1])
             .unwrap();
 
         assert!(
-            !crate::test_support::fresh_devnet_sentinel_is_pristine(storage, sentinel,).unwrap()
+            crate::test_support::fresh_devnet_sentinel_is_pristine(storage.clone(), sentinel)
+                .is_err(),
+            "malformed receipt must remain an observation error"
+        );
+        let receipt = crate::terminal::model::WwdTerminalReceipt::MissedOffering(
+            crate::terminal::model::TerminalReceiptCommon {
+                worldwide_day: sentinel,
+                value_routed: U256::ZERO,
+                carry_over_before: U256::ZERO,
+                carry_over_after: U256::ZERO,
+                retirement: outbe_tribute::runtime::RetirementOutcome::NotPresent,
+                block_number: 1,
+            },
+        );
+        MetadosisContract::new(storage.clone())
+            .worldwide_day_terminal_receipts
+            .get_bytes(&sentinel)
+            .write(&crate::terminal::codec::encode(&receipt))
+            .unwrap();
+        assert!(
+            !crate::test_support::fresh_devnet_sentinel_is_pristine(storage, sentinel).unwrap()
         );
     });
 }
@@ -413,7 +432,7 @@ fn test_calculate_metadosis_red_day() {
     });
 }
 
-/// The local path is the OCOMP rule with nothing drawn from the carry-over, and a draw only ever
+/// The local path is the same auction rule with nothing drawn from the carry-over, and a draw only ever
 /// widens what the auction may take.
 #[test]
 fn the_desis_limit_is_one_rule_for_both_paths() {
@@ -428,9 +447,13 @@ fn the_desis_limit_is_one_rule_for_both_paths() {
                 let local =
                     crate::settlement::desis_limit(nominal, lysis, day_limit, U256::ZERO, true);
                 assert_eq!(local, Some(nominal.min(day_limit) - lysis));
-                let ocomp = crate::settlement::desis_limit(nominal, lysis, day_limit, draw, true);
-                assert_eq!(ocomp, Some((nominal - lysis).min(draw + day_limit - lysis)));
-                assert!(ocomp >= local);
+                let with_carry =
+                    crate::settlement::desis_limit(nominal, lysis, day_limit, draw, true);
+                assert_eq!(
+                    with_carry,
+                    Some((nominal - lysis).min(draw + day_limit - lysis))
+                );
+                assert!(with_carry >= local);
                 assert_eq!(
                     crate::settlement::desis_limit(nominal, lysis, day_limit, draw, false),
                     Some(U256::ZERO)
@@ -513,21 +536,6 @@ fn test_query_worldwide_days_by_status_via_precompile() {
     });
 }
 
-/// The committed layout string must describe the live schema, not only hash to its pin.
-#[test]
-fn storage_layout_string_matches_the_live_schema() {
-    with_contract(|m| {
-        let live = format!(
-            "OUTBE_METADOSIS_STORAGE_LAYOUT_V1|worldwide_day_slots={}|closed_wwd_base_slot={}|ocomp_job_records_base_slot={}|league_snapshot_base_slot={}|terminal_receipt_base_slot={}|terminal_receipt_codec=OMTR1|live_index_codec=OMLI2|day_limit_receipt_base_slot={}|day_limit_receipt_slots={}",
-            <WorldwideDay as StorageRecord>::SLOTS, m.closed_wwd.base_slot(), m.ocomp_job_records.base_slot(), m.ocomp_fidelity_league_snapshot.base_slot(), m.worldwide_day_terminal_receipts.base_slot(), m.day_limit_formation_receipts.base_slot(), <crate::schema::DayLimitFormationReceiptState as StorageRecord>::SLOTS,
-        );
-        assert_eq!(
-            live.as_bytes(),
-            crate::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_CANONICAL
-        );
-    });
-}
-
 #[test]
 fn test_storage_dsl_layout_slots() {
     with_contract(|m| {
@@ -537,14 +545,9 @@ fn test_storage_dsl_layout_slots() {
         // 10 scalar slots (was 9). worldwide_days occupies slots 1..=10.
         assert_eq!(<WorldwideDay as StorageRecord>::SLOTS, 10);
         assert_eq!(m.closed_wwd.base_slot(), U256::from(13u64));
-        assert_eq!(m.ocomp_job_records.base_slot(), U256::from(19u64));
-        assert_eq!(
-            m.ocomp_fidelity_league_snapshot.base_slot(),
-            U256::from(28u64)
-        );
         assert_eq!(
             m.worldwide_day_terminal_receipts.base_slot(),
-            U256::from(30u64)
+            U256::from(15u64)
         );
         assert_eq!(
             <crate::schema::DayLimitFormationReceiptState as StorageRecord>::SLOTS,
@@ -552,14 +555,7 @@ fn test_storage_dsl_layout_slots() {
         );
         assert_eq!(
             m.day_limit_formation_receipts.base_slot(),
-            U256::from(31u64)
-        );
-        assert_eq!(m.ocomp_terminal_intents.base_slot(), U256::from(22u64));
-        assert_eq!(m.ocomp_vote_accountability.base_slot(), U256::from(26u64));
-        assert_eq!(m.ocomp_terminal_counts.base_slot(), U256::from(38u64));
-        assert_eq!(
-            alloy_primitives::keccak256(crate::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_CANONICAL),
-            crate::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH
+            U256::from(16u64)
         );
     });
 }

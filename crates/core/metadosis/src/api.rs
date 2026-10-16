@@ -3,14 +3,10 @@ use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::{
     aggregate::{ValidatedWwdAggregate, WwdMembership, WwdProjection, WwdStatus},
-    ocomp::schema::poc_schema_limits,
     schema::MetadosisContract,
 };
 
 pub use crate::aggregate::{WwdDayType, WwdStatus as WorldwideDayStatus};
-pub use crate::ocomp::activation::{OcompFinalityAuthorityError, OcompFinalizedIntentAuthority};
-pub use crate::ocomp::vote_admission::{verify_result_vote_carrier, ResultVoteCarrierAdmission};
-pub use crate::pre_admission::MetadosisPreAdmissionProjection;
 pub use crate::state::DayLimitFormationReceipt;
 pub use crate::terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt};
 
@@ -80,28 +76,6 @@ pub fn offering_worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<Worldwi
     Ok(result)
 }
 
-/// True only when a canonical active OCOMP request profile is persisted.
-pub fn has_active_ocomp_profile(storage: StorageHandle<'_>) -> Result<bool> {
-    MetadosisContract::new(storage)
-        .read_ocomp_request_profile(&poc_schema_limits())
-        .map(|profile| profile.is_some())
-}
-
-/// Compare the request profile and protocol bundle with `install`.
-/// This predicate does not compare classification, activation height, or founder registrations.
-/// It keeps callers away from the storage facade.
-pub fn is_active_ocomp_fork_install(
-    storage: StorageHandle<'_>,
-    install: &crate::config::OcompForkInstallV1,
-) -> Result<bool> {
-    let contract = MetadosisContract::new(storage);
-    let limits = poc_schema_limits();
-    let profile = contract.read_ocomp_request_profile(&limits)?;
-    let authority = contract.read_ocomp_activation_authority(&limits)?;
-    Ok(profile.as_ref() == Some(&install.request_profile)
-        && authority.is_some_and(|authority| authority.bundle == install.protocol_bundle))
-}
-
 /// Reads the durable Metadosis-owned semantic result for one Cycle day-limit
 /// formation slot.
 pub fn day_limit_formation_receipt(
@@ -126,15 +100,3 @@ pub fn capacity_forfeiture_receipt(
 ) -> Result<Option<CapacityForfeitureReceipt>> {
     MetadosisContract::new(storage).read_capacity_forfeiture_receipt(wwd)
 }
-
-pub fn pre_admission_projection(
-    storage: StorageHandle<'_>,
-    wwd: WorldwideDay,
-) -> Result<MetadosisPreAdmissionProjection> {
-    MetadosisContract::new(storage).ocomp_pre_admission_projection(wwd)
-}
-
-pub use crate::ocomp::views::{
-    get_active_lysis_generation, get_lysis_terminal_receipt, get_offchain_job,
-    get_offchain_vote_accountability, read_live_ocomp_jobs,
-};

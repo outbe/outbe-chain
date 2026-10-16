@@ -74,7 +74,6 @@ fn run_live_loop_propagates_fatal_executor_error() {
             mailbox_rx,
             execution_finalized_height_tx: None,
 
-            ocomp_readiness: None,
             finalized_execution_barrier: None,
             ancestry_readiness: None,
             // Heartbeat far in the future so the biased mailbox arm wins.
@@ -132,7 +131,6 @@ fn mailbox_updates_are_processed_before_ready_heartbeat() {
             mailbox_rx,
             execution_finalized_height_tx: None,
 
-            ocomp_readiness: None,
             finalized_execution_barrier: None,
             ancestry_readiness: None,
             fcu_heartbeat_interval: std::time::Duration::ZERO,

@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+alloy-trie = { workspace = true, optional = true }
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
@@ -64,7 +65,7 @@ default = []
 bench-utils = []
 # Retarget the Intex CREATE3 addresses at the throwaway e2e set. Never in a release build.
 e2e-test = []
-test-utils = []
+test-utils = ["dep:alloy-trie"]
 tee-attestation-v1 = []
 
 [lints]

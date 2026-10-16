@@ -172,13 +172,15 @@ fn durable_headers_wait_for_executed_state_and_partial_trie_progress() {
     let mut parent_hash = B256::ZERO;
     let blocks: Vec<_> = (0..3)
         .map(|number| {
-            let mut block = outbe_primitives::OutbeBlock::default();
-            block.header = OutbeHeader::new(alloy_consensus::Header {
-                number,
-                parent_hash,
-                state_root: B256::repeat_byte(number as u8 + 1),
+            let block = outbe_primitives::OutbeBlock {
+                header: OutbeHeader::new(alloy_consensus::Header {
+                    number,
+                    parent_hash,
+                    state_root: B256::repeat_byte(number as u8 + 1),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            });
+            };
             let block = RecoveredBlock::new_unhashed(block, Vec::new());
             parent_hash = block.hash();
             block

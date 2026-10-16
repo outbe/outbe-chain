@@ -45,13 +45,6 @@ class MainnetNetworkProfileTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, field.replace("_", "-")):
                 PN.validate_mainnet_options(args)
 
-    def test_mainnet_requires_operator_owned_ocomp_material(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            material = Path(tmp)
-            for index in range(4):
-                (material / f"validator-{index}").mkdir()
-            with self.assertRaisesRegex(ValueError, "OCOMP material"):
-                PN.require_mainnet_ocomp_material(material, 4)
 
 
 if __name__ == "__main__":

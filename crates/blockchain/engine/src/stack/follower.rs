@@ -128,7 +128,7 @@ where
         "follower mode (--upstream) selected; anchored on the genesis validator set"
     );
 
-    let ocomp_storage_root = args
+    let consensus_storage_root = args
         .storage_dir
         .clone()
         .ok_or(crate::errors::FollowerStackError::MissingStorageDirBeforeStartup)?;
@@ -143,22 +143,21 @@ where
         startup::FollowerTrustAnchor {
             participants: anchor_participants,
             epoch_length_blocks: epoch_length,
-            storage_root: ocomp_storage_root,
+            storage_root: consensus_storage_root,
         },
         services,
     )
     .await
 }
 
-/// Rebuild the exact parent-proof record a certified follower needs before
-/// OCOMP retention may consume a finalized block.
+/// Rebuild the exact parent-proof record used by certified follower finality.
 ///
 /// Marshal already verified the finalization certificate against `scheme`.
 /// This seam also binds that verified certificate to the exact block that the
 /// follower executed. It also binds the certificate to the historical committee
 /// snapshot committed in the follower's own canonical state. A mismatch is
 /// node-fatal. A substitute (the current committee or a same-height block)
-/// would make the locally produced OCOMP input proof unverifiable.
+/// would make the locally produced parent certificate unverifiable.
 pub(in crate::stack) fn build_certified_follower_parent_record(
     finalization: &outbe_consensus::marshal_types::Finalization,
     block: &outbe_consensus::block::ConsensusBlock,

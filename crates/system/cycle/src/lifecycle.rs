@@ -35,11 +35,8 @@ impl<'storage> CycleLifecycleContext<'storage> {
         }
     }
 
-    /// Binds genesis-day initialization to the immutable OCOMP install that
-    /// the selected chain manifest carries. The supported fresh-devnet contract
-    /// always supplies block 1. The frozen OCOMP evidence profile retains its
-    /// existing Final/32 activation without becoming a second Metadosis
-    /// compatibility target.
+    /// Sets the block that initializes the native genesis WorldwideDay.
+    /// Fresh genesis uses block 1.
     #[must_use]
     pub fn with_metadosis_genesis_activation_height(mut self, height: u64) -> Self {
         self.metadosis_genesis_activation_height = height;

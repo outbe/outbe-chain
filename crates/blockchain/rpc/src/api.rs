@@ -333,16 +333,6 @@ pub trait OutbeApi {
         proof: outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
         legacy_direct_dev_source: bool,
     ) -> jsonrpsee::core::RpcResult<Bytes>;
-    /// Builds the exact Fidelity/Oracle openings for one finalized OCOMP
-    /// `JobIntent`. The event supplies only `intent_id`. The node resolves the
-    /// authoritative finalized record and exact request state locally.
-    #[method(name = "getOcompLysisOpeningsV1")]
-    async fn get_ocomp_lysis_openings_v1(
-        &self,
-        intent_id: B256,
-        canonical_request: Bytes,
-    ) -> jsonrpsee::core::RpcResult<Bytes>;
-
     /// Returns information about all active validators.
     #[method(name = "getValidators")]
     async fn get_validators(&self) -> jsonrpsee::core::RpcResult<Vec<ValidatorInfo>>;

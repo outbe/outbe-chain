@@ -1,18 +1,16 @@
-mod result_vote_state;
-
 use super::*;
-use alloy_consensus::{SignableTransaction as _, Transaction as _, TxEip1559, TxEip7702};
+use alloy_consensus::{SignableTransaction as _, TxEip1559, TxEip7702};
 use alloy_eips::{
     eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718 as _, eip7702::Authorization,
 };
-use alloy_primitives::{Bytes, Signature, TxKind, B256};
+use alloy_primitives::{Bytes, Signature, TxKind};
 use alloy_signer::SignerSync as _;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use outbe_primitives::addresses::{ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS};
 use reth_ethereum::TransactionSigned;
 use reth_primitives_traits::SignedTransaction as _;
-use reth_transaction_pool::{error::PoolTransactionError, EthPooledTransaction};
+use reth_transaction_pool::EthPooledTransaction;
 
 const CHAIN_ID: u64 = 1;
 fn pooled_tx(
@@ -123,7 +121,7 @@ fn pool_admits_true_type4_bootstrap_with_one_atomic_unit() {
             .set_eip7702(true)
             .disable_balance_check()
             .build(InMemoryBlobStore::default());
-    let validator = OutbeTransactionValidator::new(inner, OcompLifecycleActivation::at_block(1));
+    let validator = OutbeTransactionValidator::new(inner);
 
     let outcome = futures::executor::block_on(
         validator.validate_transaction(TransactionOrigin::External, transaction),
@@ -154,7 +152,7 @@ fn pool_rejects_true_type4_bootstrap_with_zero_balance() {
             .set_eip7702(true)
             .disable_balance_check()
             .build(InMemoryBlobStore::default());
-    let validator = OutbeTransactionValidator::new(inner, OcompLifecycleActivation::at_block(1));
+    let validator = OutbeTransactionValidator::new(inner);
 
     let outcome = futures::executor::block_on(
         validator.validate_transaction(TransactionOrigin::External, transaction),
@@ -181,45 +179,6 @@ fn oracle_submit_vote_input() -> Bytes {
     .into()
 }
 
-fn ocomp_submit_result_vote_input() -> Bytes {
-    use outbe_ocomp_protocol::{
-        abi::SUBMIT_LYSIS_RESULT_SELECTOR, encode_envelope, profile::poc_schema_limits,
-        registry::ObjectKind, vote::ResultVotePrefixV1, OCB1_HEADER_LEN,
-    };
-
-    let prefix = ResultVotePrefixV1 {
-        protocol_bundle_hash: B256::repeat_byte(0x31),
-        job_id: B256::repeat_byte(0x32),
-        attempt: 3,
-        result_validator_set_epoch: 7,
-        result_committee_set_hash: B256::repeat_byte(0x33),
-        result_ocomp_binding_hash: B256::repeat_byte(0x34),
-        ocomp_key_hash: B256::repeat_byte(0x35),
-        key_epoch: 1,
-    };
-    let mut body = Vec::new();
-    body.extend_from_slice(prefix.protocol_bundle_hash.as_slice());
-    body.extend_from_slice(prefix.job_id.as_slice());
-    body.extend_from_slice(&prefix.attempt.to_be_bytes());
-    body.extend_from_slice(&prefix.result_validator_set_epoch.to_be_bytes());
-    body.extend_from_slice(prefix.result_committee_set_hash.as_slice());
-    body.extend_from_slice(prefix.result_ocomp_binding_hash.as_slice());
-    body.extend_from_slice(prefix.ocomp_key_hash.as_slice());
-    body.extend_from_slice(&prefix.key_epoch.to_be_bytes());
-    body.resize(180, 0);
-    let payload = encode_envelope(ObjectKind::ResultVoteV1, &body, poc_schema_limits().codec)
-        .expect("canonical OCOMP vote prefix must encode");
-    assert_eq!(payload.len(), OCB1_HEADER_LEN + body.len());
-
-    let padded_len = (payload.len() + 31) & !31;
-    let mut input = vec![0_u8; 68 + padded_len];
-    input[..4].copy_from_slice(&SUBMIT_LYSIS_RESULT_SELECTOR);
-    input[4..36].copy_from_slice(&U256::from(32).to_be_bytes::<32>());
-    input[36..68].copy_from_slice(&U256::from(payload.len()).to_be_bytes::<32>());
-    input[68..68 + payload.len()].copy_from_slice(&payload);
-    input.into()
-}
-
 #[test]
 fn only_submit_vote_has_reserved_zero_fee_priority_class() {
     assert_eq!(
@@ -240,185 +199,6 @@ fn zero_fee_submit_vote_orders_above_any_fee_paying_transaction() {
     let expensive_normal_tx = pooled_tx(Address::ZERO, Bytes::new(), u128::MAX, u128::MAX);
 
     assert!(ordering.priority(&zero_fee_vote, 0) > ordering.priority(&expensive_normal_tx, 0));
-}
-
-#[test]
-fn canonical_ocomp_system_carrier_has_reserved_priority() {
-    let ordering = OutbeTransactionOrdering::<EthPooledTransaction>::default();
-    let system_carrier = pooled_tx_with_gas(
-        outbe_ocomp_protocol::abi::METADOSIS_ADDRESS,
-        ocomp_submit_result_vote_input(),
-        MIN_PROTOCOL_BASE_FEE as u128,
-        0,
-        outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
-    );
-    let expensive_normal_tx = pooled_tx(Address::ZERO, Bytes::new(), u128::MAX, u128::MAX);
-
-    assert!(ordering.priority(&system_carrier, 0) > ordering.priority(&expensive_normal_tx, 0));
-}
-
-#[test]
-fn truncated_ocomp_vote_gets_no_pool_priority() {
-    let ordering = OutbeTransactionOrdering::<EthPooledTransaction>::default();
-    let malformed_vote = pooled_tx_with_gas(
-        outbe_ocomp_protocol::abi::METADOSIS_ADDRESS,
-        Bytes::copy_from_slice(&outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR),
-        MIN_PROTOCOL_BASE_FEE as u128,
-        0,
-        outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
-    );
-
-    assert_eq!(ordering.priority(&malformed_vote, 0), Priority::None);
-}
-
-#[test]
-fn pool_classifies_ocomp_carrier_before_ordinary_intrinsic_gas() {
-    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use reth_transaction_pool::{
-        blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
-    };
-
-    let carrier = pooled_tx_with_gas(
-        outbe_ocomp_protocol::abi::METADOSIS_ADDRESS,
-        ocomp_submit_result_vote_input(),
-        MIN_PROTOCOL_BASE_FEE as u128,
-        0,
-        outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
-    );
-    let provider = MockEthProvider::default().with_genesis_block();
-    provider.add_account(
-        carrier.sender(),
-        ExtendedAccount::new(carrier.nonce(), U256::MAX),
-    );
-    let inner =
-        EthTransactionValidatorBuilder::new(provider, reth_ethereum::evm::EthEvmConfig::mainnet())
-            .build(InMemoryBlobStore::default());
-    let validator = OutbeTransactionValidator::new(inner, OcompLifecycleActivation::at_block(1));
-
-    let outcome = futures::executor::block_on(
-        validator.validate_transaction(TransactionOrigin::External, carrier),
-    );
-    let TransactionValidationOutcome::Invalid(_, error) = outcome else {
-        panic!("carrier without pinned state must be rejected, got {outcome:?}");
-    };
-    assert!(
-        !error.to_string().contains("intrinsic"),
-        "state authorization must run before ordinary intrinsic gas: {error}"
-    );
-}
-
-#[test]
-fn ocomp_carrier_before_lifecycle_activation_stays_invalid() {
-    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use reth_transaction_pool::{
-        blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
-    };
-
-    let carrier = pooled_tx_with_gas(
-        outbe_ocomp_protocol::abi::METADOSIS_ADDRESS,
-        ocomp_submit_result_vote_input(),
-        MIN_PROTOCOL_BASE_FEE as u128,
-        0,
-        outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
-    );
-    let provider = MockEthProvider::default().with_genesis_block();
-    provider.add_account(
-        carrier.sender(),
-        ExtendedAccount::new(carrier.nonce(), U256::MAX),
-    );
-    let inner =
-        EthTransactionValidatorBuilder::new(provider, reth_ethereum::evm::EthEvmConfig::mainnet())
-            .build(InMemoryBlobStore::default());
-    let validator = OutbeTransactionValidator::new(inner, OcompLifecycleActivation::at_block(2));
-
-    let outcome = futures::executor::block_on(
-        validator.validate_transaction(TransactionOrigin::External, carrier),
-    );
-    let TransactionValidationOutcome::Invalid(_, error) = outcome else {
-        panic!("inactive lifecycle must stay invalid, got {outcome:?}");
-    };
-    assert!(error.to_string().contains("not active"));
-}
-
-#[test]
-fn invalid_result_vote_is_a_bad_pool_transaction() {
-    let decision = ocomp_admission::result_vote_pool_decision(
-        outbe_metadosis::api::ResultVoteCarrierAdmission::InvalidCarrier {
-            reason: "invalid signature".to_owned(),
-        },
-    );
-    let ocomp_admission::ResultVotePoolDecision::Reject(reason) = decision else {
-        panic!("invalid carrier must be rejected");
-    };
-    let error = ocomp_admission::OutbeOcompSystemCarrierPoolError(reason);
-    assert!(error.is_bad_transaction());
-}
-
-#[test]
-fn state_unavailable_result_vote_is_not_blamed_on_the_peer() {
-    let decision = ocomp_admission::result_vote_pool_decision(
-        outbe_metadosis::api::ResultVoteCarrierAdmission::StateUnavailable {
-            source: outbe_primitives::error::PrecompileError::Storage("disk".to_owned()),
-        },
-    );
-    assert!(matches!(
-        decision,
-        ocomp_admission::ResultVotePoolDecision::Temporary(_)
-    ));
-}
-
-#[test]
-fn corrupt_result_vote_state_is_not_blamed_on_the_peer() {
-    let decision = ocomp_admission::result_vote_pool_decision(
-        outbe_metadosis::api::ResultVoteCarrierAdmission::CorruptCommittedState {
-            source: outbe_primitives::error::PrecompileError::Fatal("torn job".to_owned()),
-        },
-    );
-    assert!(matches!(
-        decision,
-        ocomp_admission::ResultVotePoolDecision::Temporary(_)
-    ));
-}
-
-#[test]
-fn deadline_passed_result_vote_stays_admissible() {
-    let decision = ocomp_admission::result_vote_pool_decision(
-        outbe_metadosis::api::ResultVoteCarrierAdmission::DeadlinePassed {
-            represented_validator: Address::repeat_byte(0x11),
-        },
-    );
-    assert!(matches!(
-        decision,
-        ocomp_admission::ResultVotePoolDecision::Admit
-    ));
-}
-
-#[test]
-fn deadline_due_unclosed_result_vote_is_temporary() {
-    let decision = ocomp_admission::result_vote_pool_decision(
-        outbe_metadosis::api::ResultVoteCarrierAdmission::DeadlineDueUnclosed {
-            deadline_height: 40,
-        },
-    );
-    assert!(matches!(
-        decision,
-        ocomp_admission::ResultVotePoolDecision::Temporary(
-            ocomp_admission::OcompCarrierTemporaryError::DeadlineDueUnclosed {
-                deadline_height: 40
-            }
-        )
-    ));
-}
-
-#[test]
-fn not_yet_open_result_vote_is_temporary() {
-    let decision = ocomp_admission::result_vote_pool_decision(
-        outbe_metadosis::api::ResultVoteCarrierAdmission::NotYetOpen { open_height: 9 },
-    );
-    assert!(matches!(
-        decision,
-        ocomp_admission::ResultVotePoolDecision::Temporary(_)
-    ));
 }
 
 #[test]

@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use eyre::{ensure, Result, WrapErr};
-use outbe_e2e_harness::metadosis_evidence;
 use outbe_e2e_harness::verification_ledger::{
     verify_evidence_set, verify_source_checkout, DomainEvidenceBundle, DomainEvidenceV1,
     VerificationLedger,
@@ -74,17 +73,6 @@ fn main() -> Result<()> {
                 .map(|path| resolve(&repo, path))
                 .collect::<Vec<_>>();
 
-            for ((domain, evidence_path), bundle_root) in
-                evidence.iter().zip(&evidence_paths).zip(&bundle_roots)
-            {
-                if domain.namespace == metadosis_evidence::METADOSIS_NAMESPACE {
-                    // Generic closure validates identity, catalog shape and
-                    // member bytes. Metadosis additionally derives every
-                    // status from its retained runner receipt. Invoke that
-                    // domain adapter before accepting the cross-pack set.
-                    metadosis_evidence::verify(&repo, &index, bundle_root, evidence_path)?;
-                }
-            }
             for domain in &evidence {
                 verify_source_checkout(&repo, &domain.source)?;
             }

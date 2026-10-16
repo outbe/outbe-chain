@@ -37,7 +37,7 @@ fn protocol_cycle_forfeits_every_completed_day_after_a_multi_day_halt() {
                 outbe_metadosis::api::worldwide_day(fire.storage.clone(), wwd)
                     .unwrap()
                     .is_none(),
-                "missed day {day} must not gain the WWD identity required by downstream OCOMP or Promis work"
+                "missed day {day} must not gain the WWD identity required by downstream Lysis or Promis work"
             );
             assert!(
                 outbe_metadosis::api::missed_offering_receipt(fire.storage.clone(), wwd)

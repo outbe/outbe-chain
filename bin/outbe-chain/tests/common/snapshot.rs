@@ -13,8 +13,7 @@ use std::{
 
 use alloy_consensus::{Header, Sealable};
 use alloy_primitives::B256;
-use outbe_ocomp::discovery_spool::ContiguousCheckpointStoreV1;
-use outbe_primitives::{projection::ProjectionCheckpoint, OutbeHeader};
+use outbe_primitives::OutbeHeader;
 use reth_ethereum::provider::db::{
     database::Database,
     init_db,
@@ -97,7 +96,6 @@ pub(crate) struct StoppedFixture {
     pub(crate) finalized_hash: B256,
     pub(crate) execution_hash: B256,
     pub(crate) genesis_hash: B256,
-    pub(crate) pending_result: String,
 }
 
 /// Native snapshot guards reject symlinked ancestors. macOS's default /var
@@ -113,7 +111,7 @@ pub(crate) fn stopped_fixture(donor: &Path) -> StoppedFixture {
         .args(["tee", "genesis", "--input"])
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../testing/e2e-harness/fixtures/ocomp-final-v1/artifacts/genesis-final.json"
+            "/tests/assets/native-genesis.json"
         ))
         .arg("--output")
         .arg(&genesis_path)
@@ -164,34 +162,8 @@ pub(crate) fn stopped_fixture(donor: &Path) -> StoppedFixture {
     tx.commit().unwrap();
     drop(db);
 
-    let ocomp = donor.join("ocomp/domain-v1");
-    let baseline = ProjectionCheckpoint {
-        block_number: 0,
-        block_hash: genesis_hash,
-    };
-    let closure = ContiguousCheckpointStoreV1::open(
-        ocomp.join("exporter-v1/discovery/closure-checkpoint-v1"),
-        baseline,
-    )
-    .unwrap();
-    closure
-        .compare_and_advance_to(
-            baseline,
-            ProjectionCheckpoint {
-                block_number: 97,
-                block_hash: B256::repeat_byte(97),
-            },
-        )
-        .unwrap();
-    drop(closure);
-
-    // Opaque unfinished public bytes must survive creation without a semantic gate.
-    let pending_result = format!("node-v1/local-results/.{}.pending", "11".repeat(32));
-    fs::create_dir_all(ocomp.join("node-v1/local-results")).unwrap();
-    fs::write(ocomp.join(&pending_result), b"unfinished native fixture").unwrap();
     fs::create_dir_all(chain.join("keys")).unwrap();
     fs::write(chain.join("keys/private.hex"), b"recipient authority").unwrap();
-    fs::write(ocomp.join("ocomp-evm-key.hex"), b"private sentinel").unwrap();
 
     let secret = [1u8; 32];
     let signer = k256::ecdsa::SigningKey::from_bytes((&secret).into()).unwrap();
@@ -219,7 +191,6 @@ pub(crate) fn stopped_fixture(donor: &Path) -> StoppedFixture {
         finalized_hash: h.hash_slow(),
         execution_hash: e.hash_slow(),
         genesis_hash,
-        pending_result,
     }
 }
 

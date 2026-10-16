@@ -15,20 +15,9 @@
 //! ```
 //!
 //! ```compile_fail
-//! use outbe_metadosis::ocomp::expiry::run_lifecycle_begin_with_scope;
-//! ```
-//!
-//! ```compile_fail
 //! use outbe_metadosis::emission_sink::apply;
 //! ```
 //!
-//! ```compile_fail
-//! use outbe_metadosis::ocomp::expiry::record_certified_parent_finality;
-//! ```
-//!
-//! ```compile_fail
-//! use outbe_metadosis::ocomp::request::run_terminal_request;
-//! ```
 
 mod aggregate;
 pub mod api;
@@ -36,26 +25,17 @@ pub mod api;
 pub mod bench_support;
 pub mod commands;
 mod commit;
-pub mod config;
 pub mod constants;
 mod emission_sink;
 pub mod errors;
 #[cfg(any(test, feature = "test-utils"))]
-#[path = "ocomp/test_support.rs"]
 mod fixture_kernel;
 #[cfg(feature = "test-utils")]
 pub mod genesis;
 mod lifecycle;
+mod limits;
 mod lysis;
-mod ocomp;
-pub use ocomp::vote::{
-    deadline_passed_result_vote_revert_data, is_deadline_passed_result_vote_revert_data,
-    resolve_historical_result_vote_carrier_signer, resolve_historical_result_vote_participant,
-};
-pub(crate) mod ocomp_limits;
-mod pre_admission;
 pub mod precompile;
-pub mod proof_layout;
 mod reducer;
 mod runtime;
 mod schema;
@@ -66,18 +46,7 @@ mod terminal;
 pub mod test_support;
 
 pub use aggregate::{WwdDayType, WwdMembership, WwdProjection, WwdStatus};
-pub use ocomp::fork::{OcompForkInstallClassification, OcompForkInstallV1};
-pub use pre_admission::MetadosisPreAdmissionProjection;
-pub use state::{DayLimitFormationReceipt, OcompDayLimitFormation};
-
-/// Pure in-memory OCOMP FSM model. It carries no storage handle and cannot
-/// mutate consensus state.
-pub mod model {
-    pub use crate::ocomp::state::{
-        transition_rules, DayPhase, JobFsmCommand, JobFsmState, JobFsmTransitionKind,
-        ReadyAttemptSnapshot, RequestEffectMode,
-    };
-}
+pub use state::{DayLimitFormation, DayLimitFormationReceipt};
 
 #[cfg(test)]
 mod tests;

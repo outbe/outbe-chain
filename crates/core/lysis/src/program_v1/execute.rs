@@ -362,7 +362,7 @@ pub(crate) fn compute_fraction_map_from_groups(
 
     // Six-decimal share rounding can make the real group projection exceed the
     // allocation even when the normalized share-space projection does not. Own
-    // the one real-amount normalization here so sequential and OCOMP consume
+    // the one real-amount normalization here so every Lysis execution consumes
     // exactly the same fraction map.
     let projected = group_nominals.iter().zip(&fractions).try_fold(
         U256::ZERO,

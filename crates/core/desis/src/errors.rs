@@ -41,9 +41,6 @@ pub enum DesisError {
     #[error("auction brief limit exceeds Desis u128 domain")]
     AuctionBriefLimitExceedsDomain,
 
-    #[error("invalid OCOMP Desis brief hash: {0}")]
-    InvalidOcompDesisBriefHash(String),
-
     #[error("processBidsBatch: array length mismatch")]
     BatchArrayLengthMismatch,
 
@@ -69,12 +66,7 @@ pub enum DesisError {
     ScheduleTimestampExceedsU32,
 }
 
-impl DesisError {
-    /// Creates an error when the OCOMP Desis brief hash is invalid.
-    pub fn invalid_ocomp_brief_hash(err: impl core::fmt::Display) -> Self {
-        Self::InvalidOcompDesisBriefHash(err.to_string())
-    }
-}
+impl DesisError {}
 
 impl From<DesisError> for outbe_primitives::error::PrecompileError {
     fn from(e: DesisError) -> Self {

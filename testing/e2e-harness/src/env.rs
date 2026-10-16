@@ -26,9 +26,6 @@ use std::sync::OnceLock;
 use cucumber::gherkin::{Feature, Scenario};
 
 use crate::internal::ports::Ports;
-use crate::metadosis_p0::{
-    MetadosisP0Case, MetadosisP0EnvironmentReceiptV1, REMOVED_OWNER_FAILPOINT,
-};
 
 /// Enclave mode the localnet runs with (the `--tee` flag).
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -190,18 +187,9 @@ pub struct EnvCli {
     #[arg(long)]
     pub scenario_timeout_secs: Option<u64>,
 
-    /// Exact Metadosis P0 parity case. Test-only: validates and retains the
-    /// removed process input inherited by every node child.
-    #[arg(long, value_enum)]
-    pub metadosis_p0_case: Option<MetadosisP0Case>,
-
     /// `outbe-chain` binary. Defaults to `<repo>/target/release/outbe-chain`.
     #[arg(long)]
     pub chain_bin: Option<PathBuf>,
-
-    /// `outbe-ocomp` binary. Defaults to `<repo>/target/release/outbe-ocomp`.
-    #[arg(long)]
-    pub ocomp_bin: Option<PathBuf>,
 
     /// `outbe-feeder` binary. Defaults to `<repo>/target/release/outbe-feeder`.
     #[arg(long)]
@@ -259,9 +247,7 @@ pub struct Environment {
     pub evidence_dir: Option<PathBuf>,
     pub artifact_manifest: Option<PathBuf>,
     pub scenario_timeout_secs: Option<u64>,
-    pub metadosis_p0: Option<MetadosisP0EnvironmentReceiptV1>,
     pub chain_bin: PathBuf,
-    pub ocomp_bin: PathBuf,
     pub feeder_bin: PathBuf,
     pub upgraded_chain_bin: Option<PathBuf>,
     pub cli_bin: PathBuf,
@@ -273,18 +259,9 @@ pub struct Environment {
 
 impl Environment {
     /// Resolve from the parsed CLI. Unset path flags default relative to the
-    /// repo root. The sole process-environment read is the explicit P0 evidence
-    /// receipt selected by `--metadosis-p0-case`.
+    /// repo root.
     pub fn from_cli(cli: &EnvCli) -> Self {
         let repo = cli.repo.clone().unwrap_or_else(default_repo);
-        let metadosis_p0 = cli.metadosis_p0_case.map(|case| {
-            MetadosisP0EnvironmentReceiptV1::capture(case).unwrap_or_else(|error| {
-                panic!(
-                    "invalid --metadosis-p0-case environment receipt for \
-                     {REMOVED_OWNER_FAILPOINT}: {error:#}"
-                )
-            })
-        });
         Self {
             validators: cli.validators,
             ports: Ports::new(!cli.no_resolve_ports),
@@ -297,15 +274,10 @@ impl Environment {
             evidence_dir: cli.evidence_dir.clone(),
             artifact_manifest: cli.artifact_manifest.clone(),
             scenario_timeout_secs: cli.scenario_timeout_secs,
-            metadosis_p0,
             chain_bin: cli
                 .chain_bin
                 .clone()
                 .unwrap_or_else(|| repo.join("target/release/outbe-chain")),
-            ocomp_bin: cli
-                .ocomp_bin
-                .clone()
-                .unwrap_or_else(|| repo.join("target/release/outbe-ocomp")),
             feeder_bin: cli
                 .feeder_bin
                 .clone()
@@ -364,9 +336,7 @@ impl Default for Environment {
             evidence_dir: None,
             artifact_manifest: None,
             scenario_timeout_secs: None,
-            metadosis_p0_case: None,
             chain_bin: None,
-            ocomp_bin: None,
             feeder_bin: None,
             upgraded_chain_bin: None,
             cli_bin: None,
@@ -512,12 +482,6 @@ fn tee_profile_unmet(feature: &Feature, scenario: &Scenario, env: &Environment) 
 fn host_unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Option<String> {
     if has_tag(feature, scenario, "sudo") && !env.sudo {
         return Some("needs sudo (@sudo), but --no-sudo".to_string());
-    }
-    if has_tag(feature, scenario, "ocomp") && !cfg!(feature = "ocomp-integration") {
-        return Some(
-            "needs the Rust OCOMP integration profile (@ocomp), but the harness was built without --features ocomp-integration"
-                .to_string(),
-        );
     }
     None
 }

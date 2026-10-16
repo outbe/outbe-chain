@@ -6,9 +6,7 @@ use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, B256};
 use core::fmt::Debug;
 use dispatch::{outbe_ctx_dispatch, OutbeDispatchRuntime};
-use outbe_metadosis::{api::OcompFinalizedIntentAuthority, config::OcompForkInstallV1};
 use revm::{primitives::hardfork::SpecId, Database};
-use std::sync::Arc;
 
 mod call_authority;
 mod cancellation;
@@ -23,10 +21,6 @@ mod value_policy;
 pub use outcome::map_outbe_precompile_result;
 pub(crate) use sub_call_provider::OutbeSubCallPrecompiles;
 
-/// Shared marker retained in the sub-call context while q-forming apply
-/// accounting is migrated to the direct result-vote path.
-#[derive(Debug, Default)]
-pub struct OcompActivationBlockMeter;
 /// Returns the list of outbe precompile addresses registered by
 /// [`extend_outbe_precompiles`].
 ///
@@ -66,24 +60,14 @@ impl OutbePrecompileExecutionContext {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct OutbePrecompileRuntime {
     pub(crate) abort_bridge: ExecutionAbortBridge,
-
-    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
-    ocomp_lifecycle_active: bool,
 }
 
 impl OutbePrecompileRuntime {
-    pub fn new(
-        ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
-        ocomp_lifecycle_active: bool,
-    ) -> Self {
-        Self {
-            abort_bridge: ExecutionAbortBridge::default(),
-            ocomp_finality_authority,
-            ocomp_lifecycle_active,
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
     pub(crate) fn with_abort_bridge(mut self, bridge: ExecutionAbortBridge) -> Self {
         self.abort_bridge = bridge;
@@ -108,7 +92,6 @@ pub fn extend_outbe_precompiles<DB>(
     precompiles: &mut PrecompilesMap,
     execution_context: OutbePrecompileExecutionContext,
     runtime: OutbePrecompileRuntime,
-    ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
 ) where
     DB: Database + Debug,
     DB::Error: Debug,
@@ -118,12 +101,7 @@ pub fn extend_outbe_precompiles<DB>(
         genesis_hash,
         tee_attestation_v1,
     } = execution_context;
-    let OutbePrecompileRuntime {
-        abort_bridge,
-        ocomp_finality_authority,
-        ocomp_lifecycle_active,
-    } = runtime;
-    let ocomp_activation_block_meter = Arc::new(OcompActivationBlockMeter);
+    let OutbePrecompileRuntime { abort_bridge } = runtime;
     precompiles.set_ctx_dispatch_hook(
         // handles: claim every outbe address.
         |addr: &Address| precompile_routes::resolve(addr).is_some(),
@@ -146,11 +124,6 @@ pub fn extend_outbe_precompiles<DB>(
                     spec,
                     genesis_hash,
                     tee_attestation_v1: &tee_attestation_v1,
-
-                    ocomp_finality_authority: ocomp_finality_authority.clone(),
-                    ocomp_activation_block_meter: ocomp_activation_block_meter.clone(),
-                    ocomp_lifecycle_active,
-                    ocomp_fork_install: ocomp_fork_install.clone(),
                 },
             )
             .map_err(String::from)

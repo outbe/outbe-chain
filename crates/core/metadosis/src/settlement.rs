@@ -98,7 +98,7 @@ enum LocalTerminalOutcome {
     },
 }
 
-pub(crate) fn process_ocomp_ready_candidate(
+pub(crate) fn process_ready_candidate(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
     current: &WwdProjection,

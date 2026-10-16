@@ -653,7 +653,7 @@ fn full_node_syncs(world: &mut World) {
         std::fs::create_dir_all(&dir)?;
         let node_log = LaunchLog::arm(&dir.join("node.log"))?;
         let enclave_log = LaunchLog::arm(&dir.join("enclave.log"))?;
-        world.localnet.launch_joiner_full_node(4, 0, &[])?;
+        world.localnet.launch_joiner_full_node(4, 0)?;
         let (node_pid, exit) = world.localnet.owned_full_node_process(4)?;
         ensure!(exit.is_none(), "FullNode exited during startup");
         let enclave_pid = world.localnet.live_enclave_pid(4)?;

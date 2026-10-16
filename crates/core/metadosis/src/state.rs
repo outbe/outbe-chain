@@ -10,7 +10,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::time::WorldwideDay as WorldwideDayKey;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct OcompDayLimitFormation {
+pub struct DayLimitFormation {
     pub worldwide_day: WorldwideDayKey,
     pub base_limit: U256,
     pub carry_over_before: U256,
@@ -23,7 +23,7 @@ pub struct OcompDayLimitFormation {
 /// Durable semantic result owned by Metadosis for one Cycle day-limit slot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DayLimitFormationReceipt {
-    Formed(OcompDayLimitFormation),
+    Formed(DayLimitFormation),
 }
 
 impl MetadosisContract<'_> {
@@ -32,7 +32,7 @@ impl MetadosisContract<'_> {
         current: &crate::aggregate::WwdProjection,
         reason: &'static str,
     ) -> Result<()> {
-        match self.ocomp_day_limit_formation(current.worldwide_day)? {
+        match self.day_limit_formation(current.worldwide_day)? {
             Some(formation) if formation.day_limit == current.metadosis_limit_minor => Ok(()),
             Some(_) => Err(
                 MetadosisStorageCorruptionError::FormedDayLimitDoesNotMatchWwdState { reason }
@@ -71,7 +71,7 @@ impl MetadosisContract<'_> {
     pub(crate) fn commit_write_day_limit_formation(
         &mut self,
         _permit: &crate::commit::CommitPermit<'_>,
-        formation: OcompDayLimitFormation,
+        formation: DayLimitFormation,
     ) -> Result<()> {
         if self
             .day_limit_formation_receipts
@@ -79,7 +79,7 @@ impl MetadosisContract<'_> {
             .formed()
             .read()?
         {
-            return Err(MetadosisCallerError::FormedOcompDayLimitImmutable.into());
+            return Err(MetadosisCallerError::FormedDayLimitImmutable.into());
         }
         self.worldwide_days
             .entry(formation.worldwide_day)
@@ -153,10 +153,10 @@ impl MetadosisContract<'_> {
         })
     }
 
-    pub fn ocomp_day_limit_formation(
+    pub fn day_limit_formation(
         &self,
         wwd_key: WorldwideDayKey,
-    ) -> Result<Option<OcompDayLimitFormation>> {
+    ) -> Result<Option<DayLimitFormation>> {
         let receipt = self.day_limit_formation_receipts.entry(wwd_key);
         if !receipt.formed().read()? {
             return Ok(None);
@@ -176,11 +176,9 @@ impl MetadosisContract<'_> {
             && carry_over_before.checked_sub(carry_over_taken) == Some(carry_over_after);
         let valid_binding = day_limit == persisted_day_limit && block_number != 0;
         if !valid_arithmetic || !valid_binding {
-            return Err(
-                MetadosisStorageCorruptionError::FormedOcompDayLimitReceiptInconsistent.into(),
-            );
+            return Err(MetadosisStorageCorruptionError::FormedDayLimitReceiptInconsistent.into());
         }
-        Ok(Some(OcompDayLimitFormation {
+        Ok(Some(DayLimitFormation {
             worldwide_day: wwd_key,
             base_limit,
             carry_over_before,
@@ -195,7 +193,7 @@ impl MetadosisContract<'_> {
         &self,
         wwd_key: WorldwideDayKey,
     ) -> Result<Option<DayLimitFormationReceipt>> {
-        self.ocomp_day_limit_formation(wwd_key)
+        self.day_limit_formation(wwd_key)
             .map(|formed| formed.map(DayLimitFormationReceipt::Formed))
     }
 
@@ -211,7 +209,6 @@ impl MetadosisContract<'_> {
         (|| {
             // The day's terminal-evidence index dies with the day. Without
             // this, retired days would leak index entries forever.
-            self.delete_terminal_index(wwd_key)?;
             self.worldwide_day_terminal_receipts
                 .get_bytes(&wwd_key)
                 .clear()?;

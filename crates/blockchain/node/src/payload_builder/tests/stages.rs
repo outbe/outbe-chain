@@ -27,17 +27,8 @@ struct UserStageResult {
 
 /// Exercise pool selection against the real EVM. This helper disables block hooks to
 /// isolate this stage from the bootstrap zone that the replay tests cover.
-fn run_user_stage(
-    transactions: &[(u64, u64)],
-    reserved_end_gas: u64,
-    cancel: CancelOnDrop,
-) -> UserStageResult {
-    run_user_stage_with_options(
-        transactions,
-        reserved_end_gas,
-        cancel,
-        StageOptions::default(),
-    )
+fn run_user_stage(transactions: &[(u64, u64)], cancel: CancelOnDrop) -> UserStageResult {
+    run_user_stage_with_options(transactions, cancel, StageOptions::default())
 }
 
 #[derive(Default)]
@@ -105,7 +96,6 @@ impl BestTransactions for RecordingTransactions {
 
 fn run_user_stage_with_options(
     transactions: &[(u64, u64)],
-    reserved_end_gas: u64,
     cancel: CancelOnDrop,
     options: StageOptions,
 ) -> UserStageResult {
@@ -213,10 +203,8 @@ fn run_user_stage_with_options(
         &EthereumBuilderConfig::new(),
         100_000,
         builder.evm_mut().block().basefee(),
-        &[],
     )
     .expect("budgets initialize");
-    state.reserved_end_gas = reserved_end_gas;
     let initial_size = state.size_budget.estimate(0).unwrap();
     let pool = TestPool::new();
     let outcome = UserTransactions {
@@ -225,7 +213,6 @@ fn run_user_stage_with_options(
         state: &mut state,
         cancel: &cancel,
         payload_id: PayloadId::new([0x09; 8]),
-        carrier_block: None,
     }
     .execute(&mut builder);
     let receipts = builder
@@ -269,11 +256,7 @@ fn run_user_stage_with_options(
 
 #[test]
 fn user_stage_accounts_only_included_transactions_and_skips_nonce_too_low() {
-    let result = run_user_stage(
-        &[(0, 30_000), (0, 30_000), (1, 30_000)],
-        0,
-        Default::default(),
-    );
+    let result = run_user_stage(&[(0, 30_000), (0, 30_000), (1, 30_000)], Default::default());
     assert_eq!(result.outcome.unwrap(), StageOutcome::Completed);
     assert_eq!(result.included_nonces, vec![0, 1]);
     assert_eq!(result.gas_used, 42_000);
@@ -283,21 +266,10 @@ fn user_stage_accounts_only_included_transactions_and_skips_nonce_too_low() {
 }
 
 #[test]
-fn user_stage_reserves_terminal_gas_before_execution() {
-    let result = run_user_stage(&[(0, 100_000)], 1, Default::default());
-    assert_eq!(result.outcome.unwrap(), StageOutcome::Completed);
-    assert!(result.included_nonces.is_empty());
-    assert_eq!(result.rejected, 1);
-    assert_eq!(result.gas_used, 0);
-    assert_eq!(result.fees, U256::ZERO);
-    assert_eq!(result.body_bytes, 0);
-}
-
-#[test]
 fn user_stage_cancellation_leaves_candidate_unexecuted_and_unaccounted() {
     let cancel = CancelOnDrop::default();
     drop(cancel.clone());
-    let result = run_user_stage(&[(0, 30_000)], 0, cancel);
+    let result = run_user_stage(&[(0, 30_000)], cancel);
     assert_eq!(result.outcome.unwrap(), StageOutcome::Cancelled);
     assert!(result.included_nonces.is_empty());
     assert_eq!(result.rejected, 0);
@@ -310,7 +282,7 @@ fn user_stage_cancellation_leaves_candidate_unexecuted_and_unaccounted() {
 fn user_stage_gas_rejection_precedes_cancellation_checkpoint() {
     let cancel = CancelOnDrop::default();
     drop(cancel.clone());
-    let result = run_user_stage(&[(0, 100_001)], 0, cancel);
+    let result = run_user_stage(&[(0, 100_001)], cancel);
     assert_eq!(result.outcome.unwrap(), StageOutcome::Completed);
     assert!(result.included_nonces.is_empty());
     assert_eq!(result.rejected, 1);
@@ -323,7 +295,6 @@ fn user_stage_gas_rejection_precedes_cancellation_checkpoint() {
 fn user_revert_is_included_with_failed_receipt_and_consumed_nonce() {
     let result = run_user_stage_with_options(
         &[(0, 30_000), (0, 30_000)],
-        0,
         Default::default(),
         StageOptions {
             code: Bytes::from_static(&[0x5f, 0x5f, 0xfd]),
@@ -340,7 +311,6 @@ fn user_revert_is_included_with_failed_receipt_and_consumed_nonce() {
 fn node_storage_failure_aborts_selection_without_receipt_or_pool_invalidation() {
     let result = run_user_stage_with_options(
         &[(0, 30_000), (0, 30_000)],
-        0,
         Default::default(),
         StageOptions {
             code: Bytes::from_static(&[0x5f, 0x54, 0x00]),
@@ -361,7 +331,6 @@ fn node_storage_failure_aborts_selection_without_receipt_or_pool_invalidation() 
 fn invalid_transaction_preserves_the_actual_validation_reason() {
     let result = run_user_stage_with_options(
         &[(4, 30_000)],
-        0,
         Default::default(),
         StageOptions {
             account_nonce: Some(0),

@@ -1,4 +1,4 @@
-//! Standard Ethereum post-execution, run before the OCOMP terminal boundary.
+//! Standard Ethereum post-execution with native Outbe withdrawal validation.
 
 use super::*;
 
@@ -10,17 +10,8 @@ where
     E: Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
     E::Error: std::fmt::Display,
 {
-    /// Runs the standard Ethereum post-execution phase before the OCOMP
-    /// terminal boundary.
-    ///
-    /// This intentionally mirrors [`EthBlockExecutor::finish`]'s semantic
-    /// writes. The active OCOMP lifecycle requires a stricter order than the
-    /// upstream executor exposes:
-    ///
-    /// `Ethereum post-execution -> OSR2`.
-    ///
-    /// The resulting EIP-7685 requests are retained for [`BlockExecutor::finish`],
-    /// which assembles the result without invoking the upstream phase again.
+    /// Applies Ethereum post-execution writes without Gwei conversion of native Outbe withdrawals.
+    /// Retains EIP-7685 requests for final result assembly.
     pub(in crate::executor) fn apply_outbe_ethereum_post_execution(
         &mut self,
     ) -> Result<(), BlockExecutionError> {

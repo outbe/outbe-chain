@@ -60,14 +60,6 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
     let genesis_hash = B256::repeat_byte(0x11);
     let mut storage = HashMapStorageProvider::new_with_chain_identity(chain_id, genesis_hash);
     storage.set_block_number(1);
-    storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
-    let install = outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
-        1,
-        chain_id,
-        genesis_hash,
-    )
-    .unwrap()
-    .into_install();
     StorageHandle::enter(&mut storage, |handle| {
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, GENESIS_TS, chain_id),
@@ -88,18 +80,12 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
             .register_validator(owner, founder, &consensus_key)
             .unwrap();
         validators.mark_pending(founder).unwrap();
-        let registration = install.founder_registrations[0]
-            .encode_canonical(&outbe_metadosis::config::poc_schema_limits())
-            .unwrap();
-        validators
-            .confirm_validator_ready(founder, &registration)
-            .unwrap();
+        validators.confirm_validator_ready(founder).unwrap();
         validators
             .activate_validator_via_boundary_for_test(founder)
             .unwrap();
         outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-        outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
     });
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
     storage
@@ -306,11 +292,6 @@ pub(super) fn capacity_scenario(
     day_limit: U256,
 ) -> CapacityScenario {
     let mut storage = cycle_storage();
-    storage.enter(|handle| {
-        outbe_tribute::TributeContract::new(handle)
-            .initialize_fresh_ocomp_profile()
-            .unwrap();
-    });
     storage.enter(|handle| {
         outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(
             handle.clone(),

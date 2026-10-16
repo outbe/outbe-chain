@@ -93,8 +93,6 @@ pub struct OracleGenesisConfig {
     pub snapshots: Vec<GenesisSnapshot>,
     /// Active S-curve entries.
     pub scurve_entries: Vec<GenesisScurveEntry>,
-    /// Validators protected from slashing.
-    pub protected_validators: Vec<Address>,
 }
 
 impl OracleGenesisConfig {
@@ -119,7 +117,6 @@ impl OracleGenesisConfig {
             aggregate_votes: vec![],
             snapshots: vec![],
             scurve_entries: vec![],
-            protected_validators: vec![],
         }
     }
 }

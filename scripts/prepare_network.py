@@ -9,8 +9,7 @@ Inputs:
 
 Outputs:
   - genesis.json: seeded chain state with ValidatorSet/Staking/Rewards/precompile storage
-    plus canonical block-1 OCOMP and TEE manifests
-  - protocol-bundle-v1.ocb1 and per-validator OCOMP key/PoP registrations
+    plus the canonical block-1 TEE policy
   - reth-bootnodes.txt: stable Reth enodes for --bootnodes
   - validator-N/evm-key.hex: validator EVM key material when present in validators.json
   - validator-N/reth-p2p-secret.hex: stable Reth p2p node identity keys
@@ -18,8 +17,8 @@ Outputs:
   - commands/enclave-N.sh: matching Gramine enclave command per validator
   - network.md: human-readable launch plan with addresses, ports, and commands
 
-OCOMP V1 requires exactly four founding validators with threshold 3. Generated
-founders get fresh consensus identity, EVM, Reth and OCOMP keys. Only the live
+The bootstrap profile uses four founding validators. Generated
+founders get fresh consensus identity, EVM and Reth keys. Only the live
 block-1 founding ceremony creates the permanent offer key and threshold shares.
 This tool deliberately does not precompute a conflicting DKG triplet.
 Existing-validator mode requires the complete matching identity material. The
@@ -61,9 +60,6 @@ NETWORK_IDENTITIES = {
     "testnet": (TESTNET_CHAIN_ID, "outbe-testnet-1"),
     "mainnet": (MAINNET_CHAIN_ID, "outbe-mainnet-1"),
 }
-# OCOMP jobs can live for 1,868 blocks. The canonical localnet and retained
-# final-artifact fixture use a 300-block epoch, so the fixed eight-epoch
-# committee snapshot ring retains 7 * 300 = 2,100 blocks of history.
 DEFAULT_EPOCH_LENGTH_BLOCKS = 300
 DEFAULT_DKG_PREPARE_WINDOW_BLOCKS = 30
 DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS = 30
@@ -117,19 +113,6 @@ def validate_mainnet_options(args: argparse.Namespace) -> None:
             raise ValueError(f"Mainnet forbids {option}")
 
 
-def require_mainnet_ocomp_material(material_dir: Path, count: int) -> None:
-    required = ("ocomp-key-v1.hex", "ocomp-registration-v1.ocb1")
-    missing = [
-        str(material_dir / f"validator-{index}" / name)
-        for index in range(count)
-        for name in required
-        if not (material_dir / f"validator-{index}" / name).is_file()
-    ]
-    if missing:
-        raise ValueError(
-            "Mainnet requires operator-owned OCOMP material; missing "
-            + ", ".join(missing)
-        )
 
 
 def load_json(path: Path) -> Any:
@@ -528,8 +511,6 @@ def import_founder_material(
     output_dir: Path,
     count: int,
     validators: list[dict[str, Any]],
-    *,
-    include_ocomp: bool = False,
 ) -> None:
     validate_founder_radicle_material(validators, source, count)
     required_private = ("signing-key.hex", "evm-key.hex")
@@ -547,11 +528,6 @@ def import_founder_material(
             source / f"validator-{index}" / "radicle",
             destination / "radicle",
         )
-        if include_ocomp:
-            for name in ("ocomp-key-v1.hex", "ocomp-registration-v1.ocb1"):
-                destination_path = destination / name
-                shutil.copyfile(source / f"validator-{index}" / name, destination_path)
-                destination_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
 def verify_founder_material(
@@ -671,105 +647,10 @@ def run_tee_genesis(
     subprocess.run(cmd, check=True)
 
 
-def run_ocomp_bindings(
-    *,
-    chain_binary: str,
-    seeded_genesis: Path,
-    validators: Path,
-    output: Path,
-) -> dict[str, Any]:
-    subprocess.run(
-        [
-            chain_binary,
-            "ocomp",
-            "bindings",
-            "--input",
-            str(seeded_genesis),
-            "--validators",
-            str(validators),
-            "--output",
-            str(output),
-        ],
-        check=True,
-    )
-    value = load_json(output)
-    if not isinstance(value, dict) or value.get("schemaVersion") != 1:
-        raise ValueError("outbe-chain returned an invalid OCOMP bindings document")
-    identities = value.get("validatorIdentityHashes")
-    if not isinstance(identities, list) or len(identities) != 4:
-        raise ValueError("OCOMP bindings must contain exactly four validator identities")
-    return value
 
 
-def run_ocomp_keygen(
-    *,
-    keygen_binary: str,
-    output_dir: Path,
-    bindings: dict[str, Any],
-    validators: list[dict[str, Any]],
-) -> None:
-    identities = bindings["validatorIdentityHashes"]
-    if len(validators) != len(identities):
-        raise ValueError(
-            "OCOMP key generation validator count does not match bindings"
-        )
-    for index, validator in enumerate(validators):
-        address = normalize_hex(
-            validator_field(validator, ["address"]) or "",
-            expected_len=40,
-            field=f"validator {index} address",
-        )
-        public_key = normalize_hex(
-            validator_field(validator, ["public_key"]) or "",
-            expected_len=96,
-            field=f"validator {index} public_key",
-        )
-        subprocess.run(
-            [
-                keygen_binary,
-                "ocomp",
-                "--output-dir",
-                str(output_dir / f"validator-{index}"),
-                "--chain-id",
-                str(bindings["chainId"]),
-                "--genesis-hash",
-                str(bindings["genesisHash"]),
-                "--validator-address",
-                "0x" + address,
-                "--consensus-bls-min-pk",
-                "0x" + public_key,
-            ],
-            check=True,
-        )
 
 
-def run_ocomp_genesis(
-    *,
-    chain_binary: str,
-    seeded_genesis: Path,
-    validators: Path,
-    registrations_dir: Path,
-    output_genesis: Path,
-    protocol_bundle_output: Path,
-) -> None:
-    subprocess.run(
-        [
-            chain_binary,
-            "ocomp",
-            "genesis",
-            "--input",
-            str(seeded_genesis),
-            "--validators",
-            str(validators),
-            "--registrations-dir",
-            str(registrations_dir),
-            "--output",
-            str(output_genesis),
-            "--protocol-bundle-output",
-            str(protocol_bundle_output),
-        ],
-        check=True,
-    )
 
 
 def generate_dev_sgx_signing_key(path: Path) -> None:
@@ -1145,7 +1026,7 @@ def main() -> None:
             raise ValueError("--generate-validators must be > 0")
         if args.generate_validators != 4:
             raise ValueError(
-                "OCOMP V1 requires exactly 4 founding validators; "
+                "Bootstrap profile requires exactly 4 founding validators; "
                 "--generate-validators must be 4"
             )
         hosts = parse_hosts(args, args.generate_validators)
@@ -1182,14 +1063,11 @@ def main() -> None:
             validators_path=validators_path,
             material_dir=args.founder_material_dir,
         )
-        if network == "mainnet":
-            require_mainnet_ocomp_material(args.founder_material_dir, 4)
         import_founder_material(
             args.founder_material_dir,
             output_dir,
             4,
             external_validators,
-            include_ocomp=network == "mainnet",
         )
 
     validators_raw = load_json(validators_path)
@@ -1198,7 +1076,7 @@ def main() -> None:
     validators: list[dict[str, Any]] = validators_raw
     if len(validators) != 4:
         raise ValueError(
-            f"OCOMP V1 requires exactly 4 founding validators, got {len(validators)}"
+            f"Bootstrap profile requires exactly 4 founding validators, got {len(validators)}"
         )
 
     for index, validator in enumerate(validators):
@@ -1239,7 +1117,6 @@ def main() -> None:
     )
     preseed_path = output_dir / "genesis.prefund.json"
     seeded_genesis_path = output_dir / "genesis.seeded.json"
-    ocomp_genesis_path = output_dir / "genesis.ocomp.json"
     genesis_path = output_dir / "genesis.json"
     if genesis_path.exists():
         raise ValueError(f"refusing to overwrite existing genesis: {genesis_path}")
@@ -1252,32 +1129,9 @@ def main() -> None:
         validators=copied_validators_path,
         output_genesis=seeded_genesis_path,
     )
-    ocomp_bindings_path = output_dir / "ocomp-bindings-v1.json"
-    ocomp_bindings = run_ocomp_bindings(
-        chain_binary=args.chain_binary,
-        seeded_genesis=seeded_genesis_path,
-        validators=copied_validators_path,
-        output=ocomp_bindings_path,
-    )
-    if network != "mainnet":
-        run_ocomp_keygen(
-            keygen_binary=args.keygen_binary,
-            output_dir=output_dir,
-            bindings=ocomp_bindings,
-            validators=validators,
-        )
-    protocol_bundle_path = output_dir / "protocol-bundle-v1.ocb1"
-    run_ocomp_genesis(
-        chain_binary=args.chain_binary,
-        seeded_genesis=seeded_genesis_path,
-        validators=copied_validators_path,
-        registrations_dir=output_dir,
-        output_genesis=ocomp_genesis_path,
-        protocol_bundle_output=protocol_bundle_path,
-    )
     run_tee_genesis(
         chain_binary=args.chain_binary,
-        seeded_genesis=ocomp_genesis_path,
+        seeded_genesis=seeded_genesis_path,
         output_genesis=genesis_path,
         tee_mode=args.tee_mode,
         mrenclave=args.mrenclave,

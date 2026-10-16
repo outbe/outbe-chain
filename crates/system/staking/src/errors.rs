@@ -30,10 +30,6 @@ pub enum StakingError {
     StakeAccountingUnderflow { validator: Address },
     #[error("registered validator is missing history")]
     MissingValidatorHistory,
-    #[error("OCOMP bonded slash exceeds total staked")]
-    OcompBondedSlashExceedsTotalStaked,
-    #[error("active OCOMP recovery validator was not jailed")]
-    ActiveOcompRecoveryValidatorNotJailed,
     #[error("validator registry exceeds consensus bound: {count} > {bound}")]
     ValidatorRegistryExceedsConsensusBound { count: u32, bound: u32 },
     #[error("{0}")]

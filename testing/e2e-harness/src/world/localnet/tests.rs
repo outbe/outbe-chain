@@ -433,7 +433,7 @@ fn co_located_devnet_bounds_each_nodes_cross_block_cache() {
 }
 
 #[test]
-fn every_localnet_node_retains_the_ocomp_exact_state_proof_window() {
+fn every_localnet_node_retains_the_native_state_proof_window() {
     let env = Environment::default();
     env.ports
         .start_scenario(env.validators)

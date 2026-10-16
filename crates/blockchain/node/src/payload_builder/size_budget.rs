@@ -41,15 +41,9 @@ pub(super) struct BlockSizeBudget {
 }
 
 impl BlockSizeBudget {
-    /// Starts an empty budget. `reserved_end_rlp_length` covers the end-zone
-    /// system transactions appended after pool selection.
-    pub(super) fn new(
-        reserved_end_rlp_length: usize,
-        withdrawals_rlp_length: usize,
-        osaka: bool,
-    ) -> Self {
-        let reserved = reserved_end_rlp_length
-            .saturating_add(withdrawals_rlp_length)
+    /// Starts an empty budget with header and withdrawal overhead.
+    pub(super) fn new(withdrawals_rlp_length: usize, osaka: bool) -> Self {
+        let reserved = withdrawals_rlp_length
             .saturating_add(HEADER_ALLOWANCE)
             .saturating_add(max_encoded_extra_data());
         Self {

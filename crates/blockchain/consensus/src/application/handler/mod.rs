@@ -29,7 +29,6 @@ use commonware_cryptography::bls12381::primitives::variant::MinSig;
 
 use futures::StreamExt;
 use outbe_primitives::projection::ExecutionReadBudget;
-use outbe_primitives::system_tx::OcompLifecycleActivation;
 use outbe_primitives::OutbePayloadTypes;
 
 use reth_node_builder::ConsensusEngineHandle;
@@ -93,11 +92,6 @@ pub(crate) struct ApplicationShared {
 
     repository_publication_enabled: bool,
     repository_publication: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
-
-    /// Immutable chain-manifest activation used by the pre-Engine consensus
-    /// system-transaction verifier. This must match the payload builder and
-    /// execution configuration so every validator expects the same layout at H.
-    ocomp_lifecycle_activation: OcompLifecycleActivation,
 
     /// Marshal mailbox for digest-bound block resolution.
     pub(crate) marshal_mailbox: crate::marshal_types::MarshalMailbox,
@@ -195,7 +189,6 @@ pub struct ApplicationDeps {
     pub chain_id: u64,
     pub repository_publication_enabled: bool,
     pub repository_publication: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
-    pub ocomp_lifecycle_activation: OcompLifecycleActivation,
     pub marshal_mailbox: crate::marshal_types::MarshalMailbox,
     pub publication: super::publication::ProposalPublication,
     pub certificate_scheme_provider: HybridSchemeProvider<MinSig>,
@@ -237,7 +230,6 @@ impl ApplicationHandler {
             chain_id,
             repository_publication_enabled,
             repository_publication,
-            ocomp_lifecycle_activation,
             marshal_mailbox,
             publication,
             certificate_scheme_provider,
@@ -268,7 +260,6 @@ impl ApplicationHandler {
                 chain_id,
                 repository_publication_enabled,
                 repository_publication,
-                ocomp_lifecycle_activation,
                 marshal_mailbox,
                 publication,
                 certificate_scheme_provider,

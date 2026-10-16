@@ -115,14 +115,6 @@ pub mod test_enclave {
         }
         contract.store_day_totals(totals)
     }
-    pub fn seed_pre_admission(
-        contract: &mut crate::TributeContract<'_>,
-        admission: &crate::DayPreAdmission,
-    ) -> outbe_primitives::error::Result<()> {
-        install();
-        contract.store_day_pre_admission(admission)
-    }
-
     pub fn encrypted_fixture(
         tribute: &crate::TributeData,
         chain_id: u64,

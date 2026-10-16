@@ -47,7 +47,7 @@ pub fn league_at(storage: StorageHandle<'_>, account: Address, timestamp: u64) -
 }
 
 /// Batch league snapshot for `owners` at `timestamp` (one enclave round-trip),
-/// returned in `owners` order. The OCOMP prepare phase uses it to snapshot the
+/// returned in `owners` order. Metadosis preparation uses it to snapshot the
 /// day's leagues. See [`FidelityContract::snapshot_leagues`].
 pub fn snapshot_leagues(
     storage: StorageHandle<'_>,

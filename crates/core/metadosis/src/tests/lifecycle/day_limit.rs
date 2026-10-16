@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn test_emission_sink_writes_metadosis_limit_for_worldwide_day() {
     with_storage(|storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         let timestamp = outbe_primitives::time::WorldwideDay::new(20241221).start_timestamp()
             + 2 * SECONDS_PER_HOUR;
         let ctx = BlockRuntimeContext::new(
@@ -42,7 +42,7 @@ fn test_emission_sink_writes_metadosis_limit_for_worldwide_day() {
 }
 
 #[test]
-fn ocomp_day_limit_formation_leaves_the_accumulator_untouched() {
+fn day_limit_formation_leaves_the_accumulator_untouched() {
     fn apply_limit(
         provider: &mut HashMapStorageProvider,
         block_number: u64,
@@ -71,7 +71,7 @@ fn ocomp_day_limit_formation_leaves_the_accumulator_untouched() {
     let third = outbe_primitives::time::WorldwideDay::new(20260727);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {
-        arm_genesis_ocomp(&storage, CHAIN_ID);
+        install_test_enclaves();
         PromisLimitContract::new(storage)
             .checked_add_carry_over(U256::from(30))
             .unwrap();
@@ -82,7 +82,7 @@ fn ocomp_day_limit_formation_leaves_the_accumulator_untouched() {
         let promis = PromisLimitContract::new(storage.clone());
         let metadosis = MetadosisContract::new(storage.clone());
         let first_day = metadosis.worldwide_days.entry(first);
-        let first_formation = metadosis.ocomp_day_limit_formation(first).unwrap().unwrap();
+        let first_formation = metadosis.day_limit_formation(first).unwrap().unwrap();
         assert_eq!(first_formation.worldwide_day, first);
         assert_eq!(first_formation.base_limit, U256::from(100));
         assert_eq!(first_formation.carry_over_before, U256::from(30));
@@ -132,10 +132,7 @@ fn ocomp_day_limit_formation_leaves_the_accumulator_untouched() {
         let promis = PromisLimitContract::new(storage.clone());
         let metadosis = MetadosisContract::new(storage);
         let second_day = metadosis.worldwide_days.entry(second);
-        let second_formation = metadosis
-            .ocomp_day_limit_formation(second)
-            .unwrap()
-            .unwrap();
+        let second_formation = metadosis.day_limit_formation(second).unwrap().unwrap();
         assert_eq!(second_formation.carry_over_taken, U256::ZERO);
         assert_eq!(second_formation.carry_over_before, U256::from(37));
         assert_eq!(second_formation.carry_over_after, U256::from(37));
@@ -150,7 +147,7 @@ fn ocomp_day_limit_formation_leaves_the_accumulator_untouched() {
     apply_limit(&mut provider, 30, third, U256::from(50)).unwrap();
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
-        let third_formation = metadosis.ocomp_day_limit_formation(third).unwrap().unwrap();
+        let third_formation = metadosis.day_limit_formation(third).unwrap().unwrap();
         assert_eq!(third_formation.base_limit, U256::from(50));
         assert_eq!(third_formation.carry_over_taken, U256::ZERO);
         assert_eq!(third_formation.day_limit, U256::from(50));
@@ -159,17 +156,17 @@ fn ocomp_day_limit_formation_leaves_the_accumulator_untouched() {
             .delete_worldwide_day(third)
             .unwrap();
         assert!(MetadosisContract::new(storage)
-            .ocomp_day_limit_formation(third)
+            .day_limit_formation(third)
             .unwrap()
             .is_none());
     })
 }
 
 #[test]
-fn ocomp_day_limit_rejection_and_every_mutation_failure_are_atomic() {
+fn day_limit_rejection_and_every_mutation_failure_are_atomic() {
     fn seed(provider: &mut HashMapStorageProvider, carry_over: U256) {
         StorageHandle::enter(provider, |storage| {
-            arm_genesis_ocomp(&storage, CHAIN_ID);
+            install_test_enclaves();
             PromisLimitContract::new(storage)
                 .checked_add_carry_over(carry_over)
                 .unwrap();
@@ -218,7 +215,7 @@ fn ocomp_day_limit_rejection_and_every_mutation_failure_are_atomic() {
             U256::from(1)
         );
         let formation = MetadosisContract::new(storage)
-            .ocomp_day_limit_formation(outbe_primitives::time::WorldwideDay::new(20260727))
+            .day_limit_formation(outbe_primitives::time::WorldwideDay::new(20260727))
             .unwrap()
             .unwrap();
         assert_eq!(formation.base_limit, U256::from(100));
@@ -236,7 +233,7 @@ fn ocomp_day_limit_rejection_and_every_mutation_failure_are_atomic() {
         mutation_count >= 2,
         "formation must mutate Metadosis and events"
     );
-    let event = IMetadosis::OcompDayLimitFormed::decode_log(
+    let event = IMetadosis::DayLimitFormed::decode_log(
         probe.get_ordered_events().last().expect("formation event"),
     )
     .unwrap();
@@ -282,7 +279,7 @@ fn ocomp_day_limit_rejection_and_every_mutation_failure_are_atomic() {
         );
         StorageHandle::enter(&mut provider, |storage| {
             let formed = MetadosisContract::new(storage.clone())
-                .ocomp_day_limit_formation(outbe_primitives::time::WorldwideDay::new(20260727))
+                .day_limit_formation(outbe_primitives::time::WorldwideDay::new(20260727))
                 .unwrap()
                 .unwrap();
             assert_eq!(formed.base_limit, U256::from(100));

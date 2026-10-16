@@ -16,15 +16,12 @@ use crate::schema::{OracleContract, SCALE_1E18};
 struct SlashPolicy {
     /// Minimum `success / total` vote rate at scale `1e18`.
     min_valid: U256,
-    /// `true` when protected validators skip the vote-rate check.
-    allow_protected: bool,
 }
 
 /// Processes the slash window: checks vote rates and jails underperformers.
 pub fn slash_and_reset_counters(oracle: &mut OracleContract, _timestamp: u64) -> Result<()> {
     let policy = SlashPolicy {
         min_valid: oracle.config_min_valid_per_window.read()?,
-        allow_protected: oracle.config_allow_protected.read()?,
     };
 
     let vs = outbe_validatorset::contract::ValidatorSet::new(oracle.storage.clone());
@@ -47,19 +44,13 @@ pub fn slash_and_reset_counters(oracle: &mut OracleContract, _timestamp: u64) ->
     Ok(())
 }
 
-/// Closes the slash window of one validator. A protected validator, a
-/// validator without rounds, and a validator at or above the minimum vote rate
-/// only get a counter reset. Any other validator is jailed and slashed first.
+/// Closes the slash window of one validator. A validator without rounds and
+/// a validator at or above the minimum vote rate only get a counter reset. Any other validator is jailed and slashed first.
 fn close_validator_window(
     oracle: &mut OracleContract,
     addr: Address,
     policy: SlashPolicy,
 ) -> Result<()> {
-    // Skip protected validators
-    if policy.allow_protected && oracle.protected_validator.read(&addr)? {
-        return oracle.reset_penalty_counter(&addr);
-    }
-
     let success = oracle.penalty_success_count.read(&addr)?;
     let abstain = oracle.penalty_abstain_count.read(&addr)?;
     let miss = oracle.penalty_miss_count.read(&addr)?;

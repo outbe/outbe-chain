@@ -188,7 +188,7 @@ fn production_full_node_in_joiner_slot(world: &mut World) {
     let index = world.validators.joiner_index();
     world
         .localnet
-        .launch_joiner_full_node(index, 0, &[])
+        .launch_joiner_full_node(index, 0)
         .expect("launch the fifth node as a production FullNode");
 }
 

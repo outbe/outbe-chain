@@ -31,7 +31,7 @@ use core::fmt;
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_ocomp_protocol::transaction_call::TransactionCallFields;
+use outbe_primitives::transaction_call::TransactionCallFields;
 use outbe_primitives::{
     addresses::{TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS},
     storage::StorageHandle,

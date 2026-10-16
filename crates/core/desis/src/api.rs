@@ -29,9 +29,8 @@ impl AuctionBriefRejectionReason {
     }
 }
 
-/// What an oversized limit means for the caller. The settlement paths carry it
-/// to the unallocated pool. The OCOMP request path cannot, because its receipt
-/// commits a brief hash that a rejection would have nothing to fill.
+/// How callers handle an oversized auction limit. Settlement can return it to
+/// the unallocated pool. Native Lysis requires the prepared brief to succeed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BriefOverflowPolicy {
     CarryOver,

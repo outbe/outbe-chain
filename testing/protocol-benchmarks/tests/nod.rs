@@ -37,35 +37,3 @@ fn direct_nod_creation_covers_single_and_typical_profiles() {
         );
     }
 }
-
-#[test]
-fn certified_nod_materialization_covers_single_and_two_batch_typical_profiles() {
-    for (profile, expected_count, expected_batches) in [
-        (Profile::Single, 1_u64, "1"),
-        (Profile::Typical, 10_u64, "2"),
-    ] {
-        let report = run_scenario(
-            &NodScenario::certified(profile),
-            RunConfig {
-                samples: 3,
-                warmups: 0,
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            report.postconditions["nod.created_count"],
-            expected_count.to_string()
-        );
-        assert_eq!(
-            report.postconditions["nod.materialization_batches"],
-            expected_batches
-        );
-        assert_eq!(
-            report.postconditions["nod.materialization_completed"],
-            "true"
-        );
-        assert_eq!(report.postconditions["nod.all_readable"], "true");
-        assert!(report.gas_totals[&GasLedger::SystemVisible] > 0);
-    }
-}

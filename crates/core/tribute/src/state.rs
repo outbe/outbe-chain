@@ -1,4 +1,4 @@
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, Address};
 use outbe_primitives::error::Result;
 use outbe_primitives::time::WorldwideDay;
 #[cfg(any(test, feature = "test-enclave"))]
@@ -6,40 +6,10 @@ use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::errors::TributeError;
-use crate::schema::{DayPreAdmission, DayTotals, TributeContract, TributeData};
+use crate::schema::{DayTotals, TributeContract, TributeData};
 use crate::TributeRecord;
 
-/// Immutable read projection consumed by the OCOMP terminal request path.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TributePreAdmissionProjection {
-    pub worldwide_day: WorldwideDay,
-    pub source_generation: u64,
-    pub profile_ready: bool,
-    pub is_sealed: bool,
-    pub tribute_count: u32,
-    pub tribute_nominal_total_minor: U256,
-    pub canonical_body_bytes: u64,
-    pub distinct_owner_count: u32,
-    pub distinct_reference_currency_count: u16,
-}
-
 impl TributeContract<'_> {
-    /// Initializes the OCOMP accumulator only on an empty fresh-devnet
-    /// Tribute state. The genesis-bound OCOMP lifecycle owns the production
-    /// call site.
-    pub fn initialize_fresh_ocomp_profile(&mut self) -> Result<()> {
-        let storage = self.storage_handle();
-        storage.with_checkpoint(|| {
-            if self.ocomp_profile_ready.read()? {
-                return Ok(());
-            }
-            if self.total_supply.read()? != 0 {
-                return Err(TributeError::OcompProfileRequiresEmptyLiveState.into());
-            }
-            self.ocomp_profile_ready.write(true)
-        })
-    }
-
     pub fn total_supply(&self) -> Result<u64> {
         self.total_supply.read()
     }
@@ -113,33 +83,6 @@ impl TributeContract<'_> {
             .unwrap_or(false))
     }
 
-    pub fn pre_admission_projection(
-        &self,
-        day: WorldwideDay,
-    ) -> Result<TributePreAdmissionProjection> {
-        let admission = self.read_day_pre_admission(day)?;
-        let (tribute_count, tribute_nominal_total_minor) = if admission.is_sealed {
-            (
-                admission.sealed_tribute_count,
-                admission.sealed_tribute_nominal_total_minor,
-            )
-        } else {
-            let totals = self.get_day_totals(day)?;
-            (totals.tribute_count, totals.tribute_nominal_total_minor)
-        };
-        Ok(TributePreAdmissionProjection {
-            worldwide_day: day,
-            source_generation: admission.source_generation,
-            profile_ready: self.ocomp_profile_ready.read()?,
-            is_sealed: admission.is_sealed,
-            tribute_count,
-            tribute_nominal_total_minor,
-            canonical_body_bytes: admission.canonical_body_bytes,
-            distinct_owner_count: admission.distinct_owner_count,
-            distinct_reference_currency_count: admission.distinct_reference_currency_count,
-        })
-    }
-
     pub fn get_tribute_ids_by_owner(&self, owner: Address) -> Result<Vec<WwdEntityId>> {
         Ok(self
             .state_records_by_owner(owner)?
@@ -171,94 +114,6 @@ impl TributeContract<'_> {
             return Err(TributeError::DayMetadataDiffersFromEncryptedAmount.into());
         }
         self.store_day_metadata(totals)
-    }
-
-    pub(crate) fn store_day_pre_admission(&mut self, admission: &DayPreAdmission) -> Result<()> {
-        if admission.is_sealed {
-            if self
-                .day_amount_record(admission.worldwide_day, true)?
-                .is_none()
-            {
-                self.freeze_day_nominal(admission)?;
-            }
-            if admission.sealed_tribute_nominal_total_minor
-                != self.day_nominal_amount(admission.worldwide_day, true)?
-            {
-                return Err(TributeError::SealedDayMetadataDiffersFromEncryptedAmount.into());
-            }
-        } else if !admission.sealed_tribute_nominal_total_minor.is_zero()
-            || self
-                .day_amount_record(admission.worldwide_day, true)?
-                .is_some()
-        {
-            return Err(TributeError::SealedDayMetadataDiffersFromEncryptedAmount.into());
-        }
-        self.store_pre_admission_metadata(admission)
-    }
-
-    pub(crate) fn update_pre_admission_for_tribute(
-        &mut self,
-        tribute: &crate::TributeRecord,
-        is_add: bool,
-    ) -> Result<()> {
-        if !self.ocomp_profile_ready.read()? {
-            return Ok(());
-        }
-        let day = tribute.worldwide_day;
-        let mut admission = self.read_day_pre_admission(day)?;
-        if admission.is_sealed {
-            return Err(TributeError::PreAdmissionSealed.into());
-        }
-
-        let body_bytes = tribute
-            .stored_body()
-            .map_err(TributeError::from)?
-            .payload()
-            .len();
-        let body_bytes =
-            u64::try_from(body_bytes).map_err(|_| TributeError::CanonicalBodyLengthOverflow)?;
-        let currency_key = reference_currency_refcount_key(day, tribute.reference_currency);
-        let currency_refcount = self.day_reference_currency_refcount.read(&currency_key)?;
-
-        let next_currency_refcount = if is_add {
-            admission.canonical_body_bytes = admission
-                .canonical_body_bytes
-                .checked_add(body_bytes)
-                .ok_or(TributeError::CanonicalBodyByteTotalOverflow)?;
-            if currency_refcount == 0 {
-                admission.distinct_reference_currency_count = admission
-                    .distinct_reference_currency_count
-                    .checked_add(1)
-                    .ok_or(TributeError::DistinctReferenceCurrencyCountOverflow)?;
-            }
-            currency_refcount
-                .checked_add(1)
-                .ok_or(TributeError::ReferenceCurrencyRefcountOverflow)?
-        } else {
-            admission.canonical_body_bytes = admission
-                .canonical_body_bytes
-                .checked_sub(body_bytes)
-                .ok_or(TributeError::CanonicalBodyByteTotalUnderflow)?;
-            let next_currency = currency_refcount
-                .checked_sub(1)
-                .ok_or(TributeError::ReferenceCurrencyRefcountUnderflow)?;
-            if next_currency == 0 {
-                admission.distinct_reference_currency_count = admission
-                    .distinct_reference_currency_count
-                    .checked_sub(1)
-                    .ok_or(TributeError::DistinctReferenceCurrencyCountUnderflow)?;
-            }
-            next_currency
-        };
-
-        admission.initialized = true;
-        admission.distinct_owner_count = self
-            .day_totals
-            .get(day)?
-            .map_or(0, |totals| totals.tribute_count);
-        self.day_reference_currency_refcount
-            .write(&currency_key, next_currency_refcount)?;
-        self.store_day_pre_admission(&admission)
     }
 
     pub(crate) fn bump_day_bucket_record(
@@ -317,13 +172,6 @@ impl TributeContract<'_> {
             .map(|record| crate::record::from_encrypted(record.into()))
             .collect())
     }
-}
-
-fn reference_currency_refcount_key(day: WorldwideDay, currency: u16) -> B256 {
-    let mut preimage = [0_u8; 6];
-    preimage[..4].copy_from_slice(&day.value().to_be_bytes());
-    preimage[4..].copy_from_slice(&currency.to_be_bytes());
-    keccak256(preimage)
 }
 
 fn calculation_view(record: &TributeRecord) -> Result<TributeData> {

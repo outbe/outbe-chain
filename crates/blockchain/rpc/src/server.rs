@@ -78,30 +78,8 @@ pub struct OutbeApiHandler<P> {
     /// validator-status fields.
     is_validator: bool,
     tee_renewal_schedule: Option<TeeRenewalScheduleConfigV1>,
-    ocomp_lysis_openings: Option<OcompLysisOpeningsRuntimeV1>,
     radicle_status: RadicleStatusHandle,
     tee_enclave_health: outbe_tee::TeeEnclaveHealthChannel,
-}
-
-type OcompLysisOpeningsBuilderV1 =
-    dyn Fn(B256, Bytes) -> Result<Bytes, crate::errors::RpcError> + Send + Sync + 'static;
-
-#[derive(Clone)]
-pub struct OcompLysisOpeningsRuntimeV1(Arc<OcompLysisOpeningsBuilderV1>);
-
-impl OcompLysisOpeningsRuntimeV1 {
-    #[must_use]
-    pub fn new<E: std::fmt::Display>(
-        builder: impl Fn(B256, Bytes) -> Result<Bytes, E> + Send + Sync + 'static,
-    ) -> Self {
-        Self(Arc::new(move |intent_id, subjects| {
-            builder(intent_id, subjects).map_err(crate::errors::RpcError::lysis_openings)
-        }))
-    }
-
-    fn build(&self, intent_id: B256, subjects: Bytes) -> Result<Bytes, crate::errors::RpcError> {
-        (self.0)(intent_id, subjects)
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -129,7 +107,6 @@ impl<P> OutbeApiHandler<P> {
             bridge: None,
             is_validator: false,
             tee_renewal_schedule: None,
-            ocomp_lysis_openings: None,
             radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
             tee_enclave_health: outbe_tee::TeeEnclaveHealthChannel::disabled(),
         }
@@ -169,12 +146,6 @@ impl<P> OutbeApiHandler<P> {
             dkg_prepare_window_blocks,
             minimum_block_time_millis,
         });
-        self
-    }
-
-    #[must_use]
-    pub fn with_ocomp_lysis_openings(mut self, runtime: OcompLysisOpeningsRuntimeV1) -> Self {
-        self.ocomp_lysis_openings = Some(runtime);
         self
     }
 
@@ -398,22 +369,6 @@ where
         })
         .await
         .map_err(|error| internal_err(format!("Tribute day proof worker failed: {error}")))?
-    }
-
-    async fn get_ocomp_lysis_openings_v1(
-        &self,
-        intent_id: B256,
-        canonical_request: Bytes,
-    ) -> RpcResult<Bytes> {
-        let runtime = self.ocomp_lysis_openings.clone().ok_or_else(|| {
-            internal_err(crate::errors::RpcInternalError::OcompLysisOpeningsNotConfigured)
-        })?;
-        tokio::task::spawn_blocking(move || runtime.build(intent_id, canonical_request))
-            .await
-            .map_err(|error| {
-                internal_err(crate::errors::RpcInternalError::ocomp_openings_worker_failed(error))
-            })?
-            .map_err(internal_err)
     }
 
     async fn derive_keys(
@@ -855,17 +810,14 @@ fn invalid_params_err(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObj
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Bytes, B256};
+    use alloy_primitives::B256;
     use commonware_cryptography::{bls12381, Signer as _};
     use outbe_radicle::{
         endpoint::{sign_response, EndpointAddress, EndpointFrame, EndpointResponseBody, PeerId},
         integration::{RadicleStatusChannel, SignedEndpointEvidence},
     };
 
-    use super::{
-        radicle_peer_info, radicle_status_info, read_effective_slash_config,
-        OcompLysisOpeningsRuntimeV1,
-    };
+    use super::{radicle_peer_info, radicle_status_info, read_effective_slash_config};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use outbe_slashindicator::constants::{
         DEFAULT_EVIDENCE_REWARD_PERCENT, DEFAULT_PROPOSER_FELONY_THRESHOLD,
@@ -1013,26 +965,5 @@ mod tests {
         assert_eq!(info.encoded_frame.as_ref(), evidence.encoded_frame);
         assert_eq!(info.addresses, ["peer.example.com:8776"]);
         assert_eq!(info.valid_until_height, 80);
-    }
-
-    #[test]
-    fn ocomp_openings_runtime_forwards_exact_intent_and_canonical_request() {
-        let expected_intent = B256::repeat_byte(0x41);
-        let expected_request = Bytes::from_static(b"canonical-request");
-        let runtime = OcompLysisOpeningsRuntimeV1::new({
-            let expected_request = expected_request.clone();
-            move |intent_id, request| {
-                assert_eq!(intent_id, expected_intent);
-                assert_eq!(request, expected_request);
-                Ok::<_, crate::errors::RpcError>(Bytes::from_static(b"canonical-openings"))
-            }
-        });
-
-        assert_eq!(
-            runtime
-                .build(expected_intent, expected_request)
-                .expect("purpose-bound openings"),
-            Bytes::from_static(b"canonical-openings")
-        );
     }
 }
