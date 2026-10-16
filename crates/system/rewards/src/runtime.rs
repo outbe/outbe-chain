@@ -240,12 +240,6 @@ fn write_addr_list(buf: &mut Vec<u8>, list: &[Address]) {
 /// `Finalization <-> CertifiedNotarization` changes the fingerprint.
 pub use outbe_primitives::consensus_metadata::ParentParticipationProof as ProofKind;
 
-/// Validator emission percentage (kept for documentation/compat). The
-/// closed-form `day_emission_limit` in
-/// `outbe_emissionlimit::day_emission` is the authoritative source
-/// for the validator daily reward, allocated through the Cycle handler.
-pub const VALIDATOR_REWARD_PERCENT: u64 = 4;
-
 #[cfg(test)]
 mod tests {
     use super::*;
