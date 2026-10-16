@@ -149,7 +149,6 @@ fn init_from_genesis_imports_every_custom_config_collection() {
             aggregate_votes: vec![],
             snapshots: vec![],
             scurve_entries: vec![],
-            protected_validators: vec![],
         };
 
         let mut oracle = OracleContract::new(storage.clone());
@@ -661,29 +660,6 @@ fn genesis_imports_one_chain_per_pair() {
 }
 
 #[test]
-fn genesis_imports_protected_validators() {
-    with_storage(|storage| {
-        let v1 = Address::new([0x11; 20]);
-        let v2 = Address::new([0x22; 20]);
-        let config = crate::genesis::OracleGenesisConfig {
-            protected_validators: vec![v1, v2],
-            ..crate::genesis::OracleGenesisConfig::default_config()
-        };
-
-        let mut oracle = OracleContract::new(storage.clone());
-        crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
-
-        assert!(oracle.config_allow_protected.read().unwrap());
-        assert!(oracle.protected_validator.read(&v1).unwrap());
-        assert!(oracle.protected_validator.read(&v2).unwrap());
-        assert!(!oracle
-            .protected_validator
-            .read(&Address::new([0x33; 20]))
-            .unwrap());
-    });
-}
-
-#[test]
 fn genesis_imports_pending_aggregate_votes() {
     with_storage(|storage| {
         let validator = Address::new([0x11; 20]);
@@ -810,7 +786,6 @@ fn export_genesis_round_trips_the_full_oracle_state() {
             peak_day: SECONDS_PER_DAY,
             peak_price: coen_iso(100),
         }],
-        protected_validators: vec![v1],
         vote_period: 2,
         reward_band: U256::from(20_000_000_000_000_000u128),
         slash_window: 96,
@@ -838,7 +813,6 @@ fn export_genesis_round_trips_the_full_oracle_state() {
     assert_eq!(exported.penalty_counters, config.penalty_counters);
     assert_exported_snapshot(&exported);
     assert_exported_scurve_entry(&exported);
-    assert_eq!(exported.protected_validators, vec![v1]);
 
     let mut storage = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut storage, |storage| {
@@ -861,7 +835,6 @@ fn export_genesis_round_trips_the_full_oracle_state() {
         );
         assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 1);
         assert_eq!(oracle.scurve_count.read().unwrap(), 1);
-        assert!(oracle.protected_validator.read(&v1).unwrap());
     });
 }
 
