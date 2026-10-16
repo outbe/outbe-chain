@@ -1,0 +1,95 @@
+{
+  "source_sha": "ac8a578118e47cd611359c69889e1e742918aea1",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "toolchain": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4"
+  },
+  "spec_sha256": {
+    "plans/radicle-patch-vote/design.md": "93be4a659ee70b9ac6fdf12d0447ff948b7aa0f6160e9ccf6428ca493dd20025",
+    "plans/radicle-patch-vote/plan.md": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b",
+    "plans/radicle-patch-vote/task-specs.json": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412"
+  },
+  "commands": [
+    {
+      "label": "adapter-tests",
+      "argv": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "--lib"
+      ],
+      "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+      "start_utc": "2026-10-16T04:07:38.948608+00:00",
+      "end_utc": "2026-10-16T04:07:53.291205+00:00",
+      "exit": 0,
+      "log": "adapter-tests.log",
+      "sha256": "8dd703ad7b18da23cbe98497292a0743dbea12c85c5b5af3eb3aa34d6a4963cf"
+    },
+    {
+      "label": "adapter-lint",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+      "start_utc": "2026-10-16T04:07:53.327410+00:00",
+      "end_utc": "2026-10-16T04:07:59.990846+00:00",
+      "exit": 0,
+      "log": "adapter-lint.log",
+      "sha256": "f84ff2c37a1e9e655e27dfa605e618fa659a6429d986e775193350a6f761bcd2"
+    },
+    {
+      "label": "format",
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2021",
+        "--config",
+        "skip_children=true",
+        "--check",
+        "crates/blockchain/radicle/src/integration/mod.rs",
+        "crates/blockchain/radicle/src/integration/bootstrap.rs",
+        "crates/blockchain/radicle/src/integration/bootstrap/tests.rs",
+        "crates/blockchain/radicle/src/integration/publication/policy.rs"
+      ],
+      "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+      "start_utc": "2026-10-16T04:08:00.011991+00:00",
+      "end_utc": "2026-10-16T04:08:00.046423+00:00",
+      "exit": 0,
+      "log": "format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "diff",
+      "argv": [
+        "git",
+        "diff",
+        "--check",
+        "8f3008ae2",
+        "ac8a578118e47cd611359c69889e1e742918aea1"
+      ],
+      "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+      "start_utc": "2026-10-16T04:08:00.066101+00:00",
+      "end_utc": "2026-10-16T04:08:00.083499+00:00",
+      "exit": 0,
+      "log": "diff.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}
