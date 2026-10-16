@@ -2,10 +2,10 @@
   "feature": "outbe-chain-pjz",
   "goal_status": "active",
   "scope": "approved plan.md + task-specs.json + design.md only",
-  "last_periodic_report_utc": "2026-10-16T06:10:29.466993+00:00",
-  "next_periodic_report_due_utc": "2026-10-16T06:40:29.466993+00:00",
+  "last_periodic_report_utc": "2026-10-16T06:40:30.233178+00:00",
+  "next_periodic_report_due_utc": "2026-10-16T07:10:30.233178+00:00",
   "period_minutes": 30,
-  "stage": "P2/P3/P4/P6 incomplete. Automatic bootstrap verified on three real sidecars. Fixed Review COB/refs protected UDS signing now verified with real native Ed patch, root archive proof and node actor; automatic Review collection/publication and production E2E remain incomplete.",
+  "stage": "P2/P3/P4/P6 incomplete. Actual automatic bootstrap and fixed Review UDS signing verified. Complete Review native/q package -> durable selection -> current attestation -> bounded mailbox now verified through protected SDK. Automatic Review discovery/collection/checkpoint acceptance/native installation remain incomplete.",
   "decision_gate": {
     "id": "D3-description-bound",
     "status": "Resolved by explicit user decision: maximum256 UTF-8 bytes; implemented8f3008ae2. No approval pending.",
@@ -42,11 +42,11 @@
   },
   "acceptance": "P0 administratively reopened during limit correction, not reclosed; P1/P5 historical closed; P2/P3 incomplete; P4/P6/P7/P8 open. No new task/feature acceptance asserted.",
   "last_periodic_report": {
-    "completed": "Uncommitted automatic bootstrap worker/journal, pending/accepted policy and exact accepted native ref installation. Multi-node test uses three actual sidecars/SDK services in a four-member committee; fourth offline; pre-quorum and accepted restart, native Noise connection/fetch passed.",
-    "proof": "Provisional working-tree runs: runtime journal3, SDK bootstrap1, existing runtime sidecar10 and automatic governments1 PASS. DKG/finality/Commonware transport fixtures; no production E2E claim. Current Clippy running; exact source SHA/evidence not frozen yet.",
-    "tasks": "No new closures. P1/P5 historical closed; P0 administratively reopened; P2/P3 incomplete; P4/P6/P7/P8 open.",
-    "limitations": "Accepted package catch-up for a collector without local selected package, Review/Merge and production E2E remain incomplete. No pending decision.",
-    "next": "Complete scoped checks; freeze source/evidence. Continue missing accepted-package catch-up and approved Review/Merge wiring."
+    "completed": "3181fe773 automatic three-sidecar bootstrap/restart/native fetch;0ff4183ba fixed native Review UDS signing and accepted root archive proof, with exact evidence. Current uncommitted full Review verification/persistence/attestation/mailbox bridge targeted scenario passes.",
+    "proof": "3181fe773156tests;0ff4183ba157tests; both7consumer builds/Clippy/fmt PASS. Current full package bridge targeted UDS/native/q-1/invalid-last-attestation/no-slot/currentness/mailbox tests PASS before final source freeze; Clippy running.",
+    "tasks": "No new closures:2 historically accepted P1/P5; P0 administratively reopened; P2/P3 incomplete; P4/P6/P7/P8 open.",
+    "limitations": "Automatic Review job discovery/collection/checkpoint install, later owner-history grants, archived fresh-node delivery, BindMaterial/Merge and production E2E remain incomplete; no pending decision.",
+    "next": "Freeze current source and full affected checks/evidence, then wire automatic Review job discovery/collection/publication and accepted native installation."
   },
   "blocked_audit": {
     "consecutive_goal_turns": 3,
@@ -66,7 +66,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; goal API active confirmed2026-10-16"
   },
-  "source_sha": "0ff4183ba7ad059971b2fa35f8bc5462be0be088",
+  "source_sha": "48a542fc3cd5027d6529e7cb68279f9a4261572b",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -85,7 +85,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "0ff4183ba: fixed OCR1/OCV1 Review signer reconstructs own-current approved revision and exact accepted preparation snapshot; client public polynomial verification; archived receipt-bound descriptor/content; fresh Storage root policy restored from archived native/q proof; launcher supplies existing public transport NodeId. No native git.rs changes.",
+  "current_source_changes": "48a542fc3: existing OCA1/OCQ1 package channel dispatches Bootstrap/Review; Review native/q reconstruction and all batch attestations verified before durable selection; actor freshly rechecks own authority/material and uses same one-batch mailbox, clears on material/finality/shutdown. No proposer or native git.rs changes.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -111,9 +111,9 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "0ff4183ba7ad059971b2fa35f8bc5462be0be088",
-    "checks": "157 affected SDK/runtime tests, zero ignored; seven consumers all-target check; SDK/runtime/node all-target Clippy -Dwarnings; eleven changed Rust files fmt PASS. Frozen source unchanged.",
-    "scenarios": "Actual native BLS bootstrap/Ed patch -> protected UDS Review COB partial -> q3 public recovery -> protected refs partial. Later unapproved author revision does not change job; fresh approval replacement rejects cached old job; missing provider, withdrawn permission, wrong genesis, wrong native envelope and malformed frame reject; exact owner refs/sigrefs unchanged. Descriptor/content archive reopen and tamper/missing tests. Automatic three-sidecar bootstrap/restart/Noise/fetch regression passes. Fixture DKG/finality/approval/Commonware relay; not production E2E."
+    "source_sha": "48a542fc3cd5027d6529e7cb68279f9a4261572b",
+    "checks": "157 affected SDK/runtime tests, zero ignored; seven consumers all-target check; SDK/runtime/node all-target Clippy -Dwarnings; seven changed Rust files fmt PASS. Frozen source unchanged.",
+    "scenarios": "Real native bootstrap/Ed patch/UDS/actor: Review COB and refs q3 recovery, complete Review package verification/selection/attestation/mailbox; q-1 witness and invalid-last identity reject before slot/ready; repeated attestation; budgeted nonconsuming prefix; material withdrawal/restore and fresh approval replacement; finalized refresh/shutdown clear ready. Owner refs/sigrefs unchanged before checkpoint. Automatic three-sidecar bootstrap/restart/native fetch regression PASS. DKG/finality/approval fixture, not production E2E."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
@@ -123,8 +123,8 @@
   "current_signing_evidence": "evidence/outbe-chain-pjz.4/current-signing",
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
-  "last_goal_turn_classification": "progress:3181fe773 automatic bootstrap and0ff4183ba local fixed Review signing committed with complete affected exact-SHA checks/evidence. No task closures; goal active; no pending decision.",
-  "next_required_work": "Implement complete Review package verification/persistence/attestation/ready-mailbox bridge over existing protected local channel, then actual automatic approved-job collection/publication. Complete later-history grants, fresh-node archived delivery, BindMaterial, separate Merge, production E2E and all full-AC acceptance reviews.",
+  "last_goal_turn_classification": "progress:48a542fc3 complete Review package local publication bridge source committed and exact157tests/build/lint/fmt evidence verified. No stage closure; goal active; no pending decision.",
+  "next_required_work": "Wire own-finalized approved-job discovery and actual automatic distributed Review collector/publication; install/announce exact accepted Review, complete later-history grants and fresh-node archive delivery; finish BindMaterial, separate Merge, full production E2E and all full-AC acceptance reviews.",
   "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
   "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
   "review_store_evidence": "evidence/outbe-chain-pjz.4/review-store-r2",
@@ -132,7 +132,7 @@
   "transport_investigation": {
     "repowise": "Worktree not indexed; no main-checkout/index changes. Earlier MCP query did not return and was terminated. Current evidence uses live source/checks.",
     "known_sources": "bin/outbe-chain/src/launch/node/radicle.rs; integration/local.rs; manager/snapshot.rs; crates/system/radicle/src/lib.rs::PreparedSidecar",
-    "current_boundary": "Protected node interface now provides exact contexts, public material, fixed bootstrap and Review COB/refs partials, bounded public relay, bootstrap package attestation/mailbox and own-finalized progress. Automatic runtime currently only bootstraps. Complete Review publication control and automatic execution remain incomplete.",
+    "current_boundary": "Protected node interface now provides exact contexts, public material, fixed bootstrap/Review partials, bounded public relay, complete Bootstrap/Review package verification/persistence/attestation/mailbox and own-finalized progress. Automatic runtime still only bootstraps; Review automatic scheduling/collection and accepted installation remain incomplete.",
     "decision": "No active approval question; fixed local receipt transport realizes existing trusted-UDS requirement, no new consensus/signing policy."
   },
   "accepted_review_evidence": "evidence/outbe-chain-pjz.4/accepted-review",
@@ -170,12 +170,13 @@
   "local_bootstrap_native_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-native",
   "local_bootstrap_publication_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-publication",
   "progress_audit": {
-    "previous_turn": "progress: automatic worker/journal and targeted checks; no multi-node automatic proof yet.",
-    "current_turn": "progress:3181fe773 automatic three-sidecar bootstrap/restart/native fetch with156 tests;0ff4183ba fixed Review UDS/root-archive proof with157 tests; all consumers/lint/fmt PASS on both frozen sources.",
-    "next_action": "Implement complete Review package verification/persistence/attestation/ready-mailbox bridge over existing protected local channel, then actual automatic approved-job collection/publication. Complete later-history grants, fresh-node archived delivery, BindMaterial, separate Merge, production E2E and all full-AC acceptance reviews."
+    "previous_turn": "progress:3181fe773 automatic bootstrap and0ff4183ba fixed Review signing with complete affected evidence.",
+    "current_turn": "progress:48a542fc3 complete Review package local verification/persistence/attestation/mailbox path with real native/q/UDS actor scenario; all157 tests and consumers/lint/fmt PASS.",
+    "next_action": "Wire own-finalized approved-job discovery and actual automatic distributed Review collector/publication; install/announce exact accepted Review, complete later-history grants and fresh-node archive delivery; finish BindMaterial, separate Merge, full production E2E and all full-AC acceptance reviews."
   },
   "public_contribution_relay_evidence": "evidence/outbe-chain-pjz.4/public-contribution-relay",
   "finalized_publication_progress_evidence": "evidence/outbe-chain-pjz.4/finalized-publication-progress",
   "automatic_bootstrap_evidence": "evidence/outbe-chain-pjz.4/automatic-bootstrap",
-  "local_review_signing_evidence": "evidence/outbe-chain-pjz.4/local-review-signing"
+  "local_review_signing_evidence": "evidence/outbe-chain-pjz.4/local-review-signing",
+  "local_review_publication_evidence": "evidence/outbe-chain-pjz.4/local-review-publication"
 }
