@@ -169,7 +169,7 @@ impl GemContract<'_> {
         let (mut bucket, current_bucket) = bucket.into_parts();
         check_loaded(self, &item, &current_item, &current_bucket)?;
         if item.is_settled() {
-            return Err(GemError::InvalidState.into());
+            return Err(GemError::AlreadySettled.into());
         }
         bucket.settled_gems = bucket
             .settled_gems

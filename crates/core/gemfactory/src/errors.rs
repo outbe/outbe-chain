@@ -15,6 +15,15 @@ pub enum GemFactoryError {
     #[error("invalid state for action")]
     InvalidState,
 
+    #[error("gem is already settled")]
+    GemAlreadySettled,
+
+    #[error("gem is not settled")]
+    GemNotSettled,
+
+    #[error("gem bucket is not called")]
+    GemNotCalled,
+
     #[error("settlement deadline has passed")]
     SettlementDeadlinePassed,
 

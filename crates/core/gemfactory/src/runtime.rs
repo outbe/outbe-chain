@@ -387,7 +387,7 @@ pub fn settle_gem(
 /// qualified. The qualification walk goes last.
 pub(crate) fn require_settleable(storage: &StorageHandle<'_>, gem: &GemView) -> Result<()> {
     if gem.item.is_settled() {
-        return Err(GemFactoryError::InvalidState.into());
+        return Err(GemFactoryError::GemAlreadySettled.into());
     }
     if gem.bucket_called_at != 0 {
         if storage.timestamp()?.to::<u64>() > gem.settlement_deadline() {
@@ -404,7 +404,7 @@ pub(crate) fn burn_settled(storage: &StorageHandle<'_>, gem_id: U256) -> Result<
     let (item, bucket) =
         gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     if !item.body().is_settled() {
-        return Err(GemFactoryError::InvalidState.into());
+        return Err(GemFactoryError::GemNotSettled.into());
     }
     gem_api::remove_gem(storage, item, bucket)
 }
@@ -499,7 +499,7 @@ pub fn mine_promis(
     let item = gem_api::get_item(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     // Anyone may submit. The owner's modify key authorizes the mint.
     if !item.is_settled() {
-        return Err(GemFactoryError::InvalidState.into());
+        return Err(GemFactoryError::GemNotSettled.into());
     }
 
     validate_pow(gem_id, item.owner, nonce)?;
