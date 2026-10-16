@@ -432,7 +432,7 @@ pub(crate) fn settlement_units(
     rate: Option<(U256, U256)>,
     asset_decimals: u8,
 ) -> Result<U256> {
-    outbe_common::settlement::settlement_cost_units(&settlement_cost(gem), rate, asset_decimals)
+    outbe_primitives::settlement::settlement_cost_units(&settlement_cost(gem), rate, asset_decimals)
         .map_err(|e| settlement::SettlementError::Rounding(e).into())
 }
 

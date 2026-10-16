@@ -1,8 +1,8 @@
-//! Settlement cost rule shared by Nod, Gem, Intex and Lysis. The cost is computed at
-//! full precision, any FX leg included, and then floored once into the settlement
-//! asset's minor units.
+//! Settlement rules shared by the rights and by Lysis: the cost, computed at full
+//! precision with any FX leg and floored once into the asset's minor units, the
+//! settlement deadline, and who pays in which asset.
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 
 pub use crate::errors::RoundingError;
 use crate::units::{MAX_ASSET_DECIMALS, PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U256};
@@ -90,6 +90,44 @@ pub fn settlement_cost_units(
         None => (amount, percent),
     };
     floor_to_asset_units(numerator, denominator, COST_DECIMALS, asset_decimals)
+}
+
+/// The last second a called right may still be settled: `called_at` plus its notice period.
+#[must_use]
+pub fn settlement_deadline_of(called_at: u64, notice_period: u32) -> u64 {
+    called_at.saturating_add(u64::from(notice_period))
+}
+
+/// Who pays a settlement, in which asset, and against which VWAP snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SettlementPayment {
+    pub payer: Address,
+    pub asset: Address,
+    pub snapshot_id: U256,
+}
+
+/// Which of a right's two currencies a payment asset is denominated in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaymentCurrency {
+    Reference,
+    Issuance,
+}
+
+impl PaymentCurrency {
+    /// The cross rate and its snapshot a payment converts at. Only the issuance
+    /// rail converts, so only it calls `cross_rate`.
+    pub fn conversion<R, S, E>(
+        self,
+        cross_rate: impl FnOnce() -> Result<(R, S), E>,
+    ) -> Result<(Option<R>, Option<S>), E> {
+        match self {
+            Self::Reference => Ok((None, None)),
+            Self::Issuance => {
+                let (rate, snapshot) = cross_rate()?;
+                Ok((Some(rate), Some(snapshot)))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -233,5 +271,22 @@ mod tests {
         };
         assert!(settlement_cost_units(&huge, None, 6).is_err());
         assert!(settlement_cost_units(&dust, Some((U256::ONE, U256::ZERO)), 6).is_err());
+    }
+
+    #[test]
+    fn only_the_issuance_rail_converts() {
+        let unavailable = || Err::<(U256, u8), _>("unavailable");
+        assert_eq!(
+            PaymentCurrency::Reference.conversion(unavailable),
+            Ok((None, None))
+        );
+        assert_eq!(
+            PaymentCurrency::Issuance.conversion(unavailable),
+            Err("unavailable")
+        );
+        assert_eq!(
+            PaymentCurrency::Issuance.conversion(|| Ok::<_, &str>((u(2), 7u8))),
+            Ok((Some(u(2)), Some(7u8)))
+        );
     }
 }

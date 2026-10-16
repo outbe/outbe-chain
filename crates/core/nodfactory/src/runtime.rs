@@ -191,7 +191,7 @@ pub(crate) fn settlement_units(
     asset_decimals: u8,
 ) -> Result<U256> {
     let cost = nod_cost(entry_price_minor, gratis_load_minor);
-    outbe_common::settlement::settlement_cost_units(&cost, rate, asset_decimals)
+    outbe_primitives::settlement::settlement_cost_units(&cost, rate, asset_decimals)
         .map_err(|e| settlement::SettlementError::Rounding(e).into())
 }
 

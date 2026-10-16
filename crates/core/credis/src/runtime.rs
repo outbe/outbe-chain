@@ -21,7 +21,7 @@ use crate::schema::{Credis, CredisContract, CredisState};
 /// Reads the notice period sealed onto the Credis at issuance, so switching the
 /// profile cannot move the deadline of a Credis that is already live.
 pub fn settlement_deadline(record: &Credis) -> u64 {
-    outbe_common::settlement::settlement_deadline_of(
+    outbe_primitives::settlement::settlement_deadline_of(
         record.called_at,
         record.call_notice_period_seconds,
     )

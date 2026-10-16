@@ -5,13 +5,13 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_common::settlement::{settlement_cost_units, PaymentCurrency};
 use outbe_oracle::api::{settlement_fx_rates, VwapSnapshotId};
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_primitives::settlement::{settlement_cost_units, PaymentCurrency};
 use outbe_primitives::storage::StorageHandle;
 
-pub use outbe_common::settlement::{SettlementCost, SettlementPayment};
+pub use outbe_primitives::settlement::{SettlementCost, SettlementPayment};
 
 pub use crate::errors::SettlementError;
 

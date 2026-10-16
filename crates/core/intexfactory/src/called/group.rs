@@ -52,7 +52,7 @@ pub(crate) fn call_if_breached(
     for &series_id in &group.members {
         mark_called(storage, series_id, called_at)?;
     }
-    let settlement_deadline = outbe_common::settlement::settlement_deadline_of(
+    let settlement_deadline = outbe_primitives::settlement::settlement_deadline_of(
         u64::from(called_at),
         series.call_notice_period_seconds,
     );
