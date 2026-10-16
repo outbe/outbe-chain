@@ -79,7 +79,7 @@ contract IntexAuctionLockTermsTest is Test {
             IIntexAuction.AuctionParams({
                 promisLoadMinor: PROMIS_LOAD_MINOR,
                 minIntexBidRate: 50,
-                prices: ReferenceCurrencyPriceLib.onePriced(840, 1e6, 100, 200),
+                prices: ReferenceCurrencyPriceLib.onePriced(840, 1e6, 200),
                 callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
                 minIntexBidQuantity: 1,
                 commitBondMinor: 0

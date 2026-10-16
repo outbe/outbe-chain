@@ -299,7 +299,6 @@ fn sent_capacity(promis_load: u128) -> U256 {
 fn seed_source_series(
     storage: &StorageHandle,
     entry: U256,
-    floor: U256,
     promis_load: u128,
     call_trigger: outbe_intex::IntexCallTrigger,
 ) {
@@ -311,7 +310,6 @@ fn seed_source_series(
             issued_units: SENT_UNITS as u32,
             promis_load_minor: promis_load,
             entry_price_minor: entry,
-            floor_price_minor: floor,
             call_price_minor: U256::ZERO,
             call_trigger,
             issued_at: T_NOW as u32,
@@ -324,11 +322,10 @@ fn seed_source_series(
 
 /// Seed an Intex series and send the merchant's whole holding into a GemPosition
 /// NFT (burn stubbed via `with_storage`). Returns the `position_id`.
-fn seed_and_send(storage: &StorageHandle, entry: U256, floor: U256, promis_load: u128) -> U256 {
+fn seed_and_send(storage: &StorageHandle, entry: U256, promis_load: u128) -> U256 {
     seed_source_series(
         storage,
         entry,
-        floor,
         promis_load,
         outbe_intex::IntexCallTrigger::default(),
     );
@@ -341,7 +338,6 @@ const SOURCE_NOTICE_SECONDS: u32 = 3_600;
 fn seed_called_source(storage: &StorageHandle, called_at: u64) {
     seed_source_series(
         storage,
-        six_decimal_unit(),
         six_decimal_unit(),
         six_decimal_u128(),
         outbe_intex::IntexCallTrigger {
@@ -409,7 +405,7 @@ fn seed_day_vwap(storage: &StorageHandle, iso: u16, vwap: U256) {
 }
 
 fn merchant_entry_price(storage: &StorageHandle, world: &GemWorld, source_entry: U256) -> U256 {
-    let id = seed_and_send(storage, source_entry, source_entry, six_decimal_u128());
+    let id = seed_and_send(storage, source_entry, six_decimal_u128());
     let gem_id = runtime::issue_merchant_gem(
         storage,
         &world.scope,

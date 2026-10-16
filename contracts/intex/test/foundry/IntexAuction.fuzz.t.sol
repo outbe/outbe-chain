@@ -172,7 +172,7 @@ contract IntexAuctionFuzzTest is Test {
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: MIN_RATE,
-            prices: ReferenceCurrencyPriceLib.onePriced(840, ENTRY_PRICE, 100, 200),
+            prices: ReferenceCurrencyPriceLib.onePriced(840, ENTRY_PRICE, 200),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: MIN_QTY,
             commitBondMinor: 0

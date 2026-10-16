@@ -55,7 +55,7 @@ fn a_timestamp_before_the_first_slot_yields_the_offset() {
 
 #[test]
 fn only_current_state_scans_and_calendar_owned_protocol_cycle_coalesce() {
-    const COALESCING: [TriggerId; 9] = [
+    const COALESCING: [TriggerId; 8] = [
         TriggerId::AuctionClearing,
         TriggerId::AuctionAdvance,
         TriggerId::ProtocolCycle,
@@ -64,7 +64,6 @@ fn only_current_state_scans_and_calendar_owned_protocol_cycle_coalesce() {
         TriggerId::IntexCallDaily,
         TriggerId::GemCallDaily,
         TriggerId::IntexDrainParked,
-        TriggerId::IntexVwapPush,
     ];
     for spec in ACTIVE_TRIGGERS {
         let coalesces = COALESCING.iter().any(|id| id.as_u32() == spec.id);
@@ -121,13 +120,14 @@ fn registry_ids_are_unique_and_traversed_in_permanent_id_order() {
         .iter()
         .map(|spec| spec.id)
         .collect::<Vec<_>>();
-    assert_eq!(ids, vec![0, 1, 3, 4, 5, 7, 8, 9, 10, 11]);
+    assert_eq!(ids, vec![0, 1, 3, 4, 5, 7, 8, 9, 10]);
 
     let mut unique = ids.clone();
     unique.sort_unstable();
     unique.dedup();
     assert_eq!(unique.len(), ids.len());
     assert!(!ids.contains(&TriggerId::WwdAdvanceNoon.as_u32()));
+    assert!(!ids.contains(&TriggerId::IntexVwapPush.as_u32()));
 }
 
 #[test]

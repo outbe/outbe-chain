@@ -313,7 +313,6 @@ library TargetInbound {
                         issuedUnits: payload.issuedUnits,
                         promisLoadMinor: payload.promisLoadMinor,
                         entryPriceMinor: payload.entryPriceMinor,
-                        floorPriceMinor: payload.floorPriceMinor,
                         callPriceMinor: payload.callPriceMinor,
                         callTrigger: IIntexNFT1155.IntexCallTrigger({
                             callWindow: payload.callWindow,
@@ -380,9 +379,8 @@ library TargetInbound {
         return a.worldwideDay == b.worldwideDay && a.issuanceCurrency == b.issuanceCurrency
             && a.referenceCurrency == b.referenceCurrency && a.issuedUnits == b.issuedUnits
             && a.promisLoadMinor == b.promisLoadMinor && a.entryPriceMinor == b.entryPriceMinor
-            && a.floorPriceMinor == b.floorPriceMinor && a.callPriceMinor == b.callPriceMinor
-            && a.callWindow == b.callWindow && a.callThreshold == b.callThreshold
-            && a.callNoticePeriod == b.callNoticePeriod;
+            && a.callPriceMinor == b.callPriceMinor && a.callWindow == b.callWindow
+            && a.callThreshold == b.callThreshold && a.callNoticePeriod == b.callNoticePeriod;
     }
 
     /// @dev Whether the series this chain holds was created under exactly the chunk's terms.
@@ -395,8 +393,8 @@ library TargetInbound {
         return d.worldwideDay == payload.worldwideDay && d.issuanceCurrency == payload.issuanceCurrency
             && d.referenceCurrency == payload.referenceCurrency && d.issuedUnits == payload.issuedUnits
             && d.promisLoadMinor == payload.promisLoadMinor && d.entryPriceMinor == payload.entryPriceMinor
-            && d.floorPriceMinor == payload.floorPriceMinor && d.callPriceMinor == payload.callPriceMinor
-            && d.callTrigger.callWindow == payload.callWindow && d.callTrigger.callThreshold == payload.callThreshold
+            && d.callPriceMinor == payload.callPriceMinor && d.callTrigger.callWindow == payload.callWindow
+            && d.callTrigger.callThreshold == payload.callThreshold
             && d.callTrigger.callNoticePeriod == payload.callNoticePeriod;
     }
 
@@ -480,13 +478,6 @@ library TargetInbound {
         for (uint256 i = 0; i < seriesIds.length; ++i) {
             _applyMark($, srcChainId, seriesIds[i], calledAt);
         }
-    }
-
-    function handleDailyVwap(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
-        (uint32 utcDay, IOriginRouter.DailyVwap[] memory rows) = BridgeMsgCodec.decodeDailyVwap(message);
-        if (address($.vwapRegistry) == address(0)) revert ITargetRouter.VwapRegistryUnset();
-        $.vwapRegistry.record(utcDay, rows);
-        emit ITargetRouter.DailyVwapReceived(srcChainId, utcDay, rows.length);
     }
 
     /// @dev An unseen series keeps the mark in its slot. An already called one is acknowledged. Any

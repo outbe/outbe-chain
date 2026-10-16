@@ -29,8 +29,7 @@ library BridgeMsgCodec {
     // 9 was MARK_QUALIFIED. It must not be reused.
     /// @dev Target -> origin: the day's relay stopped with chunks left, so the origin sends another round.
     uint8 internal constant MSG_BIDS_REMAINING = 10;
-    /// @dev Origin -> target: one finalized UTC day's VWAPs.
-    uint8 internal constant MSG_DAILY_VWAP = 11;
+    // 11 was DAILY_VWAP. It must not be reused.
 
     /// @notice Upper bound on every caller-supplied cross-chain payload array
     ///         (`BIDS_BATCH`, `ISSUANCE_INSTRUCTIONS`, `REFUND_INSTRUCTIONS`).
@@ -84,8 +83,8 @@ library BridgeMsgCodec {
 
     // Fixed head of AUCTION_STAGE_START; the price rows follow it.
     uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 70;
-    /// @notice Bytes per reference-price row: [iso(2)][entry(8)][floor(8)][call(8)].
-    uint16 internal constant REFERENCE_PRICE_LEN = 26;
+    /// @notice Bytes per reference-price row: [iso(2)][entry(8)][call(8)].
+    uint16 internal constant REFERENCE_PRICE_LEN = 18;
     /// @notice The oracle's reference list is short. A day may not exceed this.
     uint8 internal constant MAX_REFERENCE_PRICES = 6;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
@@ -96,10 +95,6 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_BIDS_DONE = 16;
     // BIDS_REMAINING: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][nextBatch(2)][totalBatches(2)]
     uint16 internal constant MIN_LEN_BIDS_REMAINING = 14;
-    // DAILY_VWAP: [ver(1)][type(1)][utcDay(4)][rowCount(1)], then [iso(2)][vwap(8)] per row.
-    uint16 internal constant DAILY_VWAP_HEAD = 7;
-    uint16 internal constant DAILY_VWAP_LEN = 10;
-    uint16 internal constant MIN_LEN_DAILY_VWAP = DAILY_VWAP_HEAD + DAILY_VWAP_LEN;
 
     // abi.encode payloads have variable length. The minimum corresponds to all
     // dynamic arrays being empty:
@@ -107,12 +102,12 @@ library BridgeMsgCodec {
     //     4 static head words + 2 dynamic head offsets + 2 empty length words = 8x32 = 256
     //   REFUND_INSTRUCTIONS(uint32, uint16, uint16, uint64, uint128, address[], uint16, uint16):
     //     7 static head words + 1 dynamic offset + 1 empty length word = 9x32 = 288
-    //   ISSUANCE_INSTRUCTIONS(3 static head words + dynamic array of a struct with 13 static + 2 dynamic fields):
-    //     3 head words + array offset(32) + array length(32) + one element's offset(32) + 13 static
-    //     + 2 inner offsets + 2 empty length words = 23x32 = 736
+    //   ISSUANCE_INSTRUCTIONS(3 static head words + dynamic array of a struct with 12 static + 2 dynamic fields):
+    //     3 head words + array offset(32) + array length(32) + one element's offset(32) + 12 static
+    //     + 2 inner offsets + 2 empty length words = 22x32 = 704
     uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 256;
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 288;
-    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 736;
+    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 704;
 
     /// @notice Per-message cap on inbound BIDS_BATCH entries. Bounds the crosschainMint/storage loop the
     ///         receiver runs so one oversized batch cannot exceed the inbound gas limit and stall
@@ -183,7 +178,6 @@ library BridgeMsgCodec {
     error RefundBatchTooLarge(uint256 count, uint256 max);
     /// @notice A live day was encoded without a single reference price to bid against.
     error MissingReferencePrices();
-    error EmptyDailyVwap();
     /// @notice An ISSUANCE_INSTRUCTIONS message carried no series at all.
     error EmptyIssuanceBatch();
     /// @notice An ISSUANCE_INSTRUCTIONS message carried more series than one may hold.
@@ -332,13 +326,7 @@ library BridgeMsgCodec {
         }
         bytes memory rows = abi.encodePacked(uint8(_prices.length));
         for (uint256 i = 0; i < _prices.length; ++i) {
-            rows = abi.encodePacked(
-                rows,
-                _prices[i].isoCode,
-                _prices[i].entryPriceMinor,
-                _prices[i].floorPriceMinor,
-                _prices[i].callPriceMinor
-            );
+            rows = abi.encodePacked(rows, _prices[i].isoCode, _prices[i].entryPriceMinor, _prices[i].callPriceMinor);
         }
         // Split into packed halves: this many packed args in one call is too deep for the IR
         // pipeline. Concatenation of encodePacked results is byte-identical to a single call.
@@ -405,7 +393,6 @@ library BridgeMsgCodec {
         uint32 issuedUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
-        uint64 floorPriceMinor;
         /// @notice Duration in seconds between Called and the settlement deadline. 0 uses default.
         uint32 callNoticePeriod;
         uint16 issuanceCurrency;
@@ -485,8 +472,7 @@ library BridgeMsgCodec {
             rows[i] = IIntexAuction.ReferenceCurrencyPrice({
                 isoCode: uint16(bytes2(_msg[at:at + 2])),
                 entryPriceMinor: uint64(bytes8(_msg[at + 2:at + 10])),
-                floorPriceMinor: uint64(bytes8(_msg[at + 10:at + 18])),
-                callPriceMinor: uint64(bytes8(_msg[at + 18:at + 26]))
+                callPriceMinor: uint64(bytes8(_msg[at + 10:at + 18]))
             });
         }
     }
@@ -600,45 +586,6 @@ library BridgeMsgCodec {
         if (_seriesIds.length > MAX_SERIES_PER_MARK) {
             revert MarkBatchTooLarge(_seriesIds.length, MAX_SERIES_PER_MARK);
         }
-    }
-
-    /// @dev External, like the decoder, so the row loop stays off the router's runtime size.
-    function encodeDailyVwap(uint32 _utcDay, IOriginRouter.DailyVwap[] calldata _rows)
-        external
-        pure
-        returns (bytes memory message)
-    {
-        _assertDailyVwapRows(_rows.length);
-        message = abi.encodePacked(BODY_VERSION_V1, MSG_DAILY_VWAP, _utcDay, uint8(_rows.length));
-        for (uint256 i = 0; i < _rows.length; ++i) {
-            message = abi.encodePacked(message, _rows[i].isoCode, _rows[i].vwapMinor);
-        }
-    }
-
-    function decodeDailyVwap(bytes calldata _msg)
-        external
-        pure
-        returns (uint32 utcDay, IOriginRouter.DailyVwap[] memory rows)
-    {
-        _assertMinLength(_msg, MSG_DAILY_VWAP, MIN_LEN_DAILY_VWAP);
-        _assertBodyVersion(_msg);
-        utcDay = uint32(bytes4(_msg[2:6]));
-        uint256 count = uint8(_msg[6]);
-        _assertDailyVwapRows(count);
-        uint256 expected = DAILY_VWAP_HEAD + count * DAILY_VWAP_LEN;
-        if (_msg.length != expected) revert InvalidPayloadLength(MSG_DAILY_VWAP, _msg.length, expected);
-        rows = new IOriginRouter.DailyVwap[](count);
-        for (uint256 i = 0; i < count; ++i) {
-            uint256 at = DAILY_VWAP_HEAD + i * DAILY_VWAP_LEN;
-            rows[i] = IOriginRouter.DailyVwap({
-                isoCode: uint16(bytes2(_msg[at:at + 2])), vwapMinor: uint64(bytes8(_msg[at + 2:at + 10]))
-            });
-        }
-    }
-
-    function _assertDailyVwapRows(uint256 _count) private pure {
-        if (_count == 0) revert EmptyDailyVwap();
-        if (_count > MAX_REFERENCE_PRICES) revert PayloadArrayTooLong(_count, MAX_REFERENCE_PRICES);
     }
 
     // --- Decoding ---
@@ -929,7 +876,6 @@ library BridgeMsgCodec {
         if (_msgType == MSG_BIDS_BATCH) return MIN_LEN_BIDS_BATCH;
         if (_msgType == MSG_BIDS_DONE) return MIN_LEN_BIDS_DONE;
         if (_msgType == MSG_BIDS_REMAINING) return MIN_LEN_BIDS_REMAINING;
-        if (_msgType == MSG_DAILY_VWAP) return MIN_LEN_DAILY_VWAP;
         if (_msgType == MSG_REFUND_INSTRUCTIONS) return MIN_LEN_REFUND_INSTRUCTIONS;
         if (_msgType == MSG_ISSUANCE_INSTRUCTIONS) return MIN_LEN_ISSUANCE_INSTRUCTIONS;
         return 0;

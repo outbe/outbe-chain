@@ -44,11 +44,9 @@ pub fn issue_intex(
     let mut intex = IntexContract::new(storage.clone());
     let cfg = outbe_intex::config::read(storage)?;
 
-    let floor_price_minor = marked_up(params.entry_price_minor, cfg.floor_rate)?;
     let call_price_minor = marked_up(params.entry_price_minor, cfg.call_rate)?;
 
     let entry_price_minor_u64 = to_wire_price(params.entry_price_minor)?;
-    let floor_price_minor_u64 = to_wire_price(floor_price_minor)?;
     let call_price_minor_u64 = to_wire_price(call_price_minor)?;
 
     let record = outbe_intex::CreateSeriesParams {
@@ -57,7 +55,6 @@ pub fn issue_intex(
         issued_units: params.issued_units,
         promis_load_minor: params.promis_load_minor,
         entry_price_minor: params.entry_price_minor,
-        floor_price_minor,
         call_price_minor,
         call_trigger: outbe_intex::IntexCallTrigger {
             call_window_seconds: cfg.call_window_seconds,
@@ -88,7 +85,6 @@ pub fn issue_intex(
                 issuedUnits: params.issued_units,
                 promisLoadMinor: params.promis_load_minor,
                 entryPriceMinor: entry_price_minor_u64,
-                floorPriceMinor: floor_price_minor_u64,
                 callNoticePeriod: cfg.call_notice_period_seconds,
                 issuanceCurrency: params.issuance_currency,
                 referenceCurrency: params.reference_currency,
@@ -249,7 +245,7 @@ pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, 
         .collect()
 }
 
-/// `entry x (100 + rate) / 100`, the markup a series seals its floor and call prices at.
+/// `entry x (100 + rate) / 100`, the markup a series seals its call price at.
 pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
     outbe_primitives::markup::marked_up(entry_price, rate)
         .ok_or_else(|| IntexFactoryError::MarkedUpPriceOverflow.into())
@@ -372,7 +368,6 @@ pub fn settle_intex(
 }
 
 fn require_settleable(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Result<()> {
-    // The call check is one read; the qualification walk goes last.
     match series.lifecycle_state()? {
         IntexState::Called => {
             let now = storage.timestamp()?.to::<u64>();
@@ -383,7 +378,7 @@ fn require_settleable(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Res
             }
             Ok(())
         }
-        IntexState::Issued if outbe_intex::api::is_qualified(storage, series)? => Ok(()),
+        IntexState::Issued => Ok(()),
         _ => Err(IntexFactoryError::NotSettleable(series.state).into()),
     }
 }

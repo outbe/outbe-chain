@@ -30,7 +30,6 @@ library CreateSeriesLib {
             issuedUnits: issuedUnits,
             promisLoadMinor: 100_000 * 1e6,
             entryPriceMinor: 1e6,
-            floorPriceMinor: 100,
             callPriceMinor: 200,
             callTrigger: IIntexNFT1155.IntexCallTrigger({
                 callWindow: 0, callThreshold: 0, callNoticePeriod: callNoticePeriod

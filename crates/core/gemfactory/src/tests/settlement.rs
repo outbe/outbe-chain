@@ -380,7 +380,6 @@ fn sending_rejects_a_series_whose_reference_currency_is_unregistered() {
                 issued_units: SENT_UNITS as u32,
                 promis_load_minor: six_decimal_u128(),
                 entry_price_minor: six_decimal_unit(),
-                floor_price_minor: six_decimal_unit(),
                 call_price_minor: U256::ZERO,
                 call_trigger: outbe_intex::IntexCallTrigger::default(),
                 issued_at: T_NOW as u32,

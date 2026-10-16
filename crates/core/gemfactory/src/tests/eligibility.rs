@@ -5,12 +5,7 @@ fn a_position_reports_its_full_terms() {
     with_storage(
         Some(U256::from(2u64) * six_decimal_unit()),
         |storage, _world| {
-            let id = seed_and_send(
-                storage,
-                six_decimal_unit(),
-                six_decimal_unit(),
-                six_decimal_u128(),
-            );
+            let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
             let data = runtime::position_data(storage, id).unwrap();
             assert_eq!(data.merchant, ALICE);
             assert_eq!(data.sourceEntryPriceMinor, six_decimal_unit());

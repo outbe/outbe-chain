@@ -93,7 +93,7 @@ contract IntexAuctionBondTest is Test {
         return IIntexAuction.AuctionParams({
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: 1,
-            prices: ReferenceCurrencyPriceLib.onePriced(840, ENTRY_PRICE, 100, 200),
+            prices: ReferenceCurrencyPriceLib.onePriced(840, ENTRY_PRICE, 200),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: 1,
             commitBondMinor: bond

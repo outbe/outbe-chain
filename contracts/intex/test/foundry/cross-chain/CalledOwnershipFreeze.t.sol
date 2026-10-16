@@ -89,6 +89,6 @@ contract CalledOwnershipFreezeTest is CrossChainTest {
             })
         );
 
-        assertEq(intex.balanceOf(owner, openTokenId), 3, "qualified stays freely bridgeable");
+        assertEq(intex.balanceOf(owner, openTokenId), 3, "an uncalled series stays freely bridgeable");
     }
 }

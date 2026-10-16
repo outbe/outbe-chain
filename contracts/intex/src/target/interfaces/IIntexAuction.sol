@@ -66,11 +66,10 @@ interface IIntexAuction {
         uint32 callNoticePeriod;
     }
 
-    /// @notice Entry, floor and call price of one reference currency for a day.
+    /// @notice Entry and call price of one reference currency for a day.
     struct ReferenceCurrencyPrice {
         uint16 isoCode;
         uint64 entryPriceMinor;
-        uint64 floorPriceMinor;
         uint64 callPriceMinor;
     }
 

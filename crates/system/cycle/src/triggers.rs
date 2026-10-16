@@ -30,6 +30,7 @@ pub enum TriggerId {
     NodCallDaily = 8,
     GemPositionDaily = 9,
     IntexDrainParked = 10,
+    /// Reserved historical identifier. No active trigger uses it.
     IntexVwapPush = 11,
 }
 
@@ -81,7 +82,6 @@ pub enum TriggerHandler {
     NodCallDaily,
     GemPositionDaily,
     IntexDrainParked,
-    IntexVwapPush,
 }
 
 impl TriggerHandler {
@@ -101,7 +101,6 @@ impl TriggerHandler {
             Self::NodCallDaily => outbe_nodfactory::called::run_daily(ctx),
             Self::GemPositionDaily => outbe_gemfactory::positions_expired::run_daily(ctx),
             Self::IntexDrainParked => outbe_intexfactory::parked::drain(ctx),
-            Self::IntexVwapPush => outbe_intexfactory::vwap_push::run(ctx),
         }
     }
 }
@@ -134,18 +133,12 @@ const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 600;
 #[cfg(feature = "e2e-test")]
 const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 30;
 
-/// A day finalizes once, so an hourly poll catches it soon after. E2e seeds days minutes apart.
-#[cfg(not(feature = "e2e-test"))]
-const INTEX_VWAP_PUSH_PERIOD_SECONDS: u64 = 3_600;
-#[cfg(feature = "e2e-test")]
-const INTEX_VWAP_PUSH_PERIOD_SECONDS: u64 = 60;
-
 /// Active trigger table in permanent numeric-id order.
 /// The dispatcher walks this array in order inside one block.
 /// The first handler error stops the walk.
 /// AuctionAdvance must stay after ProtocolCycle.
 /// Same-slot brief and auction order depends on that sequence.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 10] {
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 9] {
     [
         TriggerSpec {
             id: TriggerId::ProtocolCycle.as_u32(),
@@ -264,22 +257,10 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             coalesces_backlog: true,
             handler: TriggerHandler::IntexDrainParked,
         },
-        TriggerSpec {
-            id: TriggerId::IntexVwapPush.as_u32(),
-            label: "intex_vwap_push",
-            period_seconds: INTEX_VWAP_PUSH_PERIOD_SECONDS,
-            start_offset_seconds: 0,
-            // Reads finalized oracle days. It has no dependency on the parent block's
-            // accounting.
-            requires_accounting_window: false,
-            // The handler resumes from the last day it sent, so a gap collapses to one firing.
-            coalesces_backlog: true,
-            handler: TriggerHandler::IntexVwapPush,
-        },
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 10] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 9] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
@@ -365,13 +346,6 @@ mod protocol_parameter_tests {
         assert!(matches!(
             configured[8].handler,
             TriggerHandler::IntexDrainParked
-        ));
-
-        assert_eq!(configured[9].period_seconds, INTEX_VWAP_PUSH_PERIOD_SECONDS);
-        assert_eq!(configured[9].id, TriggerId::IntexVwapPush.as_u32());
-        assert!(matches!(
-            configured[9].handler,
-            TriggerHandler::IntexVwapPush
         ));
 
         let defaults =

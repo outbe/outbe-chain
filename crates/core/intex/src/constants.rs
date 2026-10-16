@@ -3,8 +3,6 @@
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::units::SCALE_1E18_U128;
 
-/// Floor price = entry * 1.08.
-pub const FLOOR_RATE_PCT: u16 = 8;
 /// Call price = entry * 2.28; its breach arms a Call Event.
 pub const CALL_RATE_PCT: u16 = 128;
 
