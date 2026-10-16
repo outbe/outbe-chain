@@ -51,6 +51,12 @@ fn pow10(exponent: u32) -> U256 {
     U256::from(10u64).pow(U256::from(exponent))
 }
 
+/// The last second a called right may still be settled: `called_at` plus its notice period.
+#[must_use]
+pub fn settlement_deadline_of(called_at: u64, notice_period: u32) -> u64 {
+    called_at.saturating_add(u64::from(notice_period))
+}
+
 /// Who pays a settlement, in which asset, and against which VWAP snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SettlementPayment {

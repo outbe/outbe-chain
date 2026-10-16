@@ -369,9 +369,7 @@ fn require_settleable(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Res
     match series.lifecycle_state()? {
         IntexState::Called => {
             let now = storage.timestamp()?.to::<u64>();
-            let deadline =
-                u64::from(series.called_at) + u64::from(series.call_notice_period_seconds);
-            if now > deadline {
+            if now > series.settlement_deadline() {
                 return Err(IntexFactoryError::DeadlineExpired.into());
             }
             Ok(())

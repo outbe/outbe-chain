@@ -103,7 +103,7 @@ fn to_abi_data(
         settlementDeadline: if r.called_at == 0 {
             0
         } else {
-            u64::from(r.called_at) + u64::from(r.call_notice_period_seconds)
+            r.settlement_deadline()
         },
     })
 }
