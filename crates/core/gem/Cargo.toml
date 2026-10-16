@@ -10,7 +10,6 @@ outbe-common.workspace = true
 outbe-macros.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-primitives.workspace = true
-outbe-oracle = { path = "../../system/oracle" }
 outbe-offchain-storage.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-sol-types.workspace = true

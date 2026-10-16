@@ -16,7 +16,7 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
-use outbe_primitives::time::{first_full_day, previous_date_key, timestamp_to_date_key};
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use outbe_gem::api;
 use outbe_gem::precompile::IGem;
@@ -32,9 +32,6 @@ pub(crate) const ALICE: Address = address!("0x1111111111111111111111111111111111
 pub(crate) const BOB: Address = address!("0x2222222222222222222222222222222222222222");
 pub(crate) const USD: u16 = 840;
 pub(crate) const EUR: u16 = 978;
-
-/// Two days after the sample gems were issued: the day before it they held in full.
-pub(crate) const QUALIFY_TS: u64 = T_NOW + 2 * SECONDS_PER_DAY;
 
 /// One block's worth of compressed-entity authority: the executor scope and the
 /// finalized parent bodies. Tests never cross a block, so the overlay is the truth.
@@ -66,10 +63,9 @@ pub(crate) fn with_storage<R>(f: impl FnOnce(&StorageHandle, &World) -> R) -> R 
 pub(crate) fn sample_params(owner: Address) -> GemAddParams {
     GemAddParams {
         owner,
-        gem_type: 2, // SRA
+        gem_type: 1, // SRA
         promis_load_minor: U256::from(1_000_000u64),
         entry_price_minor: U256::from(500_000u64),
-        floor_price_minor: U256::from(540_000u64),
         issuance_currency: USD,
         reference_currency: USD,
         issued_at: T_NOW,
@@ -128,8 +124,8 @@ pub(crate) fn call_gem(storage: &StorageHandle, world: &World, gem_id: U256, at:
     crate::called::mark_called(&mut gem, bucket, &terms, at).unwrap();
 }
 
-/// Settles a gem the way the factory does once payment is accepted: a called gem
-/// before its deadline, or a qualified one.
+/// Settles a gem the way the factory does once payment is accepted: an uncalled gem,
+/// or a called one before its deadline.
 pub(crate) fn settle(storage: &StorageHandle, world: &World, gem_id: U256) {
     try_settle(storage, world, gem_id).unwrap();
 }
@@ -141,25 +137,8 @@ pub(crate) fn try_settle(storage: &StorageHandle, world: &World, gem_id: U256) -
     api::record_settled(storage, &world.scope, item, bucket)
 }
 
-/// Qualifies then settles an uncalled gem.
-pub(crate) fn qualify_and_settle(storage: &StorageHandle, world: &World, gem_id: U256) {
-    let gem = item(storage, world, gem_id).unwrap();
-    close_day_above(
-        storage,
-        gem.reference_currency,
-        gem.floor_price_minor,
-        first_full_day(gem.issued_at),
-    );
-    settle(storage, world, gem_id);
-}
-
 pub(crate) fn burn_settled(storage: &StorageHandle, world: &World, gem_id: U256) {
     crate::runtime::burn_settled(storage, &world.scope, &world.parent, gem_id).unwrap();
-}
-
-/// Whether the gem has qualified, as settlement and the view read it.
-pub(crate) fn is_qualified(storage: &StorageHandle, world: &World, gem_id: U256) -> bool {
-    api::is_qualified(storage, &item(storage, world, gem_id).unwrap()).unwrap()
 }
 
 pub(crate) fn unallocated(storage: &StorageHandle) -> U256 {
@@ -176,46 +155,6 @@ pub(crate) fn set_profile(storage: &StorageHandle, profile: u8) {
 }
 
 // --- Oracle ---------------------------------------------------------------------
-
-/// Closes the day before `QUALIFY_TS` at `vwap` for the pair at `index`.
-pub(crate) fn close_day(storage: &StorageHandle, index: u32, vwap: U256) {
-    let oracle = OracleContract::new(storage.clone());
-    let day = previous_date_key(timestamp_to_date_key(QUALIFY_TS));
-    oracle.record_utc_day_vwap(day, index, vwap).unwrap();
-    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
-        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
-    }
-}
-
-/// Lists `iso_code` and, given a price, registers its pair and closes the day at it.
-pub(crate) fn seed_day_price(storage: &StorageHandle, iso_code: u16, vwap: Option<U256>) -> u32 {
-    let oracle = OracleContract::new(storage.clone());
-    oracle.reference_currencies.push(iso_code).unwrap();
-    let Some(vwap) = vwap else {
-        return 0;
-    };
-    let index =
-        outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(iso_code))
-            .unwrap();
-    close_day(storage, index, vwap);
-    index
-}
-
-/// Closes `day` just above `floor` on `COEN/<iso>`, registering the pair on first use.
-pub(crate) fn close_day_above(storage: &StorageHandle, iso: u16, floor: U256, day: u32) {
-    let pair = AddressPair::new_coen_to(iso);
-    let oracle = OracleContract::new(storage.clone());
-    let mut index = oracle.pair_index_of(pair).unwrap();
-    if index == 0 {
-        index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
-    }
-    oracle
-        .record_utc_day_vwap(day, index, floor + U256::from(1))
-        .unwrap();
-    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
-        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
-    }
-}
 
 /// Registers `iso_code` as a reference currency, and its `COEN/<iso>` pair when
 /// `rate` is given. Returns the pair index, or 0 when no pair was registered.

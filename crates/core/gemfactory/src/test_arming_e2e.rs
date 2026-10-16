@@ -54,14 +54,14 @@ fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<Bytes>) ->
     hook()
 }
 
-/// Issues a gem and settles it at once, skipping qualification.
+/// Issues a gem and settles it at once, skipping the payment.
 fn issue_settled(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     call: IGemFactoryTestArming::issueSettledGemForTestCall,
 ) -> Result<U256> {
-    // One six-decimal unit: a positive entry price with a floor that never blocks.
+    // One six-decimal unit: a positive entry price.
     let unit = U256::from(1_000_000u64);
     let gem_id = crate::runtime::add_gem(
         storage,
@@ -72,7 +72,6 @@ fn issue_settled(
             gem_type: crate::schema::GemTypes::Wallet as u8,
             promis_load_minor: call.promisLoadMinor,
             entry_price_minor: unit,
-            floor_price_minor: unit,
             issuance_currency: call.currency,
             reference_currency: call.currency,
             issued_at: storage.timestamp()?.to::<u64>(),

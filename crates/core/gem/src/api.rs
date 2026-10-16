@@ -6,7 +6,7 @@ use outbe_compressed_entities::{
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{first_full_day, timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::{timestamp_to_date_key, WorldwideDay};
 
 use crate::schema::{
     CallTerms, GemAddParams, GemBucketState, GemContract, GemItemState, GemState, GemView,
@@ -67,7 +67,6 @@ pub fn add_gem(
         owner: params.owner,
         gem_type: params.gem_type,
         promis_load_minor: params.promis_load_minor,
-        floor_price_minor: params.floor_price_minor,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
         issued_at: params.issued_at,
@@ -214,17 +213,6 @@ pub fn list_by_owner(
     owner: Address,
 ) -> Result<Vec<GemItemState>> {
     GemContract::new(storage.clone()).read_all_by_owner(scope, parent, owner)
-}
-
-/// A gem is qualified once a finalized daily VWAP closed above its own floor. A zero
-/// floor clears on the first eligible full day, because every positive price exceeds it.
-pub fn is_qualified(storage: &StorageHandle<'_>, item: &GemItemState) -> Result<bool> {
-    outbe_oracle::api::closed_above_floor(
-        storage.clone(),
-        item.reference_currency,
-        item.floor_price_minor,
-        first_full_day(item.issued_at),
-    )
 }
 
 /// Timestamp by which a called bucket must be settled, or `0` while it is not called.

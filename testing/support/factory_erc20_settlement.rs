@@ -58,7 +58,7 @@ pub trait Rail: Copy + Debug + Sized {
     /// Addresses besides the token and vault that run the settlement fixture.
     const EXTRA_COUNTERPARTIES: &'static [Address] = &[];
 
-    /// Issues and qualifies the entity `OWNER` settles. Returns its id and settlement deadline.
+    /// Issues the entity `OWNER` settles. Returns its id and settlement deadline.
     fn seed(
         self,
         storage: &StorageHandle<'_>,

@@ -19,7 +19,6 @@ fn item(owner: Address, shard: u8) -> GemItemState {
         owner,
         gem_type: 1,
         promis_load_minor: U256::from(11_u64),
-        floor_price_minor: U256::from(5_u64),
         issuance_currency: 840,
         reference_currency: 840,
         issued_at: 1_752_534_000,

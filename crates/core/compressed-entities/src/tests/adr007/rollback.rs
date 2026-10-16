@@ -216,7 +216,7 @@ fn every_mutation_write_and_event_boundary_rolls_back_for_all_typed_collections(
         (
             FixtureBody::Gem(super::gem_ce::gem()),
             FixtureBody::Gem(crate::GemBodyV1 {
-                state: 3,
+                state: 2,
                 called_at: 8,
                 settled_at: 9,
                 ..super::gem_ce::gem()

@@ -418,12 +418,11 @@ fn offline_audit_covers_gem_items_and_buckets() {
         owner: Address::repeat_byte(0x72),
         gem_type: 0,
         promis_load_minor: U256::from(1),
-        floor_price_minor: U256::from(2),
         issuance_currency: 840,
         reference_currency: 840,
         issued_at: 123,
         bucket_key: bucket.bucket_key,
-        state: 3,
+        state: 2,
         called_at: 124,
         settled_at: 125,
     };

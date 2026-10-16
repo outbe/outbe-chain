@@ -4,7 +4,6 @@ use outbe_gemfactory::GemTypes;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::time::date_key_to_utc_timestamp;
 
 use crate::test_support::{
     block_ctx, bootstrap_genesis, meta_with_hash, record_genesis_day_parent,
@@ -198,18 +197,10 @@ fn prepare_daily_validator_gem_batch_stores_exact_shares_without_minting() {
 }
 
 #[test]
-fn prepared_reward_gem_batch_freezes_reward_utc_day_type_for_delivery() {
+fn every_reward_day_delivers_issued_validator_gems() {
     with_genesis_block(|ctx| {
         let world = open_gems(&ctx);
         seed_oracle(&ctx, U256::from(2u64) * one_coen840());
-        // The bootstrap closes as the first rewarded day does, so that day is
-        // still Genesis and the next one is not.
-        outbe_metadosis::test_support::seed_bootstrap_end_time(
-            ctx.storage.clone(),
-            date_key_to_utc_timestamp(20240102),
-        )
-        .unwrap();
-
         prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(50u64), &[(VAL_X, 1)])
             .unwrap();
         prepare_daily_validator_gem_batch(&ctx, 20240201, U256::from(70u64), &[(VAL_Y, 1)])
@@ -232,20 +223,11 @@ fn prepared_reward_gem_batch_freezes_reward_utc_day_type_for_delivery() {
             }
         ));
 
-        let x_item = sole_gem(&ctx, &world, VAL_X);
-        assert_eq!(x_item.gem_type, GemTypes::Genesis as u8);
-        assert!(
-            x_item.floor_price_minor.is_zero(),
-            "Genesis gem carries no floor"
-        );
-
-        let y_item = sole_gem(&ctx, &world, VAL_Y);
-        assert_eq!(y_item.gem_type, GemTypes::Validator as u8);
-        assert_eq!(
-            y_item.state,
-            outbe_gem::GemState::Issued as u8,
-            "Post-genesis Validator gem is born Issued"
-        );
+        for validator in [VAL_X, VAL_Y] {
+            let item = sole_gem(&ctx, &world, validator);
+            assert_eq!(item.gem_type, GemTypes::Validator as u8);
+            assert_eq!(item.state, outbe_gem::GemState::Issued as u8);
+        }
     });
 }
 

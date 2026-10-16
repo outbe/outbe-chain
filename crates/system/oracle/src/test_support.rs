@@ -69,9 +69,9 @@ pub fn record_finalized_day_vwap(
     Ok(())
 }
 
-/// Registers COEN/`iso`. Then writes one observation just before the current
-/// snapshot cutoff: COEN at `usd_vwap` against ISO 840 and at `iso_vwap`
-/// against `iso`, each with unit volume.
+/// Registers COEN/840 when absent and COEN/`iso`. Then writes one observation just
+/// before the current snapshot cutoff: COEN at `usd_vwap` against ISO 840 and at
+/// `iso_vwap` against `iso`, each with unit volume.
 pub fn seed_trailing_vwap_window(
     storage: &StorageHandle<'_>,
     iso: u16,
@@ -80,6 +80,9 @@ pub fn seed_trailing_vwap_window(
 ) -> Result<()> {
     let usd = AddressPair::new_coen_to(840);
     let other = AddressPair::new_coen_to(iso);
+    if OracleContract::new(storage.clone()).pair_index_of(usd)? == 0 {
+        register_pair(storage.clone(), usd)?;
+    }
     register_pair(storage.clone(), other)?;
     let snapshot = current_vwap_snapshot(storage.clone())?;
     let volume = U256::from(1_000_000);

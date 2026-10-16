@@ -10,7 +10,6 @@ pub(super) fn gem() -> GemBodyV1 {
         owner: Address::repeat_byte(0x22),
         gem_type: 2,
         promis_load_minor: U256::from(11),
-        floor_price_minor: U256::from(12),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 123,
@@ -32,6 +31,20 @@ pub(super) fn bucket() -> GemBucketBodyV1 {
 }
 
 #[test]
+fn a_gem_body_carrying_the_retired_floor_field_is_rejected() {
+    let mut payload = encode_gem_v1(&gem()).unwrap();
+    // Fields 1-4: the id, owner, type and load, then the retired field 5 in its place.
+    let at = 34 + 22 + 2 + 34;
+    let mut floor = vec![0x2a, 0x20];
+    floor.extend_from_slice(&U256::from(12).to_be_bytes::<32>());
+    payload.splice(at..at, floor);
+    assert!(matches!(
+        decode_gem_v1(&payload),
+        Err(CanonicalBodyError::UnknownField { field: 5 })
+    ));
+}
+
+#[test]
 fn gem_and_bucket_encode_one_canonical_protobuf_and_reject_schema_2() {
     let item = gem();
     let group = bucket();
@@ -48,7 +61,6 @@ fn gem_and_bucket_encode_one_canonical_protobuf_and_reject_schema_2() {
             "0a20ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
             "121422222222222222222222222222222222222222221802",
             "2220000000000000000000000000000000000000000000000000000000000000000b",
-            "2a20000000000000000000000000000000000000000000000000000000000000000c",
             "30c80638d207407b4a203333333333333333333333333333333333333333333333333333333333333333"
         )
     );
@@ -87,7 +99,7 @@ fn gem_and_bucket_encode_one_canonical_protobuf_and_reject_schema_2() {
     invalid.state = 1;
     assert!(encode_gem_v1(&invalid).is_err());
     let mut settled = item;
-    settled.state = 3;
+    settled.state = 2;
     settled.called_at = 456;
     settled.settled_at = 789;
     assert_eq!(

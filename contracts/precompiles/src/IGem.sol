@@ -28,12 +28,11 @@ interface IGem {
         uint256 gemId;
         address owner;
         uint8 gemType;
-        /// Read-time state: 0 Issued, 1 Qualified (derived), 2 Called, 3 Settled,
-        /// 4 Forfeited (a Called gem past its notice period, until the sweep burns it).
+        /// Read-time state: 0 Issued, 1 Called, 2 Settled,
+        /// 3 Forfeited (a Called gem past its notice period, until the sweep burns it).
         uint8 state;
         uint256 promisLoadMinor;
         uint256 entryPriceMinor;
-        uint256 floorPriceMinor;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint64 issuedAt;
@@ -74,8 +73,6 @@ interface IGem {
 
     // outbe-specific views
     function getGem(uint256 gemId) external view returns (GemData memory);
-    /// @notice Born Qualified (Genesis), or derived from finalized daily VWAPs. Never stored.
-    function isQualified(uint256 gemId) external view returns (bool);
 
     // --- Events ---
     /// @notice Emitted when a gem is issued and when it is burned by forfeit or mining.

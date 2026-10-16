@@ -8836,7 +8836,6 @@ dependencies = [
  "outbe-compressed-entities",
  "outbe-macros",
  "outbe-offchain-storage",
- "outbe-oracle",
  "outbe-primitives",
  "serde",
  "serde_json",

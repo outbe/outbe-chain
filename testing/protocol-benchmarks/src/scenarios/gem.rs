@@ -73,7 +73,6 @@ pub struct PreparedGem {
 
 fn branch_name(gem_type: GemTypes) -> &'static str {
     match gem_type {
-        GemTypes::Genesis => "genesis",
         GemTypes::Validator => "validator",
         GemTypes::Sra => "sra",
         GemTypes::Wallet => "wallet",

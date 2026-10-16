@@ -240,10 +240,6 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
             U256::from(20u64) * six_decimal_unit()
         ); // entry * load
         assert_eq!(
-            item.item.floor_price_minor,
-            rate * U256::from(108u64) / U256::from(100u64)
-        );
-        assert_eq!(
             item.terms.call_price_minor,
             rate * U256::from(228u64) / U256::from(100u64)
         );
@@ -256,14 +252,13 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
 }
 
 #[test]
-fn issue_merchant_gem_anchors_entry_and_floor_to_source() {
+fn issue_merchant_gem_anchors_entry_to_source() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage, world| {
         seed_day_vwap(storage, 840, rate);
-        // source entry above coen, source floor above 1.08 * entry -> both dominate.
+        // source entry above coen -> it dominates.
         let source_entry = U256::from(3u64) * six_decimal_unit();
-        let source_floor = U256::from(5u64) * six_decimal_unit();
-        let id = seed_and_send(storage, source_entry, source_floor, six_decimal_u128());
+        let id = seed_and_send(storage, source_entry, source_entry, six_decimal_u128());
 
         let gem_id = runtime::issue_merchant_gem(
             storage,
@@ -279,7 +274,6 @@ fn issue_merchant_gem_anchors_entry_and_floor_to_source() {
         .unwrap();
         let item = gem_view(storage, world, gem_id);
         assert_eq!(item.bucket.entry_price_minor, source_entry);
-        assert_eq!(item.item.floor_price_minor, source_floor);
     });
 }
 
@@ -372,7 +366,6 @@ fn issue_merchant_gem_after_expiry_rejects() {
                 source_intex_id: source_intex_id(),
                 remaining_capacity_minor: U256::from(100u64) * six_decimal_unit(),
                 source_entry_price_minor: six_decimal_unit(),
-                source_floor_price_minor: six_decimal_unit(),
                 issuance_currency: 840,
                 reference_currency: 840,
                 issued_at: T_NOW - POSITION_VALIDITY_SECONDS - 1,
@@ -481,10 +474,6 @@ fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
         let item = gem_view(storage, world, gem_id);
         assert_eq!(item.bucket.entry_price_minor, vwap);
         assert_eq!(
-            item.item.floor_price_minor,
-            vwap * U256::from(108u64) / U256::from(100u64)
-        );
-        assert_eq!(
             item.terms.call_price_minor,
             vwap * U256::from(228u64) / U256::from(100u64)
         );
@@ -541,33 +530,23 @@ fn issue_merchant_gem_source_entry_dominates_the_market_price() {
     });
 }
 
-/// Entry and floor are two independent maxima against the source terms. A tie takes the shared
-/// value. The floor can come from the source while the entry comes from the market.
+/// The entry is the higher of the market and the source entry. A tie takes the shared value.
 #[test]
-fn issue_merchant_gem_takes_each_maximum_independently() {
+fn issue_merchant_gem_takes_the_higher_entry() {
     let unit = six_decimal_unit();
     let rate = U256::from(2u64) * unit;
-    let markup = |entry: U256| entry * U256::from(108u64) / U256::from(100u64);
-    // (day VWAP, source entry, source floor, expected entry, expected floor)
-    for (vwap, source_entry, source_floor, entry, floor) in [
+    // (day VWAP, source entry, expected entry)
+    for (vwap, source_entry, entry) in [
         (
             U256::from(5u64) * unit,
             U256::from(5u64) * unit,
-            markup(U256::from(5u64) * unit),
             U256::from(5u64) * unit,
-            markup(U256::from(5u64) * unit),
         ),
-        (
-            U256::from(4u64) * unit,
-            unit,
-            U256::from(6u64) * unit,
-            U256::from(4u64) * unit,
-            U256::from(6u64) * unit,
-        ),
+        (U256::from(4u64) * unit, unit, U256::from(4u64) * unit),
     ] {
         with_storage(Some(rate), |storage, world| {
             seed_day_vwap(storage, 840, vwap);
-            let id = seed_and_send(storage, source_entry, source_floor, six_decimal_u128());
+            let id = seed_and_send(storage, source_entry, source_entry, six_decimal_u128());
             let gem_id = runtime::issue_merchant_gem(
                 storage,
                 &world.scope,
@@ -582,23 +561,21 @@ fn issue_merchant_gem_takes_each_maximum_independently() {
             .unwrap();
             let item = gem_view(storage, world, gem_id);
             assert_eq!(item.bucket.entry_price_minor, entry);
-            assert_eq!(item.item.floor_price_minor, floor);
         });
     }
 }
 
-/// Every Genesis gem carries a zero floor whatever its entry, and keeps its cost and call terms.
+/// An agent gem prices its cost and call from the entry at every rate.
 #[test]
-fn a_genesis_floor_is_zero_at_every_entry_price() {
+fn an_agent_gem_prices_cost_and_call_from_the_entry_at_every_rate() {
     let unit = six_decimal_unit();
     let load = U256::from(10u64) * unit;
     for rate in [unit, U256::from(2u64) * unit, U256::from(7u64) * unit] {
         with_storage(Some(rate), |storage, world| {
             let gem_id =
-                issue_at_live_rate(storage, world, ALICE, GemTypes::Genesis, load, 840, 840)
+                issue_at_live_rate(storage, world, ALICE, GemTypes::Validator, load, 840, 840)
                     .unwrap();
             let item = gem_view(storage, world, gem_id);
-            assert_eq!(item.item.floor_price_minor, U256::ZERO);
             assert_eq!(item.bucket.entry_price_minor, rate);
             assert_eq!(
                 item.terms.call_price_minor,

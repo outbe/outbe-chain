@@ -44,6 +44,10 @@ pub fn issue_gem(
     if promis_load.is_zero() {
         return Err(GemFactoryError::ZeroPromisLoad.into());
     }
+    // Merchant gems draw on a GemPosition, not this agent-class path.
+    if gem_type == GemTypes::Merchant {
+        return Err(GemFactoryError::UnsupportedGemType.into());
+    }
 
     // The owner's own label: only its range is checked, as the auction checks a bid's.
     if issuance_currency == 0 || issuance_currency > 999 {
@@ -56,15 +60,11 @@ pub fn issue_gem(
 
     // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.timestamp()?.to::<u64>();
-    let terms = outbe_gem::config::read(storage)?;
-    let floor_price = compute_floor(gem_type, entry_price, &terms)?;
-
     let params = GemAddParams {
         owner,
         gem_type: gem_type as u8,
         promis_load_minor: promis_load,
         entry_price_minor: entry_price,
-        floor_price_minor: floor_price,
         issuance_currency,
         reference_currency,
         issued_at,
@@ -85,7 +85,6 @@ pub fn issue_gem(
 }
 
 /// Issues a gem on the live profile: the bucket it opens seals the profile's call terms.
-/// Only the genesis type is issued without a floor.
 pub(crate) fn add_gem(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -94,9 +93,6 @@ pub(crate) fn add_gem(
 ) -> Result<U256> {
     if params.owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
-    }
-    if params.floor_price_minor.is_zero() && params.gem_type != outbe_gem::GENESIS_GEM_TYPE {
-        return Err(GemFactoryError::ZeroFloorPrice.into());
     }
     params.call_terms = derived_call_terms(
         params.entry_price_minor,
@@ -149,7 +145,6 @@ fn emit_gem_issued(
             owner: gem.item.owner,
             promisLoadMinor: gem.item.promis_load_minor,
             entryPriceMinor: gem.bucket.entry_price_minor,
-            floorPriceMinor: gem.item.floor_price_minor,
             issuanceCurrency: gem.item.issuance_currency,
             referenceCurrency: gem.item.reference_currency,
             issuedAt: gem.item.issued_at,
@@ -174,7 +169,7 @@ fn load_view(
 }
 
 /// Issue a GemPosition NFT from the merchant's selected `units` of Issued Intex.
-/// The merchant can transfer a partial holding. The position pins the source entry and floor.
+/// The merchant can transfer a partial holding. The position pins the source entry.
 /// Its Promis capacity equals the source load times the burned units.
 /// Return the issued `position_id`.
 pub fn issue_gem_position(
@@ -227,7 +222,6 @@ pub fn issue_gem_position(
         source_intex_id,
         remaining_capacity_minor: capacity,
         source_entry_price_minor: series.entry_price_minor,
-        source_floor_price_minor: series.floor_price_minor,
         issuance_currency: series.issuance_currency,
         reference_currency: series.reference_currency,
         issued_at,
@@ -251,7 +245,6 @@ pub fn issue_gem_position(
             sourceIntexId: source_intex_id.into(),
             capacityMinor: capacity,
             sourceEntryPriceMinor: position.source_entry_price_minor,
-            sourceFloorPriceMinor: position.source_floor_price_minor,
             issuanceCurrency: position.issuance_currency,
             referenceCurrency: position.reference_currency,
             issuedAt: issued_at,
@@ -324,12 +317,9 @@ pub fn issue_merchant_gem(
         .checked_sub(promis_load)
         .ok_or(GemFactoryError::InsufficientCapacity)?;
 
-    // Both maxima are an anti-dilution floor, not a price: never below the source Intex.
+    // An anti-dilution bound, not a price: never below the source Intex.
     let market_price = read_market_price(storage, record.reference_currency, now)?;
     let entry_price = market_price.max(record.source_entry_price_minor);
-    let terms = outbe_gem::config::read(storage)?;
-    let floor_price =
-        derived_floor(entry_price, terms.floor_rate)?.max(record.source_floor_price_minor);
 
     let gem_id = add_gem(
         storage,
@@ -340,7 +330,6 @@ pub fn issue_merchant_gem(
             gem_type: GemTypes::Merchant as u8,
             promis_load_minor: promis_load,
             entry_price_minor: entry_price,
-            floor_price_minor: floor_price,
             issuance_currency: record.issuance_currency,
             reference_currency: record.reference_currency,
             issued_at: now,
@@ -412,18 +401,13 @@ pub fn settle_gem(
     })
 }
 
-/// A gem the owner may pay for: a called one until its deadline, an uncalled one once
-/// qualified. The qualification walk goes last.
+/// A gem the owner may pay for: an uncalled one, or a called one until its deadline.
 pub(crate) fn require_settleable(storage: &StorageHandle<'_>, gem: &GemView) -> Result<()> {
     if gem.item.is_settled() {
         return Err(GemFactoryError::InvalidState.into());
     }
-    if gem.bucket_called_at != 0 {
-        if storage.timestamp()?.to::<u64>() > gem.settlement_deadline() {
-            return Err(GemFactoryError::DeadlineExpired.into());
-        }
-    } else if !gem_api::is_qualified(storage, &gem.item)? {
-        return Err(GemFactoryError::InvalidState.into());
+    if gem.bucket_called_at != 0 && storage.timestamp()?.to::<u64>() > gem.settlement_deadline() {
+        return Err(GemFactoryError::DeadlineExpired.into());
     }
     Ok(())
 }
@@ -518,7 +502,6 @@ pub fn position_data(
         sourceIntexId: record.source_intex_id.into(),
         remainingCapacityMinor: record.remaining_capacity_minor,
         sourceEntryPriceMinor: record.source_entry_price_minor,
-        sourceFloorPriceMinor: record.source_floor_price_minor,
         issuanceCurrency: record.issuance_currency,
         referenceCurrency: record.reference_currency,
         issuedAt: record.issued_at,
@@ -571,29 +554,6 @@ fn read_market_price(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Re
     let day = previous_date_key(timestamp_to_date_key(now));
     get_utc_day_vwap_for_iso(storage.clone(), day, iso_code)?
         .ok_or_else(|| GemFactoryError::OracleUnavailable.into())
-}
-
-fn compute_floor(
-    gem_type: GemTypes,
-    coen_rate: U256,
-    terms: &outbe_gem::GemParams,
-) -> Result<U256> {
-    let floor_price = match gem_type {
-        // A zero floor clears at any price on the gem's first full day.
-        GemTypes::Genesis => U256::ZERO,
-        // Every other agent class: floor = rate x 1.08.
-        GemTypes::Sra | GemTypes::Validator | GemTypes::Wallet | GemTypes::Cca => {
-            derived_floor(coen_rate, terms.floor_rate)?
-        }
-        // `issue_merchant_gem` issues Merchant gems against a GemPosition,
-        // not this agent-class path.
-        GemTypes::Merchant => return Err(GemFactoryError::UnsupportedGemType.into()),
-    };
-    Ok(floor_price)
-}
-
-fn derived_floor(entry_price: U256, floor_rate: u16) -> Result<U256> {
-    marked_up(entry_price, floor_rate).ok_or_else(|| GemFactoryError::Overflow.into())
 }
 
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {

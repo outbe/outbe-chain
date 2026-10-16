@@ -1,17 +1,16 @@
 use super::*;
 
 #[test]
-fn mine_promis_full_genesis_flow() {
+fn mine_promis_full_flow() {
     outbe_promis::enclave_client::test_enclave::install();
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage, world| {
         let load = U256::from(10u64) * six_decimal_unit();
-        // Genesis carries no floor. The paid settle deposits into the Reserve
-        // vault, which this storage-only harness cannot service. `force_settled`
-        // records Settled through `gem_api::settle_gem` after a qualifying day
-        // and does not deposit. Localnet covers the paid settle.
+        // The paid settle deposits into the Reserve vault, which this storage-only
+        // harness cannot service. `force_settled` records Settled through
+        // `gem_api::settle_gem` and does not deposit. Localnet covers the paid settle.
         let gem_id =
-            issue_at_live_rate(storage, world, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
+            issue_at_live_rate(storage, world, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
 
         force_settled(storage, world, gem_id);
         let nonce = find_valid_nonce(gem_id, ALICE);
@@ -75,7 +74,7 @@ fn anyone_may_relay_mining_and_the_promis_lands_with_the_owner() {
     with_storage(Some(rate), |storage, world| {
         let load = U256::from(10u64) * six_decimal_unit();
         let gem_id =
-            issue_at_live_rate(storage, world, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
+            issue_at_live_rate(storage, world, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
         force_settled(storage, world, gem_id);
 
         let nonce = find_valid_nonce(gem_id, ALICE);

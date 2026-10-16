@@ -371,7 +371,7 @@ fn every_typed_collection_obeys_the_complete_same_block_transition_matrix() {
         (
             FixtureBody::Gem(super::gem_ce::gem()),
             FixtureBody::Gem(crate::GemBodyV1 {
-                state: 3,
+                state: 2,
                 called_at: 8,
                 settled_at: 9,
                 ..super::gem_ce::gem()

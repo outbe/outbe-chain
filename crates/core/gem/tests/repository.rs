@@ -35,7 +35,6 @@ fn item(gem_id: WwdEntityId, owner: Address) -> GemItemState {
         owner,
         gem_type: 1,
         promis_load_minor: U256::MAX,
-        floor_price_minor: U256::from(1_u64),
         issuance_currency: 0,
         reference_currency: u16::MAX,
         issued_at: u64::MAX,
@@ -254,7 +253,6 @@ fn canonical_stored_bodies_roundtrip_field_boundaries() {
         owner: Address::ZERO,
         gem_type: 0,
         promis_load_minor: U256::ZERO,
-        floor_price_minor: U256::ZERO,
         issuance_currency: 0,
         reference_currency: 0,
         issued_at: 0,
@@ -268,7 +266,6 @@ fn canonical_stored_bodies_roundtrip_field_boundaries() {
         owner: Address::repeat_byte(u8::MAX),
         gem_type: u8::MAX,
         promis_load_minor: U256::MAX,
-        floor_price_minor: U256::MAX,
         issuance_currency: u16::MAX,
         reference_currency: u16::MAX,
         issued_at: u64::MAX,
@@ -307,7 +304,7 @@ fn canonical_stored_bodies_roundtrip_field_boundaries() {
         Err(GemRepositoryError::CanonicalFieldOutOfRange { field: "gem_type" })
     ));
     wide.gem_type = 2;
-    wide.state = 2;
+    wide.state = outbe_gem::GemState::Called as u32;
     assert!(encode_gem_v1(&wide).is_err());
 }
 

@@ -13,7 +13,6 @@ pub fn item(seed: u8) -> GemBodyV1 {
         owner: Address::repeat_byte(0x41),
         gem_type: 1,
         promis_load_minor: U256::from(100),
-        floor_price_minor: U256::from(2),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 1_752_534_000,

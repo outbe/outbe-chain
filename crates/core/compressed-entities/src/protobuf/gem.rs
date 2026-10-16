@@ -7,7 +7,6 @@ pub struct GemBodyV1 {
     pub owner: Address,
     pub gem_type: u32,
     pub promis_load_minor: U256,
-    pub floor_price_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub issued_at: u64,
@@ -31,7 +30,6 @@ pub fn encode_gem_v1(body: &GemBodyV1) -> Result<Vec<u8>, CanonicalBodyError> {
     encode_bytes_field(2, body.owner.as_slice(), &mut output);
     encode_optional_varint_field(3, u64::from(body.gem_type), &mut output);
     encode_bytes_field(4, &body.promis_load_minor.to_be_bytes::<32>(), &mut output);
-    encode_bytes_field(5, &body.floor_price_minor.to_be_bytes::<32>(), &mut output);
     encode_optional_varint_field(6, u64::from(body.issuance_currency), &mut output);
     encode_optional_varint_field(7, u64::from(body.reference_currency), &mut output);
     encode_optional_varint_field(8, body.issued_at, &mut output);
@@ -48,7 +46,6 @@ pub fn decode_gem_v1(bytes: &[u8]) -> Result<GemBodyV1, CanonicalBodyError> {
     let owner = Address::from(fixed_bytes::<20>(required_bytes(&mut fields, 2)?, 2)?);
     let gem_type = optional_u32(&mut fields, 3)?;
     let promis_load_minor = decode_u256(required_bytes(&mut fields, 4)?, 4)?;
-    let floor_price_minor = decode_u256(required_bytes(&mut fields, 5)?, 5)?;
     let issuance_currency = optional_u16(&mut fields, 6)?;
     let reference_currency = optional_u16(&mut fields, 7)?;
     let issued_at = optional_varint(&mut fields, 8)?;
@@ -62,7 +59,6 @@ pub fn decode_gem_v1(bytes: &[u8]) -> Result<GemBodyV1, CanonicalBodyError> {
         owner,
         gem_type,
         promis_load_minor,
-        floor_price_minor,
         issuance_currency,
         reference_currency,
         issued_at,
@@ -127,7 +123,7 @@ pub fn decode_stored_gem_bucket_v1(bytes: &[u8]) -> Result<GemBucketBodyV1, Cano
 }
 
 fn validate_gem_state(state: u32) -> Result<(), CanonicalBodyError> {
-    if state != 0 && state != 3 {
+    if state != 0 && state != 2 {
         return Err(CanonicalBodyError::IntegerOutOfRange { field: 10 });
     }
     Ok(())

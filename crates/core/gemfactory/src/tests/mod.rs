@@ -235,24 +235,6 @@ fn admitted_at_quote(
     (currency, amount)
 }
 
-/// Close the gem's first full day above its floor, which qualifies it.
-fn seed_qualifying_day(storage: &StorageHandle<'_>, world: &GemWorld, gem_id: U256) {
-    let item = gem_item(storage, world, gem_id);
-    let oracle = OracleContract::new(storage.clone());
-    let pair = oracle
-        .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(
-            item.reference_currency,
-        ))
-        .unwrap();
-    let day = outbe_primitives::time::first_full_day(item.issued_at);
-    oracle
-        .record_utc_day_vwap(day, pair, item.floor_price_minor + U256::ONE)
-        .unwrap();
-    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
-        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
-    }
-}
-
 /// Registers and prices `COEN/<iso>` and adds `iso` to the reference registry.
 /// Registers `COEN/<iso>`, prices it at `rate` both live and for the last closed
 /// day, and adds `iso` to the reference registry.
@@ -279,12 +261,10 @@ fn register_currency(storage: &StorageHandle<'_>, iso: u16, rate: U256) {
 
 // The paid `settle_gem` path (Reserve vault deposit) is not exercisable in the
 // storage-only harness: the stubbed token moves no balance. Mine coverage
-// records Settled through `gem_api::settle_gem` after a qualifying day, which
-// does not deposit. Localnet covers the paid settle.
+// records Settled through `gem_api::settle_gem`, which does not deposit. Localnet covers the paid settle.
 
-/// Qualifies `gem_id` and records Settled. The body stays until it is mined.
+/// Records Settled. The body stays until it is mined.
 fn force_settled(storage: &StorageHandle<'_>, world: &GemWorld, gem_id: U256) {
-    seed_qualifying_day(storage, world, gem_id);
     record_settled(storage, world, gem_id);
 }
 

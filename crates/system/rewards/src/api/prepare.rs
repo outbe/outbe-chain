@@ -1,10 +1,5 @@
 use alloy_primitives::{Address, U256};
-use outbe_gemfactory::GemTypes;
-use outbe_primitives::{
-    block::BlockRuntimeContext,
-    error::Result,
-    time::{date_key_to_utc_timestamp, next_date_key},
-};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use super::batch::{
     require_reward_gem_currency, require_reward_gem_queue_consistency, reward_gem_batch_digest,
@@ -40,13 +35,11 @@ fn prepare_daily_validator_gem_batch_inner(
         return Err(RewardsError::GemPreparationBeforeParticipationWindowsClose.into());
     }
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
-    let gem_type = reward_utc_day_gem_type(ctx, utc_day)? as u8;
     let (recipients, planned_promis_load_amount) =
         validator_reward_shares(validator_topup_amount, voters)?;
     let recipient_count = reward_gem_recipient_count(&recipients)?;
     let digest = reward_gem_batch_digest(&RewardGemBatchTerms {
         reward_utc_day: utc_day,
-        gem_type,
         issuance_currency: REWARD_GEM_CURRENCY,
         reference_currency: REWARD_GEM_CURRENCY,
         planned_promis_load_amount,
@@ -60,12 +53,12 @@ fn prepare_daily_validator_gem_batch_inner(
     };
 
     if rewards.daily_topup_prepared.read(&utc_day)? {
-        require_identical_reward_gem_batch_replay(&rewards, &summary, gem_type, &recipients)?;
+        require_identical_reward_gem_batch_replay(&rewards, &summary, &recipients)?;
         return Ok(RewardGemPreparationOutcome::AlreadyPrepared(summary));
     }
     require_unprepared_day_unsettled(&rewards, utc_day)?;
 
-    write_reward_gem_batch_terms(&rewards, &summary, gem_type)?;
+    write_reward_gem_batch_terms(&rewards, &summary)?;
     if recipients.is_empty() {
         rewards.daily_topup_prepared.write(&utc_day, true)?;
         rewards.daily_topup_settled.write(&utc_day, true)?;
@@ -76,17 +69,6 @@ fn prepare_daily_validator_gem_batch_inner(
     enqueue_reward_gem_batch(&rewards, &summary, &recipients)?;
     rewards.daily_topup_prepared.write(&utc_day, true)?;
     Ok(RewardGemPreparationOutcome::Prepared(summary))
-}
-
-fn reward_utc_day_gem_type(ctx: &BlockRuntimeContext, utc_day: u32) -> Result<GemTypes> {
-    // The type is frozen into the batch digest, so it reads the rewarded day's
-    // close, never the block that happens to prepare or retry the batch.
-    let day_close = date_key_to_utc_timestamp(next_date_key(utc_day));
-    let gem_type = match outbe_metadosis::api::bootstrap_end_time(ctx.storage.clone())? {
-        Some(end) if day_close > end => GemTypes::Validator,
-        _ => GemTypes::Genesis,
-    };
-    Ok(gem_type)
 }
 
 fn validator_reward_shares(
@@ -166,7 +148,6 @@ fn require_unprepared_day_unsettled(rewards: &Rewards<'_>, utc_day: u32) -> Resu
 fn write_reward_gem_batch_terms(
     rewards: &Rewards<'_>,
     summary: &PreparedRewardGemBatch,
-    gem_type: u8,
 ) -> Result<()> {
     let utc_day = summary.reward_utc_day;
     rewards
@@ -175,7 +156,6 @@ fn write_reward_gem_batch_terms(
     rewards
         .reward_gem_planned_load_amount
         .write(&utc_day, summary.planned_promis_load_amount)?;
-    rewards.reward_gem_type.write(&utc_day, gem_type)?;
     rewards
         .reward_gem_issuance_currency
         .write(&utc_day, REWARD_GEM_CURRENCY)?;

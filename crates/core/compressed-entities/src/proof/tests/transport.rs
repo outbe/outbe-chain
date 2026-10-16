@@ -64,7 +64,6 @@ fn present_golden_packages_cover_every_closed_domain() {
                 owner: Address::repeat_byte(0x44),
                 gem_type: 1,
                 promis_load_minor: U256::from(13),
-                floor_price_minor: U256::from(14),
                 issuance_currency: 840,
                 reference_currency: 978,
                 issued_at: 123,
@@ -206,10 +205,10 @@ fn present_golden_packages_cover_every_closed_domain() {
                 "c401b4fc8759510f0def36b6a90258d98bb4317347ecc84395a776fd5968b18f"
             ),
             alloy_primitives::b256!(
-                "dc768b511c3d87d5e179e5598da10b7be467ee05add3348ba0624ac12f3bbb08"
+                "ff2fc5f57debedf4ae1068b91a1644fc1dd8ecc84e0555192fc11170e28c9901"
             ),
             alloy_primitives::b256!(
-                "befae53e0e7193cb25e9e90eefc603d4426af11407413c9448a9135bd36c78b0"
+                "ee5ebceab732fe14b47e847a89167165ad6ef688c32014d3b01a8aa39a9737c2"
             ),
             alloy_primitives::b256!(
                 "44a889b4fe93736c601b2b608dc3d0c85b11f63706157b6c0460888dedb7595c"

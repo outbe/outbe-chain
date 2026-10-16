@@ -129,7 +129,7 @@ fn burn_requires_settled_state() {
             crate::runtime::burn_settled(storage, &world.scope, &world.parent, gem_id).is_err()
         );
 
-        qualify_and_settle(storage, world, gem_id);
+        settle(storage, world, gem_id);
         burn_settled(storage, world, gem_id);
 
         assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 0);
@@ -142,7 +142,7 @@ fn burn_requires_settled_state() {
 fn burn_leaves_the_owners_other_gems_listed() {
     with_storage(|storage, world| {
         let gems = alice_gems(storage, world, &[1, 2, 3]);
-        qualify_and_settle(storage, world, gems[0]);
+        settle(storage, world, gems[0]);
         burn_settled(storage, world, gems[0]);
 
         let remaining = owned(storage, world, ALICE);
@@ -190,11 +190,6 @@ fn a_bucket_holds_the_gems_of_one_day_entry_price_and_currency() {
         assert_eq!(apart(&|p| p.issued_at += 1), bucket, "the same day");
         assert_ne!(apart(&|p| p.reference_currency = EUR), bucket);
         assert_ne!(apart(&|p| p.entry_price_minor += U256::from(1u64)), bucket);
-        assert_eq!(
-            apart(&|p| p.floor_price_minor += U256::from(1u64)),
-            bucket,
-            "the floor is the gem's own"
-        );
         set_profile(storage, outbe_gem::config::PROFILE_PROD);
         assert_eq!(
             apart(&|_| {}),
@@ -243,7 +238,7 @@ fn leaving_a_bucket_moves_its_last_member_into_the_hole() {
         let bucket = bucket_of(storage, world, gems[0]);
         let gem = GemContract::new(storage.clone());
 
-        qualify_and_settle(storage, world, gems[0]);
+        settle(storage, world, gems[0]);
         assert_eq!(gem.bucket_gem_count.read(&bucket).unwrap(), 2);
         assert_eq!(
             gem.bucket_gems
@@ -276,7 +271,7 @@ fn bucket_body_and_terms_survive_until_unpaid_and_settled_are_zero() {
         .unwrap();
         assert!(tree_math::contains(&outbe_gem::CallBins(&gem, USD), bin).unwrap());
 
-        qualify_and_settle(storage, world, gem_id);
+        settle(storage, world, gem_id);
         assert_eq!(gem.bucket_gem_count.read(&bucket).unwrap(), 0);
         let body = api::get_bucket(storage, &world.scope, &world.parent, bucket_id)
             .unwrap()
@@ -372,39 +367,17 @@ fn unpaid_removal_emits_no_bucket_update_settled_removal_decrements() {
 }
 
 #[test]
-fn settle_requires_a_called_or_qualified_gem() {
+fn an_issued_gem_settles_once() {
     with_storage(|storage, world| {
         let gem_id = add(storage, world, sample_params(ALICE));
-        assert!(try_settle(storage, world, gem_id).is_err());
         assert_eq!(gem_state(storage, world, gem_id), GemState::Issued as u8);
 
-        qualify_and_settle(storage, world, gem_id);
+        settle(storage, world, gem_id);
         let settled = item(storage, world, gem_id).unwrap();
         assert_eq!(settled.state, GemState::Settled as u8);
         assert_eq!(settled.settled_at, T_NOW);
         assert_eq!(settled.called_at, 0);
         assert!(try_settle(storage, world, gem_id).is_err());
-    });
-}
-
-/// A low-floor sibling in the same bucket does not qualify a high-floor gem.
-#[test]
-fn settle_requires_per_item_qualification_not_bucket_sibling() {
-    with_storage(|storage, world| {
-        let low = add(storage, world, sample_params(ALICE));
-        let mut high = sample_params(BOB);
-        high.floor_price_minor = U256::from(900_000u64);
-        let high = add(storage, world, high);
-        assert_eq!(
-            bucket_of(storage, world, low),
-            bucket_of(storage, world, high)
-        );
-
-        seed_day_price(storage, USD, Some(U256::from(600_000u64)));
-        assert!(is_qualified(storage, world, low));
-        assert!(!is_qualified(storage, world, high));
-        settle(storage, world, low);
-        assert!(try_settle(storage, world, high).is_err());
     });
 }
 
@@ -447,18 +420,6 @@ fn leaving_called_frees_the_expiry_slot() {
         burn_settled(storage, world, gem_id);
         assert_eq!(gem.expiry_bucket_live.read(&hour).unwrap(), 0);
         assert_eq!(gem.first_expiry_day().unwrap(), None);
-    });
-}
-
-#[test]
-fn only_a_genesis_gem_is_issued_without_a_floor() {
-    with_storage(|storage, world| {
-        let mut p = sample_params(ALICE);
-        p.floor_price_minor = U256::ZERO;
-        assert!(crate::runtime::add_gem(storage, &world.scope, &world.parent, p.clone()).is_err());
-
-        p.gem_type = outbe_gem::GENESIS_GEM_TYPE;
-        assert!(crate::runtime::add_gem(storage, &world.scope, &world.parent, p).is_ok());
     });
 }
 

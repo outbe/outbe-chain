@@ -175,7 +175,7 @@ fn metadata_update_marks_each_lifecycle_transition() {
         .filter_map(|log| IGem::MetadataUpdate::decode_log_data(log).ok())
         .map(|event| event._tokenId)
         .collect();
-    assert_eq!(updates, vec![gem_id], "settled; qualifying writes nothing");
+    assert_eq!(updates, vec![gem_id], "only settlement announces an update");
 }
 
 #[test]
@@ -183,7 +183,7 @@ fn transfer_logs_announce_mint_and_burn() {
     let (mut provider, world) = provider_at(T_NOW);
     let gem_id = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = add(&storage, &world, sample_params(ALICE));
-        qualify_and_settle(&storage, &world, gem_id);
+        settle(&storage, &world, gem_id);
         burn_settled(&storage, &world, gem_id);
         gem_id
     });
@@ -318,17 +318,16 @@ fn token_uri_renders_the_gem_card() {
     with_storage(|storage, world| {
         set_profile(storage, crate::config::PROFILE_PROD);
         let gem_id = add(storage, world, sample_params(ALICE));
-        seed_day_price(storage, USD, Some(U256::from(540_001u64)));
         let (json, svg) = token_uri_parts(storage, world, gem_id);
 
         let id = outbe_common::nft_card::short_id(gem_id);
         assert_eq!(json["name"], format!("Gem {id}"));
         assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
         assert!(!json.to_string().contains("https://"));
-        assert_eq!(trait_value(&json, "State").unwrap(), "Qualified");
+        assert_eq!(trait_value(&json, "State").unwrap(), "Issued");
         assert_eq!(trait_value(&json, "Gem Type").unwrap(), "SRA");
         assert_eq!(trait_value(&json, "Entry Price").unwrap(), 0.5);
-        assert_eq!(trait_value(&json, "Floor Price").unwrap(), 0.54);
+        assert!(trait_value(&json, "Floor Price").is_none());
         assert_eq!(trait_value(&json, "Call Price").unwrap(), 1.14);
         assert_eq!(trait_value(&json, "Promis Load").unwrap(), 1);
         assert_eq!(trait_value(&json, "Issued At").unwrap(), T_NOW);
@@ -336,7 +335,7 @@ fn token_uri_renders_the_gem_card() {
 
         assert!(svg.contains(">GEM</text>"));
         assert!(svg.contains(&format!(">{id}</text>")));
-        assert!(svg.contains(">QUALIFIED</text>"));
+        assert!(svg.contains(">ISSUED</text>"));
         assert!(svg.contains(">Call Price</text>"));
         assert!(svg.contains(">1.14</text>"));
         assert!(!svg.contains("Floor Price"));
@@ -344,15 +343,14 @@ fn token_uri_renders_the_gem_card() {
 }
 
 #[test]
-fn an_issued_card_leads_with_the_load_and_shows_the_floor_price() {
+fn an_issued_card_leads_with_the_load() {
     with_storage(|storage, world| {
         let gem_id = add(storage, world, sample_params(ALICE));
         let (_, svg) = token_uri_parts(storage, world, gem_id);
 
         let row = |label: &str| svg.find(&format!(">{label}</text>")).unwrap();
         assert!(row("Promis Load") < row("Entry Price"));
-        assert!(row("Entry Price") < row("Floor Price"));
-        assert!(row("Floor Price") < row("Call Price"));
+        assert!(row("Entry Price") < row("Call Price"));
     });
 }
 
@@ -479,6 +477,6 @@ fn gem_contract_slot_layout_is_pinned() {
             gem.min_call_threshold_seconds.base_slot(),
             U256::from(36u64)
         );
-        assert_eq!(GemState::Settled as u8, 3);
+        assert_eq!(GemState::Settled as u8, 2);
     });
 }

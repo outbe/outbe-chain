@@ -10,7 +10,6 @@ const REWARD_GEM_BATCH_DIGEST_DOMAIN: &[u8] = b"OUTBE_REWARD_GEM_BATCH_V1";
 
 pub(super) struct RewardGemBatchTerms<'a> {
     pub(super) reward_utc_day: u32,
-    pub(super) gem_type: u8,
     pub(super) issuance_currency: u16,
     pub(super) reference_currency: u16,
     pub(super) planned_promis_load_amount: U256,
@@ -60,11 +59,10 @@ pub(super) fn require_reward_gem_currency(ctx: &BlockRuntimeContext, currency: u
 pub(super) fn reward_gem_batch_digest(terms: &RewardGemBatchTerms<'_>) -> B256 {
     let recipients = terms.recipients;
     let mut bytes = Vec::with_capacity(
-        REWARD_GEM_BATCH_DIGEST_DOMAIN.len() + 4 + 1 + 2 + 2 + 4 + 32 + recipients.len() * 52,
+        REWARD_GEM_BATCH_DIGEST_DOMAIN.len() + 4 + 2 + 2 + 4 + 32 + recipients.len() * 52,
     );
     bytes.extend_from_slice(REWARD_GEM_BATCH_DIGEST_DOMAIN);
     bytes.extend_from_slice(&terms.reward_utc_day.to_be_bytes());
-    bytes.push(terms.gem_type);
     bytes.extend_from_slice(&terms.issuance_currency.to_be_bytes());
     bytes.extend_from_slice(&terms.reference_currency.to_be_bytes());
     bytes.extend_from_slice(&(recipients.len() as u32).to_be_bytes());

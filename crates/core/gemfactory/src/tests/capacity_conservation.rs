@@ -29,7 +29,6 @@ fn world() -> HashMapStorageProvider {
                     .unwrap(),
                 remaining_capacity_minor: U256::from(REMAINDER),
                 source_entry_price_minor: U256::from(1_000_000),
-                source_floor_price_minor: U256::from(1_080_000),
                 issuance_currency: 840,
                 reference_currency: 840,
                 issued_at: EXPIRES - SECONDS_PER_DAY,

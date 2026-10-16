@@ -5,18 +5,14 @@ use outbe_primitives::addresses::GEM_ADDRESS;
 use outbe_primitives::time::{timestamp_to_date_key, WorldwideDay};
 use serde::{Deserialize, Serialize};
 
-/// The one type issued without a floor. Pinned to `GemTypes::Genesis` by a test in the
-/// factory, which owns that enum.
-pub const GENESIS_GEM_TYPE: u8 = 0;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum GemState {
     Issued = 0,
-    Called = 2,
-    Settled = 3,
+    Called = 1,
+    Settled = 2,
     /// Read-time only: a Called gem past its notice period, until the sweep burns it.
-    Forfeited = 4,
+    Forfeited = 3,
 }
 
 /// Plain issuance inputs. The call terms are not among them: the bucket seals them
@@ -27,7 +23,6 @@ pub struct GemAddParams {
     pub gem_type: u8,
     pub promis_load_minor: U256,
     pub entry_price_minor: U256,
-    pub floor_price_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub issued_at: u64,
@@ -44,8 +39,6 @@ pub struct GemItemState {
     pub owner: Address,
     pub gem_type: u8,
     pub promis_load_minor: U256,
-    /// Per gem: the type and the merchant source set it, not the bucket.
-    pub floor_price_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub issued_at: u64,
