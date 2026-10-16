@@ -1,5 +1,5 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_macros::{contract, storage_schema};
+use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_ADDRESS;
 use outbe_primitives::time::{timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
@@ -31,25 +31,37 @@ pub struct GemAddParams {
     pub call_terms: Option<CallTerms>,
 }
 
-/// Runtime view of one canonical gem body. The entry price and the call terms are
-/// the bucket's, read through [`GemView`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// One gem record. The entry price and the call terms are the bucket's, read
+/// through [`GemView`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[storage_record(exists_field = owner)]
 pub struct GemItemState {
+    #[key]
     pub gem_id: WwdEntityId,
+    #[attribute(order = 0)]
     pub owner: Address,
+    #[attribute(order = 1)]
     pub gem_type: u8,
+    #[attribute(order = 2)]
     pub promis_load_minor: U256,
+    #[attribute(order = 3)]
     pub issuance_currency: u16,
+    #[attribute(order = 4)]
     pub reference_currency: u16,
+    #[attribute(order = 5)]
     pub issued_at: u64,
     /// `keccak(wwd ‖ entry_price ‖ reference_currency)`, see `crate::identity`.
+    #[attribute(order = 6)]
     pub bucket_key: B256,
     /// `GemState::Issued` or `GemState::Settled`. Called is the bucket's.
+    #[attribute(order = 7)]
     pub state: u8,
     /// The bucket's `called_at` copied in at settlement, so a settled gem keeps it
     /// after its bucket is gone. `0` until then.
+    #[attribute(order = 8)]
     pub called_at: u64,
     /// Block timestamp of the settlement. `0` until Settled.
+    #[attribute(order = 9)]
     pub settled_at: u64,
 }
 
@@ -73,16 +85,22 @@ impl GemItemState {
     }
 }
 
-/// Shared bucket body. The unpaid membership lives on the EVM. The body is deleted
-/// once both the unpaid count and `settled_gems` reach zero.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Shared bucket record. The record is deleted once both the unpaid count and
+/// `settled_gems` reach zero.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[storage_record(exists_field = worldwide_day)]
 pub struct GemBucketState {
+    #[key]
     pub bucket_key: B256,
     /// Worldwide day of the first member. Later members are issued on the same day.
+    #[attribute(order = 0)]
     pub worldwide_day: WorldwideDay,
+    #[attribute(order = 1)]
     pub entry_price_minor: U256,
+    #[attribute(order = 2)]
     pub reference_currency: u16,
     /// Paid members still holding the bucket open.
+    #[attribute(order = 3)]
     pub settled_gems: u64,
 }
 
@@ -268,10 +286,9 @@ pub struct GemContract {
     #[attribute(order = 35)]
     pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
     #[attribute(order = 36)]
-    pub records:
-        outbe_primitives::storage::dsl::Map<WwdEntityId, crate::storage_records::StoredGem>,
+    pub records: outbe_primitives::storage::dsl::Map<WwdEntityId, GemItemState>,
     #[attribute(order = 37)]
-    pub buckets: outbe_primitives::storage::dsl::Map<B256, crate::storage_records::StoredGemBucket>,
+    pub buckets: outbe_primitives::storage::dsl::Map<B256, GemBucketState>,
     #[attribute(order = 38)]
     pub all_ids: outbe_primitives::storage::dsl::List<WwdEntityId>,
     #[attribute(order = 39)]

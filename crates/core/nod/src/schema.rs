@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_macros::{contract, storage_schema};
+use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1;
 use outbe_primitives::addresses::NOD_ADDRESS;
 use outbe_primitives::time::WorldwideDay;
@@ -80,20 +80,26 @@ pub struct CallTerms {
     pub call_notice_period_seconds: u32,
 }
 
-/// Shared bucket body. `bucket_nod_count` tracks unpaid membership.
-/// The body is deleted when both unpaid and settled counts reach zero.
-#[derive(Serialize, Deserialize)]
+/// Shared bucket record. `bucket_nod_count` tracks unpaid membership.
+/// The record is deleted when both unpaid and settled counts reach zero.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[storage_record(exists_field = worldwide_day)]
 pub struct NodBucketState {
+    #[key]
     pub bucket_key: B256,
+    #[attribute(order = 0)]
     pub worldwide_day: WorldwideDay,
+    #[attribute(order = 1)]
     pub entry_price_minor: U256,
 
     /// Denomination of `entry_price_minor`, propagated from the Nods in the
     /// bucket. The call index is namespaced by it.
+    #[attribute(order = 2)]
     pub reference_currency: u16,
 
     /// Live paid entitlements. The count decreases when one is exercised.
     #[serde(default)]
+    #[attribute(order = 3)]
     pub settled_nods: u64,
 }
 
@@ -377,7 +383,7 @@ pub struct NodContract {
     pub records:
         outbe_primitives::storage::dsl::Map<WwdEntityId, crate::storage_records::StoredNod>,
     #[attribute(order = 84)]
-    pub buckets: outbe_primitives::storage::dsl::Map<B256, crate::storage_records::StoredNodBucket>,
+    pub buckets: outbe_primitives::storage::dsl::Map<B256, NodBucketState>,
     #[attribute(order = 85)]
     pub all_ids: outbe_primitives::storage::dsl::List<WwdEntityId>,
     #[attribute(order = 86)]

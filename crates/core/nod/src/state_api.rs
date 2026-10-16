@@ -1,7 +1,7 @@
 use crate::errors::NodError;
 use crate::precompile::INod;
 use crate::schema::{CallTerms, NodBucketState, NodContract, NodItemState};
-use crate::storage_records::{StoredNod, StoredNodBucket, StoredNodEntryExt};
+use crate::storage_records::{StoredNod, StoredNodEntryExt};
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
     error::{PrecompileError, Result},
@@ -25,13 +25,13 @@ impl LoadedNodItem {
 
 pub struct LoadedNodBucket {
     body: NodBucketState,
-    current: StoredNodBucket,
+    current: NodBucketState,
 }
 impl LoadedNodBucket {
     pub const fn body(&self) -> &NodBucketState {
         &self.body
     }
-    pub(crate) fn into_parts(self) -> (NodBucketState, StoredNodBucket) {
+    pub(crate) fn into_parts(self) -> (NodBucketState, NodBucketState) {
         (self.body, self.current)
     }
 }
@@ -67,7 +67,7 @@ pub fn load_bucket(storage: &StorageHandle<'_>, key: B256) -> Result<Option<Load
         .get(key)?
         .map(|current| {
             Ok(LoadedNodBucket {
-                body: current.clone().into(),
+                body: current.clone(),
                 current,
             })
         })
@@ -105,7 +105,7 @@ fn check_loaded(
     contract: &NodContract<'_>,
     item: &NodItemState,
     current: &StoredNod,
-    bucket: &StoredNodBucket,
+    bucket: &NodBucketState,
 ) -> Result<()> {
     if item.bucket_key != bucket.bucket_key
         || contract.records.get(item.nod_id)?.as_ref() != Some(current)
@@ -171,7 +171,7 @@ impl NodContract<'_> {
         self.insert_bucket_member(item.bucket_key, item.nod_id)?;
         self.insert_state_record(&StoredNod::from(item))?;
         if let Some(bucket) = new_bucket {
-            self.buckets.create(&StoredNodBucket::from(&bucket))?;
+            self.buckets.create(&bucket)?;
         }
         self.emit(INod::Transfer {
             from: Address::ZERO,
@@ -198,7 +198,7 @@ impl NodContract<'_> {
         self.remove_bucket_member(item.bucket_key, item.nod_id)?;
         item.is_settled = true;
         self.records.update(&StoredNod::from(&item))?;
-        self.buckets.update(&StoredNodBucket::from(&bucket))?;
+        self.buckets.update(&bucket)?;
         self.emit(INod::MetadataUpdate {
             _tokenId: item.nod_id.to_u256(),
         })
@@ -239,7 +239,7 @@ impl NodContract<'_> {
             self.close_bucket(item.bucket_key)?;
             self.buckets.delete(bucket.bucket_key)?;
         } else if item.is_settled {
-            self.buckets.update(&StoredNodBucket::from(&bucket))?;
+            self.buckets.update(&bucket)?;
         }
         self.emit(INod::Transfer {
             from: item.owner,

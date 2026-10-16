@@ -1,117 +1,14 @@
-use alloy_primitives::{Address, B256, U256};
-use outbe_macros::storage_record;
-use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
+use alloy_primitives::Address;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[storage_record(exists_field = owner)]
-pub struct StoredGem {
-    #[key]
-    pub gem_id: WwdEntityId,
-    #[attribute(order = 0)]
-    pub owner: Address,
-    #[attribute(order = 1)]
-    pub gem_type: u8,
-    #[attribute(order = 2)]
-    pub promis_load_minor: U256,
-    #[attribute(order = 3)]
-    pub issuance_currency: u16,
-    #[attribute(order = 4)]
-    pub reference_currency: u16,
-    #[attribute(order = 5)]
-    pub issued_at: u64,
-    #[attribute(order = 6)]
-    pub bucket_key: B256,
-    #[attribute(order = 7)]
-    pub state: u8,
-    #[attribute(order = 8)]
-    pub called_at: u64,
-    #[attribute(order = 9)]
-    pub settled_at: u64,
-}
+use crate::GemItemState;
+use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[storage_record(exists_field = present)]
-pub struct StoredGemBucket {
-    #[key]
-    pub bucket_key: B256,
-    #[attribute(order = 0)]
-    pub present: bool,
-    #[attribute(order = 1)]
-    pub worldwide_day: WorldwideDay,
-    #[attribute(order = 2)]
-    pub entry_price_minor: U256,
-    #[attribute(order = 3)]
-    pub reference_currency: u16,
-    #[attribute(order = 4)]
-    pub settled_gems: u64,
-}
-
-impl From<&crate::GemItemState> for StoredGem {
-    fn from(body: &crate::GemItemState) -> Self {
-        Self {
-            gem_id: body.gem_id,
-            owner: body.owner,
-            gem_type: body.gem_type,
-            promis_load_minor: body.promis_load_minor,
-            issuance_currency: body.issuance_currency,
-            reference_currency: body.reference_currency,
-            issued_at: body.issued_at,
-            bucket_key: body.bucket_key,
-            state: body.state,
-            called_at: body.called_at,
-            settled_at: body.settled_at,
-        }
-    }
-}
-
-impl From<StoredGem> for crate::GemItemState {
-    fn from(body: StoredGem) -> Self {
-        Self {
-            gem_id: body.gem_id,
-            owner: body.owner,
-            gem_type: body.gem_type,
-            promis_load_minor: body.promis_load_minor,
-            issuance_currency: body.issuance_currency,
-            reference_currency: body.reference_currency,
-            issued_at: body.issued_at,
-            bucket_key: body.bucket_key,
-            state: body.state,
-            called_at: body.called_at,
-            settled_at: body.settled_at,
-        }
-    }
-}
-
-impl From<&crate::GemBucketState> for StoredGemBucket {
-    fn from(body: &crate::GemBucketState) -> Self {
-        Self {
-            present: true,
-            bucket_key: body.bucket_key,
-            worldwide_day: body.worldwide_day,
-            entry_price_minor: body.entry_price_minor,
-            reference_currency: body.reference_currency,
-            settled_gems: body.settled_gems,
-        }
-    }
-}
-
-impl From<StoredGemBucket> for crate::GemBucketState {
-    fn from(body: StoredGemBucket) -> Self {
-        Self {
-            bucket_key: body.bucket_key,
-            worldwide_day: body.worldwide_day,
-            entry_price_minor: body.entry_price_minor,
-            reference_currency: body.reference_currency,
-            settled_gems: body.settled_gems,
-        }
-    }
-}
-
-impl crate::GemContract<'_> {
+impl<'storage> crate::GemContract<'storage> {
     pub fn state_records(
         &self,
         owner: Option<Address>,
-    ) -> outbe_primitives::error::Result<Vec<StoredGem>> {
+    ) -> outbe_primitives::error::Result<Vec<GemItemState>> {
         let mut ids = match owner {
             Some(owner) => self.owner_ids.list(&owner).read_all()?,
             None => self.all_ids.read_all()?,
@@ -139,46 +36,34 @@ impl crate::GemContract<'_> {
             .collect()
     }
 
-    pub fn insert_state_record(&self, record: &StoredGem) -> outbe_primitives::error::Result<()> {
-        use outbe_primitives::storage::indexed_list::IndexedList;
-        let storage = self.records.storage();
-        storage.with_checkpoint(|| {
-            self.records.create(record)?;
+    fn record_indexes(&self, record: &GemItemState) -> [IndexedList<'storage, WwdEntityId>; 2] {
+        [
             IndexedList::new(
-                &self.owner_ids.list(&record.owner),
+                self.owner_ids.list(&record.owner),
                 self.owner_id_position.clone(),
-            )
-            .insert(record.gem_id)?;
-            IndexedList::new(&self.all_ids, self.global_id_position.clone())
-                .insert(record.gem_id)?;
-            Ok(())
-        })
+            ),
+            IndexedList::new(self.all_ids.clone(), self.global_id_position.clone()),
+        ]
+    }
+
+    pub fn insert_state_record(
+        &self,
+        record: &GemItemState,
+    ) -> outbe_primitives::error::Result<()> {
+        create_indexed(&self.records, record, self.record_indexes(record))
     }
 
     pub fn delete_state_record(&self, id: WwdEntityId) -> outbe_primitives::error::Result<()> {
-        use outbe_primitives::storage::indexed_list::IndexedList;
-        let storage = self.records.storage();
-        storage.with_checkpoint(|| {
-            let record = self.records.get(id)?.ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::fatal(
-                    "state record is absent from its index",
-                )
-            })?;
-            IndexedList::new(
-                &self.owner_ids.list(&record.owner),
-                self.owner_id_position.clone(),
-            )
-            .remove(id)?;
-            IndexedList::new(&self.all_ids, self.global_id_position.clone()).remove(id)?;
-            self.records.delete(id)
-        })
+        delete_indexed(&self.records, id, |record| self.record_indexes(record))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::{B256, U256};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+    use outbe_primitives::time::WorldwideDay;
 
     #[test]
     fn indexed_record_creation_reverts_if_an_index_rejects_it() {
@@ -187,7 +72,7 @@ mod tests {
             let contract = crate::GemContract::new(storage);
             let id =
                 WwdEntityId::from_day_and_digest(WorldwideDay::new(20261015), B256::repeat_byte(7));
-            let mut record = StoredGem::with_key(id);
+            let mut record = GemItemState::with_key(id);
             record.owner = Address::repeat_byte(1);
             contract.owner_id_position.write(&id, 9).unwrap();
             assert!(contract.insert_state_record(&record).is_err());
@@ -204,7 +89,7 @@ mod tests {
             let contract = crate::GemContract::new(storage);
             let id =
                 WwdEntityId::from_day_and_digest(WorldwideDay::new(20261015), B256::repeat_byte(7));
-            let mut record = StoredGem::with_key(id);
+            let mut record = GemItemState::with_key(id);
             record.owner = Address::repeat_byte(1);
             record.promis_load_minor = U256::from(123);
             assert!(contract.records.get(id).unwrap().is_none());
@@ -226,8 +111,7 @@ mod tests {
         StorageHandle::enter(&mut provider, |storage| {
             let contract = crate::GemContract::new(storage);
             let key = B256::repeat_byte(2);
-            let mut record = StoredGemBucket::with_key(key);
-            record.present = true;
+            let mut record = crate::GemBucketState::with_key(key);
             record.worldwide_day = WorldwideDay::new(20261015);
             contract.buckets.create(&record).unwrap();
             assert_eq!(contract.buckets.get(key).unwrap(), Some(record));
