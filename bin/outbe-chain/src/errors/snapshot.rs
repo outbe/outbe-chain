@@ -412,9 +412,6 @@ pub(crate) enum SnapshotError {
         #[source]
         source: std::io::Error,
     },
-    /// Retained body count calculation overflowed.
-    #[error("retained body count overflow")]
-    RetainedBodyCountOverflow,
 }
 
 /// Precompile storage errors raised while reading canonical snapshot state.
