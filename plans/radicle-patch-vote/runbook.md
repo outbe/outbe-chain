@@ -1,0 +1,114 @@
+# Governments: запуск и проверка
+
+Статус: рабочий runbook реализации, не release acceptance. На source `8987e23ae`
+проверен локальный сценарий с native sidecars, настоящими BLS partials и
+криптографической reshare, но fixture delivery/finality. Production E2E,
+положительный fresh catch-up и финальный комплект CI/evidence ещё не выполнены.
+
+## Genesis
+
+В обычный seed для `scripts/seed_genesis.py` добавить поле `governments` внутри
+существующего `radicle_registry`. Пример для пустого initial tree:
+
+```json
+{
+  "radicle_registry": {
+    "max_repositories": 8,
+    "governments": {
+      "description": "Network governance",
+      "initial_tree_oid": "0x4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+      "initial_content_manifest_sha256": "0x4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    }
+  }
+}
+```
+
+Это Git OID пустого tree и SHA256 точных bytes `[]`. Seeder связывает OGD1 с
+chain ID и genesis timestamp и записывает descriptor одновременно в genesis config
+и RadicleRegistry storage. Описание ограничено 256 UTF-8 bytes. Capacity включает
+зарезервированное место для governments. Без поля `governments` автоматический
+сетевой repo выключен; существующие permissionless user repositories продолжают работать.
+
+Для governments effective окно `epochLengthBlocks - min(dkgPrepareWindowBlocks,
+epochLengthBlocks)` должно быть не меньше 64 blocks. Примеры из проверок genesis:
+300/30 и 65/1. Это проверка поддерживаемой конфигурации, а не гарантия доставки
+при произвольной сетевой задержке.
+
+RID и owner key вручную в genesis не задаются. Их связывает automatic bootstrap
+с существующим DKG group public key и OGD1. Отдельный `rad init` для governments
+не нужен. Полный owner secret key не собирается; share остаётся в node provider.
+
+## Процессы и наблюдение
+
+Используются штатные validator node и `scripts/run-radicle.sh`. Script принимает
+`<rad-home> <listen> <status-listen> <max-validators> <advertise> [advertise ...]`.
+Existing Radicle transport identity должна быть подготовлена обычным node setup;
+она используется для Ed25519 NodeId/Noise, а не как владелец governments.
+Sidecar и node запускаются от одного UID, home/node directories имеют mode 0700,
+private local socket — 0600. Private node socket определяется от native control
+socket с суффиксом `.outbe`; вручную выдавать через него peer grants не нужно.
+
+После готовности DKG и собственного finalized state collector автоматически:
+
+1. Готовит одинаковые genesis/native objects и собирает threshold contributions.
+2. Передаёт bounded publication attestations через существующий node mailbox.
+3. Дожидается принятого chain receipt, проверяет native/q proof, устанавливает
+   accepted snapshot и вызывает штатный seed/announce.
+
+Для наблюдения используются existing RPC `outbe_radicleStatus`,
+`outbe_radiclePeers`, `outbe_radicleRepositories` и sidecar log
+`governments collector: ...`. Готовность обычной mesh сама по себе не доказывает
+принятие конкретного patch. В evidence нужны exact repo/patch/revision, finalized
+approval, accepted Review/Merge receipts и actual native refs.
+
+## Patch и смена material
+
+Ed25519 author предлагает обычный patch/revision. Vote фиксирует точные
+repo/patch/revision/expected target; later author revision не заменяет это решение.
+После finalized Approved сеть автоматически публикует native BLS Review Accept,
+затем native Merge в рамках того же решения. Второй Vote для успешного Merge не нужен.
+
+`ApprovedUnmerged` с `Conflict` сохраняет принятый Review и прежний main.
+`TargetMoved` также сохраняет Review; для нового expected target нужен новый Vote.
+Обычный Review Accept сам по себе не является изменением Git main.
+
+При смене текущего material незавершённая подпись старого поколения не завершается
+как новое действие. `BindMaterial` связывает новый public Output, не меняя owner key
+и native refs. Новые действия используют current material; уже accepted exact
+history остаётся читаемой без current share/quorum. `WaitingForWindow` означает,
+что collector не начал действие в недостаточном текущем окне; consensus не ждёт его.
+
+## Перезапуск и доступность archive
+
+Сохраняются native Git storage, managed-publication requirements и private collector/
+node publication stores. При restart worker перечитывает собственные finalized
+receipts, проверяет сохранённые packages и устанавливает latest accepted snapshot
+через existing CAS. Удалять journal/owner requirements или вручную двигать refs
+для обхода ошибки нельзя: это уничтожает данные проверки вместо восстановления.
+
+В текущем source свежий узел с receipt, но без package сообщает
+`AwaitingAcceptedPackage`. Положительная peer-доставка отдельного witness/manifest
+ещё не реализована: [D4 proposal](decisions/D4-accepted-package-delivery/proposal.md)
+проходит gate решения. Не считать Git fetch копированием этих файлов и не выдавать
+временные owner grants. Команды production catch-up и его финальная проверка должны
+быть добавлены после согласования и реального E2E.
+
+## Сборка и граница совместимости
+
+Root workspace закрепляет Rust 1.96.0; standalone Heartwood workspace закрепляет
+Rust 1.98.0. Успешная root сборка не заменяет standalone проверки на его toolchain.
+Для governments нужны Outbe BLS fork и validating publication policy; upstream Ed25519
+client не получает прав BLS owner через transport identity. Обычный Ed25519 workflow
+проверяется отдельно как regression, без изменения его authority.
+
+Локальные команды, действительно выполненные на `8987e23ae` (macOS, root Rust 1.96.0):
+
+```sh
+cargo +1.96.0 test --offline --locked -p outbe-radicle-runtime --test governments automatic_bootstrap_vote_review_and_merge_with_one_offline_member_and_restarts -- --nocapture
+cargo +1.96.0 clippy --offline --locked -p outbe-radicle -p outbe-radicle-runtime --all-targets -- -D warnings
+```
+
+Тест: 1 PASS, 72.19 s; Clippy PASS. Использовались existing Cargo cache,
+`CARGO_PROFILE_TEST_DEBUG=0`, `CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_INCREMENTAL=0`,
+`CARGO_BUILD_JOBS=4`, `CARGO_TARGET_DIR=/private/tmp/outbe-radicle-p1-target`.
+Они не являются production E2E/required CI или основанием закрыть P8.

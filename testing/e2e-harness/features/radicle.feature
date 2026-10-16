@@ -3,6 +3,10 @@ Feature: Validator-managed Radicle storage
   Validators discover one another from finalized chain identity and replicate a
   permissionlessly registered public repository without joining public Radicle.
 
+  Scenario: The network bootstraps its BLS-owned governments repository
+    Given a fresh four-validator governments localnet
+    Then every validator has the same finalized governments bootstrap and native owner refs
+
   Scenario: A public repository survives topology and process changes
     Given a fresh four-validator Radicle localnet
     Then Radicle genesis and the signed validator mesh are ready

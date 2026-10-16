@@ -143,6 +143,7 @@ pub(crate) struct PendingValidatorPoolFixture {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct RadicleScenarioEvidenceV1 {
+    pub governments_bootstrap: Vec<serde_json::Value>,
     pub genesis_hash: Option<String>,
     pub repo_id: Option<String>,
     pub repo_id_hex: Option<String>,

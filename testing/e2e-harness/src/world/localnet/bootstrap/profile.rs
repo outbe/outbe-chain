@@ -24,6 +24,7 @@ pub struct BootstrapProfile {
     pub(super) metadosis_offering_seconds: u64,
     pub(super) ocomp_vote_window_blocks: u64,
     pub(super) governance_voting_window_blocks: u64,
+    pub(super) governments: bool,
     pub(super) oracle_pairs: Option<Vec<(String, String, String)>>,
     pub(super) credis_accounts: Option<(alloy_primitives::Address, alloy_primitives::Address)>,
 }
@@ -49,6 +50,7 @@ impl Default for BootstrapProfile {
             metadosis_offering_seconds: LOCALNET_METADOSIS_OFFERING_SECONDS,
             ocomp_vote_window_blocks: LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS,
             governance_voting_window_blocks: 6,
+            governments: false,
             oracle_pairs: None,
             credis_accounts: None,
         }
@@ -56,6 +58,13 @@ impl Default for BootstrapProfile {
 }
 
 impl BootstrapProfile {
+    /// Enable the network-owned repository through the normal genesis seeder.
+    pub fn with_governments(mut self) -> Result<Self> {
+        self.governments = true;
+        self.validate_timing()?;
+        Ok(self)
+    }
+
     /// Fund only this scenario's actors and seed its user's mineable Gem.
     #[cfg(any(test, feature = "ocomp-integration"))]
     pub(crate) fn with_credis_accounts(
@@ -244,6 +253,12 @@ impl BootstrapProfile {
     }
 
     pub(super) fn validate_timing(&self) -> Result<()> {
+        if self.governments {
+            outbe_primitives::radicle_genesis::validate_publication_window(
+                self.epoch_length_blocks.get(),
+                self.dkg_prepare_window_blocks.get(),
+            )?;
+        }
         if self.dkg_prepare_window_blocks > self.epoch_length_blocks {
             bail!(
                 "DKG prepare window {} exceeds epoch length {}",
