@@ -1804,7 +1804,7 @@ mod tests {
 
         let generation = server
             .publish(COEN_USD_SYMBOL, "1.080001", "4.000000")
-            .expect("publish controlled qualification quote");
+            .expect("publish a controlled quote");
         assert_eq!(generation, 4);
         assert_eq!(server.book(), coen_book(4, "1.080001", "4.000000"));
         let ticker = raw_get(server.addr, "/api/tickers?symbols=COEN840");

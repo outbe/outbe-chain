@@ -2,7 +2,7 @@
 //!
 //! The node exposes `issueForTest` only under its `e2e-test` feature. The entry
 //! makes the two calls the clearing engine makes, so the series is indexed for
-//! the qualify sweep and its mints travel as real issuance instructions.
+//! the call sweep and its mints travel as real issuance instructions.
 
 use alloy_primitives::{Address, FixedBytes, U256};
 use alloy_sol_types::sol;
@@ -68,7 +68,6 @@ sol! {
     struct ReferenceCurrencyPrice {
         uint16 isoCode;
         uint64 entryPriceMinor;
-        uint64 floorPriceMinor;
         uint64 callPriceMinor;
     }
 
@@ -268,7 +267,6 @@ pub fn open_day(
         prices: vec![ReferenceCurrencyPrice {
             isoCode: reference_currency,
             entryPriceMinor: entry_price_minor,
-            floorPriceMinor: entry_price_minor,
             callPriceMinor: entry_price_minor,
         }],
         callNoticePeriod: 0,

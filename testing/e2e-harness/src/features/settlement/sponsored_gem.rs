@@ -1,5 +1,4 @@
 use super::*;
-use outbe_primitives::time::SECONDS_PER_DAY;
 
 struct SponsoredGem {
     key: String,
@@ -166,63 +165,9 @@ fn prepare(world: &mut World) -> SponsoredGem {
         .evm_key()
         .expect("validator 1 sponsorship payer key");
     let payer = eth::address_of(&payer_key).expect("validator 1 payer address");
-    let (owner, gem_id, mut gem) = wait_for_validator_reward_gem(world);
+    let (owner, gem_id, gem) = wait_for_validator_reward_gem(world);
     let fixture = deploy_settlement_fixture(world);
     let url = world.rpc.url(world.validators.primary_port());
-    // A reward Gem qualifies on a closed day that it held in full. This one was delivered
-    // minutes ago. Stamp it behind the day that is then seeded above its floor.
-    if !crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id) {
-        let now = world
-            .rpc
-            .latest_block_timestamp(world.validators.primary_port())
-            .expect("committee head timestamp");
-        eth::send_call(
-            &url,
-            addresses::GEM_FACTORY_ADDR,
-            DEPLOYER_KEY,
-            &crate::features::gem_lifecycle::IGemFactoryTestArming::backdateGemForTestCall {
-                gemId: gem_id,
-                issuedAt: now.saturating_sub(3 * SECONDS_PER_DAY),
-            },
-            None,
-        )
-        .expect("backdate the reward Gem's issuance stamp");
-        test_issuance::seed_day_vwaps(
-            &url,
-            DEPLOYER_KEY,
-            USD_ISO,
-            1,
-            // A Genesis floor is zero, and a zero VWAP is no price at all.
-            gem.floorPriceMinor
-                .checked_mul(U256::from(2u64))
-                .expect("qualifying day VWAP")
-                .max(gem.entryPriceMinor),
-        )
-        .expect("seed the closed day's VWAP above the reward Gem floor");
-        // Qualification is derived on read once the seeded day is closed.
-        let deadline = Instant::now() + Duration::from_secs(240);
-        while !crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id) {
-            assert!(
-                Instant::now() < deadline,
-                "reward Gem qualification timed out"
-            );
-            sleep(Duration::from_millis(250));
-        }
-    }
-    gem = eth::read_call(
-        &url,
-        addresses::GEM_ADDR,
-        &eth::IGem::getGemCall { gemId: gem_id },
-    )
-    .expect("read the same reward Gem after qualification");
-    assert_eq!(
-        gem.state, 1,
-        "reward Gem must read Qualified for settlement"
-    );
-    assert!(
-        crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id),
-        "reward Gem must be qualified for settlement"
-    );
     // The cost is derived, so the amount to fund is the factory's own quote. That quote
     // is already in the settlement asset's units. The reference amount never was.
     let quote = eth::read_call(

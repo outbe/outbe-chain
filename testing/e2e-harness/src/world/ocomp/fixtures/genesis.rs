@@ -312,9 +312,9 @@ pub(in crate::world::ocomp) fn schedule_public_measurement_day(
             worldwide_day,
             pair,
         )?);
-        let qualification_rate = entry_price.checked_mul(U256::from(2)).ok_or_else(|| {
+        let live_rate = entry_price.checked_mul(U256::from(2)).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::Fatal(
-                "OCOMP public measurement qualification rate overflow".into(),
+                "OCOMP public measurement live rate overflow".into(),
             )
         })?;
         outbe_oracle::api::set_exchange_rate(
@@ -322,7 +322,7 @@ pub(in crate::world::ocomp) fn schedule_public_measurement_day(
             Address::ZERO,
             pair,
             outbe_oracle::api::RateObservation {
-                rate: qualification_rate,
+                rate: live_rate,
                 block_number: 1,
                 timestamp: genesis_timestamp,
             },

@@ -44,14 +44,12 @@ const GEM_LOAD_MINOR: u128 = 100_003;
 /// USD (840) as the reference, spelled `U` in the series id.
 const REFERENCE_BYTE: u8 = b'U';
 /// `GemTypes::Merchant`.
-const MERCHANT_GEM_TYPE: u8 = 5;
-/// `getGem` states: Issued, Qualified, Called, Settled, Forfeited. Qualified and
-/// Forfeited are derived on read.
+const MERCHANT_GEM_TYPE: u8 = 4;
+/// `getGem` states: Issued, Called, Settled, Forfeited. Forfeited is derived on read.
 const ISSUED: u8 = 0;
-const QUALIFIED: u8 = 1;
-const CALLED: u8 = 2;
-const SETTLED: u8 = 3;
-const FORFEITED_STATE: u8 = 4;
+const CALLED: u8 = 1;
+const SETTLED: u8 = 2;
+const FORFEITED_STATE: u8 = 3;
 const HOLDER_SEED: u64 = 0x0e6e_0000;
 /// Issuance mints through a message, not inside the issuing call.
 const ISSUANCE_TIMEOUT_SECS: u64 = 180;
@@ -245,8 +243,8 @@ fn issue_five_gems(world: &mut World) {
             addresses::GEM_FACTORY_ADDR,
         )
         .gemId;
-        // Qualification and the call count only days a gem held in full: stamp it
-        // behind every day the scenario seeds.
+        // The call counts only days a gem held in full: stamp it behind every day
+        // the scenario seeds.
         let backdated = eth::send_call_outcome(
             &url,
             addresses::GEM_FACTORY_ADDR,
@@ -297,7 +295,6 @@ fn gem_bodies_match_on_every_committee_port(world: &mut World) {
         assert_eq!(item.gem_id, WwdEntityId::from(id));
         assert_eq!(item.owner, owner_address(index));
         assert_eq!(item.promis_load_minor, view.promisLoadMinor);
-        assert_eq!(item.floor_price_minor, view.floorPriceMinor);
         assert_eq!(item.issued_at, view.issuedAt);
         assert_eq!(bucket.bucket_key, item.bucket_key);
         assert_eq!(bucket.entry_price_minor, view.entryPriceMinor);
@@ -306,10 +303,6 @@ fn gem_bodies_match_on_every_committee_port(world: &mut World) {
 }
 
 impl Lifecycle for GemLifecycle {
-    fn floor(&self, world: &World) -> U256 {
-        read_gem(world, gem(world, 0)).floorPriceMinor
-    }
-
     fn call_price(&self, world: &World) -> U256 {
         read_gem(world, gem(world, 0)).callPriceMinor
     }
@@ -342,7 +335,6 @@ impl Lifecycle for GemLifecycle {
             let id = gem(world, index);
             let data = read_gem(world, id);
             assert_eq!(data.state, ISSUED, "gem {id} was not born Issued");
-            assert!(!gem_is_qualified(&world_url(world), id));
             assert_eq!(data.calledAt, 0);
             assert_eq!(
                 data.owner,
@@ -365,27 +357,11 @@ impl Lifecycle for GemLifecycle {
                 "gem {id} priced below the Intex it was parked from"
             );
             assert_eq!(
-                (
-                    data.entryPriceMinor,
-                    data.floorPriceMinor,
-                    data.callPriceMinor
-                ),
-                (
-                    first.entryPriceMinor,
-                    first.floorPriceMinor,
-                    first.callPriceMinor
-                ),
+                (data.entryPriceMinor, data.callPriceMinor),
+                (first.entryPriceMinor, first.callPriceMinor),
                 "every gem must share one set of terms"
             );
         }
-    }
-
-    fn qualified(&self, world: &World) -> bool {
-        let url = world_url(world);
-        (0..HOLDERS).all(|index| {
-            let id = gem(world, index);
-            read_gem(world, id).state == QUALIFIED && gem_is_qualified(&url, id)
-        })
     }
 
     fn targets(&self, world: &World, phase: Phase) -> [Target; 2] {
@@ -792,13 +768,4 @@ fn read_gem(world: &World, gem_id: U256) -> eth::IGem::GemData {
         &eth::IGem::getGemCall { gemId: gem_id },
         &format!("gem {gem_id} does not read back"),
     )
-}
-
-pub(crate) fn gem_is_qualified(url: &str, gem_id: U256) -> bool {
-    eth::read_call(
-        url,
-        addresses::GEM_ADDR,
-        &eth::IGem::isQualifiedCall { gemId: gem_id },
-    )
-    .unwrap_or_else(|| panic!("gem {gem_id} qualification does not read back"))
 }
