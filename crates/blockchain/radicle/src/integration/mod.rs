@@ -9,6 +9,9 @@ mod sidecar;
 pub mod signing;
 mod status;
 
+#[cfg(test)]
+mod bootstrap_probe;
+
 pub use lifecycle::EndpointTaskOwner;
 pub use material::RepositoryMaterialPublisher;
 pub use metrics::RadicleMetrics;
