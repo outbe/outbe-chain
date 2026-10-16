@@ -15,7 +15,7 @@ pub use balance::BalanceClientError;
 pub use call_context::{CallContextError, CallContextProviderError};
 pub use client_verification::{NodeHostRecordError, TeeClientVerificationError};
 pub use crypto::LocalCryptoError;
-pub use dcap_fixture::DcapFixtureError;
+pub use dcap_fixture::{DcapFixtureError, NativeQvlError};
 pub use host_collateral::HostCollateralError;
 pub use protocol::{
     FinalizedAdmissionMalformedReason, TeeDkgMalformedWireReason, TeeDkgUnexpectedResponseReason,
