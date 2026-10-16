@@ -149,6 +149,11 @@ impl TransportError {
         move |_| Self::Codec(format!("NodeHost {label} length overflow"))
     }
 
+    /// Construct a [`Self::IdentityMismatch`] error from a reason and detail.
+    pub fn identity_mismatch(reason: &'static str, detail: impl fmt::Display) -> Self {
+        Self::IdentityMismatch(format!("{reason}: {detail}"))
+    }
+
     /// Return true when the connection is broken or desynchronized.
     ///
     /// A bounded reconnect and one retry can recover from these variants:

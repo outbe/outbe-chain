@@ -147,9 +147,9 @@ pub(super) fn reconcile_promoted_replacement(
             "promoted manifest does not match the persistent NodeHost key".into(),
         ));
     }
-    let promotion = authorization.promotion.ok_or_else(|| {
-        TransportError::Codec("promoted manifest is missing its authorization receipt".into())
-    })?;
+    let promotion = authorization
+        .promotion
+        .ok_or(crate::errors::NodeHostRecordError::PromotedManifestMissingAuthorizationReceipt)?;
     if promotion.candidate_manifest_hash != authorization.active_hash
         || authorization
             .submission

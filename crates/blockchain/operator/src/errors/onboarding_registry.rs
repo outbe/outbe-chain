@@ -161,4 +161,9 @@ pub enum RegistryError {
     /// The finalized Registry returned a zero offer key.
     #[error("finalized Registry tribute offer public key is zero")]
     ZeroTributeOfferPublicKey,
+
+    /// An unexpected Registry selector was called in tests.
+    #[cfg(test)]
+    #[error("unexpected Registry call")]
+    UnexpectedRegistryCall,
 }

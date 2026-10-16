@@ -213,9 +213,7 @@ impl VerifiedPlanSchedule<'_> {
                 let exact = producer_ids
                     .iter()
                     .copied()
-                    .map(|unit_id| {
-                        unit_id.ok_or(ExactLysisPlanError::AuthorityMismatch("shuffle producer"))
-                    })
+                    .map(|unit_id| unit_id.ok_or(ExactLysisPlanError::ShuffleProducer))
                     .collect::<Result<Vec<_>, _>>()?;
                 self.planner
                     .shuffle_unit_at(phase_ordinal, &exact, self.limits)
@@ -369,7 +367,7 @@ impl VerifiedPlanSchedule<'_> {
             authority.plan_hash,
         ) || record.unit_id.is_zero()
         {
-            return Err(ExactLysisPlanError::AuthorityMismatch("producer admission"));
+            return Err(ExactLysisPlanError::ProducerAdmission);
         }
         Ok(())
     }

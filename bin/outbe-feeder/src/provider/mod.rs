@@ -215,7 +215,7 @@ pub fn create_providers(config: &FeederConfig) -> Result<Vec<Box<dyn Provider>>>
             "mock_http" => {
                 let endpoint = endpoints
                     .get("mock_http")
-                    .ok_or(ProviderError::MissingApiProviderEntry("mock_http"))?;
+                    .ok_or(ProviderError::MissingMockHttpProviderEntry)?;
                 Box::new(mock_http::MockHttpProvider::new(endpoint)?)
             }
             "pyth" => Box::new(pyth::PythProvider::new(endpoints.get("pyth").copied())?),

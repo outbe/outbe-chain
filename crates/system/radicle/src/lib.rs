@@ -19,29 +19,12 @@ use radicle::node::{Address, Alias, Config, NodeId};
 use radicle::profile::Home;
 use radicle::storage::{ReadRepository, ReadStorage};
 use radicle_signals::Signal;
-use thiserror::Error;
+pub mod errors;
+pub use errors::{Error, RepositoryAvailabilityError};
 
 const MAX_STATUS_CONNECTIONS: usize = 32;
 const STATUS_DEADLINE: Duration = Duration::from_secs(5);
 const MAX_REQUEST_BYTES: usize = 4096;
-
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("missing required option {0}")]
-    Missing(&'static str),
-    #[error("invalid command-line options: {0}")]
-    Options(#[from] lexopt::Error),
-    #[error("invalid value for {option}: {value}")]
-    InvalidValue { option: &'static str, value: String },
-    #[error("i/o error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("failed to load Radicle key: {0}")]
-    Key(#[from] radicle::crypto::ssh::keystore::Error),
-    #[error("Radicle key is missing at {0}")]
-    MissingKey(PathBuf),
-    #[error("failed to initialize Heartwood: {0}")]
-    Runtime(#[from] radicle_node::runtime::Error),
-}
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -168,18 +151,18 @@ where
 }
 
 pub trait RepositoryAvailability: Send + Sync + 'static {
-    fn contains(&self, rid: &RepoId) -> Result<bool, String>;
+    fn contains(&self, rid: &RepoId) -> Result<bool, RepositoryAvailabilityError>;
 }
 
 impl RepositoryAvailability for radicle::storage::git::Storage {
-    fn contains(&self, rid: &RepoId) -> Result<bool, String> {
-        if !ReadStorage::contains(self, rid).map_err(|error| error.to_string())? {
+    fn contains(&self, rid: &RepoId) -> Result<bool, RepositoryAvailabilityError> {
+        if !ReadStorage::contains(self, rid)? {
             return Ok(false);
         }
         ReadStorage::repository(self, *rid)
             .and_then(|repository| repository.identity_doc().map(|_| ()))
             .map(|()| true)
-            .map_err(|error| error.to_string())
+            .map_err(RepositoryAvailabilityError::from)
     }
 }
 

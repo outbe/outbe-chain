@@ -16,6 +16,8 @@ use rustix::fs::{openat, renameat_with, unlinkat, AtFlags, Mode, OFlags, RenameF
 #[cfg(target_os = "linux")]
 use rustix::fs::{openat2, ResolveFlags};
 
+use crate::errors::SnapshotFsError;
+
 /// Fail closed where atomic no-symlink, beneath-root resolution is unavailable.
 fn open_source(
     directory: impl std::os::fd::AsFd,
@@ -103,10 +105,10 @@ impl SourceRoot {
 
     pub fn verify_unchanged(&self) -> io::Result<()> {
         if Self::open(&self.path)?.identity != self.identity {
-            return Err(io::Error::other(format!(
-                "snapshot source root changed: {}",
-                self.path.display()
-            )));
+            return Err(SnapshotFsError::SourceRootChanged {
+                path: self.path.clone(),
+            }
+            .into());
         }
         Ok(())
     }
@@ -142,10 +144,10 @@ impl SourceRoot {
     pub fn reopen(&self, member: &Path, expected: &FileIdentity) -> io::Result<SourceEntry> {
         let entry = self.open_entry(member)?;
         if &entry.identity != expected {
-            return Err(io::Error::other(format!(
-                "snapshot source changed: {}",
-                member.display()
-            )));
+            return Err(SnapshotFsError::SourceChanged {
+                path: member.to_path_buf(),
+            }
+            .into());
         }
         Ok(entry)
     }
@@ -159,7 +161,7 @@ pub struct SourceEntry {
 impl SourceEntry {
     pub fn verify_unchanged(&self) -> io::Result<()> {
         if FileIdentity::read(&self.file.metadata()?) != self.identity {
-            return Err(io::Error::other("snapshot source changed while reading"));
+            return Err(SnapshotFsError::SourceChangedWhileReading.into());
         }
         Ok(())
     }
@@ -222,7 +224,7 @@ impl PendingArchive {
     pub fn publish(mut self) -> io::Result<()> {
         self.file.sync_all()?;
         if !self.owns_pending()? {
-            return Err(io::Error::other("pending snapshot file was replaced"));
+            return Err(SnapshotFsError::PendingFileReplaced.into());
         }
         renameat_with(
             &self.parent,

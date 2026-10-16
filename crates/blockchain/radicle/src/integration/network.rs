@@ -184,10 +184,12 @@ impl EndpointNetworkResolver {
             self.commands
                 .send(NetworkCommand::Shutdown { result })
                 .await
-                .map_err(|_| ManagerError::Endpoint("shutdown mailbox closed".into()))?;
-            response
-                .await
-                .map_err(|_| ManagerError::Endpoint("shutdown acknowledgement closed".into()))?
+                .map_err(|_| {
+                    ManagerError::from(crate::errors::EndpointLifecycleError::ShutdownMailboxClosed)
+                })?;
+            response.await.map_err(|_| {
+                ManagerError::from(crate::errors::EndpointLifecycleError::ShutdownAckClosed)
+            })?
         })
         .await
         .map_err(|_| ManagerError::ShutdownDeadline("endpoint"))?
@@ -209,7 +211,11 @@ impl EndpointResolver for EndpointNetworkResolver {
                 .map_err(|_| ManagerError::Stopped)?;
             tokio::time::timeout(HANDLE_DEADLINE, response)
                 .await
-                .map_err(|_| ManagerError::Endpoint("endpoint refresh deadline exceeded".into()))?
+                .map_err(|_| {
+                    ManagerError::from(
+                        crate::errors::EndpointLifecycleError::RefreshDeadlineExceeded,
+                    )
+                })?
                 .map_err(|_| ManagerError::Stopped)?
         })
     }
@@ -257,8 +263,8 @@ impl EndpointNetworkState {
             tokio::select! {
                 joined = actor.join_next() => {
                     break Err(match joined {
-                        Some(Err(error)) => ManagerError::Task(format!("endpoint actor: {error}")),
-                        _ => ManagerError::Endpoint("endpoint actor stopped unexpectedly".into()),
+                        Some(Err(error)) => ManagerError::endpoint_actor_task(error),
+                        _ => crate::errors::EndpointLifecycleError::ActorStoppedUnexpectedly.into(),
                     });
                 }
                 command = self.commands.recv() => {
@@ -317,9 +323,9 @@ impl EndpointNetworkState {
         let outcome = match (outcome, cleanup) {
             (Ok(()), Ok(())) => Ok(()),
             (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
-            (Err(error), Err(cleanup)) => Err(ManagerError::Task(format!(
-                "{error}; endpoint actor cleanup also failed: {cleanup}"
-            ))),
+            (Err(error), Err(cleanup)) => {
+                Err(ManagerError::endpoint_actor_cleanup_failed(error, cleanup))
+            }
         };
         if let Some(result) = shutdown_ack {
             let _ = result.send(outcome.clone());
@@ -439,8 +445,8 @@ async fn stop_actor(handle: &EndpointHandle, actor: &mut JoinSet<()>) -> Result<
         // Keep the failure that required cancellation, including a closed ACK.
         Ok(Some(Err(error))) if error.is_cancelled() && stopped.is_err() => stopped,
         // A panic carries more information than the closed ACK it caused.
-        Ok(Some(Err(error))) => Err(ManagerError::Task(format!("endpoint actor: {error}"))),
-        Ok(None) => Err(ManagerError::Endpoint("endpoint actor join missing".into())),
+        Ok(Some(Err(error))) => Err(ManagerError::endpoint_actor_task(error)),
+        Ok(None) => Err(crate::errors::EndpointLifecycleError::ActorJoinMissing.into()),
         Err(_) => cancel_and_join(actor, end).await,
     }
 }
@@ -452,7 +458,7 @@ async fn cancel_and_join(
     actor.abort_all();
     match tokio::time::timeout_at(end, actor.join_next()).await {
         Ok(Some(Err(error))) if !error.is_cancelled() => {
-            Err(ManagerError::Task(format!("endpoint actor: {error}")))
+            Err(ManagerError::endpoint_actor_task(error))
         }
         Ok(_) => Err(ManagerError::ShutdownDeadline("endpoint actor")),
         Err(_) => Err(ManagerError::ShutdownDeadline(

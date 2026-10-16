@@ -43,11 +43,11 @@ pub(crate) fn plan_outer_transition(
     event: OuterWwdEvent,
 ) -> Result<OuterWwdTransition> {
     let aggregate = ValidatedWwdAggregate::load_and_validate(storage)?;
-    let current = aggregate.record(worldwide_day).ok_or_else(|| {
-        crate::errors::storage_corruption(format!(
-            "Metadosis outer transition has no persisted WWD {worldwide_day}"
-        ))
-    })?;
+    let current = aggregate.record(worldwide_day).ok_or(
+        crate::errors::MetadosisStorageCorruptionError::OuterTransitionMissingPersistedWwd {
+            worldwide_day,
+        },
+    )?;
     reduce_outer_wwd(Some(current), event)
 }
 
@@ -57,14 +57,9 @@ pub(crate) fn plan_outer_transition_for_test_fixture(
     worldwide_day: WorldwideDay,
     event: OuterWwdEvent,
 ) -> Result<OuterWwdTransition> {
-    let record = metadosis
-        .worldwide_days
-        .get(worldwide_day)?
-        .ok_or_else(|| {
-            crate::errors::storage_corruption(format!(
-                "Metadosis test fixture has no WWD {worldwide_day}"
-            ))
-        })?;
+    let record = metadosis.worldwide_days.get(worldwide_day)?.ok_or(
+        crate::errors::MetadosisStorageCorruptionError::TestFixtureMissingWwd { worldwide_day },
+    )?;
     let projection = WwdProjection::from_record(
         worldwide_day,
         WwdStatus::try_from(record.status)?,
@@ -141,14 +136,18 @@ fn commit_new_wwd_inner(
     let valid_destination = transition.target() == WwdStatus::Forming
         && transition.membership_after() == WwdMembership::Active;
     if !valid_origin || !valid_destination {
-        return Err(crate::errors::storage_corruption(
-            "Metadosis WWD creation requires the exact reducer Created transition",
-        ));
+        return Err(
+            crate::errors::MetadosisStorageCorruptionError::WwdCreationRequiresExactCreatedTransition
+                .into(),
+        );
     }
     if metadosis.worldwide_days.get(worldwide_day)?.is_some() {
-        return Err(crate::errors::storage_corruption(format!(
-            "Metadosis WWD {worldwide_day} already exists at creation commit"
-        )));
+        return Err(
+            crate::errors::MetadosisStorageCorruptionError::WwdAlreadyExistsAtCreationCommit {
+                worldwide_day,
+            }
+            .into(),
+        );
     }
 
     metadosis.commit_create_worldwide_day(permit, worldwide_day, schedule)?;
@@ -158,7 +157,7 @@ fn commit_new_wwd_inner(
     let record = metadosis
         .worldwide_days
         .get(worldwide_day)?
-        .ok_or_else(|| crate::errors::storage_corruption("created WWD record disappeared"))?;
+        .ok_or(crate::errors::MetadosisStorageCorruptionError::CreatedWwdRecordDisappeared)?;
     metadosis.emit(IMetadosis::WorldwideDayStarted {
         worldwideDay: worldwide_day.into(),
         formingStart: record.forming_start,
@@ -224,12 +223,11 @@ pub(crate) fn commit_day_limit_formation(
     formation: OcompDayLimitFormation,
 ) -> Result<DayLimitFormationReceipt> {
     let aggregate = ValidatedWwdAggregate::load_and_validate(metadosis.storage.clone())?;
-    let current = aggregate.record(formation.worldwide_day).ok_or_else(|| {
-        crate::errors::storage_corruption(format!(
-            "day-limit formation has no persisted WWD {}",
-            formation.worldwide_day
-        ))
-    })?;
+    let current = aggregate.record(formation.worldwide_day).ok_or(
+        crate::errors::MetadosisStorageCorruptionError::DayLimitFormationMissingPersistedWwd {
+            worldwide_day: formation.worldwide_day,
+        },
+    )?;
     let transition = reduce_outer_wwd(Some(current), OuterWwdEvent::CreateDay)?;
     let unchanged_status =
         transition.source() == Some(current.status) && transition.target() == current.status;
@@ -238,9 +236,10 @@ pub(crate) fn commit_day_limit_formation(
         || !unchanged_status
         || !unchanged_membership
     {
-        return Err(crate::errors::storage_corruption(
-            "day-limit formation requires an exact reducer no-op outer transition",
-        ));
+        return Err(
+            crate::errors::MetadosisStorageCorruptionError::DayLimitFormationRequiresNoopOuterTransition
+                .into(),
+        );
     }
 
     with_commit_permit(|permit| {
@@ -267,9 +266,8 @@ pub(crate) fn commit_day_limit_formation(
         metadosis
             .day_limit_formation_receipt(formation.worldwide_day)?
             .ok_or_else(|| {
-                crate::errors::storage_corruption(
-                    "formed OCOMP day-limit receipt disappeared after commit",
-                )
+                crate::errors::MetadosisStorageCorruptionError::FormedOcompDayLimitReceiptDisappearedAfterCommit
+                    .into()
             })
     })
 }
@@ -295,7 +293,7 @@ struct StatusChange {
 struct TerminalClose<'edges> {
     preceding_edges: &'edges [WwdAdvanceEdge],
     expected_source: WwdStatus,
-    mismatch: &'static str,
+    mismatch: crate::errors::MetadosisStorageCorruptionError,
 }
 
 fn commit_outer_transition_owned(
@@ -339,15 +337,17 @@ fn commit_existing_wwd(
     let source = validate_persisted_source(metadosis, scope.worldwide_day, transition)?;
     match transition.kind() {
         OuterWwdTransitionKind::Noop => validate_noop(source, transition),
-        OuterWwdTransitionKind::Created => Err(crate::errors::storage_corruption(
-            "Created transition must use commit_new_wwd",
-        )),
+        OuterWwdTransitionKind::Created => Err(
+            crate::errors::MetadosisStorageCorruptionError::CreatedTransitionMustUseCommitNewWwd
+                .into(),
+        ),
         OuterWwdTransitionKind::Advance(edges) => {
             let final_status = commit_advance_edges(scope, metadosis, source, edges)?;
             if final_status != transition.target() {
-                return Err(crate::errors::storage_corruption(
-                    "outer advance edges do not reach the reducer target",
-                ));
+                return Err(
+                    crate::errors::MetadosisStorageCorruptionError::OuterAdvanceEdgesDoNotReachReducerTarget
+                        .into(),
+                );
             }
             Ok(())
         }
@@ -358,7 +358,7 @@ fn commit_existing_wwd(
             TerminalClose {
                 preceding_edges,
                 expected_source: WwdStatus::LookbackDelay,
-                mismatch: "MissedOffering commit must terminate from LOOKBACK_DELAY",
+                mismatch: crate::errors::MetadosisStorageCorruptionError::MissedOfferingCommitMustTerminateFromLookbackDelay,
             },
         ),
         OuterWwdTransitionKind::CapacityForfeiture { preceding_edges } => commit_terminal_close(
@@ -368,7 +368,7 @@ fn commit_existing_wwd(
             TerminalClose {
                 preceding_edges,
                 expected_source: WwdStatus::Waiting,
-                mismatch: "CapacityForfeiture commit must terminate from WAITING",
+                mismatch: crate::errors::MetadosisStorageCorruptionError::CapacityForfeitureCommitMustTerminateFromWaiting,
             },
         ),
         OuterWwdTransitionKind::EmergencyFail => commit_failed_day(scope, metadosis, source),
@@ -394,9 +394,10 @@ fn commit_rate_resolution(
             if edges.contains(&WwdAdvanceEdge::ResolveForming)
     );
     if requires_resolution != rate_resolution.is_some() {
-        return Err(crate::errors::storage_corruption(
-            "ResolveForming commit requires exactly one typed rate resolution",
-        ));
+        return Err(
+            crate::errors::MetadosisStorageCorruptionError::ResolveFormingCommitRequiresSingleTypedRateResolution
+                .into(),
+        );
     }
     if let Some(resolution) = rate_resolution {
         metadosis.commit_set_wwd_rate_resolution(scope.permit, scope.worldwide_day, resolution)?;
@@ -409,14 +410,19 @@ fn validate_persisted_source(
     worldwide_day: WorldwideDay,
     transition: &OuterWwdTransition,
 ) -> Result<WwdStatus> {
-    let source = transition.source().ok_or_else(|| {
-        crate::errors::storage_corruption("persisted WWD transition is missing a source status")
-    })?;
+    let source = transition.source().ok_or(
+        crate::errors::MetadosisStorageCorruptionError::PersistedWwdTransitionMissingSourceStatus,
+    )?;
     let persisted = metadosis.get_wwd_status(worldwide_day)?;
     if persisted != source {
-        return Err(crate::errors::storage_corruption(format!(
-            "Metadosis WWD {worldwide_day} reducer expected {source:?}, found {persisted:?}"
-        )));
+        return Err(
+            crate::errors::MetadosisStorageCorruptionError::WwdReducerStatusMismatch {
+                worldwide_day,
+                expected: source,
+                persisted,
+            }
+            .into(),
+        );
     }
     let expected_membership = if transition.target().is_terminal() {
         WwdMembership::Closed
@@ -424,18 +430,19 @@ fn validate_persisted_source(
         WwdMembership::Active
     };
     if transition.membership_after() != expected_membership {
-        return Err(crate::errors::storage_corruption(
-            "outer transition target/membership decision is inconsistent",
-        ));
+        return Err(
+            crate::errors::MetadosisStorageCorruptionError::OuterTransitionTargetMembershipDecisionInconsistent
+                .into(),
+        );
     }
     Ok(source)
 }
 
 fn validate_noop(source: WwdStatus, transition: &OuterWwdTransition) -> Result<()> {
     if transition.target() != source {
-        return Err(crate::errors::storage_corruption(
-            "outer Noop transition changes status",
-        ));
+        return Err(
+            crate::errors::MetadosisStorageCorruptionError::OuterNoopTransitionChangesStatus.into(),
+        );
     }
     Ok(())
 }
@@ -448,7 +455,7 @@ fn commit_terminal_close(
 ) -> Result<()> {
     let status = commit_advance_edges(scope, metadosis, source, close.preceding_edges)?;
     if status != close.expected_source {
-        return Err(crate::errors::storage_corruption(close.mismatch));
+        return Err(close.mismatch.into());
     }
     commit_failed_day(scope, metadosis, status)
 }
@@ -502,10 +509,13 @@ fn commit_advance_edges(
     let mut status = source;
     for edge in edges {
         if edge.source() != status {
-            return Err(crate::errors::storage_corruption(format!(
-                "Metadosis WWD {} has a non-contiguous reducer edge {edge:?}",
-                scope.worldwide_day
-            )));
+            return Err(
+                crate::errors::MetadosisStorageCorruptionError::WwdNonContiguousReducerEdge {
+                    worldwide_day: scope.worldwide_day,
+                    edge: *edge,
+                }
+                .into(),
+            );
         }
         commit_status(
             scope,
@@ -534,9 +544,14 @@ fn commit_status(
     let worldwide_day = scope.worldwide_day;
     let persisted = metadosis.get_wwd_status(worldwide_day)?;
     if persisted != source {
-        return Err(crate::errors::storage_corruption(format!(
-            "Metadosis WWD {worldwide_day} commit expected {source:?}, found {persisted:?}"
-        )));
+        return Err(
+            crate::errors::MetadosisStorageCorruptionError::WwdCommitStatusMismatch {
+                worldwide_day,
+                expected: source,
+                persisted,
+            }
+            .into(),
+        );
     }
     metadosis
         .worldwide_days

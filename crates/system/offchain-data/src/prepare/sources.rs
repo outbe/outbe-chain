@@ -166,7 +166,7 @@ fn collect_retired_ids(
             .transpose()
             .map_err(|reason| ProjectionError::RetentionSelector {
                 worldwide_day: *worldwide_day,
-                reason,
+                reason: reason.to_string(),
             })?
             .flatten()
             .is_some();

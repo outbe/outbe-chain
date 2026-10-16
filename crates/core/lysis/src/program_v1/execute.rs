@@ -207,9 +207,9 @@ impl ProgramExecutionV1 {
         });
 
         if !outbe_nod::pricing::is_issuable_entry(entry_price_minor) {
-            return Err(ProgramErrorV1::Arithmetic {
-                message: format!("Nod entry price out of bounds at {ordinal}"),
-            });
+            return Err(
+                crate::errors::LysisArithmeticErrorV1::NodEntryPriceOutOfBounds { ordinal }.into(),
+            );
         }
         let first_league = self.first_leagues[ordinal];
         self.observations.push(SemanticObservationV1::Fidelity {
@@ -227,7 +227,7 @@ impl ProgramExecutionV1 {
         }
         calculate_cost(entry_price_minor, pending.gratis_load_minor, ordinal)?;
         let nod_id = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day)
-            .map_err(ProgramErrorV1::arithmetic)?;
+            .map_err(ProgramErrorV1::entity_id_derivation)?;
         if !nod_target_available || tribute.owner.is_zero() {
             return Err(ProgramErrorV1::InvalidNodTarget { ordinal });
         }
@@ -290,9 +290,7 @@ pub(crate) fn compute_fraction_map(
         group.0 = group
             .0
             .checked_add(1)
-            .ok_or_else(|| ProgramErrorV1::Arithmetic {
-                message: "Fidelity league population overflow".to_owned(),
-            })?;
+            .ok_or(crate::errors::LysisArithmeticErrorV1::FidelityLeaguePopulationOverflow)?;
         group.1 = group
             .1
             .checked_add(nominal_amounts[ordinal])
@@ -323,26 +321,21 @@ pub(crate) fn compute_fraction_map_from_groups(
         group_nominals.push(group_nominal);
     }
     let share_sum = shares.iter().copied().try_fold(U256::ZERO, |sum, share| {
-        sum.checked_add(share)
-            .ok_or_else(|| ProgramErrorV1::Arithmetic {
-                message: "Fidelity share sum overflow".to_owned(),
-            })
+        sum.checked_add(share).ok_or_else(|| {
+            ProgramErrorV1::from(crate::errors::LysisArithmeticErrorV1::FidelityShareSumOverflow)
+        })
     })?;
     if let Some(last) = shares.last_mut() {
         if share_sum < SCALE {
-            *last =
-                last.checked_add(SCALE - share_sum)
-                    .ok_or_else(|| ProgramErrorV1::Arithmetic {
-                        message: "Fidelity share remainder overflow".to_owned(),
-                    })?;
+            *last = last
+                .checked_add(SCALE - share_sum)
+                .ok_or(crate::errors::LysisArithmeticErrorV1::FidelityShareRemainderOverflow)?;
         }
     }
     let f = scaled_floor(lysis_limit_minor, SCALE, total_interest)?;
     let fmax = f
         .checked_mul(U256::from(2_u8))
-        .ok_or_else(|| ProgramErrorV1::Arithmetic {
-            message: "maximum Gratis fraction overflow".to_owned(),
-        })?;
+        .ok_or(crate::errors::LysisArithmeticErrorV1::MaximumGratisFractionOverflow)?;
     // The distribution prioritizes its first group: highest league first.
     shares.reverse();
     populations.reverse();
@@ -353,7 +346,7 @@ pub(crate) fn compute_fraction_map_from_groups(
         f,
         fmax,
     )
-    .map_err(ProgramErrorV1::arithmetic)?;
+    .map_err(ProgramErrorV1::math)?;
     // Match the ascending league IDs and nominals for projection and output.
     fractions.reverse();
 
@@ -365,10 +358,11 @@ pub(crate) fn compute_fraction_map_from_groups(
         U256::ZERO,
         |sum, (nominal, fraction)| {
             let load = scaled_floor(*nominal, *fraction, SCALE)?;
-            sum.checked_add(load)
-                .ok_or_else(|| ProgramErrorV1::Arithmetic {
-                    message: "projected Gratis allocation overflow".to_owned(),
-                })
+            sum.checked_add(load).ok_or_else(|| {
+                ProgramErrorV1::from(
+                    crate::errors::LysisArithmeticErrorV1::ProjectedGratisAllocationOverflow,
+                )
+            })
         },
     )?;
     if projected > lysis_limit_minor {
@@ -384,7 +378,7 @@ fn scaled_floor(
     multiplier: U256,
     denominator: U256,
 ) -> Result<U256, ProgramErrorV1> {
-    checked_mul_div_floor(numerator, multiplier, denominator).map_err(ProgramErrorV1::arithmetic)
+    checked_mul_div_floor(numerator, multiplier, denominator).map_err(ProgramErrorV1::math)
 }
 
 pub(crate) fn calculate_gratis_load(
@@ -407,7 +401,7 @@ pub(crate) fn calculate_cost(
 ) -> Result<U256, ProgramErrorV1> {
     // Use the same minor-unit minimum as Nod reads and settlement.
     let cost = outbe_nod::api::settlement_cost_minor(entry_price_minor, gratis_load_minor)
-        .map_err(ProgramErrorV1::arithmetic)?;
+        .map_err(ProgramErrorV1::math)?;
     if cost.is_zero() {
         return Err(ProgramErrorV1::ZeroCost {
             ordinal,
@@ -439,7 +433,7 @@ pub(crate) fn validate_canonical_tributes(
         }
         previous = Some(tribute.tribute_id);
         let expected = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day)
-            .map_err(ProgramErrorV1::arithmetic)?;
+            .map_err(ProgramErrorV1::entity_id_derivation)?;
         if tribute.tribute_id != expected {
             return Err(ProgramErrorV1::InvalidTributeIdentity { ordinal });
         }

@@ -67,9 +67,7 @@ impl StorageReader for RethStateReader<'_> {
         self.state
             .storage(address, key)
             .map(|opt| opt.unwrap_or(U256::ZERO))
-            .map_err(|e| {
-                outbe_primitives::error::PrecompileError::Storage(format!("state read failed: {e}"))
-            })
+            .map_err(|e| crate::errors::RpcStateReadError::StateReadFailed(e.to_string()).into())
     }
 }
 
@@ -385,16 +383,15 @@ where
         &self,
         f: impl FnOnce(StorageHandle) -> Result<R, outbe_primitives::error::PrecompileError>,
     ) -> RpcResult<R> {
-        let state = self
-            .provider
-            .latest()
-            .map_err(|e| internal_err(format!("failed to get latest state: {e}")))?;
+        let state = self.provider.latest().map_err(|e| {
+            internal_err(crate::errors::RpcInternalError::latest_state_read_failed(e))
+        })?;
 
         let reader = RethStateReader { state: &state };
         let mut provider = ReadOnlyStorageProvider::new(reader);
         let storage = StorageHandle::new(&mut provider);
 
-        f(storage).map_err(|e| internal_err(format!("precompile error: {e}")))
+        f(storage).map_err(|e| internal_err(crate::errors::RpcInternalError::Precompile(e)))
     }
 }
 
@@ -421,13 +418,14 @@ where
         intent_id: B256,
         canonical_request: Bytes,
     ) -> RpcResult<Bytes> {
-        let runtime = self
-            .ocomp_lysis_openings
-            .clone()
-            .ok_or_else(|| internal_err("OCOMP Lysis openings are not configured".to_owned()))?;
+        let runtime = self.ocomp_lysis_openings.clone().ok_or_else(|| {
+            internal_err(crate::errors::RpcInternalError::OcompLysisOpeningsNotConfigured)
+        })?;
         tokio::task::spawn_blocking(move || runtime.build(intent_id, canonical_request))
             .await
-            .map_err(|error| internal_err(format!("OCOMP openings worker failed: {error}")))?
+            .map_err(|error| {
+                internal_err(crate::errors::RpcInternalError::ocomp_openings_worker_failed(error))
+            })?
             .map_err(internal_err)
     }
 
@@ -445,10 +443,9 @@ where
         // `"outbe/<ledger>/derive-keys/v1" || account || ephemeralPubkey`. Require
         // the signer to equal `account`.
         let sig65: [u8; 65] = signature.as_ref().try_into().map_err(|_| {
-            invalid_params_err(format!(
-                "signature must be 65 bytes (r||s||v), got {}",
-                signature.len()
-            ))
+            invalid_params_err(
+                crate::errors::RpcInvalidParamsError::InvalidSignatureLength(signature.len()),
+            )
         })?;
         // Recover the signer to reject unauthorized requests before the enclave round-trip.
         // This adds defense in depth. The enclave also verifies the signature.
@@ -458,11 +455,18 @@ where
             &outbe_tee::protocol::derive_account_keys_message(ledger, account, ephemeral_pubkey),
         );
         let recovered = outbe_primitives::tee_signatures::recover_signer(&prehash, &sig65)
-            .map_err(|e| invalid_params_err(format!("signature recovery failed: {e}")))?;
+            .map_err(|e| {
+                invalid_params_err(
+                    crate::errors::RpcInvalidParamsError::signature_recovery_failed(e),
+                )
+            })?;
         if recovered != account {
-            return Err(invalid_params_err(format!(
-                "signature signer {recovered} does not control account {account}"
-            )));
+            return Err(invalid_params_err(
+                crate::errors::RpcInvalidParamsError::SignatureSignerMismatch {
+                    recovered,
+                    account,
+                },
+            ));
         }
 
         // Off-chain key delivery through the process-global enclave client (no state).
@@ -474,8 +478,10 @@ where
             requester_ephemeral_pubkey: ephemeral_pubkey.0,
             owner_sig: sig65.to_vec(),
         })
-        .ok_or_else(|| internal_err("tee enclave not configured".to_string()))?
-        .map_err(|e| internal_err(format!("enclave DeriveAccountKeys failed: {e}")))?;
+        .ok_or_else(|| internal_err(crate::errors::RpcInternalError::TeeEnclaveNotConfigured))?
+        .map_err(|e| {
+            internal_err(crate::errors::RpcInternalError::enclave_derive_account_keys_failed(e))
+        })?;
         match response {
             EnclaveResponse::AccountKeysSealed {
                 sealed,
@@ -487,12 +493,12 @@ where
                 nonce: nonce.to_vec().into(),
                 enclave_ephemeral_pubkey: B256::from(enclave_ephemeral_pubkey),
             }),
-            EnclaveResponse::Error { message } => {
-                Err(internal_err(format!("enclave error: {message}")))
-            }
-            other => Err(internal_err(format!(
-                "unexpected enclave response: {other:?}"
-            ))),
+            EnclaveResponse::Error { message } => Err(internal_err(
+                crate::errors::RpcInternalError::EnclaveError(message),
+            )),
+            other => Err(internal_err(
+                crate::errors::RpcInternalError::unexpected_enclave_response(other),
+            )),
         }
     }
 
@@ -675,15 +681,15 @@ where
         // finalized block.
         let target = match block_number {
             Some(n) => n,
-            None => self
-                .provider
-                .best_block_number()
-                .map_err(|e| internal_err(format!("failed to read latest block number: {e}")))?,
+            None => self.provider.best_block_number().map_err(|e| {
+                internal_err(crate::errors::RpcInternalError::latest_block_number_read_failed(e))
+            })?,
         };
-        let header = self
-            .provider
-            .header_by_number(target)
-            .map_err(|e| internal_err(format!("failed to read header for block {target}: {e}")))?;
+        let header = self.provider.header_by_number(target).map_err(|e| {
+            internal_err(crate::errors::RpcInternalError::block_header_read_failed(
+                target, e,
+            ))
+        })?;
         // `mix_hash()` is itself `Option<B256>`. A missing block also yields None.
         Ok(header.and_then(|h| h.mix_hash()))
     }
@@ -774,17 +780,17 @@ where
         // bridge at marshal-start. A node without a bridge (pure EL full node)
         // has no marshal and cannot answer.
         let bridge = self.bridge.as_ref().ok_or_else(|| {
-            internal_err("node is not serving consensus finalizations".to_string())
+            internal_err(crate::errors::RpcInternalError::NotServingConsensusFinalizations)
         })?;
         let proof = bridge.request_finalization(height).await.ok_or_else(|| {
-            internal_err(format!(
-                "no finalization available for height {height} (not finalized locally or pruned)"
+            internal_err(crate::errors::RpcInternalError::NoFinalizationAvailable(
+                height,
             ))
         })?;
         if proof.finalization.is_empty() {
-            return Err(internal_err(format!(
-                "no direct finalization available for height {height}"
-            )));
+            return Err(internal_err(
+                crate::errors::RpcInternalError::NoDirectFinalizationAvailable(height),
+            ));
         }
         Ok(FinalizationProof {
             finalization_hex: format!("0x{}", hex::encode(&proof.finalization)),
@@ -793,18 +799,17 @@ where
     }
 
     async fn get_consensus_block(&self, height: u64) -> RpcResult<Bytes> {
-        let bridge = self
-            .bridge
-            .as_ref()
-            .ok_or_else(|| internal_err("node is not serving consensus blocks".to_owned()))?;
+        let bridge = self.bridge.as_ref().ok_or_else(|| {
+            internal_err(crate::errors::RpcInternalError::NotServingConsensusBlocks)
+        })?;
         bridge
             .request_finalization(height)
             .await
             .map(|proof| proof.block)
             .ok_or_else(|| {
-                internal_err(format!(
-                    "no finalized consensus block available for height {height}"
-                ))
+                internal_err(
+                    crate::errors::RpcInternalError::NoFinalizedConsensusBlockAvailable(height),
+                )
             })
     }
 
@@ -813,23 +818,23 @@ where
         height: u64,
     ) -> RpcResult<crate::api::AncestorFinalizationProof> {
         let bridge = self.bridge.as_ref().ok_or_else(|| {
-            internal_err("node is not serving consensus finalizations".to_owned())
+            internal_err(crate::errors::RpcInternalError::NotServingConsensusFinalizations)
         })?;
         let mut ancestors = Vec::new();
         let mut total_bytes = 0usize;
         for offset in 0..=64u64 {
-            let next = height
-                .checked_add(offset)
-                .ok_or_else(|| internal_err("proof height overflow".to_owned()))?;
+            let next = height.checked_add(offset).ok_or_else(|| {
+                internal_err(crate::errors::RpcInternalError::ProofHeightOverflow)
+            })?;
             let proof = bridge.request_finalization(next).await.ok_or_else(|| {
-                internal_err(format!("no finality evidence available at height {next}"))
+                internal_err(crate::errors::RpcInternalError::NoFinalityEvidenceAvailable(next))
             })?;
             total_bytes = total_bytes.saturating_add(proof.block.len());
             // Hex JSON doubles the block payload. Stay below the default
             // upstream HTTP client's 10 MiB response bound with envelope room.
             if total_bytes > 4 * 1024 * 1024 {
                 return Err(internal_err(
-                    "ancestor finality proof exceeds byte limit".to_owned(),
+                    crate::errors::RpcInternalError::AncestorFinalityProofExceedsByteLimit,
                 ));
             }
             if !proof.finalization.is_empty() {
@@ -844,7 +849,7 @@ where
             ancestors.push(format!("0x{}", hex::encode(proof.block)));
         }
         Err(internal_err(
-            "no descendant finalization within 64 blocks".to_owned(),
+            crate::errors::RpcInternalError::NoDescendantFinalizationWithin64Blocks,
         ))
     }
 }

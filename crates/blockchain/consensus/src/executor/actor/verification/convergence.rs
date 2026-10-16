@@ -69,9 +69,9 @@ impl ExecutionStatus {
                 return Ok(status);
             }
         }
-        Err(eyre::Report::new(error).wrap_err(format!(
-            "new_payload failed during executor verification: target={digest}"
-        )))
+        Err(eyre::Report::new(error).wrap_err(
+            crate::errors::ExecutorError::VerificationNewPayloadFailed(digest),
+        ))
     }
 
     fn classify_internal_error(source: &(dyn std::error::Error + 'static)) -> Option<Self> {

@@ -188,7 +188,7 @@ impl OcompRetentionCoordinator {
                 return Ok(RetainedGcAttemptOutcome::NoLongerPending);
             }
             return Err(RetainedGcAttemptFailure::global(
-                RetentionError::InvalidTransition("GC claim changed before completion"),
+                crate::errors::RetentionTransitionError::GcClaimChangedBeforeCompletion.into(),
             ));
         }
         self.persist_next(&mut inner, key, current, completed_state)

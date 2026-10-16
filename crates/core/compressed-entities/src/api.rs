@@ -95,9 +95,10 @@ pub trait AuthenticatedParentTree: Send + Sync + core::fmt::Debug {
         _partition: PartitionRef,
         _expected_parent_root: B256,
     ) -> Result<Option<B256>> {
-        Err(fatal_scope(
-            "authenticated parent tree does not expose collection roots",
-        ))
+        Err(
+            crate::errors::CompressedEntitiesFatalError::ParentTreeDoesNotExposeCollectionRoots
+                .into(),
+        )
     }
 
     /// Prepare an immutable, side-effect-free candidate batch against this
@@ -183,9 +184,10 @@ impl AuthenticatedParentTree for EmptyAuthenticatedTree {
         expected_parent_root: B256,
     ) -> Result<Option<crate::Commitment>> {
         if expected_parent_root != self.parent_root() {
-            return Err(fatal_scope(
-                "empty reference parent does not match the EVM root",
-            ));
+            return Err(
+                crate::errors::CompressedEntitiesFatalError::EmptyReferenceParentRootMismatch
+                    .into(),
+            );
         }
         Ok(None)
     }
@@ -196,9 +198,10 @@ impl AuthenticatedParentTree for EmptyAuthenticatedTree {
         expected_parent_root: B256,
     ) -> Result<bool> {
         if expected_parent_root != self.parent_root() {
-            return Err(fatal_scope(
-                "empty reference parent does not match the EVM root",
-            ));
+            return Err(
+                crate::errors::CompressedEntitiesFatalError::EmptyReferenceParentRootMismatch
+                    .into(),
+            );
         }
         Ok(false)
     }
@@ -209,9 +212,10 @@ impl AuthenticatedParentTree for EmptyAuthenticatedTree {
         expected_parent_root: B256,
     ) -> Result<Option<B256>> {
         if expected_parent_root != self.parent_root() {
-            return Err(fatal_scope(
-                "empty reference parent does not match the EVM root",
-            ));
+            return Err(
+                crate::errors::CompressedEntitiesFatalError::EmptyReferenceParentRootMismatch
+                    .into(),
+            );
         }
         Ok(None)
     }
@@ -223,7 +227,10 @@ impl AuthenticatedParentTree for EmptyAuthenticatedTree {
         retirements: &[PartitionRef],
     ) -> Result<crate::ProvisionalTreeBatch> {
         if !retirements.is_empty() {
-            return Err(fatal_scope("empty parent cannot retire a collection"));
+            return Err(
+                crate::errors::CompressedEntitiesFatalError::EmptyParentCannotRetireCollection
+                    .into(),
+            );
         }
         empty_parent::prepare(block_number, self.parent_root(), mutations)
     }
@@ -527,10 +534,6 @@ impl Drop for ExplicitGasWindow<'_> {
 pub mod scope_factory;
 
 mod scope;
-
-fn fatal_scope(message: impl core::fmt::Display) -> outbe_primitives::error::PrecompileError {
-    crate::errors::fatal_error(message)
-}
 
 impl Default for ExecutionScope {
     fn default() -> Self {

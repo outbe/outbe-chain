@@ -8,7 +8,7 @@
 
 use alloy_primitives::{I256, U256};
 
-use crate::error::{PrecompileError, Result};
+use crate::error::{PrimitivesMathError, Result};
 use crate::math::bit_math::most_significant_bit;
 use crate::math::constants::SCALE_1_128_128;
 
@@ -27,10 +27,10 @@ pub fn log2(x: U256) -> Result<I256> {
     // Special cases match LB.
     if x == U256::ONE {
         return I256::try_from(-128i32)
-            .map_err(|_| PrecompileError::revert("lb_math: log2 i256 conversion"));
+            .map_err(|_| PrimitivesMathError::LbMathLog2I256Conversion.into());
     }
     if x.is_zero() {
-        return Err(PrecompileError::revert("lb_math: log2 underflow (x == 0)"));
+        return Err(PrimitivesMathError::LbMathLog2Underflow.into());
     }
 
     // Convert x from 128.128 to 129.127 by halving (one bit of headroom).
@@ -51,7 +51,7 @@ pub fn log2(x: U256) -> Result<I256> {
     let n = most_significant_bit(x_inner >> LOG_SCALE_OFFSET as usize);
     // result = n << LOG_SCALE_OFFSET (signed 129.127).
     let mut result = I256::try_from(U256::from(n))
-        .map_err(|_| PrecompileError::revert("lb_math: log2 n widen"))?
+        .map_err(|_| PrimitivesMathError::LbMathLog2NWiden)?
         << LOG_SCALE_OFFSET as usize;
 
     // y = x * 2^(-n).
@@ -102,9 +102,7 @@ pub fn pow(x: U256, y: i32) -> Result<U256> {
     if abs_y >= 0x100000 {
         // LB writes `revert PowUnderflow(x, y)` after the if-block when result == 0.
         // Our caller treats this as either saturation (caller decides) or hard error.
-        return Err(PrecompileError::revert(format!(
-            "lb_math: pow exponent out of LB range (|y| = {abs_y})"
-        )));
+        return Err(PrimitivesMathError::LbMathPowExponentOutOfRange { abs_y }.into());
     }
 
     // Square-and-multiply over the 20 bits of |y|.
@@ -130,9 +128,7 @@ pub fn pow(x: U256, y: i32) -> Result<U256> {
     }
 
     if result.is_zero() {
-        return Err(PrecompileError::revert(format!(
-            "lb_math: pow underflow (x = {x}, y = {y})"
-        )));
+        return Err(PrimitivesMathError::LbMathPowUnderflow { x, y }.into());
     }
 
     if invert {

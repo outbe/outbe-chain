@@ -31,7 +31,7 @@ pub(super) fn encode_header(header: &InventoryHeaderV1) -> Vec<u8> {
 
 pub(super) fn decode_header(encoded: &[u8]) -> Result<InventoryHeaderV1, TributeInventoryError> {
     if encoded.len() != header_len() || encoded[..8] != HEADER_MAGIC {
-        return Err(TributeInventoryError::Corrupt("inventory header"));
+        return Err(TributeInventoryError::CorruptInventoryHeader);
     }
     let mut offset = 8;
     let mut take = |count: usize| {
@@ -79,7 +79,7 @@ pub(super) fn decode_header(encoded: &[u8]) -> Result<InventoryHeaderV1, Tribute
         exact_body_bytes,
     };
     if !header.subject.worldwide_day.is_valid() {
-        return Err(TributeInventoryError::Corrupt("inventory worldwide day"));
+        return Err(TributeInventoryError::CorruptInventoryWorldwideDay);
     }
     Ok(header)
 }

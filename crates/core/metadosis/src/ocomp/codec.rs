@@ -1,4 +1,4 @@
-use crate::errors::storage_corruption_message;
+use crate::errors::MetadosisStorageCorruptionError;
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::SchemaLimits;
 use outbe_primitives::error::Result;
@@ -29,15 +29,15 @@ impl<'a> FixedReader<'a> {
         let end = self
             .offset
             .checked_add(N)
-            .ok_or_else(|| storage_corruption_message("OCOMP scheduler offset overflow"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompSchedulerOffsetOverflow)?;
         let bytes = self
             .encoded
             .get(self.offset..end)
-            .ok_or_else(|| storage_corruption_message("truncated OCOMP scheduler"))?;
+            .ok_or(MetadosisStorageCorruptionError::TruncatedOcompScheduler)?;
         self.offset = end;
         bytes
             .try_into()
-            .map_err(|_| storage_corruption_message("invalid OCOMP scheduler field width"))
+            .map_err(|_| MetadosisStorageCorruptionError::InvalidOcompSchedulerFieldWidth.into())
     }
 
     pub(super) fn u8(&mut self) -> Result<u8> {
@@ -56,9 +56,7 @@ impl<'a> FixedReader<'a> {
         if self.offset == self.encoded.len() {
             Ok(())
         } else {
-            Err(storage_corruption_message(
-                "OCOMP scheduler has trailing bytes",
-            ))
+            Err(MetadosisStorageCorruptionError::OcompSchedulerHasTrailingBytes.into())
         }
     }
 }
@@ -68,7 +66,7 @@ pub(super) fn max_canonical_object_bytes(limits: &SchemaLimits) -> Result<usize>
         .codec
         .max_body_bytes
         .checked_add(outbe_ocomp_protocol::OCB1_HEADER_LEN)
-        .ok_or_else(|| storage_corruption_message("OCOMP canonical object byte cap overflow"))
+        .ok_or_else(|| MetadosisStorageCorruptionError::OcompCanonicalObjectByteCapOverflow.into())
 }
 
 pub(super) fn read_canonical_optional<T>(
@@ -82,14 +80,12 @@ pub(super) fn read_canonical_optional<T>(
         return Ok(None);
     }
     if len > max_encoded_bytes {
-        return Err(storage_corruption_message(format!(
-            "{label} exceeds canonical byte cap"
-        )));
+        return Err(MetadosisStorageCorruptionError::ExceedsCanonicalByteCap { label }.into());
     }
     let encoded = bytes.read()?;
-    decode(&encoded)
-        .map(Some)
-        .map_err(|error| storage_corruption_message(format!("decode {label}: {error}")))
+    decode(&encoded).map(Some).map_err(|error| {
+        MetadosisStorageCorruptionError::DecodeCanonicalObject { label, error }.into()
+    })
 }
 
 pub(super) fn encode_scheduler(state: &JobFsmState) -> Result<Vec<u8>> {
@@ -100,9 +96,9 @@ pub(super) fn scheduler_snapshot(state: &JobFsmState) -> Result<JobFsmSnapshot> 
     let mut snapshot = state.snapshot();
     snapshot.terminal.clear();
     if snapshot.live.is_none() && snapshot.ready.is_none() {
-        return Err(storage_corruption_message(
-            "OCOMP scheduler state has no active attempt",
-        ));
+        return Err(
+            MetadosisStorageCorruptionError::OcompSchedulerStateMissingActiveAttempt.into(),
+        );
     }
     Ok(snapshot)
 }
@@ -133,15 +129,13 @@ pub(super) fn encode_scheduler_snapshot(snapshot: &JobFsmSnapshot) -> Result<Vec
             encode_retained_effect(&mut encoded, Some(live.retained_effect));
         }
         _ => {
-            return Err(storage_corruption_message(
-                "encode invalid OCOMP scheduler phase cardinality",
-            ))
+            return Err(
+                MetadosisStorageCorruptionError::EncodeInvalidOcompSchedulerPhaseCardinality.into(),
+            )
         }
     }
     if encoded.len() != SCHEDULER_ENCODED_LEN {
-        return Err(storage_corruption_message(
-            "OCOMP scheduler encoded length mismatch",
-        ));
+        return Err(MetadosisStorageCorruptionError::OcompSchedulerEncodedLengthMismatch.into());
     }
     Ok(encoded)
 }
@@ -165,17 +159,13 @@ fn encode_retained_effect(encoded: &mut Vec<u8>, effect: Option<RetainedRequestE
 
 pub(super) fn decode_scheduler(encoded: &[u8]) -> Result<JobFsmSnapshot> {
     if encoded.len() != SCHEDULER_ENCODED_LEN {
-        return Err(storage_corruption_message(
-            "OCOMP scheduler has non-canonical length",
-        ));
+        return Err(MetadosisStorageCorruptionError::OcompSchedulerNonCanonicalLength.into());
     }
     let mut reader = FixedReader::new(encoded);
     if reader.take::<4>()? != SCHEDULER_MAGIC
         || u16::from_be_bytes(reader.take::<2>()?) != SCHEDULER_VERSION
     {
-        return Err(storage_corruption_message(
-            "OCOMP scheduler magic/version mismatch",
-        ));
+        return Err(MetadosisStorageCorruptionError::OcompSchedulerMagicVersionMismatch.into());
     }
     let phase = reader.u8()?;
     let worldwide_day = WorldwideDay::new(reader.u32()?);
@@ -244,16 +234,16 @@ fn decode_scheduler_phase(fields: SchedulerFields) -> Result<JobFsmSnapshot> {
                     pending_nonce,
                     requested_height,
                     deadline_height: (deadline_height != 0).then_some(deadline_height),
-                    retained_effect: retained_effect.ok_or_else(|| {
-                        storage_corruption_message("pending OCOMP scheduler has no retained effect")
-                    })?,
+                    retained_effect: retained_effect.ok_or(
+                        MetadosisStorageCorruptionError::PendingOcompSchedulerMissingRetainedEffect,
+                    )?,
                 }),
             )
         }
         _ => {
-            return Err(storage_corruption_message(
-                "OCOMP scheduler phase/index fields are inconsistent",
-            ))
+            return Err(
+                MetadosisStorageCorruptionError::OcompSchedulerPhaseIndexFieldsInconsistent.into(),
+            )
         }
     };
     Ok(JobFsmSnapshot {
@@ -278,8 +268,8 @@ fn decode_retained_effect(
             lysis_limit_minor,
             receipt_hash,
         })),
-        _ => Err(storage_corruption_message(
-            "OCOMP scheduler retained-effect fields are inconsistent",
-        )),
+        _ => Err(
+            MetadosisStorageCorruptionError::OcompSchedulerRetainedEffectFieldsInconsistent.into(),
+        ),
     }
 }

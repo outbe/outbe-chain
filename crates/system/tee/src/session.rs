@@ -467,7 +467,7 @@ impl EnclaveSession {
     fn revoke(&mut self, reason: &'static str, detail: impl std::fmt::Display) -> TransportError {
         self.revoked = Some(reason);
         self.client = None;
-        TransportError::IdentityMismatch(format!("{reason}: {detail}"))
+        TransportError::identity_mismatch(reason, detail)
     }
 }
 

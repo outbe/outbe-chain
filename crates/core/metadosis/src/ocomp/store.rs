@@ -11,7 +11,7 @@ use outbe_primitives::time::WorldwideDay;
 
 use crate::{
     aggregate::WwdStatus,
-    errors::storage_corruption_message,
+    errors::MetadosisStorageCorruptionError,
     schema::{MetadosisContract, WorldwideDayEntryExt},
 };
 
@@ -45,7 +45,7 @@ impl MetadosisContract<'_> {
         limits: &SchemaLimits,
     ) -> Result<Option<OcompJobRecordV1>> {
         let storage_key = intent_storage_key(intent_id).map_err(|error| {
-            storage_corruption_message(format!("derive OCOMP intent storage key: {error}"))
+            MetadosisStorageCorruptionError::DeriveOcompIntentStorageKey { error }
         })?;
         let bytes = self.ocomp_job_records.get_bytes(&storage_key);
         let record = read_canonical_optional(
@@ -56,12 +56,12 @@ impl MetadosisContract<'_> {
         )?;
         if let Some(record) = &record {
             let actual = record.intent.intent_id(limits).map_err(|error| {
-                storage_corruption_message(format!("hash stored OCOMP intent: {error}"))
+                MetadosisStorageCorruptionError::HashStoredOcompIntent { error }
             })?;
             if actual != intent_id {
-                return Err(storage_corruption_message(
-                    "OCOMP job record key/IntentId mismatch",
-                ));
+                return Err(
+                    MetadosisStorageCorruptionError::OcompJobRecordKeyIntentIdMismatch.into(),
+                );
             }
         }
         Ok(record)
@@ -82,9 +82,10 @@ impl MetadosisContract<'_> {
             .as_ref()
             .is_some_and(|accountability| accountability.job_id != job_id)
         {
-            return Err(storage_corruption_message(
-                "OCOMP vote accountability storage key/JobId mismatch",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompVoteAccountabilityStorageKeyJobIdMismatch
+                    .into(),
+            );
         }
         Ok(accountability)
     }
@@ -95,12 +96,12 @@ impl MetadosisContract<'_> {
         limits: &SchemaLimits,
     ) -> Result<()> {
         accountability.validate_semantics(limits).map_err(|error| {
-            storage_corruption_message(format!("invalid OCOMP vote accountability: {error}"))
+            MetadosisStorageCorruptionError::InvalidOcompVoteAccountability { error }
         })?;
         self.ocomp_vote_accountability
             .get_bytes(&accountability.job_id)
             .write(&accountability.encode_canonical(limits).map_err(|error| {
-                storage_corruption_message(format!("encode OCOMP vote accountability: {error}"))
+                MetadosisStorageCorruptionError::EncodeOcompVoteAccountability { error }
             })?)
     }
 
@@ -124,19 +125,15 @@ impl MetadosisContract<'_> {
     ) -> Result<JobFsmState> {
         let encoded = self.ocomp_fsm_states.get_bytes(&wwd).read()?;
         if encoded.is_empty() {
-            return Err(storage_corruption_message(
-                "OCOMP WWD FSM is not initialized",
-            ));
+            return Err(MetadosisStorageCorruptionError::OcompWwdFsmNotInitialized.into());
         }
         let snapshot = decode_scheduler(&encoded)?;
         if snapshot.worldwide_day != wwd {
-            return Err(storage_corruption_message(
-                "OCOMP WWD FSM storage key mismatch",
-            ));
+            return Err(MetadosisStorageCorruptionError::OcompWwdFsmStorageKeyMismatch.into());
         }
 
         let state = JobFsmState::restore(snapshot)
-            .map_err(|error| storage_corruption_message(format!("restore OCOMP FSM: {error}")))?;
+            .map_err(|error| MetadosisStorageCorruptionError::RestoreOcompFsm { error })?;
         self.validate_persisted_equivalences(&state, schema_limits)?;
         Ok(state)
     }
@@ -160,13 +157,13 @@ impl MetadosisContract<'_> {
         let mut states = Vec::new();
         states
             .try_reserve_exact(snapshots.len())
-            .map_err(|_| storage_corruption_message("allocate bounded OCOMP live scheduler"))?;
+            .map_err(|_| MetadosisStorageCorruptionError::AllocateBoundedOcompLiveScheduler)?;
         for snapshot in snapshots {
             let state = self.ocomp_fsm_state(snapshot.worldwide_day, schema_limits)?;
             if state.projection().phase != DayPhase::OffchainPending
                 || state.projection().live_intent_id != Some(snapshot.intent_id)
             {
-                return Err(storage_corruption_message("OCOMP live index/FSM mismatch"));
+                return Err(MetadosisStorageCorruptionError::OcompLiveIndexFsmMismatch.into());
             }
             states.push(state);
         }
@@ -183,9 +180,9 @@ impl MetadosisContract<'_> {
             DayPhase::Ready => WwdStatus::Ready.as_u8(),
             DayPhase::OffchainPending => WwdStatus::OffchainPending.as_u8(),
             DayPhase::Terminal => {
-                return Err(storage_corruption_message(
-                    "terminal OCOMP FSM must not be persisted",
-                ))
+                return Err(
+                    MetadosisStorageCorruptionError::TerminalOcompFsmMustNotBePersisted.into(),
+                )
             }
         };
         if self
@@ -195,18 +192,18 @@ impl MetadosisContract<'_> {
             .read()?
             != expected_status
         {
-            return Err(storage_corruption_message(
-                "OCOMP scheduler/WorldwideDay status mismatch",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompSchedulerWorldwideDayStatusMismatch.into(),
+            );
         }
 
         self.validate_retained_request_effect(state, limits)?;
         match projection.phase {
             DayPhase::Ready => self.validate_ready_equivalence(projection),
             DayPhase::OffchainPending => self.validate_pending_equivalence(projection, limits),
-            DayPhase::Terminal => Err(storage_corruption_message(
-                "terminal OCOMP FSM must not be persisted",
-            )),
+            DayPhase::Terminal => {
+                Err(MetadosisStorageCorruptionError::TerminalOcompFsmMustNotBePersisted.into())
+            }
         }
     }
 
@@ -220,20 +217,17 @@ impl MetadosisContract<'_> {
         match projection.retained_lysis_limit_minor {
             None if receipt.is_none() && projection.pending_nonce == 0 => {}
             Some(lysis_limit_minor) => {
-                let receipt = receipt.ok_or_else(|| {
-                    storage_corruption_message("OCOMP retained limit has no receipt")
-                })?;
+                let receipt = receipt
+                    .ok_or(MetadosisStorageCorruptionError::OcompRetainedLimitMissingReceipt)?;
                 let expected_hash = receipt.receipt_hash(limits).map_err(|error| {
-                    storage_corruption_message(format!("hash stored request receipt: {error}"))
+                    MetadosisStorageCorruptionError::HashStoredRequestReceipt { error }
                 })?;
                 let snapshot = state.snapshot();
                 let retained = snapshot
                     .ready
                     .and_then(|ready| ready.retained_effect)
                     .or_else(|| snapshot.live.map(|live| live.retained_effect))
-                    .ok_or_else(|| {
-                        storage_corruption_message("OCOMP retained effect snapshot is missing")
-                    })?;
+                    .ok_or(MetadosisStorageCorruptionError::OcompRetainedEffectSnapshotMissing)?;
                 let receipt_binding = (
                     receipt.wwd,
                     receipt.lysis_limit_minor,
@@ -247,15 +241,15 @@ impl MetadosisContract<'_> {
                     retained.receipt_hash,
                 );
                 if receipt_binding != retained_binding {
-                    return Err(storage_corruption_message(
-                        "OCOMP limit receipt/state mismatch",
-                    ));
+                    return Err(
+                        MetadosisStorageCorruptionError::OcompLimitReceiptStateMismatch.into(),
+                    );
                 }
             }
             _ => {
-                return Err(storage_corruption_message(
-                    "OCOMP fresh READY state has a residual receipt",
-                ))
+                return Err(
+                    MetadosisStorageCorruptionError::OcompFreshReadyStateHasResidualReceipt.into(),
+                )
             }
         }
 
@@ -265,9 +259,9 @@ impl MetadosisContract<'_> {
     fn validate_ready_equivalence(&self, projection: super::state::JobFsmProjection) -> Result<()> {
         let key = ReadyIndexKey::from_projection(projection)?;
         if self.read_ready_index()?.binary_search(&key).is_err() {
-            return Err(storage_corruption_message(
-                "OCOMP READY FSM has no exact due-index key",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompReadyFsmMissingExactDueIndexKey.into(),
+            );
         }
         Ok(())
     }
@@ -279,10 +273,10 @@ impl MetadosisContract<'_> {
     ) -> Result<()> {
         let intent_id = projection
             .live_intent_id
-            .ok_or_else(|| storage_corruption_message("OCOMP pending FSM has no live intent"))?;
-        let record = self.ocomp_job_record(intent_id, limits)?.ok_or_else(|| {
-            storage_corruption_message("OCOMP live scheduler key has no job record")
-        })?;
+            .ok_or(MetadosisStorageCorruptionError::OcompPendingFsmMissingLiveIntent)?;
+        let record = self
+            .ocomp_job_record(intent_id, limits)?
+            .ok_or(MetadosisStorageCorruptionError::OcompLiveSchedulerKeyMissingJobRecord)?;
         let expected_deadline = Some(expected_live_deadline(&record)?);
         let identity_matches = record.intent.wwd == projection.worldwide_day.value()
             && record.intent.pending_nonce == projection.pending_nonce;
@@ -290,18 +284,16 @@ impl MetadosisContract<'_> {
             || !identity_matches
             || expected_deadline != projection.deadline_height
         {
-            return Err(storage_corruption_message(
-                "OCOMP live scheduler/job record mismatch",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompLiveSchedulerJobRecordMismatch.into(),
+            );
         }
         if self
             .read_ready_index()?
             .iter()
             .any(|key| key.worldwide_day == projection.worldwide_day)
         {
-            return Err(storage_corruption_message(
-                "OCOMP live WWD remains in the READY index",
-            ));
+            return Err(MetadosisStorageCorruptionError::OcompLiveWwdRemainsInReadyIndex.into());
         }
         Ok(())
     }
@@ -312,14 +304,14 @@ impl MetadosisContract<'_> {
         record: &OcompJobRecordV1,
         limits: &SchemaLimits,
     ) -> Result<()> {
-        record.validate_semantics(limits).map_err(|error| {
-            storage_corruption_message(format!("invalid OCOMP job record: {error}"))
-        })?;
-        let encoded = record.encode_canonical(limits).map_err(|error| {
-            storage_corruption_message(format!("encode OCOMP job record: {error}"))
-        })?;
+        record
+            .validate_semantics(limits)
+            .map_err(|error| MetadosisStorageCorruptionError::InvalidOcompJobRecord { error })?;
+        let encoded = record
+            .encode_canonical(limits)
+            .map_err(|error| MetadosisStorageCorruptionError::EncodeOcompJobRecord { error })?;
         let storage_key = intent_storage_key(intent_id).map_err(|error| {
-            storage_corruption_message(format!("derive OCOMP intent storage key: {error}"))
+            MetadosisStorageCorruptionError::DeriveOcompIntentStorageKey { error }
         })?;
         self.ocomp_job_records
             .get_bytes(&storage_key)
@@ -334,14 +326,14 @@ impl MetadosisContract<'_> {
 
     pub(super) fn write_live_scheduler(&self, state: &JobFsmState) -> Result<()> {
         if state.projection().phase != DayPhase::OffchainPending {
-            return Err(storage_corruption_message(
-                "OCOMP live scheduler requires pending state",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompLiveSchedulerRequiresPendingState.into(),
+            );
         }
         let projection = state.projection();
-        let intent_id = projection.live_intent_id.ok_or_else(|| {
-            storage_corruption_message("OCOMP live scheduler has no live attempt")
-        })?;
+        let intent_id = projection
+            .live_intent_id
+            .ok_or(MetadosisStorageCorruptionError::OcompLiveSchedulerMissingLiveAttempt)?;
         let key = LiveIndexKey {
             worldwide_day: projection.worldwide_day,
             intent_id,
@@ -351,9 +343,9 @@ impl MetadosisContract<'_> {
             existing.worldwide_day == key.worldwide_day || existing.intent_id == key.intent_id
         }) {
             if index[position] != key {
-                return Err(storage_corruption_message(
-                    "OCOMP live scheduler identity changed",
-                ));
+                return Err(
+                    MetadosisStorageCorruptionError::OcompLiveSchedulerIdentityChanged.into(),
+                );
             }
         } else {
             index.push(key);
@@ -368,9 +360,7 @@ impl MetadosisContract<'_> {
         let position = index
             .iter()
             .position(|key| key.intent_id == intent_id)
-            .ok_or_else(|| {
-                storage_corruption_message("OCOMP live scheduler is missing the exact job")
-            })?;
+            .ok_or(MetadosisStorageCorruptionError::OcompLiveSchedulerMissingExactJob)?;
         index.remove(position);
         if index.is_empty() {
             self.ocomp_scheduler.clear()
@@ -386,16 +376,12 @@ fn expected_live_deadline(record: &OcompJobRecordV1) -> Result<u64> {
         OcompJobStatus::AwaitingFinality => Ok(record
             .intent_height
             .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
-            .ok_or_else(|| {
-                storage_corruption_message("OCOMP awaiting-finality deadline overflow")
-            })?),
+            .ok_or(MetadosisStorageCorruptionError::OcompAwaitingFinalityDeadlineOverflow)?),
         OcompJobStatus::VotingOpen => Ok(record
             .finalized
             .as_ref()
-            .ok_or_else(|| storage_corruption_message("live OCOMP job has no finalized binding"))?
+            .ok_or(MetadosisStorageCorruptionError::LiveOcompJobMissingFinalizedBinding)?
             .deadline_height),
-        _ => Err(storage_corruption_message(
-            "terminal OCOMP job remains in the live scheduler",
-        )),
+        _ => Err(MetadosisStorageCorruptionError::TerminalOcompJobRemainsInLiveScheduler.into()),
     }
 }

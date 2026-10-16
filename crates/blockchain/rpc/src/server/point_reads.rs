@@ -39,7 +39,11 @@ where
         )
     })
     .await
-    .map_err(|error| internal_err(format!("point-read worker failed: {error}")))?
+    .map_err(|error| {
+        internal_err(crate::errors::RpcInternalError::point_read_worker_failed(
+            error,
+        ))
+    })?
     .map_err(invalid_params)
 }
 

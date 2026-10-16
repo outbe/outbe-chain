@@ -113,9 +113,10 @@ where
             .await
         {
             Ok(outcome) => outcome,
-            Err(_) => RecoveredForkchoiceAttempt::Retryable(format!(
-                "recovered FCU attempt {attempt_number} timed out"
-            )),
+            Err(_) => RecoveredForkchoiceAttempt::Retryable(
+                crate::errors::StackRecoveryError::RecoveredFcuAttemptTimedOut(attempt_number)
+                    .to_string(),
+            ),
         };
         let observed = read_provider()?;
         match classify_recovered_fcu_attempt(anchor, &outcome, observed) {

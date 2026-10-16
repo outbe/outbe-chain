@@ -90,7 +90,7 @@ fn public_rpc_rejects_success_response_without_result_field() {
 
     assert!(matches!(
         parse_rpc_response(response, 7),
-        Err(PublicVoteRpcErrorV1::Malformed(message)) if message == "missing result"
+        Err(PublicVoteRpcErrorV1::MissingResult)
     ));
 }
 

@@ -72,9 +72,9 @@ fn apply_ocomp_day_limit(
 
         if let Some(formed) = metadosis.ocomp_day_limit_formation(wwd)? {
             if formed.base_limit != base_limit {
-                return Err(crate::errors::caller_rejection(
-                    "formed OCOMP day limit cannot be replaced",
-                ));
+                return Err(
+                    crate::errors::MetadosisCallerError::FormedOcompDayLimitCannotBeReplaced.into(),
+                );
             }
             return Ok(DayLimitFormationReceipt::Formed(formed));
         }

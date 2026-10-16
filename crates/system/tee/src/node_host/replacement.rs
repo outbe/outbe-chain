@@ -170,7 +170,7 @@ impl ReplacementCandidateEnclaveV1 {
         }
         let proof = evidence
             .transition_key_ready_proof()
-            .ok_or_else(|| TransportError::Attestation("missing key-ready proof".into()))?;
+            .ok_or(crate::errors::NodeHostRecordError::MissingKeyReadyProof)?;
         proof
             .verify_for_transition(intent, proof.resident_offer_public)
             .map_err(codec_error)?;
@@ -811,9 +811,7 @@ pub(super) fn validate_candidate_key_ready_proof(
     let proof = evidence
         .transition_key_ready_proof
         .as_ref()
-        .ok_or_else(|| {
-            TransportError::Codec("transition evidence is missing its key-ready proof".into())
-        })?;
+        .ok_or(crate::errors::NodeHostRecordError::TransitionEvidenceMissingKeyReadyProof)?;
     let expected_manifest_hash = manifest.authorization_hash().map_err(codec_error)?;
     if proof.candidate_manifest_hash != expected_manifest_hash {
         return Err(TransportError::Codec(
@@ -830,7 +828,7 @@ pub(super) fn validate_direct_dev_transition_proof(
     let proof = evidence
         .transition_key_ready_proof
         .as_ref()
-        .ok_or_else(|| TransportError::Codec("transition proof missing".into()))?;
+        .ok_or(crate::errors::NodeHostRecordError::TransitionProofMissing)?;
     proof
         .verify_for_transition(&evidence.intent, proof.resident_offer_public)
         .map_err(codec_error)?;

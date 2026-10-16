@@ -72,14 +72,15 @@ impl ProvisionalShardBatch {
         crate::persistence::validate_root(parent_shard_root)?;
         crate::persistence::validate_root(new_shard_root)?;
         if parent_shard_root == new_shard_root {
-            return Err(StagingError::InvalidShardEnvelope(
-                "changed shard roots must differ",
-            ));
+            return Err(
+                crate::errors::ShardEnvelopeErrorReason::ChangedShardRootsMustDiffer.into(),
+            );
         }
         if branch_changes.is_empty() && leaf_changes.is_empty() {
-            return Err(StagingError::InvalidShardEnvelope(
-                "changed shard must contain effective records",
-            ));
+            return Err(
+                crate::errors::ShardEnvelopeErrorReason::ChangedShardMustContainEffectiveRecords
+                    .into(),
+            );
         }
         Ok(Self {
             parent_shard_root,
@@ -176,19 +177,26 @@ impl RetirementBatch {
     ) -> Result<Self, StagingError> {
         if domain != CeDomain::Tribute || parent_shard_roots.len() != domain.shard_count() as usize
         {
-            return Err(StagingError::InvalidCatalogEnvelope(
-                "only a complete Tribute collection may retire",
-            ));
+            return Err(
+                crate::errors::CatalogEnvelopeErrorReason::OnlyCompleteTributeCollectionMayRetire
+                    .into(),
+            );
         }
-        let top = aggregate_b256_shard_roots(&parent_shard_roots)
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid retirement shard roots"))?;
-        if collection_root(domain, key, top)
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid retirement collection"))?
-            != parent_collection_root
+        let top = aggregate_b256_shard_roots(&parent_shard_roots).map_err(|_| {
+            StagingError::from(
+                crate::errors::CatalogEnvelopeErrorReason::InvalidRetirementShardRoots,
+            )
+        })?;
+        if collection_root(domain, key, top).map_err(|_| {
+            StagingError::from(
+                crate::errors::CatalogEnvelopeErrorReason::InvalidRetirementCollection,
+            )
+        })? != parent_collection_root
         {
-            return Err(StagingError::InvalidCatalogEnvelope(
-                "retirement parent collection root mismatch",
-            ));
+            return Err(
+                crate::errors::CatalogEnvelopeErrorReason::RetirementParentCollectionRootMismatch
+                    .into(),
+            );
         }
         Ok(Self {
             domain_id: domain.id(),
@@ -222,33 +230,41 @@ impl CollectionBatch {
         shard_set: ProvisionalShardSetBatch,
     ) -> Result<Self, StagingError> {
         if shard_set.shard_count != domain.shard_count() {
-            return Err(StagingError::InvalidCatalogEnvelope(
-                "collection shard count does not match domain topology",
-            ));
+            return Err(
+                crate::errors::CatalogEnvelopeErrorReason::CollectionShardCountMismatch.into(),
+            );
         }
         if let Some(parent) = parent_collection_root {
-            let expected = collection_root(domain, key, shard_set.parent_shard_top_root)
-                .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid parent collection"))?;
+            let expected =
+                collection_root(domain, key, shard_set.parent_shard_top_root).map_err(|_| {
+                    StagingError::from(
+                        crate::errors::CatalogEnvelopeErrorReason::InvalidParentCollection,
+                    )
+                })?;
             if parent != expected {
-                return Err(StagingError::InvalidCatalogEnvelope(
-                    "parent collection root mismatch",
-                ));
+                return Err(
+                    crate::errors::CatalogEnvelopeErrorReason::ParentCollectionRootMismatch.into(),
+                );
             }
         } else if shard_set
             .parent_shard_roots
             .iter()
             .any(|root| *root != B256::ZERO)
         {
-            return Err(StagingError::InvalidCatalogEnvelope(
-                "absent collection must start from all-zero shard roots",
-            ));
+            return Err(
+                crate::errors::CatalogEnvelopeErrorReason::AbsentCollectionNonZeroParentShardRoots
+                    .into(),
+            );
         }
-        let expected = collection_root(domain, key, shard_set.new_shard_top_root)
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid new collection"))?;
+        let expected =
+            collection_root(domain, key, shard_set.new_shard_top_root).map_err(|_| {
+                StagingError::from(crate::errors::CatalogEnvelopeErrorReason::InvalidNewCollection)
+            })?;
         if expected != new_collection_root || shard_set.changed_shards.is_empty() {
-            return Err(StagingError::InvalidCatalogEnvelope(
-                "changed collection root or shard payload mismatch",
-            ));
+            return Err(
+                crate::errors::CatalogEnvelopeErrorReason::ChangedCollectionRootOrShardPayloadMismatch
+                    .into(),
+            );
         }
         Ok(Self {
             domain_id: domain.id(),
@@ -346,8 +362,9 @@ impl ProvisionalTreeBatch {
         parent_block_hash: B256,
         parent_catalog_root: B256,
     ) -> Result<Self, StagingError> {
-        let parent_r_sealed = sealed_root(parent_catalog_root)
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid identity parent"))?;
+        let parent_r_sealed = sealed_root(parent_catalog_root).map_err(|_| {
+            StagingError::from(crate::errors::CatalogEnvelopeErrorReason::InvalidIdentityParent)
+        })?;
         Self::new(
             block_number,
             parent_block_hash,
@@ -376,22 +393,33 @@ impl ProvisionalTreeBatch {
         leaf_changes: BTreeMap<TreeKey, TreeChange<LeafValue>>,
     ) -> Result<Self, StagingError> {
         let parent_catalog_root = B256::ZERO;
-        let parent_r_sealed = sealed_root(parent_catalog_root)
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid benchmark parent"))?;
+        let parent_r_sealed = sealed_root(parent_catalog_root).map_err(|_| {
+            StagingError::from(crate::errors::CatalogEnvelopeErrorReason::InvalidBenchmarkParent)
+        })?;
         if branch_changes.is_empty() && leaf_changes.is_empty() {
             return Self::new_identity(block_number, parent_block_hash, parent_catalog_root);
         }
 
         let domain = CeDomain::Tribute;
-        let collection_key = CollectionKey::try_from(B256::from([0_u8; 32]))
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid benchmark collection"))?;
+        let collection_key = CollectionKey::try_from(B256::from([0_u8; 32])).map_err(|_| {
+            StagingError::from(
+                crate::errors::CatalogEnvelopeErrorReason::InvalidBenchmarkCollection,
+            )
+        })?;
         let mut parent_shard_roots = vec![B256::ZERO; domain.shard_count() as usize];
         let mut new_shard_roots = parent_shard_roots.clone();
         new_shard_roots[0] = new_root;
-        let parent_shard_top_root = aggregate_b256_shard_roots(&parent_shard_roots)
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid benchmark shard roots"))?;
-        let new_shard_top_root = aggregate_b256_shard_roots(&new_shard_roots)
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid benchmark shard roots"))?;
+        let parent_shard_top_root =
+            aggregate_b256_shard_roots(&parent_shard_roots).map_err(|_| {
+                StagingError::from(
+                    crate::errors::CatalogEnvelopeErrorReason::InvalidBenchmarkShardRoots,
+                )
+            })?;
+        let new_shard_top_root = aggregate_b256_shard_roots(&new_shard_roots).map_err(|_| {
+            StagingError::from(
+                crate::errors::CatalogEnvelopeErrorReason::InvalidBenchmarkShardRoots,
+            )
+        })?;
         let shard = ProvisionalShardBatch::new(B256::ZERO, new_root, branch_changes, leaf_changes)?;
         let shard_set = ProvisionalShardSetBatch::new(
             domain.shard_count(),
@@ -405,7 +433,9 @@ impl ProvisionalTreeBatch {
         )?;
         let new_collection_root = collection_root(domain, collection_key, new_shard_top_root)
             .map_err(|_| {
-                StagingError::InvalidCatalogEnvelope("invalid benchmark collection root")
+                StagingError::from(
+                    crate::errors::CatalogEnvelopeErrorReason::InvalidBenchmarkCollectionRoot,
+                )
             })?;
         let collection = CollectionOperation::Mutate(CollectionBatch::new(
             domain,
@@ -423,8 +453,9 @@ impl ProvisionalTreeBatch {
             branch_changes: BTreeMap::new(),
             leaf_changes: BTreeMap::from([(catalog_key, TreeChange::Set(catalog_value))]),
         };
-        let new_r_sealed = sealed_root(new_catalog_root)
-            .map_err(|_| StagingError::InvalidCatalogEnvelope("invalid benchmark root"))?;
+        let new_r_sealed = sealed_root(new_catalog_root).map_err(|_| {
+            StagingError::from(crate::errors::CatalogEnvelopeErrorReason::InvalidBenchmarkRoot)
+        })?;
         Self::new(
             block_number,
             parent_block_hash,

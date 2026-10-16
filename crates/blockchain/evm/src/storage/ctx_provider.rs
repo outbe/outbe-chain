@@ -592,16 +592,13 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
                 return Err(SubCallError::ParentOutOfGas);
             }
             Err(LoadError::DBError) => {
-                return Err(SubCallError::DatabaseError(format!(
-                    "{:?}",
-                    self.ctx.error()
-                )));
+                return Err(crate::errors::SubCallDriverError::database_error(
+                    self.ctx.error(),
+                ));
             }
         };
         if state_cost != 0 {
-            return Err(SubCallError::Fatal(
-                "unsupported subcall state-gas charge".into(),
-            ));
+            return Err(crate::errors::SubCallDriverError::UnsupportedStateGasCharge.into());
         }
         self.charge_subcall(cost)?;
         let remaining = self.gas.remaining();

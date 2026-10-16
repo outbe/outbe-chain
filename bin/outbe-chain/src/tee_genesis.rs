@@ -205,9 +205,8 @@ fn generate_genesis(args: &TeeGenesisArgs) -> eyre::Result<()> {
             InitialTeeProfileV1::GramineDirectDev
         }
     };
-    let policy =
-        initial_tee_policy_v1(profile, chain_id, genesis_hash).map_err(eyre::Report::msg)?;
-    let field = tee_attestation_v1_genesis_field(&policy).map_err(eyre::Report::msg)?;
+    let policy = initial_tee_policy_v1(profile, chain_id, genesis_hash)?;
+    let field = tee_attestation_v1_genesis_field(&policy)?;
 
     let mut genesis: serde_json::Value = serde_json::from_slice(
         &fs::read(&args.input)
@@ -282,8 +281,7 @@ fn validate_output(
         .map_err(|error| TeeGenesisError::ChainSpecBinding {
             details: crate::errors::display_error(error),
         })?
-        .policy_at(1)
-        .map_err(eyre::Report::msg)?
+        .policy_at(1)?
         .attestation_mode;
     if mode != expected_profile.attestation_mode() {
         return Err(TeeGenesisError::GeneratedGenesisModeMismatch.into());

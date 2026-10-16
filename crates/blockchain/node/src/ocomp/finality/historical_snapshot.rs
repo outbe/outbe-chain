@@ -20,7 +20,9 @@ pub(super) fn read_historical_committee_snapshot(
         ));
     }
     let committee_len = usize::try_from(word(mapped(32))?).map_err(|_| {
-        FinalizedIntentProofBuildError::Finalization("historical committee length exceeds usize")
+        FinalizedIntentProofBuildError::from(
+            crate::errors::FinalizedIntentProofFinalizationError::HistoricalCommitteeLengthExceedsUsize,
+        )
     })?;
     if committee_len == 0
         || committee_len > limits.max_collection_items
@@ -82,10 +84,14 @@ fn read_vrf_key(
     let mapped = |base_slot: u64| key.mapping_slot(U256::from(base_slot));
     let nested = |base_slot: u64, index: u64| index.mapping_slot(mapped(base_slot));
     let vrf_material_version = u64::try_from(word(mapped(36))?).map_err(|_| {
-        FinalizedIntentProofBuildError::Finalization("VRF material version exceeds u64")
+        FinalizedIntentProofBuildError::from(
+            crate::errors::FinalizedIntentProofFinalizationError::VrfMaterialVersionExceedsU64,
+        )
     })?;
     let vrf_key_len = usize::try_from(word(mapped(38))?).map_err(|_| {
-        FinalizedIntentProofBuildError::Finalization("VRF group key length exceeds usize")
+        FinalizedIntentProofBuildError::from(
+            crate::errors::FinalizedIntentProofFinalizationError::VrfGroupKeyLengthExceedsUsize,
+        )
     })?;
     if vrf_key_len == 0 || vrf_key_len > limits.max_proof_bytes {
         return Err(FinalizedIntentProofBuildError::Finalization(

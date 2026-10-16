@@ -153,15 +153,17 @@ impl DkgWireMessage {
     /// malformed or trailing-byte payload.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let mut offset = 0usize;
-        let tag = *bytes
-            .first()
-            .ok_or(CeremonyError::MalformedWire("empty payload"))?;
+        let tag = *bytes.first().ok_or(CeremonyError::malformed_wire(
+            crate::errors::TeeDkgMalformedWireReason::EmptyPayload,
+        ))?;
         offset += 1;
         let take = |offset: &mut usize| -> Result<Vec<u8>> {
             let len_end = offset
                 .checked_add(4)
                 .filter(|end| *end <= bytes.len())
-                .ok_or(CeremonyError::MalformedWire("truncated length"))?;
+                .ok_or(CeremonyError::malformed_wire(
+                    crate::errors::TeeDkgMalformedWireReason::TruncatedLength,
+                ))?;
             let len = u32::from_be_bytes([
                 bytes[*offset],
                 bytes[*offset + 1],
@@ -171,7 +173,9 @@ impl DkgWireMessage {
             let end = len_end
                 .checked_add(len)
                 .filter(|end| *end <= bytes.len())
-                .ok_or(CeremonyError::MalformedWire("truncated field"))?;
+                .ok_or(CeremonyError::malformed_wire(
+                    crate::errors::TeeDkgMalformedWireReason::TruncatedField,
+                ))?;
             let field = bytes[len_end..end].to_vec();
             *offset = end;
             Ok(field)
@@ -195,10 +199,16 @@ impl DkgWireMessage {
                 recipient_bls: take(&mut offset)?,
                 partial: take(&mut offset)?,
             },
-            _ => return Err(CeremonyError::MalformedWire("unknown tag")),
+            _ => {
+                return Err(CeremonyError::malformed_wire(
+                    crate::errors::TeeDkgMalformedWireReason::UnknownTag,
+                ))
+            }
         };
         if offset != bytes.len() {
-            return Err(CeremonyError::MalformedWire("trailing bytes"));
+            return Err(CeremonyError::malformed_wire(
+                crate::errors::TeeDkgMalformedWireReason::TrailingBytes,
+            ));
         }
         Ok(msg)
     }
@@ -258,6 +268,20 @@ pub enum CeremonyError {
     Delivery(String),
 }
 
+impl CeremonyError {
+    #[must_use]
+    pub const fn malformed_wire(reason: crate::errors::TeeDkgMalformedWireReason) -> Self {
+        Self::MalformedWire(reason.as_str())
+    }
+
+    #[must_use]
+    pub const fn unexpected_response(
+        reason: crate::errors::TeeDkgUnexpectedResponseReason,
+    ) -> Self {
+        Self::UnexpectedResponse(reason.as_str())
+    }
+}
+
 type Result<T> = core::result::Result<T, CeremonyError>;
 
 /// Drives one node's participation in a TEE DKG ceremony by routing each phase to
@@ -300,7 +324,9 @@ impl CeremonyCoordinator {
             participants: self.participants.clone(),
         })? {
             EnclaveResponse::Ack => Ok(()),
-            _ => Err(CeremonyError::UnexpectedResponse("DkgOpen")),
+            _ => Err(CeremonyError::unexpected_response(
+                crate::errors::TeeDkgUnexpectedResponseReason::DkgOpen,
+            )),
         }
     }
 
@@ -323,7 +349,9 @@ impl CeremonyCoordinator {
                     },
                 })
                 .collect()),
-            _ => Err(CeremonyError::UnexpectedResponse("DkgStartDealer")),
+            _ => Err(CeremonyError::unexpected_response(
+                crate::errors::TeeDkgUnexpectedResponseReason::DkgStartDealer,
+            )),
         }
     }
 
@@ -347,7 +375,9 @@ impl CeremonyCoordinator {
                     ack,
                 },
             })),
-            _ => Err(CeremonyError::UnexpectedResponse("DkgPlayerIngest")),
+            _ => Err(CeremonyError::unexpected_response(
+                crate::errors::TeeDkgUnexpectedResponseReason::DkgPlayerIngest,
+            )),
         }
     }
 
@@ -359,7 +389,9 @@ impl CeremonyCoordinator {
             ack: ack.ack.clone(),
         })? {
             EnclaveResponse::Ack => Ok(()),
-            _ => Err(CeremonyError::UnexpectedResponse("DkgDealerReceiveAck")),
+            _ => Err(CeremonyError::unexpected_response(
+                crate::errors::TeeDkgUnexpectedResponseReason::DkgDealerReceiveAck,
+            )),
         }
     }
 
@@ -372,7 +404,9 @@ impl CeremonyCoordinator {
                 dealer_bls: self.my_bls.clone(),
                 signed_log,
             }),
-            _ => Err(CeremonyError::UnexpectedResponse("DkgDealerFinalize")),
+            _ => Err(CeremonyError::unexpected_response(
+                crate::errors::TeeDkgUnexpectedResponseReason::DkgDealerFinalize,
+            )),
         }
     }
 
@@ -398,7 +432,9 @@ impl CeremonyCoordinator {
                 tribute_offer_public: [0u8; 32],
                 tribute_offer_group_public_key: Vec::new(),
             }),
-            _ => Err(CeremonyError::UnexpectedResponse("DkgPlayerFinalize")),
+            _ => Err(CeremonyError::unexpected_response(
+                crate::errors::TeeDkgUnexpectedResponseReason::DkgPlayerFinalize,
+            )),
         }
     }
 
@@ -414,7 +450,9 @@ impl CeremonyCoordinator {
             ceremony_id: self.ceremony_id,
         })? {
             EnclaveResponse::DkgTributeOfferPartial { sealed } => Ok(sealed),
-            _ => Err(CeremonyError::UnexpectedResponse("DkgTributeOfferPartial")),
+            _ => Err(CeremonyError::unexpected_response(
+                crate::errors::TeeDkgUnexpectedResponseReason::DkgTributeOfferPartial,
+            )),
         }
     }
 
@@ -439,7 +477,9 @@ impl CeremonyCoordinator {
                 group_public_key,
             } => Ok((tribute_offer_public, group_public_key)),
             EnclaveResponse::Error { message } => Err(CeremonyError::EnclaveError(message)),
-            _ => Err(CeremonyError::UnexpectedResponse("DkgFinalizeTributeOffer")),
+            _ => Err(CeremonyError::unexpected_response(
+                crate::errors::TeeDkgUnexpectedResponseReason::DkgFinalizeTributeOffer,
+            )),
         }
     }
 }

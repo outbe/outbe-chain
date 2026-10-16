@@ -163,9 +163,9 @@ impl Mailbox {
                 Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)),
             ) => {
                 if *boundary != *expected {
-                    return Err(rejected(
-                        "block BoundaryOutcome does not match pending DKG boundary",
-                    ));
+                    return Err(
+                        crate::errors::HeaderArtifactRejectError::BoundaryOutcomeMismatch.into(),
+                    );
                 }
                 self.verify_pending_boundary_artifact(round_epoch, boundary)
                     .await
@@ -178,21 +178,26 @@ impl Mailbox {
                     ConsensusHeaderArtifact::DealerLog(_)
                     | ConsensusHeaderArtifact::CommitteePreAnnounce { .. },
                 ),
-            ) => return Err(rejected("block omitted pending DKG BoundaryOutcome")),
+            ) => {
+                return Err(
+                    crate::errors::HeaderArtifactRejectError::OmittedPendingBoundaryOutcome.into(),
+                )
+            }
             (
                 ResolvedBoundary::AlreadyCommitted,
                 Some(ConsensusHeaderArtifact::BoundaryOutcome(_)),
             ) => {
                 crate::metrics::record_dkg_boundary_duplicate_rejected();
-                return Err(rejected(
-                    "duplicate DKG BoundaryOutcome after parent ancestry already committed it",
-                ));
+                return Err(
+                    crate::errors::HeaderArtifactRejectError::DuplicateBoundaryOutcomeAfterAncestryCommitted.into(),
+                );
             }
             (ResolvedBoundary::NoPending, Some(ConsensusHeaderArtifact::BoundaryOutcome(_))) => {
                 crate::metrics::record_dkg_boundary_duplicate_rejected();
-                return Err(rejected(
-                    "block carried DKG BoundaryOutcome without pending boundary",
-                ));
+                return Err(
+                    crate::errors::HeaderArtifactRejectError::CarriedBoundaryOutcomeWithoutPending
+                        .into(),
+                );
             }
             (
                 ResolvedBoundary::AlreadyCommitted | ResolvedBoundary::NoPending,
@@ -221,23 +226,33 @@ impl Mailbox {
         outcome: &[u8],
     ) -> Result<(), ArtifactAdmissionError> {
         let successor = round_epoch.get().checked_add(1).ok_or_else(|| {
-            rejected("committee pre-announce has no successor for the round epoch")
+            ArtifactAdmissionError::from(
+                crate::errors::HeaderArtifactRejectError::PreAnnounceNoSuccessorForRoundEpoch,
+            )
         })?;
         if announced_epoch != successor {
-            return Err(rejected(format!(
-                "committee pre-announce epoch {announced_epoch} is not the successor of round epoch {}",
-                round_epoch.get()
-            )));
+            return Err(
+                crate::errors::HeaderArtifactRejectError::PreAnnounceEpochNotSuccessor {
+                    announced_epoch,
+                    round_epoch: round_epoch.get(),
+                }
+                .into(),
+            );
         }
         let expected = self
             .pending_next_epoch_artifact(round_epoch)
             .ok_or_else(|| {
-                rejected("no pending DKG boundary artifact to validate committee pre-announce")
+                ArtifactAdmissionError::from(
+                    crate::errors::HeaderArtifactRejectError::NoPendingBoundaryForPreAnnounce,
+                )
             })?;
         if expected.outcome.as_ref() != outcome {
-            return Err(rejected(format!(
-                "committee pre-announce outcome does not match local DKG output for epoch {announced_epoch}"
-            )));
+            return Err(
+                crate::errors::HeaderArtifactRejectError::PreAnnounceOutcomeMismatch {
+                    announced_epoch,
+                }
+                .into(),
+            );
         }
         Ok(())
     }
@@ -259,9 +274,9 @@ impl Mailbox {
                 ResolvedBoundary::MustEmit(Box::new(boundary))
             }
             (BoundaryRequirement::MustEmit, None) => {
-                return Err(BoundaryRequirementError::Unavailable(
-                    "boundary requirement requested emission without pending artifact".to_string(),
-                ))
+                return Err(
+                    crate::errors::BoundaryResolutionError::EmissionWithoutPendingArtifact.into(),
+                )
             }
         })
     }

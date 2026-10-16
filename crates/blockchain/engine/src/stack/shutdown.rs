@@ -100,9 +100,9 @@ pub(in crate::stack) fn preserve_stack_result_after_drain<T>(
         (Ok(value), Ok(())) => Ok(value),
         (Ok(_), Err(drain_error)) => Err(drain_error),
         (Err(error), Ok(())) => Err(error),
-        (Err(error), Err(drain_error)) => Err(error.wrap_err(format!(
-            "additional failure while draining the consensus stack: {drain_error:#}"
-        ))),
+        (Err(error), Err(drain_error)) => Err(error.wrap_err(
+            crate::errors::StackShutdownError::additional_drain_failure(&drain_error),
+        )),
     }
 }
 

@@ -66,9 +66,9 @@ pub(crate) async fn await_consensus_stack_shutdown(
             let timeout = eyre::Report::new(LaunchError::ConsensusStackResultDeadlineExceeded);
             match abort_and_wait_supervised(handle).await {
                 Ok(Some(Err(error))) => Err(error.wrap_err(format!("{timeout:#}"))),
-                Err(error) => Err(timeout.wrap_err(format!(
-                    "consensus stack task failed while reaping: {error:?}"
-                ))),
+                Err(error) => {
+                    Err(timeout.wrap_err(LaunchError::consensus_stack_failed_while_reaping(error)))
+                }
                 // Forced cancellation is cleanup, not a successful stack exit.
                 Ok(Some(Ok(())) | None) => Err(timeout),
             }

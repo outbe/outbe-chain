@@ -1,9 +1,10 @@
 use super::{registered_status, status};
+use crate::errors::ValidatorSetError;
 use crate::precompile::IValidatorSet;
 use crate::schema::ValidatorSet;
 use crate::state_machine::{self, ValidatorLifecycle};
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 
 impl ValidatorSet<'_> {
     /// Registers a new validator.
@@ -41,13 +42,13 @@ impl ValidatorSet<'_> {
         let waiting = match before.lifecycle().clone() {
             ValidatorLifecycle::WaitingForStake(waiting) => waiting,
             ValidatorLifecycle::Absent => {
-                return Err(PrecompileError::Revert("validator not registered".into()));
+                return Err(ValidatorSetError::ValidatorNotRegistered.into());
             }
             _ => return Ok(()),
         };
-        let stake = *before.stake().ok_or_else(|| {
-            PrecompileError::Fatal("registered validator is missing stake projection".into())
-        })?;
+        let stake = *before
+            .stake()
+            .ok_or(ValidatorSetError::RegisteredValidatorMissingStakeProjection)?;
         let lifecycle = ValidatorLifecycle::WaitingForReadiness(state_machine::reach_minimum(
             waiting,
             stake,
@@ -75,22 +76,20 @@ impl ValidatorSet<'_> {
                 state_machine::activate_at_boundary(state_machine::confirm_ready(waiting))
             }
             ValidatorLifecycle::WaitingForStake(waiting) => {
-                let stake = *before.stake().ok_or_else(|| {
-                    PrecompileError::Fatal(
-                        "registered validator is missing stake projection".into(),
-                    )
-                })?;
+                let stake = *before
+                    .stake()
+                    .ok_or(ValidatorSetError::RegisteredValidatorMissingStakeProjection)?;
                 let ready = state_machine::reach_minimum(waiting, stake, U256::ZERO)?;
                 state_machine::activate_at_boundary(state_machine::confirm_ready(ready))
             }
             ValidatorLifecycle::Absent => {
-                return Err(PrecompileError::Revert("validator not registered".into()));
+                return Err(ValidatorSetError::ValidatorNotRegistered.into());
             }
             lifecycle => {
-                return Err(PrecompileError::Revert(format!(
-                    "cannot activate validator with status {}: only REGISTERED or PENDING allowed in test fixtures",
-                    registered_status(&lifecycle)?
-                )))
+                return Err(ValidatorSetError::CannotActivateValidatorInTestFixture {
+                    status: registered_status(&lifecycle)?,
+                }
+                .into())
             }
         };
         let after = before

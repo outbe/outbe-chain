@@ -2,7 +2,7 @@
 use super::{
     ensure_count_fits_u16, ensure_len_fits_u32, ensure_payload_fits_u16,
     tee_expired_target_exclusions_hash, validate_tee_expired_target_exclusions, Address, Bytes,
-    ConsensusHeaderArtifact, DkgBoundaryArtifact, PrecompileError, Result, B256, BOUNDARY_TAG,
+    ConsensusHeaderArtifact, DkgBoundaryArtifact, ReshareArtifactError, Result, B256, BOUNDARY_TAG,
     COMMITTEE_PREANNOUNCE_TAG, DEALER_LOG_TAG, MAX_TEE_EXPIRED_TARGET_EXCLUSIONS,
 };
 use crate::consensus::ReshareResult;
@@ -34,9 +34,7 @@ pub(super) fn decode_boundary_record(payload: &[u8]) -> Result<ConsensusHeaderAr
 
 pub(super) fn decode_preannounce_record(payload: &[u8]) -> Result<ConsensusHeaderArtifact> {
     if payload.len() < 8 {
-        return Err(PrecompileError::revert(
-            "committee pre-announce payload too short for epoch",
-        ));
+        return Err(ReshareArtifactError::CommitteePreAnnouncePayloadTooShort.into());
     }
     let mut epoch_buf = [0u8; 8];
     epoch_buf.copy_from_slice(&payload[..8]);
@@ -59,9 +57,7 @@ fn encode_boundary_payload(result: &DkgBoundaryArtifact) -> Result<Vec<u8>> {
     let exclusions_hash =
         tee_expired_target_exclusions_hash(&result.tee_expired_target_exclusions)?;
     if exclusions_hash != result.tee_expired_target_exclusions_hash {
-        return Err(PrecompileError::revert(
-            "boundary TEE expiry exclusions commitment mismatch",
-        ));
+        return Err(ReshareArtifactError::BoundaryTeeExpiryExclusionsCommitmentMismatch.into());
     }
 
     let mut payload = Vec::with_capacity(
@@ -128,9 +124,7 @@ pub(super) fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtif
     // + is_validator_set_change (1) + is_full_dkg (1) + active_set_hash (32) + count (u16)
     // + outcome_len (u32) + vrf_group_pk_len (u32).
     if payload.len() < 8 + 8 + 8 + 8 + 32 + 8 + 32 + 32 + 1 + 1 + 32 + 2 + 4 + 4 {
-        return Err(PrecompileError::revert(
-            "boundary header artifact payload too short",
-        ));
+        return Err(ReshareArtifactError::BoundaryPayloadTooShort.into());
     }
 
     let mut offset = 0usize;
@@ -163,13 +157,14 @@ pub(super) fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtif
     offset += 2;
     let addresses_len = count
         .checked_mul(20)
-        .ok_or_else(|| PrecompileError::revert("boundary address list length overflow"))?;
+        .ok_or(ReshareArtifactError::BoundaryAddressListLengthOverflow)?;
     let needed_before_outcome = offset + addresses_len + 4;
     if payload.len() < needed_before_outcome {
-        return Err(PrecompileError::revert(format!(
-            "invalid boundary header artifact payload length: {} < {needed_before_outcome}",
-            payload.len()
-        )));
+        return Err(ReshareArtifactError::BoundaryPayloadLengthTooShort {
+            actual: payload.len(),
+            needed: needed_before_outcome,
+        }
+        .into());
     }
 
     let new_active_set = (0..count)
@@ -183,18 +178,19 @@ pub(super) fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtif
     let outcome_len = u32::from_be_bytes(
         payload[offset..offset + 4]
             .try_into()
-            .map_err(|_| PrecompileError::revert("invalid outcome length bytes"))?,
+            .map_err(|_| ReshareArtifactError::InvalidOutcomeLengthBytes)?,
     ) as usize;
     offset += 4;
     let needed_after_outcome = offset
         .checked_add(outcome_len)
         .and_then(|v| v.checked_add(4))
-        .ok_or_else(|| PrecompileError::revert("boundary payload length overflow"))?;
+        .ok_or(ReshareArtifactError::BoundaryPayloadLengthOverflow)?;
     if payload.len() < needed_after_outcome {
-        return Err(PrecompileError::revert(format!(
-            "invalid boundary header artifact payload length: {} < {needed_after_outcome}",
-            payload.len()
-        )));
+        return Err(ReshareArtifactError::BoundaryPayloadLengthTooShort {
+            actual: payload.len(),
+            needed: needed_after_outcome,
+        }
+        .into());
     }
     let outcome = Bytes::copy_from_slice(&payload[offset..offset + outcome_len]);
     offset += outcome_len;
@@ -229,16 +225,14 @@ pub(super) fn decode_boundary_payload(payload: &[u8]) -> Result<DkgBoundaryArtif
     })
 }
 
-fn read_u64(payload: &[u8], offset: &mut usize, name: &str) -> Result<u64> {
+fn read_u64(payload: &[u8], offset: &mut usize, name: &'static str) -> Result<u64> {
     let end = offset.saturating_add(8);
     let Some(bytes) = payload.get(*offset..end) else {
-        return Err(PrecompileError::revert(format!(
-            "unexpected EOF reading {name}"
-        )));
+        return Err(ReshareArtifactError::UnexpectedEofReading { name }.into());
     };
     *offset = end;
     Ok(u64::from_be_bytes(bytes.try_into().map_err(|_| {
-        PrecompileError::revert(format!("invalid {name} bytes"))
+        ReshareArtifactError::InvalidFieldBytes { name }
     })?))
 }
 
@@ -246,15 +240,16 @@ fn decode_boundary_vrf_key(payload: &[u8], offset: &mut usize) -> Result<Bytes> 
     let vrf_group_pk_len = u32::from_be_bytes(
         payload[*offset..*offset + 4]
             .try_into()
-            .map_err(|_| PrecompileError::revert("invalid vrf group pk length bytes"))?,
+            .map_err(|_| ReshareArtifactError::InvalidVrfGroupPkLengthBytes)?,
     ) as usize;
     *offset += 4;
     let needed_after_vrf = *offset + vrf_group_pk_len;
     if payload.len() < needed_after_vrf {
-        return Err(PrecompileError::revert(format!(
-            "invalid boundary header artifact payload length: {} < {needed_after_vrf}",
-            payload.len()
-        )));
+        return Err(ReshareArtifactError::BoundaryPayloadLengthTooShort {
+            actual: payload.len(),
+            needed: needed_after_vrf,
+        }
+        .into());
     }
     let vrf_group_public_key_bytes =
         Bytes::copy_from_slice(&payload[*offset..*offset + vrf_group_pk_len]);
@@ -266,24 +261,23 @@ fn decode_boundary_vrf_key(payload: &[u8], offset: &mut usize) -> Result<Bytes> 
 fn decode_boundary_recipients(payload: &[u8], offset: &mut usize) -> Result<Vec<(Address, B256)>> {
     // V0.07: tee_recipient_pubkeys (u16 count + entries of Address(20)+B256(32)).
     if payload.len() < *offset + 2 {
-        return Err(PrecompileError::revert(
-            "invalid boundary header artifact: missing tee recipient count",
-        ));
+        return Err(ReshareArtifactError::MissingTeeRecipientCount.into());
     }
     let tee_count = u16::from_be_bytes([payload[*offset], payload[*offset + 1]]) as usize;
     *offset += 2;
     let tee_bytes = tee_count
         .checked_mul(20 + 32)
-        .ok_or_else(|| PrecompileError::revert("tee recipient pubkeys length overflow"))?;
+        .ok_or(ReshareArtifactError::TeeRecipientPubkeysLengthOverflow)?;
     let needed_after_recipients = offset
         .checked_add(tee_bytes)
         .and_then(|v| v.checked_add(32 + 2))
-        .ok_or_else(|| PrecompileError::revert("boundary payload length overflow"))?;
+        .ok_or(ReshareArtifactError::BoundaryPayloadLengthOverflow)?;
     if payload.len() < needed_after_recipients {
-        return Err(PrecompileError::revert(format!(
-            "invalid boundary header artifact payload length: {} < {needed_after_recipients}",
-            payload.len()
-        )));
+        return Err(ReshareArtifactError::BoundaryPayloadLengthTooShort {
+            actual: payload.len(),
+            needed: needed_after_recipients,
+        }
+        .into());
     }
     let mut tee_recipient_pubkeys = Vec::with_capacity(tee_count);
     for _ in 0..tee_count {
@@ -305,21 +299,24 @@ fn decode_boundary_exclusions(payload: &[u8], offset: &mut usize) -> Result<(Vec
     let exclusions_count = u16::from_be_bytes([payload[*offset], payload[*offset + 1]]) as usize;
     *offset += 2;
     if exclusions_count > MAX_TEE_EXPIRED_TARGET_EXCLUSIONS {
-        return Err(PrecompileError::revert(format!(
-            "TEE expiry exclusions exceed protocol cap: {exclusions_count} > {MAX_TEE_EXPIRED_TARGET_EXCLUSIONS}"
-        )));
+        return Err(ReshareArtifactError::TeeExpiryExclusionsExceedCap {
+            count: exclusions_count,
+            max_count: MAX_TEE_EXPIRED_TARGET_EXCLUSIONS,
+        }
+        .into());
     }
     let exclusions_bytes = exclusions_count
         .checked_mul(20)
-        .ok_or_else(|| PrecompileError::revert("TEE expiry exclusions length overflow"))?;
+        .ok_or(ReshareArtifactError::TeeExpiryExclusionsLengthOverflow)?;
     let needed_after_exclusions = offset
         .checked_add(exclusions_bytes)
-        .ok_or_else(|| PrecompileError::revert("boundary payload length overflow"))?;
+        .ok_or(ReshareArtifactError::BoundaryPayloadLengthOverflow)?;
     if payload.len() < needed_after_exclusions {
-        return Err(PrecompileError::revert(format!(
-            "invalid boundary header artifact payload length: {} < {needed_after_exclusions}",
-            payload.len()
-        )));
+        return Err(ReshareArtifactError::BoundaryPayloadLengthTooShort {
+            actual: payload.len(),
+            needed: needed_after_exclusions,
+        }
+        .into());
     }
     let mut tee_expired_target_exclusions = Vec::with_capacity(exclusions_count);
     for _ in 0..exclusions_count {
@@ -329,16 +326,15 @@ fn decode_boundary_exclusions(payload: &[u8], offset: &mut usize) -> Result<(Vec
     let expected_exclusions_hash =
         tee_expired_target_exclusions_hash(&tee_expired_target_exclusions)?;
     if expected_exclusions_hash != carried_tee_expired_target_exclusions_hash {
-        return Err(PrecompileError::revert(
-            "boundary TEE expiry exclusions commitment mismatch",
-        ));
+        return Err(ReshareArtifactError::BoundaryTeeExpiryExclusionsCommitmentMismatch.into());
     }
 
     if payload.len() != *offset {
-        return Err(PrecompileError::revert(format!(
-            "invalid boundary header artifact payload length: {} != {offset}",
-            payload.len()
-        )));
+        return Err(ReshareArtifactError::BoundaryPayloadLengthMismatch {
+            actual: payload.len(),
+            expected: *offset,
+        }
+        .into());
     }
 
     Ok((
@@ -347,14 +343,16 @@ fn decode_boundary_exclusions(payload: &[u8], offset: &mut usize) -> Result<(Vec
     ))
 }
 
-fn decode_boundary_flag(payload: &[u8], offset: &mut usize, field: &str) -> Result<bool> {
+fn decode_boundary_flag(payload: &[u8], offset: &mut usize, field: &'static str) -> Result<bool> {
     let flag = match payload[*offset] {
         0 => false,
         1 => true,
         other => {
-            return Err(PrecompileError::revert(format!(
-                "invalid boundary {field} flag: {other}"
-            )))
+            return Err(ReshareArtifactError::InvalidBoundaryFlag {
+                field,
+                value: other,
+            }
+            .into())
         }
     };
     *offset += 1;

@@ -61,7 +61,7 @@ impl ProjectionRetentionFence {
     pub(crate) fn gc_claim_guard(&self) -> Result<RwLockWriteGuard<'_, ()>, RetentionError> {
         self.gate
             .write()
-            .map_err(|_| RetentionError::InvalidTransition("OCOMP projection/GC fence is poisoned"))
+            .map_err(|_| crate::errors::RetentionTransitionError::ProjectionGcFencePoisoned.into())
     }
 }
 

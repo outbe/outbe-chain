@@ -4,7 +4,7 @@ use alloy_primitives::{Address, U256};
 use outbe_compressed_entities::{TributeBodyV1, WwdEntityId};
 use outbe_primitives::time::WorldwideDay;
 
-pub use crate::errors::ProgramErrorV1;
+pub use crate::errors::{LysisArithmeticErrorV1, ProgramErrorV1};
 
 /// One canonical Tribute body required by Lysis V1.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -243,5 +243,5 @@ fn expected_receipt(
 }
 
 fn protocol_error_to_revert(error: outbe_ocomp_protocol::ProtocolError) -> PrecompileError {
-    crate::errors::caller_rejection(format!("invalid OCOMP request limit receipt: {error}"))
+    crate::errors::MetadosisCallerError::InvalidOcompRequestLimitReceipt { error }.into()
 }

@@ -22,21 +22,23 @@ pub(in super::super) fn record_finalized_target(
     incoming: FinalizedTarget,
 ) -> eyre::Result<bool> {
     match *latest {
-        Some(current) if incoming.number < current.number => Err(eyre::eyre!(
-            "finalized target regressed from {} ({}) to {} ({})",
-            current.number,
-            current.hash,
-            incoming.number,
-            incoming.hash
-        )),
-        Some(current) if incoming.number == current.number && incoming.hash != current.hash => {
-            Err(eyre::eyre!(
-                "finalized target hash changed at height {}: {} -> {}",
-                current.number,
-                current.hash,
-                incoming.hash
-            ))
-        }
+        Some(current) if incoming.number < current.number => Err(
+            crate::errors::NodeProjectionError::FinalizedTargetRegressed {
+                current_number: current.number,
+                current_hash: current.hash,
+                incoming_number: incoming.number,
+                incoming_hash: incoming.hash,
+            }
+            .into(),
+        ),
+        Some(current) if incoming.number == current.number && incoming.hash != current.hash => Err(
+            crate::errors::NodeProjectionError::FinalizedTargetHashChanged {
+                height: current.number,
+                current_hash: current.hash,
+                incoming_hash: incoming.hash,
+            }
+            .into(),
+        ),
         Some(current) if incoming == current => Ok(pending.is_some()),
         _ => {
             *latest = Some(incoming);

@@ -13,9 +13,9 @@ pub(super) fn prepare_input(input: BodyInput<'_>) -> Result<PreparedBody> {
 }
 
 fn prepare_tribute(body: TributeBodyV1) -> Result<PreparedBody> {
-    let payload = encode_tribute_v1(&body).map_err(input_error)?;
-    let stored_body =
-        StoredBody::new(crate::BODY_SCHEMA_V1, payload.clone()).map_err(input_error)?;
+    let payload = encode_tribute_v1(&body).map_err(CompressedEntitiesError::from)?;
+    let stored_body = StoredBody::new(crate::BODY_SCHEMA_V1, payload.clone())
+        .map_err(CompressedEntitiesError::from)?;
     let entity_id = body.tribute_id;
     let commitment = calculate_commitment(entity_id, &payload)?;
     let memberships = vec![
@@ -34,9 +34,9 @@ fn prepare_tribute(body: TributeBodyV1) -> Result<PreparedBody> {
 fn prepare_encrypted_tribute(
     body: &outbe_primitives::tribute_encryption::EncryptedTributeV2,
 ) -> Result<PreparedBody> {
-    let payload = crate::encode_tribute_v2(body).map_err(input_error)?;
-    let stored_body =
-        StoredBody::new(crate::TRIBUTE_BODY_SCHEMA_V2, payload.clone()).map_err(input_error)?;
+    let payload = crate::encode_tribute_v2(body).map_err(CompressedEntitiesError::from)?;
+    let stored_body = StoredBody::new(crate::TRIBUTE_BODY_SCHEMA_V2, payload.clone())
+        .map_err(CompressedEntitiesError::from)?;
     let entity_id = body.context.tribute_id;
     let commitment = body_commitment(
         ACTIVE_COMMITMENT_SCHEME,
@@ -44,7 +44,7 @@ fn prepare_encrypted_tribute(
         entity_id,
         &payload,
     )
-    .map_err(fatal)?;
+    .map_err(CompressedEntitiesFatalError::from)?;
     Ok(PreparedBody {
         collection: Collection::Tribute,
         entity_id,
@@ -58,9 +58,9 @@ fn prepare_encrypted_tribute(
 }
 
 fn prepare_nod_item(body: NodItemBodyV1) -> Result<PreparedBody> {
-    let payload = encode_nod_item_v1(&body).map_err(input_error)?;
-    let stored_body =
-        StoredBody::new(crate::BODY_SCHEMA_V1, payload.clone()).map_err(input_error)?;
+    let payload = encode_nod_item_v1(&body).map_err(CompressedEntitiesError::from)?;
+    let stored_body = StoredBody::new(crate::BODY_SCHEMA_V1, payload.clone())
+        .map_err(CompressedEntitiesError::from)?;
     let entity_id = body.nod_id;
     let commitment = calculate_commitment(entity_id, &payload)?;
     let memberships = vec![
@@ -77,9 +77,9 @@ fn prepare_nod_item(body: NodItemBodyV1) -> Result<PreparedBody> {
 }
 
 fn prepare_nod_bucket(body: NodBucketBodyV1) -> Result<PreparedBody> {
-    let payload = encode_nod_bucket_v1(&body).map_err(input_error)?;
-    let stored_body =
-        StoredBody::new(crate::BODY_SCHEMA_V1, payload.clone()).map_err(input_error)?;
+    let payload = encode_nod_bucket_v1(&body).map_err(CompressedEntitiesError::from)?;
+    let stored_body = StoredBody::new(crate::BODY_SCHEMA_V1, payload.clone())
+        .map_err(CompressedEntitiesError::from)?;
     let entity_id = body.entity_id();
     let commitment = calculate_commitment(entity_id, &payload)?;
     Ok(PreparedBody {
@@ -92,8 +92,9 @@ fn prepare_nod_bucket(body: NodBucketBodyV1) -> Result<PreparedBody> {
 }
 
 fn prepare_gem(body: &crate::GemBodyV1) -> Result<PreparedBody> {
-    let payload = crate::encode_gem_v1(body).map_err(input_error)?;
-    let stored_body = StoredBody::new(BODY_SCHEMA_V1, payload.clone()).map_err(input_error)?;
+    let payload = crate::encode_gem_v1(body).map_err(CompressedEntitiesError::from)?;
+    let stored_body =
+        StoredBody::new(BODY_SCHEMA_V1, payload.clone()).map_err(CompressedEntitiesError::from)?;
     let entity_id = body.gem_id;
     let commitment = calculate_commitment(entity_id, &payload)?;
     Ok(PreparedBody {
@@ -106,8 +107,9 @@ fn prepare_gem(body: &crate::GemBodyV1) -> Result<PreparedBody> {
 }
 
 fn prepare_gem_bucket(body: &crate::GemBucketBodyV1) -> Result<PreparedBody> {
-    let payload = crate::encode_gem_bucket_v1(body).map_err(input_error)?;
-    let stored_body = StoredBody::new(BODY_SCHEMA_V1, payload.clone()).map_err(input_error)?;
+    let payload = crate::encode_gem_bucket_v1(body).map_err(CompressedEntitiesError::from)?;
+    let stored_body =
+        StoredBody::new(BODY_SCHEMA_V1, payload.clone()).map_err(CompressedEntitiesError::from)?;
     let entity_id = body.entity_id();
     let commitment = calculate_commitment(entity_id, &payload)?;
     Ok(PreparedBody {
@@ -130,18 +132,22 @@ pub(super) fn verify_stored(
     let encrypted_nod = matches!(entity, EntityRef::NodItem(_))
         && stored_body.schema_version() == crate::NOD_BODY_SCHEMA_V2;
     if stored_body.schema_version() != BODY_SCHEMA_V1 && !encrypted_tribute && !encrypted_nod {
-        return Err(origin.invalid(format!(
-            "unsupported stored body schema {}",
-            stored_body.schema_version()
-        )));
+        return Err(
+            origin.invalid(StoredBodyVerificationError::UnsupportedSchema {
+                schema: stored_body.schema_version(),
+            }),
+        );
     }
     let payload = stored_body.payload();
     let entity_id = entity.entity_id();
     let (decoded_id, verified_payload) = decode_stored_payload(entity, &stored_body, origin)?;
     if decoded_id != entity_id {
-        return Err(origin.invalid(format!(
-            "body identity {decoded_id} does not match requested {entity_id}"
-        )));
+        return Err(
+            origin.invalid(StoredBodyVerificationError::IdentityMismatch {
+                decoded: decoded_id,
+                requested: entity_id,
+            }),
+        );
     }
     let actual = body_commitment(
         ACTIVE_COMMITMENT_SCHEME,
@@ -153,15 +159,21 @@ pub(super) fn verify_stored(
     if actual != expected {
         // Preserve the exact authenticated input, not a re-encoded replacement.
         // Bodies are canonical on-chain event payloads, never enclave key material.
-        return Err(origin.invalid(format!(
-            "body commitment mismatch for {entity_id}; [CE_BODY_DIAGNOSTIC] entity={entity:?} origin={origin:?} scheme={ACTIVE_COMMITMENT_SCHEME} schema={} expected=0x{} actual=0x{} payload_len={} payload_hex={} stored_body_hex={} decoded={verified_payload:?}",
-            stored_body.schema_version(),
-            hex::encode(expected.as_bytes()),
-            hex::encode(actual.as_bytes()),
-            payload.len(),
-            hex::encode(payload),
-            hex::encode(stored_body.encode()),
-        )));
+        return Err(
+            origin.invalid(StoredBodyVerificationError::CommitmentMismatch {
+                entity_id,
+                entity,
+                origin: origin.as_str(),
+                scheme: ACTIVE_COMMITMENT_SCHEME,
+                schema: stored_body.schema_version(),
+                expected_hex: hex::encode(expected.as_bytes()),
+                actual_hex: hex::encode(actual.as_bytes()),
+                payload_len: payload.len(),
+                payload_hex: hex::encode(payload),
+                stored_body_hex: hex::encode(stored_body.encode()),
+                decoded: Box::new(verified_payload),
+            }),
+        );
     }
     Ok(VerifiedBody {
         entity,
@@ -218,9 +230,9 @@ fn decode_stored_payload(
 }
 
 fn prepare_encrypted_nod_item(body: &crate::NodItemBodyV2) -> Result<PreparedBody> {
-    let payload = crate::encode_nod_item_v2(body).map_err(input_error)?;
-    let stored_body =
-        StoredBody::new(crate::NOD_BODY_SCHEMA_V2, payload.clone()).map_err(input_error)?;
+    let payload = crate::encode_nod_item_v2(body).map_err(CompressedEntitiesError::from)?;
+    let stored_body = StoredBody::new(crate::NOD_BODY_SCHEMA_V2, payload.clone())
+        .map_err(CompressedEntitiesError::from)?;
     let entity_id = body.encrypted.terms.nod_id;
     let commitment = body_commitment(
         ACTIVE_COMMITMENT_SCHEME,
@@ -228,7 +240,7 @@ fn prepare_encrypted_nod_item(body: &crate::NodItemBodyV2) -> Result<PreparedBod
         entity_id,
         &payload,
     )
-    .map_err(fatal)?;
+    .map_err(CompressedEntitiesFatalError::from)?;
     Ok(PreparedBody {
         collection: Collection::NodItem,
         entity_id,

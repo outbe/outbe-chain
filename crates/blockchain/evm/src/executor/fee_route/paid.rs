@@ -44,9 +44,7 @@ where
             self.current_block_validator_fees = self
                 .current_block_validator_fees
                 .checked_add(validator_fee)
-                .ok_or_else(|| -> BlockExecutionError {
-                    BlockValidationError::msg("validator fee accumulator overflow").into()
-                })?;
+                .ok_or(crate::errors::ExecutorValidationError::ValidatorFeeAccumulatorOverflow)?;
         }
 
         Ok(result)

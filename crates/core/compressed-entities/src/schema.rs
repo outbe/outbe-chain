@@ -6,7 +6,10 @@ use outbe_primitives::{
     storage::types::{Mapping, Slot, StorageBytes, StorageVec},
 };
 
-use crate::{Commitment, WwdEntityId};
+use crate::{
+    errors::{CompressedEntitiesError, CompressedEntitiesFatalError},
+    Commitment, WwdEntityId,
+};
 
 pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 4;
 const INDEX_RECORD_VERSION: u8 = 1;
@@ -40,9 +43,7 @@ impl Collection {
             3 => Ok(Self::NodBucket),
             4 => Ok(Self::Gem),
             5 => Ok(Self::GemBucket),
-            _ => Err(fatal(format!(
-                "invalid compressed-entity collection id {id}"
-            ))),
+            _ => Err(CompressedEntitiesFatalError::InvalidCollectionId { id }.into()),
         }
     }
 }
@@ -64,7 +65,7 @@ impl PendingWord {
         }
         Commitment::try_from(word.to_be_bytes::<32>())
             .map(Self::Set)
-            .map_err(|_| fatal(format!("invalid compressed-entity pending word {word:#x}")))
+            .map_err(|_| CompressedEntitiesFatalError::InvalidPendingWord { word }.into())
     }
 
     pub(crate) fn encode(self) -> U256 {
@@ -91,9 +92,7 @@ impl DeltaStatus {
             value if value == U256::from(1) => Ok(Self::Added),
             value if value == U256::from(2) => Ok(Self::Removed),
             value if value == U256::from(3) => Ok(Self::NoChangeTouched),
-            _ => Err(fatal(format!(
-                "invalid compressed-entity index delta word {word:#x}"
-            ))),
+            _ => Err(CompressedEntitiesFatalError::InvalidIndexDeltaWord { word }.into()),
         }
     }
 
@@ -134,7 +133,7 @@ impl IndexKind {
             3 => Ok(Self::NodByOwner),
             4 => Ok(Self::NodAll),
             5 => Ok(Self::GemByOwner),
-            _ => Err(fatal(format!("invalid compressed-entity index kind {id}"))),
+            _ => Err(CompressedEntitiesFatalError::InvalidIndexKind { id }.into()),
         }
     }
 
@@ -195,30 +194,31 @@ impl IndexRecord {
 
     pub(crate) fn decode(bytes: &[u8]) -> outbe_primitives::error::Result<Self> {
         if bytes.len() < 3 + WwdEntityId::len_bytes() {
-            return Err(fatal("compressed-entity index record is truncated"));
+            return Err(CompressedEntitiesFatalError::IndexRecordTruncated.into());
         }
         if bytes[0] != INDEX_RECORD_VERSION {
-            return Err(fatal(format!(
-                "unsupported compressed-entity index record version {}",
-                bytes[0]
-            )));
+            return Err(
+                CompressedEntitiesFatalError::UnsupportedIndexRecordVersion { version: bytes[0] }
+                    .into(),
+            );
         }
         let kind = IndexKind::from_id(bytes[1])?;
         let partition_len = usize::from(bytes[2]);
         if partition_len != kind.partition_len()
             || bytes.len() != 3 + partition_len + WwdEntityId::len_bytes()
         {
-            return Err(fatal("non-canonical compressed-entity index record length"));
+            return Err(CompressedEntitiesFatalError::NonCanonicalIndexRecordLength.into());
         }
         let partition = bytes[3..3 + partition_len].to_vec();
-        let entity_id = WwdEntityId::try_from(&bytes[3 + partition_len..]).map_err(fatal)?;
+        let entity_id = WwdEntityId::try_from(&bytes[3 + partition_len..])
+            .map_err(CompressedEntitiesFatalError::from)?;
         let record = Self {
             kind,
             partition,
             entity_id,
         };
         if record.encode() != bytes {
-            return Err(fatal("non-canonical compressed-entity index record"));
+            return Err(CompressedEntitiesFatalError::NonCanonicalIndexRecord.into());
         }
         Ok(record)
     }
@@ -232,7 +232,7 @@ pub(crate) fn body_locator(
     collection: Collection,
     entity_id: WwdEntityId,
 ) -> outbe_primitives::error::Result<B256> {
-    let identity = crate::identity_field(entity_id).map_err(crate::errors::revert_error)?;
+    let identity = crate::identity_field(entity_id).map_err(CompressedEntitiesError::from)?;
     let mut preimage = Vec::with_capacity(BODY_LOCATOR_PREFIX.len() + 1 + 32);
     preimage.extend_from_slice(BODY_LOCATOR_PREFIX);
     preimage.push(collection.id());
@@ -245,10 +245,6 @@ pub(crate) fn index_delta_key(record: &[u8]) -> B256 {
     preimage.extend_from_slice(INDEX_DELTA_PREFIX);
     preimage.extend_from_slice(record);
     keccak256(preimage)
-}
-
-fn fatal(message: impl core::fmt::Display) -> outbe_primitives::error::PrecompileError {
-    crate::errors::fatal_error(message)
 }
 
 /// Consensus storage schema at `0xEE0D`.

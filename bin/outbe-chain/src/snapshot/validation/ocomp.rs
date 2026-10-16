@@ -1,6 +1,6 @@
 //! Offline OCOMP observations at the verified current canonical state.
 
-use crate::errors::{require, SnapshotOcompError};
+use crate::errors::{require, SnapshotIncompleteError, SnapshotOcompError};
 use alloy_primitives::{B256, U256};
 use outbe_primitives::time::WorldwideDay;
 

@@ -45,7 +45,7 @@ impl StorageWriter for PartitionedStorage {
     fn verify_transaction_capability(&self) -> Result<(), StorageError> {
         self.writer
             .as_ref()
-            .ok_or_else(|| StorageError::InvalidArgument("read-only partition session".into()))?
+            .ok_or(crate::errors::StorageValidationError::ReadOnlyPartitionSession)?
             .verify_write_capability()
     }
 
@@ -55,7 +55,7 @@ impl StorageWriter for PartitionedStorage {
         let writer = self
             .writer
             .as_ref()
-            .ok_or_else(|| StorageError::InvalidArgument("read-only partition session".into()))?;
+            .ok_or(crate::errors::StorageValidationError::ReadOnlyPartitionSession)?;
         let mut routed = PartitionedBatch {
             retired_scopes: batch.retired_scopes().to_vec(),
             ..Default::default()

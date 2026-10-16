@@ -719,17 +719,13 @@ impl AuthorizedEnclaveClient {
         let mut offset = 0usize;
         for chunk in record.chunks(MAX_ONBOARDING_INGEST_CHUNK_BYTES) {
             let wire_offset = u32::try_from(offset).map_err(|_| {
-                TransportError::DcapVerification(
-                    "finalized admission proof offset exceeds u32".into(),
-                )
+                crate::errors::TeeClientVerificationError::FinalizedAdmissionProofOffsetExceedsU32
             })?;
-            let next = offset.checked_add(chunk.len()).ok_or_else(|| {
-                TransportError::DcapVerification("finalized admission proof offset overflow".into())
-            })?;
+            let next = offset.checked_add(chunk.len()).ok_or(
+                crate::errors::TeeClientVerificationError::FinalizedAdmissionProofOffsetOverflow,
+            )?;
             let expected_next = u32::try_from(next).map_err(|_| {
-                TransportError::DcapVerification(
-                    "finalized admission proof offset exceeds u32".into(),
-                )
+                crate::errors::TeeClientVerificationError::FinalizedAdmissionProofOffsetExceedsU32
             })?;
             match self.request_internal(&EnclaveRequest::DcapOnboardingArtifactChunkV1 {
                 request_hash,
@@ -881,10 +877,9 @@ impl AuthorizedEnclaveClient {
     ) -> Result<DcapVerificationOutcomeV1, TransportError> {
         let request_hash = dcap_verification_request_hash(evidence, policy, block_timestamp)
             .map_err(|code| {
-                TransportError::DcapVerification(format!(
-                    "invalid verifier input dimensions: {:#06x}",
-                    code.code()
-                ))
+                crate::errors::TeeClientVerificationError::InvalidVerifierInputDimensions {
+                    code: code.code(),
+                }
             })?;
         let response = self.upload_dcap_verification_v1(
             evidence,
@@ -893,10 +888,10 @@ impl AuthorizedEnclaveClient {
             EnclaveRequest::BeginDcapVerificationV1 {
                 request_hash,
                 evidence_len: u32::try_from(evidence.len()).map_err(|_| {
-                    TransportError::DcapVerification("evidence length exceeds u32".into())
+                    crate::errors::TeeClientVerificationError::EvidenceLengthExceedsU32
                 })?,
                 policy_len: u32::try_from(policy.len()).map_err(|_| {
-                    TransportError::DcapVerification("policy length exceeds u32".into())
+                    crate::errors::TeeClientVerificationError::PolicyLengthExceedsU32
                 })?,
                 block_timestamp,
             },
@@ -921,10 +916,9 @@ impl AuthorizedEnclaveClient {
             tribute_offer_epoch,
         } = request;
         let request_hash = dcap_onboarding_request_hash(request).map_err(|code| {
-            TransportError::DcapVerification(format!(
-                "invalid onboarding verifier input dimensions: {:#06x}",
-                code.code()
-            ))
+            crate::errors::TeeClientVerificationError::InvalidOnboardingVerifierInputDimensions {
+                code: code.code(),
+            }
         })?;
         let response = self.upload_dcap_verification_v1(
             evidence,
@@ -933,10 +927,10 @@ impl AuthorizedEnclaveClient {
             EnclaveRequest::BeginDcapOnboardingVerificationV1 {
                 request_hash,
                 evidence_len: u32::try_from(evidence.len()).map_err(|_| {
-                    TransportError::DcapVerification("evidence length exceeds u32".into())
+                    crate::errors::TeeClientVerificationError::EvidenceLengthExceedsU32
                 })?,
                 policy_len: u32::try_from(policy.len()).map_err(|_| {
-                    TransportError::DcapVerification("policy length exceeds u32".into())
+                    crate::errors::TeeClientVerificationError::PolicyLengthExceedsU32
                 })?,
                 block_timestamp,
                 node_signature: node_signature.to_vec(),
@@ -974,10 +968,9 @@ impl AuthorizedEnclaveClient {
         }
         let artifact =
             DcapOnboardingArtifactV1::decode_canonical(&onboarding_artifact).map_err(|code| {
-                TransportError::EnclaveError(format!(
-                    "GramineDirectDev onboarding artifact is non-canonical: {:#06x}",
-                    code.code()
-                ))
+                crate::errors::TeeClientVerificationError::GramineDirectDevOnboardingArtifactNonCanonical {
+                    code: code.code(),
+                }
             })?;
         if artifact.context != context {
             return Err(TransportError::EnclaveError(
@@ -1016,13 +1009,13 @@ impl AuthorizedEnclaveClient {
                 continue;
             }
             let wire_offset = u32::try_from(offset).map_err(|_| {
-                TransportError::DcapVerification("verification offset exceeds u32".into())
+                crate::errors::TeeClientVerificationError::VerificationOffsetExceedsU32
             })?;
-            let next = offset.checked_add(chunk.len()).ok_or_else(|| {
-                TransportError::DcapVerification("verification offset overflow".into())
-            })?;
+            let next = offset
+                .checked_add(chunk.len())
+                .ok_or(crate::errors::TeeClientVerificationError::VerificationOffsetOverflow)?;
             let expected_next = u32::try_from(next).map_err(|_| {
-                TransportError::DcapVerification("verification offset exceeds u32".into())
+                crate::errors::TeeClientVerificationError::VerificationOffsetExceedsU32
             })?;
             match self.request(&EnclaveRequest::DcapVerificationChunkV1 {
                 request_hash,
@@ -1186,7 +1179,7 @@ fn unix_time_seconds() -> Result<u64, TransportError> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs())
-        .map_err(|_| TransportError::Handshake("system time precedes Unix epoch".into()))
+        .map_err(|_| crate::errors::TeeClientVerificationError::SystemTimePrecedesUnixEpoch.into())
 }
 
 /// Extract the enclave identity fields from the quote response.

@@ -60,6 +60,14 @@ pub(crate) enum OcompNextBlockError {
 }
 
 #[derive(Debug, Error)]
+pub(crate) enum OcompCarrierRejectError {
+    #[error("OCOMP carrier signer is not authorized for this action")]
+    UnauthorizedSigner,
+    #[error("OCOMP carrier authorization failed: {0}")]
+    AuthorizationFailed(PrecompileError),
+}
+
+#[derive(Debug, Error)]
 #[error("OCOMP system carrier rejected: {0}")]
 pub(crate) struct OutbeOcompSystemCarrierPoolError(pub(crate) String);
 
@@ -76,5 +84,17 @@ impl PoolTransactionError for OutbeOcompSystemCarrierPoolError {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum TxPoolStateReadError {
+    #[error("state read failed: {0}")]
+    StateReadFailed(String),
+}
+
+impl From<TxPoolStateReadError> for PrecompileError {
+    fn from(error: TxPoolStateReadError) -> Self {
+        Self::Storage(error.to_string())
     }
 }

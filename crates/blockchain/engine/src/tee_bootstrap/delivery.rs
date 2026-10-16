@@ -56,7 +56,8 @@ impl DeliveryTracker {
             Recipients::One(peer) => (false, [peer].into_iter().collect()),
             _ => {
                 return Err(CeremonyError::Delivery(
-                    "unsupported recipient mode for tracked delivery".to_string(),
+                    crate::errors::TeeBootstrapError::UnsupportedRecipientModeForTrackedDelivery
+                        .to_string(),
                 ));
             }
         };
@@ -67,11 +68,13 @@ impl DeliveryTracker {
         if self.pending.len() >= DELIVERY_MAX_PENDING_MESSAGES
             || self.pending_bytes.saturating_add(envelope.len()) > DELIVERY_MAX_PENDING_BYTES
         {
-            return Err(CeremonyError::Delivery(format!(
-                "pending delivery budget exceeded: messages={}, bytes={}",
-                self.pending.len(),
-                self.pending_bytes
-            )));
+            return Err(CeremonyError::Delivery(
+                crate::errors::TeeBootstrapError::PendingDeliveryBudgetExceeded {
+                    messages: self.pending.len(),
+                    bytes: self.pending_bytes,
+                }
+                .to_string(),
+            ));
         }
         self.pending_bytes += envelope.len();
         self.pending.insert(

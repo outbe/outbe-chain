@@ -16,7 +16,7 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result, time::Worldwid
 pub(crate) fn validate_metadosis_timestamp(timestamp: u64) -> Result<()> {
     timestamp
         .checked_add(outbe_primitives::time::UTC_PLUS_14_OFFSET)
-        .ok_or_else(|| crate::errors::caller_rejection("Metadosis UTC+14 timestamp overflow"))?;
+        .ok_or(crate::errors::MetadosisCallerError::UtcPlus14TimestampOverflow)?;
     Ok(())
 }
 
@@ -41,12 +41,12 @@ fn initialize_bootstrap_if_needed(metadosis: &mut MetadosisContract) -> Result<(
         return Ok(());
     }
     let active = metadosis.active_wwd.read_all()?;
-    let first = *active.first().ok_or_else(|| {
-        crate::errors::storage_corruption("Metadosis bootstrap needs the genesis Worldwide Day")
-    })?;
-    let record = metadosis.worldwide_days.get(first)?.ok_or_else(|| {
-        crate::errors::storage_corruption("genesis Worldwide Day record disappeared")
-    })?;
+    let first = *active
+        .first()
+        .ok_or(crate::errors::MetadosisStorageCorruptionError::BootstrapNeedsGenesisWorldwideDay)?;
+    let record = metadosis.worldwide_days.get(first)?.ok_or(
+        crate::errors::MetadosisStorageCorruptionError::GenesisWorldwideDayRecordDisappeared,
+    )?;
     metadosis.set_bootstrap_end_time(record.lookback_end)
 }
 
@@ -79,11 +79,11 @@ pub(crate) fn create_worldwide_day_for_date(
     let aggregate = ValidatedWwdAggregate::load_and_validate(metadosis.storage.clone())?;
     let existing_forming_start = metadosis.worldwide_days.entry(wwd).forming_start().read()?;
     if existing_forming_start != 0 {
-        let current = aggregate.record(wwd).ok_or_else(|| {
-            crate::errors::storage_corruption(format!(
-                "Metadosis WWD {wwd} record exists outside validated membership"
-            ))
-        })?;
+        let current = aggregate.record(wwd).ok_or(
+            crate::errors::MetadosisStorageCorruptionError::WwdRecordExistsOutsideValidatedMembership {
+                wwd,
+            },
+        )?;
         let transition = reduce_outer_wwd(Some(current), OuterWwdEvent::CreateDay)?;
         return commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number);
     }

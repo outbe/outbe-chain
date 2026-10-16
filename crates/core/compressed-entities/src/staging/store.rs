@@ -25,16 +25,18 @@ impl AuthenticatedCatalogView {
     ) -> Result<Self, StagingError> {
         let marker = snapshot.marker()?;
         marker.verify_exact_parent(required)?;
-        let catalog_root = snapshot.tree_root(TreeNamespace::Catalog)?.ok_or(
-            StagingError::InvalidCatalogEnvelope("catalog root is missing"),
-        )?;
+        let catalog_root = snapshot.tree_root(TreeNamespace::Catalog)?.ok_or_else(|| {
+            StagingError::from(crate::errors::CatalogEnvelopeErrorReason::CatalogRootMissing)
+        })?;
         if sealed_root(catalog_root).map_err(|_| {
-            StagingError::InvalidCatalogEnvelope("invalid exact-parent catalog root")
+            StagingError::from(
+                crate::errors::CatalogEnvelopeErrorReason::InvalidExactParentCatalogRoot,
+            )
         })? != required.root
         {
-            return Err(StagingError::InvalidCatalogEnvelope(
-                "exact-parent catalog root does not match authoritative sealed root",
-            ));
+            return Err(
+                crate::errors::CatalogEnvelopeErrorReason::ExactParentCatalogRootMismatch.into(),
+            );
         }
         Ok(Self {
             snapshot: Arc::new(Mutex::new(snapshot)),
@@ -292,9 +294,9 @@ impl StagingCkbStore {
         let parent_root = self.parent_root;
         if new_root == parent_root {
             if !self.branch_changes.is_empty() || !self.leaf_changes.is_empty() {
-                return Err(StagingError::InvalidShardEnvelope(
-                    "net-no-op shard contains records",
-                ));
+                return Err(
+                    crate::errors::ShardEnvelopeErrorReason::NetNoOpShardContainsRecords.into(),
+                );
             }
             return Ok(None);
         }

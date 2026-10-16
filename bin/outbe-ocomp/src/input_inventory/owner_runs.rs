@@ -11,7 +11,7 @@ impl OwnerBatchReader {
         let mut file = open_regular_readonly(&path)?;
         let count = read_run_header(&mut file, &path)?;
         if count != expected_count {
-            return Err(TributeInventoryError::Corrupt("owner inventory count"));
+            return Err(TributeInventoryError::CorruptOwnerInventoryCount);
         }
         Ok(Self {
             file,
@@ -36,7 +36,7 @@ impl OwnerBatchReader {
         for _ in 0..take {
             let owner = read_owner(&mut self.file)?;
             if self.previous.is_some_and(|previous| previous >= owner) {
-                return Err(TributeInventoryError::Corrupt("owner inventory order"));
+                return Err(TributeInventoryError::CorruptOwnerInventoryOrder);
             }
             self.previous = Some(owner);
             self.remaining -= 1;
@@ -244,7 +244,7 @@ pub(super) fn verify_owner_file(
     let mut records_since_progress = 0_u64;
     while let Some(owner) = reader.next()? {
         if previous.is_some_and(|candidate| candidate >= owner) {
-            return Err(TributeInventoryError::Corrupt("owner inventory order"));
+            return Err(TributeInventoryError::CorruptOwnerInventoryOrder);
         }
         previous = Some(owner);
         count = count
@@ -257,7 +257,7 @@ pub(super) fn verify_owner_file(
         }
     }
     if count != expected_count {
-        return Err(TributeInventoryError::Corrupt("owner inventory count"));
+        return Err(TributeInventoryError::CorruptOwnerInventoryCount);
     }
     Ok(())
 }

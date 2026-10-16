@@ -1,6 +1,6 @@
 use crate::{
     commit::commit_outer_transition,
-    errors::storage_corruption_message,
+    errors::MetadosisStorageCorruptionError,
     precompile::IMetadosis,
     reducer::{OuterWwdTransition, OuterWwdTransitionKind},
     schema::MetadosisContract,
@@ -52,27 +52,26 @@ impl MetadosisContract<'_> {
         let result_evidence_hash = input.result_evidence_hash;
         let schema_limits = input.schema_limits;
         if result_evidence_hash.is_zero() {
-            return Err(storage_corruption_message(
-                "OCOMP result evidence hash is zero",
-            ));
+            return Err(MetadosisStorageCorruptionError::OcompResultEvidenceHashIsZero.into());
         }
         if active_generation.result_evidence_hash != result_evidence_hash {
-            return Err(storage_corruption_message(
-                "active Lysis generation differs from result evidence",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::ActiveLysisGenerationDiffersFromResultEvidence
+                    .into(),
+            );
         }
 
         let wwd = WorldwideDay::new(record.intent.wwd);
         if self.active_lysis_generation(wwd, schema_limits)?.is_some() {
-            return Err(storage_corruption_message(
-                "active Lysis generation cannot be overwritten",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::ActiveLysisGenerationCannotBeOverwritten.into(),
+            );
         }
         let completed_binding = completed_binding(&input, &permit)?;
         self.persist_completion(&input, &mut record, &completed_binding)?;
         self.emit_completion(&input, &record, &completed_binding, &permit)?;
         permit.commit_terminal().map_err(|error| {
-            storage_corruption_message(format!("commit Lysis terminal permit: {error}"))
+            MetadosisStorageCorruptionError::CommitLysisTerminalPermit { error }
         })?;
         Ok(completed_binding)
     }
@@ -84,26 +83,25 @@ impl MetadosisContract<'_> {
             outer_transition.kind(),
             OuterWwdTransitionKind::OcompCompleted
         ) {
-            return Err(storage_corruption_message(
-                "OCOMP completion requires the typed completed outer transition",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompCompletionRequiresTypedCompletedOuterTransition
+                    .into(),
+            );
         }
         let state = self
             .live_ocomp_fsm_state_by_intent(intent_id, schema_limits)?
-            .ok_or_else(|| storage_corruption_message("OCOMP completion has no live job"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompCompletionMissingLiveJob)?;
         let projection = state.projection();
         if projection.live_intent_id != Some(intent_id) {
-            return Err(storage_corruption_message(
-                "OCOMP completion IntentId is not the live job",
-            ));
+            return Err(MetadosisStorageCorruptionError::OcompCompletionIntentIdNotLiveJob.into());
         }
         let record = self
             .ocomp_job_record(intent_id, schema_limits)?
-            .ok_or_else(|| storage_corruption_message("OCOMP completion job record is missing"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompCompletionJobRecordMissing)?;
         if record.status != OcompJobStatus::VotingOpen || record.terminal.is_some() {
-            return Err(storage_corruption_message(
-                "OCOMP completion requires a voting-open job",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompCompletionRequiresVotingOpenJob.into(),
+            );
         }
         if record
             .finalized
@@ -111,17 +109,15 @@ impl MetadosisContract<'_> {
             .and_then(|finalized| finalized.quorum.as_ref())
             .is_some()
         {
-            return Err(storage_corruption_message(
-                "OCOMP completion job already has a quorum",
-            ));
+            return Err(MetadosisStorageCorruptionError::OcompCompletionJobAlreadyHasQuorum.into());
         }
         // Lockstep with the persisted per-day index. See `expire_ocomp_job`.
         let wwd = WorldwideDay::new(record.intent.wwd);
         let indexed_terminal = self.terminal_intent_count(wwd)?;
         if indexed_terminal != 0 || projection.terminal_records != 0 {
-            return Err(storage_corruption_message(
-                "OCOMP WorldwideDay already has a terminal job",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompWorldwideDayAlreadyHasTerminalJob.into(),
+            );
         }
 
         Ok(record)
@@ -143,14 +139,14 @@ impl MetadosisContract<'_> {
         self.ocomp_active_lysis_generations.get_bytes(&wwd).write(
             &active_generation
                 .encode_canonical(schema_limits)
-                .map_err(|error| {
-                    storage_corruption_message(format!("encode active Lysis generation: {error}"))
-                })?,
+                .map_err(
+                    |error| MetadosisStorageCorruptionError::EncodeActiveLysisGeneration { error },
+                )?,
         )?;
         record
             .finalized
             .as_mut()
-            .ok_or_else(|| storage_corruption_message("OCOMP completion job is not finalized"))?
+            .ok_or(MetadosisStorageCorruptionError::OcompCompletionJobNotFinalized)?
             .quorum = Some(quorum.clone());
         record.status = OcompJobStatus::Completed;
         record.terminal = Some(LysisTerminalV1 {
@@ -219,9 +215,9 @@ fn validate_terminal_binding(
         .intent
         .activation_preconditions
         .activation_preconditions_hash(schema_limits)
-        .map_err(|error| {
-            storage_corruption_message(format!("hash OCOMP activation preconditions: {error}"))
-        })?;
+        .map_err(
+            |error| MetadosisStorageCorruptionError::HashOcompActivationPreconditions { error },
+        )?;
     let binding = permit.binding().clone();
     let identity_matches = binding.intent_id == intent_id
         && binding.job_id == active_generation.job_id
@@ -241,9 +237,7 @@ fn validate_terminal_binding(
             unused_lysis_limit_minor,
         )
     {
-        return Err(storage_corruption_message(
-            "OCOMP terminal permit is not bound to the live job",
-        ));
+        return Err(MetadosisStorageCorruptionError::OcompTerminalPermitNotBoundToLiveJob.into());
     }
     Ok(())
 }
@@ -260,9 +254,7 @@ fn completed_binding(
     let binding = permit.binding().clone();
     let active_generation_hash = active_generation
         .active_generation_hash(schema_limits)
-        .map_err(|error| {
-            storage_corruption_message(format!("hash active Lysis generation: {error}"))
-        })?;
+        .map_err(|error| MetadosisStorageCorruptionError::HashActiveLysisGeneration { error })?;
     let receipt = AggregateActivationReceiptV1 {
         binding: binding.clone(),
         outcome: ActivationOutcome::Applied,
@@ -277,13 +269,11 @@ fn completed_binding(
         activated_at_time,
     };
     receipt.validate_semantics().map_err(|error| {
-        storage_corruption_message(format!("invalid applied terminal receipt: {error}"))
+        MetadosisStorageCorruptionError::InvalidAppliedTerminalReceipt { error }
     })?;
     let terminal_receipt_hash = receipt
         .terminal_receipt_hash(schema_limits)
-        .map_err(|error| {
-            storage_corruption_message(format!("hash applied terminal receipt: {error}"))
-        })?;
+        .map_err(|error| MetadosisStorageCorruptionError::HashAppliedTerminalReceipt { error })?;
     let completed_binding = OcompCompletedBindingV1 {
         job_id: binding.job_id,
         activation_call_id: permit.activation_call_id(),
@@ -297,9 +287,7 @@ fn completed_binding(
     };
     completed_binding
         .validate_semantics(quorum, schema_limits)
-        .map_err(|error| {
-            storage_corruption_message(format!("invalid OCOMP completed binding: {error}"))
-        })?;
+        .map_err(|error| MetadosisStorageCorruptionError::InvalidOcompCompletedBinding { error })?;
 
     Ok(completed_binding)
 }

@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use alloy_primitives::B256;
 
-use crate::error::{PrecompileError, Result};
+use crate::error::{PrimitivesStorageError, Result};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LysisActivationCursor {
@@ -90,9 +90,9 @@ impl<'frame> CertifiedLysisActivation<'frame> {
         owner: &'static str,
     ) -> Result<()> {
         if self.cursor != expected {
-            return Err(PrecompileError::revert(format!(
-                "certified Lysis activation {owner} cursor is out of order"
-            )));
+            return Err(
+                PrimitivesStorageError::CertifiedLysisActivationCursorOutOfOrder { owner }.into(),
+            );
         }
         self.cursor = next;
         Ok(())

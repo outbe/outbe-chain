@@ -767,12 +767,225 @@ pub enum ValidatorSetError {
     /// The target validator is inactive.
     #[error("validator is inactive")]
     ValidatorIsInactive,
+
+    /// Attempted to register a validator whose lifecycle is not absent.
+    #[error("validator is already registered")]
+    ValidatorIsAlreadyRegistered,
+
+    /// A validator jail height is zero.
+    #[error("validator jail height must be non-zero")]
+    ValidatorJailHeightZero,
+
+    /// Computation of the unjail cooldown height overflowed `u64`.
+    #[error("unjail cooldown height overflow")]
+    UnjailCooldownHeightOverflow,
+
+    /// The unjail cooldown period has not elapsed.
+    #[error("unjail cooldown not elapsed: ready at {ready_at}, current {current_height}")]
+    UnjailCooldownNotElapsed {
+        /// Earliest block height at which the validator can unjail.
+        ready_at: u64,
+        /// Current block height.
+        current_height: u64,
+    },
+
+    /// Attempted to complete unbonding while bonded stake or a live-claim hint remains.
+    #[error("cannot complete unbonding while bonded value or a live-claim hint remains")]
+    CannotCompleteUnbondingWithRemainingStakeOrClaim,
+
+    /// Attempted to stake for an unregistered validator.
+    #[error("cannot stake before validator registration")]
+    CannotStakeBeforeRegistration,
+
+    /// Attempted to stake for an inactive validator before re-registration.
+    #[error("inactive validator must re-register before staking")]
+    InactiveValidatorMustReregisterBeforeStaking,
+
+    /// A history record uses the zero sentinel as its deactivation height.
+    #[error("deactivation height must not use the zero sentinel")]
+    DeactivationHeightZeroSentinel,
+
+    /// Active validator history contains a deactivation height.
+    #[error("active history must not contain a deactivation height")]
+    ActiveHistoryHasDeactivationHeight,
+
+    /// Retained jailed validator history does not match the jail height.
+    #[error("retained jail history must match the jail height")]
+    RetainedJailHistoryHeightMismatch,
+
+    /// Jailed validator history does not match the jail height.
+    #[error("jail history must match the jail height")]
+    JailHistoryHeightMismatch,
+
+    /// Exiting validator history is missing a deactivation height.
+    #[error("exiting history requires a deactivation height")]
+    ExitingHistoryMissingDeactivationHeight,
+
+    /// Unbonding validator history is missing a deactivation height.
+    #[error("unbonding history requires a deactivation height")]
+    UnbondingHistoryMissingDeactivationHeight,
+
+    /// Inactive validator history is missing a deactivation height.
+    #[error("inactive history requires a deactivation height")]
+    InactiveHistoryMissingDeactivationHeight,
+
+    /// Bonded stake is below the required minimum.
+    #[error("bonded stake {bonded} is below minimum {minimum}")]
+    BondedStakeBelowMinimum {
+        /// Current bonded stake.
+        bonded: alloy_primitives::U256,
+        /// Required minimum stake.
+        minimum: alloy_primitives::U256,
+    },
+
+    /// Bonded stake has not fallen below the required minimum.
+    #[error("bonded stake {bonded} has not fallen below minimum {minimum}")]
+    BondedStakeNotBelowMinimum {
+        /// Current bonded stake.
+        bonded: alloy_primitives::U256,
+        /// Required minimum stake.
+        minimum: alloy_primitives::U256,
+    },
+
+    /// A jailed validator attempted permanent exit while bonded stake remains.
+    #[error("jailed validator must fully unstake before permanent exit")]
+    JailedValidatorMustFullyUnstakeForExit,
+
+    /// A stake projection uses the zero sentinel for `unbonding_end_hint`.
+    #[error("unbonding-end hint must not use the zero sentinel")]
+    UnbondingEndHintZeroSentinel,
+
+    /// A registered validator is missing its stake projection.
+    #[error("registered validator is missing stake projection")]
+    RegisteredValidatorMissingStakeProjection,
+
+    /// Test fixture attempted to activate a validator with an ineligible status.
+    #[error(
+        "cannot activate validator with status {status}: only REGISTERED or PENDING allowed in test fixtures"
+    )]
+    CannotActivateValidatorInTestFixture {
+        /// Stored status code.
+        status: u8,
+    },
+
+    /// Deterministic derivation of a test OCOMP signing key failed.
+    #[error("failed to derive deterministic test OCOMP signing key")]
+    TestOcompSigningKeyDerivationFailed,
+
+    /// Derivation of a test validator identity hash failed.
+    #[error("cannot derive test validator identity: {reason}")]
+    CannotDeriveTestValidatorIdentity {
+        /// Underlying error text.
+        reason: String,
+    },
+
+    /// Construction of a seeded test OCOMP signing key failed.
+    #[error("test OCOMP seed key: {reason}")]
+    TestOcompSeedKeyInvalid {
+        /// Underlying error text.
+        reason: String,
+    },
+
+    /// Encoded test OCOMP SEC1 public key is not 33 bytes.
+    #[error("test OCOMP SEC1 key is not 33 bytes")]
+    TestOcompSec1KeyWrongLength,
+
+    /// Computation of a test OCOMP proof-of-possession digest failed.
+    #[error("test OCOMP PoP digest: {reason}")]
+    TestOcompPopDigestFailed {
+        /// Underlying error text.
+        reason: String,
+    },
+
+    /// Signing of a test OCOMP proof-of-possession digest failed.
+    #[error("test OCOMP PoP signing: {reason}")]
+    TestOcompPopSigningFailed {
+        /// Underlying error text.
+        reason: String,
+    },
+
+    /// Canonical encoding of a test OCOMP registration failed.
+    #[error("test OCOMP registration encode: {reason}")]
+    TestOcompRegistrationEncodeFailed {
+        /// Underlying error text.
+        reason: String,
+    },
+
+    /// Test target validator is not registered.
+    #[error("test validator is not registered")]
+    TestValidatorNotRegistered,
+
+    /// Test boundary admission encountered an unsupported validator status.
+    #[error("test boundary activation cannot admit validator status {status}")]
+    TestBoundaryCannotAdmitStatus {
+        /// Stored status code.
+        status: u8,
+    },
+
+    /// Canonical encoding of a stored test OCOMP registration failed.
+    #[error("stored test OCOMP registration encode: {reason}")]
+    StoredTestOcompRegistrationEncodeFailed {
+        /// Underlying error text.
+        reason: String,
+    },
+
+    /// A test validator disappeared during boundary activation setup.
+    #[error("test validator disappeared")]
+    TestValidatorDisappeared,
+
+    /// Test fixture is not in PENDING status before boundary promotion.
+    #[error("fixture {validator} is not PENDING before promotion")]
+    FixtureNotPendingBeforePromotion {
+        /// Validator address.
+        validator: Address,
+    },
+
+    /// Test fixture is not in ACTIVE status after boundary promotion.
+    #[error("fixture {validator} is not ACTIVE after promotion")]
+    FixtureNotActiveAfterPromotion {
+        /// Validator address.
+        validator: Address,
+    },
+
+    /// Test fixture activation stake is below the required minimum.
+    #[error("fixture activation stake {bonded} is below minimum {minimum}")]
+    FixtureActivationStakeBelowMinimum {
+        /// Provided bonded stake.
+        bonded: alloy_primitives::U256,
+        /// Required minimum stake.
+        minimum: alloy_primitives::U256,
+    },
+
+    /// Test fixture canonical activation requires a join-path lifecycle.
+    #[error("fixture activation requires a join-path lifecycle, got status {status:?}")]
+    FixtureActivationRequiresJoinPath {
+        /// Stored status code if present.
+        status: Option<u8>,
+    },
+
+    /// Setting test fixture history requires a registered validator.
+    #[error("test fixture history requires a registered validator")]
+    TestFixtureHistoryRequiresRegisteredValidator,
 }
 
 impl ValidatorSetError {
     /// Returns true when the error represents fatal state corruption or invariant failure.
     pub const fn is_fatal(&self) -> bool {
-        matches!(self, Self::CommitteeSnapshotReplayMismatch { .. })
+        matches!(
+            self,
+            Self::CommitteeSnapshotReplayMismatch { .. }
+                | Self::RegisteredValidatorMissingStakeProjection
+                | Self::TestOcompSigningKeyDerivationFailed
+                | Self::CannotDeriveTestValidatorIdentity { .. }
+                | Self::TestOcompSeedKeyInvalid { .. }
+                | Self::TestOcompSec1KeyWrongLength
+                | Self::TestOcompPopDigestFailed { .. }
+                | Self::TestOcompPopSigningFailed { .. }
+                | Self::TestOcompRegistrationEncodeFailed { .. }
+                | Self::StoredTestOcompRegistrationEncodeFailed { .. }
+                | Self::TestValidatorDisappeared
+                | Self::TestFixtureHistoryRequiresRegisteredValidator
+        )
     }
 
     /// Builds a fatal error when OCOMP identity derivation fails for an active validator.
