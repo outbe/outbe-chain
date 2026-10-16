@@ -28,7 +28,7 @@ fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
         IERC20::balanceOfCall::SELECTOR,
         Bytes::from(IERC20::balanceOfCall::abi_encode_returns(&U256::ZERO)),
     );
-    // A transfer with no received funds must fail, even for a dust obligation.
+    // A transfer with no received funds must fail, even for a dust cost.
     let error = world
         .enter(|storage| {
             api::settle_nod(

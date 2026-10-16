@@ -330,7 +330,7 @@ pub fn settle_intex(
         storage,
         asset,
         pricing::currencies(&series),
-        &pricing::obligation(&series, units),
+        &pricing::settlement_cost(&series, units),
     )?;
     quote.require_snapshot(snapshot_id)?;
     storage.clone().with_checkpoint(|| {

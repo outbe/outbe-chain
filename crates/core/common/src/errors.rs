@@ -20,7 +20,7 @@ pub enum RoundingError {
     ZeroRate,
     #[error("settlement conversion overflow")]
     Overflow,
-    /// A positive obligation floors to zero.
+    /// A positive cost floors to zero.
     #[error("settlement cost rounds to zero")]
     RoundsToZero,
 }

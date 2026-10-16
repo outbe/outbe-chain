@@ -101,8 +101,8 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
 }
 
 #[test]
-fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
-    // Exact obligation 2.5 EUR units: flooring charges 2, rounding up charged 3.
+fn the_issuance_rail_floors_the_whole_cost_in_the_payers_favour() {
+    // Exact cost 2.5 EUR units: flooring charges 2, rounding up charged 3.
     with_storage(Some(U256::from(3_000_000u64)), |storage| {
         register_currency(storage, 978, U256::from(2_500_000u64));
         seed_day_vwap(storage, 840, U256::from(3_000_000u64));
@@ -122,7 +122,7 @@ fn the_issuance_rail_floors_the_whole_obligation_in_the_payers_favour() {
 
 #[test]
 fn a_wider_asset_keeps_what_the_six_decimal_cost_dropped() {
-    // The reference cost floors to 1. The obligation is 1.500001. An
+    // The reference cost floors to 1. The cost is 1.500001. An
     // eighteen-decimal asset carries all of it. Scaling the floored 1 charged 1e12.
     with_storage(Some(U256::from(1_500_001u64)), |storage| {
         let gem_id =

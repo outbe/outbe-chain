@@ -20,7 +20,7 @@ use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::errors::NodFactoryError;
 use crate::precompile::INodFactory;
-use outbe_vaultrouter::settlement::{self, Currencies, Obligation};
+use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost};
 
 /// Issues an authenticated encrypted Nod through the block-scoped body lifecycle.
 pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV2) -> Result<WwdEntityId> {
@@ -161,7 +161,7 @@ pub fn settle_nod(storage: &StorageHandle<'_>, request: SettleNodRequest) -> Res
         storage,
         asset,
         currencies(item.body()),
-        &obligation(item.body(), bucket.body())?,
+        &settlement_cost(item.body(), bucket.body())?,
     )?;
     quote.require_snapshot(snapshot_id)?;
     storage.clone().with_checkpoint(|| {
@@ -195,8 +195,8 @@ pub(crate) fn settlement_units(
     rate: Option<(U256, U256)>,
     asset_decimals: u8,
 ) -> Result<U256> {
-    let obligation = nod_obligation(entry_price_minor, gratis_load_minor);
-    outbe_common::settlement::obligation_units(&obligation, rate, asset_decimals)
+    let cost = nod_cost(entry_price_minor, gratis_load_minor);
+    outbe_common::settlement::settlement_cost_units(&cost, rate, asset_decimals)
         .map_err(|e| settlement::SettlementError::Rounding(e).into())
 }
 
@@ -208,16 +208,16 @@ fn currencies(item: &NodItemState) -> Currencies {
 }
 
 /// One Nod: its bucket's entry price times its Gratis load.
-fn obligation(item: &NodItemState, bucket: &NodBucketState) -> Result<Obligation> {
-    Ok(nod_obligation(
+fn settlement_cost(item: &NodItemState, bucket: &NodBucketState) -> Result<SettlementCost> {
+    Ok(nod_cost(
         bucket.entry_price_minor,
         nod_api::calculation_amount(item)?,
     ))
 }
 
 /// One Nod at its entry price and Gratis load, at cost.
-fn nod_obligation(entry_price_minor: U256, gratis_load_minor: U256) -> Obligation {
-    Obligation {
+fn nod_cost(entry_price_minor: U256, gratis_load_minor: U256) -> SettlementCost {
+    SettlementCost {
         entry_price_minor,
         load_minor: gratis_load_minor,
         units: U256::ONE,
@@ -319,7 +319,7 @@ pub fn quote_settlement(
         storage,
         asset,
         currencies(item.body()),
-        &obligation(item.body(), bucket.body())?,
+        &settlement_cost(item.body(), bucket.body())?,
     )?;
     Ok((
         quote.settlement_currency,
