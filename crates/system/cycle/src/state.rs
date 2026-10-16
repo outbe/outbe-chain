@@ -41,8 +41,64 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
 };
+use tracing::trace;
 
+use crate::errors::CycleError;
+use crate::schema::Accounting;
 use crate::triggers::TriggerSpec;
+
+/// Reads `last_accounted_block_number` from EVM storage.
+///
+/// Returns `0` on a fresh chain that has not yet committed any V2 Phase 1
+/// (the underlying EVM slot defaults to `U256::ZERO`).
+pub(crate) fn last_accounted_block_number(ctx: &BlockRuntimeContext) -> Result<u64> {
+    let accounting: Accounting<'_> = ctx.storage.contract::<Accounting<'_>>();
+    accounting.last_accounted_block_number.read()
+}
+
+/// Writes `last_accounted_block_number` to EVM storage. The V2 executor
+/// Phase 1 path is the only intended caller.
+///
+/// The function takes a `BlockRuntimeContext`, not a raw `StorageHandle`.
+/// Thus the storage scope stays bound to the same block whose Phase 1 is
+/// committing. This prevents accidental cross-block writes.
+pub(crate) fn set_last_accounted_block_number(
+    ctx: &BlockRuntimeContext,
+    block_number: u64,
+) -> Result<()> {
+    let accounting: Accounting<'_> = ctx.storage.contract::<Accounting<'_>>();
+    accounting.last_accounted_block_number.write(block_number)
+}
+
+/// Records that V2 Phase 1 for `block_number` committed successfully.
+///
+/// Intended writer for `ACCOUNTING_PROGRESS_ADDRESS` slot 0 (INV4).
+/// The V2 executor Phase 1 path calls this function. The caller is
+/// responsible for ordering. Phase 1 commits an exact-parent successor
+/// block, so `block_number` should equal the parent height being
+/// accounted for.
+pub fn record_phase1_progress(ctx: &BlockRuntimeContext, block_number: u64) -> Result<()> {
+    let current = last_accounted_block_number(ctx)?;
+    if block_number < current {
+        return Err(CycleError::BlockNumberRegression {
+            current,
+            attempted: block_number,
+        }
+        .into());
+    }
+    trace!(
+        target: "outbe::accounting",
+        block_number,
+        "recording V2 Phase 1 accounting progress",
+    );
+    set_last_accounted_block_number(ctx, block_number)
+}
+
+/// Reads `last_accounted_block_number` from EVM storage. Returns `0` on a
+/// fresh chain that has not yet committed any V2 Phase 1.
+pub fn read_last_accounted_block_number(ctx: &BlockRuntimeContext) -> Result<u64> {
+    last_accounted_block_number(ctx)
+}
 
 /// deterministic accounting window for a Cycle trigger.
 ///
@@ -126,7 +182,7 @@ pub fn accounting_gate_blocks(
 }
 
 /// Cycle-internal [`AccountingProgressView`] that reads
-/// `last_accounted_block_number` via [`outbe_accounting::read_last_accounted_block_number`].
+/// `last_accounted_block_number` via [`read_last_accounted_block_number`].
 ///
 /// Routing the dispatcher's gate through this trait satisfies Scope 1:
 /// the handler observes accounting progress via the
@@ -144,6 +200,6 @@ impl<'a, 'storage> EvmAccountingProgress<'a, 'storage> {
 
 impl AccountingProgressView for EvmAccountingProgress<'_, '_> {
     fn last_accounted_block_number(&self) -> Result<u64> {
-        outbe_accounting::read_last_accounted_block_number(self.ctx)
+        read_last_accounted_block_number(self.ctx)
     }
 }

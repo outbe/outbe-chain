@@ -10,24 +10,26 @@
 //! Each `<period>_boundary_cycle_runs_after_parent_accounted` test
 //! covers a different period (hour, day, week, month). The test constructs
 //! a synthetic gated `TriggerSpec`. It asserts that `accounting_gate_blocks`
-//! returns `false` after `outbe_accounting::record_phase1_progress`
+//! returns `false` after `outbe_cycle::record_phase1_progress`
 //! accounts the parent block.
 //!
 //! `phase1_accounts_parent_before_cycle_tick` is a structural check on
 //! `crates/blockchain/evm/src/executor.rs`. It confirms the V2 reorder
 //! invariant that this gate depends on.
 
-use alloy_primitives::Address;
-use outbe_accounting::record_phase1_progress;
+use alloy_primitives::{address, Address, U256};
 use outbe_cycle::{
+    read_last_accounted_block_number, record_phase1_progress,
+    schema::Accounting,
     state::{accounting_gate_blocks, resolve_accounting_window, AccountingWindow},
     triggers::{TriggerHandler, TriggerSpec},
 };
 use outbe_primitives::{
     accounting_progress::AccountingProgressView,
+    addresses::ACCOUNTING_PROGRESS_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
-    storage::hashmap::HashMapStorageProvider,
+    storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use proptest::prelude::*;
 
@@ -117,7 +119,7 @@ fn boundary_gate_check(period_seconds: u64, block_number: u64, block_ts: u64) {
         struct Reader<'a, 'b>(&'a BlockRuntimeContext<'b>);
         impl AccountingProgressView for Reader<'_, '_> {
             fn last_accounted_block_number(&self) -> Result<u64> {
-                outbe_accounting::read_last_accounted_block_number(self.0)
+                read_last_accounted_block_number(self.0)
             }
         }
 
@@ -237,6 +239,139 @@ fn genesis_bootstrap_resolves_to_no_window_for_gated_trigger() {
             "genesis bootstrap gate must never block trigger (block {block_number})"
         );
     }
+}
+
+#[test]
+fn accounting_progress_slot0_roundtrips_last_accounted_block_number() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.enter(|handle: StorageHandle| {
+        let block = BlockContext::empty_for_tests(0, 0, CHAIN_ID);
+        let ctx = BlockRuntimeContext::new(block, handle);
+
+        record_phase1_progress(&ctx, 42).expect("write progress");
+        let read = read_last_accounted_block_number(&ctx).expect("read progress");
+        assert_eq!(read, 42);
+
+        record_phase1_progress(&ctx, 1_000_000).expect("overwrite progress");
+        assert_eq!(
+            read_last_accounted_block_number(&ctx).expect("read overwritten progress"),
+            1_000_000,
+        );
+
+        let accounting: Accounting<'_> = ctx.storage.contract::<Accounting<'_>>();
+        let raw = accounting
+            .last_accounted_block_number
+            .read()
+            .expect("raw slot read");
+        assert_eq!(raw, 1_000_000);
+
+        let view = StubProgress(raw);
+        assert_eq!(
+            view.last_accounted_block_number().expect("view read"),
+            1_000_000
+        );
+    });
+}
+
+#[test]
+fn genesis_progress_reads_zero_before_first_phase1_write() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.enter(|handle: StorageHandle| {
+        let block = BlockContext::empty_for_tests(0, 0, CHAIN_ID);
+        let ctx = BlockRuntimeContext::new(block, handle);
+
+        let initial = read_last_accounted_block_number(&ctx).expect("read genesis slot 0");
+        assert_eq!(
+            initial, 0,
+            "genesis slot 0 must read as zero before any Phase 1 commit",
+        );
+
+        for slot_index in 1u64..=15 {
+            let slot = ctx
+                .storage
+                .sload(ACCOUNTING_PROGRESS_ADDRESS, U256::from(slot_index))
+                .expect("read reserved slot");
+            assert_eq!(
+                slot,
+                U256::ZERO,
+                "INV2: reserved slot {slot_index} must be zero in genesis V2",
+            );
+        }
+    });
+}
+
+#[test]
+fn phase1_reorg_requires_branch_parent_state_for_fresh_progress() {
+    const VALIDATOR: Address = address!("0x1111111111111111111111111111111111111111");
+    const CHILD_BLOCK: u64 = 27;
+    const PARENT_BLOCK: u64 = CHILD_BLOCK - 1;
+    const REQUIRED_PREVIOUS: u64 = PARENT_BLOCK - 1;
+
+    let provider = |block_number: u64| -> HashMapStorageProvider {
+        let mut p = HashMapStorageProvider::new(2026);
+        p.set_block_number(block_number);
+        p.set_timestamp(U256::from(1_700_000_000u64));
+        p.set_beneficiary(VALIDATOR);
+        p
+    };
+    let read_progress = |p: &mut HashMapStorageProvider| -> u64 {
+        p.enter(|storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::new(
+                    storage.block_number().expect("block number"),
+                    storage.timestamp().expect("timestamp").to::<u64>(),
+                    storage.chain_id().expect("chain id"),
+                    VALIDATOR,
+                    vec![VALIDATOR],
+                ),
+                storage,
+            );
+            read_last_accounted_block_number(&ctx).expect("read progress")
+        })
+    };
+    let record_progress = |p: &mut HashMapStorageProvider, block_number: u64| {
+        p.enter(|storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::new(
+                    storage.block_number().expect("block number"),
+                    storage.timestamp().expect("timestamp").to::<u64>(),
+                    storage.chain_id().expect("chain id"),
+                    VALIDATOR,
+                    vec![VALIDATOR],
+                ),
+                storage,
+            );
+            record_phase1_progress(&ctx, block_number).expect("record progress");
+        });
+    };
+
+    let mut parent = provider(CHILD_BLOCK);
+    record_progress(&mut parent, REQUIRED_PREVIOUS);
+    let parent_state = parent.storage.clone();
+
+    let mut branch_a = provider(CHILD_BLOCK);
+    branch_a.storage = parent_state.clone();
+    assert_eq!(read_progress(&mut branch_a), REQUIRED_PREVIOUS);
+    record_progress(&mut branch_a, PARENT_BLOCK);
+    assert_eq!(read_progress(&mut branch_a), PARENT_BLOCK);
+
+    let mut branch_b_from_parent = provider(CHILD_BLOCK);
+    branch_b_from_parent.storage = parent_state;
+    assert_eq!(
+        read_progress(&mut branch_b_from_parent),
+        REQUIRED_PREVIOUS,
+        "same-height reorg branch must begin from its own parent state"
+    );
+    record_progress(&mut branch_b_from_parent, PARENT_BLOCK);
+    assert_eq!(read_progress(&mut branch_b_from_parent), PARENT_BLOCK);
+
+    let mut branch_b_from_abandoned_post_state = provider(CHILD_BLOCK);
+    branch_b_from_abandoned_post_state.storage = branch_a.storage.clone();
+    assert_eq!(
+        read_progress(&mut branch_b_from_abandoned_post_state),
+        PARENT_BLOCK,
+        "using abandoned sibling post-state would make the Fresh Phase 1 guard reject"
+    );
 }
 
 // ---------------------------------------------------------------------------

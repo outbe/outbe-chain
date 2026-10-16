@@ -1,5 +1,5 @@
 use outbe_macros::contract;
-use outbe_primitives::addresses::CYCLE_ADDRESS;
+use outbe_primitives::addresses::{ACCOUNTING_PROGRESS_ADDRESS, CYCLE_ADDRESS};
 use outbe_primitives::storage::types::{Mapping, Slot};
 
 /// EVM storage layout for the Cycle dispatcher.
@@ -32,4 +32,24 @@ pub struct Cycle {
     /// from the consensus header timestamp. A contiguous transition settles it.
     /// A multi-day halt advances it without synthesizing missed-day economics.
     pub active_utc_day: Slot<u32>,
+}
+
+/// V2 Phase 1 accounting-progress storage facade (`ACCOUNTING_PROGRESS_ADDRESS`).
+///
+/// ```text
+/// slot  0: last_accounted_block_number - u64
+/// slot  1..=15: reserved (genesis zero; do not reuse)
+/// ```
+///
+/// Slot 0 is the highest exact-parent block number whose V2 Phase 1 system
+/// tx has successfully committed. Cycle reads this slot through
+/// [`crate::state::read_last_accounted_block_number`] to gate per-day
+/// accounting. The begin-block finalization path reads it for per-block
+/// accounting.
+#[contract(addr = ACCOUNTING_PROGRESS_ADDRESS)]
+pub struct Accounting {
+    /// Highest exact-parent block number whose V2 Phase 1 system tx has
+    /// successfully committed. `0` means no Phase 1 has committed yet on
+    /// this chain (fresh genesis).
+    pub last_accounted_block_number: Slot<u64>,
 }
