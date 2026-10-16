@@ -221,6 +221,8 @@ fn seed_execution(
             .unwrap();
     }
     tx.commit().unwrap();
+    drop(db);
+    native_state::publish_history(layout);
 }
 
 fn write_frontiers(layout: &RequestedLayout, request: &OutbeHeader) {
@@ -333,6 +335,8 @@ fn damage(fixture: &AllFixture, damage: Damage) {
                 .unwrap();
             }
             tx.commit().unwrap();
+            drop(db);
+            native_state::publish_history(&fixture.layout);
         }
         Damage::Receipt => {
             let file = fixture

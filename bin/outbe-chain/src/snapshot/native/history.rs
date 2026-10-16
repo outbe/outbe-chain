@@ -8,10 +8,7 @@ use reth_ethereum::{
     provider::db::DatabaseEnv,
     tasks::{RayonConfig, RuntimeBuilder, RuntimeConfig, TokioConfig},
 };
-use reth_provider::{
-    providers::{ProviderFactoryBuilder, ReadOnlyConfig, RocksDBProvider},
-    ProviderFactory, StateProvider,
-};
+use reth_provider::{providers::RocksDBProvider, DBProvider, ProviderFactory, StateProvider};
 use reth_storage_overlay::{OverlayManager, OverlayStateProvider};
 
 use super::RethReadOnlyView;
@@ -65,17 +62,18 @@ impl HistoricalStateReader {
             },
         })
         .build()?;
-        let factory = ProviderFactoryBuilder::<outbe_node::OutbeNode>::default().open_read_only(
-            layout.chain.clone(),
-            ReadOnlyConfig::from_dirs(
-                layout.chain_root.join("db"),
-                &layout.static_files_root,
-                rocks,
-            )
-            .no_watch()
-            .disable_long_read_transaction_safety(),
+        let rocksdb = RocksDBProvider::builder(&rocks)
+            .with_default_tables()
+            .with_read_only(true)
+            .build()?;
+        let factory = ProviderFactory::new(
+            view.db.clone(),
+            view.chain.clone(),
+            view.static_files.clone(),
+            rocksdb,
             runtime,
-        )?;
+        )?
+        .with_read_only_sync(false);
         Ok(Self {
             factory,
             _directory: directory,
@@ -88,7 +86,9 @@ impl HistoricalStateReader {
         read: impl FnOnce(&dyn StateProvider) -> eyre::Result<T>,
     ) -> eyre::Result<T> {
         let state = OverlayStateProvider::new(
-            self.factory.provider()?,
+            self.factory
+                .provider()?
+                .disable_long_read_transaction_safety(),
             OverlayManager::<outbe_primitives::OutbePrimitives>::default()
                 .overlay_builder(block_hash),
         );

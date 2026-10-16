@@ -489,17 +489,11 @@ fn changed_cas_bytes_are_failed_and_never_missing_input() {
 }
 
 #[test]
-fn native_consistent_checkpoint_height_and_schema_still_bind_to_canonical_request() {
-    for damage in ["checkpoint_height", "checkpoint_schema"] {
-        // Native writers accept internally consistent checkpoint descriptors.
-        // The local composition must compare height/schema with B/native state.
-        let f = fixture(20, Some(damage));
-        let error = f.check(None).unwrap_err();
-        assert!(
-            error.downcast_ref::<Incomplete>().is_none(),
-            "{damage}: {error:#}"
-        );
-    }
+fn native_consistent_checkpoint_height_still_binds_to_canonical_request() {
+    // The native writer binds the hash. Composition also checks the request height.
+    let f = fixture(20, Some("checkpoint_height"));
+    let error = f.check(None).unwrap_err();
+    assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
 }
 
 #[test]

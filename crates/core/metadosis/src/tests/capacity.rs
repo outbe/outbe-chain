@@ -626,7 +626,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
         assert_eq!(receipt.forfeited_nominal, U256::ZERO);
         assert_eq!(receipt.source_generation, 0);
         assert_eq!(receipt.retired_generation, 1);
-        assert_eq!(receipt.retirement, RetirementOutcome::NotPresent);
+        assert_eq!(receipt.retirement, RetirementOutcome::Requested);
         let error = metadosis
             .write_capacity_forfeiture_receipt(receipt)
             .unwrap_err();
@@ -659,7 +659,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
         assert_eq!(decoded.promisLimitReturnedMinor, U256::from(100));
         assert_eq!(
             decoded.retirementOutcome,
-            crate::schema::terminal_retirement::NOT_PRESENT
+            crate::schema::terminal_retirement::REQUESTED
         );
 
         let generic = IMetadosis::getWorldwideDayTerminalReceiptCall {

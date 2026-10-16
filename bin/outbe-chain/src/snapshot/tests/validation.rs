@@ -713,8 +713,8 @@ mod native_files {
             domain.native_path = format!("/donor/unavailable/{n}/../../never-open");
         }
         run(root.path(), &layout, &manifest).unwrap();
-        assert!(!layout.static_files_root.exists());
-        assert!(!layout.execution_rocksdb_root.exists());
+        assert!(layout.static_files_root.is_dir());
+        assert!(layout.execution_rocksdb_root.is_dir());
         assert!(!layout.consensus_root.exists());
     }
 

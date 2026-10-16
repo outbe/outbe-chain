@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use alloy_primitives::{address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
-use outbe_primitives::entity_codec::encode_tribute_v1;
+use outbe_primitives::entity_codec::encode_tribute_v2;
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -17,6 +17,12 @@ fn with_tribute<R>(f: impl FnOnce(&mut TributeContract<'_>) -> R) -> R {
         let _enclave = crate::enclave_client::test_enclave::scope();
         f(&mut TributeContract::new(storage))
     })
+}
+
+fn encrypted_payload_len(tc: &TributeContract<'_>, id: WwdEntityId) -> usize {
+    let record = tc.get_record(id).unwrap().expect("live Tribute record");
+    let encrypted = record.encrypted().expect("encrypted Tribute payload");
+    encode_tribute_v2(encrypted).unwrap().len()
 }
 
 fn with_provider<R>(f: impl FnOnce(&mut HashMapStorageProvider) -> R) -> R {
@@ -132,13 +138,8 @@ fn pre_admission_projection_tracks_exact_incremental_tribute_inputs() {
         tc.issue(&second).unwrap();
 
         let projection = tc.pre_admission_projection(first.worldwide_day).unwrap();
-        let expected_body_bytes = [
-            encode_tribute_v1(&crate::canonical_body(&first)).unwrap(),
-            encode_tribute_v1(&crate::canonical_body(&second)).unwrap(),
-        ]
-        .iter()
-        .map(Vec::len)
-        .sum::<usize>();
+        let expected_body_bytes = encrypted_payload_len(tc, first.tribute_id)
+            + encrypted_payload_len(tc, second.tribute_id);
 
         assert!(!projection.is_sealed);
         assert_eq!(projection.tribute_count, 2);
@@ -173,9 +174,7 @@ fn pre_admission_projection_removes_burned_tribute_contribution() {
         tc.burn(first.tribute_id).unwrap();
 
         let projection = tc.pre_admission_projection(first.worldwide_day).unwrap();
-        let expected_body_bytes = encode_tribute_v1(&crate::canonical_body(&second))
-            .unwrap()
-            .len();
+        let expected_body_bytes = encrypted_payload_len(tc, second.tribute_id);
 
         assert_eq!(projection.tribute_count, 1);
         assert_eq!(
@@ -383,14 +382,7 @@ fn assert_pre_admission_matches_fold(
         count = count.checked_add(1).unwrap();
         nominal = nominal.checked_add(tribute.nominal_amount_minor).unwrap();
         canonical_body_bytes = canonical_body_bytes
-            .checked_add(
-                u64::try_from(
-                    encode_tribute_v1(&crate::canonical_body(tribute))
-                        .unwrap()
-                        .len(),
-                )
-                .unwrap(),
-            )
+            .checked_add(u64::try_from(encrypted_payload_len(tc, tribute.tribute_id)).unwrap())
             .unwrap();
         owners.insert(tribute.owner);
         currencies.insert(tribute.reference_currency);

@@ -609,11 +609,27 @@ fn second_recipient_uses_the_bucket_persisted_by_the_previous_block() {
     });
 }
 
-/// A delivery uses the existing system envelope with production storage charges.
+/// A delivery uses the existing internal budget with production storage charges.
 #[test]
-fn one_delivery_fits_the_system_envelope_reserve() {
+fn one_delivery_fits_the_internal_budget_and_preserves_the_visible_reserve() {
     use outbe_primitives::storage::StorageHandle;
-    use outbe_primitives::system_tx::REWARD_GEM_DELIVERY_GAS_RESERVE;
+    use outbe_primitives::system_tx::{
+        SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan, REWARD_GEM_DELIVERY_GAS_RESERVE,
+        STEADY_BLOCK_GAS_LIMIT, SYSTEM_TX_ARTIFACT_GAS_LIMIT,
+    };
+
+    let visible_plan = SystemTxVisibleGasPlan::new(
+        STEADY_BLOCK_GAS_LIMIT,
+        &[(
+            SystemTxKind::RewardsGemDelivery,
+            SystemTxInputV2::RewardsGemDelivery.encode().unwrap(),
+        )],
+    )
+    .unwrap();
+    assert_eq!(
+        visible_plan.execution_gas_limit(0),
+        Some(REWARD_GEM_DELIVERY_GAS_RESERVE)
+    );
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(1);
@@ -630,7 +646,7 @@ fn one_delivery_fits_the_system_envelope_reserve() {
         )
         .unwrap();
     });
-    provider.set_gas_limit(REWARD_GEM_DELIVERY_GAS_RESERVE);
+    provider.set_gas_limit(SYSTEM_TX_ARTIFACT_GAS_LIMIT);
     provider.enable_production_storage_gas_metering();
     StorageHandle::enter(&mut provider, |handle| {
         let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
@@ -644,6 +660,6 @@ fn one_delivery_fits_the_system_envelope_reserve() {
         ));
         let gas = ctx.storage.gas_used().unwrap();
         assert!(gas > 0, "delivery must charge storage gas");
-        assert!(gas <= REWARD_GEM_DELIVERY_GAS_RESERVE);
+        assert!(gas <= SYSTEM_TX_ARTIFACT_GAS_LIMIT);
     });
 }

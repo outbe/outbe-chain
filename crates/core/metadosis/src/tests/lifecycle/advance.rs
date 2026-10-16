@@ -288,6 +288,8 @@ fn test_terminal_day_leaves_active_set() {
             .set_metadosis_limit(wwd, U256::from(777u64))
             .unwrap();
 
+        TributeContract::new(storage.clone()).seal_day(wwd).unwrap();
+
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
         let metadosis = MetadosisContract::new(storage);

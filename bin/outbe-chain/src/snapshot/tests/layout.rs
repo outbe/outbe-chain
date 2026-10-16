@@ -224,7 +224,7 @@ fn inventory_selects_native_public_domains_and_excludes_signing_authority() {
         fs::write(path, "private sentinel").unwrap();
     }
     let inventory = enumerate_native_files(&layout).unwrap();
-    assert_eq!(inventory.domains.len(), 23);
+    assert_eq!(inventory.domains.len(), 21);
     for (native_root, kind, path) in expected {
         assert!(
             inventory.domains.iter().any(|domain| domain.kind == kind

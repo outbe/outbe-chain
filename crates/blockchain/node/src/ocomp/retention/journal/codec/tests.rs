@@ -170,7 +170,7 @@ fn terminal_and_released_authority_errors_keep_state_specific_diagnostics() {
         (
             4,
             terminal(4, Some(export())),
-            279,
+            247,
             "zero terminal source generation",
             "invalid terminal export-authority flag",
             "terminal export authority has a conflicting source generation",
@@ -178,7 +178,7 @@ fn terminal_and_released_authority_errors_keep_state_specific_diagnostics() {
         (
             5,
             released(Some(export())),
-            255,
+            223,
             "zero released source generation",
             "invalid export-authority flag",
             "released record carries inconsistent authority",
@@ -186,7 +186,7 @@ fn terminal_and_released_authority_errors_keep_state_specific_diagnostics() {
         (
             6,
             terminal(6, Some(export())),
-            279,
+            247,
             "zero GC source generation",
             "invalid GC export-authority flag",
             "GC export authority has a conflicting source generation",
@@ -234,52 +234,53 @@ fn registry_rejects_duplicate_keys_and_zero_record_count() {
     );
 }
 
-// Captured from the pre-refactor v6 codec, independently of the current encoder.
+// Derived from the field layout with an independent byte writer and Keccak.
+// The native-state candidate omits the former 32-byte CE root.
 const GOLDEN_RECORDS: [(u8, usize, &str); 9] = [
     (
         1,
-        255,
-        "0xc36054213686577638bdb7b1b4b3922b5a3060e4fb938317c3621f9198eafb2d",
+        223,
+        "0xfe35fe296d0b0c36f149a96c16b8602bf3303bdd2f24b9c9bfb94dd2a6454d84",
     ),
     (
         2,
-        311,
-        "0x41d4dbd10fb50cbc706d15e1d23d65b3c0dbbeccd3a71f231a991422b4673d8b",
+        279,
+        "0x9260f013862c8f5a20277eb6049cf9803f4283a769dfb6c33eea5da4d5476883",
     ),
     (
         3,
-        359,
-        "0x2a1369498dd11a71fba6c94ede929c4dfa10699b42c7ce230aea86b0160a7668",
+        327,
+        "0xcd766dc17e18adefce44e87071341d6a077b445449754c65f226efbfde53a457",
     ),
     (
         4,
-        336,
-        "0x715cc5d94c145bbf82b1dde2f7f7ff7316a5648eab452d7910949ad06744e822",
-    ),
-    (
-        4,
-        384,
-        "0x4f420d591abc16b731706131cb0afdeb02349743892f9a39202b5acfe4597c14",
-    ),
-    (
-        5,
         304,
-        "0x5bad530cb6343e730068af313972b6f8764df2bdf2f88b8970311ac79002e269",
+        "0x6796b5bd97c16b0d0199f0739f8b18d395cf8ea966346609bc82eb85aeeaacc3",
+    ),
+    (
+        4,
+        352,
+        "0xdad7c0205cdb69193cb5532b1c550bf25a74efdb1df9c75ad93cacc484bf0a9e",
     ),
     (
         5,
+        272,
+        "0xe848bca22c396896cdc216ab6d4930dfac5363732c3ec5d304b7ea2093910bea",
+    ),
+    (
+        5,
+        320,
+        "0x39bbb9841b5bee8ffca0a1346f0df99736e2ba2e84fae6db7e32233d6e9517df",
+    ),
+    (
+        6,
+        304,
+        "0x1df28ce6c06f848c897d405c878bc2c08bad062b458dd7f29a291e243ca72971",
+    ),
+    (
+        6,
         352,
-        "0x00ab2e2c52e7950d0765dcda30d6b4a32bca133da4744d08527e569379bb973c",
-    ),
-    (
-        6,
-        336,
-        "0x34a0257ba62a73eaf69dbfc211d69d9510a723f7b47330d3ab30ac6cc3162d28",
-    ),
-    (
-        6,
-        384,
-        "0xd912406c5d7e366b42633f578a192d1cefeb72472957eede7b3e50af4e664188",
+        "0xa9a5c85a176ab4af87a30157b0bb53df25ab31018d2a1f9eedcfdc718e110387",
     ),
 ];
 

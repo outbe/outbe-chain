@@ -418,14 +418,16 @@ fn full_canonical_composition_finds_active_obligation_without_any_local_pin_or_j
                         Some(&mut report),
                     )
                     .err()
-                    .expect("missing body for independently found active job cannot pass");
+                    .expect(
+                        "a canonical active job with an inconsistent native day count cannot pass",
+                    );
                     assert!(
-                        error.downcast_ref::<Incomplete>().is_some(),
+                        error.downcast_ref::<Incomplete>().is_none(),
                         "{phase:?}: {error:#}"
                     );
                     assert!(
-                        format!("{error:#}").contains("Tribute"),
-                        "must reach active source requirement: {error:#}"
+                        format!("{error:#}").contains("native Tribute day count mismatch"),
+                        "must discover the active source count conflict: {error:#}"
                     );
                     let (intent_id, job) = state.live_ocomp_jobs().unwrap().pop().unwrap();
                     assert_eq!(report.active_ocomp.len(), 1);

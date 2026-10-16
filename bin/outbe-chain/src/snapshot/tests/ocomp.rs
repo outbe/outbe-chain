@@ -137,6 +137,7 @@ fn with_prepared_owner_storage_setup(
     }
     tx.commit().unwrap();
     drop(db);
+    native_state::publish_history(&layout);
     let before_files = super::headers::fingerprint(_source.path());
     let scratch = tempfile::tempdir().unwrap();
     let source = RethReadOnlyView::open(&layout).unwrap();

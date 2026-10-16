@@ -32,7 +32,7 @@ fn hourly_protocol_cycle_commits_the_same_typed_missed_offering_outcome() {
         assert_eq!(receipt.carry_over_after, day_limit);
         assert_eq!(
             receipt.retirement,
-            outbe_tribute::runtime::RetirementOutcome::NotPresent
+            outbe_tribute::runtime::RetirementOutcome::Requested
         );
         assert_eq!(receipt.block_number, 20);
 
@@ -104,7 +104,7 @@ fn hourly_protocol_cycle_applies_exact_capacity_forfeiture_to_the_new_due_candid
         assert_eq!(receipt.forfeited_nominal, U256::ZERO);
         assert_eq!(
             receipt.retirement,
-            outbe_tribute::runtime::RetirementOutcome::NotPresent
+            outbe_tribute::runtime::RetirementOutcome::Requested
         );
 
         let cycle: Cycle<'_> = handle.contract::<Cycle<'_>>();

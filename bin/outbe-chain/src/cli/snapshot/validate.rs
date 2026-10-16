@@ -154,8 +154,6 @@ mod tests {
     fn report_publication_protects_native_roots_in_provenance_only_mode() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
-        let config = root.join("projection.toml");
-        std::fs::write(&config, "version = 1\nbackend = 'rocksdb'\n[rocksdb]\npath = 'projection'\nsecondary_path = 'secondary'\n").unwrap();
         let arguments: Vec<OsString> = vec![
             "--chain".into(),
             genesis(root),
@@ -165,8 +163,6 @@ mod tests {
             root.join("consensus").into_os_string(),
             "--consensus.keys-dir".into(),
             root.join("keys").into_os_string(),
-            "--projection.storage-config".into(),
-            config.into_os_string(),
             "--datadir.static-files".into(),
             root.join("static").into_os_string(),
             "--datadir.rocksdb".into(),
@@ -179,7 +175,6 @@ mod tests {
             "consensus",
             "ocomp/domain-v1",
             "keys",
-            "projection",
         ] {
             let native = root.join(relative);
             std::fs::create_dir_all(&native).unwrap();

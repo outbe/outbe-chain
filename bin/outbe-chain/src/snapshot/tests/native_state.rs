@@ -2,25 +2,32 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use alloy_consensus::Sealable;
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::{
     storage::hashmap::HashMapStorageProvider,
     tribute_encryption::{
         EncryptedTributeV2, TributeContextV2, TRIBUTE_AMOUNTS_BLOB_LEN, TRIBUTE_PUBLIC_KEY_BLOB_LEN,
     },
+    OutbeHeader, OutbePrimitives,
 };
 use reth_ethereum::provider::db::{
     cursor::{DbCursorRO, DbDupCursorRO},
     database::Database,
     init_db,
     mdbx::DatabaseArguments,
-    models::{storage_sharded_key::StorageShardedKey, AccountBeforeTx, ShardedKey},
+    models::{
+        storage_sharded_key::StorageShardedKey, AccountBeforeTx, ShardedKey, StorageBeforeTx,
+    },
     table::Table,
     tables,
     transaction::{DbTx, DbTxMut},
 };
 use reth_primitives_traits::{Account, StorageEntry};
-use reth_provider::{providers::RocksDBProvider, StorageSettings};
+use reth_provider::{
+    providers::RocksDBProvider, StaticFileProviderBuilder, StaticFileSegment, StaticFileWriter,
+    StorageSettings,
+};
 
 use crate::snapshot::config::NativeLayout;
 
@@ -97,7 +104,8 @@ pub(super) fn read_plain(tx: &impl DbTx) -> State {
 }
 
 /// Store the current population and actual before-values for its transition.
-/// Version 2 uses RocksDB history indexes and MDBX changesets, as Reth does.
+/// Version 2 uses RocksDB history indexes. MDBX stages its fixture before-values.
+/// Call `publish_history` after all fixture mutations to write static history.
 pub(super) fn persist(
     layout: &NativeLayout,
     version: u32,
@@ -252,6 +260,143 @@ pub(super) fn persist(
     tx.commit().unwrap();
     drop(db);
     materialize_trie(layout, rocks, version, root(after));
+}
+
+/// Publish the final fixture headers and history before readers take fingerprints.
+pub(super) fn publish_history(layout: &NativeLayout) {
+    let db = init_db(layout.chain_root.join("db"), DatabaseArguments::test()).unwrap();
+    let tx = db.tx_mut().unwrap();
+    let headers = tx
+        .cursor_read::<tables::Headers<OutbeHeader>>()
+        .unwrap()
+        .walk(None)
+        .unwrap()
+        .map(|row| row.unwrap().1)
+        .collect::<Vec<_>>();
+    for header in &headers {
+        let hash = header.hash_slow();
+        assert_eq!(
+            tx.get::<tables::CanonicalHeaders>(header.inner.number)
+                .unwrap(),
+            Some(hash)
+        );
+        tx.put::<tables::HeaderNumbers>(hash, header.inner.number)
+            .unwrap();
+    }
+    let finish = tx
+        .get::<tables::StageCheckpoints>("Finish".into())
+        .unwrap()
+        .unwrap()
+        .block_number;
+    let settings: StorageSettings = serde_json::from_slice(
+        &tx.get::<tables::Metadata>("storage_settings".into())
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    let mut account_rows: BTreeMap<u64, Vec<AccountBeforeTx>> = BTreeMap::new();
+    let mut storage_rows: BTreeMap<u64, Vec<StorageBeforeTx>> = BTreeMap::new();
+    if settings.storage_v2 {
+        for row in tx
+            .cursor_read::<tables::AccountChangeSets>()
+            .unwrap()
+            .walk(None)
+            .unwrap()
+        {
+            let (height, change) = row.unwrap();
+            account_rows.entry(height).or_default().push(change);
+        }
+        for row in tx
+            .cursor_read::<tables::StorageChangeSets>()
+            .unwrap()
+            .walk(None)
+            .unwrap()
+        {
+            let (key, change) = row.unwrap();
+            storage_rows
+                .entry(key.block_number())
+                .or_default()
+                .push(StorageBeforeTx {
+                    address: key.address(),
+                    key: change.key,
+                    value: change.value,
+                });
+        }
+    }
+    tx.commit().unwrap();
+    drop(db);
+
+    {
+        let files = StaticFileProviderBuilder::read_write(&layout.static_files_root)
+            .build::<OutbePrimitives>()
+            .unwrap();
+        for segment in [
+            StaticFileSegment::Headers,
+            StaticFileSegment::AccountChangeSets,
+            StaticFileSegment::StorageChangeSets,
+        ] {
+            files.delete_segment(segment).unwrap();
+        }
+    }
+    // Sparse fixtures retain 0 and 100 onward. Never create the missing headers.
+    let mut remaining = headers.as_slice();
+    while let Some(first) = remaining.first() {
+        let length = remaining
+            .windows(2)
+            .position(|pair| pair[0].inner.number + 1 != pair[1].inner.number)
+            .map_or(remaining.len(), |index| index + 1);
+        assert_eq!(
+            first.inner.number % 100,
+            0,
+            "fixture run must start at a jar boundary"
+        );
+        let files = StaticFileProviderBuilder::read_write(&layout.static_files_root)
+            .with_blocks_per_file_for_segment(StaticFileSegment::Headers, 100)
+            .build::<OutbePrimitives>()
+            .unwrap();
+        {
+            let mut writer = files
+                .get_writer(first.inner.number, StaticFileSegment::Headers)
+                .unwrap();
+            for header in &remaining[..length] {
+                writer.append_header(header, &header.hash_slow()).unwrap();
+            }
+        }
+        files.commit().unwrap();
+        remaining = &remaining[length..];
+    }
+    if settings.storage_v2 {
+        let files = StaticFileProviderBuilder::read_write(&layout.static_files_root)
+            .build::<OutbePrimitives>()
+            .unwrap();
+        {
+            let mut writer = files
+                .get_writer(0, StaticFileSegment::AccountChangeSets)
+                .unwrap();
+            for height in 0..=finish {
+                writer
+                    .append_account_changeset(
+                        account_rows.remove(&height).unwrap_or_default(),
+                        height,
+                    )
+                    .unwrap();
+            }
+        }
+        {
+            let mut writer = files
+                .get_writer(0, StaticFileSegment::StorageChangeSets)
+                .unwrap();
+            for height in 0..=finish {
+                writer
+                    .append_storage_changeset(
+                        storage_rows.remove(&height).unwrap_or_default(),
+                        height,
+                    )
+                    .unwrap();
+            }
+        }
+        files.commit().unwrap();
+    }
 }
 
 fn materialize_trie(layout: &NativeLayout, rocks: RocksDBProvider, version: u32, expected: B256) {

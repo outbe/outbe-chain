@@ -201,7 +201,7 @@ fn recovered_height_with_conflicting_hash_still_fails_closed() {
         let canonical = executor_test_block(28, 0x28);
         let conflicting = executor_test_block(28, 0x29);
         assert_ne!(canonical.block_hash(), conflicting.block_hash());
-        let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
 
         let (mut actor, _mailbox) = super::ExecutorActor::new(
@@ -223,6 +223,10 @@ fn recovered_height_with_conflicting_hash_still_fails_closed() {
         assert!(
             waiter.await.is_err(),
             "same-height conflicting block must not acknowledge marshal"
+        );
+        assert!(
+            engine_rx.try_recv().is_err(),
+            "same-height conflicting block must fail before execution"
         );
         assert_eq!(actor.state.finalized_height, Height::new(28));
         assert_eq!(

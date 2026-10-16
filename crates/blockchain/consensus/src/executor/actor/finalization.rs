@@ -214,6 +214,14 @@ where
                     }
                     .into());
                 }
+                if height == self.state.finalized_height {
+                    return Err(crate::errors::FinalizationError::SameHeightInconsistency {
+                        block_number: block.number(),
+                        digest,
+                        finalized_hash: self.state.forkchoice.finalized_block_hash,
+                    }
+                    .into());
+                }
                 info!(
                     %height,
                     %digest,

@@ -226,6 +226,8 @@ impl Fixture {
             _ => {}
         }
         tx.commit().unwrap();
+        drop(db);
+        native_state::publish_history(&layout);
         let job = OcompJobRecordV1 {
             intent: intent(5, U256::from(3500)),
             intent_height: 100,

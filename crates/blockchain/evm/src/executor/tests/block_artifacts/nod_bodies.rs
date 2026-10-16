@@ -12,6 +12,7 @@ type NodBlockObservation = (
     u64,
     Vec<u64>,
     Vec<reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>>,
+    u64,
 );
 
 fn nod_execution_context(
@@ -91,7 +92,13 @@ fn execute_nod_block(
             .apply_pre_execution_changes()
             .expect("state-backed pre-execution hook must succeed");
     });
+    let mut cycle_internal_gas = None;
     for tx in system_txs {
+        let is_cycle = matches!(
+            SystemTxInputV2::decode(tx.tx().input().as_ref()).unwrap(),
+            SystemTxInputV2::CycleTick
+        );
+        let internal_before = executor.system_tx_execution_gas;
         let result = executor.execute_transaction(tx);
         if result.is_err() {
             assert!(
@@ -100,6 +107,21 @@ fn execute_nod_block(
             );
         }
         result?;
+        if is_cycle {
+            let internal_gas = executor.system_tx_execution_gas - internal_before;
+            let intrinsic =
+                system_tx_intrinsic_gas(SystemTxInputV2::CycleTick.encode().unwrap().as_ref())
+                    .unwrap();
+            assert!(
+                internal_gas > intrinsic,
+                "CycleTick storage work must consume internal gas beyond intrinsic gas"
+            );
+            cycle_internal_gas = Some(internal_gas);
+        }
+        assert!(
+            executor.system_tx_execution_gas
+                <= outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
+        );
     }
     let receipts = executor.receipts().to_vec();
     assert_bucket_mutation_receipts(&receipts, signed_body.len());
@@ -122,6 +144,7 @@ fn execute_nod_block(
         block_result.gas_used,
         visible_envelopes,
         signed_body,
+        cycle_internal_gas.expect("CycleTick internal gas must be captured"),
     ))
 }
 
@@ -180,9 +203,9 @@ fn assert_cycle_tick_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes:
         .saturating_sub(previous_cumulative);
     let cycle_intrinsic_gas =
         system_tx_intrinsic_gas(SystemTxInputV2::CycleTick.encode().unwrap().as_ref()).unwrap();
-    assert!(
-        body_receipt_gas > cycle_intrinsic_gas,
-        "receipt-visible CycleTick gas must add explicit storage work to intrinsic gas"
+    assert_eq!(
+        body_receipt_gas, cycle_intrinsic_gas,
+        "native storage work uses the internal budget"
     );
     assert!(
         body_receipt_gas <= envelopes[body_receipt_index],
@@ -191,7 +214,7 @@ fn assert_cycle_tick_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes:
     assert_eq!(
         gas_used,
         receipts.last().unwrap().cumulative_gas_used,
-        "header gas_used must equal the final receipt cumulative gas including storage work"
+        "header gas_used must equal the final receipt cumulative gas"
     );
 }
 

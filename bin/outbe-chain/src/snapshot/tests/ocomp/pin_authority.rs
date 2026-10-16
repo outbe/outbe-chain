@@ -436,7 +436,6 @@ fn every_candidate_identity_component_and_registry_key_bind_exactly() {
                     wwd: valid.wwd + 1,
                     ..valid
                 },
-                CandidatePinV1 { ..valid },
                 CandidatePinV1 {
                     protocol_bundle_hash: bad_hash,
                     ..valid

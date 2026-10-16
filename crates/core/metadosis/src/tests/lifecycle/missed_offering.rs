@@ -75,7 +75,7 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
         assert_eq!(receipt.block_number, 2);
         assert_eq!(
             receipt.retirement,
-            outbe_tribute::runtime::RetirementOutcome::NotPresent
+            outbe_tribute::runtime::RetirementOutcome::Requested
         );
         assert_eq!(
             PromisLimitContract::new(storage.clone())
@@ -109,7 +109,7 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
         assert_eq!(decoded.promisLimitAfterMinor, carried + formed_limit);
         assert_eq!(
             decoded.retirementOutcome,
-            crate::schema::terminal_retirement::NOT_PRESENT
+            crate::schema::terminal_retirement::REQUESTED
         );
         assert_eq!(decoded.blockNumber, 2);
     });

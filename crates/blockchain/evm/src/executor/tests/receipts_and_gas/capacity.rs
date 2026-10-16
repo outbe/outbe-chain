@@ -59,7 +59,10 @@ fn assert_capacity_events(receipt: &Receipt) {
         .expect("typed capacity-forfeiture event");
     assert_eq!(capacity_log.forfeitedTributeCount, u32::MAX);
     assert_eq!(capacity_log.forfeitedTributeNominalMinor, U256::MAX);
-    assert_eq!(capacity_log.retirementOutcome, 1);
+    assert_eq!(
+        capacity_log.retirementOutcome, 2,
+        "the first logical retirement must report Requested in the ABI event"
+    );
 }
 
 fn run_capacity_cycle() -> (u64, Receipt, B256, B256) {

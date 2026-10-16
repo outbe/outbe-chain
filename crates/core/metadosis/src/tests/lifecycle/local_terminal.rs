@@ -521,6 +521,8 @@ fn test_ready_processing_no_tributes_returns_the_limit_to_promis() {
             .unwrap();
         metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
 
+        seal_fresh_tribute_day(&storage, wwd);
+
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
         let metadosis = MetadosisContract::new(storage.clone());
@@ -555,6 +557,8 @@ fn active_ocomp_profile_preserves_the_empty_day_compatibility_branch() {
         let day_limit = U256::from(777);
         let scheduled = create_waiting_day(&storage, wwd, day_type::RED, day_limit);
         arm_genesis_ocomp(&storage, CHAIN_ID);
+
+        seal_fresh_tribute_day(&storage, wwd);
 
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
@@ -600,6 +604,8 @@ fn green_empty_day_briefs_nothing_however_large_the_limit() {
         let wwd = outbe_primitives::time::WorldwideDay::new(2026_0321);
         let scheduled = create_waiting_day(&storage, wwd, day_type::GREEN, U256::MAX);
         arm_genesis_ocomp(&storage, CHAIN_ID);
+
+        seal_fresh_tribute_day(&storage, wwd);
 
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
@@ -758,6 +764,8 @@ fn no_tributes_green_day_briefs_nothing_and_returns_the_limit() {
             .scheduled_process_time()
             .read()
             .unwrap();
+
+        seal_fresh_tribute_day(&storage, wwd);
 
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
