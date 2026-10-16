@@ -1,7 +1,5 @@
 //! Nested Outbe precompile dispatch, calldata forwarding and memory restoration.
 
-mod sub_call_support;
-
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_evm::sub_call;
