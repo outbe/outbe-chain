@@ -10,7 +10,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 
 use outbe_intex::{IntexContract, IntexState, SeriesRecord};
-use outbe_vaultrouter::settlement;
+use outbe_vaultrouter::settlement::{self, SettlementPayment};
 
 use crate::constants::{
     INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
@@ -286,14 +286,7 @@ pub(crate) fn owner_balances(
     })
 }
 
-/// Who pays a settlement, in which asset, and against which VWAP snapshot.
-pub struct SettlementPayment {
-    pub settler: Address,
-    pub asset: Address,
-    pub snapshot_id: U256,
-}
-
-/// Settle paying the cost from `settler` in `asset` by ERC20 transfer. The settled
+/// Settle paying the cost from `payer` in `asset` by ERC20 transfer. The settled
 /// units stay with `owner`. An issuance-currency payment must name the VWAP
 /// snapshot required at this block.
 pub fn settle_intex(
@@ -304,11 +297,11 @@ pub fn settle_intex(
     payment: SettlementPayment,
 ) -> Result<()> {
     let SettlementPayment {
-        settler,
+        payer,
         asset,
         snapshot_id,
     } = payment;
-    if owner.is_zero() || settler.is_zero() {
+    if owner.is_zero() || payer.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
     }
     if units.is_zero() {
@@ -355,7 +348,7 @@ pub fn settle_intex(
         settlement::collect(
             storage,
             INTEX_FACTORY_ADDRESS,
-            settler,
+            payer,
             asset,
             quote.payment_minor,
         )?;

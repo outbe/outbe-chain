@@ -1,5 +1,6 @@
 use super::*;
 use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 /// Settlement at the deadline remains valid. The paid Nod can then be mined.
 #[test]
@@ -310,9 +311,9 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
         world.enter(|storage| {
             api::settle_nod(
                 &storage,
-                api::SettleNodRequest {
-                    caller,
-                    nod_id,
+                nod_id,
+                SettlementPayment {
+                    payer: caller,
                     asset,
                     snapshot_id: U256::ZERO,
                 },
@@ -379,9 +380,9 @@ fn settlement_over_a_broken_member_index_reverts() {
         .enter(|storage| {
             api::settle_nod(
                 &storage,
-                api::SettleNodRequest {
-                    caller: input.owner,
-                    nod_id,
+                nod_id,
+                SettlementPayment {
+                    payer: input.owner,
                     asset: PAYMENT_ASSET,
                     snapshot_id: U256::ZERO,
                 },
@@ -420,9 +421,9 @@ fn erc20_settlement_uses_the_existing_inclusive_deadline() {
             .enter(|storage| {
                 api::settle_nod(
                     &storage,
-                    api::SettleNodRequest {
-                        caller: input.owner,
-                        nod_id,
+                    nod_id,
+                    SettlementPayment {
+                        payer: input.owner,
                         asset: foreign,
                         snapshot_id: U256::ZERO,
                     },
@@ -447,9 +448,9 @@ fn any_asset_registered_for_the_reference_currency_pays_the_nod() {
         .enter(|storage| {
             api::settle_nod(
                 &storage,
-                api::SettleNodRequest {
-                    caller: input.owner,
-                    nod_id,
+                nod_id,
+                SettlementPayment {
+                    payer: input.owner,
                     asset: second_asset,
                     snapshot_id: U256::ZERO,
                 },

@@ -15,6 +15,7 @@ use outbe_primitives::{
 };
 use outbe_tee::protocol::GratisOp;
 use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 use crate::{
     api,
@@ -194,9 +195,9 @@ impl World {
         self.enter(|storage| {
             api::settle_nod(
                 &storage,
-                api::SettleNodRequest {
-                    caller,
-                    nod_id,
+                nod_id,
+                SettlementPayment {
+                    payer: caller,
                     asset: PAYMENT_ASSET,
                     snapshot_id: U256::ZERO,
                 },
@@ -404,9 +405,9 @@ fn settle_erc20(
     world.enter(|storage| {
         api::settle_nod(
             &storage,
-            api::SettleNodRequest {
-                caller: owner,
-                nod_id,
+            nod_id,
+            SettlementPayment {
+                payer: owner,
                 asset,
                 snapshot_id: snapshot,
             },

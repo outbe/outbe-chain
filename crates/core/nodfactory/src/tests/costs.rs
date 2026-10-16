@@ -1,4 +1,5 @@
 use super::*;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 #[test]
 fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
@@ -33,9 +34,9 @@ fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
         .enter(|storage| {
             api::settle_nod(
                 &storage,
-                api::SettleNodRequest {
-                    caller: input.owner,
-                    nod_id,
+                nod_id,
+                SettlementPayment {
+                    payer: input.owner,
                     asset: PAYMENT_ASSET,
                     snapshot_id: U256::ZERO,
                 },

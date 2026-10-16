@@ -2,7 +2,7 @@
 //! cost at full precision, any FX leg included, and then floors it once into
 //! the settlement asset's minor units.
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use outbe_primitives::units::{MAX_ASSET_DECIMALS, PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U256};
 
 pub use crate::errors::RoundingError;
@@ -49,6 +49,14 @@ pub fn floor_to_asset_units(
 
 fn pow10(exponent: u32) -> U256 {
     U256::from(10u64).pow(U256::from(exponent))
+}
+
+/// Who pays a settlement, in which asset, and against which VWAP snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SettlementPayment {
+    pub payer: Address,
+    pub asset: Address,
+    pub snapshot_id: U256,
 }
 
 /// Which of a right's two currencies a payment asset is denominated in.

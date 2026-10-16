@@ -1,4 +1,5 @@
 use super::*;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 #[test]
 fn quote_prices_both_rails() {
@@ -214,9 +215,9 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
         .enter(|storage| {
             api::settle_nod(
                 &storage,
-                api::SettleNodRequest {
-                    caller: input.owner,
-                    nod_id,
+                nod_id,
+                SettlementPayment {
+                    payer: input.owner,
                     asset: EUR_ASSET,
                     snapshot_id: quoted.2,
                 },
@@ -247,9 +248,9 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
         .enter(|storage| {
             api::settle_nod(
                 &storage,
-                api::SettleNodRequest {
-                    caller: input.owner,
-                    nod_id,
+                nod_id,
+                SettlementPayment {
+                    payer: input.owner,
                     asset: PAYMENT_ASSET,
                     snapshot_id: U256::ZERO,
                 },

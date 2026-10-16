@@ -1,4 +1,5 @@
 use super::*;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 fn entry_price() -> U256 {
     U256::from(500_000u64)
@@ -294,8 +295,8 @@ fn erc20_settle_refuses_a_transfer_that_moves_nothing_and_books_no_units() {
             sid(7),
             owner(),
             U256::from(2),
-            runtime::SettlementPayment {
-                settler: owner(),
+            SettlementPayment {
+                payer: owner(),
                 asset: payment_token(),
                 snapshot_id: U256::ZERO,
             },
@@ -314,8 +315,8 @@ fn erc20_settle_refuses_a_token_answering_false() {
             sid(7),
             owner(),
             U256::from(2),
-            runtime::SettlementPayment {
-                settler: owner(),
+            SettlementPayment {
+                payer: owner(),
                 asset: payment_token(),
                 snapshot_id: U256::ZERO,
             },
@@ -335,8 +336,8 @@ fn erc20_settle_rejects_an_unaccepted_asset_before_any_transfer() {
             sid(7),
             owner(),
             U256::from(1),
-            runtime::SettlementPayment {
-                settler: owner(),
+            SettlementPayment {
+                payer: owner(),
                 asset: foreign,
                 snapshot_id: U256::ZERO
             }
@@ -358,8 +359,8 @@ fn settle_rejects_zero_amount() {
             sid(7),
             owner(),
             U256::ZERO,
-            runtime::SettlementPayment {
-                settler: owner(),
+            SettlementPayment {
+                payer: owner(),
                 asset: payment_token(),
                 snapshot_id: U256::ZERO
             }
@@ -376,8 +377,8 @@ fn settle_rejects_missing_series() {
             sid(7),
             owner(),
             U256::from(1),
-            runtime::SettlementPayment {
-                settler: owner(),
+            SettlementPayment {
+                payer: owner(),
                 asset: payment_token(),
                 snapshot_id: U256::ZERO
             }
@@ -403,8 +404,8 @@ fn settle_rejects_an_unqualified_series() {
             sid(7),
             owner(),
             U256::from(1),
-            runtime::SettlementPayment {
-                settler: owner(),
+            SettlementPayment {
+                payer: owner(),
                 asset: payment_token(),
                 snapshot_id: U256::ZERO,
             },
@@ -438,8 +439,8 @@ fn settle_rejects_expired_deadline() {
             sid(7),
             owner(),
             U256::from(1),
-            runtime::SettlementPayment {
-                settler: owner(),
+            SettlementPayment {
+                payer: owner(),
                 asset: payment_token(),
                 snapshot_id: U256::ZERO,
             },
@@ -468,8 +469,8 @@ fn a_qualified_series_called_past_its_deadline_stays_closed() {
             sid(7),
             owner(),
             U256::from(1),
-            runtime::SettlementPayment {
-                settler: owner(),
+            SettlementPayment {
+                payer: owner(),
                 asset: payment_token(),
                 snapshot_id: U256::ZERO,
             },

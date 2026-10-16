@@ -12,6 +12,7 @@ use outbe_tee::protocol::PromisOp;
 use outbe_tee_enclave::promis::{
     decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
 };
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 
@@ -201,9 +202,9 @@ fn admitted_at_quote(storage: &StorageHandle<'_>, gem_id: U256, asset: Address) 
     let (currency, amount, snapshot) = runtime::quote_settlement(storage, gem_id, asset).unwrap();
     let res = runtime::settle_gem(
         storage,
-        crate::schema::GemSettlementParams {
-            caller: BOB,
-            gem_id,
+        gem_id,
+        SettlementPayment {
+            payer: BOB,
             asset,
             snapshot_id: snapshot,
         },

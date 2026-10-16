@@ -7,6 +7,7 @@ use outbe_tee::protocol::PromisOp;
 use outbe_tee_enclave::promis::{
     decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
 };
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 fn promis_auth(account: Address, amount: U256, nonce: u64) -> outbe_promisfactory::api::ModifyAuth {
     let sk = outbe_promis::enclave_client::test_enclave::state_key();
@@ -71,8 +72,8 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
             sid(7),
             owner(),
             U256::ONE,
-            runtime::SettlementPayment {
-                settler: owner(),
+            SettlementPayment {
+                payer: owner(),
                 asset: payment_token(),
                 snapshot_id: U256::ZERO,
             },

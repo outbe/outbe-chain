@@ -2,6 +2,7 @@
 //! a payment whose target leg that window never priced, before any write.
 
 use super::*;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 /// The euro trades live and the dollar leg is priced in the window, but the
 /// window holds no euro price. The direct settlement of a euro-referenced Gem
@@ -51,9 +52,9 @@ fn a_direct_settlement_through_a_leg_the_window_never_priced_is_refused_without_
     let result = StorageHandle::enter(&mut provider, |storage| {
         runtime::settle_gem(
             &storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
                 asset: STABLE,
                 snapshot_id: required,
             },

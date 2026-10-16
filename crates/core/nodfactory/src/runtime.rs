@@ -20,7 +20,7 @@ use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::errors::NodFactoryError;
 use crate::precompile::INodFactory;
-use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost};
+use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
 /// Issues an authenticated encrypted Nod through the block-scoped body lifecycle.
 pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV2) -> Result<WwdEntityId> {
@@ -124,23 +124,18 @@ pub struct MineGratisRequest {
     pub auth: outbe_gratisfactory::api::ModifyAuth,
 }
 
-/// One payment for a qualified or called Nod.
-pub struct SettleNodRequest {
-    pub caller: Address,
-    pub nod_id: WwdEntityId,
-    pub asset: Address,
-    pub snapshot_id: U256,
-}
-
 /// Pays a qualified or called Nod's known cost in ERC20 base units of `asset`. An
 /// issuance-currency payment must name the VWAP snapshot required at this block.
-pub fn settle_nod(storage: &StorageHandle<'_>, request: SettleNodRequest) -> Result<()> {
-    let SettleNodRequest {
-        caller,
-        nod_id,
+pub fn settle_nod(
+    storage: &StorageHandle<'_>,
+    nod_id: WwdEntityId,
+    payment: SettlementPayment,
+) -> Result<()> {
+    let SettlementPayment {
+        payer,
         asset,
         snapshot_id,
-    } = request;
+    } = payment;
     let (item, bucket) = load_nod(storage, nod_id)?;
     if item.body().is_settled {
         return Err(NodFactoryError::NodAlreadySettled.into());
@@ -171,7 +166,7 @@ pub fn settle_nod(storage: &StorageHandle<'_>, request: SettleNodRequest) -> Res
         settlement::collect(
             storage,
             NOD_FACTORY_ADDRESS,
-            caller,
+            payer,
             asset,
             quote.payment_minor,
         )?;

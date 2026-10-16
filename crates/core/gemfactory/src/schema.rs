@@ -37,15 +37,6 @@ pub struct MerchantGemIssueParams {
     pub promis_load: U256,
 }
 
-/// One payment and its required price snapshot.
-#[derive(Debug, Clone, Copy)]
-pub struct GemSettlementParams {
-    pub caller: Address,
-    pub gem_id: U256,
-    pub asset: Address,
-    pub snapshot_id: U256,
-}
-
 /// The proof of work submitted for a settled Gem.
 #[derive(Debug, Clone, Copy)]
 pub struct GemMiningProof {

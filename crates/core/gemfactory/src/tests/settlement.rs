@@ -1,4 +1,5 @@
 use super::*;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 #[test]
 fn settlement_takes_the_rail_the_asset_matched() {
@@ -63,9 +64,9 @@ fn erc20_settle_rejects_a_foreign_currency_asset_before_paying() {
 
         let res = runtime::settle_gem(
             storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
                 asset: STABLE_EUR,
                 snapshot_id: U256::ZERO,
             },
@@ -211,9 +212,9 @@ fn settling_on_an_unregistered_issuance_leg_is_refused() {
         seed_qualifying_day(storage, gem_id);
         let res = runtime::settle_gem(
             storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
                 asset: STABLE_EUR,
                 snapshot_id: U256::ZERO,
             },
@@ -268,9 +269,9 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
         seed_qualifying_day(&storage, gem_id);
         let res = runtime::settle_gem(
             &storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
                 asset: STABLE,
                 snapshot_id: U256::ZERO,
             },
@@ -440,9 +441,9 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
         let (_, _, required) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
         let stale = runtime::settle_gem(
             &storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
                 asset: STABLE_EUR,
                 snapshot_id: quoted,
             },
@@ -466,9 +467,9 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
         let (_, _, required) = runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
         let late = runtime::settle_gem(
             &storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
                 asset: STABLE_EUR,
                 snapshot_id: required,
             },
@@ -517,9 +518,9 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     StorageHandle::enter(&mut provider, |storage| {
         let res = runtime::settle_gem(
             &storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
                 asset: STABLE_EUR,
                 snapshot_id: quoted,
             },
@@ -534,9 +535,9 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
         assert_eq!(next_amount, amount, "the next window holds the same price");
         let res = runtime::settle_gem(
             &storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
                 asset: STABLE_EUR,
                 snapshot_id: quoted,
             },
@@ -563,9 +564,9 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
         .unwrap();
         let res = runtime::settle_gem(
             &storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
                 asset: STABLE_EUR,
                 snapshot_id: other_policy.to_u256(),
             },
@@ -584,9 +585,9 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
         );
         let reference = runtime::settle_gem(
             &storage,
-            crate::schema::GemSettlementParams {
-                caller: ALICE,
-                gem_id,
+            gem_id,
+            SettlementPayment {
+                payer: ALICE,
                 asset: STABLE,
                 snapshot_id: quoted,
             },

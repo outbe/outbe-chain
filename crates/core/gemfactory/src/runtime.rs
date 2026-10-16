@@ -16,7 +16,7 @@ use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemPositionIssued,
 use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition, GemTypes};
 use crate::sol_ext::IIntexNFT1155;
 use outbe_gem::constants::SRA_RATE;
-use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost};
+use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
 /// Issues one agent-class gem priced at `entry_price`, the COEN rate in
 /// `reference_currency` that the caller resolved for the gem's own day.
@@ -339,19 +339,19 @@ pub fn issue_merchant_gem(
     Ok(gem_id)
 }
 
-/// Settles a gem paying its cost from `caller` in `asset` by ERC20 transfer. Anyone
+/// Settles a gem paying its cost from `payer` in `asset` by ERC20 transfer. Anyone
 /// may pay for a gem. It stays with its owner. An issuance-currency payment must
 /// name the VWAP snapshot required at this block.
 pub fn settle_gem(
     storage: &StorageHandle<'_>,
-    params: crate::schema::GemSettlementParams,
+    gem_id: U256,
+    payment: SettlementPayment,
 ) -> Result<()> {
-    let crate::schema::GemSettlementParams {
-        caller,
-        gem_id,
+    let SettlementPayment {
+        payer,
         asset,
         snapshot_id,
-    } = params;
+    } = payment;
     let gem = load_view(storage, gem_id)?;
     require_settleable(storage, &gem)?;
 
@@ -366,7 +366,7 @@ pub fn settle_gem(
         settlement::collect(
             storage,
             GEM_FACTORY_ADDRESS,
-            caller,
+            payer,
             asset,
             quote.payment_minor,
         )?;

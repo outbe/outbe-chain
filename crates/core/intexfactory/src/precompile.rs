@@ -6,6 +6,7 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 use outbe_intex::SeriesId;
 use outbe_primitives::dispatch::{
@@ -52,8 +53,8 @@ pub fn dispatch(
                         SeriesId::from(c.seriesId),
                         c.owner,
                         c.units,
-                        runtime::SettlementPayment {
-                            settler: sender,
+                        SettlementPayment {
+                            payer: sender,
                             asset: c.asset,
                             snapshot_id: c.snapshotId,
                         },

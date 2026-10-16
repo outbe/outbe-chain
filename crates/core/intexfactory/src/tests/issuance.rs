@@ -1,5 +1,6 @@
 use super::*;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
+use outbe_vaultrouter::settlement::SettlementPayment;
 
 #[test]
 fn issue_creates_series_in_registry() {
@@ -505,8 +506,8 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
                 sid(7),
                 owner(),
                 U256::ONE,
-                runtime::SettlementPayment {
-                    settler: owner(),
+                SettlementPayment {
+                    payer: owner(),
                     asset: payment_token(),
                     snapshot_id: snapshot,
                 },
@@ -592,8 +593,8 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
                 sid(7),
                 owner(),
                 U256::ONE,
-                runtime::SettlementPayment {
-                    settler: owner(),
+                SettlementPayment {
+                    payer: owner(),
                     asset: payment_token(),
                     snapshot_id: snapshot,
                 },
@@ -658,8 +659,8 @@ fn a_reference_payment_ignores_the_snapshot_it_names() {
             sid(7),
             owner(),
             U256::ONE,
-            runtime::SettlementPayment {
-                settler: owner(),
+            SettlementPayment {
+                payer: owner(),
                 asset: payment_token(),
                 snapshot_id: U256::from(7u64),
             },
