@@ -24,7 +24,7 @@ const NOW: u64 = 1_704_067_205;
 const ANCHOR: u64 = NOW - 5;
 const CLEAR_AT: u64 = ANCHOR + 2 * SECONDS_PER_DAY;
 const DAY: WorldwideDay = WorldwideDay::new(20_240_101);
-const LOAD: u128 = 100_000_000_000;
+const LOAD: u128 = 1_000_000_000_000;
 const LIMIT: u128 = 3 * LOAD + 7;
 const CHAIN: u32 = 1;
 
