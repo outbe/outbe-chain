@@ -55,7 +55,7 @@ contract AuctionTest is Test {
 
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), bridger);
-        auction.wire(address(escrow), makeAddr("intex"));
+        auction.wire(address(escrow));
         vm.stopPrank();
     }
 
@@ -460,11 +460,27 @@ contract AuctionTest is Test {
     function test_AccessControl_Wire() public {
         vm.expectRevert();
         vm.prank(iba1);
-        auction.wire(address(0xBEEF), makeAddr("intex"));
+        auction.wire(address(0xBEEF));
 
         vm.expectRevert();
         vm.prank(bridger);
-        auction.wire(address(0xBEEF), makeAddr("intex"));
+        auction.wire(address(0xBEEF));
+    }
+
+    function test_SetIntexContract_AdminOnlyAndNonZero() public {
+        vm.prank(iba1);
+        vm.expectRevert();
+        auction.setIntexContract(address(0xBEEF));
+
+        vm.startPrank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "intexContract"));
+        auction.setIntexContract(address(0));
+
+        vm.expectEmit(true, true, true, true, address(auction));
+        emit IIntexAuction.IntexWired(address(auction.intexContract()), address(0xBEEF));
+        auction.setIntexContract(address(0xBEEF));
+        vm.stopPrank();
+        assertEq(address(auction.intexContract()), address(0xBEEF));
     }
 
     /// @dev Bidders claim their own locks, so an escrow still holding them is the steady state and
@@ -481,7 +497,7 @@ contract AuctionTest is Test {
 
         MockAuctionEscrow escrow2 = new MockAuctionEscrow();
         vm.prank(admin);
-        auction.wire(address(escrow2), makeAddr("intex"));
+        auction.wire(address(escrow2));
 
         assertEq(address(auction.escrowContract()), address(escrow2));
         assertTrue(escrow.hasOutstandingLocks(), "the old escrow keeps the lock it took");
@@ -498,7 +514,7 @@ contract AuctionTest is Test {
         escrow.releaseAllLocks();
         MockAuctionEscrow escrow2 = new MockAuctionEscrow();
         vm.prank(admin);
-        auction.wire(address(escrow2), makeAddr("intex"));
+        auction.wire(address(escrow2));
         assertEq(address(auction.escrowContract()), address(escrow2));
     }
 
@@ -754,7 +770,7 @@ contract AuctionTest is Test {
 
         // Zero escrow address
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "escrowContract"));
-        newAuction.wire(address(0), makeAddr("intex"));
+        newAuction.wire(address(0));
 
         vm.stopPrank();
     }

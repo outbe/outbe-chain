@@ -148,17 +148,23 @@ contract IntexAuction is
     }
 
     /// @inheritdoc IIntexAuction
-    function wire(address _escrow, address _intex) external override onlyRole(DEFAULT_ADMIN_ROLE) {
+    function wire(address _escrow) external override onlyRole(DEFAULT_ADMIN_ROLE) {
         if (_escrow == address(0)) revert ZeroAddress("escrowContract");
+
+        IntexAuctionStorage storage $ = _s();
+        IEscrowAdapter current = $.escrowContract;
+        $.escrowContract = IEscrowAdapter(_escrow);
+        emit EscrowWired(address(current), _escrow);
+    }
+
+    /// @inheritdoc IIntexAuction
+    function setIntexContract(address _intex) external override onlyRole(DEFAULT_ADMIN_ROLE) {
         if (_intex == address(0)) revert ZeroAddress("intexContract");
 
         IntexAuctionStorage storage $ = _s();
-        IEscrowAdapter escrow = $.escrowContract;
-        IIntexNFT1155 intex = $.intexContract;
-        $.escrowContract = IEscrowAdapter(_escrow);
+        IIntexNFT1155 current = $.intexContract;
         $.intexContract = IIntexNFT1155(_intex);
-        emit EscrowWired(address(escrow), _escrow);
-        emit IntexWired(address(intex), _intex);
+        emit IntexWired(address(current), _intex);
     }
 
     // --- Lifecycle ---

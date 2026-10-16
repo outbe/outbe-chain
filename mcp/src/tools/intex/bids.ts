@@ -35,7 +35,7 @@ async function signReveal(n: Network, account: Account, bid: Bid): Promise<Hex> 
   return account.signTypedData(typedData);
 }
 
-/** Sealed bid commit, reveal and the claims a bid ends in. */
+/** Sealed bid commit and reveal. */
 export function registerBidTools(server: McpServer, deps: IntexDeps): void {
   const { ctx, submit, paymentMeta, target } = deps;
   server.tool(
@@ -187,55 +187,51 @@ export function registerBidTools(server: McpServer, deps: IntexDeps): void {
       return ok({ network: n.name, worldwideDay, ...receipt });
     }),
   );
+}
 
-  server.tool(
+/** The claims a bid ends in: each one names the day and the bidder it always pays. */
+const CLAIMS = [
+  [
     "intex_claim_commit_bond",
     "Reclaim an entry bond left behind by a no-reveal commit. Permissionless and always pays the stored " +
       "bidder: a cancelled (red-day) auction releases immediately, otherwise the bond is claimable only " +
       "24 hours past revealEnd. Requires OUTBE_PRIVATE_KEY.",
-    { worldwideDay: worldwideDayArg, bidder: accountArg, network: networkName.optional(), wait: waitFlag },
-    handler(async ({ worldwideDay, bidder, network, wait }) => {
-      const n = await target(network);
-      const account = requireAccount(ctx);
-      const who = bidder ? getAddress(bidder) : account.address;
-      const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "claimCommitBond", args: [worldwideDay, who] });
-      const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
-      return ok({ network: n.name, worldwideDay, bidder: who, ...receipt });
-    }),
-  );
-
-  server.tool(
+    "claimCommitBond",
+  ],
+  [
     "auction_claim_refund",
     "Collect the money a bid lock still holds: a winner's change over the clearing price (its Intex stays " +
       "for auction_issue_intex), a loser's whole principal once its day closed, or the whole principal 72h " +
       "after the lock when no refund instructions reached this chain (e.g. it missed the clearing deadline). " +
       "Read the amount and the date first with auction_bids_by_owner. Permissionless and always pays the " +
       "stored bidder. Requires OUTBE_PRIVATE_KEY.",
-    { worldwideDay: worldwideDayArg, bidder: accountArg, network: networkName.optional(), wait: waitFlag },
-    handler(async ({ worldwideDay, bidder, network, wait }) => {
-      const n = await target(network);
-      const account = requireAccount(ctx);
-      const who = bidder ? getAddress(bidder) : account.address;
-      const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "claimRefund", args: [worldwideDay, who] });
-      const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
-      return ok({ network: n.name, worldwideDay, bidder: who, ...receipt });
-    }),
-  );
-
-  server.tool(
+    "claimRefund",
+  ],
+  [
     "auction_issue_intex",
     "Issue the Intex a winning bid won, on the chain it bid on, and return any change still in its lock. " +
       "Winners issue their own units: nothing is minted for them. Needs the day's series on that chain; " +
       "past the series settlementDeadline the win closes without units. Read what is waiting with " +
       "auction_bids_by_owner. Permissionless and always issues to the stored bidder. Requires OUTBE_PRIVATE_KEY.",
-    { worldwideDay: worldwideDayArg, bidder: accountArg, network: networkName.optional(), wait: waitFlag },
-    handler(async ({ worldwideDay, bidder, network, wait }) => {
-      const n = await target(network);
-      const account = requireAccount(ctx);
-      const who = bidder ? getAddress(bidder) : account.address;
-      const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "issueIntex", args: [worldwideDay, who] });
-      const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
-      return ok({ network: n.name, worldwideDay, bidder: who, ...receipt });
-    }),
-  );
+    "issueIntex",
+  ],
+] as const;
+
+export function registerClaimTools(server: McpServer, deps: IntexDeps): void {
+  const { ctx, submit, target } = deps;
+  for (const [name, description, functionName] of CLAIMS) {
+    server.tool(
+      name,
+      description,
+      { worldwideDay: worldwideDayArg, bidder: accountArg, network: networkName.optional(), wait: waitFlag },
+      handler(async ({ worldwideDay, bidder, network, wait }) => {
+        const n = await target(network);
+        const account = requireAccount(ctx);
+        const who = bidder ? getAddress(bidder) : account.address;
+        const data = encodeFunctionData({ abi: AUCTION_ABI, functionName, args: [worldwideDay, who] });
+        const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
+        return ok({ network: n.name, worldwideDay, bidder: who, ...receipt });
+      }),
+    );
+  }
 }

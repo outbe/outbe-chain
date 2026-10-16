@@ -53,7 +53,8 @@ contract IntexAuctionClaimsTest is Test {
         vm.startPrank(admin);
         escrow.wire(address(auction), address(compact), address(token));
         escrow.setProceedsRecipient(makeAddr("proceeds"));
-        auction.wire(address(escrow), address(intex));
+        auction.wire(address(escrow));
+        auction.setIntexContract(address(intex));
         intex.grantRole(intex.AUCTION_ROLE(), address(auction));
         vm.stopPrank();
 

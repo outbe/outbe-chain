@@ -52,7 +52,7 @@ contract AuctionSignatureTest is Test {
 
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), bridger);
-        auction.wire(address(escrow), makeAddr("intex"));
+        auction.wire(address(escrow));
         vm.stopPrank();
     }
 
@@ -208,7 +208,7 @@ contract AuctionSignatureTest is Test {
         MockAuctionEscrow otherEscrow = new MockAuctionEscrow();
         vm.startPrank(admin);
         other.grantRole(other.RELAYER_ROLE(), bridger);
-        other.wire(address(otherEscrow), makeAddr("intex"));
+        other.wire(address(otherEscrow));
         vm.stopPrank();
 
         // Start an identical auction on both instances.

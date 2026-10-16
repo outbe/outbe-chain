@@ -20,7 +20,6 @@ use crate::world::forge::{self, address_from, DEPLOYER_ADDRESS, DEPLOYER_KEY, SA
 /// Which role id to read off a venue contract.
 enum Role {
     Relayer,
-    Auction,
 }
 
 /// Chain id of the local target chain, distinct from the committee's so the two
@@ -60,14 +59,13 @@ sol! {
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IAuctionWire {
-        function wire(address escrow, address intex) external;
+        function wire(address escrow) external;
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IVenueRoles {
         function grantRole(bytes32 role, address account) external;
         function hasRole(bytes32 role, address account) external view returns (bool);
         function RELAYER_ROLE() external view returns (bytes32);
-        function AUCTION_ROLE() external view returns (bytes32);
     }
 }
 
@@ -299,7 +297,6 @@ impl TargetChain {
             contracts.auction,
             &IAuctionWire::wireCall {
                 escrow: contracts.escrow,
-                intex: contracts.intex_nft,
             },
         )?;
 
@@ -326,10 +323,8 @@ impl TargetChain {
             },
         )?;
         let relayer = self.role(&url, contracts.intex_nft, Role::Relayer)?;
-        let issuer = self.role(&url, contracts.intex_nft, Role::Auction)?;
         for (owner, role, account) in [
             (contracts.intex_nft, relayer, contracts.target_router),
-            (contracts.intex_nft, issuer, contracts.auction),
             (contracts.auction, relayer, contracts.target_router),
             (contracts.escrow, relayer, contracts.target_router),
             (contracts.intex_nft, relayer, contracts.nft_bridge),
@@ -375,7 +370,6 @@ impl TargetChain {
     fn role(&self, url: &str, owner: Address, role: Role) -> Result<B256> {
         let read = match role {
             Role::Relayer => eth::read_call(url, owner, &IVenueRoles::RELAYER_ROLECall {}),
-            Role::Auction => eth::read_call(url, owner, &IVenueRoles::AUCTION_ROLECall {}),
         };
         read.ok_or_else(|| eyre!("read the role id from {owner}"))
     }

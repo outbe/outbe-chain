@@ -166,7 +166,7 @@ interface IIntexAuction {
     /// @param current Escrow contract address after the update.
     event EscrowWired(address previous, address current);
 
-    /// @notice Emitted on `wire` after the Intex collection address is set.
+    /// @notice Emitted on `setIntexContract` after the Intex collection address is set.
     /// @param previous Collection address before the update.
     /// @param current Collection address after the update.
     event IntexWired(address previous, address current);
@@ -247,8 +247,11 @@ interface IIntexAuction {
     ///      days costs nothing. Rotating while a day is still taking reveals splits that day's locks over two
     ///      escrows. That day's refunds only reach the one the target router points at.
     /// @param _escrow Escrow contract address.
-    /// @param _intex Intex collection the auction issues winners' units on.
-    function wire(address _escrow, address _intex) external;
+    function wire(address _escrow) external;
+
+    /// @notice Set the Intex collection winners' units are issued on.
+    /// @param _intex Collection address.
+    function setIntexContract(address _intex) external;
 
     // --- Lifecycle ---
 

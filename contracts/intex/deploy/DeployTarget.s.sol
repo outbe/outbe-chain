@@ -21,8 +21,9 @@ import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
 ///         targets, so it never self-peers.
 /// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS, ORIGIN_CHAIN_ID (where OriginRouter lives),
 ///      TARGET_CHAIN_IDS (comma-separated, for the NFT-bridge mesh), optional WCOEN_BRIDGE
-///      (proceeds route). The deployer is admin + delegate. App wiring (escrow/compact, roles) is
-///      a separate step. Peers are CREATE3-deterministic across chains.
+///      (proceeds route). The deployer is admin + delegate. The auction gets its collection and
+///      the issue role here. The rest of app wiring (escrow/compact, relayer roles) is a separate
+///      step. Peers are CREATE3-deterministic across chains.
 contract DeployTarget is BaseScript {
     /// @dev The IntexFactory precompile: the origin chain's own daily VWAP source.
     address internal constant INTEX_FACTORY = address(0x1015);
@@ -95,6 +96,11 @@ contract DeployTarget is BaseScript {
             }
         }
         if (IntexNFT1155(nft).vwapSource() != vwapSource) IntexNFT1155(nft).setVwapSource(vwapSource);
+
+        // Winners issue their own units through the auction.
+        if (address(IntexAuction(auction).intexContract()) != nft) IntexAuction(auction).setIntexContract(nft);
+        bytes32 issueRole = IntexNFT1155(nft).AUCTION_ROLE();
+        if (!IntexNFT1155(nft).hasRole(issueRole, auction)) IntexNFT1155(nft).grantRole(issueRole, auction);
 
         // Peer the router with the OriginRouter (same address on every chain via CREATE3).
         TargetRouter(payable(router))

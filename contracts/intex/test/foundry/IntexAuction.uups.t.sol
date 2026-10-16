@@ -77,7 +77,7 @@ contract IntexAuctionUupsTest is Test {
         vm.prank(bidder);
         auction.commitBid(20260612, keccak256("commit"));
         vm.prank(admin);
-        auction.wire(makeAddr("escrow"), makeAddr("intex"));
+        auction.wire(makeAddr("escrow"));
 
         IntexAuction newImpl = new IntexAuction();
         vm.prank(admin);
