@@ -9,9 +9,9 @@ use crate::provider::ObservationError;
 /// Errors that occur when the feeder constructs price providers.
 #[derive(Debug, Error)]
 pub(crate) enum ProviderError {
-    /// A provider requires an entry in `[[api_providers]]`.
-    #[error("provider {0} requires a [[api_providers]] entry")]
-    MissingApiProviderEntry(&'static str),
+    /// The `mock_http` provider requires an entry in `[[api_providers]]`.
+    #[error("provider mock_http requires a [[api_providers]] entry")]
+    MissingMockHttpProviderEntry,
     /// A DEX provider requires an entry in `[[dex_providers]]`.
     #[error("provider {0} requires a [[dex_providers]] entry")]
     MissingDexProviderEntry(String),

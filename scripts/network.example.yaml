@@ -78,7 +78,6 @@ tee:
 # radicle_status_port: 8876
 # tee_enclave_port: 17000
 # feeder_health_port: 9002
-# mongodb_port: 27017
 
 # output: genesis.json                # also settable via --output
 # chain_binary: target/release/outbe-chain    # genesis build only, on this box

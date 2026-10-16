@@ -119,10 +119,6 @@ impl TeeMode {
 /// `--repo`.
 #[derive(clap::Args, Clone, Debug)]
 pub struct EnvCli {
-    /// Projection datasource. MongoDB starts a scenario-owned local replica set.
-    #[arg(long, value_enum, default_value_t = ProjectionBackend::Rocksdb)]
-    pub projection_backend: ProjectionBackend,
-
     /// Number of committee validators to bootstrap.
     #[arg(long, default_value_t = 4)]
     pub validators: usize,
@@ -245,7 +241,6 @@ pub struct EnvCli {
 /// entirely from the CLI.
 #[derive(Clone, Debug)]
 pub struct Environment {
-    pub projection_backend: ProjectionBackend,
     pub validators: usize,
     /// Per-node port blocks, shared by every scenario's `World`. Each scenario
     /// calls [`Ports::start_scenario`], which re-seeds the committee above the
@@ -291,7 +286,6 @@ impl Environment {
             })
         });
         Self {
-            projection_backend: cli.projection_backend,
             validators: cli.validators,
             ports: Ports::new(!cli.no_resolve_ports),
             no_cleanup: cli.no_cleanup,
@@ -354,7 +348,6 @@ impl Environment {
 impl Default for Environment {
     fn default() -> Self {
         Self::from_cli(&EnvCli {
-            projection_backend: ProjectionBackend::Rocksdb,
             validators: 4,
             // Unlike the CLI defaults, don't scan and never delete: a `Default`
             // environment must be deterministic, must not bind sockets, and must
@@ -465,47 +458,58 @@ pub fn is_todo(feature: &Feature, scenario: &Scenario) -> bool {
 /// Every requirement is declared as a tag (`@tee`, validator count, `@sudo`),
 /// so the Given text stays purely descriptive. Nothing here reparses step prose.
 pub fn unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Option<String> {
-    if let Some(n) = exact_validators(feature, scenario) {
-        if env.validators != n {
-            return Some(format!(
-                "needs exactly {n} validators, have {}",
-                env.validators
-            ));
-        }
-    }
-    if let Some(n) = required_validators(feature, scenario) {
-        if env.validators < n {
-            return Some(format!("needs >={n} validators, have {}", env.validators));
-        }
-    }
-    if has_tag(feature, scenario, "mock-native") && !env.tee_mode.runs_native_host_enclave() {
+    validator_count_unmet(feature, scenario, env)
+        .or_else(|| tee_profile_unmet(feature, scenario, env))
+        .or_else(|| host_unmet(feature, scenario, env))
+}
+
+fn validator_count_unmet(
+    feature: &Feature,
+    scenario: &Scenario,
+    env: &Environment,
+) -> Option<String> {
+    if let Some(n) = exact_validators(feature, scenario).filter(|&n| env.validators != n) {
         return Some(format!(
-            "needs the native mock enclave (@mock-native), but --tee {}",
-            env.tee_mode.evidence_name()
+            "needs exactly {n} validators, have {}",
+            env.validators
         ));
     }
-    if has_tag(feature, scenario, "gramine-direct")
-        && !env.tee_mode.satisfies_gramine_direct_requirement()
-    {
-        return Some(format!(
-            "needs the production enclave under gramine-direct (@gramine-direct), but --tee {}",
-            env.tee_mode.evidence_name()
-        ));
-    }
-    if has_tag(feature, scenario, "real-sgx") && !matches!(env.tee_mode, TeeMode::Real) {
-        return Some(format!(
-            "needs SGX hardware and DcapRequired (@real-sgx), but --tee {}",
-            env.tee_mode.evidence_name()
-        ));
-    }
-    if has_tag(feature, scenario, "sgx-no-attest")
-        && !env.tee_mode.satisfies_sgx_no_attest_requirement()
-    {
-        return Some(format!(
-            "needs production SGX without remote attestation (@sgx-no-attest), but --tee {}",
-            env.tee_mode.evidence_name()
-        ));
-    }
+    required_validators(feature, scenario)
+        .filter(|&n| env.validators < n)
+        .map(|n| format!("needs >={n} validators, have {}", env.validators))
+}
+
+fn tee_profile_unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Option<String> {
+    let tee = env.tee_mode;
+    let profiles = [
+        (
+            "mock-native",
+            tee.runs_native_host_enclave(),
+            "needs the native mock enclave (@mock-native)",
+        ),
+        (
+            "gramine-direct",
+            tee.satisfies_gramine_direct_requirement(),
+            "needs the production enclave under gramine-direct (@gramine-direct)",
+        ),
+        (
+            "real-sgx",
+            matches!(tee, TeeMode::Real),
+            "needs SGX hardware and DcapRequired (@real-sgx)",
+        ),
+        (
+            "sgx-no-attest",
+            tee.satisfies_sgx_no_attest_requirement(),
+            "needs production SGX without remote attestation (@sgx-no-attest)",
+        ),
+    ];
+    profiles
+        .into_iter()
+        .find(|(tag, satisfied, _)| !satisfied && has_tag(feature, scenario, tag))
+        .map(|(_, _, need)| format!("{need}, but --tee {}", tee.evidence_name()))
+}
+
+fn host_unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Option<String> {
     if has_tag(feature, scenario, "sudo") && !env.sudo {
         return Some("needs sudo (@sudo), but --no-sudo".to_string());
     }
@@ -569,13 +573,7 @@ pub fn decide(feature: &Feature, scenario: &Scenario, env: &Environment) -> Deci
         return Decision::Skip("not implemented (@todo)".to_string());
     }
     let requirement = unmet(feature, scenario, env);
-    let profile_mismatch = (has_tag(feature, scenario, "real-sgx")
-        && !matches!(env.tee_mode, TeeMode::Real))
-        || (has_tag(feature, scenario, "sgx-no-attest")
-            && !env.tee_mode.satisfies_sgx_no_attest_requirement())
-        || (has_tag(feature, scenario, "gramine-direct")
-            && !env.tee_mode.satisfies_gramine_direct_requirement())
-        || (has_tag(feature, scenario, "mock-native") && !env.tee_mode.runs_native_host_enclave());
+    let profile_mismatch = tee_profile_unmet(feature, scenario, env).is_some();
     decide_requirement(requirement, env.all, profile_mismatch)
 }
 
@@ -602,11 +600,3 @@ fn has_tag(feature: &Feature, scenario: &Scenario, tag: &str) -> bool {
 
 #[cfg(test)]
 mod tests;
-
-/// Backend selection belongs to harness composition, independent of entity rules.
-#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum ProjectionBackend {
-    #[default]
-    Rocksdb,
-    Mongodb,
-}

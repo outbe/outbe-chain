@@ -5,7 +5,6 @@
 //! trigger table
 //! and fires any trigger whose next slot has been reached.
 
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::handler::{protocol_day_action, ProtocolDayAction};
@@ -24,16 +23,12 @@ use crate::ICycle;
 /// seconds. In that case the dispatcher is a near-noop on every block. It
 /// fires ProtocolCycle only on the first block whose timestamp crosses
 /// the next UTC-hour boundary.
-pub fn dispatch_triggers(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-) -> Result<()> {
+pub fn dispatch_triggers(ctx: &BlockRuntimeContext) -> Result<()> {
     let triggers = active_triggers(outbe_chain_constants::get_metadosis_advance_interval_seconds());
 
     for spec in &triggers {
         if let Some(slot) = due_slot(ctx, spec)? {
-            fire_trigger(ctx, scope, parent, spec, slot)?;
+            fire_trigger(ctx, spec, slot)?;
         }
     }
 
@@ -154,13 +149,7 @@ fn protocol_cycle_awaits_late_window(
 /// Runs the handler of `spec` for `slot` in its own storage checkpoint, then
 /// records the slot and emits `CycleTriggerExecuted`. A failure rolls the
 /// checkpoint back and returns the error.
-fn fire_trigger(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    spec: &TriggerSpec,
-    slot: DueSlot,
-) -> Result<()> {
+fn fire_trigger(ctx: &BlockRuntimeContext, spec: &TriggerSpec, slot: DueSlot) -> Result<()> {
     let block_ts = ctx.block.timestamp;
     let block_number = ctx.block.block_number;
     let DueSlot {
@@ -169,7 +158,7 @@ fn fire_trigger(
     } = slot;
 
     let result = ctx.storage.with_checkpoint(|| {
-        spec.handler.run(ctx, scope, parent)?;
+        spec.handler.run(ctx)?;
         let mut cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
         cycle.last_executed_at.write(&spec.id, recorded_at)?;
         cycle

@@ -5,10 +5,7 @@ use std::time::Duration;
 
 use alloy_primitives::{Address, B256, U256};
 use cucumber::{given, then, when};
-use outbe_compressed_entities::{
-    decode_stored_tribute_v2, verify_point_read_v1, AbsentEvidenceV1, PointReadRequestV1,
-    PointReadResultV1, VerifiedPointReadV1, WwdEntityId,
-};
+use outbe_primitives::{entity_codec::decode_stored_tribute_v2, wwd_entity_id::WwdEntityId};
 
 use crate::features::common::boot_bounded_tribute_localnet;
 use crate::features::l2_registration;
@@ -128,7 +125,6 @@ fn submit_one_cross_currency_offer(world: &mut World) {
                 wwd: &wwd,
                 amounts: ("0", "410000"),
                 currency: 949,
-                exclude_from_intex_issuance: false,
             },
             978,
         )
@@ -183,8 +179,8 @@ fn submit_duplicate_offer(world: &mut World) {
     wait_for_offering(world, &wwd);
     let tx_hash = world
         .rpc
-        // The first offer uses amount=100 and exclude=false. Change both
-        // fields here: the second transaction must still collide because the
+        // The first offer is TRY to EUR. Change the amount and both currencies
+        // here: the second transaction must still collide because the
         // canonical Tribute identity is `(owner, worldwide_day)`.
         .tribute_offer_with_params(
             &key,
@@ -192,7 +188,6 @@ fn submit_duplicate_offer(world: &mut World) {
                 wwd: &wwd,
                 amounts: ("777", "0"),
                 currency: 840,
-                exclude_from_intex_issuance: true,
             },
         )
         .expect("replayed offerTribute returned transaction hash");
@@ -220,7 +215,7 @@ fn successful_receipt_and_supply(world: &mut World) {
     panic!("successful tribute did not increase totalSupply to 1");
 }
 
-#[then("every validator projects the same tribute and indexes")]
+#[then("every validator stores the same Tribute and indexes in EVM state")]
 fn projection_parity(world: &mut World) {
     let tx_hash = world.state.tribute_tx_hash.as_deref().expect("tribute tx");
     world
@@ -317,9 +312,7 @@ fn duplicate_rejected_without_effects(world: &mut World) {
         .expect("worldwide day")
         .parse()
         .expect("numeric worldwide day");
-    let expected_ids = vec![alloy_primitives::U256::from_be_slice(
-        after.records[0].key.as_bytes(),
-    )];
+    let expected_ids = vec![after.tribute.raw_id.to_u256()];
     for port in world.validators.committee_ports() {
         let mut owner_ids = None;
         let mut day_ids = None;
@@ -346,120 +339,75 @@ fn duplicate_rejected_without_effects(world: &mut World) {
     }
 }
 
-#[then("every validator serves the same independently verified compressed tribute")]
-fn compressed_tribute_parity(world: &mut World) {
+#[then("every validator verifies the same Tribute against finalized EVM state")]
+fn state_tribute_parity(world: &mut World) {
     let tx_hash = world.state.tribute_tx_hash.as_deref().expect("tribute tx");
-    let projected = world
+    let observed = world
         .projection
         .projected_tribute(0, tx_hash)
-        .expect("validator-0 projected Tribute body");
-    let request = PointReadRequestV1 {
-        domain_id: 1,
-        raw_id: projected.raw_id,
-    };
-    for port in world.validators.committee_ports() {
-        let chain_id = world.rpc.chain_id(port).expect("validator chain ID");
-        let mut observed = None;
-        let mut verified = false;
-        for _ in 0..60 {
-            if let Ok(package) = world.rpc.compressed_entity(port, request) {
-                observed = Some(format!("{:?}", package.result));
-                if matches!(
-                    verify_point_read_v1(chain_id, request, &package.header, &package.result),
-                    Ok(VerifiedPointReadV1::Present)
-                ) {
-                    let PointReadResultV1::Present { body_bytes, .. } = &package.result else {
-                        unreachable!("verified Present must carry a present package")
-                    };
-                    assert_eq!(
-                        body_bytes.as_ref(),
-                        projected.stored_body,
-                        "RPC body must equal RocksDB bytes"
-                    );
-                    verified = true;
-                    break;
-                }
-            }
-            sleep(Duration::from_millis(500));
-        }
-        assert!(
-            verified,
-            "validator on port {port} did not expose the projected Tribute at a finalized header; last result: {observed:?}"
+        .expect("stored Tribute body");
+    let ports = world.validators.committee_ports();
+    let height = world
+        .rpc
+        .receipt_block_number(tx_hash, ports[0])
+        .expect("Tribute receipt height");
+    let checkpoint = world
+        .rpc
+        .wait_finalized_checkpoint(&ports, height, 60)
+        .expect("shared finalized checkpoint");
+    let expected =
+        decode_stored_tribute_v2(&observed.stored_body).expect("stored encrypted Tribute");
+    for port in ports {
+        assert_eq!(
+            world
+                .rpc
+                .authenticated_tribute_at(port, checkpoint, observed.raw_id)
+                .expect("independently verified Tribute MPT proof"),
+            expected
         );
     }
 }
 
-#[then("every validator proves an unknown tribute absent from the existing collection")]
-fn entity_absent_in_existing_collection(world: &mut World) {
+#[then("every validator reads an unknown Tribute absent from the existing day state")]
+fn entity_absent_in_existing_day(world: &mut World) {
     let tx_hash = world.state.tribute_tx_hash.as_deref().expect("tribute tx");
-    let projected = world
+    let observed = world
         .projection
         .projected_tribute(0, tx_hash)
-        .expect("validator-0 projected Tribute body");
-    let mut unknown: [u8; 32] = projected.raw_id.into();
+        .expect("stored Tribute");
+    let mut unknown: [u8; 32] = observed.raw_id.into();
     unknown[WwdEntityId::len_bytes() - 1] ^= 1;
-    let request = PointReadRequestV1 {
-        domain_id: 1,
-        raw_id: WwdEntityId::from(unknown),
-    };
-    verify_absence_on_committee(world, request, false);
+    verify_absence_on_committee(world, WwdEntityId::from(unknown));
 }
 
-#[then("every validator proves an unknown tribute collection absent")]
-fn collection_absent(world: &mut World) {
+#[then("every validator reads an unknown Tribute day absent from EVM state")]
+fn day_absent(world: &mut World) {
     let mut unknown = [0_u8; WwdEntityId::len_bytes()];
     unknown[..4].copy_from_slice(&20_000_101_u32.to_be_bytes());
     unknown[WwdEntityId::len_bytes() - 1] = 1;
-    let request = PointReadRequestV1 {
-        domain_id: 1,
-        raw_id: WwdEntityId::from(unknown),
-    };
-    verify_absence_on_committee(world, request, true);
+    verify_absence_on_committee(world, WwdEntityId::from(unknown));
 }
 
-#[then("no validator projects a tribute")]
-fn no_tribute_projection(world: &mut World) {
+#[then("no validator stores a Tribute")]
+fn no_tribute_state(world: &mut World) {
     world
         .projection
         .assert_no_tribute_projection()
-        .expect("no primary or secondary Tribute projections");
+        .expect("no Tribute state");
 }
 
-fn verify_absence_on_committee(
-    world: &World,
-    request: PointReadRequestV1,
-    expect_collection_absent: bool,
-) {
-    for port in world.validators.committee_ports() {
-        let chain_id = world.rpc.chain_id(port).expect("validator chain ID");
-        let mut observed = None;
-        let mut verified = false;
-        for _ in 0..60 {
-            if let Ok(package) = world.rpc.compressed_entity(port, request) {
-                observed = Some(format!("{:?}", package.result));
-                let expected_scope = matches!(
-                    &package.result,
-                    PointReadResultV1::Absent {
-                        evidence: AbsentEvidenceV1::CollectionAbsent { .. },
-                        ..
-                    }
-                ) == expect_collection_absent;
-                if expected_scope
-                    && matches!(
-                        verify_point_read_v1(chain_id, request, &package.header, &package.result),
-                        Ok(VerifiedPointReadV1::Absent)
-                    )
-                {
-                    verified = true;
-                    break;
-                }
-            }
-            sleep(Duration::from_millis(500));
-        }
-        assert!(
-            verified,
-            "validator on port {port} did not expose the expected verifiable absence; last result: {observed:?}"
-        );
+fn verify_absence_on_committee(world: &World, id: WwdEntityId) {
+    let ports = world.validators.committee_ports();
+    let checkpoint = world
+        .rpc
+        .wait_finalized_checkpoint(&ports, 1, 60)
+        .expect("shared finalized checkpoint");
+    for port in ports {
+        assert!(world
+            .rpc
+            .tribute_state_at(port, checkpoint, id)
+            .expect("read Tribute state")
+            .is_none());
     }
 }
 

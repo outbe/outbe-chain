@@ -11,11 +11,10 @@ fn a_direct_settlement_in_a_currency_the_window_never_priced_is_refused_without_
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xa7));
     let nod_id = world.issue(&input);
-    world.qualify(nod_id);
     world.register_settlement_asset(EUR_ASSET, 978);
     world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
     world.publish_coen_spot(978, U256::from(SCALE_1E6_U64));
-    let required = world.enter(|storage, _, _| {
+    let required = world.enter(|storage| {
         outbe_oracle::api::current_vwap_snapshot(storage.clone())
             .unwrap()
             .to_u256()

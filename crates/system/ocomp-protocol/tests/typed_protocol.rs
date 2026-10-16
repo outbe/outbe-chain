@@ -47,8 +47,7 @@ use outbe_ocomp_protocol::{
         LysisArithmeticSummaryV1, LysisResultV1, MetadosisCompletionSummaryV1, ResultChunkV1,
     },
     shuffle::{
-        ShuffleBucketRecordV1, ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1,
-        ShuffleRunPayloadV1,
+        ShuffleBucketRecordV1, ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunPayloadV1,
     },
     state::{
         ActiveGenerationV1, LysisTerminalV1, OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus,
@@ -114,15 +113,14 @@ fn single_attempt_identity_rejects_nonzero_attempt_or_nonce() {
     assert!(invalid.input_lease_id().is_err());
 
     let mut changed_input = first.clone();
-    changed_input.sealed_tribute_collection_root = hash(0xa1);
     changed_input
         .activation_preconditions
         .tribute
-        .sealed_collection_root = hash(0xa1);
+        .source_generation += 1;
     assert_ne!(
         first.input_lease_id().unwrap(),
         changed_input.input_lease_id().unwrap(),
-        "a changed authenticated source root must create a different lease"
+        "a changed sealed source generation must create a different lease"
     );
 }
 
@@ -232,7 +230,6 @@ fn ceiling_conservation(
     let lysis_limit_minor = lysis_allocation_minor;
     ConservationTotalsV1 {
         tribute_nominal_total: U256::from(tribute_nominal_total),
-        eligible_nominal_total: U256::from(tribute_nominal_total),
         day_limit: U256::from(lysis_limit_minor + desis_limit_minor),
         gratis_demand: U256::from(lysis_limit_minor),
         day_gratis_limit_minor: U256::from(lysis_limit_minor),
@@ -794,7 +791,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         genesis_hash: hash(40),
         fork_id: hash(1),
         wwd: 7,
-        sealed_tribute_collection_root: hash(31),
         sealed_tribute_count: 0,
         sealed_tribute_canonical_body_bytes: 0,
         distinct_owner_count: 0,
@@ -821,12 +817,8 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
             finalized_block_number: 90,
             finalized_block_hash: hash(46),
             finalized_state_root: hash(98),
-            finalized_ce_root: hash(99),
-            ce_schema_version: 1,
         },
         wwd: 7,
-        sealed_tribute_collection_key: hash(30),
-        sealed_tribute_collection_root: hash(31),
         tribute_count: 1,
         tribute_nominal_total: U256::ZERO,
         input_chunk_count: 1,
@@ -916,7 +908,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     let tribute_receipt = TributeReceiptV1 {
         binding: binding(),
         tribute_input_binding: preconditions().tribute,
-        sealed_collection_root: hash(31),
         consumed_count: 0,
         consumed_nominal_total: U256::ZERO,
         retired_generation: 3,
@@ -990,7 +981,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         job_id: hash(59),
         attempt: 0,
         unit_id: hash(117),
-        kind: ShuffleRunKindV1::Bucket,
         run_span: outbe_ocomp_protocol::unit::CanonicalRunSpan {
             start_run: 0,
             end_run: 1,
@@ -1990,8 +1980,6 @@ fn snapshot_export_control_pages_job_scoped_leases_and_manifests() {
         finalized_block_number: 100,
         finalized_block_hash: hash(0xa2),
         finalized_state_root: hash(0xa3),
-        finalized_ce_root: hash(0xa4),
-        ce_schema_version: 1,
     };
     let lease = BoundedBytes(vec![0xa5; SNAPSHOT_LEASE_WIRE_BYTES]);
 

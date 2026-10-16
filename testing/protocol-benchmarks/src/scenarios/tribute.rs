@@ -23,7 +23,6 @@ use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
-use outbe_compressed_entities::{begin_block, ExecutionScope};
 use outbe_l2registry::L2RegistryContract;
 use outbe_metadosis::{
     genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
@@ -37,8 +36,8 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     address_pair::AddressPair,
     addresses::{
-        AGENT_REWARD_ADDRESS, COMPRESSED_ENTITIES_ADDRESS, L2_REGISTRY_ADDRESS, METADOSIS_ADDRESS,
-        ORACLE_ADDRESS, TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
+        AGENT_REWARD_ADDRESS, L2_REGISTRY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS,
+        TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
     },
     storage::{
         hashmap::{HashMapStorageProvider, StorageTraceKind},
@@ -83,7 +82,7 @@ use crate::{
 
 use super::support::{
     aggregate_events, aggregate_storage_trace_with_modules, elapsed_ns,
-    storage_gas_components_with_modules, EmptyParentBodies,
+    storage_gas_components_with_modules,
 };
 
 const CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
@@ -106,13 +105,6 @@ const OFFER_PRIVATE_KEY: [u8; 32] = [0x33; 32];
 const PAIRING_REFERENCE_GAS: u64 = ISTANBUL_PAIR_BASE + 2 * ISTANBUL_PAIR_PER_POINT;
 const VERIFIER_SAFETY_MULTIPLIER: f64 = 1.5;
 const GAS_ROUNDING: u64 = 10_000;
-// Stable ADR-007 cleanup reserves charged explicitly by the CE execution scope.
-// Keeping the decomposition here makes a protocol-gas change fail loudly rather
-// than disappearing into a generic runtime remainder.
-const CE_FIRST_BODY_TOUCH_CLEANUP_GAS: u64 = 55_000;
-const CE_BODY_TOUCHED_LENGTH_CLEANUP_GAS: u64 = 5_000;
-const CE_FIRST_INDEX_TOUCH_CLEANUP_GAS: u64 = 25_000;
-const CE_INDEX_TOUCHED_LENGTH_CLEANUP_GAS: u64 = 5_000;
 const FIXED_DEMO_TRIBUTE_V1: &[u8] = include_bytes!("../../fixtures/tribute_demo_tribute_v1.bin");
 
 mod abi {
@@ -126,7 +118,6 @@ mod abi {
             uint32 worldwideDay,
             uint16 tributeCurrency,
             uint16 referenceCurrency,
-            bool excludeFromIntexIssuance,
             bytes zkProof,
             uint32 chainId,
             string version,
@@ -309,7 +300,6 @@ fn bench_input(fixture: &Fixture) -> BenchOfferInput {
         worldwide_day: TARGET_WWD,
         tribute_currency: 840,
         reference_currency: 840,
-        exclude_from_intex_issuance: false,
         zk_proof: fixture.proof.clone(),
         l2_chain_id: L2_CHAIN_ID,
         circuit_version: L2_CIRCUIT_VERSION.to_owned(),
@@ -326,7 +316,6 @@ fn calldata(fixture: &Fixture) -> Vec<u8> {
         worldwideDay: TARGET_WWD.value(),
         tributeCurrency: 840,
         referenceCurrency: 840,
-        excludeFromIntexIssuance: false,
         zkProof: fixture.proof.clone(),
         chainId: L2_CHAIN_ID,
         version: L2_CIRCUIT_VERSION.to_owned(),
@@ -338,21 +327,6 @@ fn calldata(fixture: &Fixture) -> Vec<u8> {
 }
 
 fn seed_offer_world(storage: StorageHandle<'_>) {
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-        .unwrap();
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1),
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
-                    .unwrap()
-                    .as_slice(),
-            ),
-        )
-        .unwrap();
-
     FreshDevnetGenesisBuilder::new()
         .seed_active_worldwide_day(GenesisWorldwideDay {
             worldwide_day: TARGET_WWD,
@@ -400,20 +374,15 @@ fn seeded_world(fixture: &Fixture) -> HashMapStorageProvider {
     provider
 }
 
-fn prepared_world(fixture: &Fixture) -> (HashMapStorageProvider, ExecutionScope) {
+fn prepared_world(fixture: &Fixture) -> HashMapStorageProvider {
     let mut provider = seeded_world(fixture);
-    let scope = StorageHandle::enter(&mut provider, |storage| {
-        let scope = ExecutionScope::default();
-        begin_block(storage, &scope).unwrap();
-        scope
-    });
     provider.set_gas_limit(BLOCK_GAS_LIMIT);
     provider.enable_production_storage_gas_metering();
-    (provider, scope)
+    provider
 }
 
 fn measure_gate(fixture: &Fixture) -> GateMeasurement {
-    let (mut provider, _scope) = prepared_world(fixture);
+    let mut provider = prepared_world(fixture);
     let root = fixture.public_inputs.merkle_root.as_slice();
     let signature = fixture.signature.as_ref();
     let started = Instant::now();
@@ -556,11 +525,6 @@ impl BenchmarkScenario for TributeScenario {
 fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, String> {
     let fixture = &prepared.fixture;
     let mut provider = prepared.provider.clone();
-    let scope = StorageHandle::enter(&mut provider, |storage| {
-        let scope = ExecutionScope::default();
-        begin_block(storage, &scope).map_err(|error| error.to_string())?;
-        Ok::<_, String>(scope)
-    })?;
     provider.set_gas_limit(BLOCK_GAS_LIMIT);
     provider.enable_production_storage_gas_metering();
     provider.enable_storage_trace();
@@ -574,19 +538,13 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
     let mut enclave_ns = 0_u64;
     let started = Instant::now();
     let (tribute_id, runtime_gas) = StorageHandle::enter(&mut provider, |storage| {
-        let tribute_id = execute_offer_with_processor(
-            storage.clone(),
-            &scope,
-            &EmptyParentBodies,
-            input,
-            |offers| {
-                let enclave_started = Instant::now();
-                let (results, inputs_hash) = process_tribute_offer_batch(&key, offers);
-                enclave_ns = elapsed_ns(enclave_started);
-                black_box(inputs_hash);
-                Ok(results)
-            },
-        )
+        let tribute_id = execute_offer_with_processor(storage.clone(), input, |offers| {
+            let enclave_started = Instant::now();
+            let (results, inputs_hash) = process_tribute_offer_batch(&key, offers);
+            enclave_ns = elapsed_ns(enclave_started);
+            black_box(inputs_hash);
+            Ok(results)
+        })
         .map_err(|error| error.to_string())?;
         let gas = storage.gas_used().map_err(|error| error.to_string())?;
         Ok::<_, String>((tribute_id, gas))
@@ -617,12 +575,32 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
     let ordered_events = provider.get_ordered_events()[event_offset..].to_vec();
 
     let stored = StorageHandle::enter(&mut provider, |storage| {
-        TributeContract::new(storage)
-            .get_tribute(&scope, &EmptyParentBodies, tribute_id)
-            .map_err(|error| error.to_string())
+        let contract = TributeContract::new(storage);
+        let stored = contract
+            .get_record(tribute_id)
+            .map_err(|error| error.to_string())?;
+        let supply = contract
+            .total_supply
+            .read()
+            .map_err(|error| error.to_string())?;
+        let owner_ids = contract
+            .owner_ids
+            .list(&CALLER)
+            .read_all()
+            .map_err(|error| error.to_string())?;
+        let day_ids = contract
+            .day_ids
+            .list(&TARGET_WWD)
+            .read_all()
+            .map_err(|error| error.to_string())?;
+        if supply != 1 || owner_ids != [tribute_id] || day_ids != [tribute_id] {
+            return Err("created Tribute has inconsistent native supply or indexes".to_owned());
+        }
+        Ok::<_, String>(stored)
     })?
     .ok_or_else(|| "created Tribute is not readable through the canonical contract".to_owned())?;
-    if stored.owner != CALLER || stored.worldwide_day != TARGET_WWD {
+    if stored.owner != CALLER || stored.worldwide_day != TARGET_WWD || stored.encrypted().is_none()
+    {
         return Err("created Tribute postcondition has the wrong owner or day".to_owned());
     }
 
@@ -635,14 +613,8 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
     let explicit_runtime_gas = runtime_gas
         .checked_sub(storage_gas)
         .ok_or_else(|| "runtime gas is lower than metered storage gas".to_owned())?;
-    let expected_explicit = CE_FIRST_BODY_TOUCH_CLEANUP_GAS
-        + CE_BODY_TOUCHED_LENGTH_CLEANUP_GAS
-        + 2 * CE_FIRST_INDEX_TOUCH_CLEANUP_GAS
-        + CE_INDEX_TOUCHED_LENGTH_CLEANUP_GAS;
-    if explicit_runtime_gas != expected_explicit {
-        return Err(format!(
-            "unexpected explicit runtime gas: expected {expected_explicit}, got {explicit_runtime_gas}"
-        ));
+    if explicit_runtime_gas != 0 {
+        return Err(format!("unattributed runtime gas: {explicit_runtime_gas}"));
     }
 
     let mut gas_components = vec![
@@ -676,36 +648,6 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
         GasLedger::UserTransaction,
         module_name,
     ));
-    gas_components.extend([
-        GasComponent::new(
-            GasLedger::UserTransaction,
-            "compressed_entities.cleanup.first_body_touch",
-            CE_FIRST_BODY_TOUCH_CLEANUP_GAS,
-            1,
-        )
-        .attributed_to("compressed_entities"),
-        GasComponent::new(
-            GasLedger::UserTransaction,
-            "compressed_entities.cleanup.body_touched_length",
-            CE_BODY_TOUCHED_LENGTH_CLEANUP_GAS,
-            1,
-        )
-        .attributed_to("compressed_entities"),
-        GasComponent::new(
-            GasLedger::UserTransaction,
-            "compressed_entities.cleanup.first_index_touch",
-            2 * CE_FIRST_INDEX_TOUCH_CLEANUP_GAS,
-            2,
-        )
-        .attributed_to("compressed_entities"),
-        GasComponent::new(
-            GasLedger::UserTransaction,
-            "compressed_entities.cleanup.index_touched_length",
-            CE_INDEX_TOUCHED_LENGTH_CLEANUP_GAS,
-            1,
-        )
-        .attributed_to("compressed_entities"),
-    ]);
     let total_gas = calldata_stats
         .intrinsic_gas()
         .saturating_add(configured_base)
@@ -743,6 +685,8 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
                 ms_to_ns(measure_verify_ms(&fixture.proof)),
             )
             .with_postcondition("tribute.created", "true")
+            .with_postcondition("tribute.native_record", "true")
+            .with_postcondition("tribute.native_indexes", "true")
             .with_postcondition("tribute.id", tribute_id.to_string())
             .with_artifact(
                 "demo_tribute_proof",
@@ -770,7 +714,6 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
 
 fn module_name(address: Address) -> &'static str {
     match address {
-        COMPRESSED_ENTITIES_ADDRESS => "compressed_entities",
         TRIBUTE_ADDRESS => "tribute",
         TRIBUTE_FACTORY_ADDRESS => "tribute_factory",
         METADOSIS_ADDRESS => "metadosis",

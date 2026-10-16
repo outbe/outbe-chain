@@ -88,10 +88,26 @@ impl<'storage> StorageHandle<'storage> {
         &self,
         f: impl FnOnce(&mut dyn PrecompileStorageProvider) -> Result<R>,
     ) -> Result<R> {
-        let mut provider = self.inner.try_borrow_mut().map_err(|_| {
-            crate::error::PrecompileError::revert("storage provider is already mutably borrowed")
-        })?;
+        let mut provider = self
+            .inner
+            .try_borrow_mut()
+            .map_err(|_| crate::error::PrimitivesStorageError::ProviderAlreadyMutablyBorrowed)?;
         f(&mut **provider)
+    }
+
+    pub fn require_metadosis_process_ready(&self) -> Result<()> {
+        let chain_id = self.chain_id()?;
+        let block_number = self.block_number()?;
+        let timestamp = self.timestamp()?.to::<u64>();
+        let binding = super::metadosis_process_ready_binding(chain_id, block_number, timestamp);
+        self.with_provider(|provider| {
+            provider.require_metadosis_mutation_frame(
+                super::MetadosisMutationPurposeTag::CycleLifecycle,
+                binding,
+                chain_id,
+                block_number,
+            )
+        })
     }
 
     pub fn chain_id(&self) -> Result<u64> {
@@ -283,9 +299,9 @@ impl<'storage> StorageHandle<'storage> {
         frame.close(completed)?;
         match outcome {
             Ok(value) if completed => Ok(value),
-            Ok(_) => Err(PrecompileError::revert(
-                "certified Lysis activation frame returned before terminal completion",
-            )),
+            Ok(_) => {
+                Err(crate::error::PrimitivesStorageError::CertifiedLysisActivationIncomplete.into())
+            }
             Err(error) => Err(error),
         }
     }

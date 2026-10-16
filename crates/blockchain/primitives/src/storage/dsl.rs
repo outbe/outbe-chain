@@ -3,13 +3,14 @@ use std::marker::PhantomData;
 
 use crate::error::{PrecompileError, Result};
 use crate::storage::types::{
-    BinaryHeap as StorageBinaryHeap, Mapping, Slot, Storable, StorageCircularBuffer, StorageDeque,
-    StorageKey, StorageSet, StorageVec,
+    BinaryHeap as StorageBinaryHeap, Mapping, Slot, Storable, StorageBytes, StorageCircularBuffer,
+    StorageDeque, StorageKey, StorageSet, StorageVec,
 };
 use crate::storage::StorageHandle;
 
 pub type Value<'storage, T> = Slot<'storage, T>;
 pub type List<'storage, T> = StorageVec<'storage, T>;
+pub type Bytes<'storage> = StorageBytes<'storage>;
 pub type Set<'storage, T> = StorageSet<'storage, T>;
 pub type BinaryHeap<'storage, T> = StorageBinaryHeap<'storage, T>;
 pub type Deque<'storage, T> = StorageDeque<'storage, T>;
@@ -96,6 +97,26 @@ impl<'storage, K: StorageKey, V: Storable> Map<'storage, K, V> {
 impl<'storage, K: StorageKey, T: Storable> Map<'storage, K, StorageVec<'storage, T>> {
     pub fn list(&self, key: &K) -> StorageVec<'storage, T> {
         StorageVec::new(
+            key.mapping_slot(self.base_slot),
+            self.address,
+            self.storage.clone(),
+        )
+    }
+}
+
+impl<'storage, K: StorageKey> Map<'storage, K, StorageBytes<'storage>> {
+    pub fn bytes(&self, key: &K) -> StorageBytes<'storage> {
+        StorageBytes::new(
+            key.mapping_slot(self.base_slot),
+            self.address,
+            self.storage.clone(),
+        )
+    }
+}
+
+impl<'storage, K: StorageKey, InnerKey, V> Map<'storage, K, Map<'storage, InnerKey, V>> {
+    pub fn map(&self, key: &K) -> Map<'storage, InnerKey, V> {
+        Map::new(
             key.mapping_slot(self.base_slot),
             self.address,
             self.storage.clone(),
@@ -264,11 +285,17 @@ where
 }
 
 pub fn missing_record_err(name: &str) -> PrecompileError {
-    PrecompileError::revert(format!("{name} not found"))
+    crate::error::PrimitivesStorageError::RecordNotFound {
+        name: name.to_owned(),
+    }
+    .into()
 }
 
 pub fn existing_record_err(name: &str) -> PrecompileError {
-    PrecompileError::revert(format!("{name} already exists"))
+    crate::error::PrimitivesStorageError::RecordAlreadyExists {
+        name: name.to_owned(),
+    }
+    .into()
 }
 
 #[cfg(test)]

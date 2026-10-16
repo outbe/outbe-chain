@@ -88,7 +88,7 @@ pub(super) fn read_exact_file(
     )
     .map_err(|_| TributeInventoryError::IntegerOverflow)?;
     if actual != expected {
-        return Err(TributeInventoryError::Corrupt("inventory file length"));
+        return Err(TributeInventoryError::CorruptInventoryFileLength);
     }
     let mut bytes = vec![0_u8; expected];
     file.read_exact(&mut bytes)
@@ -144,7 +144,6 @@ pub(super) fn remove_owned_build_directory(path: &Path) -> Result<(), TributeInv
 }
 
 pub(super) fn recover_unsealed_inventory(root: &Path) -> Result<(), TributeInventoryError> {
-    remove_owned_build_directory(&root.join(SOURCE_PROOF_ARCHIVE_DIRECTORY))?;
     let mut removed = false;
     for path in [
         root.join(OWNERS_FILE),

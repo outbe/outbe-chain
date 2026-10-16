@@ -18,8 +18,7 @@ struct ReservedSystemReceiptContext {
     block_number: u64,
     visible_base_gas: u64,
     visible_gas_limit: u64,
-    ce_gas_limit: u64,
-    compressed_entities_gas: u64,
+    available_visible_gas: u64,
     has_boundary_outcome: bool,
     has_tee_bootstrap: bool,
     has_publication: bool,
@@ -43,11 +42,13 @@ where
         R: RecoveredTx<TransactionSigned>,
         F: FnOnce(&EthTxResult<E::HaltReason, reth_ethereum::TxType>) -> CommitChanges,
     {
+        use crate::errors::ExecutorValidationError;
+
         let tx = recovered.tx();
         let signer = *recovered.signer();
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
-            .map_err(|err| BlockExecutionError::from(BlockValidationError::msg(err)))?;
+            .map_err(ExecutorValidationError::block_artifacts)?;
 
         // Witness validate-without-reexec: if Phase 1
         // was already committed in `apply_pre_execution_changes::apply_phase1_commit_in_preexec`,
@@ -98,12 +99,8 @@ where
         // path. Body-parity validation above (decode / phase / calldata / signature /
         // signer) also remains fatal: those are validator-side checks that the proposer
         // never produces for itself.
-        let (ce_gas_limit, gas_window) = open_reserved_gas_window(
-            &self.compressed_entities_scope,
-            body_index,
-            expected_phase,
-            (visible_base_gas, visible_gas_limit),
-        )?;
+        let available_visible_gas =
+            reserved_visible_headroom(body_index, (visible_base_gas, visible_gas_limit))?;
         let transact_outcome = with_preloaded_system_tx_context(phase_context, || {
             self.inner.evm.transact_system_call(
                 outbe_primitives::addresses::SYSTEM_ADDRESS,
@@ -131,25 +128,13 @@ where
             }
             BlockExecutionError::other(error)
         })?;
-        let compressed_entities_gas = gas_window.gas_used().map_err(|error| {
-            if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
-                BlockExecutionError::other(error)
-            } else {
-                BlockValidationError::msg(format!(
-                    "read CE gas window for {expected_phase:?} at body_index={body_index}: {error}"
-                ))
-                .into()
-            }
-        })?;
-        drop(gas_window);
         let receipt_context = ReservedSystemReceiptContext {
             body_index,
             expected_phase,
             block_number,
             visible_base_gas,
             visible_gas_limit,
-            ce_gas_limit,
-            compressed_entities_gas,
+            available_visible_gas,
             has_boundary_outcome,
             has_tee_bootstrap,
             has_publication: block_artifacts.radicle_publication.is_some(),
@@ -204,7 +189,6 @@ where
     {
         let ReservedSystemReceiptContext {
             visible_base_gas,
-            compressed_entities_gas,
             visible_gas_limit,
             has_boundary_outcome,
             has_tee_bootstrap,
@@ -217,12 +201,7 @@ where
             return Ok(None);
         }
         let commit_outcome = self
-            .commit_system_transaction(
-                output,
-                visible_base_gas,
-                compressed_entities_gas,
-                visible_gas_limit,
-            )
+            .commit_system_transaction(output, visible_base_gas, 0, visible_gas_limit)
             .map(Some);
         if commit_outcome.is_ok() {
             self.system_tx_phase_cursor = self
@@ -249,8 +228,7 @@ where
             block_number,
             visible_base_gas,
             visible_gas_limit,
-            ce_gas_limit,
-            compressed_entities_gas,
+            available_visible_gas,
             has_boundary_outcome,
             has_tee_bootstrap,
             has_publication,
@@ -279,30 +257,31 @@ where
         // system-call gas limit and therefore remains a hard aggregate
         // budget failure once earlier mandatory phases have run.
         if expected_phase.revert_fails_block() {
-            let reason = format!(
-                "critical system tx {expected_phase:?} did not succeed (revert/halt) at \
-             body_index={body_index}, block_number={block_number}, \
-             failure_code={code}: {:?}",
-                result
+            let err = crate::errors::ExecutorValidationError::critical_system_tx_did_not_succeed(
+                expected_phase,
+                body_index,
+                block_number,
+                code,
+                result,
             );
-            tracing::error!(target: "outbe::executor", %reason, "critical begin-zone phase did not succeed; failing block");
-            return Err(BlockValidationError::msg(reason).into());
+            tracing::error!(target: "outbe::executor", %err, "critical begin-zone phase did not succeed; failing block");
+            return Err(err.into());
         }
         let reason = format!(
             "system tx {expected_phase:?} did not succeed at body_index={body_index}: {:?}",
             result
         );
         let tx_type = tx.tx_type();
-        let receipt_ce_gas = if matches!(
+        let additional_visible_gas = if matches!(
             result,
             ExecutionResult::Halt {
                 reason: HaltReason::OutOfGas(_),
                 ..
             }
         ) {
-            ce_gas_limit
+            available_visible_gas
         } else {
-            compressed_entities_gas
+            0
         };
         let gas_output = self.push_system_failure_receipt(SystemFailureReceiptInput {
             tx_type,
@@ -310,7 +289,7 @@ where
             code,
             reason,
             visible_base_gas,
-            compressed_entities_gas: receipt_ce_gas,
+            additional_visible_gas,
             signed_gas_limit: visible_gas_limit,
             internal_gas_used: result.tx_gas_used(),
         })?;
@@ -337,11 +316,13 @@ where
         {
             if !cached_hash.is_zero() {
                 if tx.signature_hash() != cached_hash {
-                    return Err(BlockValidationError::msg(format!(
-                        "Phase 1 body[0] witness signature_hash mismatch: expected {cached_hash}, got {}",
-                        tx.signature_hash()
-                    ))
-                    .into());
+                    return Err(
+                        crate::errors::ExecutorValidationError::Phase1WitnessSignatureHashMismatch {
+                            expected: cached_hash,
+                            actual: tx.signature_hash(),
+                        }
+                        .into(),
+                    );
                 }
                 // Advance cursor past Phase 1. The mandatory LateFinalizeCredits
                 // phase (body_index=1) is next.
@@ -395,10 +376,15 @@ where
             .begin_zone_proposer(block_number)?
             .unwrap_or_else(|| self.inner.evm.block().beneficiary());
         if signer != proposer {
-            return Err(BlockValidationError::msg(format!(
-                "system tx signer mismatch at body_index={body_index} for {expected_phase:?}: expected proposer {proposer}, got {signer}"
-            ))
-            .into());
+            return Err(
+                crate::errors::ExecutorValidationError::SystemTxSignerMismatch {
+                    body_index,
+                    expected_phase,
+                    proposer,
+                    signer,
+                }
+                .into(),
+            );
         }
 
         Ok(ValidatedReservedSystemTx {
@@ -417,12 +403,11 @@ where
         expected: (usize, SystemTxKind, u64),
         block_number: u64,
     ) -> Result<(), BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         let (body_index, expected_phase, planned_gas_limit) = expected;
         let ordinal = body_index.try_into().map_err(|_| -> BlockExecutionError {
-            BlockValidationError::msg(format!(
-                "system tx body_index {body_index} exceeds u8 range"
-            ))
-            .into()
+            ExecutorValidationError::SystemTxBodyIndexExceedsU8 { body_index }.into()
         })?;
         let unsigned = build_unsigned_system_tx_with_gas_limit(
             outbe_primitives::system_tx::SystemTxEnvelopeInput {
@@ -435,15 +420,13 @@ where
             },
         )
         .map_err(|error| -> BlockExecutionError {
-            BlockValidationError::msg(format!(
-                "build expected system tx at body_index={body_index}: {error}"
-            ))
-            .into()
+            ExecutorValidationError::build_expected_system_tx(body_index, error).into()
         })?;
         if tx.signature_hash() != unsigned.signature_hash() {
-            return Err(BlockValidationError::msg(format!(
-                "system tx signature_hash mismatch at body_index={body_index} for {expected_phase:?}"
-            ))
+            return Err(ExecutorValidationError::SystemTxSignatureHashMismatch {
+                body_index,
+                expected_phase,
+            }
             .into());
         }
         Ok(())
@@ -458,6 +441,8 @@ where
     where
         R: RecoveredTx<TransactionSigned>,
     {
+        use crate::errors::ExecutorValidationError;
+
         let tx = recovered.tx();
         let signer = *recovered.signer();
         let Some(candidate) = classify_ocomp_system_carrier(
@@ -467,19 +452,12 @@ where
             },
             &outbe_ocomp_protocol::profile::poc_schema_limits(),
         )
-        .map_err(|error| {
-            BlockExecutionError::from(BlockValidationError::msg(format!(
-                "invalid OCOMP system carrier: {error}"
-            )))
-        })?
+        .map_err(ExecutorValidationError::invalid_ocomp_system_carrier)?
         else {
             return Ok(None);
         };
         if !self.ocomp_lifecycle_active {
-            return Err(BlockValidationError::msg(
-                "OCOMP system carrier is not active for this block",
-            )
-            .into());
+            return Err(ExecutorValidationError::OcompSystemCarrierNotActive.into());
         }
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
@@ -520,16 +498,11 @@ where
             if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
                 BlockExecutionError::other(error)
             } else {
-                BlockValidationError::msg(format!(
-                    "OCOMP system carrier authorization failed: {error}"
-                ))
-                .into()
+                ExecutorValidationError::ocomp_system_carrier_authorization_failed(error).into()
             }
         })?;
         if authorized.is_none() {
-            return Err(
-                BlockValidationError::msg("OCOMP system carrier signer is not authorized").into(),
-            );
+            return Err(ExecutorValidationError::OcompSystemCarrierSignerNotAuthorized.into());
         }
         Ok(Some(candidate))
     }
@@ -567,11 +540,12 @@ where
             }
         };
         if !output.result.result.is_success() && !allowed_failed_receipt {
-            return Err(BlockValidationError::msg(format!(
-                "OCOMP system carrier execution did not succeed: {:?}",
-                output.result.result
-            ))
-            .into());
+            return Err(
+                crate::errors::ExecutorValidationError::ocomp_system_carrier_did_not_succeed(
+                    &output.result.result,
+                )
+                .into(),
+            );
         }
         if !f(&output).should_commit() {
             return Ok(None);
@@ -587,59 +561,46 @@ fn validate_reserved_system_input(
     body_index: usize,
     expected: (SystemTxKind, &SystemTxInputV2),
 ) -> Result<(), BlockExecutionError> {
+    use crate::errors::ExecutorValidationError;
+
     let (expected_phase, expected_input) = expected;
     let actual_input =
         SystemTxInputV2::decode(tx.input().as_ref()).map_err(|error| -> BlockExecutionError {
-            BlockValidationError::msg(format!(
-                "decode system tx at body_index={body_index}: {error}"
-            ))
-            .into()
+            ExecutorValidationError::decode_system_tx_at_body_index(body_index, error).into()
         })?;
     let actual_phase = actual_input.kind();
     if actual_phase != expected_phase {
-        return Err(BlockValidationError::msg(format!(
-            "system tx phase mismatch at body_index={body_index}: expected {expected_phase:?}, got {actual_phase:?}"
-        ))
+        return Err(ExecutorValidationError::SystemTxPhaseMismatch {
+            body_index,
+            expected_phase,
+            actual_phase,
+        }
         .into());
     }
     if &actual_input != expected_input {
-        return Err(BlockValidationError::msg(format!(
-            "system tx calldata mismatch at body_index={body_index} for {expected_phase:?}"
-        ))
+        return Err(ExecutorValidationError::SystemTxCalldataMismatch {
+            body_index,
+            expected_phase,
+        }
         .into());
     }
 
     Ok(())
 }
 
-fn open_reserved_gas_window(
-    scope: &ExecutionScope,
+fn reserved_visible_headroom(
     body_index: usize,
-    expected_phase: SystemTxKind,
     visible_gas: (u64, u64),
-) -> Result<(u64, outbe_compressed_entities::ExplicitGasWindow<'_>), BlockExecutionError> {
+) -> Result<u64, BlockExecutionError> {
     let (visible_base_gas, visible_gas_limit) = visible_gas;
-    let ce_gas_limit =
-        visible_gas_limit
-            .checked_sub(visible_base_gas)
-            .ok_or_else(|| -> BlockExecutionError {
-                BlockValidationError::msg(format!(
-                    "system tx signed gas below visible base at body_index={body_index}: \
-             signed={visible_gas_limit}, visible_base={visible_base_gas}"
-                ))
-                .into()
-            })?;
-    let gas_window = scope
-        .begin_explicit_gas_window(ce_gas_limit)
-        .map_err(|error| {
-            if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
-                BlockExecutionError::other(error)
-            } else {
-                BlockValidationError::msg(format!(
-                    "open CE gas window for {expected_phase:?} at body_index={body_index}: {error}"
-                ))
-                .into()
+    visible_gas_limit
+        .checked_sub(visible_base_gas)
+        .ok_or_else(|| {
+            crate::errors::ExecutorValidationError::SystemTxSignedGasBelowVisibleBase {
+                body_index,
+                signed: visible_gas_limit,
+                visible_base: visible_base_gas,
             }
-        })?;
-    Ok((ce_gas_limit, gas_window))
+            .into()
+        })
 }

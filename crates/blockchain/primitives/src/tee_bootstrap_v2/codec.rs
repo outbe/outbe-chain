@@ -88,7 +88,7 @@ pub fn decode_canonical(input: &[u8]) -> Result<TeeBootstrapV2, CodecError> {
     enforce_full_calldata_cap(input.len())?;
     let mut decoder = Decoder { input, cursor: 0 };
     if decoder.take(4)? != MAGIC {
-        return Err(CodecError::NonCanonical("invalid TeeBootstrapV2 magic"));
+        return Err(crate::error::TeeCodecNonCanonicalError::InvalidTeeBootstrapV2Magic.into());
     }
     let policy = TeePolicyV1::decode_canonical(
         decoder.bounded_bytes("TEE policy", MAX_EVIDENCE_CALL_FRAMING_BYTES)?,

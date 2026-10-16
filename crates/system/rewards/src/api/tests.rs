@@ -1,10 +1,8 @@
 use super::*;
-use outbe_gem::test_support::GemWorld;
 use outbe_gemfactory::GemTypes;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::time::date_key_to_utc_timestamp;
 
 use crate::test_support::{
     block_ctx, bootstrap_genesis, meta_with_hash, record_genesis_day_parent,
@@ -33,13 +31,9 @@ fn seed_oracle(ctx: &BlockRuntimeContext, rate_6: U256) {
     record_coen840_day_vwap(&ctx.storage, day, rate_6);
 }
 
-fn open_gems(ctx: &BlockRuntimeContext) -> GemWorld {
-    GemWorld::open(&ctx.storage)
-}
-
 /// Collects all gem loads owned by `voter`. Empty when the voter holds no gems.
-fn voter_promis_loads(ctx: &BlockRuntimeContext, world: &GemWorld, voter: Address) -> Vec<U256> {
-    outbe_gem::api::list_by_owner(&ctx.storage, &world.scope, &world.parent, voter)
+fn voter_promis_loads(ctx: &BlockRuntimeContext, voter: Address) -> Vec<U256> {
+    outbe_gem::api::list_by_owner(&ctx.storage, voter)
         .unwrap()
         .into_iter()
         .map(|item| item.promis_load_minor)
@@ -47,13 +41,8 @@ fn voter_promis_loads(ctx: &BlockRuntimeContext, world: &GemWorld, voter: Addres
 }
 
 /// The only Gem that `owner` holds.
-fn sole_gem(
-    ctx: &BlockRuntimeContext,
-    world: &GemWorld,
-    owner: Address,
-) -> outbe_gem::GemItemState {
-    let mut items =
-        outbe_gem::api::list_by_owner(&ctx.storage, &world.scope, &world.parent, owner).unwrap();
+fn sole_gem(ctx: &BlockRuntimeContext, owner: Address) -> outbe_gem::GemItemState {
+    let mut items = outbe_gem::api::list_by_owner(&ctx.storage, owner).unwrap();
     assert_eq!(items.len(), 1);
     items.pop().unwrap()
 }
@@ -133,7 +122,6 @@ fn read_voters_for_day_empty_when_no_metadata() {
 #[test]
 fn prepare_daily_validator_gem_batch_stores_exact_shares_without_minting() {
     with_genesis_block(|ctx| {
-        let world = open_gems(&ctx);
         seed_oracle(&ctx, U256::from(2u64) * one_coen840());
 
         // counts 1 + 3 = 4; topup 400 -> VAL_X 100, VAL_Y 300.
@@ -147,8 +135,8 @@ fn prepare_daily_validator_gem_batch_stores_exact_shares_without_minting() {
         assert_eq!(batch.planned_promis_load_amount, U256::from(400u64));
         assert_eq!(batch.recipient_count, 2);
 
-        assert!(voter_promis_loads(&ctx, &world, VAL_X).is_empty());
-        assert!(voter_promis_loads(&ctx, &world, VAL_Y).is_empty());
+        assert!(voter_promis_loads(&ctx, VAL_X).is_empty());
+        assert!(voter_promis_loads(&ctx, VAL_Y).is_empty());
 
         let rewards = ctx.storage.contract::<Rewards>();
         assert!(rewards.daily_topup_prepared.read(&20240101).unwrap());
@@ -198,24 +186,15 @@ fn prepare_daily_validator_gem_batch_stores_exact_shares_without_minting() {
 }
 
 #[test]
-fn prepared_reward_gem_batch_freezes_reward_utc_day_type_for_delivery() {
+fn every_reward_day_delivers_issued_validator_gems() {
     with_genesis_block(|ctx| {
-        let world = open_gems(&ctx);
         seed_oracle(&ctx, U256::from(2u64) * one_coen840());
-        // The bootstrap closes as the first rewarded day does, so that day is
-        // still Genesis and the next one is not.
-        outbe_metadosis::test_support::seed_bootstrap_end_time(
-            ctx.storage.clone(),
-            date_key_to_utc_timestamp(20240102),
-        )
-        .unwrap();
-
         prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(50u64), &[(VAL_X, 1)])
             .unwrap();
         prepare_daily_validator_gem_batch(&ctx, 20240201, U256::from(70u64), &[(VAL_Y, 1)])
             .unwrap();
 
-        let first = deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap();
+        let first = deliver_oldest_reward_gem_batch(&ctx).unwrap();
         assert!(matches!(
             first,
             RewardGemDeliveryOutcome::Delivered {
@@ -223,7 +202,7 @@ fn prepared_reward_gem_batch_freezes_reward_utc_day_type_for_delivery() {
                 ..
             }
         ));
-        let second = deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap();
+        let second = deliver_oldest_reward_gem_batch(&ctx).unwrap();
         assert!(matches!(
             second,
             RewardGemDeliveryOutcome::Delivered {
@@ -232,20 +211,11 @@ fn prepared_reward_gem_batch_freezes_reward_utc_day_type_for_delivery() {
             }
         ));
 
-        let x_item = sole_gem(&ctx, &world, VAL_X);
-        assert_eq!(x_item.gem_type, GemTypes::Genesis as u8);
-        assert!(
-            x_item.floor_price_minor.is_zero(),
-            "Genesis gem carries no floor"
-        );
-
-        let y_item = sole_gem(&ctx, &world, VAL_Y);
-        assert_eq!(y_item.gem_type, GemTypes::Validator as u8);
-        assert_eq!(
-            y_item.state,
-            outbe_gem::GemState::Issued as u8,
-            "Post-genesis Validator gem is born Issued"
-        );
+        for validator in [VAL_X, VAL_Y] {
+            let item = sole_gem(&ctx, validator);
+            assert_eq!(item.gem_type, GemTypes::Validator as u8);
+            assert_eq!(item.state, outbe_gem::GemState::Issued as u8);
+        }
     });
 }
 
@@ -273,13 +243,12 @@ fn identical_preparation_replay_does_not_append_a_second_batch() {
 #[test]
 fn delivered_preparation_replay_ignores_dead_recipient_rows() {
     with_genesis_block(|ctx| {
-        let world = open_gems(&ctx);
         seed_oracle(&ctx, one_coen840());
         let voters = [(VAL_X, 1)];
 
         prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(100u64), &voters).unwrap();
         assert!(matches!(
-            deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap(),
+            deliver_oldest_reward_gem_batch(&ctx).unwrap(),
             RewardGemDeliveryOutcome::Delivered {
                 reward_utc_day: 20240101,
                 ..
@@ -309,14 +278,13 @@ fn delivered_preparation_replay_ignores_dead_recipient_rows() {
         ));
         assert_reward_queue(&rewards, 1, 1);
         assert_eq!(rewards.reward_gem_pending_batch_count.read().unwrap(), 0);
-        assert_eq!(voter_promis_loads(&ctx, &world, VAL_X).len(), 1);
+        assert_eq!(voter_promis_loads(&ctx, VAL_X).len(), 1);
     });
 }
 
 #[test]
 fn prepared_batch_with_lost_fifo_linkage_is_retryable_without_writes() {
     with_genesis_block(|ctx| {
-        let world = open_gems(&ctx);
         seed_oracle(&ctx, one_coen840());
         let voters = [(VAL_X, 1)];
         prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(100u64), &voters).unwrap();
@@ -332,13 +300,12 @@ fn prepared_batch_with_lost_fifo_linkage_is_retryable_without_writes() {
             "prepared obligation without a live FIFO link must fail closed: {replay_error:?}"
         );
 
-        let delivery_error =
-            deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap_err();
+        let delivery_error = deliver_oldest_reward_gem_batch(&ctx).unwrap_err();
         assert!(
             matches!(delivery_error, PrecompileError::Revert(_)),
             "an empty queue cannot hide a prepared unsettled obligation: {delivery_error:?}"
         );
-        assert!(voter_promis_loads(&ctx, &world, VAL_X).is_empty());
+        assert!(voter_promis_loads(&ctx, VAL_X).is_empty());
     });
 }
 
@@ -369,7 +336,6 @@ fn contradictory_preparation_replay_is_retryable_without_writes() {
 #[test]
 fn unpriced_delivery_preserves_fifo_head_without_minting() {
     with_genesis_block(|ctx| {
-        let world = open_gems(&ctx);
         seed_oracle(&ctx, one_coen840());
         prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(100u64), &[(VAL_X, 1)])
             .unwrap();
@@ -379,27 +345,26 @@ fn unpriced_delivery_preserves_fifo_head_without_minting() {
         record_coen840_day_vwap(&ctx.storage, day, U256::ZERO);
 
         assert_eq!(
-            deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap(),
+            deliver_oldest_reward_gem_batch(&ctx).unwrap(),
             RewardGemDeliveryOutcome::PendingRate {
                 reward_utc_day: 20240101
             }
         );
         assert_eq!(
-            deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap(),
+            deliver_oldest_reward_gem_batch(&ctx).unwrap(),
             RewardGemDeliveryOutcome::PendingRate {
                 reward_utc_day: 20240101
             }
         );
         let rewards = ctx.storage.contract::<Rewards>();
         assert_reward_queue(&rewards, 0, 1);
-        assert!(voter_promis_loads(&ctx, &world, VAL_X).is_empty());
+        assert!(voter_promis_loads(&ctx, VAL_X).is_empty());
     });
 }
 
 #[test]
 fn fresh_delivery_mints_the_head_exactly_once() {
     with_genesis_block(|ctx| {
-        let world = open_gems(&ctx);
         seed_oracle(&ctx, one_coen840());
         prepare_daily_validator_gem_batch(
             &ctx,
@@ -411,7 +376,7 @@ fn fresh_delivery_mints_the_head_exactly_once() {
 
         // One compressed Gem body per block: the head drains one recipient per call.
         assert_eq!(
-            deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap(),
+            deliver_oldest_reward_gem_batch(&ctx).unwrap(),
             RewardGemDeliveryOutcome::Delivered {
                 reward_utc_day: 20240101,
                 recipient_count: 2,
@@ -420,11 +385,8 @@ fn fresh_delivery_mints_the_head_exactly_once() {
                 batch_complete: false,
             }
         );
-        assert_eq!(
-            voter_promis_loads(&ctx, &world, VAL_X),
-            vec![U256::from(100u64)]
-        );
-        assert!(voter_promis_loads(&ctx, &world, VAL_Y).is_empty());
+        assert_eq!(voter_promis_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
+        assert!(voter_promis_loads(&ctx, VAL_Y).is_empty());
         let rewards = ctx.storage.contract::<Rewards>();
         assert_eq!(
             rewards.reward_gem_delivered_count.read(&20240101).unwrap(),
@@ -432,7 +394,7 @@ fn fresh_delivery_mints_the_head_exactly_once() {
         );
         assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
         assert_eq!(
-            deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap(),
+            deliver_oldest_reward_gem_batch(&ctx).unwrap(),
             RewardGemDeliveryOutcome::Delivered {
                 reward_utc_day: 20240101,
                 recipient_count: 2,
@@ -441,34 +403,24 @@ fn fresh_delivery_mints_the_head_exactly_once() {
                 batch_complete: true,
             }
         );
-        assert_eq!(
-            voter_promis_loads(&ctx, &world, VAL_Y),
-            vec![U256::from(300u64)]
-        );
+        assert_eq!(voter_promis_loads(&ctx, VAL_Y), vec![U256::from(300u64)]);
         assert_eq!(
             rewards.reward_gem_delivered_count.read(&20240101).unwrap(),
             0
         );
         assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 1);
         assert_eq!(
-            deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap(),
+            deliver_oldest_reward_gem_batch(&ctx).unwrap(),
             RewardGemDeliveryOutcome::Empty
         );
-        assert_eq!(
-            voter_promis_loads(&ctx, &world, VAL_X),
-            vec![U256::from(100u64)]
-        );
-        assert_eq!(
-            voter_promis_loads(&ctx, &world, VAL_Y),
-            vec![U256::from(300u64)]
-        );
+        assert_eq!(voter_promis_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
+        assert_eq!(voter_promis_loads(&ctx, VAL_Y), vec![U256::from(300u64)]);
     });
 }
 
 #[test]
 fn failed_delivery_rolls_back_every_gem_and_retries_the_same_batch() {
     with_genesis_block(|ctx| {
-        let world = open_gems(&ctx);
         seed_oracle(&ctx, one_coen840());
         prepare_daily_validator_gem_batch(
             &ctx,
@@ -482,46 +434,39 @@ fn failed_delivery_rolls_back_every_gem_and_retries_the_same_batch() {
         factory.total_gems_issued.write(U256::MAX).unwrap();
 
         let err = ctx
-            .with_checkpoint(|| deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent))
+            .with_checkpoint(|| deliver_oldest_reward_gem_batch(&ctx))
             .unwrap_err();
         assert!(matches!(err, PrecompileError::Revert(_)), "{err:?}");
-        assert!(voter_promis_loads(&ctx, &world, VAL_X).is_empty());
-        assert!(voter_promis_loads(&ctx, &world, VAL_Y).is_empty());
+        assert!(voter_promis_loads(&ctx, VAL_X).is_empty());
+        assert!(voter_promis_loads(&ctx, VAL_Y).is_empty());
         let rewards = ctx.storage.contract::<Rewards>();
         assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
 
         factory.total_gems_issued.write(U256::ZERO).unwrap();
         for _ in 0..2 {
             assert!(matches!(
-                deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap(),
+                deliver_oldest_reward_gem_batch(&ctx).unwrap(),
                 RewardGemDeliveryOutcome::Delivered {
                     reward_utc_day: 20240101,
                     ..
                 }
             ));
         }
-        assert_eq!(
-            voter_promis_loads(&ctx, &world, VAL_X),
-            vec![U256::from(100u64)]
-        );
-        assert_eq!(
-            voter_promis_loads(&ctx, &world, VAL_Y),
-            vec![U256::from(100u64)]
-        );
+        assert_eq!(voter_promis_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
+        assert_eq!(voter_promis_loads(&ctx, VAL_Y), vec![U256::from(100u64)]);
     });
 }
 
 #[test]
 fn two_reward_utc_days_deliver_fifo_one_batch_per_call() {
     with_genesis_block(|ctx| {
-        let world = open_gems(&ctx);
         seed_oracle(&ctx, one_coen840());
         prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(10u64), &[(VAL_X, 1)])
             .unwrap();
         prepare_daily_validator_gem_batch(&ctx, 20240102, U256::from(20u64), &[(VAL_Y, 1)])
             .unwrap();
 
-        let first = deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap();
+        let first = deliver_oldest_reward_gem_batch(&ctx).unwrap();
         assert!(matches!(
             first,
             RewardGemDeliveryOutcome::Delivered {
@@ -529,13 +474,10 @@ fn two_reward_utc_days_deliver_fifo_one_batch_per_call() {
                 ..
             }
         ));
-        assert_eq!(
-            voter_promis_loads(&ctx, &world, VAL_X),
-            vec![U256::from(10u64)]
-        );
-        assert!(voter_promis_loads(&ctx, &world, VAL_Y).is_empty());
+        assert_eq!(voter_promis_loads(&ctx, VAL_X), vec![U256::from(10u64)]);
+        assert!(voter_promis_loads(&ctx, VAL_Y).is_empty());
 
-        let second = deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap();
+        let second = deliver_oldest_reward_gem_batch(&ctx).unwrap();
         assert!(matches!(
             second,
             RewardGemDeliveryOutcome::Delivered {
@@ -543,10 +485,7 @@ fn two_reward_utc_days_deliver_fifo_one_batch_per_call() {
                 ..
             }
         ));
-        assert_eq!(
-            voter_promis_loads(&ctx, &world, VAL_Y),
-            vec![U256::from(20u64)]
-        );
+        assert_eq!(voter_promis_loads(&ctx, VAL_Y), vec![U256::from(20u64)]);
     });
 }
 
@@ -563,12 +502,12 @@ fn pending_reward_gem_batch_survives_storage_reopen() {
 
     storage.enter(|handle| {
         let reopened = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + 120), handle);
-        let world = open_gems(&reopened);
+
         let rewards = reopened.storage.contract::<Rewards>();
         assert!(rewards.daily_topup_prepared.read(&20240101).unwrap());
         assert_reward_queue(&rewards, 0, 1);
         assert!(matches!(
-            deliver_oldest_reward_gem_batch(&reopened, &world.scope, &world.parent).unwrap(),
+            deliver_oldest_reward_gem_batch(&reopened).unwrap(),
             RewardGemDeliveryOutcome::Delivered {
                 reward_utc_day: 20240101,
                 delivered_promis_load_amount,
@@ -576,73 +515,24 @@ fn pending_reward_gem_batch_survives_storage_reopen() {
             } if delivered_promis_load_amount == U256::from(90u64)
         ));
         assert_eq!(
-            voter_promis_loads(&reopened, &world, VAL_Z),
+            voter_promis_loads(&reopened, VAL_Z),
             vec![U256::from(90u64)]
         );
         assert!(rewards.daily_topup_settled.read(&20240101).unwrap());
     });
 }
 
-/// Block N mints the first recipient's Gem together with the day's bucket body. Block
-/// N+1 holds only the finalized projection of those events and the finalized tree, so
-/// the second recipient's mint must find the bucket through the parent body store and
-/// authenticate it against the parent root, not through the ended scope.
+/// A later block reads the first recipient and its bucket from EVM storage.
 #[test]
-fn second_recipient_is_minted_in_the_next_block_from_the_parent_bucket_body() {
-    use outbe_compressed_entities::test_support::{
-        open_empty_ce_database, seed_compressed_entities_genesis,
-    };
-    use outbe_compressed_entities::{
-        begin_block, end_block, execution_scope::with_parent_tree, sealed_root,
-        CandidateCacheLimits, CeWorkConfig, CompressedTreeService, ExactParentIdentity,
-        ACTIVE_COMMITMENT_SCHEME,
-    };
-    use outbe_offchain_data::{FinalizedBlock, FinalizedLog, FinalizedReceipt, ProjectionConfig};
-    use outbe_offchain_storage::MemoryStorage;
-    use outbe_primitives::addresses::GEM_ADDRESS;
+fn second_recipient_uses_the_bucket_persisted_by_the_previous_block() {
     use outbe_primitives::storage::StorageHandle;
-    use std::sync::Arc;
 
-    let directory = tempfile::tempdir().unwrap();
-    let tree = Arc::new(
-        CompressedTreeService::new(
-            open_empty_ce_database(directory.path(), alloy_primitives::B256::ZERO).unwrap(),
-            CandidateCacheLimits {
-                max_candidates: 4,
-                max_encoded_bytes: 1_000_000,
-            },
-        )
-        .unwrap(),
-    );
-    let open_parent = |block_number: u64, block_hash: alloy_primitives::B256, root| {
-        let parent = tree
-            .open_parent(ExactParentIdentity {
-                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                block_number,
-                block_hash,
-                root,
-            })
-            .unwrap();
-        with_parent_tree(parent, CeWorkConfig::new(0, 0, u64::MAX))
-    };
-    let bodies = Arc::new(MemoryStorage::new());
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-
     provider.set_block_number(1);
     provider.set_timestamp(U256::from(GENESIS_TS + 60));
-    let staged = StorageHandle::enter(&mut provider, |handle| {
+    StorageHandle::enter(&mut provider, |handle| {
         let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
         bootstrap_genesis(&ctx);
-        let world = GemWorld {
-            scope: open_parent(
-                0,
-                alloy_primitives::B256::ZERO,
-                sealed_root(alloy_primitives::B256::ZERO).unwrap(),
-            ),
-            parent: outbe_gem::gem_reader(Arc::new(MemoryStorage::new())),
-        };
-        seed_compressed_entities_genesis(&ctx.storage).unwrap();
-        begin_block(ctx.storage.clone(), &world.scope).unwrap();
         seed_oracle(&ctx, one_coen840());
         prepare_daily_validator_gem_batch(
             &ctx,
@@ -652,7 +542,7 @@ fn second_recipient_is_minted_in_the_next_block_from_the_parent_bucket_body() {
         )
         .unwrap();
         assert_eq!(
-            deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap(),
+            deliver_oldest_reward_gem_batch(&ctx).unwrap(),
             RewardGemDeliveryOutcome::Delivered {
                 reward_utc_day: 20240101,
                 recipient_count: 2,
@@ -661,63 +551,15 @@ fn second_recipient_is_minted_in_the_next_block_from_the_parent_bucket_body() {
                 batch_complete: false,
             }
         );
-        end_block(ctx.storage.clone(), &world.scope)
-            .unwrap()
-            .staged_tree_batch
     });
 
-    // Finalize block 1 the way a node does: the sealed tree becomes the finalized
-    // parent and the Gem receipts flow through the real off-chain projection into the
-    // body store the next block reads as its parent.
-    let block_one_hash = alloy_primitives::B256::repeat_byte(0x01);
-    let block_one_root = staged.new_root();
-    tree.publish_candidate(block_one_hash, staged).unwrap();
-    tree.apply_finalized(1, block_one_hash, block_one_root)
-        .unwrap();
-    let logs = provider
-        .get_events(GEM_ADDRESS)
-        .iter()
-        .enumerate()
-        .map(|(index, data)| FinalizedLog {
-            log_index: index as u64,
-            emitter: GEM_ADDRESS,
-            data: data.clone(),
-        })
-        .collect();
-    let mut projection = outbe_offchain_data::open_projection(
-        ProjectionConfig {
-            chain_id: CHAIN_ID,
-            genesis_hash: alloy_primitives::B256::repeat_byte(0x91),
-            start_block: 1,
-        },
-        bodies.clone(),
-        bodies.clone(),
-    )
-    .unwrap();
-    projection
-        .project_block(&FinalizedBlock {
-            number: 1,
-            hash: block_one_hash,
-            receipts: vec![FinalizedReceipt {
-                tx_hash: alloy_primitives::B256::repeat_byte(0x02),
-                transaction_index: 0,
-                success: true,
-                logs,
-            }],
-        })
-        .unwrap();
-
+    let mut provider = provider.clone();
     provider.set_block_number(2);
     provider.set_timestamp(U256::from(GENESIS_TS + 120));
     StorageHandle::enter(&mut provider, |handle| {
         let ctx = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + 120), handle);
-        let world = GemWorld {
-            scope: open_parent(1, block_one_hash, block_one_root),
-            parent: outbe_gem::gem_reader(bodies.clone()),
-        };
-        begin_block(ctx.storage.clone(), &world.scope).unwrap();
         assert_eq!(
-            deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap(),
+            deliver_oldest_reward_gem_batch(&ctx).unwrap(),
             RewardGemDeliveryOutcome::Delivered {
                 reward_utc_day: 20240101,
                 recipient_count: 2,
@@ -726,8 +568,8 @@ fn second_recipient_is_minted_in_the_next_block_from_the_parent_bucket_body() {
                 batch_complete: true,
             }
         );
-        let first = sole_gem(&ctx, &world, VAL_X);
-        let second = sole_gem(&ctx, &world, VAL_Y);
+        let first = sole_gem(&ctx, VAL_X);
+        let second = sole_gem(&ctx, VAL_Y);
         assert_eq!(first.promis_load_minor, U256::from(100u64));
         assert_eq!(second.promis_load_minor, U256::from(300u64));
         assert_eq!(
@@ -736,14 +578,9 @@ fn second_recipient_is_minted_in_the_next_block_from_the_parent_bucket_body() {
         );
         let gem = outbe_gem::GemContract::new(ctx.storage.clone());
         assert_eq!(gem.bucket_gem_count.read(&first.bucket_key).unwrap(), 2);
-        assert!(outbe_gem::api::get_bucket(
-            &ctx.storage,
-            &world.scope,
-            &world.parent,
-            first.bucket_id()
-        )
-        .unwrap()
-        .is_some());
+        assert!(outbe_gem::api::get_bucket(&ctx.storage, first.bucket_key)
+            .unwrap()
+            .is_some());
         let rewards = ctx.storage.contract::<Rewards>();
         assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 1);
         assert_eq!(
@@ -751,20 +588,37 @@ fn second_recipient_is_minted_in_the_next_block_from_the_parent_bucket_body() {
             0
         );
         assert!(rewards.daily_topup_settled.read(&20240101).unwrap());
-        end_block(ctx.storage.clone(), &world.scope).unwrap();
     });
 }
 
-/// The system envelope reserves exactly `REWARD_GEM_DELIVERY_CE_GAS_RESERVE` of
-/// compressed-entity gas for one delivery. A fresh block with a new bucket is the
-/// most expensive shape: two first body touches, one first index touch and the
-/// touched-length slots. The window turns an over-budget mint into `OutOfGas`.
+/// A delivery uses the existing internal budget with production storage charges.
 #[test]
-fn one_delivery_fits_the_system_envelope_ce_reserve() {
-    use outbe_primitives::system_tx::REWARD_GEM_DELIVERY_CE_GAS_RESERVE;
+fn one_delivery_fits_the_internal_budget_and_preserves_the_visible_reserve() {
+    use outbe_primitives::storage::StorageHandle;
+    use outbe_primitives::system_tx::{
+        SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan, REWARD_GEM_DELIVERY_GAS_RESERVE,
+        STEADY_BLOCK_GAS_LIMIT, SYSTEM_TX_ARTIFACT_GAS_LIMIT,
+    };
 
-    with_genesis_block(|ctx| {
-        let world = open_gems(&ctx);
+    let visible_plan = SystemTxVisibleGasPlan::new(
+        STEADY_BLOCK_GAS_LIMIT,
+        &[(
+            SystemTxKind::RewardsGemDelivery,
+            SystemTxInputV2::RewardsGemDelivery.encode().unwrap(),
+        )],
+    )
+    .unwrap();
+    assert_eq!(
+        visible_plan.execution_gas_limit(0),
+        Some(REWARD_GEM_DELIVERY_GAS_RESERVE)
+    );
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1);
+    provider.set_timestamp(U256::from(GENESIS_TS + 60));
+    StorageHandle::enter(&mut provider, |handle| {
+        let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
+        bootstrap_genesis(&ctx);
         seed_oracle(&ctx, one_coen840());
         prepare_daily_validator_gem_batch(
             &ctx,
@@ -773,15 +627,12 @@ fn one_delivery_fits_the_system_envelope_ce_reserve() {
             &[(VAL_X, 1), (VAL_Y, 3)],
         )
         .unwrap();
-
-        let window = world
-            .scope
-            .begin_explicit_gas_window(REWARD_GEM_DELIVERY_CE_GAS_RESERVE)
-            .unwrap();
-        let outcome = deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap();
-        let ce_gas = window.gas_used().unwrap();
-        drop(window);
-
+    });
+    provider.set_gas_limit(SYSTEM_TX_ARTIFACT_GAS_LIMIT);
+    provider.enable_production_storage_gas_metering();
+    StorageHandle::enter(&mut provider, |handle| {
+        let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
+        let outcome = deliver_oldest_reward_gem_batch(&ctx).unwrap();
         assert!(matches!(
             outcome,
             RewardGemDeliveryOutcome::Delivered {
@@ -789,10 +640,8 @@ fn one_delivery_fits_the_system_envelope_ce_reserve() {
                 ..
             }
         ));
-        assert!(ce_gas > 0, "delivery must charge compressed-entity gas");
-        assert!(
-            ce_gas <= REWARD_GEM_DELIVERY_CE_GAS_RESERVE,
-            "one delivery charged {ce_gas} CE gas, reserve is {REWARD_GEM_DELIVERY_CE_GAS_RESERVE}"
-        );
+        let gas = ctx.storage.gas_used().unwrap();
+        assert!(gas > 0, "delivery must charge storage gas");
+        assert!(gas <= SYSTEM_TX_ARTIFACT_GAS_LIMIT);
     });
 }

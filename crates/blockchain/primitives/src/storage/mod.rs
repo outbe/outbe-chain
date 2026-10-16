@@ -5,9 +5,11 @@ pub mod finalized_guard_ring;
 pub mod gas;
 pub mod handle;
 pub mod hashmap;
+pub mod indexed_list;
 pub mod keys;
 pub mod lysis_activation;
 mod metadosis_mutation;
+pub mod proof;
 pub mod readonly;
 pub mod types;
 
@@ -211,9 +213,18 @@ pub trait PrecompileStorageProvider {
         _chain_id: u64,
         _block_number: u64,
     ) -> Result<()> {
-        Err(crate::error::PrecompileError::revert(
-            "Metadosis mutation frame is not available",
-        ))
+        Err(crate::error::PrimitivesStorageError::MetadosisMutationFrameUnavailable.into())
+    }
+
+    /// Requires the exact active frame before an owner applies Lysis effects.
+    fn require_metadosis_mutation_frame(
+        &mut self,
+        _purpose: MetadosisMutationPurposeTag,
+        _binding: B256,
+        _chain_id: u64,
+        _block_number: u64,
+    ) -> Result<()> {
+        Err(crate::error::PrimitivesStorageError::MetadosisMutationFrameUnavailable.into())
     }
 
     /// Closes the exact Metadosis mutation frame opened above.
@@ -223,9 +234,7 @@ pub trait PrecompileStorageProvider {
         _binding: B256,
         _completed: bool,
     ) -> Result<()> {
-        Err(crate::error::PrecompileError::revert(
-            "Metadosis mutation frame is not available",
-        ))
+        Err(crate::error::PrimitivesStorageError::MetadosisMutationFrameUnavailable.into())
     }
 
     /// Opens the private execution lease for one certified Lysis activation.
@@ -233,9 +242,7 @@ pub trait PrecompileStorageProvider {
     /// Providers deny this by default. The production EVM execution context
     /// grants the lease only from the fork-pinned activation dispatch.
     fn begin_lysis_activation_frame(&mut self, _activation_call_id: B256) -> Result<()> {
-        Err(crate::error::PrecompileError::revert(
-            "certified Lysis activation frame is not available",
-        ))
+        Err(crate::error::PrimitivesStorageError::CertifiedLysisActivationFrameUnavailable.into())
     }
 
     /// Closes a previously granted Lysis activation lease.
@@ -247,9 +254,7 @@ pub trait PrecompileStorageProvider {
         _activation_call_id: B256,
         _completed: bool,
     ) -> Result<()> {
-        Err(crate::error::PrecompileError::revert(
-            "certified Lysis activation frame is not available",
-        ))
+        Err(crate::error::PrimitivesStorageError::CertifiedLysisActivationFrameUnavailable.into())
     }
 
     /// Returns the chain ID.

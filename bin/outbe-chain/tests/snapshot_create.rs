@@ -64,9 +64,7 @@ fn stopped_native_files_create_a_portable_signed_archive_without_rewriting_progr
         ])
         .arg(&fixture.genesis)
         .arg("--datadir")
-        .arg(&fixture.chain)
-        .arg("--projection.storage-config")
-        .arg(&fixture.projection_config));
+        .arg(&fixture.chain));
     assert!(created.status.success(), "{}", transcript(&created));
     assert_eq!(fs::read(&fixture.signing_key).unwrap(), key_before);
     assert_eq!(fingerprint(&fixture.donor), before);
@@ -109,21 +107,14 @@ fn stopped_native_files_create_a_portable_signed_archive_without_rewriting_progr
             .partial_state_trie,
         99
     );
-    assert_eq!(manifest.progress.ce.number, 100);
-    assert_eq!(manifest.progress.projection.number, 98);
     assert_eq!(manifest.progress.ocomp_current.number, 97);
     assert_eq!(manifest.progress.ocomp_previous.number, 0);
     assert_eq!(
         manifest.progress.ocomp_baseline.hash,
         hex::encode(fixture.genesis_hash)
     );
-    assert_eq!(manifest.domains.len(), 23);
-    for kind in [
-        DomainKind::ExecutionDb,
-        DomainKind::Ce,
-        DomainKind::OffchainProjection,
-        DomainKind::ClosureCheckpoint,
-    ] {
+    assert_eq!(manifest.domains.len(), 21);
+    for kind in [DomainKind::ExecutionDb, DomainKind::ClosureCheckpoint] {
         assert!(manifest.domains.iter().any(|domain| domain.kind == kind
             && domain
                 .entries
@@ -169,9 +160,7 @@ fn unsupported_platform_rejects_creation_after_valid_schema_three_inspection() {
         .args(["--", "--chain"])
         .arg(&fixture.genesis)
         .arg("--datadir")
-        .arg(&fixture.chain)
-        .arg("--projection.storage-config")
-        .arg(&fixture.projection_config));
+        .arg(&fixture.chain));
     assert!(!result.status.success());
     assert!(
         transcript(&result)

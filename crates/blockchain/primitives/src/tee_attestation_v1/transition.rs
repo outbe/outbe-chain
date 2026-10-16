@@ -104,7 +104,11 @@ impl TransitionKeyReadyProofV1 {
             self.signing_hash()?.as_slice(),
             &self.candidate_attestation_signature,
         )
-        .map_err(|_| CodecError::NonCanonical("transition key-ready proof signature"))
+        .map_err(|_| {
+            CodecError::from(
+                crate::error::TeeCodecNonCanonicalError::TransitionKeyReadyProofSignature,
+            )
+        })
     }
 
     pub(super) fn validate_shape(&self) -> Result<(), CodecError> {

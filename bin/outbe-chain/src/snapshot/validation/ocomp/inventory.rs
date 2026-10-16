@@ -1,7 +1,7 @@
 //! inventory obligations for the offline OCOMP audit.
 use super::*;
 
-/// Scratch-only sets avoid retaining the permanent series index in RAM.
+/// Scratch-only key/value rows, kept out of RAM.
 #[derive(Debug)]
 pub(super) struct InventoryRows;
 impl Table for InventoryRows {
@@ -83,10 +83,13 @@ impl ReferenceMembership {
     ) -> eyre::Result<()> {
         cas.read_verified(reference).map_err(|error| {
             if missing_native_input(&error) {
-                eyre::Report::new(error).wrap_err(Incomplete(format!(
-                    "missing retained CAS object {} for job {job}",
-                    reference.transport_digest
-                )))
+                eyre::Report::new(error).wrap_err(
+                    SnapshotIncompleteError::MissingRetainedCasObject {
+                        transport_digest: reference.transport_digest,
+                        job,
+                    }
+                    .into_incomplete(),
+                )
             } else {
                 eyre::Report::new(error)
             }
@@ -117,8 +120,6 @@ pub(crate) struct InventoryBounds {
     pub nod_head: u64,
     pub nod_tail: u64,
     pub nod_entries: u64,
-    pub series: u64,
-    pub days: u64,
 }
 
 /// Canonical obligation discovery is independent of local job directories.
@@ -219,7 +220,6 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
                         worldwide_day: job.intent.wwd,
                         canonical_status: format!("{:?}", job.status),
                         pin_stage: "NotInspected".into(),
-                        projection_before_request: None,
                         source_verified: false,
                         export_verified: false,
                     },
@@ -328,48 +328,6 @@ impl<'a, 'b> CanonicalInventory<'a, 'b> {
             );
         }
 
-        let total_series = state.intex_total_series()?;
-        observe_inventory_bound(report.as_deref_mut(), "intex_series", 0, total_series, 0);
-        observe_inventory_bound(report.as_deref_mut(), "intex_days", 0, 0, 0);
-        for index in 0..total_series {
-            scan_budget("Intex series", index, total_series, maximum_records)?;
-            let id = state.intex_series_id_at(index)?;
-            let day = verify_series_day(id)?;
-            let record = state.intex_read_series(id)?;
-            require(
-                record.series_id == id && record.worldwide_day == day,
-                SnapshotOcompError::IntexSeriesRecordMismatch,
-            )?;
-            let key = inventory_key(b's', id.as_bytes());
-            require(
-                tx.get::<InventoryRows>(key.clone())?.is_none(),
-                SnapshotOcompError::DuplicateIntexSeriesIdentity,
-            )?;
-            tx.put::<InventoryRows>(key, Vec::new())?;
-            bounds.series += 1;
-            observe_inventory_bound(
-                report.as_deref_mut(),
-                "intex_series",
-                0,
-                total_series,
-                bounds.series,
-            );
-            let day_key = inventory_key(b'w', &day.value().to_be_bytes());
-            if tx.get::<InventoryRows>(day_key.clone())?.is_some() {
-                continue;
-            }
-            tx.put::<InventoryRows>(day_key, Vec::new())?;
-            bounds.days += 1;
-            // Distinct days are discovered through the permanent series index.
-            // This records the population reached, not an unobserved final count.
-            observe_inventory_bound(
-                report.as_deref_mut(),
-                "intex_days",
-                0,
-                bounds.days,
-                bounds.days,
-            );
-        }
         tx.commit()?;
         Ok(Self {
             state,

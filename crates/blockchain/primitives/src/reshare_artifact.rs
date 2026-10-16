@@ -2,7 +2,7 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 
 use crate::{
     consensus::{DkgBoundaryArtifact, OUTBE_MAX_EXTRA_DATA_SIZE},
-    error::{PrecompileError, Result},
+    error::{ReshareArtifactError, Result},
     validators::MAX_TEE_EXPIRED_TARGET_EXCLUSIONS,
 };
 
@@ -64,13 +64,9 @@ const DEALER_LOG_TAG: u8 = 0x03;
 const TIMESTAMP_MILLIS_PART_TAG: u8 = 0x05;
 const LATE_FINALIZE_CREDITS_TAG: u8 = 0x06;
 const COMMITTEE_PREANNOUNCE_TAG: u8 = 0x07;
-pub const COMPRESSED_ENTITIES_ROOT_TAG: u8 = 0x08;
+// Tag 0x08 is retired. Entity records are committed by the EVM state root.
 const EXECUTION_SUMMARY_LEN: usize = 32;
 const TIMESTAMP_MILLIS_PART_LEN: usize = 8;
-pub const COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN: usize = 4 + 32;
-pub const COMPRESSED_ENTITIES_ROOT_RECORD_LEN: usize = 1 + 2 + COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN;
-pub const OUTBE_MAX_NON_ROOT_ARTIFACT_SIZE: usize =
-    OUTBE_MAX_EXTRA_DATA_SIZE - COMPRESSED_ENTITIES_ROOT_RECORD_LEN;
 /// Raw BLS (MinPk) aggregate signature length carried per late-finalize credit.
 const LATE_FINALIZE_SIG_LEN: usize = 96;
 /// Max signer-bitmap bytes = `ceil(MAX_VALIDATORS / 8)` = `ceil(256 / 8)`.
@@ -112,16 +108,6 @@ pub struct OutbeBlockArtifacts {
     /// per-finalized-block late-finalize proofs the proposer gathered within the
     /// `K`-block inclusion window. `None`/empty when this block credits nothing.
     pub late_finalize_credits: Option<LateFinalizeCreditsArtifact>,
-    /// Execution-computed post-state compressed-entity root (tag 0x08).
-    /// Structurally optional. Block execution, not this height-independent
-    /// codec, enforces mandatory presence for block 1+.
-    pub compressed_entities_root: Option<CompressedEntitiesRootArtifact>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CompressedEntitiesRootArtifact {
-    pub commitment_scheme_version: u32,
-    pub r_sealed: B256,
 }
 
 /// A batch of late-finalize credits carried in `header.extra_data` (tag 0x06).
@@ -235,14 +221,9 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
             fields::encode_timestamp(artifacts.timestamp_millis_part),
         ));
     }
-    if let Some(root) = artifacts.compressed_entities_root {
-        records.push((COMPRESSED_ENTITIES_ROOT_TAG, fields::encode_root(root)));
-    }
     if let Some(batch) = &artifacts.radicle_publication {
         if !artifacts.radicle_publication_enabled {
-            return Err(PrecompileError::revert(
-                "repository publication requires OART v0x0C",
-            ));
+            return Err(ReshareArtifactError::PublicationRequiresV0c.into());
         }
         records.push((RADICLE_PUBLICATION_TAG, batch.to_bytes()?));
     }
@@ -252,19 +233,23 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
     }
 
     if records.len() > u8::MAX as usize {
-        return Err(PrecompileError::revert("too many block artifact records"));
+        return Err(ReshareArtifactError::TooManyRecords.into());
     }
 
-    let payload_len = records.iter().try_fold(0usize, |acc, (_, payload)| {
-        ensure_payload_fits_u16("block artifact record", payload.len())?;
-        acc.checked_add(1 + 2 + payload.len())
-            .ok_or_else(|| PrecompileError::revert("block artifact length overflow"))
-    })?;
+    let payload_len = records
+        .iter()
+        .try_fold(0usize, |acc, (_, payload)| -> Result<usize> {
+            ensure_payload_fits_u16("block artifact record", payload.len())?;
+            acc.checked_add(1 + 2 + payload.len())
+                .ok_or_else(|| ReshareArtifactError::LengthOverflow.into())
+        })?;
     let total_len = 4 + 1 + 1 + payload_len;
     if total_len > OUTBE_MAX_EXTRA_DATA_SIZE {
-        return Err(PrecompileError::revert(format!(
-            "block artifacts exceed extra_data budget: {total_len} > {OUTBE_MAX_EXTRA_DATA_SIZE}"
-        )));
+        return Err(ReshareArtifactError::ExceedsExtraDataBudget {
+            total_len,
+            max_len: OUTBE_MAX_EXTRA_DATA_SIZE,
+        }
+        .into());
     }
 
     let mut buf = Vec::with_capacity(total_len);
@@ -298,9 +283,7 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
 
     for _ in 0..record_count {
         if offset + 3 > extra_data.len() {
-            return Err(PrecompileError::revert(
-                "truncated block artifact record header",
-            ));
+            return Err(ReshareArtifactError::TruncatedRecordHeader.into());
         }
         let tag = extra_data[offset];
         offset += 1;
@@ -308,11 +291,9 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
         offset += 2;
         let end = offset
             .checked_add(payload_len)
-            .ok_or_else(|| PrecompileError::revert("block artifact record overflow"))?;
+            .ok_or(ReshareArtifactError::RecordOverflow)?;
         let Some(payload) = extra_data.get(offset..end) else {
-            return Err(PrecompileError::revert(
-                "truncated block artifact record payload",
-            ));
+            return Err(ReshareArtifactError::TruncatedRecordPayload.into());
         };
         offset = end;
 
@@ -320,7 +301,7 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
     }
 
     if offset != extra_data.len() {
-        return Err(PrecompileError::revert("trailing bytes in block artifacts"));
+        return Err(ReshareArtifactError::TrailingBytes.into());
     }
 
     Ok(artifacts)
@@ -329,22 +310,13 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
 /// Canonicalizes proposer-supplied artifact fragments before block execution.
 ///
 /// This function never accepts execution-produced fields from payload attributes. The
-/// caller must insert the local execution summary, timestamp remainder, and CE
-/// root after compressed-entity sealing. The reduced size limit reserves the
-/// mandatory tag `0x08` record inside the unchanged 64 KiB final envelope.
+/// caller inserts the local execution summary and timestamp remainder after
+/// execution. The encoder enforces the existing final envelope size limit.
 pub fn sanitize_prefinal_outbe_block_artifacts(extra_data: &[u8]) -> Result<Bytes> {
     let mut artifacts = decode_outbe_block_artifacts(extra_data)?;
     artifacts.execution_summary = None;
     artifacts.timestamp_millis_part = 0;
-    artifacts.compressed_entities_root = None;
     let encoded = encode_outbe_block_artifacts(&artifacts)?;
-    if encoded.len() > OUTBE_MAX_NON_ROOT_ARTIFACT_SIZE {
-        return Err(PrecompileError::revert(format!(
-            "pre-final block artifacts exceed reserved extra_data budget: {} > {}",
-            encoded.len(),
-            OUTBE_MAX_NON_ROOT_ARTIFACT_SIZE
-        )));
-    }
     Ok(encoded)
 }
 
@@ -360,10 +332,6 @@ pub fn encode_proposal_block_artifacts(
             validator_fee_sum: alloy_primitives::U256::MAX,
         });
         reserved.timestamp_millis_part = 999;
-        reserved.compressed_entities_root = Some(CompressedEntitiesRootArtifact {
-            commitment_scheme_version: 2,
-            r_sealed: B256::ZERO,
-        });
         let reserved_length = encode_outbe_block_artifacts(&reserved)?.len();
         let payload_budget = OUTBE_MAX_EXTRA_DATA_SIZE
             .saturating_sub(reserved_length)
@@ -381,7 +349,6 @@ pub fn encode_consensus_header_artifact(artifact: &ConsensusHeaderArtifact) -> R
         consensus_header_artifact: Some(artifact.clone()),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
-        compressed_entities_root: None,
     })?;
     sanitize_prefinal_outbe_block_artifacts(&encoded)
 }
@@ -425,23 +392,19 @@ pub fn tee_expired_target_exclusions_hash(addresses: &[Address]) -> Result<B256>
 
 fn validate_tee_expired_target_exclusions(addresses: &[Address]) -> Result<()> {
     if addresses.len() > MAX_TEE_EXPIRED_TARGET_EXCLUSIONS {
-        return Err(PrecompileError::revert(format!(
-            "TEE expiry exclusions exceed protocol cap: {} > {}",
-            addresses.len(),
-            MAX_TEE_EXPIRED_TARGET_EXCLUSIONS
-        )));
+        return Err(ReshareArtifactError::TeeExpiryExclusionsExceedCap {
+            count: addresses.len(),
+            max_count: MAX_TEE_EXPIRED_TARGET_EXCLUSIONS,
+        }
+        .into());
     }
     let mut unique = std::collections::BTreeSet::new();
     for address in addresses {
         if address.is_zero() {
-            return Err(PrecompileError::revert(
-                "TEE expiry exclusions contain zero validator address",
-            ));
+            return Err(ReshareArtifactError::TeeExpiryExclusionsZeroValidator.into());
         }
         if !unique.insert(*address) {
-            return Err(PrecompileError::revert(
-                "TEE expiry exclusions contain duplicate validator address",
-            ));
+            return Err(ReshareArtifactError::TeeExpiryExclusionsDuplicateValidator.into());
         }
     }
     Ok(())
@@ -484,49 +447,41 @@ pub fn decode_radicle_publication_artifact(
     Ok(decode_outbe_block_artifacts(extra_data)?.radicle_publication)
 }
 
-fn ensure_count_fits_u16(name: &str, count: usize) -> Result<()> {
+fn ensure_count_fits_u16(name: &'static str, count: usize) -> Result<()> {
     if count > u16::MAX as usize {
-        return Err(PrecompileError::revert(format!(
-            "{name} list exceeds u16 count limit: {count}"
-        )));
+        return Err(ReshareArtifactError::ListExceedsU16Limit { name, count }.into());
     }
     Ok(())
 }
 
-fn ensure_len_fits_u32(name: &str, len: usize) -> Result<()> {
+fn ensure_len_fits_u32(name: &'static str, len: usize) -> Result<()> {
     if len > u32::MAX as usize {
-        return Err(PrecompileError::revert(format!(
-            "{name} exceeds u32 length limit: {len}"
-        )));
+        return Err(ReshareArtifactError::ExceedsU32LengthLimit { name, len }.into());
     }
     Ok(())
 }
 
-fn ensure_payload_fits_u16(name: &str, len: usize) -> Result<()> {
+fn ensure_payload_fits_u16(name: &'static str, len: usize) -> Result<()> {
     if len > u16::MAX as usize {
-        return Err(PrecompileError::revert(format!(
-            "{name} payload exceeds u16 length limit: {len}"
-        )));
+        return Err(ReshareArtifactError::PayloadExceedsU16LengthLimit { name, len }.into());
     }
     Ok(())
 }
 
 fn decode_block_artifact_record_count(extra_data: &[u8]) -> Result<usize> {
     if extra_data.len() < 4 + 1 + 1 {
-        return Err(PrecompileError::revert("block artifacts too short"));
+        return Err(ReshareArtifactError::TooShort.into());
     }
 
     if &extra_data[..4] != MAGIC {
-        return Err(PrecompileError::revert(
-            "unknown non-empty extra_data block artifact",
-        ));
+        return Err(ReshareArtifactError::UnknownExtraDataArtifact.into());
     }
 
     if extra_data[4] != VERSION && extra_data[4] != PUBLICATION_VERSION {
-        return Err(PrecompileError::revert(format!(
-            "unsupported block artifact version: {}",
-            extra_data[4]
-        )));
+        return Err(ReshareArtifactError::UnsupportedVersion {
+            version: extra_data[4],
+        }
+        .into());
     }
 
     Ok(extra_data[5] as usize)
@@ -540,9 +495,7 @@ mod tests {
         decode_boundary_artifact, decode_consensus_header_artifact, decode_outbe_block_artifacts,
         encode_boundary_artifact, encode_consensus_header_artifact, encode_outbe_block_artifacts,
         sanitize_prefinal_outbe_block_artifacts, tee_expired_target_exclusions_hash,
-        CompressedEntitiesRootArtifact, ConsensusHeaderArtifact, ExecutionSummaryArtifact,
-        OutbeBlockArtifacts, COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN,
-        COMPRESSED_ENTITIES_ROOT_RECORD_LEN, OUTBE_MAX_NON_ROOT_ARTIFACT_SIZE,
+        ConsensusHeaderArtifact, ExecutionSummaryArtifact, OutbeBlockArtifacts,
     };
     use crate::consensus::{DkgBoundaryArtifact, ReshareResult};
 
@@ -672,7 +625,6 @@ mod tests {
             )),
             timestamp_millis_part: 0,
             late_finalize_credits: None,
-            compressed_entities_root: None,
         })
         .unwrap();
         let decoded = decode_outbe_block_artifacts(&encoded).unwrap();
@@ -913,28 +865,17 @@ mod tests {
         ];
 
         let timestamps = [0u64, 1, 999, u64::MAX];
-        let roots = [
-            None,
-            Some(CompressedEntitiesRootArtifact {
-                commitment_scheme_version: 2,
-                r_sealed: B256::repeat_byte(0xA8),
-            }),
-        ];
-
         for summary in &summaries {
             for header in &consensus_headers {
                 for &ts in &timestamps {
-                    for root in roots {
-                        assert_roundtrip(&OutbeBlockArtifacts {
-                            radicle_publication_enabled: false,
-                            radicle_publication: None,
-                            execution_summary: *summary,
-                            consensus_header_artifact: header.clone(),
-                            timestamp_millis_part: ts,
-                            late_finalize_credits: None,
-                            compressed_entities_root: root,
-                        });
-                    }
+                    assert_roundtrip(&OutbeBlockArtifacts {
+                        radicle_publication_enabled: false,
+                        radicle_publication: None,
+                        execution_summary: *summary,
+                        consensus_header_artifact: header.clone(),
+                        timestamp_millis_part: ts,
+                        late_finalize_credits: None,
+                    });
                 }
             }
         }
@@ -980,7 +921,6 @@ mod tests {
                 consensus_header_artifact,
                 timestamp_millis_part,
                 late_finalize_credits: None,
-                compressed_entities_root: None,
             };
 
             let encoded = encode_outbe_block_artifacts(&artifacts).expect("encode");
@@ -1026,7 +966,6 @@ mod tests {
             )),
             timestamp_millis_part: 0,
             late_finalize_credits: None,
-            compressed_entities_root: None,
         };
         let err = encode_outbe_block_artifacts(&oversize)
             .expect_err("encoding past the extra_data budget must be rejected");
@@ -1051,7 +990,6 @@ mod tests {
             )),
             timestamp_millis_part: 0,
             late_finalize_credits: None,
-            compressed_entities_root: None,
         };
         let encoded =
             encode_outbe_block_artifacts(&at_limit).expect("at-limit artifact must encode");
@@ -1093,7 +1031,6 @@ mod tests {
             )),
             timestamp_millis_part: 0,
             late_finalize_credits: None,
-            compressed_entities_root: None,
         })
         .expect("boundary encode");
         // Byte 6 is the first record's tag (after MAGIC[0..4] + version + count).
@@ -1109,7 +1046,6 @@ mod tests {
             )),
             timestamp_millis_part: 0,
             late_finalize_credits: None,
-            compressed_entities_root: None,
         })
         .expect("dealer encode");
         assert_eq!(dealer_encoded[6], super::DEALER_LOG_TAG);
@@ -1158,7 +1094,6 @@ mod tests {
             late_finalize_credits: Some(super::LateFinalizeCreditsArtifact {
                 batches: vec![sample_credit(5, 0x55)],
             }),
-            compressed_entities_root: None,
         };
         let encoded = encode_outbe_block_artifacts(&original).expect("encode");
         assert_eq!(
@@ -1248,85 +1183,17 @@ mod tests {
     }
 
     #[test]
-    fn compressed_entities_root_has_pinned_tag_length_order_and_big_endian_bytes() {
-        let artifact = CompressedEntitiesRootArtifact {
-            commitment_scheme_version: 2,
-            r_sealed: B256::repeat_byte(0xAB),
-        };
-        let encoded = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-            compressed_entities_root: Some(artifact),
-            ..Default::default()
-        })
-        .unwrap();
-
-        let mut expected = b"OART\x0B\x01\x08\x00\x24\x00\x00\x00\x02".to_vec();
-        expected.extend_from_slice(&[0xAB; 32]);
-        assert_eq!(encoded.as_ref(), expected);
-        assert_eq!(COMPRESSED_ENTITIES_ROOT_PAYLOAD_LEN, 36);
-        assert_eq!(COMPRESSED_ENTITIES_ROOT_RECORD_LEN, 39);
-        assert_eq!(OUTBE_MAX_NON_ROOT_ARTIFACT_SIZE, 65_536 - 39);
-        assert_eq!(
-            decode_outbe_block_artifacts(&encoded)
-                .unwrap()
-                .compressed_entities_root,
-            Some(artifact)
-        );
-    }
-
-    #[test]
     fn post_reset_block_one_extra_data_vector_is_pinned() {
-        let root = B256::repeat_byte(0x11);
         let encoded = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
             execution_summary: Some(ExecutionSummaryArtifact {
                 validator_fee_sum: U256::ZERO,
             }),
-            compressed_entities_root: Some(CompressedEntitiesRootArtifact {
-                commitment_scheme_version: 2,
-                r_sealed: root,
-            }),
             ..Default::default()
         })
         .unwrap();
-        let mut expected = b"OART\x0B\x02\x01\x00\x20".to_vec();
+        let mut expected = b"OART\x0B\x01\x01\x00\x20".to_vec();
         expected.extend_from_slice(&[0_u8; 32]);
-        expected.extend_from_slice(b"\x08\x00\x24\x00\x00\x00\x02");
-        expected.extend_from_slice(root.as_slice());
         assert_eq!(encoded.as_ref(), expected);
-    }
-
-    #[test]
-    fn compressed_entities_root_decode_rejects_duplicate_wrong_lengths_and_truncation() {
-        let valid = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-            compressed_entities_root: Some(CompressedEntitiesRootArtifact {
-                commitment_scheme_version: 0,
-                r_sealed: B256::ZERO,
-            }),
-            ..Default::default()
-        })
-        .unwrap();
-        assert!(
-            decode_outbe_block_artifacts(&valid).is_ok(),
-            "codec is structural only"
-        );
-
-        let record = &valid[6..];
-        let mut duplicate = valid.to_vec();
-        duplicate[5] = 2;
-        duplicate.extend_from_slice(record);
-        assert!(decode_outbe_block_artifacts(&duplicate).is_err());
-
-        for length in [0_u16, 35, 37, u16::MAX] {
-            let mut malformed = valid.to_vec();
-            malformed[7..9].copy_from_slice(&length.to_be_bytes());
-            assert!(decode_outbe_block_artifacts(&malformed).is_err());
-        }
-        assert_eq!(
-            decode_outbe_block_artifacts(&[]).unwrap(),
-            OutbeBlockArtifacts::default()
-        );
-        for end in 1..valid.len() {
-            assert!(decode_outbe_block_artifacts(&valid[..end]).is_err());
-        }
     }
 
     #[test]
@@ -1338,10 +1205,6 @@ mod tests {
             }),
             consensus_header_artifact: Some(consensus.clone()),
             timestamp_millis_part: 321,
-            compressed_entities_root: Some(CompressedEntitiesRootArtifact {
-                commitment_scheme_version: 99,
-                r_sealed: B256::repeat_byte(0xEF),
-            }),
             ..Default::default()
         })
         .unwrap();
@@ -1351,45 +1214,16 @@ mod tests {
         assert_eq!(decoded.consensus_header_artifact, Some(consensus));
         assert_eq!(decoded.execution_summary, None);
         assert_eq!(decoded.timestamp_millis_part, 0);
-        assert_eq!(decoded.compressed_entities_root, None);
     }
 
     #[test]
-    fn root_reservation_accepts_exact_64k_final_and_rejects_one_more_non_root_byte() {
-        let exact_dealer_len =
-            OUTBE_MAX_EXTRA_DATA_SIZE - 6 - 3 - COMPRESSED_ENTITIES_ROOT_RECORD_LEN;
-        let exact_non_root = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-            consensus_header_artifact: Some(ConsensusHeaderArtifact::DealerLog(Bytes::from(
-                vec![0x5A; exact_dealer_len],
-            ))),
-            ..Default::default()
-        })
-        .unwrap();
-        assert_eq!(exact_non_root.len(), OUTBE_MAX_NON_ROOT_ARTIFACT_SIZE);
-        assert_eq!(
-            sanitize_prefinal_outbe_block_artifacts(&exact_non_root).unwrap(),
-            exact_non_root
-        );
-
-        let mut final_artifacts = decode_outbe_block_artifacts(&exact_non_root).unwrap();
-        final_artifacts.compressed_entities_root = Some(CompressedEntitiesRootArtifact {
-            commitment_scheme_version: 2,
-            r_sealed: B256::repeat_byte(0xA5),
-        });
-        assert_eq!(
-            encode_outbe_block_artifacts(&final_artifacts)
-                .unwrap()
-                .len(),
-            OUTBE_MAX_EXTRA_DATA_SIZE
-        );
-
-        let one_over = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-            consensus_header_artifact: Some(ConsensusHeaderArtifact::DealerLog(Bytes::from(
-                vec![0x5A; exact_dealer_len + 1],
-            ))),
-            ..Default::default()
-        })
-        .unwrap();
-        assert!(sanitize_prefinal_outbe_block_artifacts(&one_over).is_err());
+    fn retired_ce_tag_is_rejected_instead_of_becoming_authority() {
+        for length in [0u16, 35, 36, 37] {
+            let mut encoded = b"OART\x0B\x01\x08".to_vec();
+            encoded.extend_from_slice(&length.to_be_bytes());
+            encoded.extend(std::iter::repeat_n(0, length as usize));
+            assert!(decode_outbe_block_artifacts(&encoded).is_err());
+            assert!(sanitize_prefinal_outbe_block_artifacts(&encoded).is_err());
+        }
     }
 }

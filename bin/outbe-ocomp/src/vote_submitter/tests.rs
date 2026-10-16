@@ -90,7 +90,7 @@ fn public_rpc_rejects_success_response_without_result_field() {
 
     assert!(matches!(
         parse_rpc_response(response, 7),
-        Err(PublicVoteRpcErrorV1::Malformed(message)) if message == "missing result"
+        Err(PublicVoteRpcErrorV1::MissingResult)
     ));
 }
 
@@ -108,7 +108,6 @@ fn test_result(limits: &SchemaLimits) -> LysisResultV1 {
     };
     let conservation = ConservationTotalsV1 {
         tribute_nominal_total: U256::ZERO,
-        eligible_nominal_total: U256::ZERO,
         day_limit: U256::ZERO,
         gratis_demand: U256::ZERO,
         day_gratis_limit_minor: U256::ZERO,

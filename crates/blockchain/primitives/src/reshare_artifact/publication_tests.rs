@@ -17,10 +17,6 @@ fn proposer_uses_maximum_ready_prefix_after_reserving_final_fields() {
             validator_fee_sum: U256::MAX,
         });
         final_fields.timestamp_millis_part = 999;
-        final_fields.compressed_entities_root = Some(CompressedEntitiesRootArtifact {
-            commitment_scheme_version: 2,
-            r_sealed: B256::repeat_byte(255),
-        });
         let final_base_len = encode_outbe_block_artifacts(&final_fields).unwrap().len();
         let available = 3 + PUBLICATION_BODY_LEN + 1 + count * 100;
         let padding = OUTBE_MAX_EXTRA_DATA_SIZE - final_base_len - available;
@@ -45,7 +41,6 @@ fn proposer_uses_maximum_ready_prefix_after_reserving_final_fields() {
         );
         decoded.execution_summary = final_fields.execution_summary;
         decoded.timestamp_millis_part = final_fields.timestamp_millis_part;
-        decoded.compressed_entities_root = final_fields.compressed_entities_root;
         let sealed = encode_outbe_block_artifacts(&decoded).unwrap();
         assert!(sealed.len() <= OUTBE_MAX_EXTRA_DATA_SIZE);
         if count > 0 {
@@ -119,10 +114,6 @@ fn full_publication_batch_fits_with_maximum_other_mandatory_records() {
         }),
         timestamp_millis_part: 999,
         late_finalize_credits: Some(credits),
-        compressed_entities_root: Some(CompressedEntitiesRootArtifact {
-            commitment_scheme_version: 2,
-            r_sealed: B256::repeat_byte(255),
-        }),
         ..Default::default()
     };
     let mandatory = encode_outbe_block_artifacts(&artifacts).unwrap();
@@ -140,7 +131,6 @@ fn full_publication_batch_fits_with_maximum_other_mandatory_records() {
         artifacts.late_finalize_credits
     );
     assert!(sanitized.execution_summary.is_none());
-    assert!(sanitized.compressed_entities_root.is_none());
 }
 
 #[test]

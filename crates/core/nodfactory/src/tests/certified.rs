@@ -245,6 +245,11 @@ fn binding(call: u8) -> EffectBindingV1 {
 
 fn input(wwd: u32, call: u8) -> CertifiedNodGenerationV1 {
     CertifiedNodGenerationV1 {
+        source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
+            block_number: 1,
+            block_hash: B256::repeat_byte(0x71),
+            state_root: B256::repeat_byte(0x72),
+        },
         binding: binding(call),
         program_semantics_hash: B256::repeat_byte(7),
         precondition: NodTargetPreconditionV1 {
@@ -266,6 +271,7 @@ fn input(wwd: u32, call: u8) -> CertifiedNodGenerationV1 {
         },
         nod_amount_total: U256::from(700),
         lysis_allocation_minor: U256::from(500),
+        nod_gratis_load_max: U256::from(200),
         issued_at: 1_700_000_123,
     }
 }
@@ -280,6 +286,7 @@ fn valid_capability_installs_exact_generation_receipt_and_event() {
     assert_eq!(
         provider.generation(WorldwideDay::new(input.precondition.wwd)),
         Some(NodCertifiedGenerationProjection {
+            source_checkpoint: input.source_checkpoint,
             worldwide_day: WorldwideDay::new(input.precondition.wwd),
             generation: 1,
             job_id: input.binding.job_id,
@@ -293,6 +300,7 @@ fn valid_capability_installs_exact_generation_receipt_and_event() {
             bucket_count: input.counts.bucket_count,
             nod_amount_total: input.nod_amount_total,
             lysis_allocation_minor: input.lysis_allocation_minor,
+            nod_gratis_load_max: input.nod_gratis_load_max,
             issued_at: input.issued_at,
             next_nod_ordinal: 0,
             last_progress_height: 1,
@@ -378,6 +386,14 @@ fn exact_replay_is_idempotent_and_wrong_generation_is_side_effect_free() {
     assert_eq!(provider.inner.storage, state_after_first);
     assert_eq!(provider.inner.get_ordered_events(), events_after_first);
 
+    for cap in [U256::from(199), U256::from(201)] {
+        let mut forged = first.clone();
+        forged.nod_gratis_load_max = cap;
+        assert!(provider.run(&forged).is_err());
+        assert_eq!(provider.inner.storage, state_after_first);
+        assert_eq!(provider.inner.get_ordered_events(), events_after_first);
+    }
+
     let mut wrong = input(20_260_727, 23);
     wrong.precondition.target_generation = 7;
     wrong.precondition.namespace_root_before = B256::repeat_byte(77);
@@ -430,6 +446,16 @@ fn invalid_roots_counts_binding_and_time_never_mutate_state() {
 
     let mut value = base.clone();
     value.issued_at = 0;
+    invalid.push(value);
+
+    let mut value = base.clone();
+    value.source_checkpoint.block_number = 0;
+    invalid.push(value);
+    let mut value = base.clone();
+    value.source_checkpoint.block_hash = B256::ZERO;
+    invalid.push(value);
+    let mut value = base.clone();
+    value.source_checkpoint.state_root = B256::ZERO;
     invalid.push(value);
 
     let mut value = base;
@@ -575,4 +601,24 @@ fn receipt_hash_is_stable_across_activation_block_times() {
         receipt_hash,
         second_receipt.receipt_hash(&poc_schema_limits()).unwrap()
     );
+}
+
+#[test]
+fn replay_cannot_replace_the_finalized_source_checkpoint() {
+    let mut provider = ActivationTestProvider::new();
+    let first = input(20_260_736, 33);
+    provider.run(&first).unwrap();
+    let before = provider.inner.storage.clone();
+    let events = provider.inner.get_ordered_events().to_vec();
+    for component in 0..3 {
+        let mut changed = first.clone();
+        match component {
+            0 => changed.source_checkpoint.block_number += 1,
+            1 => changed.source_checkpoint.block_hash = B256::repeat_byte(0x81),
+            _ => changed.source_checkpoint.state_root = B256::repeat_byte(0x82),
+        }
+        assert!(provider.run(&changed).is_err());
+        assert_eq!(provider.inner.storage, before);
+        assert_eq!(provider.inner.get_ordered_events(), events);
+    }
 }

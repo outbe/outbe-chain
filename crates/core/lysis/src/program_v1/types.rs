@@ -1,10 +1,11 @@
 //! Typed storage-independent inputs, actions, observations and failures.
 
 use alloy_primitives::{Address, U256};
-use outbe_compressed_entities::{TributeBodyV1, WwdEntityId};
+use outbe_primitives::entity_codec::TributeBodyV1;
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
-pub use crate::errors::ProgramErrorV1;
+pub use crate::errors::{LysisArithmeticErrorV1, ProgramErrorV1};
 
 /// One canonical Tribute body required by Lysis V1.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -16,7 +17,6 @@ pub struct TributeInputV1 {
     pub nominal_amount_minor: U256,
     pub reference_currency: u16,
     pub tribute_price_minor: U256,
-    pub exclude_from_intex_issuance: bool,
 }
 
 impl From<&TributeBodyV1> for TributeInputV1 {
@@ -29,7 +29,6 @@ impl From<&TributeBodyV1> for TributeInputV1 {
             nominal_amount_minor: body.nominal_amount_minor,
             reference_currency: body.reference_currency,
             tribute_price_minor: body.tribute_price_minor,
-            exclude_from_intex_issuance: body.exclude_from_intex_issuance,
         }
     }
 }

@@ -1,10 +1,9 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_compressed_entities::{
-    derive_poseidon_entity_id, list, read, EntityRef, ExecutionScope, IdPageRequest,
-    ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
-};
 use outbe_primitives::error::Result;
 use outbe_primitives::time::WorldwideDay;
+#[cfg(any(test, feature = "test-enclave"))]
+use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::errors::TributeError;
 use crate::schema::{DayPreAdmission, DayTotals, TributeContract, TributeData};
@@ -17,7 +16,6 @@ pub struct TributePreAdmissionProjection {
     pub source_generation: u64,
     pub profile_ready: bool,
     pub is_sealed: bool,
-    pub sealed_collection_root: B256,
     pub tribute_count: u32,
     pub tribute_nominal_total_minor: U256,
     pub canonical_body_bytes: u64,
@@ -46,39 +44,24 @@ impl TributeContract<'_> {
         self.total_supply.read()
     }
 
-    pub fn owner_of(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        tribute_id: WwdEntityId,
-    ) -> Result<Address> {
+    pub fn owner_of(&self, tribute_id: WwdEntityId) -> Result<Address> {
         let tribute = self
-            .get_record(scope, parent, tribute_id)?
+            .get_record(tribute_id)?
             .ok_or(TributeError::TributeNotFound)?;
         Ok(tribute.owner)
     }
 
-    pub fn balance_of(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        owner: Address,
-    ) -> Result<u64> {
-        let count = self.get_tribute_ids_by_owner(scope, parent, owner)?.len();
+    pub fn balance_of(&self, owner: Address) -> Result<u64> {
+        let count = self.get_tribute_ids_by_owner(owner)?.len();
         let count: u64 = count
             .try_into()
             .map_err(|_| TributeError::OwnerBalanceOverflow)?;
         Ok(count)
     }
 
-    pub fn token_uri(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        tribute_id: WwdEntityId,
-    ) -> Result<String> {
+    pub fn token_uri(&self, tribute_id: WwdEntityId) -> Result<String> {
         let tribute = self
-            .get_record(scope, parent, tribute_id)?
+            .get_record(tribute_id)?
             .ok_or(TributeError::TributeNotFound)?;
         let (issuance, nominal, encryption) = tribute.public_amount_attributes()?;
         let attributes = serde_json::json!([
@@ -87,8 +70,7 @@ impl TributeContract<'_> {
             {"trait_type":"issuance_currency", "value": tribute.issuance_currency.to_string()},
             {"trait_type":"issuance_amount_minor", "value": issuance},
             {"trait_type":"nominal_amount_minor", "value": nominal},
-            {"trait_type":"reference_currency", "value": tribute.reference_currency.to_string()},
-            {"trait_type":"exclude_from_intex_issuance", "value": tribute.exclude_from_intex_issuance}
+            {"trait_type":"reference_currency", "value": tribute.reference_currency.to_string()}
         ]);
         let metadata = serde_json::json!({
             "name": format!("Tribute 0x{}", tribute.tribute_id),
@@ -99,29 +81,12 @@ impl TributeContract<'_> {
     }
 
     /// Public authenticated record; no amount decryption occurs on this path.
-    pub fn get_record(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        tribute_id: WwdEntityId,
-    ) -> Result<Option<TributeRecord>> {
-        read(
-            self.storage_handle(),
-            scope,
-            parent,
-            EntityRef::Tribute(tribute_id),
-        )?
-        .map(|current| record_from_verified(&current))
-        .transpose()
+    pub fn get_record(&self, tribute_id: WwdEntityId) -> Result<Option<TributeRecord>> {
+        crate::state_api::get_record(&self.storage_handle(), tribute_id)
     }
 
-    pub fn get_tribute(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        tribute_id: WwdEntityId,
-    ) -> Result<Option<TributeData>> {
-        self.get_record(scope, parent, tribute_id)?
+    pub fn get_tribute(&self, tribute_id: WwdEntityId) -> Result<Option<TributeData>> {
+        self.get_record(tribute_id)?
             .as_ref()
             .map(calculation_view)
             .transpose()
@@ -167,7 +132,6 @@ impl TributeContract<'_> {
             source_generation: admission.source_generation,
             profile_ready: self.ocomp_profile_ready.read()?,
             is_sealed: admission.is_sealed,
-            sealed_collection_root: admission.sealed_collection_root,
             tribute_count,
             tribute_nominal_total_minor,
             canonical_body_bytes: admission.canonical_body_bytes,
@@ -176,29 +140,19 @@ impl TributeContract<'_> {
         })
     }
 
-    pub fn get_tribute_ids_by_owner(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        owner: Address,
-    ) -> Result<Vec<WwdEntityId>> {
+    pub fn get_tribute_ids_by_owner(&self, owner: Address) -> Result<Vec<WwdEntityId>> {
         Ok(self
-            .read_records(scope, parent, QueryRef::TributeByOwner(owner))?
+            .state_records_by_owner(owner)?
             .into_iter()
-            .map(|tribute| tribute.tribute_id)
+            .map(|record| record.tribute_id)
             .collect())
     }
 
-    pub fn get_tribute_ids_by_day(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        day: WorldwideDay,
-    ) -> Result<Vec<WwdEntityId>> {
+    pub fn get_tribute_ids_by_day(&self, day: WorldwideDay) -> Result<Vec<WwdEntityId>> {
         Ok(self
-            .read_records(scope, parent, QueryRef::TributeByDay(day))?
+            .state_records_by_day(day)?
             .into_iter()
-            .map(|tribute| tribute.tribute_id)
+            .map(|record| record.tribute_id)
             .collect())
     }
 
@@ -258,7 +212,7 @@ impl TributeContract<'_> {
 
         let body_bytes = tribute
             .stored_body()
-            .map_err(crate::errors::body_read_corruption)?
+            .map_err(TributeError::from)?
             .payload()
             .len();
         let body_bytes =
@@ -342,77 +296,26 @@ impl TributeContract<'_> {
         self.day_totals.update(&totals)
     }
 
-    pub fn read_all_by_owner(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        owner: Address,
-    ) -> Result<Vec<TributeData>> {
-        self.read_all(scope, parent, QueryRef::TributeByOwner(owner))
+    pub fn read_all_by_owner(&self, owner: Address) -> Result<Vec<TributeData>> {
+        self.state_records_by_owner(owner)?
+            .into_iter()
+            .map(|record| calculation_view(&crate::record::from_encrypted(record.into())))
+            .collect()
     }
 
-    pub fn read_all_by_day(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        day: WorldwideDay,
-    ) -> Result<Vec<TributeData>> {
-        self.read_all(scope, parent, QueryRef::TributeByDay(day))
-    }
-
-    pub fn read_records_by_day(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        day: WorldwideDay,
-    ) -> Result<Vec<TributeRecord>> {
-        self.read_records(scope, parent, QueryRef::TributeByDay(day))
-    }
-
-    fn read_all(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        query: QueryRef,
-    ) -> Result<Vec<TributeData>> {
-        self.read_records(scope, parent, query)?
+    pub fn read_all_by_day(&self, day: WorldwideDay) -> Result<Vec<TributeData>> {
+        self.read_records_by_day(day)?
             .iter()
             .map(calculation_view)
             .collect()
     }
 
-    fn read_records(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        query: QueryRef,
-    ) -> Result<Vec<TributeRecord>> {
-        let mut records = Vec::new();
-        let mut after = None;
-        loop {
-            let page = list(
-                self.storage_handle(),
-                scope,
-                parent,
-                query,
-                IdPageRequest {
-                    after,
-                    limit: MAX_ID_PAGE_LIMIT,
-                },
-            )?;
-            let next_after = page.next_after();
-            let bodies = page.into_bodies();
-            records.extend(
-                bodies
-                    .iter()
-                    .map(record_from_verified)
-                    .collect::<Result<Vec<_>>>()?,
-            );
-            let Some(next) = next_after else {
-                return Ok(records);
-            };
-            after = Some(next);
-        }
+    pub fn read_records_by_day(&self, day: WorldwideDay) -> Result<Vec<TributeRecord>> {
+        Ok(self
+            .state_records_by_day(day)?
+            .into_iter()
+            .map(|record| crate::record::from_encrypted(record.into()))
+            .collect())
     }
 }
 
@@ -423,25 +326,13 @@ fn reference_currency_refcount_key(day: WorldwideDay, currency: u16) -> B256 {
     keccak256(preimage)
 }
 
-pub(crate) fn record_from_verified(body: &VerifiedBody) -> Result<TributeRecord> {
-    if let Some(encrypted) = body.payload().as_encrypted_tribute() {
-        return Ok(crate::record::from_encrypted(encrypted.clone()));
-    }
-    let payload = body
-        .payload()
-        .as_tribute()
-        .ok_or(TributeError::NonTributePayload)?;
-    Ok(crate::record::from_legacy(
-        crate::repository::from_canonical_body(payload.clone()),
-    ))
-}
-
 fn calculation_view(record: &TributeRecord) -> Result<TributeData> {
     record
         .calculation_view()
         .map_err(TributeError::private_amount_read_failed)
 }
 
+#[cfg(any(test, feature = "test-enclave"))]
 pub(crate) fn validate_tribute_for_issue(tribute: &TributeData) -> Result<()> {
     if tribute.owner.is_zero() {
         return Err(TributeError::InvalidOwner.into());

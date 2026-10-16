@@ -1,0 +1,39 @@
+# Feeder sources for the baseline protocol version. Every validator's feeder
+# reads this file from the node. Do not edit it after a release: a change is a
+# new file under the version that introduces it (see `src/sources.rs`).
+#
+# RPC URLs and API keys are not here. Each operator sets them in the local
+# feeder config: `rpc_endpoints` by `chain_id`, and `api_providers`.
+
+[[currency_pairs]]
+base = "COEN"
+quote = "840"
+markets = [
+  { provider = "uniswap", quote = "USDC" },
+]
+
+# COEN/978 = COEN/840 ÷ 978/840. The markets give dollars per euro.
+[[currency_pairs]]
+base = "COEN"
+quote = "978"
+cross = "840"
+markets = [
+  { provider = "chainlink_eur_usd", quote = "840" },
+  { provider = "pyth", quote = "840" },
+]
+
+[[deviation_thresholds]]
+base = "COEN"
+threshold = "2.0"
+
+[[dex_providers]]
+name = "uniswap"
+chain_id = 1
+base_token = "0x1111111111111111111111111111111111111111"    # COEN token, replace
+quote_token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"   # USDC
+pool = { protocol = "uniswap_v3", address = "0x2222222222222222222222222222222222222222" }   # replace
+
+[[onchain_providers]]
+name = "chainlink_eur_usd"
+chain_id = 1
+contract = "0xb49f677943BC038e9857d61E7d053CaA2C1734C1"   # Chainlink EUR / USD

@@ -11,10 +11,14 @@ pub mod transport;
 use std::fmt;
 
 pub use attestation::{DcapVerifyError, FinalizedAdmissionError, GramineError};
-pub use compute::{ComputeError, PayloadError, ProcessError};
+pub use compute::{
+    ComputeError, FidelityEnclaveError, GratisRejectReason, NodMaterializationRejectReason,
+    NodMineRejectReason, PayloadError, ProcessError, PromisRejectReason, TributeDayRejectReason,
+};
 pub use init::{InitError, OnboardingUploadError, RunError, SgxSealingError};
 pub use transport::{
-    transport_handshake, transport_noise, transport_noise_debug, TransportDispatchError,
+    transport_handshake, transport_noise, transport_noise_debug, RemoteSessionHandshakeError,
+    TransportDispatchError,
 };
 
 /// Result alias for enclave cryptographic, sealing, and DKG operations.
@@ -23,10 +27,62 @@ pub type Result<T> = core::result::Result<T, TeeError>;
 /// Result alias for enclave domain, initialization, attestation, and dispatch operations.
 pub type EnclaveResult<T> = core::result::Result<T, EnclaveError>;
 
+/// Typed DKG ceremony and dispatch errors.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DkgError {
+    #[error("participant count exceeds u32")]
+    ParticipantCountOverflow,
+    #[error("empty participant set")]
+    EmptyParticipantSet,
+    #[error("dealer log failed verification")]
+    DealerLogVerificationFailed,
+    #[error("incomplete dealer set: {actual} of {expected} committee dealers")]
+    IncompleteDealerSet { actual: usize, expected: usize },
+    #[error("ceremony {0} already open")]
+    CeremonyAlreadyOpen(String),
+    #[error("DkgOpen: enc key missing for participant")]
+    MissingParticipantEncKey,
+    #[error("DKG announcement requires initialized state")]
+    AnnouncementRequiresInitializedState,
+}
+
+impl From<DkgError> for TeeError {
+    fn from(err: DkgError) -> Self {
+        Self::Dkg(err.to_string())
+    }
+}
+
+/// Typed DKG seam-order errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum DkgSeamOrderError {
+    #[error("start_dealer called twice")]
+    StartDealerCalledTwice,
+    #[error("player already finalized")]
+    PlayerAlreadyFinalized,
+}
+
+impl DkgSeamOrderError {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StartDealerCalledTwice => "start_dealer called twice",
+            Self::PlayerAlreadyFinalized => "player already finalized",
+        }
+    }
+}
+
+impl From<DkgSeamOrderError> for TeeError {
+    fn from(err: DkgSeamOrderError) -> Self {
+        Self::DkgSeamOrder(err.as_str())
+    }
+}
+
 /// Error from enclave cryptographic, sealing, or DKG operations.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum TeeError {
+    #[error("Lysis calculation rejected")]
+    LysisCalculationRejected,
+
     /// The nonce size is not 12 bytes.
     #[error("invalid nonce size: expected 12 bytes, got {0}")]
     InvalidNonce(usize),
@@ -120,6 +176,11 @@ impl TeeError {
         Self::Dkg(format!("{prefix}: {err}"))
     }
 
+    /// Wrap a prefixed debuggable error as a `TeeError::Dkg` variant.
+    pub fn dkg_debug_context(prefix: &'static str, err: impl fmt::Debug) -> Self {
+        Self::Dkg(format!("{prefix}: {err:?}"))
+    }
+
     /// Wrap a displayable error as a `TeeError::TributeOfferReject` variant.
     pub fn tribute_offer_reject(err: impl fmt::Display) -> Self {
         Self::TributeOfferReject(err.to_string())
@@ -185,14 +246,14 @@ impl EnclaveError {
 impl PartialEq<&str> for EnclaveError {
     #[allow(clippy::cmp_owned)]
     fn eq(&self, other: &&str) -> bool {
-        self.to_string() == *other
+        self.to_string().as_str() == *other
     }
 }
 
 impl PartialEq<str> for EnclaveError {
     #[allow(clippy::cmp_owned)]
     fn eq(&self, other: &str) -> bool {
-        self.to_string() == other
+        self.to_string().as_str() == other
     }
 }
 

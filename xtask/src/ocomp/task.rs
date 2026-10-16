@@ -306,8 +306,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
-                    "-p",
                     "outbe-tribute",
                     "-p",
                     "outbe-fidelity",
@@ -332,8 +330,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 &[
                     "clippy",
                     "--locked",
-                    "-p",
-                    "outbe-compressed-entities",
                     "-p",
                     "outbe-tribute",
                     "-p",
@@ -386,23 +382,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 repository_root,
                 &["test", "--locked", "-p", "outbe-primitives"],
             )?;
-            for integration_test in [
-                "system_tx_layout",
-                "e2e_system_tx",
-                "phase1_safety_verification",
-            ] {
-                cargo(
-                    repository_root,
-                    &[
-                        "test",
-                        "--locked",
-                        "-p",
-                        "outbe-evm",
-                        "--test",
-                        integration_test,
-                    ],
-                )?;
-            }
             for test in [
                 "ethereum_post_execution_copy_matches_upstream_behavior_matrix",
                 "active_terminal_request_is_last_semantic_writer_and_rejects_later_transactions",
@@ -492,10 +471,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
             )?;
             cargo(
                 repository_root,
-                &["test", "--locked", "-p", "outbe-compressed-entities"],
-            )?;
-            cargo(
-                repository_root,
                 &["test", "--locked", "-p", "outbe-metadosis"],
             )?;
             cargo(
@@ -508,7 +483,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-evm",
+                    "outbe-node",
                     "--test",
                     "ocomp_request_lifecycle",
                 ],
@@ -518,8 +493,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 &[
                     "clippy",
                     "--locked",
-                    "-p",
-                    "outbe-compressed-entities",
                     "-p",
                     "outbe-metadosis",
                     "-p",
@@ -561,10 +534,6 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
             )?;
             cargo(
                 repository_root,
-                &["test", "--locked", "-p", "outbe-compressed-entities"],
-            )?;
-            cargo(
-                repository_root,
                 &["test", "--locked", "-p", "outbe-metadosis"],
             )?;
             cargo(
@@ -577,7 +546,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-evm",
+                    "outbe-node",
                     "--test",
                     "ocomp_request_lifecycle",
                 ],
@@ -591,32 +560,21 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 &["test", "--locked", "-p", "outbe-node", "ocm_pin_001"],
             )?;
             cargo(repository_root, &["test", "--locked", "-p", "outbe-engine"])?;
-            cargo(
+            clippy_packages(
                 repository_root,
                 &[
                     "clippy",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
-                    "-p",
                     "outbe-metadosis",
-                    "-p",
                     "outbe-evm",
-                    "-p",
                     "outbe-consensus",
-                    "-p",
                     "outbe-node",
-                    "-p",
                     "outbe-engine",
-                    "-p",
                     "outbe-ocomp-protocol",
-                    "-p",
                     "xtask",
-                    "--all-targets",
-                    "--",
-                    "-D",
-                    "warnings",
                 ],
+                &["--all-targets"],
             )?;
             task_progress(
                 repository_root,
@@ -649,15 +607,11 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
-                    "-p",
                     "outbe-tribute",
                     "-p",
                     "outbe-fidelity",
                     "-p",
                     "outbe-oracle",
-                    "-p",
-                    "outbe-offchain-data",
                 ],
             )?;
             cargo(
@@ -673,39 +627,28 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "outbe-e2e-harness",
                     "--features",
                     "ocomp-integration",
-                    "--test",
-                    "ocomp_checkpoint_handoff",
+                    "--lib",
                 ],
             )?;
-            cargo(
+            clippy_packages(
                 repository_root,
                 &[
                     "clippy",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
-                    "-p",
                     "outbe-tribute",
-                    "-p",
                     "outbe-fidelity",
-                    "-p",
                     "outbe-oracle",
                     "-p",
-                    "outbe-offchain-data",
-                    "-p",
                     "outbe-node",
-                    "-p",
                     "outbe-ocomp-protocol",
-                    "-p",
                     "outbe-e2e-harness",
-                    "-p",
                     "xtask",
+                ],
+                &[
                     "--all-targets",
                     "--features",
                     "outbe-e2e-harness/ocomp-integration",
-                    "--",
-                    "-D",
-                    "warnings",
                 ],
             )?;
             task_progress(
@@ -1256,34 +1199,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "warnings",
                 ],
             )?;
-            task_progress(
-                repository_root,
-                task,
-                &[
-                    "OCM-EVD-001",
-                    "OCM-SEM-001",
-                    "OCM-SEM-002",
-                    "OCM-BYT-001",
-                    "OCM-BYT-002",
-                    "OCM-BND-003",
-                    "OCM-FSM-001",
-                    "OCM-REQ-001",
-                    "OCM-FIN-001",
-                    "OCM-PIN-001",
-                    "OCM-CTL-001",
-                    "OCM-DIS-001",
-                    "OCM-EXP-001",
-                    "OCM-CAS-001",
-                    "OCM-DET-001",
-                    "OCM-SIG-001",
-                    "OCM-VOT-001",
-                    "OCM-APL-001",
-                    "OCM-BND-002",
-                    "OCM-BND-001",
-                    "OCM-APL-002",
-                    "OCM-TIM-001",
-                ],
-            )?;
+            full_task_progress(repository_root, task)?;
         }
         "OCM-19" => {
             evidence_verifier(repository_root)?;
@@ -1334,34 +1250,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "warnings",
                 ],
             )?;
-            task_progress(
-                repository_root,
-                task,
-                &[
-                    "OCM-EVD-001",
-                    "OCM-SEM-001",
-                    "OCM-SEM-002",
-                    "OCM-BYT-001",
-                    "OCM-BYT-002",
-                    "OCM-BND-003",
-                    "OCM-FSM-001",
-                    "OCM-REQ-001",
-                    "OCM-FIN-001",
-                    "OCM-PIN-001",
-                    "OCM-CTL-001",
-                    "OCM-DIS-001",
-                    "OCM-EXP-001",
-                    "OCM-CAS-001",
-                    "OCM-DET-001",
-                    "OCM-SIG-001",
-                    "OCM-VOT-001",
-                    "OCM-APL-001",
-                    "OCM-BND-002",
-                    "OCM-BND-001",
-                    "OCM-APL-002",
-                    "OCM-TIM-001",
-                ],
-            )?;
+            full_task_progress(repository_root, task)?;
         }
         "OCM-20" => {
             evidence_verifier(repository_root)?;
@@ -1374,24 +1263,11 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-compressed-entities",
-                    "--",
-                    "--test-threads=1",
-                ],
-            )?;
-            cargo(
-                repository_root,
-                &[
-                    "test",
-                    "--locked",
-                    "-p",
                     "outbe-ocomp-protocol",
                     "-p",
                     "outbe-primitives",
                     "-p",
                     "outbe-tribute",
-                    "-p",
-                    "outbe-offchain-data",
                     "-p",
                     "outbe-metadosis",
                     "-p",
@@ -1412,11 +1288,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "-p",
                     "outbe-primitives",
                     "-p",
-                    "outbe-compressed-entities",
-                    "-p",
                     "outbe-tribute",
-                    "-p",
-                    "outbe-offchain-data",
                     "-p",
                     "outbe-metadosis",
                     "-p",
@@ -1431,34 +1303,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "warnings",
                 ],
             )?;
-            task_progress(
-                repository_root,
-                task,
-                &[
-                    "OCM-EVD-001",
-                    "OCM-SEM-001",
-                    "OCM-SEM-002",
-                    "OCM-BYT-001",
-                    "OCM-BYT-002",
-                    "OCM-BND-003",
-                    "OCM-FSM-001",
-                    "OCM-REQ-001",
-                    "OCM-FIN-001",
-                    "OCM-PIN-001",
-                    "OCM-CTL-001",
-                    "OCM-DIS-001",
-                    "OCM-EXP-001",
-                    "OCM-CAS-001",
-                    "OCM-DET-001",
-                    "OCM-SIG-001",
-                    "OCM-VOT-001",
-                    "OCM-APL-001",
-                    "OCM-BND-002",
-                    "OCM-BND-001",
-                    "OCM-APL-002",
-                    "OCM-TIM-001",
-                ],
-            )?;
+            full_task_progress(repository_root, task)?;
         }
         "OCM-21" => {
             evidence_verifier(repository_root)?;
@@ -1486,64 +1331,26 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-evm",
+                    "outbe-node",
                     "--test",
                     "ocomp_request_lifecycle",
                 ],
             )?;
-            cargo(
+            clippy_packages(
                 repository_root,
                 &[
-                    "clippy",
-                    "--locked",
-                    "-p",
                     "outbe-promislimit",
-                    "-p",
                     "outbe-metadosis",
-                    "-p",
                     "outbe-emissionlimit",
-                    "-p",
                     "outbe-cycle",
-                    "-p",
                     "outbe-evm",
-                    "-p",
+                    "outbe-node",
                     "outbe-ocomp-protocol",
-                    "-p",
                     "xtask",
-                    "--all-targets",
-                    "--",
-                    "-D",
-                    "warnings",
                 ],
+                &["--all-targets"],
             )?;
-            task_progress(
-                repository_root,
-                task,
-                &[
-                    "OCM-EVD-001",
-                    "OCM-SEM-001",
-                    "OCM-SEM-002",
-                    "OCM-BYT-001",
-                    "OCM-BYT-002",
-                    "OCM-BND-003",
-                    "OCM-FSM-001",
-                    "OCM-REQ-001",
-                    "OCM-FIN-001",
-                    "OCM-PIN-001",
-                    "OCM-CTL-001",
-                    "OCM-DIS-001",
-                    "OCM-EXP-001",
-                    "OCM-CAS-001",
-                    "OCM-DET-001",
-                    "OCM-SIG-001",
-                    "OCM-VOT-001",
-                    "OCM-APL-001",
-                    "OCM-BND-002",
-                    "OCM-BND-001",
-                    "OCM-APL-002",
-                    "OCM-TIM-001",
-                ],
-            )?;
+            full_task_progress(repository_root, task)?;
         }
         "OCM-22" => {
             evidence_verifier(repository_root)?;
@@ -1586,34 +1393,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "warnings",
                 ],
             )?;
-            task_progress(
-                repository_root,
-                task,
-                &[
-                    "OCM-EVD-001",
-                    "OCM-SEM-001",
-                    "OCM-SEM-002",
-                    "OCM-BYT-001",
-                    "OCM-BYT-002",
-                    "OCM-BND-003",
-                    "OCM-FSM-001",
-                    "OCM-REQ-001",
-                    "OCM-FIN-001",
-                    "OCM-PIN-001",
-                    "OCM-CTL-001",
-                    "OCM-DIS-001",
-                    "OCM-EXP-001",
-                    "OCM-CAS-001",
-                    "OCM-DET-001",
-                    "OCM-SIG-001",
-                    "OCM-VOT-001",
-                    "OCM-APL-001",
-                    "OCM-BND-002",
-                    "OCM-BND-001",
-                    "OCM-APL-002",
-                    "OCM-TIM-001",
-                ],
-            )?;
+            full_task_progress(repository_root, task)?;
         }
         "OCM-23" => {
             evidence_verifier(repository_root)?;
@@ -1706,34 +1486,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "warnings",
                 ],
             )?;
-            task_progress(
-                repository_root,
-                task,
-                &[
-                    "OCM-EVD-001",
-                    "OCM-SEM-001",
-                    "OCM-SEM-002",
-                    "OCM-BYT-001",
-                    "OCM-BYT-002",
-                    "OCM-BND-003",
-                    "OCM-FSM-001",
-                    "OCM-REQ-001",
-                    "OCM-FIN-001",
-                    "OCM-PIN-001",
-                    "OCM-CTL-001",
-                    "OCM-DIS-001",
-                    "OCM-EXP-001",
-                    "OCM-CAS-001",
-                    "OCM-DET-001",
-                    "OCM-SIG-001",
-                    "OCM-VOT-001",
-                    "OCM-APL-001",
-                    "OCM-BND-002",
-                    "OCM-BND-001",
-                    "OCM-APL-002",
-                    "OCM-TIM-001",
-                ],
-            )?;
+            full_task_progress(repository_root, task)?;
         }
         "OCM-24" => {
             evidence_verifier(repository_root)?;
@@ -1808,34 +1561,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "gramine-direct",
                 ],
             )?;
-            task_progress(
-                repository_root,
-                task,
-                &[
-                    "OCM-EVD-001",
-                    "OCM-SEM-001",
-                    "OCM-SEM-002",
-                    "OCM-BYT-001",
-                    "OCM-BYT-002",
-                    "OCM-BND-003",
-                    "OCM-FSM-001",
-                    "OCM-REQ-001",
-                    "OCM-FIN-001",
-                    "OCM-PIN-001",
-                    "OCM-CTL-001",
-                    "OCM-DIS-001",
-                    "OCM-EXP-001",
-                    "OCM-CAS-001",
-                    "OCM-DET-001",
-                    "OCM-SIG-001",
-                    "OCM-VOT-001",
-                    "OCM-APL-001",
-                    "OCM-BND-002",
-                    "OCM-BND-001",
-                    "OCM-APL-002",
-                    "OCM-TIM-001",
-                ],
-            )?;
+            full_task_progress(repository_root, task)?;
         }
         "OCM-25" => {
             evidence_verifier(repository_root)?;
@@ -1953,25 +1679,18 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "ocomp_final_fixture",
                 ],
             )?;
-            cargo(
+            clippy_packages(
                 repository_root,
                 &[
-                    "clippy",
-                    "--locked",
-                    "-p",
                     "outbe-ocomp-protocol",
-                    "-p",
                     "outbe-node",
-                    "-p",
                     "outbe-e2e-harness",
-                    "-p",
                     "xtask",
+                ],
+                &[
                     "--features",
                     "outbe-e2e-harness/ocomp-integration",
                     "--all-targets",
-                    "--",
-                    "-D",
-                    "warnings",
                 ],
             )?;
 
@@ -1981,12 +1700,16 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
             let checked_capacity = checked_artifacts.join("generated-capacity-v1.json");
             super::finalize::run(
                 repository_root,
-                &checked_capacity,
-                &base.join("genesis.json"),
-                &base.join("validators.json"),
-                super::finalize::FinalArtifactOverrides::default(),
+                super::finalize::FinalArtifactSources {
+                    capacity: &checked_capacity,
+                    base_genesis: &base.join("genesis.json"),
+                    validators: &base.join("validators.json"),
+                },
+                super::finalize::FinalArtifactOptions {
+                    check: true,
+                    ..Default::default()
+                },
                 &checked_artifacts,
-                true,
             )?;
 
             let run_root = fresh_task_output_dir("ocm26")?;
@@ -2001,12 +1724,13 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
             let generated_artifacts = run_root.join("final-artifacts");
             super::finalize::run(
                 repository_root,
-                &generated_capacity,
-                &base.join("genesis.json"),
-                &base.join("validators.json"),
-                super::finalize::FinalArtifactOverrides::default(),
+                super::finalize::FinalArtifactSources {
+                    capacity: &generated_capacity,
+                    base_genesis: &base.join("genesis.json"),
+                    validators: &base.join("validators.json"),
+                },
+                super::finalize::FinalArtifactOptions::default(),
                 &generated_artifacts,
-                false,
             )?;
             require_matching_final_consensus_artifacts(&generated_artifacts, &checked_artifacts)?;
 
@@ -2586,6 +2310,37 @@ fn path_str(path: &Path) -> Result<&str> {
         .ok_or_else(|| eyre::eyre!("path is not UTF-8: {}", path.display()))
 }
 
+fn full_task_progress(repository_root: &Path, task: &str) -> Result<()> {
+    task_progress(
+        repository_root,
+        task,
+        &[
+            "OCM-EVD-001",
+            "OCM-SEM-001",
+            "OCM-SEM-002",
+            "OCM-BYT-001",
+            "OCM-BYT-002",
+            "OCM-BND-003",
+            "OCM-FSM-001",
+            "OCM-REQ-001",
+            "OCM-FIN-001",
+            "OCM-PIN-001",
+            "OCM-CTL-001",
+            "OCM-DIS-001",
+            "OCM-EXP-001",
+            "OCM-CAS-001",
+            "OCM-DET-001",
+            "OCM-SIG-001",
+            "OCM-VOT-001",
+            "OCM-APL-001",
+            "OCM-BND-002",
+            "OCM-BND-001",
+            "OCM-APL-002",
+            "OCM-TIM-001",
+        ],
+    )
+}
+
 fn task_progress(repository_root: &Path, task: &str, passed: &[&str]) -> Result<()> {
     let mut arguments = vec![
         "run",
@@ -2602,6 +2357,16 @@ fn task_progress(repository_root: &Path, task: &str, passed: &[&str]) -> Result<
         arguments.push("--passed");
         arguments.push(test_id);
     }
+    cargo(repository_root, &arguments)
+}
+
+fn clippy_packages(repository_root: &Path, packages: &[&str], options: &[&str]) -> Result<()> {
+    let mut arguments = vec!["clippy", "--locked"];
+    for package in packages {
+        arguments.extend(["-p", package]);
+    }
+    arguments.extend_from_slice(options);
+    arguments.extend(["--", "-D", "warnings"]);
     cargo(repository_root, &arguments)
 }
 

@@ -87,13 +87,6 @@
       "state": "sender_creator_v07.state.json",
       "nonce": "0x1",
       "balance": "0x0"
-    },
-    {
-      "address": "0x000000000000000000000000000000000000C0DE",
-      "code": "counter.code.hex",
-      "state": "counter.state.json",
-      "nonce": "0x1",
-      "balance": "0x0"
     }
   ]
 }

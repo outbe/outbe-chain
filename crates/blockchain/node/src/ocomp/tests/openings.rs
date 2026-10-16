@@ -8,13 +8,13 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::{Address, B256, U256};
 use alloy_trie::{TrieAccount, KECCAK_EMPTY};
 use outbe_metadosis::config::poc_schema_limits;
-use outbe_nod::openings::entry_price_slots;
+use outbe_nod::openings::{entry_price_day, entry_price_slots, pair_index_slots};
 use outbe_ocomp_protocol::{
     league_snapshot::{league_snapshot_slot, ordered_league_snapshot_slots},
     opening::OpeningSubjectsV1,
 };
-use outbe_primitives::addresses::{FIDELITY_ADDRESS, METADOSIS_ADDRESS, NOD_ADDRESS};
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::addresses::{FIDELITY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS};
+use outbe_primitives::time::{date_key_to_utc_timestamp, WorldwideDay};
 use reth_primitives_traits::Account;
 use reth_trie::{AccountProof, StorageProof};
 
@@ -115,12 +115,12 @@ fn fidelity_and_oracle_openings_reject_mutated_values_shape_and_mpt_nodes() {
     ];
     let (state, state_root) = opening_state(&[
         (FIDELITY_ADDRESS, fidelity_slots.clone()),
-        (NOD_ADDRESS, oracle_slots.clone()),
+        (ORACLE_ADDRESS, oracle_slots.clone()),
     ]);
 
     for (address, slots) in [
         (FIDELITY_ADDRESS, fidelity_slots),
-        (NOD_ADDRESS, oracle_slots),
+        (ORACLE_ADDRESS, oracle_slots),
     ] {
         let ordered_slots = slots.iter().map(|(slot, _)| *slot).collect::<Vec<_>>();
         let opening = build_verified_raw_contract_opening(
@@ -205,7 +205,15 @@ fn lysis_opening_builder_returns_league_snapshot_and_oracle_proofs() {
     // storage. Any value in [1, 4096] is a valid league.
     let fidelity_slots = vec![(league_snapshot_slot(day.value(), owner), U256::from(7))];
 
-    let oracle_plan = entry_price_slots(day, &subjects.reference_isos).unwrap();
+    // A request on the following UTC day prices the day before it.
+    let logical_evaluation_time = date_key_to_utc_timestamp(20260726) + 3_600;
+    let priced_day = entry_price_day(logical_evaluation_time);
+    assert_eq!(priced_day, 20260725);
+    let oracle_plan = entry_price_slots(priced_day, &subjects.reference_isos, &[1]).unwrap();
+    assert_eq!(
+        oracle_plan[..1],
+        pair_index_slots(&subjects.reference_isos).unwrap()[..]
+    );
     let oracle_slots = oracle_plan
         .iter()
         .copied()
@@ -214,7 +222,7 @@ fn lysis_opening_builder_returns_league_snapshot_and_oracle_proofs() {
 
     let (state, state_root) = opening_state(&[
         (METADOSIS_ADDRESS, fidelity_slots),
-        (NOD_ADDRESS, oracle_slots),
+        (ORACLE_ADDRESS, oracle_slots),
     ]);
     let candidate = CandidatePinV1 {
         block_number: 100,
@@ -222,7 +230,6 @@ fn lysis_opening_builder_returns_league_snapshot_and_oracle_proofs() {
         state_root,
         intent_id: B256::repeat_byte(0x62),
         wwd: day.value(),
-        ce_sealed_root: B256::repeat_byte(0x63),
         protocol_bundle_hash: B256::repeat_byte(0x64),
         input_lease_id: B256::repeat_byte(0x65),
     };
@@ -237,6 +244,7 @@ fn lysis_opening_builder_returns_league_snapshot_and_oracle_proofs() {
         },
         &limits,
         candidate,
+        logical_evaluation_time,
         subjects.clone(),
     )
     .expect("exact historical Fidelity and Oracle openings");
@@ -274,7 +282,7 @@ fn lysis_opening_builder_returns_league_snapshot_and_oracle_proofs() {
     .expect("Fidelity league proof must verify against the finalized root");
     verify_raw_contract_opening(
         &openings.oracle,
-        NOD_ADDRESS,
+        ORACLE_ADDRESS,
         state_root,
         &oracle_plan,
         &limits,

@@ -24,10 +24,10 @@ const NOD_CREATOR_BLOB: &str = "0000000000000001e61bd19649c699bec83af492872209e7
 const NOD_AMOUNT_BLOB: &str = "000000000000000180659b0633bd77c6b51dea420ff70bb2288cd6a1f282a9cf7fdbedcc651c41f1afc6d3e21537750cde151f4ca9c10c0d";
 const NOD_WRONG_NONCE_DOMAIN_BLOB: &str = "0000000000000001a850187c31ee54d13f4586dd8e1917c06c8f657fdbd6d09cb7f7d60f0df86b0209349a0265f21b1b90e38d68733853ca";
 const TRIBUTE_CONTEXT_DIGEST: &str =
-    "bf2aeb00d99f4fb3a3e3c65f921e35ec92faef7547ce133c3381aa7d8f9d2905";
+    "79d19e3d69598d12698496e748a6ddef52b72392b6722778db2de3c2ef493d8a";
 const TRIBUTE_CREATOR_BLOB: &str = "000000000000000151d8b0ba9ed9c55483aa2ae2997845f050a185b3e57e09bc8c29e163a15af42504e0f20c819ac698c3fd5537f699c07e";
-const TRIBUTE_AMOUNT_BLOB: &str = "0000000000000001209db04214512d85c7b00fbca520e98fd1a748e7cb95f91de5c236d9b8856d683ac28c2b6c7b53b8029fae6ceddd5a72dd04ffe1b23e3441fc31accd0924f1de98c5f9cceb78fef3786403afe5bfb3c8";
-const TRIBUTE_WRONG_NONCE_DOMAIN_BLOB: &str = "00000000000000013cbe3bd290320d4efb40a2c38c0a3242e1b81a482ae621741331bf87baac24f3ab66707698c13d67e307b9898f8e1bfde8a7ba74caec550da3035df99a9de6bc1cd18dc6cec86b70a9a3f971e49b427a";
+const TRIBUTE_AMOUNT_BLOB: &str = "0000000000000001395c8e08d20d9a182e5aab594ecbca1615f313c70e0f8160102d5f2bed8e9e4babca50c1a1ada7af4d2e17fe3fe4233ffbfe9807a7e40992ba967fc713558030605443292bdb530bcd0dd0977a8497a3";
+const TRIBUTE_WRONG_NONCE_DOMAIN_BLOB: &str = "0000000000000001e6f78fde2189ee83c6817b391fcf2d27cc558b5dbedb4e53bb236cf49a14fd0b8a0e1ff9bbf2885018411a2f7f91050b57b4df509e6b2c4f5aba17572e58e078ccaa07196a6689cac6570cbe6ac80e95";
 
 fn enclave_public() -> [u8; 32] {
     hex::decode(ENCLAVE_PUBLIC).unwrap().try_into().unwrap()
@@ -68,7 +68,6 @@ fn fixed_tribute() -> EncryptedTributeV2 {
             issuance_currency: 978,
             reference_currency: 840,
             tribute_price_minor: U256::from(7_654_321u64),
-            exclude_from_intex_issuance: true,
             offer_input_hash: B256::repeat_byte(0xb6),
         },
         encrypted_creator_public_key: hex::decode(TRIBUTE_CREATOR_BLOB).unwrap(),

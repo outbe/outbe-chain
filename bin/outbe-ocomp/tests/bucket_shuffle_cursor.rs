@@ -14,7 +14,7 @@ use outbe_ocomp_protocol::{
     common::BoundedBytes,
     shuffle::{
         build_bucket_shuffle_run, ShuffleBucketRecordV1, ShuffleRunBuildContextV1,
-        ShuffleRunPayloadV1, VerifiedShuffleRecordV1,
+        ShuffleRunPayloadV1,
     },
     unit::{
         CanonicalRunSpan, UnitArtifactV1, UnitInterval, UnitPhase, UnitSpecV1, WorkOutputHeaderV1,
@@ -198,14 +198,8 @@ fn cold_restart_streams_the_final_bucket_shuffle_from_authoritative_cas() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     assert_eq!(records.len(), 257);
-    assert!(matches!(
-        &records[0],
-        VerifiedShuffleRecordV1::Bucket(record) if record.raw_ordinal == 0
-    ));
-    assert!(matches!(
-        &records[256],
-        VerifiedShuffleRecordV1::Bucket(record) if record.raw_ordinal == 256
-    ));
+    assert_eq!(records[0].raw_ordinal, 0);
+    assert_eq!(records[256].raw_ordinal, 256);
 }
 
 #[test]

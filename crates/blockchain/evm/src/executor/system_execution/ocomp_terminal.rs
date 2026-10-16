@@ -17,6 +17,8 @@ where
     where
         R: RecoveredTx<TransactionSigned>,
     {
+        use crate::errors::ExecutorValidationError;
+
         self.validate_terminal_phase()?;
 
         let tx = recovered.tx();
@@ -24,14 +26,14 @@ where
 
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
-            .map_err(|err| BlockExecutionError::from(BlockValidationError::msg(err)))?;
+            .map_err(ExecutorValidationError::block_artifacts)?;
         let begin_count = self
             .begin_block_system_tx_inputs(block_number, &block_artifacts)?
             .len();
         let ordinal = begin_count.try_into().map_err(|_| {
-            BlockExecutionError::from(BlockValidationError::msg(format!(
-                "terminal system tx ordinal {begin_count} exceeds u8 range"
-            )))
+            ExecutorValidationError::TerminalSystemTxOrdinalExceedsU8 {
+                ordinal: begin_count,
+            }
         })?;
         let unsigned = build_unsigned_system_tx(
             SystemTxKind::OcompTerminalRequest,
@@ -40,43 +42,30 @@ where
             self.inner.evm.chain_id(),
             tx.input().clone(),
         )
-        .map_err(|error| {
-            BlockExecutionError::from(BlockValidationError::msg(format!(
-                "build expected terminal system tx: {error}"
-            )))
-        })?;
+        .map_err(ExecutorValidationError::build_expected_terminal_system_tx)?;
         if tx.signature_hash() != unsigned.signature_hash() {
-            return Err(
-                BlockValidationError::msg("terminal system tx signature hash mismatch").into(),
-            );
+            return Err(ExecutorValidationError::TerminalSystemTxSignatureHashMismatch.into());
         }
         let proposer = self
             .begin_zone_proposer(block_number)?
             .unwrap_or_else(|| self.inner.evm.block().beneficiary());
         let signer = *recovered.signer();
         if signer != proposer {
-            return Err(BlockValidationError::msg(format!(
-                "terminal system tx signer mismatch: expected proposer {proposer}, got {signer}"
-            ))
+            return Err(ExecutorValidationError::TerminalSystemTxSignerMismatch {
+                proposer,
+                signer,
+            }
             .into());
         }
 
         let tx_type = tx.tx_type();
         let signed_gas_limit = tx.gas_limit();
         let intrinsic_gas = crate::system_tx::system_tx_intrinsic_gas(tx.input().as_ref())
-            .map_err(|error| {
-                BlockExecutionError::from(BlockValidationError::msg(format!(
-                    "terminal system tx intrinsic gas: {error}"
-                )))
-            })?;
+            .map_err(ExecutorValidationError::terminal_system_tx_intrinsic_gas)?;
 
-        // All ordinary and Ethereum post-execution changes are complete. The
-        // terminal request consumes exact provisional roots while CE remains
-        // active. Thus its failure path can retire the WWD Tribute partition as
-        // the last CE mutation. The sole committed seal follows the terminal
-        // decision.
+        // Complete ordinary state changes before the terminal request freezes
+        // the day inputs. The finalized block state root authenticates them.
         self.apply_outbe_ethereum_post_execution()?;
-        self.preview_compressed_entities()?;
 
         let phase_context = PreloadedSystemTxContext {
             proposer,
@@ -93,11 +82,13 @@ where
         })
         .map_err(BlockExecutionError::other)?;
         if !result.result.is_success() {
-            return Err(BlockValidationError::msg(format!(
-                "critical terminal system tx did not succeed at block {block_number}: {:?}",
-                result.result
-            ))
-            .into());
+            return Err(
+                ExecutorValidationError::critical_terminal_system_tx_did_not_succeed(
+                    block_number,
+                    &result.result,
+                )
+                .into(),
+            );
         }
 
         let output = EthTxResult {
@@ -106,13 +97,9 @@ where
             tx_type,
         };
         if !commit(&output).should_commit() {
-            return Err(BlockValidationError::msg(
-                "terminal system transaction cannot execute without commit",
-            )
-            .into());
+            return Err(ExecutorValidationError::TerminalSystemTxWithoutCommit.into());
         }
         let gas = self.commit_system_transaction(output, intrinsic_gas, 0, signed_gas_limit)?;
-        self.finalize_compressed_entities()?;
         self.ocomp_terminal_request_consumed = true;
         let execution_origin = if self.block_hash.is_some() {
             "canonical"
@@ -129,47 +116,37 @@ where
     }
 
     fn validate_terminal_phase(&self) -> Result<(), BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         if !self.ocomp_lifecycle_active {
-            return Err(BlockValidationError::msg(
-                "OCOMP terminal request is not active for this block",
-            )
-            .into());
+            return Err(ExecutorValidationError::OcompTerminalRequestNotActive.into());
         }
         if self.system_tx_phase_cursor != crate::system_tx::SystemTxPhase::UserTxs {
-            return Err(BlockValidationError::msg(
-                "OCOMP terminal request arrived before the begin zone completed",
-            )
-            .into());
+            return Err(
+                ExecutorValidationError::OcompTerminalRequestBeforeBeginZoneCompleted.into(),
+            );
         }
         if self.expected_end_system_txs.len() > 1 {
-            return Err(BlockValidationError::msg(
-                "OCOMP lifecycle permits exactly one end-zone system transaction",
-            )
-            .into());
+            return Err(ExecutorValidationError::MultipleEndZoneSystemTransactions.into());
         }
 
         Ok(())
     }
 
     fn validate_terminal_input(&self, tx: &TransactionSigned) -> Result<(), BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         if let Some(expected) = self.expected_end_system_txs.first() {
             if expected.tx().tx_hash() != tx.tx_hash() {
-                return Err(BlockValidationError::msg(
-                    "terminal system transaction differs from the validated block suffix",
-                )
-                .into());
+                return Err(
+                    ExecutorValidationError::TerminalSystemTxDiffersFromValidatedSuffix.into(),
+                );
             }
         }
-        let input = SystemTxInputV2::decode(tx.input().as_ref()).map_err(|error| {
-            BlockExecutionError::from(BlockValidationError::msg(format!(
-                "decode terminal system tx input: {error}"
-            )))
-        })?;
+        let input = SystemTxInputV2::decode(tx.input().as_ref())
+            .map_err(ExecutorValidationError::decode_terminal_system_tx_input)?;
         if input != SystemTxInputV2::OcompTerminalRequest {
-            return Err(BlockValidationError::msg(
-                "end-zone system transaction is not OcompTerminalRequest",
-            )
-            .into());
+            return Err(ExecutorValidationError::EndZoneSystemTxNotOcompTerminalRequest.into());
         }
 
         Ok(())

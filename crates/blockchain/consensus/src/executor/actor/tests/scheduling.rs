@@ -15,13 +15,7 @@ fn heartbeat_sends_fcu_to_last_forkchoice_without_payload_attributes() {
         let target = B256::repeat_byte(0xAA);
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        let (_projection_publisher, projection_readiness) = ready_projection(
-            genesis,
-            ProjectionCheckpoint {
-                block_number: 0,
-                block_hash: genesis,
-            },
-        );
+
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context.child("test"),
             engine,
@@ -30,7 +24,6 @@ fn heartbeat_sends_fcu_to_last_forkchoice_without_payload_attributes() {
                 last_finalized_height: 0,
                 last_finalized_hash: genesis,
             },
-            projection_readiness,
             None,
         );
         actor.state = actor.state.update_finalized(Height::new(7), Digest(target));
@@ -72,8 +65,6 @@ fn run_live_loop_propagates_fatal_executor_error() {
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
         let (mailbox_tx, mailbox_rx) = futures::channel::mpsc::unbounded();
-        let (_projection_publisher, projection_readiness) =
-            ready_projection_for_block(genesis, &block);
 
         let mut actor = super::ExecutorActor {
             context: context.child("test"),
@@ -82,9 +73,9 @@ fn run_live_loop_propagates_fatal_executor_error() {
             state: LastCanonicalized::new(genesis),
             mailbox_rx,
             execution_finalized_height_tx: None,
-            projection_readiness,
+
             ocomp_readiness: None,
-            finalized_ce_committer: None,
+            finalized_execution_barrier: None,
             ancestry_readiness: None,
             // Heartbeat far in the future so the biased mailbox arm wins.
             fcu_heartbeat_interval: std::time::Duration::from_secs(3600),
@@ -132,13 +123,6 @@ fn mailbox_updates_are_processed_before_ready_heartbeat() {
         let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
         let (mailbox_tx, mailbox_rx) = futures::channel::mpsc::unbounded();
-        let (_projection_publisher, projection_readiness) = ready_projection(
-            genesis,
-            ProjectionCheckpoint {
-                block_number: 0,
-                block_hash: genesis,
-            },
-        );
 
         let mut actor = super::ExecutorActor {
             context: context.child("test"),
@@ -147,9 +131,9 @@ fn mailbox_updates_are_processed_before_ready_heartbeat() {
             state: LastCanonicalized::new(genesis),
             mailbox_rx,
             execution_finalized_height_tx: None,
-            projection_readiness,
+
             ocomp_readiness: None,
-            finalized_ce_committer: None,
+            finalized_execution_barrier: None,
             ancestry_readiness: None,
             fcu_heartbeat_interval: std::time::Duration::ZERO,
             next_fcu_heartbeat_deadline: context.current(),
@@ -215,13 +199,7 @@ fn finalized_subscriber_completes_immediately_when_height_already_finalized() {
         let finalized = B256::repeat_byte(0x07);
         let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        let (_projection_publisher, projection_readiness) = ready_projection(
-            genesis,
-            ProjectionCheckpoint {
-                block_number: 0,
-                block_hash: genesis,
-            },
-        );
+
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context,
             engine,
@@ -230,7 +208,6 @@ fn finalized_subscriber_completes_immediately_when_height_already_finalized() {
                 last_finalized_height: 7,
                 last_finalized_hash: finalized,
             },
-            projection_readiness,
             None,
         );
         let (response, rx) = commonware_utils::channel::oneshot::channel();
@@ -249,13 +226,7 @@ fn ancestry_readiness_advances_from_executor_finalized_notifications() {
         let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
         let readiness = AncestryReadiness::new(0, 3);
-        let (_projection_publisher, projection_readiness) = ready_projection(
-            genesis,
-            ProjectionCheckpoint {
-                block_number: 0,
-                block_hash: genesis,
-            },
-        );
+
         let (actor, _mailbox) = super::ExecutorActor::new(
             context,
             engine,
@@ -264,7 +235,6 @@ fn ancestry_readiness_advances_from_executor_finalized_notifications() {
                 last_finalized_height: 0,
                 last_finalized_hash: genesis,
             },
-            projection_readiness,
             None,
         );
         let actor = actor.with_ancestry_readiness(readiness.clone());
@@ -283,13 +253,7 @@ fn finalized_subscriber_completes_when_later_height_is_notified() {
         let genesis = B256::repeat_byte(0x01);
         let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
         let engine = ConsensusEngineHandle::new(engine_tx);
-        let (_projection_publisher, projection_readiness) = ready_projection(
-            genesis,
-            ProjectionCheckpoint {
-                block_number: 0,
-                block_hash: genesis,
-            },
-        );
+
         let (mut actor, _mailbox) = super::ExecutorActor::new(
             context,
             engine,
@@ -298,7 +262,6 @@ fn finalized_subscriber_completes_when_later_height_is_notified() {
                 last_finalized_height: 0,
                 last_finalized_hash: genesis,
             },
-            projection_readiness,
             None,
         );
         let (response, rx) = commonware_utils::channel::oneshot::channel();

@@ -67,7 +67,7 @@ fn validate_response(
         return Err(TributeFactoryError::EncryptedOfferInputOrCountMismatch.into());
     }
     let preimage = tribute_v2::encrypted_offer_attestation_preimage(expected, &results)
-        .map_err(TributeFactoryError::fatal)?;
+        .map_err(TributeFactoryError::attestation_preimage_encode)?;
     tribute_v2::verify_attestation(key, &preimage, &tag)
         .map_err(TributeFactoryError::offer_attestation_invalid)?;
     for (offer, result) in offers.iter().zip(&results) {
@@ -97,7 +97,6 @@ fn validate_record_context(
         offer.worldwide_day,
         offer.tribute_currency,
         offer.reference_currency,
-        offer.exclude_from_intex_issuance,
         offer
             .reference_wwd_vwap_minor
             .max(offer.reference_scurve_minor),
@@ -108,7 +107,6 @@ fn validate_record_context(
         context.worldwide_day,
         context.issuance_currency,
         context.reference_currency,
-        context.exclude_from_intex_issuance,
         context.tribute_price_minor,
         context.offer_input_hash,
     );
@@ -145,19 +143,19 @@ mod tests {
                 worldwide_day: day,
                 tribute_currency: 840,
                 reference_currency: 978,
-                exclude_from_intex_issuance: false,
                 issuance_wwd_vwap_minor: U256::from(100),
                 reference_wwd_vwap_minor: U256::from(200),
                 reference_scurve_minor: U256::from(300),
                 zk_context: None,
             };
-            let digest = outbe_compressed_entities::derive_poseidon_digest(owner, day).unwrap();
+            let digest =
+                outbe_primitives::wwd_entity_id::derive_poseidon_digest(owner, day).unwrap();
             let body = outbe_tee_enclave::tribute_encryption::encrypt_tribute(
                 &[7; 32],
                 &outbe_tee_enclave::crypto::x25519_public(&[11; 32]),
                 TributeContextV2 {
                     chain_id: 1,
-                    tribute_id: outbe_compressed_entities::WwdEntityId::from_day_and_digest(
+                    tribute_id: outbe_primitives::wwd_entity_id::WwdEntityId::from_day_and_digest(
                         day, digest,
                     ),
                     owner,
@@ -165,7 +163,6 @@ mod tests {
                     issuance_currency: 840,
                     reference_currency: 978,
                     tribute_price_minor: U256::from(300),
-                    exclude_from_intex_issuance: false,
                     offer_input_hash: tribute_v2::encrypted_offer_inputs_hash(
                         1,
                         std::slice::from_ref(&offer),
@@ -238,7 +235,6 @@ mod tests {
             |body| body.context.issuance_currency = 978,
             |body| body.context.reference_currency = 840,
             |body| body.context.tribute_price_minor += U256::ONE,
-            |body| body.context.exclude_from_intex_issuance = true,
             |body| body.context.offer_input_hash = B256::ZERO,
             |body| {
                 body.encrypted_amounts.pop();

@@ -23,7 +23,6 @@ where
                 self.state.finalized_height,
                 Digest(self.state.forkchoice.finalized_block_hash),
             ),
-            self.projection_readiness.clone(),
         ) {
             self.commit_convergence(height, digest).await?;
         }
@@ -69,9 +68,9 @@ impl ExecutionStatus {
                 return Ok(status);
             }
         }
-        Err(eyre::Report::new(error).wrap_err(format!(
-            "new_payload failed during executor verification: target={digest}"
-        )))
+        Err(eyre::Report::new(error).wrap_err(
+            crate::errors::ExecutorError::VerificationNewPayloadFailed(digest),
+        ))
     }
 
     fn classify_internal_error(source: &(dyn std::error::Error + 'static)) -> Option<Self> {
@@ -112,9 +111,7 @@ fn find_precompile_error(
 const fn is_candidate_validation_precompile_error(precompile_error: &PrecompileError) -> bool {
     matches!(
         precompile_error,
-        PrecompileError::TransactionCeWorkLimitExceeded
-            | PrecompileError::BlockCeWorkCapacityExhausted
-            | PrecompileError::Revert(_)
+        PrecompileError::Revert(_)
             | PrecompileError::RevertBytes(_)
             | PrecompileError::Halt(_)
             | PrecompileError::OutOfGas

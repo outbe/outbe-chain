@@ -102,7 +102,6 @@ fn process_one(
         issuance_currency: offer.tribute_currency,
         reference_currency: offer.reference_currency,
         tribute_price_minor,
-        exclude_from_intex_issuance: offer.exclude_from_intex_issuance,
         offer_input_hash: encrypted_offer_inputs_hash(chain_id, std::slice::from_ref(offer)),
     };
     let amounts = TributeAmountsV2 {

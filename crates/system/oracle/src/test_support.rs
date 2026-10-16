@@ -7,7 +7,9 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
-use crate::api::{register_pair, set_exchange_rate, RateObservation};
+use crate::api::{
+    current_vwap_snapshot, register_pair, set_exchange_rate, AddressPair, RateObservation,
+};
 use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR};
 use crate::schema::OracleContract;
 
@@ -44,4 +46,48 @@ pub fn publish_day_type_quote(
     OracleContract::new(storage.clone())
         .reference_currencies
         .push(DAY_TYPE_ISO)
+}
+
+/// Registers COEN/`iso` if it is new, records `vwap` for UTC day `day` and
+/// moves the last finalized day up to `day`.
+pub fn record_finalized_day_vwap(
+    storage: &StorageHandle<'_>,
+    iso: u16,
+    day: u32,
+    vwap: U256,
+) -> Result<()> {
+    let pair = AddressPair::new_coen_to(iso);
+    let oracle = OracleContract::new(storage.clone());
+    let mut index = oracle.pair_index_of(pair)?;
+    if index == 0 {
+        index = register_pair(storage.clone(), pair)?;
+    }
+    oracle.record_utc_day_vwap(day, index, vwap)?;
+    if oracle.utc_day_vwap_last_finalized.read()? < day {
+        oracle.utc_day_vwap_last_finalized.write(day)?;
+    }
+    Ok(())
+}
+
+/// Registers COEN/840 when absent and COEN/`iso`. Then writes one observation just
+/// before the current snapshot cutoff: COEN at `usd_vwap` against ISO 840 and at
+/// `iso_vwap` against `iso`, each with unit volume.
+pub fn seed_trailing_vwap_window(
+    storage: &StorageHandle<'_>,
+    iso: u16,
+    usd_vwap: U256,
+    iso_vwap: U256,
+) -> Result<()> {
+    let usd = AddressPair::new_coen_to(840);
+    let other = AddressPair::new_coen_to(iso);
+    if OracleContract::new(storage.clone()).pair_index_of(usd)? == 0 {
+        register_pair(storage.clone(), usd)?;
+    }
+    register_pair(storage.clone(), other)?;
+    let snapshot = current_vwap_snapshot(storage.clone())?;
+    let volume = U256::from(1_000_000);
+    OracleContract::new(storage.clone()).write_snapshot(
+        snapshot.cutoff() - 1,
+        &[(usd, usd_vwap, volume), (other, iso_vwap, volume)],
+    )
 }

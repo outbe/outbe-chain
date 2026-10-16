@@ -122,7 +122,6 @@ fn boundary_activation_allows_registered_next_epoch_proposer() {
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
-        compressed_entities_root: None,
     })
     .expect("extra_data encodes");
     let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
@@ -209,7 +208,6 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
-        compressed_entities_root: None,
     })
     .expect("extra_data encodes");
     let config =
@@ -376,7 +374,6 @@ fn oracle_slash_window_runs_after_boundary_activation() {
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
-        compressed_entities_root: None,
     })
     .expect("extra_data encodes");
     let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());

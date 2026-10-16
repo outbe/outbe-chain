@@ -569,4 +569,28 @@ pub enum StackDkgError {
         "pending DKG boundary snapshot was recovered but matching DKG material is unavailable"
     )]
     PendingBoundarySnapshotMissingMaterial,
+
+    /// Indicates that unfinalized pending DKG material does not match the pending boundary.
+    #[error("unfinalized pending DKG material does not match pending boundary: {0}")]
+    UnfinalizedPendingMaterialMismatch(String),
+
+    /// Indicates that an unfinalized pending DKG boundary is missing local private material.
+    #[error("unfinalized pending DKG boundary missing local private material")]
+    UnfinalizedPendingMissingLocalPrivateMaterial,
+
+    /// Indicates that unfinalized pending DKG private state is incomplete or corrupt.
+    #[error("unfinalized pending DKG private state is incomplete or corrupt: {0}")]
+    UnfinalizedPendingPrivateStateCorrupt(String),
+}
+
+impl StackDkgError {
+    /// Formats a mismatch between unfinalized pending DKG material and the pending boundary.
+    pub fn unfinalized_pending_material_mismatch(error: &eyre::Report) -> Self {
+        Self::UnfinalizedPendingMaterialMismatch(format!("{error:#}"))
+    }
+
+    /// Formats an incomplete or corrupt unfinalized pending DKG private state error.
+    pub fn unfinalized_pending_private_state_corrupt(error: &eyre::Report) -> Self {
+        Self::UnfinalizedPendingPrivateStateCorrupt(format!("{error:#}"))
+    }
 }

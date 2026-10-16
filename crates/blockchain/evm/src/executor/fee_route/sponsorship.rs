@@ -51,20 +51,22 @@ where
             if let Err(err) = recorded {
                 return Err(match err {
                     outbe_zerofee::ZeroFeePolicyError::Storage(reason) => {
-                        BlockExecutionError::other(PrecompileError::storage(format!(
-                            "sponsored quota write failed after inclusion: {reason}"
-                        )))
+                        BlockExecutionError::other(
+                            crate::errors::ExecutorStorageError::sponsored_quota_write(reason),
+                        )
                     }
-                    other => BlockValidationError::msg(format!(
-                        "sponsored quota write failed after inclusion: {other}"
-                    ))
-                    .into(),
+                    other => {
+                        crate::errors::ExecutorValidationError::sponsored_quota_write_validation(
+                            other,
+                        )
+                        .into()
+                    }
                 });
             }
             provider.flush().map_err(|err| {
-                BlockExecutionError::other(PrecompileError::storage(format!(
-                    "sponsored quota flush failed after inclusion: {err}"
-                )))
+                BlockExecutionError::other(
+                    crate::errors::ExecutorStorageError::sponsored_quota_flush(err),
+                )
             })?;
             let events = provider.take_events();
             // State::commit already notified the parallel state root hook.

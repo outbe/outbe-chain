@@ -2,7 +2,6 @@
 //! These builders do not execute the worker pipeline.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::TributeBodyV1;
 use outbe_lysis::program_v1::{
     planner::{LysisPlannerBindingsV1, LysisPlannerV1},
     result::{LysisListSubtreeCarrierV1, RootReduceSummaryV1},
@@ -18,6 +17,7 @@ use outbe_ocomp_protocol::{
     result::{NodActionV1, OutputManifestEntryV1, ResultChunkV1},
     CasObjectRefV1, ListKind, SchemaLimits,
 };
+use outbe_primitives::entity_codec::TributeBodyV1;
 use outbe_primitives::time::WorldwideDay;
 
 #[path = "protocol.rs"]
@@ -64,6 +64,17 @@ pub fn fixture_openings(
     tributes: &[TributeBodyV1],
     limits: &SchemaLimits,
 ) -> FixtureOpenings {
+    fixture_openings_at(bundle, job_id, day, tributes, limits, hash(0x32))
+}
+
+pub fn fixture_openings_at(
+    bundle: &ProtocolBundleV1,
+    job_id: B256,
+    day: WorldwideDay,
+    tributes: &[TributeBodyV1],
+    limits: &SchemaLimits,
+    finalized_state_root: B256,
+) -> FixtureOpenings {
     let bundle_hash = bundle.protocol_bundle_hash(limits).unwrap();
     let owners = tributes
         .iter()
@@ -80,7 +91,6 @@ pub fn fixture_openings(
     reference_isos.push(840);
     reference_isos.sort_unstable();
     reference_isos.dedup();
-    let finalized_state_root = hash(0x32);
     let raw_opening = |address, slot_byte| RawContractOpeningProofV1 {
         contract_address: address,
         state_root: finalized_state_root,
@@ -197,7 +207,6 @@ pub fn root_summary_fixture(
         nod_count: count,
         bucket_count: count,
         tribute_nominal_total: raw_nominal_total,
-        eligible_nominal_total: raw_nominal_total,
         lysis_allocation_minor: U256::from(count),
         nod_cost_total,
         first_error_ordinal: None,

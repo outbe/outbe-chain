@@ -16,64 +16,6 @@ fn seed_cycle_genesis(storage: StorageHandle<'_>) {
         .unwrap();
 }
 
-pub(super) fn persistent_test_tree(
-    genesis_hash: B256,
-) -> (tempfile::TempDir, Arc<CompressedTreeService>) {
-    persistent_test_tree_with_marker(
-        genesis_hash,
-        FinalizedMarker {
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            height: 0,
-            block_hash: genesis_hash,
-            parent_block_hash: B256::ZERO,
-            parent_root: B256::ZERO,
-            new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
-        },
-    )
-}
-
-pub(super) fn persistent_test_tree_with_marker(
-    genesis_hash: B256,
-    marker: FinalizedMarker,
-) -> (tempfile::TempDir, Arc<CompressedTreeService>) {
-    let directory = tempfile::tempdir().expect("CE test directory must be created");
-    let genesis_marker = FinalizedMarker {
-        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-        height: 0,
-        block_hash: genesis_hash,
-        parent_block_hash: B256::ZERO,
-        parent_root: B256::ZERO,
-        new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
-    };
-    let db = CeMdbx::open(
-        directory.path(),
-        EnvironmentIdentity {
-            local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
-            chain_id: CHAIN_ID,
-            genesis_hash,
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            topology: outbe_compressed_entities::CeTopologyV1.encode(),
-            tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".to_owned(),
-            vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
-        },
-        genesis_marker,
-    )
-    .expect("CE test MDBX must open");
-    if marker != genesis_marker {
-        db.test_seed_finalized_marker(marker)
-            .expect("CE test finalized marker must seed");
-    }
-    let service = CompressedTreeService::new(
-        db,
-        CandidateCacheLimits {
-            max_candidates: 4,
-            max_encoded_bytes: 1_000_000,
-        },
-    )
-    .expect("CE test tree service must open");
-    (directory, Arc::new(service))
-}
-
 pub(super) fn numbered_test_address(prefix: u8, n: u64) -> Address {
     let mut bytes = [0u8; 20];
     bytes[0] = prefix;
@@ -177,7 +119,6 @@ fn state_with_active_proposer_fixture(
     let proposer_key = dummy_pubkey(0xA2);
     let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
     StorageHandle::enter(&mut seed_storage, |storage| {
-        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         seed_cycle_genesis(storage.clone());
         seed_registered_active_validator_with_registration(
             storage.clone(),
@@ -202,14 +143,6 @@ fn state_with_active_proposer_fixture(
     );
     db.insert_account_info(
         outbe_primitives::addresses::ORACLE_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code.clone()),
-            ..Default::default()
-        },
-    );
-    db.insert_account_info(
-        outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code.clone()),
@@ -264,7 +197,6 @@ pub(super) fn state_with_active_proposer_and_funded_account_fixture(
     let proposer_key = dummy_pubkey(0xA2);
     let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
     StorageHandle::enter(&mut seed_storage, |storage| {
-        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         seed_cycle_genesis(storage.clone());
         seed_registered_active_validator_with_registration(
             storage.clone(),
@@ -289,14 +221,6 @@ pub(super) fn state_with_active_proposer_and_funded_account_fixture(
     );
     db.insert_account_info(
         outbe_primitives::addresses::ORACLE_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code.clone()),
-            ..Default::default()
-        },
-    );
-    db.insert_account_info(
-        outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code.clone()),
@@ -365,7 +289,6 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
     let install = test_ocomp_fork_install(&chain_spec, validators);
     seed_storage.set_block_number(block_number);
     StorageHandle::enter(&mut seed_storage, |storage| {
-        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         seed_cycle_genesis(storage.clone());
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
@@ -377,11 +300,10 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
             register_and_activate_with_ocomp_registration(&mut vs, *validator, pk, registration);
         }
         seed_test_committee_snapshot(storage.clone(), validators);
-        // Seed the COEN/840 oracle pair + a 1.0 rate so begin-block
-        // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
-        // of soft-skipping the scan. Also push 840 onto the reference currency
-        // list to match genesis. The Nod qualifier reads its ISO from there, not
-        // from a hard-coded constant.
+        // Seed the COEN/840 oracle pair + a 1.0 rate so the begin-block
+        // NOD/GEM/INTEX call scans resolve a live rate instead of soft-skipping.
+        // Also push 840 onto the reference currency list to match genesis. The
+        // scans read their ISO from there, not from a hard-coded constant.
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
         outbe_oracle::schema::OracleContract::new(storage.clone())
@@ -426,7 +348,6 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
         outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
         outbe_primitives::addresses::TRIBUTE_ADDRESS,
         NOD_ADDRESS,
-        outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
         // marker allowlist: in production, `0xef` bytecode preserves the
         // accounting-progress marker account across EIP-161. So its seeded
         // slot survives as live state here too. Otherwise an empty account's
@@ -786,10 +707,10 @@ pub(super) fn seed_registered_active_validator(
     vs.activate_validator_via_boundary_for_test(validator)
         .unwrap();
     seed_test_committee_snapshot(storage.clone(), &[(validator, *pk)]);
-    // Seed COEN/840 pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
-    // reads a registered pair instead of reverting "pair not registered".
+    // Seed COEN/840 pair + 1.0 rate so the begin-block NOD/GEM/INTEX call scans
+    // read a registered pair instead of reverting "pair not registered".
     // 840 also goes on the reference currency list, matching genesis: the
-    // Nod qualifier reads its ISO from there.
+    // scans read their ISO from there.
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
     outbe_oracle::schema::OracleContract::new(storage.clone())
         .reference_currencies
@@ -993,7 +914,6 @@ pub(super) fn empty_executor_inputs(parent_hash: B256) -> BlockExecutorInputs {
             parent_consensus_metadata: None,
             parent_artifact_hint: None,
         },
-        runtime: empty_execution_runtime(),
         dependencies: BlockExecutionDependencies {
             bridge: None,
             evm_signer: None,
@@ -1037,20 +957,10 @@ pub(super) fn executor_inputs_from_ctx(
             parent_consensus_metadata,
             parent_artifact_hint,
         },
-        runtime: empty_execution_runtime(),
         dependencies: BlockExecutionDependencies {
             bridge: None,
             evm_signer,
         },
-    }
-}
-
-fn empty_execution_runtime() -> BlockExecutionRuntime {
-    BlockExecutionRuntime {
-        compressed_entities_scope: Arc::new(ExecutionScope::default()),
-        compressed_tree_service: None,
-        runtime_body_readers: None,
-        execution_read_budget: None,
     }
 }
 

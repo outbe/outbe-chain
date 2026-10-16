@@ -33,6 +33,11 @@ pub struct FeederConfig {
     /// one EVM network, under a name the operator chooses.
     #[serde(default)]
     pub onchain_providers: Vec<crate::provider::onchain_feed::OnchainFeedConfig>,
+    /// JSON-RPC of each external EVM network, keyed by chain id. A
+    /// `dex_providers` or `onchain_providers` entry without its own
+    /// `rpc_endpoint` uses the URL for its `chain_id`.
+    #[serde(default)]
+    pub rpc_endpoints: std::collections::BTreeMap<String, String>,
     /// Health/status HTTP server configuration.
     pub health: Option<HealthConfig>,
 }
@@ -87,6 +92,22 @@ pub struct OracleConfig {
     /// How often to poll for new blocks (seconds).
     #[serde(default = "default_poll_interval")]
     pub poll_interval_secs: u64,
+    /// Where the pairs and their markets come from.
+    #[serde(default)]
+    pub sources: SourcesMode,
+}
+
+/// Where the feeder takes the sections that every validator shares:
+/// `currency_pairs`, `deviation_thresholds`, `dex_providers` and
+/// `onchain_providers`.
+#[derive(Debug, Default, Clone, Copy, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum SourcesMode {
+    /// The node's `getSources()` for the active protocol version.
+    #[default]
+    Chain,
+    /// The local config. For networks without sources in the node binary.
+    Local,
 }
 
 /// A currency pair to feed prices for.
@@ -174,15 +195,29 @@ fn default_deviation() -> FixedValue {
 }
 
 impl FeederConfig {
-    /// Loads configuration from a TOML file. A top-level `pairs` key names a
-    /// second file, relative to this one, whose sections join the config.
-    pub fn load(path: &str) -> Result<Self> {
-        let table = pairs_file::read_with_pairs(path)?;
+    /// Reads the local config file. A top-level `pairs` key names a second
+    /// file, relative to this one, whose sections join the table.
+    pub fn read_local(path: &str) -> Result<toml::Table> {
+        pairs_file::read_with_pairs(path)
+    }
+
+    /// Builds the config from the local table and, in `chain` sources mode,
+    /// the TOML that the node's `getSources()` returned.
+    pub fn build(mut table: toml::Table, chain_sources: Option<&str>) -> Result<Self> {
+        if let Some(text) = chain_sources {
+            pairs_file::merge_chain_sources(&mut table, text)?;
+        }
         let mut config: Self = table
             .try_into()
             .with_context(|| "failed to parse feeder config")?;
         config.resolve_sources()?;
         Ok(config)
+    }
+
+    /// Loads a config whose pairs are local.
+    #[cfg(test)]
+    pub fn load(path: &str) -> Result<Self> {
+        Self::build(Self::read_local(path)?, None)
     }
 
     /// Fills each market's default base and hands the DEX and on-chain
@@ -196,6 +231,7 @@ impl FeederConfig {
                 }
             }
         }
+        pairs_file::fill_rpc_endpoints(self)?;
         crate::provider::dex::collect_markets(self);
         crate::provider::onchain_feed::collect_feeds(self);
         Ok(())
@@ -442,12 +478,14 @@ mod tests {
             oracle: OracleConfig {
                 vote_period,
                 poll_interval_secs: 2,
+                sources: SourcesMode::Local,
             },
             currency_pairs: vec![],
             deviation_thresholds: vec![],
             api_providers: vec![],
             dex_providers: vec![],
             onchain_providers: vec![],
+            rpc_endpoints: Default::default(),
             health: None,
         }
     }

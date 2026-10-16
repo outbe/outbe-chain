@@ -47,10 +47,8 @@ fn overflowing_worldwide_day_vwap_keeps_the_forming_edge() {
             BlockContext::empty_for_tests(2, forming_end, outbe_primitives::chain::CHAIN_ID),
             storage.clone(),
         );
-        with_active_scope(ctx.storage.clone(), |scope, parent| {
-            crate::commands::start_metadosis(&ctx, scope, parent)
-        })
-        .expect("the forming edge commits when the day VWAP overflows");
+        (|| crate::commands::start_metadosis(&ctx))()
+            .expect("the forming edge commits when the day VWAP overflows");
 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(

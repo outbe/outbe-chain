@@ -1,12 +1,12 @@
 use super::restart_capture_incarnations;
 use super::restart_check_logs;
 use super::restart_finalize_hash;
-use super::restart_install_replacement;
 use super::restart_pin_before;
 use super::restart_prove_signing;
 use super::restart_require_membership;
 use super::restart_sealed_node_evidence;
 use super::restart_snapshot;
+use super::{restart_install_replacement, ReplacementLogs};
 
 use crate::internal::launch_log::LaunchLog;
 
@@ -119,7 +119,11 @@ fn node_killed_and_restarted(world: &mut World) {
         .localnet
         .launch_joiner(idx, &["--consensus.keys-dir", &keys])
         .expect("restart same node slot");
-    restart_install_replacement(world, idx, previous, node_log, old.enclave_log, false)
+    let logs = ReplacementLogs {
+        node: node_log,
+        enclave: old.enclave_log,
+    };
+    restart_install_replacement(world, idx, previous, logs, false)
         .expect("only node replaced; enclave and public identity preserved");
 }
 

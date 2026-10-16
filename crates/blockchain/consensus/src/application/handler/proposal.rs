@@ -1,9 +1,7 @@
 use super::parent_round;
 use super::proposal_timestamp_millis;
-use super::wait_for_projected_parent;
 use super::ApplicationShared;
 use super::EngineHandle;
-use super::ParentProjectionGate;
 use super::ParentProofLookup;
 
 use crate::application::epoch_boundary;
@@ -30,7 +28,6 @@ use commonware_consensus::types::View;
 
 use outbe_primitives::addresses::REWARDS_ADDRESS;
 use outbe_primitives::projection::ExecutionReadBudget;
-use outbe_primitives::projection::ProjectionCheckpoint;
 
 use outbe_primitives::reshare_artifact::OutbeBlockArtifacts;
 
@@ -76,7 +73,6 @@ pub(super) enum ProposeOutcome {
     ParentProofUnavailable,
     EpochStale,
     BoundaryUnavailable,
-    ProjectionUnavailable,
     ExecutionUnavailable,
     RoundAlreadyProposed,
 }
@@ -91,9 +87,6 @@ impl ProposeOutcome {
             Self::EpochStale => "proposal task completed without response for stale epoch work",
             Self::BoundaryUnavailable => {
                 "proposal task completed without response: DKG boundary requirement unavailable"
-            }
-            Self::ProjectionUnavailable => {
-                "proposal task completed without response: exact parent is not projected"
             }
             Self::ExecutionUnavailable => {
                 "proposal task completed without response: candidate execution is not valid"
@@ -148,9 +141,7 @@ pub(super) async fn prepare_built_candidate(
         .await
         .map_err(BuiltCandidatePreparationError::from_execution_error)?;
     if !status.is_valid() {
-        return Err(BuiltCandidatePreparationError::Execution(format!(
-            "{status:?}"
-        )));
+        return Err(BuiltCandidatePreparationError::from_invalid_status(&status));
     }
     Ok(())
 }

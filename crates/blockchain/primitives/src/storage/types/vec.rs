@@ -17,6 +17,17 @@ pub struct StorageVec<'storage, T> {
     _marker: std::marker::PhantomData<T>,
 }
 
+impl<T> Clone for StorageVec<'_, T> {
+    fn clone(&self) -> Self {
+        Self {
+            base_slot: self.base_slot,
+            address: self.address,
+            storage: self.storage.clone(),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
 impl<'storage, T: Storable> StorageVec<'storage, T> {
     pub fn new(base_slot: U256, address: Address, storage: StorageHandle<'storage>) -> Self {
         Self {
@@ -30,6 +41,10 @@ impl<'storage, T: Storable> StorageVec<'storage, T> {
     pub fn len(&self) -> Result<u32> {
         let word = self.storage.sload(self.address, self.base_slot)?;
         Ok(word.to::<u32>())
+    }
+
+    pub fn base_slot(&self) -> U256 {
+        self.base_slot
     }
 
     pub fn is_empty(&self) -> Result<bool> {
@@ -48,9 +63,7 @@ impl<'storage, T: Storable> StorageVec<'storage, T> {
     pub fn set(&self, index: u32, value: T) -> Result<()> {
         let length = self.len()?;
         if index >= length {
-            return Err(crate::error::PrecompileError::revert(
-                "vec index out of bounds",
-            ));
+            return Err(crate::error::PrimitivesStorageError::VecIndexOutOfBounds.into());
         }
         self.storage
             .sstore(self.address, self.data_slot(index), value.to_word())
@@ -99,7 +112,7 @@ impl<'storage, T: Storable> StorageVec<'storage, T> {
             .sstore(self.address, self.base_slot, U256::ZERO)
     }
 
-    fn data_slot(&self, index: u32) -> U256 {
+    pub fn data_slot(&self, index: u32) -> U256 {
         let start = U256::from_be_bytes(keccak256(self.base_slot.to_be_bytes::<32>()).0);
         start + U256::from(index as u64 * T::SLOTS as u64)
     }

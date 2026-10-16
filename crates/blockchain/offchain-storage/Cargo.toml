@@ -10,8 +10,6 @@ default = []
 test-utils = []
 
 [dependencies]
-hex.workspace = true
-mongodb.workspace = true
 parking_lot.workspace = true
 postcard.workspace = true
 rocksdb.workspace = true

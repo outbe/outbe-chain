@@ -30,7 +30,7 @@ contract AuctionTest is Test {
 
     // EIP-712 typehash mirrors `IntexAuction.REVEAL_BID_TYPEHASH`.
     bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
-        "RevealBid(uint32 worldwideDay,address bidder,uint16 units,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
     );
 
     uint32 internal constant SCALE_1E6 = BridgeMsgCodec.SCALE_1E6;
@@ -79,7 +79,7 @@ contract AuctionTest is Test {
         return IIntexAuction.AuctionParams({
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: minIntexBidRate,
-            prices: ReferenceCurrencyPriceLib.onePriced(840, entryPrice, 100, 200),
+            prices: ReferenceCurrencyPriceLib.onePriced(840, entryPrice, 200),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: minIntexBidQuantity,
             commitBondMinor: 0
@@ -829,15 +829,15 @@ contract AuctionTest is Test {
         _commit(worldwideDay, iba1, 10, 20, iba1PrivateKey);
         _enterRevealStage(worldwideDay, startTs);
 
-        // Zero units
+        // Zero quantity
         bytes memory sig = _createSignature(worldwideDay, iba1, 0, 20, iba1PrivateKey);
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "units/bidRate"));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "quantity/bidRate"));
         vm.prank(iba1);
         auction.revealBid(worldwideDay, 0, 20, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 
         // Zero bidRate
         sig = _createSignature(worldwideDay, iba1, 10, 0, iba1PrivateKey);
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "units/bidRate"));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "quantity/bidRate"));
         vm.prank(iba1);
         auction.revealBid(worldwideDay, 10, 0, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 

@@ -39,7 +39,7 @@ pub(super) fn worldwide_days_by_status(
     c: IMetadosis::getWorldwideDaysByStatusCall,
 ) -> Result<<IMetadosis::getWorldwideDaysByStatusCall as SolCall>::Return> {
     let wanted = WwdStatus::try_from(c.status)
-        .map_err(|_| crate::errors::caller_rejection("unknown WorldwideDay status"))?;
+        .map_err(|_| crate::errors::MetadosisCallerError::UnknownWorldwideDayStatus)?;
     let wwds = metadosis.get_active_wwd_by_status(wanted)?;
     Ok(wwds.into_iter().map(u32::from).collect())
 }
@@ -61,6 +61,9 @@ pub(super) fn terminal_receipt(
             .into());
     };
     match &stored {
+        crate::terminal::model::WwdTerminalReceipt::LysisCompleted { .. } => {
+            metadosis.read_lysis_completion(wwd)?;
+        }
         crate::terminal::model::WwdTerminalReceipt::MissedOffering(_) => {
             metadosis.read_missed_offering_receipt(wwd)?;
         }
@@ -103,7 +106,6 @@ pub(super) fn capacity_forfeiture_receipt(
             U256::ZERO,
             U256::ZERO,
             U256::ZERO,
-            alloy_primitives::B256::ZERO,
             0_u32,
             U256::ZERO,
             0_u64,
@@ -114,10 +116,8 @@ pub(super) fn capacity_forfeiture_receipt(
             .into());
     };
     let retirement = match receipt.retirement {
-        outbe_compressed_entities::RetirementOutcome::NotPresent => {
-            terminal_retirement::NOT_PRESENT
-        }
-        outbe_compressed_entities::RetirementOutcome::Requested => terminal_retirement::REQUESTED,
+        outbe_tribute::runtime::RetirementOutcome::NotPresent => terminal_retirement::NOT_PRESENT,
+        outbe_tribute::runtime::RetirementOutcome::Requested => terminal_retirement::REQUESTED,
     };
     Ok((
         terminal_outcome::CAPACITY_FORFEITURE,
@@ -126,7 +126,6 @@ pub(super) fn capacity_forfeiture_receipt(
         receipt.value_routed,
         receipt.carry_over_before,
         receipt.carry_over_after,
-        receipt.sealed_collection_root,
         receipt.forfeited_count,
         receipt.forfeited_nominal,
         receipt.source_generation,

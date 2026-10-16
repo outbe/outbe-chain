@@ -15,6 +15,7 @@ function decodePayload(amount_base: string, amount_micro = "0"): Record<string, 
         amount_micro,
         tribute_draft_id: DRAFT_ID,
         su_hashes: SU_HASHES,
+        creator_public_key: `0x${"44".repeat(32)}`,
       }),
     ),
   ) as Record<string, unknown>;

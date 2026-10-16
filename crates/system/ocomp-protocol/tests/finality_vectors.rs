@@ -88,8 +88,6 @@ fn intent() -> JobIntentV1 {
             wwd: 7,
             pending_nonce: 0,
             tribute_source_generation: 1,
-            collection_key: hash(5),
-            sealed_collection_root: hash(6),
             exact_count: 0,
             exact_nominal_total: U256::ZERO,
         },
@@ -107,7 +105,6 @@ fn intent() -> JobIntentV1 {
             fork_id: hash(2),
             attempt: 0,
             protocol_bundle_hash: hash(3),
-            ce_sealed_root: hash(4),
             pre_admission_envelope_hash: hash(7),
             source_availability_policy_id: hash(8),
             frozen_metadosis_values: FrozenMetadosisValuesV1 {
@@ -735,8 +732,6 @@ fn ocm_fin_001_exporter_derives_job_inputs_only_from_verified_handoff_proof() {
             finalized_block_number: verified.request.block_number,
             finalized_block_hash: verified.request.block_hash,
             finalized_state_root: verified.request.state_root,
-            finalized_ce_root: verified.intent.ce_sealed_root,
-            ce_schema_version: 1,
         },
         canonical_lease_offer: BoundedBytes(vec![1]),
     };
@@ -746,11 +741,15 @@ fn ocm_fin_001_exporter_derives_job_inputs_only_from_verified_handoff_proof() {
             .expect("production exporter verifier closes every handoff binding");
     assert_eq!(authenticated, verified);
 
-    let mut wrong_ce = handoff;
-    wrong_ce.checkpoint.finalized_ce_root = hash(0xee);
-    assert!(
-        authenticate_snapshot_handoff(&wrong_ce, &response, baseline.expected, &LIMITS).is_err()
-    );
+    let mut wrong_checkpoint = handoff;
+    wrong_checkpoint.checkpoint.finalized_state_root = hash(0xee);
+    assert!(authenticate_snapshot_handoff(
+        &wrong_checkpoint,
+        &response,
+        baseline.expected,
+        &LIMITS
+    )
+    .is_err());
 }
 
 #[test]
@@ -787,7 +786,6 @@ fn ocm_fin_001_production_source_builds_exact_proof_and_refuses_missing_or_ambig
         state_root: fixture.state_root,
         intent_id: fixture.intent_id,
         wwd: fixture.intent.wwd,
-        ce_sealed_root: fixture.intent.ce_sealed_root,
         protocol_bundle_hash: fixture.intent.protocol_bundle_hash,
         input_lease_id: fixture.intent.input_lease_id().expect("input lease id"),
     };

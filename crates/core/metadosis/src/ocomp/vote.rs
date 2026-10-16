@@ -9,7 +9,6 @@
 //! It never executes Lysis.
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_ocomp_protocol::{
     error::ProtocolError,
     state::{OcompJobRecordV1, OcompJobStatus},
@@ -21,8 +20,8 @@ use outbe_primitives::{error::Result, storage::StorageHandle};
 use crate::{
     aggregate::ValidatedWwdAggregate,
     errors::{
-        caller_rejection as reject, result_vote_rejection as vote_reject,
-        storage_corruption_message, vote_rejection_code::*,
+        result_vote_rejection as vote_reject, vote_rejection_code::*, MetadosisCallerError,
+        MetadosisStorageCorruptionError,
     },
     precompile::IMetadosis,
     reducer::{reduce_outer_wwd, OuterWwdEvent},
@@ -119,7 +118,6 @@ impl ResponseWindowCloseReport {
 /// signature authorizes this transition.
 pub fn dispatch_public_result_vote(
     storage: StorageHandle<'_>,
-    scope: &ExecutionScope,
     data: &[u8],
     value: U256,
     is_static: bool,
@@ -133,7 +131,7 @@ pub fn dispatch_public_result_vote(
         .map_err(|_| vote_reject(MALFORMED_ENCODING))?;
     let inclusion_height = storage.block_number()?;
     MetadosisContract::new(storage)
-        .record_ocomp_result_vote(&vote, inclusion_height, scope, &limits)
+        .record_ocomp_result_vote(&vote, inclusion_height, &limits)
         .map_err(map_vote_transition_error)?;
     Ok(Bytes::new())
 }
@@ -275,14 +273,10 @@ fn member_count_for_open_vote(
     limits: &SchemaLimits,
 ) -> Result<Option<u16>> {
     let Some(record) = contract.ocomp_job_record(response.intent_id, limits)? else {
-        return Err(storage_corruption_message(
-            "OCOMP response index points to a missing job",
-        ));
+        return Err(MetadosisStorageCorruptionError::OcompResponseIndexMissingJob.into());
     };
     let Some(finalized) = record.finalized.as_ref() else {
-        return Err(storage_corruption_message(
-            "OCOMP response-window job is not finalized",
-        ));
+        return Err(MetadosisStorageCorruptionError::OcompResponseWindowJobNotFinalized.into());
     };
     if finalized.job_id != response.job_id
         || finalized.deadline_height != response.deadline_height
@@ -291,9 +285,7 @@ fn member_count_for_open_vote(
             OcompJobStatus::VotingOpen | OcompJobStatus::Completed
         )
     {
-        return Err(storage_corruption_message(
-            "OCOMP response index/job binding mismatch",
-        ));
+        return Err(MetadosisStorageCorruptionError::OcompResponseIndexJobBindingMismatch.into());
     }
     if PinnedVoteBinding::from_prefix(prefix) != PinnedVoteBinding::from_record(&record) {
         return Ok(None);
@@ -339,7 +331,7 @@ pub(super) fn resolve_historical_result_vote_member(
             snapshot_key,
             validator_index,
         )?
-        .ok_or_else(|| storage_corruption_message("OCOMP historical snapshot member is missing"))?;
+        .ok_or(MetadosisStorageCorruptionError::OcompHistoricalSnapshotMemberMissing)?;
         if member.validator_address != validator_address {
             continue;
         }

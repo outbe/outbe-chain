@@ -203,7 +203,7 @@ fn validate_dcap_evidence(
     used_components: &mut [bool],
 ) -> Result<(), CodecError> {
     if quote.is_empty() {
-        return Err(CodecError::NonCanonical("TEE bootstrap quote is empty"));
+        return Err(crate::error::TeeCodecNonCanonicalError::TeeBootstrapQuoteEmpty.into());
     }
     enforce_limit("SGX quote", MAX_QUOTE_BYTES, quote.len())?;
     for (expected_kind, index) in indices.iter().enumerate() {

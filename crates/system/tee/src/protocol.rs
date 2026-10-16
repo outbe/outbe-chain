@@ -33,7 +33,7 @@ pub const MIN_ONBOARDING_ARTIFACT_BYTES: usize = 60;
 /// Fields mirror the part of `ITributeFactory.offerTribute` the enclave needs,
 /// plus the sender and the node-resolved public Oracle inputs:
 ///   - `cipherText`, `nonce`, `ephemeralPubkey`, `worldwideDay`,
-///     `tributeCurrency`, `referenceCurrency`, `excludeFromIntexIssuance` (ABI).
+///     `tributeCurrency`, `referenceCurrency` (ABI).
 ///   - `owner`: the L1 `msg.sender`. The enclave binds it into the result and
 ///     into the `token_id` (computed in-enclave, see `TributeOfferResult`).
 ///   - `issuance_wwd_vwap_minor`, `reference_wwd_vwap_minor`, and
@@ -78,11 +78,8 @@ pub struct EncryptedTributeOffer {
     /// ABI `tributeCurrency`: ISO 4217 code the tribute amount is denominated in.
     pub tribute_currency: u16,
     /// ABI `referenceCurrency`. A separate axis from `tribute_currency`. It
-    /// drives gem/intex qualification, not pricing.
+    /// denominates the rights' entry and call prices, not pricing.
     pub reference_currency: u16,
-    /// ABI `excludeFromIntexIssuance`: when true, the resulting Tribute is
-    /// excluded from Intex issuance.
-    pub exclude_from_intex_issuance: bool,
     /// Exact WorldwideDay VWAP for `COEN/<tribute_currency>`, scale 1e6.
     pub issuance_wwd_vwap_minor: U256,
     /// Exact WorldwideDay VWAP for `COEN/<reference_currency>`, scale 1e6.
@@ -151,8 +148,8 @@ pub enum TributeOfferStatus {
 ///
 /// This carries **only what the enclave computed**. The enclave does not echo back
 /// the values that the host supplied in [`EncryptedTributeOffer`] (day, currencies,
-/// exclusion flag, price). The host already holds them, so an echo would be one
-/// more thing to keep in agreement for no gain. `owner` is the deliberate
+/// price). The host already holds them, so an echo would be one more thing to
+/// keep in agreement for no gain. `owner` is the deliberate
 /// exception. The enclave folds it into `token_id`, so a comparison against
 /// `msg.sender` checks the enclave's computation rather than repeating an input.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -840,13 +837,6 @@ pub enum EnclaveRequest {
         creator_public: [u8; 32],
         amount: U256,
     },
-    PrepareEncryptedNodsV2 {
-        request: Box<crate::nod_materialization::PrepareEncryptedNodsRequestV2>,
-    },
-    OpenEncryptedNodsV2 {
-        authority: crate::nod_materialization::NodMaterializationAuthorityV2,
-        carrier: Vec<u8>,
-    },
     MineEncryptedNodV2 {
         request: Box<crate::nod_mine::MineEncryptedNodRequestV2>,
     },
@@ -883,6 +873,16 @@ pub enum EnclaveRequest {
     ReadTributeDayAmountV2 {
         record: outbe_primitives::tribute_day_encryption::EncryptedTributeDayAmountV2,
     },
+    ExecuteLysis {
+        request: Box<crate::lysis::LysisRequest>,
+    },
+    PrepareStateNods {
+        request: Box<crate::nod_state_materialization::PrepareStateNodsRequest>,
+    },
+    OpenStateNods {
+        authority: crate::nod_state_materialization::StateNodAuthority,
+        carrier: Vec<u8>,
+    },
 }
 
 impl EnclaveRequest {
@@ -891,8 +891,9 @@ impl EnclaveRequest {
     pub const fn label(&self) -> &'static str {
         match self {
             Self::CreateNodForTestV2 { .. } => "create_nod_for_test_v2",
-            Self::PrepareEncryptedNodsV2 { .. } => "prepare_encrypted_nods_v2",
-            Self::OpenEncryptedNodsV2 { .. } => "open_encrypted_nods_v2",
+            Self::ExecuteLysis { .. } => "execute_lysis",
+            Self::PrepareStateNods { .. } => "prepare_state_nods",
+            Self::OpenStateNods { .. } => "open_state_nods",
             Self::MineEncryptedNodV2 { .. } => "mine_encrypted_nod_v2",
             Self::ReadNodAmountV2 { .. } => "read_nod_amount_v2",
             Self::NodTransferChunkV2 { .. } => "nod_transfer_chunk_v2",
@@ -972,8 +973,9 @@ impl EnclaveRequest {
         match self {
             Self::CreateNodForTestV2 { .. } => true,
             Self::GetQuote { .. }
-            | Self::PrepareEncryptedNodsV2 { .. }
-            | Self::OpenEncryptedNodsV2 { .. }
+            | Self::ExecuteLysis { .. }
+            | Self::PrepareStateNods { .. }
+            | Self::OpenStateNods { .. }
             | Self::MineEncryptedNodV2 { .. }
             | Self::ReadNodAmountV2 { .. }
             | Self::NodTransferChunkV2 { .. }
@@ -1111,7 +1113,6 @@ pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
         buf.extend_from_slice(&offer.worldwide_day.value().to_be_bytes());
         buf.extend_from_slice(&offer.tribute_currency.to_be_bytes());
         buf.extend_from_slice(&offer.reference_currency.to_be_bytes());
-        buf.push(u8::from(offer.exclude_from_intex_issuance));
         buf.extend_from_slice(&offer.issuance_wwd_vwap_minor.to_be_bytes::<32>());
         buf.extend_from_slice(&offer.reference_wwd_vwap_minor.to_be_bytes::<32>());
         buf.extend_from_slice(&offer.reference_scurve_minor.to_be_bytes::<32>());
@@ -1446,6 +1447,15 @@ pub enum EnclaveResponse {
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },
+    LysisRejected {
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    LysisExecuted {
+        result: Box<crate::lysis::LysisResult>,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
     EncryptedNodsOpenedV2 {
         nods: Vec<outbe_primitives::nod_encryption::EncryptedNodV2>,
         inputs_canonical_hash: B256,
@@ -1500,6 +1510,11 @@ pub enum EnclaveResponse {
     /// or an expired session. Unlike `Error`, it reports this enclave's state, not the request's content.
     NotReady {
         message: String,
+    },
+    TributeSourcesRequested {
+        lookup: crate::nod_state_materialization::TributeSourceLookup,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
     },
 }
 

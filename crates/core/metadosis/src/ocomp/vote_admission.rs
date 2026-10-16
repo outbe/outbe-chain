@@ -6,7 +6,11 @@ use outbe_ocomp_protocol::{
 };
 use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
 
-use crate::{constants::MAX_ACTIVE_WWDS, schema::MetadosisContract};
+use crate::{
+    constants::MAX_ACTIVE_WWDS,
+    errors::{MetadosisStorageCorruptionError, ResultVoteCarrierInvalidError},
+    schema::MetadosisContract,
+};
 
 use super::{
     live_index::{LIVE_INDEX_HEADER_LEN, LIVE_INDEX_KEY_LEN},
@@ -65,8 +69,9 @@ pub fn verify_result_vote_carrier(
 ) -> ResultVoteCarrierAdmission {
     let decision = (|| {
         let vote_bytes = preflight_result_vote_calldata(calldata, limits).map_err(invalid)?;
-        let vote = ResultVoteV1::decode_canonical(vote_bytes, limits)
-            .map_err(|error| invalid_reason(crate::errors::malformed_result_vote_reason(error)))?;
+        let vote = ResultVoteV1::decode_canonical(vote_bytes, limits).map_err(|error| {
+            invalid_reason(ResultVoteCarrierInvalidError::MalformedCanonicalResultVote { error })
+        })?;
         let carrier = CarrierVote {
             vote: &vote,
             outer_signer,
@@ -112,9 +117,11 @@ fn verify_indexed_window(
     let record = contract
         .ocomp_job_record(response.intent_id, limits)
         .map_err(classify_state_error)?
-        .ok_or_else(|| corrupt("OCOMP response index points to a missing job"))?;
+        .ok_or_else(|| corrupt(MetadosisStorageCorruptionError::OcompResponseIndexMissingJob))?;
     let Some(finalized) = record.finalized.as_ref() else {
-        return Err(corrupt("OCOMP response-window job is not finalized"));
+        return Err(corrupt(
+            MetadosisStorageCorruptionError::OcompResponseWindowJobNotFinalized,
+        ));
     };
     if finalized.job_id != response.job_id
         || finalized.deadline_height != response.deadline_height
@@ -123,7 +130,9 @@ fn verify_indexed_window(
             OcompJobStatus::VotingOpen | OcompJobStatus::Completed
         )
     {
-        return Err(corrupt("OCOMP response index/job binding mismatch"));
+        return Err(corrupt(
+            MetadosisStorageCorruptionError::OcompResponseIndexJobBindingMismatch,
+        ));
     }
     let (represented_validator, member, member_count) =
         authorize_vote_for_record(storage, vote, &record, outer_signer)?;
@@ -152,7 +161,9 @@ fn verify_indexed_window(
         },
         limits,
     ) {
-        return Err(invalid_reason(format!("invalid result vote: {error}")));
+        return Err(invalid_reason(
+            ResultVoteCarrierInvalidError::InvalidResultVote { error },
+        ));
     }
 
     Ok(ResultVoteCarrierAdmission::Valid {
@@ -168,33 +179,31 @@ fn live_job_for_finalized_job_id(
     let max_scheduler_bytes = LIVE_INDEX_KEY_LEN
         .checked_mul(MAX_ACTIVE_WWDS)
         .and_then(|bytes| LIVE_INDEX_HEADER_LEN.checked_add(bytes))
-        .ok_or_else(|| {
-            crate::errors::storage_corruption_message("OCOMP live scheduler byte cap overflow")
-        })?;
+        .ok_or(MetadosisStorageCorruptionError::OcompLiveSchedulerByteCapOverflow)?;
     if contract.ocomp_scheduler.len()? > max_scheduler_bytes {
-        return Err(crate::errors::storage_corruption_message(
-            "OCOMP live scheduler exceeds the active-job capacity",
-        ));
+        return Err(
+            MetadosisStorageCorruptionError::OcompLiveSchedulerExceedsActiveJobCapacity.into(),
+        );
     }
     let mut matched = None;
     for state in contract.live_ocomp_fsm_states(limits)? {
-        let intent_id = state.projection().live_intent_id.ok_or_else(|| {
-            crate::errors::storage_corruption_message("OCOMP live scheduler has no IntentId")
-        })?;
+        let intent_id = state
+            .projection()
+            .live_intent_id
+            .ok_or(MetadosisStorageCorruptionError::OcompLiveSchedulerHasNoIntentId)?;
         let record = contract
             .ocomp_job_record(intent_id, limits)?
-            .ok_or_else(|| {
-                crate::errors::storage_corruption_message("OCOMP live scheduler job is missing")
-            })?;
+            .ok_or(MetadosisStorageCorruptionError::OcompLiveSchedulerJobMissing)?;
         let matches_job = record
             .finalized
             .as_ref()
             .is_some_and(|finalized| finalized.job_id == job_id);
         if matches_job {
             if matched.is_some() {
-                return Err(crate::errors::storage_corruption_message(
-                    "OCOMP live scheduler contains duplicate JobId bindings",
-                ));
+                return Err(
+                    MetadosisStorageCorruptionError::OcompLiveSchedulerDuplicateJobIdBindings
+                        .into(),
+                );
             }
             matched = Some(record);
         }
@@ -214,13 +223,17 @@ fn verify_unmaterialized_window(
         limits,
     } = *carrier;
     if record.status != OcompJobStatus::AwaitingFinality || record.terminal.is_some() {
-        return corrupt("OCOMP live job without a response window is not awaiting finality");
+        return corrupt(
+            MetadosisStorageCorruptionError::OcompLiveJobWithoutResponseWindowNotAwaitingFinality,
+        );
     }
     let Some(finalized) = record.finalized.as_ref() else {
-        return invalid_reason("result vote job is not finalized");
+        return invalid_reason(ResultVoteCarrierInvalidError::JobNotFinalized);
     };
     if inclusion_height > finalized.open_height {
-        return corrupt("OCOMP finalized job did not materialize its response window on time");
+        return corrupt(
+            MetadosisStorageCorruptionError::OcompFinalizedJobDidNotMaterializeResponseWindowOnTime,
+        );
     }
     let (represented_validator, member, member_count) =
         match authorize_vote_for_record(storage, vote, record, outer_signer) {
@@ -242,7 +255,7 @@ fn verify_unmaterialized_window(
         },
         limits,
     ) {
-        return invalid_reason(format!("invalid result vote: {error}"));
+        return invalid_reason(ResultVoteCarrierInvalidError::InvalidResultVote { error });
     }
     if inclusion_height < finalized.open_height {
         ResultVoteCarrierAdmission::NotYetOpen {
@@ -263,7 +276,7 @@ fn authorize_vote_for_record(
 ) -> Result<(Address, ResolvedHistoricalResultVoteMemberV1, u16), ResultVoteCarrierAdmission> {
     if PinnedVoteBinding::from_prefix(&vote.prefix()) != PinnedVoteBinding::from_record(record) {
         return Err(invalid_reason(
-            "result vote does not match the pinned job binding",
+            ResultVoteCarrierInvalidError::PinnedJobBindingMismatch,
         ));
     }
     let snapshot = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
@@ -273,9 +286,11 @@ fn authorize_vote_for_record(
         record.intent.result_ocomp_binding_hash,
     )
     .map_err(classify_state_error)?
-    .ok_or_else(|| corrupt("OCOMP historical snapshot is missing"))?;
+    .ok_or_else(|| corrupt(MetadosisStorageCorruptionError::OcompHistoricalSnapshotMissing))?;
     if snapshot.member_count != record.intent.result_member_count {
-        return Err(corrupt("OCOMP historical snapshot member count changed"));
+        return Err(corrupt(
+            MetadosisStorageCorruptionError::OcompHistoricalSnapshotMemberCountChanged,
+        ));
     }
     let snapshot_key = outbe_validatorset::committee_snapshot_key(
         vote.result_validator_set_epoch,
@@ -289,14 +304,14 @@ fn authorize_vote_for_record(
         vote.key_epoch,
     )
     .map_err(classify_state_error)?
-    .ok_or_else(|| invalid_reason("result vote member is not in the pinned snapshot"))?;
+    .ok_or_else(|| invalid_reason(ResultVoteCarrierInvalidError::MemberNotInPinnedSnapshot))?;
     let represented_validator = authorize_historical_result_vote_carrier_signer(
         storage,
         member.validator_address,
         outer_signer,
     )
     .map_err(classify_state_error)?
-    .ok_or_else(|| invalid_reason("result vote carrier signer is not authorized"))?;
+    .ok_or_else(|| invalid_reason(ResultVoteCarrierInvalidError::CarrierSignerNotAuthorized))?;
     Ok((represented_validator, member, snapshot.member_count))
 }
 
@@ -314,15 +329,17 @@ fn verify_closed_window(
     let accountability = contract
         .result_vote_accountability(vote.job_id, limits)
         .map_err(classify_state_error)?
-        .ok_or_else(|| invalid_reason("result vote has no response window"))?;
+        .ok_or_else(|| invalid_reason(ResultVoteCarrierInvalidError::NoResponseWindow))?;
     if accountability.closed_summary.is_none() {
-        return Err(invalid_reason("result vote has no open response window"));
+        return Err(invalid_reason(
+            ResultVoteCarrierInvalidError::NoOpenResponseWindow,
+        ));
     }
     if PinnedCommittee::from_prefix(&vote.prefix())
         != PinnedCommittee::from_accountability(&accountability)
     {
         return Err(invalid_reason(
-            "result vote does not match the closed response window",
+            ResultVoteCarrierInvalidError::ClosedResponseWindowMismatch,
         ));
     }
     let snapshot = outbe_validatorset::read_ocomp_snapshot_extension_for_binding(
@@ -332,9 +349,13 @@ fn verify_closed_window(
         vote.result_ocomp_binding_hash,
     )
     .map_err(classify_state_error)?
-    .ok_or_else(|| corrupt("OCOMP closed-window historical snapshot is missing"))?;
+    .ok_or_else(|| {
+        corrupt(MetadosisStorageCorruptionError::OcompClosedWindowHistoricalSnapshotMissing)
+    })?;
     if snapshot.member_count != accountability.member_count {
-        return Err(corrupt("OCOMP closed-window snapshot member count changed"));
+        return Err(corrupt(
+            MetadosisStorageCorruptionError::OcompClosedWindowSnapshotMemberCountChanged,
+        ));
     }
     let snapshot_key = outbe_validatorset::committee_snapshot_key(
         vote.result_validator_set_epoch,
@@ -348,32 +369,36 @@ fn verify_closed_window(
         vote.key_epoch,
     )
     .map_err(classify_state_error)?
-    .ok_or_else(|| invalid_reason("closed-window vote member is not in the snapshot"))?;
+    .ok_or_else(|| {
+        invalid_reason(ResultVoteCarrierInvalidError::ClosedWindowMemberNotInSnapshot)
+    })?;
     let represented_validator = authorize_historical_result_vote_carrier_signer(
         storage,
         member.validator_address,
         outer_signer,
     )
     .map_err(classify_state_error)?
-    .ok_or_else(|| invalid_reason("closed-window carrier signer is not authorized"))?;
+    .ok_or_else(|| {
+        invalid_reason(ResultVoteCarrierInvalidError::ClosedWindowCarrierSignerNotAuthorized)
+    })?;
     Ok(ResultVoteCarrierAdmission::DeadlinePassed {
         represented_validator,
     })
 }
 
 fn invalid(error: PrecompileError) -> ResultVoteCarrierAdmission {
-    invalid_reason(error.to_string())
+    invalid_reason(ResultVoteCarrierInvalidError::Preflight { error })
 }
 
-fn invalid_reason(reason: impl Into<String>) -> ResultVoteCarrierAdmission {
+fn invalid_reason(reason: ResultVoteCarrierInvalidError) -> ResultVoteCarrierAdmission {
     ResultVoteCarrierAdmission::InvalidCarrier {
-        reason: reason.into(),
+        reason: reason.to_string(),
     }
 }
 
-fn corrupt(reason: impl std::fmt::Display) -> ResultVoteCarrierAdmission {
+fn corrupt(error: MetadosisStorageCorruptionError) -> ResultVoteCarrierAdmission {
     ResultVoteCarrierAdmission::CorruptCommittedState {
-        source: crate::errors::storage_corruption_message(reason),
+        source: error.into(),
     }
 }
 
@@ -634,8 +659,7 @@ mod tests {
                 BlockContext::empty_for_tests(deadline, 1_011, 1),
                 storage,
             );
-            crate::commands::run_ocomp_lifecycle_begin_with_scope(&context, &fixture.scope)
-                .unwrap();
+            crate::commands::run_ocomp_lifecycle_begin_with_scope(&context).unwrap();
         });
 
         let before = fixture.rollback_snapshot();

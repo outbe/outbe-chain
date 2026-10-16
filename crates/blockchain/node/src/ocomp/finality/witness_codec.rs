@@ -10,7 +10,9 @@ pub(super) fn encode_account_witness(
         ));
     }
     let account = proof.info.as_ref().ok_or_else(|| {
-        FinalizedIntentProofBuildError::Trie("account proof opened no account".to_owned())
+        FinalizedIntentProofBuildError::from(
+            crate::errors::FinalizedIntentProofTrieError::AccountProofOpenedNoAccount,
+        )
     })?;
     let code_hash = account.get_bytecode_hash();
     let mut encoded = Vec::new();
@@ -34,7 +36,9 @@ pub(super) fn encode_storage_witness(
     encoded.extend_from_slice(
         &u32::try_from(expected_slots.len())
             .map_err(|_| {
-                FinalizedIntentProofBuildError::Trie("storage proof count exceeds u32".to_owned())
+                FinalizedIntentProofBuildError::from(
+                    crate::errors::FinalizedIntentProofTrieError::StorageProofCountExceedsU32,
+                )
             })?
             .to_be_bytes(),
     );
@@ -62,7 +66,9 @@ fn encode_nodes(
     encoded.extend_from_slice(
         &u32::try_from(nodes.len())
             .map_err(|_| {
-                FinalizedIntentProofBuildError::Trie("proof node count exceeds u32".to_owned())
+                FinalizedIntentProofBuildError::from(
+                    crate::errors::FinalizedIntentProofTrieError::ProofNodeCountExceedsU32,
+                )
             })?
             .to_be_bytes(),
     );
@@ -70,7 +76,9 @@ fn encode_nodes(
         encoded.extend_from_slice(
             &u32::try_from(node.len())
                 .map_err(|_| {
-                    FinalizedIntentProofBuildError::Trie("proof node length exceeds u32".to_owned())
+                    FinalizedIntentProofBuildError::from(
+                        crate::errors::FinalizedIntentProofTrieError::ProofNodeLengthExceedsU32,
+                    )
                 })?
                 .to_be_bytes(),
         );
@@ -90,7 +98,9 @@ pub(super) fn encode_historical_committee_witness(
     encoded.extend_from_slice(
         &u32::try_from(snapshot.committee.len())
             .map_err(|_| {
-                FinalizedIntentProofBuildError::Trie("committee length exceeds u32".to_owned())
+                FinalizedIntentProofBuildError::from(
+                    crate::errors::FinalizedIntentProofTrieError::CommitteeLengthExceedsU32,
+                )
             })?
             .to_be_bytes(),
     );
@@ -102,7 +112,9 @@ pub(super) fn encode_historical_committee_witness(
     encoded.extend_from_slice(
         &u32::try_from(snapshot.vrf_group_public_key_bytes.len())
             .map_err(|_| {
-                FinalizedIntentProofBuildError::Trie("VRF group key length exceeds u32".to_owned())
+                FinalizedIntentProofBuildError::from(
+                    crate::errors::FinalizedIntentProofTrieError::VrfGroupKeyLengthExceedsU32,
+                )
             })?
             .to_be_bytes(),
     );

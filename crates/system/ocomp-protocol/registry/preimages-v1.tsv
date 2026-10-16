@@ -1,5 +1,6 @@
 domain	payload_grammar
 OUTBE_OCOMP_PROTOCOL_BUNDLE_V1	canonical(ProtocolBundleV1)
+OUTBE_OCOMP_LYSIS_PROGRAM_SEMANTICS_V1	utf8(lysis_program_semantics_hash_descriptor)
 OUTBE_OCOMP_PRE_ADMISSION_V1	canonical(PreAdmissionEnvelopeV1)
 OUTBE_OCOMP_ACTIVATION_PRECONDITIONS_V1	canonical(ActivationPreconditionsV1)
 OUTBE_OCOMP_INTENT_V1	canonical(JobIntentV1)
@@ -19,7 +20,7 @@ OUTBE_OCOMP_UNIT_OUTPUT_V1	protocol_bundle_hash||JobId||attempt||UnitId||phase||
 OUTBE_OCOMP_UNIT_COVERAGE_V1	phase||interval_commitment||coverage_roots||coverage_counts
 OUTBE_OCOMP_UNIT_ARTIFACT_V1	canonical(UnitArtifactV1)
 OUTBE_OCOMP_SHUFFLE_SOURCE_COVERAGE_V1	u8(leaf_or_node)||canonical(run_span)||leaf(raw_coverage_root,raw_coverage_count)|node(left_root,left_count,right_root,right_count)
-OUTBE_OCOMP_SHUFFLE_RUN_NODE_V1	canonical(kind,page_span,first_record_ordinal,record_count,left_ordered_record_root,right_ordered_record_root)
+OUTBE_OCOMP_SHUFFLE_RUN_NODE_V1	canonical(page_span,first_record_ordinal,record_count,left_ordered_record_root,right_ordered_record_root)
 OUTBE_OCOMP_RESULT_CHUNK_V1	canonical(ResultChunkV1)
 OUTBE_OCOMP_RESULT_V1	canonical(LysisResultV1)
 OUTBE_OCOMP_RESULT_VOTE_SUBJECT_V1	chain_id||genesis_hash||fork_id||protocol_bundle_hash||JobId||attempt||result_validator_set_epoch||result_committee_set_hash||result_ocomp_binding_hash||ocomp_key_hash||key_epoch||u8(RESULT_SIGNATURE=1)||ResultDigest
@@ -41,8 +42,8 @@ OUTBE_OCOMP_CARRY_OVER_RECEIPT_V1	canonical(CarryOverReceiptV1)
 OUTBE_OCOMP_ACTIVE_GENERATION_V1	canonical(ActiveGenerationV1)
 OUTBE_OCOMP_JOB_RECORD_V1	canonical(OcompJobRecordV1)
 OUTBE_OCOMP_STATE_EVENTS_V1	owner_kind||effect_binding||len||owner_projection
-OUTBE_OCOMP_APPLY_EVENT_SUMMARY_V1	four_activation_owner_state_event_digests
-OUTBE_OCOMP_EFFECTS_V1	four_activation_owner_receipt_hashes_or_empty
+OUTBE_OCOMP_APPLY_EVENT_SUMMARY_V1	three_activation_owner_state_event_digests
+OUTBE_OCOMP_EFFECTS_V1	three_activation_owner_receipt_hashes_or_empty
 OUTBE_OCOMP_LIST_EMPTY_V1	list_kind
 OUTBE_OCOMP_LIST_LEAF_V1	list_kind||index||len||item
 OUTBE_OCOMP_LIST_PAD_V1	list_kind||missing_index

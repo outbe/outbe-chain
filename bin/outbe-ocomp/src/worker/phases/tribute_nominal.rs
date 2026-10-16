@@ -36,37 +36,6 @@ pub(super) fn shard_tribute_nominals(
     Ok(nominals)
 }
 
-/// Sum of Tribute nominals in this shard that still enter Intex issuance.
-pub(super) fn shard_eligible_nominal_total(
-    input_chunks: &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
-    shard_ordinal: u32,
-) -> Result<U256, WorkerError> {
-    let mut matched = input_chunks.iter().filter(|(reference, chunk)| {
-        reference.kind == InputChunkKind::Tribute
-            && chunk.kind == InputChunkKind::Tribute
-            && reference.ordinal == shard_ordinal
-    });
-    let Some((_, chunk)) = matched.next() else {
-        return Err(WorkerError::UnitBindingMismatch);
-    };
-    if matched.next().is_some() {
-        return Err(WorkerError::UnitBindingMismatch);
-    }
-    let mut total = U256::ZERO;
-    for record in &chunk.canonical_records_or_openings {
-        let tribute = outbe_tribute::record::decode_canonical(&record.0)?.calculation_view()?;
-        if tribute.exclude_from_intex_issuance {
-            continue;
-        }
-        total = total.checked_add(tribute.nominal_amount_minor).ok_or(
-            outbe_ocomp_protocol::ProtocolError::IntegerOverflow {
-                what: "root reducer eligible nominal total",
-            },
-        )?;
-    }
-    Ok(total)
-}
-
 pub(super) fn refill_nominal(
     tribute: &mut TributeInputV1,
     nominals: &BTreeMap<B256, U256>,

@@ -1,26 +1,6 @@
 //! frames obligations for the offline OCOMP audit.
 use super::*;
 
-/// Native SeriesId::worldwide_day is intentionally permissive. Validate its
-/// stored spelling and date before using it to discover canonical obligations.
-pub(crate) fn verify_series_day(id: SeriesId) -> eyre::Result<WorldwideDay> {
-    let bytes = id.as_bytes();
-    require(
-        bytes[..8].iter().all(u8::is_ascii_digit) && bytes[8] == b'-' && bytes[12] == b'-',
-        SnapshotOcompError::NoncanonicalSeriesIdentity,
-    )?;
-    let day = id.worldwide_day();
-    require(
-        day.value() != 0 && day.is_valid(),
-        SnapshotOcompError::InvalidSeriesWorldwideDay,
-    )?;
-    let issuance = [bytes[9], bytes[10], bytes[11]];
-    require(
-        SeriesId::pack(day, issuance, bytes[13])? == id,
-        SnapshotOcompError::NoncanonicalSeriesCodes,
-    )?;
-    Ok(day)
-}
 #[derive(Debug, Default)]
 pub(crate) struct FrameAvailability {
     pub blocks: u64,
@@ -38,7 +18,6 @@ pub(crate) struct ClosureAudit {
 pub(crate) fn verify_closure(
     view: &crate::snapshot::native::RethReadOnlyView,
     root: &Path,
-    projection: Option<outbe_primitives::projection::ProjectionCheckpoint>,
     maximum_transactions: Option<u64>,
 ) -> eyre::Result<ClosureAudit> {
     use alloy_consensus::Sealable;
@@ -53,10 +32,12 @@ pub(crate) fn verify_closure(
     };
     let checkpoint = inspect_closure_checkpoint(root, baseline).map_err(|error| {
         if missing_native_input(&error) {
-            eyre::Report::new(error).wrap_err(Incomplete(format!(
-                "missing native closure checkpoint at {}",
-                root.display()
-            )))
+            eyre::Report::new(error).wrap_err(
+                SnapshotIncompleteError::MissingNativeClosureCheckpoint {
+                    root: root.display().to_string(),
+                }
+                .into_incomplete(),
+            )
         } else {
             error.into()
         }
@@ -72,12 +53,16 @@ pub(crate) fn verify_closure(
             Some(header) => Some(header),
             None => view.static_files.header_by_number(number)?,
         }
-        .ok_or_else(|| Incomplete(format!("missing closure {name} header at {number}")))?;
+        .ok_or_else(|| {
+            SnapshotIncompleteError::MissingClosureHeader { name, number }.into_incomplete()
+        })?;
         let hash = match tx.get::<tables::CanonicalHeaders>(number)? {
             Some(hash) => Some(hash),
             None => view.static_files.block_hash(number)?,
         }
-        .ok_or_else(|| Incomplete(format!("missing closure {name} canonical hash at {number}")))?;
+        .ok_or_else(|| {
+            SnapshotIncompleteError::MissingClosureCanonicalHash { name, number }.into_incomplete()
+        })?;
         require(
             header.inner.number == number && header.hash_slow() == hash && point.block_hash == hash,
             SnapshotOcompError::ClosureHeaderMismatch {
@@ -86,22 +71,10 @@ pub(crate) fn verify_closure(
             },
         )?;
     }
-    match projection {
-        Some(projected) => {
-            require(
-                projected.block_number > checkpoint.current.block_number
-                    || (projected.block_number == checkpoint.current.block_number
-                        && projected.block_hash == checkpoint.current.block_hash),
-                SnapshotOcompError::ClosureAheadOrConflictsWithProjection,
-            )?;
-        }
-        None => {
-            require(
-                checkpoint.current.block_number == 0,
-                SnapshotOcompError::NonzeroClosureWithoutProjection,
-            )?;
-        }
-    }
+    require(
+        checkpoint.current.block_number <= view.progress.execution.number,
+        SnapshotOcompError::ClosureAheadOrConflictsWithExecution,
+    )?;
     let replay = if checkpoint.current.block_number < view.progress.finalized.number {
         // The strict comparison proves addition cannot overflow, even at MAX.
         verify_retained_frames(
@@ -153,12 +126,14 @@ pub(super) fn visit_retained_frames(
             Some(header) => Some(header),
             None => view.static_files.header_by_number(height)?,
         }
-        .ok_or_else(|| Incomplete(format!("missing replay header at {height}")))?;
+        .ok_or_else(|| SnapshotIncompleteError::MissingReplayHeader { height }.into_incomplete())?;
         let hash = match tx.get::<tables::CanonicalHeaders>(height)? {
             Some(hash) => Some(hash),
             None => view.static_files.block_hash(height)?,
         }
-        .ok_or_else(|| Incomplete(format!("missing replay canonical hash at {height}")))?;
+        .ok_or_else(|| {
+            SnapshotIncompleteError::MissingReplayCanonicalHash { height }.into_incomplete()
+        })?;
         require(
             header.inner.number == height && header.hash_slow() == hash,
             SnapshotOcompError::ReplayHeaderIdentityMismatch { height },
@@ -174,9 +149,9 @@ pub(super) fn visit_retained_frames(
             height != end.number || hash == expected_end,
             SnapshotOcompError::ReplayTargetHashMismatch { height },
         )?;
-        let indices = tx
-            .get::<tables::BlockBodyIndices>(height)?
-            .ok_or_else(|| Incomplete(format!("missing replay body indices at {height}")))?;
+        let indices = tx.get::<tables::BlockBodyIndices>(height)?.ok_or_else(|| {
+            SnapshotIncompleteError::MissingReplayBodyIndices { height }.into_incomplete()
+        })?;
         let tx_end = indices
             .first_tx_num
             .checked_add(indices.tx_count)
@@ -184,10 +159,15 @@ pub(super) fn visit_retained_frames(
         for number in indices.first_tx_num..tx_end {
             require(
                 maximum_transactions.is_none_or(|maximum| result.transactions < maximum),
-                Incomplete(format!(
-                    "replay frame scan stopped at block {height}/{}, transaction {number}/{tx_end}; {} blocks, {} transactions visited",
-                    end.number, result.blocks, result.transactions
-                )),
+                SnapshotIncompleteError::ReplayFrameScanStopped {
+                    height,
+                    end_number: end.number,
+                    number,
+                    tx_end,
+                    blocks: result.blocks,
+                    transactions: result.transactions,
+                }
+                .into_incomplete(),
             )?;
             // Match the pinned Reth provider. Transactions are static-only.
             // Receipts choose one native backend by its high-water mark. A hole
@@ -195,9 +175,8 @@ pub(super) fn visit_retained_frames(
             view.static_files
                 .transaction_by_id(number)?
                 .ok_or_else(|| {
-                    Incomplete(format!(
-                        "missing replay transaction {number} at block {height}"
-                    ))
+                    SnapshotIncompleteError::MissingReplayTransaction { number, height }
+                        .into_incomplete()
                 })?;
             let receipt = view
                 .static_files
@@ -208,7 +187,8 @@ pub(super) fn visit_retained_frames(
                     || Ok(tx.get::<tables::Receipts<OutbeReceipt>>(number)?),
                 )?
                 .ok_or_else(|| {
-                    Incomplete(format!("missing replay receipt {number} at block {height}"))
+                    SnapshotIncompleteError::MissingReplayReceipt { number, height }
+                        .into_incomplete()
                 })?;
             visitor(&receipt)?;
             result.transactions = result
@@ -237,9 +217,9 @@ pub(crate) fn locate_request_job(
     use outbe_metadosis::precompile::IMetadosis;
     use outbe_primitives::addresses::METADOSIS_ADDRESS;
 
-    let header = view
-        .header(request_height)?
-        .ok_or_else(|| Incomplete(format!("missing OCOMP request header B={request_height}")))?;
+    let header = view.header(request_height)?.ok_or_else(|| {
+        SnapshotIncompleteError::MissingOcompRequestHeader { request_height }.into_incomplete()
+    })?;
     let hash = header.hash_slow();
     let mut request = None;
     visit_retained_frames(

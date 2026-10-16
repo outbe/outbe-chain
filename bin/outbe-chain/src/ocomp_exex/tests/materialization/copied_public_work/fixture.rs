@@ -56,13 +56,22 @@ impl SourcePopulation {
             &source_actions,
             copied_native::chain().chain().id(),
         )
-        .build_at(
-            &root
-                .join("exporter-v1/input-refs/.work")
+        .build()
+        .unwrap();
+        let mut archive = outbe_ocomp::input_inventory::StateTributeProofArchiveBuilder::create(
+            root.join("exporter-v1/input-refs/.work")
                 .join(hex::encode(job_id))
                 .join("inventory/source-proof-archive-v1"),
+            protected_sources.subject,
+            protected_sources.day_proof.clone(),
         )
         .unwrap();
+        let mut physical = protected_sources.sources.values().collect::<Vec<_>>();
+        physical.sort_by_key(|source| source.day_index);
+        for source in physical {
+            archive.push(source).unwrap();
+        }
+        drop(archive.finish().unwrap());
         Self {
             tributes,
             protected_sources,
@@ -75,8 +84,15 @@ impl SourcePopulation {
         let day = setup.day;
         let tributes = &self.tributes;
         let protected_sources = &self.protected_sources;
-        let openings = fixture_support::fixture_openings(bundle, job_id, day, tributes, &limits);
-        let finalized_state_root = hash(0x32);
+        let finalized_state_root = protected_sources.subject.checkpoint.state_root;
+        let openings = fixture_support::fixture_openings_at(
+            bundle,
+            job_id,
+            day,
+            tributes,
+            &limits,
+            finalized_state_root,
+        );
         InputArtifactContents {
             identity: InputArtifactIdentity {
                 job_id,
@@ -85,12 +101,8 @@ impl SourcePopulation {
                     finalized_block_number: 90,
                     finalized_block_hash: hash(0x31),
                     finalized_state_root,
-                    finalized_ce_root: hash(0x33),
-                    ce_schema_version: 1,
                 },
                 wwd: day.value(),
-                sealed_tribute_collection_key: hash(0x34),
-                sealed_tribute_collection_root: protected_sources.source_root(),
             },
             canonical_tributes: protected_sources.canonical_source_bodies().unwrap(),
             fidelity_openings: openings.fidelity,
@@ -167,8 +179,26 @@ impl PublishedPlan {
         drop(input_refs_for_plan);
         let manifest_ref = published.manifest_ref;
 
-        let planner =
-            fixture_support::fixture_planner(bundle, job_id, &manifest_ref, &manifest, &limits);
+        // Match the installed generation's per-Nod cap of two: 2048 / 1024.
+        let planner = outbe_lysis::program_v1::planner::LysisPlannerV1::new(
+            outbe_lysis::program_v1::planner::LysisPlannerBindingsV1 {
+                protocol_bundle_hash: bundle.protocol_bundle_hash(&limits).unwrap(),
+                job_id,
+                attempt: 0,
+                input_manifest_hash: manifest.manifest_hash(&limits).unwrap(),
+                input_manifest_encoded_bytes: manifest_ref.encoded_bytes,
+                fidelity_opening_root: manifest.fidelity_opening_root,
+                oracle_opening_root: manifest.oracle_opening_root,
+                wwd: manifest.wwd,
+                lysis_limit_minor: U256::from(2048),
+                logical_evaluation_time: 1_784_765_900,
+                tribute_count: manifest.tribute_count,
+                lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
+                planner_spec_version: bundle.planner_spec_version,
+                reducer_spec_version: bundle.reducer_spec_version,
+            },
+        )
+        .unwrap();
         let plan = planner
             .commit_primary_catalog(tribute_refs.clone(), &limits)
             .unwrap();

@@ -14,28 +14,6 @@ interface INod {
     /// The range is the ids of that day, whose top four bytes are the day.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
-    event NodBodyStored(
-        uint256 nodId,
-        uint32 commitmentSchemeVersion,
-        uint32 schemaVersion,
-        bytes32 previousCommitment,
-        bytes32 newCommitment,
-        bytes canonicalPayload
-    );
-
-    event NodBodyDeleted(uint256 nodId, bytes32 previousCommitment);
-
-    event NodBucketBodyStored(
-        uint256 bucketId,
-        uint32 commitmentSchemeVersion,
-        uint32 schemaVersion,
-        bytes32 previousCommitment,
-        bytes32 newCommitment,
-        bytes canonicalPayload
-    );
-
-    event NodBucketBodyDeleted(uint256 bucketId, bytes32 previousCommitment);
-
     /// Bucket force-called by the daily Call scan: the reference price
     /// exceeded the bucket's call price on enough of the trailing window. Every
     /// Nod in the bucket must be settled by `settlementDeadline`. Otherwise the
@@ -51,7 +29,6 @@ interface INod {
         address owner;
         uint32 worldwideDay;
         uint16 leagueId;
-        uint256 floorPriceMinor;
         /// Encrypted Gratis entitlement, readable by the owner and enclave.
         bytes encryptedGratisAmount;
         bytes encryptedCreatorPublicKey;
@@ -62,8 +39,6 @@ interface INod {
         /// floor(entryPriceMinor * gratisLoadMinor / 1,000,000), in referenceCurrency
         /// at six-decimal precision. Payment in an asset is quoted separately.
         uint256 settlementCostMinor;
-        /// Derived from finalized daily VWAPs, never stored.
-        bool isQualified;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint64 issuedAt;
@@ -71,7 +46,7 @@ interface INod {
         /// called. The settlement deadline is this plus the call notice period.
         uint64 calledAt;
         bool isSettled;
-        /// Read-time state: 0 Issued, 1 Qualified, 2 Called, 3 Settled, 4 Forfeited.
+        /// Read-time state: 0 Issued, 1 Called, 2 Settled, 3 Forfeited.
         /// Paid entitlements remain Settled after expiry. Forfeited items stay
         /// in storage until cleanup. Reads of deleted items revert with NodNotFound.
         uint8 effectiveState;

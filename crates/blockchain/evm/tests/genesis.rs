@@ -24,7 +24,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use outbe_evm::system_tx::{expected_begin_block_kinds, SystemTxKind};
 use outbe_gem::GemContract;
 use outbe_intex::IntexContract;
@@ -180,31 +180,16 @@ fn accounting_progress_address_seeded_with_marker_and_zero_slot0() {
 }
 
 #[test]
-fn compressed_entities_genesis_binds_schema_and_empty_sealed_catalog_root() {
+fn clean_genesis_does_not_allocate_a_compressed_entity_account() {
     let (_tmp, genesis, _raw) = run_seed_genesis(
         FIXTURE_GENESIS,
         FIXTURE_SEED,
         FIXTURE_VALIDATORS_4_PUBLIC_ONLY,
     );
-    let entry = alloc_entry(&genesis, COMPRESSED_ENTITIES_ADDRESS_HEX);
-    let storage = entry
-        .get("storage")
-        .and_then(Value::as_object)
-        .expect("EE0D entry has storage");
-    let slot0 = format!("0x{:064x}", 0);
-    let slot1 = format!("0x{:064x}", 1);
-    assert_eq!(storage[&slot0], format!("0x{:064x}", 4));
-    assert_eq!(
-        storage[&slot1],
-        format!(
-            "{:#066x}",
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(alloy_primitives::B256::ZERO)
-                    .unwrap()
-                    .as_slice(),
-            )
-        )
-    );
+    assert!(!genesis["alloc"]
+        .as_object()
+        .unwrap()
+        .contains_key(COMPRESSED_ENTITIES_ADDRESS_HEX));
 }
 
 /// `seed_genesis.py` does not write any direct-slot
@@ -429,7 +414,7 @@ fn genesis_seeds_epoch0_committee_snapshot() {
     // Genesis V2 carries no VRF material in `genesis.json`.
     // The same `expected_begin_block_kinds(1, false, false)` must reject the
     // layout via the V2-specific block-1 missing-BoundaryOutcome error,
-    // proven separately in `system_tx_layout.rs`.
+    // proven separately in `crates/blockchain/primitives/tests/system_tx_layout.rs`.
 }
 
 /// T-5 / block 1's `BoundaryOutcome` runs before any block 2

@@ -80,7 +80,7 @@ struct BinaryIdentityV1 {
 struct CapacityPublicPathV1 {
     capacity_resources: CapacityResourcesV1,
     capacity_public_path: CapacityPublicObservationV1,
-    capacity_historical_replay: CapacityHistoricalReplayObservationV1,
+    capacity_historical_replay: Option<CapacityHistoricalReplayObservationV1>,
     #[serde(flatten)]
     _other: BTreeMap<String, serde_json::Value>,
 }
@@ -200,7 +200,9 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
         &scenario.environment.gramine_image_id,
     )?;
     let public = scenario.ocomp.public_path.capacity_public_path;
-    let historical_replay = scenario.ocomp.public_path.capacity_historical_replay;
+    let historical_replay = scenario.ocomp.public_path.capacity_historical_replay.ok_or_else(|| eyre::eyre!(
+        "capacity calibration requires measured historical replay evidence; native preserved-state restart evidence does not prove a replay span"
+    ))?;
     let resources = scenario.ocomp.public_path.capacity_resources;
     ensure!(
         resources.cgroup_path.contains("outbe-ocomp-capacity-")
@@ -647,6 +649,18 @@ mod tests {
                 r#""block_hash""#,
             ]
         );
+
+        let mut native_only = scenario.clone();
+        native_only["ocomp"]["public_path"]
+            .as_object_mut()
+            .unwrap()
+            .remove("capacity_historical_replay");
+        native_only["ocomp"]["public_path"]["capacity_native_restart"] =
+            json!({"elapsed_micros": 1000});
+        fs::write(&path, serde_json::to_vec_pretty(&native_only).unwrap()).unwrap();
+        let error = assemble_capacity_run(1, &path).unwrap_err();
+        assert!(format!("{error:#}")
+            .contains("native preserved-state restart evidence does not prove a replay span"));
 
         let mut unknown_generation = scenario.clone();
         unknown_generation["ocomp"]["public_path"]["capacity_historical_replay"]

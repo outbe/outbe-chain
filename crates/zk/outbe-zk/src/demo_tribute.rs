@@ -18,6 +18,7 @@ use ark_ff::PrimeField;
 use ark_std::rand::Rng;
 
 use crate::error::Error;
+use crate::errors::MerkleError;
 use crate::primitive::curve::coords;
 use crate::primitive::hash;
 use crate::protocol::entity::{Entity, Owned};
@@ -72,16 +73,14 @@ pub trait DemoTributeProvable: Entity + Owned {
         K: NftSigner,
     {
         if path.depth() != INCLUSION_DEPTH {
-            return Err(Error::Merkle(format!(
-                "expected an inclusion path of depth {}, got {}",
-                INCLUSION_DEPTH,
-                path.depth()
-            )));
+            return Err(MerkleError::InclusionPathDepthMismatch {
+                expected: INCLUSION_DEPTH,
+                actual: path.depth(),
+            }
+            .into());
         }
         if path.domain != demo_tribute_domain() {
-            return Err(Error::Merkle(
-                "inclusion path uses the wrong tree domain".into(),
-            ));
+            return Err(MerkleError::WrongInclusionPathDomain.into());
         }
 
         // Ownership: recompute owner from (pk, nonce), reject a mismatch, sign
@@ -104,11 +103,11 @@ pub trait DemoTributeProvable: Entity + Owned {
             .siblings
             .as_slice()
             .try_into()
-            .map_err(|_| Error::Merkle("siblings length".into()))?;
+            .map_err(|_| MerkleError::SiblingsLength)?;
         let merkle_path_indices: [bool; 32] = path
             .circuit_indices()?
             .try_into()
-            .map_err(|_| Error::Merkle("indices length".into()))?;
+            .map_err(|_| MerkleError::IndicesLength)?;
 
         let witness = Witness {
             pk: EmbeddedCurvePoint { x, y },

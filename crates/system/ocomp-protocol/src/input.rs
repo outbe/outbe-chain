@@ -44,8 +44,6 @@ wire_struct! {
         pub finalized_block_number: u64,
         pub finalized_block_hash: B256,
         pub finalized_state_root: B256,
-        pub finalized_ce_root: B256,
-        pub ce_schema_version: u16,
     }
 }
 
@@ -93,8 +91,6 @@ wire_struct! {
         pub attempt: u32,
         pub checkpoint: CheckpointIdentityV1,
         pub wwd: u32,
-        pub sealed_tribute_collection_key: B256,
-        pub sealed_tribute_collection_root: B256,
         pub tribute_count: u32,
         pub tribute_nominal_total: U256,
         pub input_chunk_count: u32,

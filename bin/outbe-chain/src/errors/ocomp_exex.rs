@@ -123,22 +123,12 @@ pub(crate) enum OcompExExError {
     UnifiedClosureCheckpointUnavailable,
     #[error("unified OCOMP closure checkpoint conflicts with canonical history")]
     UnifiedClosureCheckpointConflictsWithHistory,
-    #[error("unified projection sink lock is poisoned")]
-    UnifiedProjectionSinkLockPoisoned,
-    #[error("unified OCOMP closure checkpoint is ahead of durable projection")]
-    UnifiedClosureCheckpointAheadOfProjection,
-    #[error("unified OCOMP closure exists before the durable projection checkpoint")]
-    UnifiedClosureExistsBeforeDurableProjection,
-    #[error("projection accepted an absent finalized target")]
-    ProjectionAcceptedAbsentFinalizedTarget,
-    #[error("projection reconciled a different finalized target identity")]
-    ProjectionReconciledDifferentTargetIdentity,
     #[error("recovered durable projection floor {block_number} ({block_hash}) is unavailable")]
-    RecoveredProjectionFloorUnavailable { block_number: u64, block_hash: B256 },
+    RecoveredClosureFloorUnavailable { block_number: u64, block_hash: B256 },
     #[error(
         "recovered durable projection floor {block_number} changed from {expected} to {actual}"
     )]
-    RecoveredProjectionFloorChanged {
+    RecoveredClosureFloorChanged {
         block_number: u64,
         expected: B256,
         actual: B256,
@@ -149,4 +139,17 @@ pub(crate) enum OcompExExError {
     UnifiedFinalizedHeightOverflow,
     #[error("unexpected embedded OCOMP vote action")]
     UnexpectedVoteAction,
+}
+
+/// Errors that occur when reading finalized state into precompile storage in OCOMP ExEx.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum OcompExExStateReadError {
+    #[error("OCOMP ExEx finalized state read failed: {0}")]
+    FinalizedStateReadFailed(String),
+}
+
+impl From<OcompExExStateReadError> for outbe_primitives::error::PrecompileError {
+    fn from(error: OcompExExStateReadError) -> Self {
+        Self::Storage(error.to_string())
+    }
 }

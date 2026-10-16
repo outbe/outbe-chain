@@ -8,9 +8,33 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use eyre::{ensure, Result, WrapErr};
 use sha2::{Digest, Sha256};
 
-use super::schema::{AssertionRecordV1, ClosureReportV1, MemberDigestV1, SourceIdentityV1};
+use super::schema::{
+    AssertionRecordV1, ClosureReportV1, MemberDigestV1, RunManifestV1, SourceIdentityV1,
+};
 
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// The manifest's JSONL assertions under `root`, one record per non-blank line.
+pub(super) fn read_assertions(
+    root: &Path,
+    manifest: &RunManifestV1,
+) -> Result<Vec<AssertionRecordV1>> {
+    let path = root.join(&manifest.assertions_path);
+    let text = fs::read_to_string(&path)
+        .wrap_err_with(|| format!("read assertions {}", path.display()))?;
+    text.lines()
+        .enumerate()
+        .map(|(index, line)| {
+            ensure!(
+                !line.trim().is_empty(),
+                "blank assertion line {}",
+                index + 1
+            );
+            serde_json::from_str(line)
+                .wrap_err_with(|| format!("decode assertion line {}", index + 1))
+        })
+        .collect()
+}
 
 /// Capture clean/dirty state and exact Rust dependency inputs.
 pub fn capture_source_identity(repo: &Path) -> Result<SourceIdentityV1> {

@@ -14,27 +14,25 @@ use outbe_gem::config::GemParams;
 use outbe_gem::schema::{GemContract, GemState};
 
 /// Unix time of the first block past the deadline of a bucket called at `T_NOW`.
-fn first_due_block(storage: &StorageHandle, world: &World, gem_id: U256) -> u64 {
-    let notice = view(storage, world, gem_id)
-        .terms
-        .call_notice_period_seconds;
+fn first_due_block(storage: &StorageHandle, gem_id: U256) -> u64 {
+    let notice = view(storage, gem_id).terms.call_notice_period_seconds;
     GemContract::hour_end(GemContract::deadline_hour(T_NOW + u64::from(notice)))
 }
 
 #[test]
 fn expiry_waits_until_the_deadline_hour_has_closed() {
-    with_storage(|storage, world| {
-        let gem_id = mature_gem(storage, world);
-        call_gem(storage, world, gem_id, T_NOW);
+    with_storage(|storage| {
+        let gem_id = mature_gem(storage);
+        call_gem(storage, gem_id, T_NOW);
         let hour_end =
             GemContract::hour_end(GemContract::deadline_hour(T_NOW + 7 * SECONDS_PER_DAY));
 
-        begin_block_at(storage, world, hour_end - 1);
-        assert_eq!(gem_state(storage, world, gem_id), GemState::Called as u8);
+        begin_block_at(storage, hour_end - 1);
+        assert_eq!(gem_state(storage, gem_id), GemState::Called as u8);
         assert_eq!(unallocated(storage), U256::ZERO);
 
-        begin_block_at(storage, world, hour_end);
-        assert!(item(storage, world, gem_id).is_none());
+        begin_block_at(storage, hour_end);
+        assert!(item(storage, gem_id).is_none());
         assert_eq!(unallocated(storage), U256::from(1_000_000));
     });
 }
@@ -42,31 +40,32 @@ fn expiry_waits_until_the_deadline_hour_has_closed() {
 /// The body is deleted and the load goes back to the reserve in one transition.
 #[test]
 fn forfeit_deletes_the_gem_body_and_returns_promis_load() {
-    let (mut provider, world) = provider_at(T_NOW);
+    let mut provider = provider_at(T_NOW);
     let (gem_id, load) = StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = mature_gem(&storage, &world);
-        let load = item(&storage, &world, gem_id).unwrap().promis_load_minor;
-        call_gem(&storage, &world, gem_id, T_NOW);
+        let gem_id = mature_gem(&storage);
+        let load = item(&storage, gem_id).unwrap().promis_load_minor;
+        call_gem(&storage, gem_id, T_NOW);
 
-        begin_block_at(&storage, &world, T_NOW + 6 * SECONDS_PER_DAY);
-        assert!(
-            item(&storage, &world, gem_id).is_some(),
-            "inside the notice"
-        );
+        begin_block_at(&storage, T_NOW + 6 * SECONDS_PER_DAY);
+        assert!(item(&storage, gem_id).is_some(), "inside the notice");
         assert_eq!(unallocated(&storage), U256::ZERO);
 
-        begin_block_at(&storage, &world, first_due_block(&storage, &world, gem_id));
-        assert!(item(&storage, &world, gem_id).is_none());
+        begin_block_at(&storage, first_due_block(&storage, gem_id));
+        assert!(item(&storage, gem_id).is_none());
         assert_eq!(unallocated(&storage), load);
         assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 0);
         (gem_id, load)
     });
     let events = provider.get_events(GEM_ADDRESS);
-    let deleted = events
+    let burned = events
         .iter()
-        .find_map(|log| IGem::GemBodyDeleted::decode_log_data(log).ok())
-        .expect("the body deletion is announced");
-    assert_eq!(deleted.gemId, gem_id);
+        .find_map(|log| {
+            IGem::Transfer::decode_log_data(log)
+                .ok()
+                .filter(|event| event.to.is_zero())
+        })
+        .expect("the burn is announced");
+    assert_eq!((burned.from, burned.tokenId), (ALICE, gem_id));
     let expired = events
         .iter()
         .find_map(|log| IGem::GemForfeited::decode_log_data(log).ok())
@@ -75,22 +74,19 @@ fn forfeit_deletes_the_gem_body_and_returns_promis_load() {
         (expired.gemId, expired.owner, expired.promisLoadMinor),
         (gem_id, ALICE, load)
     );
-    assert!(events
-        .iter()
-        .any(|log| IGem::GemBucketBodyDeleted::decode_log_data(log).is_ok()));
 }
 
 #[test]
 fn forfeiting_a_gem_returns_its_load_to_the_pool() {
-    with_storage(|storage, world| {
-        let gem_id = mature_gem(storage, world);
-        let load = item(storage, world, gem_id).unwrap().promis_load_minor;
-        call_gem(storage, world, gem_id, T_NOW);
+    with_storage(|storage| {
+        let gem_id = mature_gem(storage);
+        let load = item(storage, gem_id).unwrap().promis_load_minor;
+        call_gem(storage, gem_id, T_NOW);
 
-        begin_block_at(storage, world, T_NOW + 6 * SECONDS_PER_DAY);
+        begin_block_at(storage, T_NOW + 6 * SECONDS_PER_DAY);
         assert_eq!(unallocated(storage), U256::ZERO);
 
-        begin_block_at(storage, world, first_due_block(storage, world, gem_id));
+        begin_block_at(storage, first_due_block(storage, gem_id));
         assert_eq!(unallocated(storage), load);
     });
 }
@@ -98,15 +94,15 @@ fn forfeiting_a_gem_returns_its_load_to_the_pool() {
 /// Its owner paid the strike, so the load is theirs.
 #[test]
 fn a_settled_gem_is_never_forfeited() {
-    with_storage(|storage, world| {
-        let gem_id = mature_gem(storage, world);
-        let bucket = bucket_of(storage, world, gem_id);
-        call_gem(storage, world, gem_id, T_NOW);
-        settle(storage, world, gem_id);
+    with_storage(|storage| {
+        let gem_id = mature_gem(storage);
+        let bucket = bucket_of(storage, gem_id);
+        call_gem(storage, gem_id, T_NOW);
+        settle(storage, gem_id);
 
-        begin_block_at(storage, world, first_due_block(storage, world, gem_id));
-        assert!(item(storage, world, gem_id).is_some());
-        assert_eq!(gem_state(storage, world, gem_id), GemState::Settled as u8);
+        begin_block_at(storage, first_due_block(storage, gem_id));
+        assert!(item(storage, gem_id).is_some());
+        assert_eq!(gem_state(storage, gem_id), GemState::Settled as u8);
         assert_eq!(unallocated(storage), U256::ZERO);
         assert_eq!(
             GemContract::new(storage.clone())
@@ -122,18 +118,18 @@ fn a_settled_gem_is_never_forfeited() {
 /// the gems behind it still drain. The burn and the credit share a checkpoint.
 #[test]
 fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_bucket() {
-    with_storage(|storage, world| {
-        let live = mature_gem(storage, world);
+    with_storage(|storage| {
+        let live = mature_gem(storage);
         let mut gem = GemContract::new(storage.clone());
         // A slot naming a bucket that is not there.
         let ghost = B256::repeat_byte(0xde);
         let deadline = T_NOW + 7 * SECONDS_PER_DAY;
         gem.push_called(ghost, deadline).unwrap();
-        call_gem(storage, world, live, T_NOW);
+        call_gem(storage, live, T_NOW);
         let day = GemContract::deadline_hour(deadline);
-        let load = item(storage, world, live).unwrap().promis_load_minor;
+        let load = item(storage, live).unwrap().promis_load_minor;
 
-        begin_block_at(storage, world, GemContract::hour_end(day));
+        begin_block_at(storage, GemContract::hour_end(day));
 
         assert_eq!(gem.expiry_slot(day, 0).unwrap(), None, "the ghost is out");
         assert_eq!(
@@ -147,29 +143,27 @@ fn an_entry_the_sweep_cannot_retire_does_not_hold_up_its_bucket() {
 /// Same for a due bucket that was never called: it burns nothing.
 #[test]
 fn a_due_entry_that_cannot_burn_credits_nothing() {
-    with_storage(|storage, world| {
-        let gem_id = mature_gem(storage, world);
+    with_storage(|storage| {
+        let gem_id = mature_gem(storage);
         let mut gem = GemContract::new(storage.clone());
-        gem.push_called(bucket_of(storage, world, gem_id), T_NOW)
-            .unwrap();
+        gem.push_called(bucket_of(storage, gem_id), T_NOW).unwrap();
 
         begin_block_at(
             storage,
-            world,
             GemContract::hour_end(GemContract::deadline_hour(T_NOW)),
         );
 
         assert_eq!(unallocated(storage), U256::ZERO);
-        assert!(item(storage, world, gem_id).is_some());
+        assert!(item(storage, gem_id).is_some());
     });
 }
 
 /// Expiry reads the queue, not the tree: the reason the two stages are separate.
 #[test]
 fn a_gem_above_the_window_is_not_visited_but_still_expires() {
-    with_storage(|storage, world| {
-        let gem_id = mature_gem(storage, world);
-        let call_price = view(storage, world, gem_id).terms.call_price_minor;
+    with_storage(|storage| {
+        let gem_id = mature_gem(storage);
+        let call_price = view(storage, gem_id).terms.call_price_minor;
 
         // Every published day sits below the gem's call price.
         let pair = seed_currency(storage, USD, Some(U256::from(600_000u64)));
@@ -185,29 +179,29 @@ fn a_gem_above_the_window_is_not_visited_but_still_expires() {
             crate::called::scan_and_call(&block_ctx(storage)).unwrap(),
             0
         );
-        assert_eq!(gem_state(storage, world, gem_id), GemState::Issued as u8);
+        assert_eq!(gem_state(storage, gem_id), GemState::Issued as u8);
 
-        call_gem(storage, world, gem_id, T_NOW);
-        begin_block_at(storage, world, first_due_block(storage, world, gem_id));
-        assert!(item(storage, world, gem_id).is_none());
+        call_gem(storage, gem_id, T_NOW);
+        begin_block_at(storage, first_due_block(storage, gem_id));
+        assert!(item(storage, gem_id).is_none());
     });
 }
 
 #[test]
 fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
-    with_storage(|storage, world| {
-        let gem_id = mature_gem(storage, world);
+    with_storage(|storage| {
+        let gem_id = mature_gem(storage);
         let gem = GemContract::new(storage.clone());
-        call_gem(storage, world, gem_id, T_NOW);
+        call_gem(storage, gem_id, T_NOW);
         let deadline = T_NOW + 7 * SECONDS_PER_DAY;
         let hour = GemContract::deadline_hour(deadline);
 
-        let entry = bucket_of(storage, world, gem_id);
+        let entry = bucket_of(storage, gem_id);
         gem.called_deadline
             .write(&entry, deadline + 400 * SECONDS_PER_DAY)
             .unwrap();
 
-        begin_block_at(storage, world, GemContract::hour_end(hour));
+        begin_block_at(storage, GemContract::hour_end(hour));
 
         let retry = GemContract::deadline_hour(deadline + 400 * SECONDS_PER_DAY);
         assert_eq!(
@@ -216,8 +210,8 @@ fn a_bucket_that_outlives_its_hour_is_retired_rather_than_left_in_front() {
             "the bucket moves to its deadline's hour instead of blocking every later one"
         );
 
-        begin_block_at(storage, world, GemContract::hour_end(retry));
-        assert!(item(storage, world, gem_id).is_none());
+        begin_block_at(storage, GemContract::hour_end(retry));
+        assert!(item(storage, gem_id).is_none());
     });
 }
 
@@ -227,11 +221,11 @@ fn forfeit_fails_once() -> (
     outbe_primitives::storage::hashmap::HashMapStorageProvider,
     U256,
 ) {
-    let (mut provider, world) = provider_at(T_NOW);
+    let mut provider = provider_at(T_NOW);
     let (gem_id, load, retry) = StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = mature_gem(&storage, &world);
-        let load = item(&storage, &world, gem_id).unwrap().promis_load_minor;
-        call_gem(&storage, &world, gem_id, T_NOW);
+        let gem_id = mature_gem(&storage);
+        let load = item(&storage, gem_id).unwrap().promis_load_minor;
+        call_gem(&storage, gem_id, T_NOW);
         let hour = GemContract::deadline_hour(T_NOW + 7 * SECONDS_PER_DAY);
         // The credit overflows, so the forfeit reverts as a whole.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
@@ -239,10 +233,10 @@ fn forfeit_fails_once() -> (
         limit.checked_add_carry_over(U256::MAX).unwrap();
 
         let now = GemContract::hour_end(hour);
-        begin_block_at(&storage, &world, now);
+        begin_block_at(&storage, now);
 
         let retry = GemContract::deadline_hour(now) + 1;
-        assert_eq!(gem_state(&storage, &world, gem_id), GemState::Called as u8);
+        assert_eq!(gem_state(&storage, gem_id), GemState::Called as u8);
         assert_eq!(
             GemContract::new(storage.clone())
                 .first_expiry_day()
@@ -256,9 +250,9 @@ fn forfeit_fails_once() -> (
         outbe_promislimit::PromisLimitContract::new(storage.clone())
             .checked_take_carry_over_up_to(U256::MAX)
             .unwrap();
-        begin_block_at(&storage, &world, GemContract::hour_end(retry));
+        begin_block_at(&storage, GemContract::hour_end(retry));
 
-        assert!(item(&storage, &world, gem_id).is_none());
+        assert!(item(&storage, gem_id).is_none());
         assert_eq!(unallocated(&storage), load);
     });
     (provider, gem_id)
@@ -280,10 +274,10 @@ fn a_bucket_whose_member_fails_to_burn_is_deferred_and_burned_later() {
 /// One member that cannot burn stays in its bucket, deferred. The others burn on time.
 #[test]
 fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
-    with_storage(|storage, world| {
-        let gems = alice_gems(storage, world, &[1, 1_000]);
-        call_gem(storage, world, gems[0], T_NOW);
-        let now = first_due_block(storage, world, gems[0]);
+    with_storage(|storage| {
+        let gems = alice_gems(storage, &[1, 1_000]);
+        call_gem(storage, gems[0], T_NOW);
+        let now = first_due_block(storage, gems[0]);
         // Room for the small load's credit only.
         let mut limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
         limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
@@ -292,13 +286,13 @@ fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
             .unwrap();
 
         // The failing member sits on top, where the sweep starts.
-        begin_block_at(storage, world, now);
-        assert!(item(storage, world, gems[0]).is_none(), "burned");
-        assert_eq!(gem_state(storage, world, gems[1]), GemState::Called as u8);
+        begin_block_at(storage, now);
+        assert!(item(storage, gems[0]).is_none(), "burned");
+        assert_eq!(gem_state(storage, gems[1]), GemState::Called as u8);
         assert_eq!(
             GemContract::new(storage.clone())
                 .bucket_gem_count
-                .read(&bucket_of(storage, world, gems[1]))
+                .read(&bucket_of(storage, gems[1]))
                 .unwrap(),
             1,
             "it stays in its bucket"
@@ -307,10 +301,9 @@ fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
         limit.checked_take_carry_over_up_to(U256::MAX).unwrap();
         begin_block_at(
             storage,
-            world,
             GemContract::hour_end(GemContract::deadline_hour(now) + 1),
         );
-        assert!(item(storage, world, gems[1]).is_none());
+        assert!(item(storage, gems[1]).is_none());
         assert_eq!(unallocated(storage), U256::from(1_000u64));
     });
 }
@@ -319,17 +312,17 @@ fn a_member_that_cannot_burn_does_not_hold_back_its_bucket() {
 /// every block.
 #[test]
 fn a_broken_bucket_index_defers_the_bucket_and_keeps_blocks_going() {
-    let (mut provider, world) = provider_at(T_NOW);
+    let mut provider = provider_at(T_NOW);
     let bucket = StorageHandle::enter(&mut provider, |storage| {
-        let gems = alice_gems(&storage, &world, &[1, 2]);
-        call_gem(&storage, &world, gems[0], T_NOW);
-        let bucket = bucket_of(&storage, &world, gems[0]);
+        let gems = alice_gems(&storage, &[1, 2]);
+        call_gem(&storage, gems[0], T_NOW);
+        let bucket = bucket_of(&storage, gems[0]);
         GemContract::new(storage.clone())
             .bucket_gem_index
             .write(&gems[1], 7)
             .unwrap();
-        begin_block_at(&storage, &world, first_due_block(&storage, &world, gems[0]));
-        assert_eq!(gem_state(&storage, &world, gems[1]), GemState::Called as u8);
+        begin_block_at(&storage, first_due_block(&storage, gems[0]));
+        assert_eq!(gem_state(&storage, gems[1]), GemState::Called as u8);
         bucket
     });
     let deferred: Vec<_> = provider
@@ -345,20 +338,20 @@ fn a_broken_bucket_index_defers_the_bucket_and_keeps_blocks_going() {
 /// leaves the queue.
 #[test]
 fn a_called_bucket_wider_than_the_budget_burns_over_several_blocks() {
-    with_storage(|storage, world| {
+    with_storage(|storage| {
         let loads: Vec<u64> = (0..=u64::from(SWEEP_WRITES_PER_BLOCK))
             .map(|n| 1_000 + n)
             .collect();
-        let gems = alice_gems(storage, world, &loads);
-        call_gem(storage, world, gems[0], T_NOW);
-        let now = first_due_block(storage, world, gems[0]);
+        let gems = alice_gems(storage, &loads);
+        call_gem(storage, gems[0], T_NOW);
+        let now = first_due_block(storage, gems[0]);
         let live = || {
             gems.iter()
-                .filter(|id| item(storage, world, **id).is_some())
+                .filter(|id| item(storage, **id).is_some())
                 .count()
         };
 
-        begin_block_at(storage, world, now);
+        begin_block_at(storage, now);
         assert_eq!(
             live(),
             gems.len() - SWEEP_BODY_WRITES_PER_BLOCK as usize,
@@ -370,7 +363,7 @@ fn a_called_bucket_wider_than_the_budget_burns_over_several_blocks() {
                 blocks < 16,
                 "the queue drains within a bounded number of blocks"
             );
-            begin_block_at(storage, world, now + blocks);
+            begin_block_at(storage, now + blocks);
             blocks += 1;
         }
         assert_eq!(live(), 0);
@@ -387,10 +380,10 @@ fn a_called_bucket_wider_than_the_budget_burns_over_several_blocks() {
 /// A storage fault is this node's own: it fails the block instead of moving the gem.
 #[test]
 fn a_storage_fault_in_a_forfeit_fails_the_block() {
-    let (mut provider, world) = provider_at(T_NOW);
+    let mut provider = provider_at(T_NOW);
     let (gem_id, now) = StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = mature_gem(&storage, &world);
-        call_gem(&storage, &world, gem_id, T_NOW);
+        let gem_id = mature_gem(&storage);
+        call_gem(&storage, gem_id, T_NOW);
         let now = GemContract::hour_end(GemContract::deadline_hour(T_NOW + 7 * SECONDS_PER_DAY));
         (gem_id, now)
     });
@@ -398,22 +391,22 @@ fn a_storage_fault_in_a_forfeit_fails_the_block() {
     provider.fail_mutation_at_address(PROMIS_LIMIT_ADDRESS);
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = block_ctx_at(&storage, now);
-        let error = continue_sweeps(&ctx, &world).unwrap_err();
+        let error = continue_sweeps(&ctx).unwrap_err();
         assert!(matches!(
             error,
             outbe_primitives::error::PrecompileError::Storage(_)
         ));
-        assert_eq!(gem_state(&storage, &world, gem_id), GemState::Called as u8);
+        assert_eq!(gem_state(&storage, gem_id), GemState::Called as u8);
     });
 }
 
 /// The DEV notice is the one a DEV-profile bucket forfeits on.
 #[test]
 fn config_dev_profile_terms_a_new_bucket() {
-    with_storage(|storage, world| {
+    with_storage(|storage| {
         set_profile(storage, outbe_gem::config::PROFILE_DEV);
-        let gem_id = add(storage, world, sample_params(ALICE));
-        let terms = view(storage, world, gem_id).terms;
+        let gem_id = add(storage, sample_params(ALICE));
+        let terms = view(storage, gem_id).terms;
         assert_eq!(
             terms.call_window_seconds,
             GemParams::DEV.call_window_seconds
@@ -435,9 +428,9 @@ fn config_dev_profile_terms_a_new_bucket() {
 fn a_corrupt_body_fails_the_forfeit_sweep() {
     use outbe_primitives::error::{PrecompileError, SweepFailure};
     use outbe_primitives::expiry_queue::ExpiryHandler;
-    with_storage(|storage, world| {
+    with_storage(|storage| {
         let ctx = block_ctx(storage);
-        let expiry = crate::expired::GemExpiry::new(&ctx, &world.scope, &world.parent);
+        let expiry = crate::expired::GemExpiry::new(&ctx);
         assert_eq!(
             expiry.classify(&PrecompileError::BodyReadCorruption("x".into())),
             SweepFailure::Propagate

@@ -11,8 +11,8 @@ pragma solidity ^0.8.30;
 interface IIntexFactory {
     /// @notice Settle `units` Issued Intexes of `seriesId` held by
     ///         `owner`, paying the cost in `asset`. Any caller may pay. The
-    ///         settled units stay with the owner. Allowed once qualified (voluntary,
-    ///         see `IIntex.isQualified`) and once called (forced, until the deadline).
+    ///         settled units stay with the owner. Allowed while uncalled (voluntary)
+    ///         and once called (forced, until the deadline).
     /// @dev Approve IntexFactory for the `quoteSettlement` amount before calling.
     ///      Payment is deposited into the reserve vault through VaultRouter.
     /// @param asset Token registered with the vault router under either of the
@@ -35,10 +35,6 @@ interface IIntexFactory {
         view
         returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
 
-    /// @notice The origin's `IVwapSource`: the highest finalized daily VWAP from `fromUtcDay`
-    ///         on, 0 when none.
-    function maxUtcDayVwapSince(uint16 isoCode, uint32 fromUtcDay) external view returns (uint256);
-
     /// @notice Burn settled Intexes and mint confidential Promis, gated by
     ///         off-chain proof of work. Any caller may submit. The units burn from
     ///         `owner` and the Promis is minted to them. The owner's Promis modify key
@@ -54,12 +50,10 @@ interface IIntexFactory {
     /// @notice Leading zero bytes `minePromis` requires of the work hash.
     function powDifficulty() external view returns (uint8);
 
-    /// @notice Credit auction proceeds (native COEN, sent as msg.value) from
-    ///         `srcChainId` into the day's pot. Callable only by the OriginRouter.
-    ///         A ready pot is burned once every winning chain has routed its
-    ///         proceeds, or once the fan-in deadline passes.
+    /// @notice Burn auction proceeds (native COEN, sent as msg.value) and credit them to the
+    ///         Promis limit pool in whole protocol units. Callable only by the OriginRouter.
     /// @param worldwideDay Worldwide day (yyyymmdd) the proceeds belong to.
-    /// @param srcChainId Target chain the proceeds arrived from (for fan-in completeness).
+    /// @param srcChainId Target chain the proceeds arrived from.
     function distribute(uint32 worldwideDay, uint32 srcChainId) external payable;
 
     /// @notice One owner's units of a series. `issuedUnits` and `settledUnits` are the
@@ -80,7 +74,9 @@ interface IIntexFactory {
     function ownerBalances(bytes14 seriesId, address owner) external view returns (OwnerBalances memory);
 
     /// @notice A new series was created from a cleared auction.
-    event IntexSeriesIssued(bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPriceMinor);
+    event IntexSeriesIssued(
+        bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPriceMinor, uint256 callPriceMinor
+    );
 
     /// @notice `units` Issued Intexes of `seriesId` were settled.
     event IntexSettled(bytes14 indexed seriesId, address indexed owner, uint256 units);
@@ -104,15 +100,9 @@ interface IIntexFactory {
     ///         parked it for another pass at `retryAt`.
     event ExpiryDeferred(uint16 indexed referenceCurrency, uint32 indexed worldwideDay, uint64 retryAt);
 
-    /// @notice One chain routed `amount` native COEN of `worldwideDay`'s auction
-    ///         proceeds into the day's pot. Emitted once per delivery, so a chain
-    ///         routing its proceeds in parts emits once per part.
-    event ProceedsCredited(uint32 indexed worldwideDay, uint32 indexed srcChainId, uint256 amount);
-
-    /// @notice The day's ready proceeds pot was burned.
-    event ProceedsBurned(uint32 indexed worldwideDay, uint256 amount);
-
-    /// @notice Proceeds arrived for `worldwideDay` after the day was finalized
-    ///         and were burned.
-    event LateProceedsBurned(uint32 indexed worldwideDay, uint256 amount);
+    /// @notice `amount` native COEN of `worldwideDay`'s auction proceeds from `srcChainId`
+    ///         was burned and `creditedPromisMinor` was added to the Promis limit pool.
+    event ProceedsBurned(
+        uint32 indexed worldwideDay, uint32 indexed srcChainId, uint256 amount, uint256 creditedPromisMinor
+    );
 }

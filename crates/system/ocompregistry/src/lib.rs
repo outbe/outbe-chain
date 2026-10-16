@@ -1,12 +1,13 @@
 //! Standalone on-chain authority for OCOMP protocol bundles.
 
-mod errors;
+pub mod errors;
 mod fork;
 pub mod precompile;
 mod profile;
 mod runtime;
 pub mod schema;
 
+pub use errors::OcompRegistryError;
 pub use fork::{
     OcompForkInstallClassification, OcompForkInstallV1, OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
 };

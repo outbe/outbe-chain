@@ -6,7 +6,6 @@ pub(crate) struct BlockExecutorInputs {
     pub(crate) system_plan: BlockSystemPlan,
     pub(crate) parent_accounting: ParentAccountingInputs,
     pub(crate) dependencies: BlockExecutionDependencies,
-    pub(crate) runtime: BlockExecutionRuntime,
 }
 
 pub(crate) struct BlockExecutionIdentity {
@@ -20,7 +19,7 @@ pub(crate) struct BlockExecutionIdentity {
 pub(crate) struct BlockSystemPlan {
     pub(crate) expected_begin_system_txs: Vec<Recovered<TransactionSigned>>,
     pub(crate) expected_end_system_txs: Vec<Recovered<TransactionSigned>>,
-    pub(crate) system_layout_error: Option<String>,
+    pub(crate) system_layout_error: Option<crate::errors::SystemTxExpectationError>,
     pub(crate) proposer_evm_address: Option<Address>,
     pub(crate) execute_outbe_block_hooks: bool,
     pub(crate) prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,
@@ -37,13 +36,4 @@ pub(crate) struct ParentAccountingInputs {
 pub(crate) struct BlockExecutionDependencies {
     pub(crate) bridge: Option<ConsensusExecutionBridge>,
     pub(crate) evm_signer: Option<SharedOutbeEvmSigner>,
-}
-
-/// Execution-local capabilities shared with this block's EVM.
-pub(crate) struct BlockExecutionRuntime {
-    pub(crate) compressed_entities_scope: Arc<ExecutionScope>,
-    pub(crate) compressed_tree_service:
-        Option<Arc<outbe_compressed_entities::CompressedTreeService>>,
-    pub(crate) runtime_body_readers: Option<RuntimeBodyReaders>,
-    pub(crate) execution_read_budget: Option<outbe_primitives::projection::ExecutionReadBudget>,
 }

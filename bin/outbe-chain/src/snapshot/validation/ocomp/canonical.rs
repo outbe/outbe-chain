@@ -17,7 +17,6 @@ pub(crate) struct CanonicalActiveAudit {
     pub intent_id: B256,
     pub job: OcompJobRecordV1,
     pub pin_stage: CanonicalLocalPinStage,
-    pub projection_before_request: bool,
     pub source_verified: bool,
     pub export_verified: bool,
 }
@@ -35,7 +34,6 @@ impl From<&CanonicalActiveAudit> for super::super::report::ActiveOcompObservatio
             worldwide_day: audit.job.intent.wwd,
             canonical_status: format!("{:?}", audit.job.status),
             pin_stage: format!("{:?}", audit.pin_stage),
-            projection_before_request: Some(audit.projection_before_request),
             source_verified: audit.source_verified,
             export_verified: audit.export_verified,
         }
@@ -48,7 +46,6 @@ pub(crate) struct CanonicalPinAudit {
 }
 
 pub(crate) struct CanonicalOcompAudit {
-    pub projection: outbe_primitives::projection::ProjectionCheckpoint,
     pub closure: ClosureAudit,
     pub bounds: InventoryBounds,
     pub active: Vec<CanonicalActiveAudit>,
@@ -74,93 +71,9 @@ fn pin_stage(pin: Option<&CanonicalPinAudit>) -> CanonicalLocalPinStage {
     }
 }
 
-fn open_verified_projection_checkpoint(
-    view: &crate::snapshot::native::RethReadOnlyView,
-    layout: &crate::snapshot::config::RequestedLayout,
-    scratch_parent: &Path,
-    report: Option<&mut super::super::report::ValidationReport>,
-) -> eyre::Result<(
-    tempfile::TempDir,
-    outbe_offchain_storage::StorageReaderHandle,
-    outbe_primitives::projection::ProjectionCheckpoint,
-)> {
-    use alloy_consensus::Sealable;
-    use outbe_offchain_data::{read_projection_state, ProjectionConfig};
-    use outbe_offchain_storage::partitioned::adapters::RocksPartitionReadView;
-    use outbe_offchain_storage::{PartitionedStorage, StorageReaderHandle};
-    use std::sync::Arc;
-
-    let location = layout
-        .projection
-        .as_ref()
-        .ok_or_else(|| Incomplete("missing OCOMP projection configuration".into()))?;
-    let database = projection_database(&location.root);
-    match std::fs::metadata(database.join("CURRENT")) {
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(
-                Incomplete("missing OCOMP projection database or CURRENT file".into()).into(),
-            );
-        }
-        Err(error) => return Err(error.into()),
-    }
-    let secondary = tempfile::Builder::new()
-        .prefix("ocomp-projection-audit-")
-        .tempdir_in(scratch_parent)?;
-    let reader: StorageReaderHandle = Arc::new(PartitionedStorage::read_only(
-        Arc::new(RocksPartitionReadView::open(
-            &location.root,
-            secondary.path(),
-        )?),
-        outbe_offchain_data::entity_partition_routing()?,
-    ));
-    let projection = read_projection_state(
-        ProjectionConfig {
-            chain_id: layout.chain.chain().id(),
-            genesis_hash: layout.chain.genesis_hash(),
-            start_block: location.start_block,
-        },
-        reader.clone(),
-    )?
-    .and_then(|state| state.checkpoint)
-    .ok_or_else(|| Incomplete("missing initialized OCOMP projection checkpoint".into()))?;
-    let p_header = view.header(projection.block_number)?.ok_or_else(|| {
-        Incomplete(format!(
-            "missing projection header P={}",
-            projection.block_number
-        ))
-    })?;
-    let p_hash = view
-        .canonical_hash(projection.block_number)?
-        .ok_or_else(|| {
-            Incomplete(format!(
-                "missing projection canonical hash P={}",
-                projection.block_number
-            ))
-        })?;
-    if p_header.inner.number != projection.block_number
-        || p_header.hash_slow() != p_hash
-        || p_hash != projection.block_hash
-    {
-        return Err(SnapshotOcompError::ProjectionCheckpointHeaderMismatch.into());
-    }
-    if let Some(report) = report {
-        report.observed.p = Some(outbe_snapshot::manifest::BlockIdentity {
-            number: projection.block_number,
-            hash: hex::encode(projection.block_hash),
-        });
-        for observation in &mut report.active_ocomp {
-            observation.projection_before_request =
-                Some(projection.block_number < observation.request_height);
-        }
-    }
-    Ok((secondary, reader, projection))
-}
-
 fn verify_and_record_closure(
     view: &crate::snapshot::native::RethReadOnlyView,
     layout: &crate::snapshot::config::RequestedLayout,
-    projection: outbe_primitives::projection::ProjectionCheckpoint,
     maximum_records: Option<u64>,
     report: Option<&mut super::super::report::ValidationReport>,
 ) -> eyre::Result<ClosureAudit> {
@@ -169,7 +82,6 @@ fn verify_and_record_closure(
         &layout
             .ocomp_root
             .join("exporter-v1/discovery/closure-checkpoint-v1"),
-        Some(projection),
         maximum_records,
     )?;
     if let Some(report) = report {
@@ -239,13 +151,13 @@ fn load_and_verify_pins(
 struct CanonicalObligationVerifier<'a> {
     view: &'a crate::snapshot::native::RethReadOnlyView,
     layout: &'a crate::snapshot::config::RequestedLayout,
-    reader: outbe_offchain_storage::StorageReaderHandle,
+    history: Option<crate::snapshot::native::HistoricalStateReader>,
     scratch_parent: &'a Path,
-    protected: &'a ProtectedPaths,
     cas_limits: CasLimits,
     maximum_records: Option<u64>,
     checked_requests: std::collections::BTreeSet<u64>,
     checked_leases: std::collections::BTreeSet<B256>,
+    checked_sources: std::collections::BTreeSet<(B256, B256)>,
     checked_exports: std::collections::BTreeSet<B256>,
     input_chunks: u64,
 }
@@ -258,14 +170,12 @@ impl CanonicalObligationVerifier<'_> {
     ) -> eyre::Result<()> {
         use alloy_consensus::Sealable;
         let b = job.intent_height;
-        let header = self
-            .view
-            .header(b)?
-            .ok_or_else(|| Incomplete(format!("missing active request header B={b}")))?;
-        let hash = self
-            .view
-            .canonical_hash(b)?
-            .ok_or_else(|| Incomplete(format!("missing active request canonical hash B={b}")))?;
+        let header = self.view.header(b)?.ok_or_else(|| {
+            SnapshotIncompleteError::MissingActiveRequestHeader { b }.into_incomplete()
+        })?;
+        let hash = self.view.canonical_hash(b)?.ok_or_else(|| {
+            SnapshotIncompleteError::MissingActiveRequestCanonicalHash { b }.into_incomplete()
+        })?;
         if header.inner.number != b
             || header.hash_slow() != hash
             || job.intent.logical_evaluation_height != b
@@ -286,14 +196,21 @@ impl CanonicalObligationVerifier<'_> {
             self.checked_requests.insert(b);
         }
         let lease = job.intent.input_lease_id()?;
-        if !self.checked_leases.contains(&lease) {
+        if !self.checked_sources.contains(&(lease, hash)) {
+            if self.history.is_none() {
+                self.history = Some(crate::snapshot::native::HistoricalStateReader::open(
+                    self.layout,
+                    self.view,
+                    self.scratch_parent,
+                )?);
+            }
             verify_lease_inputs(
-                self.reader.clone(),
-                &job.intent,
-                self.scratch_parent,
-                self.protected,
+                self.history.as_ref().expect("history opened"),
+                self.view,
+                job,
                 self.maximum_records,
             )?;
+            self.checked_sources.insert((lease, hash));
             self.checked_leases.insert(lease);
         }
         Ok(())
@@ -340,10 +257,9 @@ impl CanonicalObligationVerifier<'_> {
         &mut self,
         state: &CanonicalState<'_>,
         active_jobs: &[(B256, OcompJobRecordV1)],
-        (pins, pin_by_intent, projection_height): (
+        (pins, pin_by_intent): (
             &[CanonicalPinAudit],
             &std::collections::BTreeMap<B256, usize>,
-            u64,
         ),
         mut report: Option<&mut super::super::report::ValidationReport>,
     ) -> eyre::Result<Vec<CanonicalActiveAudit>> {
@@ -382,7 +298,6 @@ impl CanonicalObligationVerifier<'_> {
             }
             active.push(CanonicalActiveAudit {
                 intent_id: *intent_id,
-                projection_before_request: projection_height < job.intent_height,
                 job,
                 pin_stage: pin_stage(pin),
                 source_verified: true,
@@ -410,9 +325,6 @@ pub(crate) fn verify_canonical_obligations(
         layout.static_files_root.clone(),
         layout.execution_rocksdb_root.clone(),
     ]);
-    if let Some(projection) = &layout.projection {
-        protected.0.push(projection.root.clone());
-    }
     let mut inventory = CanonicalInventory::scan_with_report(
         state,
         scratch_parent,
@@ -421,15 +333,7 @@ pub(crate) fn verify_canonical_obligations(
         report.as_deref_mut(),
     )?;
 
-    let (_secondary, reader, projection) =
-        open_verified_projection_checkpoint(view, layout, scratch_parent, report.as_deref_mut())?;
-    let closure = verify_and_record_closure(
-        view,
-        layout,
-        projection,
-        maximum_records,
-        report.as_deref_mut(),
-    )?;
+    let closure = verify_and_record_closure(view, layout, maximum_records, report.as_deref_mut())?;
 
     let native_parameters = layout
         .chain
@@ -459,13 +363,13 @@ pub(crate) fn verify_canonical_obligations(
     let mut verifier = CanonicalObligationVerifier {
         view,
         layout,
-        reader,
+        history: None,
         scratch_parent,
-        protected: &protected,
         cas_limits,
         maximum_records,
         checked_requests: BTreeSet::new(),
         checked_leases: BTreeSet::new(),
+        checked_sources: BTreeSet::new(),
         checked_exports: BTreeSet::new(),
         input_chunks: 0,
     };
@@ -473,7 +377,7 @@ pub(crate) fn verify_canonical_obligations(
     let active = verifier.verify_active_obligations(
         state,
         inventory.active_jobs(),
-        (&pins, &pin_by_intent, projection.block_number),
+        (&pins, &pin_by_intent),
         report,
     )?;
     let source_leases = u64::try_from(verifier.checked_leases.len())?;
@@ -487,7 +391,6 @@ pub(crate) fn verify_canonical_obligations(
     )?;
     let bounds = std::mem::take(&mut inventory.bounds);
     Ok(CanonicalOcompAudit {
-        projection,
         closure,
         bounds,
         active,

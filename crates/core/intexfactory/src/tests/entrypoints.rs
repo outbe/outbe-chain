@@ -50,7 +50,7 @@ fn dispatch_pow_difficulty_serves_the_protocol_difficulty() {
 }
 
 #[test]
-fn config_dev_profile_drives_issuance_and_qualification() {
+fn config_dev_profile_drives_issuance() {
     with_factory(|s| {
         let f = outbe_intex::IntexContract::new(s.clone());
         // Select the dev profile through the single selector byte.
@@ -69,10 +69,6 @@ fn config_dev_profile_drives_issuance_and_qualification() {
         let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
         assert_eq!(r.call_notice_period_seconds, dev.call_notice_period_seconds);
         assert_eq!(
-            r.floor_price_minor,
-            U256::from(ENTRY_PRICE * u64::from(100 + dev.floor_rate) / 100)
-        );
-        assert_eq!(
             r.call_price_minor,
             U256::from(ENTRY_PRICE * u64::from(100 + dev.call_rate) / 100)
         );
@@ -84,17 +80,6 @@ fn config_dev_profile_drives_issuance_and_qualification() {
                 call_notice_period_seconds: dev.call_notice_period_seconds,
             }
         );
-
-        // Qualification is the floor comparison alone: a day closing one unit past
-        // the dev-derived floor qualifies the series.
-        write_day_vwap(
-            &OracleContract::new(s.clone()),
-            REFERENCE_ISO,
-            PAIR_ID,
-            ISSUED_AT as u64 + 2 * DAY,
-            r.floor_price_minor + U256::from(1),
-        );
-        assert!(is_series_qualified(&s, sid(7)).unwrap());
     });
 }
 
@@ -111,7 +96,6 @@ fn intex_factory_slot_layout_is_pinned() {
             f.notify_at.base_slot(),
             f.parked_message_cursor.slot(),
             f.parked_proceeds_cursor.slot(),
-            f.vwap_sent_day.slot(),
         ];
         for (index, slot) in slots.into_iter().enumerate() {
             assert_eq!(slot, U256::from(index), "field #{index}");

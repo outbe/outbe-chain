@@ -5,20 +5,15 @@
 //! This would provide light-client-grade trust: verify that 2/3+1 validators
 //! signed each block using the group public key from the ValidatorSet contract.
 
-mod point_reads;
 mod tee;
-
-use point_reads::PointReadRuntime;
+mod tribute_sources;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use jsonrpsee::core::RpcResult;
-use outbe_compressed_entities::{CompressedTreeService, PointReadRequestV1, PointReadResultV1};
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::header::OutbeHeader;
 use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
-    projection::{ProjectionReadinessHandle, ProjectionStatus},
     storage::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
@@ -33,10 +28,9 @@ use std::sync::Arc;
 
 use crate::api::{
     ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, GratisKeysSealed,
-    OutbeApiServer, ParticipationInfo, Phase1VerificationMode, ProjectionHealth,
-    ProjectionStatusInfo, RadiclePeerInfo, RadiclePhaseErrorInfo, RadiclePhaseInfo,
-    RadicleRepositoryInfo, RadicleRepositoryStateInfo, RadicleStatusInfo, SlashConfig, SlashInfo,
-    SyncStatusInfo, ValidatorDetailInfo, ValidatorInfo,
+    OutbeApiServer, ParticipationInfo, Phase1VerificationMode, RadiclePeerInfo,
+    RadiclePhaseErrorInfo, RadiclePhaseInfo, RadicleRepositoryInfo, RadicleRepositoryStateInfo,
+    RadicleStatusInfo, SlashConfig, SlashInfo, SyncStatusInfo, ValidatorDetailInfo, ValidatorInfo,
 };
 use outbe_radicle::integration::{
     RadicleRepositoryState, RadicleStatusHandle, RadicleStatusSnapshot, RadicleVotingGate,
@@ -67,9 +61,7 @@ impl StorageReader for RethStateReader<'_> {
         self.state
             .storage(address, key)
             .map(|opt| opt.unwrap_or(U256::ZERO))
-            .map_err(|e| {
-                outbe_primitives::error::PrecompileError::Storage(format!("state read failed: {e}"))
-            })
+            .map_err(|e| crate::errors::RpcStateReadError::StateReadFailed(e.to_string()).into())
     }
 }
 
@@ -85,8 +77,6 @@ pub struct OutbeApiHandler<P> {
     /// TrustedFinality node. This flag, NOT `bridge.is_some()`, drives
     /// validator-status fields.
     is_validator: bool,
-    projection_readiness: ProjectionReadinessHandle,
-    point_reads: Option<PointReadRuntime>,
     tee_renewal_schedule: Option<TeeRenewalScheduleConfigV1>,
     ocomp_lysis_openings: Option<OcompLysisOpeningsRuntimeV1>,
     radicle_status: RadicleStatusHandle,
@@ -125,7 +115,6 @@ impl<P> std::fmt::Debug for OutbeApiHandler<P> {
         formatter
             .debug_struct("OutbeApiHandler")
             .field("is_validator", &self.is_validator)
-            .field("point_reads", &self.point_reads)
             .finish_non_exhaustive()
     }
 }
@@ -133,14 +122,12 @@ impl<P> std::fmt::Debug for OutbeApiHandler<P> {
 impl<P> OutbeApiHandler<P> {
     /// Create a new handler backed by the given state provider factory (no
     /// bridge, plain EL full node).
-    pub fn new(provider: Arc<P>, projection_readiness: ProjectionReadinessHandle) -> Self {
+    pub fn new(provider: Arc<P>) -> Self {
         Self {
             provider,
             chain_identity: None,
             bridge: None,
             is_validator: false,
-            projection_readiness,
-            point_reads: None,
             tee_renewal_schedule: None,
             ocomp_lysis_openings: None,
             radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
@@ -149,12 +136,8 @@ impl<P> OutbeApiHandler<P> {
     }
 
     /// Create a validator handler with full access to the consensus bridge.
-    pub fn with_bridge(
-        provider: Arc<P>,
-        bridge: ConsensusExecutionBridge,
-        projection_readiness: ProjectionReadinessHandle,
-    ) -> Self {
-        let mut handler = Self::new(provider, projection_readiness);
+    pub fn with_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
+        let mut handler = Self::new(provider);
         handler.bridge = Some(bridge);
         handler.is_validator = true;
         handler
@@ -163,12 +146,8 @@ impl<P> OutbeApiHandler<P> {
     /// Create a `--upstream` follower handler. It holds the bridge so it can
     /// serve `outbe_getFinalization` (chaining followers). But it reports itself
     /// as a non-validator (TrustedFinality) node, not a validator.
-    pub fn with_follower_bridge(
-        provider: Arc<P>,
-        bridge: ConsensusExecutionBridge,
-        projection_readiness: ProjectionReadinessHandle,
-    ) -> Self {
-        let mut handler = Self::new(provider, projection_readiness);
+    pub fn with_follower_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
+        let mut handler = Self::new(provider);
         handler.bridge = Some(bridge);
         handler.is_validator = false;
         handler
@@ -177,21 +156,6 @@ impl<P> OutbeApiHandler<P> {
     #[must_use]
     pub fn with_chain_identity(mut self, chain_id: u64, genesis_hash: B256) -> Self {
         self.chain_identity = Some((chain_id, genesis_hash));
-        self
-    }
-
-    #[must_use]
-    pub fn with_point_reads(
-        mut self,
-        tree: Arc<CompressedTreeService>,
-        bodies: RuntimeBodyReaders,
-        chain_id: u64,
-    ) -> Self {
-        self.point_reads = Some(PointReadRuntime {
-            tree,
-            bodies,
-            chain_id,
-        });
         self
     }
 
@@ -385,16 +349,15 @@ where
         &self,
         f: impl FnOnce(StorageHandle) -> Result<R, outbe_primitives::error::PrecompileError>,
     ) -> RpcResult<R> {
-        let state = self
-            .provider
-            .latest()
-            .map_err(|e| internal_err(format!("failed to get latest state: {e}")))?;
+        let state = self.provider.latest().map_err(|e| {
+            internal_err(crate::errors::RpcInternalError::latest_state_read_failed(e))
+        })?;
 
         let reader = RethStateReader { state: &state };
         let mut provider = ReadOnlyStorageProvider::new(reader);
         let storage = StorageHandle::new(&mut provider);
 
-        f(storage).map_err(|e| internal_err(format!("precompile error: {e}")))
+        f(storage).map_err(|e| internal_err(crate::errors::RpcInternalError::Precompile(e)))
     }
 }
 
@@ -409,11 +372,32 @@ where
         + Sync
         + 'static,
 {
-    async fn get_compressed_entity(
+    async fn get_tribute_state_source(
         &self,
-        request: PointReadRequestV1,
-    ) -> RpcResult<PointReadResultV1> {
-        point_reads::serve(&self.provider, self.point_reads.clone(), request).await
+        subject: outbe_tee::tribute_source::TributeSourceSubject,
+        tribute_id: outbe_primitives::wwd_entity_id::WwdEntityId,
+    ) -> RpcResult<outbe_tee::tribute_source::TributeStateSource> {
+        let provider = Arc::clone(&self.provider);
+        let chain_identity = self.chain_identity;
+        tokio::task::spawn_blocking(move || {
+            tribute_sources::serve(&*provider, chain_identity, subject, tribute_id)
+        })
+        .await
+        .map_err(|error| internal_err(format!("Tribute source worker failed: {error}")))?
+    }
+
+    async fn get_tribute_day_state_proof(
+        &self,
+        subject: outbe_tee::tribute_source::TributeSourceSubject,
+        day_index: Option<u32>,
+    ) -> RpcResult<outbe_tribute::state_proof::TributeDayStateProof> {
+        let provider = Arc::clone(&self.provider);
+        let chain_identity = self.chain_identity;
+        tokio::task::spawn_blocking(move || {
+            tribute_sources::serve_day(&*provider, chain_identity, subject, day_index)
+        })
+        .await
+        .map_err(|error| internal_err(format!("Tribute day proof worker failed: {error}")))?
     }
 
     async fn get_ocomp_lysis_openings_v1(
@@ -421,13 +405,14 @@ where
         intent_id: B256,
         canonical_request: Bytes,
     ) -> RpcResult<Bytes> {
-        let runtime = self
-            .ocomp_lysis_openings
-            .clone()
-            .ok_or_else(|| internal_err("OCOMP Lysis openings are not configured".to_owned()))?;
+        let runtime = self.ocomp_lysis_openings.clone().ok_or_else(|| {
+            internal_err(crate::errors::RpcInternalError::OcompLysisOpeningsNotConfigured)
+        })?;
         tokio::task::spawn_blocking(move || runtime.build(intent_id, canonical_request))
             .await
-            .map_err(|error| internal_err(format!("OCOMP openings worker failed: {error}")))?
+            .map_err(|error| {
+                internal_err(crate::errors::RpcInternalError::ocomp_openings_worker_failed(error))
+            })?
             .map_err(internal_err)
     }
 
@@ -445,10 +430,9 @@ where
         // `"outbe/<ledger>/derive-keys/v1" || account || ephemeralPubkey`. Require
         // the signer to equal `account`.
         let sig65: [u8; 65] = signature.as_ref().try_into().map_err(|_| {
-            invalid_params_err(format!(
-                "signature must be 65 bytes (r||s||v), got {}",
-                signature.len()
-            ))
+            invalid_params_err(
+                crate::errors::RpcInvalidParamsError::InvalidSignatureLength(signature.len()),
+            )
         })?;
         // Recover the signer to reject unauthorized requests before the enclave round-trip.
         // This adds defense in depth. The enclave also verifies the signature.
@@ -458,11 +442,18 @@ where
             &outbe_tee::protocol::derive_account_keys_message(ledger, account, ephemeral_pubkey),
         );
         let recovered = outbe_primitives::tee_signatures::recover_signer(&prehash, &sig65)
-            .map_err(|e| invalid_params_err(format!("signature recovery failed: {e}")))?;
+            .map_err(|e| {
+                invalid_params_err(
+                    crate::errors::RpcInvalidParamsError::signature_recovery_failed(e),
+                )
+            })?;
         if recovered != account {
-            return Err(invalid_params_err(format!(
-                "signature signer {recovered} does not control account {account}"
-            )));
+            return Err(invalid_params_err(
+                crate::errors::RpcInvalidParamsError::SignatureSignerMismatch {
+                    recovered,
+                    account,
+                },
+            ));
         }
 
         // Off-chain key delivery through the process-global enclave client (no state).
@@ -474,8 +465,10 @@ where
             requester_ephemeral_pubkey: ephemeral_pubkey.0,
             owner_sig: sig65.to_vec(),
         })
-        .ok_or_else(|| internal_err("tee enclave not configured".to_string()))?
-        .map_err(|e| internal_err(format!("enclave DeriveAccountKeys failed: {e}")))?;
+        .ok_or_else(|| internal_err(crate::errors::RpcInternalError::TeeEnclaveNotConfigured))?
+        .map_err(|e| {
+            internal_err(crate::errors::RpcInternalError::enclave_derive_account_keys_failed(e))
+        })?;
         match response {
             EnclaveResponse::AccountKeysSealed {
                 sealed,
@@ -487,12 +480,12 @@ where
                 nonce: nonce.to_vec().into(),
                 enclave_ephemeral_pubkey: B256::from(enclave_ephemeral_pubkey),
             }),
-            EnclaveResponse::Error { message } => {
-                Err(internal_err(format!("enclave error: {message}")))
-            }
-            other => Err(internal_err(format!(
-                "unexpected enclave response: {other:?}"
-            ))),
+            EnclaveResponse::Error { message } => Err(internal_err(
+                crate::errors::RpcInternalError::EnclaveError(message),
+            )),
+            other => Err(internal_err(
+                crate::errors::RpcInternalError::unexpected_enclave_response(other),
+            )),
         }
     }
 
@@ -627,14 +620,6 @@ where
             .as_ref()
             .map(ConsensusExecutionBridge::consensus_status_with_threshold_shares)
             .unwrap_or_default();
-        let projection = projection_status_info(
-            self.projection_readiness.current(),
-            self.provider
-                .finalized_block_num_hash()
-                .ok()
-                .flatten()
-                .map(|block| (block.number, block.hash)),
-        );
 
         Ok(ConsensusStatusInfo {
             current_view: status.current_view,
@@ -654,7 +639,6 @@ where
             } else {
                 Phase1VerificationMode::TrustedFinality
             },
-            projection,
             enclave: enclave_health_info(
                 &self.tee_enclave_health.snapshot(),
                 std::time::SystemTime::now()
@@ -675,15 +659,15 @@ where
         // finalized block.
         let target = match block_number {
             Some(n) => n,
-            None => self
-                .provider
-                .best_block_number()
-                .map_err(|e| internal_err(format!("failed to read latest block number: {e}")))?,
+            None => self.provider.best_block_number().map_err(|e| {
+                internal_err(crate::errors::RpcInternalError::latest_block_number_read_failed(e))
+            })?,
         };
-        let header = self
-            .provider
-            .header_by_number(target)
-            .map_err(|e| internal_err(format!("failed to read header for block {target}: {e}")))?;
+        let header = self.provider.header_by_number(target).map_err(|e| {
+            internal_err(crate::errors::RpcInternalError::block_header_read_failed(
+                target, e,
+            ))
+        })?;
         // `mix_hash()` is itself `Option<B256>`. A missing block also yields None.
         Ok(header.and_then(|h| h.mix_hash()))
     }
@@ -774,17 +758,17 @@ where
         // bridge at marshal-start. A node without a bridge (pure EL full node)
         // has no marshal and cannot answer.
         let bridge = self.bridge.as_ref().ok_or_else(|| {
-            internal_err("node is not serving consensus finalizations".to_string())
+            internal_err(crate::errors::RpcInternalError::NotServingConsensusFinalizations)
         })?;
         let proof = bridge.request_finalization(height).await.ok_or_else(|| {
-            internal_err(format!(
-                "no finalization available for height {height} (not finalized locally or pruned)"
+            internal_err(crate::errors::RpcInternalError::NoFinalizationAvailable(
+                height,
             ))
         })?;
         if proof.finalization.is_empty() {
-            return Err(internal_err(format!(
-                "no direct finalization available for height {height}"
-            )));
+            return Err(internal_err(
+                crate::errors::RpcInternalError::NoDirectFinalizationAvailable(height),
+            ));
         }
         Ok(FinalizationProof {
             finalization_hex: format!("0x{}", hex::encode(&proof.finalization)),
@@ -793,18 +777,17 @@ where
     }
 
     async fn get_consensus_block(&self, height: u64) -> RpcResult<Bytes> {
-        let bridge = self
-            .bridge
-            .as_ref()
-            .ok_or_else(|| internal_err("node is not serving consensus blocks".to_owned()))?;
+        let bridge = self.bridge.as_ref().ok_or_else(|| {
+            internal_err(crate::errors::RpcInternalError::NotServingConsensusBlocks)
+        })?;
         bridge
             .request_finalization(height)
             .await
             .map(|proof| proof.block)
             .ok_or_else(|| {
-                internal_err(format!(
-                    "no finalized consensus block available for height {height}"
-                ))
+                internal_err(
+                    crate::errors::RpcInternalError::NoFinalizedConsensusBlockAvailable(height),
+                )
             })
     }
 
@@ -813,23 +796,23 @@ where
         height: u64,
     ) -> RpcResult<crate::api::AncestorFinalizationProof> {
         let bridge = self.bridge.as_ref().ok_or_else(|| {
-            internal_err("node is not serving consensus finalizations".to_owned())
+            internal_err(crate::errors::RpcInternalError::NotServingConsensusFinalizations)
         })?;
         let mut ancestors = Vec::new();
         let mut total_bytes = 0usize;
         for offset in 0..=64u64 {
-            let next = height
-                .checked_add(offset)
-                .ok_or_else(|| internal_err("proof height overflow".to_owned()))?;
+            let next = height.checked_add(offset).ok_or_else(|| {
+                internal_err(crate::errors::RpcInternalError::ProofHeightOverflow)
+            })?;
             let proof = bridge.request_finalization(next).await.ok_or_else(|| {
-                internal_err(format!("no finality evidence available at height {next}"))
+                internal_err(crate::errors::RpcInternalError::NoFinalityEvidenceAvailable(next))
             })?;
             total_bytes = total_bytes.saturating_add(proof.block.len());
             // Hex JSON doubles the block payload. Stay below the default
             // upstream HTTP client's 10 MiB response bound with envelope room.
             if total_bytes > 4 * 1024 * 1024 {
                 return Err(internal_err(
-                    "ancestor finality proof exceeds byte limit".to_owned(),
+                    crate::errors::RpcInternalError::AncestorFinalityProofExceedsByteLimit,
                 ));
             }
             if !proof.finalization.is_empty() {
@@ -844,57 +827,8 @@ where
             ancestors.push(format!("0x{}", hex::encode(proof.block)));
         }
         Err(internal_err(
-            "no descendant finalization within 64 blocks".to_owned(),
+            crate::errors::RpcInternalError::NoDescendantFinalizationWithin64Blocks,
         ))
-    }
-}
-
-fn projection_status_info(
-    status: ProjectionStatus,
-    reth_finalized: Option<(u64, B256)>,
-) -> ProjectionStatusInfo {
-    let (state, checkpoint, ready, unavailable_for_millis, last_failure_class) = match status {
-        ProjectionStatus::Starting => (ProjectionHealth::Starting, None, false, None, None),
-        ProjectionStatus::CatchingUp { checkpoint } => {
-            (ProjectionHealth::CatchingUp, checkpoint, false, None, None)
-        }
-        ProjectionStatus::Ready { checkpoint } => {
-            (ProjectionHealth::Ready, Some(checkpoint), true, None, None)
-        }
-        ProjectionStatus::MongoUnavailable { checkpoint, since } => (
-            ProjectionHealth::MongoUnavailable,
-            checkpoint,
-            false,
-            Some(u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX)),
-            Some("Unavailable".to_owned()),
-        ),
-        ProjectionStatus::Fatal { checkpoint, error } => (
-            ProjectionHealth::Fatal,
-            checkpoint,
-            false,
-            None,
-            Some(format!("{:?}", error.class)),
-        ),
-    };
-    let checkpoint_number = checkpoint.map(|value| value.block_number);
-    let checkpoint_hash = checkpoint.map(|value| value.block_hash);
-    let reth_finalized_number = reth_finalized.map(|value| value.0);
-    let reth_finalized_hash = reth_finalized.map(|value| value.1);
-    let lag_blocks = checkpoint_number.zip(reth_finalized_number).map(
-        |(checkpoint_number, reth_finalized_number)| {
-            reth_finalized_number.saturating_sub(checkpoint_number)
-        },
-    );
-    ProjectionStatusInfo {
-        state,
-        checkpoint_number,
-        checkpoint_hash,
-        reth_finalized_number,
-        reth_finalized_hash,
-        lag_blocks,
-        ready,
-        unavailable_for_millis,
-        last_failure_class,
     }
 }
 
@@ -941,27 +875,13 @@ mod tests {
 
     #[test]
     fn a_follower_bridge_does_not_make_the_handler_a_validator() {
-        use outbe_primitives::{
-            consensus::ConsensusExecutionBridge,
-            projection::{projection_readiness, ProjectionCheckpoint, ProjectionStatus},
-        };
-        let checkpoint = ProjectionCheckpoint {
-            block_number: 0,
-            block_hash: B256::ZERO,
-        };
-        let (_publisher, readiness) = projection_readiness(checkpoint, ProjectionStatus::Starting);
+        use outbe_primitives::consensus::ConsensusExecutionBridge;
         let provider = std::sync::Arc::new(());
-        let plain = super::OutbeApiHandler::new(provider.clone(), readiness.clone());
-        let validator = super::OutbeApiHandler::with_bridge(
-            provider.clone(),
-            ConsensusExecutionBridge::new(),
-            readiness.clone(),
-        );
-        let follower = super::OutbeApiHandler::with_follower_bridge(
-            provider,
-            ConsensusExecutionBridge::new(),
-            readiness,
-        );
+        let plain = super::OutbeApiHandler::new(provider.clone());
+        let validator =
+            super::OutbeApiHandler::with_bridge(provider.clone(), ConsensusExecutionBridge::new());
+        let follower =
+            super::OutbeApiHandler::with_follower_bridge(provider, ConsensusExecutionBridge::new());
         assert!(!plain.is_validator && plain.bridge.is_none());
         assert!(validator.is_validator && validator.bridge.is_some());
         assert!(!follower.is_validator && follower.bridge.is_some());

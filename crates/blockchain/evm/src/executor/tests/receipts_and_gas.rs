@@ -276,9 +276,6 @@ fn system_prefix_charges_visible_gas_and_receipt_cumulative_contract() {
     );
 
     executor
-        .finalize_compressed_entities()
-        .expect("compressed entities should finalize");
-    executor
         .prepare_final_header_artifacts(0)
         .expect("final extra_data should encode");
     let (_evm, block_result) = executor.finish().expect("executor finish should succeed");
@@ -698,7 +695,7 @@ fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
     let intrinsic_gas = 21_000;
     let protocol_precharge = 300_000;
     let visible_base_gas = intrinsic_gas + protocol_precharge;
-    let compressed_entities_gas = 70_000;
+    let additional_visible_gas = 70_000;
     let output = executor
         .push_system_failure_receipt(SystemFailureReceiptInput {
             tx_type: alloy_consensus::TxType::Legacy,
@@ -706,12 +703,12 @@ fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
             code: 299,
             reason: "deterministic test failure".into(),
             visible_base_gas,
-            compressed_entities_gas,
-            signed_gas_limit: visible_base_gas + compressed_entities_gas,
+            additional_visible_gas,
+            signed_gas_limit: visible_base_gas + additional_visible_gas,
             internal_gas_used: 123,
         })
-        .expect("visible envelope plus CE gas should fit");
-    let expected_visible = intrinsic_gas + protocol_precharge + compressed_entities_gas;
+        .expect("visible envelope plus state-operation gas should fit");
+    let expected_visible = intrinsic_gas + protocol_precharge + additional_visible_gas;
     assert_eq!(output.tx_gas_used(), expected_visible);
     assert_eq!(
         executor.receipts().last().unwrap().cumulative_gas_used,
@@ -733,11 +730,11 @@ fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
             code: 299,
             reason: "must not commit".into(),
             visible_base_gas: remaining,
-            compressed_entities_gas: 1,
+            additional_visible_gas: 1,
             signed_gas_limit: remaining + 1,
             internal_gas_used: 456,
         })
-        .expect_err("CE delta must not push cumulative gas past the block limit");
+        .expect_err("State-operation delta must not push cumulative gas past the block limit");
     assert!(error.to_string().contains("exceeds block gas limit"));
     assert_eq!(executor.receipts().len(), receipts_before);
     assert_eq!(executor.inner.cumulative_tx_gas_used, cumulative_before);
@@ -764,7 +761,7 @@ fn system_internal_work_budget_rejects_before_receipt_or_state_accounting() {
             code: 299,
             reason: "must not commit past the internal system-work budget".into(),
             visible_base_gas: 0,
-            compressed_entities_gas: 0,
+            additional_visible_gas: 0,
             signed_gas_limit: 0,
             internal_gas_used: 2,
         })
@@ -835,9 +832,6 @@ fn gas_14_executor_finish_sets_visible_system_gas_for_fee_history_input() {
     assert_eq!(receipt_deltas, expected_system_deltas);
 
     executor
-        .finalize_compressed_entities()
-        .expect("compressed entities should finalize");
-    executor
         .prepare_final_header_artifacts(0)
         .expect("final extra_data should encode");
     let (_evm, result) = executor.finish().expect("finish should succeed");
@@ -900,9 +894,6 @@ fn gas_16_mixed_system_and_user_block_finish_uses_visible_system_gas() {
         .expect("funded regular user tx should execute")
         .tx_gas_used();
 
-    executor
-        .finalize_compressed_entities()
-        .expect("compressed entities should finalize");
     executor
         .prepare_final_header_artifacts(0)
         .expect("final extra_data should encode");

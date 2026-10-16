@@ -1,5 +1,5 @@
 use super::codec::FixedReader;
-use crate::errors::storage_corruption_message;
+use crate::errors::MetadosisStorageCorruptionError;
 use alloy_primitives::B256;
 use outbe_primitives::{error::Result, time::WorldwideDay};
 use std::collections::BTreeSet;
@@ -21,7 +21,7 @@ pub(super) fn encode_live_scheduler_index(index: &[LiveIndexKey]) -> Result<Vec<
         return Ok(Vec::new());
     }
     let count = u16::try_from(index.len())
-        .map_err(|_| storage_corruption_message("OCOMP live index count exceeds u16"))?;
+        .map_err(|_| MetadosisStorageCorruptionError::OcompLiveIndexCountExceedsU16)?;
     let mut encoded = Vec::with_capacity(LIVE_INDEX_HEADER_LEN + index.len() * LIVE_INDEX_KEY_LEN);
     encoded.extend_from_slice(&MAGIC);
     encoded.extend_from_slice(&VERSION.to_be_bytes());
@@ -39,20 +39,14 @@ pub(super) fn decode_live_scheduler_index(encoded: &[u8]) -> Result<Vec<LiveInde
     }
     let mut reader = FixedReader::new(encoded);
     if reader.take::<4>()? != MAGIC || u16::from_be_bytes(reader.take::<2>()?) != VERSION {
-        return Err(storage_corruption_message(
-            "OCOMP live index magic/version mismatch",
-        ));
+        return Err(MetadosisStorageCorruptionError::OcompLiveIndexMagicVersionMismatch.into());
     }
     let count = usize::from(u16::from_be_bytes(reader.take::<2>()?));
     if count == 0 {
-        return Err(storage_corruption_message(
-            "OCOMP live index must use empty bytes for zero jobs",
-        ));
+        return Err(MetadosisStorageCorruptionError::OcompLiveIndexNonEmptyBytesForZeroJobs.into());
     }
     if encoded.len() != LIVE_INDEX_HEADER_LEN + count * LIVE_INDEX_KEY_LEN {
-        return Err(storage_corruption_message(
-            "OCOMP live index has non-canonical length",
-        ));
+        return Err(MetadosisStorageCorruptionError::OcompLiveIndexNonCanonicalLength.into());
     }
     let mut index = Vec::with_capacity(count);
     for _ in 0..count {
@@ -68,22 +62,16 @@ pub(super) fn decode_live_scheduler_index(encoded: &[u8]) -> Result<Vec<LiveInde
 
 fn validate(index: &[LiveIndexKey]) -> Result<()> {
     if index.windows(2).any(|pair| pair[0] >= pair[1]) {
-        return Err(storage_corruption_message(
-            "OCOMP live index is not in strict canonical order",
-        ));
+        return Err(MetadosisStorageCorruptionError::OcompLiveIndexNotStrictlyOrdered.into());
     }
     let mut days = BTreeSet::new();
     let mut intents = BTreeSet::new();
     for key in index {
         if key.intent_id.is_zero() {
-            return Err(storage_corruption_message(
-                "OCOMP live index contains a non-live state",
-            ));
+            return Err(MetadosisStorageCorruptionError::OcompLiveIndexContainsNonLiveState.into());
         }
         if !days.insert(key.worldwide_day) || !intents.insert(key.intent_id) {
-            return Err(storage_corruption_message(
-                "OCOMP live index contains a duplicate job",
-            ));
+            return Err(MetadosisStorageCorruptionError::OcompLiveIndexDuplicateJob.into());
         }
     }
     Ok(())

@@ -184,6 +184,35 @@ impl PlanningLedger {
 
     /// Validate IDs, ownership, references, lanes, oracles and exact deferrals.
     pub fn validate(&self) -> EyreResult<()> {
+        self.validate_envelope()?;
+        let allowed_oracles = self.validate_oracle_policy()?;
+        self.validate_lanes()?;
+        for (test_id, test) in &self.tests {
+            self.validate_planned_test(test_id, test, &allowed_oracles)?;
+        }
+        let test_ids = self.tests.keys().cloned().collect::<BTreeSet<_>>();
+        self.validate_retired_tests(&test_ids)?;
+        self.validate_ownership(&test_ids)?;
+        validate_task_contracts(
+            &self.task_ownership,
+            &self.task_dependencies,
+            &self.task_commands,
+        )?;
+        for (test_id, test) in &self.tests {
+            for discharge in &test.substitution_discharge {
+                ensure!(
+                    test_ids.contains(discharge),
+                    "test {test_id} has unknown substitution discharge {discharge}"
+                );
+            }
+        }
+        self.validate_described_requirements(&test_ids)?;
+        self.validate_pfs_requirements(&test_ids)?;
+        self.validate_story(&test_ids, &allowed_oracles)?;
+        self.validate_runtime_fields()
+    }
+
+    fn validate_envelope(&self) -> EyreResult<()> {
         ensure!(self.schema_version == 1, "unsupported ledger schema");
         ensure!(self.kind == LEDGER_KIND, "unexpected ledger kind");
         ensure!(self.status == "planned", "ledger must remain planned");
@@ -200,7 +229,10 @@ impl PlanningLedger {
             self.runtime_evidence.publish_last,
             "run manifest must publish last"
         );
+        Ok(())
+    }
 
+    fn validate_oracle_policy(&self) -> EyreResult<BTreeSet<&str>> {
         let allowed_oracles =
             unique_nonempty("oracle_policy.allowed", &self.oracle_policy.allowed)?;
         ensure!(
@@ -224,7 +256,10 @@ impl PlanningLedger {
                 "non-proving status {expected} is missing"
             );
         }
+        Ok(allowed_oracles)
+    }
 
+    fn validate_lanes(&self) -> EyreResult<()> {
         for (lane_id, lane) in &self.lanes {
             ensure!(!lane_id.trim().is_empty(), "empty lane ID");
             ensure!(
@@ -237,54 +272,45 @@ impl PlanningLedger {
                 "lane {lane_id} enables automatic retries"
             );
         }
+        Ok(())
+    }
 
-        for (test_id, test) in &self.tests {
-            ensure!(valid_test_id(test_id), "invalid stable test ID {test_id}");
-            ensure!(test.status == "planned", "test {test_id} is not planned");
-            ensure!(!test.layer.trim().is_empty(), "test {test_id} has no layer");
+    fn validate_planned_test(
+        &self,
+        test_id: &str,
+        test: &PlannedTest,
+        allowed_oracles: &BTreeSet<&str>,
+    ) -> EyreResult<()> {
+        ensure!(valid_test_id(test_id), "invalid stable test ID {test_id}");
+        ensure!(test.status == "planned", "test {test_id} is not planned");
+        ensure!(!test.layer.trim().is_empty(), "test {test_id} has no layer");
+        ensure!(
+            self.lanes.contains_key(&test.lane),
+            "test {test_id} references unknown lane {}",
+            test.lane
+        );
+        validate_relative_path(&test.planned_path)
+            .wrap_err_with(|| format!("invalid planned path for {test_id}"))?;
+        ensure!(
+            !test.production_entrypoint.trim().is_empty(),
+            "test {test_id} has no production entrypoint"
+        );
+        ensure!(
+            !test.real_components.is_empty(),
+            "test {test_id} has no real components"
+        );
+        ensure!(!test.oracles.is_empty(), "test {test_id} has no oracle");
+        for oracle in &test.oracles {
             ensure!(
-                self.lanes.contains_key(&test.lane),
-                "test {test_id} references unknown lane {}",
-                test.lane
+                allowed_oracles.contains(oracle.as_str()),
+                "test {test_id} uses unknown oracle {oracle}"
             );
-            validate_relative_path(&test.planned_path)
-                .wrap_err_with(|| format!("invalid planned path for {test_id}"))?;
-            ensure!(
-                !test.production_entrypoint.trim().is_empty(),
-                "test {test_id} has no production entrypoint"
-            );
-            ensure!(
-                !test.real_components.is_empty(),
-                "test {test_id} has no real components"
-            );
-            ensure!(!test.oracles.is_empty(), "test {test_id} has no oracle");
-            for oracle in &test.oracles {
-                ensure!(
-                    allowed_oracles.contains(oracle.as_str()),
-                    "test {test_id} uses unknown oracle {oracle}"
-                );
-            }
-            ensure!(!test.evidence.is_empty(), "test {test_id} has no evidence");
-            if test.substitutions.is_empty() {
-                ensure!(
-                    test.substitution_justification.is_none(),
-                    "test {test_id} justifies no substitution"
-                );
-                ensure!(
-                    test.substitution_discharge.is_empty(),
-                    "test {test_id} discharges no substitution"
-                );
-            } else {
-                ensure!(
-                    test.substitution_justification
-                        .as_deref()
-                        .is_some_and(|value| !value.trim().is_empty()),
-                    "test {test_id} substitution has no justification"
-                );
-            }
         }
+        ensure!(!test.evidence.is_empty(), "test {test_id} has no evidence");
+        validate_substitutions(test_id, test)
+    }
 
-        let test_ids = self.tests.keys().cloned().collect::<BTreeSet<_>>();
+    fn validate_retired_tests(&self, test_ids: &BTreeSet<String>) -> EyreResult<()> {
         let expected_retired_tests = BTreeSet::from([
             "OCM-CTL-001".to_owned(),
             "OCM-DIS-001".to_owned(),
@@ -310,6 +336,10 @@ impl PlanningLedger {
                 "retired test {test_id} has no reason"
             );
         }
+        Ok(())
+    }
+
+    fn validate_ownership(&self, test_ids: &BTreeSet<String>) -> EyreResult<()> {
         let mut owners = BTreeMap::<String, Vec<String>>::new();
         for expected in 0..=27 {
             let task_id = format!("OCM-{expected:02}");
@@ -331,40 +361,32 @@ impl PlanningLedger {
                     .push(task_id.clone());
             }
         }
-        for test_id in &test_ids {
+        for test_id in test_ids {
             let test_owners = owners.get(test_id).map(Vec::as_slice).unwrap_or_default();
             ensure!(
                 test_owners.len() == 1,
                 "test {test_id} must have exactly one owner, got {test_owners:?}"
             );
         }
-        validate_task_contracts(
-            &self.task_ownership,
-            &self.task_dependencies,
-            &self.task_commands,
-        )?;
+        Ok(())
+    }
 
-        for (test_id, test) in &self.tests {
-            for discharge in &test.substitution_discharge {
-                ensure!(
-                    test_ids.contains(discharge),
-                    "test {test_id} has unknown substitution discharge {discharge}"
-                );
-            }
-        }
-
+    fn validate_described_requirements(&self, test_ids: &BTreeSet<String>) -> EyreResult<()> {
         for (id, requirement) in &self.requirements.meta {
             ensure!(!requirement.text.trim().is_empty(), "{id} has empty text");
-            validate_test_refs(id, &requirement.tests, &test_ids, false)?;
+            validate_test_refs(id, &requirement.tests, test_ids, false)?;
         }
         for (id, requirement) in &self.requirements.adr {
             ensure!(!requirement.text.trim().is_empty(), "{id} has empty text");
-            validate_test_refs(id, &requirement.tests, &test_ids, false)?;
+            validate_test_refs(id, &requirement.tests, test_ids, false)?;
         }
         for (id, tests) in &self.requirements.poc {
-            validate_test_refs(id, tests, &test_ids, false)?;
+            validate_test_refs(id, tests, test_ids, false)?;
         }
+        Ok(())
+    }
 
+    fn validate_pfs_requirements(&self, test_ids: &BTreeSet<String>) -> EyreResult<()> {
         let expected_deferred = BTreeSet::from(["PFS-002-07".to_owned(), "PFS-002-08".to_owned()]);
         ensure!(
             self.deferred.keys().cloned().collect::<BTreeSet<_>>() == expected_deferred,
@@ -379,9 +401,9 @@ impl PlanningLedger {
         let mut observed_retired = BTreeSet::new();
         for (id, requirement) in &self.requirements.pfs {
             match requirement.status.as_str() {
-                "required" => validate_test_refs(id, &requirement.tests, &test_ids, false)?,
+                "required" => validate_test_refs(id, &requirement.tests, test_ids, false)?,
                 "DEFERRED" => {
-                    validate_test_refs(id, &requirement.tests, &test_ids, true)?;
+                    validate_test_refs(id, &requirement.tests, test_ids, true)?;
                     ensure!(
                         requirement.tests.is_empty(),
                         "deferred requirement {id} owns tests"
@@ -389,21 +411,7 @@ impl PlanningLedger {
                     observed_deferred.insert(id.clone());
                 }
                 "RETIRED" => {
-                    ensure!(
-                        expected_retired.contains(id),
-                        "PFS requirement {id} cannot be retired"
-                    );
-                    ensure!(
-                        requirement.tests.is_empty(),
-                        "retired requirement {id} owns tests"
-                    );
-                    ensure!(
-                        requirement
-                            .reason
-                            .as_deref()
-                            .is_some_and(|reason| !reason.trim().is_empty()),
-                        "retired requirement {id} has no reason"
-                    );
+                    validate_retired_pfs(id, requirement, &expected_retired)?;
                     observed_retired.insert(id.clone());
                 }
                 status => {
@@ -419,7 +427,14 @@ impl PlanningLedger {
             observed_retired == expected_retired,
             "PFS retirements do not match the frozen tombstone"
         );
+        Ok(())
+    }
 
+    fn validate_story(
+        &self,
+        test_ids: &BTreeSet<String>,
+        allowed_oracles: &BTreeSet<&str>,
+    ) -> EyreResult<()> {
         for (step, requirement) in &self.requirements.story {
             let step_number = step
                 .parse::<u8>()
@@ -428,7 +443,7 @@ impl PlanningLedger {
                 (1..=13).contains(&step_number),
                 "story step {step} is outside 1..13"
             );
-            validate_test_refs(step, &requirement.tests, &test_ids, false)?;
+            validate_test_refs(step, &requirement.tests, test_ids, false)?;
             ensure!(
                 allowed_oracles.contains(requirement.oracle.as_str()),
                 "story step {step} uses unknown oracle {}",
@@ -439,7 +454,10 @@ impl PlanningLedger {
             self.requirements.story.len() == 13,
             "story must contain exactly thirteen steps"
         );
+        Ok(())
+    }
 
+    fn validate_runtime_fields(&self) -> EyreResult<()> {
         let required_fields = unique_nonempty(
             "assertion_required_fields",
             &self.runtime_evidence.assertion_required_fields,
@@ -537,6 +555,50 @@ fn unique_nonempty<'a>(name: &str, values: &'a [String]) -> EyreResult<BTreeSet<
         );
     }
     Ok(unique)
+}
+
+fn validate_substitutions(test_id: &str, test: &PlannedTest) -> EyreResult<()> {
+    if test.substitutions.is_empty() {
+        ensure!(
+            test.substitution_justification.is_none(),
+            "test {test_id} justifies no substitution"
+        );
+        ensure!(
+            test.substitution_discharge.is_empty(),
+            "test {test_id} discharges no substitution"
+        );
+    } else {
+        ensure!(
+            test.substitution_justification
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty()),
+            "test {test_id} substitution has no justification"
+        );
+    }
+    Ok(())
+}
+
+fn validate_retired_pfs(
+    id: &str,
+    requirement: &PfsRequirement,
+    expected_retired: &BTreeSet<String>,
+) -> EyreResult<()> {
+    ensure!(
+        expected_retired.contains(id),
+        "PFS requirement {id} cannot be retired"
+    );
+    ensure!(
+        requirement.tests.is_empty(),
+        "retired requirement {id} owns tests"
+    );
+    ensure!(
+        requirement
+            .reason
+            .as_deref()
+            .is_some_and(|reason| !reason.trim().is_empty()),
+        "retired requirement {id} has no reason"
+    );
+    Ok(())
 }
 
 fn validate_test_refs(
@@ -643,12 +705,12 @@ fn valid_test_id(id: &str) -> bool {
     let Some((prefix, digits)) = id.rsplit_once('-') else {
         return false;
     };
-    prefix.starts_with("OCM-")
+    let valid_prefix = prefix.starts_with("OCM-")
         && prefix[4..]
             .bytes()
-            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
-        && digits.len() == 3
-        && digits.bytes().all(|byte| byte.is_ascii_digit())
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit());
+    let valid_digits = digits.len() == 3 && digits.bytes().all(|byte| byte.is_ascii_digit());
+    valid_prefix && valid_digits
 }
 
 fn valid_task_id(id: &str) -> bool {

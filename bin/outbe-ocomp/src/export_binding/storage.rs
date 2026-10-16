@@ -75,8 +75,6 @@ pub(crate) fn encode_checkpoint(output: &mut Vec<u8>, checkpoint: &CheckpointIde
     output.extend_from_slice(&checkpoint.finalized_block_number.to_be_bytes());
     output.extend_from_slice(checkpoint.finalized_block_hash.as_slice());
     output.extend_from_slice(checkpoint.finalized_state_root.as_slice());
-    output.extend_from_slice(checkpoint.finalized_ce_root.as_slice());
-    output.extend_from_slice(&checkpoint.ce_schema_version.to_be_bytes());
 }
 
 pub(crate) fn decode_checkpoint_at(
@@ -87,8 +85,6 @@ pub(crate) fn decode_checkpoint_at(
         finalized_block_number: read_u64(encoded, offset)?,
         finalized_block_hash: read_b256(encoded, offset + 8)?,
         finalized_state_root: read_b256(encoded, offset + 40)?,
-        finalized_ce_root: read_b256(encoded, offset + 72)?,
-        ce_schema_version: read_u16(encoded, offset + 104)?,
     })
 }
 

@@ -124,19 +124,21 @@ impl HistoricalCommitteeAuthority for TrieHistoricalCommitteeAuthority {
         }
         .verify(request_state_root)
         .map_err(|error| {
-            HistoricalCommitteeError::new(format!(
-                "historical committee account proof rejected: {error}"
-            ))
+            HistoricalCommitteeError::from(
+                crate::errors::HistoricalCommitteeValidationError::account_proof_rejected(error),
+            )
         })?;
 
         let expected =
             historical_committee_storage_slots(epoch, committee_set_hash, &witness.snapshot);
         if witness.storage.proofs.len() != expected.len() {
-            return Err(HistoricalCommitteeError::new(format!(
-                "historical committee storage proof count mismatch: expected {}, got {}",
-                expected.len(),
-                witness.storage.proofs.len()
-            )));
+            return Err(
+                crate::errors::HistoricalCommitteeValidationError::StorageProofCountMismatch {
+                    expected: expected.len(),
+                    actual: witness.storage.proofs.len(),
+                }
+                .into(),
+            );
         }
         for (index, ((slot, value), nodes)) in
             expected.into_iter().zip(witness.storage.proofs).enumerate()
@@ -149,9 +151,11 @@ impl HistoricalCommitteeAuthority for TrieHistoricalCommitteeAuthority {
             .with_proof(nodes)
             .verify(witness.account.storage_root)
             .map_err(|error| {
-                HistoricalCommitteeError::new(format!(
-                    "historical committee storage proof {index} rejected: {error}"
-                ))
+                HistoricalCommitteeError::from(
+                    crate::errors::HistoricalCommitteeValidationError::storage_proof_rejected(
+                        index, error,
+                    ),
+                )
             })?;
         }
         Ok(witness.snapshot)
@@ -269,9 +273,6 @@ pub fn authenticate_snapshot_handoff(
     {
         return Err(SnapshotHandoffVerificationError::Checkpoint);
     }
-    if verified.intent.ce_sealed_root != handoff.checkpoint.finalized_ce_root {
-        return Err(SnapshotHandoffVerificationError::CeRoot);
-    }
     Ok(verified)
 }
 
@@ -289,8 +290,6 @@ pub enum SnapshotHandoffVerificationError {
     InputLeaseId,
     #[error("verified request identity differs from the snapshot checkpoint")]
     Checkpoint,
-    #[error("verified JobIntent CE root differs from the snapshot checkpoint")]
-    CeRoot,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -624,10 +623,13 @@ where
             .provider
             .state_by_block_hash(block_hash)
             .map_err(|error| {
-                FinalizedIntentProofBuildError::State(format!(
-                    "open block {} {}: {error}",
-                    block_number, block_hash
-                ))
+                FinalizedIntentProofBuildError::from(
+                    crate::errors::FinalizedIntentProofStateError::open_block_state(
+                        block_number,
+                        block_hash,
+                        error,
+                    ),
+                )
             })?;
         let record = read_pending_job_record(state.as_ref(), intent_id, &self.limits)?;
         let finalization =
@@ -649,9 +651,11 @@ where
                 &slot_keys(&intent_slots),
             )
             .map_err(|error| {
-                FinalizedIntentProofBuildError::Trie(format!(
-                    "build Metadosis intent proof: {error}"
-                ))
+                FinalizedIntentProofBuildError::from(
+                    crate::errors::FinalizedIntentProofTrieError::build_metadosis_intent_proof(
+                        error,
+                    ),
+                )
             })?;
 
         let committee_slots = historical_committee_storage_slots(
@@ -666,9 +670,11 @@ where
                 &slot_keys(&committee_slots),
             )
             .map_err(|error| {
-                FinalizedIntentProofBuildError::Trie(format!(
-                    "build ValidatorSet committee proof: {error}"
-                ))
+                FinalizedIntentProofBuildError::from(
+                    crate::errors::FinalizedIntentProofTrieError::build_validator_set_committee_proof(
+                        error,
+                    ),
+                )
             })?;
 
         let proof = FinalizedIntentProofV1 {
@@ -972,10 +978,14 @@ fn read_storage_bytes(
     }
 
     let len_word = head.checked_sub(U256::from(1)).ok_or_else(|| {
-        FinalizedIntentProofBuildError::Intent("invalid StorageBytes length word".to_owned())
+        FinalizedIntentProofBuildError::from(
+            crate::errors::FinalizedIntentProofIntentError::InvalidStorageBytesLengthWord,
+        )
     })? / U256::from(2);
     let len = usize::try_from(len_word).map_err(|_| {
-        FinalizedIntentProofBuildError::Intent("StorageBytes length exceeds usize".to_owned())
+        FinalizedIntentProofBuildError::from(
+            crate::errors::FinalizedIntentProofIntentError::StorageBytesLengthExceedsUsize,
+        )
     })?;
     if len <= 31 || len > max_len {
         return Err(FinalizedIntentProofBuildError::Intent(
@@ -1026,18 +1036,23 @@ pub(crate) fn build_verified_raw_contract_opening(
                 .storage(contract_address, slot)
                 .map(|value| (U256::from_be_bytes(slot.0), value.unwrap_or_default()))
                 .map_err(|error| {
-                    FinalizedIntentProofBuildError::State(format!(
-                        "read raw opening slot {slot}: {error}"
-                    ))
+                    FinalizedIntentProofBuildError::from(
+                        crate::errors::FinalizedIntentProofStateError::read_raw_opening_slot(
+                            slot, error,
+                        ),
+                    )
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
     let proof = state
         .proof(TrieInput::default(), contract_address, ordered_slots)
         .map_err(|error| {
-            FinalizedIntentProofBuildError::Trie(format!(
-                "build raw opening proof for {contract_address}: {error}"
-            ))
+            FinalizedIntentProofBuildError::from(
+                crate::errors::FinalizedIntentProofTrieError::build_raw_opening_proof(
+                    contract_address,
+                    error,
+                ),
+            )
         })?;
     let opening = RawContractOpeningProofV1 {
         contract_address,
@@ -1060,63 +1075,6 @@ pub(crate) fn build_verified_raw_contract_opening(
         limits,
     )
     .map_err(FinalizedIntentProofBuildError::RawOpeningVerification)?;
-    Ok(opening)
-}
-
-/// Converts a standard `eth_getProof` response into the canonical OCOMP raw
-/// opening and verifies it against the finalized block state root.
-///
-/// The RPC server is only a proof transport. This function checks the account
-/// path, every storage path, the exact contract address, and the ordered slot
-/// set locally before it returns the opening.
-pub fn build_verified_raw_contract_opening_from_public_proof(
-    proof: &PublicAccountProofV1,
-    state_root: B256,
-    contract_address: Address,
-    ordered_slots: &[B256],
-    limits: &SchemaLimits,
-) -> Result<RawContractOpeningProofV1, PublicFinalizedIntentProofBuildError> {
-    if ordered_slots.is_empty() || ordered_slots.len() > limits.max_collection_items {
-        return Err(PublicFinalizedIntentProofBuildError::ProofSlotSet);
-    }
-    verify_public_account_proof(proof, contract_address, ordered_slots, state_root)?;
-    let expected_slots = ordered_slots
-        .iter()
-        .copied()
-        .map(|slot| {
-            proof
-                .storage_value(slot)
-                .map(|value| (U256::from_be_bytes(slot.0), value))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let reth_proof = proof.to_reth_proof();
-    let opening = RawContractOpeningProofV1 {
-        contract_address,
-        state_root,
-        ordered_slots: expected_slots
-            .iter()
-            .map(|(slot, value)| RawStorageSlotV1 {
-                slot: B256::new(slot.to_be_bytes()),
-                value: *value,
-            })
-            .collect(),
-        account_proof: ProofBytes(
-            encode_account_witness(&reth_proof, contract_address)
-                .map_err(PublicFinalizedIntentProofBuildError::witness)?,
-        ),
-        storage_proof: ProofBytes(
-            encode_storage_witness(&reth_proof, &expected_slots)
-                .map_err(PublicFinalizedIntentProofBuildError::witness)?,
-        ),
-    };
-    verify_raw_contract_opening(
-        &opening,
-        contract_address,
-        state_root,
-        ordered_slots,
-        limits,
-    )
-    .map_err(PublicFinalizedIntentProofBuildError::witness)?;
     Ok(opening)
 }
 

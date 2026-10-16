@@ -79,7 +79,6 @@ tee:
 # radicle_status_port: 8876
 # tee_enclave_port: 17000
 # feeder_health_port: 9002
-# mongodb_port: 27017
 
 # --- Chain parameters ------------------------------------------------------
 
@@ -218,10 +217,5 @@ contracts:
   - address: 0xEFC2c1444eBCC4Db75e7613d20C6a62fF67A167C
     code: sender_creator_v07.code.hex
     state: sender_creator_v07.state.json
-    nonce: 0x1
-    balance: 0x0
-  - address: 0x000000000000000000000000000000000000C0DE
-    code: counter.code.hex
-    state: counter.state.json
     nonce: 0x1
     balance: 0x0

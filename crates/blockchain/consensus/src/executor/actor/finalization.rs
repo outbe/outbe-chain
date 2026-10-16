@@ -1,7 +1,4 @@
-use super::{
-    wait_for_finalized_parent, wait_for_optional_ocomp_parent, ExecutorActor, HeadOrFinalized,
-    MaybeBuild,
-};
+use super::{wait_for_optional_ocomp_parent, ExecutorActor, HeadOrFinalized, MaybeBuild};
 
 use crate::digest::Digest;
 use alloy_primitives::B256;
@@ -19,9 +16,9 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
-/// Exact finalized block identity handed to compressed-storage persistence.
+/// Exact finalized block identity handed to native execution persistence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FinalizedCeBlock {
+pub struct FinalizedExecutionBlock {
     pub height: u64,
     pub block_hash: B256,
     pub parent_block_hash: B256,
@@ -29,11 +26,17 @@ pub struct FinalizedCeBlock {
 
 /// Finalization barrier installed by the node integration.
 ///
-/// The returned future completes only after Reth's durable notification,
-/// DB-only canonical/root verification, and the atomic CE MDBX commit. The
-/// executor deliberately awaits it before acknowledging Marshal.
-pub trait FinalizedCeCommitter: Send + Sync {
-    fn commit_finalized(&self, block: FinalizedCeBlock) -> BoxFuture<'static, eyre::Result<()>>;
+/// The returned future completes only after DB-only canonical and executed-state
+/// verification. Persistence notifications are advisory. The executor awaits it
+/// before acknowledging Marshal.
+pub trait FinalizedExecutionBarrier: Send + Sync {
+    fn commit_finalized(
+        &self,
+        block: FinalizedExecutionBlock,
+    ) -> BoxFuture<'static, eyre::Result<()>>;
+
+    /// Verify the certified native recovery anchor before participation.
+    fn verify_checkpoint(&self, checkpoint: ProjectionCheckpoint) -> eyre::Result<()>;
 }
 
 impl<E> ExecutorActor<E>
@@ -143,11 +146,7 @@ where
                 "forkchoice update returned invalid status"
             );
             maybe_build.send_error(
-                crate::errors::ExecutorError::FcuInvalid(format!(
-                    "{:?}",
-                    fcu_response.payload_status
-                ))
-                .into(),
+                crate::errors::ExecutorError::fcu_invalid(&fcu_response.payload_status).into(),
             );
             return;
         }
@@ -208,6 +207,14 @@ where
                         digest,
                         finalized_height: self.state.finalized_height,
                         expected: self.genesis_hash,
+                    }
+                    .into());
+                }
+                if height == self.state.finalized_height {
+                    return Err(crate::errors::FinalizationError::SameHeightInconsistency {
+                        block_number: block.number(),
+                        digest,
+                        finalized_hash: self.state.forkchoice.finalized_block_hash,
                     }
                     .into());
                 }
@@ -274,7 +281,6 @@ where
             block_number: parent_height,
             block_hash: block.parent_hash(),
         };
-        wait_for_finalized_parent(self.projection_readiness.clone(), parent_checkpoint).await?;
         wait_for_optional_ocomp_parent(self.ocomp_readiness.clone(), parent_checkpoint).await?;
 
         let execution_data =
@@ -344,9 +350,9 @@ where
                 reason: error,
             }
         })?;
-        if let Some(committer) = &self.finalized_ce_committer {
+        if let Some(committer) = &self.finalized_execution_barrier {
             committer
-                .commit_finalized(FinalizedCeBlock {
+                .commit_finalized(FinalizedExecutionBlock {
                     height: height.get(),
                     block_hash: block.block_hash(),
                     parent_block_hash: block.parent_hash(),

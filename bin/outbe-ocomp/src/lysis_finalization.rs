@@ -14,8 +14,8 @@ use outbe_lysis::program_v1::{
     result::{decode_root_reduce_output, RootReduceOutputV1},
 };
 use outbe_ocomp_protocol::{
-    intent::JobIntentV1, result::LysisResultV1, shuffle::VerifiedShuffleRecordV1, CasObjectRefV1,
-    ObjectKind, ProtocolError, SchemaLimits,
+    intent::JobIntentV1, result::LysisResultV1, CasObjectRefV1, ObjectKind, ProtocolError,
+    SchemaLimits,
 };
 use thiserror::Error;
 
@@ -142,17 +142,12 @@ pub fn finalize_verified_lysis_v1(
     });
     let buckets =
         authoritative_bucket_shuffle_records(audit.admissions(), reader, limits)?.map(|record| {
-            match record {
-                Ok(record) => {
-                    let VerifiedShuffleRecordV1::Bucket(bucket) = record;
-                    Ok(bucket)
-                }
-                Err(_) => Err(LysisFinalizationErrorV1::Authority(
+            record.map_err(|_| {
+                LysisFinalizationErrorV1::Authority(
                     "cold-reloaded authoritative BucketShuffle cursor",
-                )),
-            }
+                )
+            })
         });
-    let eligible_nominal_total = audit.eligible_nominal_total()?;
     let result = finalize_v1(
         VerifiedLysisFinalizationInputsV1 {
             finalized_job_id: summary.job_id,
@@ -163,7 +158,6 @@ pub fn finalize_verified_lysis_v1(
             unit_artifacts: units,
             result_chunks: chunks,
             bucket_records: buckets,
-            eligible_nominal_total,
         },
         limits,
     )?;

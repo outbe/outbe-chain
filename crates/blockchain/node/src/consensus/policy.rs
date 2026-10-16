@@ -161,10 +161,14 @@ fn validate_protocol_gas_limit(header: &OutbeHeader) -> Result<(), ConsensusErro
     let expected = outbe_primitives::system_tx::protocol_block_gas_limit(header.number());
     let actual = header.gas_limit();
     if actual != expected {
-        return Err(consensus_other(format!(
-            "block {} protocol gas limit mismatch: expected {expected}, got {actual}",
-            header.number()
-        )));
+        return Err(
+            crate::errors::ConsensusPolicyError::ProtocolGasLimitMismatch {
+                block_number: header.number(),
+                expected,
+                actual,
+            }
+            .into(),
+        );
     }
     Ok(())
 }
@@ -188,9 +192,13 @@ fn validate_outbe_body_withdrawals(body: &OutbeBlockBody) -> Result<(), Consensu
 fn validate_block_transport_size(block: &SealedBlock<OutbeBlock>) -> Result<(), ConsensusError> {
     let rlp_length = block.rlp_length();
     if rlp_length > OUTBE_MAX_BLOCK_SIZE {
-        return Err(consensus_other(format!(
-            "block RLP size {rlp_length} exceeds the {OUTBE_MAX_BLOCK_SIZE}-byte P2P transport cap"
-        )));
+        return Err(
+            crate::errors::ConsensusPolicyError::BlockRlpSizeExceedsTransportCap {
+                rlp_length,
+                max_block_rlp_bytes: OUTBE_MAX_BLOCK_SIZE,
+            }
+            .into(),
+        );
     }
     Ok(())
 }
@@ -222,10 +230,15 @@ fn validate_against_parent_timestamp_millis(
     // long outage self-heals as chain time ratchets forward in bounded steps.
     let drift = timestamp - parent_timestamp;
     if drift > MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS {
-        return Err(consensus_other(format!(
-            "block timestamp_millis {timestamp} exceeds parent {parent_timestamp} by {drift} ms, \
-             above the {MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS} ms maximum drift"
-        )));
+        return Err(
+            crate::errors::ConsensusPolicyError::TimestampExceedsMaxDrift {
+                timestamp,
+                parent: parent_timestamp,
+                drift,
+                max_drift: MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+            }
+            .into(),
+        );
     }
 
     // Lower bound on forward advance. Monotonicity alone lets a colluding
@@ -238,10 +251,15 @@ fn validate_against_parent_timestamp_millis(
     // (parent number 0) is exempt. Its `finalization_view` is unseeded, so block 1
     // is monotonic-only, matching the proposer's genesis exception.
     if parent.number() > 0 && drift < MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS {
-        return Err(consensus_other(format!(
-            "block timestamp_millis {timestamp} advances parent {parent_timestamp} by only \
-             {drift} ms, below the {MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS} ms minimum advance"
-        )));
+        return Err(
+            crate::errors::ConsensusPolicyError::TimestampBelowMinAdvance {
+                timestamp,
+                parent: parent_timestamp,
+                drift,
+                min_advance: MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+            }
+            .into(),
+        );
     }
 
     Ok(())
@@ -250,9 +268,13 @@ fn validate_against_parent_timestamp_millis(
 fn validate_header_timestamp_millis_part(header: &OutbeHeader) -> Result<(), ConsensusError> {
     let part = header.timestamp_millis_part();
     if part >= MILLIS_PER_SECOND {
-        return Err(consensus_other(format!(
-            "timestamp_millis_part {part} must be less than {MILLIS_PER_SECOND}"
-        )));
+        return Err(
+            crate::errors::ConsensusPolicyError::InvalidTimestampMillisPart {
+                part,
+                max_part: MILLIS_PER_SECOND,
+            }
+            .into(),
+        );
     }
 
     Ok(())

@@ -27,6 +27,16 @@ impl<'storage> StorageBytes<'storage> {
         Ok(decode_length(raw))
     }
 
+    /// Checks the encoded length without allocating or narrowing stored values.
+    pub fn has_exact_length(&self, expected: usize) -> Result<bool> {
+        let raw = self.storage.sload(self.address, self.base_slot)?;
+        if expected <= 31 {
+            Ok(is_short(raw) && raw.to_be_bytes::<32>()[31] == (expected * 2) as u8)
+        } else {
+            Ok(raw == U256::from(expected) * U256::from(2) + U256::from(1))
+        }
+    }
+
     pub fn is_empty(&self) -> Result<bool> {
         self.len().map(|l| l == 0)
     }
@@ -55,6 +65,38 @@ impl<'storage> StorageBytes<'storage> {
         }
     }
 
+    /// Encodes the exact storage words without reading or changing storage.
+    pub fn encoded_words<'data>(
+        &self,
+        data: &'data [u8],
+    ) -> impl Iterator<Item = (U256, U256)> + 'data {
+        let short = data.len() <= 31;
+        let first_word = if short {
+            let mut word = [0u8; 32];
+            word[..data.len()].copy_from_slice(data);
+            word[31] = (data.len() * 2) as u8;
+            U256::from_be_bytes(word)
+        } else {
+            U256::from(data.len()) * U256::from(2) + U256::from(1)
+        };
+        let data_start = if short {
+            U256::ZERO
+        } else {
+            data_slot(self.base_slot)
+        };
+        let tail_count = if short { 0 } else { data.len().div_ceil(32) };
+        std::iter::once((self.base_slot, first_word)).chain(
+            data.chunks(32)
+                .take(tail_count)
+                .enumerate()
+                .map(move |(index, bytes)| {
+                    let mut word = [0u8; 32];
+                    word[..bytes.len()].copy_from_slice(bytes);
+                    (data_start + U256::from(index), U256::from_be_bytes(word))
+                }),
+        )
+    }
+
     pub fn write(&self, data: &[u8]) -> Result<()> {
         // Number of data-run slots the current value occupies. The short form
         // uses none: its bytes live inline in the base slot.
@@ -68,27 +110,8 @@ impl<'storage> StorageBytes<'storage> {
         let length = data.len();
         let new_data_slots = if length <= 31 { 0 } else { length.div_ceil(32) };
 
-        if length <= 31 {
-            let mut word = [0u8; 32];
-            word[..length].copy_from_slice(data);
-            word[31] = (length * 2) as u8;
-            self.storage
-                .sstore(self.address, self.base_slot, U256::from_be_bytes(word))?;
-        } else {
-            self.storage
-                .sstore(self.address, self.base_slot, U256::from(length * 2 + 1))?;
-            let data_start = data_slot(self.base_slot);
-            for i in 0..new_data_slots {
-                let start = i * 32;
-                let end = (start + 32).min(length);
-                let mut word = [0u8; 32];
-                word[..end - start].copy_from_slice(&data[start..end]);
-                self.storage.sstore(
-                    self.address,
-                    data_start + U256::from(i),
-                    U256::from_be_bytes(word),
-                )?;
-            }
+        for (slot, word) in self.encoded_words(data) {
+            self.storage.sstore(self.address, slot, word)?;
         }
 
         // Zero any stale tail slots left by a longer previous value, so a
@@ -174,6 +197,30 @@ mod tests {
     }
 
     const ADDR: Address = address!("0x0000000000000000000000000000000000001003");
+
+    #[test]
+    fn exact_length_checks_short_and_long_metadata() {
+        with_storage(|storage| {
+            let sb = StorageBytes::new(U256::ZERO, ADDR, storage);
+            for length in [0, 1, 31, 32, 56, 88] {
+                sb.write(&vec![0xab; length]).unwrap();
+                assert!(sb.has_exact_length(length).unwrap());
+                assert!(!sb.has_exact_length(length + 1).unwrap());
+            }
+        });
+    }
+
+    #[test]
+    fn exact_length_rejects_oversized_and_invalid_short_metadata() {
+        with_storage(|storage| {
+            let sb = StorageBytes::new(U256::ZERO, ADDR, storage.clone());
+            for raw in [U256::MAX, U256::from(112), U256::from(176), U256::from(63)] {
+                storage.sstore(ADDR, U256::ZERO, raw).unwrap();
+                assert!(!sb.has_exact_length(56).unwrap());
+                assert!(!sb.has_exact_length(88).unwrap());
+            }
+        });
+    }
 
     #[test]
     fn test_empty() {

@@ -751,6 +751,19 @@
   },
   {
     "type": "function",
+    "name": "getSources",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "toml",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getTwap",
     "inputs": [
       {

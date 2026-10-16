@@ -130,7 +130,7 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                 self.assertNotIn(
                     "gems",
                     seed,
-                    "Gem bodies are compressed entities and cannot be genesis-seeded",
+                    "The network seed does not issue Gems",
                 )
                 if filename.startswith("seed-testnet"):
                     # A network profile seeds no worldwide day. The runtime
@@ -156,7 +156,6 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
 
                 for nod in seed.get("nods", []):
                     self.assertEqual(nod["gratis_load"], "100000")
-                    self.assertEqual(nod["floor_price"], "540000")
 
     def test_default_reference_and_policy_registries_use_the_frozen_slots(self):
         storage = seed_genesis.StorageBuilder()

@@ -1,10 +1,8 @@
 use super::*;
-use outbe_offchain_data::runtime_body_readers;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ObservedWrite {
     EthereumPostBlock,
-    CompressedEntitiesSeal,
     TerminalTransaction,
 }
 
@@ -18,13 +16,10 @@ fn prepare_terminal_block() -> (
     let state = state_with_active_proposer_without_ocomp(proposer);
     let chain_spec = test_chain_spec();
     let install = test_ocomp_fork_install(&chain_spec, &[(proposer, dummy_pubkey(0xA2))]);
-    let config = OutbeEvmConfig::new_with_runtime_body_readers(
-        chain_spec,
-        runtime_body_readers(Arc::new(MemoryStorage::new())),
-    )
-    .with_evm_signer(signer)
-    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1))
-    .with_ocomp_fork_install(install);
+    let config = OutbeEvmConfig::new(chain_spec)
+        .with_evm_signer(signer)
+        .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1))
+        .with_ocomp_fork_install(install);
 
     (state, config, proposer)
 }
@@ -40,13 +35,9 @@ fn terminal_context(
 
 fn classify_write(changes: revm::state::EvmState) -> Option<ObservedWrite> {
     // Revm reports committed state directly. Distinguish the terminal
-    // call target, CE-only seal, and Ethereum post-block commits.
+    // call target and Ethereum post-block commits.
     if changes.contains_key(&outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS) {
         Some(ObservedWrite::TerminalTransaction)
-    } else if changes.len() == 1
-        && changes.contains_key(&outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS)
-    {
-        Some(ObservedWrite::CompressedEntitiesSeal)
     } else {
         Some(ObservedWrite::EthereumPostBlock)
     }
@@ -76,18 +67,13 @@ fn assert_terminal_write_order(writes_after_terminal: &[ObservedWrite]) {
         .iter()
         .position(|write| *write == ObservedWrite::EthereumPostBlock)
         .expect("standard Ethereum post-block changes execute before OSR2");
-    let compressed_entities_seal_index = writes_after_terminal
-        .iter()
-        .position(|write| *write == ObservedWrite::CompressedEntitiesSeal)
-        .expect("compressed entities seal executes after OSR2");
     let terminal_transaction_index = writes_after_terminal
         .iter()
         .position(|write| *write == ObservedWrite::TerminalTransaction)
         .expect("OSR2 commits as the terminal transaction");
     assert!(
-        ethereum_post_block_index < terminal_transaction_index
-            && terminal_transaction_index < compressed_entities_seal_index,
-        "semantic write order must be Ethereum post-block -> OSR2 -> final CE seal; got \
+        ethereum_post_block_index < terminal_transaction_index,
+        "semantic write order must be Ethereum post-block -> OSR2; got \
          {writes_after_terminal:?}"
     );
 }
@@ -126,30 +112,19 @@ pub(super) fn run() {
     assert_eq!(end.len(), 1);
     executor
         .execute_transaction(end.into_iter().next().unwrap())
-        .expect("terminal system tx executes before the final CE seal");
+        .expect("terminal system tx executes");
 
     let writes_after_terminal = observed_writes.lock().unwrap().clone();
     assert_terminal_write_order(&writes_after_terminal);
-    assert!(executor.compressed_entities_seal_output().is_some());
     let receipt_count = executor.receipts().len();
     let later_user = test_regular_tx()
         .try_into_recovered()
         .expect("regular tx signer recovers");
     assert!(executor.execute_transaction(later_user).is_err());
     assert_eq!(executor.receipts().len(), receipt_count);
-    assert_eq!(
-        observed_writes
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|write| **write == ObservedWrite::CompressedEntitiesSeal)
-            .count(),
-        1
-    );
-
     executor
         .prepare_final_header_artifacts(0)
-        .expect("sealed CE root enters final header");
+        .expect("final header artifacts encode");
     let writes_before_finish = observed_writes.lock().unwrap().clone();
     let (_evm, result) = executor.finish().expect("active executor finishes");
     assert_eq!(result.receipts.len(), 7);

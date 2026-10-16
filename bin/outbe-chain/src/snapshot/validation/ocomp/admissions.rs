@@ -288,11 +288,10 @@ pub(crate) fn verify_present_local_results(
     for entry in std::fs::read_dir(&root)? {
         let entry = entry?;
         if maximum_records.is_some_and(|maximum| counts.results >= maximum) {
-            return Err(Incomplete(format!(
-                "local result inventory stopped after {} records",
-                counts.results
-            ))
-            .into());
+            return Err(SnapshotIncompleteError::LocalResultInventoryStopped {
+                results: counts.results,
+            }
+            .into_report());
         }
         // The owner has checked exact native filename/record identity. Decode
         // that locator to use its typed read API, never a caller-supplied path.
@@ -306,9 +305,9 @@ pub(crate) fn verify_present_local_results(
         let mut bytes = [0_u8; 32];
         hex::decode_to_slice(encoded_job, &mut bytes)?;
         let job_id = B256::from(bytes);
-        let loaded = reader
-            .load(job_id)?
-            .ok_or_else(|| Incomplete(format!("local result disappeared for job {job_id}")))?;
+        let loaded = reader.load(job_id)?.ok_or_else(|| {
+            SnapshotIncompleteError::LocalResultDisappeared { job_id }.into_incomplete()
+        })?;
         let result = LysisResultV1::decode_canonical(&loaded.canonical_result, &limits)?;
         let summary = &result.metadosis_completion_summary;
         let job = locate_request_job(

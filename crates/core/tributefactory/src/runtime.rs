@@ -3,13 +3,11 @@ mod prepare;
 use crate::offer_result::ProcessedOffer;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
-use outbe_compressed_entities::{
-    derive_poseidon_digest, ExecutionScope, ParentBodySource, WwdEntityId,
-};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::validate_currency_code;
 use outbe_primitives::time::timestamp_to_date_key;
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::{derive_poseidon_digest, WwdEntityId};
 #[cfg(any(test, feature = "bench-utils"))]
 use outbe_tee::protocol::TributeOfferResult;
 use outbe_tee::protocol::{
@@ -31,7 +29,6 @@ pub struct OfferTributeInput {
     pub worldwide_day: WorldwideDay,
     pub tribute_currency: u16,
     pub reference_currency: u16,
-    pub exclude_from_intex_issuance: bool,
     pub zk_proof: Bytes,
     pub l2_chain_id: u32,
     pub circuit_version: String,
@@ -42,14 +39,9 @@ pub struct OfferTributeInput {
 impl TributeFactoryContract<'_> {
     /// Validates the caller-bound proof and issues the enclave-produced encrypted
     /// Tribute. The decrypted offer's creator becomes its owner.
-    pub(crate) fn offer_tribute(
-        &mut self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        input: OfferTributeInput,
-    ) -> Result<WwdEntityId> {
+    pub(crate) fn offer_tribute(&mut self, input: OfferTributeInput) -> Result<WwdEntityId> {
         let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
-        self.offer_tribute_inner(scope, parent, input, |chain_id, offers| {
+        self.offer_tribute_inner(input, |chain_id, offers| {
             crate::encrypted_enclave_offer::process_encrypted_offers(chain_id, offers)
                 .map(|results| results.into_iter().map(ProcessedOffer::from).collect())
         })
@@ -58,8 +50,6 @@ impl TributeFactoryContract<'_> {
     #[cfg(any(test, feature = "bench-utils"))]
     pub(crate) fn offer_tribute_with_processor(
         &mut self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
         input: OfferTributeInput,
         processor: impl FnOnce(
             &[EncryptedTributeOffer],
@@ -67,7 +57,7 @@ impl TributeFactoryContract<'_> {
             -> core::result::Result<Vec<TributeOfferResult>, PrecompileError>,
     ) -> Result<WwdEntityId> {
         let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
-        self.offer_tribute_inner(scope, parent, input, |_, offers| {
+        self.offer_tribute_inner(input, |_, offers| {
             processor(offers)?
                 .into_iter()
                 .zip(offers)
@@ -78,8 +68,6 @@ impl TributeFactoryContract<'_> {
 
     fn offer_tribute_inner(
         &mut self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
         input: OfferTributeInput,
         processor: impl FnOnce(
             u64,
@@ -118,13 +106,13 @@ impl TributeFactoryContract<'_> {
             .as_ref()
             .ok_or(TributeFactoryError::CreatedTributeMissingBody)?;
         let expected_digest = derive_poseidon_digest(record.owner, worldwide_day)
-            .map_err(TributeFactoryError::fatal)?;
+            .map_err(TributeFactoryError::EntityIdDerivation)?;
         let tribute_id = WwdEntityId::from_day_and_digest(worldwide_day, expected_digest);
         if result.token_id != expected_digest || record.tribute_id != tribute_id {
             return Err(TributeFactoryError::InvalidCanonicalIdentity.into());
         }
         let tribute = TributeContract::new(self.storage.clone());
-        if tribute.get_record(scope, parent, tribute_id)?.is_some() {
+        if tribute.get_record(tribute_id)?.is_some() {
             return Err(TributeFactoryError::TributeAlreadyExists.into());
         }
 
@@ -134,35 +122,26 @@ impl TributeFactoryContract<'_> {
         let (wallet_addresses, sra_addresses) =
             validate_agent_reward_addresses(&result.wallet_addresses, &result.sra_addresses)?;
 
-        self.issue_processed_record(scope, parent, record)?;
+        self.issue_processed_record(record)?;
 
         self.record_agent_reward_activity(&wallet_addresses, &sra_addresses)?;
 
         Ok(tribute_id)
     }
 
-    fn issue_processed_record(
-        &mut self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        record: &outbe_tribute::TributeRecord,
-    ) -> Result<()> {
+    fn issue_processed_record(&mut self, record: &outbe_tribute::TributeRecord) -> Result<()> {
         let mut tribute = TributeContract::new(self.storage.clone());
         if let Some(body) = record.encrypted() {
-            tribute.issue_encrypted(scope, parent, body)?;
+            tribute.issue_encrypted(body)?;
         } else {
             #[cfg(any(test, feature = "bench-utils"))]
-            tribute.issue(
-                scope,
-                parent,
-                &record.calculation_view().map_err(|error| {
-                    if error.is_node_local() {
-                        TributeFactoryError::sidecar_unavailable(error)
-                    } else {
-                        TributeFactoryError::fatal(error)
-                    }
-                })?,
-            )?;
+            tribute.issue(&record.calculation_view().map_err(|error| {
+                if error.is_node_local() {
+                    TributeFactoryError::sidecar_unavailable(error)
+                } else {
+                    TributeFactoryError::CalculationView(error)
+                }
+            })?)?;
             #[cfg(not(any(test, feature = "bench-utils")))]
             return Err(TributeFactoryError::EncryptedOfferReturnedLegacyBody.into());
         }

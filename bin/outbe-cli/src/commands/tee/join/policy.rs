@@ -15,7 +15,6 @@ use outbe_tee::protocol::EnclaveResponse;
 use outbe_tee::CommittedJoinSubmissionV1;
 
 use outbe_tee::ReplacementCandidateSubmissionV1;
-use outbe_tee::TransportError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in super::super) enum JoinTransport {
@@ -130,15 +129,7 @@ pub(in super::super) fn plan_join_completion(
 pub(in super::super) fn classify_join_offer_key_state(
     response: EnclaveResponse,
     expected_offer_pub: [u8; 32],
-) -> Result<JoinOfferKeyState> {
-    classify_join_offer_key_state_transport(response, expected_offer_pub)
-        .map_err(|error| TeeJoinError::Transport(error).into())
-}
-
-pub(in super::super) fn classify_join_offer_key_state_transport(
-    response: EnclaveResponse,
-    expected_offer_pub: [u8; 32],
-) -> std::result::Result<JoinOfferKeyState, TransportError> {
+) -> std::result::Result<JoinOfferKeyState, TeeJoinError> {
     match response {
         EnclaveResponse::PublicKeys {
             offer_key_ready: false,
@@ -153,9 +144,7 @@ pub(in super::super) fn classify_join_offer_key_state_transport(
             offer_key_ready: true,
             ..
         } => Ok(JoinOfferKeyState::ReadyMismatch),
-        other => Err(TransportError::DcapVerification(format!(
-            "expected enclave PublicKeys, got {other:?}"
-        ))),
+        other => Err(TeeJoinError::UnexpectedPublicKeysResponse(other)),
     }
 }
 

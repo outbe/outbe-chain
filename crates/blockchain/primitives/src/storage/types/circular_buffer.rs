@@ -1,7 +1,6 @@
 use alloy_primitives::{keccak256, Address, U256};
 
-use crate::error::PrecompileError;
-use crate::error::Result;
+use crate::error::{PrimitivesStorageError, Result};
 use crate::storage::StorageHandle;
 
 use super::Storable;
@@ -73,7 +72,7 @@ impl<'storage, T: Storable> StorageCircularBuffer<'storage, T> {
     pub fn push(&self, value: T) -> Result<Option<T>> {
         let cap = self.capacity()?;
         if cap == 0 {
-            return Err(PrecompileError::revert("circular buffer not initialized"));
+            return Err(PrimitivesStorageError::CircularBufferNotInitialized.into());
         }
         let total = self.read_total()?;
         // total % cap < cap (<= u32::MAX), so the conversion is lossless.

@@ -37,7 +37,6 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
                 issued_units: 10,
                 promis_load_minor: LOAD,
                 entry_price_minor: U256::from(1_000_000),
-                floor_price_minor: U256::from(1_080_000),
                 call_price_minor: U256::from(2_280_000),
                 call_trigger: IntexCallTrigger {
                     call_window_seconds: 28 * SECONDS_PER_DAY_U32,
@@ -72,7 +71,6 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     p.set_timestamp(U256::from(at));
     StorageHandle::enter(p, |s| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, at, 1), s);
-        crate::hooks::sweep_proceeds(&ctx)?;
         crate::hooks::sweep_forfeits(&ctx)?;
         crate::called::run_call_slice(&ctx)?;
         crate::notify::send_notices(&ctx)

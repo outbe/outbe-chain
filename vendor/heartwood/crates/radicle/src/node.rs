@@ -1168,18 +1168,27 @@ impl<T: DeserializeOwned> Iterator for LineIter<T> {
         match self.stream.read_line(&mut l) {
             Ok(0) => None,
             Ok(_) => {
-                let result: CommandResult<T> = match json::from_str(&l) {
+                // Decoding through `Value` keeps numbers intact under `serde_json/arbitrary_precision`.
+                let value: json::Value = match json::from_str(&l) {
                     Err(e) => {
                         return Some(Err(Error::InvalidJson {
                             response: l.clone(),
                             error: e,
                         }));
                     }
-                    Ok(result) => result,
+                    Ok(value) => value,
                 };
-                match result {
-                    CommandResult::Okay(result) => Some(Ok(result)),
-                    CommandResult::Error { reason } => Some(Err(Error::Command { reason })),
+                match T::deserialize(&value) {
+                    Ok(result) => Some(Ok(result)),
+                    Err(error) => match value.get("error").and_then(json::Value::as_str) {
+                        Some(reason) => Some(Err(Error::Command {
+                            reason: reason.to_owned(),
+                        })),
+                        None => Some(Err(Error::InvalidJson {
+                            response: l.clone(),
+                            error,
+                        })),
+                    },
                 }
             }
             Err(e) => match e.kind() {

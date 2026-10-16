@@ -129,8 +129,8 @@ pub enum DcapFixtureError {
     TimestampExceedsI64,
 
     /// Native QVL quote verification preflight failed.
-    #[error("native QVL preflight failed: {0}")]
-    NativeQvlPreflightFailed(String),
+    #[error("native QVL preflight failed: {0:?}")]
+    NativeQvlPreflightFailed(NativeQvlError),
 
     /// Canonical `AttestationEvidenceV1` encoding failed for the valid fixture.
     #[error("encode valid AttestationEvidenceV1: {0}")]
@@ -168,6 +168,26 @@ pub enum DcapFixtureError {
     /// Fixture manifest JSON serialization failed.
     #[error("encode fixture manifest: {0}")]
     EncodeFixtureManifest(String),
+}
+
+/// Errors returned by the native Intel QVL quote verification boundary.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+pub enum NativeQvlError {
+    /// Input buffer is empty, exceeds the 32-bit length bound, or contains an embedded NUL byte.
+    #[error("native QVL input is empty, oversized, or contains an embedded NUL")]
+    InvalidInput,
+    /// Native QVL adapter ABI version does not match the pinned Outbe version.
+    #[error("native QVL ABI does not match the pinned Outbe adapter")]
+    UnsupportedAbi,
+    /// Native QVL rejected the quote or collateral.
+    #[error("native QVL rejected the quote or collateral")]
+    VerificationFailed,
+    /// Native QVL returned an unsupported result code.
+    #[error("native QVL returned an unsupported result")]
+    UnsupportedResult,
+    /// Native QVL returned malformed supplemental data.
+    #[error("native QVL returned malformed supplemental data")]
+    MalformedSupplemental,
 }
 
 impl DcapFixtureError {
@@ -281,8 +301,8 @@ impl DcapFixtureError {
     }
 
     /// Construct [`Self::NativeQvlPreflightFailed`].
-    pub fn native_qvl_preflight_failed(error: impl fmt::Debug) -> Self {
-        Self::NativeQvlPreflightFailed(format!("{error:?}"))
+    pub const fn native_qvl_preflight_failed(error: NativeQvlError) -> Self {
+        Self::NativeQvlPreflightFailed(error)
     }
 
     /// Construct [`Self::EncodeValidEvidence`].

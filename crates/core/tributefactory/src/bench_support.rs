@@ -4,7 +4,7 @@
 //! benchmark exercise the same crate-private processor-injection seam as unit
 //! tests. That seam does not become part of TributeFactory's product API.
 
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
@@ -21,13 +21,10 @@ pub use crate::runtime::OfferTributeInput as BenchOfferInput;
 /// standalone Cargo benchmark.
 pub fn execute_offer_with_processor(
     storage: StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
     input: BenchOfferInput,
     processor: impl FnOnce(
         &[EncryptedTributeOffer],
     ) -> core::result::Result<Vec<TributeOfferResult>, PrecompileError>,
 ) -> Result<WwdEntityId> {
-    TributeFactoryContract::new(storage)
-        .offer_tribute_with_processor(scope, parent, input, processor)
+    TributeFactoryContract::new(storage).offer_tribute_with_processor(input, processor)
 }

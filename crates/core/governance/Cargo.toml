@@ -20,6 +20,10 @@ similar.workspace = true
 [dev-dependencies]
 alloy-primitives = { workspace = true, features = ["rand"] }
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
+outbe-evm.workspace = true
+outbe-vote.workspace = true
+outbe-primitives = { workspace = true, features = ["test-utils"] }
+alloy-sol-types.workspace = true
 
 [features]
 default = []

@@ -104,23 +104,21 @@ fn midnight_late_vote_survives_reentry_and_mints_equal_gems_once() {
         assert!(api::day_participation_complete(&ctx, DAY).unwrap());
         let counts = api::read_voters_for_day(&ctx, DAY).unwrap();
         api::prepare_daily_validator_gem_batch(&ctx, DAY, U256::from(400), &counts).unwrap();
-        let world = outbe_gem::test_support::GemWorld::open(&ctx.storage);
+
         // One compressed Gem body per block: the batch drains one voter per call.
         for _ in VOTERS {
             assert!(matches!(
-                api::deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap(),
+                api::deliver_oldest_reward_gem_batch(&ctx).unwrap(),
                 api::RewardGemDeliveryOutcome::Delivered { .. }
             ));
         }
         api::prepare_daily_validator_gem_batch(&ctx, DAY, U256::from(400), &counts).unwrap();
         assert!(matches!(
-            api::deliver_oldest_reward_gem_batch(&ctx, &world.scope, &world.parent).unwrap(),
+            api::deliver_oldest_reward_gem_batch(&ctx).unwrap(),
             api::RewardGemDeliveryOutcome::Empty
         ));
         for voter in VOTERS {
-            let owned =
-                outbe_gem::api::list_by_owner(&ctx.storage, &world.scope, &world.parent, voter)
-                    .unwrap();
+            let owned = outbe_gem::api::list_by_owner(&ctx.storage, voter).unwrap();
             assert_eq!(owned.len(), 1);
             assert_eq!(owned[0].promis_load_minor, U256::from(100));
         }

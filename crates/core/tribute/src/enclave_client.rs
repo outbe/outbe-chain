@@ -123,6 +123,33 @@ pub mod test_enclave {
         contract.store_day_pre_admission(admission)
     }
 
+    pub fn encrypted_fixture(
+        tribute: &crate::TributeData,
+        chain_id: u64,
+    ) -> outbe_primitives::error::Result<outbe_primitives::tribute_encryption::EncryptedTributeV2>
+    {
+        use outbe_primitives::tribute_encryption::{TributeAmountsV2, TributeContextV2};
+        outbe_tee_enclave::tribute_encryption::encrypt_tribute(
+            &NETWORK_SECRET,
+            &outbe_tee_enclave::crypto::x25519_public(&[0x77; 32]),
+            TributeContextV2 {
+                chain_id,
+                tribute_id: tribute.tribute_id,
+                owner: tribute.owner,
+                worldwide_day: tribute.worldwide_day,
+                issuance_currency: tribute.issuance_currency,
+                reference_currency: tribute.reference_currency,
+                tribute_price_minor: tribute.tribute_price_minor,
+                offer_input_hash: alloy_primitives::keccak256(tribute.tribute_id.as_slice()),
+            },
+            &TributeAmountsV2 {
+                issuance_amount_minor: tribute.issuance_amount_minor,
+                nominal_amount_minor: tribute.nominal_amount_minor,
+            },
+        )
+        .map_err(crate::errors::body_read_corruption)
+    }
+
     pub(super) fn with_key<T>(f: impl FnOnce(&[u8; 32]) -> T) -> Option<T> {
         INSTALLED.get().then(|| f(&NETWORK_SECRET))
     }

@@ -1,5 +1,4 @@
 use super::*;
-use outbe_primitives::time::SECONDS_PER_DAY;
 
 struct PaidGem {
     ports: Vec<u16>,
@@ -32,7 +31,7 @@ pub(super) fn redeem(world: &mut World) {
     let (owner, gem_id, asset, snapshot_id) = (*owner, *gem_id, *asset, *snapshot_id);
     let (settle, settled) = scenario.finalize(
         world,
-        eth::send_call_with_gas_reserve(
+        eth::send_call_outcome(
             url,
             addresses::GEM_FACTORY_ADDR,
             key,
@@ -67,7 +66,7 @@ pub(super) fn redeem(world: &mut World) {
     );
     let (mint, minted) = scenario.finalize(
         world,
-        eth::send_call_with_gas_reserve(
+        eth::send_call_outcome(
             url,
             addresses::GEM_FACTORY_ADDR,
             key,
@@ -101,7 +100,7 @@ pub(super) fn redeem(world: &mut World) {
     );
     let (burn, burned) = scenario.finalize(
         world,
-        eth::send_call_with_gas_reserve(
+        eth::send_call_outcome(
             url,
             addresses::PROMIS_FACTORY_ADDR,
             key,
@@ -127,10 +126,7 @@ fn prepare(world: &mut World) -> PaidGem {
     let key = world.validators.get(0).evm_key().expect("validator 0 key");
     let (owner, gem_id, gem) = wait_for_validator_reward_gem(world);
     assert_eq!(gem.owner, owner);
-    assert!(
-        matches!(gem.gemType, 0 | 1),
-        "expected a protocol reward Gem"
-    );
+    assert_eq!(gem.gemType, 0, "expected a protocol reward Gem");
     assert!(
         !gem.promisLoadMinor.is_zero(),
         "reward Gem must carry Promis"
@@ -141,46 +137,6 @@ fn prepare(world: &mut World) -> PaidGem {
         .rpc
         .wait_finalized_checkpoint(&ports, delivery, 120)
         .expect("all validators finalize the reward Gem delivery");
-    let qualified = || crate::features::gem_lifecycle::gem_is_qualified(&url, gem_id);
-    if !qualified() {
-        // A reward Gem qualifies on a closed day that it held in full. This one was
-        // delivered minutes ago. Stamp it behind the day that is then seeded above its floor.
-        let now = world
-            .rpc
-            .latest_block_timestamp(port)
-            .expect("committee head timestamp");
-        eth::send_call(
-            &url,
-            addresses::GEM_FACTORY_ADDR,
-            DEPLOYER_KEY,
-            &crate::features::gem_lifecycle::IGemFactoryTestArming::backdateGemForTestCall {
-                gemId: gem_id,
-                issuedAt: now.saturating_sub(3 * SECONDS_PER_DAY),
-            },
-            None,
-        )
-        .expect("backdate the reward Gem's issuance stamp");
-        test_issuance::seed_day_vwaps(
-            &url,
-            DEPLOYER_KEY,
-            USD_ISO,
-            1,
-            gem.floorPriceMinor
-                .checked_mul(U256::from(2u64))
-                .expect("qualifying day VWAP")
-                .max(gem.entryPriceMinor),
-        )
-        .expect("seed the closed day's VWAP above the reward Gem floor");
-        let deadline = Instant::now() + Duration::from_secs(240);
-        while !qualified() {
-            assert!(
-                Instant::now() < deadline,
-                "reward Gem qualification timed out"
-            );
-            sleep(Duration::from_millis(250));
-        }
-    }
-
     // The preceding Nod redemption already registered a real settlement vault.
     // Reuse it and assert a balance delta, not an empty-vault fixture balance.
     let vault = eth::read_call(
@@ -261,7 +217,7 @@ impl PaidGem {
                 height,
                 "finalized settled reward Gem",
             );
-            assert_eq!(observed.state, 3, "reward Gem must be Settled");
+            assert_eq!(observed.state, 2, "reward Gem must be Settled");
             assert_eq!(observed.owner, owner);
             assert_eq!(observed.promisLoadMinor, gem.promisLoadMinor);
             assert_eq!(
@@ -322,22 +278,17 @@ impl PaidGem {
     fn finalize(
         &self,
         world: &World,
-        tx: String,
+        mined: eth::MinedCallOutcome,
         label: &str,
     ) -> (
         crate::world::rpc::TxOutcome,
         crate::world::rpc::FinalizedCheckpoint,
     ) {
-        let url = &self.url;
         let ports = &self.ports;
         let gem_id = self.gem_id;
 
-        let receipt = successful_receipt(url, &tx, label);
-        let outcome = crate::world::rpc::TxOutcome {
-            transaction_hash: tx,
-            success: true,
-            receipt,
-        };
+        assert_mined_success(&mined, label);
+        let outcome: crate::world::rpc::TxOutcome = mined.into();
         let checkpoint = world
             .rpc
             .finalize_outcome(&outcome, ports, 120)

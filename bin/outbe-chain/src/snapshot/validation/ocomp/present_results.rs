@@ -173,20 +173,16 @@ pub(super) fn verify_present_reference_membership(
     work.visit_refs(id, &mut |reference| {
         if !membership_valid {
             cas.read_verified(&reference)?;
-            return Err(Incomplete(format!(
-                "job {id}: materialization reference lacks available plan membership evidence"
-            ))
-            .into());
+            return Err(
+                SnapshotIncompleteError::MaterializationRefLacksPlanMembership { id }.into_report(),
+            );
         }
         membership.verify(id, &reference, cas, membership_complete)?;
         increment_present(&mut count, 1)
     })?;
     increment_present(&mut counts.references, count)?;
     if !membership_complete {
-        return Err(Incomplete(format!(
-            "job {id}: retained reference membership is partial; certified output-root comparison unavailable"
-        ))
-        .into());
+        return Err(SnapshotIncompleteError::RetainedRefMembershipPartial { id }.into_report());
     }
     Ok(())
 }
@@ -228,7 +224,6 @@ pub(super) fn verify_complete_present_results<'a>(
         audit.plan().primary_work_unit_count,
     )?;
     let mut chunks = 0_u64;
-    let (mut allocation, mut cost) = (U256::ZERO, U256::ZERO);
     let mut complete = false;
     for step in ExactLysisResultCatalogCursorV1::open(audit)? {
         match step? {
@@ -241,12 +236,6 @@ pub(super) fn verify_complete_present_results<'a>(
                         .encode_canonical_record(&limits)?,
                     limits.max_bounded_bytes,
                 )?;
-                allocation = allocation
-                    .checked_add(chunk.summary().lysis_allocation_minor)
-                    .ok_or(SnapshotOcompError::ResultAllocationOverflow)?;
-                cost = cost
-                    .checked_add(chunk.summary().nod_cost_total)
-                    .ok_or(SnapshotOcompError::ResultNodCostOverflow)?;
                 record_result_chunk_actions(
                     &sorted,
                     &mut nod,
@@ -270,13 +259,7 @@ pub(super) fn verify_complete_present_results<'a>(
     })?;
     let roots = (nod.finish()?, bucket.finish()?, output.finish()?);
     if let Some(expected) = certified.filter(|expected| expected.job_id == id) {
-        verify_certified_result_outputs(
-            &expected,
-            (job, bundle),
-            audit,
-            roots,
-            (allocation, cost),
-        )?;
+        verify_certified_result_outputs(&expected, (job, bundle), audit, roots)?;
     }
     Ok(chunks)
 }
@@ -320,7 +303,6 @@ fn verify_certified_result_outputs(
     (job, bundle): (&OcompJobRecordV1, &PinnedProtocolBundle),
     audit: &LocalLysisPlanAuditV1<'_>,
     (nod_root, bucket_root, output_root): (B256, B256, B256),
-    (allocation, cost): (U256, U256),
 ) -> eyre::Result<()> {
     let tribute_count = audit.plan().tribute_count;
     if (
@@ -332,8 +314,6 @@ fn verify_certified_result_outputs(
         expected.nod_root,
         expected.bucket_root,
         expected.output_manifest_root,
-        expected.lysis_allocation_minor,
-        expected.nod_amount_total,
     ) != (
         job.intent.protocol_bundle_hash,
         bundle.bundle().lysis_program_semantics_hash,
@@ -343,8 +323,6 @@ fn verify_certified_result_outputs(
         nod_root,
         bucket_root,
         output_root,
-        allocation,
-        cost,
     ) {
         return Err(SnapshotOcompError::PresentResultCatalogCertifiedMismatch.into());
     }

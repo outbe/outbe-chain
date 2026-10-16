@@ -336,22 +336,11 @@ fn finality_and_epoch_changes_retire_pending_work_without_a_false_verdict() {
 }
 
 #[test]
-fn consensus_parent_convergence_waits_for_projection_and_survives_cancellation() {
+fn consensus_parent_convergence_survives_verification_cancellation() {
     deterministic::Runner::default().start(|clock| async move {
         let mut engine = EngineStub::new();
         let mut work = VerificationWork::default();
         let parent = linked(1, B256::ZERO, 16);
-        let required = ProjectionCheckpoint {
-            block_number: 1,
-            block_hash: parent.block_hash(),
-        };
-        let (publisher, readiness) = projection_readiness(
-            ProjectionCheckpoint {
-                block_number: 0,
-                block_hash: B256::ZERO,
-            },
-            ProjectionStatus::CatchingUp { checkpoint: None },
-        );
         let pending = PendingParent {
             round: Round::new(Epoch::new(0), View::new(4)),
             digest: parent.digest(),
@@ -360,7 +349,7 @@ fn consensus_parent_convergence_waits_for_projection_and_survives_cancellation()
             epoch_fence: ApplicationEpochFence::new(Epoch::new(0)),
         };
         assert_eq!(
-            work.record_parent(pending, (Height::zero(), Digest::ZERO), readiness),
+            work.record_parent(pending, (Height::zero(), Digest::ZERO)),
             Some((Height::zero(), Digest::ZERO))
         );
         assert!(work.next_event().now_or_never().is_none());
@@ -371,12 +360,6 @@ fn consensus_parent_convergence_waits_for_projection_and_survives_cancellation()
         drop(receiver);
         work.reconcile((Height::zero(), Digest::ZERO));
         assert!(budget.is_cancelled());
-        publisher.publish(ProjectionStatus::Ready {
-            checkpoint: required,
-        });
-        let event = work.next_event().await;
-        work.handle_event(event, &clock, (Height::zero(), Digest::ZERO))
-            .unwrap();
         assert_eq!(
             probe(
                 &mut work,
@@ -408,13 +391,7 @@ fn finalized_round_ignores_delayed_consensus_parent_messages() {
     let round = Round::new(Epoch::new(0), View::new(4));
     let mut work = VerificationWork::default();
     work.finalized(round, Height::new(1), Digest::ZERO);
-    let (_publisher, readiness) = ready_projection(
-        B256::ZERO,
-        ProjectionCheckpoint {
-            block_number: 2,
-            block_hash: parent.block_hash(),
-        },
-    );
+
     for view in [3, 4] {
         assert_eq!(
             work.record_parent(
@@ -425,50 +402,12 @@ fn finalized_round_ignores_delayed_consensus_parent_messages() {
                     block: Some(parent.clone()),
                     epoch_fence: ApplicationEpochFence::new(Epoch::new(0)),
                 },
-                (Height::new(1), Digest::ZERO),
-                readiness.clone()
+                (Height::new(1), Digest::ZERO)
             ),
             None
         );
     }
     assert!(work.next_event().now_or_never().is_none());
-}
-
-#[test]
-fn parent_convergence_propagates_fatal_projection_failure() {
-    deterministic::Runner::default().start(|clock| async move {
-        let parent = linked(1, B256::ZERO, 19);
-        let (_publisher, readiness) = projection_readiness(
-            ProjectionCheckpoint {
-                block_number: 0,
-                block_hash: B256::ZERO,
-            },
-            ProjectionStatus::Fatal {
-                checkpoint: None,
-                error: ProjectionFailure::new(
-                    ProjectionFailureClass::StorageBackend,
-                    "failed projection",
-                ),
-            },
-        );
-        let mut work = VerificationWork::default();
-        work.record_parent(
-            PendingParent {
-                round: Round::new(Epoch::new(0), View::new(4)),
-                digest: parent.digest(),
-                height: Height::new(1),
-                block: Some(parent),
-                epoch_fence: ApplicationEpochFence::new(Epoch::new(0)),
-            },
-            (Height::zero(), Digest::ZERO),
-            readiness,
-        );
-        let event = work.next_event().await;
-        let error = work
-            .handle_event(event, &clock, (Height::zero(), Digest::ZERO))
-            .unwrap_err();
-        assert!(error.to_string().contains("failed projection"));
-    });
 }
 
 #[test]
@@ -484,13 +423,7 @@ fn consensus_parent_head_commits_only_after_valid_forkchoice() {
         deterministic::Runner::default().start(|clock| async move {
             let genesis = B256::ZERO;
             let mut engine = EngineStub::new();
-            let (_publisher, readiness) = ready_projection(
-                genesis,
-                ProjectionCheckpoint {
-                    block_number: 0,
-                    block_hash: genesis,
-                },
-            );
+
             let (mut actor, _mailbox) = ExecutorActor::new(
                 clock.child("head"),
                 engine.handle,
@@ -499,7 +432,6 @@ fn consensus_parent_head_commits_only_after_valid_forkchoice() {
                     last_finalized_height: 0,
                     last_finalized_hash: genesis,
                 },
-                readiness,
                 None,
             );
             let target = Digest(B256::repeat_byte(0x42));
@@ -538,37 +470,4 @@ fn consensus_parent_head_commits_only_after_valid_forkchoice() {
             );
         });
     }
-}
-
-#[test]
-fn verification_projection_failure_reaches_executor_supervision() {
-    deterministic::Runner::default().start(|clock| async move {
-        let engine = EngineStub::new();
-        let (_publisher, readiness) = ready_projection(
-            B256::ZERO,
-            ProjectionCheckpoint {
-                block_number: 0,
-                block_hash: B256::ZERO,
-            },
-        );
-        let (mut actor, mailbox) = ExecutorActor::new(
-            clock.child("failure"),
-            engine.handle,
-            crate::executor::actor::RecoveredFinalizedState {
-                genesis_hash: B256::ZERO,
-                last_finalized_height: 0,
-                last_finalized_hash: B256::ZERO,
-            },
-            readiness,
-            None,
-        );
-        mailbox
-            .projection_failed(ProjectionFailure::new(
-                ProjectionFailureClass::StorageBackend,
-                "fatal verification projection",
-            ))
-            .unwrap();
-        let error = actor.run_live_loop().await.unwrap_err();
-        assert!(error.to_string().contains("fatal verification projection"));
-    });
 }

@@ -1,14 +1,12 @@
 //! Backend lifecycle is kept outside the node and the domain repositories.
 
-use crate::partitioned::adapters::{
-    MongoPartitionDataSource, RocksPartitionDataSource, RocksPartitionReadView,
-};
+use crate::partitioned::adapters::{RocksPartitionDataSource, RocksPartitionReadView};
 use crate::partitioned::{PartitionRouting, PartitionedStorage};
 use std::sync::Arc;
 
 use crate::{
-    DayDirectory, MongoStorage, OpenedStorage, RocksDbReader, RocksDbStorage, StorageBackend,
-    StorageConfig, StorageError, StorageReaderHandle, StorageWriterHandle,
+    DayDirectory, OpenedStorage, RocksDbReader, RocksDbStorage, StorageBackend, StorageConfig,
+    StorageError, StorageReaderHandle,
 };
 
 /// Opens capabilities for the configured storage implementation.
@@ -35,29 +33,6 @@ impl StorageProvider {
 
     pub fn open_writer(&self) -> Result<OpenedStorage, StorageError> {
         match &self.config.backend {
-            StorageBackend::MongoDb(config) => {
-                let storage = Arc::new(MongoStorage::connect(config.clone())?);
-                storage.verify_transaction_support()?;
-                let lease_storage = storage.clone();
-                let (reader, writer): (StorageReaderHandle, StorageWriterHandle) = match &self
-                    .routing
-                {
-                    Some(routing) => {
-                        let source = Arc::new(MongoPartitionDataSource::open(storage.clone())?);
-                        let logical = Arc::new(PartitionedStorage::new(source, routing.clone()));
-                        (logical.clone(), logical)
-                    }
-                    None => (storage.clone(), storage),
-                };
-                // Routing/layout inspection must succeed before acquiring writer ownership.
-                // Keep a storage capability for the lease even in the flat branch.
-                let lease = lease_storage.acquire_writer_lease()?;
-                Ok(OpenedStorage::new(
-                    reader,
-                    writer,
-                    Box::new(crate::mongo::lifecycle::MongoLifecycle(Some(lease))),
-                ))
-            }
             StorageBackend::RocksDb(config) => {
                 if let Some(routing) = &self.routing {
                     let source = Arc::new(RocksPartitionDataSource::open(&config.path)?);
@@ -109,20 +84,10 @@ pub struct StorageReadSource {
 }
 
 impl StorageReadSource {
-    /// Mongo preserves its primary/majority read contract. Rocks pins the caught-up view.
-    /// Domain completeness/commitment checks remain required for either backend.
+    /// Pin the caught-up RocksDB view for this session.
+    /// Domain completeness and commitment checks remain required.
     pub fn open_session(&self) -> Result<StorageReaderHandle, StorageError> {
         match &self.config.backend {
-            StorageBackend::MongoDb(config) => {
-                let storage = Arc::new(MongoStorage::connect(config.clone())?);
-                match &self.routing {
-                    Some(routing) => Ok(Arc::new(PartitionedStorage::read_only(
-                        Arc::new(MongoPartitionDataSource::open(storage)?),
-                        routing.clone(),
-                    ))),
-                    None => Ok(storage),
-                }
-            }
             StorageBackend::RocksDb(config) => {
                 if let Some(routing) = &self.routing {
                     let source = Arc::new(RocksPartitionReadView::open(

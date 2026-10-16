@@ -1,19 +1,15 @@
-use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
-    delete, list, mint, read, update, BodyInput, EntityRef, ExecutionReaders, ExecutionScope,
-    IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
-};
+use alloy_primitives::B256;
 use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
 use outbe_primitives::expiry_queue;
 use outbe_primitives::time::WorldwideDay;
-use std::collections::{BTreeMap, BTreeSet};
+use outbe_primitives::wwd_entity_id::WwdEntityId;
+use std::collections::BTreeSet;
 
 use crate::{
-    api::{LoadedNodBucket, LoadedNodItem},
     errors::NodError,
     precompile::INod,
-    schema::{CallTerms, NodBucketState, NodContract, NodItemState},
+    schema::{CallTerms, NodContract},
 };
 
 impl NodContract<'_> {
@@ -30,327 +26,12 @@ impl NodContract<'_> {
         Ok(())
     }
 
-    pub fn entry_price_snapshot(&self, day: WorldwideDay) -> Result<Option<BTreeMap<u16, U256>>> {
-        if !self.entry_prices_frozen.read(&day)? {
-            return Ok(None);
-        }
-        let count = self.entry_price_currency_count.read(&day)?;
-        if count > crate::openings::MAX_ENTRY_PRICE_CURRENCIES {
-            return Err(NodError::InvalidEntryPriceSnapshot.into());
-        }
-        let currencies = self.entry_price_currency.get_nested(&day);
-        let values = self.entry_price_minor.get_nested(&day);
-        let mut prices = BTreeMap::new();
-        let mut previous = 0;
-        for index in 0..count {
-            let iso = currencies.read(&index)?;
-            let price = values.read(&iso)?;
-            if iso <= previous || price.is_zero() {
-                return Err(NodError::InvalidEntryPriceSnapshot.into());
-            }
-            prices.insert(iso, price);
-            previous = iso;
-        }
-        Ok(Some(prices))
-    }
-
-    pub fn entry_price_source_day(&self, day: WorldwideDay) -> Result<Option<u32>> {
-        if !self.entry_prices_frozen.read(&day)? {
-            return Ok(None);
-        }
-        Ok(Some(self.entry_price_source_day.read(&day)?))
-    }
-
-    pub fn store_entry_price_snapshot(
-        &self,
-        day: WorldwideDay,
-        source_day: u32,
-        prices: &BTreeMap<u16, U256>,
-    ) -> Result<()> {
-        let count = u32::try_from(prices.len()).map_err(|_| NodError::InvalidEntryPriceSnapshot)?;
-        if !day.is_valid()
-            || source_day == 0
-            || count > crate::openings::MAX_ENTRY_PRICE_CURRENCIES
-            || prices
-                .iter()
-                .any(|(iso, price)| *iso == 0 || price.is_zero())
-        {
-            return Err(NodError::InvalidEntryPriceSnapshot.into());
-        }
-        self.storage.clone().with_checkpoint(|| {
-            if self.entry_prices_frozen.read(&day)? {
-                return Err(NodError::EntryPricesAlreadyFrozen.into());
-            }
-            let currencies = self.entry_price_currency.get_nested(&day);
-            let values = self.entry_price_minor.get_nested(&day);
-            for (index, (iso, price)) in (0..count).zip(prices) {
-                currencies.write(&index, *iso)?;
-                values.write(iso, *price)?;
-            }
-            self.entry_price_currency_count.write(&day, count)?;
-            self.entry_price_source_day.write(&day, source_day)?;
-            self.entry_prices_frozen.write(&day, true)
-        })
-    }
-
     // --- ID helpers ---
 
     // --- View functions ---
 
     pub fn total_supply(&self) -> Result<u64> {
         self.total_supply.read()
-    }
-
-    pub fn get_item_verified(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        nod_id: WwdEntityId,
-    ) -> Result<Option<VerifiedBody>> {
-        read(
-            self.storage.clone(),
-            scope,
-            parent,
-            EntityRef::NodItem(nod_id),
-        )
-    }
-
-    pub fn get_bucket_verified(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        bucket_id: WwdEntityId,
-    ) -> Result<Option<VerifiedBody>> {
-        read(
-            self.storage.clone(),
-            scope,
-            parent,
-            EntityRef::NodBucket(bucket_id),
-        )
-    }
-
-    pub(crate) fn read_all(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        owner: Option<Address>,
-    ) -> Result<Vec<NodItemState>> {
-        let query = owner.map_or(QueryRef::NodAll, QueryRef::NodByOwner);
-        let mut records = Vec::new();
-        let mut after = None;
-        loop {
-            let (page, next_after) = self.read_page(scope, parent, query, after)?;
-            records.extend(page);
-            let Some(next) = next_after else {
-                return Ok(records);
-            };
-            after = Some(next);
-        }
-    }
-
-    /// One page of `query` after `after`, decoded, with the cursor of the next page.
-    fn read_page(
-        &self,
-        scope: &ExecutionScope,
-        parent: &impl ParentBodySource,
-        query: QueryRef,
-        after: Option<WwdEntityId>,
-    ) -> Result<(Vec<NodItemState>, Option<WwdEntityId>)> {
-        let page = list(
-            self.storage.clone(),
-            scope,
-            parent,
-            query,
-            IdPageRequest {
-                after,
-                limit: MAX_ID_PAGE_LIMIT,
-            },
-        )?;
-        let next_after = page.next_after();
-        let records = page
-            .into_bodies()
-            .iter()
-            .map(nod_item_from_verified)
-            .collect::<Result<Vec<_>>>()?;
-        Ok((records, next_after))
-    }
-
-    /// Records compact issuance state and delegates both bodies to the generic lifecycle.
-    pub(crate) fn record_nod_issued(
-        &mut self,
-        readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
-        item: &NodItemState,
-        entry_price_minor: U256,
-        call_terms: Option<CallTerms>,
-    ) -> Result<()> {
-        let ExecutionReaders { scope, parent } = readers;
-        crate::issuance::validate_item(item, entry_price_minor)?;
-        if self
-            .get_item_verified(scope, parent, item.nod_id)?
-            .is_some()
-        {
-            return Err(NodError::NodAlreadyExists.into());
-        }
-
-        let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
-        let current_bucket = self.get_bucket_verified(scope, parent, bucket_id)?;
-        let member_count = self.bucket_nod_count.read(&item.bucket_key)?;
-        let settled_count = current_bucket
-            .as_ref()
-            .map(nod_bucket_from_verified)
-            .transpose()?
-            .map_or(0, |bucket| bucket.settled_nods);
-        if current_bucket.is_some() != (member_count > 0 || settled_count > 0) {
-            return Err(NodError::BucketExistenceDisagreesWithMemberCount {
-                bucket_id,
-                member_count,
-            }
-            .into());
-        }
-        let new_bucket = match current_bucket {
-            Some(_) => None,
-            None => {
-                let bucket = NodBucketState {
-                    settled_nods: 0,
-                    bucket_key: item.bucket_key,
-                    worldwide_day: item.worldwide_day,
-                    entry_price_minor,
-                    reference_currency: item.reference_currency,
-                };
-                self.bucket_worldwide_day
-                    .write(&item.bucket_key, item.worldwide_day)?;
-                self.bucket_issued_at
-                    .write(&item.bucket_key, item.issued_at)?;
-                if let Some(terms) = call_terms {
-                    self.seal_bucket_call_terms(item.bucket_key, terms)?;
-                    self.insert_call_bin(item.bucket_key)?;
-                }
-                Some(bucket)
-            }
-        };
-
-        let supply = self
-            .total_supply
-            .read()?
-            .checked_add(1)
-            .ok_or(NodError::TotalSupplyOverflowDuringIssuance)?;
-        self.total_supply.write(supply)?;
-        self.insert_bucket_member(item.bucket_key, item.nod_id)?;
-        let canonical_item = crate::repository::canonical_item(item);
-        mint(
-            self.storage.clone(),
-            scope,
-            BodyInput::EncryptedNodItem(&canonical_item),
-        )?;
-        if let Some(bucket) = new_bucket {
-            let canonical_bucket = crate::repository::canonical_bucket(&bucket);
-            mint(
-                self.storage.clone(),
-                scope,
-                BodyInput::NodBucket(&canonical_bucket),
-            )?;
-        }
-        self.emit(INod::Transfer {
-            from: Address::ZERO,
-            to: item.owner,
-            tokenId: item.nod_id.to_u256(),
-        })
-    }
-
-    /// Records compact removal state using capabilities retained by the caller's checks.
-    pub(crate) fn record_nod_removed(
-        &mut self,
-        scope: &ExecutionScope,
-        item: LoadedNodItem,
-        bucket: LoadedNodBucket,
-    ) -> Result<()> {
-        let (item, current_item) = item.into_parts();
-        let (mut bucket, current_bucket) = bucket.into_parts();
-        self.check_loaded_bucket(&item, &current_bucket)?;
-        let bucket_id = current_bucket.entity_id();
-        let supply = self
-            .total_supply
-            .read()?
-            .checked_sub(1)
-            .ok_or(NodError::TotalSupplyUnderflowDuringRemoval)?;
-        self.total_supply.write(supply)?;
-        let remaining = if item.is_settled {
-            bucket.settled_nods = bucket
-                .settled_nods
-                .checked_sub(1)
-                .ok_or(NodError::BucketSettledCountUnderflow { bucket_id })?;
-            self.bucket_nod_count.read(&item.bucket_key)?
-        } else {
-            self.remove_bucket_member(item.bucket_key, item.nod_id)?
-        };
-        delete(self.storage.clone(), scope, current_item)?;
-        if remaining == 0 && bucket.settled_nods == 0 {
-            self.bucket_worldwide_day.get(&item.bucket_key).delete()?;
-            self.bucket_issued_at.clear(&item.bucket_key)?;
-            self.bucket_nod_count.clear(&item.bucket_key)?;
-            self.close_bucket(item.bucket_key)?;
-            delete(self.storage.clone(), scope, current_bucket)?;
-        } else if item.is_settled {
-            update(
-                self.storage.clone(),
-                scope,
-                current_bucket,
-                BodyInput::NodBucket(&crate::repository::canonical_bucket(&bucket)),
-            )?;
-        }
-        self.emit(INod::Transfer {
-            from: item.owner,
-            to: Address::ZERO,
-            tokenId: item.nod_id.to_u256(),
-        })
-    }
-
-    /// Moves one unpaid member into the live paid count, preserving ownership and supply.
-    pub(crate) fn record_nod_settled(
-        &mut self,
-        scope: &ExecutionScope,
-        item: LoadedNodItem,
-        bucket: LoadedNodBucket,
-    ) -> Result<()> {
-        let (mut item, current_item) = item.into_parts();
-        let (mut bucket, current_bucket) = bucket.into_parts();
-        self.check_loaded_bucket(&item, &current_bucket)?;
-        if item.is_settled {
-            return Err(NodError::AlreadySettled.into());
-        }
-        bucket.settled_nods = bucket
-            .settled_nods
-            .checked_add(1)
-            .ok_or(NodError::SettledCountOverflow)?;
-        self.remove_bucket_member(item.bucket_key, item.nod_id)?;
-        item.is_settled = true;
-        update(
-            self.storage.clone(),
-            scope,
-            current_item,
-            BodyInput::EncryptedNodItem(&crate::repository::canonical_item(&item)),
-        )?;
-        update(
-            self.storage.clone(),
-            scope,
-            current_bucket,
-            BodyInput::NodBucket(&crate::repository::canonical_bucket(&bucket)),
-        )?;
-        self.emit(INod::MetadataUpdate {
-            _tokenId: item.nod_id.to_u256(),
-        })
-    }
-
-    fn check_loaded_bucket(&self, item: &NodItemState, current: &VerifiedBody) -> Result<()> {
-        let expected = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
-        if current.entity_id() != expected {
-            return Err(NodError::LoadedBucketMismatch {
-                loaded: current.entity_id(),
-                expected,
-            }
-            .into());
-        }
-        Ok(())
     }
 
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------
@@ -373,10 +54,8 @@ impl NodContract<'_> {
 
     // --- Bucket member index ------------------------------------------------
     //
-    // The compressed-entity store answers "give me this Nod" but never "give me
-    // this bucket's Nods", so the forfeit sweep needs its own enumeration. The
-    // shape mirrors the call-price bin index: a count plus a keccak-of-concat
-    // positional map, with a reverse map for O(1) swap-remove.
+    // The forfeit sweep enumerates unpaid members with a count, positional map
+    // and reverse map for O(1) swap removal.
 
     /// Appends `nod_id` and increments the bucket's authoritative unpaid count.
     pub(crate) fn insert_bucket_member(
@@ -507,8 +186,8 @@ impl NodContract<'_> {
         self.remove_call_bin(bucket_key)?;
         self.remove_called(bucket_key)?;
         self.bucket_call_price_minor.clear(&bucket_key)?;
-        self.bucket_currency.get(&bucket_key).delete()?;
-        self.bucket_call_rate.get(&bucket_key).delete()?;
+        self.bucket_currency.clear(&bucket_key)?;
+        self.bucket_call_rate.clear(&bucket_key)?;
         self.bucket_call_window_seconds.clear(&bucket_key)?;
         self.bucket_call_threshold_seconds.clear(&bucket_key)?;
         self.bucket_call_notice_period_seconds.clear(&bucket_key)?;
@@ -516,22 +195,6 @@ impl NodContract<'_> {
         self.bucket_called_at.clear(&bucket_key)?;
         Ok(())
     }
-}
-
-pub(crate) fn nod_item_from_verified(body: &VerifiedBody) -> Result<NodItemState> {
-    let payload = body
-        .payload()
-        .as_encrypted_nod_item()
-        .ok_or(NodError::NonNodItemPayload)?;
-    Ok(crate::repository::from_canonical_item(payload.clone()))
-}
-
-pub(crate) fn nod_bucket_from_verified(body: &VerifiedBody) -> Result<NodBucketState> {
-    let payload = body
-        .payload()
-        .as_nod_bucket()
-        .ok_or(NodError::NonNodBucketPayload)?;
-    Ok(crate::repository::from_canonical_bucket(payload.clone()))
 }
 
 /// One currency's call-price trie, like `outbe_gem::state::CallBins`.

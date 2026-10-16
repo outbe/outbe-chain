@@ -491,14 +491,23 @@ pub(in crate::features::ocomp) fn dynamic_deadline_validate_accountability(
     Ok(())
 }
 
+pub(in crate::features::ocomp) struct ExpiredVotes<'a> {
+    pub voters: &'a [u16],
+    pub timely_bitmap: u8,
+    pub missing_bitmap: u8,
+}
+
 pub(in crate::features::ocomp) fn assert_job_expires_without_nod(
     world: &mut World,
-    expected_voters: &[u16],
-    timely_bitmap: u8,
-    missing_bitmap: u8,
+    expected: ExpiredVotes<'_>,
     expect_export: bool,
     fault_label: &str,
 ) {
+    let ExpiredVotes {
+        voters: expected_voters,
+        timely_bitmap,
+        missing_bitmap,
+    } = expected;
     let request = world
         .state
         .ocomp_job_request
@@ -618,100 +627,140 @@ pub(in crate::features::ocomp) fn assert_job_expires_without_nod(
     world.state.ocomp_expired_without_nod = Some(true);
 }
 
+struct ReleasedPin {
+    source_generation: u64,
+    observed_height: u64,
+    export: Option<outbe_node::ocomp::retention::ExportAuthorityV1>,
+}
+
+struct ReleaseWatch<'a> {
+    job_id: B256,
+    expect_export: bool,
+    fault_label: &'a str,
+}
+
+fn assert_saved_export(world: &World, validator_index: usize, job_id: B256, pin: &ReleasedPin) {
+    let Some(outage) = &world.state.ocomp_worker_outage else {
+        return;
+    };
+    let saved = outage
+        .exports
+        .iter()
+        .find(|item| item.validator_index as usize == validator_index)
+        .expect("saved exact export for each faulted validator");
+    assert_eq!(saved.job_id, job_id);
+    assert_eq!(pin.source_generation, saved.source_generation);
+    assert_eq!(
+        pin.export,
+        Some(outbe_node::ocomp::retention::ExportAuthorityV1 {
+            source_generation: saved.source_generation,
+            lease_generation: saved.lease_generation,
+            manifest_hash: saved.manifest_hash,
+        })
+    );
+    let retention = world
+        .ocomp
+        .canonical_fork_install()
+        .unwrap()
+        .request_profile
+        .capacity_profile
+        .source_retention_after_terminal_blocks;
+    let due = world
+        .state
+        .ocomp_job_request
+        .as_ref()
+        .unwrap()
+        .deadline_height
+        .checked_add(retention)
+        .unwrap();
+    assert!(
+        pin.observed_height >= due,
+        "retention released before its canonical due height"
+    );
+}
+
+fn observe_release(
+    world: &World,
+    watch: &ReleaseWatch<'_>,
+    validator_index: usize,
+) -> (bool, String) {
+    let root = retention_journal_root(&world.validators.data_dir(validator_index));
+    let snapshot = match inspect_retention_journal(&root) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            return (
+                false,
+                format!("journal error at {}: {error}", root.display()),
+            )
+        }
+    };
+    let matching = snapshot.records.iter().find_map(|(_, record)| {
+        let PinStateV1::Released {
+            job_id: observed_job_id,
+            source_generation,
+            observed_height,
+            export,
+            ..
+        } = record.state
+        else {
+            return None;
+        };
+        (observed_job_id == watch.job_id).then_some(ReleasedPin {
+            source_generation,
+            observed_height,
+            export,
+        })
+    });
+    let Some(pin) = matching else {
+        return (
+            false,
+            format!(
+                "journal_generation={}, records={}, matching_job=absent",
+                snapshot.generation,
+                snapshot.records.len()
+            ),
+        );
+    };
+    assert!(
+        pin.source_generation > 0,
+        "validator-{validator_index} lost the released source generation"
+    );
+    assert_eq!(
+        pin.export.is_some(),
+        watch.expect_export,
+        "validator-{validator_index} released {} job with unexpected export authority",
+        watch.fault_label
+    );
+    assert_saved_export(world, validator_index, watch.job_id, &pin);
+    (
+        true,
+        format!(
+            "Released(observed_height={}, export={})",
+            pin.observed_height,
+            pin.export.is_some()
+        ),
+    )
+}
+
 pub(in crate::features::ocomp) fn wait_for_released_retention(
     world: &mut World,
     job_id: B256,
     expect_export: bool,
     fault_label: &str,
 ) {
+    let watch = ReleaseWatch {
+        job_id,
+        expect_export,
+        fault_label,
+    };
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut latest = vec![String::new(); 4];
     loop {
         let mut released = 0_usize;
         for (validator_index, observation) in latest.iter_mut().enumerate() {
-            let root = retention_journal_root(&world.validators.data_dir(validator_index));
-            match inspect_retention_journal(&root) {
-                Ok(snapshot) => {
-                    let matching = snapshot.records.iter().find_map(|(_, record)| {
-                        let PinStateV1::Released {
-                            job_id: observed_job_id,
-                            source_generation,
-                            observed_height,
-                            export,
-                            ..
-                        } = record.state
-                        else {
-                            return None;
-                        };
-                        (observed_job_id == job_id).then_some((
-                            source_generation,
-                            observed_height,
-                            export,
-                        ))
-                    });
-                    if let Some((source_generation, observed_height, export)) = matching {
-                        assert!(
-                            source_generation > 0,
-                            "validator-{validator_index} lost the released source generation"
-                        );
-                        assert_eq!(
-                            export.is_some(),
-                            expect_export,
-                            "validator-{validator_index} released {fault_label} job with unexpected export authority"
-                        );
-                        if let Some(outage) = &world.state.ocomp_worker_outage {
-                            let saved = outage
-                                .exports
-                                .iter()
-                                .find(|item| item.validator_index as usize == validator_index)
-                                .expect("saved exact export for each faulted validator");
-                            assert_eq!(saved.job_id, job_id);
-                            assert_eq!(source_generation, saved.source_generation);
-                            assert_eq!(
-                                export,
-                                Some(outbe_node::ocomp::retention::ExportAuthorityV1 {
-                                    source_generation: saved.source_generation,
-                                    lease_generation: saved.lease_generation,
-                                    manifest_hash: saved.manifest_hash,
-                                })
-                            );
-                            let retention = world
-                                .ocomp
-                                .canonical_fork_install()
-                                .unwrap()
-                                .request_profile
-                                .capacity_profile
-                                .source_retention_after_terminal_blocks;
-                            let due = world
-                                .state
-                                .ocomp_job_request
-                                .as_ref()
-                                .unwrap()
-                                .deadline_height
-                                .checked_add(retention)
-                                .unwrap();
-                            assert!(
-                                observed_height >= due,
-                                "retention released before its canonical due height"
-                            );
-                        }
-                        *observation = format!(
-                            "Released(observed_height={observed_height}, export={})",
-                            export.is_some()
-                        );
-                        released += 1;
-                    } else {
-                        *observation = format!(
-                            "journal_generation={}, records={}, matching_job=absent",
-                            snapshot.generation,
-                            snapshot.records.len()
-                        );
-                    }
-                }
-                Err(error) => {
-                    *observation = format!("journal error at {}: {error}", root.display());
-                }
-            }
+            let (done, line) = observe_release(world, &watch, validator_index);
+            released += usize::from(done);
+            *observation = line;
         }
         if released == 4 {
             break;

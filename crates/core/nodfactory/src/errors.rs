@@ -2,8 +2,8 @@ use std::fmt::Display;
 
 use alloy_primitives::B256;
 use outbe_common::pow::PowError;
-use outbe_compressed_entities::WwdEntityId;
 use outbe_primitives::error::PrecompileError;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use thiserror::Error;
 
 /// Errors that the Nod factory precompile returns.
@@ -22,8 +22,8 @@ pub enum NodFactoryError {
     #[error("nod entry price is out of bounds")]
     EntryPriceOutOfBounds,
 
-    #[error("nod is not qualified")]
-    NodNotQualified,
+    #[error("nod bucket not found")]
+    BucketNotFound,
 
     #[error("nod is already settled")]
     NodAlreadySettled,
@@ -85,8 +85,8 @@ pub enum NodFactoryError {
     #[error("certified Nod generation count mismatch")]
     CertifiedGenerationCountMismatch,
 
-    #[error("{0}")]
-    RevertMessage(String),
+    #[error(transparent)]
+    CreateNodForTest(#[from] outbe_tee::TransportError),
 
     #[error("Nod materialization FIFO bounds are malformed")]
     MaterializationFifoBoundsMalformed,
@@ -159,10 +159,6 @@ pub enum NodFactoryError {
 }
 
 impl NodFactoryError {
-    pub fn revert_message(err: impl Display) -> Self {
-        Self::RevertMessage(err.to_string())
-    }
-
     pub fn materialization_enclave(err: impl Display) -> Self {
         Self::MaterializationEnclave(err.to_string())
     }

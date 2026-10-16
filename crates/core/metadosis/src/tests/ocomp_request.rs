@@ -1,6 +1,5 @@
 use alloy_primitives::{address, b256, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_compressed_entities::{begin_block, end_block, ExecutionScope};
 use outbe_desis::{AuctionStage, DesisContract};
 use outbe_nod::NodContract;
 use outbe_ocomp_protocol::state::{OcompJobStatus, OcompTerminalOutcome};
@@ -16,7 +15,7 @@ use outbe_validatorset::{
     contract::ValidatorSet, read_ocomp_snapshot_extension, OcompSnapshotExtensionV1,
 };
 
-use super::{ocomp_storage::request_profile, TestParent};
+use super::ocomp_storage::request_profile;
 use crate::{
     commands,
     constants::{
@@ -67,13 +66,11 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
     outbe_tribute::enclave_client::test_enclave::install();
-    let scope = ExecutionScope::default();
-    let parent = TestParent::empty();
+
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0708);
     let block_number = 19;
     let block_time = wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
-    let prepare_time = block_time - SECONDS_PER_DAY;
-    let price_day = previous_date_key(timestamp_to_date_key(prepare_time));
+    let price_day = previous_date_key(timestamp_to_date_key(block_time));
     let owner = address!("7100000000000000000000000000000000000071");
     let nominal = U256::from(1_000);
     let day_limit = U256::from(100);
@@ -83,8 +80,6 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
 
     StorageHandle::enter(&mut provider, |storage| {
         let expected_ocomp_snapshot = seed_active_ocomp_snapshot(storage.clone(), 5);
-        crate::fixture_kernel::seed_ce_genesis(&storage).unwrap();
-        begin_block(storage.clone(), &scope).unwrap();
 
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
@@ -146,8 +141,6 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         let mut tribute = TributeContract::new(storage.clone());
         crate::tests::tribute_fixture::issue_sealed_tribute(
             &mut tribute,
-            &scope,
-            &parent,
             crate::tests::tribute_fixture::FixtureTribute {
                 owner,
                 wwd,
@@ -155,41 +148,17 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             },
         );
 
-        // Mirror production: the price and league snapshots are built in the active CE phase
+        // Mirror production: the league snapshot is built in the active CE phase
         // (process_ocomp_ready_candidate) before the post-seal terminal request.
-        outbe_lysis::api::freeze_entry_price_snapshot(storage.clone(), wwd, prepare_time).unwrap();
         metadosis
-            .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
+            .build_fidelity_league_snapshot(wwd, wwd.start_timestamp())
             .unwrap();
 
-        // The request is delayed across UTC midnight; newer daily and current
-        // prices must not replace the preparation snapshot.
-        oracle
-            .record_utc_day_vwap(
-                previous_date_key(timestamp_to_date_key(block_time)),
-                usd_index,
-                U256::from(700_000),
-            )
-            .unwrap();
-
-        end_block(storage.clone(), &scope).unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(block_number, block_time, chain::CHAIN_ID),
             storage.clone(),
         );
-        run_terminal_request(&ctx, &scope).unwrap();
-        assert!(NodContract::new(storage.clone())
-            .entry_prices_frozen
-            .read(&wwd)
-            .unwrap());
-        assert_eq!(
-            NodContract::new(storage.clone())
-                .entry_price_minor
-                .get_nested(&wwd)
-                .read(&840)
-                .unwrap(),
-            U256::from(250_000)
-        );
+        run_terminal_request(&ctx).unwrap();
 
         let metadosis = MetadosisContract::new(storage.clone());
         let fsm = metadosis
@@ -219,10 +188,6 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         );
         assert_eq!(record.intent.result_member_count, 5);
         assert_eq!(record.intent.result_quorum_threshold, 4);
-        assert_eq!(
-            record.intent.ce_sealed_root,
-            scope.completed_sealed_root().unwrap()
-        );
         assert_eq!(record.intent.authenticated_day_count, 1);
         assert_eq!(record.intent.authenticated_day_nominal, nominal);
         let tribute_target = TributeContract::new(storage.clone())
@@ -318,7 +283,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             BlockContext::empty_for_tests(finalized.open_height, block_time + 6, chain::CHAIN_ID),
             storage.clone(),
         );
-        run_lifecycle_begin_with_scope(&open, &scope).unwrap();
+        run_lifecycle_begin_with_scope(&open).unwrap();
         record = MetadosisContract::new(storage.clone())
             .ocomp_job_record(intent_id, &poc_schema_limits())
             .unwrap()
@@ -329,15 +294,9 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             BlockContext::empty_for_tests(expiry_height, block_time + 64, chain::CHAIN_ID),
             storage.clone(),
         );
-        let expiry_scope = fatal_recovery::begin_recovery_scope_from_storage(
-            storage.clone(),
-            &scope,
-            wwd,
-            expiry_height,
-        );
-        run_lifecycle_begin_with_scope(&expiry, &expiry_scope).unwrap();
-        run_terminal_request(&expiry, &expiry_scope).unwrap();
-        end_block(storage.clone(), &expiry_scope).unwrap();
+
+        run_lifecycle_begin_with_scope(&expiry).unwrap();
+        run_terminal_request(&expiry).unwrap();
 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(
@@ -446,7 +405,7 @@ fn ineligible_request_defers_only_the_ready_key_without_effects() {
             ),
             storage.clone(),
         );
-        run_terminal_request(&ctx, &fixture.scope).unwrap();
+        run_terminal_request(&ctx).unwrap();
 
         let after = request_observables(storage, fixture.wwd);
         assert_eq!(after.fsm.phase, DayPhase::Ready);
@@ -486,7 +445,7 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
             ),
             storage.clone(),
         );
-        run_terminal_request(&first_ctx, &fixture.scope).unwrap();
+        run_terminal_request(&first_ctx).unwrap();
 
         let metadosis = MetadosisContract::new(storage.clone());
         let first = metadosis
@@ -516,7 +475,7 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
             ),
             storage.clone(),
         );
-        run_terminal_request(&next_ctx, &fixture.scope).unwrap();
+        run_terminal_request(&next_ctx).unwrap();
 
         let metadosis = MetadosisContract::new(storage);
         let later = metadosis
@@ -566,7 +525,7 @@ fn two_eligible_days_create_independently_progressing_live_jobs() {
                 BlockContext::empty_for_tests(block_number, block_time, chain::CHAIN_ID),
                 storage.clone(),
             );
-            run_terminal_request(&ctx, &fixture.scope).unwrap();
+            run_terminal_request(&ctx).unwrap();
         }
 
         let mut metadosis = MetadosisContract::new(storage.clone());
@@ -635,14 +594,8 @@ fn two_eligible_days_create_independently_progressing_live_jobs() {
             ),
             storage.clone(),
         );
-        let expiry_scope = fatal_recovery::begin_recovery_scope_for_wwds_from_storage(
-            storage.clone(),
-            &fixture.scope,
-            &[fixture.first_wwd, fixture.later_wwd],
-            finalized.deadline_height,
-        );
-        run_lifecycle_begin_with_scope(&expiry, &expiry_scope).unwrap();
-        end_block(storage.clone(), &expiry_scope).unwrap();
+
+        run_lifecycle_begin_with_scope(&expiry).unwrap();
 
         let metadosis = MetadosisContract::new(storage);
         assert_eq!(
@@ -713,7 +666,7 @@ fn fresh_job_uses_active_successor_while_pre_activation_job_keeps_predecessor_pi
             ),
             storage.clone(),
         );
-        run_terminal_request(&ctx, &fixture.scope).unwrap();
+        run_terminal_request(&ctx).unwrap();
         let metadosis = MetadosisContract::new(storage.clone());
         let first_intent_id = metadosis
             .ocomp_fsm_state(fixture.first_wwd, &limits)
@@ -747,7 +700,7 @@ fn fresh_job_uses_active_successor_while_pre_activation_job_keeps_predecessor_pi
             ),
             storage.clone(),
         );
-        run_terminal_request(&ctx, &fixture.scope).unwrap();
+        run_terminal_request(&ctx).unwrap();
 
         let metadosis = MetadosisContract::new(storage.clone());
         let second_intent_id = metadosis
@@ -799,7 +752,7 @@ fn three_eligible_days_create_independently_progressing_live_jobs() {
                 ),
                 storage.clone(),
             );
-            run_terminal_request(&ctx, &fixture.scope).unwrap();
+            run_terminal_request(&ctx).unwrap();
         }
 
         let metadosis = MetadosisContract::new(storage);
@@ -854,7 +807,7 @@ fn awaiting_finality_expires_at_own_deadline_and_releases_live_capacity() {
                 BlockContext::empty_for_tests(block_number, block_time, chain::CHAIN_ID),
                 storage.clone(),
             );
-            run_terminal_request(&ctx, &fixture.scope).unwrap();
+            run_terminal_request(&ctx).unwrap();
         }
 
         let metadosis = MetadosisContract::new(storage.clone());
@@ -878,14 +831,8 @@ fn awaiting_finality_expires_at_own_deadline_and_releases_live_capacity() {
             ),
             storage.clone(),
         );
-        let expiry_scope = fatal_recovery::begin_recovery_scope_from_storage(
-            storage.clone(),
-            &fixture.scope,
-            expiring.worldwide_day,
-            fixture.block_number + 64,
-        );
-        run_lifecycle_begin_with_scope(&expiry, &expiry_scope).unwrap();
-        end_block(storage.clone(), &expiry_scope).unwrap();
+
+        run_lifecycle_begin_with_scope(&expiry).unwrap();
 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(
@@ -927,7 +874,7 @@ fn terminal_request_rejects_a_missing_current_validator_snapshot() {
             ),
             storage,
         );
-        let error = run_terminal_request(&ctx, &fixture.scope).unwrap_err();
+        let error = run_terminal_request(&ctx).unwrap_err();
         assert!(
             error
                 .to_string()
@@ -951,6 +898,15 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
         tribute.day_pre_admission.update(&admission).unwrap();
 
         let nod = NodContract::new(storage.clone());
+        nod.ocomp_source_block_number
+            .write(&fixture.wwd, 1)
+            .unwrap();
+        nod.ocomp_source_block_hash
+            .write(&fixture.wwd, B256::repeat_byte(0x71))
+            .unwrap();
+        nod.ocomp_source_state_root
+            .write(&fixture.wwd, B256::repeat_byte(0x72))
+            .unwrap();
         nod.ocomp_target_generation.write(&fixture.wwd, 7).unwrap();
         nod.ocomp_namespace_root
             .write(&fixture.wwd, B256::repeat_byte(0x77))
@@ -999,7 +955,7 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
             ),
             storage.clone(),
         );
-        run_terminal_request(&ctx, &fixture.scope).unwrap();
+        run_terminal_request(&ctx).unwrap();
 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(
@@ -1073,11 +1029,7 @@ fn request_storage_failure_rolls_back_every_observable_effect() {
             ),
             storage,
         );
-        commands::run_ocomp_terminal_request_with_completed_fixture(
-            &ctx,
-            &calibration_fixture.scope,
-        )
-        .unwrap();
+        commands::run_ocomp_terminal_request_with_completed_fixture(&ctx).unwrap();
     });
     let successful_mutations = calibration.clear_mutation_failure();
     assert!(
@@ -1108,8 +1060,7 @@ fn request_storage_failure_rolls_back_every_observable_effect() {
             ),
             storage,
         );
-        commands::run_ocomp_terminal_request_with_completed_fixture(&ctx, &fixture.scope)
-            .unwrap_err()
+        commands::run_ocomp_terminal_request_with_completed_fixture(&ctx).unwrap_err()
     });
     assert!(matches!(
         error,
@@ -1129,14 +1080,12 @@ fn request_storage_failure_rolls_back_every_observable_effect() {
 }
 
 struct PreparedRequestFixture {
-    scope: ExecutionScope,
     wwd: outbe_primitives::time::WorldwideDay,
     block_number: u64,
     block_time: u64,
 }
 
 struct ReadyDaysFixture {
-    scope: ExecutionScope,
     first_wwd: outbe_primitives::time::WorldwideDay,
     later_wwd: outbe_primitives::time::WorldwideDay,
     third_wwd: outbe_primitives::time::WorldwideDay,
@@ -1156,8 +1105,6 @@ fn prepare_request_fixture_with_day_type(
     oracle_ready: bool,
     day_type: WwdDayType,
 ) -> PreparedRequestFixture {
-    let scope = ExecutionScope::default();
-    let parent = TestParent::empty();
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0709);
     let block_number = 23;
     let block_time = wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
@@ -1169,8 +1116,6 @@ fn prepare_request_fixture_with_day_type(
     outbe_tribute::enclave_client::test_enclave::install();
     StorageHandle::enter(provider, |storage| {
         seed_active_ocomp_snapshot(storage.clone(), 5);
-        crate::fixture_kernel::seed_ce_genesis(&storage).unwrap();
-        begin_block(storage.clone(), &scope).unwrap();
 
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
@@ -1214,8 +1159,6 @@ fn prepare_request_fixture_with_day_type(
         let mut tribute = TributeContract::new(storage.clone());
         crate::tests::tribute_fixture::issue_sealed_tribute(
             &mut tribute,
-            &scope,
-            &parent,
             crate::tests::tribute_fixture::FixtureTribute {
                 owner,
                 wwd,
@@ -1225,14 +1168,11 @@ fn prepare_request_fixture_with_day_type(
         // Mirror production: the league snapshot is built in the active CE phase
         // before the post-seal terminal request reads its committed root.
         metadosis
-            .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
+            .build_fidelity_league_snapshot(wwd, wwd.start_timestamp())
             .unwrap();
-        outbe_lysis::api::freeze_entry_price_snapshot(storage.clone(), wwd, block_time).unwrap();
-        end_block(storage, &scope).unwrap();
     });
 
     PreparedRequestFixture {
-        scope,
         wwd,
         block_number,
         block_time,
@@ -1243,8 +1183,6 @@ fn prepare_ready_days_fixture(
     provider: &mut HashMapStorageProvider,
     oracle_ready: bool,
 ) -> ReadyDaysFixture {
-    let scope = ExecutionScope::default();
-    let parent = TestParent::empty();
     let first_wwd = outbe_primitives::time::WorldwideDay::new(2026_0710);
     let later_wwd = outbe_primitives::time::WorldwideDay::new(2026_0711);
     let third_wwd = outbe_primitives::time::WorldwideDay::new(2026_0712);
@@ -1256,8 +1194,7 @@ fn prepare_ready_days_fixture(
     outbe_tribute::enclave_client::test_enclave::install();
     StorageHandle::enter(provider, |storage| {
         seed_active_ocomp_snapshot(storage.clone(), 5);
-        crate::fixture_kernel::seed_ce_genesis(&storage).unwrap();
-        begin_block(storage.clone(), &scope).unwrap();
+
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
         // When false the Oracle profile is left un-armed so the terminal request
@@ -1307,36 +1244,27 @@ fn prepare_ready_days_fixture(
                 _ => address!("7500000000000000000000000000000000000075"),
             };
             tribute
-                .issue(
-                    &scope,
-                    &parent,
-                    &TributeData {
-                        tribute_id: outbe_nod::identity::generate_nod_id(owner, wwd).unwrap(),
-                        owner,
-                        worldwide_day: wwd,
-                        issuance_amount_minor: U256::from(1_000),
-                        issuance_currency: 840,
-                        nominal_amount_minor: U256::from(1_000),
-                        reference_currency: 840,
-                        exclude_from_intex_issuance: false,
-                        tribute_price_minor: U256::from(2),
-                    },
-                )
+                .issue(&TributeData {
+                    tribute_id: outbe_nod::identity::generate_nod_id(owner, wwd).unwrap(),
+                    owner,
+                    worldwide_day: wwd,
+                    issuance_amount_minor: U256::from(1_000),
+                    issuance_currency: 840,
+                    nominal_amount_minor: U256::from(1_000),
+                    reference_currency: 840,
+                    tribute_price_minor: U256::from(2),
+                })
                 .unwrap();
             tribute.seal_day(wwd).unwrap();
             // Mirror production: build each day's league snapshot in the active
             // CE phase before the post-seal terminal request.
             metadosis
-                .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
-                .unwrap();
-            outbe_lysis::api::freeze_entry_price_snapshot(storage.clone(), wwd, block_time)
+                .build_fidelity_league_snapshot(wwd, wwd.start_timestamp())
                 .unwrap();
         }
-        end_block(storage, &scope).unwrap();
     });
 
     ReadyDaysFixture {
-        scope,
         first_wwd,
         later_wwd,
         third_wwd,
@@ -1352,7 +1280,6 @@ struct RequestObservables {
     desis_stage: u8,
     desis_limit_minor: U256,
     nod_supply: u64,
-    nod_prices_frozen: bool,
     tribute_supply: u64,
     tribute_pre_admission: outbe_tribute::TributePreAdmissionProjection,
 }
@@ -1378,10 +1305,6 @@ fn request_observables(
             .read(&wwd)
             .unwrap(),
         nod_supply: NodContract::new(storage.clone()).total_supply().unwrap(),
-        nod_prices_frozen: NodContract::new(storage.clone())
-            .entry_prices_frozen
-            .read(&wwd)
-            .unwrap(),
         tribute_supply: TributeContract::new(storage.clone())
             .total_supply()
             .unwrap(),
@@ -1396,8 +1319,7 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();
     outbe_tribute::enclave_client::test_enclave::install();
-    let scope = ExecutionScope::default();
-    let parent = TestParent::empty();
+
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0709);
     let block_number = 19;
     let block_time = wwd.start_timestamp() + 8 * SECONDS_PER_HOUR;
@@ -1411,8 +1333,6 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
 
     StorageHandle::enter(&mut provider, |storage| {
         seed_active_ocomp_snapshot(storage.clone(), 5);
-        crate::fixture_kernel::seed_ce_genesis(&storage).unwrap();
-        begin_block(storage.clone(), &scope).unwrap();
 
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
@@ -1450,8 +1370,6 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
         let mut tribute = TributeContract::new(storage.clone());
         crate::tests::tribute_fixture::issue_sealed_tribute(
             &mut tribute,
-            &scope,
-            &parent,
             crate::tests::tribute_fixture::FixtureTribute {
                 owner,
                 wwd,
@@ -1459,16 +1377,14 @@ fn a_weak_day_briefs_its_nominal_and_leaves_the_headroom_on_the_warehouse() {
             },
         );
         metadosis
-            .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
+            .build_fidelity_league_snapshot(wwd, wwd.start_timestamp())
             .unwrap();
 
-        outbe_lysis::api::freeze_entry_price_snapshot(storage.clone(), wwd, block_time).unwrap();
-        end_block(storage.clone(), &scope).unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(block_number, block_time, chain::CHAIN_ID),
             storage.clone(),
         );
-        run_terminal_request(&ctx, &scope).unwrap();
+        run_terminal_request(&ctx).unwrap();
 
         let receipt = MetadosisContract::new(storage.clone())
             .request_limit_receipt(wwd, &poc_schema_limits())

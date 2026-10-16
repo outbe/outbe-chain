@@ -7,8 +7,8 @@
 //! correctness of their economic fields. Those require fixture-derived values.
 
 use alloy_primitives::{keccak256, B256, U256};
-use outbe_compressed_entities::TributeBodyV1;
 use outbe_ocomp_protocol::result::NodActionV1;
+use outbe_primitives::entity_codec::TributeBodyV1;
 
 const NOD_LIST_KIND: [u8; 2] = 1u16.to_be_bytes();
 const RECORD_BYTES: usize = 130;
@@ -37,6 +37,7 @@ pub(crate) fn single_league_actions(
     // With one occupied league its nominal share is one, so the distribution
     // fraction is the target itself. Preserve the two floors independently.
     let fraction = budget.checked_mul(scale).expect("fixture scaled budget") / total;
+    let nod_gratis_load_max = budget / U256::from(1024);
     let mut sorted = tributes.iter().collect::<Vec<_>>();
     sorted.sort_by_key(|tribute| tribute.tribute_id);
     sorted
@@ -47,11 +48,12 @@ pub(crate) fn single_league_actions(
         .into_iter()
         .enumerate()
         .map(|(ordinal, tribute)| {
-            let load = tribute
+            let load = (tribute
                 .nominal_amount_minor
                 .checked_mul(fraction)
                 .expect("fixture scaled load")
-                / scale;
+                / scale)
+                .min(nod_gratis_load_max);
             assert!(!load.is_zero(), "positive expected load");
             remaining = remaining.checked_sub(load).expect("loads fit input budget");
             let cost = entry_price
@@ -193,8 +195,8 @@ mod tests {
     #[test]
     fn input_arithmetic_preserves_both_load_floors_and_exact_fields() {
         for (count, budget, load, cost) in [
-            (1, 2_000_003u64, 2_000_002u64, 2_000_008u64),
-            (10, 20_000_019u64, 2_000_000u64, 2_000_006u64),
+            (1, 2_000_003u64, 1_953u64, 1_953u64),
+            (10, 20_000_019u64, 19_531u64, 19_531u64),
         ] {
             let inputs: Vec<_> = (0..count)
                 .rev()
@@ -203,7 +205,7 @@ mod tests {
                     id[..4].copy_from_slice(&20260908u32.to_be_bytes());
                     id[31] = ordinal as u8;
                     TributeBodyV1 {
-                        tribute_id: outbe_compressed_entities::WwdEntityId::from(id),
+                        tribute_id: outbe_primitives::wwd_entity_id::WwdEntityId::from(id),
                         owner: Address::repeat_byte(ordinal as u8 + 1),
                         worldwide_day: outbe_primitives::time::WorldwideDay::new(20260908),
                         issuance_amount_minor: U256::from(2_000_000),
@@ -211,7 +213,6 @@ mod tests {
                         nominal_amount_minor: U256::from(2_000_000),
                         reference_currency: 840,
                         tribute_price_minor: U256::from(1_100_001),
-                        exclude_from_intex_issuance: false,
                     }
                 })
                 .collect();
@@ -221,7 +222,8 @@ mod tests {
             let nominal = U256::from(2_000_000);
             let total = nominal * U256::from(count);
             let fraction = U256::from(budget) * scale / total;
-            let expected_load = nominal * fraction / scale;
+            let expected_load =
+                (nominal * fraction / scale).min(U256::from(budget) / U256::from(1024));
             let expected_cost = entry_price * expected_load / scale;
             assert_eq!(expected_load, U256::from(load));
             assert_eq!(expected_cost, U256::from(cost));

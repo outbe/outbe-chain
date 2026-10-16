@@ -77,7 +77,6 @@ fn unused_completion(intent: &JobIntentV1) -> MetadosisCompletionSummaryV1 {
 fn unused_conservation(summary: &MetadosisCompletionSummaryV1) -> ConservationTotalsV1 {
     ConservationTotalsV1 {
         tribute_nominal_total: summary.tribute_nominal_total,
-        eligible_nominal_total: U256::ZERO,
         day_limit: summary.day_limit,
         gratis_demand: summary.gratis_demand,
         day_gratis_limit_minor: summary.day_gratis_limit_minor,

@@ -5,7 +5,6 @@ pub(super) struct VerifiedInputSummary {
     pub exact_encoded_bytes: u64,
     pub exact_record_count: usize,
     pub tribute_count: usize,
-    pub tribute_nominal_total: U256,
     pub tribute_owners: BTreeSet<Address>,
     pub tribute_isos: BTreeSet<u16>,
     pub fidelity_openings: Vec<AuthenticatedOpeningV1>,
@@ -21,11 +20,10 @@ pub(super) fn summarize_verified_chunks(
     let mut references = Vec::new();
     references
         .try_reserve_exact(chunk_objects.len())
-        .map_err(|_| InputArtifactError::Invariant("input chunk reference allocation"))?;
+        .map_err(|_| InputArtifactError::ReferenceAllocationFailed)?;
     let mut exact_encoded_bytes = 0_u64;
     let mut exact_record_count = 0_usize;
     let mut tribute_count = 0_usize;
-    let mut tribute_nominal_total = U256::ZERO;
     let mut tribute_owners = BTreeSet::new();
     let mut tribute_isos = BTreeSet::from([840_u16]);
     let mut fidelity_openings = Vec::new();
@@ -33,7 +31,7 @@ pub(super) fn summarize_verified_chunks(
     let mut previous_kind = None;
 
     for (index, object) in chunk_objects.iter().enumerate() {
-        let derived = derive_input_chunk(object, bundle, limits, ChunkRead::Private)?;
+        let derived = derive_input_chunk(object, bundle, limits)?;
         let expected_ordinal =
             u32::try_from(index).map_err(|_| InputArtifactError::CountOverflow)?;
         require(
@@ -59,9 +57,6 @@ pub(super) fn summarize_verified_chunks(
         tribute_count = tribute_count
             .checked_add(derived.tribute_count)
             .ok_or(InputArtifactError::CountOverflow)?;
-        tribute_nominal_total = tribute_nominal_total
-            .checked_add(derived.tribute_nominal_total)
-            .ok_or(InputArtifactError::NominalTotalOverflow)?;
         tribute_owners.extend(derived.tribute_owners);
         tribute_isos.extend(derived.tribute_isos);
         fidelity_openings.extend(derived.fidelity_openings);
@@ -74,7 +69,6 @@ pub(super) fn summarize_verified_chunks(
         exact_encoded_bytes,
         exact_record_count,
         tribute_count,
-        tribute_nominal_total,
         tribute_owners,
         tribute_isos,
         fidelity_openings,

@@ -4,7 +4,7 @@ use outbe_primitives::dispatch::{dispatch_call, mutate, view};
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::runtime;
-use outbe_compressed_entities::{ExecutionReaders, ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -21,24 +21,22 @@ mod abi {
 }
 pub use abi::INodFactory;
 
-/// Dispatches NodFactory calls through the block-scoped compressed-body lifecycle.
+/// Dispatches NodFactory calls against EVM state.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
-    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     data: &[u8],
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    let ExecutionReaders { scope, parent } = readers;
     outbe_primitives::dispatch::reject_value(&value)?;
     #[cfg(feature = "e2e-test")]
-    if let Some(answer) = crate::test_arming_e2e::dispatch(&storage, scope, parent, data) {
+    if let Some(answer) = crate::test_arming_e2e::dispatch(&storage, data) {
         return answer;
     }
     if data.get(..4)
         == Some(outbe_ocomp_protocol::abi::MATERIALIZE_CERTIFIED_NODS_SELECTOR.as_slice())
     {
-        return dispatch_materialization(storage, scope, parent, data, caller);
+        return dispatch_materialization(storage, data, caller);
     }
     dispatch_call(data, INodFactory::INodFactoryCalls::abi_decode, |call| {
         use INodFactory::INodFactoryCalls::*;
@@ -46,8 +44,6 @@ pub fn dispatch(
             settleNod(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::settle_nod(
                     &storage,
-                    scope,
-                    parent,
                     runtime::SettleNodRequest {
                         caller: sender,
                         nod_id: WwdEntityId::from(c.nodId),
@@ -58,13 +54,8 @@ pub fn dispatch(
                 Ok(INodFactory::settleNodReturn {})
             }),
             quoteSettlement(c) => view(c, |c| {
-                let (settlement_currency, amount, snapshot_id) = runtime::quote_settlement(
-                    &storage,
-                    scope,
-                    parent,
-                    WwdEntityId::from(c.nodId),
-                    c.asset,
-                )?;
+                let (settlement_currency, amount, snapshot_id) =
+                    runtime::quote_settlement(&storage, WwdEntityId::from(c.nodId), c.asset)?;
                 Ok(INodFactory::quoteSettlementReturn {
                     settlementCurrency: settlement_currency,
                     paymentMinor: amount,
@@ -78,8 +69,6 @@ pub fn dispatch(
                 };
                 let encrypted_balance = runtime::mine_gratis(
                     &storage,
-                    scope,
-                    parent,
                     runtime::MineGratisRequest {
                         caller: sender,
                         nod_id: WwdEntityId::from(c.nodId),
@@ -109,8 +98,6 @@ pub fn dispatch(
 
 fn dispatch_materialization(
     storage: outbe_primitives::storage::StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
     data: &[u8],
     caller: Address,
 ) -> Result<Bytes> {
@@ -139,8 +126,6 @@ fn dispatch_materialization(
             })?;
         crate::materialization::materialize_protected_after_attempt(
             &storage,
-            scope,
-            parent,
             &batch,
             crate::materialization::MaterializationRules {
                 profile,

@@ -51,16 +51,16 @@ pub(crate) struct RunSummary {
 
 impl RunSummary {
     pub(crate) fn is_complete_pass(self) -> bool {
-        self.selected > 0
+        let every_selected_finished = self.selected > 0
             && self.selected == self.started
             && self.started == self.finished
-            && self.finished == self.framework_finished
-            && self.finished == self.passed
+            && self.finished == self.framework_finished;
+        let every_finished_passed = self.finished == self.passed
             && self.skipped == 0
             && self.failed == 0
-            && self.evidence_records == self.finished
-            && self.parsing_errors == 0
-            && self.hook_errors == 0
+            && self.evidence_records == self.finished;
+        let no_harness_errors = self.parsing_errors == 0 && self.hook_errors == 0;
+        every_selected_finished && every_finished_passed && no_harness_errors
     }
 }
 

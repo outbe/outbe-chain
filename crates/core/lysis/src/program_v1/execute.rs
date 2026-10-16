@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 use alloy_primitives::U256;
-use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 
 use crate::algorithm::{calc_fraction_distribution_fp, SCALE};
 
@@ -37,7 +37,15 @@ pub(crate) struct ProgramExecutionV1 {
 }
 
 /// Execute a complete pre-observed logical input.
-pub fn execute(mut input: ProgramInputV1) -> Result<ProgramResultV1, ProgramErrorV1> {
+pub fn execute(input: ProgramInputV1) -> Result<ProgramResultV1, ProgramErrorV1> {
+    execute_with_amounts(input).map(|output| output.0)
+}
+
+/// Returns private loads for encryption inside the enclave.
+/// The caller must not expose these loads across the enclave boundary.
+pub fn execute_with_amounts(
+    mut input: ProgramInputV1,
+) -> Result<(ProgramResultV1, Vec<U256>), ProgramErrorV1> {
     input
         .tributes
         .sort_by_key(|observed| observed.tribute.tribute_id);
@@ -77,8 +85,10 @@ pub fn execute(mut input: ProgramInputV1) -> Result<ProgramResultV1, ProgramErro
         input.lysis_limit_minor,
     )?;
 
+    let mut loads = Vec::with_capacity(input.tributes.len());
     for observed in &input.tributes {
         let pending = execution.quote_next()?;
+        loads.push(pending.gratis_load_minor);
         let ordinal = pending.ordinal;
         let entry_price =
             observed
@@ -103,7 +113,7 @@ pub fn execute(mut input: ProgramInputV1) -> Result<ProgramResultV1, ProgramErro
             observed.nod_target_available,
         )?;
     }
-    execution.finish()
+    Ok((execution.finish()?, loads))
 }
 
 /// Validate canonical input, derive the FI fraction map, and initialize the reducer.
@@ -172,8 +182,13 @@ impl ProgramExecutionV1 {
             .get(&self.first_leagues[ordinal])
             .copied()
             .unwrap_or(U256::ZERO);
-        let gratis_load_minor =
-            calculate_gratis_load(tribute.nominal_amount_minor, fraction, ordinal)?;
+        let nod_gratis_load_max = self.lysis_limit_minor / U256::from(1024);
+        let gratis_load_minor = calculate_gratis_load(
+            tribute.nominal_amount_minor,
+            fraction,
+            nod_gratis_load_max,
+            ordinal,
+        )?;
         let remaining_after = validate_required_gratis(self.remaining, gratis_load_minor, ordinal)?;
         Ok(PendingNodV1 {
             ordinal,
@@ -201,10 +216,10 @@ impl ProgramExecutionV1 {
             entry_price_minor,
         });
 
-        if !outbe_nod::pricing::is_issuable_entry(entry_price_minor) {
-            return Err(ProgramErrorV1::Arithmetic {
-                message: format!("Nod entry price out of bounds at {ordinal}"),
-            });
+        if !outbe_primitives::nod_rules::is_issuable_entry(entry_price_minor) {
+            return Err(
+                crate::errors::LysisArithmeticErrorV1::NodEntryPriceOutOfBounds { ordinal }.into(),
+            );
         }
         let first_league = self.first_leagues[ordinal];
         self.observations.push(SemanticObservationV1::Fidelity {
@@ -222,7 +237,7 @@ impl ProgramExecutionV1 {
         }
         calculate_cost(entry_price_minor, pending.gratis_load_minor, ordinal)?;
         let nod_id = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day)
-            .map_err(ProgramErrorV1::arithmetic)?;
+            .map_err(ProgramErrorV1::entity_id_derivation)?;
         if !nod_target_available || tribute.owner.is_zero() {
             return Err(ProgramErrorV1::InvalidNodTarget { ordinal });
         }
@@ -285,9 +300,7 @@ pub(crate) fn compute_fraction_map(
         group.0 = group
             .0
             .checked_add(1)
-            .ok_or_else(|| ProgramErrorV1::Arithmetic {
-                message: "Fidelity league population overflow".to_owned(),
-            })?;
+            .ok_or(crate::errors::LysisArithmeticErrorV1::FidelityLeaguePopulationOverflow)?;
         group.1 = group
             .1
             .checked_add(nominal_amounts[ordinal])
@@ -318,26 +331,21 @@ pub(crate) fn compute_fraction_map_from_groups(
         group_nominals.push(group_nominal);
     }
     let share_sum = shares.iter().copied().try_fold(U256::ZERO, |sum, share| {
-        sum.checked_add(share)
-            .ok_or_else(|| ProgramErrorV1::Arithmetic {
-                message: "Fidelity share sum overflow".to_owned(),
-            })
+        sum.checked_add(share).ok_or_else(|| {
+            ProgramErrorV1::from(crate::errors::LysisArithmeticErrorV1::FidelityShareSumOverflow)
+        })
     })?;
     if let Some(last) = shares.last_mut() {
         if share_sum < SCALE {
-            *last =
-                last.checked_add(SCALE - share_sum)
-                    .ok_or_else(|| ProgramErrorV1::Arithmetic {
-                        message: "Fidelity share remainder overflow".to_owned(),
-                    })?;
+            *last = last
+                .checked_add(SCALE - share_sum)
+                .ok_or(crate::errors::LysisArithmeticErrorV1::FidelityShareRemainderOverflow)?;
         }
     }
     let f = scaled_floor(lysis_limit_minor, SCALE, total_interest)?;
     let fmax = f
         .checked_mul(U256::from(2_u8))
-        .ok_or_else(|| ProgramErrorV1::Arithmetic {
-            message: "maximum Gratis fraction overflow".to_owned(),
-        })?;
+        .ok_or(crate::errors::LysisArithmeticErrorV1::MaximumGratisFractionOverflow)?;
     // The distribution prioritizes its first group: highest league first.
     shares.reverse();
     populations.reverse();
@@ -348,7 +356,7 @@ pub(crate) fn compute_fraction_map_from_groups(
         f,
         fmax,
     )
-    .map_err(ProgramErrorV1::arithmetic)?;
+    .map_err(ProgramErrorV1::math)?;
     // Match the ascending league IDs and nominals for projection and output.
     fractions.reverse();
 
@@ -360,10 +368,11 @@ pub(crate) fn compute_fraction_map_from_groups(
         U256::ZERO,
         |sum, (nominal, fraction)| {
             let load = scaled_floor(*nominal, *fraction, SCALE)?;
-            sum.checked_add(load)
-                .ok_or_else(|| ProgramErrorV1::Arithmetic {
-                    message: "projected Gratis allocation overflow".to_owned(),
-                })
+            sum.checked_add(load).ok_or_else(|| {
+                ProgramErrorV1::from(
+                    crate::errors::LysisArithmeticErrorV1::ProjectedGratisAllocationOverflow,
+                )
+            })
         },
     )?;
     if projected > lysis_limit_minor {
@@ -379,15 +388,16 @@ fn scaled_floor(
     multiplier: U256,
     denominator: U256,
 ) -> Result<U256, ProgramErrorV1> {
-    checked_mul_div_floor(numerator, multiplier, denominator).map_err(ProgramErrorV1::arithmetic)
+    checked_mul_div_floor(numerator, multiplier, denominator).map_err(ProgramErrorV1::math)
 }
 
 pub(crate) fn calculate_gratis_load(
     nominal_amount_minor: U256,
     fraction: U256,
+    nod_gratis_load_max: U256,
     ordinal: usize,
 ) -> Result<U256, ProgramErrorV1> {
-    let load = scaled_floor(nominal_amount_minor, fraction, SCALE)?;
+    let load = scaled_floor(nominal_amount_minor, fraction, SCALE)?.min(nod_gratis_load_max);
     if load.is_zero() {
         return Err(ProgramErrorV1::ZeroGratisLoad { ordinal });
     }
@@ -400,8 +410,9 @@ pub(crate) fn calculate_cost(
     ordinal: usize,
 ) -> Result<U256, ProgramErrorV1> {
     // Use the same minor-unit minimum as Nod reads and settlement.
-    let cost = outbe_nod::api::settlement_cost_minor(entry_price_minor, gratis_load_minor)
-        .map_err(ProgramErrorV1::arithmetic)?;
+    let cost =
+        outbe_primitives::nod_rules::settlement_cost_minor(entry_price_minor, gratis_load_minor)
+            .map_err(ProgramErrorV1::math)?;
     if cost.is_zero() {
         return Err(ProgramErrorV1::ZeroCost {
             ordinal,
@@ -433,7 +444,7 @@ pub(crate) fn validate_canonical_tributes(
         }
         previous = Some(tribute.tribute_id);
         let expected = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day)
-            .map_err(ProgramErrorV1::arithmetic)?;
+            .map_err(ProgramErrorV1::entity_id_derivation)?;
         if tribute.tribute_id != expected {
             return Err(ProgramErrorV1::InvalidTributeIdentity { ordinal });
         }
@@ -484,47 +495,4 @@ pub(crate) fn compute_fraction_hash_map(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn higher_leagues_receive_higher_fractions_within_limit() {
-        for (populations, nominals, allocation) in [
-            ([1_u32, 1, 1], [1_000_000_u64; 3], 960_000_u64),
-            ([1000, 50, 1], [999_998, 1, 1], 320_000),
-            ([1, 50, 1000], [1, 1, 999_998], 320_000),
-            ([1, 1, 1], [1, 1, 1], 1),
-            ([1, 1, 1], [1_000_000; 3], 3),
-        ] {
-            let leagues = [1, 2048, 4096];
-            let groups = leagues
-                .into_iter()
-                .zip(populations.into_iter().zip(nominals.map(U256::from)))
-                .collect();
-            let total = nominals.into_iter().map(U256::from).sum();
-            let allocation = U256::from(allocation);
-            let fractions = compute_fraction_map_from_groups(
-                &groups,
-                populations.into_iter().sum(),
-                total,
-                allocation,
-            )
-            .unwrap();
-            assert!(fractions[&1] <= fractions[&2048]);
-            assert!(fractions[&2048] <= fractions[&4096]);
-            let spent = leagues
-                .into_iter()
-                .zip(nominals)
-                .map(|(league, nominal)| U256::from(nominal) * fractions[&league] / SCALE)
-                .sum::<U256>();
-            assert!(spent <= allocation);
-            if nominals == [1_000_000; 3] && allocation == U256::from(960_000) {
-                assert!(fractions[&1] < fractions[&2048]);
-                assert!(fractions[&2048] < fractions[&4096]);
-            }
-            if allocation == U256::from(3) {
-                assert!(fractions[&1] == fractions[&2048] || fractions[&2048] == fractions[&4096]);
-            }
-        }
-    }
-}
+mod tests;

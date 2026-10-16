@@ -438,7 +438,7 @@ impl ResourceScheduleV1 {
         if self.bootstrap_block_gas_limit != BOOTSTRAP_BLOCK_GAS_LIMIT
             || self.steady_block_gas_limit != STEADY_BLOCK_GAS_LIMIT
         {
-            return Err(CodecError::NonCanonical("non-normative block gas limits"));
+            return Err(crate::error::TeeCodecNonCanonicalError::NonNormativeBlockGasLimits.into());
         }
         Ok(())
     }

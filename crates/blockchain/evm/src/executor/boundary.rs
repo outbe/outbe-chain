@@ -15,7 +15,7 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 38] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 37] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         CREDIS_ADDRESS,
@@ -66,16 +66,14 @@ pub mod marker_addresses {
         // genesis-seeded, so the runtime 0xEF marker is its only EIP-161
         // preservation path (reth22-1 class).
         L2_REGISTRY_ADDRESS,
-        // Hyperlane controller (router + domain->ISM table). Not genesis-seeded,
-        // so the runtime 0xEF marker is its only EIP-161 preservation path.
+        // Hyperlane controller (router + domain->ISM table). Genesis seeds only
+        // the bootstrap admin, so the runtime 0xEF marker keeps the rest.
         HYPERLANE_CONTROLLER_ADDRESS,
         // OCOMP authority and lineage registry. Fresh genesis initializes it
         // at height 32; the marker preserves successor/refcount state.
         OCOMP_REGISTRY_ADDRESS,
         UPDATE_ADDRESS,
         VOTE_ADDRESS,
-        // System-only compressed-entity commitment state (no public dispatch).
-        COMPRESSED_ENTITIES_ADDRESS,
     ];
 }
 
@@ -305,9 +303,7 @@ where
                     .map(|tx| Address::from(*tx.signer()))
             })
             .ok_or_else(|| {
-                BlockExecutionError::from(BlockValidationError::msg(
-                    "missing proposer EVM address for begin-zone system txs",
-                ))
+                crate::errors::ExecutorValidationError::MissingBeginZoneProposerAddress.into()
             })
             .map(Some)
     }
@@ -317,6 +313,8 @@ where
         proposer: Address,
         allow_boundary_proposer: bool,
     ) -> Result<(), BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
         let chain_id = self.inner.evm.chain_id();
@@ -336,7 +334,7 @@ where
             if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
                 BlockExecutionError::other(error)
             } else {
-                BlockValidationError::msg(format!("validate proposer identity: {error}")).into()
+                ExecutorValidationError::validate_proposer_identity(error).into()
             }
         })? {
             return Ok(());
@@ -346,16 +344,13 @@ where
                 if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
                     BlockExecutionError::other(error)
                 } else {
-                    BlockValidationError::msg(format!("validate proposer identity: {error}")).into()
+                    ExecutorValidationError::validate_proposer_identity(error).into()
                 }
             })?
         {
             return Ok(());
         }
-        Err(BlockValidationError::msg(format!(
-            "proposer EVM address is not an active consensus participant: {proposer}"
-        ))
-        .into())
+        Err(ExecutorValidationError::ProposerNotActiveConsensusParticipant { proposer }.into())
     }
 
     pub(in crate::executor) fn boundary_allows_proposer(

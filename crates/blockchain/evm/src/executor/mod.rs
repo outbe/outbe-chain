@@ -17,12 +17,10 @@ use alloy_evm::{
     Database, RecoveredTx,
 };
 use alloy_primitives::{keccak256, map::AddressMap, Address, Bytes, Log, B256, U256};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_ocomp_protocol::system_carrier::{
     classify_ocomp_system_carrier, OcompSystemCarrierCandidate, OcompSystemCarrierView,
     OCOMP_SYSTEM_CARRIER_INTERNAL_GAS_LIMIT,
 };
-use outbe_offchain_data::{ExecutionReadBudgetGuard, RuntimeBodyReaders};
 use outbe_primitives::{
     block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
     consensus::{ConsensusExecutionBridge, GenesisValidators},
@@ -31,8 +29,7 @@ use outbe_primitives::{
     hook_events::partition_hook_events,
     payload::validate_outbe_withdrawals,
     reshare_artifact::{
-        decode_outbe_block_artifacts, CompressedEntitiesRootArtifact, ConsensusHeaderArtifact,
-        ExecutionSummaryArtifact,
+        decode_outbe_block_artifacts, ConsensusHeaderArtifact, ExecutionSummaryArtifact,
     },
     storage::{direct::DirectStorageProvider, StorageHandle},
     OutbeHeader,
@@ -67,7 +64,6 @@ mod accounting;
 mod artifacts;
 mod block;
 mod boundary;
-mod compressed_entities;
 mod context;
 mod fee_route;
 mod hooks;
@@ -85,13 +81,13 @@ pub use accounting::{AccountedParentArtifact, AccountedParentArtifactProvider};
 
 pub use block::OutbeBlockExecutor;
 pub(crate) use inputs::{
-    BlockExecutionDependencies, BlockExecutionIdentity, BlockExecutionRuntime, BlockExecutorInputs,
-    BlockSystemPlan, ParentAccountingInputs,
+    BlockExecutionDependencies, BlockExecutionIdentity, BlockExecutorInputs, BlockSystemPlan,
+    ParentAccountingInputs,
 };
 
 pub use boundary::marker_addresses;
 
-pub use hooks::{run_outbe_pre_execution_hooks, run_outbe_pre_execution_hooks_with_readers};
+pub use hooks::run_outbe_pre_execution_hooks;
 
 pub(crate) use accounting::validate_finalized_metadata;
 
@@ -107,13 +103,9 @@ pub(crate) use tests::harness::with_phase1_verify_disabled;
 #[cfg(test)]
 use artifacts::validate_execution_summary_artifact;
 
-use compressed_entities::{
-    validate_compressed_entities_root_after_seal, validate_compressed_entities_root_scheme,
-};
-
 use context::{build_block_context, validate_genesis_state};
 
-use hooks::{run_atomic_storage_hook_with_output, run_atomic_storage_hooks};
+use hooks::run_atomic_storage_hooks;
 
 use receipts::{validator_fee_for_gas, SystemFailureReceiptInput};
 

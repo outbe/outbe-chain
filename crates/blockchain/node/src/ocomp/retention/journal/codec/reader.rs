@@ -11,18 +11,19 @@ impl<'a> JournalReader<'a> {
     }
 
     pub(super) fn take<const N: usize>(&mut self) -> Result<[u8; N], RetentionError> {
-        let end = self
-            .offset
-            .checked_add(N)
-            .ok_or(RetentionError::MalformedJournal("offset overflow"))?;
+        let end = self.offset.checked_add(N).ok_or(RetentionError::from(
+            crate::errors::RetentionMalformedJournalError::OffsetOverflow,
+        ))?;
         let value = self
             .encoded
             .get(self.offset..end)
-            .ok_or(RetentionError::MalformedJournal("truncated field"))?;
+            .ok_or(RetentionError::from(
+                crate::errors::RetentionMalformedJournalError::TruncatedField,
+            ))?;
         self.offset = end;
-        value
-            .try_into()
-            .map_err(|_| RetentionError::MalformedJournal("field length"))
+        value.try_into().map_err(|_| {
+            RetentionError::from(crate::errors::RetentionMalformedJournalError::FieldLength)
+        })
     }
 
     pub(super) fn record_bytes(&mut self) -> Result<&'a [u8], RetentionError> {
@@ -41,14 +42,16 @@ impl<'a> JournalReader<'a> {
         let bytes = self
             .encoded
             .get(self.offset..end)
-            .ok_or(RetentionError::MalformedJournal("truncated pin record"))?;
+            .ok_or(RetentionError::from(
+                crate::errors::RetentionMalformedJournalError::TruncatedPinRecord,
+            ))?;
         self.offset = end;
         Ok(bytes)
     }
 
     pub(super) fn finish(self) -> Result<(), RetentionError> {
         if self.offset != self.encoded.len() {
-            return Err(RetentionError::MalformedJournal("trailing bytes"));
+            return Err(crate::errors::RetentionMalformedJournalError::TrailingBytes.into());
         }
         Ok(())
     }

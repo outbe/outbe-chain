@@ -212,10 +212,7 @@ fn clear_inner(
             .add_to_total_unallocated(unused_desis_limit_minor)?;
     }
 
-    if result.issued_units == 0 {
-        // No series anywhere. Finalize the day so a later arrival burns.
-        outbe_intexfactory::api::finalize_empty_day(&storage, worldwide_day)?;
-    } else {
+    if result.issued_units != 0 {
         let mut legs = Vec::new();
         for group in issuance_groups(&result, &config, worldwide_day, snapshot)? {
             legs.extend(outbe_intexfactory::api::issue_intex(&storage, group)?);
@@ -335,7 +332,7 @@ pub(crate) fn refund_chunks(result: &ClearingResult, chain_id: u32) -> Result<Ve
 
 /// One issuance per distinct winning `(issuance, reference)` pair, in the order
 /// the pairs first appear in the ranking. Each group carries its own reference
-/// currency's entry price, which is what floor and call derive from.
+/// currency's entry price, which is what the call price derives from.
 fn issuance_groups(
     result: &ClearingResult,
     config: &AuctionConfig,

@@ -27,8 +27,6 @@ pub(super) fn native(progress: &SnapshotNativeProgress) -> eyre::Result<()> {
     for checkpoint in [
         &progress.finalized,
         &progress.execution,
-        &progress.ce,
-        &progress.projection,
         &progress.ocomp_baseline,
         &progress.ocomp_previous,
         &progress.ocomp_current,
@@ -39,7 +37,7 @@ pub(super) fn native(progress: &SnapshotNativeProgress) -> eyre::Result<()> {
         matches!(progress.storage_version, 1 | 2),
         "unknown native storage version"
     );
-    // No H=E=Finish=Q=P=C assertion. A valid native tail/partial state is retained.
+    // Preserve valid native tails and partial state.
     Ok(())
 }
 
@@ -103,7 +101,7 @@ pub(super) fn ordinary_launch(launch: &SnapshotLaunchObservation) -> eyre::Resul
         recovery.last_execution_height >= recovery.anchor.number,
         "anchor exceeds observed execution tip"
     );
-    // No anchor==H, last_execution_height==E, or reconciled CE==prelaunch Q claim.
+    // Startup anchor and execution height need not equal the stopped finalization frontier.
     for arg in &launch.argv {
         let flag = arg.split('=').next().unwrap_or(arg);
         ensure!(

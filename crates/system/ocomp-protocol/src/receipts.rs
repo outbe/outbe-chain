@@ -64,7 +64,6 @@ wire_struct! {
     pub struct TributeReceiptV1 {
         pub binding: EffectBindingV1,
         pub tribute_input_binding: TributeInputBindingV1,
-        pub sealed_collection_root: B256,
         pub consumed_count: u32,
         pub consumed_nominal_total: U256,
         pub retired_generation: u64,
@@ -121,7 +120,6 @@ wire_struct! {
     pub struct TributeStateEventProjectionV1 {
         pub wwd: u32,
         pub source_generation: u64,
-        pub sealed_collection_root: B256,
         pub consumed_count: u32,
         pub consumed_nominal_total: U256,
         pub retired_generation: u64,

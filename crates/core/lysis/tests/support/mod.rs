@@ -106,9 +106,6 @@ fn intent(day_type: DayType, request_receipt_hash: B256) -> JobIntentV1 {
         pending_nonce: 0,
         attempt: 0,
         protocol_bundle_hash: hash(41),
-        ce_sealed_root: hash(42),
-        sealed_tribute_collection_key: hash(30),
-        sealed_tribute_collection_root: hash(31),
         authenticated_day_count: 2,
         authenticated_day_nominal: U256::from(1_000),
         pre_admission_envelope_hash: hash(43),
@@ -130,8 +127,6 @@ fn intent(day_type: DayType, request_receipt_hash: B256) -> JobIntentV1 {
             tribute: TributeInputBindingV1 {
                 wwd: 7,
                 source_generation: 3,
-                collection_key: hash(30),
-                sealed_collection_root: hash(31),
                 exact_count: 2,
                 exact_nominal_total: U256::from(1_000),
             },
@@ -171,7 +166,6 @@ fn result(day_type: DayType, job_id: B256, limits: &SchemaLimits) -> LysisResult
     };
     let conservation = ConservationTotalsV1 {
         tribute_nominal_total: U256::from(1_000),
-        eligible_nominal_total: U256::from(600),
         day_limit: U256::from(100),
         gratis_demand: U256::from(60),
         day_gratis_limit_minor: U256::from(60),

@@ -93,7 +93,6 @@ SEED_SECTIONS = (
 
 
 TOP_LEVEL_KEYS = {
-    "offchain_storage",
     "network",
     "validators",
     "keys_dir",
@@ -165,9 +164,7 @@ def validate_config(config: dict[str, Any]) -> None:
             f"unknown key(s): {', '.join(unknown)}; "
             f"allowed: {', '.join(sorted(TOP_LEVEL_KEYS))}"
         )
-    launch_bundle.storage_settings(
-        config, database="validation", mongo_uri="mongodb://localhost"
-    )
+    launch_bundle.storage_settings(config)
     _validate_founders(config)
     _validate_tee(config)
     _validate_ports(config)

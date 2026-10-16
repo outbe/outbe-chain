@@ -252,13 +252,13 @@ impl UpstreamRpcClient {
             .request("eth_call", rpc_params![call, "latest"])
             .await
             .map_err(|e| {
-                crate::errors::FollowTransportError::UpstreamTributeOfferPublicKeyCall(format!(
-                    "{e}"
-                ))
+                crate::errors::FollowTransportError::UpstreamTributeOfferPublicKeyCall(
+                    e.to_string(),
+                )
             })?;
         let bytes =
             alloy_primitives::hex::decode(result.trim_start_matches("0x")).map_err(|e| {
-                crate::errors::FollowTransportError::MalformedEthCallResult(format!("{e}"))
+                crate::errors::FollowTransportError::MalformedEthCallResult(e.to_string())
             })?;
         decode_tribute_offer_public_key(&bytes)
     }

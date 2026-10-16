@@ -1,9 +1,8 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::WwdEntityId;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
-use outbe_primitives::storage::types::{Mapping, StorageBytes};
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -32,9 +31,6 @@ pub struct TributeData {
 
     #[attribute(order = 6)]
     pub tribute_price_minor: U256,
-
-    #[attribute(order = 7, default = false)]
-    pub exclude_from_intex_issuance: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,7 +48,7 @@ pub struct DayTotals {
 
 /// Bounded, incrementally maintained Tribute inputs used by OCOMP
 /// pre-admission. The live accumulator is frozen exactly once after the
-/// Tribute WWD and its CE collection are both sealed.
+/// Tribute WWD is sealed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DayPreAdmission {
     pub worldwide_day: WorldwideDay,
@@ -60,8 +56,6 @@ pub struct DayPreAdmission {
     pub initialized: bool,
 
     pub is_sealed: bool,
-
-    pub sealed_collection_root: B256,
 
     pub sealed_tribute_count: u32,
 
@@ -97,7 +91,6 @@ impl DayPreAdmission {
             worldwide_day,
             initialized: false,
             is_sealed: false,
-            sealed_collection_root: B256::ZERO,
             sealed_tribute_count: 0,
             sealed_tribute_nominal_total_minor: U256::ZERO,
             canonical_body_bytes: 0,
@@ -130,15 +123,30 @@ pub struct TributeContract {
     #[attribute(order = 6)]
     pub ocomp_profile_ready: outbe_primitives::storage::dsl::Value<bool>,
     #[attribute(order = 7)]
-    pub day_nominal_ct: outbe_primitives::storage::types::Mapping<
-        WorldwideDay,
-        outbe_primitives::storage::types::StorageBytes,
-    >,
+    pub day_nominal_ct:
+        outbe_primitives::storage::dsl::Map<WorldwideDay, outbe_primitives::storage::dsl::Bytes>,
     #[attribute(order = 8)]
-    pub frozen_day_nominal_ct: outbe_primitives::storage::types::Mapping<
-        WorldwideDay,
-        outbe_primitives::storage::types::StorageBytes,
+    pub frozen_day_nominal_ct:
+        outbe_primitives::storage::dsl::Map<WorldwideDay, outbe_primitives::storage::dsl::Bytes>,
+    #[attribute(order = 9)]
+    pub records:
+        outbe_primitives::storage::dsl::Map<WwdEntityId, crate::storage_records::StoredTribute>,
+    #[attribute(order = 10)]
+    pub owner_ids: outbe_primitives::storage::dsl::Map<
+        Address,
+        outbe_primitives::storage::dsl::List<WwdEntityId>,
     >,
+    #[attribute(order = 11)]
+    pub day_ids: outbe_primitives::storage::dsl::Map<
+        WorldwideDay,
+        outbe_primitives::storage::dsl::List<WwdEntityId>,
+    >,
+    #[attribute(order = 12)]
+    pub owner_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
+    #[attribute(order = 13)]
+    pub day_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
+    #[attribute(order = 14)]
+    pub retired_days: outbe_primitives::storage::dsl::Map<WorldwideDay, bool>,
 }
 
 impl<'storage> TributeContract<'storage> {

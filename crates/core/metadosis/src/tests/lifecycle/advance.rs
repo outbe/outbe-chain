@@ -1,9 +1,7 @@
-use super::fixtures::begin_scope_with_persisted_parent;
 use super::*;
 
 pub(super) fn run_advance_command(
     provider: &mut HashMapStorageProvider,
-    scope: &ExecutionScope,
     block_number: u64,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<()> {
@@ -16,7 +14,7 @@ pub(super) fn run_advance_command(
             BlockContext::empty_for_tests(block_number, timestamp, CHAIN_ID),
             storage,
         );
-        crate::commands::advance_active_worldwide_days(&ctx, scope)
+        crate::commands::advance_active_worldwide_days(&ctx)
     })
 }
 
@@ -74,30 +72,29 @@ fn normal_advance_command_rolls_back_every_mutation_and_retries_with_ordered_edg
 
     let mut probe = HashMapStorageProvider::new(CHAIN_ID);
     let offering_entry = seed_forming_day_for_advance(&mut probe, wwd);
-    let probe_scope = ExecutionScope::default();
-    let ce_before_probe = probe_scope.ce_work_checkpoint().unwrap();
+
     probe.fail_after_mutation_at(usize::MAX);
-    run_advance_command(&mut probe, &probe_scope, block_number, offering_entry).unwrap();
+    run_advance_command(&mut probe, block_number, offering_entry).unwrap();
     let mutation_count = probe.clear_mutation_failure();
     assert!(
         mutation_count >= 5,
         "normal advance must persist both edges, their events and offering effects"
     );
-    assert_eq!(probe_scope.ce_work_checkpoint().unwrap(), ce_before_probe);
+
     assert_opened_offering_once(&mut probe, wwd, block_number);
 
     for operation in 0..mutation_count {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         let offering_entry = seed_forming_day_for_advance(&mut provider, wwd);
-        let scope = ExecutionScope::default();
+
         let storage_before = provider.storage.clone();
         let events_before = provider.events.clone();
         let ordered_before = provider.get_ordered_events().to_vec();
-        let ce_before = scope.ce_work_checkpoint().unwrap();
+
         provider.fail_after_mutation_at(operation);
 
         assert!(
-            run_advance_command(&mut provider, &scope, block_number, offering_entry).is_err(),
+            run_advance_command(&mut provider, block_number, offering_entry).is_err(),
             "mutation {operation} unexpectedly succeeded"
         );
         assert_eq!(provider.clear_mutation_failure(), operation + 1);
@@ -108,114 +105,10 @@ fn normal_advance_command_rolls_back_every_mutation_and_retries_with_ordered_edg
             ordered_before.as_slice(),
             "ordered events at {operation}"
         );
-        assert_eq!(
-            scope.ce_work_checkpoint().unwrap(),
-            ce_before,
-            "CE work at {operation}"
-        );
 
-        run_advance_command(&mut provider, &scope, block_number, offering_entry).unwrap();
+        run_advance_command(&mut provider, block_number, offering_entry).unwrap();
         assert_opened_offering_once(&mut provider, wwd, block_number);
     }
-}
-
-#[test]
-fn cycle_command_restores_all_prior_ce_work_when_a_later_wwd_fails() {
-    let first = outbe_primitives::time::WorldwideDay::new(2026_0815);
-    let second = outbe_primitives::time::WorldwideDay::new(2026_0816);
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let first_offering_end = seed_missed_offering_day(
-        &mut provider,
-        first,
-        U256::from(100),
-        U256::ZERO,
-        U256::ZERO,
-    );
-    let second_offering_end = seed_missed_offering_day(
-        &mut provider,
-        second,
-        U256::from(200),
-        U256::ZERO,
-        U256::ZERO,
-    );
-    let timestamp = first_offering_end.max(second_offering_end);
-    let parent_root = outbe_compressed_entities::sealed_root(B256::repeat_byte(0x81)).unwrap();
-    let tree = Arc::new(FailSecondPartitionLookup {
-        parent_root,
-        partition_root: B256::repeat_byte(0x82),
-        calls: AtomicUsize::new(0),
-    });
-    let scope = outbe_compressed_entities::execution_scope::with_parent_tree(
-        tree.clone(),
-        outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
-    );
-    begin_scope_with_persisted_parent(&mut provider, &scope, parent_root);
-    let storage_before = provider.storage.clone();
-    let events_before = provider.events.clone();
-    let ordered_before = provider.get_ordered_events().to_vec();
-    let ce_before = scope.ce_work_checkpoint().unwrap();
-
-    let error = run_advance_command(&mut provider, &scope, 3, timestamp).unwrap_err();
-    assert!(matches!(
-        error,
-        outbe_primitives::error::PrecompileError::TreeUnavailable(_)
-    ));
-    assert_eq!(
-        tree.calls.load(Ordering::SeqCst),
-        2,
-        "the first WWD must request retirement before the second lookup fails"
-    );
-    assert_eq!(provider.storage, storage_before);
-    assert_eq!(provider.events, events_before);
-    assert_eq!(provider.get_ordered_events(), ordered_before.as_slice());
-    assert_eq!(
-        scope.ce_work_checkpoint().unwrap(),
-        ce_before,
-        "the command checkpoint must remove the first WWD retirement too"
-    );
-    StorageHandle::enter(&mut provider, |storage| {
-        let metadosis = MetadosisContract::new(storage);
-        assert_eq!(metadosis.get_wwd_status(first).unwrap(), status::FORMING);
-        assert_eq!(metadosis.get_wwd_status(second).unwrap(), status::FORMING);
-        assert!(metadosis
-            .read_missed_offering_receipt(first)
-            .unwrap()
-            .is_none());
-        assert!(metadosis
-            .read_missed_offering_receipt(second)
-            .unwrap()
-            .is_none());
-    });
-
-    run_advance_command(&mut provider, &scope, 3, timestamp).unwrap();
-    assert_eq!(tree.calls.load(Ordering::SeqCst), 4);
-    StorageHandle::enter(&mut provider, |storage| {
-        let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_wwd_status(first).unwrap(), status::FAILED);
-        assert_eq!(metadosis.get_wwd_status(second).unwrap(), status::FAILED);
-        assert_eq!(
-            metadosis
-                .read_missed_offering_receipt(first)
-                .unwrap()
-                .unwrap()
-                .retirement,
-            outbe_compressed_entities::RetirementOutcome::Requested
-        );
-        assert_eq!(
-            metadosis
-                .read_missed_offering_receipt(second)
-                .unwrap()
-                .unwrap()
-                .retirement,
-            outbe_compressed_entities::RetirementOutcome::Requested
-        );
-        assert_eq!(
-            PromisLimitContract::new(storage)
-                .get_total_unallocated()
-                .unwrap(),
-            U256::from(300)
-        );
-    });
 }
 
 /// `advance_active_worldwide_days` is the 12:00 UTC `wwd_advance_noon` Cycle
@@ -257,8 +150,8 @@ fn advance_active_worldwide_days_advances_status_without_creating_or_settling() 
                 BlockContext::empty_for_tests(block_number, timestamp, CHAIN_ID),
                 storage.clone(),
             );
-            let scope = ExecutionScope::default();
-            crate::commands::advance_active_worldwide_days(&ctx, &scope).unwrap();
+
+            crate::commands::advance_active_worldwide_days(&ctx).unwrap();
         };
 
         // At the offering-entry edge the day opens and the tribute day
@@ -313,9 +206,9 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
             BlockContext::empty_for_tests(2, scheduled + SECONDS_PER_HOUR, CHAIN_ID),
             storage.clone(),
         );
-        with_active_scope(storage.clone(), |scope, parent| {
-            assert!(crate::commands::start_metadosis(&ctx, scope, parent).is_err());
-        });
+        (|| {
+            assert!(crate::commands::start_metadosis(&ctx).is_err());
+        })();
 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), WwdStatus::Waiting);
@@ -356,10 +249,7 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
             storage.clone(),
         );
         crate::emission_sink::apply(&ctx, U256::from(10u64)).unwrap();
-        with_active_scope(storage, |scope, parent| {
-            crate::commands::start_metadosis(&ctx, scope, parent)
-        })
-        .unwrap();
+        (|| crate::commands::start_metadosis(&ctx))().unwrap();
     });
 
     let events = storage.get_events(contract_addr);
@@ -397,6 +287,8 @@ fn test_terminal_day_leaves_active_set() {
         metadosis
             .set_metadosis_limit(wwd, U256::from(777u64))
             .unwrap();
+
+        TributeContract::new(storage.clone()).seal_day(wwd).unwrap();
 
         run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 

@@ -37,7 +37,7 @@ sol! {
         struct IntexCallTrigger { uint32 callWindow; uint32 callThreshold; uint32 callNoticePeriod; }
         struct AuctionSchedule { uint32 commitEnd; uint32 revealEnd; uint32 issuanceEnd; }
         struct ReferenceCurrencyPrice {
-            uint16 isoCode; uint64 entryPriceMinor; uint64 floorPriceMinor; uint64 callPriceMinor;
+            uint16 isoCode; uint64 entryPriceMinor; uint64 callPriceMinor;
         }
         struct AuctionParams {
             uint128 promisLoadMinor;
@@ -367,8 +367,7 @@ pub(crate) fn ignored_inbound(url: &str, router: Address, side: &str) -> String 
                 Some(6) => "issuance instructions".to_owned(),
                 Some(7) => "refund instructions".to_owned(),
                 Some(8) => "mark called".to_owned(),
-                Some(10) => "bids remaining".to_owned(),
-                Some(11) => "daily vwap".to_owned(),
+                Some(9) => "bids remaining".to_owned(),
                 Some(other) => format!("message type {other}"),
                 None => "unreadable message type".to_owned(),
             };
@@ -565,7 +564,6 @@ sol! {
         uint32 issuedUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
-        uint64 floorPriceMinor;
         uint64 callPriceMinor;
         IntexCallTrigger callTrigger;
         uint32 issuedAt;
@@ -712,8 +710,8 @@ pub(crate) fn series_exists(
     .unwrap_or_default()
 }
 
-/// A series' lifecycle state as the collection reads it: 0 Issued, 1 Qualified,
-/// 2 Called, 3 Expired.
+/// A series' lifecycle state as the collection reads it: 0 Issued, 1 Called,
+/// 2 Expired.
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_state(
     url: &str,
@@ -759,37 +757,15 @@ pub(crate) fn series_call_deadline(
         .map(|data| u64::from(data.calledAt) + u64::from(data.callTrigger.callNoticePeriod))
 }
 
-/// What a series qualifies on: its reference currency, its floor, and the first
-/// UTC day it held in full.
-#[cfg(feature = "ocomp-integration")]
-pub(crate) fn series_floor_terms(
-    url: &str,
-    nft: Address,
-    series: alloy_primitives::FixedBytes<14>,
-) -> Option<(u16, u64, u32)> {
-    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series }).map(|data| {
-        (
-            data.referenceCurrency,
-            data.floorPriceMinor,
-            outbe_primitives::time::first_full_day(u64::from(data.issuedAt)),
-        )
-    })
-}
-
-/// The prices the engine derived at issuance: entry, floor, and call.
+/// The prices the engine derived at issuance: entry and call.
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn series_prices(
     url: &str,
     nft: Address,
     series: alloy_primitives::FixedBytes<14>,
-) -> Option<(u64, u64, u64)> {
-    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series }).map(|data| {
-        (
-            data.entryPriceMinor,
-            data.floorPriceMinor,
-            data.callPriceMinor,
-        )
-    })
+) -> Option<(u64, u64)> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
+        .map(|data| (data.entryPriceMinor, data.callPriceMinor))
 }
 
 /// PROMIS-units the series carries per Intex unit.

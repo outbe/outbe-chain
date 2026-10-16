@@ -204,9 +204,6 @@ fn intent(
         pending_nonce,
         attempt,
         protocol_bundle_hash: request_profile().protocol_bundle_hash,
-        ce_sealed_root: B256::repeat_byte(0x31),
-        sealed_tribute_collection_key: B256::repeat_byte(0x32),
-        sealed_tribute_collection_root: B256::repeat_byte(0x33),
         authenticated_day_count: 1,
         authenticated_day_nominal: U256::from(10),
         pre_admission_envelope_hash: B256::repeat_byte(0x34),
@@ -228,8 +225,6 @@ fn intent(
             tribute: TributeInputBindingV1 {
                 wwd: WWD.value(),
                 source_generation: 0,
-                collection_key: B256::repeat_byte(0x32),
-                sealed_collection_root: B256::repeat_byte(0x33),
                 exact_count: 1,
                 exact_nominal_total: U256::from(10),
             },

@@ -39,7 +39,6 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     uint32 internal constant ISSUED_UNITS = 100;
     uint128 internal constant PROMIS_LOAD_MINOR = 1e6;
     uint64 internal constant ENTRY_PRICE = 100e6;
-    uint64 internal constant FLOOR_PRICE_MINOR = 40e6;
     uint16 internal constant REFERENCE_CURRENCY = 840;
 
     TargetRouter internal bnbRouter;
@@ -178,7 +177,6 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             issuedUnits: ISSUED_UNITS,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             entryPriceMinor: ENTRY_PRICE,
-            floorPriceMinor: FLOOR_PRICE_MINOR,
             callNoticePeriod: 0,
             issuanceCurrency: 840,
             referenceCurrency: REFERENCE_CURRENCY,
@@ -214,7 +212,6 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
                     issuedUnits: ISSUED_UNITS,
                     promisLoadMinor: PROMIS_LOAD_MINOR,
                     entryPriceMinor: ENTRY_PRICE,
-                    floorPriceMinor: FLOOR_PRICE_MINOR,
                     callNoticePeriod: 0,
                     issuanceCurrency: 840,
                     referenceCurrency: REFERENCE_CURRENCY,
@@ -295,16 +292,6 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Won), "lock advanced to Won via handler");
     }
 
-    function test_aRetiredMarkQualifiedIsAnUnknownType() public {
-        _seedSeriesOnIntex();
-
-        bytes memory packet = abi.encodePacked(hex"0109", abi.encode(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID)));
-        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnknownMsgType.selector, 9));
-        _deliver(packet);
-
-        assertEq(uint8(intex.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Issued), "state untouched");
-    }
-
     // --- Helpers ---
 
     function _seedAuction() internal {
@@ -317,7 +304,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: 60e6,
-            prices: ReferenceCurrencyPriceLib.onePriced(840, ENTRY_PRICE, FLOOR_PRICE_MINOR, ENTRY_PRICE),
+            prices: ReferenceCurrencyPriceLib.onePriced(840, ENTRY_PRICE, ENTRY_PRICE),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: 1,
             commitBondMinor: 0

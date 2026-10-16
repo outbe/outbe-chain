@@ -16,7 +16,6 @@ pub(super) fn audit_current_snapshot(
     use std::{process::Command, time::Duration};
     let slot = world.validators.joiner_index();
     let data = world.validators.data_dir(slot);
-    let node = data.parent().unwrap();
     let root = world.localnet.scenario_dir().join("offline-snapshot");
     let chain = snapshot_option(&launched.argv, "--chain")?;
     let mut command = Command::new(&launched.program);
@@ -25,7 +24,7 @@ pub(super) fn audit_current_snapshot(
             "snapshot",
             "validate",
             "--checks",
-            "headers,evm,ce,bodies,ocomp",
+            "headers,evm,ocomp",
             "--report",
         ])
         .arg(root.join("current-k-validation.json"))
@@ -34,9 +33,7 @@ pub(super) fn audit_current_snapshot(
         .arg("--datadir")
         .arg(&data)
         .arg("--consensus.storage-dir")
-        .arg(data.join("consensus"))
-        .arg("--projection.storage-config")
-        .arg(node.join("offchain-storage.toml"));
+        .arg(data.join("consensus"));
     let audit = run_snapshot_command(
         command,
         &root,
@@ -62,9 +59,8 @@ pub(super) fn audit_current_snapshot(
         .filter(|check| check.selected)
         .all(|check| check.status == SnapshotCheckStatus::Passed);
     ensure!(
-        (complete && audit.exit_code == Some(0))
-            || (!complete && audit.exit_code.is_some_and(|code| code != 0)),
-        "current K validation report/exit disagree"
+        complete && audit.exit_code == Some(0),
+        "current K native validation did not pass every selected check"
     );
     Ok(())
 }
@@ -182,7 +178,6 @@ pub(super) fn new_snapshot_work_and_restart_result(
         job_id,
         result_digest,
     } = perform_snapshot_job(world, &running)?;
-    let primary = world.validators.primary_port();
     let slot = world.validators.joiner_index();
     let launched = world
         .localnet
@@ -210,19 +205,13 @@ pub(super) fn new_snapshot_work_and_restart_result(
     )?;
     let data = world.validators.data_dir(slot);
     let node = data.parent().unwrap();
-    let chain_id = world
-        .rpc
-        .chain_id(primary)
-        .ok_or_else(|| eyre!("chain id"))?;
     let genesis = canonical_snapshot_block(world, 0)?.hash.parse()?;
-    let at_k =
-        observe_stopped_native(node, &node.join("offchain-storage.toml"), chain_id, genesis)?;
+    let at_k = observe_stopped_native(node, genesis)?;
     let k_canonical = canonical_snapshot_block(world, at_k.progress.finalized.number)?;
     let identity_at_k = recipient_identity(world)?;
     // Native-only audit is separate from the subsequent ordinary launch.
     audit_current_snapshot(world, &launched)?;
-    let before_launch =
-        observe_stopped_native(node, &node.join("offchain-storage.toml"), chain_id, genesis)?;
+    let before_launch = observe_stopped_native(node, genesis)?;
     let first_exit = SnapshotExitObservation {
         pid: stopped.observation.launch.pid,
         reaped: stopped.observation.reaped_at_millis,

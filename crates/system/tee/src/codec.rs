@@ -55,16 +55,16 @@ pub fn decode_call(bytes: &[u8]) -> Result<EnclaveCallV1, TransportError> {
         let (call, rest) =
             postcard::take_from_bytes::<EnclaveCallV1>(body).map_err(TransportError::codec)?;
         if !rest.is_empty() {
-            return Err(TransportError::Codec("trailing enclave call bytes".into()));
+            return Err(crate::errors::TeeClientVerificationError::TrailingEnclaveCallBytes.into());
         }
         Ok(call)
     } else {
         let (request, rest) =
             postcard::take_from_bytes::<EnclaveRequest>(bytes).map_err(TransportError::codec)?;
         if !rest.is_empty() {
-            return Err(TransportError::Codec(
-                "trailing legacy request bytes".into(),
-            ));
+            return Err(
+                crate::errors::TeeClientVerificationError::TrailingLegacyRequestBytes.into(),
+            );
         }
         Ok(EnclaveCallV1 {
             ctx: EnclaveCallContextV1 {
@@ -220,7 +220,6 @@ mod tests {
                 worldwide_day: WorldwideDay::new(20250115),
                 tribute_currency: 840,
                 reference_currency: 840,
-                exclude_from_intex_issuance: false,
                 issuance_wwd_vwap_minor: U256::from(11u64),
                 reference_wwd_vwap_minor: U256::from(12u64),
                 reference_scurve_minor: U256::from(13u64),

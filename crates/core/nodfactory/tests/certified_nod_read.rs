@@ -26,6 +26,11 @@ fn active_generation() -> ActiveGenerationV1 {
 
 fn nod_projection() -> NodCertifiedGenerationProjection {
     NodCertifiedGenerationProjection {
+        source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
+            block_number: 1,
+            block_hash: B256::repeat_byte(0x71),
+            state_root: B256::repeat_byte(0x72),
+        },
         worldwide_day: WorldwideDay::new(WWD),
         generation: 9,
         job_id: B256::with_last_byte(1),
@@ -39,6 +44,7 @@ fn nod_projection() -> NodCertifiedGenerationProjection {
         bucket_count: 10,
         nod_amount_total: U256::from(1_000),
         lysis_allocation_minor: U256::from(500),
+        nod_gratis_load_max: U256::from(200),
         issued_at: 1_785_024_000,
         next_nod_ordinal: 0,
         last_progress_height: 1,

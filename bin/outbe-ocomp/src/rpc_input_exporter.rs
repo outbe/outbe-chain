@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 
 use alloy_primitives::{keccak256, B256};
-use outbe_compressed_entities::{body_commitment, Commitment, ACTIVE_COMMITMENT_SCHEME};
 use outbe_node::ocomp::verify_lysis_openings;
 use outbe_ocomp_protocol::{
     common::BoundedBytes,
@@ -19,12 +18,8 @@ use outbe_ocomp_protocol::{
     profile::ProtocolBundleV1,
     SchemaLimits, SnapshotExportCommittedV1, SnapshotHandoffV1,
 };
-use outbe_offchain_data::{ProjectionConfig, ProjectionState};
-use outbe_offchain_storage::{
-    StorageConfig, StorageError, StorageErrorKind, StorageProvider, StorageReadSource,
-};
+use outbe_offchain_storage::StorageConfig;
 use outbe_primitives::time::WorldwideDay;
-use outbe_tribute::RetainedTributePin;
 use thiserror::Error;
 
 use crate::{
@@ -34,7 +29,6 @@ use crate::{
         ExportReceiptError, ExportReceiptPreparation, ExportReceiptReader, ExportReceiptStore,
         VerifiedExportReceipt,
     },
-    exporter::FinalizedTributeSource,
     input_artifacts::{
         decode_fidelity_subject_key, decode_oracle_subject_key, poc_input_list_limits,
         validate_verified_input_manifest_semantics_observing, DurableInputArtifactPublisher,
@@ -61,6 +55,8 @@ use crate::opening_stage::OpeningStageReportV1;
 
 // A progress heartbeat, not a capacity limit. The exporter still consumes all
 // records and keeps only its existing bounded publisher window in memory.
+mod state_sources;
+pub use state_sources::{archive_state_tribute_day, read_state_tribute_day};
 mod publication;
 mod replay;
 use publication::ExportWork;
@@ -89,20 +85,12 @@ pub struct RpcInputExporterConfigV1 {
 pub struct RpcInputExporterV1 {
     config: RpcInputExporterConfigV1,
     rpc: PublicOcompRpcClientV1,
-    storage_source: StorageReadSource,
     cas: FilesystemCas,
     reader: FilesystemCasReader,
 }
 
 impl RpcInputExporterV1 {
     pub fn open(config: RpcInputExporterConfigV1) -> Result<Self, RpcInputExporterErrorV1> {
-        let storage_source = StorageProvider::new(config.storage.clone())
-            .and_then(|provider| {
-                outbe_offchain_data::entity_partition_routing()
-                    .map(|routing| provider.with_partition_routing(routing))
-            })
-            .and_then(|provider| provider.read_source(&hex::encode(config.protocol_bundle_hash)))
-            .map_err(source_open_error)?;
         let rpc =
             PublicOcompRpcClientV1::new(config.rpc_url.clone(), config.rpc_max_response_bytes)?;
         let cas = FilesystemCas::open(
@@ -116,7 +104,6 @@ impl RpcInputExporterV1 {
         Ok(Self {
             config,
             rpc,
-            storage_source,
             cas,
             reader,
         })
@@ -166,7 +153,7 @@ impl RpcInputExporterV1 {
         if finalized.job_id != job_id {
             return Err(RpcInputExporterErrorV1::Authority("discovery JobId"));
         }
-        let (inventory, pin) = self.prepare_inventory(&work, &on_progress)?;
+        let (inventory, input_lease_id) = self.prepare_inventory(&work, &on_progress)?;
         let (published, _publication_readers) =
             self.publish_inventory(&work, &inventory, &on_progress)?;
         if published.tribute_count != finalized.intent.authenticated_day_count
@@ -177,7 +164,7 @@ impl RpcInputExporterV1 {
             ));
         }
 
-        self.commit_publication(&work, pin, published, &on_progress)
+        self.commit_publication(&work, input_lease_id, published, &on_progress)
     }
 }
 
@@ -188,8 +175,6 @@ struct ExpectedInputAuthorityV1 {
     attempt: u32,
     checkpoint: CheckpointIdentityV1,
     wwd: u32,
-    sealed_tribute_collection_key: B256,
-    sealed_tribute_collection_root: B256,
     tribute_count: u32,
     tribute_nominal_total: alloy_primitives::U256,
     body_codec_id: B256,
@@ -218,15 +203,8 @@ impl ExpectedInputAuthorityV1 {
                 finalized_block_number: finalized.request.block_number,
                 finalized_block_hash: finalized.request.block_hash,
                 finalized_state_root: finalized.request.state_root,
-                finalized_ce_root: finalized.intent.ce_sealed_root,
-                ce_schema_version: u16::try_from(
-                    outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
-                )
-                .map_err(|_| RpcInputExporterErrorV1::Authority("CE schema version"))?,
             },
             wwd: finalized.intent.wwd,
-            sealed_tribute_collection_key: finalized.intent.sealed_tribute_collection_key,
-            sealed_tribute_collection_root: finalized.intent.sealed_tribute_collection_root,
             tribute_count: finalized.intent.authenticated_day_count,
             tribute_nominal_total: finalized.intent.authenticated_day_nominal,
             body_codec_id: bundle.tribute_body_codec_id,
@@ -247,9 +225,7 @@ fn require_replayed_input_authority(
     let job_binding_mismatches = manifest.job_id != expected.job_id
         || manifest.attempt != expected.attempt
         || manifest.checkpoint != expected.checkpoint;
-    let sealed_population_mismatches = manifest.wwd != expected.wwd
-        || manifest.sealed_tribute_collection_key != expected.sealed_tribute_collection_key
-        || manifest.sealed_tribute_collection_root != expected.sealed_tribute_collection_root;
+    let sealed_population_mismatches = manifest.wwd != expected.wwd;
     let codec_and_totals_mismatch = (
         manifest.tribute_count,
         manifest.tribute_nominal_total,
@@ -360,27 +336,6 @@ fn verified_discovery_intent(
     })
 }
 
-fn require_projection_checkpoint(
-    state: Option<&ProjectionState>,
-    request: &FinalizedRequestBindingV1,
-) -> Result<(), RpcInputExporterErrorV1> {
-    let checkpoint =
-        state
-            .and_then(|state| state.checkpoint)
-            .ok_or(RpcInputExporterErrorV1::Authority(
-                "projection checkpoint missing",
-            ))?;
-    if checkpoint.block_number < request.block_number
-        || (checkpoint.block_number == request.block_number
-            && checkpoint.block_hash != request.block_hash)
-    {
-        return Err(RpcInputExporterErrorV1::Authority(
-            "projection checkpoint does not cover finalized request",
-        ));
-    }
-    Ok(())
-}
-
 fn committed_pin_generation(source_generation: u64) -> Result<u64, RpcInputExporterErrorV1> {
     source_generation
         .checked_add(1)
@@ -423,15 +378,6 @@ fn stage(stage: &'static str, error: impl std::fmt::Display) -> RpcInputExporter
     RpcInputExporterErrorV1::Stage {
         stage,
         detail: error.to_string(),
-    }
-}
-
-fn source_open_error(error: StorageError) -> RpcInputExporterErrorV1 {
-    match error.kind() {
-        StorageErrorKind::Unavailable | StorageErrorKind::RequestDeadline => {
-            RpcInputExporterErrorV1::SourceStorageUnavailable
-        }
-        _ => stage("open finalized Tribute source", error),
     }
 }
 

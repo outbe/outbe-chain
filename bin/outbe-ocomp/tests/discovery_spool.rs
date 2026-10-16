@@ -9,7 +9,6 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION;
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
     control::poc_schema_limits as exporter_schema_limits,
@@ -80,8 +79,6 @@ fn verified_receipt_with(
         finalized_block_number: job.summary.cursor,
         finalized_block_hash: job.summary.finalized_block_hash,
         finalized_state_root: job.summary.finalized_state_root,
-        finalized_ce_root: intent.ce_sealed_root,
-        ce_schema_version: u16::try_from(LOCAL_STORAGE_SCHEMA_VERSION).expect("CE schema version"),
     };
     let mut manifest = InputManifestV1 {
         protocol_bundle_hash: intent.protocol_bundle_hash,
@@ -89,8 +86,6 @@ fn verified_receipt_with(
         attempt: intent.attempt,
         checkpoint: checkpoint.clone(),
         wwd: intent.wwd,
-        sealed_tribute_collection_key: intent.sealed_tribute_collection_key,
-        sealed_tribute_collection_root: intent.sealed_tribute_collection_root,
         tribute_count: intent.authenticated_day_count,
         tribute_nominal_total: intent.authenticated_day_nominal,
         input_chunk_count: 1,

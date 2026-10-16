@@ -62,46 +62,39 @@ pub(super) fn derive_validator_recovery_follower_args(
     certified_upstream: &str,
 ) -> Result<Vec<String>> {
     let mut follower = Vec::with_capacity(original.len() + 2);
-    let mut index = 0;
-    while index < original.len() {
-        let arg = &original[index];
-        if arg == "--upstream"
-            || arg.starts_with("--upstream=")
-            || arg == "--upstream.nocertify"
-            || arg.starts_with("--upstream.nocertify=")
+    let mut remaining = original.iter();
+    while let Some(arg) = remaining.next() {
+        if ["--upstream", "--upstream.nocertify"]
+            .iter()
+            .any(|option| is_option(arg, option))
         {
             bail!("validator argv unexpectedly contains follower option {arg}");
         }
-
-        let mut stripped = false;
-        for (option, takes_value) in VALIDATOR_RECOVERY_FOLLOWER_STRIPPED_ARGS {
-            if arg == option {
-                if *takes_value {
-                    ensure!(
-                        index + 1 < original.len(),
-                        "validator option {option} is missing its value"
-                    );
-                    index += 1;
-                }
-                stripped = true;
-                break;
+        match VALIDATOR_RECOVERY_FOLLOWER_STRIPPED_ARGS
+            .iter()
+            .find(|(option, _)| is_option(arg, option))
+        {
+            Some((option, true)) if arg == option => {
+                ensure!(
+                    remaining.next().is_some(),
+                    "validator option {option} is missing its value"
+                );
             }
-            if arg
-                .strip_prefix(option)
-                .is_some_and(|suffix| suffix.starts_with('='))
-            {
-                stripped = true;
-                break;
-            }
+            Some(_) => {}
+            None => follower.push(arg.clone()),
         }
-        if !stripped {
-            follower.push(arg.clone());
-        }
-        index += 1;
     }
     follower.extend(args!["--upstream", certified_upstream]);
     ensure_validator_recovery_follower_args(&follower)?;
     Ok(follower)
+}
+
+/// `arg` is `option` itself or its `option=value` form.
+fn is_option(arg: &str, option: &str) -> bool {
+    arg == option
+        || arg
+            .strip_prefix(option)
+            .is_some_and(|suffix| suffix.starts_with('='))
 }
 
 impl Localnet {
@@ -243,7 +236,7 @@ impl Localnet {
     #[cfg(feature = "ocomp-integration")]
     pub(crate) fn prepare_snapshot_full_node(&mut self, index: usize) -> Result<()> {
         self.provision_full_node_node_host(index)?;
-        crate::world::projection::ensure_node_config(&self.cfg, index)?;
+
         Ok(())
     }
 
@@ -636,7 +629,6 @@ mod tests {
             "node".to_owned(),
             "--datadir".to_owned(),
             "/srv/outbe/validator-3/data".to_owned(),
-            "--projection.storage-config=/srv/outbe/validator-3/offchain-storage.toml".to_owned(),
             "--upstream".to_owned(),
             "http://validator-0:8545".to_owned(),
             "--tee-enclave-socket".to_owned(),
@@ -680,7 +672,6 @@ mod tests {
             "/srv/outbe/genesis.json".to_owned(),
             "--datadir".to_owned(),
             "/srv/outbe/validator-3/data".to_owned(),
-            "--projection.storage-config=/srv/outbe/validator-3/offchain-storage.toml".to_owned(),
             "--bootnodes=enode://canonical".to_owned(),
             "--validator".to_owned(),
             "--consensus.signing-key".to_owned(),
@@ -717,8 +708,8 @@ mod tests {
             exact_restore, original,
             "validator restart must retain byte-for-byte original argv"
         );
-        assert!(follower.contains(
-            &"--projection.storage-config=/srv/outbe/validator-3/offchain-storage.toml".to_owned()
-        ));
+        assert!(!follower
+            .iter()
+            .any(|arg| arg.starts_with("--projection.storage-config")));
     }
 }

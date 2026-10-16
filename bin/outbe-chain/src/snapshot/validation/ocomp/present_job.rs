@@ -91,22 +91,20 @@ fn observe_incomplete_reader_flags(
         && !receipt_present
         && existing_file(&receipt_path.join("prepared.ref"))?
     {
-        errors.observe::<()>(Err(Incomplete(format!(
-            "job {id}: prepared receipt observed; complete receipt comparison unavailable"
-        ))
-        .into()));
+        errors.observe::<()>(Err(
+            SnapshotIncompleteError::PreparedReceiptObserved { id }.into_report()
+        ));
     }
     if flags & PRESENT_INPUTS != 0 && !input_present {
-        errors.observe::<()>(Err(Incomplete(format!(
-            "job {id}: input catalog has no sealed header; exact comparison unavailable"
-        ))
-        .into()));
+        errors.observe::<()>(Err(
+            SnapshotIncompleteError::InputCatalogLacksSealedHeader { id }.into_report(),
+        ));
     }
     if active && has_ack && !receipt_present {
-        errors.observe::<()>(Err(Incomplete(format!(
-            "job {id}: active acknowledged export lacks its required complete receipt"
-        ))
-        .into()));
+        errors.observe::<()>(Err(SnapshotIncompleteError::ActiveAckExportLacksReceipt {
+            id,
+        }
+        .into_report()));
     }
     Ok(())
 }
@@ -227,10 +225,9 @@ fn verify_present_binding_step(
         return Ok(false);
     }
     let (Some(reader), Some(inputs)) = (&readers.binding_reader, inputs) else {
-        errors.observe::<()>(Err(Incomplete(format!(
-            "job {id}: present binding comparison lacks complete input catalog"
-        ))
-        .into()));
+        errors.observe::<()>(Err(
+            SnapshotIncompleteError::PresentBindingLacksInputCatalog { id }.into_report(),
+        ));
         return Ok(false);
     };
     let loaded = load_and_verify_present_binding(
@@ -342,10 +339,9 @@ pub(super) fn verify_present_job(
     let inputs = reopen_present_input_catalog(&readers, &cas, &mut errors);
     let Some(job) = job else {
         // A bare JobId does not justify historical state scans or invented B/day.
-        errors.observe::<()>(Err(Incomplete(format!(
-            "job {id}: canonical comparison lacks retained job locator evidence"
-        ))
-        .into()));
+        errors.observe::<()>(Err(
+            SnapshotIncompleteError::CanonicalComparisonLacksJobLocator { id }.into_report(),
+        ));
         return errors.finish();
     };
     let bundle = read_pinned_bundle(root, job.intent.protocol_bundle_hash)?;

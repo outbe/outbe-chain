@@ -420,6 +420,106 @@ pub(in crate::features::ocomp) fn fresh_wwd_lifecycle_overshot(
     }
 }
 
+type StatusChanges = Vec<crate::world::rpc::MetadosisWorldwideDayStatusChangeV1>;
+type LifecycleObservation = (Vec<MetadosisFinalizedPointV1>, StatusChanges);
+
+struct LifecycleTarget<'a> {
+    worldwide_day: u32,
+    status: u8,
+    edges: &'a [(u8, u8)],
+}
+
+fn edges_match(changes: &StatusChanges, edges: &[(u8, u8)]) -> bool {
+    changes
+        .iter()
+        .map(|edge| (edge.old_status, edge.new_status))
+        .eq(edges.iter().copied())
+}
+
+fn matching_status_changes(
+    statuses: &[Option<u8>],
+    changes: &[Option<StatusChanges>],
+    target: &LifecycleTarget<'_>,
+) -> Option<StatusChanges> {
+    let persisted = statuses.iter().all(|status| *status == Some(target.status))
+        && changes.iter().all(Option::is_some);
+    if !persisted {
+        return None;
+    }
+    let first = changes[0]
+        .clone()
+        .expect("finalized Metadosis status changes");
+    let unanimous = changes
+        .iter()
+        .all(|candidate| candidate.as_ref() == Some(&first));
+    (edges_match(&first, target.edges) && unanimous).then_some(first)
+}
+
+fn historical_lifecycle_or_panic(
+    world: &World,
+    target: &LifecycleTarget<'_>,
+    heights: (u64, u64),
+    statuses: &[Option<u8>],
+) -> LifecycleObservation {
+    historical_lifecycle_observation(world, target, heights).unwrap_or_else(|error| {
+        panic!(
+            "fresh Metadosis WWD passed status {}, and the bounded canonical history did not prove the required transition: statuses={statuses:?}; {error}",
+            target.status
+        )
+    })
+}
+
+fn assert_transition_after_boundary(
+    world: &World,
+    changes: &StatusChanges,
+    requested_timestamp: u64,
+    expected_status: u8,
+) {
+    let transition = changes
+        .last()
+        .expect("expected at least one Metadosis status change");
+    let transition_timestamp = world
+        .rpc
+        .block_timestamp(world.validators.primary_port(), transition.block_number)
+        .expect("canonical Metadosis transition block timestamp");
+    let transition_floor = if expected_status == 8 {
+        world
+            .state
+            .metadosis_fresh_lifecycle_observation
+            .as_ref()
+            .expect("fresh Metadosis lifecycle evidence")
+            .scheduled_process_time
+    } else {
+        requested_timestamp
+    };
+    assert!(
+        transition_timestamp >= transition_floor.saturating_sub(1),
+        "Metadosis transition occurred before its canonical phase boundary"
+    );
+}
+
+fn record_time_control_epoch(
+    world: &mut World,
+    epoch: MetadosisTimeControlEpochV1,
+    changes: StatusChanges,
+    expected_status: u8,
+) {
+    let current_genesis_hash = common_block_hash(world, 0);
+    let lifecycle = world
+        .state
+        .metadosis_fresh_lifecycle_observation
+        .as_mut()
+        .expect("fresh Metadosis lifecycle evidence");
+    assert_eq!(lifecycle.genesis_hash, current_genesis_hash);
+    lifecycle.status_changes = changes;
+    lifecycle.time_control_epochs.push(epoch);
+    if expected_status == 2 {
+        lifecycle.offering_validator_count = 4;
+    } else {
+        lifecycle.ready_validator_count = 4;
+    }
+}
+
 fn advance_fresh_metadosis_time(
     world: &mut World,
     requested_timestamp: u64,
@@ -429,7 +529,11 @@ fn advance_fresh_metadosis_time(
     let (offset, before_restart, minimum_height, pending_price_publication) =
         restart_committee_at_logical_time(world, requested_timestamp);
     let before_timestamp = before_restart[0].block_timestamp;
-    let worldwide_day = fresh_metadosis_wwd(world);
+    let target = LifecycleTarget {
+        worldwide_day: fresh_metadosis_wwd(world),
+        status: expected_persisted_status,
+        edges: expected_edges,
+    };
     // The chain closes the gap one hour per block, so wait on progress rather
     // than on a budget derived from the distance. A loaded host slows block
     // production without stalling it.
@@ -447,71 +551,37 @@ fn advance_fresh_metadosis_time(
             last_timestamp = points[0].block_timestamp;
             deadline = Instant::now() + RATCHET_STALL_TIMEOUT;
         }
-        let states = world
-            .validators
-            .committee_ports()
-            .into_iter()
-            .map(|port| {
+        let ports = world.validators.committee_ports();
+        let statuses = ports
+            .iter()
+            .map(|&port| {
                 world
                     .rpc
-                    .metadosis_wwd_state_at(port, worldwide_day, common_height)
+                    .metadosis_wwd_state_at(port, target.worldwide_day, common_height)
+                    .map(|state| state.status)
             })
             .collect::<Vec<_>>();
-        let changes = world
-            .validators
-            .committee_ports()
-            .into_iter()
-            .map(|port| {
+        let changes = ports
+            .iter()
+            .map(|&port| {
                 world
                     .rpc
-                    .finalized_metadosis_wwd_status_changes_on(port, worldwide_day)
+                    .finalized_metadosis_wwd_status_changes_on(port, target.worldwide_day)
             })
             .collect::<Vec<_>>();
-        let lifecycle_now = states.iter().all(|state| {
-            state
-                .as_ref()
-                .is_some_and(|state| state.status == expected_persisted_status)
-        }) && changes.iter().all(Option::is_some);
-        let matching_changes = if lifecycle_now {
-            let first = changes[0]
-                .clone()
-                .expect("finalized Metadosis status changes");
-            if first
-                .iter()
-                .map(|edge| (edge.old_status, edge.new_status))
-                .eq(expected_edges.iter().copied())
-                && changes
-                    .iter()
-                    .all(|candidate| candidate.as_ref() == Some(&first))
-            {
-                Some(first)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let matching_changes = matching_status_changes(&statuses, &changes, &target);
         let lifecycle_now = matching_changes.is_some();
         if lifecycle_observation.is_none() {
-            if let Some(first) = matching_changes {
-                lifecycle_observation = Some((points.clone(), first));
-            }
+            lifecycle_observation = matching_changes.map(|first| (points.clone(), first));
         }
-        let publication_now = if barrier.publication_observed {
-            false
-        } else {
-            pending_price_publication.as_ref().is_some_and(|pending| {
+        let publication_now = !barrier.publication_observed
+            && pending_price_publication.as_ref().is_some_and(|pending| {
                 crate::features::price_oracle::observe_pending_publication(world, pending)
-            })
-        };
-        let observed_statuses = states
-            .iter()
-            .map(|state| state.as_ref().map(|state| state.status))
-            .collect::<Vec<_>>();
+            });
         match restart_barrier_decision(
             barrier,
             lifecycle_now,
-            fresh_wwd_lifecycle_overshot(expected_persisted_status, &observed_statuses),
+            fresh_wwd_lifecycle_overshot(expected_persisted_status, &statuses),
             publication_now,
         ) {
             RestartBarrierDecision::Complete => {
@@ -520,42 +590,29 @@ fn advance_fresh_metadosis_time(
                     .expect("completed restart barrier has a lifecycle observation")
             }
             RestartBarrierDecision::HistoricalLifecycleRequired(next) => {
-                let observation = historical_lifecycle_observation(
+                let observation = historical_lifecycle_or_panic(
                     world,
-                    worldwide_day,
-                    minimum_height,
-                    common_height,
-                    expected_persisted_status,
-                    expected_edges,
-                )
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "fresh Metadosis WWD passed status {expected_persisted_status}, and the bounded canonical history did not prove the required transition: statuses={observed_statuses:?}; {error}"
-                    )
-                });
-                lifecycle_observation = Some(observation);
+                    &target,
+                    (minimum_height, common_height),
+                    &statuses,
+                );
                 barrier = RestartBarrierState {
                     lifecycle_observed: true,
                     publication_observed: next.publication_observed,
                 };
                 if barrier.publication_observed {
-                    break lifecycle_observation
-                        .take()
-                        .expect("historical lifecycle proof completes the restart barrier");
+                    break observation;
                 }
+                lifecycle_observation = Some(observation);
             }
             RestartBarrierDecision::Continue(next) => barrier = next,
         }
         assert!(
             Instant::now() < deadline,
             "fresh Metadosis WWD did not reach status {expected_persisted_status} with edges \
-             {expected_edges:?}; observed statuses {observed:?} and edges {seen:?} at logical \
+             {expected_edges:?}; observed statuses {statuses:?} and edges {seen:?} at logical \
              timestamp {reached} (requested {requested_timestamp}); the drift ratchet made no \
              progress for {stall:?}",
-            observed = states
-                .iter()
-                .map(|state| state.as_ref().map(|state| state.status))
-                .collect::<Vec<_>>(),
             seen = changes[0].as_ref().map(|edges| edges
                 .iter()
                 .map(|edge| (edge.old_status, edge.new_status))
@@ -565,66 +622,75 @@ fn advance_fresh_metadosis_time(
         );
         sleep(Duration::from_millis(250));
     };
-    let transition = changes
-        .last()
-        .expect("expected at least one Metadosis status change");
-    let transition_timestamp = world
-        .rpc
-        .block_timestamp(world.validators.primary_port(), transition.block_number)
-        .expect("canonical Metadosis transition block timestamp");
-    let transition_floor = if expected_persisted_status == 8 {
-        world
-            .state
-            .metadosis_fresh_lifecycle_observation
-            .as_ref()
-            .expect("fresh Metadosis lifecycle evidence")
-            .scheduled_process_time
-    } else {
-        requested_timestamp
-    };
-    assert!(
-        transition_timestamp >= transition_floor.saturating_sub(1),
-        "Metadosis transition occurred before its canonical phase boundary"
+    assert_transition_after_boundary(
+        world,
+        &changes,
+        requested_timestamp,
+        expected_persisted_status,
     );
-
-    let current_genesis_hash = common_block_hash(world, 0);
-    let lifecycle = world
-        .state
-        .metadosis_fresh_lifecycle_observation
-        .as_mut()
-        .expect("fresh Metadosis lifecycle evidence");
-    assert_eq!(lifecycle.genesis_hash, current_genesis_hash);
-    lifecycle.status_changes = changes;
-    lifecycle
-        .time_control_epochs
-        .push(MetadosisTimeControlEpochV1 {
+    record_time_control_epoch(
+        world,
+        MetadosisTimeControlEpochV1 {
             requested_timestamp,
             unix_time_offset_secs: offset,
             before_restart,
             after_restart,
-        });
-    if expected_persisted_status == 2 {
-        lifecycle.offering_validator_count = 4;
-    } else {
-        lifecycle.ready_validator_count = 4;
-    }
+        },
+        changes,
+        expected_persisted_status,
+    );
+}
+
+fn unanimous_status_at(
+    world: &World,
+    ports: &[u16],
+    target: &LifecycleTarget<'_>,
+    height: u64,
+) -> bool {
+    let states = ports
+        .iter()
+        .map(|port| {
+            world
+                .rpc
+                .metadosis_wwd_state_at(*port, target.worldwide_day, height)
+        })
+        .collect::<Vec<_>>();
+    let Some(first_state) = states.first().and_then(Option::as_ref) else {
+        return false;
+    };
+    first_state.status == target.status
+        && states
+            .iter()
+            .all(|candidate| candidate.as_ref() == Some(first_state))
+}
+
+fn unanimous_edges_through(
+    all_changes: &[StatusChanges],
+    target: &LifecycleTarget<'_>,
+    height: u64,
+) -> Option<StatusChanges> {
+    let changes = all_changes
+        .iter()
+        .map(|validator_changes| {
+            validator_changes
+                .iter()
+                .filter(|edge| edge.block_number <= height)
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let first_changes = &changes[0];
+    let unanimous = changes.iter().all(|candidate| candidate == first_changes);
+    (edges_match(first_changes, target.edges) && unanimous).then(|| first_changes.clone())
 }
 
 fn historical_lifecycle_observation(
     world: &World,
-    worldwide_day: u32,
-    minimum_height: u64,
-    current_height: u64,
-    expected_status: u8,
-    expected_edges: &[(u8, u8)],
-) -> Result<
-    (
-        Vec<MetadosisFinalizedPointV1>,
-        Vec<crate::world::rpc::MetadosisWorldwideDayStatusChangeV1>,
-    ),
-    String,
-> {
+    target: &LifecycleTarget<'_>,
+    (minimum_height, current_height): (u64, u64),
+) -> Result<LifecycleObservation, String> {
     let ports = world.validators.committee_ports();
+    let worldwide_day = target.worldwide_day;
     let all_changes = ports
         .iter()
         .map(|port| {
@@ -639,57 +705,24 @@ fn historical_lifecycle_observation(
         })
         .collect::<Result<Vec<_>, _>>()?;
     for height in historical_lifecycle_scan_heights(minimum_height, current_height)? {
-        let states = ports
-            .iter()
-            .map(|port| {
-                world
-                    .rpc
-                    .metadosis_wwd_state_at(*port, worldwide_day, height)
-            })
-            .collect::<Vec<_>>();
-        let Some(first_state) = states.first().and_then(Option::as_ref) else {
+        if !unanimous_status_at(world, &ports, target, height) {
+            continue;
+        }
+        let Some(first_changes) = unanimous_edges_through(&all_changes, target, height) else {
             continue;
         };
-        if first_state.status != expected_status
-            || !states
-                .iter()
-                .all(|candidate| candidate.as_ref() == Some(first_state))
-        {
-            continue;
-        }
-        let changes = all_changes
-            .iter()
-            .map(|validator_changes| {
-                validator_changes
-                    .iter()
-                    .filter(|edge| edge.block_number <= height)
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        let first_changes = &changes[0];
-        if !first_changes
-            .iter()
-            .map(|edge| (edge.old_status, edge.new_status))
-            .eq(expected_edges.iter().copied())
-            || !changes.iter().all(|candidate| candidate == first_changes)
-        {
-            continue;
-        }
         let points = finalized_points_at_height(world, height);
-        if !points
-            .iter()
-            .all(|point| point.block_hash == points[0].block_hash)
-            || !points
-                .iter()
-                .all(|point| point.block_timestamp == points[0].block_timestamp)
-        {
-            continue;
+        let same_block = points.iter().all(|point| {
+            point.block_hash == points[0].block_hash
+                && point.block_timestamp == points[0].block_timestamp
+        });
+        if same_block {
+            return Ok((points, first_changes));
         }
-        return Ok((points, first_changes.clone()));
     }
     Err(format!(
-        "no unanimous status {expected_status} with edges {expected_edges:?} in finalized heights {minimum_height}..={current_height}"
+        "no unanimous status {} with edges {:?} in finalized heights {minimum_height}..={current_height}",
+        target.status, target.edges
     ))
 }
 

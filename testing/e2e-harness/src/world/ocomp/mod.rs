@@ -117,6 +117,9 @@ pub use processes::readiness::OcompRuntimeCountsV1;
 pub(crate) use processes::restart::OcompNodeFacingResumePlan;
 
 #[cfg(feature = "ocomp-integration")]
+pub(crate) use processes::worker_outage::OutageExportJob;
+
+#[cfg(feature = "ocomp-integration")]
 pub(crate) use evidence::OcompCanonicalArtifactProof;
 
 #[cfg(feature = "ocomp-integration")]
@@ -150,12 +153,19 @@ use fixtures::delegates::{
 };
 
 #[cfg(feature = "ocomp-integration")]
-use fixtures::genesis::{
-    apply_measurement_gas_envelope, capacity_tribute_private_keys, clear_seeded_metadosis_days,
-    find_alloc_address_key, fund_capacity_tribute_accounts, genesis_chain_id, parse_hex_word,
-    parse_outbe_chain_spec, parse_storage_word, schedule_public_measurement_day,
-    seed_capacity_operator_l2_registrations, seed_fresh_metadosis_oracle_input,
+use fixtures::capacity::{
+    capacity_tribute_private_keys, fund_capacity_tribute_accounts,
+    seed_capacity_operator_l2_registrations,
 };
+
+#[cfg(feature = "ocomp-integration")]
+use fixtures::genesis::{
+    apply_measurement_gas_envelope, find_alloc_address_key, genesis_chain_id, parse_hex_word,
+    parse_outbe_chain_spec, parse_storage_word, schedule_public_measurement_day,
+};
+
+#[cfg(feature = "ocomp-integration")]
+use fixtures::metadosis_days::{clear_seeded_metadosis_days, seed_fresh_metadosis_oracle_input};
 
 #[cfg(feature = "ocomp-integration")]
 use fixtures::membership::schedule_public_recovery_day;
@@ -169,8 +179,8 @@ use topology::OcompDomain;
 #[cfg(feature = "ocomp-integration")]
 #[cfg(test)]
 use processes::launch::{
-    configure_release_layout, configure_snapshot_exporter_command,
-    configure_snapshot_exporter_projection, OCOMP_BASE_PATH_ENV, OCOMP_VALIDATOR_INDEX_ENV,
+    configure_release_layout, configure_snapshot_exporter_command, OCOMP_BASE_PATH_ENV,
+    OCOMP_VALIDATOR_INDEX_ENV,
 };
 
 #[cfg(feature = "ocomp-integration")]

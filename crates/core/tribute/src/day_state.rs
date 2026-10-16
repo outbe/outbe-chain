@@ -14,7 +14,6 @@ use crate::{
 impl TributeContract<'_> {
     pub(crate) fn freeze_day_nominal(&self, admission: &DayPreAdmission) -> Result<()> {
         let mut context = b"outbe/tribute/day-freeze/v2".to_vec();
-        context.extend_from_slice(admission.sealed_collection_root.as_slice());
         context.extend_from_slice(&admission.sealed_tribute_count.to_be_bytes());
         context.extend_from_slice(&admission.canonical_body_bytes.to_be_bytes());
         context.extend_from_slice(&admission.distinct_owner_count.to_be_bytes());
@@ -29,9 +28,9 @@ impl TributeContract<'_> {
 
     pub fn encrypted_day_nominal(&self, day: WorldwideDay, frozen: bool) -> Result<Vec<u8>> {
         if frozen {
-            self.frozen_day_nominal_ct.get_bytes(&day).read()
+            self.frozen_day_nominal_ct.bytes(&day).read()
         } else {
-            self.day_nominal_ct.get_bytes(&day).read()
+            self.day_nominal_ct.bytes(&day).read()
         }
     }
 
@@ -45,7 +44,7 @@ impl TributeContract<'_> {
             return Ok(None);
         }
         let record: EncryptedTributeDayAmountV2 =
-            postcard::from_bytes(&bytes).map_err(crate::errors::body_read_corruption)?;
+            postcard::from_bytes(&bytes).map_err(crate::errors::TributeError::from)?;
         if record.worldwide_day != day
             || record.frozen != frozen
             || record.chain_id != self.storage_handle().chain_id()?
@@ -60,7 +59,7 @@ impl TributeContract<'_> {
         match self.day_amount_record(day, frozen)? {
             None => Ok(U256::ZERO),
             Some(record) => crate::enclave_client::read_day_amount(&record)
-                .map_err(crate::errors::day_enclave_error),
+                .map_err(|err| crate::errors::TributeError::DayEnclave(err).into()),
         }
     }
 
@@ -79,15 +78,15 @@ impl TributeContract<'_> {
             public_state_hash,
         };
         let record = crate::enclave_client::apply_day_operation(request)
-            .map_err(crate::errors::day_enclave_error)?;
+            .map_err(crate::errors::TributeError::DayEnclave)?;
         if record.frozen != frozen {
             return Err(crate::errors::TributeError::DayResponseScopeMismatch.into());
         }
-        let bytes = postcard::to_allocvec(&record).map_err(crate::errors::body_read_corruption)?;
+        let bytes = postcard::to_allocvec(&record).map_err(crate::errors::TributeError::from)?;
         if frozen {
-            self.frozen_day_nominal_ct.get_bytes(&day).write(&bytes)
+            self.frozen_day_nominal_ct.bytes(&day).write(&bytes)
         } else {
-            self.day_nominal_ct.get_bytes(&day).write(&bytes)
+            self.day_nominal_ct.bytes(&day).write(&bytes)
         }
     }
 
@@ -113,7 +112,6 @@ impl TributeContract<'_> {
         let mut view = DayPreAdmission::with_key(day);
         view.initialized = stored.initialized;
         view.is_sealed = stored.is_sealed;
-        view.sealed_collection_root = stored.sealed_collection_root;
         view.sealed_tribute_count = stored.sealed_tribute_count;
         view.sealed_tribute_nominal_total_minor = if stored.is_sealed {
             self.day_nominal_amount(day, true)?
@@ -157,7 +155,6 @@ impl TributeContract<'_> {
         let mut stored = StoredDayPreAdmission::with_key(view.worldwide_day);
         stored.initialized = view.initialized;
         stored.is_sealed = view.is_sealed;
-        stored.sealed_collection_root = view.sealed_collection_root;
         stored.sealed_tribute_count = view.sealed_tribute_count;
         stored.canonical_body_bytes = view.canonical_body_bytes;
         stored.distinct_owner_count = view.distinct_owner_count;

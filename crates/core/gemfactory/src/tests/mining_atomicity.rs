@@ -5,16 +5,16 @@ use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
 
 use crate::precompile::IGemFactory;
 
-/// One settled Genesis Gem of `load` Promis owned by Alice, priced at 2 COEN/USD.
-fn settled_gem(load: U256) -> (HashMapStorageProvider, GemWorld, U256) {
-    let (mut provider, world) = test_storage(Some(U256::from(2u64) * six_decimal_unit()));
+/// One settled Validator Gem of `load` Promis owned by Alice, priced at 2 COEN/USD.
+fn settled_gem(load: U256) -> (HashMapStorageProvider, U256) {
+    let mut provider = test_storage(Some(U256::from(2u64) * six_decimal_unit()));
     let gem_id = StorageHandle::enter(&mut provider, |storage| {
         let gem_id =
-            issue_at_live_rate(&storage, &world, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
-        force_settled(&storage, &world, gem_id);
+            issue_at_live_rate(&storage, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
+        force_settled(&storage, gem_id);
         gem_id
     });
-    (provider, world, gem_id)
+    (provider, gem_id)
 }
 
 fn promis_balance(storage: &StorageHandle<'_>, account: Address) -> U256 {
@@ -32,7 +32,7 @@ fn promis_balance(storage: &StorageHandle<'_>, account: Address) -> U256 {
 fn a_rejected_promis_mint_leaves_the_settled_gem_and_its_nonce_untouched() {
     outbe_promis::enclave_client::test_enclave::install();
     let load = U256::from(10u64) * six_decimal_unit();
-    let (mut provider, world, gem_id) = settled_gem(load);
+    let (mut provider, gem_id) = settled_gem(load);
     StorageHandle::enter(&mut provider, |storage| {
         let storage = &storage;
         let nonce = find_valid_nonce(gem_id, ALICE);
@@ -41,8 +41,6 @@ fn a_rejected_promis_mint_leaves_the_settled_gem_and_its_nonce_untouched() {
         let wrong = promis_auth(ALICE, load - U256::ONE, 0);
         let error = runtime::mine_promis(
             storage,
-            &world.scope,
-            &world.parent,
             crate::schema::GemMiningProof { gem_id, nonce },
             wrong,
         )
@@ -53,7 +51,7 @@ fn a_rejected_promis_mint_leaves_the_settled_gem_and_its_nonce_untouched() {
         );
 
         let gem = GemContract::new(storage.clone());
-        let item = gem_item(storage, &world, gem_id);
+        let item = gem_item(storage, gem_id);
         assert_eq!(
             item.state,
             GemState::Settled as u8,
@@ -70,18 +68,12 @@ fn a_rejected_promis_mint_leaves_the_settled_gem_and_its_nonce_untouched() {
         // The entitlement is intact: the same nonce and a correct authorization mine it.
         let minted = runtime::mine_promis(
             storage,
-            &world.scope,
-            &world.parent,
             crate::schema::GemMiningProof { gem_id, nonce },
             promis_auth(ALICE, load, 0),
         )
         .unwrap();
         assert_eq!(minted, load);
-        assert!(
-            gem_api::get_item(storage, &world.scope, &world.parent, gem_id)
-                .unwrap()
-                .is_none()
-        );
+        assert!(gem_api::get_item(storage, gem_id).unwrap().is_none());
         assert_eq!(promis_balance(storage, ALICE), load);
     });
     outbe_promis::enclave_client::test_enclave::uninstall();
@@ -91,34 +83,29 @@ fn a_rejected_promis_mint_leaves_the_settled_gem_and_its_nonce_untouched() {
 fn a_mining_that_fails_after_any_write_keeps_the_settled_gem_and_mines_once_on_retry() {
     outbe_promis::enclave_client::test_enclave::install();
     let load = U256::from(10u64) * six_decimal_unit();
-    let mine = |provider: &mut HashMapStorageProvider, world: &GemWorld, gem_id: U256| {
+    let mine = |provider: &mut HashMapStorageProvider, gem_id: U256| {
         let nonce = find_valid_nonce(gem_id, ALICE);
         StorageHandle::enter(provider, |storage| {
             runtime::mine_promis(
                 &storage,
-                &world.scope,
-                &world.parent,
                 crate::schema::GemMiningProof { gem_id, nonce },
                 promis_auth(ALICE, load, 0),
             )
         })
     };
 
-    let (mut provider, world, gem_id) = settled_gem(load);
+    let (mut provider, gem_id) = settled_gem(load);
     provider.clear_mutation_failure();
-    assert_eq!(mine(&mut provider, &world, gem_id).unwrap(), load);
+    assert_eq!(mine(&mut provider, gem_id).unwrap(), load);
     let writes = provider.clear_mutation_failure();
     assert!(writes > 0);
 
     for failure_at in 0..writes {
-        let (mut provider, world, gem_id) = settled_gem(load);
+        let (mut provider, gem_id) = settled_gem(load);
         let slots = provider.storage.clone();
         let events = provider.get_ordered_events().to_vec();
         provider.fail_after_mutation_at(failure_at);
-        assert!(
-            mine(&mut provider, &world, gem_id).is_err(),
-            "failure {failure_at}"
-        );
+        assert!(mine(&mut provider, gem_id).is_err(), "failure {failure_at}");
         assert_eq!(
             provider.storage, slots,
             "a write survived failure {failure_at}"
@@ -129,7 +116,7 @@ fn a_mining_that_fails_after_any_write_keeps_the_settled_gem_and_mines_once_on_r
             "failure {failure_at}"
         );
         StorageHandle::enter(&mut provider, |storage| {
-            let item = gem_item(&storage, &world, gem_id);
+            let item = gem_item(&storage, gem_id);
             assert_eq!(item.state, GemState::Settled as u8, "failure {failure_at}");
             assert_eq!(
                 outbe_promis::api::op_nonce(storage.clone(), ALICE).unwrap(),
@@ -141,11 +128,8 @@ fn a_mining_that_fails_after_any_write_keeps_the_settled_gem_and_mines_once_on_r
         });
 
         provider.clear_mutation_failure();
-        assert_eq!(mine(&mut provider, &world, gem_id).unwrap(), load);
-        assert!(
-            mine(&mut provider, &world, gem_id).is_err(),
-            "the Gem mines once"
-        );
+        assert_eq!(mine(&mut provider, gem_id).unwrap(), load);
+        assert!(mine(&mut provider, gem_id).is_err(), "the Gem mines once");
         StorageHandle::enter(&mut provider, |storage| {
             assert_eq!(promis_balance(&storage, ALICE), load);
             assert_eq!(

@@ -1,9 +1,6 @@
-//! Defines core engine error types for args, CE finalization, follow transport, peer management, and validators.
-
-use std::time::Duration;
+//! Defines core engine error types for args, follow transport, peer management, and validators.
 
 use alloy_primitives::{Address, B256};
-use outbe_compressed_entities::FinalizedMarker;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -13,9 +10,19 @@ pub enum ApplicationShutdownError {
     /// Indicates that the shutdown drain failed.
     #[error("{0}")]
     DrainFailed(String),
+    /// Indicates that the application drain also failed after a primary error.
+    #[error("application drain also failed: {0}")]
+    DrainAlsoFailed(String),
     /// Indicates that the consensus stack panicked.
     #[error("consensus stack panicked: {0}")]
     ConsensusStackPanicked(String),
+}
+
+impl ApplicationShutdownError {
+    /// Formats an additional application drain failure with its full cause chain.
+    pub fn drain_also_failed(cleanup: &eyre::Report) -> Self {
+        Self::DrainAlsoFailed(format!("{cleanup:#}"))
+    }
 }
 
 /// Represents CLI argument validation errors.
@@ -58,12 +65,6 @@ pub enum ArgsError {
     /// Indicates that the encrypted BLS key backend lacks a passphrase.
     #[error("--bls-key-backend encrypted requires --bls-passphrase or BLS_PASSPHRASE env var.")]
     EncryptedBackendRequiresPassphraseArg,
-    /// Indicates that the projection storage config path is missing.
-    #[error("offchain storage is required; provide --projection.storage-config")]
-    OffchainStorageRequired,
-    /// Indicates that the projection storage config path is empty.
-    #[error("--projection.storage-config must not be empty")]
-    ProjectionStorageConfigEmpty,
     /// Indicates that default EVM key derivation lacks a consensus signing key.
     #[error(
         "--validator requires --consensus.signing-key before deriving default --validator.evm-key"
@@ -75,381 +76,6 @@ pub enum ArgsError {
     /// Indicates an unrecognized BLS key backend name.
     #[error("unknown BLS key backend: {0} (expected: plaintext, encrypted, os-level)")]
     UnknownBlsKeyBackend(String),
-}
-
-/// Represents errors from the CE finalizer and durable persistence checks.
-#[derive(Debug, Error)]
-pub enum CeFinalizerError {
-    /// Indicates that the genesis header contains a CE root artifact.
-    #[error("genesis durable header unexpectedly carries a CE root artifact")]
-    GenesisCarriesCeRootArtifact,
-    /// Indicates that a canonical header lacks a CE root artifact.
-    #[error("durable canonical header is missing CE root artifact at {height}/{block_hash}")]
-    MissingCeRootArtifact {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-    },
-    /// Indicates a CE scheme mismatch between the header and the active configuration.
-    #[error(
-        "durable canonical header CE scheme mismatch at {height}/{block_hash}: header={header}, active={active}"
-    )]
-    CeSchemeMismatch {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-        /// Header scheme id.
-        header: u32,
-        /// Active scheme id.
-        active: u32,
-    },
-    /// Indicates a CE root mismatch between the header and EVM storage.
-    #[error(
-        "durable canonical header/EVM CE root mismatch at {height}/{block_hash}: header={header}, evm={evm}"
-    )]
-    HeaderEvmCeRootMismatch {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-        /// Header CE root.
-        header: B256,
-        /// EVM CE root.
-        evm: B256,
-    },
-    /// Indicates that the Reth DB-only provider failed to open.
-    #[error("failed to open Reth DB-only provider: {0}")]
-    OpenDbProvider(String),
-    /// Indicates that reading a durable block failed.
-    #[error("failed to read durable block {height}: {error}")]
-    ReadDurableBlock {
-        /// Block height.
-        height: u64,
-        /// Underlying error text.
-        error: String,
-    },
-    /// Indicates that reading a durable header failed.
-    #[error("failed to read durable header {height}: {error}")]
-    ReadDurableHeader {
-        /// Block height.
-        height: u64,
-        /// Underlying error text.
-        error: String,
-    },
-    /// Indicates that a durable header is missing.
-    #[error("durable header {height}/{block_hash} is missing")]
-    DurableHeaderMissing {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-    },
-    /// Indicates a hash conflict between the height index and the durable header.
-    #[error(
-        "durable header/hash index conflict at height {height}: index={index}, header={header}"
-    )]
-    DurableHeaderHashConflict {
-        /// Block height.
-        height: u64,
-        /// Index block hash.
-        index: B256,
-        /// Header block hash.
-        header: B256,
-    },
-    /// Indicates that decoding durable header artifacts failed.
-    #[error("failed to decode durable header artifacts for {height}/{block_hash}: {error}")]
-    DecodeDurableHeaderArtifacts {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-        /// Underlying error text.
-        error: String,
-    },
-    /// Indicates that reading the durable CE root failed.
-    #[error("failed to read durable CE root for {height}/{block_hash}: {error}")]
-    ReadDurableCeRoot {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-        /// Underlying error text.
-        error: String,
-    },
-    /// Indicates that the durable parent checkpoint is missing.
-    #[error("durable parent checkpoint {0} is missing")]
-    DurableParentCheckpointMissing(u64),
-    /// Indicates an attempt to replay height 0 as a normal block.
-    #[error("height 0 is the CE replay baseline, not a replay block")]
-    HeightZeroNotReplayBlock,
-    /// Indicates that the durable canonical parent is unavailable during replay.
-    #[error("durable canonical parent {parent_height} is unavailable while replaying {height}/{block_hash}")]
-    DurableCanonicalParentUnavailable {
-        /// Parent block height.
-        parent_height: u64,
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-    },
-    /// Indicates that opening the DB-only receipt provider failed.
-    #[error("failed to open DB-only receipt provider: {0}")]
-    OpenReceiptProvider(String),
-    /// Indicates that reading durable receipts failed.
-    #[error("failed to read durable receipts for {height}/{hash}: {error}")]
-    ReadDurableReceipts {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        hash: B256,
-        /// Underlying error text.
-        error: String,
-    },
-    /// Indicates that durable receipts are missing for the block.
-    #[error("durable receipts missing for {height}/{hash}")]
-    DurableReceiptsMissing {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        hash: B256,
-    },
-    /// Indicates that a redelivered finalized block is behind the durable marker.
-    #[error(
-        "redelivered finalized CE block is behind the durable marker: block={height}/{block_hash}, marker={marker:?}"
-    )]
-    RedeliveredBlockBehindMarker {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-        /// Durable marker.
-        marker: FinalizedMarker,
-    },
-    /// Indicates a root conflict between a redelivered block and the durable marker.
-    #[error(
-        "redelivered finalized CE block root conflicts with the durable marker at {height}/{block_hash}: Reth={authoritative_root}, marker={marker_root}"
-    )]
-    RedeliveredRootConflict {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-        /// Authoritative Reth root.
-        authoritative_root: B256,
-        /// Marker root.
-        marker_root: B256,
-    },
-    /// Indicates that DB-only state is absent after redelivered persistence notification.
-    #[error("Reth emitted persistence for redelivered block {height}/{block_hash}, but DB-only state is absent")]
-    RedeliveredDbStateAbsent {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-    },
-    /// Indicates that the durable parent is absent while validating a redelivered block.
-    #[error("durable parent is absent while validating redelivered finalized CE block {height}/{block_hash}")]
-    DurableParentAbsentRedelivery {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-    },
-    /// Indicates that the parent identity of a redelivered block conflicts with the marker.
-    #[error(
-        "redelivered finalized CE block parent identity conflicts with the durable marker at {height}/{block_hash}: Reth=({reth_hash}, {reth_root}), marker=({marker_hash}, {marker_root})"
-    )]
-    RedeliveredParentConflict {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-        /// Reth parent hash.
-        reth_hash: B256,
-        /// Reth parent root.
-        reth_root: B256,
-        /// Marker parent hash.
-        marker_hash: B256,
-        /// Marker parent root.
-        marker_root: B256,
-    },
-    /// Indicates that DB-only state is absent after persistence notification.
-    #[error("Reth emitted persistence for {height}/{block_hash}, but DB-only state is absent")]
-    DbStateAbsent {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-    },
-    /// Indicates that the durable parent is absent for a finalized block.
-    #[error("durable parent is absent for finalized CE block {height}/{block_hash}")]
-    DurableParentAbsent {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-    },
-    /// Indicates a conflict between the durable parent header and the finalized CE parent.
-    #[error(
-        "durable parent/header conflicts with finalized CE parent at {height}/{block_hash}: actor=({actor_hash}, {actor_root}), marker=({marker_hash}, {marker_root})"
-    )]
-    DurableParentHeaderConflict {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-        /// Actor parent hash.
-        actor_hash: B256,
-        /// Actor parent root.
-        actor_root: B256,
-        /// Marker parent hash.
-        marker_hash: B256,
-        /// Marker parent root.
-        marker_root: B256,
-    },
-    /// Indicates that durable canonical CE replay state is missing.
-    #[error("durable canonical CE replay missing for finalized block {height}/{block_hash}")]
-    DurableCanonicalReplayMissing {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-    },
-    /// Indicates that a redelivered block conflicts with the durable marker.
-    #[error(
-        "redelivered finalized CE block conflicts with the durable marker at {height}/{block_hash}: {current:?}"
-    )]
-    RedeliveredMarkerConflict {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-        /// Current durable marker.
-        current: FinalizedMarker,
-    },
-    /// Indicates a parent conflict on the finalized CE candidate.
-    #[error(
-        "finalized CE candidate parent conflict at {height}/{block_hash}: actor={actor}, candidate={candidate}"
-    )]
-    CandidateParentConflict {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-        /// Actor parent hash.
-        actor: B256,
-        /// Candidate parent hash.
-        candidate: B256,
-    },
-    /// Indicates a root conflict between durable EVM state and the CE candidate.
-    #[error(
-        "durable EVM/CE candidate root conflict at {height}/{block_hash}: evm={evm}, candidate={candidate}"
-    )]
-    CandidateRootConflict {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-        /// EVM root.
-        evm: B256,
-        /// Candidate root.
-        candidate: B256,
-    },
-    /// Indicates an identity or root conflict during canonical CE replay.
-    #[error(
-        "durable canonical CE replay identity/root conflict for finalized block {height}/{block_hash}: current={current:?}, replay={replay}, authoritative_root={authoritative_root}"
-    )]
-    ReplayIdentityRootConflict {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-        /// Current marker.
-        current: FinalizedMarker,
-        /// Formatted replay block.
-        replay: String,
-        /// Authoritative root.
-        authoritative_root: B256,
-    },
-    /// Indicates that CE MDBX returned a conflicting finalized marker.
-    #[error("CE MDBX returned conflicting finalized marker for {height}/{block_hash}: {marker:?}")]
-    MdbxConflictingMarker {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-        /// Returned marker.
-        marker: FinalizedMarker,
-    },
-    /// Indicates a canonical hash conflict at the finalized height.
-    #[error("durable canonical conflict at height {height}: finalized={finalized}, Reth={actual}")]
-    DurableCanonicalConflict {
-        /// Block height.
-        height: u64,
-        /// Finalized block hash.
-        finalized: B256,
-        /// Actual Reth block hash.
-        actual: B256,
-    },
-    /// Indicates that the persistence wait exceeded its deadline.
-    #[error(
-        "finalized CE persistence deadline exceeded for {height}/{block_hash} after {deadline:?}"
-    )]
-    PersistenceDeadlineExceeded {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-        /// Configured deadline.
-        deadline: Duration,
-    },
-    /// Indicates that the Reth persistence stream closed early.
-    #[error("Reth persistence stream ended before finalized CE block {height}/{block_hash}")]
-    PersistenceStreamEnded {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-    },
-    /// Indicates that Reth persistence advanced past the expected block without matching it.
-    #[error(
-        "Reth persistence passed finalized CE block {height}/{block_hash} with {notification_number}/{notification_hash}"
-    )]
-    PersistencePassedBlock {
-        /// Block height.
-        height: u64,
-        /// Block hash.
-        block_hash: B256,
-        /// Notification block number.
-        notification_number: u64,
-        /// Notification block hash.
-        notification_hash: B256,
-    },
-}
-
-/// Represents errors from CE replay and recovery verification.
-#[derive(Debug, Error)]
-pub enum CeRecoveryError {
-    /// Indicates a root or parent mismatch when replaying a CE block.
-    #[error(
-        "replayed CE root/identity mismatch at {number}/{hash}: expected parent {parent_hash}/{parent_root}, root {new_root}; computed {provisional}"
-    )]
-    ReplayedRootIdentityMismatch {
-        /// Block number.
-        number: u64,
-        /// Block hash.
-        hash: B256,
-        /// Expected parent hash.
-        parent_hash: B256,
-        /// Expected parent root.
-        parent_root: B256,
-        /// Expected new root.
-        new_root: B256,
-        /// Formatted provisional batch.
-        provisional: String,
-    },
 }
 
 /// Represents errors from upstream follow transport initialization and RPC queries.
@@ -571,9 +197,26 @@ pub enum ValidatorsError {
     ReadLocalValidatorTeeBinding(String),
 }
 
-/// Builds a precompile revert error when a validator lacks a NodeHost enclave binding.
-pub fn validator_has_no_node_host_enclave_binding_error() -> PrecompileError {
-    PrecompileError::Revert("validator has no NodeHost enclave binding".into())
+/// Represents precompile storage and binding errors raised by validator state queries.
+#[derive(Debug, Error)]
+pub enum ValidatorsPrecompileError {
+    /// Indicates that reading Reth state storage failed.
+    #[error("state read failed: {0}")]
+    StateReadFailed(String),
+    /// Indicates that a validator lacks a NodeHost enclave binding.
+    #[error("validator has no NodeHost enclave binding")]
+    ValidatorMissingNodeHostEnclaveBinding,
+}
+
+impl From<ValidatorsPrecompileError> for PrecompileError {
+    fn from(error: ValidatorsPrecompileError) -> Self {
+        match error {
+            ValidatorsPrecompileError::StateReadFailed(_) => Self::Storage(error.to_string()),
+            ValidatorsPrecompileError::ValidatorMissingNodeHostEnclaveBinding => {
+                Self::Revert(error.to_string())
+            }
+        }
+    }
 }
 
 /// Represents errors from peer manager actor, admission, and ingress operations.

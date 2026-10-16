@@ -4,7 +4,6 @@ pragma solidity 0.8.30;
 import {IIntexAuction} from "../interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../../shared/interfaces/IIntexNFT1155.sol";
 import {ITargetRouter} from "../interfaces/ITargetRouter.sol";
-import {IOriginRouter} from "../../origin/interfaces/IOriginRouter.sol";
 import {BridgeMsgCodec} from "../../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../../shared/libs/IntexGas.sol";
 import {LowLevelCall} from "@openzeppelin/contracts/utils/LowLevelCall.sol";
@@ -313,7 +312,6 @@ library TargetInbound {
                         issuedUnits: payload.issuedUnits,
                         promisLoadMinor: payload.promisLoadMinor,
                         entryPriceMinor: payload.entryPriceMinor,
-                        floorPriceMinor: payload.floorPriceMinor,
                         callPriceMinor: payload.callPriceMinor,
                         callTrigger: IIntexNFT1155.IntexCallTrigger({
                             callWindow: payload.callWindow,
@@ -380,9 +378,8 @@ library TargetInbound {
         return a.worldwideDay == b.worldwideDay && a.issuanceCurrency == b.issuanceCurrency
             && a.referenceCurrency == b.referenceCurrency && a.issuedUnits == b.issuedUnits
             && a.promisLoadMinor == b.promisLoadMinor && a.entryPriceMinor == b.entryPriceMinor
-            && a.floorPriceMinor == b.floorPriceMinor && a.callPriceMinor == b.callPriceMinor
-            && a.callWindow == b.callWindow && a.callThreshold == b.callThreshold
-            && a.callNoticePeriod == b.callNoticePeriod;
+            && a.callPriceMinor == b.callPriceMinor && a.callWindow == b.callWindow
+            && a.callThreshold == b.callThreshold && a.callNoticePeriod == b.callNoticePeriod;
     }
 
     /// @dev Whether the series this chain holds was created under exactly the chunk's terms.
@@ -395,8 +392,8 @@ library TargetInbound {
         return d.worldwideDay == payload.worldwideDay && d.issuanceCurrency == payload.issuanceCurrency
             && d.referenceCurrency == payload.referenceCurrency && d.issuedUnits == payload.issuedUnits
             && d.promisLoadMinor == payload.promisLoadMinor && d.entryPriceMinor == payload.entryPriceMinor
-            && d.floorPriceMinor == payload.floorPriceMinor && d.callPriceMinor == payload.callPriceMinor
-            && d.callTrigger.callWindow == payload.callWindow && d.callTrigger.callThreshold == payload.callThreshold
+            && d.callPriceMinor == payload.callPriceMinor && d.callTrigger.callWindow == payload.callWindow
+            && d.callTrigger.callThreshold == payload.callThreshold
             && d.callTrigger.callNoticePeriod == payload.callNoticePeriod;
     }
 
@@ -456,7 +453,7 @@ library TargetInbound {
             );
         uint128 accrued = progress.proceedsAccrued + totalPaid;
 
-        // One transfer per day: the origin counts a chain paid on the first delivery.
+        // One transfer per day, so the day pays one bridge fee.
         uint128 proceeds = completesDay ? accrued : 0;
         $.refundProgress[worldwideDay] =
             RefundProgress({totalChunks: totalChunks, chunksSeen: seen, proceedsAccrued: accrued - proceeds});
@@ -480,13 +477,6 @@ library TargetInbound {
         for (uint256 i = 0; i < seriesIds.length; ++i) {
             _applyMark($, srcChainId, seriesIds[i], calledAt);
         }
-    }
-
-    function handleDailyVwap(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
-        (uint32 utcDay, IOriginRouter.DailyVwap[] memory rows) = BridgeMsgCodec.decodeDailyVwap(message);
-        if (address($.vwapRegistry) == address(0)) revert ITargetRouter.VwapRegistryUnset();
-        $.vwapRegistry.record(utcDay, rows);
-        emit ITargetRouter.DailyVwapReceived(srcChainId, utcDay, rows.length);
     }
 
     /// @dev An unseen series keeps the mark in its slot. An already called one is acknowledged. Any

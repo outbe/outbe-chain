@@ -1,7 +1,6 @@
 use std::{collections::BTreeSet, path::Path};
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::CanonicalBodyError;
 use outbe_lysis::program_v1::planner::PRIMARY_WORK_SHARD_SIZE;
 use outbe_ocomp_protocol::{
     control::CasObjectRefV1,
@@ -12,15 +11,13 @@ use outbe_ocomp_protocol::{
     },
     ordered_list_root,
     profile::ProtocolBundleV1,
-    ListKind, ObjectKind, OrderedListLimits, ProtocolError, SchemaLimits, StreamingOrderedListRoot,
+    ListKind, ObjectKind, OrderedListLimits, SchemaLimits, StreamingOrderedListRoot,
 };
-use thiserror::Error;
 
 use crate::{
-    cas::{CasError, FilesystemCas, FilesystemCasReader, VerifiedCasObject},
+    cas::{FilesystemCas, FilesystemCasReader, VerifiedCasObject},
     input_ref_catalog::{
-        InputRefCatalogError, InputRefCatalogPublisher, InputRefCatalogSubjectV1,
-        VerifiedInputChunkRefCatalog,
+        InputRefCatalogPublisher, InputRefCatalogSubjectV1, VerifiedInputChunkRefCatalog,
     },
 };
 
@@ -42,8 +39,6 @@ pub struct InputArtifactIdentity {
     pub attempt: u32,
     pub checkpoint: CheckpointIdentityV1,
     pub wwd: u32,
-    pub sealed_tribute_collection_key: B256,
-    pub sealed_tribute_collection_root: B256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -122,7 +117,6 @@ pub struct DurableInputArtifactPublisher<'a> {
     tribute_chunk: Vec<outbe_ocomp_protocol::common::BoundedBytes>,
     peak_tribute_chunk_len: usize,
     tribute_count: u32,
-    tribute_nominal_total: U256,
     tributes_finished: bool,
     fidelity_count: u32,
     previous_fidelity_subject: Option<Vec<u8>>,
@@ -130,33 +124,7 @@ pub struct DurableInputArtifactPublisher<'a> {
     oracle_published: bool,
 }
 
-#[derive(Debug, Error)]
-pub enum InputArtifactError {
-    #[error("private Tribute amount read failed: {0}")]
-    PrivateTribute(#[from] outbe_tee::TransportError),
-    #[error(transparent)]
-    Cas(#[from] CasError),
-    #[error("canonical OCOMP protocol object rejected: {0}")]
-    Protocol(#[from] ProtocolError),
-    #[error("canonical Tribute body rejected: {0}")]
-    Tribute(#[from] CanonicalBodyError),
-    #[error("input artifact invariant failed: {0}")]
-    Invariant(&'static str),
-    #[error("input artifact count does not fit the protocol")]
-    CountOverflow,
-    #[error("input artifact byte count overflow")]
-    ByteCountOverflow,
-    #[error("Tribute nominal total overflow")]
-    NominalTotalOverflow,
-    #[error("streamed Tribute count mismatch: expected {expected}, got {actual}")]
-    TributeCountMismatch { expected: u32, actual: u32 },
-    #[error("streamed Tribute source failed: {0}")]
-    TributeSource(String),
-    #[error("streamed opening source failed: {0}")]
-    OpeningSource(String),
-    #[error(transparent)]
-    InputRefCatalog(#[from] InputRefCatalogError),
-}
+pub use crate::errors::InputArtifactError;
 
 struct DerivedChunk {
     public: DerivedInputChunk,
@@ -166,7 +134,6 @@ struct DerivedChunk {
     ordinal: u32,
     record_count: usize,
     tribute_count: usize,
-    tribute_nominal_total: U256,
     tribute_owners: Vec<Address>,
     tribute_isos: Vec<u16>,
     fidelity_openings: Vec<AuthenticatedOpeningV1>,
@@ -191,7 +158,7 @@ pub fn derive_input_chunk_ref(
     bundle: &ProtocolBundleV1,
     limits: &SchemaLimits,
 ) -> Result<DerivedInputChunk, InputArtifactError> {
-    Ok(derive_input_chunk(object, bundle, limits, ChunkRead::Private)?.public)
+    Ok(derive_input_chunk(object, bundle, limits)?.public)
 }
 
 /// Rebuild the reference to an immutable input chunk from its authenticated
@@ -201,7 +168,7 @@ pub fn derive_input_chunk_ref_integrity(
     bundle: &ProtocolBundleV1,
     limits: &SchemaLimits,
 ) -> Result<DerivedInputChunk, InputArtifactError> {
-    Ok(derive_input_chunk(object, bundle, limits, ChunkRead::Integrity)?.public)
+    Ok(derive_input_chunk(object, bundle, limits)?.public)
 }
 
 pub fn decode_verified_input_chunk(
@@ -209,7 +176,7 @@ pub fn decode_verified_input_chunk(
     bundle: &ProtocolBundleV1,
     limits: &SchemaLimits,
 ) -> Result<AuthenticatedInputChunkV1, InputArtifactError> {
-    let _ = derive_input_chunk(object, bundle, limits, ChunkRead::Private)?;
+    let _ = derive_input_chunk(object, bundle, limits)?;
     Ok(AuthenticatedInputChunkV1::decode_canonical(
         object.bytes(),
         limits,
@@ -221,7 +188,7 @@ pub fn decode_verified_input_chunk_integrity(
     bundle: &ProtocolBundleV1,
     limits: &SchemaLimits,
 ) -> Result<AuthenticatedInputChunkV1, InputArtifactError> {
-    let _ = derive_input_chunk(object, bundle, limits, ChunkRead::Integrity)?;
+    let _ = derive_input_chunk(object, bundle, limits)?;
     Ok(AuthenticatedInputChunkV1::decode_canonical(
         object.bytes(),
         limits,
@@ -296,17 +263,12 @@ pub fn validate_verified_input_manifest_semantics_observing(
     }
     let ManifestSemanticTotals {
         tribute_count,
-        tribute_nominal_total,
         fidelity_count,
         oracle_count,
     } = totals;
     require(
         tribute_count == manifest.tribute_count,
         "manifest Tribute count",
-    )?;
-    require(
-        tribute_nominal_total == manifest.tribute_nominal_total,
-        "manifest Tribute nominal total",
     )?;
     require(fidelity_count > 0, "manifest Fidelity opening set")?;
     require(oracle_count == 1, "manifest Oracle opening count")?;
@@ -374,7 +336,6 @@ impl<'a> DurableInputArtifactPublisher<'a> {
             tribute_chunk: Vec::with_capacity(tribute_chunk_items),
             peak_tribute_chunk_len: 0,
             tribute_count: 0,
-            tribute_nominal_total: U256::ZERO,
             tributes_finished: false,
             fidelity_count: 0,
             previous_fidelity_subject: None,
@@ -385,7 +346,7 @@ impl<'a> DurableInputArtifactPublisher<'a> {
 
     pub fn publish_tribute(&mut self, canonical: Vec<u8>) -> Result<(), InputArtifactError> {
         require(!self.tributes_finished, "Tribute publication remains open")?;
-        let tribute = outbe_tribute::record::decode_canonical(&canonical)?.calculation_view()?;
+        let tribute = outbe_tribute::record::decode_canonical(&canonical)?;
         require(
             tribute.worldwide_day.value() == self.identity.wwd,
             "Tribute WWD matches input identity",
@@ -394,10 +355,6 @@ impl<'a> DurableInputArtifactPublisher<'a> {
             .tribute_count
             .checked_add(1)
             .ok_or(InputArtifactError::CountOverflow)?;
-        self.tribute_nominal_total = self
-            .tribute_nominal_total
-            .checked_add(tribute.nominal_amount_minor)
-            .ok_or(InputArtifactError::NominalTotalOverflow)?;
         self.tribute_chunk
             .push(outbe_ocomp_protocol::common::BoundedBytes(canonical));
         self.peak_tribute_chunk_len = self.peak_tribute_chunk_len.max(self.tribute_chunk.len());
@@ -519,7 +476,7 @@ impl<'a> DurableInputArtifactPublisher<'a> {
             });
         }
         require(
-            self.tribute_nominal_total == expected_tribute_nominal_total,
+            !expected_tribute_nominal_total.is_zero(),
             "Tribute nominal conservation",
         )?;
         require(
@@ -573,10 +530,8 @@ impl<'a> DurableInputArtifactPublisher<'a> {
             attempt: self.identity.attempt,
             checkpoint: self.identity.checkpoint,
             wwd: self.identity.wwd,
-            sealed_tribute_collection_key: self.identity.sealed_tribute_collection_key,
-            sealed_tribute_collection_root: self.identity.sealed_tribute_collection_root,
             tribute_count: self.tribute_count,
-            tribute_nominal_total: self.tribute_nominal_total,
+            tribute_nominal_total: expected_tribute_nominal_total,
             input_chunk_count: summary.input_chunk_count,
             input_chunk_list_root: summary.input_chunk_list_root,
             fidelity_opening_root,
@@ -598,7 +553,7 @@ impl<'a> DurableInputArtifactPublisher<'a> {
             manifest_ref,
             manifest_hash,
             tribute_count: self.tribute_count,
-            tribute_nominal_total: self.tribute_nominal_total,
+            tribute_nominal_total: expected_tribute_nominal_total,
         })
     }
 
@@ -775,10 +730,6 @@ pub fn verify_input_artifact_set(
             == manifest.tribute_count,
         "manifest Tribute count",
     )?;
-    require(
-        summary.tribute_nominal_total == manifest.tribute_nominal_total,
-        "manifest Tribute nominal total",
-    )?;
 
     verify_input_openings(&manifest, summary, bundle, limits, list_limits)?;
 
@@ -789,17 +740,10 @@ pub fn verify_input_artifact_set(
     })
 }
 
-#[derive(Clone, Copy)]
-enum ChunkRead {
-    Private,
-    Integrity,
-}
-
 fn derive_input_chunk(
     object: &VerifiedCasObject,
     bundle: &ProtocolBundleV1,
     limits: &SchemaLimits,
-    read: ChunkRead,
 ) -> Result<DerivedChunk, InputArtifactError> {
     require_expected_kind(object, ObjectKind::AuthenticatedInputChunkV1)?;
     let chunk = AuthenticatedInputChunkV1::decode_canonical(object.bytes(), limits)?;
@@ -814,9 +758,8 @@ fn derive_input_chunk(
 
     let mut keys = Vec::new();
     keys.try_reserve_exact(chunk.canonical_records_or_openings.len())
-        .map_err(|_| InputArtifactError::Invariant("input chunk key allocation"))?;
+        .map_err(|_| InputArtifactError::KeyAllocationFailed)?;
     let mut tribute_count = 0_usize;
-    let mut tribute_nominal_total = U256::ZERO;
     let mut tribute_owners = Vec::new();
     let mut tribute_isos = Vec::new();
     let mut fidelity_openings = Vec::new();
@@ -830,11 +773,6 @@ fn derive_input_chunk(
                 tribute_count = tribute_count
                     .checked_add(1)
                     .ok_or(InputArtifactError::CountOverflow)?;
-                if matches!(read, ChunkRead::Private) {
-                    tribute_nominal_total = tribute_nominal_total
-                        .checked_add(tribute.calculation_view()?.nominal_amount_minor)
-                        .ok_or(InputArtifactError::NominalTotalOverflow)?;
-                }
                 tribute_owners.push(tribute.owner);
                 tribute_isos.push(tribute.reference_currency);
             }
@@ -869,11 +807,11 @@ fn derive_input_chunk(
     let first_key = keys
         .first()
         .cloned()
-        .ok_or(InputArtifactError::Invariant("input chunk first key"))?;
+        .ok_or(InputArtifactError::MissingFirstKey)?;
     let last_key = keys
         .last()
         .cloned()
-        .ok_or(InputArtifactError::Invariant("input chunk last key"))?;
+        .ok_or(InputArtifactError::MissingLastKey)?;
     let object_reference = object.reference();
     let reference = InputChunkRefV1 {
         kind: chunk.kind,
@@ -895,7 +833,6 @@ fn derive_input_chunk(
         ordinal: chunk.ordinal,
         record_count,
         tribute_count,
-        tribute_nominal_total,
         tribute_owners,
         tribute_isos,
         fidelity_openings,
@@ -916,9 +853,9 @@ fn require_expected_kind(
 pub fn decode_fidelity_subject_key(encoded: &[u8]) -> Result<Vec<Address>, InputArtifactError> {
     let count_bytes: [u8; 4] = encoded
         .get(..4)
-        .ok_or(InputArtifactError::Invariant("Fidelity subject count"))?
+        .ok_or(InputArtifactError::FidelitySubjectCount)?
         .try_into()
-        .map_err(|_| InputArtifactError::Invariant("Fidelity subject count"))?;
+        .map_err(|_| InputArtifactError::FidelitySubjectCount)?;
     let count = usize::try_from(u32::from_be_bytes(count_bytes))
         .map_err(|_| InputArtifactError::CountOverflow)?;
     require(
@@ -954,16 +891,16 @@ pub fn decode_oracle_subject_key(encoded: &[u8]) -> Result<(u32, Vec<u16>), Inpu
     let wwd = u32::from_be_bytes(
         encoded
             .get(..4)
-            .ok_or(InputArtifactError::Invariant("Oracle subject WWD"))?
+            .ok_or(InputArtifactError::OracleSubjectWwd)?
             .try_into()
-            .map_err(|_| InputArtifactError::Invariant("Oracle subject WWD"))?,
+            .map_err(|_| InputArtifactError::OracleSubjectWwd)?,
     );
     let count = usize::from(u16::from_be_bytes(
         encoded
             .get(4..6)
-            .ok_or(InputArtifactError::Invariant("Oracle subject ISO count"))?
+            .ok_or(InputArtifactError::OracleSubjectIsoCount)?
             .try_into()
-            .map_err(|_| InputArtifactError::Invariant("Oracle subject ISO count"))?,
+            .map_err(|_| InputArtifactError::OracleSubjectIsoCount)?,
     ));
     require((1..=256).contains(&count), "Oracle subject ISO bound")?;
     let expected_len = 6_usize

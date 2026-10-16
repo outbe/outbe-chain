@@ -502,8 +502,6 @@ fn encode_subject(subject: &OpeningStageSubjectV1) -> Vec<u8> {
     body.extend_from_slice(&subject.checkpoint.finalized_block_number.to_be_bytes());
     body.extend_from_slice(subject.checkpoint.finalized_block_hash.as_slice());
     body.extend_from_slice(subject.checkpoint.finalized_state_root.as_slice());
-    body.extend_from_slice(subject.checkpoint.finalized_ce_root.as_slice());
-    body.extend_from_slice(&subject.checkpoint.ce_schema_version.to_be_bytes());
     body.extend_from_slice(&subject.worldwide_day.to_be_bytes());
     body.extend_from_slice(subject.inventory_authority_digest.as_slice());
     encode_envelope(SUBJECT_MAGIC, &body)

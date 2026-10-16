@@ -2,38 +2,15 @@
 pragma solidity ^0.8.30;
 
 interface IGem {
-    event GemBodyStored(
-        uint256 gemId,
-        uint32 commitmentSchemeVersion,
-        uint32 schemaVersion,
-        bytes32 previousCommitment,
-        bytes32 newCommitment,
-        bytes canonicalPayload
-    );
-
-    event GemBodyDeleted(uint256 gemId, bytes32 previousCommitment);
-
-    event GemBucketBodyStored(
-        uint256 bucketId,
-        uint32 commitmentSchemeVersion,
-        uint32 schemaVersion,
-        bytes32 previousCommitment,
-        bytes32 newCommitment,
-        bytes canonicalPayload
-    );
-
-    event GemBucketBodyDeleted(uint256 bucketId, bytes32 previousCommitment);
-
     struct GemData {
         uint256 gemId;
         address owner;
         uint8 gemType;
-        /// Read-time state: 0 Issued, 1 Qualified (derived), 2 Called, 3 Settled,
-        /// 4 Forfeited (a Called gem past its notice period, until the sweep burns it).
+        /// Read-time state: 0 Issued, 1 Called, 2 Settled,
+        /// 3 Forfeited (a Called gem past its notice period, until the sweep burns it).
         uint8 state;
         uint256 promisLoadMinor;
         uint256 entryPriceMinor;
-        uint256 floorPriceMinor;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint64 issuedAt;
@@ -74,8 +51,6 @@ interface IGem {
 
     // outbe-specific views
     function getGem(uint256 gemId) external view returns (GemData memory);
-    /// @notice Born Qualified (Genesis), or derived from finalized daily VWAPs. Never stored.
-    function isQualified(uint256 gemId) external view returns (bool);
 
     // --- Events ---
     /// @notice Emitted when a gem is issued and when it is burned by forfeit or mining.

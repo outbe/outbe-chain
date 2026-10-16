@@ -1,17 +1,9 @@
 use super::*;
-use crate::ce_finalizer::RethDurableCeState;
-use crate::ce_recovery::{CanonicalCeReplaySource, CeStartupRecoveryCoordinator};
+use crate::finalization::{RethDurableExecutionState, RethFinalizationBarrier};
 use alloy_consensus::Sealable;
 use alloy_primitives::U256;
-use outbe_compressed_entities::{
-    sealed_root, CandidateCacheLimits, CeMdbx, CeTopologyV1, CompressedTreeService,
-    EnvironmentIdentity, ExactParentIdentity, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
-    LOCAL_STORAGE_SCHEMA_VERSION,
-};
-use outbe_primitives::{
-    addresses::COMPRESSED_ENTITIES_ADDRESS,
-    projection::{projection_readiness, ProjectionStatus},
-};
+use outbe_consensus::executor::actor::FinalizedExecutionBarrier;
+use outbe_primitives::projection::ProjectionCheckpoint;
 use reth_ethereum::{
     chainspec::ChainSpec,
     node::api::NodeTypesWithDBAdapter,
@@ -41,7 +33,6 @@ pub(in crate::stack::tests) use disk::inventory;
 type Nodes = NodeTypesWithDBAdapter<outbe_node::OutbeNode, DatabaseEnv>;
 type Provider = BlockchainProvider<Nodes>;
 type Stage = <tables::StageCheckpoints as Table>::Value;
-type StorageWord = <tables::PlainStorageState as Table>::Value;
 type Certificate = outbe_consensus::marshal_types::Finalization;
 const PREFIX: &str = "copied-native-recovery";
 pub(in crate::stack::tests) const H: u64 = 3;
@@ -63,42 +54,6 @@ fn genesis_block() -> ConsensusBlock {
     ConsensusBlock::from_sealed(SealedBlock::seal_slow(
         Block::default().map_header(|_| genesis_header()),
     ))
-}
-
-fn genesis_marker() -> FinalizedMarker {
-    FinalizedMarker {
-        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-        height: 0,
-        block_hash: genesis_header().hash_slow(),
-        parent_block_hash: B256::ZERO,
-        parent_root: B256::ZERO,
-        new_root: sealed_root(B256::ZERO).unwrap(),
-    }
-}
-
-fn ce_identity() -> EnvironmentIdentity {
-    EnvironmentIdentity {
-        local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
-        chain_id: outbe_consensus::proof::consensus_chain_id(),
-        genesis_hash: genesis_header().hash_slow(),
-        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-        topology: CeTopologyV1.encode(),
-        tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".into(),
-        vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".into(),
-    }
-}
-
-fn open_tree(root: &Path) -> Arc<CompressedTreeService> {
-    Arc::new(
-        CompressedTreeService::new(
-            CeMdbx::open(root, ce_identity(), genesis_marker()).unwrap(),
-            CandidateCacheLimits {
-                max_candidates: 8,
-                max_encoded_bytes: 1_048_576,
-            },
-        )
-        .unwrap(),
-    )
 }
 
 pub(in crate::stack::tests) fn open_static_headers(
@@ -152,7 +107,7 @@ pub(in crate::stack::tests) fn replace_native_header(
     writer.commit().unwrap();
 }
 
-pub(in crate::stack::tests) fn open_native(root: &Path) -> (Provider, Arc<CompressedTreeService>) {
+pub(in crate::stack::tests) fn open_native(root: &Path) -> Provider {
     let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
     let chain = Arc::new(ChainSpec::<OutbeHeader> {
         // Match the already-bound unit-test Marshal namespace. Production
@@ -170,27 +125,30 @@ pub(in crate::stack::tests) fn open_native(root: &Path) -> (Provider, Arc<Compre
     )
     .unwrap();
     assert_eq!(factory.cached_storage_settings(), StorageSettings::v1());
-    (BlockchainProvider::new(factory).unwrap(), open_tree(root))
+    BlockchainProvider::new(factory).unwrap()
 }
 
 pub(in crate::stack::tests) fn recover_native(
     root: &Path,
     processed: u64,
     target: u64,
-) -> eyre::Result<FinalizedMarker> {
-    let (provider, tree) = open_native(root);
+) -> eyre::Result<ProjectionCheckpoint> {
+    eyre::ensure!(
+        processed <= target,
+        "processed floor exceeds the recovery anchor"
+    );
+    let provider = open_native(root);
     let forkchoice = read_reth_recovery_forkchoice(&provider.canonical_in_memory_state())?;
     assert_eq!(forkchoice.head.block_number, target);
     assert_eq!(forkchoice.safe.unwrap().block_number, target);
     assert_eq!(forkchoice.finalized.unwrap().block_number, target);
-    let source = Arc::new(RethDurableCeState::new(provider));
-    // Even an equal CE marker must read A and A-1 from the real historical provider.
-    let checkpoint = source
-        .durable_checkpoint(target)?
-        .expect("durable checkpoint");
-    assert_eq!(checkpoint.height, target);
-    let recovery = CeStartupRecoveryCoordinator::new(source, tree);
-    recover_ce_at_reconciled_anchor(&recovery, processed, target)
+    let checkpoint = ProjectionCheckpoint {
+        block_number: target,
+        block_hash: forkchoice.finalized.unwrap().block_hash,
+    };
+    RethFinalizationBarrier::new(Arc::new(RethDurableExecutionState::new(provider)))
+        .verify_checkpoint(checkpoint)?;
+    Ok(checkpoint)
 }
 
 fn persist_fixture_headers(
@@ -219,46 +177,10 @@ fn persist_fixture_headers(
     Ok(())
 }
 
-fn persist_genesis_ce_root(tx: &impl DbTxMut) -> eyre::Result<()> {
-    // All fixture blocks leave CE unchanged, so this native genesis slot is
-    // legitimately identical at every historical height. No rewind stubs.
-    tx.put::<tables::PlainAccountState>(COMPRESSED_ENTITIES_ADDRESS, Default::default())?;
-    tx.put::<tables::PlainStorageState>(
-        COMPRESSED_ENTITIES_ADDRESS,
-        StorageWord {
-            key: B256::with_last_byte(1),
-            value: U256::from_be_bytes(genesis_marker().new_root.0),
-        },
-    )?;
-    // A nonzero genesis slot must also be indexed as previously written.
-    // Otherwise native historical lookup classifies it as NotYetWritten.
-    type HistoryKey = <tables::StoragesHistory as Table>::Key;
-    type HistoryBlocks = <tables::StoragesHistory as Table>::Value;
-    tx.put::<tables::StoragesHistory>(
-        HistoryKey {
-            address: COMPRESSED_ENTITIES_ADDRESS,
-            sharded_key: reth_ethereum::provider::db::models::ShardedKey {
-                key: B256::with_last_byte(1),
-                highest_block_number: u64::MAX,
-            },
-        },
-        HistoryBlocks::new(vec![0])?,
-    )?;
-    tx.put::<tables::StorageChangeSets>(
-        (0, COMPRESSED_ENTITIES_ADDRESS).into(),
-        StorageWord {
-            key: B256::with_last_byte(1),
-            value: U256::ZERO,
-        },
-    )?;
-    Ok(())
-}
-
 fn seed_reth(root: &Path, headers: &[OutbeHeader], through: u64) {
     let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
     let tx = db.tx_mut().unwrap();
     persist_fixture_headers(&tx, headers, through).expect("native fixture headers");
-    persist_genesis_ce_root(&tx).expect("native fixture CE root");
     for stage in ["Execution", "Finish"] {
         tx.put::<tables::StageCheckpoints>(stage.into(), Stage::new(through))
             .unwrap();
@@ -279,28 +201,6 @@ fn seed_reth(root: &Path, headers: &[OutbeHeader], through: u64) {
             writer.append_header(header, &header.hash_slow()).unwrap();
         }
         writer.commit().unwrap();
-    }
-}
-
-fn advance_ce(root: &Path, headers: &[OutbeHeader], through: u64) {
-    let tree = open_tree(root);
-    let marker = tree.finalized_marker().unwrap();
-    for height in marker.height + 1..=through {
-        let previous = tree.finalized_marker().unwrap();
-        let parent = tree
-            .open_parent(ExactParentIdentity {
-                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-                block_number: previous.height,
-                block_hash: previous.block_hash,
-                root: previous.new_root,
-            })
-            .unwrap();
-        let seal = parent.prepare_seal(height, &[], &[]).unwrap();
-        assert_eq!(seal.new_root(), genesis_marker().new_root);
-        let hash = headers[height as usize].hash_slow();
-        tree.publish_candidate(hash, seal).unwrap();
-        tree.apply_finalized(height, hash, genesis_marker().new_root)
-            .unwrap();
     }
 }
 
@@ -461,19 +361,10 @@ async fn wait_for_archive_stage(
 
 impl DiskFixture {
     pub(in crate::stack::tests) fn new(processed: u64) -> Self {
-        Self::with_ce_height(processed, H)
-    }
-
-    pub(in crate::stack::tests) fn with_ce_height(processed: u64, ce_height: u64) -> Self {
         let root = tempfile::tempdir().unwrap();
         let genesis = genesis_header();
         assert_eq!(genesis.hash_slow(), genesis_block().block_hash());
-        let headers = outbe_consensus::test_harness::linked_headers(
-            genesis,
-            K,
-            ACTIVE_COMMITMENT_SCHEME,
-            || genesis_marker().new_root,
-        );
+        let headers = outbe_consensus::test_harness::linked_headers(genesis, K);
         let blocks: Vec<_> = headers
             .iter()
             .map(|header| {
@@ -484,14 +375,6 @@ impl DiskFixture {
             .collect();
         let (provider, certificates) = certificates(&blocks);
         seed_reth(root.path(), &headers, H);
-        drop(
-            reth_ethereum::provider::db::create_db(
-                root.path().join("compressed_entities/smt"),
-                DatabaseArguments::test(),
-            )
-            .unwrap(),
-        );
-        advance_ce(root.path(), &headers, ce_height);
         fs::create_dir_all(root.path().join("recipient-identity")).unwrap();
         fs::write(
             root.path().join("recipient-identity/key"),
@@ -511,13 +394,10 @@ impl DiskFixture {
     }
 
     pub(in crate::stack::tests) fn copy_to(&self, destination: &Path) {
-        for name in ["marshal", "db", "compressed_entities", "static_files"] {
+        for name in ["marshal", "db", "static_files"] {
             copy_tree(&self.root.path().join(name), &destination.join(name));
         }
         assert!(destination.join("db/mdbx.dat").is_file());
-        assert!(destination
-            .join("compressed_entities/smt/mdbx.dat")
-            .is_file());
         let disk = inventory(&destination.join("marshal"));
         for required in ["finalizations", "blocks", "application-metadata"] {
             assert!(
@@ -557,17 +437,6 @@ impl DiskFixture {
                 .spawn(move |_| async move {
                     assert_heartbeat_only(&mut engine_rx, hash).await;
                 });
-            let checkpoint = ProjectionCheckpoint {
-                block_number: target,
-                block_hash: hash,
-            };
-            let (_publisher, readiness) = projection_readiness(
-                ProjectionCheckpoint {
-                    block_number: 0,
-                    block_hash: genesis,
-                },
-                ProjectionStatus::Ready { checkpoint },
-            );
             let (executor, executor_mailbox) = ExecutorActor::new(
                 context.child("copied_executor"),
                 ConsensusEngineHandle::new(engine_tx),
@@ -576,7 +445,6 @@ impl DiskFixture {
                     last_finalized_height: target,
                     last_finalized_hash: hash,
                 },
-                readiness,
                 None,
             );
             let (mailbox, resolver, marshal) =
@@ -743,7 +611,7 @@ impl DiskFixture {
 }
 
 #[test]
-fn copied_marshal_archives_processed_forkchoice_and_ce_reopen_at_h_then_k() {
+fn copied_marshal_archives_processed_forkchoice_and_native_state_reopen_at_h_then_k() {
     for processed in [H - 1, H] {
         let fixture = DiskFixture::new(processed);
         let recipient = tempfile::tempdir().unwrap();
@@ -753,7 +621,7 @@ fn copied_marshal_archives_processed_forkchoice_and_ce_reopen_at_h_then_k() {
         let copied = fixture.phase(recipient.path(), H + 1, H, processed);
         assert_eq!(copied.processed, processed);
         let native_head = {
-            let (provider, _) = open_native(recipient.path());
+            let provider = open_native(recipient.path());
             read_reth_recovery_forkchoice(&provider.canonical_in_memory_state())
                 .unwrap()
                 .head
@@ -770,16 +638,15 @@ fn copied_marshal_archives_processed_forkchoice_and_ce_reopen_at_h_then_k() {
         assert_eq!(
             recover_native(recipient.path(), processed, height)
                 .unwrap()
-                .height,
+                .block_number,
             H
         );
         fixture.ack_with_executor(recipient.path(), H);
         let acknowledged = fixture.phase(recipient.path(), H + 1, H, H);
         assert_eq!(acknowledged.processed, H);
-        // Test data advances through the ordinary native CE apply path and
-        // real Marshal finalization+ACK. This is not a process/EVM-execution test.
+        // Persist native fixture state, then use real Marshal finalization and ACK.
+        // This test does not execute an EVM block or start a node process.
         seed_reth(recipient.path(), &fixture.headers, K);
-        advance_ce(recipient.path(), &fixture.headers, K);
         let advanced = fixture.phase(recipient.path(), H + 1, K, K);
         assert_eq!(advanced.processed, K);
         assert_eq!(
@@ -793,7 +660,10 @@ fn copied_marshal_archives_processed_forkchoice_and_ce_reopen_at_h_then_k() {
             reopened.delivered.is_empty(),
             "K restart redelivered acknowledged history"
         );
-        assert_eq!(recover_native(recipient.path(), K, K).unwrap().height, K);
+        assert_eq!(
+            recover_native(recipient.path(), K, K).unwrap().block_number,
+            K
+        );
         assert_eq!(
             fs::read(recipient.path().join("recipient-identity/key")).unwrap(),
             key_before

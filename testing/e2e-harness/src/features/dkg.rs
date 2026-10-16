@@ -23,6 +23,11 @@ use crate::world::state::RestartIncarnation;
 use crate::world::World;
 
 mod expiry;
+mod frozen;
+mod recovery;
+
+use frozen::{dkg_log, dkg_ready_height, frozen_target, retain_frozen_target, FrozenTarget};
+use recovery::wait_recovered_dkg;
 
 const FOLLOWER_SLOT: usize = 14;
 
@@ -140,14 +145,23 @@ fn validate_dkg_owners(expected: &[usize], actual: &[usize]) -> Result<()> {
     Ok(())
 }
 
+pub(super) struct DkgMembership<'a> {
+    pub members: &'a [Address],
+    pub joiner: Address,
+    pub status: u8,
+}
+
 pub(super) fn dkg_membership_at(
     world: &World,
     ports: &[u16],
     checkpoint: FinalizedCheckpoint,
-    expected: &[Address],
-    joiner: Address,
-    status: u8,
+    membership: &DkgMembership<'_>,
 ) -> Result<()> {
+    let DkgMembership {
+        members: expected,
+        joiner,
+        status,
+    } = *membership;
     let mut expected = expected.to_vec();
     expected.sort_unstable();
     ensure!(
@@ -287,75 +301,6 @@ pub(super) fn record_dkg_checkpoint(
         "height": point.height, "block_hash": point.block_hash, "state_root": point.state_root}));
 }
 
-fn dkg_log(world: &mut World, index: usize) -> Result<String> {
-    world
-        .state
-        .lifecycle_incarnations
-        .get_mut(&index)
-        .ok_or_else(|| eyre!("missing owned DKG log interval"))?
-        .node_log
-        .read()
-}
-
-fn log_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
-    let prefix = format!("{field}=");
-    line.split_whitespace()
-        .find_map(|part| part.strip_prefix(&prefix))
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct FrozenTarget {
-    cycle: u64,
-    freeze: u64,
-    planned: u64,
-}
-
-fn frozen_target(log: &str, earliest_freeze: u64) -> Result<Option<FrozenTarget>> {
-    let mut target = None;
-    for line in log
-        .lines()
-        .filter(|line| line.contains("freezing validator set and starting DKG rotation"))
-    {
-        let number = |key| -> Result<u64> {
-            log_field(line, key)
-                .ok_or_else(|| eyre!("frozen-target record omitted {key}"))?
-                .parse()
-                .map_err(|_| eyre!("malformed frozen-target {key}"))
-        };
-        let current = FrozenTarget {
-            cycle: number("dkg_cycle")?,
-            freeze: number("freeze_height")?,
-            planned: number("planned_activation_height")?,
-        };
-        ensure!(
-            current.freeze <= current.planned,
-            "invalid frozen-target schedule"
-        );
-        if current.freeze < earliest_freeze {
-            continue;
-        }
-        if let Some(previous) = &target {
-            ensure!(previous == &current, "frozen target was replaced");
-        }
-        target = Some(current);
-    }
-    Ok(target)
-}
-
-fn observed_frozen_target(world: &mut World) -> Result<FrozenTarget> {
-    let earliest = dkg_ready_height(world)?;
-    let mut agreed = None;
-    for index in 0..3 {
-        let current = frozen_target(&dkg_log(world, index)?, earliest)?
-            .ok_or_else(|| eyre!("validator-{index} has no current frozen target"))?;
-        if let Some(expected) = &agreed {
-            ensure!(expected == &current, "survivors froze different targets");
-        }
-        agreed = Some(current);
-    }
-    agreed.ok_or_else(|| eyre!("no frozen target observations"))
-}
-
 fn finalize_dkg_receipts(world: &mut World, ports: &[u16]) -> Result<()> {
     for phase in ["dkg_stake", "dkg_ready"] {
         let row = world
@@ -376,221 +321,6 @@ fn finalize_dkg_receipts(world: &mut World, ports: &[u16]) -> Result<()> {
         record_dkg_checkpoint(world, &format!("{phase}_finalized"), ports, point);
     }
     Ok(())
-}
-
-fn dkg_ready_height(world: &World) -> Result<u64> {
-    let ready = world
-        .state
-        .restart_observations
-        .iter()
-        .find(|row| row["phase"] == "dkg_ready")
-        .ok_or_else(|| eyre!("missing ready receipt"))?;
-    let encoded = ready["receipt"]["blockNumber"]
-        .as_str()
-        .ok_or_else(|| eyre!("ready receipt omitted height"))?;
-    Ok(u64::from_str_radix(
-        encoded
-            .strip_prefix("0x")
-            .ok_or_else(|| eyre!("invalid receipt height"))?,
-        16,
-    )?)
-}
-
-fn retain_frozen_target(world: &mut World, ports: &[u16]) -> Result<FrozenTarget> {
-    let target = observed_frozen_target(world)?;
-    let point = world.rpc.checkpoint_at(ports[0], target.freeze)?;
-    let members = dkg_addresses(world, 5)?;
-    dkg_membership_at(world, ports, point, &members[..4], members[4], 1)?;
-    world
-        .state
-        .restart_observations
-        .push(json!({"phase": "dkg_frozen_target", "target": target}));
-    Ok(target)
-}
-
-fn retained_frozen_target(world: &World) -> Result<FrozenTarget> {
-    let row = world
-        .state
-        .restart_observations
-        .iter()
-        .find(|row| row["phase"] == "dkg_frozen_target")
-        .ok_or_else(|| eyre!("no retained frozen target"))?;
-    Ok(serde_json::from_value(row["target"].clone())?)
-}
-
-fn dkg_activation_anchor(boundary_commit_height: u64) -> Result<u64> {
-    // The first block of the new epoch carries the boundary artifact. That block
-    // is one block after the activation anchor that the rotation schedule uses.
-    boundary_commit_height
-        .checked_sub(1)
-        .ok_or_else(|| eyre!("DKG boundary commit height cannot be zero"))
-}
-
-fn validate_dkg_activation(
-    boundary: &BoundaryWitness,
-    target: &FrozenTarget,
-    members: &[Address],
-    old_epoch: u64,
-    require_delayed: bool,
-) -> Result<()> {
-    let anchor = dkg_activation_anchor(boundary.height)?;
-    let mut actual = boundary.members.clone();
-    let mut expected = members.to_vec();
-    actual.sort_unstable();
-    expected.sort_unstable();
-    ensure!(
-        boundary.cycle == target.cycle
-            && boundary.freeze == target.freeze
-            && boundary.planned == target.planned
-            && anchor >= target.planned
-            && boundary.target_hash != B256::ZERO
-            && boundary.epoch
-                == old_epoch
-                    .checked_add(1)
-                    .ok_or_else(|| eyre!("DKG epoch overflow"))?
-            && actual == expected,
-        "activation does not match the frozen DKG target"
-    );
-    ensure!(
-        !require_delayed || anchor > target.planned,
-        "activation was not delayed beyond its planned anchor"
-    );
-    Ok(())
-}
-
-fn validate_reveal_interval(
-    log: &str,
-    target: &FrozenTarget,
-    boundary_commit_height: u64,
-    expected: &str,
-) -> Result<()> {
-    let mut inside = false;
-    let mut revealed = false;
-    let cycle = target.cycle.to_string();
-    let height = dkg_activation_anchor(boundary_commit_height)?.to_string();
-    for line in log.lines() {
-        if line.contains("freezing validator set and starting DKG rotation") {
-            inside = log_field(line, "dkg_cycle") == Some(cycle.as_str());
-            if inside {
-                revealed = false;
-            }
-        }
-        if inside
-            && line.contains("DKG: a validator's individual share was REVEALED")
-            && log_field(line, "revealed_validator") == Some(expected)
-        {
-            revealed = true;
-        }
-        if line.contains("VRF/DKG material activated")
-            && log_field(line, "dkg_cycle") == Some(cycle.as_str())
-        {
-            ensure!(
-                inside && revealed && log_field(line, "activation_height") == Some(height.as_str()),
-                "offline reveal is not bound to the matching DKG activation interval"
-            );
-            return Ok(());
-        }
-    }
-    Err(eyre!("missing matching reveal/activation interval"))
-}
-
-fn recovered_checkpoint_attempts(remaining: Duration) -> Result<u32> {
-    // The shared checkpoint helper waits three seconds after an unavailable
-    // observation. Do not grant it a fresh budget after each recovery poll.
-    let attempts = u32::try_from(remaining.as_secs() / 3)?;
-    ensure!(
-        attempts > 0,
-        "no DKG recovery checkpoint readiness budget remains"
-    );
-    Ok(attempts)
-}
-
-fn wait_recovered_dkg(
-    world: &mut World,
-    tries: u32,
-    require_reveal: bool,
-    off_grid: bool,
-) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(u64::from(tries) * 10);
-    let target = retained_frozen_target(world)?;
-    let members = dkg_addresses(world, 5)?;
-    let ports = dkg_ports(world, &[0, 1, 2, 3])?;
-    let old_epoch = dkg_epoch_at(world, ports[0], target.freeze)?;
-    let mut next = target
-        .freeze
-        .checked_add(1)
-        .ok_or_else(|| eyre!("DKG scan height overflow"))?;
-    let mut activated = None;
-    let mut fresh_target = None;
-    loop {
-        let ports = dkg_ports(world, &[0, 1, 2, 3])?;
-        let attempts =
-            recovered_checkpoint_attempts(deadline.saturating_duration_since(Instant::now()))?;
-        // A newly restored owned process may not serve finalized RPC yet.
-        // Keep every expected peer and the helper's final per-port errors.
-        // Canonical hash/root disagreement still fails immediately.
-        let point = world.rpc.wait_finalized_checkpoint(&ports, 0, attempts)?;
-        ensure!(
-            Instant::now() < deadline,
-            "DKG recovery checkpoint became ready after its observation deadline"
-        );
-        while next <= point.height {
-            if let Some(boundary) = dkg_boundary_at(world, &ports, next)? {
-                if activated.is_some() {
-                    ensure!(
-                        boundary.epoch
-                            != old_epoch
-                                .checked_add(1)
-                                .ok_or_else(|| eyre!("epoch overflow"))?,
-                        "recovered DKG epoch activated twice"
-                    );
-                }
-                if boundary.cycle == target.cycle {
-                    ensure!(activated.is_none(), "frozen DKG target activated twice");
-                    validate_dkg_activation(&boundary, &target, &members, old_epoch, off_grid)?;
-                    let at = world.rpc.checkpoint_at(ports[0], next)?;
-                    dkg_membership_at(world, &ports, at, &members, members[4], 2)?;
-                    world
-                        .state
-                        .restart_observations
-                        .push(json!({"phase": "dkg_activation", "boundary": boundary}));
-                    activated = Some(next);
-                    fresh_target = Some(world.rpc.fresh_finality_target(&ports)?);
-                }
-            }
-            if activated.is_none() {
-                let at = world.rpc.checkpoint_at(ports[0], next)?;
-                dkg_membership_at(world, &ports, at, &members[..4], members[4], 1)?;
-            }
-            next = next
-                .checked_add(1)
-                .ok_or_else(|| eyre!("DKG scan height overflow"))?;
-        }
-        if fresh_target.is_some_and(|height| point.height >= height) {
-            dkg_membership_at(world, &ports, point, &members, members[4], 2)?;
-            if require_reveal {
-                let expected = world
-                    .state
-                    .expected_dkg_reveal
-                    .clone()
-                    .ok_or_else(|| eyre!("missing expected reveal identity"))?;
-                validate_reveal_interval(
-                    &dkg_log(world, 0)?,
-                    &target,
-                    activated.ok_or_else(|| eyre!("missing activated boundary"))?,
-                    &expected,
-                )?;
-            }
-            dkg_ports(world, &[0, 1, 2, 3])?;
-            record_dkg_checkpoint(world, "dkg_recovered_finality", &ports, point);
-            return Ok(());
-        }
-        ensure!(
-            Instant::now() < deadline,
-            "frozen DKG target did not recover with fresh expected-peer finality"
-        );
-        sleep(Duration::from_secs(10));
-    }
 }
 
 /// Setup with a WIDE DKG activation grace so the VRF window outlasts the failed
@@ -785,8 +515,17 @@ fn old_committee_keeps_finalizing(world: &mut World) {
             finalize_dkg_receipts(world, &ports)
                 .expect("stake/readiness receipts finalized by all survivors");
             retain_frozen_target(world, &ports).expect("exact agreed frozen target");
-            dkg_membership_at(world, &ports, point, &members[..4], members[4], 1)
-                .expect("old set remains authoritative");
+            dkg_membership_at(
+                world,
+                &ports,
+                point,
+                &DkgMembership {
+                    members: &members[..4],
+                    joiner: members[4],
+                    status: 1,
+                },
+            )
+            .expect("old set remains authoritative");
             record_dkg_checkpoint(world, "dkg_stalled_finality", &ports, point);
             break;
         }
@@ -839,8 +578,17 @@ fn old_committee_crosses_planned_activation(world: &mut World) {
                 finalize_dkg_receipts(world, &ports).expect("off-grid admission receipts");
                 let target = retain_frozen_target(world, &ports).expect("frozen target agreement");
                 let members = dkg_addresses(world, 5).expect("expected DKG addresses");
-                dkg_membership_at(world, &ports, point, &members[..4], members[4], 1)
-                    .expect("no partial off-grid activation");
+                dkg_membership_at(
+                    world,
+                    &ports,
+                    point,
+                    &DkgMembership {
+                        members: &members[..4],
+                        joiner: members[4],
+                        status: 1,
+                    },
+                )
+                .expect("no partial off-grid activation");
                 world.state.activation_height = Some(target.planned);
                 record_dkg_checkpoint(world, "dkg_past_planned_activation", &ports, point);
                 break;
@@ -906,165 +654,4 @@ fn delayed_reshare_activates_off_grid(world: &mut World) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recovery_checkpoint_readiness_uses_only_the_remaining_budget() {
-        assert_eq!(
-            recovered_checkpoint_attempts(Duration::from_secs(3)).unwrap(),
-            1
-        );
-        assert_eq!(
-            recovered_checkpoint_attempts(Duration::from_secs(29)).unwrap(),
-            9
-        );
-        assert_eq!(
-            recovered_checkpoint_attempts(Duration::from_secs(270)).unwrap(),
-            90
-        );
-        assert!(recovered_checkpoint_attempts(Duration::ZERO).is_err());
-        assert!(recovered_checkpoint_attempts(Duration::from_millis(2999)).is_err());
-    }
-
-    #[test]
-    fn dkg_fault_cohorts_do_not_restore_the_offline_joiner_or_omit_a_survivor() {
-        validate_dkg_owners(&[0, 1, 2], &[0, 1, 2]).unwrap();
-        validate_dkg_owners(&[0, 1, 2, 3], &[0, 1, 2, 3]).unwrap();
-        for actual in [
-            vec![0, 1],
-            vec![0, 1, 2, 3],
-            vec![0, 1, 2, 4],
-            vec![0, 1, 2, 2],
-        ] {
-            assert!(validate_dkg_owners(&[0, 1, 2], &actual).is_err());
-        }
-        assert!(validate_dkg_owners(&[0, 1, 2, 3], &[0, 1, 2, 3, 4]).is_err());
-        assert!(validate_dkg_owners(&[], &[]).is_err());
-    }
-
-    #[test]
-    fn frozen_target_observation_requires_exact_public_fields() {
-        let line = "INFO freezing validator set and starting DKG rotation dkg_cycle=7 current_height=80 freeze_height=80 planned_activation_height=180";
-        let expected = FrozenTarget {
-            cycle: 7,
-            freeze: 80,
-            planned: 180,
-        };
-        assert_eq!(frozen_target(line, 0).unwrap(), Some(expected));
-        assert_eq!(frozen_target(line, 81).unwrap(), None);
-        assert_eq!(frozen_target("unrelated DKG progress", 0).unwrap(), None);
-        for wrong in [
-            line.replace("dkg_cycle=7", "dkg_cycle=bad"),
-            line.replace("freeze_height=80", ""),
-            line.replace(
-                "planned_activation_height=180",
-                "planned_activation_height=79",
-            ),
-            format!("{line}\n{}", line.replace("dkg_cycle=7", "dkg_cycle=8")),
-        ] {
-            assert!(frozen_target(&wrong, 0).is_err());
-        }
-    }
-
-    #[test]
-    fn recovery_binds_actual_boundary_to_the_same_frozen_target() {
-        let target = FrozenTarget {
-            cycle: 7,
-            freeze: 80,
-            planned: 180,
-        };
-        let members: Vec<_> = (1..=5).map(Address::repeat_byte).collect();
-        let boundary = BoundaryWitness {
-            height: 193,
-            block_hash: B256::repeat_byte(2),
-            state_root: B256::repeat_byte(3),
-            epoch: 4,
-            cycle: 7,
-            freeze: 80,
-            planned: 180,
-            target_hash: B256::repeat_byte(1),
-            members: members.clone(),
-        };
-        validate_dkg_activation(&boundary, &target, &members, 3, false).unwrap();
-        validate_dkg_activation(&boundary, &target, &members, 3, true).unwrap();
-        let mut on_time = boundary.clone();
-        on_time.height = 181;
-        validate_dkg_activation(&on_time, &target, &members, 3, false).unwrap();
-        assert!(validate_dkg_activation(&on_time, &target, &members, 3, true).is_err());
-        for height in [0, 179, 180] {
-            let mut early = boundary.clone();
-            early.height = height;
-            assert!(validate_dkg_activation(&early, &target, &members, 3, false).is_err());
-        }
-        for defect in 0..7 {
-            let mut wrong = boundary.clone();
-            match defect {
-                0 => wrong.cycle += 1,
-                1 => wrong.epoch += 1,
-                2 => wrong.freeze += 1,
-                3 => wrong.planned += 1,
-                4 => wrong.height = 179,
-                5 => wrong.target_hash = B256::ZERO,
-                _ => {
-                    wrong.members.pop();
-                }
-            }
-            assert!(validate_dkg_activation(&wrong, &target, &members, 3, false).is_err());
-        }
-    }
-
-    #[test]
-    fn reveal_must_belong_to_the_matching_activation_not_a_later_ceremony() {
-        let target = FrozenTarget {
-            cycle: 7,
-            freeze: 80,
-            planned: 180,
-        };
-        let freeze = "freezing validator set and starting DKG rotation dkg_cycle=7";
-        let reveal =
-            "DKG: a validator's individual share was REVEALED revealed_validator=public-key";
-        let activated = "VRF/DKG material activated dkg_cycle=7 activation_height=193";
-        validate_reveal_interval(
-            &format!("{freeze}\n{reveal}\n{activated}"),
-            &target,
-            194,
-            "public-key",
-        )
-        .unwrap();
-        // Captured scenario 8: anchor 180 is committed in boundary block 181.
-        validate_reveal_interval(
-            &format!("{freeze}\n{reveal}\n{}", activated.replace("193", "180")),
-            &target,
-            181,
-            "public-key",
-        )
-        .unwrap();
-        assert!(validate_reveal_interval(
-            &format!("{freeze}\n{reveal}\n{activated}"),
-            &target,
-            0,
-            "public-key",
-        )
-        .is_err());
-        for log in [
-            format!("{reveal}\n{freeze}\n{activated}"),
-            format!("{freeze}\n{activated}\n{reveal}"),
-            format!("{freeze}\n{reveal}\n{}", activated.replace("193", "194")),
-            format!(
-                "{freeze}\n{}\n{activated}",
-                reveal.replace("public-key", "foreign-key")
-            ),
-            format!(
-                "{freeze}\n{reveal}\n{}",
-                activated.replace("dkg_cycle=7", "dkg_cycle=8")
-            ),
-            format!(
-                "{}\n{reveal}\n{activated}",
-                freeze.replace("dkg_cycle=7", "dkg_cycle=8")
-            ),
-        ] {
-            assert!(validate_reveal_interval(&log, &target, 194, "public-key").is_err());
-        }
-    }
-}
+mod tests;

@@ -135,7 +135,9 @@ fn insert_components(
     component_indices: &mut ComponentIndices,
 ) -> Result<[u16; 8], CodecError> {
     let components: [DcapCollateralComponentV1; 8] = components.try_into().map_err(|_| {
-        CodecError::NonCanonical("TEE bootstrap evidence does not contain exactly eight components")
+        CodecError::from(
+            crate::error::TeeCodecNonCanonicalError::TeeBootstrapEvidenceNotEightComponents,
+        )
     })?;
     let mut indices = [0_u16; 8];
     // Move the already-owned buffers into deduplication, without an aggregate clone.

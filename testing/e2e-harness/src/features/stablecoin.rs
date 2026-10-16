@@ -225,11 +225,13 @@ fn create_and_approve_stablecoin(world: &mut World) {
         .rpc
         .stablecoin_propose(
             ISSUER_KEY,
-            TOKEN_NAME,
-            TICKER,
-            ISO_4217_USD,
-            U256::from(SUPPLY_CAP),
-            policy_id,
+            &crate::world::rpc::StablecoinProposal {
+                name: TOKEN_NAME,
+                ticker: TICKER,
+                iso4217: ISO_4217_USD,
+                supply_cap: U256::from(SUPPLY_CAP),
+                policy_id,
+            },
         )
         .expect("submit stablecoin proposal");
     assert!(
@@ -448,15 +450,22 @@ fn native_value_stablecoin_prefix_boundary(world: &mut World) {
     }
 }
 
-fn sign_permit(
-    key: &str,
-    domain: B256,
+struct PermitTerms {
     owner: Address,
     spender: Address,
     value: U256,
     nonce: U256,
     deadline: U256,
-) -> (u8, B256, B256) {
+}
+
+fn sign_permit(key: &str, domain: B256, terms: &PermitTerms) -> (u8, B256, B256) {
+    let PermitTerms {
+        owner,
+        spender,
+        value,
+        nonce,
+        deadline,
+    } = *terms;
     let typehash = keccak256(
         "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)",
     );
@@ -541,11 +550,13 @@ fn exercise_ledger(world: &mut World) {
     let (v, r, s) = sign_permit(
         &fixture.issuer_key,
         domain,
-        fixture.issuer,
-        fixture.spender,
-        U256::from(PERMIT_AMOUNT),
-        nonce,
-        deadline,
+        &PermitTerms {
+            owner: fixture.issuer,
+            spender: fixture.spender,
+            value: U256::from(PERMIT_AMOUNT),
+            nonce,
+            deadline,
+        },
     );
     eth::send_call(
         &url,
@@ -597,9 +608,11 @@ fn exercise_ledger(world: &mut World) {
     };
     super::negative_assertions::assert_mined_revert(
         world,
-        fixture.token,
-        &fixture.issuer_key,
-        &paused_transfer,
+        super::negative_assertions::NegativeTx {
+            to: fixture.token,
+            key: &fixture.issuer_key,
+            call: &paused_transfer,
+        },
         U256::ZERO,
         &IStablecoin::TokenPaused {}.abi_encode(),
     );
@@ -745,9 +758,11 @@ fn duplicate_global_ticker(world: &mut World) {
     };
     let outcome = super::negative_assertions::assert_mined_revert(
         world,
-        addresses::VOTE_ADDR,
-        &fixture.second_issuer_key,
-        &call,
+        super::negative_assertions::NegativeTx {
+            to: addresses::VOTE_ADDR,
+            key: &fixture.second_issuer_key,
+            call: &call,
+        },
         STABLECOIN_CREATE_BOND,
         &IStablecoinFactory::TickerAlreadyRegistered {
             ticker: TICKER.to_owned(),

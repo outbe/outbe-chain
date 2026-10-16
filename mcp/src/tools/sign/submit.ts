@@ -1,5 +1,5 @@
-import type { TransactionReceipt } from "viem";
-import { type Ctx, sendTx } from "../../chain.js";
+import { type TransactionReceipt, encodeFunctionData } from "viem";
+import { type Ctx, abiFn, coerceArgs, sendTx } from "../../chain.js";
 import { contextNetwork } from "../../net/resolver.js";
 import { receiptSummary, waitForReceipt } from "../../net/tx.js";
 import { resolveContract } from "../../registry.js";
@@ -18,12 +18,18 @@ export interface Write {
   outcome?: (receipt: TransactionReceipt) => Record<string, unknown>;
   /** What the output reports whether or not it waits for the receipt. */
   extra?: Record<string, unknown>;
+  /** Run the call first, so a revert such as a rejected modify authorization throws before anything is sent. */
+  simulate?: boolean;
 }
 
 /** Send a curated write and optionally wait for the receipt. */
 export async function submit(ctx: Ctx, write: Write) {
-  const { contract, method, args, gas = GAS_DEFAULT, wait = true, value = 0n, outcome, extra } = write;
+  const { contract, method, args, gas = GAS_DEFAULT, wait = true, value = 0n, outcome, extra, simulate } = write;
   const entry = resolveContract(contract);
+  if (simulate) {
+    const data = encodeFunctionData({ abi: entry.abi, functionName: method, args: coerceArgs(abiFn(entry.abi, method), args) });
+    await ctx.publicClient.call({ account: ctx.account, to: entry.address, data, value, gas });
+  }
   const hash = await sendTx(ctx, { entry, method, args, gas, value });
   if (!wait) return ok({ txHash: hash, contract, method, ...extra, status: "submitted" });
   const r = await waitForReceipt(contextNetwork(ctx), hash);

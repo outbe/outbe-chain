@@ -8,10 +8,8 @@ from genesis_keccak import keccak256
 from genesis_seed_alloc import seed_governments_descriptor, seed_radicle_registry
 from genesis_seed_codec import (
     ACCOUNTING_PROGRESS_ADDRESS,
-    COMPRESSED_ENTITIES_ADDRESS,
-    COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT,
-    COMPRESSED_ENTITIES_SCHEMA_VERSION,
     GOVERNANCE_ADDRESS,
+
     MARKER_CODE,
     RADICLE_REGISTRY_ADDRESS,
     TEE_REGISTRY_ADDRESS,
@@ -97,12 +95,6 @@ def seed_accounting_progress(storage: StorageBuilder):
     `outbe_accounting::schema::Accounting::last_accounted_block_number`.
     """
     storage.set_slot(0, 0)
-
-
-def seed_compressed_entities(storage: StorageBuilder):
-    """Seed the EVM schema version and ADR-010's authoritative empty sealed root."""
-    storage.set_slot(0, COMPRESSED_ENTITIES_SCHEMA_VERSION)
-    storage.set_slot(1, COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT)
 
 
 def seed_governance(storage: StorageBuilder, canon_dir: str | None):
@@ -195,16 +187,6 @@ def _seed_system_state(genesis, seed, alloc, canon_dir):
     print(
         f"  AccountingProgress: slot 0 = 0, "
         f"{len(accounting_storage.entries)} storage entries"
-    )
-
-    compressed_entities_storage = StorageBuilder()
-    seed_compressed_entities(compressed_entities_storage)
-    alloc[COMPRESSED_ENTITIES_ADDRESS].setdefault("storage", {}).update(
-        compressed_entities_storage.entries
-    )
-    print(
-        "  CompressedEntities: slot 0 = 3, "
-        "slot 1 = ADR-010 empty sealed Root Catalog root"
     )
 
     if "radicle_registry" in seed:

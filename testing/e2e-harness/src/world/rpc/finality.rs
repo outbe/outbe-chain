@@ -5,7 +5,6 @@ use crate::world::rpc::*;
 pub struct BlockCommitmentV1 {
     pub block_hash: B256,
     pub state_root: B256,
-    pub ce_root: B256,
 }
 
 /// One exact canonical block observed only after every requested node finalized it.
@@ -222,15 +221,12 @@ impl Rpc {
         eth::state_root(&self.url(port), height)
     }
 
-    /// Canonical block/state/CE roots imported by one validator at `height`.
+    /// Canonical block hash and native state root imported by one validator at `height`.
     pub fn block_commitment(&self, port: u16, height: u64) -> Option<BlockCommitmentV1> {
-        let (block_hash, state_root, extra_data) = eth::block_commitment(&self.url(port), height)?;
-        let artifacts = decode_outbe_block_artifacts(&extra_data).ok()?;
-        let ce_root = artifacts.compressed_entities_root?.r_sealed;
+        let (block_hash, state_root, _) = eth::block_commitment(&self.url(port), height)?;
         Some(BlockCommitmentV1 {
             block_hash,
             state_root,
-            ce_root,
         })
     }
 

@@ -1,10 +1,9 @@
-use crate::snapshot::tests::projection_fixture::PartitionFixtureStore as RocksDbStorage;
 mod exported_composition;
 
 fn source_body() -> outbe_tribute::TributeData {
     let owner = alloy_primitives::Address::repeat_byte(1);
     outbe_tribute::TributeData {
-        tribute_id: outbe_compressed_entities::derive_poseidon_entity_id(owner, DAY).unwrap(),
+        tribute_id: outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner, DAY).unwrap(),
         owner,
         worldwide_day: DAY,
         issuance_amount_minor: U256::from(1000),
@@ -12,57 +11,114 @@ fn source_body() -> outbe_tribute::TributeData {
         nominal_amount_minor: U256::from(700),
         reference_currency: 840,
         tribute_price_minor: U256::from(2),
-        exclude_from_intex_issuance: false,
     }
 }
 
 fn bind_source(intent: &mut JobIntentV1) {
-    use outbe_compressed_entities::{
-        body_commitment, encode_tribute_v1, partition_collection_key,
-        tribute_partition_root_from_leaves, PartitionRef, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
-    };
     let body = source_body();
-    let bytes = encode_tribute_v1(&outbe_tribute::canonical_body(&body)).unwrap();
-    let commitment = body_commitment(
-        ACTIVE_COMMITMENT_SCHEME,
-        BODY_SCHEMA_V1,
-        body.tribute_id,
-        &bytes,
-    )
-    .unwrap();
-    let root =
-        tribute_partition_root_from_leaves(DAY, vec![(body.tribute_id, commitment)]).unwrap();
-    let key = alloy_primitives::B256::from(
-        *partition_collection_key(PartitionRef::TributeWwd(DAY))
-            .unwrap()
-            .1
-            .as_bytes(),
-    );
-    intent.sealed_tribute_collection_key = key;
-    intent.sealed_tribute_collection_root = root;
     intent.authenticated_day_count = 1;
     intent.authenticated_day_nominal = body.nominal_amount_minor;
     let tribute = &mut intent.activation_preconditions.tribute;
-    tribute.collection_key = key;
-    tribute.sealed_collection_root = root;
     tribute.exact_count = 1;
     tribute.exact_nominal_total = body.nominal_amount_minor;
 }
 
+fn encrypted_source(chain_id: u64) -> outbe_primitives::tribute_encryption::EncryptedTributeV2 {
+    let body = source_body();
+    crate::snapshot::tests::native_state::encrypted(
+        outbe_primitives::tribute_encryption::TributeContextV2 {
+            chain_id,
+            tribute_id: body.tribute_id,
+            owner: body.owner,
+            worldwide_day: DAY,
+            issuance_currency: body.issuance_currency,
+            reference_currency: body.reference_currency,
+            tribute_price_minor: body.tribute_price_minor,
+            offer_input_hash: alloy_primitives::B256::repeat_byte(0x43),
+        },
+    )
+}
+
+fn source_state(chain_id: u64) -> crate::snapshot::tests::native_state::State {
+    let encrypted = encrypted_source(chain_id);
+    let mut owner = HashMapStorageProvider::new(chain_id);
+    StorageHandle::enter(&mut owner, |storage| {
+        outbe_tribute::TributeContract::new(storage)
+            .insert_state_record(&outbe_tribute::storage_records::StoredTribute::from(
+                &encrypted,
+            ))
+            .unwrap();
+    });
+    crate::snapshot::tests::native_state::from_owner(&owner)
+}
+
+fn source_ciphertext_slot(chain_id: u64) -> alloy_primitives::B256 {
+    use outbe_tribute::storage_records::StoredTributeEntryExt;
+    let encrypted = encrypted_source(chain_id);
+    let mut owner = HashMapStorageProvider::new(chain_id);
+    StorageHandle::enter(&mut owner, |storage| {
+        let contract = outbe_tribute::TributeContract::new(storage);
+        let words = contract
+            .records
+            .entry(encrypted.context.tribute_id)
+            .encrypted_amounts()
+            .encoded_words(&encrypted.encrypted_amounts);
+        alloy_primitives::B256::from(words.last().unwrap().0.to_be_bytes::<32>())
+    })
+}
+
 fn write_source(layout: &crate::snapshot::config::RequestedLayout) {
-    use outbe_offchain_storage::{StorageReaderHandle, StorageWriterHandle};
-    let storage = std::sync::Arc::new(
-        RocksDbStorage::open(&layout.projection.as_ref().unwrap().root).unwrap(),
-    );
-    let reader: StorageReaderHandle = storage.clone();
-    let writer: StorageWriterHandle = storage;
-    outbe_tribute::TributeRepositoryWriter::new(reader, writer)
-        .put(&source_body())
+    use crate::snapshot::tests::native_state;
+    use reth_ethereum::provider::db::{
+        database::Database,
+        init_db,
+        mdbx::DatabaseArguments,
+        tables,
+        transaction::{DbTx, DbTxMut},
+    };
+    let source = source_state(layout.chain.chain().id());
+    let db = init_db(layout.chain_root.join("db"), DatabaseArguments::test()).unwrap();
+    let tx = db.tx().unwrap();
+    let settings = tx
+        .get::<tables::Metadata>("storage_settings".into())
+        .unwrap()
+        .map(|bytes| serde_json::from_slice::<reth_provider::StorageSettings>(&bytes).unwrap())
+        .unwrap_or_else(reth_provider::StorageSettings::v1);
+    let mut request = tx
+        .get::<tables::Headers<OutbeHeader>>(100)
+        .unwrap()
         .unwrap();
+    let mut next = tx
+        .get::<tables::Headers<OutbeHeader>>(101)
+        .unwrap()
+        .unwrap();
+    drop(tx);
+    drop(db);
+    native_state::persist(
+        layout,
+        if settings.is_v2() { 2 } else { 1 },
+        &source,
+        &source,
+        102,
+    );
+    request.inner.state_root = native_state::root(&source);
+    next.inner.state_root = request.inner.state_root;
+    next.inner.parent_hash = request.hash_slow();
+    let db = init_db(layout.chain_root.join("db"), DatabaseArguments::test()).unwrap();
+    let tx = db.tx_mut().unwrap();
+    for header in [request, next] {
+        tx.put::<tables::CanonicalHeaders>(header.inner.number, header.hash_slow())
+            .unwrap();
+        tx.put::<tables::HeaderNumbers>(header.hash_slow(), header.inner.number)
+            .unwrap();
+        tx.put::<tables::Headers<OutbeHeader>>(header.inner.number, header)
+            .unwrap();
+    }
+    tx.commit().unwrap();
 }
 
 #[test]
-fn source_complete_active_before_projection_request_passes_without_local_pin_or_export() {
+fn source_complete_active_after_closure_passes_without_local_pin_or_export() {
     use crate::snapshot::validation::ocomp::{
         verify_canonical_obligations, CanonicalLocalPinStage,
     };
@@ -115,7 +171,7 @@ fn source_complete_active_before_projection_request_passes_without_local_pin_or_
                 let audit =
                     verify_canonical_obligations(state, source, (layout, scratch), None, None)
                         .unwrap();
-                assert_eq!(audit.projection.block_number, 100);
+
                 assert_eq!(audit.closure.checkpoint.current.block_number, 100);
                 assert_eq!(audit.bounds.active_intents, 1);
                 assert_eq!(audit.active.len(), 1);
@@ -129,7 +185,7 @@ fn source_complete_active_before_projection_request_passes_without_local_pin_or_
                 assert_eq!(active.job.status, OcompJobStatus::AwaitingFinality);
                 assert!(active.job.finalized.is_none());
                 assert_eq!(active.pin_stage, CanonicalLocalPinStage::Absent);
-                assert!(active.projection_before_request);
+
                 assert!(active.source_verified);
                 assert!(!active.export_verified);
                 assert!(audit.pins.is_empty());
@@ -139,80 +195,6 @@ fn source_complete_active_before_projection_request_passes_without_local_pin_or_
                 assert_eq!(audit.nod.jobs, 0);
                 assert!(!layout.consensus_root.join("ocomp_retention").exists());
                 assert!(!layout.ocomp_root.join("supervisor-v1/jobs").exists());
-            },
-        );
-    }
-}
-
-#[test]
-fn later_series_budget_preserves_reached_bounds_and_active_identity() {
-    use crate::snapshot::validation::{
-        ocomp::verify_canonical_obligations,
-        report::{CheckName, CheckStatus, ValidationReport},
-        Incomplete,
-    };
-    for version in [1, 2] {
-        super::super::with_canonical_frontiers(
-            version,
-            |_| {},
-            |request| {
-                let mut prepared = fixture(request, Phase::AwaitingFinality, |_| {});
-                prepared
-                    .owner
-                    .storage
-                    .extend(super::super::series_owner().storage);
-                prepared.owner
-            },
-            |state, source, layout, scratch| {
-                let expected = state.live_ocomp_jobs().unwrap();
-                assert_eq!(expected.len(), 1);
-                let mut report = ValidationReport::new([CheckName::Ocomp]);
-                let error = verify_canonical_obligations(
-                    state,
-                    source,
-                    (layout, scratch),
-                    Some(1),
-                    Some(&mut report),
-                )
-                .err()
-                .expect("later series exceeds the selected cap");
-                assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
-                assert!(
-                    error
-                        .to_string()
-                        .contains("Intex series scan stopped at 1/3"),
-                    "{error:#}"
-                );
-                assert_eq!(report.active_ocomp.len(), 1);
-                let active = &report.active_ocomp[0];
-                assert_eq!(active.intent_id, hex::encode(expected[0].0));
-                assert_eq!(active.job_id, None);
-                assert_eq!(active.pin_stage, "NotInspected");
-                assert_eq!(active.projection_before_request, None);
-                assert!(!active.source_verified);
-                assert!(!active.export_verified);
-                let series = report
-                    .inventory_bounds
-                    .iter()
-                    .find(|b| b.name == "intex_series")
-                    .expect("reached permanent series interval");
-                assert_eq!(
-                    (series.start, series.end_exclusive, series.visited),
-                    (0, 3, 1)
-                );
-                let fifo = report
-                    .inventory_bounds
-                    .iter()
-                    .find(|b| b.name == "nod_fifo")
-                    .expect("completed empty FIFO interval");
-                assert_eq!((fifo.start, fifo.end_exclusive, fifo.visited), (1, 1, 0));
-                assert!(report.observed.p.is_none());
-                assert!(report.observed.c_current.is_none());
-                assert_eq!(
-                    report.check(CheckName::Ocomp).status,
-                    CheckStatus::Incomplete
-                );
-                assert!(!report.success());
             },
         );
     }
@@ -261,7 +243,7 @@ fn later_fifo_budget_preserves_discovered_active_identity_and_partial_scan_bound
                 assert_eq!(active.request_height, expected[0].1.intent_height);
                 assert_eq!(active.canonical_status, "AwaitingFinality");
                 assert_eq!(active.pin_stage, "NotInspected");
-                assert_eq!(active.projection_before_request, None);
+
                 assert!(!active.source_verified);
                 assert!(!active.export_verified);
                 let active_bounds = report
@@ -283,59 +265,13 @@ fn later_fifo_budget_preserves_discovered_active_identity_and_partial_scan_bound
                     .find(|b| b.name == "nod_fifo")
                     .expect("interrupted FIFO bound");
                 assert_eq!((fifo.start, fifo.end_exclusive, fifo.visited), (1, 3, 1));
-                assert!(report.observed.p.is_none());
-                assert!(report.observed.c_current.is_none());
-                assert_eq!(
-                    report.check(CheckName::Ocomp).status,
-                    CheckStatus::Incomplete
-                );
-                assert!(!report.success());
-            },
-        );
-    }
-}
 
-#[test]
-fn missing_projection_preserves_active_identity_with_unknown_frontier_relationship() {
-    use crate::snapshot::validation::{
-        ocomp::verify_canonical_obligations,
-        report::{CheckName, CheckStatus, ValidationReport},
-        Incomplete,
-    };
-    for version in [1, 2] {
-        super::super::with_canonical_frontiers(
-            version,
-            |layout| std::fs::remove_dir_all(&layout.projection.as_ref().unwrap().root).unwrap(),
-            |request| fixture(request, Phase::AwaitingFinality, |_| {}).owner,
-            |state, source, layout, scratch| {
-                let mut report = ValidationReport::new([CheckName::Ocomp]);
-                let error = verify_canonical_obligations(
-                    state,
-                    source,
-                    (layout, scratch),
-                    None,
-                    Some(&mut report),
-                )
-                .err()
-                .expect("selected projection inputs are absent");
-                assert!(error.downcast_ref::<Incomplete>().is_some(), "{error:#}");
-                assert!(error.to_string().contains("projection"), "{error:#}");
-                let expected = state.live_ocomp_jobs().unwrap();
-                assert_eq!(report.active_ocomp.len(), 1);
-                assert_eq!(report.active_ocomp[0].intent_id, hex::encode(expected[0].0));
-                assert_eq!(report.active_ocomp[0].pin_stage, "NotInspected");
-                assert_eq!(report.active_ocomp[0].projection_before_request, None);
-                assert!(!report.active_ocomp[0].source_verified);
-                assert!(!report.active_ocomp[0].export_verified);
-                assert!(report.observed.p.is_none());
                 assert!(report.observed.c_current.is_none());
                 assert_eq!(
                     report.check(CheckName::Ocomp).status,
                     CheckStatus::Incomplete
                 );
                 assert!(!report.success());
-                let json = serde_json::to_value(&report).unwrap();
-                assert!(json["active_ocomp"][0]["projection_before_request"].is_null());
             },
         );
     }
@@ -360,7 +296,6 @@ fn active_report_preserves_identity_and_distinguishes_unverified_local_capabilit
                 intent_id,
                 job,
                 pin_stage: CanonicalLocalPinStage::Absent,
-                projection_before_request: true,
                 source_verified: false,
                 export_verified: false,
             };
@@ -376,7 +311,7 @@ fn active_report_preserves_identity_and_distinguishes_unverified_local_capabilit
             assert_eq!(observed["worldwide_day"], day);
             assert_eq!(observed["canonical_status"], "AwaitingFinality");
             assert_eq!(observed["pin_stage"], "Absent");
-            assert_eq!(observed["projection_before_request"], true);
+            assert!(observed.get("projection_before_request").is_none());
             assert_eq!(observed["source_verified"], false);
             assert_eq!(observed["export_verified"], false);
             assert!(source.header(request_height).unwrap().is_some());
@@ -409,14 +344,16 @@ fn full_canonical_composition_finds_active_obligation_without_any_local_pin_or_j
                         Some(&mut report),
                     )
                     .err()
-                    .expect("missing body for independently found active job cannot pass");
+                    .expect(
+                        "a canonical active job with an inconsistent native day count cannot pass",
+                    );
                     assert!(
-                        error.downcast_ref::<Incomplete>().is_some(),
+                        error.downcast_ref::<Incomplete>().is_none(),
                         "{phase:?}: {error:#}"
                     );
                     assert!(
-                        format!("{error:#}").contains("Tribute"),
-                        "must reach active source requirement: {error:#}"
+                        format!("{error:#}").contains("native Tribute day count mismatch"),
+                        "must discover the active source count conflict: {error:#}"
                     );
                     let (intent_id, job) = state.live_ocomp_jobs().unwrap().pop().unwrap();
                     assert_eq!(report.active_ocomp.len(), 1);
@@ -431,7 +368,7 @@ fn full_canonical_composition_finds_active_obligation_without_any_local_pin_or_j
                     assert_eq!(observation.pin_stage, "Absent");
                     assert!(!observation.source_verified);
                     assert!(!observation.export_verified);
-                    assert_eq!(report.observed.p.as_ref().unwrap().number, 100);
+
                     assert_eq!(report.observed.c_current.as_ref().unwrap().number, 100);
                     assert!(report
                         .inventory_bounds

@@ -1,5 +1,8 @@
 //! Read durable native progress without executing or repairing the stopped dataset.
 
+mod history;
+pub(crate) use history::HistoricalStateReader;
+
 use alloy_consensus::Sealable;
 use eyre::WrapErr;
 use outbe_primitives::{OutbeHeader, OutbePrimitives};
@@ -157,7 +160,6 @@ impl RethReadOnlyView {
             layout.chain_root.clone(),
             layout.consensus_root.clone(),
             layout.ocomp_root.clone(),
-            layout.offchain_root.clone(),
             layout.static_files_root.clone(),
             layout.execution_rocksdb_root.clone(),
         ]);
@@ -178,12 +180,6 @@ impl RethReadOnlyView {
             layout.static_files_root.clone(),
             layout.execution_rocksdb_root.clone(),
         ]);
-        protected.0.extend(
-            layout
-                .projection
-                .as_ref()
-                .map(|projection| projection.root.clone()),
-        );
         Self::open_parts(
             &layout.chain_root,
             &layout.static_files_root,
@@ -227,33 +223,15 @@ impl RethReadOnlyView {
     }
 }
 
-pub(crate) fn ce_identity(layout: &NativeLayout) -> outbe_compressed_entities::EnvironmentIdentity {
-    outbe_compressed_entities::EnvironmentIdentity {
-        local_storage_schema_version: outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
-        chain_id: layout.chain.chain().id(),
-        genesis_hash: layout.chain.genesis_hash(),
-        commitment_scheme_version: outbe_compressed_entities::ACTIVE_COMMITMENT_SCHEME,
-        topology: outbe_compressed_entities::CeTopologyV1.encode(),
-        tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".to_owned(),
-        vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
-    }
-}
-
-/// Observe the stopped execution, CE, projection and closure stores independently.
-/// The caller supplies a separate disposable RocksDB secondary directory.
+/// Observe stopped native execution and OCOMP closure progress.
+/// The caller supplies a disposable scratch directory outside protected roots.
 pub(crate) fn inspect_stopped_stores(
     layout: &NativeLayout,
     scratch: &std::path::Path,
 ) -> eyre::Result<outbe_snapshot::manifest::NativeProgress> {
-    use outbe_compressed_entities::CeMdbxReadOnly;
     use outbe_ocomp::discovery_spool::inspect_closure_checkpoint;
-    use outbe_offchain_data::{read_projection_state, ProjectionConfig};
-    use outbe_offchain_storage::{
-        partitioned::adapters::RocksPartitionReadView, PartitionedStorage,
-    };
     use outbe_primitives::projection::ProjectionCheckpoint;
     use outbe_snapshot::manifest::NativeProgress;
-    use std::sync::Arc;
 
     // A RocksDB secondary writes its own files. Keep all native/config roots
     // protected even when some of their optional subdirectories are absent.
@@ -262,7 +240,6 @@ pub(crate) fn inspect_stopped_stores(
         layout.chain_root.clone(),
         layout.consensus_root.clone(),
         layout.ocomp_root.clone(),
-        layout.offchain_root.clone(),
         layout.static_files_root.clone(),
         layout.execution_rocksdb_root.clone(),
     ]);
@@ -273,23 +250,6 @@ pub(crate) fn inspect_stopped_stores(
             .wrap_err("inspect existing OCOMP retention journal")?;
     }
     let reth = inspect_reth(layout)?;
-    let ce = CeMdbxReadOnly::open(&layout.chain_root, ce_identity(layout))?.marker()?;
-    let projection = read_projection_state(
-        ProjectionConfig {
-            chain_id: layout.chain.chain().id(),
-            genesis_hash: layout.chain.genesis_hash(),
-            start_block: layout.projection_start_block,
-        },
-        Arc::new(PartitionedStorage::read_only(
-            Arc::new(RocksPartitionReadView::open(
-                &layout.offchain_root,
-                scratch,
-            )?),
-            outbe_offchain_data::entity_partition_routing()?,
-        )),
-    )?
-    .and_then(|state| state.checkpoint)
-    .ok_or(SnapshotError::MissingOffchainProjectionCheckpoint)?;
     let closure = inspect_closure_checkpoint(
         layout
             .ocomp_root
@@ -311,11 +271,6 @@ pub(crate) fn inspect_stopped_stores(
         partial_state_trie: reth.partial_state_trie,
         unwind: reth.unwind,
         storage_version: reth.storage_version,
-        ce: BlockIdentity {
-            number: ce.height,
-            hash: hex::encode(ce.block_hash),
-        },
-        projection: block(projection),
         ocomp_baseline: block(closure.baseline),
         ocomp_previous: block(closure.previous),
         ocomp_current: block(closure.current),

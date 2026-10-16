@@ -437,8 +437,8 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
         .execute_transaction(rewards_tx)
         .expect("RewardsGemDelivery revert should soft-fail")
         .tx_gas_used();
-    // A failure receipt publishes the visible base plus the CE gas actually spent,
-    // never the unused CE reserve of the signed envelope.
+    // A failure receipt publishes the visible base plus the state-operation gas actually spent,
+    // never the unused state-operation reserve of the signed envelope.
     assert!(
         (rewards_intrinsic_gas..rewards_visible_gas).contains(&revert_gas),
         "GAS-11: reverted delivery charges {revert_gas}, expected within [{rewards_intrinsic_gas}, {rewards_visible_gas})"
@@ -509,15 +509,11 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
             .total_gems_issued
             .write(U256::ZERO)?;
         let retry_ctx = BlockRuntimeContext::new(retry_context, storage.clone());
-        // The retry mints compressed bodies, so it runs under an open block scope.
-        let world = outbe_gem::test_support::GemWorld::unopened();
-        outbe_compressed_entities::begin_block(storage.clone(), &world.scope)?;
+        // Retry the unchanged FIFO head against the persisted EVM state.
+
         assert!(matches!(
             outbe_rewards::api::deliver_oldest_reward_gem_batch(
-                &retry_ctx,
-                &world.scope,
-                &world.parent
-            )?,
+                &retry_ctx)?,
             outbe_rewards::api::RewardGemDeliveryOutcome::Delivered {
                 reward_utc_day: 20_240_101,
                 recipient_count: 2,
@@ -526,24 +522,17 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
                 batch_complete: false,
             } if delivered_promis_load_amount == U256::from(100u64)
         ));
-        // One compressed Gem body per block: the head stays until its second recipient.
+        // One Gem per block. The head stays until its second recipient.
         assert_eq!(rewards.reward_gem_queue_head.read()?, 0);
         assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
         assert_eq!(rewards.reward_gem_pending_batch_count.read()?, 1);
         assert_eq!(rewards.reward_gem_delivered_count.read(&20_240_101)?, 1);
         assert_eq!(gem.total_supply()?, 1);
         assert_eq!(
-            outbe_gem::api::list_by_owner(&storage, &world.scope, &world.parent, reward_owner_a)?
-                .len(),
+            outbe_gem::api::list_by_owner(&storage, reward_owner_a)?.len(),
             1
         );
-        assert!(outbe_gem::api::list_by_owner(
-            &storage,
-            &world.scope,
-            &world.parent,
-            reward_owner_b
-        )?
-        .is_empty());
+        assert!(outbe_gem::api::list_by_owner(&storage, reward_owner_b)?.is_empty());
         Ok::<_, outbe_primitives::error::PrecompileError>(())
     })
     .expect("the unchanged FIFO head must deliver on a later retry");
@@ -869,7 +858,6 @@ fn verifier_rejects_boundary_outcome_system_tx_artifact_mismatch() {
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(header_artifact)),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
-        compressed_entities_root: None,
     })
     .expect("extra_data encodes");
 
@@ -1050,16 +1038,18 @@ fn hook_readiness_error_keeps_its_type_across_the_executor_boundary() {
     let ctx = BlockContext::new(7, 84, CHAIN_ID, OWNER, Vec::new());
 
     let error = super::run_atomic_storage_hooks(&mut state, ctx, |_hook_ctx| {
-        Err(outbe_primitives::error::PrecompileError::TreeUnavailable(
-            "finalized marker advanced past payload parent".into(),
-        ))
+        Err(
+            outbe_primitives::error::PrecompileError::BodyReadUnavailable(
+                "native historical state is temporarily unavailable".into(),
+            ),
+        )
     })
-    .expect_err("tree readiness must abort this payload execution");
+    .expect_err("native state unavailability must abort this payload execution");
 
     assert!(matches!(
         error
             .as_internal()
             .and_then(|inner| inner.downcast_other::<outbe_primitives::error::PrecompileError>()),
-        Some(outbe_primitives::error::PrecompileError::TreeUnavailable(_))
+        Some(outbe_primitives::error::PrecompileError::BodyReadUnavailable(_))
     ));
 }

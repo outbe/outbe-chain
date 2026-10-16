@@ -18,10 +18,6 @@ ocomp-finality-fixture = [
     "dep:outbe-ocompregistry",
     "dep:reth-chainspec",
 ]
-tribute-day-directory = [
-    "dep:outbe-nod",
-    "dep:outbe-tribute",
-]
 ocomp-integration = [
     "ocomp-finality-fixture",
     "outbe-ocomp-protocol/test-utils",
@@ -33,7 +29,6 @@ ocomp-integration = [
     "dep:outbe-intexfactory",
     "dep:outbe-nodfactory",
     "dep:outbe-vaultrouter",
-    "dep:outbe-tribute",
     "dep:outbe-tee-enclave",
     "dep:reth-provider",
 ]
@@ -68,7 +63,6 @@ tar.workspace = true
 hex.workspace = true
 multibase.workspace = true
 libc.workspace = true
-outbe-compressed-entities.workspace = true
 outbe-chain-constants.workspace = true
 outbe-evm.workspace = true
 outbe-l2registry.workspace = true
@@ -93,11 +87,8 @@ outbe-node = { workspace = true, optional = true }
 outbe-ocomp = { workspace = true, optional = true }
 outbe-ocomp-protocol.workspace = true
 outbe-ocompregistry = { workspace = true, optional = true }
-outbe-offchain-data.workspace = true
-outbe-offchain-storage.workspace = true
-mongodb.workspace = true
 outbe-oracle = { workspace = true }
-outbe-tribute = { workspace = true, optional = true }
+outbe-tribute.workspace = true
 outbe-vaultrouter = { workspace = true, optional = true }
 outbe-tee-enclave = { workspace = true, optional = true }
 rand.workspace = true
@@ -171,16 +162,6 @@ path = "src/bin/outbe-verification-ledger.rs"
 name = "outbe-metadosis-evidence"
 path = "src/bin/outbe-metadosis-evidence.rs"
 required-features = ["ocomp-integration"]
-
-[[test]]
-name = "ocomp_checkpoint_handoff"
-path = "tests/ocomp_checkpoint_handoff.rs"
-required-features = ["ocomp-integration"]
-
-[[test]]
-name = "tribute_day_directory"
-path = "tests/tribute_day_directory.rs"
-required-features = ["tribute-day-directory"]
 
 [lints]
 workspace = true

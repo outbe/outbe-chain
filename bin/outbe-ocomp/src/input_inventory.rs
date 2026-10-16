@@ -4,8 +4,8 @@
 //!
 //! - keeps only one bounded sort run in memory
 //! - merges runs with bounded fan-in
-//! - publishes the immutable inventory header only after the CE root, exact
-//!   count, and nominal total have all closed
+//! - publishes the immutable inventory header only after finalized state proofs and exact
+//!   day coverage have closed
 
 use std::{
     cmp::{Ordering, Reverse},
@@ -18,21 +18,20 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
-    body_commitment, BoundedTributePartitionVerifier, Commitment, TributePartitionExpectationV1,
-    TributePartitionRetentionStatsV1, TributePartitionWorkConfig, TributeProofArchiveV1,
-    WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
-};
 use outbe_ocomp_protocol::input::CheckpointIdentityV1;
 use outbe_oracle::MAX_OCOMP_REFERENCE_ISOS;
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
+use outbe_tee::tribute_source::{TributeSourceCheckpoint, TributeSourceSubject};
 use sha3::{Digest, Keccak256};
-use thiserror::Error;
 
 mod filesystem;
 mod header;
 mod open;
 mod owner_runs;
+mod state_proofs;
+
+pub use state_proofs::{StateTributeProofArchive, StateTributeProofArchiveBuilder};
 
 use filesystem::*;
 use header::{decode_header, encode_header};
@@ -68,17 +67,31 @@ pub struct TributeInventorySubjectV1 {
     pub job_id: B256,
     pub attempt: u32,
     pub checkpoint: CheckpointIdentityV1,
+    pub chain_id: u64,
     pub worldwide_day: WorldwideDay,
-    pub sealed_tribute_collection_root: B256,
     pub expected_tribute_count: u32,
     pub expected_nominal_total: U256,
+}
+
+impl TributeInventorySubjectV1 {
+    pub fn state_source(&self) -> TributeSourceSubject {
+        TributeSourceSubject {
+            checkpoint: TributeSourceCheckpoint {
+                block_number: self.checkpoint.finalized_block_number,
+                block_hash: self.checkpoint.finalized_block_hash,
+                state_root: self.checkpoint.finalized_state_root,
+            },
+            chain_id: self.chain_id,
+            worldwide_day: self.worldwide_day,
+            tribute_count: self.expected_tribute_count,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TributeInventoryWorkConfig {
     pub owners_per_run: usize,
     pub merge_fan_in: usize,
-    pub root_verifier: TributePartitionWorkConfig,
 }
 
 impl Default for TributeInventoryWorkConfig {
@@ -86,7 +99,6 @@ impl Default for TributeInventoryWorkConfig {
         Self {
             owners_per_run: 4_096,
             merge_fan_in: 16,
-            root_verifier: TributePartitionWorkConfig::default(),
         }
     }
 }
@@ -94,10 +106,8 @@ impl Default for TributeInventoryWorkConfig {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TributeInventoryRecordV1 {
     pub tribute_id: WwdEntityId,
-    pub commitment: Commitment,
     pub owner: Address,
     pub reference_iso: u16,
-    pub nominal_amount_minor: U256,
     pub canonical_body: Vec<u8>,
 }
 
@@ -106,7 +116,6 @@ pub struct TributeInventoryRetentionStatsV1 {
     pub current_owner_records: usize,
     pub peak_owner_records: usize,
     pub configured_owner_record_bound: usize,
-    pub root_verifier: TributePartitionRetentionStatsV1,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -119,18 +128,17 @@ struct InventoryHeaderV1 {
     exact_body_bytes: u64,
 }
 
-pub struct TributeInventoryBuilder {
+pub struct TributeInventoryBuilder<'a> {
     root: PathBuf,
     build_root: PathBuf,
     subject: TributeInventorySubjectV1,
     work: TributeInventoryWorkConfig,
-    root_verifier: Option<BoundedTributePartitionVerifier>,
+    sources: &'a StateTributeProofArchive,
     body_writer: Option<BodySpoolWriter>,
     owner_buffer: Vec<Address>,
     peak_owner_records: usize,
     run_count: u64,
     tribute_count: u32,
-    nominal_total: U256,
     previous_tribute_id: Option<WwdEntityId>,
     iso_bitmap: Box<[u8; ISO_BITMAP_BYTES]>,
     _lock: InventoryLock,
@@ -155,11 +163,12 @@ pub struct TributeBodySpoolReader {
     consumed_body_bytes: u64,
 }
 
-impl TributeInventoryBuilder {
+impl<'a> TributeInventoryBuilder<'a> {
     pub fn create(
         root: impl AsRef<Path>,
         subject: TributeInventorySubjectV1,
         work: TributeInventoryWorkConfig,
+        sources: &'a StateTributeProofArchive,
     ) -> Result<Self, TributeInventoryError> {
         if work.owners_per_run == 0 || work.merge_fan_in < 2 {
             return Err(TributeInventoryError::InvalidWorkConfig);
@@ -178,16 +187,9 @@ impl TributeInventoryBuilder {
         fs::set_permissions(&build_root, fs::Permissions::from_mode(DIRECTORY_MODE))
             .map_err(|source| io_error("set inventory build permissions", &build_root, source))?;
         sync_directory(&root)?;
-        let root_verifier = BoundedTributePartitionVerifier::create(
-            build_root.join("root-verifier"),
-            TributePartitionExpectationV1 {
-                day: subject.worldwide_day,
-                exact_leaf_count: subject.expected_tribute_count,
-                expected_collection_root: subject.sealed_tribute_collection_root,
-                commitment_scheme: ACTIVE_COMMITMENT_SCHEME,
-            },
-            work.root_verifier,
-        )?;
+        if sources.subject() != subject.state_source() {
+            return Err(TributeInventoryError::Authority("state source checkpoint"));
+        }
         let mut iso_bitmap = Box::new([0_u8; ISO_BITMAP_BYTES]);
         set_iso(&mut iso_bitmap, 840);
         let body_writer = BodySpoolWriter::create(build_root.join(BODIES_FILE))?;
@@ -196,13 +198,12 @@ impl TributeInventoryBuilder {
             build_root,
             subject,
             work,
-            root_verifier: Some(root_verifier),
+            sources,
             body_writer: Some(body_writer),
             owner_buffer: Vec::with_capacity(work.owners_per_run),
             peak_owner_records: 0,
             run_count: 0,
             tribute_count: 0,
-            nominal_total: U256::ZERO,
             previous_tribute_id: None,
             iso_bitmap,
             _lock: lock,
@@ -232,30 +233,12 @@ impl TributeInventoryBuilder {
                 "canonical Tribute body fields",
             ));
         }
-        let body_commitment = body_commitment(
-            ACTIVE_COMMITMENT_SCHEME,
-            decoded
-                .stored_body()
-                .map_err(|_| TributeInventoryError::Authority("canonical Tribute body schema"))?
-                .schema_version(),
-            record.tribute_id,
-            &record.canonical_body,
-        )
-        .map_err(|_| TributeInventoryError::Authority("canonical Tribute body commitment"))?;
-        if body_commitment != record.commitment {
+        let source = self.sources.record(record.tribute_id)?;
+        if decoded.encrypted() != Some(&source.tribute) {
             return Err(TributeInventoryError::Authority(
-                "canonical Tribute body commitment",
+                "canonical Tribute state source",
             ));
         }
-        if decoded.calculation_view()?.nominal_amount_minor != record.nominal_amount_minor {
-            return Err(TributeInventoryError::Authority(
-                "private Tribute nominal amount",
-            ));
-        }
-        self.root_verifier
-            .as_mut()
-            .expect("root verifier exists until inventory finish")
-            .push(record.tribute_id, record.commitment)?;
         self.body_writer
             .as_mut()
             .expect("body writer exists until inventory finish")
@@ -264,10 +247,6 @@ impl TributeInventoryBuilder {
             .tribute_count
             .checked_add(1)
             .ok_or(TributeInventoryError::IntegerOverflow)?;
-        self.nominal_total = self
-            .nominal_total
-            .checked_add(record.nominal_amount_minor)
-            .ok_or(TributeInventoryError::NominalTotalOverflow)?;
         set_iso(&mut self.iso_bitmap, record.reference_iso);
         self.owner_buffer.push(record.owner);
         self.peak_owner_records = self.peak_owner_records.max(self.owner_buffer.len());
@@ -284,11 +263,6 @@ impl TributeInventoryBuilder {
             current_owner_records: self.owner_buffer.len(),
             peak_owner_records: self.peak_owner_records,
             configured_owner_record_bound: self.work.owners_per_run,
-            root_verifier: self
-                .root_verifier
-                .as_ref()
-                .expect("root verifier exists until inventory finish")
-                .retention_stats(),
         }
     }
 
@@ -306,10 +280,10 @@ impl TributeInventoryBuilder {
                 actual: self.tribute_count,
             });
         }
-        if self.nominal_total != self.subject.expected_nominal_total {
+        if (self.tribute_count == 0) != self.subject.expected_nominal_total.is_zero() {
             return Err(TributeInventoryError::NominalTotalMismatch {
                 expected: self.subject.expected_nominal_total,
-                actual: self.nominal_total,
+                actual: U256::ZERO,
             });
         }
         let reference_iso_count = self
@@ -325,7 +299,6 @@ impl TributeInventoryBuilder {
                 actual: reference_iso_count,
             });
         }
-        self.install_source_proofs(&on_progress)?;
         let body_summary = self
             .body_writer
             .take()
@@ -375,30 +348,6 @@ impl TributeInventoryBuilder {
                 isos: self.iso_bitmap,
             },
             _lock: self._lock,
-        })
-    }
-
-    fn install_source_proofs(
-        &mut self,
-        on_progress: &impl Fn(),
-    ) -> Result<(), TributeInventoryError> {
-        let proof_archive = self
-            .root_verifier
-            .take()
-            .expect("root verifier exists until inventory finish")
-            .finish_with_archive(on_progress)?;
-        let proof_archive_path = proof_archive.path().to_path_buf();
-        drop(proof_archive);
-        fs::rename(
-            &proof_archive_path,
-            self.root.join(SOURCE_PROOF_ARCHIVE_DIRECTORY),
-        )
-        .map_err(|source| {
-            io_error(
-                "install Tribute source proof archive",
-                &proof_archive_path,
-                source,
-            )
         })
     }
 
@@ -508,20 +457,12 @@ impl SealedTributeInventory {
         )
     }
 
-    pub fn source_proofs(&self) -> Result<TributeProofArchiveV1, TributeInventoryError> {
-        Ok(outbe_compressed_entities::open_tribute_proof_archive(
+    pub fn source_proofs(&self) -> Result<StateTributeProofArchive, TributeInventoryError> {
+        StateTributeProofArchive::open(
             self.root.join(SOURCE_PROOF_ARCHIVE_DIRECTORY),
-            TributePartitionExpectationV1 {
-                day: self.metadata.header.subject.worldwide_day,
-                exact_leaf_count: self.metadata.header.subject.expected_tribute_count,
-                expected_collection_root: self
-                    .metadata
-                    .header
-                    .subject
-                    .sealed_tribute_collection_root,
-                commitment_scheme: ACTIVE_COMMITMENT_SCHEME,
-            },
-        )?)
+            self.metadata.header.subject.state_source(),
+            &|| {},
+        )
     }
 }
 
@@ -534,7 +475,7 @@ impl TributeBodySpoolReader {
         let mut file = open_regular_readonly(&path)?;
         let (remaining, exact_body_bytes) = read_body_header(&mut file, &path)?;
         if remaining != expected_count || exact_body_bytes != expected_body_bytes {
-            return Err(TributeInventoryError::Corrupt("Tribute body spool header"));
+            return Err(TributeInventoryError::CorruptTributeBodySpoolHeader);
         }
         Ok(Self {
             file,
@@ -671,7 +612,7 @@ fn read_run_header(file: &mut File, path: &Path) -> Result<u64, TributeInventory
     file.read_exact(&mut header)
         .map_err(|source| io_error("read owner run header", path, source))?;
     if header[..8] != RUN_MAGIC {
-        return Err(TributeInventoryError::Corrupt("owner run magic"));
+        return Err(TributeInventoryError::CorruptOwnerRunMagic);
     }
     let count = u64::from_be_bytes(header[8..].try_into().expect("fixed run header"));
     let expected_len = RUN_HEADER_BYTES
@@ -686,7 +627,7 @@ fn read_run_header(file: &mut File, path: &Path) -> Result<u64, TributeInventory
         .map_err(|source| io_error("stat owner run", path, source))?
         .len();
     if actual_len != expected_len {
-        return Err(TributeInventoryError::Corrupt("owner run length"));
+        return Err(TributeInventoryError::CorruptOwnerRunLength);
     }
     Ok(count)
 }
@@ -696,7 +637,7 @@ fn read_body_header(file: &mut File, path: &Path) -> Result<(u32, u64), TributeI
     file.read_exact(&mut header)
         .map_err(|source| io_error("read Tribute body spool header", path, source))?;
     if header[..8] != BODY_MAGIC {
-        return Err(TributeInventoryError::Corrupt("Tribute body spool magic"));
+        return Err(TributeInventoryError::CorruptTributeBodySpoolMagic);
     }
     let count = u32::from_be_bytes(header[8..12].try_into().expect("fixed body header"));
     let exact_body_bytes =
@@ -713,7 +654,7 @@ fn verify_body_spool(
     let mut file = open_regular_readonly(path)?;
     let (count, exact_body_bytes) = read_body_header(&mut file, path)?;
     if count != expected_count || exact_body_bytes != expected_body_bytes {
-        return Err(TributeInventoryError::Corrupt("Tribute body spool header"));
+        return Err(TributeInventoryError::CorruptTributeBodySpoolHeader);
     }
     let mut observed_body_bytes = 0_u64;
     for index in 0..count {
@@ -722,7 +663,7 @@ fn verify_body_spool(
             .map_err(|source| io_error("read Tribute body length", path, source))?;
         let length = u32::from_be_bytes(length);
         if length == 0 {
-            return Err(TributeInventoryError::Corrupt("empty Tribute body"));
+            return Err(TributeInventoryError::CorruptEmptyTributeBody);
         }
         observed_body_bytes = observed_body_bytes
             .checked_add(u64::from(length))
@@ -741,7 +682,7 @@ fn verify_body_spool(
         .map_err(|source| io_error("stat Tribute body spool", path, source))?
         .len();
     if observed_body_bytes != expected_body_bytes || position != length {
-        return Err(TributeInventoryError::Corrupt("Tribute body spool closure"));
+        return Err(TributeInventoryError::CorruptTributeBodySpoolClosure);
     }
     Ok(())
 }
@@ -753,44 +694,7 @@ fn read_owner(file: &mut File) -> Result<Address, TributeInventoryError> {
     Ok(Address::from(bytes))
 }
 
-#[derive(Debug, Error)]
-pub enum TributeInventoryError {
-    #[error("private Tribute amount read failed: {0}")]
-    PrivateTribute(#[from] outbe_tee::TransportError),
-    #[error("invalid Tribute inventory work configuration")]
-    InvalidWorkConfig,
-    #[error("Tribute inventory is already sealed")]
-    AlreadySealed,
-    #[error("Tribute inventory is locked by another writer")]
-    Locked,
-    #[error("unsafe Tribute inventory path: {0}")]
-    UnsafePath(PathBuf),
-    #[error("Tribute inventory authority mismatch: {0}")]
-    Authority(&'static str),
-    #[error("corrupt Tribute inventory: {0}")]
-    Corrupt(&'static str),
-    #[error("Tribute count mismatch: expected {expected}, got {actual}")]
-    CountMismatch { expected: u32, actual: u32 },
-    #[error("Tribute nominal total mismatch: expected {expected}, got {actual}")]
-    NominalTotalMismatch { expected: U256, actual: U256 },
-    #[error("Tribute inventory nominal total overflow")]
-    NominalTotalOverflow,
-    #[error("reference ISO count {actual} exceeds existing OCOMP protocol bound {limit}")]
-    ReferenceIsoCountOutsideProtocol { limit: usize, actual: usize },
-    #[error("canonical Tribute body has {actual} bytes outside per-body bound {limit}")]
-    BodyOutsideBound { limit: usize, actual: usize },
-    #[error("Tribute inventory integer overflow")]
-    IntegerOverflow,
-    #[error(transparent)]
-    Partition(#[from] outbe_compressed_entities::TributePartitionReconstructionError),
-    #[error("Tribute inventory I/O failed during {operation} at {path}: {source}")]
-    Io {
-        operation: &'static str,
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-}
+pub use crate::errors::TributeInventoryError;
 
 fn io_error(operation: &'static str, path: &Path, source: std::io::Error) -> TributeInventoryError {
     TributeInventoryError::Io {

@@ -1,5 +1,4 @@
 use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{Result, SweepFailure},
@@ -18,13 +17,9 @@ use crate::runtime::emit_event;
 
 /// Forfeit-burn the unpaid gems of the called buckets whose notice period closed.
 /// Returns the gems burned.
-pub(crate) fn sweep_expired(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-) -> Result<u32> {
+pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
-    let mut expiry = GemExpiry::new(ctx, scope, parent);
+    let mut expiry = GemExpiry::new(ctx);
     let mut budget = SweepBudget::per_block();
     expiry_queue::sweep(
         &ExpiryHours(&queue),
@@ -37,14 +32,14 @@ pub(crate) fn sweep_expired(
 }
 
 /// One block's burns across the due hours.
-pub(crate) struct GemExpiry<'a, 's, P> {
-    bodies: Bodies<'a, 's, P>,
+pub(crate) struct GemExpiry<'a, 's> {
+    bodies: Bodies<'a, 's>,
     gem: GemContract<'s>,
     burned: u32,
 }
 
 /// A called bucket's members are its unpaid gems: a settled one has left it.
-impl<P: ParentBodySource> ExpiryHandler<B256> for GemExpiry<'_, '_, P> {
+impl ExpiryHandler<B256> for GemExpiry<'_, '_> {
     type Member = U256;
 
     fn due(&mut self, bucket: B256) -> Result<Due> {
@@ -94,17 +89,11 @@ impl<P: ParentBodySource> ExpiryHandler<B256> for GemExpiry<'_, '_, P> {
     }
 }
 
-impl<'a, 's, P: ParentBodySource> GemExpiry<'a, 's, P> {
-    pub(crate) fn new(
-        ctx: &'a BlockRuntimeContext<'s>,
-        scope: &'a ExecutionScope,
-        parent: &'a P,
-    ) -> Self {
+impl<'a, 's> GemExpiry<'a, 's> {
+    pub(crate) fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
         Self {
             bodies: Bodies {
                 storage: &ctx.storage,
-                scope,
-                parent,
             },
             gem: GemContract::new(ctx.storage.clone()),
             burned: 0,
@@ -112,11 +101,9 @@ impl<'a, 's, P: ParentBodySource> GemExpiry<'a, 's, P> {
     }
 }
 
-/// The storage, scope and parent bodies a forfeit loads and removes gems through.
-struct Bodies<'a, 's, P> {
+/// The EVM state used to load and remove Gems during forfeiture.
+struct Bodies<'a, 's> {
     storage: &'a StorageHandle<'s>,
-    scope: &'a ExecutionScope,
-    parent: &'a P,
 }
 
 /// Forfeit-burns one unpaid member of a lapsed bucket and returns its load to the
@@ -124,27 +111,23 @@ struct Bodies<'a, 's, P> {
 /// it goes back. The return uses the same checkpoint as the burn, or there is nothing
 /// to recover.
 fn forfeit_member(
-    bodies: &Bodies<'_, '_, impl ParentBodySource>,
+    bodies: &Bodies<'_, '_>,
     gem: &mut GemContract<'_>,
     bucket_key: B256,
     gem_id: U256,
 ) -> Result<()> {
-    let Bodies {
-        storage,
-        scope,
-        parent,
-    } = *bodies;
+    let Bodies { storage } = *bodies;
     if gem_id.is_zero() {
         return Err(GemFactoryError::EmptyMemberSlotDuringForfeit { bucket_key }.into());
     }
-    let (item, bucket) = gem_api::load_pair(storage, scope, parent, gem_id)?
+    let (item, bucket) = gem_api::load_pair(storage, gem_id)?
         .ok_or(GemFactoryError::MissingMemberBodyDuringForfeit { bucket_key, gem_id })?;
     if item.body().is_settled() || item.body().bucket_key != bucket_key {
         return Err(GemFactoryError::IneligibleBucketMember { bucket_key, gem_id }.into());
     }
     let owner = item.body().owner;
     let promis_load_minor = item.body().promis_load_minor;
-    gem_api::remove_gem(storage, scope, item, bucket)?;
+    gem_api::remove_gem(storage, item, bucket)?;
     outbe_promislimit::PromisLimitContract::new(storage.clone())
         .add_to_total_unallocated(promis_load_minor)?;
     gem.emit(GemForfeited {

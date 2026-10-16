@@ -1,12 +1,10 @@
 //! Offline OCOMP observations at the verified current canonical state.
 
-use crate::errors::{require, SnapshotOcompError};
+use crate::errors::{require, SnapshotIncompleteError, SnapshotOcompError};
 use alloy_primitives::{B256, U256};
-use outbe_intex::schema::SeriesId;
 use outbe_primitives::time::WorldwideDay;
 
 use super::Incomplete;
-use crate::snapshot::projection_store::projection_database;
 
 use super::canonical_state::CanonicalState;
 use outbe_nod::schema::NodCertifiedGenerationProjection;
@@ -83,15 +81,10 @@ use present_results::{
     verify_present_input_catalog, verify_present_reference_membership, PresentAdmissionsVerify,
 };
 
-mod projection;
-use projection::verify_present_projection_structure;
-
 #[cfg(all(test, feature = "snapshot-integration"))]
 pub(crate) use admissions::verify_local_result;
 
 pub(crate) use pins::verify_lease_inputs;
-
-pub(crate) use frames::verify_series_day;
 
 #[cfg(all(test, feature = "snapshot-integration"))]
 pub(crate) use canonical::{CanonicalActiveAudit, CanonicalLocalPinStage};

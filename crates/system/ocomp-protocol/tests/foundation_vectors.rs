@@ -522,7 +522,7 @@ fn ordered_list_caps_fail_before_internal_tree_allocation() {
 #[test]
 fn generated_registry_is_complete_and_unique() {
     assert_eq!(ObjectKind::ALL.len(), 35);
-    assert_eq!(HashDomain::ALL.len(), 49);
+    assert_eq!(HashDomain::ALL.len(), 50);
     assert_eq!(ListKind::ALL.len(), 12);
     for (kind, tag) in [
         (ObjectKind::ProtocolBundleV1, 0x0001),
@@ -579,7 +579,7 @@ fn generated_input_codec_ids_match_independent_descriptor_hashes() {
         FIDELITY_OPENING_CODEC_ID
     );
     assert_eq!(
-        codec_id(3, 2, ORACLE_OPENING_CODEC_DESCRIPTOR),
+        codec_id(3, 3, ORACLE_OPENING_CODEC_DESCRIPTOR),
         ORACLE_OPENING_CODEC_ID
     );
 

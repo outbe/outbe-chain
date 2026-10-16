@@ -1,8 +1,7 @@
 //! Pure NOD identities shared by issuance and offchain calculation.
 use crate::errors::NodError;
-use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
-use outbe_primitives::storage::types::StorageKey;
+use alloy_primitives::Address;
+use outbe_primitives::wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_primitives::{error::Result, time::WorldwideDay};
 
 /// Computes the bucket key from
@@ -13,18 +12,7 @@ use outbe_primitives::{error::Result, time::WorldwideDay};
 /// different currencies are priced against different oracle rates. They must
 /// not share a bucket. This is the single derivation. The Lysis program
 /// calls it too, so the off-chain and on-chain keys cannot drift.
-pub fn bucket_key(
-    worldwide_day: WorldwideDay,
-    entry_price_minor: U256,
-    reference_currency: u16,
-) -> B256 {
-    use alloy_primitives::keccak256;
-    let mut buf = [0u8; 38];
-    buf[0..4].copy_from_slice(worldwide_day.key_bytes().as_slice());
-    buf[4..36].copy_from_slice(&entry_price_minor.to_be_bytes::<32>());
-    buf[36..38].copy_from_slice(&reference_currency.to_be_bytes());
-    keccak256(buf)
-}
+pub use outbe_primitives::nod_rules::bucket_key;
 
 /// Deterministic full-width Poseidon2 NOD identity derived from
 /// `(owner, worldwide_day)`. The typed Nod collection is its namespace.

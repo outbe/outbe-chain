@@ -1,9 +1,5 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
-use outbe_compressed_entities::{
-    begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
-    ParentBodySourceError, QueryRef, StoredBody,
-};
 use outbe_metadosis::{
     genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
     WwdDayType, WwdStatus,
@@ -13,7 +9,6 @@ use outbe_oracle::{
     schema::OracleContract,
 };
 use outbe_primitives::address_pair::AddressPair;
-use outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -26,38 +21,14 @@ use crate::schema::TributeFactoryContract;
 
 const CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
 
-struct NoParentBodies;
-
-impl ParentBodySource for NoParentBodies {
-    fn get(
-        &self,
-        _entity: EntityRef,
-    ) -> core::result::Result<Option<StoredBody>, ParentBodySourceError> {
-        Ok(None)
-    }
-
-    fn list(
-        &self,
-        _query: QueryRef,
-        _request: IdPageRequest,
-    ) -> core::result::Result<IdPage, ParentBodySourceError> {
-        Ok(IdPage {
-            ids: Vec::new(),
-            next_after: None,
-        })
-    }
-}
-
 mod l2_zk_gate {
     use alloy_primitives::{Address, Bytes, U256};
-    use outbe_compressed_entities::ExecutionScope;
     use outbe_l2registry::L2RegistryContract;
     use outbe_primitives::error::PrecompileError;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
     use outbe_zk::demo_tribute::COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN;
 
-    use super::NoParentBodies;
     use crate::runtime::OfferTributeInput;
     use crate::schema::TributeFactoryContract;
 
@@ -80,7 +51,6 @@ mod l2_zk_gate {
             worldwide_day: DAY.into(),
             tribute_currency: 840,
             reference_currency: 840,
-            exclude_from_intex_issuance: false,
             zk_proof: Bytes::new(),
             l2_chain_id: u32::try_from(L2_CHAIN_ID).unwrap(),
             circuit_version: "1.1.0".to_owned(),
@@ -157,13 +127,10 @@ mod l2_zk_gate {
                 .register_network(L2_CHAIN_ID, caller(), &public)
                 .unwrap();
 
-            let scope = ExecutionScope::default();
             let mut factory = TributeFactoryContract::new(storage.clone());
 
             // The factory rejects a missing signature before oracle/metadosis/enclave work.
-            let err = factory
-                .offer_tribute(&scope, &NoParentBodies, offer(&root, &[]))
-                .unwrap_err();
+            let err = factory.offer_tribute(offer(&root, &[])).unwrap_err();
             assert!(revert_message(err).contains("invalid BLS signature"));
 
             // A valid signature passes this gate (no OFFERING day in this fixture).
@@ -180,9 +147,7 @@ mod l2_zk_gate {
                 let mut wrong_version = offer(&root, &good_sig);
                 wrong_version.zk_proof = dummy_demo_tribute_proof(root);
                 wrong_version.circuit_version = version.to_owned();
-                let error = factory
-                    .offer_tribute(&scope, &NoParentBodies, wrong_version)
-                    .unwrap_err();
+                let error = factory.offer_tribute(wrong_version).unwrap_err();
                 let expected = crate::errors::TributeFactoryError::UnknownCircuitVersion {
                     chain_id: u32::try_from(L2_CHAIN_ID).unwrap(),
                     version: version.to_owned(),
@@ -194,9 +159,7 @@ mod l2_zk_gate {
             valid_gate.caller = Address::repeat_byte(0x88);
             valid_gate.zk_proof = dummy_demo_tribute_proof(root);
             let mut factory = TributeFactoryContract::new(storage.clone());
-            let err = factory
-                .offer_tribute(&scope, &NoParentBodies, valid_gate)
-                .unwrap_err();
+            let err = factory.offer_tribute(valid_gate).unwrap_err();
             assert!(revert_message(err).contains("is not in OFFERING status"));
 
             // A caller's registration on another chain cannot authorize an
@@ -205,9 +168,7 @@ mod l2_zk_gate {
             registry.register_network(4242, caller(), &public).unwrap();
             let mut wrong_chain = offer(&root, &good_sig);
             wrong_chain.zk_proof = dummy_demo_tribute_proof(root);
-            let error = factory
-                .offer_tribute(&scope, &NoParentBodies, wrong_chain)
-                .unwrap_err();
+            let error = factory.offer_tribute(wrong_chain).unwrap_err();
             let expected = outbe_l2registry::errors::L2RegistryError::NetworkNotRegistered {
                 chain_id: L2_CHAIN_ID,
             };
@@ -242,20 +203,15 @@ mod l2_zk_gate {
             registry
                 .register_network(L2_CHAIN_ID, caller(), &public)
                 .unwrap();
-            let scope = ExecutionScope::default();
 
             let mut factory = TributeFactoryContract::new(storage.clone());
-            let missing = factory
-                .offer_tribute(&scope, &NoParentBodies, offer(&root, &signature))
-                .unwrap_err();
+            let missing = factory.offer_tribute(offer(&root, &signature)).unwrap_err();
             assert!(revert_message(missing).contains("zkProof is required"));
 
             let mut wrong_root = offer(&root, &signature);
             wrong_root.zk_proof = dummy_demo_tribute_proof([0x24; 32]);
             let mut factory = TributeFactoryContract::new(storage.clone());
-            let mismatch = factory
-                .offer_tribute(&scope, &NoParentBodies, wrong_root)
-                .unwrap_err();
+            let mismatch = factory.offer_tribute(wrong_root).unwrap_err();
             assert!(revert_message(mismatch).contains("merkle_root"));
         });
     }
@@ -264,12 +220,10 @@ mod l2_zk_gate {
     fn unregistered_chains_cannot_offer() {
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {
-            let scope = ExecutionScope::default();
-
             // An unregistered chain must fail before any enclave work.
             let mut factory = TributeFactoryContract::new(storage.clone());
             let err = factory
-                .offer_tribute_with_processor(&scope, &NoParentBodies, offer(&[], &[]), |_| {
+                .offer_tribute_with_processor(offer(&[], &[]), |_| {
                     panic!("unregistered chain reached the enclave")
                 })
                 .unwrap_err();
@@ -289,14 +243,11 @@ mod l2_zk_gate {
     fn host_rejects_an_invalid_calendar_day_before_the_enclave() {
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {
-            let scope = ExecutionScope::default();
             let mut bad_day = signed_gate_offer(storage.clone());
             bad_day.worldwide_day = 20250230u32.into(); // February 30th
 
             let mut factory = TributeFactoryContract::new(storage);
-            let err = factory
-                .offer_tribute(&scope, &NoParentBodies, bad_day)
-                .unwrap_err();
+            let err = factory.offer_tribute(bad_day).unwrap_err();
             let message = revert_message(err);
             assert!(
                 message.contains("not a valid YYYYMMDD calendar date"),
@@ -314,14 +265,11 @@ mod l2_zk_gate {
     fn host_rejects_a_non_offering_day_before_pricing() {
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {
-            let scope = ExecutionScope::default();
             let mut unpriced = signed_gate_offer(storage.clone());
             unpriced.tribute_currency = 999; // never registered
 
             let mut factory = TributeFactoryContract::new(storage);
-            let err = factory
-                .offer_tribute(&scope, &NoParentBodies, unpriced)
-                .unwrap_err();
+            let err = factory.offer_tribute(unpriced).unwrap_err();
             let message = revert_message(err);
             assert!(
                 message.contains("is not in OFFERING status"),
@@ -367,21 +315,6 @@ const REWARD_WALLET: Address = Address::repeat_byte(0x71);
 const REWARD_SRA: Address = Address::repeat_byte(0x72);
 
 fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay]) {
-    storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-        .unwrap();
-    storage
-        .sstore(
-            COMPRESSED_ENTITIES_ADDRESS,
-            U256::from(1),
-            U256::from_be_slice(
-                outbe_compressed_entities::sealed_root(B256::ZERO)
-                    .unwrap()
-                    .as_slice(),
-            ),
-        )
-        .unwrap();
-
     let mut metadosis = FreshDevnetGenesisBuilder::new();
     for (index, worldwide_day) in target_days.iter().copied().enumerate() {
         let offset = u64::try_from(index).unwrap() * 10;
@@ -575,7 +508,6 @@ fn assert_real_zk_offer_with_key_source(
         worldwide_day: TARGET_WWD_A,
         tribute_currency: 840,
         reference_currency: 840,
-        exclude_from_intex_issuance: false,
         zk_proof: Bytes::copy_from_slice(proof),
         l2_chain_id,
         circuit_version: circuit_version.to_owned(),
@@ -598,7 +530,7 @@ fn assert_real_zk_offer_with_key_source(
         );
     }
     provider.set_timestamp(U256::from(date_key_to_utc_timestamp(REWARD_DAY) + 43_200));
-    let scope = ExecutionScope::default();
+
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
         let mut registry = L2RegistryContract::new(storage.clone());
@@ -609,19 +541,18 @@ fn assert_real_zk_offer_with_key_source(
                 if from_inbox { &[] } else { &network_key },
             )
             .unwrap();
-        begin_block(storage.clone(), &scope).unwrap();
     });
     let before_offer = provider.storage.clone();
     provider.fail_after_mutation_at(usize::MAX);
     StorageHandle::enter(&mut provider, |storage| {
         let mut factory = TributeFactoryContract::new(storage.clone());
         let id = factory
-            .offer_tribute_with_processor(&scope, &NoParentBodies, make_offer(), |offers| {
+            .offer_tribute_with_processor(make_offer(), |offers| {
                 Ok(process_tribute_offer_batch(&key, offers).0)
             })
             .unwrap();
         let stored = TributeContract::new(storage.clone())
-            .get_tribute(&scope, &NoParentBodies, id)
+            .get_tribute(id)
             .unwrap()
             .unwrap();
         assert_eq!(stored.owner, CALLER);
@@ -631,7 +562,7 @@ fn assert_real_zk_offer_with_key_source(
     StorageHandle::enter(&mut provider, |storage| {
         let mut factory = TributeFactoryContract::new(storage.clone());
         let replay = factory
-            .offer_tribute_with_processor(&scope, &NoParentBodies, make_offer(), |offers| {
+            .offer_tribute_with_processor(make_offer(), |offers| {
                 Ok(process_tribute_offer_batch(&key, offers).0)
             })
             .unwrap_err();
@@ -653,16 +584,12 @@ fn assert_real_zk_offer_with_key_source(
     provider.storage = before_offer.clone();
     provider.fail_after_mutation_at(mutations - 1);
     StorageHandle::enter(&mut provider, |storage| {
-        let scope = ExecutionScope::default();
-        begin_block(storage.clone(), &scope).unwrap();
         storage
             .with_checkpoint(|| {
-                TributeFactoryContract::new(storage.clone()).offer_tribute_with_processor(
-                    &scope,
-                    &NoParentBodies,
-                    make_offer(),
-                    |offers| Ok(process_tribute_offer_batch(&key, offers).0),
-                )
+                TributeFactoryContract::new(storage.clone())
+                    .offer_tribute_with_processor(make_offer(), |offers| {
+                        Ok(process_tribute_offer_batch(&key, offers).0)
+                    })
             })
             .unwrap_err();
     });

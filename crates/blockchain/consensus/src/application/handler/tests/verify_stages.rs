@@ -189,7 +189,7 @@ enum EarlyCase {
     BeyondBoundary,
     MalformedPhase1,
     InvalidLiveHeader,
-    CancelledProjection,
+    CancelledBeforeExecution,
     MissingEpochAnchor,
     InvalidPublicationAnchor,
     MissingPublicationAnchor,
@@ -203,7 +203,7 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
         EarlyCase::BeyondBoundary,
         EarlyCase::MalformedPhase1,
         EarlyCase::InvalidLiveHeader,
-        EarlyCase::CancelledProjection,
+        EarlyCase::CancelledBeforeExecution,
         EarlyCase::MissingEpochAnchor,
         EarlyCase::InvalidPublicationAnchor,
         EarlyCase::MissingPublicationAnchor,
@@ -269,16 +269,13 @@ fn verify_prechecks_reject_or_withhold_before_engine_work() {
                     EarlyCase::InvalidLiveHeader => {
                         shared.shared.proposer_evm_address = Some(Address::repeat_byte(1))
                     }
-                    EarlyCase::CancelledProjection => {
+                    EarlyCase::CancelledBeforeExecution => {
                         // Use height 1 so Phase 1 is optional. Otherwise prechecks reject first.
                         let block = proposed_block(None, false);
                         shared
                             .block_cache
                             .insert_bounded(block.digest(), block.clone());
                         request.parent.1 = Digest(B256::ZERO);
-                        shared
-                            ._projection_publisher
-                            .publish(ProjectionStatus::CatchingUp { checkpoint: None });
                         drop(receiver.take());
                         shared
                             .handle_verify(
@@ -371,7 +368,6 @@ fn live_executor_retries_execution_while_candidate_storage_remains_independent()
                     last_finalized_height: 0,
                     last_finalized_hash: B256::ZERO,
                 },
-                shared.projection_readiness.clone(),
                 None,
             );
             let executor_actor =

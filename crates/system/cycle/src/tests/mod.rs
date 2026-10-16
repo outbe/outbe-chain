@@ -14,17 +14,10 @@
 //! `block_ts >> 86_400` is always true on a real chain.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
-    CompressedEntitiesLifecycle, CompressedEntitiesLifecycleContext, ExecutionScope,
-};
-use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
-use outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
-use outbe_tribute::TributeRepositoryReader;
 use outbe_validatorset::contract::ValidatorSet;
-use std::sync::Arc;
 
 use crate::lifecycle::{CycleLifecycle, CycleLifecycleContext};
 use crate::schema::Cycle;
@@ -179,66 +172,8 @@ pub(super) fn account_parent(ctx: &BlockRuntimeContext, block_number: u64) {
     }
 }
 
-pub(super) fn with_execution_scope(
-    ctx: &BlockRuntimeContext,
-    f: impl FnOnce(&ExecutionScope, &TributeRepositoryReader) -> outbe_primitives::error::Result<()>,
-) -> outbe_primitives::error::Result<()> {
-    ctx.storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))?;
-    ctx.storage.sstore(
-        COMPRESSED_ENTITIES_ADDRESS,
-        U256::from(1),
-        U256::from_be_slice(
-            outbe_compressed_entities::sealed_root(B256::ZERO)
-                .unwrap()
-                .as_slice(),
-        ),
-    )?;
-    let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
-    let parent = TributeRepositoryReader::new(storage);
-    let scope = ExecutionScope::default();
-    let lifecycle = CompressedEntitiesLifecycleContext::new(ctx.clone(), &scope);
-    <CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(&lifecycle)?;
-    let result = f(&scope, &parent);
-    let cleanup =
-        <CompressedEntitiesLifecycle as BlockLifecycle>::end_block(&lifecycle).map(|_| ());
-    result.and(cleanup)
-}
-
-/// Like [`with_execution_scope`], with a Gem parent for reward Gem delivery.
-pub(super) fn with_gem_execution_scope(
-    ctx: &BlockRuntimeContext,
-    f: impl FnOnce(
-        &ExecutionScope,
-        &outbe_gem::GemRepositoryReader,
-    ) -> outbe_primitives::error::Result<()>,
-) -> outbe_primitives::error::Result<()> {
-    ctx.storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))?;
-    ctx.storage.sstore(
-        COMPRESSED_ENTITIES_ADDRESS,
-        U256::from(1),
-        U256::from_be_slice(
-            outbe_compressed_entities::sealed_root(B256::ZERO)
-                .unwrap()
-                .as_slice(),
-        ),
-    )?;
-    let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
-    let parent = outbe_gem::gem_reader(storage);
-    let scope = ExecutionScope::default();
-    let lifecycle = CompressedEntitiesLifecycleContext::new(ctx.clone(), &scope);
-    <CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(&lifecycle)?;
-    let result = f(&scope, &parent);
-    let cleanup =
-        <CompressedEntitiesLifecycle as BlockLifecycle>::end_block(&lifecycle).map(|_| ());
-    result.and(cleanup)
-}
-
 pub(super) fn dispatch_triggers(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
-    with_execution_scope(ctx, |scope, parent| {
-        crate::runtime::dispatch_triggers(ctx, scope, parent)
-    })
+    (|| crate::runtime::dispatch_triggers(ctx))()
 }
 
 pub(super) fn run_cycle_lifecycle(
@@ -251,19 +186,17 @@ pub(super) fn run_cycle_lifecycle_at_activation(
     ctx: &BlockRuntimeContext,
     metadosis_genesis_activation_height: u64,
 ) -> outbe_primitives::error::Result<()> {
-    with_execution_scope(ctx, |scope, parent| {
-        let lifecycle = CycleLifecycleContext::new(ctx.clone(), scope, parent)
+    (|| {
+        let lifecycle = CycleLifecycleContext::new(ctx.clone())
             .with_metadosis_genesis_activation_height(metadosis_genesis_activation_height);
         <CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)
-    })
+    })()
 }
 
 pub(super) fn run_emission_limit_daily(
     ctx: &BlockRuntimeContext,
 ) -> outbe_primitives::error::Result<()> {
-    with_execution_scope(ctx, |scope, parent| {
-        crate::handler::run_emission_limit_daily(ctx, scope, parent)
-    })
+    (|| crate::handler::run_emission_limit_daily(ctx))()
 }
 
 pub(super) fn advance_metadosis_only(
@@ -274,9 +207,7 @@ pub(super) fn advance_metadosis_only(
     storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
     StorageHandle::enter(storage, |handle| {
         let ctx = BlockRuntimeContext::new(block_ctx(block_number, timestamp), handle);
-        with_execution_scope(&ctx, |scope, _| {
-            outbe_metadosis::commands::advance_active_worldwide_days(&ctx, scope)
-        })
+        (|| outbe_metadosis::commands::advance_active_worldwide_days(&ctx))()
     })
 }
 

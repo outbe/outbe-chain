@@ -30,6 +30,15 @@ outbe-tee-enclave.workspace = true
 outbe-common.workspace = true
 base64.workspace = true
 serde_json.workspace = true
+outbe-evm = { workspace = true, features = ["test-utils"] }
+outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
+outbe-oracle = { workspace = true, features = ["test-utils"] }
+outbe-ccaregistry.workspace = true
+outbe-credis.workspace = true
+outbe-gratisfactory.workspace = true
+eyre.workspace = true
+revm.workspace = true
+alloy-primitives.workspace = true
 
 [lints]
 workspace = true

@@ -1,9 +1,9 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
-use outbe_compressed_entities::{ExecutionReaders, ParentBodySource, WwdEntityId};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::schema::TributeContract;
 
@@ -24,12 +24,10 @@ pub use abi::ITribute;
 
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
-    readers: ExecutionReaders<'_, '_, impl ParentBodySource>,
     data: &[u8],
     _caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    let ExecutionReaders { scope, parent } = readers;
     outbe_primitives::dispatch::reject_value(&value)?;
     dispatch_call(data, ITribute::ITributeCalls::abi_decode, |call| {
         let tribute = TributeContract::new(storage);
@@ -41,16 +39,10 @@ pub fn dispatch(
                 Ok(alloy_primitives::U256::from(tribute.total_supply()?))
             }),
             balanceOf(c) => view(c, |c| {
-                Ok(alloy_primitives::U256::from(
-                    tribute.balance_of(scope, parent, c.owner)?,
-                ))
+                Ok(alloy_primitives::U256::from(tribute.balance_of(c.owner)?))
             }),
-            ownerOf(c) => view(c, |c| {
-                tribute.owner_of(scope, parent, WwdEntityId::from(c.tributeId))
-            }),
-            tokenURI(c) => view(c, |c| {
-                tribute.token_uri(scope, parent, WwdEntityId::from(c.tributeId))
-            }),
+            ownerOf(c) => view(c, |c| tribute.owner_of(WwdEntityId::from(c.tributeId))),
+            tokenURI(c) => view(c, |c| tribute.token_uri(WwdEntityId::from(c.tributeId))),
             getDayTotals(c) => view(c, |c| {
                 let day = c.worldwideDay.into();
                 let dt = tribute
@@ -66,14 +58,14 @@ pub fn dispatch(
             }),
             getTributesByOwner(c) => view(c, |c| {
                 Ok(tribute
-                    .get_tribute_ids_by_owner(scope, parent, c.owner)?
+                    .get_tribute_ids_by_owner(c.owner)?
                     .into_iter()
                     .map(|id| id.to_u256())
                     .collect::<Vec<_>>())
             }),
             getTributesByDay(c) => view(c, |c| {
                 Ok(tribute
-                    .get_tribute_ids_by_day(scope, parent, c.worldwideDay.into())?
+                    .get_tribute_ids_by_day(c.worldwideDay.into())?
                     .into_iter()
                     .map(|id| id.to_u256())
                     .collect::<Vec<_>>())

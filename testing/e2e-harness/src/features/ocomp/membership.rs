@@ -1,5 +1,7 @@
 use crate::features::ocomp::*;
 
+mod deadlines;
+
 #[when("a fifth node syncs as a non-voting FullNode")]
 fn fifth_node_syncs_as_full_node(world: &mut World) {
     let index = world.validators.joiner_index();
@@ -191,6 +193,263 @@ fn certified_boundary_adds_fifth_ocomp_domain(world: &mut World) {
     }
 }
 
+type PublicVotes = crate::world::rpc::OcompPublicVoteAccountabilityV1;
+
+struct DynamicJobPair {
+    job_b_request: crate::world::rpc::OcompPublicJobRequestV1,
+    job_a_record: OcompJobRecordV1,
+    job_b_record: OcompJobRecordV1,
+    job_a_votes: PublicVotes,
+    job_b_votes: PublicVotes,
+    joiner_participant_index: u16,
+}
+
+struct JobPairWatch<'a> {
+    ports: Vec<u16>,
+    job_a_request: &'a crate::world::rpc::OcompPublicJobRequestV1,
+    job_b_wwd: u32,
+    certified_five_member_height: u64,
+}
+
+/// The value every peer reports. The caller has checked that each peer reported one.
+fn unanimous<T: Clone + PartialEq>(observed: &[Option<T>], disagreement: &str) -> T {
+    let first = observed[0].clone().expect("every peer reported a value");
+    assert!(
+        observed
+            .iter()
+            .all(|candidate| candidate.as_ref() == Some(&first)),
+        "{disagreement}"
+    );
+    first
+}
+
+fn all_voting_open(records: &[Option<OcompJobRecordV1>]) -> bool {
+    records.iter().all(|record| {
+        record
+            .as_ref()
+            .is_some_and(|record| record.status == OcompJobStatus::VotingOpen)
+    })
+}
+
+fn finalized_records_on(
+    world: &World,
+    ports: &[u16],
+    intent_id: B256,
+) -> Vec<Option<OcompJobRecordV1>> {
+    ports
+        .iter()
+        .map(|&port| world.rpc.finalized_ocomp_job_record_on(port, intent_id))
+        .collect()
+}
+
+fn finalized_votes_on(world: &World, ports: &[u16], job_id: B256) -> Vec<Option<PublicVotes>> {
+    ports
+        .iter()
+        .map(|&port| {
+            world
+                .rpc
+                .finalized_ocomp_vote_accountability_on(port, job_id)
+        })
+        .collect()
+}
+
+fn record_statuses(records: &[Option<OcompJobRecordV1>]) -> Vec<Option<OcompJobStatus>> {
+    records
+        .iter()
+        .map(|record| record.as_ref().map(|record| record.status))
+        .collect()
+}
+
+fn vote_slots(votes: &[Option<PublicVotes>]) -> Vec<Option<Vec<u16>>> {
+    votes
+        .iter()
+        .map(|votes| {
+            votes
+                .as_ref()
+                .map(|votes| votes.slot_validator_indexes.clone())
+        })
+        .collect()
+}
+
+fn finalized_job_id(record: &OcompJobRecordV1, what: &str) -> B256 {
+    record
+        .finalized
+        .as_ref()
+        .unwrap_or_else(|| panic!("{what} finalized intent"))
+        .job_id
+}
+
+fn joiner_vote_slot(
+    world: &World,
+    request: &crate::world::rpc::OcompPublicJobRequestV1,
+    job_b_id: B256,
+    job_b_votes: &PublicVotes,
+) -> Option<u16> {
+    let finalized_height = world
+        .rpc
+        .finalized_result(world.validators.primary_port())
+        .expect("observe finalized height for job B accountability");
+    let joiner_vote = finalized_vote_for_delegate_on_job(
+        world,
+        request.request_height,
+        finalized_height,
+        world.validators.joiner_index(),
+        job_b_id,
+    )?;
+    accountability_slot_for_vote(job_b_votes, &joiner_vote)
+}
+
+fn finalized_job_b_request(
+    world: &World,
+    watch: &JobPairWatch<'_>,
+) -> Option<crate::world::rpc::OcompPublicJobRequestV1> {
+    let requests = watch
+        .ports
+        .iter()
+        .map(|&port| {
+            world
+                .rpc
+                .finalized_ocomp_job_request_for_worldwide_day_on(
+                    port,
+                    watch.job_a_request.request_height + 1,
+                    watch.job_b_wwd,
+                )
+                .unwrap_or_else(|error| panic!("observe job B on port {port}: {error:#}"))
+        })
+        .collect::<Vec<_>>();
+    if !requests.iter().all(Option::is_some) {
+        return None;
+    }
+    let request = unanimous(
+        &requests,
+        "validators expose different finalized job B requests",
+    );
+    if request.worldwide_day != watch.job_b_wwd {
+        return None;
+    }
+    assert!(
+        request.request_height > watch.certified_five_member_height,
+        "Job B request at height {} predates the certified five-member barrier at height {}; the harness released it too early",
+        request.request_height,
+        watch.certified_five_member_height
+    );
+    Some(request)
+}
+
+/// One poll of job B; `None` keeps waiting and updates `last_observation`.
+fn observe_dynamic_job_pair(
+    world: &World,
+    watch: &JobPairWatch<'_>,
+    last_observation: &mut String,
+) -> Option<DynamicJobPair> {
+    let request = finalized_job_b_request(world, watch)?;
+    let job_a_records = finalized_records_on(world, &watch.ports, watch.job_a_request.intent_id);
+    let job_b_records = finalized_records_on(world, &watch.ports, request.intent_id);
+    let statuses = format!(
+        "job_b_request=({:#x}, {}), job_a_statuses={:?}, job_b_statuses={:?}",
+        request.intent_id,
+        request.worldwide_day,
+        record_statuses(&job_a_records),
+        record_statuses(&job_b_records)
+    );
+    last_observation.clone_from(&statuses);
+    if !(all_voting_open(&job_a_records) && all_voting_open(&job_b_records)) {
+        return None;
+    }
+    let job_a_record = unanimous(
+        &job_a_records,
+        "validators expose different canonical job A records after activation",
+    );
+    let job_b_record = unanimous(
+        &job_b_records,
+        "validators expose different canonical job B records",
+    );
+    let job_b_id = finalized_job_id(&job_b_record, "job B");
+    let job_a_accountability = finalized_votes_on(
+        world,
+        &watch.ports,
+        finalized_job_id(&job_a_record, "job A"),
+    );
+    let job_b_accountability = finalized_votes_on(world, &watch.ports, job_b_id);
+    *last_observation = format!(
+        "{statuses}, job_a_slots={:?}, job_b_slots={:?}",
+        vote_slots(&job_a_accountability),
+        vote_slots(&job_b_accountability)
+    );
+    if !(job_a_accountability.iter().all(Option::is_some)
+        && job_b_accountability.iter().all(Option::is_some))
+    {
+        return None;
+    }
+    let job_a_votes = unanimous(
+        &job_a_accountability,
+        "validators expose different job A accountability",
+    );
+    let job_b_votes = unanimous(
+        &job_b_accountability,
+        "validators expose different job B accountability",
+    );
+    let joiner_participant_index = joiner_vote_slot(world, &request, job_b_id, &job_b_votes)?;
+    dynamic_pre_restart_vote_baseline_ready(
+        job_a_votes.slot_validator_indexes.len(),
+        job_b_votes.slot_validator_indexes.len(),
+        true,
+    )
+    .then_some(DynamicJobPair {
+        job_b_request: request,
+        job_a_record,
+        job_b_record,
+        job_a_votes,
+        job_b_votes,
+        joiner_participant_index,
+    })
+}
+
+fn assert_dynamic_job_snapshots(world: &World, pair: &DynamicJobPair, job_b_wwd: u32) {
+    let DynamicJobPair {
+        job_a_record,
+        job_b_record,
+        job_a_votes,
+        job_b_votes,
+        joiner_participant_index,
+        ..
+    } = pair;
+    assert_eq!(job_a_record.intent.result_member_count, 4);
+    assert_eq!(job_a_record.intent.result_quorum_threshold, 3);
+    assert_eq!(job_a_votes.member_count, 4);
+    assert_eq!(job_a_votes.quorum_threshold, 3);
+    let job_a_id = finalized_job_id(job_a_record, "job A");
+    assert!(
+        !dynamic_vote_submission_path(world, world.validators.joiner_index(), job_a_id).exists(),
+        "the fifth validator must not create a vote submission for job A's historical snapshot"
+    );
+
+    assert_eq!(job_b_record.intent.wwd, job_b_wwd);
+    assert_eq!(job_b_record.intent.result_member_count, 5);
+    assert_eq!(job_b_record.intent.result_quorum_threshold, 4);
+    assert_eq!(job_b_votes.member_count, 5);
+    assert_eq!(job_b_votes.quorum_threshold, 4);
+    assert!(
+        job_b_votes
+            .slot_validator_indexes
+            .contains(joiner_participant_index),
+        "the fifth validator's signed public vote must be accepted at its canonical snapshot \
+         index {joiner_participant_index}"
+    );
+    assert!(
+        job_b_record.intent.result_validator_set_epoch
+            > job_a_record.intent.result_validator_set_epoch
+    );
+    assert_ne!(
+        job_b_record.intent.result_committee_set_hash,
+        job_a_record.intent.result_committee_set_hash
+    );
+    assert_ne!(
+        job_b_record.intent.result_ocomp_binding_hash,
+        job_a_record.intent.result_ocomp_binding_hash
+    );
+}
+
 #[then("job B opens with five members and quorum four while job A remains four of three")]
 fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) {
     let primary = world.validators.primary_port();
@@ -218,208 +477,17 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
         .expect("job B WorldwideDay");
     let mut ports = world.validators.committee_ports();
     ports.push(world.validators.http_port(world.validators.joiner_index()));
+    let watch = JobPairWatch {
+        ports,
+        job_a_request: &job_a_request,
+        job_b_wwd,
+        certified_five_member_height,
+    };
     let deadline = Instant::now() + Duration::from_secs(OCOMP_JOB_REQUEST_TIMEOUT_SECS);
     let mut last_observation = "no finalized job B request observed".to_owned();
-
-    let (
-        job_b_request,
-        job_a_record,
-        job_b_record,
-        job_a_votes,
-        job_b_votes,
-        joiner_participant_index,
-    ) = loop {
-        let requests = ports
-            .iter()
-            .copied()
-            .map(|port| {
-                world
-                    .rpc
-                    .finalized_ocomp_job_request_for_worldwide_day_on(
-                        port,
-                        job_a_request.request_height + 1,
-                        job_b_wwd,
-                    )
-                    .unwrap_or_else(|error| panic!("observe job B on port {port}: {error:#}"))
-            })
-            .collect::<Vec<_>>();
-        if requests.iter().all(Option::is_some) {
-            let request = requests[0].clone().expect("all job B requests are present");
-            assert!(
-                requests
-                    .iter()
-                    .all(|observed| observed.as_ref() == Some(&request)),
-                "validators expose different finalized job B requests"
-            );
-            if request.worldwide_day == job_b_wwd {
-                assert!(
-                    request.request_height > certified_five_member_height,
-                    "Job B request at height {} predates the certified five-member barrier at height {}; the harness released it too early",
-                    request.request_height,
-                    certified_five_member_height
-                );
-                let job_a_records = ports
-                    .iter()
-                    .copied()
-                    .map(|port| {
-                        world
-                            .rpc
-                            .finalized_ocomp_job_record_on(port, job_a_request.intent_id)
-                    })
-                    .collect::<Vec<_>>();
-                let job_b_records = ports
-                    .iter()
-                    .copied()
-                    .map(|port| {
-                        world
-                            .rpc
-                            .finalized_ocomp_job_record_on(port, request.intent_id)
-                    })
-                    .collect::<Vec<_>>();
-                let job_a_statuses = job_a_records
-                    .iter()
-                    .map(|record| record.as_ref().map(|record| record.status))
-                    .collect::<Vec<_>>();
-                let job_b_statuses = job_b_records
-                    .iter()
-                    .map(|record| record.as_ref().map(|record| record.status))
-                    .collect::<Vec<_>>();
-                last_observation = format!(
-                    "job_b_request=({:#x}, {}), job_a_statuses={job_a_statuses:?}, \
-                     job_b_statuses={job_b_statuses:?}",
-                    request.intent_id, request.worldwide_day
-                );
-                if job_a_records.iter().all(|record| {
-                    record
-                        .as_ref()
-                        .is_some_and(|record| record.status == OcompJobStatus::VotingOpen)
-                }) && job_b_records.iter().all(|record| {
-                    record
-                        .as_ref()
-                        .is_some_and(|record| record.status == OcompJobStatus::VotingOpen)
-                }) {
-                    let job_a_record = job_a_records[0]
-                        .clone()
-                        .expect("all job A records are present");
-                    let job_b_record = job_b_records[0]
-                        .clone()
-                        .expect("all job B records are present");
-                    assert!(
-                        job_a_records
-                            .iter()
-                            .all(|observed| observed.as_ref() == Some(&job_a_record)),
-                        "validators expose different canonical job A records after activation"
-                    );
-                    assert!(
-                        job_b_records
-                            .iter()
-                            .all(|observed| observed.as_ref() == Some(&job_b_record)),
-                        "validators expose different canonical job B records"
-                    );
-                    let job_a_id = job_a_record
-                        .finalized
-                        .as_ref()
-                        .expect("job A finalized intent")
-                        .job_id;
-                    let job_b_id = job_b_record
-                        .finalized
-                        .as_ref()
-                        .expect("job B finalized intent")
-                        .job_id;
-                    let job_a_accountability = ports
-                        .iter()
-                        .copied()
-                        .map(|port| {
-                            world
-                                .rpc
-                                .finalized_ocomp_vote_accountability_on(port, job_a_id)
-                        })
-                        .collect::<Vec<_>>();
-                    let job_b_accountability = ports
-                        .iter()
-                        .copied()
-                        .map(|port| {
-                            world
-                                .rpc
-                                .finalized_ocomp_vote_accountability_on(port, job_b_id)
-                        })
-                        .collect::<Vec<_>>();
-                    let job_a_slots = job_a_accountability
-                        .iter()
-                        .map(|accountability| {
-                            accountability
-                                .as_ref()
-                                .map(|accountability| accountability.slot_validator_indexes.clone())
-                        })
-                        .collect::<Vec<_>>();
-                    let job_b_slots = job_b_accountability
-                        .iter()
-                        .map(|accountability| {
-                            accountability
-                                .as_ref()
-                                .map(|accountability| accountability.slot_validator_indexes.clone())
-                        })
-                        .collect::<Vec<_>>();
-                    last_observation = format!(
-                        "job_b_request=({:#x}, {}), job_a_statuses={job_a_statuses:?}, \
-                         job_b_statuses={job_b_statuses:?}, job_a_slots={job_a_slots:?}, \
-                         job_b_slots={job_b_slots:?}",
-                        request.intent_id, request.worldwide_day
-                    );
-                    if job_a_accountability.iter().all(Option::is_some)
-                        && job_b_accountability.iter().all(Option::is_some)
-                    {
-                        let job_a_votes = job_a_accountability[0]
-                            .clone()
-                            .expect("all job A accountability records are present");
-                        let job_b_votes = job_b_accountability[0]
-                            .clone()
-                            .expect("all job B accountability records are present");
-                        assert!(
-                            job_a_accountability
-                                .iter()
-                                .all(|observed| observed.as_ref() == Some(&job_a_votes)),
-                            "validators expose different job A accountability"
-                        );
-                        assert!(
-                            job_b_accountability
-                                .iter()
-                                .all(|observed| observed.as_ref() == Some(&job_b_votes)),
-                            "validators expose different job B accountability"
-                        );
-                        let finalized_height = world
-                            .rpc
-                            .finalized_result(primary)
-                            .expect("observe finalized height for job B accountability");
-                        if let Some(joiner_vote) = finalized_vote_for_delegate_on_job(
-                            world,
-                            request.request_height,
-                            finalized_height,
-                            world.validators.joiner_index(),
-                            job_b_id,
-                        ) {
-                            if let Some(joiner_participant_index) =
-                                accountability_slot_for_vote(&job_b_votes, &joiner_vote)
-                            {
-                                if dynamic_pre_restart_vote_baseline_ready(
-                                    job_a_votes.slot_validator_indexes.len(),
-                                    job_b_votes.slot_validator_indexes.len(),
-                                    true,
-                                ) {
-                                    break (
-                                        request,
-                                        job_a_record,
-                                        job_b_record,
-                                        job_a_votes,
-                                        job_b_votes,
-                                        joiner_participant_index,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    let pair = loop {
+        if let Some(pair) = observe_dynamic_job_pair(world, &watch, &mut last_observation) {
+            break pair;
         }
         assert!(
             Instant::now() < deadline,
@@ -428,46 +496,11 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
         );
         sleep(Duration::from_millis(500));
     };
-
-    assert_eq!(job_a_record.intent.result_member_count, 4);
-    assert_eq!(job_a_record.intent.result_quorum_threshold, 3);
-    assert_eq!(job_a_votes.member_count, 4);
-    assert_eq!(job_a_votes.quorum_threshold, 3);
-    let job_a_id = job_a_record
-        .finalized
-        .as_ref()
-        .expect("job A finalized intent")
-        .job_id;
-    assert!(
-        !dynamic_vote_submission_path(world, world.validators.joiner_index(), job_a_id).exists(),
-        "the fifth validator must not create a vote submission for job A's historical snapshot"
-    );
-
-    assert_eq!(job_b_record.intent.wwd, job_b_wwd);
-    assert_eq!(job_b_record.intent.result_member_count, 5);
-    assert_eq!(job_b_record.intent.result_quorum_threshold, 4);
-    assert_eq!(job_b_votes.member_count, 5);
-    assert_eq!(job_b_votes.quorum_threshold, 4);
-    assert!(
-        job_b_votes
-            .slot_validator_indexes
-            .contains(&joiner_participant_index),
-        "the fifth validator's signed public vote must be accepted at its canonical snapshot \
-         index {joiner_participant_index}"
-    );
-    assert!(
-        job_b_record.intent.result_validator_set_epoch
-            > job_a_record.intent.result_validator_set_epoch
-    );
-    assert_ne!(
-        job_b_record.intent.result_committee_set_hash,
-        job_a_record.intent.result_committee_set_hash
-    );
-    assert_ne!(
-        job_b_record.intent.result_ocomp_binding_hash,
-        job_a_record.intent.result_ocomp_binding_hash
-    );
-    world.state.ocomp_dynamic_job_requests.push(job_b_request);
+    assert_dynamic_job_snapshots(world, &pair, job_b_wwd);
+    world
+        .state
+        .ocomp_dynamic_job_requests
+        .push(pair.job_b_request);
 }
 
 fn advance_dynamic_membership_to_next_daily_cycle(world: &mut World) {
@@ -676,297 +709,6 @@ fn validator_two_worker_restarts_and_completes_dynamic_quorums(world: &mut World
         .iter()
         .map(|accountability| accountability.slot_validator_indexes.clone())
         .collect();
-}
-
-#[then("both deadlines record validator 3 missing with one soft penalty and all five validators stay live")]
-fn dynamic_deadlines_preserve_active_membership_with_one_soft_penalty(world: &mut World) {
-    // The full 43,200-block recovery/possible-jail acceptance is a separate lane.
-    assert_eq!(world.validators.size(), 4, "four founders plus one joiner");
-    let ports = dynamic_deadline_ports(
-        world.validators.committee_ports(),
-        world.validators.http_port(world.validators.joiner_index()),
-    )
-    .expect("five distinct expected observers");
-    let members: Vec<Address> = (0..5)
-        .map(|index| {
-            let key = world
-                .validators
-                .get(index)
-                .evm_key()
-                .expect("validator identity");
-            eth::address_of(&key).expect("derive public validator identity")
-        })
-        .collect();
-    let victim = members[3];
-    let owned: Vec<_> = (0..5)
-        .map(|index| {
-            world
-                .localnet
-                .live_validator_and_enclave_pids(index)
-                .expect("every expected validator and enclave must be owned and live")
-        })
-        .collect();
-    let requests = world.state.ocomp_dynamic_job_requests.clone();
-    assert_eq!(requests.len(), 2, "job A and job B requests");
-    let expected_slots = world.state.ocomp_dynamic_vote_slots.clone();
-    assert_eq!(expected_slots.len(), 2, "job A and job B voting slots");
-    let deadlines = [requests[0].deadline_height, requests[1].deadline_height];
-    let recovery = deadlines[0]
-        .checked_add(DYNAMIC_OCOMP_RECOVERY_BLOCKS)
-        .expect("recovery height overflow");
-    assert!(
-        deadlines[0] > 0 && deadlines[0] < deadlines[1] && deadlines[1] < recovery,
-        "two ordered deadlines must lie in one recovery window"
-    );
-    let primary = world.validators.primary_port();
-    let baseline_height = world
-        .rpc
-        .finalized_result(primary)
-        .expect("finalized completed quorums");
-    let records: Vec<_> = requests
-        .iter()
-        .map(|request| {
-            world
-                .rpc
-                .ocomp_job_record_at_on(primary, request.intent_id, baseline_height)
-                .expect("pinned dynamic job identity")
-        })
-        .collect();
-    let job_ids: [B256; 2] = std::array::from_fn(|ordinal| {
-        records[ordinal]
-            .finalized
-            .as_ref()
-            .expect("finalized dynamic intent")
-            .job_id
-    });
-    assert_ne!(job_ids[0], job_ids[1], "two different dynamic jobs");
-    let baselines: Vec<_> = job_ids
-        .iter()
-        .map(|&job_id| {
-            world
-                .rpc
-                .ocomp_vote_accountability_at_on(primary, job_id, baseline_height)
-                .expect("retain completed quorum before the deadline wait")
-        })
-        .collect();
-    for ordinal in 0..2 {
-        assert_eq!(baselines[ordinal].job_id, job_ids[ordinal]);
-        assert_eq!(
-            baselines[ordinal].result_validator_set_epoch,
-            records[ordinal].intent.result_validator_set_epoch
-        );
-        assert_eq!(
-            baselines[ordinal].result_committee_set_hash,
-            records[ordinal].intent.result_committee_set_hash
-        );
-        assert_eq!(
-            baselines[ordinal].result_ocomp_binding_hash,
-            records[ordinal].intent.result_ocomp_binding_hash
-        );
-    }
-    let target = world
-        .rpc
-        .fresh_finality_target(&ports)
-        .expect("all-five fresh target")
-        .max(
-            deadlines[1]
-                .checked_add(1)
-                .expect("deadline height overflow"),
-        );
-    assert!(
-        target < recovery,
-        "fresh target already crossed the separate recovery gate"
-    );
-    world.state.restart_observations.push(serde_json::json!({
-        "phase": "ocomp_dynamic_deadlines_armed", "ports": ports, "members": members,
-        "owned_pids": owned, "baseline_height": baseline_height, "baselines": baselines,
-        "job_ids": job_ids, "deadlines": deadlines, "target": target,
-    }));
-    // Preserve the original 900 x 2s allowance, now requiring every expected peer.
-    let wait_deadline = Instant::now() + Duration::from_secs(900 * 2);
-    let final_checkpoint = loop {
-        dynamic_deadline_assert_live(world, &owned);
-        let observations: Vec<_> = ports
-            .iter()
-            .map(|&port| world.rpc.finalized_result(port))
-            .collect();
-        assert!(
-            observations.iter().all(|height| match height {
-                Ok(height) => *height < recovery,
-                Err(_) => true, // transient RPC failure still cannot satisfy the barrier below
-            }),
-            "an observer crossed the separate recovery gate"
-        );
-        if observations
-            .iter()
-            .all(|height| height.as_ref().is_ok_and(|height| *height >= target))
-        {
-            let height = observations
-                .iter()
-                .map(|height| *height.as_ref().expect("all finalities present"))
-                .min()
-                .expect("five finalities");
-            assert!(
-                height < recovery,
-                "dynamic deadline proof crossed the separate recovery gate"
-            );
-            break dynamic_deadline_checkpoint(world, &ports, height)
-                .expect("all-five common finalized hash/root");
-        }
-        assert!(
-            Instant::now() < wait_deadline,
-            "all five validators did not finalize dynamic deadlines: {observations:?}"
-        );
-        sleep(Duration::from_secs(2));
-    };
-    let checkpoints = deadlines.map(|height| {
-        dynamic_deadline_checkpoint(world, &ports, height).expect("canonical closing block")
-    });
-    let heights = [
-        deadlines[0] - 1,
-        deadlines[0],
-        deadlines[1] - 1,
-        deadlines[1],
-        final_checkpoint.height,
-    ];
-    let states: Vec<_> = heights
-        .iter()
-        .map(|&height| {
-            let checkpoint = dynamic_deadline_checkpoint(world, &ports, height)
-                .expect("pinned accounting checkpoint");
-            let observed: Vec<_> = ports
-                .iter()
-                .map(|&port| {
-                    dynamic_deadline_account(world, port, victim, height)
-                        .expect("pinned soft-penalty accounting")
-                })
-                .collect();
-            world.state.restart_observations.push(serde_json::json!({
-                "phase": "ocomp_dynamic_deadline_accounting", "height": height,
-                "block_hash": checkpoint.block_hash, "state_root": checkpoint.state_root,
-                "ports": ports, "accounts": observed,
-            }));
-            assert!(
-                observed.iter().all(|account| account == &observed[0]),
-                "all-five accounting disagreement"
-            );
-            assert_eq!(
-                dynamic_deadline_checkpoint(world, &ports, height).unwrap(),
-                checkpoint
-            );
-            observed[0].clone()
-        })
-        .collect();
-    let states: [DynamicDeadlineAccount; 5] = states
-        .try_into()
-        .expect("five pinned accounting observations");
-    let mut agreed_events = None;
-    for &port in &ports {
-        let logs = eth::raw_json_result(
-            &world.rpc.url(port),
-            "eth_getLogs",
-            serde_json::json!([{
-                "address": crate::internal::addresses::WWD_ADDR,
-                "fromBlock": format!("0x{:x}", requests[0].request_height),
-                "toBlock": format!("0x{:x}", final_checkpoint.height),
-                "topics": [eth::IMetadosis::OcompVoteMissed::SIGNATURE_HASH],
-            }]),
-        )
-        .expect("finalized canonical OcompVoteMissed events");
-        world.state.restart_observations.push(serde_json::json!({
-            "phase": "ocomp_dynamic_deadline_events", "port": port, "logs": logs,
-            "through_height": final_checkpoint.height,
-        }));
-        let events = dynamic_deadline_decode_events(&logs, victim, job_ids, checkpoints)
-            .expect("exact first/repeat OCOMP event identities");
-        for event in &events {
-            let receipt = eth::raw_json_result(
-                &world.rpc.url(port),
-                "eth_getTransactionReceipt",
-                serde_json::json!([event.transaction_hash]),
-            )
-            .expect("canonical OcompLifecycleBegin receipt RPC");
-            world.state.restart_observations.push(serde_json::json!({
-                "phase": "ocomp_dynamic_deadline_receipt", "port": port,
-                "event": event, "receipt": receipt,
-            }));
-            dynamic_deadline_validate_receipt(&receipt, event)
-                .expect("successful canonical system receipt contains the exact miss event");
-        }
-        dynamic_deadline_validate_penalties(
-            &states,
-            &events,
-            &members,
-            deadlines,
-            final_checkpoint.height,
-        )
-        .expect("one bonded-only slash, fixed recovery window, and unchanged ACTIVE membership");
-        if let Some(ref expected) = agreed_events {
-            assert_eq!(&events, expected, "all-five event disagreement");
-        } else {
-            agreed_events = Some(events);
-        }
-    }
-    for (ordinal, request) in requests.iter().enumerate() {
-        let mut agreed = None;
-        for &port in &ports {
-            let closed = world
-                .rpc
-                .ocomp_vote_accountability_at_on(port, job_ids[ordinal], request.deadline_height)
-                .expect("accountability at exact closing block");
-            dynamic_deadline_validate_accountability(
-                &closed,
-                &baselines[ordinal],
-                &expected_slots[ordinal],
-                request.deadline_height,
-                [(4, 3), (5, 4)][ordinal],
-            )
-            .expect("pinned historical quorum and exact singleton missing bitmap");
-            let record = world
-                .rpc
-                .ocomp_job_record_at_on(port, request.intent_id, final_checkpoint.height)
-                .expect("finalized dynamic job remains available");
-            assert_eq!(
-                record, records[ordinal],
-                "closing mutated the completed job/result/binding"
-            );
-            assert_eq!(
-                world
-                    .rpc
-                    .ocomp_vote_accountability_at_on(
-                        port,
-                        job_ids[ordinal],
-                        final_checkpoint.height
-                    )
-                    .expect("post-deadline accountability"),
-                closed,
-                "closed accountability changed later"
-            );
-            if let Some(ref first) = agreed {
-                assert_eq!(
-                    &closed, first,
-                    "all-five closed accountability disagreement"
-                );
-            } else {
-                agreed = Some(closed);
-            }
-        }
-        world.state.restart_observations.push(serde_json::json!({
-            "phase": "ocomp_dynamic_deadline_accountability", "job_id": job_ids[ordinal],
-            "accountability": agreed, "ports": ports,
-        }));
-    }
-    dynamic_deadline_assert_live(world, &owned);
-    assert_eq!(
-        dynamic_deadline_checkpoint(world, &ports, final_checkpoint.height).unwrap(),
-        final_checkpoint
-    );
-    dynamic_deadline_assert_live(world, &owned);
-    world.state.restart_observations.push(serde_json::json!({
-        "phase": "ocomp_dynamic_deadlines_verified", "ports": ports, "owned_pids": owned,
-        "height": final_checkpoint.height, "block_hash": final_checkpoint.block_hash,
-        "state_root": final_checkpoint.state_root, "recovery_deadline": recovery,
-    }));
 }
 
 #[when("one public Tribute is submitted for each scheduled OCOMP job")]

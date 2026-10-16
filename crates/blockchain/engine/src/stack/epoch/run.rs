@@ -53,13 +53,9 @@ where
     let ConsensusStackServices {
         application_drain,
         follower_shutdown,
-        projection_readiness,
         ocomp_readiness,
-        retained_tribute_writer,
-        projection_retention_fence,
         retention_selector,
-        finalized_ce_committer,
-        ce_startup_recovery,
+        finalized_execution_barrier,
         radicle_status,
         mut radicle_endpoint,
     } = services;
@@ -113,13 +109,9 @@ where
                 upstream,
             },
             services::FollowerStackServices {
-                projection_readiness,
                 ocomp_readiness,
-                retained_tribute_writer,
-                projection_retention_fence,
                 retention_selector,
-                finalized_ce_committer,
-                ce_startup_recovery,
+                finalized_execution_barrier,
                 follower_shutdown: follower_shutdown
                     .ok_or(crate::errors::StackEpochError::FollowerPreStopHandshakeNotInstalled)?,
             },
@@ -405,7 +397,6 @@ where
             last_finalized_height: recovery_anchor_height,
             last_finalized_hash: recovery_anchor_hash,
         },
-        projection_readiness.clone(),
         Some(executor_finalized_height_tx),
     );
 
@@ -609,11 +600,12 @@ where
             }
         };
 
-    let _recovered_ce_marker = recover_ce_at_reconciled_anchor(
-        ce_startup_recovery.as_ref(),
-        last_consensus_finalized.get(),
-        recovery_anchor_height,
-    )?;
+    finalized_execution_barrier
+        .verify_checkpoint(ProjectionCheckpoint {
+            block_number: recovery_anchor_height,
+            block_hash: recovery_anchor_hash,
+        })
+        .wrap_err("native execution is not durable at the certified recovery anchor")?;
 
     executor_actor = executor_actor.with_recovered_finalized_state(
         genesis_hash,
@@ -713,11 +705,9 @@ where
         ),
     );
     let ocomp_retention_coordinator = Arc::new(
-        outbe_node::ocomp::retention::OcompRetentionCoordinator::open_with_retained_tributes_and_fence(
+        outbe_node::ocomp::retention::OcompRetentionCoordinator::open(
             ocomp_retention_dir,
             ocomp_proof_source,
-            retained_tribute_writer,
-            projection_retention_fence,
         ),
     );
     retention_selector
@@ -764,7 +754,6 @@ where
         vrf_safety: vrf_safety.clone(),
         epoch_fence: application_epoch_fence.clone(),
         ancestry_readiness: ancestry_readiness.clone(),
-        projection_readiness,
         finalization_view: finalization_view.clone(),
         block_cache: finalization_block_cache.clone(),
         finalization_selector: outbe_consensus::finalization::selection::ParentProofSelector::new(
@@ -841,7 +830,7 @@ where
 
     let executor_handle_task = executor_actor
         .with_ancestry_readiness(ancestry_readiness.clone())
-        .with_finalized_ce_committer(finalized_ce_committer)
+        .with_finalized_execution_barrier(finalized_execution_barrier)
         .start(marshal_mailbox.clone(), last_consensus_finalized);
     let handler_handle = ctx
         .child("application")

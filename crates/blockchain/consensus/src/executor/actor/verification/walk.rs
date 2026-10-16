@@ -5,7 +5,6 @@ pub(super) enum Step {
     Ready,
     InFlight,
     Fetching(BoxFuture<'static, Option<Arc<ConsensusBlock>>>),
-    Projection(BoxFuture<'static, outbe_primitives::projection::WaitOutcome>),
     Retry(BoxFuture<'static, ()>),
     Stopped,
 }
@@ -82,22 +81,7 @@ impl Walk {
     }
 
     pub(super) fn poll(&mut self, cx: &mut std::task::Context<'_>) -> Poll<eyre::Result<()>> {
-        use outbe_primitives::projection::WaitOutcome;
         match &mut self.step {
-            Step::Projection(wait) => {
-                let outcome = futures::ready!(wait.as_mut().poll(cx));
-                self.step = Step::Stopped;
-                match outcome {
-                    WaitOutcome::Ready => self.step = Step::Ready,
-                    WaitOutcome::Fatal(failure) => {
-                        return Poll::Ready(Err(crate::errors::ExecutorError::ProjectionFailed(
-                            failure,
-                        )
-                        .into()))
-                    }
-                    _ => {}
-                }
-            }
             Step::Fetching(fetch) => {
                 let parent = futures::ready!(fetch.as_mut().poll(cx));
                 self.step = Step::Stopped;

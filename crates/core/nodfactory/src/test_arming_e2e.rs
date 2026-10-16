@@ -5,7 +5,6 @@
 
 use alloy_primitives::{Bytes, B256};
 use alloy_sol_types::SolCall;
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_nod::schema::NodContract;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -30,15 +29,10 @@ alloy_sol_types::sol! {
 }
 
 /// Answers a test hook, or `None` when `data` is no test hook.
-pub(crate) fn dispatch(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    data: &[u8],
-) -> Option<Result<Bytes>> {
+pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Result<Bytes>> {
     use INodFactoryTestArming::*;
     if let Ok(call) = issueForTestCall::abi_decode(data) {
-        return Some(guarded(storage, || issue(storage, scope, parent, call)));
+        return Some(guarded(storage, || issue(storage, call)));
     }
     if let Ok(call) = closeCallNoticeForTestCall::abi_decode(data) {
         return Some(guarded(storage, || {
@@ -54,13 +48,8 @@ fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<()>) -> Re
 }
 
 /// Issue one Nod straight to its owner. A non-zero `issuedAt` restamps the bucket,
-/// since calls and qualification count only days after it.
-fn issue(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    call: INodFactoryTestArming::issueForTestCall,
-) -> Result<()> {
+/// since calls count only days after it.
+fn issue(storage: &StorageHandle<'_>, call: INodFactoryTestArming::issueForTestCall) -> Result<()> {
     let day = outbe_primitives::time::WorldwideDay::new(call.worldwideDay);
     let encrypted = outbe_tee::nod_mine::create_nod_for_test(
         outbe_primitives::nod_encryption::NodTermsV2 {
@@ -76,8 +65,8 @@ fn issue(
         call.creatorPublicKey.0,
         call.gratisLoadMinor,
     )
-    .map_err(crate::errors::NodFactoryError::revert_message)?;
-    runtime::issue_nod(storage, scope, parent, &encrypted)?;
+    .map_err(crate::errors::NodFactoryError::CreateNodForTest)?;
+    runtime::issue_nod(storage, &encrypted)?;
     if call.issuedAt != 0 {
         let bucket_key =
             outbe_nod::identity::bucket_key(day, call.entryPriceMinor, call.referenceCurrency);

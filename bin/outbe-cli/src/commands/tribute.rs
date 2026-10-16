@@ -88,9 +88,6 @@ pub struct TributeOfferArgs {
     /// ISO 4217 currency code (840 = USD)
     #[arg(long, default_value_t = 840)]
     currency: u16,
-    /// Exclude the resulting Tribute from Intex issuance
-    #[arg(long, default_value_t = false)]
-    exclude_from_intex_issuance: bool,
     /// L2 zkMerkleRoot bytes (`0x`-hex).
     #[arg(long)]
     zk_merkle_root: String,
@@ -278,7 +275,6 @@ async fn offer(
         amount: amount_base,
         amount_micro,
         currency,
-        exclude_from_intex_issuance,
         zk_merkle_root,
         zk_proof,
         l2_chain_id,
@@ -326,7 +322,7 @@ async fn offer(
     // worldwide_day + currency are cleartext ABI args (below) so the node can
     // admit and price the offer without decrypting. The ciphertext carries only
     // what must stay confidential. `referenceCurrency` is a separate axis again
-    // (it drives gem/intex qualification), not the pricing key.
+    // (it denominates the rights' entry and call prices), not the pricing key.
     let payload = serde_json::json!({
         "creator": format!("{creator:?}"),
         "creator_public_key": format!("{creator_public_key:#x}"),
@@ -354,7 +350,6 @@ async fn offer(
         worldwideDay: wwd,
         tributeCurrency: currency,
         referenceCurrency: currency,
-        excludeFromIntexIssuance: exclude_from_intex_issuance,
         zkProof: zk_proof,
         chainId: l2_chain_id,
         version: circuit_version,
@@ -376,7 +371,7 @@ async fn offer(
 
     println!("offerTribute tx: {tx_hash}");
     println!(
-        "  creator={creator:?} worldwide_day={wwd} currency={currency} amount_base={amount_base} amount_micro={amount_micro} exclude_from_intex_issuance={exclude_from_intex_issuance}"
+        "  creator={creator:?} worldwide_day={wwd} currency={currency} amount_base={amount_base} amount_micro={amount_micro}"
     );
     println!("Verify once mined: outbe-cli tribute by-owner {creator:?}");
     println!(

@@ -19,30 +19,6 @@
   },
   {
     "type": "function",
-    "name": "maxUtcDayVwapSince",
-    "inputs": [
-      {
-        "name": "isoCode",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "fromUtcDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "minePromis",
     "inputs": [
       {
@@ -336,6 +312,12 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "callPriceMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -367,45 +349,7 @@
   },
   {
     "type": "event",
-    "name": "LateProceedsBurned",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "ProceedsBurned",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ProceedsCredited",
     "inputs": [
       {
         "name": "worldwideDay",
@@ -421,6 +365,12 @@
       },
       {
         "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "creditedPromisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

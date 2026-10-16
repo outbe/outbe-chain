@@ -61,12 +61,7 @@ fn build_extended_precompiles() -> PrecompilesMap {
     extend_outbe_precompiles::<EmptyDB>(
         &mut precompiles,
         OutbePrecompileExecutionContext::new(spec, B256::ZERO),
-        OutbePrecompileRuntime::new(
-            None,
-            std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::default()),
-            None,
-            false,
-        ),
+        OutbePrecompileRuntime::new(None, false),
         None,
     );
     precompiles

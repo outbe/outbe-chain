@@ -4,10 +4,10 @@
   "semantic_version": "1.0.0-poc",
   "migration_baseline_revision": "04606071023a237e43d5a3ca47642ee202983e86",
   "decision_reference": "outbe-plan/off-chain-poc-lysis-v1-semantics.md",
-  "reference_path": "testing/lysis-v1-reference/src/lib.rs",
-  "reference_sha256": "f496d35a7730230e9bccc7aaac2040a00b2ff121c9740cd10b3c7a5dc2d6bc02",
+  "reference_path": "testing/lysis-v1-reference/src",
+  "reference_sha256": "c5d4bb02982d162d057625b45923bc318e3bd916eea8a8b0b4825cd17c3adb7e",
   "case_path": "crates/core/lysis/vectors/lysis-v1/cases.jsonl",
-  "case_file_sha256": "8dfee41df34925a19e9ffb36cbd18ad41462c081a3a5840952a216d7856aebdb",
+  "case_file_sha256": "ce84c514bbf70a83675559d4c0527763c331e8176009bdac63fb99de24ad8db4",
   "case_count": 16,
   "required_arithmetic_vectors": [
     "u256-wrapping-multiply",
@@ -33,13 +33,13 @@
       "name": "positive-input-minimum-monetary-cost",
       "description": "Positive entry price and Gratis load produce at least one reference-currency minor unit; the independent reference includes this policy.",
       "case_id": "positive-price-and-load-minimum-cost",
-      "expected_source": "Exact integer arithmetic: floor(1 * 1 / 1000000) is clamped to 1; Gratis load remains 1."
+      "expected_source": "A frozen budget of 1 now has a zero per-Nod cap and rejects before cost calculation. Positive-load minimum-cost behavior remains covered by execution planner dust vectors."
     },
     {
       "name": "entry-derived-nod-floor",
       "description": "A Nod action carries the observed entry price, from which its floor derives; the tribute price does not enter it.",
       "case_id": "non840-entry-floor",
-      "expected_source": "The action carries the observed entry price 3000000 with a tribute price of 4000000; its cost is floor(3000000 * 32000000 / 1000000) = 96000000."
+      "expected_source": "The action carries entry price 3000000, not tribute price 4000000. Its load is capped to floor(32000000 / 1024) = 31250; its cost is 93750."
     }
   ]
 }

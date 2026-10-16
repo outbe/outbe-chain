@@ -1,147 +1,32 @@
-use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
 use std::collections::BTreeSet;
-use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
 
 use alloy_primitives::{address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_compressed_entities::{
-    begin_block, decode_tribute_v1, derive_poseidon_entity_id, encode_tribute_v1, end_block,
-    ExecutionScope, PartitionRef, WwdEntityId,
-};
-use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
+use outbe_primitives::entity_codec::encode_tribute_v2;
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId};
 
-use crate::{TributeContract, TributeData, TributeRepositoryReader, TributeRepositoryWriter};
+use crate::{TributeContract, TributeData};
 
-struct TestTribute<'a, 'scope> {
-    contract: TributeContract<'a>,
-    scope: &'scope ExecutionScope,
-    reader: TributeRepositoryReader,
-}
-
-impl<'a> Deref for TestTribute<'a, '_> {
-    type Target = TributeContract<'a>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.contract
-    }
-}
-
-impl DerefMut for TestTribute<'_, '_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.contract
-    }
-}
-
-impl TestTribute<'_, '_> {
-    fn issue(&mut self, tribute: &TributeData) -> PrecompileResult<()> {
-        self.contract.issue(self.scope, &self.reader, tribute)
-    }
-
-    fn burn(&mut self, tribute_id: WwdEntityId) -> PrecompileResult<()> {
-        self.contract.burn(self.scope, &self.reader, tribute_id)
-    }
-
-    fn burn_all_by_wwd(
-        &mut self,
-        day: outbe_primitives::time::WorldwideDay,
-    ) -> PrecompileResult<()> {
-        self.contract.burn_all_by_wwd(self.scope, &self.reader, day)
-    }
-
-    fn get_tribute(&self, tribute_id: WwdEntityId) -> PrecompileResult<Option<TributeData>> {
-        self.contract
-            .get_tribute(self.scope, &self.reader, tribute_id)
-    }
-
-    fn balance_of(&self, owner: alloy_primitives::Address) -> PrecompileResult<u64> {
-        self.contract.balance_of(self.scope, &self.reader, owner)
-    }
-
-    fn token_uri(&self, tribute_id: WwdEntityId) -> PrecompileResult<String> {
-        self.contract
-            .token_uri(self.scope, &self.reader, tribute_id)
-    }
-
-    fn get_tribute_ids_by_owner(
-        &self,
-        owner: alloy_primitives::Address,
-    ) -> PrecompileResult<Vec<WwdEntityId>> {
-        self.contract
-            .get_tribute_ids_by_owner(self.scope, &self.reader, owner)
-    }
-
-    fn get_tribute_ids_by_day(
-        &self,
-        day: outbe_primitives::time::WorldwideDay,
-    ) -> PrecompileResult<Vec<WwdEntityId>> {
-        self.contract
-            .get_tribute_ids_by_day(self.scope, &self.reader, day)
-    }
-
-    fn get_tributes_by_owner(
-        &self,
-        owner: alloy_primitives::Address,
-    ) -> PrecompileResult<Vec<TributeData>> {
-        self.contract
-            .read_all_by_owner(self.scope, &self.reader, owner)
-    }
-
-    fn get_all_day_tributes(
-        &self,
-        day: outbe_primitives::time::WorldwideDay,
-    ) -> PrecompileResult<Vec<TributeData>> {
-        self.contract.read_all_by_day(self.scope, &self.reader, day)
-    }
-}
-
-fn body_repository() -> (TributeRepositoryReader, TributeRepositoryWriter) {
-    let storage = Arc::new(MemoryStorage::new());
-    let reader: StorageReaderHandle = storage.clone();
-    let writer: StorageWriterHandle = storage;
-    (
-        TributeRepositoryReader::new(reader.clone()),
-        TributeRepositoryWriter::new(reader, writer),
-    )
-}
-
-fn with_tribute<R>(f: impl FnOnce(&mut TestTribute<'_, '_>) -> R) -> R {
-    let mut storage = HashMapStorageProvider::new(1);
-    let (reader, _writer) = body_repository();
-    let scope = ExecutionScope::default();
-    StorageHandle::enter(&mut storage, |storage| {
+fn with_tribute<R>(f: impl FnOnce(&mut TributeContract<'_>) -> R) -> R {
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
         let _enclave = crate::enclave_client::test_enclave::scope();
-        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
-        begin_block(storage.clone(), &scope).unwrap();
-        let mut tc = TestTribute {
-            contract: TributeContract::new(storage.clone()),
-            scope: &scope,
-            reader,
-        };
-        let result = f(&mut tc);
-        end_block(storage, &scope).unwrap();
-        result
+        f(&mut TributeContract::new(storage))
     })
 }
 
-fn with_provider<R>(
-    f: impl FnOnce(&mut HashMapStorageProvider, &TributeRepositoryReader, &ExecutionScope) -> R,
-) -> R {
-    let mut storage = HashMapStorageProvider::new(1);
-    let (reader, _writer) = body_repository();
-    let scope = ExecutionScope::default();
-    StorageHandle::enter(&mut storage, |storage| {
-        let _enclave = crate::enclave_client::test_enclave::scope();
-        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
-        begin_block(storage, &scope).unwrap()
-    });
-    let result = f(&mut storage, &reader, &scope);
-    StorageHandle::enter(&mut storage, |storage| end_block(storage, &scope).unwrap());
-    result
+fn encrypted_payload_len(tc: &TributeContract<'_>, id: WwdEntityId) -> usize {
+    let record = tc.get_record(id).unwrap().expect("live Tribute record");
+    let encrypted = record.encrypted().expect("encrypted Tribute payload");
+    encode_tribute_v2(encrypted).unwrap().len()
+}
+
+fn with_provider<R>(f: impl FnOnce(&mut HashMapStorageProvider) -> R) -> R {
+    f(&mut HashMapStorageProvider::new(1))
 }
 
 fn sample_tribute() -> TributeData {
@@ -155,7 +40,6 @@ fn sample_tribute() -> TributeData {
         issuance_currency: 840,
         nominal_amount_minor: U256::from(500_000u64),
         reference_currency: 840,
-        exclude_from_intex_issuance: false,
         tribute_price_minor: U256::from(2_000_000u64),
     }
 }
@@ -254,13 +138,8 @@ fn pre_admission_projection_tracks_exact_incremental_tribute_inputs() {
         tc.issue(&second).unwrap();
 
         let projection = tc.pre_admission_projection(first.worldwide_day).unwrap();
-        let expected_body_bytes = [
-            encode_tribute_v1(&crate::canonical_body(&first)).unwrap(),
-            encode_tribute_v1(&crate::canonical_body(&second)).unwrap(),
-        ]
-        .iter()
-        .map(Vec::len)
-        .sum::<usize>();
+        let expected_body_bytes = encrypted_payload_len(tc, first.tribute_id)
+            + encrypted_payload_len(tc, second.tribute_id);
 
         assert!(!projection.is_sealed);
         assert_eq!(projection.tribute_count, 2);
@@ -295,9 +174,7 @@ fn pre_admission_projection_removes_burned_tribute_contribution() {
         tc.burn(first.tribute_id).unwrap();
 
         let projection = tc.pre_admission_projection(first.worldwide_day).unwrap();
-        let expected_body_bytes = encode_tribute_v1(&crate::canonical_body(&second))
-            .unwrap()
-            .len();
+        let expected_body_bytes = encrypted_payload_len(tc, second.tribute_id);
 
         assert_eq!(projection.tribute_count, 1);
         assert_eq!(
@@ -316,69 +193,24 @@ fn pre_admission_projection_removes_burned_tribute_contribution() {
 #[test]
 fn sealed_pre_admission_projection_is_immutable() {
     let mut provider = HashMapStorageProvider::new(1);
-    let (reader, _writer) = body_repository();
-    let scope = ExecutionScope::default();
     let tribute = sample_tribute();
 
     StorageHandle::enter(&mut provider, |storage| {
         let _enclave = crate::enclave_client::test_enclave::scope();
-        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
-        begin_block(storage.clone(), &scope).unwrap();
         let mut contract = TributeContract::new(storage);
         contract.initialize_fresh_ocomp_profile().unwrap();
         contract.unseal_day(tribute.worldwide_day).unwrap();
-        contract.issue(&scope, &reader, &tribute).unwrap();
+        contract.issue(&tribute).unwrap();
         contract.seal_day(tribute.worldwide_day).unwrap();
     });
-    let seal = StorageHandle::enter(&mut provider, |storage| end_block(storage, &scope).unwrap());
-
-    let mut forged = seal.clone();
-    forged.new_root = B256::repeat_byte(0x31);
-    assert!(scope
-        .sealed_collection_root(&forged, PartitionRef::TributeWwd(tribute.worldwide_day))
-        .is_err());
-
-    let mut sibling_provider = HashMapStorageProvider::new(1);
-    let sibling_scope = ExecutionScope::default();
-    let mut sibling_tribute = sample_tribute();
-    set_owner(
-        &mut sibling_tribute,
-        alloy_primitives::Address::repeat_byte(0x62),
-    );
-    StorageHandle::enter(&mut sibling_provider, |storage| {
-        let _enclave = crate::enclave_client::test_enclave::scope();
-        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
-        begin_block(storage.clone(), &sibling_scope).unwrap();
-        let mut contract = TributeContract::new(storage);
-        contract.unseal_day(sibling_tribute.worldwide_day).unwrap();
-        contract
-            .issue(&sibling_scope, &reader, &sibling_tribute)
-            .unwrap();
-        contract.seal_day(sibling_tribute.worldwide_day).unwrap();
-    });
-    let sibling_seal = StorageHandle::enter(&mut sibling_provider, |storage| {
-        let _enclave = crate::enclave_client::test_enclave::scope();
-        end_block(storage, &sibling_scope).unwrap()
-    });
-    assert!(scope
-        .sealed_collection_root(
-            &sibling_seal,
-            PartitionRef::TributeWwd(tribute.worldwide_day)
-        )
-        .is_err());
-
-    let sealed_collection = scope
-        .sealed_collection_root(&seal, PartitionRef::TributeWwd(tribute.worldwide_day))
-        .unwrap();
     let sealed = StorageHandle::enter(&mut provider, |storage| {
         let _enclave = crate::enclave_client::test_enclave::scope();
         TributeContract::new(storage)
-            .seal_pre_admission(tribute.worldwide_day, sealed_collection)
+            .seal_pre_admission(tribute.worldwide_day)
             .unwrap()
     });
 
     assert!(sealed.is_sealed);
-    assert_eq!(sealed.sealed_collection_root, sealed_collection.root());
     assert_eq!(sealed.tribute_count, 1);
     assert_eq!(
         sealed.tribute_nominal_total_minor,
@@ -389,9 +221,7 @@ fn sealed_pre_admission_projection_is_immutable() {
         let _enclave = crate::enclave_client::test_enclave::scope();
         let mut contract = TributeContract::new(storage);
         assert!(contract.unseal_day(tribute.worldwide_day).is_err());
-        assert!(contract
-            .seal_pre_admission(tribute.worldwide_day, sealed_collection)
-            .is_err());
+        assert!(contract.seal_pre_admission(tribute.worldwide_day).is_err());
         assert_eq!(
             contract
                 .pre_admission_projection(tribute.worldwide_day)
@@ -444,7 +274,6 @@ fn pre_admission_overflow_rolls_back_the_entire_issue() {
                 worldwide_day: tribute.worldwide_day,
                 initialized: true,
                 is_sealed: false,
-                sealed_collection_root: B256::ZERO,
                 sealed_tribute_count: 0,
                 canonical_body_bytes: u64::MAX,
                 distinct_owner_count: 0,
@@ -537,7 +366,7 @@ fn pre_fork_tribute_issue_is_unchanged_and_cannot_backfill_ocomp_lazily() {
 }
 
 fn assert_pre_admission_matches_fold(
-    tc: &TestTribute<'_, '_>,
+    tc: &TributeContract<'_>,
     day: outbe_primitives::time::WorldwideDay,
     entries: &[(TributeData, bool)],
 ) {
@@ -553,14 +382,7 @@ fn assert_pre_admission_matches_fold(
         count = count.checked_add(1).unwrap();
         nominal = nominal.checked_add(tribute.nominal_amount_minor).unwrap();
         canonical_body_bytes = canonical_body_bytes
-            .checked_add(
-                u64::try_from(
-                    encode_tribute_v1(&crate::canonical_body(tribute))
-                        .unwrap()
-                        .len(),
-                )
-                .unwrap(),
-            )
+            .checked_add(u64::try_from(encrypted_payload_len(tc, tribute.tribute_id)).unwrap())
             .unwrap();
         owners.insert(tribute.owner);
         currencies.insert(tribute.reference_currency);
@@ -716,7 +538,6 @@ fn test_token_uri_returns_metadata_json() {
         assert!(token_uri.contains("worldwide_day"));
         assert!(token_uri.contains("issuance_amount_minor"));
         assert!(token_uri.contains("\"trait_type\":\"reference_currency\""));
-        assert!(token_uri.contains("\"trait_type\":\"exclude_from_intex_issuance\""));
     });
 }
 
@@ -789,7 +610,7 @@ fn test_get_tributes_by_owner_sparse_after_burn() {
         tc.issue(&t2).unwrap();
         tc.burn(t1.tribute_id).unwrap();
 
-        let tributes = tc.get_tributes_by_owner(alice).unwrap();
+        let tributes = tc.read_all_by_owner(alice).unwrap();
         assert_eq!(tributes.len(), 1);
         assert_eq!(tributes[0].tribute_id, t2.tribute_id);
     });
@@ -810,7 +631,7 @@ fn test_get_all_day_tributes_sparse_after_burn() {
         tc.issue(&t2).unwrap();
         tc.burn(t1.tribute_id).unwrap();
 
-        let tributes = tc.get_all_day_tributes(20241220u32.into()).unwrap();
+        let tributes = tc.read_all_by_day(20241220u32.into()).unwrap();
         assert_eq!(tributes.len(), 1);
         assert_eq!(tributes[0].tribute_id, t2.tribute_id);
     });
@@ -872,65 +693,40 @@ fn sealed_day_rejects_burn_all_by_wwd_without_partial_mutation() {
 
 #[test]
 fn test_events_emitted_for_issue_and_burn() {
-    with_provider(|provider, reader, scope| {
+    with_provider(|provider| {
         let tribute = sample_tribute();
-        StorageHandle::enter(provider, |storage| {
+        StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
-            let mut tc = TributeContract::new(storage.clone());
-            tc.unseal_day(tribute.worldwide_day).unwrap();
-            tc.issue(scope, reader, &tribute).unwrap();
+            let mut contract = TributeContract::new(storage);
+            contract.unseal_day(tribute.worldwide_day).unwrap();
+            contract.issue(&tribute).unwrap();
         });
-
-        let events = provider.get_events(TRIBUTE_ADDRESS).to_vec();
-        assert_eq!(
-            events.len(),
-            3,
-            "unseal + issue projection/product events expected"
-        );
-        let stored = crate::precompile::ITribute::TributeBodyStored::decode_log_data(&events[1])
-            .expect("issue must emit a decodable full-body event first");
-        assert_eq!(stored.tributeId, tribute.tribute_id.to_u256());
-        let event_body =
-            crate::from_canonical_body(decode_tribute_v1(&stored.canonicalPayload).unwrap());
-        assert_eq!(event_body.tribute_id, tribute.tribute_id);
-        assert_eq!(event_body.owner, tribute.owner);
-        assert_eq!(event_body.worldwide_day, tribute.worldwide_day);
-        assert_eq!(
-            event_body.issuance_amount_minor,
-            tribute.issuance_amount_minor
-        );
-        assert_eq!(
-            event_body.nominal_amount_minor,
-            tribute.nominal_amount_minor
-        );
-        assert!(!stored.newCommitment.is_zero());
-        assert_eq!(
-            events[2].topics()[0],
-            crate::precompile::ITribute::TributeIssued::SIGNATURE_HASH
-        );
-
-        StorageHandle::enter(provider, |storage| {
+        let events = provider.get_events(TRIBUTE_ADDRESS);
+        assert_eq!(events.len(), 2);
+        let issued =
+            crate::precompile::ITribute::TributeIssued::decode_log_data(&events[1]).unwrap();
+        assert_eq!(issued.tributeId, tribute.tribute_id.to_u256());
+        assert_eq!(issued.owner, tribute.owner);
+        assert_eq!(issued.worldwideDay, tribute.worldwide_day.value());
+        assert!(!issued.nominalAmountMinor.is_empty());
+        StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
             TributeContract::new(storage)
-                .burn(scope, reader, tribute.tribute_id)
+                .burn(tribute.tribute_id)
                 .unwrap();
         });
         let events = provider.get_events(TRIBUTE_ADDRESS);
-        assert_eq!(events.len(), 5, "burn projection/product events expected");
-        let deleted = crate::precompile::ITribute::TributeBodyDeleted::decode_log_data(&events[3])
-            .expect("burn must emit identity-only deletion first");
-        assert_eq!(deleted.tributeId, tribute.tribute_id.to_u256());
-        assert_eq!(deleted.previousCommitment, stored.newCommitment);
-        assert_eq!(
-            events[4].topics()[0],
-            crate::precompile::ITribute::TributeBurned::SIGNATURE_HASH
-        );
+        assert_eq!(events.len(), 3);
+        let burned =
+            crate::precompile::ITribute::TributeBurned::decode_log_data(&events[2]).unwrap();
+        assert_eq!(burned.tributeId, tribute.tribute_id.to_u256());
+        assert_eq!(burned.owner, tribute.owner);
     });
 }
 
 #[test]
-fn failed_reverted_and_control_operations_leave_no_tribute_projection_event() {
-    with_provider(|provider, reader, scope| {
+fn failed_mutations_emit_no_events_and_sealing_emits_only_its_business_event() {
+    with_provider(|provider| {
         let tribute = sample_tribute();
         StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
@@ -944,18 +740,13 @@ fn failed_reverted_and_control_operations_leave_no_tribute_projection_event() {
             let _enclave = crate::enclave_client::test_enclave::scope();
             let reverted: PrecompileResult<()> = storage.with_checkpoint(|| {
                 let contract = TributeContract::new(storage.clone());
-                TributeContract::new(storage.clone()).issue(scope, reader, &tribute)?;
-                assert!(contract
-                    .get_tribute(scope, reader, tribute.tribute_id)?
-                    .is_some());
+                TributeContract::new(storage.clone()).issue(&tribute)?;
+                assert!(contract.get_tribute(tribute.tribute_id)?.is_some());
                 Err(PrecompileError::Revert("nested caller reverted".into()))
             });
             assert!(reverted.is_err());
             let contract = TributeContract::new(storage);
-            assert!(contract
-                .get_tribute(scope, reader, tribute.tribute_id)
-                .unwrap()
-                .is_none());
+            assert!(contract.get_tribute(tribute.tribute_id).unwrap().is_none());
             assert_eq!(contract.total_supply().unwrap(), 0);
             assert_eq!(
                 contract
@@ -976,16 +767,14 @@ fn failed_reverted_and_control_operations_leave_no_tribute_projection_event() {
             let _enclave = crate::enclave_client::test_enclave::scope();
             let out_of_gas: PrecompileResult<()> = storage.with_checkpoint(|| {
                 let contract = TributeContract::new(storage.clone());
-                TributeContract::new(storage.clone()).issue(scope, reader, &oog_tribute)?;
-                assert!(contract
-                    .get_tribute(scope, reader, oog_tribute.tribute_id)?
-                    .is_some());
+                TributeContract::new(storage.clone()).issue(&oog_tribute)?;
+                assert!(contract.get_tribute(oog_tribute.tribute_id)?.is_some());
                 Err(PrecompileError::OutOfGas)
             });
             assert!(matches!(out_of_gas, Err(PrecompileError::OutOfGas)));
             let contract = TributeContract::new(storage);
             assert!(contract
-                .get_tribute(scope, reader, oog_tribute.tribute_id)
+                .get_tribute(oog_tribute.tribute_id)
                 .unwrap()
                 .is_none());
             assert_eq!(contract.total_supply().unwrap(), 0);
@@ -1001,30 +790,26 @@ fn failed_reverted_and_control_operations_leave_no_tribute_projection_event() {
 
         StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
-            TributeContract::new(storage)
-                .issue(scope, reader, &tribute)
-                .unwrap();
+            TributeContract::new(storage).issue(&tribute).unwrap();
         });
         provider.clear_events(TRIBUTE_ADDRESS);
         StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
-            assert!(TributeContract::new(storage)
-                .issue(scope, reader, &tribute)
-                .is_err());
+            assert!(TributeContract::new(storage).issue(&tribute).is_err());
         });
         assert!(provider.get_events(TRIBUTE_ADDRESS).is_empty());
 
         StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
             TributeContract::new(storage)
-                .burn(scope, reader, tribute.tribute_id)
+                .burn(tribute.tribute_id)
                 .unwrap();
         });
         provider.clear_events(TRIBUTE_ADDRESS);
         StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
             assert!(TributeContract::new(storage)
-                .burn(scope, reader, tribute.tribute_id)
+                .burn(tribute.tribute_id)
                 .is_err());
         });
         assert!(provider.get_events(TRIBUTE_ADDRESS).is_empty());
@@ -1035,26 +820,24 @@ fn failed_reverted_and_control_operations_leave_no_tribute_projection_event() {
                 .seal_day(tribute.worldwide_day)
                 .unwrap();
         });
-        let body_topics = [
-            crate::precompile::ITribute::TributeBodyStored::SIGNATURE_HASH,
-            crate::precompile::ITribute::TributeBodyDeleted::SIGNATURE_HASH,
-        ];
-        assert!(provider
-            .get_events(TRIBUTE_ADDRESS)
-            .iter()
-            .all(|event| !body_topics.contains(&event.topics()[0])));
+        let events = provider.get_events(TRIBUTE_ADDRESS);
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].topics()[0],
+            crate::precompile::ITribute::TributeWorldwideDaySealed::SIGNATURE_HASH
+        );
     });
 }
 
 #[test]
 fn failed_burn_transaction_restores_body_compact_state_and_events() {
-    with_provider(|provider, reader, scope| {
+    with_provider(|provider| {
         let tribute = sample_tribute();
         StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
             let mut contract = TributeContract::new(storage);
             contract.unseal_day(tribute.worldwide_day).unwrap();
-            contract.issue(scope, reader, &tribute).unwrap();
+            contract.issue(&tribute).unwrap();
         });
         provider.clear_events(TRIBUTE_ADDRESS);
 
@@ -1063,14 +846,8 @@ fn failed_burn_transaction_restores_body_compact_state_and_events() {
                 let _enclave = crate::enclave_client::test_enclave::scope();
                 let failed: PrecompileResult<()> = storage.with_checkpoint(|| {
                     let contract = TributeContract::new(storage.clone());
-                    TributeContract::new(storage.clone()).burn(
-                        scope,
-                        reader,
-                        tribute.tribute_id,
-                    )?;
-                    assert!(contract
-                        .get_tribute(scope, reader, tribute.tribute_id)?
-                        .is_none());
+                    TributeContract::new(storage.clone()).burn(tribute.tribute_id)?;
+                    assert!(contract.get_tribute(tribute.tribute_id)?.is_none());
                     if out_of_gas {
                         Err(PrecompileError::OutOfGas)
                     } else {
@@ -1080,7 +857,7 @@ fn failed_burn_transaction_restores_body_compact_state_and_events() {
                 assert!(failed.is_err());
                 let contract = TributeContract::new(storage);
                 let restored = contract
-                    .get_tribute(scope, reader, tribute.tribute_id)
+                    .get_tribute(tribute.tribute_id)
                     .unwrap()
                     .expect("failed burn must restore the body");
                 assert_eq!(restored.tribute_id, tribute.tribute_id);
@@ -1113,7 +890,6 @@ fn encrypted_retirement_preserves_frozen_nominal_after_live_total_is_zero() {
             issuance_currency: plain.issuance_currency,
             reference_currency: plain.reference_currency,
             tribute_price_minor: plain.tribute_price_minor,
-            exclude_from_intex_issuance: false,
             offer_input_hash: B256::repeat_byte(0x78),
         };
         let encrypted = outbe_tee_enclave::tribute_encryption::encrypt_tribute(
@@ -1127,14 +903,11 @@ fn encrypted_retirement_preserves_frozen_nominal_after_live_total_is_zero() {
         )
         .unwrap();
         tc.unseal_day(plain.worldwide_day).unwrap();
-        tc.contract
-            .issue_encrypted(tc.scope, &tc.reader, &encrypted)
-            .unwrap();
+        tc.issue_encrypted(&encrypted).unwrap();
         tc.seal_day(plain.worldwide_day).unwrap();
         let mut admission = crate::DayPreAdmission::with_key(plain.worldwide_day);
         admission.initialized = true;
         admission.is_sealed = true;
-        admission.sealed_collection_root = B256::repeat_byte(0x80);
         admission.sealed_tribute_count = 1;
         admission.sealed_tribute_nominal_total_minor = plain.nominal_amount_minor;
         tc.store_day_pre_admission(&admission).unwrap();

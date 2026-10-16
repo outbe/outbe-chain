@@ -17,9 +17,7 @@ use crate::{
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Bytes, B256, U256};
 use core::fmt::Debug;
-use outbe_compressed_entities::ExecutionScope;
 use outbe_metadosis::{api::OcompFinalizedIntentAuthority, config::OcompForkInstallV1};
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::error::{PrecompileError, Result as DomainResult};
 use outbe_primitives::{
     addresses::{FIDELITY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS},
@@ -39,8 +37,7 @@ pub(super) struct OutbeDispatchRuntime<'a> {
     pub(super) spec: SpecId,
     pub(super) genesis_hash: B256,
     pub(super) tee_attestation_v1: &'a TeeAttestationChainSpecStateV1,
-    pub(super) runtime_body_readers: Option<&'a RuntimeBodyReaders>,
-    pub(super) execution_scope: &'a Arc<ExecutionScope>,
+
     pub(super) ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
     pub(super) ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
     pub(super) ocomp_lifecycle_active: bool,
@@ -75,7 +72,7 @@ pub(super) fn outbe_ctx_dispatch<DB>(
     ctx: &mut EthEvmContext<DB>,
     inputs: &CallInputs,
     runtime: OutbeDispatchRuntime<'_>,
-) -> Result<Option<InterpreterResult>, String>
+) -> Result<Option<InterpreterResult>, crate::errors::OutbePrecompileFatalError>
 where
     DB: Database + Debug,
     DB::Error: Debug,
@@ -201,9 +198,9 @@ impl DispatchCall<'_> {
             reentrancy_stack: ReentrancyStack,
             spec: runtime.spec,
             genesis_hash: runtime.genesis_hash,
-            runtime_body_readers: runtime.runtime_body_readers.cloned(),
+
             abort_bridge: runtime.abort_bridge.clone(),
-            execution_scope: runtime.execution_scope.clone(),
+
             ocomp_finality_authority: runtime.ocomp_finality_authority.clone(),
             ocomp_activation_block_meter: runtime.ocomp_activation_block_meter.clone(),
             ocomp_lifecycle_active: runtime.ocomp_lifecycle_active,
@@ -318,39 +315,24 @@ impl DispatchCall<'_> {
         if admission.result_vote == ResultVoteCall::Entitled {
             outbe_metadosis::commands::submit_verified_result_vote(
                 storage,
-                runtime.execution_scope.as_ref(),
                 self.data.as_ref(),
                 admission.value,
                 self.inputs.is_static,
             )
         } else if self.inputs.bytecode_address == OUTBE_SYSTEM_TX_ADDRESS {
-            if let Some(readers) = runtime.runtime_body_readers {
-                crate::begin_block_precompile::dispatch_with_readers_and_ocomp_install(
-                    storage,
-                    crate::begin_block_precompile::SystemTxRuntime {
-                        scope: runtime.execution_scope.as_ref(),
-                        parent: readers,
-                        ocomp_fork_install: runtime.ocomp_fork_install.as_deref(),
-                        tee_attestation_v1: runtime.tee_attestation_v1,
-                    },
-                    self.data.as_ref(),
-                    self.inputs.caller,
-                    admission.value,
-                )
-            } else {
-                crate::begin_block_precompile::dispatch_with_tee_attestation(
-                    storage,
-                    runtime.tee_attestation_v1,
-                    self.data.as_ref(),
-                    self.inputs.caller,
-                    admission.value,
-                )
-            }
+            crate::begin_block_precompile::dispatch_with_runtime(
+                storage,
+                crate::begin_block_precompile::SystemTxRuntime {
+                    ocomp_fork_install: runtime.ocomp_fork_install.as_deref(),
+                    tee_attestation_v1: runtime.tee_attestation_v1,
+                },
+                self.data.as_ref(),
+                self.inputs.caller,
+                admission.value,
+            )
         } else {
             self.route.dispatch(
                 storage,
-                runtime.execution_scope.as_ref(),
-                runtime.runtime_body_readers,
                 precompile_routes::RouteCall {
                     callee: self.inputs.bytecode_address,
                     data: self.data.as_ref(),
@@ -368,12 +350,7 @@ fn translate_outcome(
     gas_limit: u64,
 ) -> Result<InterpreterResult, crate::errors::OutbePrecompileFatalError> {
     if let Err(error) = &outcome.result {
-        runtime
-            .abort_bridge
-            .observe(error, runtime.runtime_body_readers);
-        if let Some(readers) = runtime.runtime_body_readers {
-            readers.report_precompile_error(error);
-        }
+        runtime.abort_bridge.observe(error);
     }
     match map_outbe_precompile_result_with_refund(
         outcome.result,

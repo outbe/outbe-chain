@@ -32,6 +32,15 @@ impl Rpc {
         )?;
         let limits = poc_schema_limits();
         let active = ActiveGenerationV1::decode_canonical(active_bytes.as_ref(), &limits).ok()?;
+        let request = self
+            .ocomp_job_record_at_on(port, activation.intent_id, activation.block_number)
+            .ok()?;
+        if request.intent.intent_id(&limits).ok()? != activation.intent_id
+            || request.intent.wwd != activation.worldwide_day
+            || request.finalized.as_ref()?.job_id != active.job_id
+        {
+            return None;
+        }
 
         let nod = eth::read_call_at(
             &rpc_url,
@@ -45,6 +54,13 @@ impl Rpc {
             return None;
         }
         let nod = NodCertifiedGenerationProjection {
+            // This ABI reader joins result roots only. Source checkpoint is private
+            // materialization authority and is not exposed by this ABI call.
+            source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
+                block_number: 0,
+                block_hash: B256::ZERO,
+                state_root: B256::ZERO,
+            },
             worldwide_day: WorldwideDay::new(nod.worldwideDay),
             generation: nod.generation,
             job_id: active.job_id,
@@ -59,6 +75,8 @@ impl Rpc {
             bucket_count: nod.bucketCount,
             nod_amount_total: nod.totalSettlementCostMinor,
             lysis_allocation_minor: nod.lysisAllocationMinor,
+            nod_gratis_load_max: request.intent.frozen_metadosis_values.lysis_limit_minor
+                / U256::from(1024),
             issued_at: nod.issuedAt,
             next_nod_ordinal: 0,
             last_progress_height: activation.block_number,

@@ -80,7 +80,11 @@ fn check_registry_version(encoded: &[u8]) -> Result<(), RetentionError> {
                 "truncated registry version",
             ))?
             .try_into()
-            .map_err(|_| RetentionError::MalformedJournal("registry version length"))?,
+            .map_err(|_| {
+                RetentionError::from(
+                    crate::errors::RetentionMalformedJournalError::RegistryVersionLength,
+                )
+            })?,
     );
     if version != JOURNAL_VERSION {
         return Err(RetentionError::UnsupportedJournalVersion { actual: version });

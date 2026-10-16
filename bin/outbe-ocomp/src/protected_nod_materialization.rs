@@ -7,141 +7,56 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use outbe_compressed_entities::{
-    verify_body_in_collection, CeDomain, TributePartitionExpectationV1, TributeProofArchiveV1,
-    WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
-};
 use outbe_ocomp_protocol::{
-    input::InputChunkKind,
     list::{leaf_hash, node_hash, pad_hash},
     nod_materialization::{
         verify_nod_materialization_batch, NodMaterializationBatchV1, NodMaterializationHeadV1,
     },
-    CasObjectRefV1, ListKind, ObjectKind, ProtocolError,
+    ListKind, ProtocolError,
 };
 use outbe_ocomp_protocol::{nod_materialization::ProtectedNodMaterializationV2, SchemaLimits};
+#[cfg(test)]
 use outbe_primitives::time::WorldwideDay;
-use outbe_tee::nod_materialization::{
-    NodMaterializationAuthorityV2, NodSourceV2, PrepareEncryptedNodsRequestV2,
-};
+#[cfg(test)]
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use thiserror::Error;
 
-use crate::{
-    input_inventory::SOURCE_PROOF_ARCHIVE_DIRECTORY,
-    input_ref_catalog::VerifiedInputChunkRefCatalog, lysis_plan_audit::LocalLysisPlanAuditV1,
-    nod_materialization::BuiltNodMaterializationBatchV1,
-};
+use crate::nod_materialization::BuiltNodMaterializationBatchV1;
 
 const PREPARED_FILE: &str = "protected-batch-v2.bin";
 const TEMP_FILE: &str = "protected-batch-v2.tmp";
 
-/// Bound the private sources to the same frozen collection used by Lysis.
-pub fn materialization_sources(
-    audit: &LocalLysisPlanAuditV1<'_>,
-    input_refs: &VerifiedInputChunkRefCatalog,
-    built: &BuiltNodMaterializationBatchV1,
-    inventory_root: &Path,
-) -> Result<(Vec<NodSourceV2>, Vec<CasObjectRefV1>), ProtectedNodPreparationError> {
-    let archive = outbe_compressed_entities::open_tribute_proof_archive(
-        inventory_root.join(SOURCE_PROOF_ARCHIVE_DIRECTORY),
-        TributePartitionExpectationV1 {
-            day: WorldwideDay::new(audit.manifest().wwd),
-            exact_leaf_count: audit.manifest().tribute_count,
-            expected_collection_root: audit.manifest().sealed_tribute_collection_root,
-            commitment_scheme: ACTIVE_COMMITMENT_SCHEME,
-        },
-    )?;
-    let mut sources = Vec::with_capacity(built.batch.actions.len());
-    let mut references = Vec::new();
-    let mut cached_chunk: Option<(u32, crate::input_ref_catalog::VerifiedInputChunkRefV1)> = None;
-    for action in &built.batch.actions {
-        let ordinal =
-            action.raw_ordinal / outbe_lysis::program_v1::planner::PRIMARY_WORK_SHARD_SIZE;
-        if cached_chunk
-            .as_ref()
-            .is_none_or(|(cached, _)| *cached != ordinal)
-        {
-            let verified = input_refs.verified_reference_at(
-                ordinal,
-                audit.reader(),
-                audit.bundle().bundle(),
-            )?;
-            if verified.reference.kind != InputChunkKind::Tribute {
-                return Err(ProtectedNodPreparationError::SourceBinding);
-            }
-            references.push(CasObjectRefV1 {
-                transport_digest: verified.reference.transport_digest,
-                encoded_bytes: verified.reference.encoded_bytes,
-                expected_ocb1_kind: Some(ObjectKind::AuthenticatedInputChunkV1.tag()),
-            });
-            cached_chunk = Some((ordinal, verified));
-        }
-        let (_, verified) = cached_chunk
-            .as_ref()
-            .ok_or(ProtectedNodPreparationError::SourceBinding)?;
-        sources.push(encrypted_source(
-            action,
-            &verified.chunk,
-            &archive,
-            audit.manifest().sealed_tribute_collection_root,
-        )?);
-    }
-    Ok((sources, references))
-}
-
-fn encrypted_source(
-    action: &outbe_ocomp_protocol::result::NodActionV1,
-    chunk: &outbe_ocomp_protocol::input::AuthenticatedInputChunkV1,
-    archive: &TributeProofArchiveV1,
-    frozen_root: alloy_primitives::B256,
-) -> Result<NodSourceV2, ProtectedNodPreparationError> {
-    let id = WwdEntityId::from(action.tribute_id);
-    for canonical in &chunk.canonical_records_or_openings {
-        let record = outbe_tribute::record::decode_canonical(&canonical.0)?;
-        if record.tribute_id != id {
-            continue;
-        }
-        if record.owner != action.owner || record.worldwide_day.value() != action.wwd {
-            return Err(ProtectedNodPreparationError::SourceBinding);
-        }
-        let tribute = record
-            .encrypted()
-            .ok_or(ProtectedNodPreparationError::SourceBinding)?
-            .clone();
-        let proof = archive.proof(id)?;
-        verify_body_in_collection(
-            frozen_root,
-            CeDomain::Tribute,
-            id,
-            &record.stored_body()?.encode(),
-            &proof,
-        )?;
-        return Ok(NodSourceV2 {
-            tribute,
-            proof: postcard::to_allocvec(&proof)?,
-        });
-    }
-    Err(ProtectedNodPreparationError::SourceBinding)
-}
-
-pub fn prepare_protected_materialization(
-    authority: NodMaterializationAuthorityV2,
+/// Prepares state-backed sources only after the enclave requests their identities.
+/// A retry uses the actual prefix. A cached carrier reopens against that cached
+/// prefix rather than the maximum candidate size.
+pub fn prepare_state_protected_materialization(
+    authority: outbe_tee::nod_state_materialization::StateNodAuthority,
     (head, built): (&NodMaterializationHeadV1, &BuiltNodMaterializationBatchV1),
-    sources: Vec<NodSourceV2>,
     league_fractions: Vec<outbe_tee::nod_materialization::LeagueFractionInputV2>,
+    reader: &mut impl outbe_tee::nod_state_materialization::TributeSourceReader,
     store: &PreparedNodMaterializationStoreV2,
 ) -> Result<ProtectedNodMaterializationV2, ProtectedNodPreparationError> {
+    use outbe_tee::nod_state_materialization::{
+        open_state_nods, prepare_state_nods, PrepareStateNodsRequest,
+    };
+    if !authority.source_bindings.is_empty() {
+        return Err(ProtectedNodPreparationError::SourceBinding);
+    }
+    verify_nod_materialization_batch(&built.batch, head, authority.subtree_height, &store.limits)?;
     if let Some(carrier) = store.load()? {
         if carrier.queue_sequence != head.queue_sequence
             || carrier.first_nod_ordinal != head.next_nod_ordinal
         {
             return Err(ProtectedNodPreparationError::ConflictingReplay);
         }
-        outbe_tee::nod_materialization::open_encrypted_nods(&authority, &carrier)?;
+        let cached_authority = state_authority_for_prefix(
+            authority,
+            &built.batch,
+            carrier.encrypted_nods.len(),
+            reader,
+        )?;
+        open_state_nods(&cached_authority, &carrier)?;
         return Ok(carrier);
-    }
-    if sources.len() != built.batch.actions.len() {
-        return Err(ProtectedNodPreparationError::SourceBinding);
     }
     let carrier = prepare_capacity_bounded(
         head,
@@ -149,18 +64,39 @@ pub fn prepare_protected_materialization(
         authority.subtree_height,
         &store.limits,
         |batch| {
-            Ok(outbe_tee::nod_materialization::prepare_encrypted_nods(
-                PrepareEncryptedNodsRequestV2 {
+            Ok(prepare_state_nods(
+                PrepareStateNodsRequest {
                     authority: authority.clone(),
                     batch: batch.encode_canonical(&store.limits)?,
-                    sources: sources[..batch.actions.len()].to_vec(),
                     league_fractions: league_fractions.clone(),
+                    sources: Vec::new(),
                 },
+                reader,
             )?)
         },
     )?;
     store.persist(&carrier)?;
     Ok(carrier)
+}
+
+fn state_authority_for_prefix(
+    mut authority: outbe_tee::nod_state_materialization::StateNodAuthority,
+    batch: &NodMaterializationBatchV1,
+    count: usize,
+    reader: &mut impl outbe_tee::nod_state_materialization::TributeSourceReader,
+) -> Result<outbe_tee::nod_state_materialization::StateNodAuthority, ProtectedNodPreparationError> {
+    if count == 0 || count > batch.actions.len() || !authority.source_bindings.is_empty() {
+        return Err(ProtectedNodPreparationError::SourceBinding);
+    }
+    for action in &batch.actions[..count] {
+        let id = outbe_primitives::wwd_entity_id::WwdEntityId::from(action.tribute_id);
+        let source = reader.read_tribute(&authority.source, id)?;
+        if source.tribute.context.tribute_id != id {
+            return Err(ProtectedNodPreparationError::SourceBinding);
+        }
+        authority.source_bindings.push(source.binding()?);
+    }
+    Ok(authority)
 }
 
 fn prepare_capacity_bounded(
@@ -377,16 +313,6 @@ pub enum ProtectedNodPreparationError {
     Protocol(#[from] outbe_ocomp_protocol::ProtocolError),
     #[error(transparent)]
     Enclave(#[from] outbe_tee::TransportError),
-    #[error(transparent)]
-    Reconstruction(#[from] outbe_compressed_entities::TributePartitionReconstructionError),
-    #[error(transparent)]
-    SourceProof(#[from] outbe_compressed_entities::PointReadServiceError),
-    #[error(transparent)]
-    SourceBody(#[from] outbe_compressed_entities::CanonicalBodyError),
-    #[error(transparent)]
-    InputCatalog(#[from] crate::input_ref_catalog::InputRefCatalogError),
-    #[error(transparent)]
-    Postcard(#[from] postcard::Error),
 }
 
 impl ProtectedNodPreparationError {
@@ -490,6 +416,98 @@ mod tests {
     }
 
     #[test]
+    fn cached_state_authority_resolves_only_the_actual_carrier_prefix() {
+        use outbe_primitives::{
+            storage::proof::AccountStorageProof,
+            tribute_encryption::{EncryptedTributeV2, TributeContextV2},
+        };
+        use outbe_tee::{
+            nod_state_materialization::{StateNodAuthority, TributeSourceReader},
+            tribute_source::{TributeSourceCheckpoint, TributeSourceSubject, TributeStateSource},
+        };
+        struct Reader {
+            subject: TributeSourceSubject,
+            ids: Vec<WwdEntityId>,
+        }
+        impl TributeSourceReader for Reader {
+            fn read_tribute(
+                &mut self,
+                subject: &TributeSourceSubject,
+                id: WwdEntityId,
+            ) -> Result<TributeStateSource, outbe_tee::TransportError> {
+                assert_eq!(subject, &self.subject);
+                self.ids.push(id);
+                // This regression exercises prefix selection. MPT validation is
+                // covered by the real source-proof and enclave engine tests.
+                Ok(TributeStateSource {
+                    tribute: EncryptedTributeV2 {
+                        context: TributeContextV2 {
+                            chain_id: subject.chain_id,
+                            tribute_id: id,
+                            owner: alloy_primitives::Address::repeat_byte(1),
+                            worldwide_day: subject.worldwide_day,
+                            issuance_currency: 840,
+                            reference_currency: 840,
+                            tribute_price_minor: alloy_primitives::U256::ONE,
+                            offer_input_hash: B256::repeat_byte(0x31),
+                        },
+                        encrypted_creator_public_key: vec![0; 56],
+                        encrypted_amounts: vec![0; 88],
+                    },
+                    day_index: self.ids.len() as u32 - 1,
+                    expected_words: vec![],
+                    proof: AccountStorageProof {
+                        address: outbe_primitives::addresses::TRIBUTE_ADDRESS,
+                        nonce: 0,
+                        balance: alloy_primitives::U256::ZERO,
+                        code_hash: B256::ZERO,
+                        storage_root: B256::ZERO,
+                        account_nodes: vec![],
+                        slots: vec![],
+                    },
+                })
+            }
+        }
+        let (actions, head, proofs) = population(10);
+        let batch = batch_at(&actions, &head, &proofs, 3);
+        assert_eq!(batch.actions.len(), 8);
+        let source = TributeSourceSubject {
+            checkpoint: TributeSourceCheckpoint {
+                block_number: 42,
+                block_hash: B256::repeat_byte(0x21),
+                state_root: B256::repeat_byte(0x22),
+            },
+            chain_id: 1,
+            worldwide_day: WorldwideDay::new(head.worldwide_day),
+            tribute_count: head.nod_count,
+        };
+        let authority = StateNodAuthority {
+            source,
+            head: head.encode_canonical(&poc_schema_limits()).unwrap(),
+            subtree_height: 3,
+            source_bindings: vec![],
+            nod_gratis_load_max: alloy_primitives::U256::ONE,
+        };
+        let mut reader = Reader {
+            subject: source,
+            ids: vec![],
+        };
+        let cached = state_authority_for_prefix(authority.clone(), &batch, 2, &mut reader).unwrap();
+        assert_eq!(cached.source_bindings.len(), 2);
+        assert_eq!(
+            reader.ids,
+            batch.actions[..2]
+                .iter()
+                .map(|a| WwdEntityId::from(a.tribute_id))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(cached.source, source);
+        assert!(state_authority_for_prefix(authority.clone(), &batch, 0, &mut reader).is_err());
+        assert!(state_authority_for_prefix(authority, &batch, 9, &mut reader).is_err());
+        assert_eq!(reader.ids.len(), 2);
+    }
+
+    #[test]
     fn encoded_capacity_fallback_preserves_root_then_reuses_durable_prefix() {
         let (actions, head, proofs) = population(10);
         let original = batch_at(&actions, &head, &proofs, 3);
@@ -508,39 +526,9 @@ mod tests {
         store.persist(&chosen).unwrap();
         drop(store);
         let store = PreparedNodMaterializationStoreV2::open(directory.path(), limits).unwrap();
-        fn no_prepare(
-            _: &PrepareEncryptedNodsRequestV2,
-        ) -> Result<ProtectedNodMaterializationV2, outbe_tee::TransportError> {
-            panic!("durable retry must not create new ciphertexts")
-        }
-        fn open(
-            _: &NodMaterializationAuthorityV2,
-            _: &ProtectedNodMaterializationV2,
-        ) -> Result<Vec<outbe_primitives::nod_encryption::EncryptedNodV2>, outbe_tee::TransportError>
-        {
-            Ok(Vec::new())
-        }
-        let _scope = outbe_tee::nod_materialization::test_support::scope(no_prepare, open);
-        let replay = prepare_protected_materialization(
-            NodMaterializationAuthorityV2 {
-                chain_id: 1,
-                head: head.encode_canonical(&poc_schema_limits()).unwrap(),
-                subtree_height: 3,
-                sealed_tribute_root: B256::repeat_byte(1),
-            },
-            (
-                &head,
-                &BuiltNodMaterializationBatchV1 {
-                    batch: original,
-                    dependencies: Vec::new(),
-                },
-            ),
-            Vec::new(),
-            Vec::new(),
-            &store,
-        )
-        .unwrap();
+        let replay = store.load().unwrap().unwrap();
         assert_eq!(replay, chosen);
+        assert_eq!(replay.encrypted_nods.len(), 2);
     }
 
     #[test]

@@ -22,8 +22,6 @@
 //! f3           RETURN
 //! ```
 
-mod sub_call_support;
-
 use alloy_primitives::{Address, Bytes, U256};
 use outbe_evm::sub_call;
 use outbe_primitives::storage::{SubCallInput, SubCallStatus};
@@ -69,7 +67,7 @@ fn staticcall_returns_contract_returndata() {
 
     let result = sub_call::run(
         &mut ctx,
-        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
+        outbe_evm::test_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: TARGET,
             value: U256::ZERO,

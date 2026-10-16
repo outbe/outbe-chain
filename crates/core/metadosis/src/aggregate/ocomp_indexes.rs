@@ -1,6 +1,6 @@
 use super::WwdProjection;
 use crate::{
-    errors::storage_corruption_message,
+    errors::MetadosisStorageCorruptionError,
     ocomp::{
         poc_schema_limits,
         state::{DayPhase, OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS},
@@ -40,17 +40,17 @@ fn has_profile(
             Ok::<_, PrecompileError>(found || !contract.ocomp_fsm_states.get_bytes(wwd).is_empty()?)
         })?;
         if indexed_fsm_exists {
-            return Err(storage_corruption_message(
-                "Metadosis OCOMP state exists without an active profile",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompStateExistsWithoutActiveProfile.into(),
+            );
         }
         if !contract.read_ready_index()?.is_empty()
             || !contract.ocomp_scheduler.is_empty()?
             || !contract.read_response_deadline_index()?.is_empty()
         {
-            return Err(storage_corruption_message(
-                "Metadosis OCOMP state exists without an active profile",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompStateExistsWithoutActiveProfile.into(),
+            );
         }
         return Ok(false);
     };
@@ -89,32 +89,33 @@ fn live_windows(
     for live in contract.live_ocomp_fsm_states(schema_limits)? {
         let projection = live.projection();
         if !active_set.contains(&projection.worldwide_day) {
-            return Err(storage_corruption_message(
-                "OCOMP live scheduler points outside active WWD index",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompLiveSchedulerPointsOutsideActiveWwdIndex
+                    .into(),
+            );
         }
         if !live_scheduler_wwds.insert(projection.worldwide_day) {
-            return Err(storage_corruption_message(
-                "OCOMP live scheduler contains a duplicate WWD",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompLiveSchedulerContainsDuplicateWwd.into(),
+            );
         }
         let deadline_height = projection
             .deadline_height
-            .ok_or_else(|| storage_corruption_message("OCOMP live FSM has no deadline"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompLiveFsmMissingDeadline)?;
         let intent_id = projection
             .live_intent_id
-            .ok_or_else(|| storage_corruption_message("OCOMP live FSM has no live intent"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompLiveFsmMissingLiveIntent)?;
         let record = contract
             .ocomp_job_record(intent_id, schema_limits)?
-            .ok_or_else(|| storage_corruption_message("OCOMP live FSM has no job record"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompLiveFsmMissingJobRecord)?;
         if let Some(key) = voting_window(&record, deadline_height, intent_id)? {
             unmatched_voting_windows.insert(key);
         }
     }
     if live_scheduler_wwds != *pending_fsm_wwds {
-        return Err(storage_corruption_message(
-            "OCOMP pending FSM membership does not exactly match the live scheduler",
-        ));
+        return Err(
+            MetadosisStorageCorruptionError::OcompPendingFsmMembershipMismatchLiveScheduler.into(),
+        );
     }
     Ok(unmatched_voting_windows)
 }
@@ -129,23 +130,23 @@ fn voting_window(
             let expected = record
                 .intent_height
                 .checked_add(OCOMP_AWAITING_FINALITY_DEADLINE_BLOCKS)
-                .ok_or_else(|| {
-                    storage_corruption_message("OCOMP awaiting-finality deadline overflow")
-                })?;
+                .ok_or(MetadosisStorageCorruptionError::OcompAwaitingFinalityDeadlineOverflow)?;
             if deadline_height != expected {
-                return Err(storage_corruption_message(
-                    "OCOMP awaiting-finality FSM/job deadline mismatch",
-                ));
+                return Err(
+                    MetadosisStorageCorruptionError::OcompAwaitingFinalityFsmJobDeadlineMismatch
+                        .into(),
+                );
             }
         }
         OcompJobStatus::VotingOpen => {
-            let finalized = record.finalized.as_ref().ok_or_else(|| {
-                storage_corruption_message("OCOMP voting FSM job is not finalized")
-            })?;
+            let finalized = record
+                .finalized
+                .as_ref()
+                .ok_or(MetadosisStorageCorruptionError::OcompVotingFsmJobNotFinalized)?;
             if finalized.deadline_height != deadline_height {
-                return Err(storage_corruption_message(
-                    "OCOMP voting FSM/job deadline mismatch",
-                ));
+                return Err(
+                    MetadosisStorageCorruptionError::OcompVotingFsmJobDeadlineMismatch.into(),
+                );
             }
             return Ok(Some(ResponseDeadlineKey {
                 deadline_height,
@@ -154,9 +155,9 @@ fn voting_window(
             }));
         }
         _ => {
-            return Err(storage_corruption_message(
-                "terminal OCOMP job remains in the live scheduler",
-            ))
+            return Err(
+                MetadosisStorageCorruptionError::TerminalOcompJobRemainsInLiveScheduler.into(),
+            )
         }
     }
     Ok(None)
@@ -170,21 +171,20 @@ fn validate_response_windows(
     for key in contract.read_response_deadline_index()? {
         let record = contract
             .ocomp_job_record(key.intent_id, schema_limits)?
-            .ok_or_else(|| {
-                storage_corruption_message("OCOMP response index points to a missing job")
-            })?;
+            .ok_or(MetadosisStorageCorruptionError::OcompResponseIndexMissingJob)?;
         if response_window_requires_live_fsm(&record, &key)?
             && !unmatched_voting_windows.remove(&key)
         {
-            return Err(storage_corruption_message(
-                "OCOMP response index has no matching live voting FSM",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompResponseIndexMissingLiveVotingFsm.into(),
+            );
         }
     }
     if !unmatched_voting_windows.is_empty() {
-        return Err(storage_corruption_message(
-            "OCOMP live voting FSM has no exact response deadline key",
-        ));
+        return Err(
+            MetadosisStorageCorruptionError::OcompLiveVotingFsmMissingExactResponseDeadlineKey
+                .into(),
+        );
     }
     Ok(())
 }
@@ -196,18 +196,14 @@ fn response_window_requires_live_fsm(
     let finalized = record
         .finalized
         .as_ref()
-        .ok_or_else(|| storage_corruption_message("OCOMP response index job is not finalized"))?;
+        .ok_or(MetadosisStorageCorruptionError::OcompResponseIndexJobNotFinalized)?;
     if finalized.job_id != key.job_id || finalized.deadline_height != key.deadline_height {
-        return Err(storage_corruption_message(
-            "OCOMP response index/job deadline mismatch",
-        ));
+        return Err(MetadosisStorageCorruptionError::OcompResponseIndexJobDeadlineMismatch.into());
     }
     match record.status {
         OcompJobStatus::VotingOpen => Ok(true),
         OcompJobStatus::Completed if finalized.quorum.is_some() => Ok(false),
-        _ => Err(storage_corruption_message(
-            "OCOMP response index points to a job without an open window",
-        )),
+        _ => Err(MetadosisStorageCorruptionError::OcompResponseIndexJobWithoutOpenWindow.into()),
     }
 }
 
@@ -218,18 +214,16 @@ fn validate_ready_membership(
 ) -> Result<()> {
     for ready in contract.read_ready_index()? {
         if !active_set.contains(&ready.worldwide_day) {
-            return Err(storage_corruption_message(
-                "OCOMP READY index points outside active WWD index",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompReadyIndexPointsOutsideActiveWwdIndex.into(),
+            );
         }
         if contract
             .ocomp_fsm_states
             .get_bytes(&ready.worldwide_day)
             .is_empty()?
         {
-            return Err(storage_corruption_message(
-                "OCOMP READY index points to a missing FSM",
-            ));
+            return Err(MetadosisStorageCorruptionError::OcompReadyIndexPointsToMissingFsm.into());
         }
         let state = contract.ocomp_fsm_state(ready.worldwide_day, schema_limits)?;
         let projection = state.projection();
@@ -237,9 +231,7 @@ fn validate_ready_membership(
             || projection.next_check_height != Some(ready.next_check_height)
             || projection.pending_nonce != ready.pending_nonce
         {
-            return Err(storage_corruption_message(
-                "OCOMP READY index does not match its FSM",
-            ));
+            return Err(MetadosisStorageCorruptionError::OcompReadyIndexMismatchFsm.into());
         }
     }
     Ok(())

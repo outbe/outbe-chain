@@ -5,7 +5,7 @@ use alloy_sol_types::{SolCall, SolEvent};
 
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
-use outbe_primitives::error::{Result, SweepFailure};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 
@@ -14,7 +14,7 @@ use outbe_vaultrouter::settlement;
 
 use crate::constants::{
     INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
-    ORIGIN_ROUTER_ADDRESS, PROCEEDS_FANIN_TIMEOUT_SECS, SETTLED_TAG,
+    ORIGIN_ROUTER_ADDRESS, SETTLED_TAG,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -26,7 +26,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
     storage.emit_event(INTEX_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// Record the series identity and call-price bin, then arm the day's proceeds fan-in.
+/// Record the series identity and call-price bin.
 /// Return issuance legs for the caller to broadcast through `send_issuance`.
 /// The broadcast creates IntexNFT1155 series on each target chain, including the origin.
 pub fn issue_intex(
@@ -34,8 +34,6 @@ pub fn issue_intex(
     params: IssuanceParams,
 ) -> Result<Vec<IssuanceLeg>> {
     if params.issued_units == 0 {
-        // Whether the day distributes is the caller's decision: one empty group
-        // must not touch the state its siblings armed.
         return Ok(Vec::new());
     }
 
@@ -46,11 +44,9 @@ pub fn issue_intex(
     let mut intex = IntexContract::new(storage.clone());
     let cfg = outbe_intex::config::read(storage)?;
 
-    let floor_price_minor = marked_up(params.entry_price_minor, cfg.floor_rate)?;
     let call_price_minor = marked_up(params.entry_price_minor, cfg.call_rate)?;
 
     let entry_price_minor_u64 = to_wire_price(params.entry_price_minor)?;
-    let floor_price_minor_u64 = to_wire_price(floor_price_minor)?;
     let call_price_minor_u64 = to_wire_price(call_price_minor)?;
 
     let record = outbe_intex::CreateSeriesParams {
@@ -59,7 +55,6 @@ pub fn issue_intex(
         issued_units: params.issued_units,
         promis_load_minor: params.promis_load_minor,
         entry_price_minor: params.entry_price_minor,
-        floor_price_minor,
         call_price_minor,
         call_trigger: outbe_intex::IntexCallTrigger {
             call_window_seconds: cfg.call_window_seconds,
@@ -90,7 +85,6 @@ pub fn issue_intex(
                 issuedUnits: params.issued_units,
                 promisLoadMinor: params.promis_load_minor,
                 entryPriceMinor: entry_price_minor_u64,
-                floorPriceMinor: floor_price_minor_u64,
                 callNoticePeriod: cfg.call_notice_period_seconds,
                 issuanceCurrency: params.issuance_currency,
                 referenceCurrency: params.reference_currency,
@@ -110,25 +104,13 @@ pub fn issue_intex(
         call_price_minor,
     )?;
 
-    // Arm the day's proceeds fan-in. A ready pot burns once every winning chain
-    // has routed its proceeds, or once the deadline passes.
-    let deadline = storage
-        .timestamp()?
-        .to::<u64>()
-        .saturating_add(PROCEEDS_FANIN_TIMEOUT_SECS);
-    outbe_intex::api::arm_proceeds(
-        storage,
-        params.worldwide_day,
-        &params.recipient_chains,
-        deadline,
-    )?;
-
     emit_event(
         storage,
         crate::precompile::IIntexFactory::IntexSeriesIssued {
             seriesId: params.series_id.into(),
             issuedUnits: params.issued_units,
             entryPriceMinor: params.entry_price_minor,
+            callPriceMinor: call_price_minor,
         },
     )?;
 
@@ -264,7 +246,7 @@ pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, 
         .collect()
 }
 
-/// `entry x (100 + rate) / 100`, the markup a series seals its floor and call prices at.
+/// `entry x (100 + rate) / 100`, the markup a series seals its call price at.
 pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
     outbe_primitives::markup::marked_up(entry_price, rate)
         .ok_or_else(|| IntexFactoryError::MarkedUpPriceOverflow.into())
@@ -387,7 +369,6 @@ pub fn settle_intex(
 }
 
 fn require_settleable(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Result<()> {
-    // The call check is one read; the qualification walk goes last.
     match series.lifecycle_state()? {
         IntexState::Called => {
             let now = storage.timestamp()?.to::<u64>();
@@ -398,7 +379,7 @@ fn require_settleable(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Res
             }
             Ok(())
         }
-        IntexState::Issued if outbe_intex::api::is_qualified(storage, series)? => Ok(()),
+        IntexState::Issued => Ok(()),
         _ => Err(IntexFactoryError::NotSettleable(series.state).into()),
     }
 }
@@ -431,4 +412,3 @@ pub use pricing::quote_settlement;
 #[cfg(test)]
 pub(crate) use pricing::settlement_units;
 pub use proceeds::distribute;
-pub(crate) use proceeds::sweep_proceeds_deadlines;

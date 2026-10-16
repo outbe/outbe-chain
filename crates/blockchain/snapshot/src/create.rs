@@ -7,6 +7,7 @@ use std::{
 
 use crate::{
     archive::write_archive,
+    errors::SnapshotCreateError,
     fs::PendingArchive,
     layout::{validate_layout, ProtectedPaths},
     manifest::SnapshotManifestV1,
@@ -49,7 +50,7 @@ fn validate_output(
     roots: &[PathBuf],
 ) -> io::Result<()> {
     if manifest.domains.len() != roots.len() {
-        return Err(io::Error::other("native domain/root count differs"));
+        return Err(SnapshotCreateError::DomainRootCountMismatch.into());
     }
     validate_layout(
         &[],

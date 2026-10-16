@@ -1,4 +1,3 @@
-use crate::snapshot::tests::projection_fixture::PartitionFixtureStore as RocksDbStorage;
 fn install_active_result_request_frame(
     layout: &crate::snapshot::config::RequestedLayout,
 ) -> OutbeHeader {
@@ -6,8 +5,6 @@ fn install_active_result_request_frame(
     use alloy_primitives::{Log, Signature};
     use alloy_sol_types::SolEvent;
     use outbe_metadosis::precompile::IMetadosis;
-    use outbe_offchain_data::{ProjectionState, STORAGE_SCHEMA_VERSION};
-    use outbe_offchain_storage::{Key, Namespace, StorageWriter, Value};
     use outbe_primitives::{
         addresses::METADOSIS_ADDRESS, projection::ProjectionCheckpoint, OutbePrimitives,
         OutbeReceipt, OutbeTxEnvelope,
@@ -109,31 +106,16 @@ fn install_active_result_request_frame(
     files.commit().unwrap();
     drop(files);
     // Keep native setup frontiers attached to the now-complete request header.
-    let location = layout.projection.as_ref().unwrap();
-    let projection = RocksDbStorage::open(&location.root).unwrap();
     let point = ProjectionCheckpoint {
         block_number: 100,
         block_hash: hash,
     };
-    let state = ProjectionState {
-        chain_id: layout.chain.chain().id(),
-        genesis_hash: layout.chain.genesis_hash(),
-        storage_schema_version: STORAGE_SCHEMA_VERSION,
-        start_block: location.start_block,
-        checkpoint: Some(point),
-    };
-    projection
-        .put(
-            Namespace::new("projection_state").unwrap(),
-            &Key::new(b"offchain_data".to_vec()).unwrap(),
-            &Value::new(postcard::to_stdvec(&state).unwrap()).unwrap(),
-        )
-        .unwrap();
-    drop(projection);
     let closure_root = layout
         .ocomp_root
         .join("exporter-v1/discovery/closure-checkpoint-v1");
-    fs::remove_dir_all(&closure_root).unwrap();
+    if closure_root.exists() {
+        fs::remove_dir_all(&closure_root).unwrap();
+    }
     let baseline = ProjectionCheckpoint {
         block_number: 0,
         block_hash: layout.chain.genesis_hash(),

@@ -296,15 +296,6 @@ run = './target/release/outbe-e2e localnet-sgx stop --repo . --data-dir "${OUT_D
 description = "Create a ZK Tribute; pass WorldwideDay and CLI proof arguments for the registered operator"
 run = "bash ./scripts/tribute-demo-actions.sh offer"
 
-[tasks.tribute-show-mongo]
-description = "Show the Tribute from the most recent tribute-offer in every validator MongoDB projection"
-run = "bash ./scripts/tribute-demo-actions.sh show-mongo"
-
-# Full Rust/Cucumber gramine-mock TEE e2e suite.
-# Builds the node, CLI, keygen, and mock enclave, then runs every feature.
-# Requires sudo + Docker; the `outbe-tee-enclave-gramine-test` image (joiner
-# enclave). Runnable on any box with gramine-direct (no SGX hardware required for
-# the mock); the real-SGX smoke is `sgx-smoke`.
 [tasks.e2e]
 description = "Run all Rust/Cucumber e2e features with a gramine-mock TEE"
 depends = ["e2e-capacity"]

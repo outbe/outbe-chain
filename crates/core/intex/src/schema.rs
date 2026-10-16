@@ -17,16 +17,16 @@ use crate::errors::IntexError;
 #[repr(u8)]
 pub enum IntexState {
     Issued = 0,
-    Called = 2,
-    Expired = 3,
+    Called = 1,
+    Expired = 2,
 }
 
 impl IntexState {
     pub fn from_u8(value: u8) -> Result<Self, IntexError> {
         match value {
             0 => Ok(Self::Issued),
-            2 => Ok(Self::Called),
-            3 => Ok(Self::Expired),
+            1 => Ok(Self::Called),
+            2 => Ok(Self::Expired),
             other => Err(IntexError::InvalidStateValue(other)),
         }
     }
@@ -187,10 +187,8 @@ pub struct CreateSeriesParams {
     /// PROMIS-units per Intex unit (1e6). Bounded by source `uint128`.
     pub promis_load_minor: u128,
     /// Entry price (per-unit, reference ISO stable-units, 1e6). Primary
-    /// anchor; cost/floor/call derive from it.
+    /// anchor; cost and call derive from it.
     pub entry_price_minor: U256,
-    /// Price floor in reference ISO stable-units (1e6).
-    pub floor_price_minor: U256,
     /// Call price level that arms the forced call, in reference ISO stable-units (1e6).
     pub call_price_minor: U256,
     pub call_trigger: IntexCallTrigger,
@@ -224,34 +222,31 @@ pub struct SeriesRecord {
     pub entry_price_minor: U256,
 
     #[attribute(order = 5)]
-    pub floor_price_minor: U256,
-
-    #[attribute(order = 6)]
     pub call_price_minor: U256,
 
     // call_trigger group. Storage keeps it flat (the storage DSL has no nested-struct
     // codec). `call_trigger()` exposes it nested.
-    #[attribute(order = 7)]
+    #[attribute(order = 6)]
     pub call_window_seconds: u32,
 
-    #[attribute(order = 8)]
+    #[attribute(order = 7)]
     pub call_threshold_seconds: u32,
 
-    #[attribute(order = 9)]
+    #[attribute(order = 8)]
     pub call_notice_period_seconds: u32,
 
-    #[attribute(order = 10)]
+    #[attribute(order = 9)]
     pub issued_at: u32,
 
-    #[attribute(order = 11, default = 0)]
+    #[attribute(order = 10, default = 0)]
     pub called_at: u32,
 
     /// Lifecycle state as `u8`; decode via [`IntexState::from_u8`].
-    #[attribute(order = 12)]
+    #[attribute(order = 11)]
     pub state: u8,
 
     /// Worldwide day whose tributes fed this series. It is also the id's leading digits.
-    #[attribute(order = 13, default = WorldwideDay::new(0))]
+    #[attribute(order = 12, default = WorldwideDay::new(0))]
     pub worldwide_day: WorldwideDay,
 }
 
@@ -293,45 +288,6 @@ pub struct IntexContract {
 
     #[attribute(order = 2)]
     pub series_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
-
-    // --- Multi-chain proceeds fan-in. A ready pot is burned. ---
-    /// worldwide_day -> proceeds accumulated but not yet burned.
-    #[attribute(order = 11)]
-    pub proceeds_pot: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
-
-    /// worldwide_day -> fan-in deadline. 0 means never armed. `u64::MAX` means finalized.
-    #[attribute(order = 12)]
-    pub proceeds_deadline: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
-
-    /// worldwide_day -> number of winning chains expected to route proceeds.
-    #[attribute(order = 13)]
-    pub proceeds_expected_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-
-    /// worldwide_day -> number of expected chains whose proceeds have arrived.
-    #[attribute(order = 14)]
-    pub proceeds_arrived_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-
-    /// keccak256(worldwide_day_be32 ++ chain_be32) -> 1 if a winning (expected) chain.
-    #[attribute(order = 15)]
-    pub proceeds_expected: outbe_primitives::storage::dsl::Map<B256, u8>,
-
-    /// keccak256(worldwide_day_be32 ++ chain_be32) -> 1 once that chain's proceeds arrived.
-    #[attribute(order = 16)]
-    pub proceeds_arrived: outbe_primitives::storage::dsl::Map<B256, u8>,
-
-    // Awaiting-proceeds set (dense) for the begin-block deadline sweep.
-    #[attribute(order = 18)]
-    pub awaiting_proceeds_count: outbe_primitives::storage::dsl::Value<u32>,
-    /// dense index -> worldwide_day.
-    #[attribute(order = 19)]
-    pub awaiting_proceeds_at: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// worldwide_day -> (awaiting index + 1). 0 = not awaiting.
-    #[attribute(order = 20)]
-    pub awaiting_proceeds_slot: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-
-    /// worldwide_day -> number of series created for that day.
-    #[attribute(order = 24)]
-    pub day_series_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
     // Disjoint classes: a series forfeits `issued_units - settled - exercised -
     // gem_factory` at its deadline. Not on `SeriesRecord` because a record write
@@ -466,15 +422,6 @@ impl IntexContract<'_> {
         let mut buf = [0u8; SERIES_ID_LEN + 20];
         buf[..SERIES_ID_LEN].copy_from_slice(series_id.as_bytes());
         buf[SERIES_ID_LEN..].copy_from_slice(owner.as_slice());
-        keccak256(buf)
-    }
-
-    /// Composite key for per-(day, chain) proceeds flags:
-    /// `keccak256(worldwide_day_be32 ++ chain_be32)`.
-    pub fn proceeds_chain_key(worldwide_day: WorldwideDay, chain_id: u32) -> B256 {
-        let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&worldwide_day.value().to_be_bytes());
-        buf[4..8].copy_from_slice(&chain_id.to_be_bytes());
         keccak256(buf)
     }
 }

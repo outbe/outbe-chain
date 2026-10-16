@@ -38,11 +38,12 @@ fn verify_cas_object_entry(
         .checked_add(length)
         .ok_or(SnapshotOcompError::CasTotalByteCountOverflow)?;
     if total > limits.max_total_bytes {
-        return Err(Incomplete(format!(
-            "CAS scan exceeds {} byte budget after {} objects and {} bytes",
-            limits.max_total_bytes, result.objects, result.bytes
-        ))
-        .into());
+        return Err(SnapshotIncompleteError::CasScanByteBudgetExceeded {
+            max_total_bytes: limits.max_total_bytes,
+            objects: result.objects,
+            bytes: result.bytes,
+        }
+        .into_report());
     }
     let reference = outbe_ocomp_protocol::CasObjectRefV1 {
         transport_digest: B256::from(digest),
@@ -157,10 +158,7 @@ pub(crate) fn verify_present_receipt(
             SnapshotOcompError::ReceiptManifestAttemptOrWwdMismatch,
         )?;
         require(
-            manifest.sealed_tribute_collection_key == job.intent.sealed_tribute_collection_key
-                && manifest.sealed_tribute_collection_root
-                    == job.intent.sealed_tribute_collection_root
-                && manifest.tribute_count == job.intent.authenticated_day_count
+            manifest.tribute_count == job.intent.authenticated_day_count
                 && manifest.tribute_nominal_total == job.intent.authenticated_day_nominal,
             SnapshotOcompError::ReceiptManifestTributeMismatch,
         )?;
@@ -168,10 +166,6 @@ pub(crate) fn verify_present_receipt(
             finalized_block_number: job.intent_height,
             finalized_block_hash: finalized.finalized_request_block_hash,
             finalized_state_root: finalized.finalized_request_state_root,
-            finalized_ce_root: job.intent.ce_sealed_root,
-            ce_schema_version: u16::try_from(
-                outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
-            )?,
         };
         require(
             receipt.checkpoint() == &checkpoint && manifest.checkpoint == checkpoint,

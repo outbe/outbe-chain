@@ -1,18 +1,18 @@
-@tee @min-validators-4
+@tee @min-validators-4 @ocomp
 Feature: Nod from issuance to Gratis and COEN
   # The Nod half of the shared lifecycle. Lysis over a certified generation is covered
   # by the OCOMP scenario; here the Nods are issued straight to five owners in one
   # bucket, so the phases every entity shares run on one chain and without OCOMP.
   #
-  # Every Nod is issued in MYR against a USD reference. Two are paid while qualified
+  # Every Nod is issued in MYR against a USD reference. Two are paid while issued
   # and two inside the call notice, one by its owner and one by a third party, in
   # each currency; the MYR payments price off a closed pricing window, so the
   # committee steps past the next whole hour once the Nods are issued and the
   # quotes finalized. The fifth Nod is left to forfeit.
   #
   # Time is seeded rather than lived through wherever the protocol allows it.
-  # Qualification and the call count only closed days after the bucket's stamp, so
-  # the bucket is stamped behind the seeded days. The call notice is the DEV
+  # The call counts only closed days after the bucket's stamp, so the bucket is
+  # stamped behind the seeded days. The call notice is the DEV
   # profile's, so it is waited out for real.
   @nod-lifecycle @myr-issuance
   Scenario: Five Nods in one bucket are paid by owners and third parties in both currencies, one forfeits, and the paid ones end in COEN
@@ -22,15 +22,12 @@ Feature: Nod from issuance to Gratis and COEN
     Then owners may settle in each of them
     When five owners are issued Nods in one bucket
     Then every Nod reads Issued and carries its terms
-    And no Nod can be paid before it qualifies
     And no Nod can be transferred
     And the controlled COEN quotes are finalized through the real price feeder
     And the pricing window closes over those quotes
-    When the reference rate stands above the Nod floor
-    Then every Nod qualifies
     And a Nod payment is refused for a stale snapshot or a foreign currency
     And an unpaid Nod cannot be mined
-    When a qualified Nod is paid in USD by a third party and another in MYR by its owner
+    When an issued Nod is paid in USD by a third party and another in MYR by its owner
     Then each payment settles exactly its quote into its currency's vault
     When the reference rate holds above the Nod call price across the call window
     Then every unpaid Nod becomes Called while what was paid stays Settled

@@ -4,6 +4,7 @@ use outbe_primitives::error::Result;
 use super::batch::{require_reward_gem_queue_consistency, reward_gem_retryable_error};
 use super::PreparedRewardGemBatch;
 use crate::constants::REWARD_GEM_CURRENCY;
+use crate::errors::RewardGemRetryableReason;
 use crate::schema::Rewards;
 
 struct PreparedBatchLiveState {
@@ -27,18 +28,18 @@ impl PreparedBatchLiveState {
 
     fn require_no_payable(&self, utc_day: u32) -> Result<()> {
         if !self.is_settled || self.retains_live_state() {
-            return Err(reward_gem_retryable_error(format!(
-                "validator reward Gem no-payable replay has corrupt state for UTC day {utc_day}"
-            )));
+            return Err(reward_gem_retryable_error(
+                RewardGemRetryableReason::NoPayableReplayCorruptState { utc_day },
+            ));
         }
         Ok(())
     }
 
     fn require_delivered(&self, utc_day: u32) -> Result<()> {
         if self.retains_live_state() {
-            return Err(reward_gem_retryable_error(format!(
-                "validator reward Gem delivered replay retains live state for UTC day {utc_day}"
-            )));
+            return Err(reward_gem_retryable_error(
+                RewardGemRetryableReason::DeliveredReplayRetainsLiveState { utc_day },
+            ));
         }
         Ok(())
     }
@@ -47,24 +48,22 @@ impl PreparedBatchLiveState {
 pub(super) fn require_identical_reward_gem_batch_replay(
     rewards: &Rewards<'_>,
     summary: &PreparedRewardGemBatch,
-    gem_type: u8,
     recipients: &[(Address, U256)],
 ) -> Result<()> {
     let utc_day = summary.reward_utc_day;
     let stored_digest = rewards.reward_gem_batch_digest.read(&utc_day)?;
     let stored_amount = rewards.reward_gem_planned_load_amount.read(&utc_day)?;
     if stored_digest != summary.digest || stored_amount != summary.planned_promis_load_amount {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem preparation replay contradicts UTC day {utc_day}"
-        )));
+        return Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::PreparationReplayContradictsUtcDay { utc_day },
+        ));
     }
-    require_prepared_reward_gem_batch_replay_consistency(rewards, utc_day, gem_type, recipients)
+    require_prepared_reward_gem_batch_replay_consistency(rewards, utc_day, recipients)
 }
 
 fn require_prepared_reward_gem_batch_replay_consistency(
     rewards: &Rewards<'_>,
     utc_day: u32,
-    expected_gem_type: u8,
     expected_recipients: &[(Address, U256)],
 ) -> Result<()> {
     let state = PreparedBatchLiveState::read(rewards, utc_day)?;
@@ -72,9 +71,10 @@ fn require_prepared_reward_gem_batch_replay_consistency(
         return state.require_no_payable(utc_day);
     }
 
-    let expected_count = u32::try_from(expected_recipients.len())
-        .map_err(|_| reward_gem_retryable_error("validator reward Gem recipient count overflow"))?;
-    require_replay_metadata(rewards, utc_day, expected_gem_type)?;
+    let expected_count = u32::try_from(expected_recipients.len()).map_err(|_| {
+        reward_gem_retryable_error(RewardGemRetryableReason::RecipientCountOverflow)
+    })?;
+    require_replay_metadata(rewards, utc_day)?;
     if state.is_settled {
         return state.require_delivered(utc_day);
     }
@@ -82,18 +82,13 @@ fn require_prepared_reward_gem_batch_replay_consistency(
     require_replay_recipients(rewards, utc_day, expected_recipients)
 }
 
-fn require_replay_metadata(
-    rewards: &Rewards<'_>,
-    utc_day: u32,
-    expected_gem_type: u8,
-) -> Result<()> {
-    if rewards.reward_gem_type.read(&utc_day)? != expected_gem_type
-        || rewards.reward_gem_issuance_currency.read(&utc_day)? != REWARD_GEM_CURRENCY
+fn require_replay_metadata(rewards: &Rewards<'_>, utc_day: u32) -> Result<()> {
+    if rewards.reward_gem_issuance_currency.read(&utc_day)? != REWARD_GEM_CURRENCY
         || rewards.reward_gem_reference_currency.read(&utc_day)? != REWARD_GEM_CURRENCY
     {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem preparation replay has corrupt metadata for UTC day {utc_day}"
-        )));
+        return Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::PreparationReplayCorruptMetadata { utc_day },
+        ));
     }
     Ok(())
 }
@@ -105,25 +100,25 @@ fn require_pending_replay_linkage(
     expected_count: u32,
 ) -> Result<()> {
     if state.recipient_count != expected_count {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem preparation replay has corrupt recipient count for UTC day {utc_day}"
-        )));
+        return Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::PreparationReplayCorruptRecipientCount { utc_day },
+        ));
     }
 
     let head = rewards.reward_gem_queue_head.read()?;
     let tail = rewards.reward_gem_queue_tail.read()?;
     require_reward_gem_queue_consistency(rewards, head, tail)?;
     let sequence = state.sequence_plus_one.checked_sub(1).ok_or_else(|| {
-        reward_gem_retryable_error(format!(
-            "validator reward Gem preparation replay lost FIFO linkage for UTC day {utc_day}"
-        ))
+        reward_gem_retryable_error(RewardGemRetryableReason::PreparationReplayLostFifoLinkage {
+            utc_day,
+        })
     })?;
     if !fifo_holds(head, tail, sequence)
         || rewards.reward_gem_utc_day_by_sequence.read(&sequence)? != utc_day
     {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem preparation replay has corrupt FIFO linkage for UTC day {utc_day}"
-        )));
+        return Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::PreparationReplayCorruptFifoLinkage { utc_day },
+        ));
     }
     Ok(())
 }
@@ -143,12 +138,12 @@ fn require_replay_recipients(
     let loads = rewards.reward_promis_load_at.get_nested(&utc_day);
     for (index, (expected_owner, expected_load)) in expected_recipients.iter().enumerate() {
         let index = u32::try_from(index).map_err(|_| {
-            reward_gem_retryable_error("validator reward Gem recipient index overflow")
+            reward_gem_retryable_error(RewardGemRetryableReason::RecipientIndexOverflow)
         })?;
         if owners.read(&index)? != *expected_owner || loads.read(&index)? != *expected_load {
-            return Err(reward_gem_retryable_error(format!(
-                "validator reward Gem preparation replay has corrupt recipient {index} for UTC day {utc_day}"
-            )));
+            return Err(reward_gem_retryable_error(
+                RewardGemRetryableReason::PreparationReplayCorruptRecipient { index, utc_day },
+            ));
         }
     }
     Ok(())

@@ -38,7 +38,7 @@ pub(crate) use finalization::run_finalization_and_slashing;
 pub(crate) use late_credits::authenticate_late_credit;
 pub(crate) use late_credits::run_late_finalize_credits;
 
-use cycle::{run_cycle_tick_at_activation, run_cycle_tick_with_readers_at_activation};
+use cycle::run_cycle_tick_at_activation;
 pub(crate) use cycle::{
     run_hook_events, run_hyperlane_liveness_window, run_ocomp_lifecycle_begin,
     run_ocomp_terminal_request, run_oracle_slash_window,
@@ -64,7 +64,6 @@ pub fn dispatch(
         caller,
         value,
         DispatchAuthorities {
-            body_readers: None,
             ocomp_fork_install: None,
             tee_attestation_v1:
                 &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
@@ -72,40 +71,8 @@ pub fn dispatch(
     )
 }
 
-/// Read-only body authority for begin-block execution in a particular scope.
-pub type BeginBlockReaders<'scope, 'readers> = outbe_compressed_entities::ExecutionReaders<
-    'scope,
-    'readers,
-    outbe_offchain_data::RuntimeBodyReaders,
->;
-
-/// Dispatches begin-block work with explicit read-only body authority.
-pub fn dispatch_with_readers(
-    storage: StorageHandle,
-    readers: BeginBlockReaders<'_, '_>,
-    data: &[u8],
-    caller: Address,
-    value: U256,
-) -> Result<Bytes> {
-    let BeginBlockReaders { scope, parent } = readers;
-    dispatch_inner(
-        storage,
-        data,
-        caller,
-        value,
-        DispatchAuthorities {
-            body_readers: Some((scope, parent)),
-            ocomp_fork_install: None,
-            tee_attestation_v1:
-                &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
-        },
-    )
-}
-
-/// Dispatches begin-block work without body readers while preserving the
-/// immutable TEE authority derived from ChainSpec. Offline/component execution
-/// does not install [`RuntimeBodyReaders`], but it must verify block-1 OST3
-/// against the same genesis-fixed authority as the live node.
+/// Dispatches system work with the immutable TEE authority from ChainSpec.
+/// Component execution verifies the same genesis-fixed authority as the node.
 pub fn dispatch_with_tee_attestation(
     storage: StorageHandle,
     tee_attestation_v1: &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
@@ -119,24 +86,20 @@ pub fn dispatch_with_tee_attestation(
         caller,
         value,
         DispatchAuthorities {
-            body_readers: None,
             ocomp_fork_install: None,
             tee_attestation_v1,
         },
     )
 }
 
-/// Production dispatch with both finalized body readers and the immutable
-/// chain-manifest fork authority.
+/// Immutable chain-manifest authorities for system-transaction execution.
 pub(crate) struct SystemTxRuntime<'a> {
-    pub(crate) scope: &'a outbe_compressed_entities::ExecutionScope,
-    pub(crate) parent: &'a outbe_offchain_data::RuntimeBodyReaders,
     pub(crate) ocomp_fork_install: Option<&'a outbe_metadosis::config::OcompForkInstallV1>,
     pub(crate) tee_attestation_v1:
         &'a crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
 }
 
-pub(crate) fn dispatch_with_readers_and_ocomp_install(
+pub(crate) fn dispatch_with_runtime(
     storage: StorageHandle,
     runtime: SystemTxRuntime<'_>,
     data: &[u8],
@@ -144,8 +107,6 @@ pub(crate) fn dispatch_with_readers_and_ocomp_install(
     value: U256,
 ) -> Result<Bytes> {
     let SystemTxRuntime {
-        scope,
-        parent,
         ocomp_fork_install,
         tee_attestation_v1,
     } = runtime;
@@ -155,21 +116,13 @@ pub(crate) fn dispatch_with_readers_and_ocomp_install(
         caller,
         value,
         DispatchAuthorities {
-            body_readers: Some((scope, parent)),
             ocomp_fork_install,
             tee_attestation_v1,
         },
     )
 }
 
-struct DispatchAuthorities<'a> {
-    body_readers: Option<(
-        &'a outbe_compressed_entities::ExecutionScope,
-        &'a outbe_offchain_data::RuntimeBodyReaders,
-    )>,
-    ocomp_fork_install: Option<&'a outbe_metadosis::config::OcompForkInstallV1>,
-    tee_attestation_v1: &'a crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
-}
+type DispatchAuthorities<'a> = SystemTxRuntime<'a>;
 
 fn dispatch_inner(
     storage: StorageHandle,
@@ -179,7 +132,6 @@ fn dispatch_inner(
     authorities: DispatchAuthorities<'_>,
 ) -> Result<Bytes> {
     let DispatchAuthorities {
-        body_readers,
         ocomp_fork_install,
         tee_attestation_v1,
     } = authorities;
@@ -205,39 +157,18 @@ fn dispatch_inner(
         }
         SystemTxInputV2::OcompLifecycleBegin => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            let (scope, _) = body_readers
-                .ok_or(crate::errors::BeginBlockPrecompileError::OcompLifecycleBeginMissingScope)?;
-            run_ocomp_lifecycle_begin(&ctx, scope, ocomp_fork_install)?;
+            run_ocomp_lifecycle_begin(&ctx, ocomp_fork_install)?;
         }
         SystemTxInputV2::CycleTick => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
             let metadosis_genesis_activation_height = ocomp_fork_install
                 .map(|install| install.activation_height)
                 .unwrap_or(1);
-            match body_readers {
-                Some((scope, parent)) => {
-                    run_cycle_tick_with_readers_at_activation(
-                        &ctx,
-                        scope,
-                        parent,
-                        metadosis_genesis_activation_height,
-                    )?;
-                }
-                None => {
-                    run_cycle_tick_at_activation(&ctx, metadosis_genesis_activation_height)?;
-                }
-            }
+            run_cycle_tick_at_activation(&ctx, metadosis_genesis_activation_height)?;
         }
         SystemTxInputV2::RewardsGemDelivery => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            // Reward Gems are compressed bodies: delivery needs the block's scope and
-            // the finalized parent bodies, exactly like CycleTick.
-            match body_readers {
-                Some((scope, parent)) => {
-                    outbe_rewards::api::deliver_oldest_reward_gem_batch(&ctx, scope, parent)?;
-                }
-                None => cycle::run_reward_gem_delivery_without_readers(&ctx)?,
-            }
+            outbe_rewards::api::deliver_oldest_reward_gem_batch(&ctx)?;
         }
         SystemTxInputV2::BoundaryOutcome { artifact } => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
@@ -262,10 +193,7 @@ fn dispatch_inner(
         }
         SystemTxInputV2::OcompTerminalRequest => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            let (scope, _) = body_readers.ok_or(
-                crate::errors::BeginBlockPrecompileError::OcompTerminalRequestMissingSealAuthority,
-            )?;
-            run_ocomp_terminal_request(&ctx, scope)?;
+            run_ocomp_terminal_request(&ctx)?;
         }
     }
 

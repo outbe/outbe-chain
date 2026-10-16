@@ -95,11 +95,6 @@
                   "internalType": "uint64"
                 },
                 {
-                  "name": "floorPriceMinor",
-                  "type": "uint64",
-                  "internalType": "uint64"
-                },
-                {
                   "name": "callPriceMinor",
                   "type": "uint64",
                   "internalType": "uint64"
@@ -295,11 +290,6 @@
                       "internalType": "uint64"
                     },
                     {
-                      "name": "floorPriceMinor",
-                      "type": "uint64",
-                      "internalType": "uint64"
-                    },
-                    {
                       "name": "callPriceMinor",
                       "type": "uint64",
                       "internalType": "uint64"
@@ -483,11 +473,6 @@
                       "internalType": "uint64"
                     },
                     {
-                      "name": "floorPriceMinor",
-                      "type": "uint64",
-                      "internalType": "uint64"
-                    },
-                    {
                       "name": "callPriceMinor",
                       "type": "uint64",
                       "internalType": "uint64"
@@ -580,7 +565,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "units",
+          "name": "quantity",
           "type": "uint16",
           "internalType": "uint16"
         },
@@ -836,7 +821,7 @@
           "internalType": "address"
         },
         {
-          "name": "units",
+          "name": "quantity",
           "type": "uint16",
           "indexed": true,
           "internalType": "uint16"
@@ -925,7 +910,7 @@
       "name": "BidAmountOverflow",
       "inputs": [
         {
-          "name": "units",
+          "name": "quantity",
           "type": "uint16",
           "internalType": "uint16"
         },

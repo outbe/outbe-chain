@@ -7,9 +7,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 #[cfg(feature = "bench-utils")]
 use serde::{Deserialize, Serialize};
 
-use crate::error::PrecompileError;
-
-use crate::error::Result;
+use crate::error::{PrecompileError, PrimitivesStorageError, Result};
 use crate::storage::{
     MetadosisMutationEntitlements, MetadosisMutationPurposeTag, PrecompileStorageProvider,
     StorageHandle, SubCallError, SubCallInput, SubCallOutput, SubCallStatus,
@@ -401,12 +399,14 @@ impl HashMapStorageProvider {
             provider.fail_mutation_at(operation);
             let outcome = provider.enter(&call);
             provider.clear_mutation_failure();
-            let injected =
-                format!("injected storage mutation failure before operation {operation}");
-            if !matches!(&outcome, Err(PrecompileError::Storage(message)) if *message == injected) {
-                return Err(PrecompileError::Storage(format!(
-                    "mutation {operation} did not stop the call with the injected failure"
-                )));
+            let expected = PrecompileError::from(
+                PrimitivesStorageError::InjectedMutationFailureBeforeOperation { operation },
+            );
+            if !matches!(&outcome, Err(error) if error.is_node_local() && error.to_string() == expected.to_string())
+            {
+                return Err(
+                    PrimitivesStorageError::InjectedMutationDidNotStop { operation }.into(),
+                );
             }
             before_mutation.push(view(&mut provider));
         }
@@ -419,17 +419,17 @@ impl HashMapStorageProvider {
 
     fn before_mutation(&mut self, address: Address) -> Result<()> {
         if self.mutation_failure_address == Some(address) {
-            return Err(PrecompileError::Storage(format!(
-                "injected storage mutation failure for owner {address}"
-            )));
+            return Err(PrimitivesStorageError::InjectedMutationFailureForOwner { address }.into());
         }
         if !self.mutation_failure_after
             && self.mutation_failure_at == Some(self.mutation_operations)
         {
-            return Err(PrecompileError::Storage(format!(
-                "injected storage mutation failure before operation {}",
-                self.mutation_operations
-            )));
+            return Err(
+                PrimitivesStorageError::InjectedMutationFailureBeforeOperation {
+                    operation: self.mutation_operations,
+                }
+                .into(),
+            );
         }
         Ok(())
     }
@@ -438,9 +438,7 @@ impl HashMapStorageProvider {
         let operation = self.mutation_operations;
         self.mutation_operations = self.mutation_operations.saturating_add(1);
         if self.mutation_failure_after && self.mutation_failure_at == Some(operation) {
-            Err(PrecompileError::Storage(format!(
-                "injected storage mutation failure after operation {operation}"
-            )))
+            Err(PrimitivesStorageError::InjectedMutationFailureAfterOperation { operation }.into())
         } else {
             Ok(())
         }
@@ -478,11 +476,22 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
                 .metadosis_mutation_entitlements
                 .consume(purpose, binding)
         {
-            return Err(PrecompileError::revert(
-                "test provider has no matching Metadosis mutation lease",
-            ));
+            return Err(PrimitivesStorageError::TestProviderNoMatchingMetadosisLease.into());
         }
         self.metadosis_mutation_active = Some((purpose, binding, chain_id, block_number));
+        Ok(())
+    }
+
+    fn require_metadosis_mutation_frame(
+        &mut self,
+        purpose: MetadosisMutationPurposeTag,
+        binding: B256,
+        chain_id: u64,
+        block_number: u64,
+    ) -> Result<()> {
+        if self.metadosis_mutation_active != Some((purpose, binding, chain_id, block_number)) {
+            return Err(PrimitivesStorageError::TestProviderMetadosisLeaseIdentityMismatch.into());
+        }
         Ok(())
     }
 
@@ -495,14 +504,10 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         let Some((active_purpose, active_binding, _, _)) =
             self.metadosis_mutation_active.as_ref().copied()
         else {
-            return Err(PrecompileError::revert(
-                "test provider has no active Metadosis mutation lease",
-            ));
+            return Err(PrimitivesStorageError::TestProviderNoActiveMetadosisLease.into());
         };
         if active_purpose != purpose || active_binding != binding {
-            return Err(PrecompileError::revert(
-                "test provider Metadosis mutation lease identity mismatch",
-            ));
+            return Err(PrimitivesStorageError::TestProviderMetadosisLeaseIdentityMismatch.into());
         }
         self.metadosis_mutation_active = None;
         Ok(())
@@ -513,9 +518,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             || self.lysis_activation_attempted
             || self.lysis_activation_call_id.is_some()
         {
-            return Err(PrecompileError::revert(
-                "test provider has no certified Lysis activation lease",
-            ));
+            return Err(PrimitivesStorageError::TestProviderNoCertifiedLysisActivationLease.into());
         }
         self.lysis_activation_attempted = true;
         self.lysis_activation_call_id = Some(activation_call_id);
@@ -528,9 +531,9 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         _completed: bool,
     ) -> Result<()> {
         if self.lysis_activation_call_id.take() != Some(activation_call_id) {
-            return Err(PrecompileError::revert(
-                "test provider Lysis activation lease identity mismatch",
-            ));
+            return Err(
+                PrimitivesStorageError::TestProviderLysisActivationLeaseIdentityMismatch.into(),
+            );
         }
         self.lysis_activation_entitled = false;
         Ok(())
@@ -701,9 +704,12 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
         let from_balance = self.accounts.entry(from).or_default().balance;
         if from_balance < amount {
-            return Err(crate::error::PrecompileError::revert(format!(
-                "insufficient balance: {from} has {from_balance} but needs {amount}"
-            )));
+            return Err(PrimitivesStorageError::InsufficientBalance {
+                from,
+                balance: from_balance,
+                needed: amount,
+            }
+            .into());
         }
 
         self.accounts.entry(from).or_default().balance -= amount;
@@ -766,10 +772,12 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         }
         let entry = self.accounts.entry(address).or_default();
         if entry.balance < amount {
-            return Err(PrecompileError::revert(format!(
-                "insufficient balance for burn: {address} has {} but needs {amount}",
-                entry.balance
-            )));
+            return Err(PrimitivesStorageError::InsufficientBalanceForBurn {
+                address,
+                balance: entry.balance,
+                needed: amount,
+            }
+            .into());
         }
         entry.balance -= amount;
         Ok(())

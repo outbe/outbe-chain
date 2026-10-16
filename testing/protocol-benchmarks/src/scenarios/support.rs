@@ -1,6 +1,3 @@
-pub(crate) use outbe_compressed_entities::bench_support::EmptyParentBodies;
-pub(crate) use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
-
 use std::collections::BTreeMap;
 use std::time::Instant;
 
@@ -8,12 +5,11 @@ use alloy_primitives::Address;
 use outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS;
 use outbe_primitives::{
     addresses::{
-        COMPRESSED_ENTITIES_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, FIDELITY_ADDRESS,
-        GEM_ADDRESS, GEM_FACTORY_ADDRESS, GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, INTEX_ADDRESS,
-        INTEX_FACTORY_ADDRESS, METADOSIS_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, ORACLE_ADDRESS,
-        PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS, STABLECOIN_FACTORY_ADDRESS,
-        STABLECOIN_POLICY_REGISTRY_ADDRESS, TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
-        VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS,
+        CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, FIDELITY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS,
+        GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, INTEX_ADDRESS, INTEX_FACTORY_ADDRESS,
+        METADOSIS_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, ORACLE_ADDRESS, PROMIS_ADDRESS,
+        PROMIS_FACTORY_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS,
+        TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS,
     },
     storage::hashmap::{HashMapStorageProvider, StorageTraceKind, StorageTraceOperation},
 };
@@ -182,7 +178,6 @@ fn module_name(address: Address) -> &'static str {
         return "stablecoin";
     }
     match address {
-        COMPRESSED_ENTITIES_ADDRESS => "compressed_entities",
         CREDIS_ADDRESS => "credis",
         CREDIS_FACTORY_ADDRESS => "credis_factory",
         FIDELITY_ADDRESS => "fidelity",

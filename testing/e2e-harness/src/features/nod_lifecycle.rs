@@ -1,5 +1,5 @@
 //! What a Nod supplies to the shared lifecycle. One bucket holds five Nods, issued straight
-//! to five owners. Two are paid while qualified, two are inside the call notice, and one is
+//! to five owners. Two are paid while issued, two are inside the call notice, and one is
 //! forfeited.
 
 use outbe_primitives::time::SECONDS_PER_DAY;
@@ -10,7 +10,6 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use cucumber::when;
 use outbe_nod::config::NodParams;
-use outbe_nod::constants::FLOOR_RATE_PCT;
 
 use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until, settlement_read,
@@ -50,9 +49,8 @@ const ENTRY_PRICE_MINOR: u64 = 800_000;
 const GRATIS_LOAD_MINOR: u64 = 5_000_003;
 /// `effectiveState` of `INod.NodData`.
 const ISSUED: u8 = 0;
-const QUALIFIED: u8 = 1;
-const CALLED: u8 = 2;
-const SETTLED: u8 = 3;
+const CALLED: u8 = 1;
+const SETTLED: u8 = 2;
 /// Issuance goes through the compressed-body projection before the index shows it.
 const ISSUANCE_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long a Nod view may trail the block that wrote it.
@@ -77,8 +75,8 @@ fn issue_five_nods(world: &mut World) {
         .expect("the Nod scenario prices an issuance market");
     let now = head_time(world);
     let day = outbe_primitives::time::worldwide_day_from_timestamp(now);
-    // Qualification and the call count only days after the bucket's stamp: stamp it
-    // behind every day the scenario seeds.
+    // The call counts only days after the bucket's stamp: stamp it behind every day
+    // the scenario seeds.
     let issued_at = now.saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * SECONDS_PER_DAY);
     holders::fund(world, HOLDER_SEED);
     let mut nods = Vec::with_capacity(HOLDERS);
@@ -109,10 +107,6 @@ fn issue_five_nods(world: &mut World) {
 }
 
 impl Lifecycle for NodLifecycle {
-    fn floor(&self, world: &World) -> U256 {
-        read_nod(world, nod(world, 0)).floorPriceMinor
-    }
-
     fn call_price(&self, world: &World) -> U256 {
         read_nod(world, nod(world, 0)).callPriceMinor
     }
@@ -134,7 +128,7 @@ impl Lifecycle for NodLifecycle {
         };
         let url = world.rpc.url(world.validators.primary_port());
         let expected_state = match phase {
-            Phase::Qualified => QUALIFIED,
+            Phase::Issued => ISSUED,
             Phase::Called => CALLED,
         };
         let data = settlement_read(|| {
@@ -166,7 +160,6 @@ impl Lifecycle for NodLifecycle {
             let data = read_nod(world, nod(world, index));
             assert_eq!(data.owner, owner_address(index));
             assert_eq!(data.effectiveState, ISSUED);
-            assert!(!data.isQualified);
             assert!(!data.isSettled);
             assert_eq!(data.calledAt, 0);
             assert_eq!(data.settlementDeadline, 0);
@@ -182,10 +175,6 @@ impl Lifecycle for NodLifecycle {
             assert_eq!(
                 data.settlementCostMinor,
                 entry * U256::from(GRATIS_LOAD_MINOR) / U256::from(1_000_000)
-            );
-            assert_eq!(
-                data.floorPriceMinor,
-                entry * U256::from(100 + FLOOR_RATE_PCT) / U256::from(100)
             );
             let dev = NodParams::DEV;
             assert_eq!(
@@ -207,18 +196,11 @@ impl Lifecycle for NodLifecycle {
                 data.callNoticePeriod
             );
             assert_eq!(
-                (data.worldwideDay, data.floorPriceMinor),
-                (first.worldwideDay, first.floorPriceMinor),
+                (data.worldwideDay, data.entryPriceMinor),
+                (first.worldwideDay, first.entryPriceMinor),
                 "every Nod must share one bucket"
             );
         }
-    }
-
-    fn qualified(&self, world: &World) -> bool {
-        (0..HOLDERS).all(|index| {
-            let data = read_nod(world, nod(world, index));
-            data.effectiveState == QUALIFIED && data.isQualified
-        })
     }
 
     fn targets(&self, world: &World, phase: Phase) -> [Target; 2] {

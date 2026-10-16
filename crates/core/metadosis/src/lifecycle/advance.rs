@@ -10,12 +10,8 @@ use crate::{
     },
     schema::MetadosisContract,
 };
-use outbe_compressed_entities::ExecutionScope;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
-pub(crate) fn advance_active_worldwide_days(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-) -> Result<()> {
+pub(crate) fn advance_active_worldwide_days(ctx: &BlockRuntimeContext) -> Result<()> {
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
     require_active_ocomp_profile(&metadosis)?;
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
@@ -35,7 +31,6 @@ pub(crate) fn advance_active_worldwide_days(
         )?;
         admission_consumed |= AdvanceTick {
             ctx,
-            scope,
             aggregate: &aggregate,
         }
         .apply(&mut metadosis, current, &transition)?;
@@ -45,7 +40,7 @@ pub(crate) fn advance_active_worldwide_days(
 
 struct AdvanceTick<'a, 'storage> {
     ctx: &'a BlockRuntimeContext<'storage>,
-    scope: &'a ExecutionScope,
+
     aggregate: &'a ValidatedWwdAggregate,
 }
 impl<'storage> AdvanceTick<'_, 'storage> {
@@ -57,7 +52,6 @@ impl<'storage> AdvanceTick<'_, 'storage> {
     ) -> WwdEffect<'a, 'storage> {
         WwdEffect {
             ctx: self.ctx,
-            scope: self.scope,
             current,
             transition,
             rate_resolution,
@@ -105,9 +99,12 @@ impl<'storage> AdvanceTick<'_, 'storage> {
                 )?;
                 Ok(true)
             }
-            unexpected => Err(crate::errors::storage_corruption(format!(
-                "AdvanceDue produced non-Cycle transition {unexpected:?}"
-            ))),
+            unexpected => Err(
+                crate::errors::MetadosisStorageCorruptionError::UnexpectedAdvanceDueTransition {
+                    unexpected: unexpected.clone(),
+                }
+                .into(),
+            ),
         }
     }
 
@@ -120,7 +117,7 @@ impl<'storage> AdvanceTick<'_, 'storage> {
             metadosis,
             step.current.worldwide_day,
             step.edges,
-            "missed offering resolved one WWD rate more than once",
+            crate::errors::MetadosisStorageCorruptionError::MissedOfferingResolvedRateMoreThanOnce,
         )?;
         apply_missed_offering(metadosis, self.effect(step.current, step.transition, rate))
     }
@@ -130,7 +127,7 @@ impl<'storage> AdvanceTick<'_, 'storage> {
             metadosis,
             step.current.worldwide_day,
             step.edges,
-            "outer advance resolved one WWD rate more than once",
+            crate::errors::MetadosisStorageCorruptionError::OuterAdvanceResolvedRateMoreThanOnce,
         )?;
         commit_outer_transition_with_rate(
             metadosis,
@@ -151,7 +148,7 @@ impl<'storage> AdvanceTick<'_, 'storage> {
             metadosis,
             step.current.worldwide_day,
             step.edges,
-            "capacity forfeiture resolved one WWD rate more than once",
+            crate::errors::MetadosisStorageCorruptionError::CapacityForfeitureResolvedRateMoreThanOnce,
         )?;
         apply_capacity_forfeiture(
             metadosis,

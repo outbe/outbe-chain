@@ -1,7 +1,7 @@
 //! Independent creator encryption keys for reproducible E2E fixtures only.
 
 use alloy_primitives::Address;
-use outbe_compressed_entities::{
+use outbe_primitives::entity_codec::{
     decode_stored_tribute_v1, decode_stored_tribute_v2, TributeBodyV1,
 };
 use sha2::{Digest, Sha256};
@@ -44,6 +44,5 @@ pub(crate) fn calculation_view(
         nominal_amount_minor: amounts.nominal_amount_minor,
         reference_currency: context.reference_currency,
         tribute_price_minor: context.tribute_price_minor,
-        exclude_from_intex_issuance: context.exclude_from_intex_issuance,
     })
 }

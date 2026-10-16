@@ -19,11 +19,9 @@ fn root_reduce_rejects_finalized_payload_that_no_longer_matches_coverage_header(
                 entry_price_minor: U256::from(2),
                 issuance_currency: 840,
                 reference_currency: 978,
-                exclude_from_intex_issuance: false,
             }],
             checked_segment_gratis_total: U256::from(1),
             checked_segment_nominal_total: U256::from(10),
-            checked_segment_eligible_nominal_total: U256::from(10),
             checked_segment_settlement_cost_total: U256::from(4),
         },
         &GratisLeafPrefixV1 {
@@ -62,20 +60,14 @@ fn complete_root_rejects_manifest_total_mismatch_for_leaf_and_node() {
         assert!(require_complete_root_values(
             (0, primary_work_unit_count, primary_work_unit_count),
             (257, 257, 257),
-            (U256::from(256), U256::from(200), U256::from(257)),
+            (U256::from(256), U256::from(257)),
         )
         .is_err());
     }
     require_complete_root_values(
         (0, 1, 2),
         (256, 257, 257),
-        (U256::from(256), U256::from(200), U256::from(257)),
+        (U256::from(256), U256::from(257)),
     )
     .unwrap();
-    assert!(require_complete_root_values(
-        (0, 2, 2),
-        (257, 257, 257),
-        (U256::from(257), U256::from(258), U256::from(257)),
-    )
-    .is_err());
 }

@@ -82,7 +82,7 @@ pub fn gramine_direct_policy_v1(chain_id: u64, genesis_hash: B256) -> Result<Tee
 }
 
 pub fn tee_attestation_v1_extra_field(policy: &TeePolicyV1) -> Result<Value, String> {
-    tee_attestation_v1_genesis_field(policy).map_err(Into::into)
+    tee_attestation_v1_genesis_field(policy).map_err(|error| error.to_string())
 }
 
 pub fn gramine_direct_bootstrap_v2(

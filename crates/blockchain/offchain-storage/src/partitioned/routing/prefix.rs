@@ -42,9 +42,11 @@ impl DayPrefixRouting {
     fn scope(&self, bytes: &[u8]) -> Result<StorageScope, StorageError> {
         let raw: [u8; 4] = bytes
             .get(self.offset..self.offset + 4)
-            .ok_or_else(|| StorageError::Corruption("missing WWD routing prefix".into()))?
+            .ok_or(crate::errors::StorageCorruptionError::MissingWwdRoutingPrefix)?
             .try_into()
-            .map_err(|_| StorageError::Corruption("invalid WWD routing prefix".into()))?;
+            .map_err(|_| {
+                StorageError::from(crate::errors::StorageCorruptionError::InvalidWwdRoutingPrefix)
+            })?;
         StorageScope::new(
             &self.domain,
             WorldwideDayPartition.partition(&PartitionContext {
@@ -103,9 +105,11 @@ impl OwnerPrefixRouting {
     fn scope(&self, bytes: &[u8]) -> Result<StorageScope, StorageError> {
         let owner: [u8; 20] = bytes
             .get(..20)
-            .ok_or_else(|| StorageError::Corruption("missing owner routing prefix".into()))?
+            .ok_or(crate::errors::StorageCorruptionError::MissingOwnerRoutingPrefix)?
             .try_into()
-            .map_err(|_| StorageError::Corruption("invalid owner routing prefix".into()))?;
+            .map_err(|_| {
+                StorageError::from(crate::errors::StorageCorruptionError::InvalidOwnerRoutingPrefix)
+            })?;
         StorageScope::new(
             &self.domain,
             self.strategy.partition(&PartitionContext {

@@ -1,5 +1,5 @@
 //! Amount-private NOD exercise; both ledger outcomes commit together on the host.
-use crate::errors::{Result, TeeError};
+use crate::errors::{NodMineRejectReason, Result, TeeError};
 use alloy_primitives::{B256, U256};
 use outbe_tee::{
     nod_mine::{MineEncryptedNodRequestV2, MineEncryptedNodResultV2},
@@ -36,7 +36,7 @@ pub fn apply(
         amount,
         &request.fidelity,
     )
-    .map_err(|error| TeeError::TributeOfferReject(format!("fidelity section failed: {error}")))?;
+    .map_err(NodMineRejectReason::FidelitySectionFailed)?;
     Ok(MineEncryptedNodResultV2 {
         new_balance: result.new_balance,
         next_op_nonce: result.next_op_nonce,

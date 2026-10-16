@@ -5,10 +5,9 @@
 //! authority and does not validate phase payload semantics. Therefore neither
 //! an individual item nor `Complete` is a signing/finalization capability.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedProducerV1,
     PlannedUnitPositionV1, PlannerErrorV1,
@@ -24,19 +23,19 @@ use outbe_ocomp_protocol::{
     CasObjectRefV1, ListKind, ObjectKind, ProtocolError, SchemaLimits, StreamingOrderedListRoot,
 };
 use outbe_primitives::time::WorldwideDay;
-use thiserror::Error;
+use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 
 use crate::{
     admission_catalog::{
-        AdmissionCatalogError, AdmissionCatalogReader, AdmissionDirectoryCursorV1,
-        AdmissionDirectoryStepV1, VerifiedAdmissionCatalog, VerifiedAdmissionRecordV1,
+        AdmissionCatalogReader, AdmissionDirectoryCursorV1, AdmissionDirectoryStepV1,
+        VerifiedAdmissionCatalog, VerifiedAdmissionRecordV1,
     },
     bundle::PinnedProtocolBundle,
-    cas::{CasError, FilesystemCasReader},
-    input_artifacts::{decode_fidelity_subject_key, decode_oracle_subject_key, InputArtifactError},
+    cas::FilesystemCasReader,
+    input_artifacts::{decode_fidelity_subject_key, decode_oracle_subject_key},
     input_ref_catalog::{
-        InputRefCatalogClosureCursorV1, InputRefCatalogClosureStepV1, InputRefCatalogError,
-        VerifiedInputChunkRefCatalog, VerifiedInputChunkRefV1,
+        InputRefCatalogClosureCursorV1, InputRefCatalogClosureStepV1, VerifiedInputChunkRefCatalog,
+        VerifiedInputChunkRefV1,
     },
 };
 
@@ -152,7 +151,6 @@ pub struct LysisPlanAuditCursorV1<'a> {
     fidelity_root: Option<StreamingOrderedListRoot>,
     oracle_root: Option<StreamingOrderedListRoot>,
     tribute_count: u32,
-    tribute_nominal_total: U256,
     tribute_isos: BTreeSet<u16>,
     previous_tribute_last_key: Option<Vec<u8>>,
     previous_fidelity_owner: Option<Address>,
@@ -337,7 +335,6 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
             )?),
             oracle_root: Some(StreamingOrderedListRoot::new(ListKind::OracleOpenings, 1)?),
             tribute_count: 0,
-            tribute_nominal_total: U256::ZERO,
             tribute_isos: BTreeSet::from([840]),
             previous_tribute_last_key: None,
             previous_fidelity_owner: None,
@@ -356,53 +353,6 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
         &self.schedule.plan
     }
 
-    /// Opened Tribute nominals, keyed by tribute id. Row artifacts no longer
-    /// carry the amount.
-    pub fn tribute_nominals(&self) -> Result<BTreeMap<B256, U256>, ExactLysisPlanError> {
-        let mut nominals = BTreeMap::new();
-        for verified in self.schedule.exact_verified_cursor()? {
-            let verified = verified?;
-            if verified.reference.kind != InputChunkKind::Tribute {
-                continue;
-            }
-            for record in &verified.chunk.canonical_records_or_openings {
-                let tribute =
-                    outbe_tribute::record::decode_canonical(&record.0)?.calculation_view()?;
-                let id = *tribute.tribute_id;
-                if nominals.insert(id, tribute.nominal_amount_minor).is_some() {
-                    return Err(ExactLysisPlanError::AuthorityMismatch(
-                        "duplicate Tribute id",
-                    ));
-                }
-            }
-        }
-        Ok(nominals)
-    }
-
-    /// Sum of opened Tribute nominals that still enter Intex issuance.
-    pub fn eligible_nominal_total(&self) -> Result<U256, ExactLysisPlanError> {
-        let mut total = U256::ZERO;
-        for verified in self.schedule.exact_verified_cursor()? {
-            let verified = verified?;
-            if verified.reference.kind != InputChunkKind::Tribute {
-                continue;
-            }
-            for record in &verified.chunk.canonical_records_or_openings {
-                let tribute =
-                    outbe_tribute::record::decode_canonical(&record.0)?.calculation_view()?;
-                if tribute.exclude_from_intex_issuance {
-                    continue;
-                }
-                total = total.checked_add(tribute.nominal_amount_minor).ok_or(
-                    ProtocolError::IntegerOverflow {
-                        what: "eligible nominal total",
-                    },
-                )?;
-            }
-        }
-        Ok(total)
-    }
-
     /// Public FixedReduce fractions for the enclave Nod load. One pair per league.
     pub fn league_fractions(&self) -> Result<Vec<(u16, U256)>, ExactLysisPlanError> {
         let position = PlannedUnitPositionV1::TreeNode {
@@ -416,7 +366,7 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
             item.artifact().phase_payload(self.schedule.limits)?,
             self.schedule.limits,
         )
-        .map_err(|_| ExactLysisPlanError::AuthorityMismatch("fixed reduce league fractions"))?;
+        .map_err(|_| ExactLysisPlanError::FixedReduceLeagueFractions)?;
         if output.ordered_fractions.is_empty()
             || output
                 .aggregate
@@ -424,9 +374,7 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
                 .map(|aggregate| aggregate.tribute_count)
                 != Some(self.schedule.plan.tribute_count)
         {
-            return Err(ExactLysisPlanError::AuthorityMismatch(
-                "fixed reduce league fractions",
-            ));
+            return Err(ExactLysisPlanError::FixedReduceLeagueFractions);
         }
         Ok(output
             .ordered_fractions
@@ -536,26 +484,4 @@ fn exact_pair(producer_ids: &[Option<B256>]) -> Result<[Option<B256>; 2], ExactL
     }
 }
 
-#[derive(Debug, Error)]
-pub enum ExactLysisPlanError {
-    #[error("private Tribute amount read failed: {0}")]
-    PrivateTribute(#[from] outbe_tee::TransportError),
-    #[error(transparent)]
-    Admission(#[from] AdmissionCatalogError),
-    #[error(transparent)]
-    InputRef(#[from] InputRefCatalogError),
-    #[error(transparent)]
-    InputArtifact(#[from] InputArtifactError),
-    #[error(transparent)]
-    TributeBody(#[from] outbe_compressed_entities::CanonicalBodyError),
-    #[error(transparent)]
-    Cas(#[from] CasError),
-    #[error(transparent)]
-    Planner(#[from] PlannerErrorV1),
-    #[error(transparent)]
-    Protocol(#[from] ProtocolError),
-    #[error("Lysis plan authority mismatch: {0}")]
-    AuthorityMismatch(&'static str),
-    #[error("plan ordinal {plan_ordinal} admitted an unexpected UnitId")]
-    UnexpectedUnitId { plan_ordinal: u32 },
-}
+pub use crate::errors::ExactLysisPlanError;

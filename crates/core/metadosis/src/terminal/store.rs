@@ -4,10 +4,24 @@ use super::{
     CapacityForfeitureReceipt, MetadosisFailureReceipt, MissedOfferingReceipt,
     TerminalReceiptValidationContext,
 };
-use crate::{errors::storage_corruption_message, schema::MetadosisContract};
+use crate::{errors::MetadosisStorageCorruptionError, schema::MetadosisContract};
 use outbe_primitives::{error::Result, time::WorldwideDay};
 
 impl MetadosisContract<'_> {
+    pub(crate) fn read_lysis_completion(
+        &self,
+        worldwide_day: WorldwideDay,
+    ) -> Result<Option<super::model::LysisCompletionDetail>> {
+        let Some(receipt) = self.read_terminal_receipt(worldwide_day)? else {
+            return Ok(None);
+        };
+        let super::model::WwdTerminalReceipt::LysisCompleted { detail, .. } = receipt else {
+            return Ok(None);
+        };
+        receipt.validate(self.terminal_receipt_validation_context(worldwide_day, None)?)?;
+        Ok(Some(detail))
+    }
+
     pub(crate) fn read_terminal_receipt(
         &self,
         worldwide_day: WorldwideDay,
@@ -19,26 +33,24 @@ impl MetadosisContract<'_> {
         if len == 0 {
             return Ok(None);
         }
-        if len != codec::COMMON_LEN && len != codec::CAPACITY_LEN {
-            return Err(storage_corruption_message(
-                "terminal receipt has non-canonical length",
-            ));
+        if len != codec::COMMON_LEN && len != codec::CAPACITY_LEN && len != codec::LYSIS_LEN {
+            return Err(MetadosisStorageCorruptionError::TerminalReceiptNonCanonicalLength.into());
         }
         codec::decode(&bytes.read()?, worldwide_day).map(Some)
     }
 
-    fn write_terminal_receipt(&self, receipt: WwdTerminalReceipt) -> Result<()> {
+    pub(crate) fn write_terminal_receipt(&self, receipt: WwdTerminalReceipt) -> Result<()> {
         let bytes = self
             .worldwide_day_terminal_receipts
             .get_bytes(&receipt.common().worldwide_day);
         if !bytes.is_empty()? {
-            let message = match receipt {
+            let error = match receipt {
                 WwdTerminalReceipt::CapacityForfeiture { .. } => {
-                    "Metadosis capacity-forfeiture receipt is immutable"
+                    MetadosisStorageCorruptionError::CapacityForfeitureReceiptImmutable
                 }
-                _ => "Metadosis WWD terminal receipt is immutable",
+                _ => MetadosisStorageCorruptionError::WwdTerminalReceiptImmutable,
             };
-            return Err(storage_corruption_message(message));
+            return Err(error.into());
         }
         bytes.write(&codec::encode(&receipt))
     }
@@ -142,10 +154,11 @@ impl MetadosisContract<'_> {
                 retirement: common.retirement,
                 block_number: common.block_number,
             })),
-            WwdTerminalReceipt::CapacityForfeiture { .. } => Ok(None),
-            WwdTerminalReceipt::MetadosisFailure(_) => Err(storage_corruption_message(
-                "Metadosis WWD terminal receipt is invalid",
-            )),
+            WwdTerminalReceipt::CapacityForfeiture { .. }
+            | WwdTerminalReceipt::LysisCompleted { .. } => Ok(None),
+            WwdTerminalReceipt::MetadosisFailure(_) => {
+                Err(MetadosisStorageCorruptionError::WwdTerminalReceiptInvalid.into())
+            }
         }
     }
 
@@ -165,7 +178,6 @@ impl MetadosisContract<'_> {
             detail: CapacityForfeitureDetail {
                 max_retained_wwds: receipt.max_retained_wwds,
                 retained_count_before: receipt.retained_count_before,
-                sealed_collection_root: receipt.sealed_collection_root,
                 forfeited_count: receipt.forfeited_count,
                 forfeited_nominal: receipt.forfeited_nominal,
                 source_generation: receipt.source_generation,
@@ -191,7 +203,6 @@ impl MetadosisContract<'_> {
                     value_routed: common.value_routed,
                     carry_over_before: common.carry_over_before,
                     carry_over_after: common.carry_over_after,
-                    sealed_collection_root: detail.sealed_collection_root,
                     forfeited_count: detail.forfeited_count,
                     forfeited_nominal: detail.forfeited_nominal,
                     source_generation: detail.source_generation,
@@ -200,10 +211,13 @@ impl MetadosisContract<'_> {
                     block_number: common.block_number,
                 }))
             }
-            WwdTerminalReceipt::MissedOffering(_) => Ok(None),
-            WwdTerminalReceipt::MetadosisFailure(_) => Err(storage_corruption_message(
-                "capacity-forfeiture terminal receipt has no detail",
-            )),
+            WwdTerminalReceipt::MissedOffering(_) | WwdTerminalReceipt::LysisCompleted { .. } => {
+                Ok(None)
+            }
+            WwdTerminalReceipt::MetadosisFailure(_) => Err(
+                MetadosisStorageCorruptionError::CapacityForfeitureTerminalReceiptMissingDetail
+                    .into(),
+            ),
         }
     }
 }

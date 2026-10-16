@@ -607,7 +607,7 @@ pub fn worker_shard_count(
 
 /// Deterministic worst-case work reserved by one public result-vote
 /// transaction. Every vote is admitted as potentially q-forming. For this
-/// reason, the formula includes the four atomic root transitions and the current
+/// reason, the formula includes the three atomic root transitions and the current
 /// validator's signature verification before any state-dependent branching.
 pub fn result_vote_internal_work(
     canonical_vote_bytes: usize,

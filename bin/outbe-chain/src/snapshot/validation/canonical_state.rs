@@ -2,7 +2,6 @@
 
 use alloy_consensus::Sealable;
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_intex::schema::{IntexContract, SeriesId, SeriesRecord};
 use outbe_nod::schema::{NodCertifiedGenerationProjection, NodContract};
 #[cfg(all(test, feature = "snapshot-integration"))]
 use outbe_ocomp_protocol::receipts::AggregateActivationReceiptV1;
@@ -14,7 +13,6 @@ use outbe_primitives::{
     error::{PrecompileError, Result as StorageResult},
     storage::{
         readonly::{ReadOnlyBlockContext, ReadOnlyStorageProvider, StorageReader},
-        types::Storable,
         StorageHandle,
     },
     time::WorldwideDay,
@@ -212,28 +210,5 @@ impl<'a> CanonicalState<'a> {
         day: WorldwideDay,
     ) -> eyre::Result<Option<NodCertifiedGenerationProjection>> {
         self.with_storage(|storage| NodContract::new(storage).ocomp_certified_generation(day))
-    }
-
-    pub(crate) fn intex_total_series(&self) -> eyre::Result<u64> {
-        self.with_storage(|storage| outbe_intex::api::total_series(&storage))
-    }
-
-    pub(crate) fn intex_series_id_at(&self, index: u64) -> eyre::Result<SeriesId> {
-        self.with_storage(|storage| {
-            let id = outbe_intex::api::series_id_at(&storage, index)?;
-            let raw = IntexContract::new(storage)
-                .series_id_at_index
-                .read(&index)?;
-            if raw != id.to_word() {
-                return Err(
-                    CanonicalStatePrecompileError::IntexSeriesIndexNoncanonicalPadding.into(),
-                );
-            }
-            Ok(id)
-        })
-    }
-
-    pub(crate) fn intex_read_series(&self, id: SeriesId) -> eyre::Result<SeriesRecord> {
-        self.with_storage(|storage| outbe_intex::api::read_series(&storage, id))
     }
 }

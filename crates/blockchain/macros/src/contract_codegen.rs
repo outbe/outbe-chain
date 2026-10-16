@@ -3,8 +3,8 @@
 use super::{
     field_attrs::{parse_common_field_attrs, CommonFieldAttrs},
     is_dsl_binary_heap_type, is_dsl_circular_buffer_type, is_dsl_deque_type, is_dsl_list_type,
-    is_dsl_map_type, is_dsl_set_type, is_dsl_value_type, is_mapping_type, is_scalar_like_type,
-    is_slot_type, is_storage_collection, type_args, unwrap_single_generic_type,
+    is_dsl_map_type, is_dsl_set_type, is_dsl_value_type, is_mapping_type, is_slot_type,
+    is_storage_collection, type_args, unwrap_single_generic_type,
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;

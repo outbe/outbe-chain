@@ -22,8 +22,6 @@ use crate::precompiles::{
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, B256, U256};
 use core::fmt::Debug;
-use outbe_compressed_entities::ExecutionScope;
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCallStatus};
 use revm::{
     context::{Evm, LocalContextTr},
@@ -51,11 +49,9 @@ pub struct SubCallEnvironment {
     pub self_address: Address,
     pub outer_is_static: bool,
     pub spec: SpecId,
-    pub runtime_body_readers: Option<RuntimeBodyReaders>,
-    pub execution_scope: Arc<ExecutionScope>,
 }
 
-/// Runs a sub-call with the executor-owned compressed-entity lifecycle scope.
+/// Runs a sub-call through the executor-owned EVM context.
 ///
 /// `environment.outer_is_static = true` forces the child to STATICCALL regardless of the
 /// caller's `input.is_static` field (outer STATIC propagates inward).
@@ -72,8 +68,6 @@ where
         self_address,
         outer_is_static,
         spec,
-        runtime_body_readers,
-        execution_scope,
     } = environment;
     run_with_ocomp_context(
         ctx,
@@ -81,12 +75,7 @@ where
             self_address,
             outer_is_static,
             execution: OutbePrecompileExecutionContext::new(spec, B256::ZERO),
-            runtime: OutbePrecompileRuntime::new(
-                runtime_body_readers,
-                execution_scope,
-                None,
-                false,
-            ),
+            runtime: OutbePrecompileRuntime::new(None, false),
             activation_meter: Arc::new(OcompActivationBlockMeter),
         },
         input,
@@ -323,7 +312,7 @@ where
 {
     let res = evm
         .frame_init(first_frame_input)
-        .map_err(|e| SubCallError::Fatal(format!("frame_init: {e:?}")))?;
+        .map_err(crate::errors::SubCallDriverError::frame_init)?;
     if let ItemOrResult::Result(frame_result) = res {
         return Ok(frame_result);
     }
@@ -331,13 +320,13 @@ where
     loop {
         let call_or_result = evm
             .frame_run()
-            .map_err(|e| SubCallError::Fatal(format!("frame_run: {e:?}")))?;
+            .map_err(crate::errors::SubCallDriverError::frame_run)?;
         let Some(result) = finish_or_initialize_frame(evm, call_or_result)? else {
             continue;
         };
         if let Some(r) = evm
             .frame_return_result(result)
-            .map_err(|e| SubCallError::Fatal(format!("frame_return_result: {e:?}")))?
+            .map_err(crate::errors::SubCallDriverError::frame_return_result)?
         {
             return Ok(r);
         }
@@ -358,7 +347,7 @@ where
     };
     match evm
         .frame_init(init)
-        .map_err(|e| SubCallError::Fatal(format!("frame_init nested: {e:?}")))?
+        .map_err(crate::errors::SubCallDriverError::frame_init_nested)?
     {
         ItemOrResult::Item(_) => Ok(None),
         ItemOrResult::Result(result) => Ok(Some(result)),
@@ -393,17 +382,13 @@ pub(crate) fn settle_outcome(
             SubCallStatus::Halt(SubCallError::StateChangeDuringStaticCall)
         }
         InstructionResult::FatalExternalError | InstructionResult::Suspend => {
-            return Err(SubCallError::Fatal(format!(
-                "non-VM child terminal: {instr:?}"
-            )));
+            return Err(crate::errors::SubCallDriverError::non_vm_child_terminal(
+                instr,
+            ));
         }
         other => match SuccessOrHalt::<revm::context_interface::result::HaltReason>::from(other) {
             SuccessOrHalt::Halt(reason) => SubCallStatus::Halt(SubCallError::EvmHalt(reason)),
-            _ => {
-                return Err(SubCallError::Fatal(format!(
-                    "unexpected child terminal: {other:?}"
-                )))
-            }
+            _ => return Err(crate::errors::SubCallDriverError::unexpected_child_terminal(other)),
         },
     };
     handle_reservoir_remaining_gas(

@@ -36,7 +36,7 @@ pub const GEM_ADDRESS: Address = address!("0x00000000000000000000000000000000000
 pub const INTEX_ADDRESS: Address = address!("0x0000000000000000000000000000000000001014");
 
 /// IntexFactory address. Drives Intex issuance, the autonomous
-/// Issued->Qualified->Called lifecycle, and two-step settlement. Series state is
+/// Issued->Called lifecycle, and two-step settlement. Series state is
 /// written to [`INTEX_ADDRESS`].
 pub const INTEX_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001015");
 
@@ -196,13 +196,6 @@ pub const UPDATE_ADDRESS: Address = address!("0x00000000000000000000000000000000
 /// Hosts reusable proposal/voting state. Callable dispatch is registered
 /// at `VOTE_ADDRESS`.
 pub const VOTE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0C");
-
-/// System-owned compressed-entity state account.
-///
-/// This address has no public mutating precompile. Trusted Tribute/Nod runtime
-/// paths use it through the internal compressed-entities module.
-pub const COMPRESSED_ENTITIES_ADDRESS: Address =
-    address!("0x000000000000000000000000000000000000EE0D");
 
 /// L2 network registry precompile (storage-backed).
 ///

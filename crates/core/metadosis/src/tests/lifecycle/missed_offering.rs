@@ -1,13 +1,11 @@
-use super::fixtures::begin_scope_with_persisted_parent;
 use super::*;
 
 fn run_missed_offering_command(
     provider: &mut HashMapStorageProvider,
-    scope: &ExecutionScope,
     block_number: u64,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<()> {
-    run_advance_command(provider, scope, block_number, timestamp)
+    run_advance_command(provider, block_number, timestamp)
 }
 
 fn seed_unformed_missed_offering_day(
@@ -55,9 +53,8 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
         seed_missed_offering_day(&mut provider, wwd, base_limit, formation_carry, later_carry);
-    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
 
-    run_missed_offering_command(&mut provider, &scope, 2, offering_end).unwrap();
+    run_missed_offering_command(&mut provider, 2, offering_end).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
@@ -78,7 +75,7 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
         assert_eq!(receipt.block_number, 2);
         assert_eq!(
             receipt.retirement,
-            outbe_compressed_entities::RetirementOutcome::NotPresent
+            outbe_tribute::runtime::RetirementOutcome::Requested
         );
         assert_eq!(
             PromisLimitContract::new(storage.clone())
@@ -112,7 +109,7 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
         assert_eq!(decoded.promisLimitAfterMinor, carried + formed_limit);
         assert_eq!(
             decoded.retirementOutcome,
-            crate::schema::terminal_retirement::NOT_PRESENT
+            crate::schema::terminal_retirement::REQUESTED
         );
         assert_eq!(decoded.blockNumber, 2);
     });
@@ -125,11 +122,9 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
     assert_eq!(missed_events_before, 1);
     let storage_before_replay = provider.storage.clone();
     let events_before_replay = provider.events.clone();
-    run_missed_offering_command(&mut provider, &scope, 3, offering_end + 1).unwrap();
+    run_missed_offering_command(&mut provider, 3, offering_end + 1).unwrap();
     assert_eq!(provider.storage, storage_before_replay);
     assert_eq!(provider.events, events_before_replay);
-
-    end_persistent_active_scope(&mut provider, &scope);
 }
 
 fn seed_zero_limit_lookback_day_opening_at(
@@ -191,17 +186,16 @@ fn final_zero_limit_misses_the_offering_from_forming_and_lookback() {
                 day.lookback_end().read().unwrap(),
             )
         });
-        let (scope, _parent) = begin_persistent_active_scope(&mut provider);
+
         let mut block_number = 2;
         if from_lookback {
-            run_advance_command(&mut provider, &scope, block_number, forming_end).unwrap();
+            run_advance_command(&mut provider, block_number, forming_end).unwrap();
             block_number += 1;
         }
 
-        run_advance_command(&mut provider, &scope, block_number, lookback_end).unwrap();
+        run_advance_command(&mut provider, block_number, lookback_end).unwrap();
 
         assert_zero_limit_offering_missed(&mut provider, wwd, block_number);
-        end_persistent_active_scope(&mut provider, &scope);
     }
 }
 
@@ -213,8 +207,8 @@ fn zero_limit_offering_opens_until_its_utc_day_closes() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let last_open_hour = utc_day_closed - SECONDS_PER_HOUR;
     seed_zero_limit_lookback_day_opening_at(&mut provider, wwd, last_open_hour);
-    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
-    run_advance_command(&mut provider, &scope, 2, last_open_hour).unwrap();
+
+    run_advance_command(&mut provider, 2, last_open_hour).unwrap();
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::OFFERING);
@@ -224,14 +218,12 @@ fn zero_limit_offering_opens_until_its_utc_day_closes() {
             .is_none());
         assert!(!TributeContract::new(storage).is_day_sealed(wwd).unwrap());
     });
-    end_persistent_active_scope(&mut provider, &scope);
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     seed_zero_limit_lookback_day_opening_at(&mut provider, wwd, utc_day_closed);
-    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
-    run_advance_command(&mut provider, &scope, 2, utc_day_closed).unwrap();
+
+    run_advance_command(&mut provider, 2, utc_day_closed).unwrap();
     assert_zero_limit_offering_missed(&mut provider, wwd, 2);
-    end_persistent_active_scope(&mut provider, &scope);
 }
 
 #[test]
@@ -272,9 +264,8 @@ fn final_zero_limit_miss_from_forming_keeps_the_rate_for_the_next_day() {
             .read()
             .unwrap()
     });
-    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
 
-    run_advance_command(&mut provider, &scope, 2, lookback_end).unwrap();
+    run_advance_command(&mut provider, 2, lookback_end).unwrap();
 
     assert_zero_limit_offering_missed(&mut provider, wwd, 2);
     assert_eq!(
@@ -305,14 +296,13 @@ fn final_zero_limit_miss_from_forming_keeps_the_rate_for_the_next_day() {
         TributeContract::new(storage).seal_day(next).unwrap();
     });
 
-    run_advance_command(&mut provider, &scope, 3, lookback_end + SECONDS_PER_HOUR).unwrap();
+    run_advance_command(&mut provider, 3, lookback_end + SECONDS_PER_HOUR).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
         let day = MetadosisContract::new(storage).worldwide_days.entry(next);
         assert_eq!(day.previous_vwap().read().unwrap(), U256::from(110u64));
         assert_eq!(day.day_type().read().unwrap(), day_type::GREEN);
     });
-    end_persistent_active_scope(&mut provider, &scope);
 }
 
 #[test]
@@ -322,7 +312,6 @@ fn limit_settled_earlier_in_the_opening_tick_opens_the_offering() {
     let tick = wwd.to_timestamp_utc() + 24 * SECONDS_PER_HOUR + 60;
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     seed_zero_limit_lookback_day_opening_at(&mut provider, wwd, tick);
-    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
 
     provider.enable_metadosis_mutation_frame(
         outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
@@ -335,7 +324,7 @@ fn limit_settled_earlier_in_the_opening_tick_opens_the_offering() {
         );
         crate::commands::apply_cycle_day_limit(&settlement, settled_limit).unwrap();
     });
-    run_advance_command(&mut provider, &scope, 2, tick).unwrap();
+    run_advance_command(&mut provider, 2, tick).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
@@ -351,7 +340,6 @@ fn limit_settled_earlier_in_the_opening_tick_opens_the_offering() {
         );
         assert!(!TributeContract::new(storage).is_day_sealed(wwd).unwrap());
     });
-    end_persistent_active_scope(&mut provider, &scope);
 }
 
 #[test]
@@ -364,7 +352,7 @@ fn malformed_missed_offering_receipt_is_fatal() {
                 value_routed: U256::from(10),
                 carry_over_before: U256::from(3),
                 carry_over_after: U256::from(12),
-                retirement: outbe_compressed_entities::RetirementOutcome::NotPresent,
+                retirement: outbe_tribute::runtime::RetirementOutcome::NotPresent,
                 block_number: 1,
             })
             .unwrap();
@@ -382,8 +370,8 @@ fn missed_receipt_value_drift_is_fatal_in_reader_and_aggregate() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
         seed_missed_offering_day(&mut provider, wwd, U256::from(100), U256::ZERO, U256::ZERO);
-    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
-    run_missed_offering_command(&mut provider, &scope, 2, offering_end).unwrap();
+
+    run_missed_offering_command(&mut provider, 2, offering_end).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
@@ -413,8 +401,8 @@ fn missed_receipt_with_trailing_capacity_payload_is_fatal_in_reader_and_aggregat
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
         seed_missed_offering_day(&mut provider, wwd, U256::from(100), U256::ZERO, U256::ZERO);
-    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
-    run_missed_offering_command(&mut provider, &scope, 2, offering_end).unwrap();
+
+    run_missed_offering_command(&mut provider, 2, offering_end).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
@@ -440,8 +428,8 @@ fn missed_receipt_status_drift_is_fatal_in_reader_and_aggregate() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
         seed_missed_offering_day(&mut provider, wwd, U256::from(100), U256::ZERO, U256::ZERO);
-    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
-    run_missed_offering_command(&mut provider, &scope, 2, offering_end).unwrap();
+
+    run_missed_offering_command(&mut provider, 2, offering_end).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
         let mut metadosis = MetadosisContract::new(storage.clone());
@@ -466,8 +454,8 @@ fn missed_receipt_membership_drift_is_fatal_in_reader_and_aggregate() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
         seed_missed_offering_day(&mut provider, wwd, U256::from(100), U256::ZERO, U256::ZERO);
-    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
-    run_missed_offering_command(&mut provider, &scope, 2, offering_end).unwrap();
+
+    run_missed_offering_command(&mut provider, 2, offering_end).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
         let mut metadosis = MetadosisContract::new(storage.clone());
@@ -490,8 +478,8 @@ fn duplicate_closed_membership_is_fatal_in_reader_and_aggregate() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
         seed_missed_offering_day(&mut provider, wwd, U256::from(100), U256::ZERO, U256::ZERO);
-    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
-    run_missed_offering_command(&mut provider, &scope, 2, offering_end).unwrap();
+
+    run_missed_offering_command(&mut provider, 2, offering_end).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
@@ -519,12 +507,10 @@ fn missed_offering_rejects_a_populated_partition_without_any_partial_effect() {
         U256::ZERO,
         U256::from(7),
     );
-    let (scope, parent) = begin_persistent_active_scope(&mut provider);
+
     StorageHandle::enter(&mut provider, |storage| {
-        issue_one_tribute_in_scope(
+        issue_one_tribute(
             &storage,
-            &scope,
-            &parent,
             FixtureTribute {
                 owner: address!("7600000000000000000000000000000000000076"),
                 wwd,
@@ -535,15 +521,15 @@ fn missed_offering_rejects_a_populated_partition_without_any_partial_effect() {
 
     let storage_before = provider.storage.clone();
     let events_before = provider.events.clone();
-    let ce_before = scope.ce_work_checkpoint().unwrap();
-    let error = run_missed_offering_command(&mut provider, &scope, 2, offering_end).unwrap_err();
+
+    let error = run_missed_offering_command(&mut provider, 2, offering_end).unwrap_err();
     assert!(matches!(
         error,
         outbe_primitives::error::PrecompileError::BodyReadCorruption(_)
     ));
     assert_eq!(provider.storage, storage_before);
     assert_eq!(provider.events, events_before);
-    assert_eq!(scope.ce_work_checkpoint().unwrap(), ce_before);
+
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FORMING);
@@ -558,8 +544,6 @@ fn missed_offering_rejects_a_populated_partition_without_any_partial_effect() {
             U256::from(7)
         );
     });
-
-    end_persistent_active_scope(&mut provider, &scope);
 }
 
 #[test]
@@ -568,7 +552,7 @@ fn missed_offering_rolls_back_every_injected_storage_or_event_failure_then_retri
     let mut probe = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end =
         seed_missed_offering_day(&mut probe, wwd, U256::from(100), U256::ZERO, U256::from(7));
-    let (probe_scope, _parent) = begin_persistent_active_scope(&mut probe);
+
     probe.enable_metadosis_mutation_frame(
         outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
     );
@@ -578,7 +562,7 @@ fn missed_offering_rolls_back_every_injected_storage_or_event_failure_then_retri
             BlockContext::empty_for_tests(2, offering_end, CHAIN_ID),
             storage,
         );
-        crate::commands::advance_active_worldwide_days(&ctx, &probe_scope).unwrap();
+        crate::commands::advance_active_worldwide_days(&ctx).unwrap();
     });
     let mutation_count = probe.clear_mutation_failure();
     assert!(
@@ -588,8 +572,6 @@ fn missed_offering_rolls_back_every_injected_storage_or_event_failure_then_retri
     let clean_storage = probe.storage.clone();
     let clean_events = probe.events.clone();
     let clean_ordered_events = probe.get_ordered_events().to_vec();
-    let clean_ce_work = probe_scope.ce_work_checkpoint().unwrap();
-    end_persistent_active_scope(&mut probe, &probe_scope);
 
     for operation in 0..mutation_count {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -600,11 +582,10 @@ fn missed_offering_rolls_back_every_injected_storage_or_event_failure_then_retri
             U256::ZERO,
             U256::from(7),
         );
-        let (scope, _parent) = begin_persistent_active_scope(&mut provider);
+
         let storage_before = provider.storage.clone();
         let events_before = provider.events.clone();
         let ordered_events_before = provider.get_ordered_events().to_vec();
-        let ce_before = scope.ce_work_checkpoint().unwrap();
 
         provider.enable_metadosis_mutation_frame(
             outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
@@ -615,7 +596,7 @@ fn missed_offering_rolls_back_every_injected_storage_or_event_failure_then_retri
                 BlockContext::empty_for_tests(2, offering_end, CHAIN_ID),
                 storage,
             );
-            crate::commands::advance_active_worldwide_days(&ctx, &scope)
+            crate::commands::advance_active_worldwide_days(&ctx)
         });
         assert!(
             result.is_err(),
@@ -629,13 +610,8 @@ fn missed_offering_rolls_back_every_injected_storage_or_event_failure_then_retri
             ordered_events_before.as_slice(),
             "ordered events at {operation}"
         );
-        assert_eq!(
-            scope.ce_work_checkpoint().unwrap(),
-            ce_before,
-            "CE work at {operation}"
-        );
 
-        run_missed_offering_command(&mut provider, &scope, 2, offering_end).unwrap();
+        run_missed_offering_command(&mut provider, 2, offering_end).unwrap();
         StorageHandle::enter(&mut provider, |storage| {
             assert_eq!(
                 MetadosisContract::new(storage).get_wwd_status(wwd).unwrap(),
@@ -655,82 +631,7 @@ fn missed_offering_rolls_back_every_injected_storage_or_event_failure_then_retri
             clean_ordered_events.as_slice(),
             "MissedOffering retry ordered events diverged at {operation}"
         );
-        assert_eq!(
-            scope.ce_work_checkpoint().unwrap(),
-            clean_ce_work,
-            "MissedOffering retry CE work diverged at {operation}"
-        );
-        end_persistent_active_scope(&mut provider, &scope);
     }
-}
-
-#[test]
-fn missed_offering_rolls_back_a_ce_lookup_failure_after_promis_then_retries_once() {
-    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0808);
-    let later_carry = U256::from(7);
-    let formed_limit = U256::from(100);
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let offering_end =
-        seed_missed_offering_day(&mut provider, wwd, formed_limit, U256::ZERO, later_carry);
-    let parent_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
-    let tree = Arc::new(FailOncePartitionLookup {
-        parent_root,
-        calls: AtomicUsize::new(0),
-    });
-    let scope = outbe_compressed_entities::execution_scope::with_parent_tree(
-        tree.clone(),
-        outbe_compressed_entities::CeWorkConfig::new(0, 0, u64::MAX),
-    );
-    begin_scope_with_persisted_parent(&mut provider, &scope, parent_root);
-
-    let storage_before = provider.storage.clone();
-    let events_before = provider.events.clone();
-    let ce_before = scope.ce_work_checkpoint().unwrap();
-    let error = run_missed_offering_command(&mut provider, &scope, 2, offering_end).unwrap_err();
-    assert!(matches!(
-        error,
-        outbe_primitives::error::PrecompileError::TreeUnavailable(_)
-    ));
-    assert_eq!(tree.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(provider.storage, storage_before);
-    assert_eq!(provider.events, events_before);
-    assert_eq!(scope.ce_work_checkpoint().unwrap(), ce_before);
-    StorageHandle::enter(&mut provider, |storage| {
-        let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FORMING);
-        assert!(metadosis
-            .read_missed_offering_receipt(wwd)
-            .unwrap()
-            .is_none());
-        assert_eq!(
-            PromisLimitContract::new(storage)
-                .get_total_unallocated()
-                .unwrap(),
-            later_carry
-        );
-    });
-
-    run_missed_offering_command(&mut provider, &scope, 2, offering_end).unwrap();
-    assert_eq!(tree.calls.load(Ordering::SeqCst), 2);
-    StorageHandle::enter(&mut provider, |storage| {
-        let metadosis = MetadosisContract::new(storage.clone());
-        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
-        assert_eq!(
-            PromisLimitContract::new(storage)
-                .get_total_unallocated()
-                .unwrap(),
-            later_carry + formed_limit
-        );
-        assert_eq!(
-            metadosis
-                .read_missed_offering_receipt(wwd)
-                .unwrap()
-                .unwrap()
-                .retirement,
-            outbe_compressed_entities::RetirementOutcome::NotPresent
-        );
-    });
-    end_persistent_active_scope(&mut provider, &scope);
 }
 
 #[test]
@@ -739,9 +640,8 @@ fn missed_offering_terminalizes_a_day_that_never_formed_its_limit() {
     let carry_over = U256::from(11);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let offering_end = seed_unformed_missed_offering_day(&mut provider, wwd, carry_over);
-    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
 
-    run_missed_offering_command(&mut provider, &scope, 2, offering_end).unwrap();
+    run_missed_offering_command(&mut provider, 2, offering_end).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
@@ -761,8 +661,6 @@ fn missed_offering_terminalizes_a_day_that_never_formed_its_limit() {
             carry_over
         );
     });
-
-    end_persistent_active_scope(&mut provider, &scope);
 }
 
 #[test]
@@ -778,13 +676,10 @@ fn missed_offering_rejects_a_day_limit_with_no_formation() {
             .write(U256::from(5))
             .unwrap();
     });
-    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
 
-    let error = run_missed_offering_command(&mut provider, &scope, 2, offering_end).unwrap_err();
+    let error = run_missed_offering_command(&mut provider, 2, offering_end).unwrap_err();
     assert!(
         format!("{error:?}").contains("has a day limit with no formation"),
         "unexpected error: {error:?}"
     );
-
-    end_persistent_active_scope(&mut provider, &scope);
 }

@@ -47,18 +47,14 @@ where
     E::Error: std::fmt::Display,
 {
     fn expected_begin_input(&self, ordinal: usize) -> Result<SystemTxInputV2, BlockExecutionError> {
-        let recovered =
-            self.expected_begin_system_txs
-                .get(ordinal)
-                .ok_or_else(|| -> BlockExecutionError {
-                    BlockValidationError::msg(format!(
-                        "missing expected begin system tx at ordinal {ordinal}"
-                    ))
-                    .into()
-                })?;
+        use crate::errors::ExecutorValidationError;
+
+        let recovered = self
+            .expected_begin_system_txs
+            .get(ordinal)
+            .ok_or(ExecutorValidationError::MissingExpectedBeginSystemTx { ordinal })?;
         SystemTxInputV2::decode(recovered.tx().input().as_ref()).map_err(|error| {
-            BlockValidationError::msg(format!("decode expected begin system tx input: {error}"))
-                .into()
+            ExecutorValidationError::decode_expected_begin_system_tx_input(error).into()
         })
     }
 
@@ -85,6 +81,8 @@ where
         block_number: u64,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<Vec<BeginSystemTransaction>, BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         // Genesis returns before inspecting queued bootstrap or body inputs.
         if block_number == 0 {
             return Ok(Vec::new());
@@ -151,9 +149,9 @@ where
                 SystemTxKind::OracleSlashWindow => {
                     // Keep late OST3 rejection after boundary, before decoding Oracle.
                     if block_number != 1 && self.pending_tee_bootstrap.is_some() {
-                        return Err(BlockValidationError::msg(format!(
-                            "OST3 bootstrap payload is forbidden at block {block_number}"
-                        ))
+                        return Err(ExecutorValidationError::Ost3BootstrapForbiddenAtBlock {
+                            block_number,
+                        }
                         .into());
                     }
                     self.append_begin_input(&mut system_txs, *kind, || {
@@ -173,9 +171,10 @@ where
                 }
                 // The canonical begin plan excludes the end-zone terminal request.
                 SystemTxKind::OcompTerminalRequest => {
-                    return Err(BlockValidationError::msg(format!(
-                        "unexpected system tx at body_index={ordinal}; expected begin_block system txs {kinds:?}"
-                    ))
+                    return Err(ExecutorValidationError::UnexpectedBeginSystemTx {
+                        body_index: ordinal,
+                        expected: kinds.clone(),
+                    }
                     .into());
                 }
             }
@@ -197,10 +196,13 @@ where
             self.expected_begin_input(ordinal)?
         };
         if input.kind() != expected_kind {
-            return Err(BlockValidationError::msg(format!(
-                "expected {expected_kind:?} system tx at ordinal {ordinal}"
-            ))
-            .into());
+            return Err(
+                crate::errors::ExecutorValidationError::ExpectedSystemTxAtOrdinal {
+                    expected_kind,
+                    ordinal,
+                }
+                .into(),
+            );
         }
         system_txs.push((expected_kind, input, None));
         Ok(())
@@ -210,33 +212,31 @@ where
         &self,
         ordinal: usize,
     ) -> Result<BeginSystemTransaction, BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         let verifier_mode = !self.expected_begin_system_txs.is_empty();
         let input = if verifier_mode {
             self.expected_begin_input(ordinal)?
         } else {
-            let metadata =
-                self.parent_consensus_metadata
-                    .clone()
-                    .ok_or_else(|| -> BlockExecutionError {
-                        BlockValidationError::msg(
-                            "missing parent consensus metadata for CertifiedParentAccounting",
-                        )
-                        .into()
-                    })?;
+            let metadata = self
+                .parent_consensus_metadata
+                .clone()
+                .ok_or(ExecutorValidationError::MissingParentConsensusMetadata)?;
             SystemTxInputV2::CertifiedParentAccounting { metadata }
         };
         let SystemTxInputV2::CertifiedParentAccounting { metadata } = &input else {
-            return Err(BlockValidationError::msg(
-                "expected CertifiedParentAccounting system tx at ordinal 0",
-            )
-            .into());
+            return Err(
+                ExecutorValidationError::ExpectedCertifiedParentAccountingAtOrdinal0.into(),
+            );
         };
         if metadata.finalized_block_hash != self.parent_hash {
-            return Err(BlockValidationError::msg(format!(
-                "CertifiedParentAccounting metadata hash must match block parent: expected {}, got {}",
-                self.parent_hash, metadata.finalized_block_hash
-            ))
-            .into());
+            return Err(
+                ExecutorValidationError::CertifiedParentAccountingHashMismatch {
+                    expected: self.parent_hash,
+                    actual: metadata.finalized_block_hash,
+                }
+                .into(),
+            );
         }
         let summary = self.accounted_parent_artifact_for_metadata(metadata)?;
         Ok((
@@ -251,6 +251,8 @@ where
         ordinal: usize,
         artifact: &outbe_primitives::consensus::DkgBoundaryArtifact,
     ) -> Result<SystemTxInputV2, BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         let verifier_mode = !self.expected_begin_system_txs.is_empty();
         let input = if verifier_mode {
             self.expected_begin_input(ordinal)?
@@ -264,16 +266,14 @@ where
                 artifact: input_artifact,
             } if input_artifact == artifact => {}
             SystemTxInputV2::BoundaryOutcome { .. } => {
-                return Err(BlockValidationError::msg(format!(
-                    "BoundaryOutcome system tx artifact mismatch at ordinal {ordinal}"
-                ))
-                .into());
+                return Err(
+                    ExecutorValidationError::BoundaryOutcomeArtifactMismatch { ordinal }.into(),
+                );
             }
             _ => {
-                return Err(BlockValidationError::msg(format!(
-                    "expected BoundaryOutcome system tx at ordinal {ordinal}"
-                ))
-                .into());
+                return Err(
+                    ExecutorValidationError::ExpectedBoundaryOutcomeAtOrdinal { ordinal }.into(),
+                );
             }
         }
         Ok(input)
@@ -283,26 +283,20 @@ where
         &self,
         ordinal: usize,
     ) -> Result<SystemTxInputV2, BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         let verifier_mode = !self.expected_begin_system_txs.is_empty();
         let input = if verifier_mode {
             self.expected_begin_input(ordinal)?
         } else {
-            let payload =
-                self.pending_tee_bootstrap
-                    .clone()
-                    .ok_or_else(|| -> BlockExecutionError {
-                        BlockValidationError::msg(
-                            "missing mandatory block-1 OST3 bootstrap payload",
-                        )
-                        .into()
-                    })?;
+            let payload = self
+                .pending_tee_bootstrap
+                .clone()
+                .ok_or(ExecutorValidationError::MissingBlock1Ost3BootstrapPayload)?;
             SystemTxInputV2::TeeBootstrap { payload }
         };
         if !matches!(input, SystemTxInputV2::TeeBootstrap { .. }) {
-            return Err(BlockValidationError::msg(format!(
-                "expected mandatory OST3 system tx at ordinal {ordinal}"
-            ))
-            .into());
+            return Err(ExecutorValidationError::ExpectedMandatoryOst3AtOrdinal { ordinal }.into());
         }
         Ok(input)
     }
@@ -322,16 +316,15 @@ where
         ),
         BlockExecutionError,
     > {
+        use crate::errors::ExecutorValidationError;
+
         let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
         let mut gas_inputs = system_txs
             .iter()
             .map(|(kind, input, _)| {
                 input.encode().map(|calldata| (*kind, calldata)).map_err(
                     |error| -> BlockExecutionError {
-                        BlockValidationError::msg(format!(
-                            "encode system tx for visible gas plan: {error}"
-                        ))
-                        .into()
+                        ExecutorValidationError::encode_system_tx_for_visible_gas_plan(error).into()
                     },
                 )
             })
@@ -341,51 +334,27 @@ where
             gas_inputs.push((
                 terminal.kind(),
                 terminal.encode().map_err(|error| -> BlockExecutionError {
-                    BlockValidationError::msg(format!(
-                        "encode terminal system tx for visible gas plan: {error}"
-                    ))
-                    .into()
+                    ExecutorValidationError::encode_terminal_system_tx_for_visible_gas_plan(error)
+                        .into()
                 })?,
             ));
         }
         let gas_plan = SystemTxVisibleGasPlan::new(self.inner.evm.block().gas_limit(), &gas_inputs)
             .map_err(|error| -> BlockExecutionError {
-                BlockValidationError::msg(format!("plan visible system tx gas: {error}")).into()
+                ExecutorValidationError::plan_visible_system_tx_gas(error).into()
             })?;
-        let intrinsic_gas =
-            gas_plan
-                .intrinsic_gas(body_index)
-                .ok_or_else(|| -> BlockExecutionError {
-                    BlockValidationError::msg(format!(
-                        "visible gas plan missing intrinsic gas for body_index={body_index}"
-                    ))
-                    .into()
-                })?;
-        let protocol_precharge =
-            gas_plan
-                .protocol_precharge(body_index)
-                .ok_or_else(|| -> BlockExecutionError {
-                    BlockValidationError::msg(format!(
-                        "visible gas plan missing protocol precharge for body_index={body_index}"
-                    ))
-                    .into()
-                })?;
-        let visible_base_gas = intrinsic_gas.checked_add(protocol_precharge).ok_or_else(
-            || -> BlockExecutionError {
-                BlockValidationError::msg(format!(
-                    "visible base gas overflow for body_index={body_index}"
-                ))
-                .into()
-            },
+        let intrinsic_gas = gas_plan
+            .intrinsic_gas(body_index)
+            .ok_or(ExecutorValidationError::VisibleGasPlanMissingIntrinsicGas { body_index })?;
+        let protocol_precharge = gas_plan.protocol_precharge(body_index).ok_or(
+            ExecutorValidationError::VisibleGasPlanMissingProtocolPrecharge { body_index },
         )?;
+        let visible_base_gas = intrinsic_gas
+            .checked_add(protocol_precharge)
+            .ok_or(ExecutorValidationError::VisibleBaseGasOverflow { body_index })?;
         let gas_limit = gas_plan
             .gas_limit(body_index)
-            .ok_or_else(|| -> BlockExecutionError {
-                BlockValidationError::msg(format!(
-                    "visible gas plan missing gas limit for body_index={body_index}"
-                ))
-                .into()
-            })?;
+            .ok_or(ExecutorValidationError::VisibleGasPlanMissingGasLimit { body_index })?;
         system_txs
             .into_iter()
             .nth(body_index)
@@ -408,9 +377,10 @@ where
                     ocomp_activation,
                     block_artifacts.radicle_publication.is_some(),
                 );
-                BlockValidationError::msg(format!(
-                    "unexpected system tx at body_index={body_index}; expected begin_block system txs {expected:?}"
-                ))
+                ExecutorValidationError::UnexpectedBeginSystemTx {
+                    body_index,
+                    expected,
+                }
                 .into()
             })
     }
@@ -429,25 +399,26 @@ where
         block_number: u64,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<ExpectedSystemTransaction, BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         let cursor = self.system_tx_phase_cursor;
         let Some(body_index) = cursor.body_index() else {
             // Cursor=UserTxs: all begin-zone system txs are consumed.
             // A reserved system transaction address here has two possible
             // causes: an unsolicited user-tx attempt at the reserved address,
             // or a duplicate / out-of-band system tx. Both are fatal.
-            return Err(BlockValidationError::msg(
-                "tx to reserved system transaction address after begin-zone system txs are consumed",
-            )
-            .into());
+            return Err(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into());
         };
         let body_index_usize = usize::from(body_index);
         let (resolved_kind, input, finalized_summary, visible_base_gas, gas_limit) =
             self.expected_system_tx_at_body_index(body_index_usize, block_number, block_artifacts)?;
         if let Some(expected_kind) = cursor.expected_kind() {
             if expected_kind != resolved_kind {
-                return Err(BlockValidationError::msg(format!(
-                    "system tx cursor/body mismatch at body_index={body_index_usize}: cursor expects {expected_kind:?}, body has {resolved_kind:?}"
-                ))
+                return Err(ExecutorValidationError::SystemTxCursorBodyMismatch {
+                    body_index: body_index_usize,
+                    expected_kind,
+                    resolved_kind,
+                }
                 .into());
             }
         }

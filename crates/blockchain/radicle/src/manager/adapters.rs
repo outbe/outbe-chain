@@ -37,7 +37,7 @@ impl NativeHeartwoodControl {
             blocking(move || native_call(&socket, deadline, &command)),
         )
         .await
-        .map_err(|_| ManagerError::Control("Heartwood control deadline exceeded".into()))?
+        .map_err(|_| ManagerError::from(crate::errors::HeartwoodControlReason::DeadlineExceeded))?
     }
 }
 
@@ -167,9 +167,10 @@ impl HeartwoodControl for NativeHeartwoodControl {
                     NativeConnectResult::Disconnected { reason } => last_error = Some(reason),
                 }
             }
-            Err(ManagerError::Control(
-                last_error.unwrap_or_else(|| "peer has no signed endpoint".into()),
-            ))
+            Err(match last_error {
+                Some(reason) => ManagerError::Control(reason),
+                None => crate::errors::HeartwoodControlReason::PeerHasNoSignedEndpoint.into(),
+            })
         })
     }
 
@@ -231,7 +232,7 @@ fn native_call<C: Serialize, R: DeserializeOwned>(
         .read_line(&mut response)
         .map_err(control_error)?;
     if response.is_empty() {
-        return Err(ManagerError::Control("empty control response".into()));
+        return Err(crate::errors::HeartwoodControlReason::EmptyResponse.into());
     }
     let value: serde_json::Value = serde_json::from_str(&response).map_err(control_error)?;
     if let Some(reason) = value.get("error").and_then(serde_json::Value::as_str) {
@@ -258,11 +259,11 @@ fn encode_node_id(node_id: [u8; 32]) -> String {
 fn decode_node_id(encoded: &str) -> Result<[u8; 32], ManagerError> {
     let (base, bytes) = multibase::decode(encoded).map_err(control_error)?;
     if base != multibase::Base::Base58Btc || bytes.len() != 34 || bytes[..2] != [0xed, 0x01] {
-        return Err(ManagerError::Control("invalid Heartwood NodeId".into()));
+        return Err(crate::errors::HeartwoodControlReason::InvalidNodeId.into());
     }
     bytes[2..]
         .try_into()
-        .map_err(|_| ManagerError::Control("invalid Heartwood NodeId".into()))
+        .map_err(|_| ManagerError::from(crate::errors::HeartwoodControlReason::InvalidNodeId))
 }
 
 fn encode_repo_id(repo: RepoId) -> String {
@@ -282,7 +283,7 @@ fn parse_endpoint(encoded: &str) -> Result<EndpointAddress, ManagerError> {
     }
     let (host, port) = encoded
         .rsplit_once(':')
-        .ok_or_else(|| ManagerError::Control("invalid Heartwood address".into()))?;
+        .ok_or_else(|| ManagerError::from(crate::errors::HeartwoodControlReason::InvalidAddress))?;
     let port = port.parse::<u16>().map_err(control_error)?;
     EndpointAddress::dns(host, port).map_err(control_error)
 }
@@ -299,9 +300,9 @@ fn format_endpoint(endpoint: &EndpointAddress) -> Result<String, ManagerError> {
             u16::from_be_bytes([*port_hi, *port_lo])
         )),
         [1, octets @ .., port_hi, port_lo] if octets.len() == 16 => {
-            let octets: [u8; 16] = octets
-                .try_into()
-                .map_err(|_| ManagerError::Control("invalid IPv6 endpoint".into()))?;
+            let octets: [u8; 16] = octets.try_into().map_err(|_| {
+                ManagerError::from(crate::errors::HeartwoodControlReason::InvalidIpv6Endpoint)
+            })?;
             Ok(format!(
                 "[{}]:{}",
                 std::net::Ipv6Addr::from(octets),
@@ -309,14 +310,12 @@ fn format_endpoint(endpoint: &EndpointAddress) -> Result<String, ManagerError> {
             ))
         }
         [2, length, rest @ ..] if rest.len() == usize::from(*length) + 2 => {
-            let host = endpoint
-                .host()
-                .ok_or_else(|| ManagerError::Control("invalid DNS endpoint".into()))?;
+            let host = endpoint.host().ok_or_else(|| {
+                ManagerError::from(crate::errors::HeartwoodControlReason::InvalidDnsEndpoint)
+            })?;
             Ok(format!("{host}:{}", endpoint.port()))
         }
-        _ => Err(ManagerError::Control(
-            "invalid canonical endpoint encoding".into(),
-        )),
+        _ => Err(crate::errors::HeartwoodControlReason::InvalidCanonicalEndpointEncoding.into()),
     }
 }
 
@@ -340,9 +339,7 @@ struct RepositoryResponse {
 impl HttpRepositoryStatus {
     pub fn new(address: SocketAddr, deadline: Duration) -> Result<Self, ManagerError> {
         if !address.ip().is_loopback() {
-            return Err(ManagerError::Status(
-                "repository status endpoint must be loopback".into(),
-            ));
+            return Err(crate::errors::RepositoryStatusReason::NonLoopbackEndpoint.into());
         }
         let client = reqwest::Client::builder()
             .timeout(deadline)
@@ -372,9 +369,7 @@ impl RepositoryStatus for HttpRepositoryStatus {
                 .await
                 .map_err(status_error)?;
             if response.version != 1 || response.repo_id != encoded {
-                return Err(ManagerError::Status(
-                    "repository status identity mismatch".into(),
-                ));
+                return Err(crate::errors::RepositoryStatusReason::IdentityMismatch.into());
             }
             Ok(response.available)
         })

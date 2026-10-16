@@ -1,14 +1,11 @@
 //! Certified OCOMP consume and logical-retirement boundary for Tribute.
 //!
-//! The owner transition is constant-size: it authenticates the already sealed
-//! collection aggregate, retires that CE collection, and advances one source
-//! generation. It never traverses Tribute records or deletes projection bodies.
+//! The transition verifies frozen day aggregates, marks the day retired, and
+//! advances its source generation. It retains all ciphertext records and indexes.
 
+use crate::runtime::RetirementOutcome;
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_compressed_entities::{
-    partition_collection_key, ExecutionScope, PartitionRef, RetirementOutcome,
-};
 use outbe_ocomp_protocol::{
     intent::TributeInputBindingV1,
     receipts::{
@@ -54,7 +51,7 @@ impl PreparedCertifiedTributeRetirementV1 {
 }
 
 /// Validates the complete certified Tribute input and constructs its receipt
-/// without mutating Tribute or compressed-entity state.
+/// without mutating Tribute state.
 pub fn prepare_certified_partition_retirement(
     storage: &StorageHandle<'_>,
     capability: &CertifiedLysisActivation<'_>,
@@ -64,13 +61,6 @@ pub fn prepare_certified_partition_retirement(
     validate_input(capability, input)?;
 
     let day = WorldwideDay::new(input.input_binding.wwd);
-    let partition = PartitionRef::TributeWwd(day);
-    let (_, collection_key) = partition_collection_key(partition)
-        .map_err(crate::errors::TributeError::invalid_certified_protocol_value)?;
-    if B256::from(*collection_key.as_bytes()) != input.input_binding.collection_key {
-        return Err(crate::errors::TributeError::CertifiedCollectionKeyMismatch.into());
-    }
-
     let tribute = TributeContract::new(storage.clone());
     let current = tribute.pre_admission_projection(day)?;
     if !current.profile_ready
@@ -79,8 +69,7 @@ pub fn prepare_certified_partition_retirement(
     {
         return Err(crate::errors::TributeError::CertifiedInputDiffersFromSealedGeneration.into());
     }
-    if current.sealed_collection_root != input.input_binding.sealed_collection_root
-        || current.tribute_count != input.input_binding.exact_count
+    if current.tribute_count != input.input_binding.exact_count
         || current.tribute_nominal_total_minor != input.input_binding.exact_nominal_total
     {
         return Err(crate::errors::TributeError::CertifiedInputDiffersFromSealedGeneration.into());
@@ -92,7 +81,6 @@ pub fn prepare_certified_partition_retirement(
     let state_projection = TributeStateEventProjectionV1 {
         wwd: input.input_binding.wwd,
         source_generation: input.input_binding.source_generation,
-        sealed_collection_root: input.input_binding.sealed_collection_root,
         consumed_count: input.consumed_count,
         consumed_nominal_total: input.consumed_nominal_total,
         retired_generation: input.retired_generation,
@@ -102,7 +90,6 @@ pub fn prepare_certified_partition_retirement(
     let receipt = TributeReceiptV1 {
         binding: input.binding.clone(),
         tribute_input_binding: input.input_binding.clone(),
-        sealed_collection_root: input.input_binding.sealed_collection_root,
         consumed_count: input.consumed_count,
         consumed_nominal_total: input.consumed_nominal_total,
         retired_generation: input.retired_generation,
@@ -123,25 +110,22 @@ pub fn prepare_certified_partition_retirement(
     })
 }
 
-/// Consumes one exact sealed Tribute generation and requests its authenticated
-/// CE collection retirement. Physical body retention/release remains node
-/// owned and is deliberately outside this consensus transition.
+/// Consumes one sealed generation and marks its day retired in EVM state.
+/// The transition retains all ciphertext records and indexes.
 pub fn retire_certified_partition(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
     capability: &mut CertifiedLysisActivation<'_>,
     input: &CertifiedTributeRetirementV1,
     limits: &SchemaLimits,
 ) -> Result<TributeReceiptV1> {
     let prepared = prepare_certified_partition_retirement(storage, capability, input, limits)?;
-    retire_prepared_certified_partition(storage, scope, capability, prepared)
+    retire_prepared_certified_partition(storage, capability, prepared)
 }
 
 /// Applies a previously validated retirement. Callers prepare and verify every
-/// receipt gate before invoking this final compressed-entity owner mutation.
+/// receipt gate before this final state mutation.
 pub fn retire_prepared_certified_partition(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
     capability: &mut CertifiedLysisActivation<'_>,
     prepared: PreparedCertifiedTributeRetirementV1,
 ) -> Result<TributeReceiptV1> {
@@ -159,7 +143,7 @@ pub fn retire_prepared_certified_partition(
             input.consumed_count,
             input.consumed_nominal_total,
         )?;
-        if tribute.retire_completed_partition_inner(scope, day)? != RetirementOutcome::Requested {
+        if tribute.retire_completed_partition_inner(day)? != RetirementOutcome::Requested {
             return Err(
                 crate::errors::TributeError::SealedProjectionContradictsAuthenticatedCeGeneration
                     .into(),
@@ -185,7 +169,6 @@ pub fn retire_prepared_certified_partition(
                 activationCallId: input.binding.activation_call_id,
                 worldwideDay: input.input_binding.wwd,
                 sourceGeneration: input.input_binding.source_generation,
-                sealedCollectionRoot: input.input_binding.sealed_collection_root,
                 consumedCount: input.consumed_count,
                 consumedNominalTotalMinor: tribute.encrypted_day_nominal(day, true)?.into(),
                 retiredGeneration: input.retired_generation,
@@ -209,10 +192,7 @@ fn validate_input(
     if capability.activation_call_id() != input.binding.activation_call_id {
         return Err(crate::errors::TributeError::CertifiedActivationBindingMismatch.into());
     }
-    if input.input_binding.sealed_collection_root.is_zero()
-        || input.input_binding.exact_count == 0
-        || input.input_binding.source_generation != 0
-    {
+    if input.input_binding.exact_count == 0 || input.input_binding.source_generation != 0 {
         return Err(crate::errors::TributeError::InvalidCertifiedRetirementAggregate.into());
     }
     if input.consumed_count != input.input_binding.exact_count
@@ -226,21 +206,12 @@ fn validate_input(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use alloy_primitives::{Address, LogData};
     use alloy_sol_types::SolEvent;
-    use outbe_compressed_entities::{
-        begin_block, AuthenticatedParentTree, CeWorkConfig, EntityRef, FinalLeafMutation,
-        ProvisionalTreeBatch,
-    };
     use outbe_ocomp_protocol::profile::poc_schema_limits;
-    use outbe_primitives::{
-        addresses::COMPRESSED_ENTITIES_ADDRESS,
-        storage::{
-            hashmap::HashMapStorageProvider, PrecompileStorageProvider, SubCallError, SubCallInput,
-            SubCallOutput,
-        },
+    use outbe_primitives::storage::{
+        hashmap::HashMapStorageProvider, PrecompileStorageProvider, SubCallError, SubCallInput,
+        SubCallOutput,
     };
     use revm::{
         context::journaled_state::JournalCheckpoint,
@@ -251,74 +222,6 @@ mod tests {
     use outbe_primitives::error::PrecompileError;
 
     use super::*;
-
-    #[derive(Clone, Copy, Debug)]
-    enum ParentMode {
-        Present,
-        Absent,
-        Failure,
-    }
-
-    #[derive(Debug)]
-    struct PartitionTree {
-        snapshot: SyntheticPartitionSnapshot,
-    }
-
-    #[derive(Debug)]
-    struct SyntheticPartitionSnapshot {
-        block_hash: B256,
-        root: B256,
-        partition: PartitionRef,
-        mode: ParentMode,
-        leaf: Option<outbe_compressed_entities::Commitment>,
-        seal_error: &'static str,
-    }
-
-    impl AuthenticatedParentTree for PartitionTree {
-        fn parent_block_hash(&self) -> B256 {
-            self.snapshot.block_hash
-        }
-
-        fn parent_root(&self) -> B256 {
-            self.snapshot.root
-        }
-
-        fn read_leaf_verified(
-            &self,
-            _entity: EntityRef,
-            _expected_parent_root: B256,
-        ) -> Result<Option<outbe_compressed_entities::Commitment>> {
-            Ok(self.snapshot.leaf)
-        }
-
-        fn partition_present_verified(
-            &self,
-            partition: PartitionRef,
-            expected_parent_root: B256,
-        ) -> Result<bool> {
-            if expected_parent_root != self.snapshot.root || partition != self.snapshot.partition {
-                return Err(PrecompileError::Revert(
-                    "test parent partition binding mismatch".into(),
-                ));
-            }
-            match self.snapshot.mode {
-                ParentMode::Present => Ok(true),
-                ParentMode::Absent => Ok(false),
-                ParentMode::Failure => Err(PrecompileError::Revert(
-                    "injected authenticated CE retirement failure".into(),
-                )),
-            }
-        }
-
-        fn prepare_seal(
-            &self,
-            _block_number: u64,
-            _mutations: &[FinalLeafMutation],
-            _retirements: &[PartitionRef],
-        ) -> Result<ProvisionalTreeBatch> {
-            Err(PrecompileError::Revert(self.snapshot.seal_error.into()))
-        }
-    }
 
     struct ActivationTestProvider {
         authority: ActivationStorage,
@@ -493,40 +396,13 @@ mod tests {
 
     struct Fixture {
         provider: ActivationTestProvider,
-        scope: ExecutionScope,
     }
 
     impl Fixture {
-        fn new(expected: &CertifiedTributeRetirementV1, mode: ParentMode) -> Self {
-            let parent_root = B256::repeat_byte(80);
-            let scope = outbe_compressed_entities::execution_scope::with_parent_tree(
-                Arc::new(PartitionTree {
-                    snapshot: SyntheticPartitionSnapshot {
-                        block_hash: B256::repeat_byte(90),
-                        root: parent_root,
-                        partition: PartitionRef::TributeWwd(WorldwideDay::new(20_260_725)),
-                        mode,
-                        leaf: None,
-                        seal_error: "test does not seal the synthetic parent",
-                    },
-                }),
-                CeWorkConfig::new(0, 0, u64::MAX),
-            );
+        fn new(expected: &CertifiedTributeRetirementV1) -> Self {
             let mut provider = ActivationTestProvider::new();
             StorageHandle::enter(&mut provider, |storage| {
                 let _enclave = crate::enclave_client::test_enclave::scope();
-                storage
-                    .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-                    .unwrap();
-                storage
-                    .sstore(
-                        COMPRESSED_ENTITIES_ADDRESS,
-                        U256::from(1),
-                        U256::from_be_slice(parent_root.as_slice()),
-                    )
-                    .unwrap();
-                begin_block(storage.clone(), &scope).unwrap();
-
                 let day = WorldwideDay::new(expected.input_binding.wwd);
                 let mut tribute = TributeContract::new(storage);
                 tribute.ocomp_profile_ready.write(true).unwrap();
@@ -555,14 +431,13 @@ mod tests {
                 let mut admission = DayPreAdmission::with_key(day);
                 admission.initialized = true;
                 admission.is_sealed = true;
-                admission.sealed_collection_root = expected.input_binding.sealed_collection_root;
                 admission.sealed_tribute_count = expected.input_binding.exact_count;
                 admission.sealed_tribute_nominal_total_minor =
                     expected.input_binding.exact_nominal_total;
                 admission.source_generation = expected.input_binding.source_generation;
                 tribute.store_day_pre_admission(&admission).unwrap();
             });
-            Self { provider, scope }
+            Self { provider }
         }
 
         fn run(&mut self, input: &CertifiedTributeRetirementV1) -> Result<TributeReceiptV1> {
@@ -575,7 +450,6 @@ mod tests {
                         capability.authorize_carry_over_credit()?;
                         let receipt = retire_certified_partition(
                             &storage,
-                            &self.scope,
                             capability,
                             input,
                             &poc_schema_limits(),
@@ -621,14 +495,11 @@ mod tests {
 
     fn input(call: u8) -> CertifiedTributeRetirementV1 {
         let day = WorldwideDay::new(20_260_725);
-        let (_, collection_key) = partition_collection_key(PartitionRef::TributeWwd(day)).unwrap();
         CertifiedTributeRetirementV1 {
             binding: binding(call),
             input_binding: TributeInputBindingV1 {
                 wwd: day.value(),
                 source_generation: 0,
-                collection_key: B256::from(*collection_key.as_bytes()),
-                sealed_collection_root: B256::repeat_byte(31),
                 exact_count: 3,
                 exact_nominal_total: U256::from(900),
             },
@@ -641,7 +512,7 @@ mod tests {
     #[test]
     fn valid_capability_consumes_exact_generation_and_emits_canonical_receipt() {
         let input = input(21);
-        let mut fixture = Fixture::new(&input, ParentMode::Present);
+        let mut fixture = Fixture::new(&input);
         let receipt = fixture.run(&input).unwrap();
 
         let (supply, count, nominal, is_sealed, generation) =
@@ -670,10 +541,6 @@ mod tests {
         );
         assert_eq!(certified.data.worldwideDay, input.input_binding.wwd);
         assert_eq!(certified.data.sourceGeneration, 0);
-        assert_eq!(
-            certified.data.sealedCollectionRoot,
-            input.input_binding.sealed_collection_root
-        );
         assert_eq!(certified.data.consumedCount, input.consumed_count);
         let encrypted: outbe_primitives::tribute_day_encryption::EncryptedTributeDayAmountV2 =
             postcard::from_bytes(&certified.data.consumedNominalTotalMinor).unwrap();
@@ -690,12 +557,12 @@ mod tests {
     }
 
     #[test]
-    fn wrong_root_count_nominal_or_generation_is_side_effect_free() {
+    fn wrong_day_count_nominal_or_generation_is_side_effect_free() {
         let expected = input(22);
         for mutation in 0..5 {
             let mut candidate = expected.clone();
             match mutation {
-                0 => candidate.input_binding.sealed_collection_root = B256::repeat_byte(99),
+                0 => candidate.input_binding.wwd += 1,
                 1 => {
                     candidate.input_binding.exact_count += 1;
                     candidate.consumed_count += 1;
@@ -708,10 +575,10 @@ mod tests {
                     candidate.input_binding.source_generation = 1;
                     candidate.retired_generation = 2;
                 }
-                4 => candidate.input_binding.collection_key = B256::repeat_byte(98),
+                4 => candidate.consumed_count += 1,
                 _ => unreachable!(),
             }
-            let mut fixture = Fixture::new(&expected, ParentMode::Present);
+            let mut fixture = Fixture::new(&expected);
             let before = fixture.state(WorldwideDay::new(expected.input_binding.wwd));
             assert!(fixture.run(&candidate).is_err());
             assert_eq!(
@@ -723,24 +590,9 @@ mod tests {
     }
 
     #[test]
-    fn ce_absence_or_failure_rolls_back_bulk_accounting_and_generation() {
-        let input = input(23);
-        for mode in [ParentMode::Absent, ParentMode::Failure] {
-            let mut fixture = Fixture::new(&input, mode);
-            let before = fixture.state(WorldwideDay::new(input.input_binding.wwd));
-            assert!(fixture.run(&input).is_err());
-            assert_eq!(
-                fixture.state(WorldwideDay::new(input.input_binding.wwd)),
-                before
-            );
-            assert!(fixture.provider.get_ordered_events().is_empty());
-        }
-    }
-
-    #[test]
     fn every_storage_and_event_failure_rolls_back_and_allows_exact_retry() {
         let input = input(24);
-        let mut probe = Fixture::new(&input, ParentMode::Present);
+        let mut probe = Fixture::new(&input);
         probe.provider.fail_after_mutation_at(usize::MAX);
         probe.run(&input).unwrap();
         let mutation_count = probe.provider.clear_mutation_failure();
@@ -750,7 +602,7 @@ mod tests {
         );
 
         for operation in 0..mutation_count {
-            let mut fixture = Fixture::new(&input, ParentMode::Present);
+            let mut fixture = Fixture::new(&input);
             let day = WorldwideDay::new(input.input_binding.wwd);
             let before_state = fixture.state(day);
             let before_storage = fixture.provider.storage.clone();
@@ -772,7 +624,7 @@ mod tests {
     #[test]
     fn caught_late_failure_or_wrong_phase_cannot_skip_the_tribute_cursor() {
         let input = input(25);
-        let mut probe = Fixture::new(&input, ParentMode::Present);
+        let mut probe = Fixture::new(&input);
         probe.provider.fail_after_mutation_at(usize::MAX);
         probe.run(&input).unwrap();
         let final_mutation = probe
@@ -781,7 +633,7 @@ mod tests {
             .checked_sub(1)
             .expect("certified retirement must mutate state");
 
-        let mut late_failure = Fixture::new(&input, ParentMode::Present);
+        let mut late_failure = Fixture::new(&input);
         late_failure.provider.fail_after_mutation_at(final_mutation);
         let receipt = StorageHandle::enter(&mut late_failure.provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
@@ -790,19 +642,13 @@ mod tests {
                 capability.authorize_carry_over_credit()?;
                 assert!(retire_certified_partition(
                     &storage,
-                    &late_failure.scope,
                     capability,
                     &input,
                     &poc_schema_limits(),
                 )
                 .is_err());
-                let receipt = retire_certified_partition(
-                    &storage,
-                    &late_failure.scope,
-                    capability,
-                    &input,
-                    &poc_schema_limits(),
-                )?;
+                let receipt =
+                    retire_certified_partition(&storage, capability, &input, &poc_schema_limits())?;
                 capability.authorize_terminal_receipt()?;
                 Ok(receipt)
             })
@@ -811,27 +657,21 @@ mod tests {
         assert_eq!(receipt.consumed_count, input.consumed_count);
         assert_eq!(late_failure.provider.get_ordered_events().len(), 2);
 
-        let mut wrong_phase = Fixture::new(&input, ParentMode::Present);
+        let mut wrong_phase = Fixture::new(&input);
         let receipt = StorageHandle::enter(&mut wrong_phase.provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
             storage.with_lysis_activation_frame(input.binding.activation_call_id, |capability| {
                 capability.authorize_nod_installation()?;
                 assert!(retire_certified_partition(
                     &storage,
-                    &wrong_phase.scope,
                     capability,
                     &input,
                     &poc_schema_limits(),
                 )
                 .is_err());
                 capability.authorize_carry_over_credit()?;
-                let receipt = retire_certified_partition(
-                    &storage,
-                    &wrong_phase.scope,
-                    capability,
-                    &input,
-                    &poc_schema_limits(),
-                )?;
+                let receipt =
+                    retire_certified_partition(&storage, capability, &input, &poc_schema_limits())?;
                 capability.authorize_terminal_receipt()?;
                 Ok(receipt)
             })
@@ -844,7 +684,7 @@ mod tests {
     #[test]
     fn exact_retry_cannot_consume_or_retire_twice() {
         let input = input(26);
-        let mut fixture = Fixture::new(&input, ParentMode::Present);
+        let mut fixture = Fixture::new(&input);
         fixture.run(&input).unwrap();
         let state = fixture.state(WorldwideDay::new(input.input_binding.wwd));
         let events = fixture.provider.get_ordered_events().to_vec();
@@ -860,7 +700,7 @@ mod tests {
     #[test]
     fn populated_postfork_partition_rejects_legacy_consume_and_retire() {
         let input = input(27);
-        let mut fixture = Fixture::new(&input, ParentMode::Present);
+        let mut fixture = Fixture::new(&input);
         StorageHandle::enter(&mut fixture.provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
             let mut tribute = TributeContract::new(storage);
@@ -872,10 +712,7 @@ mod tests {
                 )
                 .is_err());
             assert!(tribute
-                .retire_completed_partition(
-                    &fixture.scope,
-                    WorldwideDay::new(input.input_binding.wwd),
-                )
+                .retire_completed_partition(WorldwideDay::new(input.input_binding.wwd),)
                 .is_err());
         });
         let (supply, count, nominal, is_sealed, generation) =

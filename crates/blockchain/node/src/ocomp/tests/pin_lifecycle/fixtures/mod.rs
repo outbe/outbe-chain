@@ -35,7 +35,6 @@ pub(super) fn candidate_for_intent(block: &ConsensusBlock, intent: &JobIntentV1)
         state_root: block.header().inner.state_root,
         intent_id: intent.intent_id(&poc_schema_limits()).unwrap(),
         wwd: intent.wwd,
-        ce_sealed_root: intent.ce_sealed_root,
         protocol_bundle_hash: intent.protocol_bundle_hash,
         input_lease_id: intent.input_lease_id().unwrap(),
     }
@@ -56,7 +55,7 @@ pub(super) fn intent_for_candidate(candidate: CandidatePinV1) -> JobIntentV1 {
     intent.activation_preconditions.tribute.wwd = candidate.wwd;
     intent.activation_preconditions.nod.wwd = candidate.wwd;
     intent.activation_preconditions.metadosis.wwd = candidate.wwd;
-    intent.ce_sealed_root = candidate.ce_sealed_root;
+
     intent.protocol_bundle_hash = candidate.protocol_bundle_hash;
     assert_eq!(
         intent.intent_id(&poc_schema_limits()).unwrap(),
@@ -94,9 +93,6 @@ pub(super) fn production_intent(block_number: u64) -> JobIntentV1 {
         pending_nonce: 0,
         attempt: 0,
         protocol_bundle_hash: B256::repeat_byte(3),
-        ce_sealed_root: B256::repeat_byte(4),
-        sealed_tribute_collection_key: B256::repeat_byte(5),
-        sealed_tribute_collection_root: B256::repeat_byte(6),
         authenticated_day_count: 0,
         authenticated_day_nominal: U256::ZERO,
         pre_admission_envelope_hash: B256::repeat_byte(7),
@@ -118,8 +114,7 @@ pub(super) fn production_intent(block_number: u64) -> JobIntentV1 {
             tribute: TributeInputBindingV1 {
                 wwd: 7,
                 source_generation: 1,
-                collection_key: B256::repeat_byte(5),
-                sealed_collection_root: B256::repeat_byte(6),
+
                 exact_count: 0,
                 exact_nominal_total: U256::ZERO,
             },
@@ -228,7 +223,6 @@ pub(super) fn production_candidate_source() -> ProductionCandidateFixture {
         state_root: request.header().inner.state_root,
         intent_id,
         wwd: intent.wwd,
-        ce_sealed_root: intent.ce_sealed_root,
         protocol_bundle_hash: intent.protocol_bundle_hash,
         input_lease_id: intent.input_lease_id().expect("input lease id"),
     };

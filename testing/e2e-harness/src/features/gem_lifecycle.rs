@@ -7,10 +7,8 @@ use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, U256};
 use cucumber::{then, when};
-use outbe_compressed_entities::{
-    decode_stored_gem_bucket_v1, decode_stored_gem_v1, CeDomain, GemBodyV1, GemBucketBodyV1,
-    WwdEntityId,
-};
+use outbe_gem::{GemBucketState, GemItemState};
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until,
@@ -20,7 +18,7 @@ use crate::features::entity_lifecycle::holders::{self, FORFEITED, HOLDERS, UNPAI
 use crate::features::entity_lifecycle::markets::MYR_ISO;
 use crate::features::entity_lifecycle::phases::CALL_WINDOW_SEED_DAYS;
 use crate::features::entity_lifecycle::redeem::{self, mint_authorization, Ledger, Mined};
-use crate::features::settlement::{assert_mined_success, compressed_body, find_mining_pow_nonce};
+use crate::features::settlement::{assert_mined_success, find_mining_pow_nonce};
 use crate::internal::{addresses, eth};
 use crate::world::forge::DEPLOYER_KEY;
 use crate::world::settlement_currency::USD_ISO;
@@ -44,14 +42,12 @@ const GEM_LOAD_MINOR: u128 = 100_003;
 /// USD (840) as the reference, spelled `U` in the series id.
 const REFERENCE_BYTE: u8 = b'U';
 /// `GemTypes::Merchant`.
-const MERCHANT_GEM_TYPE: u8 = 5;
-/// `getGem` states: Issued, Qualified, Called, Settled, Forfeited. Qualified and
-/// Forfeited are derived on read.
+const MERCHANT_GEM_TYPE: u8 = 4;
+/// `getGem` states: Issued, Called, Settled, Forfeited. Forfeited is derived on read.
 const ISSUED: u8 = 0;
-const QUALIFIED: u8 = 1;
-const CALLED: u8 = 2;
-const SETTLED: u8 = 3;
-const FORFEITED_STATE: u8 = 4;
+const CALLED: u8 = 1;
+const SETTLED: u8 = 2;
+const FORFEITED_STATE: u8 = 3;
 const HOLDER_SEED: u64 = 0x0e6e_0000;
 /// Issuance mints through a message, not inside the issuing call.
 const ISSUANCE_TIMEOUT_SECS: u64 = 180;
@@ -245,8 +241,8 @@ fn issue_five_gems(world: &mut World) {
             addresses::GEM_FACTORY_ADDR,
         )
         .gemId;
-        // Qualification and the call count only days a gem held in full: stamp it
-        // behind every day the scenario seeds.
+        // The call counts only days a gem held in full: stamp it behind every day
+        // the scenario seeds.
         let backdated = eth::send_call_outcome(
             &url,
             addresses::GEM_FACTORY_ADDR,
@@ -287,7 +283,7 @@ fn issue_five_gems(world: &mut World) {
     world.state.entity_lifecycle.pool_before_forfeit = Some((height, pool));
 }
 
-#[then("every validator serves the same gem and bucket bodies under one sealed root")]
+#[then("every validator reads the same gem and bucket from one finalized EVM state")]
 fn gem_bodies_match_on_every_committee_port(world: &mut World) {
     let minimum = issuance_baseline_height(world);
     for index in 0..HOLDERS {
@@ -297,7 +293,6 @@ fn gem_bodies_match_on_every_committee_port(world: &mut World) {
         assert_eq!(item.gem_id, WwdEntityId::from(id));
         assert_eq!(item.owner, owner_address(index));
         assert_eq!(item.promis_load_minor, view.promisLoadMinor);
-        assert_eq!(item.floor_price_minor, view.floorPriceMinor);
         assert_eq!(item.issued_at, view.issuedAt);
         assert_eq!(bucket.bucket_key, item.bucket_key);
         assert_eq!(bucket.entry_price_minor, view.entryPriceMinor);
@@ -306,10 +301,6 @@ fn gem_bodies_match_on_every_committee_port(world: &mut World) {
 }
 
 impl Lifecycle for GemLifecycle {
-    fn floor(&self, world: &World) -> U256 {
-        read_gem(world, gem(world, 0)).floorPriceMinor
-    }
-
     fn call_price(&self, world: &World) -> U256 {
         read_gem(world, gem(world, 0)).callPriceMinor
     }
@@ -342,7 +333,6 @@ impl Lifecycle for GemLifecycle {
             let id = gem(world, index);
             let data = read_gem(world, id);
             assert_eq!(data.state, ISSUED, "gem {id} was not born Issued");
-            assert!(!gem_is_qualified(&world_url(world), id));
             assert_eq!(data.calledAt, 0);
             assert_eq!(
                 data.owner,
@@ -365,27 +355,11 @@ impl Lifecycle for GemLifecycle {
                 "gem {id} priced below the Intex it was parked from"
             );
             assert_eq!(
-                (
-                    data.entryPriceMinor,
-                    data.floorPriceMinor,
-                    data.callPriceMinor
-                ),
-                (
-                    first.entryPriceMinor,
-                    first.floorPriceMinor,
-                    first.callPriceMinor
-                ),
+                (data.entryPriceMinor, data.callPriceMinor),
+                (first.entryPriceMinor, first.callPriceMinor),
                 "every gem must share one set of terms"
             );
         }
-    }
-
-    fn qualified(&self, world: &World) -> bool {
-        let url = world_url(world);
-        (0..HOLDERS).all(|index| {
-            let id = gem(world, index);
-            read_gem(world, id).state == QUALIFIED && gem_is_qualified(&url, id)
-        })
     }
 
     fn targets(&self, world: &World, phase: Phase) -> [Target; 2] {
@@ -484,14 +458,18 @@ impl Lifecycle for GemLifecycle {
         let height = finalized_checkpoint(world).height;
         for port in world.validators.committee_ports() {
             assert!(
-                compressed_body(
-                    world,
-                    port,
-                    CeDomain::Gem.id(),
-                    WwdEntityId::from(id),
-                    height
-                )
-                .is_none(),
+                world
+                    .rpc
+                    .gem_state_at(
+                        port,
+                        world
+                            .rpc
+                            .checkpoint_at(world.validators.primary_port(), height)
+                            .expect("forfeit EVM checkpoint"),
+                        WwdEntityId::from(id)
+                    )
+                    .expect("forfeited Gem state")
+                    .is_none(),
                 "validator {port} still serves the forfeited gem body"
             );
         }
@@ -670,38 +648,22 @@ fn issuance_baseline_height(world: &World) -> u64 {
         .0
 }
 
-/// The gem and its bucket bodies, proven identical on every committee port. The shared
-/// proof helper also pins every port to one finalized header, so one sealed root.
-fn gem_bodies(world: &World, id: U256, minimum: u64) -> (GemBodyV1, GemBucketBodyV1) {
+/// Reads the exact Gem and bucket state on every validator at one checkpoint.
+fn gem_bodies(world: &World, id: U256, minimum: u64) -> (GemItemState, GemBucketState) {
+    let checkpoint = finalized_checkpoint(world);
+    assert!(checkpoint.height >= minimum);
     let mut expected = None;
     for port in world.validators.committee_ports() {
-        let item = decode_stored_gem_v1(
-            &compressed_body(
-                world,
-                port,
-                CeDomain::Gem.id(),
-                WwdEntityId::from(id),
-                minimum,
-            )
-            .expect("gem body present"),
-        )
-        .expect("canonical gem body");
-        let bucket_id = WwdEntityId::from_day_and_digest(
-            outbe_primitives::time::WorldwideDay::new(
-                outbe_primitives::time::timestamp_to_date_key(item.issued_at),
-            ),
-            item.bucket_key,
-        );
-        let bucket = decode_stored_gem_bucket_v1(
-            &compressed_body(world, port, CeDomain::GemBucket.id(), bucket_id, minimum)
-                .expect("gem bucket body present"),
-        )
-        .expect("canonical gem bucket body");
+        let (item, bucket) = world
+            .rpc
+            .gem_state_at(port, checkpoint, WwdEntityId::from(id))
+            .expect("Gem EVM state")
+            .expect("Gem is present");
         let bodies = (item, bucket);
         assert_eq!(
             *expected.get_or_insert(bodies.clone()),
             bodies,
-            "all-validator gem body parity"
+            "all-validator Gem state parity"
         );
     }
     expected.expect("nonempty validator cohort")
@@ -792,13 +754,4 @@ fn read_gem(world: &World, gem_id: U256) -> eth::IGem::GemData {
         &eth::IGem::getGemCall { gemId: gem_id },
         &format!("gem {gem_id} does not read back"),
     )
-}
-
-pub(crate) fn gem_is_qualified(url: &str, gem_id: U256) -> bool {
-    eth::read_call(
-        url,
-        addresses::GEM_ADDR,
-        &eth::IGem::isQualifiedCall { gemId: gem_id },
-    )
-    .unwrap_or_else(|| panic!("gem {gem_id} qualification does not read back"))
 }

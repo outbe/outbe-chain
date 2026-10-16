@@ -67,8 +67,7 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(block_ctx(2, midnight - 1), storage.clone());
-        with_execution_scope(&ctx, |scope, _| {
-            let parent = outbe_nod::nod_reader(Arc::new(MemoryStorage::new()));
+        (|| {
             let cycle = Cycle::new(storage.clone());
             let trigger = isolate_nod_call_schedule(&cycle, midnight)?;
             let (oracle, index) = seed_closed_day_prices(&storage, midnight)?;
@@ -78,19 +77,19 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
                     .read(&bucket_key)
                     .unwrap()
             };
-            let first = issue_nod(&storage, scope, &parent, Address::repeat_byte(0x51), 13)?;
-            dispatch_and_call(&ctx, scope, &parent)?;
+            let first = issue_nod(&storage, Address::repeat_byte(0x51), 13)?;
+            dispatch_and_call(&ctx)?;
             assert_eq!(called_at(first), 0);
 
             let ctx = BlockRuntimeContext::new(block_ctx(3, midnight), storage.clone());
-            dispatch_and_call(&ctx, scope, &parent)?;
+            dispatch_and_call(&ctx)?;
             assert_eq!(called_at(first), midnight);
             assert_eq!(cycle.last_executed_at.read(&trigger)?, midnight);
 
             // New work created after the daily run waits for the next UTC slot.
-            let second = issue_nod(&storage, scope, &parent, Address::repeat_byte(0x52), 14)?;
+            let second = issue_nod(&storage, Address::repeat_byte(0x52), 14)?;
             let ctx = BlockRuntimeContext::new(block_ctx(4, midnight + 1), storage.clone());
-            dispatch_and_call(&ctx, scope, &parent)?;
+            dispatch_and_call(&ctx)?;
             assert_eq!(called_at(second), 0);
 
             // A multi-day halt runs once against the latest completed day,
@@ -107,15 +106,15 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             }
             oracle.utc_day_vwap_last_finalized.write(previous)?;
             let ctx = BlockRuntimeContext::new(block_ctx(5, late), storage.clone());
-            dispatch_and_call(&ctx, scope, &parent)?;
+            dispatch_and_call(&ctx)?;
             assert_eq!(called_at(second), late);
             assert_eq!(cycle.last_executed_at.read(&trigger)?, late);
-            let third = issue_nod(&storage, scope, &parent, Address::repeat_byte(0x53), 15)?;
+            let third = issue_nod(&storage, Address::repeat_byte(0x53), 15)?;
             let ctx = BlockRuntimeContext::new(block_ctx(6, late + 1), storage.clone());
-            dispatch_and_call(&ctx, scope, &parent)?;
+            dispatch_and_call(&ctx)?;
             assert_eq!(called_at(third), 0);
-            Ok(())
-        })
+            Ok::<_, outbe_primitives::error::PrecompileError>(())
+        })()
         .unwrap();
     });
 }
@@ -164,8 +163,6 @@ fn seed_closed_day_prices<'s>(
 /// Returns its bucket key.
 fn issue_nod(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl outbe_compressed_entities::ParentBodySource,
     owner: Address,
     entry: u64,
 ) -> outbe_primitives::error::Result<B256> {
@@ -187,7 +184,6 @@ fn issue_nod(
     );
     outbe_nod::api::add_nod(
         storage,
-        outbe_compressed_entities::ExecutionReaders { scope, parent },
         &body,
         U256::from(entry),
         outbe_nod::test_support::sealed_terms(storage, &body, U256::from(entry)),
@@ -196,12 +192,8 @@ fn issue_nod(
 }
 
 /// Runs the Cycle dispatcher at `ctx`, then the Nod call slice.
-fn dispatch_and_call(
-    ctx: &BlockRuntimeContext<'_>,
-    scope: &ExecutionScope,
-    parent: &impl outbe_compressed_entities::ParentBodySource,
-) -> outbe_primitives::error::Result<()> {
-    crate::runtime::dispatch_triggers(ctx, scope, parent)?;
+fn dispatch_and_call(ctx: &BlockRuntimeContext<'_>) -> outbe_primitives::error::Result<()> {
+    crate::runtime::dispatch_triggers(ctx)?;
     outbe_nodfactory::called::run_call_slice(ctx)?;
     Ok(())
 }

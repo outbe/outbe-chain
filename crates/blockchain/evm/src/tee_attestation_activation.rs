@@ -299,7 +299,7 @@ pub enum TeeAttestationChainSpecStateV1 {
     #[default]
     Unbound,
     Active(Arc<TeeAttestationActivationV1>),
-    Invalid(Arc<str>),
+    Invalid(TeeAttestationActivationError),
 }
 
 impl TeeAttestationChainSpecStateV1 {
@@ -310,30 +310,29 @@ impl TeeAttestationChainSpecStateV1 {
             .extra_fields
             .get_deserialized::<GenesisTeeAttestationV1>(TEE_ATTESTATION_V1_CONFIG_FIELD);
         match parsed {
-            None => Self::Invalid(
-                format!("genesis config is missing required {TEE_ATTESTATION_V1_CONFIG_FIELD}")
-                    .into(),
-            ),
-            Some(Err(error)) => Self::Invalid(
-                format!("invalid genesis config {TEE_ATTESTATION_V1_CONFIG_FIELD}: {error}").into(),
-            ),
+            None => Self::Invalid(TeeAttestationActivationError::MissingGenesisConfigField {
+                field: TEE_ATTESTATION_V1_CONFIG_FIELD,
+            }),
+            Some(Err(error)) => {
+                Self::Invalid(TeeAttestationActivationError::invalid_genesis_config_field(
+                    TEE_ATTESTATION_V1_CONFIG_FIELD,
+                    error,
+                ))
+            }
             Some(Ok(raw)) => {
                 match validate_activation(raw, spec.chain().id(), spec.genesis_hash()) {
                     Ok(activation) => Self::Active(Arc::new(activation)),
-                    Err(error) => Self::Invalid(error.into()),
+                    Err(error) => Self::Invalid(error),
                 }
             }
         }
     }
 
-    pub fn activation(&self) -> Result<&TeeAttestationActivationV1, &str> {
-        const UNBOUND_TEE_ATTESTATION_AUTHORITY: &str =
-            "TEE attestation ChainSpec authority is not bound";
-
+    pub fn activation(&self) -> Result<&TeeAttestationActivationV1, TeeAttestationActivationError> {
         match self {
-            Self::Unbound => Err(UNBOUND_TEE_ATTESTATION_AUTHORITY),
+            Self::Unbound => Err(TeeAttestationActivationError::UnboundAuthority),
             Self::Active(activation) => Ok(activation),
-            Self::Invalid(error) => Err(error),
+            Self::Invalid(error) => Err(error.clone()),
         }
     }
 }

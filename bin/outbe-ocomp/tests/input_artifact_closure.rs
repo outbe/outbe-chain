@@ -3,7 +3,6 @@
 mod support;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas},
     control::poc_schema_limits,
@@ -26,7 +25,9 @@ use outbe_ocomp_protocol::{
     registry::ObjectKind,
     ListKind, OrderedListLimits,
 };
+use outbe_primitives::entity_codec::{encode_tribute_v1, TributeBodyV1};
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 
 #[test]
 fn worker_reconstructs_the_complete_manifest_from_exact_cas_streams() {
@@ -47,7 +48,6 @@ fn worker_reconstructs_the_complete_manifest_from_exact_cas_streams() {
         nominal_amount_minor: U256::from(100),
         reference_currency: 978,
         tribute_price_minor: U256::from(3),
-        exclude_from_intex_issuance: false,
     };
     let raw_opening = |address, slot_byte, value| RawContractOpeningProofV1 {
         contract_address: address,
@@ -165,12 +165,8 @@ fn worker_reconstructs_the_complete_manifest_from_exact_cas_streams() {
             finalized_block_number: 90,
             finalized_block_hash: B256::repeat_byte(0x31),
             finalized_state_root,
-            finalized_ce_root: B256::repeat_byte(0x33),
-            ce_schema_version: 1,
         },
         wwd: day.value(),
-        sealed_tribute_collection_key: B256::repeat_byte(0x34),
-        sealed_tribute_collection_root: B256::repeat_byte(0x35),
         tribute_count: 1,
         tribute_nominal_total: U256::from(100),
         input_chunk_count: 3,
@@ -240,7 +236,6 @@ fn exporter_starts_a_second_tribute_chunk_at_the_frozen_256_record_boundary() {
                 nominal_amount_minor: U256::from(1),
                 reference_currency: 978,
                 tribute_price_minor: U256::from(1),
-                exclude_from_intex_issuance: false,
             }
         })
         .collect::<Vec<_>>();
@@ -314,12 +309,8 @@ fn exporter_starts_a_second_tribute_chunk_at_the_frozen_256_record_boundary() {
                     finalized_block_number: 91,
                     finalized_block_hash: B256::repeat_byte(0x62),
                     finalized_state_root,
-                    finalized_ce_root: B256::repeat_byte(0x67),
-                    ce_schema_version: 1,
                 },
                 wwd: day.value(),
-                sealed_tribute_collection_key: B256::repeat_byte(0x68),
-                sealed_tribute_collection_root: B256::repeat_byte(0x69),
             },
             canonical_tributes: tributes
                 .iter()

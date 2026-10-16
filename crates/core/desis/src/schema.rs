@@ -52,7 +52,7 @@ pub struct IntexCallTrigger {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReferenceCurrencyPrice {
     pub iso_code: u16,
-    /// Per-unit entry price in ISO stable-units (1e6). Floor and call derive from it.
+    /// Per-unit entry price in ISO stable-units (1e6). The call price derives from it.
     pub entry_price_minor: U256,
 }
 
@@ -102,7 +102,7 @@ impl AuctionConfig {
     }
 
     /// Per-Intex escrow basis = `promis_load` COEN, which the day is briefed at. The escrow
-    /// pays wCOEN, so the bid rate applies against this. entry_price feeds only floor/call.
+    /// pays wCOEN, so the bid rate applies against this. entry_price feeds only the call price.
     pub fn escrow_basis_minor(&self) -> u128 {
         self.promis_load_minor
     }
@@ -281,19 +281,22 @@ pub struct DesisContract {
     #[attribute(order = 36)]
     pub reference_price_iso: outbe_primitives::storage::dsl::Map<B256, u32>,
     /// keccak256(worldwide_day_be32 ++ index_be32) -> entry price in ISO stable-units (1e6).
-    /// Floor and call derive from it, so only the anchor is stored.
+    /// The call price derives from it, so only the anchor is stored.
     #[attribute(order = 37)]
     pub reference_entry_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     // --- PROMIS load ladder ---
     /// Exponent `k` of the current load, `promis_load_minor = 10^k`. Zero until the
-    /// chain has briefed a day it could price, which the deadband has nothing to hold.
+    /// chain has briefed a day it could price.
     #[attribute(order = 38)]
     pub promis_load_exponent: outbe_primitives::storage::dsl::Value<u32>,
-    /// Digits of the launch pair the ladder re-anchors against, captured on the first
-    /// day the chain could price the anchor currency. Zero until captured.
+    /// iso_code -> price the currency was captured at. Zero until captured.
     #[attribute(order = 39)]
-    pub promis_load_anchor_digits: outbe_primitives::storage::dsl::Value<u32>,
+    pub promis_load_reference_minor: outbe_primitives::storage::dsl::Map<u16, U256>,
+    /// iso_code -> exponent the price was captured at. A capture under another
+    /// exponent is stale.
+    #[attribute(order = 40)]
+    pub promis_load_reference_exponent: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl DesisContract<'_> {

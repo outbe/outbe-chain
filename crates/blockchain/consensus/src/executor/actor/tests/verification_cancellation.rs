@@ -182,7 +182,7 @@ fn cancelled_body_read_retires_verification_before_response_receiver_closes() {
 }
 
 #[test]
-fn ce_work_limit_exceeded_marks_candidate_invalid_without_stopping_actor() {
+fn out_of_gas_marks_candidate_invalid_without_stopping_actor() {
     deterministic::Runner::default().start(|clock| async move {
         let mut engine = EngineStub::new();
         let mut work = VerificationWork::default();
@@ -195,7 +195,7 @@ fn ce_work_limit_exceeded_marks_candidate_invalid_without_stopping_actor() {
         };
         tx.send(Err(
             reth_ethereum::node::api::BeaconOnNewPayloadError::internal(
-                outbe_primitives::error::PrecompileError::TransactionCeWorkLimitExceeded,
+                outbe_primitives::error::PrecompileError::OutOfGas,
             ),
         ))
         .unwrap();

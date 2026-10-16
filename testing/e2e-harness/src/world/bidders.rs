@@ -21,7 +21,7 @@ sol! {
         function commitBid(uint32 worldwideDay, bytes32 commitHash) external;
         function revealBid(
             uint32 worldwideDay,
-            uint16 units,
+            uint16 quantity,
             uint32 bidRate,
             uint16 issuanceCurrency,
             uint16 referenceCurrency,
@@ -104,7 +104,7 @@ pub fn fund(
 
 fn bid_digest(auction: Address, chain_id: u64, worldwide_day: u32, bidder: &Bidder) -> B256 {
     let type_hash = keccak256(
-        b"RevealBid(uint32 worldwideDay,address bidder,uint16 units,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+        b"RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
             .as_slice(),
     );
     let struct_hash = keccak256(
@@ -194,7 +194,7 @@ pub fn reveal(
             &bidder.key,
             &IAuctionBids::revealBidCall {
                 worldwideDay: worldwide_day,
-                units: bidder.quantity,
+                quantity: bidder.quantity,
                 bidRate: bidder.bid_rate,
                 issuanceCurrency: DAY_CURRENCY,
                 referenceCurrency: DAY_CURRENCY,
@@ -234,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bid_signs_the_shared_units_vector() {
+    fn a_bid_signs_the_shared_quantity_vector() {
         let key = format!("0x{:064x}", 0x100);
         let signer: PrivateKeySigner = key.parse().expect("parse the vector key");
         let bidder = Bidder {
@@ -248,18 +248,18 @@ mod tests {
         assert_eq!(
             bid_digest(auction, 56, 20_260_108, &bidder),
             alloy_primitives::b256!(
-                "79d282877f73104ba843ec1a87de49b71c0069f3d25da66f0537abb0c9a3da61"
+                "35d31042ad5daa0f569876090530a923d6fb2a49bdf3f20874ed24358d35a45a"
             )
         );
         let signature = bid_signature(auction, 56, 20_260_108, &bidder).expect("sign the bid");
         assert_eq!(
             hex::encode(&signature),
-            "8bb0a9136c704f6cd320eccaa0c7d00fbf5148e6973252284823c6aa66da0c916c3619e2142d3766b63fb6bc8a27e9a8f2454080239370f759e8c81109741ec91c"
+            "afca4e3dfbb39f0850864924229d4d636ec7256d6358912a27e04aab0bb4c91428f1146fc84838a11695e3c030f55901af4185312485edbd1be25bd4212e97cc1c"
         );
         assert_eq!(
             keccak256(&signature),
             alloy_primitives::b256!(
-                "e5530a4bac07b5ece7b7aab6d17308dac486432e646e13208cef87b9cafc961a"
+                "6bcf37c8a30f41999cc39e61771ca752662730d4fc87620703876283092c2101"
             )
         );
     }

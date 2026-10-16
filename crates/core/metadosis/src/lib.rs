@@ -46,6 +46,7 @@ mod fixture_kernel;
 #[cfg(feature = "test-utils")]
 pub mod genesis;
 mod lifecycle;
+mod lysis;
 mod ocomp;
 pub use ocomp::vote::{
     deadline_passed_result_vote_revert_data, is_deadline_passed_result_vote_revert_data,

@@ -34,7 +34,7 @@ impl NodeIdV1 {
         decoder.version("NodeIdV1")?;
         let payload_len = decoder.declared_len("node id payload", 33)?;
         if payload_len != 33 {
-            return Err(CodecError::NonCanonical("node id length"));
+            return Err(crate::error::TeeCodecNonCanonicalError::NodeIdLength.into());
         }
         let value = Self {
             reth_p2p_public: decoder.array()?,

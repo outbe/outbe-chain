@@ -1,11 +1,11 @@
 use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::RetirementOutcome;
 use outbe_primitives::{error::Result, time::WorldwideDay};
+use outbe_tribute::runtime::RetirementOutcome;
 
 use super::TerminalReceiptValidationContext;
 use crate::{
     constants::MAX_RETAINED_WWDS,
-    errors::storage_corruption_message,
+    errors::MetadosisStorageCorruptionError,
     schema::{status, terminal_outcome},
 };
 
@@ -23,11 +23,21 @@ pub(crate) struct TerminalReceiptCommon {
 pub(crate) struct CapacityForfeitureDetail {
     pub max_retained_wwds: u32,
     pub retained_count_before: u32,
-    pub sealed_collection_root: B256,
     pub forfeited_count: u32,
     pub forfeited_nominal: U256,
     pub source_generation: u64,
     pub retired_generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LysisCompletionDetail {
+    pub tribute_count: u32,
+    pub lysis_limit: U256,
+    pub used: U256,
+    pub unused: U256,
+    pub desis_limit: U256,
+    pub inputs_hash: B256,
+    pub result_hash: B256,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -38,6 +48,10 @@ pub(crate) enum WwdTerminalReceipt {
         detail: CapacityForfeitureDetail,
     },
     MetadosisFailure(TerminalReceiptCommon),
+    LysisCompleted {
+        common: TerminalReceiptCommon,
+        detail: LysisCompletionDetail,
+    },
 }
 
 impl WwdTerminalReceipt {
@@ -45,7 +59,8 @@ impl WwdTerminalReceipt {
         match self {
             Self::MissedOffering(common)
             | Self::MetadosisFailure(common)
-            | Self::CapacityForfeiture { common, .. } => common,
+            | Self::CapacityForfeiture { common, .. }
+            | Self::LysisCompleted { common, .. } => common,
         }
     }
 
@@ -54,7 +69,8 @@ impl WwdTerminalReceipt {
         match self {
             Self::MissedOffering(common)
             | Self::MetadosisFailure(common)
-            | Self::CapacityForfeiture { common, .. } => common,
+            | Self::CapacityForfeiture { common, .. }
+            | Self::LysisCompleted { common, .. } => common,
         }
     }
 
@@ -63,10 +79,34 @@ impl WwdTerminalReceipt {
             Self::MissedOffering(_) => terminal_outcome::MISSED_OFFERING,
             Self::CapacityForfeiture { .. } => terminal_outcome::CAPACITY_FORFEITURE,
             Self::MetadosisFailure(_) => terminal_outcome::METADOSIS_FAILURE,
+            Self::LysisCompleted { .. } => terminal_outcome::LYSIS_COMPLETED,
         }
     }
 
     pub(crate) fn validate(&self, context: TerminalReceiptValidationContext) -> Result<()> {
+        if let Self::LysisCompleted { common, detail } = self {
+            let after = common
+                .value_routed
+                .checked_sub(detail.lysis_limit)
+                .and_then(|credit| common.carry_over_before.checked_add(credit))
+                .and_then(|available| available.checked_sub(detail.desis_limit))
+                .and_then(|remaining| remaining.checked_add(detail.unused));
+            if context.status != status::COMPLETED
+                || context.active_memberships != 0
+                || context.closed_memberships != 1
+                || common.block_number == 0
+                || common.retirement != RetirementOutcome::Requested
+                || detail.tribute_count == 0
+                || detail.inputs_hash.is_zero()
+                || detail.result_hash.is_zero()
+                || detail.used.checked_add(detail.unused) != Some(detail.lysis_limit)
+                || common.value_routed != context.expected_value_routed
+                || after != Some(common.carry_over_after)
+            {
+                return Err(MetadosisStorageCorruptionError::WwdTerminalReceiptInvalid.into());
+            }
+            return Ok(());
+        }
         self.common().validate(context)?;
         if let Self::CapacityForfeiture { common, detail } = self {
             detail.validate(common.retirement)?;
@@ -83,9 +123,7 @@ impl TerminalReceiptCommon {
         let conserved = self.value_routed == context.expected_value_routed
             && self.carry_over_before.checked_add(self.value_routed) == Some(self.carry_over_after);
         if !terminal_membership || !conserved || self.block_number == 0 {
-            return Err(storage_corruption_message(
-                "Metadosis WWD terminal receipt is invalid",
-            ));
+            return Err(MetadosisStorageCorruptionError::WwdTerminalReceiptInvalid.into());
         }
         Ok(())
     }
@@ -94,13 +132,14 @@ impl TerminalReceiptCommon {
 impl CapacityForfeitureDetail {
     fn validate(&self, retirement: RetirementOutcome) -> Result<()> {
         let max = u32::try_from(MAX_RETAINED_WWDS)
-            .map_err(|_| storage_corruption_message("retained cap exceeds u32"))?;
+            .map_err(|_| MetadosisStorageCorruptionError::RetainedCapExceedsU32)?;
         let capacity_policy = self.max_retained_wwds == max && self.retained_count_before == max;
         let generation_transition = self.source_generation == 0 && self.retired_generation == 1;
         if !capacity_policy || !generation_transition || !self.valid_retirement(retirement) {
-            return Err(storage_corruption_message(
-                "capacity-forfeiture detail differs from terminal receipt",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::CapacityForfeitureDetailDiffersFromTerminalReceipt
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -108,11 +147,9 @@ impl CapacityForfeitureDetail {
     fn valid_retirement(&self, retirement: RetirementOutcome) -> bool {
         match retirement {
             RetirementOutcome::NotPresent => {
-                self.sealed_collection_root.is_zero()
-                    && self.forfeited_count == 0
-                    && self.forfeited_nominal.is_zero()
+                self.forfeited_count == 0 && self.forfeited_nominal.is_zero()
             }
-            RetirementOutcome::Requested => !self.sealed_collection_root.is_zero(),
+            RetirementOutcome::Requested => true,
         }
     }
 }
@@ -134,7 +171,6 @@ mod tests {
             detail: CapacityForfeitureDetail {
                 max_retained_wwds: MAX_RETAINED_WWDS as u32,
                 retained_count_before: MAX_RETAINED_WWDS as u32,
-                sealed_collection_root: B256::ZERO,
                 forfeited_count: 0,
                 forfeited_nominal: U256::ZERO,
                 source_generation: 0,
@@ -173,7 +209,7 @@ mod tests {
 
     #[test]
     fn capacity_checks_exact_cap_generations_and_retirement_evidence() {
-        for field in 0..7 {
+        for field in 0..6 {
             let mut corrupt = receipt();
             let WwdTerminalReceipt::CapacityForfeiture { detail, .. } = &mut corrupt else {
                 unreachable!()
@@ -183,19 +219,17 @@ mod tests {
                 1 => detail.retained_count_before += 1,
                 2 => detail.source_generation = 1,
                 3 => detail.retired_generation = 2,
-                4 => detail.sealed_collection_root = B256::repeat_byte(1),
-                5 => detail.forfeited_count = 1,
+                4 => detail.forfeited_count = 1,
                 _ => detail.forfeited_nominal = U256::from(1),
             }
             assert!(corrupt.validate(context()).is_err());
         }
         let mut requested = receipt();
         requested.common_mut().retirement = RetirementOutcome::Requested;
-        assert!(requested.validate(context()).is_err());
+        assert!(requested.validate(context()).is_ok());
         let WwdTerminalReceipt::CapacityForfeiture { detail, .. } = &mut requested else {
             unreachable!()
         };
-        detail.sealed_collection_root = B256::repeat_byte(1);
         detail.forfeited_count = u32::MAX;
         detail.forfeited_nominal = U256::MAX;
         assert!(requested.validate(context()).is_ok());

@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
 use outbe_nod::{NodContract, NodIssueParams};
 use outbe_ocomp_protocol::{
     list::{
@@ -17,10 +16,9 @@ use outbe_ocomp_protocol::{
 };
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
-use super::support::{
-    capture_execution, elapsed_ns, seed_compressed_entities_genesis, EmptyParentBodies,
-};
+use super::support::{capture_execution, elapsed_ns};
 use crate::{BenchmarkScenario, ExecutionClass, GasLedger, Observation, Profile, ScenarioMetadata};
 
 const CHAIN_ID: u64 = 1;
@@ -92,7 +90,7 @@ fn certified_action(index: usize) -> NodActionV1 {
     let ordinal = u32::try_from(index).expect("benchmark cardinality fits u32");
     let owner = Address::from_word(B256::from(U256::from(ordinal + 1)));
     let entry_price_minor = U256::from(510);
-    let tribute_id = outbe_compressed_entities::derive_poseidon_entity_id(owner, TARGET_WWD)
+    let tribute_id = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner, TARGET_WWD)
         .expect("fixture identity");
     let nod_id = outbe_nod::identity::generate_nod_id(owner, TARGET_WWD)
         .expect("benchmark owner and worldwide day form a Nod id");
@@ -160,7 +158,8 @@ fn certified_fixture(count: usize) -> Result<CertifiedFixture, String> {
 
     let sources =
         outbe_nodfactory::test_support::MaterializationFixtureBuilder::new(&actions, CHAIN_ID)
-            .build()?;
+            .build()
+            .map_err(|e| e.to_string())?;
     let batches = batches
         .into_iter()
         .enumerate()
@@ -177,11 +176,12 @@ fn certified_fixture(count: usize) -> Result<CertifiedFixture, String> {
                 last_progress_height: (index.max(1)) as u64,
             };
             sources.protect(
-                &outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {
-                    chain_id: CHAIN_ID,
+                &outbe_tee::nod_state_materialization::StateNodAuthority {
+                    source: sources.subject.clone(),
                     head: head.encode_canonical(&limits).map_err(|e| e.to_string())?,
                     subtree_height: SUBTREE_HEIGHT as u8,
-                    sealed_tribute_root: sources.source_root(),
+                    source_bindings: Vec::new(),
+                    nod_gratis_load_max: U256::from(10_000),
                 },
                 &batch,
             )
@@ -207,7 +207,7 @@ fn seed_certified_world(
     storage: &StorageHandle<'_>,
     fixture: &CertifiedFixture,
 ) -> Result<(), String> {
-    fixture.sources.seed_source_root(storage)?;
+    fixture.sources.seed_sources(storage)?;
     let limits = poc_schema_limits();
     let encoded = fixture
         .actions
@@ -225,6 +225,11 @@ fn seed_certified_world(
     )
     .map_err(|error| error.to_string())?;
     let projection = outbe_nod::NodCertifiedGenerationProjection {
+        source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
+            block_number: 1,
+            block_hash: B256::repeat_byte(0x71),
+            state_root: B256::repeat_byte(0x72),
+        },
         worldwide_day: TARGET_WWD,
         generation: 1,
         job_id: B256::repeat_byte(0x11),
@@ -238,11 +243,21 @@ fn seed_certified_world(
         bucket_count: 1,
         nod_amount_total: U256::from(10_000),
         lysis_allocation_minor: U256::from(10_000),
+        nod_gratis_load_max: U256::from(10_000),
         issued_at: 1_600_000_000,
         next_nod_ordinal: 0,
         last_progress_height: 1,
     };
     let nod = NodContract::new(storage.clone());
+    nod.ocomp_source_block_number
+        .write(&TARGET_WWD, projection.source_checkpoint.block_number)
+        .map_err(|error| error.to_string())?;
+    nod.ocomp_source_block_hash
+        .write(&TARGET_WWD, projection.source_checkpoint.block_hash)
+        .map_err(|error| error.to_string())?;
+    nod.ocomp_source_state_root
+        .write(&TARGET_WWD, projection.source_checkpoint.state_root)
+        .map_err(|error| error.to_string())?;
     nod.ocomp_target_generation
         .write(&TARGET_WWD, projection.generation)
         .map_err(|error| error.to_string())?;
@@ -263,6 +278,9 @@ fn seed_certified_world(
         .map_err(|error| error.to_string())?;
     nod.ocomp_lysis_allocation_minor
         .write(&TARGET_WWD, projection.lysis_allocation_minor)
+        .map_err(|error| error.to_string())?;
+    nod.ocomp_nod_gratis_load_max
+        .write(&TARGET_WWD, projection.nod_gratis_load_max)
         .map_err(|error| error.to_string())?;
     nod.ocomp_materialization_job_id
         .write(&TARGET_WWD, projection.job_id)
@@ -357,7 +375,6 @@ impl BenchmarkScenario for NodScenario {
             NodPath::Certified => Some(certified_fixture(count)?),
         };
         StorageHandle::enter(&mut provider, |storage| {
-            seed_compressed_entities_genesis(&storage).map_err(|error| error.to_string())?;
             if let Some(fixture) = &certified {
                 seed_certified_world(&storage, fixture)?;
             }
@@ -388,11 +405,6 @@ fn measure_certified(prepared: &PreparedNod) -> Result<Observation, String> {
         .as_ref()
         .ok_or_else(|| "certified Nod fixture is missing".to_owned())?;
     let mut provider = prepared.provider.clone();
-    let scope = StorageHandle::enter(&mut provider, |storage| {
-        let scope = ExecutionScope::default();
-        begin_block(storage, &scope).map_err(|error| error.to_string())?;
-        Ok::<_, String>(scope)
-    })?;
     provider.set_gas_limit(BLOCK_GAS_LIMIT);
     provider.enable_production_storage_gas_metering();
     provider.enable_storage_trace();
@@ -405,10 +417,6 @@ fn measure_certified(prepared: &PreparedNod) -> Result<Observation, String> {
         completed = StorageHandle::enter(&mut provider, |storage| {
             outbe_nodfactory::api::materialize_encrypted_certified_nods(
                 &storage,
-                ExecutionReaders {
-                    scope: &scope,
-                    parent: &EmptyParentBodies,
-                },
                 Address::repeat_byte(0x42),
                 outbe_nodfactory::api::ProtectedMaterializationRequest {
                     carrier: batch,
@@ -434,7 +442,7 @@ fn measure_certified(prepared: &PreparedNod) -> Result<Observation, String> {
     let all_readable = StorageHandle::enter(&mut provider, |storage| {
         fixture.actions.iter().try_fold(true, |all, action| {
             let id = WwdEntityId::from(action.nod_id);
-            outbe_nod::api::get_item(&storage, &scope, &EmptyParentBodies, id)
+            outbe_nod::api::get_item(&storage, id)
                 .map(|item| all && item.is_some())
                 .map_err(|error| error.to_string())
         })
@@ -465,11 +473,6 @@ fn measure_certified(prepared: &PreparedNod) -> Result<Observation, String> {
 
 fn measure_direct(prepared: &PreparedNod) -> Result<Observation, String> {
     let mut provider = prepared.provider.clone();
-    let scope = StorageHandle::enter(&mut provider, |storage| {
-        let scope = ExecutionScope::default();
-        begin_block(storage, &scope).map_err(|error| error.to_string())?;
-        Ok::<_, String>(scope)
-    })?;
     provider.set_gas_limit(BLOCK_GAS_LIMIT);
     provider.enable_production_storage_gas_metering();
     provider.enable_storage_trace();
@@ -480,7 +483,7 @@ fn measure_direct(prepared: &PreparedNod) -> Result<Observation, String> {
         let mut ids = Vec::with_capacity(prepared.encrypted.len());
         for encrypted in &prepared.encrypted {
             ids.push(
-                outbe_nodfactory::api::issue_nod(&storage, &scope, &EmptyParentBodies, encrypted)
+                outbe_nodfactory::api::issue_nod(&storage, encrypted)
                     .map_err(|error| error.to_string())?,
             );
         }
@@ -493,12 +496,12 @@ fn measure_direct(prepared: &PreparedNod) -> Result<Observation, String> {
         event_offset,
         GasLedger::SystemInternal,
         runtime_gas,
-        "compressed_entities",
+        "nod",
     )?;
 
     let all_readable = StorageHandle::enter(&mut provider, |storage| {
         ids.iter().try_fold(true, |all, id| {
-            outbe_nod::api::get_item(&storage, &scope, &EmptyParentBodies, *id)
+            outbe_nod::api::get_item(&storage, *id)
                 .map(|item| all && item.is_some())
                 .map_err(|error| error.to_string())
         })

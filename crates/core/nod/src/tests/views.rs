@@ -10,42 +10,25 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
     use base64::Engine;
 
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::default();
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
         let item = item(Address::repeat_byte(0x86), U256::from(20), USD);
         api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &item,
             U256::from(20),
             crate::test_support::sealed_terms(&storage, &item, U256::from(20)),
         )
         .unwrap();
-        qualify(&storage, &item, U256::from(20));
-        let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
+        let bucket_id = item.bucket_key;
         api::record_settled(
             &storage,
-            &scope,
-            api::load_item(&storage, &scope, &parent, item.nod_id)
-                .unwrap()
-                .unwrap(),
-            api::load_bucket(&storage, &scope, &parent, bucket_id)
-                .unwrap()
-                .unwrap(),
+            api::load_item(&storage, item.nod_id).unwrap().unwrap(),
+            api::load_bucket(&storage, bucket_id).unwrap().unwrap(),
         )
         .unwrap();
         let data = dispatch(
             storage.clone(),
-            ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &INod::getNodCall {
                 nodId: item.nod_id.to_u256(),
             }
@@ -61,10 +44,6 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
         );
         let data = dispatch(
             storage,
-            ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &INod::tokenURICall {
                 nodId: item.nod_id.to_u256(),
             }
@@ -88,27 +67,21 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
     use crate::precompile::{dispatch, INod};
     use alloy_sol_types::SolCall;
 
-    // qualified, paid, called_at, notice, now, expected state, expected deadline
-    for (qualified, paid, called_at, notice, now, state, deadline) in [
-        (false, false, 0, 17, 118, 0, 0),
-        (true, false, 0, 17, 118, 1, 0),
-        (true, false, 100, 17, 116, 2, 117),
-        (true, false, 100, 17, 117, 2, 117),
-        (true, false, 100, 17, 118, 4, 117),
-        (true, true, 100, 17, 118, 3, 117),
-        (true, false, u64::MAX - 1, 17, u64::MAX, 2, u64::MAX),
+    // paid, called_at, notice, now, expected state, expected deadline
+    for (paid, called_at, notice, now, state, deadline) in [
+        (false, 0, 17, 118, 0, 0),
+        (false, 100, 17, 116, 1, 117),
+        (false, 100, 17, 117, 1, 117),
+        (false, 100, 17, 118, 3, 117),
+        (true, 100, 17, 118, 2, 117),
+        (false, u64::MAX - 1, 17, u64::MAX, 1, u64::MAX),
     ] {
         let mut provider = HashMapStorageProvider::new(1);
         provider.set_timestamp(U256::from(now));
-        let scope = ExecutionScope::default();
-        let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
         StorageHandle::enter(&mut provider, |storage| {
             let (item, bucket_id) = seed_public_lifecycle(
                 &storage,
-                &scope,
-                &parent,
                 PublicLifecycle {
-                    qualified,
                     paid,
                     called_at,
                     notice,
@@ -117,30 +90,16 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
             let call = INod::getNodCall {
                 nodId: item.nod_id.to_u256(),
             };
-            let bytes = dispatch(
-                storage.clone(),
-                ExecutionReaders {
-                    scope: &scope,
-                    parent: &parent,
-                },
-                &call.abi_encode(),
-                item.owner,
-                U256::ZERO,
-            )
-            .unwrap();
+            let bytes =
+                dispatch(storage.clone(), &call.abi_encode(), item.owner, U256::ZERO).unwrap();
             let data = INod::getNodCall::abi_decode_returns(&bytes).unwrap();
             assert_eq!(data.effectiveState, state);
-            assert_eq!(data.isQualified, qualified);
             assert_eq!(data.isSettled, paid);
             assert_eq!(data.calledAt, called_at);
             assert_eq!(data.settlementDeadline, deadline);
             assert_sealed_call_terms(&data, notice);
             let bytes = dispatch(
                 storage.clone(),
-                ExecutionReaders {
-                    scope: &scope,
-                    parent: &parent,
-                },
                 &INod::tokenURICall {
                     nodId: item.nod_id.to_u256(),
                 }
@@ -154,26 +113,11 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
             // Cleanup removes the public entity instead of retaining a tombstone.
             api::remove_nod(
                 &storage,
-                &scope,
-                api::load_item(&storage, &scope, &parent, item.nod_id)
-                    .unwrap()
-                    .unwrap(),
-                api::load_bucket(&storage, &scope, &parent, bucket_id)
-                    .unwrap()
-                    .unwrap(),
+                api::load_item(&storage, item.nod_id).unwrap().unwrap(),
+                api::load_bucket(&storage, bucket_id).unwrap().unwrap(),
             )
             .unwrap();
-            let error = dispatch(
-                storage,
-                ExecutionReaders {
-                    scope: &scope,
-                    parent: &parent,
-                },
-                &call.abi_encode(),
-                item.owner,
-                U256::ZERO,
-            )
-            .unwrap_err();
+            let error = dispatch(storage, &call.abi_encode(), item.owner, U256::ZERO).unwrap_err();
             assert_removed_nod(error);
         });
     }
@@ -207,7 +151,7 @@ fn assert_lifecycle_metadata(uri: &str, state: u8, called_at: u64, paid: bool, d
             .unwrap(),
     )
     .unwrap();
-    let label = ["Issued", "Qualified", "Called", "Settled", "Forfeited"][usize::from(state)];
+    let label = ["Issued", "Called", "Settled", "Forfeited"][usize::from(state)];
     let mut expected = vec![
         format!(r#"{{"trait_type":"State","value":"{label}"}}"#),
         r#"{"trait_type":"Call Price","value":0.000937,"display_type":"number"}"#.to_string(),
@@ -226,48 +170,29 @@ fn assert_lifecycle_metadata(uri: &str, state: u8, called_at: u64, paid: bool, d
 }
 
 #[test]
-fn qualification_announces_nothing_and_settlement_updates_the_nod() {
+fn settlement_updates_only_the_settled_nod() {
     use crate::precompile::INod;
     use alloy_sol_types::SolEvent;
 
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let first = item(Address::repeat_byte(0x51), U256::from(500_000), USD);
     let second = item(Address::repeat_byte(0x52), U256::from(600_000), USD);
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
         for (body, entry) in [(&first, 500_000u64), (&second, 600_000)] {
             api::add_nod(
                 &storage,
-                outbe_compressed_entities::ExecutionReaders {
-                    scope: &scope,
-                    parent: &parent,
-                },
                 body,
                 U256::from(entry),
                 crate::test_support::sealed_terms(&storage, body, U256::from(entry)),
             )
             .unwrap();
         }
-        close_day_above(
-            &storage,
-            USD,
-            crate::pricing::floor_price_minor(U256::from(600_000)).unwrap(),
-            first_full_day(first.issued_at),
-        );
-
-        let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, first.bucket_key);
+        let bucket_id = first.bucket_key;
         api::record_settled(
             &storage,
-            &scope,
-            api::load_item(&storage, &scope, &parent, first.nod_id)
-                .unwrap()
-                .unwrap(),
-            api::load_bucket(&storage, &scope, &parent, bucket_id)
-                .unwrap()
-                .unwrap(),
+            api::load_item(&storage, first.nod_id).unwrap().unwrap(),
+            api::load_bucket(&storage, bucket_id).unwrap().unwrap(),
         )
         .unwrap();
     });
@@ -283,7 +208,7 @@ fn qualification_announces_nothing_and_settlement_updates_the_nod() {
         .filter_map(|log| INod::MetadataUpdate::decode_log_data(log).ok())
         .map(|event| event._tokenId)
         .collect();
-    assert!(batches.is_empty(), "a derived qualification writes nothing");
+    assert!(batches.is_empty(), "a settlement announces no batch");
     assert_eq!(updates, vec![first.nod_id.to_u256()]);
 }
 
@@ -294,20 +219,13 @@ fn token_uri_renders_the_nod_image_and_metadata() {
     use base64::Engine;
 
     let engine = base64::engine::general_purpose::STANDARD;
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let mut body = item(Address::repeat_byte(0x71), U256::from(400_000), USD);
     crate::test_support::set_amount(&mut body, U256::from(1_250_123_456u64));
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &body,
             U256::from(400_000),
             crate::test_support::sealed_terms(&storage, &body, U256::from(400_000)),
@@ -318,17 +236,7 @@ fn token_uri_renders_the_nod_image_and_metadata() {
                 nodId: body.nod_id.to_u256(),
             }
             .abi_encode();
-            let out = dispatch(
-                storage.clone(),
-                ExecutionReaders {
-                    scope: &scope,
-                    parent: &parent,
-                },
-                &data,
-                Address::ZERO,
-                U256::ZERO,
-            )
-            .unwrap();
+            let out = dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO).unwrap();
             let uri = INod::tokenURICall::abi_decode_returns(&out).unwrap();
             let json = engine
                 .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
@@ -359,21 +267,17 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         assert!(svg.contains(">ISSUED</text>"));
         let row = |label: &str| svg.find(&format!(">{label}</text>")).unwrap();
         assert!(row("Gratis Load") < row("Entry Price"));
-        assert!(row("Entry Price") < row("Floor Price"));
-        assert!(row("Floor Price") < row("Call Price"));
+        assert!(row("Entry Price") < row("Call Price"));
 
-        qualify(&storage, &body, U256::from(400_000));
-        let (json, svg) = read();
         let hex = format!("{:064x}", body.nod_id.to_u256());
         let id = format!("{}-{}", body.worldwide_day, &hex[8..16]);
         assert_eq!(json["name"], format!("Nod {id}"));
         assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
         assert!(!json.to_string().contains("https://"));
-        assert_eq!(value(&json, "State").unwrap(), "Qualified");
         assert_eq!(value(&json, "Worldwide Day").unwrap(), 20_260_715);
         assert_eq!(value(&json, "League").unwrap(), 4);
         assert_eq!(value(&json, "Entry Price").unwrap(), 0.4);
-        assert_eq!(value(&json, "Floor Price").unwrap(), 0.432);
+        assert!(value(&json, "Floor Price").is_none());
         assert_eq!(value(&json, "Call Price").unwrap(), 1.424);
         assert_eq!(
             value(&json, "Encrypted Gratis Load").unwrap(),
@@ -384,7 +288,6 @@ fn token_uri_renders_the_nod_image_and_metadata() {
 
         assert!(svg.contains(">NOD</text>"));
         assert!(svg.contains(&format!(">{id}</text>")));
-        assert!(svg.contains(">QUALIFIED</text>"));
         assert!(svg.contains(">1.424</text>"));
         assert!(svg.contains(">Encrypted</text>"));
         assert!(!svg.contains("1,250.12"));
@@ -402,18 +305,11 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
 
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_timestamp(U256::from(118));
-    let scope = ExecutionScope::default();
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let json = StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
         let item = item(Address::repeat_byte(0x88), U256::from(20), USD);
         api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &item,
             U256::from(20),
             crate::test_support::sealed_terms(&storage, &item, U256::from(20)),
@@ -432,26 +328,16 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
             },
         )
         .unwrap();
-        qualify(&storage, &item, U256::from(20));
-        let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
+        let bucket_id = item.bucket_key;
         api::record_settled(
             &storage,
-            &scope,
-            api::load_item(&storage, &scope, &parent, item.nod_id)
-                .unwrap()
-                .unwrap(),
-            api::load_bucket(&storage, &scope, &parent, bucket_id)
-                .unwrap()
-                .unwrap(),
+            api::load_item(&storage, item.nod_id).unwrap().unwrap(),
+            api::load_bucket(&storage, bucket_id).unwrap().unwrap(),
         )
         .unwrap();
         nod.bucket_called_at.write(&item.bucket_key, 100).unwrap();
         let out = dispatch(
             storage.clone(),
-            ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &INod::tokenURICall {
                 nodId: item.nod_id.to_u256(),
             }
@@ -475,7 +361,6 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
 }
 
 struct PublicLifecycle {
-    qualified: bool,
     paid: bool,
     called_at: u64,
     notice: u32,
@@ -483,23 +368,18 @@ struct PublicLifecycle {
 
 fn seed_public_lifecycle(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl outbe_compressed_entities::ParentBodySource,
     scenario: PublicLifecycle,
-) -> (NodItemState, WwdEntityId) {
+) -> (NodItemState, B256) {
     use crate::schema::CallTerms;
     let PublicLifecycle {
-        qualified,
         paid,
         called_at,
         notice,
     } = scenario;
     seed_production_nod_genesis(storage);
-    begin_block(storage.clone(), scope).unwrap();
     let item = item(Address::repeat_byte(0x87), U256::from(20), USD);
     api::add_nod(
         storage,
-        outbe_compressed_entities::ExecutionReaders { scope, parent },
         &item,
         U256::from(20),
         crate::test_support::sealed_terms(storage, &item, U256::from(20)),
@@ -518,20 +398,12 @@ fn seed_public_lifecycle(
         },
     )
     .unwrap();
-    if qualified {
-        qualify(storage, &item, U256::from(20));
-    }
-    let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key);
+    let bucket_id = item.bucket_key;
     if paid {
         api::record_settled(
             storage,
-            scope,
-            api::load_item(storage, scope, parent, item.nod_id)
-                .unwrap()
-                .unwrap(),
-            api::load_bucket(storage, scope, parent, bucket_id)
-                .unwrap()
-                .unwrap(),
+            api::load_item(storage, item.nod_id).unwrap().unwrap(),
+            api::load_bucket(storage, bucket_id).unwrap().unwrap(),
         )
         .unwrap();
     }

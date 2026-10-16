@@ -95,12 +95,8 @@ impl PublishedPlan {
                         finalized_block_number: 90,
                         finalized_block_hash: hash(0x31),
                         finalized_state_root,
-                        finalized_ce_root: hash(0x33),
-                        ce_schema_version: 1,
                     },
                     wwd: day.value(),
-                    sealed_tribute_collection_key: hash(0x34),
-                    sealed_tribute_collection_root: hash(0x35),
                 },
                 canonical_tributes: tributes
                     .iter()
@@ -345,8 +341,8 @@ impl ResultFixture<'_> {
         );
         if index == 1 {
             match result_fault {
-                ResultCatalogFault::EligibleTotal => {
-                    summary.eligible_nominal_total -= U256::from(1);
+                ResultCatalogFault::NodCarrier => {
+                    summary.nod_actions.tree_root = hash(0xed);
                 }
                 ResultCatalogFault::None
                 | ResultCatalogFault::HeaderCoverage

@@ -1,88 +1,9 @@
 use super::*;
 use crate::{WwdDayType, WwdStatus};
+use outbe_tribute::runtime::RetirementOutcome;
 
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_compressed_entities::{
-    AuthenticatedParentTree, CeWorkConfig, Commitment, FinalLeafMutation, PartitionRef,
-    ProvisionalTreeBatch, RetirementOutcome,
-};
 use outbe_primitives::error::{PrecompileError, Result};
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
-
-#[derive(Debug)]
-pub(super) struct FixedPartitionTree {
-    parent: SyntheticParent,
-    pub(super) partition_root: B256,
-    leaf_reads: AtomicUsize,
-}
-
-#[derive(Debug)]
-struct SyntheticParent {
-    block_hash: B256,
-    root: B256,
-    seal_error: &'static str,
-}
-
-impl AuthenticatedParentTree for FixedPartitionTree {
-    fn parent_block_hash(&self) -> B256 {
-        self.parent.block_hash
-    }
-
-    fn parent_root(&self) -> B256 {
-        self.parent.root
-    }
-
-    fn read_leaf_verified(
-        &self,
-        _entity: EntityRef,
-        expected_parent_root: B256,
-    ) -> Result<Option<Commitment>> {
-        if expected_parent_root != self.parent.root {
-            return Err(PrecompileError::Fatal(
-                "fixed partition parent-root mismatch".into(),
-            ));
-        }
-        self.leaf_reads.fetch_add(1, Ordering::SeqCst);
-        Ok(None)
-    }
-
-    fn partition_present_verified(
-        &self,
-        partition: PartitionRef,
-        expected_parent_root: B256,
-    ) -> Result<bool> {
-        Ok(self
-            .partition_root_verified(partition, expected_parent_root)?
-            .is_some())
-    }
-
-    fn partition_root_verified(
-        &self,
-        partition: PartitionRef,
-        expected_parent_root: B256,
-    ) -> Result<Option<B256>> {
-        if expected_parent_root != self.parent.root
-            || !matches!(partition, PartitionRef::TributeWwd(_))
-        {
-            return Err(PrecompileError::Fatal(
-                "fixed partition authentication mismatch".into(),
-            ));
-        }
-        Ok(Some(self.partition_root))
-    }
-
-    fn prepare_seal(
-        &self,
-        _block_number: u64,
-        _mutations: &[FinalLeafMutation],
-        _retirements: &[PartitionRef],
-    ) -> Result<ProvisionalTreeBatch> {
-        Err(PrecompileError::Fatal(self.parent.seal_error.into()))
-    }
-}
 
 fn seed_day(
     storage: &StorageHandle<'_>,
@@ -219,61 +140,8 @@ fn seed_capacity_fixture_with_victim_state(
     })
 }
 
-fn begin_empty_scope(provider: &mut HashMapStorageProvider) -> ExecutionScope {
-    let scope = ExecutionScope::default();
-    let parent_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
-    StorageHandle::enter(provider, |storage| {
-        storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-            .unwrap();
-        storage
-            .sstore(
-                COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(parent_root.as_slice()),
-            )
-            .unwrap();
-        begin_block(storage, &scope).unwrap();
-    });
-    scope
-}
-
-pub(super) fn begin_fixed_partition_scope(
-    provider: &mut HashMapStorageProvider,
-) -> (ExecutionScope, Arc<FixedPartitionTree>) {
-    let parent_root = outbe_compressed_entities::sealed_root(B256::repeat_byte(0x71)).unwrap();
-    let tree = Arc::new(FixedPartitionTree {
-        parent: SyntheticParent {
-            block_hash: B256::ZERO,
-            root: parent_root,
-            seal_error: "capacity test does not close its synthetic parent tree",
-        },
-        partition_root: B256::repeat_byte(0x72),
-        leaf_reads: AtomicUsize::new(0),
-    });
-    let scope = outbe_compressed_entities::execution_scope::with_parent_tree(
-        tree.clone(),
-        CeWorkConfig::new(0, 0, u64::MAX),
-    );
-    StorageHandle::enter(provider, |storage| {
-        storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
-            .unwrap();
-        storage
-            .sstore(
-                COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(parent_root.as_slice()),
-            )
-            .unwrap();
-        begin_block(storage, &scope).unwrap();
-    });
-    (scope, tree)
-}
-
 fn run_advance(
     provider: &mut HashMapStorageProvider,
-    scope: &ExecutionScope,
     block_number: u64,
     timestamp: u64,
 ) -> Result<()> {
@@ -283,7 +151,7 @@ fn run_advance(
             BlockContext::empty_for_tests(block_number, timestamp, CHAIN_ID),
             storage,
         );
-        crate::commands::advance_active_worldwide_days(&ctx, scope)
+        crate::commands::advance_active_worldwide_days(&ctx)
     })
 }
 
@@ -420,8 +288,8 @@ fn retained_cap_minus_one_admits_cap_forfeits_and_cap_plus_one_is_corruption() {
             victim_state: status::WAITING,
         },
     );
-    let scope = begin_empty_scope(&mut below);
-    run_advance(&mut below, &scope, 2, scheduled).unwrap();
+
+    run_advance(&mut below, 2, scheduled).unwrap();
     StorageHandle::enter(&mut below, |storage| {
         let metadosis = MetadosisContract::new(storage);
         assert_eq!(metadosis.get_wwd_status(victim).unwrap(), status::READY);
@@ -442,8 +310,8 @@ fn retained_cap_minus_one_admits_cap_forfeits_and_cap_plus_one_is_corruption() {
             victim_state: status::WAITING,
         },
     );
-    let scope = begin_empty_scope(&mut at);
-    run_advance(&mut at, &scope, 2, scheduled).unwrap();
+
+    run_advance(&mut at, 2, scheduled).unwrap();
     StorageHandle::enter(&mut at, |storage| {
         let metadosis = MetadosisContract::new(storage);
         assert_eq!(metadosis.get_wwd_status(victim).unwrap(), status::FAILED);
@@ -468,10 +336,10 @@ fn retained_cap_minus_one_admits_cap_forfeits_and_cap_plus_one_is_corruption() {
             victim_state: status::WAITING,
         },
     );
-    let scope = begin_empty_scope(&mut above);
+
     let before_storage = above.storage.clone();
     let before_events = above.events.clone();
-    let error = run_advance(&mut above, &scope, 2, scheduled).unwrap_err();
+    let error = run_advance(&mut above, 2, scheduled).unwrap_err();
     assert!(matches!(error, PrecompileError::Revert(_)));
     assert_eq!(above.storage, before_storage);
     assert_eq!(above.events, before_events);
@@ -517,9 +385,8 @@ fn multiple_due_candidates_advance_exactly_one_per_tick_in_protocol_order() {
         }
         latest
     });
-    let scope = begin_empty_scope(&mut provider);
 
-    run_advance(&mut provider, &scope, 10, timestamp).unwrap();
+    run_advance(&mut provider, 10, timestamp).unwrap();
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage);
         assert_eq!(
@@ -528,7 +395,7 @@ fn multiple_due_candidates_advance_exactly_one_per_tick_in_protocol_order() {
         );
     });
 
-    run_advance(&mut provider, &scope, 11, timestamp + 1).unwrap();
+    run_advance(&mut provider, 11, timestamp + 1).unwrap();
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage);
         assert_eq!(
@@ -537,7 +404,7 @@ fn multiple_due_candidates_advance_exactly_one_per_tick_in_protocol_order() {
         );
     });
 
-    run_advance(&mut provider, &scope, 12, timestamp + 2).unwrap();
+    run_advance(&mut provider, 12, timestamp + 2).unwrap();
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage);
         assert_eq!(
@@ -576,7 +443,7 @@ fn continuous_creation_cadence_keeps_due_candidates_within_the_derived_wait_boun
             candidates.push((wwd, 0_usize));
         }
     });
-    let scope = begin_empty_scope(&mut provider);
+
     let total_candidates = MAX_PIPELINE_WWDS + EXTRA_ARRIVALS;
     let mut terminal_or_admitted_at = BTreeMap::new();
     let mut next_sequence = MAX_PIPELINE_WWDS;
@@ -584,7 +451,6 @@ fn continuous_creation_cadence_keeps_due_candidates_within_the_derived_wait_boun
     for tick in 1..=total_candidates {
         run_advance(
             &mut provider,
-            &scope,
             u64::try_from(100 + tick).unwrap(),
             DUE_AT + u64::try_from(tick).unwrap(),
         )
@@ -658,8 +524,6 @@ fn start_metadosis_settles_one_ready_day_per_tick_oldest_first() {
         tribute.seal_day(older).unwrap();
         newer_time.max(older_time)
     });
-    let scope = begin_empty_scope(&mut provider);
-    let parent = TestParent::empty();
 
     for (block_number, expected) in [
         (50_u64, [status::FAILED, status::READY]),
@@ -671,7 +535,7 @@ fn start_metadosis_settles_one_ready_day_per_tick_oldest_first() {
                 BlockContext::empty_for_tests(block_number, timestamp, CHAIN_ID),
                 storage,
             );
-            crate::commands::start_metadosis(&ctx, &scope, &parent).unwrap();
+            crate::commands::start_metadosis(&ctx).unwrap();
         });
         StorageHandle::enter(&mut provider, |storage| {
             let metadosis = MetadosisContract::new(storage);
@@ -709,8 +573,8 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
             metadosis.ocomp_ready_index.read().unwrap(),
         )
     });
-    let scope = begin_empty_scope(&mut provider);
-    run_advance(&mut provider, &scope, 20, scheduled).unwrap();
+
+    run_advance(&mut provider, 20, scheduled).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
         let mut metadosis = MetadosisContract::new(storage.clone());
@@ -762,7 +626,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
         assert_eq!(receipt.forfeited_nominal, U256::ZERO);
         assert_eq!(receipt.source_generation, 0);
         assert_eq!(receipt.retired_generation, 1);
-        assert_eq!(receipt.retirement, RetirementOutcome::NotPresent);
+        assert_eq!(receipt.retirement, RetirementOutcome::Requested);
         let error = metadosis
             .write_capacity_forfeiture_receipt(receipt)
             .unwrap_err();
@@ -795,7 +659,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
         assert_eq!(decoded.promisLimitReturnedMinor, U256::from(100));
         assert_eq!(
             decoded.retirementOutcome,
-            crate::schema::terminal_retirement::NOT_PRESENT
+            crate::schema::terminal_retirement::REQUESTED
         );
 
         let generic = IMetadosis::getWorldwideDayTerminalReceiptCall {
@@ -824,7 +688,7 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
     );
     let storage_before_replay = provider.storage.clone();
     let events_before_replay = provider.events.clone();
-    run_advance(&mut provider, &scope, 21, scheduled + 1).unwrap();
+    run_advance(&mut provider, 21, scheduled + 1).unwrap();
     assert_eq!(provider.storage, storage_before_replay);
     assert_eq!(provider.events, events_before_replay);
 }
@@ -883,8 +747,7 @@ fn additional_ready_day_preserves_real_pending_ocomp_job_and_indexes_byte_for_by
         snapshot
     });
 
-    let scope = begin_empty_scope(&mut fixture.provider);
-    run_advance(&mut fixture.provider, &scope, 51, scheduled).unwrap();
+    run_advance(&mut fixture.provider, 51, scheduled).unwrap();
 
     StorageHandle::enter(&mut fixture.provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
@@ -953,8 +816,8 @@ fn malformed_capacity_detail_is_fatal() {
             victim_state: status::WAITING,
         },
     );
-    let scope = begin_empty_scope(&mut provider);
-    run_advance(&mut provider, &scope, 20, scheduled).unwrap();
+
+    run_advance(&mut provider, 20, scheduled).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage);
@@ -991,8 +854,8 @@ fn capacity_receipt_without_detail_is_fatal_in_reader_and_aggregate() {
             victim_state: status::WAITING,
         },
     );
-    let scope = begin_empty_scope(&mut provider);
-    run_advance(&mut provider, &scope, 20, scheduled).unwrap();
+
+    run_advance(&mut provider, 20, scheduled).unwrap();
 
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
@@ -1026,8 +889,8 @@ fn populated_and_max_shape_forfeiture_is_constant_size_and_emits_one_canonical_r
                 victim_state: status::WAITING,
             },
         );
-        let (scope, tree) = begin_fixed_partition_scope(&mut provider);
-        run_advance(&mut provider, &scope, 30, scheduled).unwrap();
+
+        run_advance(&mut provider, 30, scheduled).unwrap();
 
         StorageHandle::enter(&mut provider, |storage| {
             let metadosis = MetadosisContract::new(storage.clone());
@@ -1035,7 +898,6 @@ fn populated_and_max_shape_forfeiture_is_constant_size_and_emits_one_canonical_r
                 .read_capacity_forfeiture_receipt(victim)
                 .unwrap()
                 .unwrap();
-            assert_eq!(receipt.sealed_collection_root, tree.partition_root);
             assert_eq!(receipt.forfeited_count, count);
             assert_eq!(receipt.forfeited_nominal, nominal);
             assert_eq!(receipt.retirement, RetirementOutcome::Requested);
@@ -1045,10 +907,8 @@ fn populated_and_max_shape_forfeiture_is_constant_size_and_emits_one_canonical_r
             assert_eq!(totals.tribute_count, 0);
             assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
             let admission = tribute.pre_admission_projection(victim).unwrap();
-            assert_eq!(admission.sealed_collection_root, tree.partition_root);
             assert_eq!(admission.source_generation, 1);
         });
-        assert_eq!(tree.leaf_reads.load(Ordering::SeqCst), 0);
         let tribute_events = provider
             .get_ordered_events()
             .iter()
@@ -1078,9 +938,9 @@ fn every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_
             victim_state: status::OFFERING,
         },
     );
-    let (probe_scope, _) = begin_fixed_partition_scope(&mut probe);
+
     probe.fail_after_mutation_at(usize::MAX);
-    run_advance(&mut probe, &probe_scope, 40, scheduled).unwrap();
+    run_advance(&mut probe, 40, scheduled).unwrap();
     let mutation_count = probe.clear_mutation_failure();
     assert!(mutation_count >= 12);
     StorageHandle::enter(&mut probe, |storage| {
@@ -1141,7 +1001,6 @@ fn every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_
     let clean_storage = probe.storage.clone();
     let clean_events = probe.events.clone();
     let clean_ordered_events = probe.get_ordered_events().to_vec();
-    let clean_ce_work = probe_scope.ce_work_checkpoint().unwrap();
 
     for operation in 0..mutation_count {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -1155,14 +1014,14 @@ fn every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_
                 victim_state: status::OFFERING,
             },
         );
-        let (scope, _) = begin_fixed_partition_scope(&mut provider);
+
         let storage_before = provider.storage.clone();
         let events_before = provider.events.clone();
         let ordered_events_before = provider.get_ordered_events().to_vec();
-        let ce_before = scope.ce_work_checkpoint().unwrap();
+
         provider.fail_after_mutation_at(operation);
 
-        let result = run_advance(&mut provider, &scope, 40, scheduled);
+        let result = run_advance(&mut provider, 40, scheduled);
         assert!(
             result.is_err(),
             "mutation {operation} unexpectedly succeeded"
@@ -1175,13 +1034,8 @@ fn every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_
             ordered_events_before.as_slice(),
             "ordered events at {operation}"
         );
-        assert_eq!(
-            scope.ce_work_checkpoint().unwrap(),
-            ce_before,
-            "CE work at {operation}"
-        );
 
-        run_advance(&mut provider, &scope, 40, scheduled).unwrap();
+        run_advance(&mut provider, 40, scheduled).unwrap();
         StorageHandle::enter(&mut provider, |storage| {
             let metadosis = MetadosisContract::new(storage.clone());
             assert_eq!(metadosis.get_wwd_status(victim).unwrap(), status::FAILED);
@@ -1219,11 +1073,6 @@ fn every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_
             provider.get_ordered_events(),
             clean_ordered_events.as_slice(),
             "capacity retry ordered events diverged at {operation}"
-        );
-        assert_eq!(
-            scope.ce_work_checkpoint().unwrap(),
-            clean_ce_work,
-            "capacity retry CE work diverged at {operation}"
         );
     }
 }

@@ -1,4 +1,3 @@
-mod compressed_entities;
 #[cfg(feature = "ocomp-integration")]
 mod materialization;
 #[cfg(feature = "ocomp-integration")]

@@ -100,9 +100,8 @@ impl StorageReader for OcompExExStateReaderV1<'_> {
             .storage(address, key)
             .map(|value| value.unwrap_or_default())
             .map_err(|error| {
-                outbe_primitives::error::PrecompileError::Storage(format!(
-                    "OCOMP ExEx finalized state read failed: {error}"
-                ))
+                crate::errors::OcompExExStateReadError::FinalizedStateReadFailed(error.to_string())
+                    .into()
             })
     }
 }

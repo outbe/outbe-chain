@@ -2,21 +2,8 @@
 //! the caps and timings of the cross-chain sends. The series terms live in Intex.
 
 use alloy_primitives::U256;
-#[cfg(feature = "e2e-test")]
-use alloy_primitives::{address, Address};
-use outbe_primitives::time::SECONDS_PER_DAY;
 
 pub use outbe_primitives::addresses::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS};
-
-/// A proceeds e2e credits proceeds without deploying the router, so a throwaway
-/// build also accepts Hardhat account #0 as their source.
-#[cfg(feature = "e2e-test")]
-pub const PROCEEDS_TEST_SENDER: Address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-
-/// Proceeds fan-in window. A ready pot burns once every winning chain has
-/// routed its proceeds, or this long after issuance, whichever comes first.
-/// A full day absorbs legitimate escrow-finalize retries.
-pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = SECONDS_PER_DAY;
 
 /// Router calls a Called notice gets before it is dropped.
 pub const MAX_CALLED_NOTICE_ATTEMPTS: u8 = 12;
@@ -37,13 +24,6 @@ pub const MAX_PARKED_CALLS_PER_FIRING: u32 = 16;
 
 /// Consecutive failures that end a parked pass: an empty relay float fails every entry alike.
 pub const MAX_PARKED_FAILURES_PER_FIRING: u32 = 3;
-
-/// Days one `intex_vwap_push` firing may walk; each priced day is one cross-chain send per target.
-/// A sender that never sent starts at the newest finalized day: earlier days stay off the targets.
-pub const MAX_VWAP_DAYS_PER_FIRING: u32 = 8;
-
-/// Rows one DAILY_VWAP message may carry. Mirrors the codec's `MAX_REFERENCE_PRICES`.
-pub const MAX_VWAP_ROWS: usize = 6;
 
 /// Series one ISSUANCE_INSTRUCTIONS message may carry. Mirrors `MAX_SERIES_PER_ISSUANCE`.
 pub const MAX_SERIES_PER_MESSAGE: usize = 8;

@@ -34,7 +34,7 @@ interface IIntexAuction {
         address bidderAddress;
         /// @notice Bid rate the bidder accepts (`1e6` fixed-point, % of the escrow basis).
         uint32 intexBidRate;
-        /// @notice Requested Intex units.
+        /// @notice Requested quantity (Intex units).
         uint16 intexQuantity;
         /// @notice Timestamp assigned at reveal (ordering only).
         uint32 timestamp;
@@ -66,11 +66,10 @@ interface IIntexAuction {
         uint32 callNoticePeriod;
     }
 
-    /// @notice Entry, floor and call price of one reference currency for a day.
+    /// @notice Entry and call price of one reference currency for a day.
     struct ReferenceCurrencyPrice {
         uint16 isoCode;
         uint64 entryPriceMinor;
-        uint64 floorPriceMinor;
         uint64 callPriceMinor;
     }
 
@@ -83,7 +82,7 @@ interface IIntexAuction {
         /// @notice Minimum allowed bid rate (`1e6` fixed-point, % of the escrow basis). Reveal
         ///         rejects bids below it.
         uint32 minIntexBidRate;
-        /// @notice Minimum Intex units per bid.
+        /// @notice Minimum quantity per bid (Intex units).
         uint16 minIntexBidQuantity;
         /// @notice One row per currency the day can clear in. The bid's reference
         ///         currency must appear here.
@@ -144,12 +143,12 @@ interface IIntexAuction {
     /// @notice Emitted on `revealBid` after a successful reveal.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address.
-    /// @param units Revealed Intex units.
+    /// @param quantity Revealed Intex quantity.
     /// @param bidRate Revealed bid rate (`1e6` fixed-point, % of the escrow basis).
     event BidRevealed(
         uint32 indexed worldwideDay,
         address indexed bidder,
-        uint16 indexed units,
+        uint16 indexed quantity,
         uint32 bidRate,
         uint16 issuanceCurrency,
         uint16 referenceCurrency
@@ -193,10 +192,10 @@ interface IIntexAuction {
     error BidBelowMinIntexBidRate();
     /// @notice Bid rate exceeds 100% of the escrow basis (scale `1e6`).
     error BidRateAboveMax(uint32 bidRate);
-    /// @notice Bid units are below `minIntexBidQuantity`.
+    /// @notice Bid quantity is below `minIntexBidQuantity`.
     error BidBelowMinIntexBidQuantity();
     /// @notice The 18-decimal WCOEN lock derived from protocol-scale inputs exceeds uint128.
-    error BidAmountOverflow(uint16 units, uint32 bidRate);
+    error BidAmountOverflow(uint16 quantity, uint32 bidRate);
     /// @notice `issuedUnits * promisLoadMinor` exceeds the uint128 loaded-Promis range.
     error IssuedPromisOverflow(uint32 issuedUnits, uint128 promisLoadMinor);
     /// @notice Auction does not exist.
@@ -278,7 +277,7 @@ interface IIntexAuction {
     ///      no-reveal locks it until `revealEnd + UNREVEALED_BOND_LOCK_PERIOD` (see `claimCommitBond`).
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param commitHash `keccak256(signature)`, where `signature` is an EIP-712 typed-data
-    ///                   signature over `RevealBid(uint32 worldwideDay,address bidder,uint16 units,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)`
+    ///                   signature over `RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)`
     ///                   under the `IntexAuction` v1 domain (`chainId`, `verifyingContract = address(this)`).
     function commitBid(uint32 worldwideDay, bytes32 commitHash) external;
 
@@ -298,7 +297,7 @@ interface IIntexAuction {
     /// @dev Returns the commit bond (if any) before locking the bid escrow, so the bond can fund
     ///      the bid in the same transaction.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param units Requested Intex units.
+    /// @param quantity Requested quantity (Intex units).
     /// @param bidRate Bid rate (`1e6` fixed-point, % of the escrow basis).
     /// @param issuanceCurrency Declared issuance currency (ISO numeric). The contract checks only its
     ///                         three-digit range, because the network keeps no list of issuance
@@ -309,7 +308,7 @@ interface IIntexAuction {
     /// @param signature 65-byte ECDSA signature over the EIP-712 `RevealBid` typed data.
     function revealBid(
         uint32 worldwideDay,
-        uint16 units,
+        uint16 quantity,
         uint32 bidRate,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,

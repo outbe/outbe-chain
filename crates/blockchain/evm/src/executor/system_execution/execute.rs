@@ -66,28 +66,23 @@ where
     /// The precompile executes under the separate internal system-work budget.
     /// The public Ethereum block gas lane charges the visible base gas of the
     /// signed envelope (intrinsic plus any schedule-hashed protocol precharge).
-    /// It also charges any explicit compressed-entity gas. It does not expose the
+    /// It also charges any explicit state-operation gas. It does not expose the
     /// internal execution lane.
     pub(in crate::executor) fn commit_system_transaction(
         &mut self,
         output: EthTxResult<E::HaltReason, alloy_consensus::TxType>,
         visible_base_gas: u64,
-        compressed_entities_gas: u64,
+        additional_visible_gas: u64,
         signed_gas_limit: u64,
     ) -> Result<GasOutput, BlockExecutionError> {
-        let visible_gas_used = self.visible_system_gas_with_compressed_entities(
-            visible_base_gas,
-            compressed_entities_gas,
-            signed_gas_limit,
-        )?;
+        let visible_gas_used =
+            self.visible_system_gas(visible_base_gas, additional_visible_gas, signed_gas_limit)?;
         let user_cumulative_tx_gas = self.inner.cumulative_tx_gas_used;
         let user_regular_gas = self.inner.block_regular_gas_used;
         let user_state_gas = self.inner.block_state_gas_used;
         let visible_cumulative_tx_gas = user_cumulative_tx_gas
             .checked_add(visible_gas_used)
-            .ok_or_else(|| -> BlockExecutionError {
-                BlockValidationError::msg("system tx visible gas overflow").into()
-            })?;
+            .ok_or(crate::errors::ExecutorValidationError::SystemTxVisibleGasOverflow)?;
         let system_cumulative_gas_used =
             self.checked_system_tx_execution_gas(output.result.result.tx_gas_used())?;
 
@@ -112,15 +107,17 @@ where
         let cumulative = self
             .system_tx_execution_gas
             .checked_add(additional)
-            .ok_or_else(|| -> BlockExecutionError {
-                BlockValidationError::msg("internal system-work gas overflow").into()
-            })?;
+            .ok_or(crate::errors::ExecutorValidationError::InternalSystemWorkGasOverflow)?;
         let limit = outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT;
         if cumulative > limit {
-            return Err(BlockValidationError::msg(format!(
-                "internal system-work budget exceeded: cumulative={cumulative}, limit={limit}, additional={additional}"
-            ))
-            .into());
+            return Err(
+                crate::errors::ExecutorValidationError::InternalSystemWorkBudgetExceeded {
+                    cumulative,
+                    limit,
+                    additional,
+                }
+                .into(),
+            );
         }
         Ok(cumulative)
     }

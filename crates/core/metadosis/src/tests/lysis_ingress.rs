@@ -11,10 +11,10 @@ use crate::terminal::{CapacityForfeitureReceipt, MissedOfferingReceipt};
 use crate::{
     errors::vote_rejection_code::LIFECYCLE_INACTIVE, ocomp::vote::dispatch_public_result_vote,
 };
-use outbe_compressed_entities::RetirementOutcome;
 use outbe_ocomp_protocol::abi::OCOMP_RESULT_VOTE_REJECTED_SELECTOR;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::time::WorldwideDay as WwdKey;
+use outbe_tribute::runtime::RetirementOutcome;
 
 const REJECT_CALL_MODE_CODE: u16 = 3;
 
@@ -75,9 +75,8 @@ fn active_lifecycle_still_routes_lysis_vote_to_the_command_path() {
 #[test]
 fn static_or_valued_lysis_call_rejects_with_call_mode_code_when_active() {
     with_storage(|storage| {
-        let scope = ExecutionScope::default();
         for (value, is_static) in [(U256::from(1_u8), false), (U256::ZERO, true)] {
-            let err = dispatch_public_result_vote(storage.clone(), &scope, &[], value, is_static)
+            let err = dispatch_public_result_vote(storage.clone(), &[], value, is_static)
                 .expect_err("static or valued vote call must be rejected");
             match err {
                 PrecompileError::RevertBytes(bytes) => {
@@ -147,7 +146,6 @@ fn terminal_receipt_writers_only_emit_known_outcomes() {
                 value_routed: U256::from(9_u8),
                 carry_over_before: U256::ZERO,
                 carry_over_after: U256::from(9_u8),
-                sealed_collection_root: B256::repeat_byte(0x21),
                 forfeited_count: 3,
                 forfeited_nominal: U256::from(30_u8),
                 source_generation: 1,

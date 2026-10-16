@@ -4,7 +4,6 @@
 //! calls. Public Ethereum RPC gas accounting must expose only the committed
 //! header gas actually used by the visible transaction envelopes.
 
-use outbe_offchain_data::runtime_body_readers;
 use std::{path::PathBuf, process::Command, sync::Arc};
 
 use alloy_consensus::Transaction as _;
@@ -13,14 +12,9 @@ use alloy_primitives::{keccak256, Address, Bytes, B256};
 use alloy_provider::{Provider, ProviderBuilder};
 use eyre::{bail, Context};
 use outbe_chain_constants::GenesisProtocolParametersV1;
-use outbe_compressed_entities::{
-    CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
-    ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
-};
 use outbe_evm::OutbeEvmSigner;
 use outbe_metadosis::test_support::ForkInstallScenario;
 use outbe_node::OutbeNode;
-use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
     chain::DEVNET_CHAIN_ID,
@@ -82,7 +76,7 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
         ),
     )?;
     // Seed the COEN/840 oracle pair + a 1.0 rate (scale 1e6). The begin-block
-    // NOD/GEM/INTEX floor-price promotion then reads a registered pair instead of
+    // NOD/GEM/INTEX call scans then read a registered pair instead of
     // reverting "pair not registered". That revert would abort pre-execution and
     // leave every payload empty. Production genesis always seeds oracle pairs.
     // The oracle itself is left uninitialized so its own begin-block
@@ -204,7 +198,6 @@ fn payload_attributes(timestamp: u64, proposer: Address) -> OutbePayloadAttribut
         )),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
-        compressed_entities_root: None,
     })
     .expect("Outbe boundary artifacts should encode");
     OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {
@@ -241,7 +234,6 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
             .expect("GramineDirectDev TEE activation manifest is canonical"),
     );
     let chain_spec = chain_spec_with_genesis(genesis);
-    let ce_directory = tempfile::tempdir()?;
 
     // The OST3 payload binds the epoch-0 committee snapshot that the block-1
     // BoundaryOutcome writes before TeeBootstrap runs. The boundary artifact
@@ -267,33 +259,6 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
             .expect("OCOMP founder registration matches the seeded validator")
             .into_install(),
     );
-    let ce_db = CeMdbx::open(
-        ce_directory.path(),
-        EnvironmentIdentity {
-            local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
-            chain_id: DEVNET_CHAIN_ID,
-            genesis_hash,
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            topology: outbe_compressed_entities::CeTopologyV1.encode(),
-            tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".to_owned(),
-            vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
-        },
-        FinalizedMarker {
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            height: 0,
-            block_hash: genesis_hash,
-            parent_block_hash: B256::ZERO,
-            parent_root: B256::ZERO,
-            new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
-        },
-    )?;
-    let compressed_tree_service = Arc::new(CompressedTreeService::new(
-        ce_db,
-        CandidateCacheLimits {
-            max_candidates: usize::MAX,
-            max_encoded_bytes: usize::MAX,
-        },
-    )?);
     let runtime = Runtime::test();
 
     let network_config = NetworkArgs {
@@ -318,8 +283,7 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         shutdown: Default::default(),
         bridge: Some(bridge),
         evm_signer: Some(signer),
-        runtime_body_readers: runtime_body_readers(Arc::new(MemoryStorage::new())),
-        compressed_tree_service,
+
         ocomp_fork_install: Some(ocomp_fork_install),
     };
     let NodeHandle {

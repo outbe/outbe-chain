@@ -1,6 +1,4 @@
 //! The borrowed child frame must expose a settled, typed VM outcome.
-mod sub_call_support;
-
 use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
@@ -130,10 +128,9 @@ fn static_gem_factory_command_is_denied_before_domain_validation() {
     let mut provider = HashMapStorageProvider::new(1);
     provider.set_static(true);
     let storage = StorageHandle::new(&mut provider);
-    let world = outbe_gem::test_support::GemWorld::unopened();
+
     let result = outbe_gemfactory::precompile::dispatch(
         storage,
-        world.readers(),
         &IGemFactory::issueGemPositionCall {
             sourceIntexId: alloy_primitives::FixedBytes::repeat_byte(99),
             units: U256::from(1),
@@ -164,7 +161,7 @@ fn invalid_opcode_spends_the_child_allowance_and_retains_its_vm_reason() {
     let mut ctx = Context::mainnet().with_db(db);
     let result = sub_call::run(
         &mut ctx,
-        sub_call_support::fresh_environment(Address::repeat_byte(0xc0), SpecId::PRAGUE),
+        outbe_evm::test_support::fresh_environment(Address::repeat_byte(0xc0), SpecId::PRAGUE),
         SubCallInput {
             target,
             value: U256::ZERO,
@@ -233,7 +230,6 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
                     issued_units: 1,
                     promis_load_minor: 1_000_000,
                     entry_price_minor: U256::from(1_000_000),
-                    floor_price_minor: U256::ONE,
                     call_price_minor: U256::ZERO,
                     call_trigger: Default::default(),
                     issued_at: 1_700_000_000,
@@ -315,12 +311,7 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
                 ..Default::default()
             },
         );
-        // Gem Factory routes through the compressed-body readers; a position needs no
-        // body, so an empty finalized store is enough authority here.
-        let readers = outbe_offchain_data::runtime_body_readers(std::sync::Arc::new(
-            outbe_offchain_storage::MemoryStorage::new(),
-        ));
-        let mut evm = outbe_evm::factory::evm_factory_with_body_readers(readers).create_evm(
+        let mut evm = outbe_evm::factory::OutbeEvmFactory::default().create_evm(
             &mut db,
             EvmEnv {
                 cfg_env: CfgEnv::new()

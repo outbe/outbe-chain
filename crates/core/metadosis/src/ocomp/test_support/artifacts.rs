@@ -4,11 +4,6 @@ pub(super) fn hash(byte: u8) -> B256 {
     B256::repeat_byte(byte)
 }
 
-pub(super) fn tribute_collection_key() -> B256 {
-    let (_, key) = partition_collection_key(PartitionRef::TributeWwd(TEST_WWD)).unwrap();
-    B256::from(*key.as_bytes())
-}
-
 pub(super) fn capacity_profile() -> CapacityProfileV1 {
     CapacityProfileV1 {
         profile_id: hash(13),
@@ -30,6 +25,8 @@ pub(super) fn capacity_profile() -> CapacityProfileV1 {
 
 pub(super) fn bundle() -> ProtocolBundleV1 {
     let mut bundle = outbe_ocomp_protocol::test_utils::minimal_protocol_bundle();
+    bundle.lysis_program_semantics_hash =
+        outbe_ocomp_protocol::profile::supported_lysis_v1_semantics_hash().unwrap();
     bundle.fork_id = hash(21);
     bundle.release_gate_authority_envelope_hash = hash(22);
     bundle.release_approval_policy_hash = hash(24);
@@ -118,6 +115,7 @@ pub fn seed_registry_authority(
     authority: &outbe_ocompregistry::OcompProtocolAuthorityV1,
     limits: &outbe_ocomp_protocol::SchemaLimits,
 ) -> PrecompileResult<()> {
+    use crate::errors::MetadosisTestSupportError;
     let registry = outbe_ocompregistry::OcompRegistry::new(storage.clone());
     registry
         .active_request_profile
@@ -126,15 +124,13 @@ pub fn seed_registry_authority(
         &authority
             .protocol_bundle
             .encode_canonical(limits)
-            .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
+            .map_err(MetadosisTestSupportError::from)?,
     )?;
     registry
         .active_protocol_bundle_hash
         .write(authority.request_profile.protocol_bundle_hash)?;
     if registry.active_authority(limits)?.as_ref() != Some(authority) {
-        return Err(PrecompileError::Fatal(
-            "seeded OCOMP Registry authority does not read back".into(),
-        ));
+        return Err(MetadosisTestSupportError::SeededOcompRegistryAuthorityMismatch.into());
     }
     Ok(())
 }
@@ -172,9 +168,6 @@ pub(super) fn intent(
         pending_nonce: 0,
         attempt: 0,
         protocol_bundle_hash: bundle_hash,
-        ce_sealed_root: hash(42),
-        sealed_tribute_collection_key: tribute_collection_key(),
-        sealed_tribute_collection_root: hash(31),
         authenticated_day_count: 2,
         authenticated_day_nominal: U256::from(1_000),
         pre_admission_envelope_hash: hash(43),
@@ -196,8 +189,6 @@ pub(super) fn intent(
             tribute: TributeInputBindingV1 {
                 wwd: TEST_WWD.value(),
                 source_generation: 0,
-                collection_key: tribute_collection_key(),
-                sealed_collection_root: hash(31),
                 exact_count: 2,
                 exact_nominal_total: U256::from(1_000),
             },
@@ -245,7 +236,6 @@ pub(super) fn result(
     };
     let conservation = ConservationTotalsV1 {
         tribute_nominal_total: U256::from(1_000),
-        eligible_nominal_total: U256::from(600),
         day_limit: U256::from(100),
         gratis_demand: U256::from(60),
         day_gratis_limit_minor: U256::from(60),
@@ -338,7 +328,6 @@ pub fn lysis_result_for_intent(
     };
     let conservation = ConservationTotalsV1 {
         tribute_nominal_total: intent.authenticated_day_nominal,
-        eligible_nominal_total: U256::ZERO,
         day_limit: frozen.day_limit,
         gratis_demand: frozen.gratis_demand,
         day_gratis_limit_minor: frozen.day_gratis_limit_minor,

@@ -12,17 +12,13 @@ test-utils = ["outbe-ocomp-protocol/test-utils"]
 [dependencies]
 # Internal
 outbe-evm.workspace = true
-outbe-compressed-entities.workspace = true
 outbe-primitives.workspace = true
 outbe-txpool.workspace = true
-outbe-offchain-data.workspace = true
-outbe-offchain-storage.workspace = true
 outbe-consensus.workspace = true
 outbe-metadosis.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-oracle.workspace = true
 outbe-nod.workspace = true
-outbe-tribute.workspace = true
 outbe-tee.workspace = true
 outbe-teeregistry.workspace = true
 outbe-validatorset.workspace = true
@@ -71,8 +67,6 @@ thiserror.workspace = true
 k256.workspace = true
 
 [dev-dependencies]
-outbe-offchain-storage = { workspace = true, features = ["test-utils"] }
-outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 outbe-ocomp-protocol = { workspace = true, features = ["test-utils"] }
 reth-engine-tree = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
 reth-stages-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
@@ -84,7 +78,6 @@ outbe-tee-enclave = { workspace = true, features = ["mock"] }
 alloy-provider.workspace = true
 alloy-trie.workspace = true
 ed25519-dalek.workspace = true
-mongodb.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-e2e-test-utils.workspace = true
 reth-node-api.workspace = true
@@ -94,6 +87,24 @@ reth-tracing.workspace = true
 serde_json.workspace = true
 hex.workspace = true
 tempfile.workspace = true
+commonware-codec.workspace = true
+commonware-consensus.workspace = true
+commonware-cryptography.workspace = true
+commonware-utils.workspace = true
+outbe-cycle.workspace = true
+outbe-desis.workspace = true
+outbe-intex.workspace = true
+outbe-promislimit.workspace = true
+outbe-rewards.workspace = true
+outbe-update.workspace = true
+outbe-vaultrouter.workspace = true
+rand-commonware.workspace = true
+rand-core-commonware.workspace = true
+outbe-tribute = { workspace = true, features = ["test-enclave"] }
+outbe-nod = { workspace = true, features = ["test-utils", "test-enclave"] }
+outbe-validatorset = { workspace = true, features = ["test-utils"] }
+reth-trie = { workspace = true, features = ["test-utils"] }
+outbe-oracle = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

@@ -88,8 +88,20 @@ impl VerifiedPlanSchedule<'_> {
                     self.push_primary_input_ref(index, &mut ordered_input_refs)?;
                 }
             }
-            UnitPhase::FixedReduce
-            | UnitPhase::GratisPrefix
+            UnitPhase::FixedReduce => {
+                if matches!(
+                    position,
+                    PlannedUnitPositionV1::TreeNode {
+                        level, index: 0, ..
+                    } if level == self.topology.tree().height()
+                ) {
+                    for ordinal in 0..self.plan.primary_work_unit_count {
+                        self.push_primary_input_ref(ordinal, &mut ordered_input_refs)?;
+                    }
+                    self.push_input_kind_refs(InputChunkKind::Fidelity, &mut ordered_input_refs)?;
+                }
+            }
+            UnitPhase::GratisPrefix
             | UnitPhase::GratisPrefixDown
             | UnitPhase::OutputFinalize
             | UnitPhase::BucketShuffle => {}
@@ -201,12 +213,10 @@ impl VerifiedPlanSchedule<'_> {
                 let exact = producer_ids
                     .iter()
                     .copied()
-                    .map(|unit_id| {
-                        unit_id.ok_or(ExactLysisPlanError::AuthorityMismatch("shuffle producer"))
-                    })
+                    .map(|unit_id| unit_id.ok_or(ExactLysisPlanError::ShuffleProducer))
                     .collect::<Result<Vec<_>, _>>()?;
                 self.planner
-                    .shuffle_unit_at(phase, phase_ordinal, &exact, self.limits)
+                    .shuffle_unit_at(phase_ordinal, &exact, self.limits)
                     .map_err(Into::into)
             }
             UnitPhase::RootReduce => self
@@ -357,7 +367,7 @@ impl VerifiedPlanSchedule<'_> {
             authority.plan_hash,
         ) || record.unit_id.is_zero()
         {
-            return Err(ExactLysisPlanError::AuthorityMismatch("producer admission"));
+            return Err(ExactLysisPlanError::ProducerAdmission);
         }
         Ok(())
     }

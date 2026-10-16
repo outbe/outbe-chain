@@ -110,12 +110,9 @@ mod observation_tests {
     #[test]
     fn recovery_fields_come_from_complete_existing_record_not_later_head() {
         let hash = "ab".repeat(32);
-        let log = format!("unrelated height=900\nINFO certified follower startup recovery barrier completed marshal_processed=100 recovery_height=101 recovery_hash=0x{hash} ce_marker_height=101 last_execution_height=102\nsubsequent finalized=200\n");
-        let (processed, anchor, ce, execution) = parse_recovery_record(&log).unwrap();
-        assert_eq!(
-            (processed, anchor.number, ce, execution),
-            (100, 101, 101, 102)
-        );
+        let log = format!("unrelated height=900\nINFO certified follower startup recovery barrier completed marshal_processed=100 recovery_height=101 recovery_hash=0x{hash} last_execution_height=102\nsubsequent finalized=200\n");
+        let (processed, anchor, execution) = parse_recovery_record(&log).unwrap();
+        assert_eq!((processed, anchor.number, execution), (100, 101, 102));
         assert_eq!(anchor.hash, hash);
         assert!(parse_recovery_record("subsequent finalized=200").is_err());
         assert!(parse_recovery_record(&log.replace("recovery_hash=", "missing_hash=")).is_err());
@@ -138,7 +135,7 @@ mod observation_tests {
     }
 }
 
-pub(crate) fn parse_recovery_record(log: &str) -> eyre::Result<(u64, SnapshotBlock, u64, u64)> {
+pub(crate) fn parse_recovery_record(log: &str) -> eyre::Result<(u64, SnapshotBlock, u64)> {
     let mut records = log
         .lines()
         .filter(|line| line.contains("certified follower startup recovery barrier completed"));
@@ -163,7 +160,6 @@ pub(crate) fn parse_recovery_record(log: &str) -> eyre::Result<(u64, SnapshotBlo
             number: field("recovery_height")?.parse()?,
             hash: hex::encode(hash),
         },
-        field("ce_marker_height")?.parse()?,
         field("last_execution_height")?.parse()?,
     ))
 }

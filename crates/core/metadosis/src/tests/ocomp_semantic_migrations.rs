@@ -61,7 +61,7 @@ fn close_completed_response_window(
             BlockContext::empty_for_tests(deadline_height, 1_011, 1),
             storage,
         );
-        crate::commands::run_ocomp_lifecycle_begin_with_scope(&ctx, &fixture.scope)
+        crate::commands::run_ocomp_lifecycle_begin_with_scope(&ctx)
     })
 }
 
@@ -438,12 +438,7 @@ fn every_pinned_validator_can_vote_after_quorum_until_the_exclusive_deadline() {
         .set_block_number(finalized.deadline_height - 1);
     StorageHandle::enter(&mut fixture.provider, |storage| {
         MetadosisContract::new(storage)
-            .record_ocomp_result_vote(
-                &last_vote,
-                finalized.deadline_height - 1,
-                &fixture.scope,
-                &fixture.limits,
-            )
+            .record_ocomp_result_vote(&last_vote, finalized.deadline_height - 1, &fixture.limits)
             .unwrap();
     });
 
@@ -454,7 +449,6 @@ fn every_pinned_validator_can_vote_after_quorum_until_the_exclusive_deadline() {
             MetadosisContract::new(storage).record_ocomp_result_vote(
                 &at_deadline,
                 finalized.deadline_height,
-                &fixture.scope,
                 &fixture.limits,
             ),
             Err(PrecompileError::Revert(_))
@@ -1042,7 +1036,7 @@ fn request_pinned_semantics_are_identical_at_different_activation_heights() {
             .unwrap()
     });
     assert_ne!(freeze_instant, TEST_LOGICAL_TIME);
-    assert_eq!(first_semantics.nod.issued_at, freeze_instant);
+    assert_eq!(first_semantics.nod.issued_at, TEST_LOGICAL_TIME);
     assert_eq!(
         first_metadata,
         ActivationMetadata {
@@ -1080,13 +1074,7 @@ fn submit_vote_result(
     }
     .abi_encode();
     StorageHandle::enter(&mut fixture.provider, |storage| {
-        crate::commands::submit_verified_result_vote(
-            storage,
-            &fixture.scope,
-            &calldata,
-            U256::ZERO,
-            false,
-        )
+        crate::commands::submit_verified_result_vote(storage, &calldata, U256::ZERO, false)
     })
 }
 
@@ -1268,7 +1256,7 @@ fn vote_binding_mismatch_is_rejected_before_historical_snapshot_lookup() {
             .unwrap();
 
         let error = MetadosisContract::new(storage)
-            .record_ocomp_result_vote(&vote, 14, &fixture.scope, &fixture.limits)
+            .record_ocomp_result_vote(&vote, 14, &fixture.limits)
             .unwrap_err();
         assert!(matches!(
             error,

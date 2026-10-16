@@ -135,19 +135,7 @@ pub struct NativeDcapCollateral<'a> {
     pub qe_identity: &'a [u8],
 }
 
-#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
-pub enum NativeQvlError {
-    #[error("native QVL input is empty, oversized, or contains an embedded NUL")]
-    InvalidInput,
-    #[error("native QVL ABI does not match the pinned Outbe adapter")]
-    UnsupportedAbi,
-    #[error("native QVL rejected the quote or collateral")]
-    VerificationFailed,
-    #[error("native QVL returned an unsupported result")]
-    UnsupportedResult,
-    #[error("native QVL returned malformed supplemental data")]
-    MalformedSupplemental,
-}
+pub use crate::errors::NativeQvlError;
 
 #[repr(C)]
 struct RawCollateral {

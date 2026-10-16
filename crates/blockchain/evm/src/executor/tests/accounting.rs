@@ -35,7 +35,6 @@ fn bad_late_proof_pre_exec_fatal() {
                 aggregate_signature: [0u8; 96],
             }],
         }),
-        compressed_entities_root: None,
     };
     let extra_data = encode_outbe_block_artifacts(&artifact).unwrap();
 

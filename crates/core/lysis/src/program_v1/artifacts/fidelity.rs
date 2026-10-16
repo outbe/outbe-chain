@@ -1,6 +1,6 @@
 use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::WwdEntityId;
 use outbe_ocomp_protocol::{CanonicalReader, CanonicalWriter, SchemaLimits};
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use super::coverage::{
     decode_raw_coverage_carrier, encode_raw_coverage_carrier, raw_coverage_root,
@@ -39,14 +39,12 @@ pub fn encode_fixed_reduce_output(
         writer.write_u32(aggregate.start_ordinal)?;
         writer.write_u32(aggregate.end_ordinal)?;
         writer.write_u32(aggregate.tribute_count)?;
-        writer.write_u256(aggregate.checked_total_nominal)?;
         writer.write_vec(
             &aggregate.ordered_league_partials,
             limits.max_collection_items,
             |writer, partial| {
                 writer.write_u16(partial.league_id)?;
-                writer.write_u32(partial.count)?;
-                writer.write_u256(partial.nominal_amount_minor)
+                writer.write_u32(partial.count)
             },
         )
     })?;
@@ -77,20 +75,19 @@ pub fn decode_fixed_reduce_output(
         let start_ordinal = reader.read_u32()?;
         let end_ordinal = reader.read_u32()?;
         let tribute_count = reader.read_u32()?;
-        let checked_total_nominal = reader.read_u256()?;
         let ordered_league_partials =
-            reader.read_vec(limits.max_collection_items, 38, |reader| {
+            reader.read_vec(limits.max_collection_items, 6, |reader| {
                 Ok(FidelityLeaguePartialV1 {
                     league_id: reader.read_u16()?,
                     count: reader.read_u32()?,
-                    nominal_amount_minor: reader.read_u256()?,
+                    nominal_amount_minor: U256::ZERO,
                 })
             })?;
         Ok(FidelityAggregateV1 {
             start_ordinal,
             end_ordinal,
             tribute_count,
-            checked_total_nominal,
+            checked_total_nominal: U256::ZERO,
             ordered_league_partials,
         })
     })?;
@@ -125,7 +122,6 @@ pub fn encode_fidelity_map_output(
     encoded.write_u32(output.aggregate.start_ordinal)?;
     encoded.write_u32(output.aggregate.end_ordinal)?;
     encoded.write_u32(output.aggregate.tribute_count)?;
-    encoded.write_u256(output.aggregate.checked_total_nominal)?;
     encoded.write_u32(
         u32::try_from(output.observations.len())
             .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
@@ -143,7 +139,6 @@ pub fn encode_fidelity_map_output(
     for partial in &output.aggregate.ordered_league_partials {
         encoded.write_u16(partial.league_id)?;
         encoded.write_u32(partial.count)?;
-        encoded.write_u256(partial.nominal_amount_minor)?;
     }
     Ok(encoded.into_bytes())
 }
@@ -159,7 +154,6 @@ pub fn decode_fidelity_map_output(
     let start_ordinal = input.read_u32()?;
     let end_ordinal = input.read_u32()?;
     let tribute_count = input.read_u32()?;
-    let checked_total_nominal = input.read_u256()?;
     let observation_count = input.read_u32()?;
     validate_shard_size(
         usize::try_from(observation_count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
@@ -192,7 +186,7 @@ pub fn decode_fidelity_map_output(
         ordered_league_partials.push(FidelityLeaguePartialV1 {
             league_id: input.read_u16()?,
             count: input.read_u32()?,
-            nominal_amount_minor: input.read_u256()?,
+            nominal_amount_minor: U256::ZERO,
         });
     }
     input.finish()?;
@@ -202,7 +196,7 @@ pub fn decode_fidelity_map_output(
             start_ordinal,
             end_ordinal,
             tribute_count,
-            checked_total_nominal,
+            checked_total_nominal: U256::ZERO,
             ordered_league_partials,
         },
     };
@@ -282,8 +276,7 @@ fn validate_fixed_reduce_output(output: &FixedReduceOutputV1) -> Result<(), Lysi
 
     let coverage_differs = aggregate.start_ordinal != output.coverage.start_ordinal
         || aggregate.end_ordinal != output.coverage.end_ordinal;
-    let aggregate_empty =
-        aggregate.checked_total_nominal.is_zero() || aggregate.ordered_league_partials.is_empty();
+    let aggregate_empty = aggregate.ordered_league_partials.is_empty();
     if coverage_differs
         || aggregate.start_ordinal >= aggregate.end_ordinal
         || aggregate.tribute_count != aggregate.end_ordinal - aggregate.start_ordinal
@@ -325,7 +318,6 @@ fn checked_league_partials(
     let mut previous_league = None;
     for partial in partials {
         if partial.count == 0
-            || partial.nominal_amount_minor.is_zero()
             || previous_league.is_some_and(|previous| previous >= partial.league_id)
         {
             return Err(LysisArtifactErrorV1::InvalidEncoding(order_error));

@@ -9,15 +9,23 @@ impl OcompRetentionCoordinator {
         let candidate = self.live_candidate(job_id)?;
         let proof = self.source.build_finalized_intent_proof(candidate)?;
         let limits = poc_schema_limits();
-        let intent = proof
-            .decoded_intent(&limits)
-            .map_err(|error| RetentionError::Source(format!("decode finalized intent: {error}")))?;
-        let proof_intent_id = intent
-            .intent_id(&limits)
-            .map_err(|error| RetentionError::Source(format!("derive proof IntentId: {error}")))?;
+        let intent = proof.decoded_intent(&limits).map_err(|error| {
+            RetentionError::from(
+                crate::errors::RetentionSourceError::decode_finalized_intent(error),
+            )
+        })?;
+        let proof_intent_id = intent.intent_id(&limits).map_err(|error| {
+            RetentionError::from(crate::errors::RetentionSourceError::derive_proof_intent_id(
+                error,
+            ))
+        })?;
         let proof_job_id = intent
             .job_id(candidate.block_hash, candidate.state_root, &limits)
-            .map_err(|error| RetentionError::Source(format!("derive proof JobId: {error}")))?;
+            .map_err(|error| {
+                RetentionError::from(crate::errors::RetentionSourceError::derive_proof_job_id(
+                    error,
+                ))
+            })?;
         let intent_identity_mismatch = proof_job_id != job_id
             || proof_intent_id != candidate.intent_id
             || proof.protocol_bundle_hash != candidate.protocol_bundle_hash;
@@ -26,7 +34,6 @@ impl OcompRetentionCoordinator {
             || proof.parent_accounting.finalized_block_hash != candidate.block_hash
             || intent.wwd != candidate.wwd;
         if finalized_request_mismatch
-            || intent.ce_sealed_root != candidate.ce_sealed_root
             || intent.input_lease_id().map_err(RetentionError::source)? != candidate.input_lease_id
         {
             return Err(RetentionError::Source(

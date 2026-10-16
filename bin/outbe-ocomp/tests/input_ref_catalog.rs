@@ -7,7 +7,6 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
     control::poc_schema_limits,
@@ -27,7 +26,9 @@ use outbe_ocomp_protocol::{
     registry::ObjectKind,
     CasObjectRefV1, ListKind, OrderedListLimits,
 };
+use outbe_primitives::entity_codec::{encode_tribute_v1, TributeBodyV1};
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 
 fn hash(byte: u8) -> B256 {
     B256::repeat_byte(byte)
@@ -84,12 +85,8 @@ impl OneChunkStageFixture {
                 finalized_block_number: u64::from(checkpoint_byte),
                 finalized_block_hash: hash(checkpoint_byte),
                 finalized_state_root: hash(checkpoint_byte.saturating_add(1)),
-                finalized_ce_root: hash(checkpoint_byte.saturating_add(2)),
-                ce_schema_version: 1,
             },
             wwd: self.day.value(),
-            sealed_tribute_collection_key: hash(93),
-            sealed_tribute_collection_root: hash(94),
             tribute_count: summary.tribute_count,
             tribute_nominal_total: self.nominal,
             input_chunk_count: summary.input_chunk_count,
@@ -132,7 +129,6 @@ fn one_chunk_stage_fixture() -> OneChunkStageFixture {
         nominal_amount_minor: nominal,
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: false,
     };
     let chunk = AuthenticatedInputChunkV1 {
         protocol_bundle_hash,
@@ -199,12 +195,8 @@ fn fixture() -> Fixture {
             finalized_block_number: 4,
             finalized_block_hash: hash(5),
             finalized_state_root: hash(6),
-            finalized_ce_root: hash(7),
-            ce_schema_version: 1,
         },
         wwd: 20_260_725,
-        sealed_tribute_collection_key: hash(8),
-        sealed_tribute_collection_root: hash(9),
         tribute_count: 2,
         tribute_nominal_total: U256::from(100),
         input_chunk_count: 2,
@@ -359,7 +351,6 @@ fn cold_restart_reopens_each_input_chunk_from_authoritative_cas_and_rederives_it
         nominal_amount_minor: U256::from(11),
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: false,
     };
     let chunk = AuthenticatedInputChunkV1 {
         protocol_bundle_hash,
@@ -396,12 +387,8 @@ fn cold_restart_reopens_each_input_chunk_from_authoritative_cas_and_rederives_it
             finalized_block_number: 40,
             finalized_block_hash: hash(41),
             finalized_state_root: hash(42),
-            finalized_ce_root: hash(43),
-            ce_schema_version: 1,
         },
         wwd: day.value(),
-        sealed_tribute_collection_key: hash(44),
-        sealed_tribute_collection_root: hash(45),
         tribute_count: 1,
         tribute_nominal_total: tribute.nominal_amount_minor,
         input_chunk_count: 1,
@@ -478,7 +465,6 @@ fn staged_reference_survives_restart_and_seals_only_after_the_manifest_exists() 
         nominal_amount_minor: U256::from(11),
         reference_currency: 978,
         tribute_price_minor: U256::from(12),
-        exclude_from_intex_issuance: false,
     };
     let chunk = AuthenticatedInputChunkV1 {
         protocol_bundle_hash,
@@ -541,12 +527,8 @@ fn staged_reference_survives_restart_and_seals_only_after_the_manifest_exists() 
             finalized_block_number: 62,
             finalized_block_hash: hash(63),
             finalized_state_root: hash(64),
-            finalized_ce_root: hash(65),
-            ce_schema_version: 1,
         },
         wwd: day.value(),
-        sealed_tribute_collection_key: hash(66),
-        sealed_tribute_collection_root: hash(67),
         tribute_count: summary.tribute_count,
         tribute_nominal_total: tribute.nominal_amount_minor,
         input_chunk_count: summary.input_chunk_count,
@@ -892,7 +874,6 @@ fn staged_prepare_streams_past_the_old_4096_reference_limit() {
         nominal_amount_minor: U256::from(1),
         reference_currency: 978,
         tribute_price_minor: U256::from(1),
-        exclude_from_intex_issuance: false,
     };
     let canonical_tribute = encode_tribute_v1(&tribute).unwrap();
     let directory = support::tempdir().unwrap();
@@ -946,12 +927,8 @@ fn staged_prepare_streams_past_the_old_4096_reference_limit() {
             finalized_block_number: 112,
             finalized_block_hash: hash(113),
             finalized_state_root: hash(114),
-            finalized_ce_root: hash(115),
-            ce_schema_version: 1,
         },
         wwd: day.value(),
-        sealed_tribute_collection_key: hash(116),
-        sealed_tribute_collection_root: hash(117),
         tribute_count: summary.tribute_count,
         tribute_nominal_total: U256::from(CHUNK_COUNT),
         input_chunk_count: summary.input_chunk_count,
