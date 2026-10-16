@@ -240,15 +240,14 @@ export const GEM_STATE = ["Issued", "Called", "Settled", "Forfeited"] as const;
 // Credis state (crates/core/credis/src/schema.rs::CredisState).
 export const CREDIS_STATE = ["Issued", "Called", "Settled", "Forfeited"] as const;
 
-// ISO 4217 numeric -> symbol. Chain currently accepts 840 (USD) only. The rest
-// are convenience labels for display.
+// ISO 4217 numeric -> symbol for the Oracle's genesis reference currencies.
 export const ISO_4217: Record<number, string> = {
+  156: "CNY",
+  344: "HKD",
+  392: "JPY",
+  826: "GBP",
   840: "USD",
   978: "EUR",
-  826: "GBP",
-  392: "JPY",
-  756: "CHF",
-  156: "CNY",
 };
 
 export function statusName(v: number): string {

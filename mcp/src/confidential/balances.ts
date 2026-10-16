@@ -5,6 +5,7 @@ import { type Address, type Hex, bytesToBigInt, concat, formatUnits, getAddress,
 import { PRECOMPILE_ABI } from "../abi.js";
 import type { Ctx } from "../chain.js";
 import type { Network } from "../net/resolver.js";
+import { PROTOCOL_DECIMALS } from "../intex/units.js";
 import { CONTRACTS } from "../registry.js";
 import { accountKeys } from "./keys.js";
 import type { Ledger } from "./mac.js";
@@ -38,7 +39,7 @@ export function openGratis(view: Uint8Array, account: Address, field: number, bl
 
 /** A decrypted protocol amount: six decimals. */
 export function plain(amount: bigint) {
-  return { raw: amount.toString(), value: formatUnits(amount, 6) };
+  return { raw: amount.toString(), value: formatUnits(amount, PROTOCOL_DECIMALS) };
 }
 
 /**

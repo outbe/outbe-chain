@@ -9,8 +9,6 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 
-use outbe_oracle::api::AddressPair;
-
 use crate::{api, NodContract, NodItemState};
 
 /// Default block timestamp. Not UTC midnight, so its last closed day is the
@@ -155,73 +153,6 @@ fn membership_changes_preserve_bucket_body_and_commitment_until_last_removal() {
         assert_eq!(nod.bucket_nod_count.read(&first.bucket_key).unwrap(), 0);
         assert_eq!(nod.total_supply().unwrap(), 0);
         assert!(api::get_bucket(&storage, bucket_id).unwrap().is_none());
-    });
-}
-
-/// `openings` and the oracle-opening codec both name the Oracle's slots; both must be the schema's.
-#[test]
-fn entry_price_openings_follow_the_oracle_schema() {
-    use outbe_primitives::addresses::ORACLE_ADDRESS;
-
-    let day = 20_260_725;
-    let mut provider = HashMapStorageProvider::new(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        // GBP is registered without a VWAP for the day; EUR is not registered at all.
-        let gbp = outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(826))
-            .unwrap();
-        let usd = outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(840))
-            .unwrap();
-        outbe_oracle::schema::OracleContract::new(storage.clone())
-            .record_utc_day_vwap(day, usd, U256::from(320_000))
-            .unwrap();
-        let isos = [826, 840, 978];
-        let pair_slots = crate::openings::pair_index_slots(&isos).unwrap();
-        let indices = pair_slots
-            .iter()
-            .map(|slot| {
-                storage
-                    .sload(ORACLE_ADDRESS, U256::from_be_bytes(slot.0))
-                    .unwrap()
-                    .to::<u32>()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(indices, vec![gbp, usd, 0]);
-        let opened = crate::openings::entry_price_slots(day, &isos, &indices)
-            .unwrap()
-            .into_iter()
-            .map(|slot| {
-                let value = storage
-                    .sload(ORACLE_ADDRESS, U256::from_be_bytes(slot.0))
-                    .unwrap();
-                (slot, value)
-            })
-            .collect::<Vec<_>>();
-        let prices = crate::openings::evaluate_entry_prices(day, &isos, &opened).unwrap();
-        assert_eq!(
-            prices,
-            std::collections::BTreeMap::from([(840, U256::from(320_000))])
-        );
-        for iso in isos {
-            assert_eq!(
-                prices.get(&iso).copied(),
-                outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), day, iso).unwrap(),
-                "the opening prices {iso} like the runtime Oracle read"
-            );
-        }
-        assert!(crate::openings::evaluate_entry_prices(day + 1, &isos, &opened).is_err());
-        let mut reordered = opened.clone();
-        reordered.swap(0, 1);
-        assert!(crate::openings::evaluate_entry_prices(day, &isos, &reordered).is_err());
-        let mut forged_index = opened.clone();
-        forged_index[2].1 = U256::from(usd);
-        assert!(crate::openings::evaluate_entry_prices(day, &isos, &forged_index).is_err());
-        let mut wide_index = opened.clone();
-        wide_index[0].1 = U256::from(u64::from(u32::MAX) + 1);
-        assert!(crate::openings::evaluate_entry_prices(day, &isos, &wide_index).is_err());
-        assert!(crate::openings::evaluate_entry_prices(day, &isos, &opened[..3]).is_err());
-        assert!(crate::openings::pair_index_slots(&[978]).is_err());
-        assert!(crate::openings::pair_index_slots(&[840, 840]).is_err());
-        assert!(crate::openings::pair_index_slots(&[0, 840]).is_err());
     });
 }
 

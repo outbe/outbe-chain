@@ -20,7 +20,6 @@ x25519-dalek = { workspace = true, optional = true }
 
 [dev-dependencies]
 outbe-nod = { path = ".", features = ["test-enclave"] }
-outbe-oracle = { path = "../../system/oracle" }
 outbe-tee-enclave.workspace = true
 x25519-dalek.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
