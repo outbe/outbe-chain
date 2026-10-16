@@ -1,4 +1,4 @@
-//! Price markup the rights derive their floor and call prices with.
+//! Price markup the rights derive their call prices with.
 
 use alloy_primitives::U256;
 

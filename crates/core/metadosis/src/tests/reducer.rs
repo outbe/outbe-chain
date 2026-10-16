@@ -266,6 +266,8 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
     for (disposition, target) in [
         (ReadyDisposition::EmptyTributeDay, WwdStatus::Completed),
         (ReadyDisposition::ZeroGratisAllocation, WwdStatus::Completed),
+        (ReadyDisposition::LysisCompleted, WwdStatus::Completed),
+        (ReadyDisposition::LysisFailed, WwdStatus::Failed),
         (ReadyDisposition::PrepareOcomp, WwdStatus::Ready),
     ] {
         let transition =
@@ -285,11 +287,15 @@ fn outer_reducer_covers_creation_advance_capacity_and_ready_outcomes() {
         );
     }
 
-    assert!(reduce_outer_wwd(
-        Some(&waiting),
-        OuterWwdEvent::ProcessReady(ReadyDisposition::PrepareOcomp),
-    )
-    .is_err());
+    for disposition in [
+        ReadyDisposition::LysisCompleted,
+        ReadyDisposition::LysisFailed,
+        ReadyDisposition::PrepareOcomp,
+    ] {
+        assert!(
+            reduce_outer_wwd(Some(&waiting), OuterWwdEvent::ProcessReady(disposition)).is_err()
+        );
+    }
 }
 
 #[test]
@@ -381,6 +387,8 @@ fn outer_wwd_state_event_matrix_is_exhaustive() {
         },
         OuterWwdEvent::ProcessReady(ReadyDisposition::EmptyTributeDay),
         OuterWwdEvent::ProcessReady(ReadyDisposition::ZeroGratisAllocation),
+        OuterWwdEvent::ProcessReady(ReadyDisposition::LysisCompleted),
+        OuterWwdEvent::ProcessReady(ReadyDisposition::LysisFailed),
         OuterWwdEvent::ProcessReady(ReadyDisposition::PrepareOcomp),
         OuterWwdEvent::OcompRequestCommitted,
         OuterWwdEvent::OcompExpired,
@@ -477,9 +485,10 @@ fn expected_transition_at_process_time(
         },
         OuterWwdEvent::ProcessReady(disposition) if status == WwdStatus::Ready => {
             let target = match disposition {
-                ReadyDisposition::EmptyTributeDay | ReadyDisposition::ZeroGratisAllocation => {
-                    WwdStatus::Completed
-                }
+                ReadyDisposition::EmptyTributeDay
+                | ReadyDisposition::ZeroGratisAllocation
+                | ReadyDisposition::LysisCompleted => WwdStatus::Completed,
+                ReadyDisposition::LysisFailed => WwdStatus::Failed,
                 ReadyDisposition::PrepareOcomp => WwdStatus::Ready,
             };
             (target, OuterWwdTransitionKind::ProcessReady(disposition))

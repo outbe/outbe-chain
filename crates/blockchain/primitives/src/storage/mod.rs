@@ -216,6 +216,17 @@ pub trait PrecompileStorageProvider {
         Err(crate::error::PrimitivesStorageError::MetadosisMutationFrameUnavailable.into())
     }
 
+    /// Requires the exact active frame before an owner applies Lysis effects.
+    fn require_metadosis_mutation_frame(
+        &mut self,
+        _purpose: MetadosisMutationPurposeTag,
+        _binding: B256,
+        _chain_id: u64,
+        _block_number: u64,
+    ) -> Result<()> {
+        Err(crate::error::PrimitivesStorageError::MetadosisMutationFrameUnavailable.into())
+    }
+
     /// Closes the exact Metadosis mutation frame opened above.
     fn finish_metadosis_mutation_frame(
         &mut self,

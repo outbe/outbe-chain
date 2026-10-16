@@ -8,6 +8,20 @@ use crate::{errors::MetadosisStorageCorruptionError, schema::MetadosisContract};
 use outbe_primitives::{error::Result, time::WorldwideDay};
 
 impl MetadosisContract<'_> {
+    pub(crate) fn read_lysis_completion(
+        &self,
+        worldwide_day: WorldwideDay,
+    ) -> Result<Option<super::model::LysisCompletionDetail>> {
+        let Some(receipt) = self.read_terminal_receipt(worldwide_day)? else {
+            return Ok(None);
+        };
+        let super::model::WwdTerminalReceipt::LysisCompleted { detail, .. } = receipt else {
+            return Ok(None);
+        };
+        receipt.validate(self.terminal_receipt_validation_context(worldwide_day, None)?)?;
+        Ok(Some(detail))
+    }
+
     pub(crate) fn read_terminal_receipt(
         &self,
         worldwide_day: WorldwideDay,
@@ -19,13 +33,13 @@ impl MetadosisContract<'_> {
         if len == 0 {
             return Ok(None);
         }
-        if len != codec::COMMON_LEN && len != codec::CAPACITY_LEN {
+        if len != codec::COMMON_LEN && len != codec::CAPACITY_LEN && len != codec::LYSIS_LEN {
             return Err(MetadosisStorageCorruptionError::TerminalReceiptNonCanonicalLength.into());
         }
         codec::decode(&bytes.read()?, worldwide_day).map(Some)
     }
 
-    fn write_terminal_receipt(&self, receipt: WwdTerminalReceipt) -> Result<()> {
+    pub(crate) fn write_terminal_receipt(&self, receipt: WwdTerminalReceipt) -> Result<()> {
         let bytes = self
             .worldwide_day_terminal_receipts
             .get_bytes(&receipt.common().worldwide_day);
@@ -140,7 +154,8 @@ impl MetadosisContract<'_> {
                 retirement: common.retirement,
                 block_number: common.block_number,
             })),
-            WwdTerminalReceipt::CapacityForfeiture { .. } => Ok(None),
+            WwdTerminalReceipt::CapacityForfeiture { .. }
+            | WwdTerminalReceipt::LysisCompleted { .. } => Ok(None),
             WwdTerminalReceipt::MetadosisFailure(_) => {
                 Err(MetadosisStorageCorruptionError::WwdTerminalReceiptInvalid.into())
             }
@@ -196,7 +211,9 @@ impl MetadosisContract<'_> {
                     block_number: common.block_number,
                 }))
             }
-            WwdTerminalReceipt::MissedOffering(_) => Ok(None),
+            WwdTerminalReceipt::MissedOffering(_) | WwdTerminalReceipt::LysisCompleted { .. } => {
+                Ok(None)
+            }
             WwdTerminalReceipt::MetadosisFailure(_) => Err(
                 MetadosisStorageCorruptionError::CapacityForfeitureTerminalReceiptMissingDetail
                     .into(),

@@ -105,7 +105,7 @@ pub trait NodBucketKeyV1 {
 
 impl NodBucketKeyV1 for NodActionV1 {
     fn bucket_key(&self) -> B256 {
-        outbe_nod::identity::bucket_key(
+        outbe_primitives::nod_rules::bucket_key(
             self.worldwide_day,
             self.entry_price_minor,
             self.reference_currency,
@@ -115,7 +115,7 @@ impl NodBucketKeyV1 for NodActionV1 {
 
 impl NodBucketKeyV1 for CertifiedNodActionV1 {
     fn bucket_key(&self) -> B256 {
-        outbe_nod::identity::bucket_key(
+        outbe_primitives::nod_rules::bucket_key(
             WorldwideDay::new(self.wwd),
             self.entry_price_minor,
             self.reference_currency,
@@ -505,7 +505,7 @@ fn amount_record(
             ordinal: raw_ordinal as usize,
         });
     }
-    if !outbe_nod::pricing::is_issuable_entry(entry_price_minor) {
+    if !outbe_primitives::nod_rules::is_issuable_entry(entry_price_minor) {
         return Err(
             crate::errors::LysisArithmeticErrorV1::NodEntryPriceOutOfBounds {
                 ordinal: raw_ordinal as usize,

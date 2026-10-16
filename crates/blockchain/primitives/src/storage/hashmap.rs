@@ -482,6 +482,19 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         Ok(())
     }
 
+    fn require_metadosis_mutation_frame(
+        &mut self,
+        purpose: MetadosisMutationPurposeTag,
+        binding: B256,
+        chain_id: u64,
+        block_number: u64,
+    ) -> Result<()> {
+        if self.metadosis_mutation_active != Some((purpose, binding, chain_id, block_number)) {
+            return Err(PrimitivesStorageError::TestProviderMetadosisLeaseIdentityMismatch.into());
+        }
+        Ok(())
+    }
+
     fn finish_metadosis_mutation_frame(
         &mut self,
         purpose: MetadosisMutationPurposeTag,

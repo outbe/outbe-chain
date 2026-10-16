@@ -54,6 +54,8 @@ pub enum ReadyDisposition {
     EmptyTributeDay,
     ZeroGratisAllocation,
     PrepareOcomp,
+    LysisCompleted,
+    LysisFailed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -260,9 +262,10 @@ fn reduce_ready(
         ));
     }
     let target = match disposition {
-        ReadyDisposition::EmptyTributeDay | ReadyDisposition::ZeroGratisAllocation => {
-            WwdStatus::Completed
-        }
+        ReadyDisposition::EmptyTributeDay
+        | ReadyDisposition::ZeroGratisAllocation
+        | ReadyDisposition::LysisCompleted => WwdStatus::Completed,
+        ReadyDisposition::LysisFailed => WwdStatus::Failed,
         ReadyDisposition::PrepareOcomp => WwdStatus::Ready,
     };
     Ok(transition(

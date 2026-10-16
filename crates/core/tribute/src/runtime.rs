@@ -30,7 +30,65 @@ pub struct TributeForfeitureReceipt {
     pub retirement_outcome: RetirementOutcome,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TributeLysisReceipt {
+    pub worldwide_day: WorldwideDay,
+    pub consumed_count: u32,
+    pub consumed_nominal: U256,
+    pub source_generation: u64,
+    pub retired_generation: u64,
+    pub retirement_outcome: RetirementOutcome,
+}
+
 impl TributeContract<'_> {
+    pub fn consume_and_retire_lysis_partition(
+        &mut self,
+        day: WorldwideDay,
+        verified_count: u32,
+        verified_nominal: U256,
+    ) -> Result<TributeLysisReceipt> {
+        let storage = self.storage_handle();
+        storage.require_metadosis_process_ready()?;
+        storage.with_checkpoint(|| {
+            let totals = self.get_day_totals(day)?;
+            let mut admission = self.read_day_pre_admission(day)?;
+            if !self.ocomp_profile_ready.read()?
+                || self.retired_days.read(&day)?
+                || admission.source_generation != 0
+                || !totals.initialized
+                || !totals.is_sealed
+                || verified_count == 0
+                || totals.tribute_count != verified_count
+                || totals.tribute_nominal_total_minor != verified_nominal
+                || (admission.is_sealed
+                    && (admission.sealed_tribute_count != verified_count
+                        || admission.sealed_tribute_nominal_total_minor != verified_nominal))
+            {
+                return Err(TributeError::LysisInputMismatch.into());
+            }
+            admission.initialized = true;
+            admission.is_sealed = true;
+            admission.sealed_tribute_count = verified_count;
+            admission.sealed_tribute_nominal_total_minor = verified_nominal;
+            self.store_day_pre_admission(&admission)?;
+            self.consume_lysis_partition_inner(day, verified_count, verified_nominal)?;
+            let retirement_outcome = self.retire_completed_partition_inner(day)?;
+            if retirement_outcome != RetirementOutcome::Requested {
+                return Err(TributeError::LysisInputMismatch.into());
+            }
+            admission.source_generation = 1;
+            self.store_day_pre_admission(&admission)?;
+            Ok(TributeLysisReceipt {
+                worldwide_day: day,
+                consumed_count: verified_count,
+                consumed_nominal: verified_nominal,
+                source_generation: 0,
+                retired_generation: 1,
+                retirement_outcome,
+            })
+        })
+    }
+
     /// Applies ADR-011's one bulk accounting transition after every verified
     /// Tribute in the sealed WWD has produced exactly one Nod.
     pub fn consume_lysis_partition(

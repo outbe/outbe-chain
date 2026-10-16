@@ -1,4 +1,4 @@
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 use outbe_primitives::{error::Result, time::WorldwideDay};
 use outbe_tribute::runtime::RetirementOutcome;
 
@@ -30,6 +30,17 @@ pub(crate) struct CapacityForfeitureDetail {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LysisCompletionDetail {
+    pub tribute_count: u32,
+    pub lysis_limit: U256,
+    pub used: U256,
+    pub unused: U256,
+    pub desis_limit: U256,
+    pub inputs_hash: B256,
+    pub result_hash: B256,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WwdTerminalReceipt {
     MissedOffering(TerminalReceiptCommon),
     CapacityForfeiture {
@@ -37,6 +48,10 @@ pub(crate) enum WwdTerminalReceipt {
         detail: CapacityForfeitureDetail,
     },
     MetadosisFailure(TerminalReceiptCommon),
+    LysisCompleted {
+        common: TerminalReceiptCommon,
+        detail: LysisCompletionDetail,
+    },
 }
 
 impl WwdTerminalReceipt {
@@ -44,7 +59,8 @@ impl WwdTerminalReceipt {
         match self {
             Self::MissedOffering(common)
             | Self::MetadosisFailure(common)
-            | Self::CapacityForfeiture { common, .. } => common,
+            | Self::CapacityForfeiture { common, .. }
+            | Self::LysisCompleted { common, .. } => common,
         }
     }
 
@@ -53,7 +69,8 @@ impl WwdTerminalReceipt {
         match self {
             Self::MissedOffering(common)
             | Self::MetadosisFailure(common)
-            | Self::CapacityForfeiture { common, .. } => common,
+            | Self::CapacityForfeiture { common, .. }
+            | Self::LysisCompleted { common, .. } => common,
         }
     }
 
@@ -62,10 +79,34 @@ impl WwdTerminalReceipt {
             Self::MissedOffering(_) => terminal_outcome::MISSED_OFFERING,
             Self::CapacityForfeiture { .. } => terminal_outcome::CAPACITY_FORFEITURE,
             Self::MetadosisFailure(_) => terminal_outcome::METADOSIS_FAILURE,
+            Self::LysisCompleted { .. } => terminal_outcome::LYSIS_COMPLETED,
         }
     }
 
     pub(crate) fn validate(&self, context: TerminalReceiptValidationContext) -> Result<()> {
+        if let Self::LysisCompleted { common, detail } = self {
+            let after = common
+                .value_routed
+                .checked_sub(detail.lysis_limit)
+                .and_then(|credit| common.carry_over_before.checked_add(credit))
+                .and_then(|available| available.checked_sub(detail.desis_limit))
+                .and_then(|remaining| remaining.checked_add(detail.unused));
+            if context.status != status::COMPLETED
+                || context.active_memberships != 0
+                || context.closed_memberships != 1
+                || common.block_number == 0
+                || common.retirement != RetirementOutcome::Requested
+                || detail.tribute_count == 0
+                || detail.inputs_hash.is_zero()
+                || detail.result_hash.is_zero()
+                || detail.used.checked_add(detail.unused) != Some(detail.lysis_limit)
+                || common.value_routed != context.expected_value_routed
+                || after != Some(common.carry_over_after)
+            {
+                return Err(MetadosisStorageCorruptionError::WwdTerminalReceiptInvalid.into());
+            }
+            return Ok(());
+        }
         self.common().validate(context)?;
         if let Self::CapacityForfeiture { common, detail } = self {
             detail.validate(common.retirement)?;
