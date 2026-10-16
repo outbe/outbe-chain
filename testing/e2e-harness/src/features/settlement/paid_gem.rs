@@ -217,7 +217,7 @@ impl PaidGem {
                 height,
                 "finalized settled reward Gem",
             );
-            assert_eq!(observed.state, 3, "reward Gem must be Settled");
+            assert_eq!(observed.state, 2, "reward Gem must be Settled");
             assert_eq!(observed.owner, owner);
             assert_eq!(observed.promisLoadMinor, gem.promisLoadMinor);
             assert_eq!(

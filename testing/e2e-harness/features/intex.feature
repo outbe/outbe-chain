@@ -56,7 +56,7 @@ Feature: Intex from auction to Promis
   # currencies; the MYR ones price off a closed pricing window, so the committee
   # steps through feeder-covered hours once the series are issued. Its first step crosses midnight on this
   # localnet: the committee closes the day on its own feed, and every seeded day repeats that
-  # close, because a target chain records a day's price once. The other two are
+  # close. The other two are
   # left to run out: one is settled in part and one never touched, so the sweep
   # has to return the load of the unrealized units alone from one and the whole
   # tirage from the other.

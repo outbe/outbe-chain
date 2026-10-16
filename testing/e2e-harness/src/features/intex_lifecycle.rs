@@ -288,7 +288,7 @@ fn target_rpc_url(world: &World) -> String {
 
 impl Lifecycle for IntexLifecycle {
     /// The pricing window closes at midnight on this localnet, so the committee has
-    /// closed yesterday on its own feed and sent that close to the target chain.
+    /// closed yesterday on its own feed.
     fn recorded_close(&self, world: &World) -> Option<U256> {
         use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
         let yesterday = previous_date_key(timestamp_to_date_key(head_time(world)));
@@ -707,6 +707,9 @@ fn chain_worldwide_day_offset(world: &World, port: u16, offset_secs: i64) -> u32
 
 #[when("the owner brings part of the target-chain units home")]
 fn bridge_part_home(world: &mut World) {
+    // The pricing window moved the committee ahead. The call mark it sends later
+    // carries that clock, which the target refuses as its own future.
+    carry_target_clock(world);
     bring_home(world, TRADABLE_HOP_UNITS);
 }
 
