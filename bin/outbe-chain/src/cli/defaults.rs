@@ -32,18 +32,3 @@ where
 {
     matches!(command, reth_ethereum::cli::interface::Commands::Node(_))
 }
-
-pub(crate) fn initialize_crs_for_command<C, Ext, SubCmd>(
-    command: &reth_ethereum::cli::interface::Commands<C, Ext, SubCmd>,
-    initialize: impl FnOnce() -> eyre::Result<()>,
-) -> eyre::Result<()>
-where
-    C: reth_cli::chainspec::ChainSpecParser,
-    Ext: clap::Args + std::fmt::Debug,
-    SubCmd: clap::Subcommand + std::fmt::Debug,
-{
-    if command_requires_crs(command) {
-        initialize()?;
-    }
-    Ok(())
-}

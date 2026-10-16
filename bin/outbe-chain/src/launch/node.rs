@@ -24,18 +24,17 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     // execution. Tribute admission is consensus-critical, so a node that
     // cannot initialize the verifier must not start. Database and other
     // operator commands never execute proofs and must remain offline.
-    // This runs before `run_with_execution_runtime` creates the Tokio runtime
-    // because `init_crs` uses `reqwest::blocking` internally.
-    initialize_crs_for_command(&cli.command, || {
+    // CRS initialization blocks this thread and can use reqwest::blocking.
+    // Initialize before starting the execution runtime.
+    if command_requires_crs(&cli.command) {
         let srs_path = std::env::var("OUTBE_BB_SRS_PATH").ok();
         outbe_zk_backend::barretenberg::init_crs().map_err(eyre::Report::from)?;
         tracing::info!(
             num_points = outbe_zk_backend::barretenberg::CANONICAL_SRS_POINTS,
             path = ?srs_path,
-            "Barretenberg SRS initialized"
+            "Barretenberg handler and CRS initialized"
         );
-        Ok(())
-    })?;
+    }
 
     let bridge = ConsensusExecutionBridge::new();
 

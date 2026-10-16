@@ -3,6 +3,30 @@
 use outbe_zk::error::Error;
 use thiserror::Error;
 
+/// Failures of the native handler for this process.
+/// Restart the process after a terminal failure.
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum HandlerError {
+    /// Native initialization failed. Launch must stop before proof processing starts.
+    #[error("Barretenberg initialization failed: {0}")]
+    Initialization(CrsInitError),
+    /// Proof operations require the handler installed during launch.
+    #[error("Barretenberg handler is not initialized")]
+    NotInitialized,
+    /// A native operation panicked. Do not reuse the native state.
+    #[error("Barretenberg handler failed; process restart required")]
+    Terminal,
+    /// A command failed. The handler can execute later operations.
+    #[error("{0}")]
+    Command(String),
+}
+
+impl From<HandlerError> for Error {
+    fn from(error: HandlerError) -> Self {
+        Self::Proof(error.to_string())
+    }
+}
+
 /// Errors that CRS setup returns.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum CrsInitError {
