@@ -10,8 +10,8 @@ use outbe_primitives::units::{SCALE_1E18, SCALE_1E18_U128, SCALE_1E6_U128, SCALE
 /// (Secured Overnight Financing Rate) at scale `1e6`.
 pub const DEFAULT_USD_CURRENCY_RATE: U256 = U256::from_limbs([36_300u64, 0, 0, 0]);
 
-/// Maximum age of a live COEN/ISO rate used by economic transaction paths and
-/// qualification hooks. The raw Oracle query ABI intentionally remains historical.
+/// Maximum age of a live COEN/ISO rate used by economic transaction paths. The raw
+/// Oracle query ABI intentionally remains historical.
 pub const FX_RATE_MAX_AGE_SECONDS: u64 = 6 * 60 * 60;
 
 /// Raw snapshots older than this are no longer readable.
