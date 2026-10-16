@@ -71,12 +71,11 @@ impl From<outbe_tee::tribute_source::TributeSourceSubject> for TributeStateProof
 
 impl TributeStateProofSubject {
     fn validate(&self) -> Result<()> {
-        if self.chain_id == 0
-            || self.worldwide_day.value() == 0
-            || self.checkpoint.block_number == 0
-            || self.checkpoint.block_hash.is_zero()
-            || self.checkpoint.state_root.is_zero()
-        {
+        let checkpoint = &self.checkpoint;
+        let checkpoint_complete = checkpoint.block_number != 0
+            && !checkpoint.block_hash.is_zero()
+            && !checkpoint.state_root.is_zero();
+        if self.chain_id == 0 || self.worldwide_day.value() == 0 || !checkpoint_complete {
             return Err(invalid("incomplete finalized Tribute proof subject"));
         }
         Ok(())
@@ -106,18 +105,17 @@ pub fn expected_record_words(
 ) -> Result<Vec<(B256, U256)>> {
     subject.validate()?;
     let context = &tribute.context;
-    if day_index >= subject.tribute_count
-        || !tribute.has_valid_encoding()
-        || context.chain_id != subject.chain_id
-        || context.worldwide_day != subject.worldwide_day
-        || context.owner.is_zero()
-        || derive_poseidon_entity_id(context.owner, context.worldwide_day)
-            .map_err(|error| invalid(error.to_string()))?
-            != context.tribute_id
+    let mismatch = || invalid("Tribute source identity does not match its subject");
+    let in_subject = day_index < subject.tribute_count
+        && (context.chain_id, context.worldwide_day) == (subject.chain_id, subject.worldwide_day);
+    if !in_subject || !tribute.has_valid_encoding() || context.owner.is_zero() {
+        return Err(mismatch());
+    }
+    if derive_poseidon_entity_id(context.owner, context.worldwide_day)
+        .map_err(|error| invalid(error.to_string()))?
+        != context.tribute_id
     {
-        return Err(invalid(
-            "Tribute source identity does not match its subject",
-        ));
+        return Err(mismatch());
     }
     let position = day_index
         .checked_add(1)
