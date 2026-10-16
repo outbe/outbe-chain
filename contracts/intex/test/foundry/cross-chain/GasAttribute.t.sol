@@ -45,10 +45,10 @@ contract GasAttributeTest is CrossChainTest {
 
     function test_fixedMessage_carriesTypeGas() public {
         IOriginRouter.AuctionStageStartParams memory p;
-        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.worldwideDay = 42;
         p.dayState = 1;
-        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         vm.prank(desis);
         outbe.sendAuctionStageStart(p);
         _assertLastGas(IntexGas.auctionStart(1));
@@ -57,7 +57,7 @@ contract GasAttributeTest is CrossChainTest {
     function test_variableMessage_gasScalesWithItemCount() public {
         // Freeze day 42's snapshot so the addressed refund send passes membership.
         IOriginRouter.AuctionStageStartParams memory sp;
-        sp.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
+        sp.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         sp.worldwideDay = 42;
         sp.dayState = 1;
         vm.prank(desis);

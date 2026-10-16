@@ -1,5 +1,35 @@
 use super::*;
 
+pub(in crate::stack) fn repository_publication_enabled_from_genesis(
+    node: &OutbeFullNode,
+) -> Result<bool> {
+    use outbe_primitives::radicle_genesis::{
+        GovernmentsDescriptor, GENESIS_GOVERNMENTS_FIELD, GOVERNMENTS_DESCRIPTOR_HASH_SLOT,
+    };
+    let spec = node.chain_spec();
+    let genesis = &spec.genesis;
+    let slot = alloy_primitives::B256::from(
+        alloy_primitives::U256::from(GOVERNMENTS_DESCRIPTOR_HASH_SLOT).to_be_bytes::<32>(),
+    );
+    let seeded_hash = genesis
+        .alloc
+        .get(&outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS)
+        .and_then(|account| account.storage.as_ref())
+        .and_then(|storage| storage.get(&slot))
+        .copied()
+        .unwrap_or_default();
+    Ok(GovernmentsDescriptor::from_genesis_field(
+        genesis.config.extra_fields.get(GENESIS_GOVERNMENTS_FIELD),
+        spec.chain().id(),
+        genesis.timestamp,
+        seeded_hash,
+    )
+    .map_err(|error| {
+        crate::errors::StackStartupError::InvalidGovernmentsGenesis(error.to_string())
+    })?
+    .is_some())
+}
+
 /// Read `epochLengthBlocks` from genesis.json `config` section.
 /// Falls back to [`config::DEFAULT_EPOCH_LENGTH_BLOCKS`] if absent.
 pub(in crate::stack) fn epoch_length_blocks_from_genesis(node: &OutbeFullNode) -> Result<u32> {

@@ -30,22 +30,39 @@ pub enum SystemTxPhase {
     },
     /// Next expected begin-zone tx is the mandatory (blocks `>= 2`)
     /// `LateFinalizeCredits` phase, ordered immediately after Phase 1.
-    LateFinalizeCredits { body_index: u8 },
+    LateFinalizeCredits {
+        body_index: u8,
+    },
     /// Next expected begin-zone tx is Phase 2 (`CycleTick`).
-    CycleTick { body_index: u8 },
+    CycleTick {
+        body_index: u8,
+    },
     /// Mandatory Rewards-owned delivery phase immediately after `CycleTick`.
-    RewardsGemDelivery { body_index: u8 },
+    RewardsGemDelivery {
+        body_index: u8,
+    },
     /// Next expected begin-zone tx is the optional Phase 3
     /// (`BoundaryOutcome`). It is emitted only when the header carries a
     /// boundary outcome artifact.
-    BoundaryOutcomeOptional { body_index: u8 },
+    BoundaryOutcomeOptional {
+        body_index: u8,
+    },
     /// Next expected begin-zone tx is the optional Phase 3b
     /// (`TeeBootstrap`). It is present only in the one-time bootstrap block.
-    TeeBootstrapOptional { body_index: u8 },
+    TeeBootstrapOptional {
+        body_index: u8,
+    },
     /// Next expected begin-zone tx is Phase 4 (`OracleSlashWindow`).
-    OracleSlashWindow { body_index: u8 },
+    OracleSlashWindow {
+        body_index: u8,
+    },
     /// Next expected begin-zone tx is the mandatory `HookEvents` receipt carrier.
-    HookEvents { body_index: u8 },
+    HookEvents {
+        body_index: u8,
+    },
+    RadiclePublication {
+        body_index: u8,
+    },
     /// All begin-zone system txs are consumed. User transactions may execute.
     UserTxs,
 }
@@ -77,6 +94,7 @@ impl SystemTxPhase {
             Self::TeeBootstrapOptional { .. } => Some(SystemTxKind::TeeBootstrap),
             Self::OracleSlashWindow { .. } => Some(SystemTxKind::OracleSlashWindow),
             Self::HookEvents { .. } => Some(SystemTxKind::HookEvents),
+            Self::RadiclePublication { .. } => Some(SystemTxKind::RadiclePublication),
             Self::UserTxs => None,
         }
     }
@@ -92,7 +110,8 @@ impl SystemTxPhase {
             | Self::BoundaryOutcomeOptional { body_index }
             | Self::TeeBootstrapOptional { body_index }
             | Self::OracleSlashWindow { body_index }
-            | Self::HookEvents { body_index } => Some(*body_index),
+            | Self::HookEvents { body_index }
+            | Self::RadiclePublication { body_index } => Some(*body_index),
             Self::UserTxs => None,
         }
     }
@@ -101,6 +120,15 @@ impl SystemTxPhase {
         self,
         has_boundary_outcome: bool,
         has_tee_bootstrap: bool,
+    ) -> Self {
+        self.advance_after_commit_with_publication(has_boundary_outcome, has_tee_bootstrap, false)
+    }
+
+    pub const fn advance_after_commit_with_publication(
+        self,
+        has_boundary_outcome: bool,
+        has_tee_bootstrap: bool,
+        has_publication: bool,
     ) -> Self {
         match self {
             Self::Phase1Preexecuted { body_index, .. } => Self::LateFinalizeCredits {
@@ -144,7 +172,12 @@ impl SystemTxPhase {
             Self::OracleSlashWindow { body_index } => Self::HookEvents {
                 body_index: body_index + 1,
             },
-            Self::HookEvents { .. } | Self::UserTxs => Self::UserTxs,
+            Self::HookEvents { body_index } if has_publication => Self::RadiclePublication {
+                body_index: body_index + 1,
+            },
+            Self::HookEvents { .. } | Self::RadiclePublication { .. } | Self::UserTxs => {
+                Self::UserTxs
+            }
         }
     }
 }

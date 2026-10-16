@@ -147,7 +147,7 @@ impl Evaluation {
             "entry_price": entry_price.to_string(),
         }));
 
-        // Validated as input; the entry bound keeps the floor and any u16-rate call price in U256.
+        // Validated as input; the entry bound keeps any u16-rate call price in U256.
         decimal(&tribute.tribute_price)?;
         if &entry_price * (100_u32 + u32::from(u16::MAX)) >= u256_modulus() {
             return Err(ReferenceFailure::new("ARITHMETIC"));

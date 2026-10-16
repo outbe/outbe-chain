@@ -8,8 +8,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 use crate::constants::{
-    CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE_PCT,
-    POSITION_VALIDITY_SECONDS,
+    CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, POSITION_VALIDITY_SECONDS,
 };
 use crate::errors::GemError;
 use crate::schema::GemContract;
@@ -24,7 +23,6 @@ pub struct GemParams {
     pub call_notice_period_seconds: u32,
     /// Percentage points over the entry price. See `crate::constants`.
     pub call_rate: u16,
-    pub floor_rate: u16,
     /// How long a Gem Factory position may still issue gems.
     pub position_validity: u64,
 }
@@ -36,7 +34,6 @@ impl GemParams {
         call_threshold_seconds: CALL_THRESHOLD,
         call_notice_period_seconds: CALL_NOTICE_PERIOD,
         call_rate: CALL_RATE_PCT,
-        floor_rate: FLOOR_RATE_PCT,
         position_validity: POSITION_VALIDITY_SECONDS,
     };
 
@@ -50,7 +47,6 @@ impl GemParams {
         #[cfg(feature = "e2e-test")]
         call_notice_period_seconds: 600,
         call_rate: 10,
-        floor_rate: 5,
         #[cfg(not(feature = "e2e-test"))]
         position_validity: 7 * outbe_primitives::time::SECONDS_PER_DAY,
         #[cfg(feature = "e2e-test")]

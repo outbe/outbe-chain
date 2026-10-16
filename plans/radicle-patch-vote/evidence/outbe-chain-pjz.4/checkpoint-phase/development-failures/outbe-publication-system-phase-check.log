@@ -1,0 +1,148 @@
+    Checking idna v1.1.0
+    Checking hyper-util v0.1.20
+    Checking tokio-rustls v0.26.4
+    Checking reth-metrics v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking url v2.5.8
+    Checking reth-consensus v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-trie-sparse v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-network-peers v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-errors v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-tasks v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-chainspec v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking hyper-rustls v0.27.9
+    Checking hyper-timeout v0.5.2
+    Checking reqwest v0.13.2
+    Checking reth-storage-api v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking tonic v0.14.5
+    Checking reth-trie v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-evm v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking opentelemetry-http v0.32.0
+    Checking tonic-prost v0.14.5
+    Checking opentelemetry-proto v0.32.0
+    Checking tonic-types v0.14.5
+    Checking reth-payload-primitives v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-eth-wire-types v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-payload-builder-primitives v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-chain-state v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-trie-db v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking opentelemetry-otlp v0.32.0
+    Checking reth-network-types v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-engine-primitives v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-tracing-otlp v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-storage-overlay v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-node-types v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-ethereum-engine-primitives v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-tracing v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-network-p2p v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking alloy-transport v2.4.2
+    Checking reth-db v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking hickory-proto v0.26.1
+    Checking reth-revm v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-evm-ethereum v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking alloy-pubsub v2.4.2
+    Checking reth-transaction-pool v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-provider v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking tokio-tungstenite v0.29.0
+    Checking reth-network-api v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking multiaddr v0.18.2
+    Checking reth-config v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking hickory-net v0.26.1
+    Checking discv5 v0.10.4 (https://github.com/sigp/discv5?rev=7663c00#7663c00e)
+    Checking alloy-transport-ws v2.4.2
+    Checking hickory-resolver v0.26.1
+    Checking alloy-transport-ipc v2.4.2
+    Checking alloy-transport-http v2.4.2
+    Checking reth-net-nat v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-ecies v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking alloy-rpc-client v2.4.2
+    Checking reth-rpc-convert v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-eth-wire v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-dns-discovery v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-discv5 v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-discv4 v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-rpc-server-types v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking jsonrpsee-server v0.26.0
+    Checking reth-trie-parallel v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-execution-cache v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-network v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-rpc-eth-types v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking jsonrpsee-http-client v0.26.0
+    Checking reth-payload-builder v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking jsonrpsee-client-transport v0.26.0
+    Checking reth-engine-local v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-basic-payload-builder v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking jsonrpsee-ws-client v0.26.0
+    Checking jsonrpsee v0.26.0
+    Checking reth-exex-types v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-static-file v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-era-downloader v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-prune v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking commonware-utils v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+    Checking reth-testing-utils v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-era-utils v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-stages-api v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-consensus-common v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking commonware-math v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+    Checking axum v0.8.9
+    Checking commonware-cryptography v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+    Checking alloy-provider v2.4.2
+    Checking reth-node-core v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-ipc v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-rpc-layer v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-node-api v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking commonware-runtime v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+    Checking reth-node-metrics v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-rpc-eth-api v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-exex v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-consensus-debug-client v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-stages v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-db-common v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-downloaders v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-node-ethstats v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-engine-tree v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-node-events v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-cli-runner v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-ethereum-payload-builder v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-rpc-api v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-cli v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking commonware-actor v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+    Checking commonware-stream v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+    Checking reth-ethereum-consensus v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking commonware-storage v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+    Checking commonware-p2p v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+    Checking reth-engine-util v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking mongodb v3.8.0
+    Checking reth-rpc-engine-api v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-invalid-block-hooks v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking commonware-resolver v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+    Checking reth-rpc v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking commonware-broadcast v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+    Checking outbe-zk-backend v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/zk/outbe-zk-backend)
+    Checking reth-rpc-builder v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-node-builder v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking commonware-coding v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+    Checking commonware-consensus v2026.9.0 (https://github.com/commonwarexyz/monorepo?tag=v2026.9.0#d476a236)
+    Checking reth-cli-commands v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-node-ethereum v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking outbe-offchain-storage v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/offchain-storage)
+    Checking reth-ethereum-cli v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-e2e-test-utils v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking reth-ethereum v2.6.0 (https://github.com/paradigmxyz/reth.git?tag=v2.6.0#73a3a008)
+    Checking outbe-primitives v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/primitives)
+error[E0521]: borrowed data escapes outside of function
+   --> crates/blockchain/primitives/src/system_tx/binding.rs:100:37
+    |
+ 92 |     layout: &SystemTxLayout<'_>,
+    |     ------
+    |     |
+    |     `layout` is a reference that is only valid in the function body
+    |     has type `&SystemTxLayout<'1>`
+...
+100 |             SystemTxInputV2::decode(tx.input()).map_err(PublicationBindingError::Decode)?
+    |                                     ^^^^^^^^^^
+    |                                     |
+    |                                     `layout` escapes the function body here
+    |                                     argument requires that `'1` must outlive `'static`
+
+For more information about this error, try `rustc --explain E0521`.
+error: could not compile `outbe-primitives` (lib) due to 1 previous error

@@ -1,0 +1,138 @@
+{
+  "source_sha256": "495e7855588116fe94448d52ce342267ea60e99f8d5348a08452aa4e97eea5d4",
+  "collected_utc": "2026-10-16T13:01:36.930907+00:00",
+  "checks": [
+    {
+      "argv": [
+        "cargo",
+        "+1.96.0",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "accepted_native_history_recovers_without_local_packages_or_signing_material"
+      ],
+      "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+      "environment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "4",
+        "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+        "CARGO_PROFILE_TEST_DEBUG": "0"
+      },
+      "exit_code": 0,
+      "log": "unit.log",
+      "sha256": "9d7994c9d29d1625a02b0d8b6d9cc9b83ac7b6441aca55242f1654327294a4a1"
+    },
+    {
+      "argv": [
+        "cargo",
+        "+1.96.0",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "integration::publication::store::tests"
+      ],
+      "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+      "environment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "4",
+        "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+        "CARGO_PROFILE_TEST_DEBUG": "0"
+      },
+      "exit_code": 0,
+      "log": "store-unit.log",
+      "sha256": "8f9c10bdbedbe5563ce2fbc227fc1096a241ec686081da55cd8b95efae21b022"
+    },
+    {
+      "argv": [
+        "cargo",
+        "+1.96.0",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "--lib",
+        "integration::publication::policy::tests"
+      ],
+      "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+      "environment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "4",
+        "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+        "CARGO_PROFILE_TEST_DEBUG": "0"
+      },
+      "exit_code": 0,
+      "log": "policy-unit.log",
+      "sha256": "8112b5cf0956b4a46ce00685d140f7c1f6b757a4f70e6a42d9825abb337ec54b"
+    },
+    {
+      "argv": [
+        "cargo",
+        "+1.96.0",
+        "clippy",
+        "--offline",
+        "--locked",
+        "-p",
+        "outbe-radicle",
+        "-p",
+        "outbe-radicle-runtime",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+      "environment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "4",
+        "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+        "CARGO_PROFILE_TEST_DEBUG": "0"
+      },
+      "exit_code": 0,
+      "log": "clippy.log",
+      "sha256": "65f7014706a768295ce5bed2c04405a4bf4e8a2589ef4e1b52251564a0d8d005"
+    },
+    {
+      "argv": [
+        "cargo",
+        "+1.96.0",
+        "clippy",
+        "--offline",
+        "--locked",
+        "-p",
+        "radicle",
+        "-p",
+        "radicle-fetch",
+        "-p",
+        "radicle-node",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood",
+      "environment": {
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_BUILD_JOBS": "4",
+        "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone"
+      },
+      "exit_code": 0,
+      "log": "vendor-clippy.log",
+      "sha256": "9d54af7a72323f36b63ee3f247f5be0cb14012c738545dc36adcdf3a15f2609b"
+    }
+  ],
+  "format": "rustfmt +1.96.0 --check --config skip_children=true: root edition2021, vendor edition2024, exact source-manifest files, exit0",
+  "diff_check": "git diff --check exit0",
+  "e2e": "NOT ADDED / NOT RUN, per user instruction; no full acceptance claimed"
+}

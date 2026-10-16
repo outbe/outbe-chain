@@ -1,0 +1,9 @@
+{
+  "README.md": "3e1edb5604f1edebfa1186478dc9fb7946e88923ae5f2d1245070dde4241a350",
+  "all-consumers.log": "4e2693042e6d0d3c06dab74def849d6d00362a6835743176f2c18c9e73dc1ad7",
+  "checks.json": "a844e78c98407b3ebca600cc98a5db51ae4cd3e91661d5c15c5d60cd41a0ca45",
+  "full-libs.log": "697da6a1098691038b553b823c524230d7cfbea6d7116adacafb3573a9b87680",
+  "rustfmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "scoped-clippy.log": "0db1f5d3672e789c4df4642b82eeb96d32890bbb178105e2bc8a25af810eddb2",
+  "source-scope.json": "9ddba71c27450e849cfc90b5684b02dfcedf0201257607db1e3bfbbd1366881a"
+}

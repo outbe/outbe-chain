@@ -164,7 +164,7 @@ where
 
     let config = match sync::PrivateNetwork::private_repo(&doc) {
         None => {
-            let (synced, unsynced) = node.seeds_for(rid, [*me])?.iter().fold(
+            let (synced, unsynced) = node.seeds_for(rid, [(*me).into()])?.iter().fold(
                 (BTreeSet::new(), BTreeSet::new()),
                 |(mut synced, mut unsynced), seed| {
                     if seed.is_synced() {
@@ -216,7 +216,7 @@ where
 
     match node.announce(
         rid,
-        [profile.did().into()],
+        [(*profile.id()).into()],
         settings.timeout,
         announcer,
         |node, progress| {

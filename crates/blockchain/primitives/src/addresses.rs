@@ -36,7 +36,7 @@ pub const GEM_ADDRESS: Address = address!("0x00000000000000000000000000000000000
 pub const INTEX_ADDRESS: Address = address!("0x0000000000000000000000000000000000001014");
 
 /// IntexFactory address. Drives Intex issuance, the autonomous
-/// Issued->Qualified->Called lifecycle, and two-step settlement. Series state is
+/// Issued->Called lifecycle, and two-step settlement. Series state is
 /// written to [`INTEX_ADDRESS`].
 pub const INTEX_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001015");
 

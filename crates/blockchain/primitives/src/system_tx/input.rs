@@ -39,6 +39,9 @@ pub enum SystemTxInputV2 {
     },
     OracleSlashWindow,
     HookEvents,
+    RadiclePublication {
+        batch: crate::radicle_publication::PublicationBatch,
+    },
 }
 
 impl SystemTxInputV2 {
@@ -52,6 +55,7 @@ impl SystemTxInputV2 {
             Self::TeeBootstrap { .. } => SystemTxKind::TeeBootstrap,
             Self::OracleSlashWindow => SystemTxKind::OracleSlashWindow,
             Self::HookEvents => SystemTxKind::HookEvents,
+            Self::RadiclePublication { .. } => SystemTxKind::RadiclePublication,
         }
     }
 
@@ -82,6 +86,9 @@ impl SystemTxInputV2 {
                         .map_err(SystemTxError::from_precompile)?
                         .as_ref(),
                 );
+            }
+            Self::RadiclePublication { batch } => {
+                out.extend_from_slice(&batch.to_bytes().map_err(SystemTxError::from_precompile)?);
             }
             Self::BoundaryOutcome { artifact } => {
                 out.extend_from_slice(
@@ -130,6 +137,10 @@ impl SystemTxInputV2 {
                 Self::decode_empty_body(kind, body, Self::OracleSlashWindow)
             }
             SystemTxKind::HookEvents => Self::decode_empty_body(kind, body, Self::HookEvents),
+            SystemTxKind::RadiclePublication => Ok(Self::RadiclePublication {
+                batch: crate::radicle_publication::PublicationBatch::from_bytes(body)
+                    .map_err(SystemTxError::from_precompile)?,
+            }),
             SystemTxKind::BoundaryOutcome => {
                 let Some(artifact) =
                     decode_boundary_artifact(body).map_err(SystemTxError::from_precompile)?

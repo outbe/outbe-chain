@@ -6,6 +6,7 @@ use crate::cob::{Op, TypeName};
 use crate::git;
 use crate::git::Oid;
 use crate::git::fmt::refspec::PatternString;
+use crate::storage::git::Repository;
 
 use super::CobRange;
 use super::error;
@@ -114,6 +115,7 @@ impl<'a> Iterator for WalkIter<'a> {
 
 /// Iterate over all operations for a given range of commits.
 pub struct OpsIter<'a, A> {
+    repo: &'a Repository,
     /// The [`WalkIter`] provides each commit that it is being walked over for a
     /// given range.
     walk: WalkIter<'a>,
@@ -154,8 +156,9 @@ where
 }
 
 impl<'a, A> OpsIter<'a, A> {
-    pub(super) fn new(walk: WalkIter<'a>, typename: TypeName) -> Self {
+    pub(super) fn new(repo: &'a Repository, walk: WalkIter<'a>, typename: TypeName) -> Self {
         Self {
+            repo,
             walk,
             typename,
             action: PhantomData,
@@ -168,11 +171,10 @@ impl<'a, A> OpsIter<'a, A> {
     where
         A: for<'de> Deserialize<'de>,
     {
-        let manifest = Op::<A>::manifest_of(self.walk.repo, &entry)
+        let manifest = Op::<A>::manifest_of(self.repo, &entry)
             .map_err(|err| error::Ops::Manifest { source: err })?;
         if manifest.type_name == self.typename {
-            let op =
-                Op::load(self.walk.repo, entry).map_err(|err| error::Ops::Load { source: err })?;
+            let op = Op::load(self.repo, entry).map_err(|err| error::Ops::Load { source: err })?;
             Ok(Some(op))
         } else {
             Ok(None)

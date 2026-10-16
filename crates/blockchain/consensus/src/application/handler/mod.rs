@@ -90,6 +90,9 @@ pub(crate) struct ApplicationShared {
     /// during consensus prechecks before Engine status is trusted.
     chain_id: u64,
 
+    repository_publication_enabled: bool,
+    repository_publication: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
+
     /// Marshal mailbox for digest-bound block resolution.
     pub(crate) marshal_mailbox: crate::marshal_types::MarshalMailbox,
     publication: super::publication::ProposalPublication,
@@ -184,6 +187,8 @@ pub struct ApplicationDeps {
     pub genesis_hash: B256,
     pub validators: ValidatorSet,
     pub chain_id: u64,
+    pub repository_publication_enabled: bool,
+    pub repository_publication: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
     pub marshal_mailbox: crate::marshal_types::MarshalMailbox,
     pub publication: super::publication::ProposalPublication,
     pub certificate_scheme_provider: HybridSchemeProvider<MinSig>,
@@ -223,6 +228,8 @@ impl ApplicationHandler {
             genesis_hash,
             validators,
             chain_id,
+            repository_publication_enabled,
+            repository_publication,
             marshal_mailbox,
             publication,
             certificate_scheme_provider,
@@ -251,6 +258,8 @@ impl ApplicationHandler {
                 genesis_hash,
                 validators,
                 chain_id,
+                repository_publication_enabled,
+                repository_publication,
                 marshal_mailbox,
                 publication,
                 certificate_scheme_provider,

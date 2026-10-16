@@ -133,6 +133,8 @@ pub(crate) struct PendingValidatorPoolFixture {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct RadicleScenarioEvidenceV1 {
+    pub governments_bootstrap: Vec<serde_json::Value>,
+    pub governments_patch: Option<GovernmentsPatchEvidenceV1>,
     pub genesis_hash: Option<String>,
     pub repo_id: Option<String>,
     pub repo_id_hex: Option<String>,
@@ -179,6 +181,23 @@ pub struct RadicleScenarioEvidenceV1 {
     pub joiner_activation_finalized_height: Option<u64>,
     pub final_native_session_sets: Vec<Vec<String>>,
     pub final_seed_scope_all_validators: Vec<usize>,
+}
+
+/// Real-chain identifiers and observations for the governments patch Vote scenario.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct GovernmentsPatchEvidenceV1 {
+    pub author: String,
+    pub patch_id: String,
+    pub revision_id: String,
+    pub base: String,
+    pub head: String,
+    pub proposal_id: Option<u64>,
+    pub proposal_transaction: Option<String>,
+    pub vote_transactions: Vec<String>,
+    pub approval: Option<serde_json::Value>,
+    pub validators: Vec<serde_json::Value>,
+    pub fresh_validator: Option<serde_json::Value>,
+    pub ordinary_reader: Option<serde_json::Value>,
 }
 
 /// Public AgentReward observations attached to the native Lysis production-path

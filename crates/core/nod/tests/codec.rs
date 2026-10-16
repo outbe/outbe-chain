@@ -63,8 +63,8 @@ fn the_bucket_reference_currency_only_appends_to_the_canonical_payload() {
     body.reference_currency = 840;
     let priced = encode_nod_bucket_v1(&canonical_bucket(&body)).unwrap();
 
-    // Tag = (7 << 3) | 0 = 0x38; 840 as a varint = 0xC8 0x06.
-    assert_eq!(priced, [unpriced.as_slice(), &[0x38, 0xC8, 0x06]].concat());
+    // Tag = (4 << 3) | 0 = 0x20; 840 as a varint = 0xC8 0x06.
+    assert_eq!(priced, [unpriced.as_slice(), &[0x20, 0xC8, 0x06]].concat());
 }
 
 #[test]

@@ -14,7 +14,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_common::pow;
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodBucket, LoadedNodItem};
-use outbe_nod::schema::{CallTerms, NodBucketState, NodItemState};
+use outbe_nod::schema::{CallTerms, NodBucketState, NodContract, NodItemState};
 use outbe_primitives::nod_encryption::EncryptedNodV2;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
@@ -71,8 +71,6 @@ fn issue_nod_with_cost(
     if !outbe_nod::pricing::is_issuable_entry(terms.entry_price_minor) {
         return Err(NodFactoryError::EntryPriceOutOfBounds.into());
     }
-    let floor_price_minor = outbe_nod::pricing::floor_price_minor(terms.entry_price_minor)
-        .ok_or(NodFactoryError::EntryPriceOutOfBounds)?;
     let item = NodItemState {
         is_settled: false,
         nod_id,
@@ -99,6 +97,10 @@ fn issue_nod_with_cost(
     };
     let call_terms = call_terms(storage, terms.entry_price_minor, terms.reference_currency)?;
     nod_api::add_nod(storage, &item, terms.entry_price_minor, call_terms)?;
+    // The bucket's sealed terms, which a Nod joining an existing bucket inherits.
+    let call_price_minor = NodContract::new(storage.clone())
+        .read_call_terms(item.bucket_key)?
+        .call_price_minor;
     emit_event(
         storage,
         INodFactory::NodIssued {
@@ -106,7 +108,7 @@ fn issue_nod_with_cost(
             nodId: nod_id.to_u256(),
             worldwideDay: U256::from(u32::from(terms.worldwide_day)),
             leagueId: U256::from(terms.league_id),
-            floorPriceMinor: floor_price_minor,
+            callPriceMinor: call_price_minor,
             encryptedGratisAmount: encrypted.encrypted_gratis_amount.clone().into(),
             entryPriceMinor: terms.entry_price_minor,
             settlementCostMinor: settlement_cost_minor,
@@ -124,7 +126,7 @@ pub struct MineGratisRequest {
     pub auth: outbe_gratisfactory::api::ModifyAuth,
 }
 
-/// One payment for a qualified or called Nod.
+/// One payment for an uncalled Nod, or a called one before its deadline.
 pub struct SettleNodRequest {
     pub caller: Address,
     pub nod_id: WwdEntityId,
@@ -132,7 +134,7 @@ pub struct SettleNodRequest {
     pub snapshot_id: U256,
 }
 
-/// Pays a qualified or called Nod's known cost in ERC20 base units of `asset`. An
+/// Pays an uncalled or called Nod's known cost in ERC20 base units of `asset`. An
 /// issuance-currency payment must name the VWAP snapshot required at this block.
 pub fn settle_nod(storage: &StorageHandle<'_>, request: SettleNodRequest) -> Result<()> {
     let SettleNodRequest {
@@ -145,16 +147,9 @@ pub fn settle_nod(storage: &StorageHandle<'_>, request: SettleNodRequest) -> Res
     if item.body().is_settled {
         return Err(NodFactoryError::NodAlreadySettled.into());
     }
-    // The call check is one read; the qualification walk goes last.
-    match nod_api::settlement_deadline(storage, item.body().bucket_key)? {
-        0 if !nod_api::is_qualified(storage, bucket.body())? => {
-            return Err(NodFactoryError::NodNotQualified.into());
-        }
-        0 => {}
-        deadline if storage.timestamp()?.to::<u64>() > deadline => {
-            return Err(NodFactoryError::CallDeadlineExpired.into());
-        }
-        _ => {}
+    let deadline = nod_api::settlement_deadline(storage, item.body().bucket_key)?;
+    if deadline != 0 && storage.timestamp()?.to::<u64>() > deadline {
+        return Err(NodFactoryError::CallDeadlineExpired.into());
     }
     let owner = item.body().owner;
     let quote = settlement::quote(
@@ -297,7 +292,7 @@ fn load_nod(
 ) -> Result<(LoadedNodItem, LoadedNodBucket)> {
     let item = nod_api::load_item(storage, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
     let bucket = nod_api::load_bucket(storage, item.body().bucket_key)?
-        .ok_or(NodFactoryError::NodNotQualified)?;
+        .ok_or(NodFactoryError::BucketNotFound)?;
     Ok((item, bucket))
 }
 

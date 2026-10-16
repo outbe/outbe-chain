@@ -105,6 +105,9 @@ fn input_for(kind: SystemTxKind) -> SystemTxInputV2 {
         },
         SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
         SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
+        SystemTxKind::RadiclePublication => SystemTxInputV2::RadiclePublication {
+            batch: outbe_primitives::test_utils::sample_radicle_publication_batch(1),
+        },
     }
 }
 

@@ -23,8 +23,8 @@ pub enum NodFactoryError {
     #[error("nod entry price is out of bounds")]
     EntryPriceOutOfBounds,
 
-    #[error("nod is not qualified")]
-    NodNotQualified,
+    #[error("nod bucket not found")]
+    BucketNotFound,
 
     #[error("nod is already settled")]
     NodAlreadySettled,

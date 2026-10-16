@@ -1,0 +1,14 @@
+{
+  "command": [
+    "/opt/homebrew/opt/python@3.15/bin/python3.15",
+    "-B",
+    "-c",
+    "import sys\nsys.path.insert(0, \"scripts\")\nfrom genesis_seed_alloc import seed_governments_descriptor\nfrom genesis_seed_codec import StorageBuilder\nfor n in [255,256,1024,1025]:\n g={\"config\":{\"chainId\":2026},\"timestamp\":\"0x6553f100\",\"alloc\":{}}\n c={\"governments\":{\"description\":\"x\"*n,\"initial_tree_oid\":\"0x4b825dc642cb6eb9a060e54bf8d69288fbee4904\",\"initial_content_manifest_sha256\":\"0x4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\"}}\n s=StorageBuilder()\n try:\n  seed_governments_descriptor(g,s,c)\n  print(f\"description_bytes={n} seeder_accepts=True descriptor_bytes={len(bytes.fromhex(g['config']['radicleGovernments'][2:]))}\")\n  assert n<=1024\n except ValueError as e:\n  print(f\"description_bytes={n} seeder_accepts=False error={e} storage_empty={not s.entries}\")\n  assert n>1024 and not s.entries\n"
+  ],
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "start_utc": "2026-10-16T00:09:37.433792+00:00",
+  "exit_code": 0,
+  "end_utc": "2026-10-16T00:09:37.488637+00:00",
+  "log": "seeder.log",
+  "log_sha256": "452d3fa444b5a262dedcc962164475a86258359a72621011d0c801547617ef76"
+}

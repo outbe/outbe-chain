@@ -453,6 +453,8 @@ fn finalizer_test_shared(
             p2p_addresses: Vec::new(),
         },
         chain_id: outbe_primitives::chain::CHAIN_ID,
+        repository_publication_enabled: false,
+        repository_publication: Default::default(),
         marshal_mailbox,
         publication: crate::application::publication::ProposalPublication::new(
             context.child("publication"),

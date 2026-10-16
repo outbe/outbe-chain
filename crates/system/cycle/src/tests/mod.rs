@@ -154,7 +154,7 @@ pub(super) fn seed_daily_voters(ctx: &BlockRuntimeContext, day: u32, voters: &[(
 /// Mirrors what `apply_phase1_commit_in_preexec` records in production.
 pub(super) fn account_parent(ctx: &BlockRuntimeContext, block_number: u64) {
     if block_number >= 2 {
-        outbe_accounting::record_phase1_progress(ctx, block_number - 1).unwrap();
+        crate::record_phase1_progress(ctx, block_number - 1).unwrap();
     }
 }
 

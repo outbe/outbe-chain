@@ -76,7 +76,7 @@ impl FindObjectsError {
         E: std::error::Error + Send + Sync + 'static,
     {
         MissingObject {
-            did,
+            did: Box::new(did),
             commit: oid,
             source: Box::new(err),
         }
@@ -84,7 +84,12 @@ impl FindObjectsError {
     }
 
     pub fn invalid_object_type(did: Did, oid: Oid, kind: Option<String>) -> Self {
-        InvalidObjectType { did, oid, kind }.into()
+        InvalidObjectType {
+            did: Box::new(did),
+            oid,
+            kind,
+        }
+        .into()
     }
 
     pub fn other<E>(err: E) -> Self
@@ -100,7 +105,7 @@ impl FindObjectsError {
 #[derive(Debug, thiserror::Error)]
 #[error("the object {oid} for {did} is of unexpected type {kind:?}")]
 pub struct InvalidObjectType {
-    did: Did,
+    did: Box<Did>,
     oid: Oid,
     kind: Option<String>,
 }
@@ -108,7 +113,7 @@ pub struct InvalidObjectType {
 #[derive(Debug, thiserror::Error)]
 #[error("the commit {commit} for {did} is missing")]
 pub struct MissingObject {
-    did: Did,
+    did: Box<Did>,
     commit: Oid,
     source: Box<dyn std::error::Error + Send + Sync + 'static>,
 }

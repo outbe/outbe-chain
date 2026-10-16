@@ -4,24 +4,14 @@ use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-#[error("reward distribution arithmetic overflow")]
-pub struct DistributionError;
-
-impl From<DistributionError> for PrecompileError {
-    fn from(err: DistributionError) -> Self {
-        PrecompileError::Revert(err.to_string())
-    }
-}
-
-#[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum AgentRewardError {
     #[error("agentreward distribute_daily overflow")]
     DistributeDailyOverflow,
     #[error("native AgentReward share overflow")]
     NativeShareOverflow,
-    #[error(transparent)]
-    Distribution(#[from] DistributionError),
+    #[error("reward distribution arithmetic overflow")]
+    DistributionOverflow,
     #[error("agentreward claimable total overflow")]
     ClaimableTotalOverflow,
     #[error("agentreward claimable_rewards overflow")]

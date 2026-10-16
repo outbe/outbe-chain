@@ -106,18 +106,6 @@ impl Network {
             Self::Test | Self::Outbe => vec![],
         }
     }
-
-    /// Public seeds for this network.
-    pub fn public_seeds(&self) -> Vec<ConnectAddress> {
-        match self {
-            Self::Main => {
-                let mut result = seeds::RADICLE_NODE_BOOTSTRAP_IRIS.clone();
-                result.extend(seeds::RADICLE_NODE_BOOTSTRAP_ROSA.clone());
-                result
-            }
-            Self::Test | Self::Outbe => vec![],
-        }
-    }
 }
 
 /// Configuration parameters defining attributes of minima and maxima.
@@ -730,7 +718,7 @@ impl Config {
     }
 
     pub fn features(&self) -> node::Features {
-        node::Features::SEED
+        node::Features::SEED.with(node::Features::REPOSITORY_KEYS)
     }
 
     /// Return the configured user agent, if set. Otherwise, fall back to the
@@ -902,7 +890,11 @@ mod test {
             json!("outbe")
         );
         assert!(Network::Outbe.bootstrap().is_empty());
-        assert!(Network::Outbe.public_seeds().is_empty());
+        assert!(
+            crate::profile::Config::new(Alias::new("outbe"))
+                .preferred_seeds
+                .is_empty()
+        );
     }
 
     #[test]

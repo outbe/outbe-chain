@@ -14,7 +14,7 @@ mod create;
 pub use create::{Create, create};
 
 mod get;
-pub use get::get;
+pub use get::{get, get_at};
 
 pub mod info;
 

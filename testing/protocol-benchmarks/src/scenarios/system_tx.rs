@@ -33,7 +33,7 @@ pub struct PreparedSystemTx {
 
 impl SystemTxScenario {
     #[must_use]
-    pub const fn all() -> [Self; 8] {
+    pub const fn all() -> [Self; 9] {
         [
             Self::new(SystemTxKind::CertifiedParentAccounting),
             Self::new(SystemTxKind::LateFinalizeCredits),
@@ -43,6 +43,7 @@ impl SystemTxScenario {
             Self::new(SystemTxKind::TeeBootstrap),
             Self::new(SystemTxKind::OracleSlashWindow),
             Self::new(SystemTxKind::HookEvents),
+            Self::new(SystemTxKind::RadiclePublication),
         ]
     }
 
@@ -214,6 +215,7 @@ const fn kind_name(kind: SystemTxKind) -> &'static str {
         SystemTxKind::TeeBootstrap => "tee-bootstrap",
         SystemTxKind::OracleSlashWindow => "oracle-slash-window",
         SystemTxKind::HookEvents => "hook-events",
+        SystemTxKind::RadiclePublication => "radicle-publication",
     }
 }
 
@@ -235,6 +237,9 @@ fn input_for(kind: SystemTxKind) -> Result<SystemTxInputV2, String> {
         },
         SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
         SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
+        SystemTxKind::RadiclePublication => SystemTxInputV2::RadiclePublication {
+            batch: outbe_primitives::test_utils::sample_radicle_publication_batch(32),
+        },
     })
 }
 

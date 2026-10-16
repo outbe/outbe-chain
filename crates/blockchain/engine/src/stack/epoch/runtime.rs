@@ -67,6 +67,8 @@ pub(super) struct EpochSupervisor<E: Clock> {
     pub(super) dkg_rotation_params: DkgRotationParams,
     pub(super) dkg_manager: DkgManagerMailbox,
     pub(super) vrf_materials: VrfMaterialProvider<MinSig>,
+    pub(super) repository_material_publisher:
+        Option<outbe_radicle::integration::RepositoryMaterialPublisher>,
     pub(super) vrf_safety: VrfSafetyGate,
     pub(super) application_epoch_fence: ApplicationEpochFence,
     pub(super) certificate_scheme_provider: HybridSchemeProvider<MinSig>,

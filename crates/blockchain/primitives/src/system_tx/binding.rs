@@ -1,6 +1,6 @@
 //! Pure system-transaction layout and header/body bindings.
 use super::{
-    split_system_layout, validate_active_system_tx_set, SystemTxError, SystemTxInputV2,
+    split_system_layout, validate_system_tx_set_for_publication, SystemTxError, SystemTxInputV2,
     SystemTxKind, SystemTxLayout,
 };
 use crate::{
@@ -22,6 +22,18 @@ pub enum LayoutBindingError {
     Layout(#[source] SystemTxError),
     #[error("invalid system tx set: {0}")]
     Set(#[source] SystemTxError),
+    #[error("invalid Radicle publication binding: {0}")]
+    Publication(#[source] PublicationBindingError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PublicationBindingError {
+    #[error("decode publication input: {0}")]
+    Decode(#[source] SystemTxError),
+    #[error("publication system transaction differs from header batch")]
+    Mismatch,
+    #[error("missing publication system transaction")]
+    Missing,
 }
 
 /// Failure to bind the first begin transaction to the header's parent.
@@ -62,14 +74,38 @@ pub fn validate_system_layout<'a>(
         Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
     );
     let has_tee_bootstrap = layout.has_begin_kind(SystemTxKind::TeeBootstrap);
-    validate_active_system_tx_set(
+    validate_system_tx_set_for_publication(
         &layout,
         header.number(),
         has_boundary_outcome,
         has_tee_bootstrap,
+        artifacts.radicle_publication.is_some(),
     )
     .map_err(LayoutBindingError::Set)?;
+    validate_publication_binding(&layout, &artifacts).map_err(LayoutBindingError::Publication)?;
     Ok((layout, artifacts))
+}
+
+pub fn validate_publication_binding(
+    layout: &SystemTxLayout<'_>,
+    artifacts: &OutbeBlockArtifacts,
+) -> Result<(), PublicationBindingError> {
+    let Some(expected) = &artifacts.radicle_publication else {
+        return Ok(());
+    };
+    for tx in &layout.begin {
+        let tx = *tx;
+        if let SystemTxInputV2::RadiclePublication { batch } =
+            SystemTxInputV2::decode(tx.input().as_ref()).map_err(PublicationBindingError::Decode)?
+        {
+            return if &batch == expected {
+                Ok(())
+            } else {
+                Err(PublicationBindingError::Mismatch)
+            };
+        }
+    }
+    Err(PublicationBindingError::Missing)
 }
 
 /// Bind CertifiedParentAccounting to the parent hash from block two onward.

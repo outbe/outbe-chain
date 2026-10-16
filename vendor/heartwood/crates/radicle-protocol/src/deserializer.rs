@@ -15,6 +15,19 @@ pub struct Deserializer<const B: usize, D = Message> {
     item: PhantomData<D>,
 }
 
+impl<const B: usize, M: wire::Decode> Deserializer<B, wire::frame::Frame<M>> {
+    /// Reject unnegotiated V2 before decoding its repository keys or allocating its payload.
+    pub fn deserialize_negotiated(
+        &mut self,
+        incoming_v2: bool,
+    ) -> Result<Option<wire::frame::Frame<M>>, wire::Invalid> {
+        if !incoming_v2 && self.unparsed.starts_with(b"rad\x02") {
+            return Err(wire::Invalid::RepositoryKeyNegotiation);
+        }
+        self.deserialize_next()
+    }
+}
+
 impl<const B: usize, D: wire::Decode> Default for Deserializer<B, D> {
     fn default() -> Self {
         Self::new(wire::Size::MAX as usize + 1)

@@ -18,6 +18,8 @@ fn bad_late_proof_pre_exec_fatal() {
     // Block-2 header artifact: an in-window credit (distance 2 - 1 = 1)
     // whose committee snapshot was never written -> verify cannot resolve it.
     let artifact = OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
         execution_summary: None,
         consensus_header_artifact: None,
         timestamp_millis_part: 0,

@@ -210,7 +210,7 @@ impl NodeHandle {
         log::debug!(target: "test", "Waiting for {} to be in sync with {nid} for {rid}", self.id);
 
         loop {
-            let seeds = self.handle.seeds_for(*rid, [self.id]).unwrap();
+            let seeds = self.handle.seeds_for(*rid, [self.id.into()]).unwrap();
             if seeds.iter().any(|s| s.nid == *nid && s.is_synced()) {
                 break;
             }
@@ -246,7 +246,7 @@ impl NodeHandle {
 
         loop {
             if let Ok(repo) = self.storage.repository(*rid)
-                && repo.remote(nid).is_ok()
+                && repo.remote(&(*nid).into()).is_ok()
             {
                 log::debug!(target: "test", "Node {} has {rid}/{nid}", self.id);
                 break;
@@ -474,13 +474,14 @@ impl Node {
 
         let listen = vec![(Ipv4Addr::LOCALHOST, 0).into()];
         let (_, signals) = mpsc::sync_channel(1);
-        let rt = Runtime::init(
+        let rt = Runtime::init_with_storage(
             self.home.clone(),
             self.config,
             self.home.socket_default(),
             listen,
             signals,
             self.secret_key.clone(),
+            self.storage.clone(),
         )
         .unwrap();
 

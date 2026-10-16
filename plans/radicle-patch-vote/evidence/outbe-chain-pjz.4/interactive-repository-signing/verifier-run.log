@@ -1,0 +1,1 @@
+PASS: fresh native verifier accepts historical/current envelopes and rejects wrong context, changed payload and tampered signatures; no Share or Commonware recovery/provider API used

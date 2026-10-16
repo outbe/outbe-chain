@@ -1,0 +1,95 @@
+   Compiling outbe-primitives v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/primitives)
+   Compiling outbe-consensus v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/consensus)
+   Compiling outbe-tee v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/tee)
+   Compiling outbe-chain-constants v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/constants)
+   Compiling outbe-common v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/common)
+   Compiling outbe-fidelity-math v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/fidelity-math)
+   Compiling outbe-ccaregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/ccaregistry)
+   Compiling outbe-compressed-entities v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/compressed-entities)
+   Compiling outbe-promislimit v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/promislimit)
+   Compiling outbe-credis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/credis)
+   Compiling outbe-gratis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/gratis)
+   Compiling outbe-fidelity v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/fidelity)
+   Compiling outbe-promis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/promis)
+   Compiling outbe-stablecoinpolicy v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/stablecoinpolicy)
+   Compiling outbe-validatorset v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/validatorset)
+   Compiling outbe-tee-enclave v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/bin/outbe-tee-enclave)
+   Compiling outbe-ocompregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/ocompregistry)
+   Compiling outbe-stablecoin v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/stablecoin)
+   Compiling outbe-teeregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/teeregistry)
+   Compiling outbe-tribute v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/tribute)
+   Compiling outbe-vote v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/vote)
+   Compiling outbe-staking v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/staking)
+   Compiling outbe-hyperlanecontroller v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/hyperlanecontroller)
+   Compiling outbe-oracle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/oracle)
+   Compiling outbe-l2registry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/l2registry)
+   Compiling outbe-accounting v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/accounting)
+   Compiling outbe-slashindicator v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/slashindicator)
+   Compiling outbe-update v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/update)
+   Compiling outbe-radicleregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/radicleregistry)
+   Compiling outbe-vaultrouter v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/vaultrouter)
+   Compiling outbe-intex v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/intex)
+   Compiling outbe-nod v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/nod)
+   Compiling outbe-gem v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/gem)
+   Compiling outbe-zerofee v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/zerofee)
+   Compiling outbe-gratisfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/gratisfactory)
+   Compiling outbe-lysis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/lysis)
+   Compiling outbe-offchain-data v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/offchain-data)
+   Compiling outbe-promisfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/promisfactory)
+   Compiling outbe-nodfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/nodfactory)
+   Compiling outbe-intexfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/intexfactory)
+   Compiling outbe-gemfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/gemfactory)
+   Compiling outbe-credisfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/credisfactory)
+   Compiling outbe-governance v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/governance)
+   Compiling outbe-stablecoinfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/stablecoinfactory)
+   Compiling outbe-desis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/desis)
+   Compiling outbe-agentreward v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/agentreward)
+   Compiling outbe-metadosis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/metadosis)
+   Compiling outbe-emissionlimit v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/emissionlimit)
+   Compiling outbe-tributefactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/tributefactory)
+   Compiling outbe-txpool v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/txpool)
+   Compiling outbe-rewards v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/rewards)
+   Compiling outbe-cycle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/cycle)
+   Compiling outbe-evm v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/evm)
+   Compiling outbe-node v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/node)
+    Finished `test` profile [unoptimized] target(s) in 45.73s
+     Running tests/consensus_stateless.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/consensus_stateless-84c68b180d8c9de5)
+
+running 13 tests
+test block_0_has_no_begin_zone_system_txs_under_v2 ... ok
+test v2_envelope_with_wrong_version_byte_rejects ... ok
+test v2_envelope_with_unknown_selector_rejects ... ok
+test block_1_layout_requires_boundary_outcome_for_v2 ... ok
+test mandatory_late_phase_cannot_be_skipped ... ok
+test block_b_ge_2_layout_requires_certified_parent_accounting_body0 ... ok
+test late_finalize_header_body_calldata_mismatch_fatal ... ok
+test legacy_v1_system_tx_rejected_at_all_heights ... ok
+test stateless_import_enforces_ocomp_fork_boundary_at_h_minus_1_h_and_h_plus_1 ... ok
+test gas_04_osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes ... ok
+test with_tx_root_forwards_transaction_root_on_wellformed_block ... ok
+test malformed_block_rejected_via_v2_with_tx_root_entrypoint ... ok
+test block_exceeding_p2p_transport_cap_is_rejected ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+     Running tests/fee_history_system_gas.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/fee_history_system_gas-402512075d24b943)
+
+running 1 test
+  Cycle: active_utc_day=20240313, slot 2 seeded
+  VaultRouter: owner=0x1a642f0e3c3af545e7acbd38b07251b3990914f1, slot 0 seeded
+  ValidatorSet: 1 active validators, 23 storage entries
+  Staking: total_staked=100000000000000000000000, 6 storage entries
+  Rewards: 1 storage entries
+  Governance: meta-canon=seeded, canon=seeded, 2167 storage entries
+  AccountingProgress: slot 0 = 0, 1 storage entries
+  CompressedEntities: slot 0 = 3, slot 1 = ADR-010 empty sealed Root Catalog root
+  ZeroFee: slot 0 = 1 (schema version), 1 storage entries
+  Nod: 2 storage entries
+  Oracle: 1 pairs, 26 storage entries
+
+Genesis written to /var/folders/vg/_4gmn7fn30v1z6v8pm1c1ldr0000gn/T/.tmpZqjKxG/out.json
+Total storage entries: 2248
+test gas_14_rpc_fee_history_uses_visible_system_gas ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.62s
+

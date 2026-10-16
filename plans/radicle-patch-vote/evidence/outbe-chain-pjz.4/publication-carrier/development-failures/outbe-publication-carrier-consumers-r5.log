@@ -1,0 +1,24 @@
+warning: outbe-tee@0.1.0: outbe-tee: skipping native-dcap QVL link (host aarch64-apple-darwin != pinned x86_64-unknown-linux-gnu); native quote verification fails closed
+    Checking outbe-emissionlimit v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/emissionlimit)
+    Checking outbe-tributefactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/tributefactory)
+    Checking outbe-txpool v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/txpool)
+    Checking outbe-cli v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/bin/outbe-cli)
+    Checking outbe-rewards v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/rewards)
+    Checking outbe-consensus v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/consensus)
+    Checking outbe-cycle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/cycle)
+    Checking outbe-rpc v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/rpc)
+    Checking outbe-evm v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/evm)
+    Checking outbe-node v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/node)
+    Checking outbe-e2e-harness v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/testing/e2e-harness)
+    Checking outbe-ocomp v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/bin/outbe-ocomp)
+    Checking outbe-engine v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/engine)
+    Checking outbe-chain v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/bin/outbe-chain)
+error[E0063]: missing fields `radicle_publication` and `radicle_publication_enabled` in initializer of `OutbeBlockArtifacts`
+   --> crates/blockchain/node/tests/fee_history_system_gas.rs:198:52
+    |
+198 |     let extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+    |                                                    ^^^^^^^^^^^^^^^^^^^ missing `radicle_publication` and `radicle_publication_enabled`
+
+For more information about this error, try `rustc --explain E0063`.
+error: could not compile `outbe-node` (test "fee_history_system_gas") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

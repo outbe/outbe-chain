@@ -1,5 +1,6 @@
 use super::*;
 mod fixtures;
+mod repository_signing;
 use fixtures::*;
 
 #[test]

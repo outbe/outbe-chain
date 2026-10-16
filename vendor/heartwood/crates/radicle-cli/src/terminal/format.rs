@@ -6,6 +6,7 @@ pub(crate) use radicle_term::format::*;
 pub(crate) use radicle_term::{Paint, style};
 
 use radicle::cob::ObjectId;
+use radicle::crypto::RepositoryKey;
 use radicle::identity::Visibility;
 use radicle::node::policy::Policy;
 use radicle::node::{Alias, AliasStore, NodeId};
@@ -243,22 +244,23 @@ impl fmt::Display for Identity<'_> {
 }
 
 /// This enum renders (nid, alias) in terminal depending on user variant.
-pub struct Author<'a> {
-    nid: &'a NodeId,
+pub struct Author {
+    nid: RepositoryKey,
     alias: Option<Alias>,
     you: bool,
     verbose: bool,
 }
 
-impl<'a> Author<'a> {
+impl Author {
     #[must_use]
-    pub fn new(nid: &'a NodeId, profile: &Profile, verbose: bool) -> Author<'a> {
-        let alias = profile.alias(nid);
+    pub fn new(nid: impl Into<RepositoryKey>, profile: &Profile, verbose: bool) -> Author {
+        let nid = nid.into();
+        let alias = nid.as_ed25519().and_then(|key| profile.alias(key));
 
         Self {
             nid,
             alias,
-            you: nid == profile.id(),
+            you: nid.as_ed25519() == Some(profile.id()),
             verbose,
         }
     }
@@ -286,9 +288,12 @@ impl<'a> Author<'a> {
     #[must_use]
     pub fn labels(self) -> (term::Label, term::Label) {
         let node_id = if self.verbose {
-            term::format::node_id_human(self.nid)
+            Paint::new(self.nid.to_human())
         } else {
-            term::format::node_id_human_compact(self.nid)
+            {
+                let key = self.nid.to_human();
+                Paint::new(format!("{}…{}", &key[..7], &key[key.len() - 7..]))
+            }
         };
 
         let alias = match self.alias.as_ref() {

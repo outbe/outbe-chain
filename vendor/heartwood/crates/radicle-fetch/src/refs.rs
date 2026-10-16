@@ -1,6 +1,6 @@
 use bstr::{BString, ByteSlice};
 use either::Either;
-use radicle::crypto::PublicKey;
+use radicle::crypto::RepositoryKey as PublicKey;
 use radicle::git::{
     self, Oid,
     fmt::{Component, Namespaced, Qualified},
@@ -19,7 +19,7 @@ pub enum Error {
     #[error("non-namespaced ref name '{0}' is not 'refs/rad/id'")]
     NotCanonicalRadID(Qualified<'static>),
     #[error("invalid remote peer id")]
-    PublicKey(#[from] radicle::crypto::PublicKeyError),
+    PublicKey(#[from] radicle::crypto::repository::Error),
     #[error(transparent)]
     Ref(#[from] radicle::git::RefError),
     #[error(transparent)]

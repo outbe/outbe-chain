@@ -9,7 +9,6 @@ publish.workspace = true
 outbe-common.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
-outbe-oracle = { path = "../../system/oracle" }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-sol-types.workspace = true
 serde.workspace = true

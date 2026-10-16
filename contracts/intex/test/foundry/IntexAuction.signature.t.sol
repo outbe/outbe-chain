@@ -112,7 +112,7 @@ contract AuctionSignatureTest is Test {
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
             promisLoadMinor: 1000,
             minIntexBidRate: 10,
-            prices: ReferenceCurrencyPriceLib.onePriced(840, 100, 100, 100),
+            prices: ReferenceCurrencyPriceLib.onePriced(840, 100, 100),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: 1,
             commitBondMinor: 0
@@ -220,7 +220,7 @@ contract AuctionSignatureTest is Test {
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
             promisLoadMinor: 1000,
             minIntexBidRate: 10,
-            prices: ReferenceCurrencyPriceLib.onePriced(840, 100, 100, 100),
+            prices: ReferenceCurrencyPriceLib.onePriced(840, 100, 100),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: 1,
             commitBondMinor: 0

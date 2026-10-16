@@ -1,4 +1,5 @@
 mod mock;
+mod native;
 
 mod commit_writer;
 mod head_reader;

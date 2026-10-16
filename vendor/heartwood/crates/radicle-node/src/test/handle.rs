@@ -3,7 +3,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time;
 
-use radicle::crypto::PublicKey;
+use radicle::crypto::RepositoryKey as PublicKey;
 use radicle::git::Oid;
 use radicle::identity::RepoId;
 use radicle::node::DisconnectDisposition;
@@ -125,7 +125,7 @@ impl radicle::node::Handle for Handle {
             .extend(namespaces.into_iter().map(|ns| (id, ns)));
 
         Ok(RefsAt {
-            remote: self.nid()?,
+            remote: self.nid()?.into(),
             at: Oid::ZERO_SHA1,
         })
     }

@@ -1,0 +1,11 @@
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+   Compiling outbe-radicle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/radicle)
+    Finished `test` profile [unoptimized] target(s) in 7.45s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_radicle-f6bb523241959efd)
+
+running 2 tests
+test integration::review::tests::review_context_matches_frozen_p0_native_vectors ... ok
+test integration::review::tests::exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_accepts ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 34 filtered out; finished in 0.77s
+

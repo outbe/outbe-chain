@@ -5,7 +5,7 @@ use std::ops;
 use log::error;
 use thiserror::Error;
 
-use crate::crypto::PublicKey;
+use crate::crypto::RepositoryKey;
 use crate::prelude::RepoId;
 use crate::storage::{Namespaces, ReadRepository as _, ReadStorage, RepositoryError};
 
@@ -117,7 +117,7 @@ impl<T> Config<T> {
                         }
                     };
                     if node.policy == Policy::Allow {
-                        followed.insert(node.nid);
+                        followed.insert(RepositoryKey::from(node.nid));
                     }
                 }
 
@@ -125,7 +125,7 @@ impl<T> Config<T> {
                     let delegates = repo
                         .delegates()
                         .map_err(|err| FailedDelegates { rid: *rid, err })?
-                        .map(PublicKey::from);
+                        .map(RepositoryKey::from);
                     followed.extend(delegates);
                 };
                 if followed.is_empty() {

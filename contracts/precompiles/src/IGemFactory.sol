@@ -64,7 +64,6 @@ interface IGemFactory {
         bytes14 sourceIntexId;
         uint256 remainingCapacityMinor;
         uint256 sourceEntryPriceMinor;
-        uint256 sourceFloorPriceMinor;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         /// @notice When the position was issued.
@@ -74,7 +73,7 @@ interface IGemFactory {
     }
 
     // --- Events (emitted by the GemFactory precompile) ---
-    /// @notice A new gem was issued (agent reward, merchant, or genesis flow). `positionId`
+    /// @notice A new gem was issued (agent reward or merchant flow). `positionId`
     ///         is the position a merchant gem drew on, 0 otherwise. `bucketKey` names the
     ///         call bucket that `IGem.GemBucketCalled` reports.
     event GemIssued(
@@ -83,7 +82,6 @@ interface IGemFactory {
         address owner,
         uint256 promisLoadMinor,
         uint256 entryPriceMinor,
-        uint256 floorPriceMinor,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         uint64 issuedAt,
@@ -101,7 +99,6 @@ interface IGemFactory {
         bytes14 sourceIntexId,
         uint256 capacityMinor,
         uint256 sourceEntryPriceMinor,
-        uint256 sourceFloorPriceMinor,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         uint64 issuedAt,

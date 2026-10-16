@@ -1,0 +1,46 @@
+[
+  {
+    "name": "peer",
+    "argv": [
+      "python3",
+      "plans/radicle-patch-vote/p1-peer-check.py",
+      "--rad",
+      "/private/tmp/outbe-radicle-p1-standalone/debug/rad",
+      "--helper",
+      "/private/tmp/outbe-radicle-p1-standalone/debug/git-remote-rad",
+      "--sidecar",
+      "/private/tmp/outbe-radicle-p1-target/debug/outbe-radicle",
+      "--evidence",
+      "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R2-artifacts/peer"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "start_utc": "2026-10-15T11:37:58.121086+00:00",
+    "end_utc": "2026-10-15T11:38:01.369344+00:00",
+    "exit_code": 0,
+    "stdout_sha256": "fbce9b5252ef739cc62cdb675ff21727440907d745dde9cf4bbf65fb756bf87b",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "name": "legacy-peer",
+    "argv": [
+      "python3",
+      "plans/radicle-patch-vote/p1-peer-check.py",
+      "--rad",
+      "/private/tmp/outbe-radicle-p1-standalone/debug/rad",
+      "--helper",
+      "/private/tmp/outbe-radicle-p1-standalone/debug/git-remote-rad",
+      "--sidecar",
+      "/private/tmp/outbe-radicle-p1-target/debug/outbe-radicle",
+      "--legacy-dir",
+      "/private/tmp/outbe-radicle-p1-legacy/debug",
+      "--evidence",
+      "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R2-artifacts/legacy-peer"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "start_utc": "2026-10-15T11:38:01.369507+00:00",
+    "end_utc": "2026-10-15T11:38:02.806255+00:00",
+    "exit_code": 0,
+    "stdout_sha256": "afb0cd1a744a9cb65926adfca7f2a17a37376828fbc12133eecf3ca9d60020c6",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+]

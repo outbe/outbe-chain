@@ -6,11 +6,9 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{precompile::IGem, GemAddParams};
 use outbe_gemfactory::precompile::IGemFactory;
-use outbe_oracle::test_support::record_finalized_day_vwap;
 use outbe_primitives::{
     addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS},
     storage::{StorageHandle, SubCallStatus},
-    time::first_full_day,
 };
 use outbe_vaultrouter::api::IVaultRouter::StablesSource;
 use settlement::{Quote, Rail, World, ASSET, OWNER, TIMESTAMP};
@@ -28,14 +26,6 @@ impl Rail for Gem {
     const SOURCE: StablesSource = StablesSource::GemCostAmount;
 
     fn seed(self, storage: &StorageHandle<'_>, issuance_currency: u16) -> (U256, u64) {
-        // A finalized day above the floor qualifies the Gem.
-        record_finalized_day_vwap(
-            storage,
-            840,
-            first_full_day(TIMESTAMP),
-            U256::from(2_160_001),
-        )
-        .unwrap();
         let profile = outbe_gem::config::read(storage).unwrap();
         let entry_price = U256::from(2_000_000);
         let gem_id = outbe_gem::api::add_gem(
@@ -45,7 +35,6 @@ impl Rail for Gem {
                 gem_type: outbe_gemfactory::schema::GemTypes::Wallet as u8,
                 promis_load_minor: U256::from(1_500_000),
                 entry_price_minor: entry_price,
-                floor_price_minor: U256::from(2_160_000),
                 issuance_currency,
                 reference_currency: 840,
                 issued_at: TIMESTAMP,

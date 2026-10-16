@@ -31,8 +31,6 @@ const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 
 const ENTRY_PRICE_MINOR: u64 = 2_000_000;
 
-const FLOOR_PRICE_MINOR: u64 = 1_500_000;
-
 const CALL_PRICE_MINOR: u64 = 900_000;
 
 const DAY: WorldwideDay = WorldwideDay::new(20_260_212);
@@ -60,7 +58,6 @@ fn sample_params(worldwide_day: u32) -> CreateSeriesParams {
         issued_units: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(ENTRY_PRICE_MINOR),
-        floor_price_minor: U256::from(FLOOR_PRICE_MINOR),
         call_price_minor: U256::from(CALL_PRICE_MINOR),
         call_trigger: IntexCallTrigger {
             call_window_seconds: 30 * SECONDS_PER_DAY_U32,

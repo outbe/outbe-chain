@@ -1,0 +1,28 @@
+{
+  "source_base": "4d74923f7ee8d35a59124841d956a24d5feb2514",
+  "test_only_patch_sha256": "1457f560f960f76284c3b050f7029c5ab964ba48ce44654a2ed25d63d3d1821c",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "-p",
+    "outbe-radicle",
+    "--lib",
+    "exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_accepts"
+  ],
+  "env": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4"
+  },
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "start_utc": "2026-10-15T22:50:30.100787+00:00",
+  "exit_code": 101,
+  "end_utc": "2026-10-15T22:50:32.574129+00:00",
+  "log_sha256": "36213b12de50efd760b8191dcad311e2bfcccf40fc5a7096a0a9a12566e98cc1"
+}

@@ -41,6 +41,9 @@ fn system_input(kind: SystemTxKind) -> SystemTxInputV2 {
         SystemTxKind::RewardsGemDelivery => SystemTxInputV2::RewardsGemDelivery,
         SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
         SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
+        SystemTxKind::RadiclePublication => SystemTxInputV2::RadiclePublication {
+            batch: outbe_primitives::test_utils::sample_radicle_publication_batch(1),
+        },
         other => panic!("layout fixture does not use {other:?}"),
     }
 }

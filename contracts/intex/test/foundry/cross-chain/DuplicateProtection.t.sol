@@ -50,7 +50,7 @@ contract DuplicateProtectionTest is CrossChainTest {
         // destination must recognize the source adapter under that chainId.
         batchDst.setRemoteMessenger(uint32(block.chainid), _interop(uint32(block.chainid), address(batchSrc)));
 
-        // Series in a bridgeable (Qualified) state on both chains, with the adapters granted RELAYER_ROLE so
+        // Series in a bridgeable (Issued) state on both chains, with the adapters granted RELAYER_ROLE so
         // crosschainBurn/crosschainMint succeed.
         _seedSeries(intexSrc);
         _seedSeries(intexDst);

@@ -1,0 +1,38 @@
+{
+  "meaning": "intermediate P2 baseline, not acceptance; D1 not implemented",
+  "source_sha": "91644eb78148e7b81cd8e46478dfb0466d321e27",
+  "argv": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "--manifest-path",
+    "vendor/heartwood/Cargo.toml",
+    "-p",
+    "radicle",
+    "-p",
+    "radicle-cob",
+    "-p",
+    "radicle-crypto",
+    "-p",
+    "radicle-git-metadata",
+    "-p",
+    "radicle-node",
+    "-p",
+    "radicle-protocol",
+    "--lib"
+  ],
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "environment": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4"
+  },
+  "started_at_utc": "2026-10-15T15:47:13.913133+00:00",
+  "exit_code": 0,
+  "ended_at_utc": "2026-10-15T15:47:53.702762+00:00",
+  "log": "native-tests.log",
+  "log_sha256": "424e4d974a2de67aa552d9fdfaf4911bbbedace89f374b1654d1be2f4691226f"
+}

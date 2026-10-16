@@ -61,8 +61,8 @@ pub mod election;
 pub(crate) mod test_support;
 mod vrf_material;
 
-pub use vrf_material::VrfMaterialProvider;
 use vrf_material::VrfPartialVerification;
+pub use vrf_material::{RepositorySigningError, VrfMaterialProvider};
 
 /// CSPRNG allowed only for Commonware BLS batch-verification weights.
 ///

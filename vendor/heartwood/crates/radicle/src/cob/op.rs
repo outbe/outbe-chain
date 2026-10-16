@@ -4,7 +4,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use radicle_cob::history::{Entry, EntryId};
-use radicle_crypto::PublicKey;
+use radicle_crypto::RepositoryKey;
 
 use crate::cob;
 use crate::cob::Timestamp;
@@ -14,7 +14,7 @@ use crate::identity::DocAt;
 use crate::storage::ReadRepository;
 
 /// The author of an [`Op`].
-pub type ActorId = PublicKey;
+pub type ActorId = RepositoryKey;
 
 /// Error decoding an operation from an entry.
 #[derive(Error, Debug)]
@@ -124,8 +124,8 @@ impl<A> Op<A> {
         S: cob::change::Storage<
                 ObjectId = git::Oid,
                 Parent = git::Oid,
-                PublicKey = crypto::PublicKey,
-                Signature = crypto::Signature,
+                PublicKey = crypto::RepositoryKey,
+                Signature = radicle_cob::change::EntrySignature,
             >,
     {
         store.manifest_of(id).map_err(|err| ManifestError {
@@ -140,8 +140,8 @@ impl<A> Op<A> {
         S: cob::change::Storage<
                 ObjectId = git::Oid,
                 Parent = git::Oid,
-                PublicKey = crypto::PublicKey,
-                Signature = crypto::Signature,
+                PublicKey = crypto::RepositoryKey,
+                Signature = radicle_cob::change::EntrySignature,
             >,
         for<'de> A: serde::Deserialize<'de>,
     {

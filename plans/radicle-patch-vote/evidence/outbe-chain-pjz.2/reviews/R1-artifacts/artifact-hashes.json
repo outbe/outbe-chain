@@ -1,0 +1,152 @@
+[
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/cli-build.log",
+    "sha256": "59e339d2aa27cd2222fead9549dbc67b0a6e0d10e368fb0ddf49b9c9ba0ac0a3",
+    "bytes": 60
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/fmt-heartwood.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/fmt-root.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/harness-artifact-tests-docker-unavailable.log",
+    "sha256": "2236fa3fc53f1f4c5c705ac06356412f221ac8fa1d4224daa9c2eb8296461117",
+    "bytes": 1225
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/harness-version-test.log",
+    "sha256": "478c8c4251b174335361b597e2d06f4eab01656a3c33b965d2456050167ba415",
+    "bytes": 590
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/heartwood-clippy.log",
+    "sha256": "a1c6332d11635b72d45079d39bba3e33630a2086325078b60b265b28a2f0f4cf",
+    "bytes": 216
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/heartwood-tests.log",
+    "sha256": "00d9339ceab2982d14bb5264e55cd767701205cac089aea1fe198339b8d40b37",
+    "bytes": 11601
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/independent-source-inventory.json",
+    "sha256": "4b516681ad8a7c66c3a4fa3d0f41bdb0f4c575df2f18a29dc7236feed1bf2e73",
+    "bytes": 802
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/initial-integrity.json",
+    "sha256": "74f9b64b9980a00843709809902987075b944116dcd8cbea81244cb349cbbf8a",
+    "bytes": 168
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/legacy-peer/alice-sidecar.log",
+    "sha256": "8169a20e9707080678aba9c5750cd2da02478e9e96f3eaa8187d9f0bdd69fc9c",
+    "bytes": 1922
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/legacy-peer/bob-sidecar.log",
+    "sha256": "5bcde48294c5a63499c176094cd74a09cecce5013cbf14e6358deca7e096a7ba",
+    "bytes": 2691
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/legacy-peer/peer-transcript.json",
+    "sha256": "3db6fc5a97ab45401b5f77af3b429280345be0565c37173e774968f9e5d55e3f",
+    "bytes": 11711
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/legacy-peer.log",
+    "sha256": "51c659e3aaa385f51a83b1a294e3e6e4b67eb8fc63458e5a5b55f6566640aa23",
+    "bytes": 1108
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/metadata-heartwood.log",
+    "sha256": "bd0e06cb97a7938dff34a2836ad10dec8e9043d3547c2062adba2a782297b210",
+    "bytes": 2232504
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/metadata-inspection.json",
+    "sha256": "2a50c65a37f6b601e8addcc6fd2441c429588905e12f0613511b162f00090c67",
+    "bytes": 8062
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/metadata-root.log",
+    "sha256": "78e6e1ec8cd449d1c72407454da3792efe9ff8b89727d4a00dd33f0629164c21",
+    "bytes": 8166668
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/peer/alice-sidecar.log",
+    "sha256": "9c88bf207f5a3d0e253dcbd159de91d72e38fb770f26a416154fcc5d4ec43e4b",
+    "bytes": 1925
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/peer/bob-sidecar.log",
+    "sha256": "7cb6237c68aeb40def3114a2c5e81ea53ef940a3f0302d00b0f9b0146e317f66",
+    "bytes": 2695
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/peer/peer-transcript.json",
+    "sha256": "3f574a5965bb3f081aba0a3355e69b1869c370ed7944a768f250e71fff055f78",
+    "bytes": 11508
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/peer-commands.json",
+    "sha256": "57fa342c4d83b8a60d9b5592d031776f6bebd927e77fa6f74c2c1e88b89ce541",
+    "bytes": 1692
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/peer.log",
+    "sha256": "b44eef857c8c998b44bc46bf238b7516858af35e85b9b41040bdb0a18f09bb2f",
+    "bytes": 747
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/radicle-tests.log",
+    "sha256": "2849fe8b5e13cb857384ce99dbf4750c9b3ff8b4a3e09e35c450b3d013dbe691",
+    "bytes": 26143
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/root-check.log",
+    "sha256": "4925046b1a6dbec6ceac77bba454001566f8ae52222f19c5b50d5fdf1a6a286f",
+    "bytes": 60
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/root-commands.json",
+    "sha256": "56ed1e34f4d0f6fafcd5c1f816e178e5b2276c371ef1620eee5852661650f51e",
+    "bytes": 7208
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/run-checks.py",
+    "sha256": "5474f20326465bbc57d57f33788e5cab2f24df0a7c4ee6b3aefa15a6efaf83d8",
+    "bytes": 1726
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/runtime-clippy.log",
+    "sha256": "c3182c9668ad7d180c125e490dc452adcee0e8cd60ab10d8b6157f8522ddcb20",
+    "bytes": 60
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/sidecar-build.log",
+    "sha256": "1ef1cf5e175dd0728ffe97eea5cb1d878bd5643a41f04c1466f3faef58340a8e",
+    "bytes": 60
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/sidecar-tests.log",
+    "sha256": "276b9c64f704682f4b3b6d4609583910e9a5ad544d197d348bcb6c5ad32bb797",
+    "bytes": 965
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/standalone-check.log",
+    "sha256": "e7a0e788c2f011df0653279f56cd58dcca091a34d28573a86e1b886eaa34b4d9",
+    "bytes": 60
+  },
+  {
+    "path": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R1-artifacts/standalone-commands.json",
+    "sha256": "a32d1b969dc9a8b95a1cf03872c797bce2f247ed6f1a6e084cdb292c55357475",
+    "bytes": 6341
+  }
+]

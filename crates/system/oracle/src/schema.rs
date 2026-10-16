@@ -251,20 +251,14 @@ pub struct OracleContract {
     pub policy_rate_currencies: StorageVec<u16>,
     pub policy_rate: Mapping<u16, U256>,
 
-    // === Bounded reads of the UTC-day VWAP history (slots 76-77) ===
-    // Both are kept by `record_utc_day_vwap`, the only writer of `utc_day_vwap_value`.
-    #[slot(76)]
-    pub(crate) utc_month_vwap_max: Mapping<u32, Mapping<PairIndex, U256>>,
-    pub(crate) utc_day_vwap_first_recorded: Slot<u32>,
-
-    // === Hourly VWAP aggregates (slots 78-80) ===
+    // === Hourly VWAP aggregates (slots 76-78) ===
     // A ring of 24 cells per pair keyed by UTC hour of day. `hourly_vwap_hour`
     // names the hour a cell holds. The cell holds nothing for any other hour.
     pub(crate) hourly_vwap_hour: Mapping<AddressPair, Mapping<u64, u64>>,
     pub(crate) hourly_pv_sum: Mapping<AddressPair, Mapping<u64, U256>>,
     pub(crate) hourly_vol_sum: Mapping<AddressPair, Mapping<u64, U256>>,
 
-    // === Window coverage (slots 81-82) ===
+    // === Window coverage (slots 79-80) ===
     // Snapshots the pair contributed to the cell's hour. It lives with the cell.
     pub(crate) hourly_snapshot_count: Mapping<AddressPair, Mapping<u64, u64>>,
     // First block number seen in each UTC hour (keyed by hour start), written

@@ -435,41 +435,6 @@ pub fn get_utc_day_vwap(
     oracle.get_utc_day_vwap_for_pair(utc_day, index)
 }
 
-/// Whether a finalized day from `from_utc_day` on closed `COEN/<iso_code>` strictly
-/// above `floor_minor`.
-pub fn closed_above_floor(
-    storage: StorageHandle,
-    iso_code: u16,
-    floor_minor: U256,
-    from_utc_day: u32,
-) -> Result<bool> {
-    Ok(max_day_vwap_since(storage, iso_code, from_utc_day, Some(floor_minor))? > floor_minor)
-}
-
-/// The highest finalized daily VWAP of `COEN/<iso_code>` from `from_utc_day` on.
-/// Zero when none.
-pub fn max_utc_day_vwap_since(
-    storage: StorageHandle,
-    iso_code: u16,
-    from_utc_day: u32,
-) -> Result<U256> {
-    max_day_vwap_since(storage, iso_code, from_utc_day, None)
-}
-
-fn max_day_vwap_since(
-    storage: StorageHandle,
-    iso_code: u16,
-    from_utc_day: u32,
-    stop_above: Option<U256>,
-) -> Result<U256> {
-    let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
-    if index == 0 {
-        return Ok(U256::ZERO);
-    }
-    oracle.max_finalized_day_vwap_since(index, from_utc_day, stop_above)
-}
-
 /// Returns the finalized UTC-day VWAP for `COEN/<iso_code>` at its original `10^6` scale.
 /// `utc_day` is a yyyymmdd UTC date key. Missing pairs, unavailable daily prices,
 /// and stored zero prices return `None`. Oracle and storage errors propagate unchanged.

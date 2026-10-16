@@ -1,0 +1,400 @@
+[
+  {
+    "argv": [
+      "/private/tmp/outbe-radicle-p1-standalone/debug/rad",
+      "--version"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi",
+    "exit_code": 0,
+    "stdout": "rad v0.7.3-testnet.8-38-g6c19aaaf5 (6c19aaaf5)\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/private/tmp/outbe-radicle-p1-standalone/debug/git-remote-rad",
+      "--version"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi",
+    "exit_code": 0,
+    "stdout": "git-remote-rad v0.7.3-testnet.8-38-g6c19aaaf5 (6c19aaaf5)\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/private/tmp/outbe-radicle-p1-legacy/debug/rad",
+      "--version"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi",
+    "exit_code": 0,
+    "stdout": "rad b76a1780 (b76a1780)\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/private/tmp/outbe-radicle-p1-legacy/debug/rad",
+      "auth",
+      "--alias",
+      "alice"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi",
+    "exit_code": 0,
+    "stdout": "\nInitializing your Radicle \ud83d\udc7e identity\n\n\u2713 Creating your Ed25519 keypair\u2026\n\u2713 Your Radicle DID is did:key:z6MkiaqMJiSiSbHJ8KpQDujbPibCV5LTYQBgLSXurGBTDXor. This identifies your device. Run `rad self` to show it at all times.\n\u2713 You're all set.\n\nTo create a Radicle repository, run `rad init` from a Git repository with at least one commit.\nTo clone a repository, run `rad clone <rid>`. For example, `rad clone rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5` clones the Radicle 'heartwood' repository.\nTo get a list of all commands, run `rad`.\n",
+    "stderr": ""
+  },
+  {
+    "spawn": [
+      "/private/tmp/outbe-radicle-p1-legacy/debug/outbe-radicle",
+      "--home",
+      "/tmp/ob-p1-f172_nyi/alice",
+      "--control-socket",
+      "/tmp/ob-p1-f172_nyi/alice/node/control.sock",
+      "--listen",
+      "127.0.0.1:0",
+      "--advertise",
+      "127.0.0.1:8776",
+      "--max-validators",
+      "4",
+      "--external-inbound-reserve",
+      "2",
+      "--status-listen",
+      "127.0.0.1:0"
+    ]
+  },
+  {
+    "control": "nodeId",
+    "fields": {},
+    "response": "z6MkiaqMJiSiSbHJ8KpQDujbPibCV5LTYQBgLSXurGBTDXor"
+  },
+  {
+    "control": "listenAddrs",
+    "fields": {},
+    "response": [
+      "127.0.0.1:60953"
+    ]
+  },
+  {
+    "control": "config",
+    "fields": {},
+    "response": {
+      "alias": "outbe",
+      "listen": [
+        "127.0.0.1:0"
+      ],
+      "peers": {
+        "type": "static"
+      },
+      "connect": [],
+      "externalAddresses": [
+        "127.0.0.1:8776"
+      ],
+      "network": "outbe",
+      "log": "INFO",
+      "relay": "always",
+      "limits": {
+        "routingMaxSize": 1000,
+        "routingMaxAge": 604800,
+        "gossipMaxAge": 1209600,
+        "fetchConcurrency": 1,
+        "maxOpenFiles": 4096,
+        "rate": {
+          "inbound": {
+            "fillRate": 5.0,
+            "capacity": 1024
+          },
+          "outbound": {
+            "fillRate": 10.0,
+            "capacity": 2048
+          }
+        },
+        "connection": {
+          "inbound": 5,
+          "outbound": 3
+        },
+        "fetchPackReceive": "500.0 MiB",
+        "fetchTimeout": 30
+      },
+      "workers": 8,
+      "seedingPolicy": {
+        "default": "block"
+      }
+    }
+  },
+  {
+    "argv": [
+      "/private/tmp/outbe-radicle-p1-standalone/debug/rad",
+      "auth",
+      "--alias",
+      "bob"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi",
+    "exit_code": 0,
+    "stdout": "\nInitializing your Radicle \ud83d\udc7e identity\n\n\u2713 Creating your Ed25519 keypair\u2026\n\u2713 Your Radicle DID is did:key:z6Mkm37LY1EH5P1wqEe8LqomBqW3o9A23TCMpeWgUJMMVwtp. This identifies your device. Run `rad self` to show it at all times.\n\u2713 You're all set.\n\nTo create a Radicle repository, run `rad init` from a Git repository with at least one commit.\nTo clone a repository, run `rad clone <rid>`. For example, `rad clone rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5` clones the Radicle 'heartwood' repository.\nTo get a list of all commands, run `rad`.\n",
+    "stderr": ""
+  },
+  {
+    "spawn": [
+      "/private/tmp/outbe-radicle-p1-target/debug/outbe-radicle",
+      "--home",
+      "/tmp/ob-p1-f172_nyi/bob",
+      "--control-socket",
+      "/tmp/ob-p1-f172_nyi/bob/node/control.sock",
+      "--listen",
+      "127.0.0.1:0",
+      "--advertise",
+      "127.0.0.1:8776",
+      "--max-validators",
+      "4",
+      "--external-inbound-reserve",
+      "2",
+      "--status-listen",
+      "127.0.0.1:0"
+    ]
+  },
+  {
+    "control": "nodeId",
+    "fields": {},
+    "response": "z6Mkm37LY1EH5P1wqEe8LqomBqW3o9A23TCMpeWgUJMMVwtp"
+  },
+  {
+    "control": "listenAddrs",
+    "fields": {},
+    "response": [
+      "127.0.0.1:60955"
+    ]
+  },
+  {
+    "control": "config",
+    "fields": {},
+    "response": {
+      "alias": "outbe",
+      "listen": [
+        "127.0.0.1:0"
+      ],
+      "peers": {
+        "type": "static"
+      },
+      "connect": [],
+      "externalAddresses": [
+        "127.0.0.1:8776"
+      ],
+      "network": "outbe",
+      "log": "INFO",
+      "relay": "always",
+      "limits": {
+        "routingMaxSize": 1000,
+        "routingMaxAge": 604800,
+        "gossipMaxAge": 1209600,
+        "fetchConcurrency": 1,
+        "maxOpenFiles": 4096,
+        "rate": {
+          "inbound": {
+            "fillRate": 5.0,
+            "capacity": 1024
+          },
+          "outbound": {
+            "fillRate": 10.0,
+            "capacity": 2048
+          }
+        },
+        "connection": {
+          "inbound": 5,
+          "outbound": 3
+        },
+        "fetchPackReceive": "500.0 MiB",
+        "fetchTimeout": 30
+      },
+      "workers": 8,
+      "seedingPolicy": {
+        "default": "block"
+      }
+    }
+  },
+  {
+    "argv": [
+      "git",
+      "init",
+      "--initial-branch=main",
+      "/tmp/ob-p1-f172_nyi/source"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi",
+    "exit_code": 0,
+    "stdout": "Initialized empty Git repository in /private/tmp/ob-p1-f172_nyi/source/.git/\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "config",
+      "user.name",
+      "Outbe P1 fixture"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi/source",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "config",
+      "user.email",
+      "p1@example.invalid"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi/source",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "add",
+      "README.md"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi/source",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-m",
+      "Initial fixture"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi/source",
+    "exit_code": 0,
+    "stdout": "[main (root-commit) e90b949] Initial fixture\n 1 file changed, 1 insertion(+)\n create mode 100644 README.md\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi/source",
+    "exit_code": 0,
+    "stdout": "e90b949360dc67894bab1923c00803c9d91b0162\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/private/tmp/outbe-radicle-p1-legacy/debug/rad",
+      "init",
+      "--name",
+      "p1-fixture",
+      "--description",
+      "Outbe stable replication",
+      "--default-branch",
+      "main",
+      "--public",
+      "--no-confirm"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi/source",
+    "exit_code": 0,
+    "stdout": "\nInitializing public Radicle \ud83d\udc7e repository in /private/tmp/ob-p1-f172_nyi/source..\n\n\u2713 Repository p1-fixture created.\n\nYour Repository ID (RID) is rad:z265VdW9ZAq8vfirv4icCozdig6mb\nYou can show it any time by running `rad .` from this directory.\n\n\u2717 Announcing.. <canceled>\n\nYou are not connected to any peers. Your repository will be announced as soon as your node establishes a connection with the network.\nCheck for peer connections with `rad node status`.\n\nTo push changes, run `git push`.\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/private/tmp/outbe-radicle-p1-standalone/debug/rad",
+      "inspect"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi/source",
+    "exit_code": 0,
+    "stdout": "rad:z265VdW9ZAq8vfirv4icCozdig6mb\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/private/tmp/outbe-radicle-p1-standalone/debug/rad",
+      "node",
+      "connect",
+      "z6MkiaqMJiSiSbHJ8KpQDujbPibCV5LTYQBgLSXurGBTDXor@127.0.0.1:60953",
+      "--timeout",
+      "5s"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi",
+    "exit_code": 0,
+    "stdout": "\u2713 Connecting to z6Mkiaq\u2026GBTDXor@127.0.0.1:60953\u2026\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/private/tmp/outbe-radicle-p1-standalone/debug/rad",
+      "clone",
+      "rad:z265VdW9ZAq8vfirv4icCozdig6mb",
+      "/tmp/ob-p1-f172_nyi/clone",
+      "--seed",
+      "z6MkiaqMJiSiSbHJ8KpQDujbPibCV5LTYQBgLSXurGBTDXor",
+      "--timeout",
+      "10s"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi",
+    "exit_code": 0,
+    "stdout": "\u2713 Seeding policy updated for rad:z265VdW9ZAq8vfirv4icCozdig6mb with scope 'followed'\nFetching rad:z265VdW9ZAq8vfirv4icCozdig6mb from the network, found 2 potential seed(s).\n\u2713 Target met: 1 preferred seed(s).\n\u2713 Creating checkout in .//tmp/ob-p1-f172_nyi/clone..\n\u2713 Remote outbe@z6MkiaqMJiSiSbHJ8KpQDujbPibCV5LTYQBgLSXurGBTDXor added\n\u2713 Remote-tracking branch outbe@z6MkiaqMJiSiSbHJ8KpQDujbPibCV5LTYQBgLSXurGBTDXor/main created for z6MkiaqMJiSiSbHJ8KpQDujbPibCV5LTYQBgLSXurGBTDXor\n\u2713 Repository successfully cloned under /private/tmp/ob-p1-f172_nyi/clone/\n\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n\u2502 p1-fixture               \u2502\n\u2502 Outbe stable replication \u2502\n\u2502 0 issues \u00b7 0 patches     \u2502\n\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f\nRun `cd .//tmp/ob-p1-f172_nyi/clone` to go to the repository directory.\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi/clone",
+    "exit_code": 0,
+    "stdout": "e90b949360dc67894bab1923c00803c9d91b0162\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/private/tmp/outbe-radicle-p1-standalone/debug/rad",
+      "inspect",
+      "--identity",
+      "rad:z265VdW9ZAq8vfirv4icCozdig6mb"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi",
+    "exit_code": 0,
+    "stdout": "{\n  \"payload\": {\n    \"xyz.radicle.project\": {\n      \"defaultBranch\": \"main\",\n      \"description\": \"Outbe stable replication\",\n      \"name\": \"p1-fixture\"\n    }\n  },\n  \"delegates\": [\n    \"did:key:z6MkiaqMJiSiSbHJ8KpQDujbPibCV5LTYQBgLSXurGBTDXor\"\n  ],\n  \"threshold\": 1\n}\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/private/tmp/outbe-radicle-p1-standalone/debug/rad",
+      "inspect",
+      "--sigrefs",
+      "rad:z265VdW9ZAq8vfirv4icCozdig6mb"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi",
+    "exit_code": 0,
+    "stdout": "z6MkiaqMJiSiSbHJ8KpQDujbPibCV5LTYQBgLSXurGBTDXor c0363a9200238dd07f448d6573be83f1a076aa41 parent\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "ls-remote",
+      "rad"
+    ],
+    "cwd": "/tmp/ob-p1-f172_nyi/clone",
+    "exit_code": 0,
+    "stdout": "e90b949360dc67894bab1923c00803c9d91b0162\tHEAD\ne90b949360dc67894bab1923c00803c9d91b0162\trefs/heads/main\n",
+    "stderr": ""
+  },
+  {
+    "control": "disconnectBounded",
+    "fields": {
+      "nid": "z6MkiaqMJiSiSbHJ8KpQDujbPibCV5LTYQBgLSXurGBTDXor",
+      "expectedAddress": "127.0.0.1:60953",
+      "timeout": {
+        "secs": 2,
+        "nanos": 0
+      }
+    },
+    "response": "disconnected"
+  }
+]

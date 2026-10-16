@@ -93,8 +93,12 @@ where
         );
 
         // The shared layout defines order. Block 1 always reserves mandatory OST3.
-        let kinds =
-            expected_begin_block_kinds(block_number, has_boundary_outcome, block_number == 1);
+        let kinds = outbe_primitives::system_tx::expected_begin_block_kinds_for_publication(
+            block_number,
+            has_boundary_outcome,
+            block_number == 1,
+            block_artifacts.radicle_publication.is_some(),
+        );
         let mut system_txs = Vec::new();
         for kind in &kinds {
             let ordinal = system_txs.len();
@@ -146,6 +150,14 @@ where
                 }
                 SystemTxKind::HookEvents => {
                     self.append_begin_input(&mut system_txs, *kind, || SystemTxInputV2::HookEvents)?
+                }
+                SystemTxKind::RadiclePublication => {
+                    let batch = block_artifacts.radicle_publication.clone().ok_or_else(|| {
+                        BlockValidationError::msg("missing publication header batch")
+                    })?;
+                    self.append_begin_input(&mut system_txs, *kind, || {
+                        SystemTxInputV2::RadiclePublication { batch }
+                    })?;
                 }
             }
         }
@@ -325,12 +337,13 @@ where
                     Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
                 );
                 let has_tee_bootstrap = self.block_has_tee_bootstrap();
-
-                let expected = expected_begin_block_kinds(
-                    block_number,
-                    has_boundary_outcome,
-                    has_tee_bootstrap,
-                );
+                let expected =
+                    outbe_primitives::system_tx::expected_begin_block_kinds_for_publication(
+                        block_number,
+                        has_boundary_outcome,
+                        has_tee_bootstrap,
+                        block_artifacts.radicle_publication.is_some(),
+                    );
                 ExecutorValidationError::UnexpectedBeginSystemTx {
                     body_index,
                     expected,

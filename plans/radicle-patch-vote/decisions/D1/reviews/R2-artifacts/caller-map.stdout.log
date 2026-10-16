@@ -1,0 +1,24 @@
+vendor/heartwood/crates/radicle-cli/src/commands/cob.rs:370:    let stream = cob::stream::Stream::<A>::new(&repo.backend, history, typename.clone());
+vendor/heartwood/crates/radicle/src/cob/patch/cache.rs:506:        self.store.find_by_revision(id)
+vendor/heartwood/crates/radicle/src/cob/patch/cache.rs:958:                cache.find_by_revision(&entry).unwrap()
+vendor/heartwood/crates/radicle-fetch/src/state.rs:590:                    if let Some(warns) = sigrefs::validate(&cache, refs)?.as_mut() {
+vendor/heartwood/crates/radicle-fetch/src/state.rs:647:                        sigrefs::validate(&cache, refs)?.unwrap_or(Validations::default());
+vendor/heartwood/crates/radicle-fetch/src/state.rs:677:            let applied = repository::update(
+vendor/heartwood/crates/radicle-fetch/src/state.rs:831:    fn validate_remote(&self, remote: &Remote) -> Result<Validations, storage::Error> {
+vendor/heartwood/crates/radicle/src/cob/patch.rs:3463:        let ByRevision { id, .. } = patches.find_by_revision(&rev_id).unwrap().unwrap();
+vendor/heartwood/crates/radicle/src/cob/stream.rs:94:/// To construct a `Stream`, use [`Stream::new`].
+vendor/heartwood/crates/radicle/src/cob/stream.rs:133:                .map_err(error::Stream::new)?,
+vendor/heartwood/crates/radicle/src/cob/stream.rs:143:                .map_err(error::Stream::new)?,
+vendor/heartwood/crates/radicle/src/cob/stream.rs:153:                .map_err(error::Stream::new)?,
+vendor/heartwood/crates/radicle/src/cob/stream.rs:162:                .map_err(error::Stream::new)?,
+vendor/heartwood/crates/radicle/src/cob/stream.rs:341:        let stream = Stream::<json::Value>::new(&repo, history, typename());
+vendor/heartwood/crates/radicle/src/cob/stream.rs:356:        let stream = Stream::<json::Value>::new(&repo, history, typename());
+vendor/heartwood/crates/radicle/src/cob/stream.rs:371:        let stream = Stream::<json::Value>::new(&repo, history, typename());
+vendor/heartwood/crates/radicle/src/cob/stream.rs:394:        let stream = Stream::<json::Value>::new(&repo, history, typename());
+vendor/heartwood/crates/radicle/src/cob/stream.rs:428:        let stream = Stream::<json::Value>::new(&repo, history, typename());
+vendor/heartwood/crates/radicle-cli/src/commands/patch/react.rs:29:        .find_by_revision(&patch::RevisionId::from(revision_id))?
+vendor/heartwood/crates/radicle-cli/src/commands/patch/redact.rs:24:        .find_by_revision(&patch::RevisionId::from(revision_id))?
+vendor/heartwood/crates/radicle-cli/src/commands/patch/comment/redact.rs:29:        .find_by_revision(&patch::RevisionId::from(revision_id))?
+vendor/heartwood/crates/radicle-cli/src/commands/patch/comment/react.rs:32:        .find_by_revision(&patch::RevisionId::from(revision_id))?
+vendor/heartwood/crates/radicle-cli/src/commands/patch/comment/edit.rs:32:        .find_by_revision(&patch::RevisionId::from(revision_id))?
+vendor/heartwood/crates/radicle-cli/src/commands/patch/comment.rs:36:        .find_by_revision(&patch::RevisionId::from(revision_id))?

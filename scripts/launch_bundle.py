@@ -388,6 +388,8 @@ validator_address = "{validator["address"]}"
 [oracle]
 vote_period = {int(oracle.get("vote_period", 60))}
 poll_interval_secs = 2
+# Pairs come from pairs.toml, not from the node.
+sources = "local"
 
 [health]
 enabled = true

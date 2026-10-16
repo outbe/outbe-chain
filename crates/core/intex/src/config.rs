@@ -10,7 +10,6 @@ use outbe_primitives::units::SCALE_1E18_U128;
 
 use crate::constants::{
     CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, COMMIT_BOND_MINOR,
-    FLOOR_RATE_PCT,
 };
 use crate::errors::IntexError;
 use crate::schema::IntexContract;
@@ -25,7 +24,6 @@ pub struct IntexParams {
     pub call_threshold_seconds: u32,
     pub call_notice_period_seconds: u32,
     pub call_rate: u16,
-    pub floor_rate: u16,
     /// Commit-entry bond on the target-chain auction in 18-decimal WCOEN units.
     pub commit_bond_minor: u128,
 }
@@ -37,7 +35,6 @@ impl IntexParams {
         call_threshold_seconds: CALL_THRESHOLD,
         call_notice_period_seconds: CALL_NOTICE_PERIOD,
         call_rate: CALL_RATE_PCT,
-        floor_rate: FLOOR_RATE_PCT,
         commit_bond_minor: COMMIT_BOND_MINOR,
     };
 
@@ -52,7 +49,6 @@ impl IntexParams {
         #[cfg(feature = "e2e-test")]
         call_notice_period_seconds: 600,
         call_rate: 10,
-        floor_rate: 5,
         commit_bond_minor: 100 * SCALE_1E18_U128,
     };
 

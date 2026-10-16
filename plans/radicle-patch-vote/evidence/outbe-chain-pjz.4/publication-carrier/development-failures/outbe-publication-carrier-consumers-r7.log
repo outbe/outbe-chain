@@ -1,0 +1,45 @@
+    Checking outbe-consensus v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/consensus)
+warning: outbe-tee@0.1.0: outbe-tee: skipping native-dcap QVL link (host aarch64-apple-darwin != pinned x86_64-unknown-linux-gnu); native quote verification fails closed
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+    Checking outbe-validatorset v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/validatorset)
+    Checking outbe-tee-enclave v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/bin/outbe-tee-enclave)
+    Checking outbe-ocompregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/ocompregistry)
+    Checking outbe-teeregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/teeregistry)
+    Checking outbe-gratis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/gratis)
+    Checking outbe-tribute v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/tribute)
+    Checking outbe-vote v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/vote)
+    Checking outbe-staking v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/staking)
+    Checking outbe-hyperlanecontroller v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/hyperlanecontroller)
+    Checking outbe-oracle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/oracle)
+    Checking outbe-radicleregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/radicleregistry)
+    Checking outbe-update v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/update)
+    Checking outbe-slashindicator v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/slashindicator)
+    Checking outbe-vaultrouter v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/vaultrouter)
+    Checking outbe-intex v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/intex)
+    Checking outbe-nod v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/nod)
+    Checking outbe-gem v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/gem)
+    Checking outbe-gratisfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/gratisfactory)
+    Checking outbe-lysis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/lysis)
+    Checking outbe-promisfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/promisfactory)
+    Checking outbe-nodfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/nodfactory)
+error[E0063]: missing fields `repository_publication` and `repository_publication_enabled` in initializer of `application::handler::ApplicationShared`
+   --> crates/blockchain/consensus/src/application/handler/../handler_tests.rs:460:18
+    |
+460 |     let shared = ApplicationShared {
+    |                  ^^^^^^^^^^^^^^^^^ missing `repository_publication` and `repository_publication_enabled`
+
+    Checking outbe-intexfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/intexfactory)
+    Checking outbe-gemfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/gemfactory)
+    Checking outbe-offchain-data v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/offchain-data)
+    Checking outbe-zerofee v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/zerofee)
+    Checking outbe-agentreward v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/agentreward)
+    Checking outbe-desis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/desis)
+    Checking outbe-credisfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/credisfactory)
+    Checking outbe-l2registry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/l2registry)
+    Checking outbe-governance v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/governance)
+    Checking outbe-radicle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/radicle)
+    Checking outbe-metadosis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/metadosis)
+    Checking outbe-cli v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/bin/outbe-cli)
+For more information about this error, try `rustc --explain E0063`.
+error: could not compile `outbe-consensus` (lib test) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

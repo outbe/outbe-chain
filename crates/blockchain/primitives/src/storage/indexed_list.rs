@@ -1,9 +1,9 @@
-use super::dsl::{List, Map};
+use super::dsl::{List, Map, StorageRecord};
 use super::types::{Storable, StorageKey};
 use crate::error::{PrecompileError, Result};
 
-pub struct IndexedList<'values, 'storage, T> {
-    values: &'values List<'storage, T>,
+pub struct IndexedList<'storage, T> {
+    values: List<'storage, T>,
     positions: Map<'storage, T, u32>,
 }
 
@@ -25,8 +25,8 @@ impl From<IndexError> for PrecompileError {
     }
 }
 
-impl<'values, 'storage, T: Storable + StorageKey + Copy + Eq> IndexedList<'values, 'storage, T> {
-    pub fn new(values: &'values List<'storage, T>, positions: Map<'storage, T, u32>) -> Self {
+impl<'storage, T: Storable + StorageKey + Copy + Eq> IndexedList<'storage, T> {
+    pub fn new(values: List<'storage, T>, positions: Map<'storage, T, u32>) -> Self {
         Self { values, positions }
     }
 
@@ -73,6 +73,46 @@ impl<'values, 'storage, T: Storable + StorageKey + Copy + Eq> IndexedList<'value
     }
 }
 
+/// Creates `record` and lists its key in every index, all or nothing.
+pub fn create_indexed<'storage, V, const N: usize>(
+    records: &Map<'storage, V::Key, V>,
+    record: &V,
+    indexes: [IndexedList<'storage, V::Key>; N],
+) -> Result<()>
+where
+    V: StorageRecord,
+    V::Key: Storable + StorageKey + Copy + Eq,
+{
+    records.storage().with_checkpoint(|| {
+        records.create(record)?;
+        indexes
+            .iter()
+            .try_for_each(|index| index.insert(record.key()))
+    })
+}
+
+/// Unlists the record under `key` from the indexes it selects and deletes it, all or
+/// nothing.
+pub fn delete_indexed<'storage, V, const N: usize>(
+    records: &Map<'storage, V::Key, V>,
+    key: V::Key,
+    indexes: impl FnOnce(&V) -> [IndexedList<'storage, V::Key>; N],
+) -> Result<()>
+where
+    V: StorageRecord,
+    V::Key: Storable + StorageKey + Copy + Eq,
+{
+    records.storage().with_checkpoint(|| {
+        let record = records
+            .get(key)?
+            .ok_or_else(|| PrecompileError::fatal("state record is absent from its index"))?;
+        indexes(&record)
+            .iter()
+            .try_for_each(|index| index.remove(key))?;
+        records.delete(key)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,7 +125,7 @@ mod tests {
         StorageHandle::enter(&mut provider, |storage| {
             let values = List::new(U256::ZERO, Address::ZERO, storage.clone());
             let positions = Map::new(U256::from(1), Address::ZERO, storage);
-            let index = IndexedList::new(&values, positions);
+            let index = IndexedList::new(values, positions);
             for value in [11u64, 22, 33] {
                 index.insert(value).unwrap();
             }
@@ -110,7 +150,7 @@ mod tests {
         StorageHandle::enter(&mut provider, |storage| {
             let values = List::new(U256::ZERO, Address::ZERO, storage.clone());
             let positions = Map::new(U256::from(1), Address::ZERO, storage);
-            let index = IndexedList::new(&values, positions);
+            let index = IndexedList::new(values, positions);
             index.insert(11u64).unwrap();
             index.insert(22u64).unwrap();
             index.positions.write(&22, 1).unwrap();

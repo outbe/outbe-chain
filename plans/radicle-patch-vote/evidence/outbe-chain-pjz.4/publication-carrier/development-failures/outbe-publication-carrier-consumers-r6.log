@@ -1,0 +1,30 @@
+    Blocking waiting for file lock on build directory
+    Checking outbe-primitives v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/primitives)
+warning: outbe-tee@0.1.0: outbe-tee: skipping native-dcap QVL link (host aarch64-apple-darwin != pinned x86_64-unknown-linux-gnu); native quote verification fails closed
+    Checking outbe-consensus v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/consensus)
+    Checking outbe-tee v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/tee)
+    Checking outbe-chain-constants v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/constants)
+    Checking outbe-fidelity-math v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/fidelity-math)
+    Checking outbe-compressed-entities v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/compressed-entities)
+    Checking outbe-common v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/common)
+    Checking outbe-ccaregistry v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/ccaregistry)
+error: unused import: `outbe_primitives::reshare_artifact::encode_outbe_block_artifacts`
+  --> crates/blockchain/consensus/src/application/handler/proposal.rs:35:5
+   |
+35 | use outbe_primitives::reshare_artifact::encode_outbe_block_artifacts;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `-D unused-imports` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(unused_imports)]`
+
+    Checking outbe-promislimit v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/promislimit)
+    Checking outbe-credis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/credis)
+    Checking outbe-stablecoinpolicy v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/stablecoinpolicy)
+    Checking outbe-accounting v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/accounting)
+    Checking outbe-fidelity v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/fidelity)
+    Checking outbe-promis v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/promis)
+    Checking outbe-stablecoin v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/stablecoin)
+    Checking outbe-operator v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/operator)
+    Checking outbe-stablecoinfactory v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/core/stablecoinfactory)
+error: could not compile `outbe-consensus` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

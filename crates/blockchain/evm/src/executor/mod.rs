@@ -48,9 +48,8 @@ use crate::{
     factory::OutbeEvm,
     signer::SharedOutbeEvmSigner,
     system_tx::{
-        build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit,
-        expected_begin_block_kinds, is_reserved_system_tx, validate_phase1_witness_against,
-        SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan,
+        build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, is_reserved_system_tx,
+        validate_phase1_witness_against, SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan,
     },
 };
 use reth_ethereum::chainspec::{ChainSpec, EthereumHardfork, EthereumHardforks};

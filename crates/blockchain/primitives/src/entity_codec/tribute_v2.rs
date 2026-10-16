@@ -25,8 +25,8 @@ pub fn encode_tribute_v2(body: &EncryptedTributeV2) -> Result<Vec<u8>, Canonical
         &context.tribute_price_minor.to_be_bytes::<32>(),
         &mut output,
     );
-    encode_optional_varint_field(10, context.chain_id, &mut output);
-    encode_bytes_field(11, context.offer_input_hash.as_slice(), &mut output);
+    encode_optional_varint_field(9, context.chain_id, &mut output);
+    encode_bytes_field(10, context.offer_input_hash.as_slice(), &mut output);
     Ok(output)
 }
 
@@ -40,8 +40,8 @@ pub fn decode_tribute_v2(bytes: &[u8]) -> Result<EncryptedTributeV2, CanonicalBo
     let encrypted_creator_public_key = required_bytes(&mut fields, 6)?.to_vec();
     let reference_currency = optional_u16(&mut fields, 7)?;
     let tribute_price_minor = decode_u256(required_bytes(&mut fields, 8)?, 8)?;
-    let chain_id = optional_varint(&mut fields, 10)?;
-    let offer_input_hash = B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 11)?, 11)?);
+    let chain_id = optional_varint(&mut fields, 9)?;
+    let offer_input_hash = B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 10)?, 10)?);
     fields.finish()?;
     let body = EncryptedTributeV2 {
         context: TributeContextV2 {

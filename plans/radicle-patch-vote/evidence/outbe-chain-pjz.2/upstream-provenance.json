@@ -1,0 +1,10 @@
+{
+  "upstream_remote": "https://github.com/radicle-dev/heartwood.git",
+  "tag": "releases/1.10.3",
+  "peeled_commit": "7e1cb406bb935c3de008d2171e8961f57b4336ea",
+  "ancestor": "16de8f1950825672fe48b901dafa0d009f612b04",
+  "is_ancestor_exit_code": 0,
+  "fork_commit": "b76a17801329291153585ed31db61ee3c658046e",
+  "fork_parent": "16de8f1950825672fe48b901dafa0d009f612b04",
+  "legacy_fixture_note": "Legacy binaries are a compatibility-test fixture only. Root/standalone production metadata have no fork Git dependency."
+}

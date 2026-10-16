@@ -4,11 +4,10 @@
 //! whose Phase 1 (`CertifiedParentAccounting`) system tx has successfully
 //! committed progress to the `ACCOUNTING_PROGRESS_ADDRESS` storage slot. This
 //! trait is the read-only surface that Cycle consumes. The writer is
-//! `outbe_accounting`'s Phase 1 runtime helper, and only the V2 executor path invokes it.
+//! `outbe_cycle`'s Phase 1 runtime helper, and only the V2 executor path invokes it.
 //!
-//! The trait lives in `outbe-primitives` (not `outbe-accounting`) so Cycle
-//! can depend on the contract without taking a dependency edge on the writer
-//! crate.
+//! The trait lives in `outbe-primitives` so callers can abstract over
+//! the storage reader in tests.
 
 use crate::error::Result;
 

@@ -16,7 +16,7 @@ export function registerBridgeTools(server: McpServer, deps: IntexDeps): void {
     "intex_bridge_quote",
     "Bridge native fee to move an Intex NFT to another Intex chain, by default to outbe. Bridging is " +
       "owner-initiated at every stage: " +
-      "to any recipient while the series is Issued or Qualified, and to yourself only once it is Called, up to " +
+      "to any recipient while the series is Issued, and to yourself only once it is Called, up to " +
       "its settlementDeadline (read it with intex_series_info).",
     { series: seriesArg, units: unitsArg, recipient: recipientArg, network: networkName.optional(), destination: destinationArg },
     handler(async ({ series, units, recipient, network, destination }) => {
@@ -45,7 +45,7 @@ export function registerBridgeTools(server: McpServer, deps: IntexDeps): void {
     "intex_bridge_send",
     "Bridge an Intex NFT to another Intex chain, by default to outbe, where settlement happens - nothing moves it for you, so a " +
       "position left on a target chain past the series settlementDeadline can no longer be settled at all. Works at every " +
-      "stage: to any recipient while Issued or Qualified, and to yourself only once the series is Called " +
+      "stage: to any recipient while Issued, and to yourself only once the series is Called " +
       "(ownership is frozen then, so a recipient other than you is refused). The bridge burns your token " +
       "directly (role-gated), so no approval is needed. Auto-quotes the native fee (paid as value), which " +
       "you pay in the source chain's native token. Requires OUTBE_PRIVATE_KEY.",

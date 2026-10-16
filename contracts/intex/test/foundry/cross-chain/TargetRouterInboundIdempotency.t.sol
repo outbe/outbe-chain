@@ -26,7 +26,6 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     uint32 internal constant DAY = 20_250_101;
     uint128 internal constant PROMIS_LOAD_MINOR = 1e6;
     uint64 internal constant ENTRY_PRICE = 100e6;
-    uint64 internal constant FLOOR_PRICE = 40e6;
 
     TargetRouter internal router;
     IntexAuction internal auction;
@@ -60,7 +59,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
             commitEnd + 2 days,
             PROMIS_LOAD_MINOR,
             minRate,
-            ReferenceCurrencyPriceLib.one(840, ENTRY_PRICE, FLOOR_PRICE, ENTRY_PRICE),
+            ReferenceCurrencyPriceLib.one(840, ENTRY_PRICE, ENTRY_PRICE),
             0,
             0,
             0,
@@ -127,7 +126,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
             commitEnd + 2 days,
             PROMIS_LOAD_MINOR,
             60e6,
-            ReferenceCurrencyPriceLib.one(840, ENTRY_PRICE, FLOOR_PRICE, ENTRY_PRICE),
+            ReferenceCurrencyPriceLib.one(840, ENTRY_PRICE, ENTRY_PRICE),
             0,
             0,
             0,

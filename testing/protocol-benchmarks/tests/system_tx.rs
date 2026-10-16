@@ -9,7 +9,7 @@ use outbe_protocol_benchmarks::{
 #[test]
 fn every_system_tx_kind_has_an_explicit_rust_only_scenario() {
     let scenarios = SystemTxScenario::all();
-    assert_eq!(scenarios.len(), 8);
+    assert_eq!(scenarios.len(), 9);
 
     let kinds = scenarios
         .iter()
@@ -26,6 +26,7 @@ fn every_system_tx_kind_has_an_explicit_rust_only_scenario() {
             SystemTxKind::TeeBootstrap,
             SystemTxKind::OracleSlashWindow,
             SystemTxKind::HookEvents,
+            SystemTxKind::RadiclePublication,
         ])
     );
 }

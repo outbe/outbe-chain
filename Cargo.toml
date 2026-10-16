@@ -25,7 +25,6 @@ members = [
     "crates/system/zerofee",
     "crates/system/emissionlimit",
     "crates/system/cycle",
-    "crates/system/accounting",
     "crates/system/tee",
     "crates/system/teeregistry",
     "crates/system/l2registry",
@@ -128,7 +127,6 @@ outbe-oracle = { path = "crates/system/oracle" }
 outbe-zerofee = { path = "crates/system/zerofee" }
 outbe-emissionlimit = { path = "crates/system/emissionlimit" }
 outbe-cycle = { path = "crates/system/cycle" }
-outbe-accounting = { path = "crates/system/accounting" }
 outbe-tee = { path = "crates/system/tee", default-features = false }
 outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
@@ -140,6 +138,7 @@ outbe-vote = { path = "crates/system/vote" }
 outbe-radicle-runtime = { path = "crates/system/radicle" }
 radicle = { path = "vendor/heartwood/crates/radicle" }
 radicle-crypto = { path = "vendor/heartwood/crates/radicle-crypto" }
+radicle-git-metadata = { path = "vendor/heartwood/crates/radicle-git-metadata" }
 radicle-log = { path = "vendor/heartwood/crates/radicle-log" }
 radicle-node = { path = "vendor/heartwood/crates/radicle-node", default-features = false, features = ["socket2"] }
 radicle-signals = { path = "vendor/heartwood/crates/radicle-signals" }

@@ -18,6 +18,7 @@ use std::time::Duration;
 use alloy_primitives::B256;
 use commonware_consensus::types::{Height, Round};
 
+use super::publication_anchor::FinalizedBlockReader;
 use crate::ancestry_readiness::AncestryReadiness;
 use crate::digest::Digest;
 use crate::dkg_manager::{AncestryReader, BlockLookupFuture};
@@ -47,12 +48,8 @@ struct MarshalAncestryReader<C: commonware_runtime::Clock> {
     clock: C,
 }
 
-impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
-    fn get_block_by_height(&self, height: u64) -> BlockLookupFuture<'_> {
-        let cached = self.block_cache.get_by_number(height);
-        if cached.is_some() {
-            return Box::pin(async move { cached });
-        }
+impl<C: commonware_runtime::Clock> MarshalAncestryReader<C> {
+    fn local_finalized_block(&self, height: u64) -> BlockLookupFuture<'_> {
         let Some(marshal) = self.marshal.clone() else {
             // No marshal mailbox (test / degraded wiring): a cache miss is
             // unresolvable. Resolve deterministically to `None` rather than block.
@@ -74,6 +71,26 @@ impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
                 _ = &mut sleep => None,
             }
         })
+    }
+}
+
+impl<C: commonware_runtime::Clock> FinalizedBlockReader for MarshalAncestryReader<C> {
+    fn finalized_block(&self, height: u64) -> BlockLookupFuture<'_> {
+        if !self.readiness.is_ready() {
+            return Box::pin(async { None });
+        }
+        // The SDK's Height lookup reads finalized storage. The proposal cache does not.
+        self.local_finalized_block(height)
+    }
+}
+
+impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
+    fn get_block_by_height(&self, height: u64) -> BlockLookupFuture<'_> {
+        let cached = self.block_cache.get_by_number(height);
+        if cached.is_some() {
+            return Box::pin(async move { cached });
+        }
+        self.local_finalized_block(height)
     }
 
     fn get_block_by_hash(&self, hash: B256) -> BlockLookupFuture<'_> {
@@ -132,7 +149,7 @@ pub(crate) fn marshal_ancestry_reader<C: commonware_runtime::Clock>(
     readiness: AncestryReadiness,
     policy: AncestryLookupPolicy,
     clock: C,
-) -> impl AncestryReader {
+) -> impl AncestryReader + FinalizedBlockReader {
     let AncestryLookupPolicy { round, timeout } = policy;
     MarshalAncestryReader {
         marshal: Some(marshal),
@@ -185,6 +202,17 @@ mod tests {
 
             let found = reader.get_block_by_height(5).await;
             assert_eq!(found.map(|b| b.number()), Some(5));
+        });
+    }
+
+    #[test]
+    fn finalized_lookup_never_treats_a_proposal_cache_hit_as_finality() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let block = crate::test_fixtures::block_with_number(5);
+            let cache = cache_with(std::slice::from_ref(&block));
+            let reader = reader_without_marshal(cache, AncestryReadiness::new(1, 0), context);
+            assert!(reader.get_block_by_height(5).await.is_some());
+            assert!(reader.finalized_block(5).await.is_none());
         });
     }
 

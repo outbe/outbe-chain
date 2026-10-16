@@ -31,32 +31,6 @@ use outbe_nod::{
     NodContract, NodItemState,
 };
 
-/// Closes `day` just above `floor` on `COEN/<iso>`, registering the pair on first use.
-fn close_day_above(storage: &StorageHandle<'_>, iso: u16, floor: U256, day: u32) {
-    let pair = AddressPair::new_coen_to(iso);
-    let oracle = OracleContract::new(storage.clone());
-    let mut index = oracle.pair_index_of(pair).unwrap();
-    if index == 0 {
-        index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
-    }
-    oracle
-        .record_utc_day_vwap(day, index, floor + U256::from(1))
-        .unwrap();
-    if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
-        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
-    }
-}
-
-/// Qualify the Nod's bucket: close its first full day above the floor of `entry`.
-fn qualify(storage: &StorageHandle<'_>, item: &NodItemState, entry: U256) {
-    close_day_above(
-        storage,
-        item.reference_currency,
-        outbe_nod::pricing::floor_price_minor(entry).unwrap(),
-        first_full_day(item.issued_at),
-    );
-}
-
 const CHAIN_ID: u64 = 1;
 const BLOCK_NUMBER: u64 = 42;
 use outbe_primitives::time::SECONDS_PER_DAY as DAY;
@@ -194,13 +168,12 @@ fn finalize_through(storage: &StorageHandle<'_>, timestamp: u64) {
     bump_watermark(storage, last_closed_day(timestamp));
 }
 
-/// Issues one Nod owned by `owner` and qualifies its bucket, so its members may
-/// settle before any call.
-fn issue_qualified(storage: &StorageHandle<'_>, owner: Address, iso: u16) -> NodItemState {
-    issue_qualified_item(storage, nod_item(owner, iso))
+/// Issues one Nod owned by `owner`.
+fn issue_owned(storage: &StorageHandle<'_>, owner: Address, iso: u16) -> NodItemState {
+    issue_item(storage, nod_item(owner, iso))
 }
 
-fn issue_qualified_item(storage: &StorageHandle<'_>, item: NodItemState) -> NodItemState {
+fn issue_item(storage: &StorageHandle<'_>, item: NodItemState) -> NodItemState {
     api::add_nod(
         storage,
         &item,
@@ -208,7 +181,6 @@ fn issue_qualified_item(storage: &StorageHandle<'_>, item: NodItemState) -> NodI
         crate::runtime::call_terms(storage, entry_price(), item.reference_currency).unwrap(),
     )
     .unwrap();
-    qualify(storage, &item, entry_price());
     item
 }
 
@@ -290,7 +262,7 @@ fn try_forfeit(
     })
 }
 
-/// Issues `specs` as (owner-byte, load, paid) into one bucket, qualifies it,
+/// Issues `specs` as (owner-byte, load, paid) into one bucket,
 /// force-calls it, and leaves the clock past the sealed notice.
 fn arm_lapsed(storage: &StorageHandle<'_>, specs: &[(u8, u64, bool)]) -> (B256, Vec<NodItemState>) {
     let items: Vec<NodItemState> = specs
@@ -310,7 +282,6 @@ fn arm_lapsed(storage: &StorageHandle<'_>, specs: &[(u8, u64, bool)]) -> (B256, 
         })
         .collect();
     let bucket_key = items[0].bucket_key;
-    qualify(storage, &items[0], entry_price());
     let id = bucket_key;
     for (item, &(_, _, paid)) in items.iter().zip(specs) {
         if paid {
@@ -513,7 +484,7 @@ fn a_later_member_does_not_reissue_the_bucket_stamp() {
 #[test]
 fn the_scan_follows_the_terms_sealed_on_the_bucket_not_the_constants() {
     harness(|storage| {
-        let item = issue_qualified(storage, Address::repeat_byte(0x11), ISO);
+        let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         let at = START + 30 * DAY;
         let latest = last_closed_day(at);
         fill_days(storage, latest, CALL_LOOKBACK_DAYS, below_call());
@@ -560,7 +531,7 @@ fn the_scan_follows_the_terms_sealed_on_the_bucket_not_the_constants() {
 fn a_window_wider_than_the_constant_is_collected_in_full() {
     harness(|storage| {
         const WIDE_DAYS: u32 = 40;
-        let item = issue_qualified(storage, Address::repeat_byte(0x11), ISO);
+        let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         let at = START + 60 * DAY;
         fill_days(storage, last_closed_day(at), WIDE_DAYS, above_call());
 
@@ -585,7 +556,7 @@ fn a_window_wider_than_the_constant_is_collected_in_full() {
 #[test]
 fn the_call_price_is_the_entry_price_times_the_call_rate() {
     harness(|storage| {
-        let item = issue_qualified(storage, Address::repeat_byte(0x11), ISO);
+        let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         let stored = NodContract::new(storage.clone())
             .bucket_call_price_minor
             .read(&item.bucket_key)
@@ -601,7 +572,7 @@ fn the_call_price_is_the_entry_price_times_the_call_rate() {
 #[test]
 fn a_full_window_above_the_call_price_calls_the_bucket() {
     harness(|storage| {
-        let item = issue_qualified(storage, Address::repeat_byte(0x11), ISO);
+        let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         let at = START + 30 * DAY;
         fill_days(
             storage,
@@ -622,7 +593,7 @@ fn a_full_window_above_the_call_price_calls_the_bucket() {
 #[test]
 fn one_breach_day_short_of_the_threshold_does_not_call() {
     harness(|storage| {
-        let item = issue_qualified(storage, Address::repeat_byte(0x11), ISO);
+        let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         let at = START + 30 * DAY;
         let latest = last_closed_day(at);
         fill_days(storage, latest, CALL_LOOKBACK_DAYS, below_call());
@@ -636,7 +607,7 @@ fn one_breach_day_short_of_the_threshold_does_not_call() {
 #[test]
 fn the_window_absorbs_below_call_days_up_to_the_slack() {
     harness(|storage| {
-        let item = issue_qualified(storage, Address::repeat_byte(0x11), ISO);
+        let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         let at = START + 30 * DAY;
         let latest = last_closed_day(at);
         fill_days(storage, latest, CALL_LOOKBACK_DAYS, above_call());
@@ -664,7 +635,7 @@ fn the_window_absorbs_below_call_days_up_to_the_slack() {
 #[test]
 fn a_day_exactly_at_the_call_price_does_not_count_as_a_breach() {
     harness(|storage| {
-        let item = issue_qualified(storage, Address::repeat_byte(0x11), ISO);
+        let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         let at = START + 30 * DAY;
         fill_days(storage, last_closed_day(at), CALL_LOOKBACK_DAYS, at_call());
 
@@ -676,7 +647,7 @@ fn a_day_exactly_at_the_call_price_does_not_count_as_a_breach() {
 #[test]
 fn missing_days_do_not_count_as_breaches() {
     harness(|storage| {
-        let item = issue_qualified(storage, Address::repeat_byte(0x11), ISO);
+        let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         let at = START + 30 * DAY;
         let latest = last_closed_day(at);
         // Only one day short of the threshold is published; the rest are absent.
@@ -691,7 +662,7 @@ fn missing_days_do_not_count_as_breaches() {
 #[test]
 fn a_breach_run_that_predates_the_bucket_does_not_call_it() {
     harness(|storage| {
-        let item = issue_qualified(storage, Address::repeat_byte(0x11), ISO);
+        let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         // Scan two days after issuance. Only a couple of closed UTC days sit at
         // or after `first_full_day(issued_at)`. The scan ignores the
         // pre-existence run beyond them, even though the whole series breaches.
@@ -723,7 +694,7 @@ fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
     for (issued_at, expected) in [(midnight, 1u32), (midnight + 1, 0u32)] {
         harness(|storage| {
             let wwd = WorldwideDay::from_timestamp(issued_at).value();
-            let item = issue_qualified_item(
+            let item = issue_item(
                 storage,
                 nod_item_issued(
                     Address::repeat_byte(0x11),
@@ -755,7 +726,7 @@ fn a_delayed_issuance_does_not_count_pre_issuance_wwd_days() {
         // partial issuance day all post-date that WWD and all predate
         // `first_full_day(START)` = 2027-01-16.
         let delayed_wwd = 20_261_216;
-        let item = issue_qualified_item(
+        let item = issue_item(
             storage,
             nod_item_issued(
                 Address::repeat_byte(0x11),
@@ -777,7 +748,7 @@ fn a_delayed_issuance_does_not_count_pre_issuance_wwd_days() {
 #[test]
 fn an_unfinalized_day_skips_the_run_without_touching_state() {
     harness(|storage| {
-        let item = issue_qualified(storage, Address::repeat_byte(0x11), ISO);
+        let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         let at = START + 30 * DAY;
         fill_days(
             storage,
@@ -797,8 +768,8 @@ fn an_unfinalized_day_skips_the_run_without_touching_state() {
 fn each_bucket_reads_its_own_currency_series() {
     harness(|storage| {
         register(storage, OTHER_ISO);
-        let usd = issue_qualified(storage, Address::repeat_byte(0x11), ISO);
-        let eur = issue_qualified(storage, Address::repeat_byte(0x22), OTHER_ISO);
+        let usd = issue_owned(storage, Address::repeat_byte(0x11), ISO);
+        let eur = issue_owned(storage, Address::repeat_byte(0x22), OTHER_ISO);
 
         let at = START + 30 * DAY;
         let latest = last_closed_day(at);
@@ -816,7 +787,7 @@ fn each_bucket_reads_its_own_currency_series() {
 
 /// Calls a bucket at `at`, returning the issued Nod.
 fn call_bucket(storage: &StorageHandle<'_>, owner: Address, at: u64) -> NodItemState {
-    let item = issue_qualified(storage, owner, ISO);
+    let item = issue_owned(storage, owner, ISO);
     fill_days(
         storage,
         last_closed_day(at),
@@ -878,11 +849,11 @@ fn forfeiting_the_last_member_drops_the_bucket_from_the_call_index() {
 // --- Member index ----------------------------------------------------------
 
 #[test]
-fn the_member_index_tracks_issuance_and_removal_in_a_qualified_bucket() {
+fn the_member_index_tracks_issuance_and_removal_in_a_bucket() {
     harness(|storage| {
         // Two owners on the same worldwide day share one bucket: identical entry
         // price and currency.
-        let a = issue_qualified(storage, Address::repeat_byte(0x11), ISO);
+        let a = issue_owned(storage, Address::repeat_byte(0x11), ISO);
         let b_item = nod_item(Address::repeat_byte(0x22), ISO);
         api::add_nod(
             storage,
@@ -1377,7 +1348,6 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
         let key = items[0].bucket_key;
         let id = key;
         let nod = NodContract::new(storage.clone());
-        qualify(storage, &items[0], entry_price());
         // Settle the middle member, exercising swap-remove of the unpaid tail.
         api::record_settled(
             storage,
@@ -1455,7 +1425,7 @@ fn mixed_bucket_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exerci
 #[test]
 fn a_fully_paid_bucket_is_not_called_and_corrupt_paid_membership_is_not_forfeited() {
     harness(|storage| {
-        let item = issue_qualified(storage, Address::repeat_byte(0x94), ISO);
+        let item = issue_owned(storage, Address::repeat_byte(0x94), ISO);
         let id = item.bucket_key;
         api::record_settled(
             storage,
@@ -1526,7 +1496,7 @@ fn a_fully_paid_bucket_is_not_called_and_corrupt_paid_membership_is_not_forfeite
 #[test]
 fn a_running_call_sweep_keeps_its_day() {
     harness(|storage| {
-        let item = issue_qualified(storage, Address::repeat_byte(0x21), ISO);
+        let item = issue_owned(storage, Address::repeat_byte(0x21), ISO);
         let at = START + 30 * DAY;
         let day = last_closed_day(at);
         let later = at + 21 * DAY;
@@ -1578,7 +1548,7 @@ fn a_node_local_failure_while_calling_a_bucket_fails_the_slice() {
         seed_production_nod_genesis(&storage);
 
         register(&storage, ISO);
-        let item = issue_qualified(&storage, Address::repeat_byte(0x61), ISO);
+        let item = issue_owned(&storage, Address::repeat_byte(0x61), ISO);
         fill_days(
             &storage,
             last_closed_day(at),
@@ -1619,7 +1589,7 @@ fn a_newer_day_pushes_out_the_waiting_call_day_and_names_it() {
         seed_production_nod_genesis(&storage);
 
         register(&storage, ISO);
-        issue_qualified(&storage, Address::repeat_byte(0x22), ISO);
+        issue_owned(&storage, Address::repeat_byte(0x22), ISO);
 
         let at = START + 30 * DAY;
         let closed = [
@@ -1982,8 +1952,8 @@ fn a_call_pass_announces_one_batch_metadata_update() {
 
         register(&storage, ISO);
         register(&storage, OTHER_ISO);
-        issue_qualified(&storage, Address::repeat_byte(0x11), ISO);
-        issue_qualified(&storage, Address::repeat_byte(0x22), OTHER_ISO);
+        issue_owned(&storage, Address::repeat_byte(0x11), ISO);
+        issue_owned(&storage, Address::repeat_byte(0x22), OTHER_ISO);
         let at = START + 30 * DAY;
         let latest = last_closed_day(at);
         fill_days_for(&storage, ISO, latest, CALL_LOOKBACK_DAYS, above_call());

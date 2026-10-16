@@ -53,7 +53,7 @@ impl Commit {
         Ok(odb.write(ObjectType::Commit, self.to_string().as_bytes())?)
     }
 
-    fn verify_for_write(&self, odb: &git2::Odb) -> Result<(), error::Write> {
+    pub(super) fn verify_for_write(&self, odb: &git2::Odb) -> Result<(), error::Write> {
         for parent in self.0.parents() {
             verify_object(odb, &parent, ObjectType::Commit)?;
         }

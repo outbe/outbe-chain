@@ -12,6 +12,7 @@ pub(crate) mod epoch_boundary;
 pub mod handler;
 pub mod ingress;
 pub mod publication;
+pub(crate) mod publication_anchor;
 pub(crate) mod validation;
 pub(crate) mod verify_resolution;
 

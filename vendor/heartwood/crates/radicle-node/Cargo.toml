@@ -54,6 +54,7 @@ radicle-windows = { workspace = true }
 uds_windows = { workspace = true }
 
 [dev-dependencies]
+blst = { workspace = true }
 mio = { version = "1", features = ["os-ext"] }
 qcheck = { workspace = true }
 radicle = { workspace = true, features = ["test"] }

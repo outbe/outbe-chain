@@ -1,0 +1,48 @@
+    Finished `test` profile [unoptimized] target(s) in 1.18s
+     Running unittests src/lib.rs (/private/tmp/outbe-radicle-p1-target/debug/deps/outbe_consensus-e927f2be449bcb68)
+
+running 41 tests
+test hybrid::election::tests::test_hybrid_elector ... ok
+test hybrid::tests::seed_message_matches_proof_side_recipe ... ok
+test hybrid::tests::epoch_scheme_keeps_material_version_after_provider_activation ... ok
+test hybrid::tests::epoch_scheme_keeps_identity_and_signing_material_after_provider_activation ... ok
+test hybrid::election::tests::test_hybrid_elector_epoch_view_one_uses_bootstrap_seed ... ok
+test hybrid::election::tests::test_hybrid_elector_with_certificate ... ok
+test hybrid::election::tests::epoch_elector_rejects_later_material_after_shared_provider_activation ... ok
+test hybrid::tests::invalid_seed_partial_verdict_does_not_depend_on_batch_rng_weights ... ok
+test hybrid::tests::assemble_rejects_quorum_without_active_version_partials ... ok
+test hybrid::tests::epoch_scheme_rejects_later_material_proof_retained_by_provider ... ok
+test hybrid::election::tests::elect_live_path_dv1_is_unchanged_raw_seed ... ok
+test hybrid::tests::test_assemble_rejects_duplicate_signer_without_panic ... ok
+test hybrid::tests::test_hybrid_is_attributable ... ok
+test hybrid::tests::test_garbage_identity_sig_does_not_censor_the_vote ... ok
+test hybrid::tests::test_hybrid_is_batchable ... ok
+test hybrid::election::tests::elect_recompute_dv_gt_1_recovers_round_and_does_not_degrade ... ok
+test hybrid::tests::test_hybrid_scheme_provider ... ok
+test hybrid::tests::test_hybrid_signature_size_includes_identity_sig ... ok
+test hybrid::tests::test_hybrid_sign_and_verify_attestation ... ok
+test hybrid::tests::test_hybrid_signature_codec_roundtrip_preserves_identity_sig ... ok
+test hybrid::tests::test_hybrid_certificate_size_small ... ok
+test hybrid::tests::excess_invalid_seed_partials_prevent_certificate_assembly ... ok
+test hybrid::tests::test_hybrid_bad_vote_attestation_rejected ... ok
+test hybrid::tests::test_signer_returns_none_on_invalid_key ... ok
+test hybrid::tests::test_hybrid_certificate_codec_roundtrip ... ok
+test hybrid::tests::test_signer_returns_none_on_polynomial_participant_mismatch ... ok
+test hybrid::tests::test_hybrid_assemble_and_verify_certificate ... ok
+test hybrid::tests::test_signer_returns_none_on_share_public_mismatch ... ok
+test hybrid::tests::test_signer_share_index_mismatch_returns_none ... ok
+test hybrid::tests::test_signer_correct_share_index_succeeds ... ok
+test hybrid::tests::test_verifier_returns_none_on_polynomial_participant_mismatch ... ok
+test hybrid::tests::seed_partial_verdict_routes_only_valid_pairs_into_quorum ... ok
+test hybrid::vrf_material::repository_tests::repository_signing_rejects_old_material_wrong_participant_and_invalid_local_share ... ok
+test hybrid::tests::test_seed_partial_identity_sig_binds_round_version_partial ... ok
+test hybrid::tests::verify_certificate_rejects_wrong_vrf_material_version ... ok
+test hybrid::tests::test_byzantine_seed_partial_excluded_keeps_valid_vrf_proof ... ok
+test hybrid::election::tests::elect_recompute_gap_views_do_not_collapse_to_one_leader ... ok
+test hybrid::tests::verify_certificate_rejects_vrf_proof_for_a_different_subject ... ok
+test hybrid::tests::valid_seed_partials_form_a_verifiable_certificate ... ok
+test hybrid::vrf_material::repository_tests::repository_threshold_partials_recover_native_bls_and_are_isolated_from_vrf ... ok
+test hybrid::election::tests::elect_gap_beyond_window_degrades_fail_closed ... ok
+
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 465 filtered out; finished in 0.15s
+

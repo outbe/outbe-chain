@@ -1,0 +1,61 @@
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+   Compiling radicle-node v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-node)
+   Compiling outbe-radicle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/radicle)
+   Compiling radicle-fetch v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-fetch)
+   Compiling radicle-protocol v0.9.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-protocol)
+   Compiling outbe-radicle-runtime v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/system/radicle)
+error[E0277]: the trait bound `FinalizedProvider: ReceiptProvider` is not satisfied
+   --> crates/system/radicle/tests/governments.rs:266:73
+    |
+266 |         let server = LocalReceiptServer::bind(&sidecars[index].control, reader.clone())
+    |                                                                         ^^^^^^^^^^^^^^ unsatisfied trait bound
+    |
+help: the trait `ReceiptProvider` is not implemented for `FinalizedProvider`
+   --> crates/system/radicle/tests/governments/support.rs:29:1
+    |
+ 29 | pub struct FinalizedProvider(Arc<RwLock<FinalizedStates>>);
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: the following other types implement trait `ReceiptProvider`:
+              &'a T
+              Arc<T>
+              BlockchainProvider<N>
+              DatabaseProvider<TX, N>
+              MockEthProvider<T, ChainSpec>
+              NoopProvider<C, N>
+              ProviderFactory<N>
+              StaticFileJarProvider<'_, N>
+              StaticFileProvider<N>
+    = note: required for `RethSnapshotReader<FinalizedProvider>` to implement `RepositoryReceiptReader`
+    = note: required for the cast from `Arc<RethSnapshotReader<FinalizedProvider>>` to `Arc<(dyn RepositoryReceiptReader + 'static)>`
+
+error[E0599]: the method `read_current_publication_receipt` exists for struct `Arc<RethSnapshotReader<FinalizedProvider>>`, but its trait bounds were not satisfied
+   --> crates/system/radicle/tests/governments.rs:288:10
+    |
+287 |       assert!(reader
+    |  _____________-
+288 | |         .read_current_publication_receipt(1)
+    | |_________-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+   ::: crates/system/radicle/tests/governments/support.rs:29:1
+    |
+ 29 |   pub struct FinalizedProvider(Arc<RwLock<FinalizedStates>>);
+    |   ---------------------------- doesn't satisfy `FinalizedProvider: ReceiptProvider`
+    |
+   ::: crates/blockchain/radicle/src/manager/snapshot.rs:28:1
+    |
+ 28 |   pub struct RethSnapshotReader<P> {
+    |   -------------------------------- doesn't satisfy `_: RepositoryReceiptReader`
+    |
+    = note: the following trait bounds were not satisfied:
+            `FinalizedProvider: ReceiptProvider`
+            which is required by `RethSnapshotReader<FinalizedProvider>: RepositoryReceiptReader`
+note: the trait `ReceiptProvider` must be implemented
+   --> /Users/sakor/.cargo/git/checkouts/reth-e231042ee7db3fb7/73a3a00/crates/storage/storage-api/src/receipts.rs:14:1
+    |
+ 14 | pub trait ReceiptProvider {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Some errors have detailed explanations: E0277, E0599.
+For more information about an error, try `rustc --explain E0277`.
+error: could not compile `outbe-radicle-runtime` (test "governments") due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...

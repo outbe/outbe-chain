@@ -71,7 +71,7 @@ pub fn run(
     ]);
     table.divider();
 
-    let me = *profile.id();
+    let me = radicle::crypto::RepositoryKey::from(profile.id());
     all.sort_by(|(id1, p1), (id2, p2)| {
         let is_me = (p2.author().id().as_key() == &me).cmp(&(p1.author().id().as_key() == &me));
         let by_id = id1.cmp(id2);
@@ -111,7 +111,7 @@ pub fn row(
     let (from, to) = revision.range();
     let stats = common::diff_stats(repository.raw(), &from, &to)?;
     let author = patch.author().id;
-    let (alias, did) = Author::new(&author, profile, false).labels();
+    let (alias, did) = Author::new(author, profile, false).labels();
     let mut delegates = repository
         .delegates()?
         .into_iter()

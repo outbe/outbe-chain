@@ -7,7 +7,8 @@
 //! transaction authenticates the proposer and fixes receipt/tx ordering.
 //!
 //! Begin-zone order: parent accounting, late credits, Cycle, reward delivery,
-//! boundary outcome, TEE bootstrap, Oracle slash window, and hook events.
+//! boundary outcome, TEE bootstrap, Oracle slash window, hook events,
+//! and optional Radicle publication.
 //! Block height and header artifacts select the mandatory phases.
 //! User transactions follow the complete begin-zone prefix.
 //! The signed envelopes use the existing version-2 codec.
@@ -36,8 +37,9 @@ pub use kind::{
 pub use phase::SystemTxPhase;
 
 pub use layout::{
-    expected_begin_block_kinds, expected_end_block_kinds, split_system_layout,
-    validate_active_system_tx_set, SystemTxLayout,
+    expected_begin_block_kinds, expected_begin_block_kinds_for_publication,
+    expected_end_block_kinds, split_system_layout, validate_active_system_tx_set,
+    validate_system_tx_set_for_publication, SystemTxLayout,
 };
 
 pub use gas::{system_tx_intrinsic_gas, system_tx_visible_gas_limit, SystemTxVisibleGasPlan};
@@ -75,6 +77,7 @@ pub const TEE_BOOTSTRAP_SELECTOR: [u8; 4] = *b"OST3";
 pub const LATE_FINALIZE_CREDITS_SELECTOR: [u8; 4] = *b"OSL2";
 /// Selector for [`SystemTxKind::HookEvents`] (V2 OSH2).
 pub const HOOK_EVENTS_SELECTOR: [u8; 4] = *b"OSH2";
+pub const RADICLE_PUBLICATION_SELECTOR: [u8; 4] = *b"OSP2";
 
 /// Hard cap on system transactions emitted in a block.
 pub const MAX_SYSTEM_TXS_PER_BLOCK: u8 = 16;
