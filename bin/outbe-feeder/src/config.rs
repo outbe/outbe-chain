@@ -138,6 +138,9 @@ pub struct CurrencyPairSource {
     /// Empty means the pair's market base. See [`FeederConfig::resolve_sources`].
     #[serde(default)]
     pub base: String,
+    /// Empty means the pair's market quote: `cross` if set, else the pair's
+    /// quote. An exchange market must name its own symbol, such as `USDT`.
+    #[serde(default)]
     pub quote: String,
 }
 
@@ -220,16 +223,11 @@ impl FeederConfig {
         Self::build(Self::read_local(path)?, None)
     }
 
-    /// Fills each market's default base and hands the DEX and on-chain
-    /// providers the markets that name them.
+    /// Fills each market's default base and quote and hands the DEX and
+    /// on-chain providers the markets that name them.
     pub fn resolve_sources(&mut self) -> Result<()> {
         for pair in &mut self.currency_pairs {
-            let base = pair.market_base().to_owned();
-            for source in &mut pair.sources {
-                if source.base.is_empty() {
-                    source.base = base.clone();
-                }
-            }
+            pair.fill_market_defaults();
         }
         pairs_file::fill_rpc_endpoints(self)?;
         crate::provider::dex::collect_markets(self);

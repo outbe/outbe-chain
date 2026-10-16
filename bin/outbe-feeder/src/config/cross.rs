@@ -58,4 +58,19 @@ impl CurrencyPairConfig {
     pub(crate) fn market_quote(&self) -> &str {
         self.cross.as_deref().unwrap_or(&self.quote)
     }
+
+    /// Gives each market without a base or quote the pair's market base or
+    /// market quote.
+    pub(super) fn fill_market_defaults(&mut self) {
+        let base = self.market_base().to_owned();
+        let quote = self.market_quote().to_owned();
+        for source in &mut self.sources {
+            if source.base.is_empty() {
+                source.base = base.clone();
+            }
+            if source.quote.is_empty() {
+                source.quote = quote.clone();
+            }
+        }
+    }
 }
