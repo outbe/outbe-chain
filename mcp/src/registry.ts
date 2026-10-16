@@ -217,7 +217,7 @@ export function proposalStatusCode(name: ProposalStatusName): number {
 export const VALIDATOR_STATUS = ["REGISTERED", "PENDING", "ACTIVE", "EXITING", "UNBONDING", "INACTIVE", "JAILED"] as const;
 
 // Gem lifecycle state (crates/core/gem/src/schema.rs::GemState); Forfeited is derived on read.
-export const GEM_STATE = ["Issued", "Qualified", "Called", "Settled", "Forfeited"] as const;
+export const GEM_STATE = ["Issued", "Called", "Settled", "Forfeited"] as const;
 
 // Credis state (crates/core/credis/src/schema.rs::CredisState).
 export const CREDIS_STATE = ["Issued", "Called", "Settled", "Forfeited"] as const;

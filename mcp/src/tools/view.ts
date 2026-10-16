@@ -97,23 +97,22 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
   // --- Gem -------------------------------------------------------------------
   server.tool(
     "gem_get",
-    "Gem NFT status by token id (decoded: type, state, load, prices, currency, issued), whether it has " +
-      "qualified (born so, or derived from finalized daily VWAPs) plus parsed tokenURI metadata.",
+    "Gem NFT status by token id (decoded: type, state, load, prices, currency, issued) plus parsed " +
+      "tokenURI metadata.",
     { id: z.string().describe("Gem token id (decimal or 0x hex)") },
     handler(async ({ id }) => {
-      const [data, qualified, metadata] = await Promise.all([
+      const [data, metadata] = await Promise.all([
         view(ctx, "gem", "getGem", [BigInt(id)]),
-        view(ctx, "gem", "isQualified", [BigInt(id)]),
         view(ctx, "gem", "tokenURI", [BigInt(id)]),
       ]);
-      return ok({ gemId: id, data, qualified, metadata });
+      return ok({ gemId: id, data, metadata });
     }),
   );
 
   server.tool(
     "gem_position_get",
     "Gem Factory position terms by id: merchant, source series, remaining capacity, " +
-      "the entry/floor prices its gems are anchored to, both currencies and when it was opened.",
+      "the entry price its gems are anchored to, both currencies and when it was opened.",
     { id: z.string().describe("Position token id (decimal or 0x hex)") },
     handler(async ({ id }) =>
       ok(await view(ctx, "gemfactory", "getPosition", [BigInt(id)])),

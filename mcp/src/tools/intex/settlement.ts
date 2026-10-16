@@ -23,7 +23,7 @@ export function registerSettlementTools(server: McpServer, deps: IntexDeps): voi
       "quotes the units, approves IntexFactory for that cost if the allowance is short, and settles at " +
       "the quoted snapshot. " +
       "Defaults to your own wallet; pass owner to pay for someone else's position. " +
-      "Allowed once the series has qualified (voluntary; see `qualified` in intex_series_info) or is Called " +
+      "Allowed while the series is Issued (voluntary) or once it is Called " +
       "(forced, within the call period). The " +
       "Settled token (soulbound) stays with the owner whoever pays, and only the owner can mine its Promis. " +
       "Settlement only ever happens on outbe: a position sitting on a target chain has to be brought over with " +

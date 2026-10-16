@@ -44,16 +44,6 @@ export function addr(n: Network, key: keyof IntexAddresses): Address {
   return intexAddress(n, key);
 }
 
-/** Whether the series has qualified. Intex derives it from finalized daily VWAPs. */
-export async function seriesQualified(n: Network, series: Hex): Promise<boolean> {
-  return await n.client.readContract({
-    address: addr(n, "intex"),
-    abi: INTEX_ABI,
-    functionName: "isQualified",
-    args: [series],
-  });
-}
-
 /** Token ids the address holds now: candidates from inbound transfer logs, then a live balance read,
  *  since ERC-1155 has no owner enumeration. */
 export async function ownedWithBalances(n: Network, owner: Address): Promise<[bigint[], bigint[]]> {
