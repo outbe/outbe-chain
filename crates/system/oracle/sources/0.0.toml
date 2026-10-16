@@ -9,7 +9,7 @@
 base = "COEN"
 quote = "840"
 markets = [
-  { provider = "uniswap", quote = "USDC" },
+  { provider = "uniswap" },
 ]
 
 # COEN/978 = COEN/840 ÷ 978/840. The markets give dollars per euro.
@@ -18,8 +18,8 @@ base = "COEN"
 quote = "978"
 cross = "840"
 markets = [
-  { provider = "chainlink_eur_usd", quote = "840" },
-  { provider = "pyth", quote = "840" },
+  { provider = "chainlink_eur_usd" },
+  { provider = "pyth" },
 ]
 
 [[deviation_thresholds]]

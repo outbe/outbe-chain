@@ -96,7 +96,7 @@ base = "COEN"
 quote = "840"
 markets = [
   { provider = "binance", quote = "USDT" },
-  { provider = "uniswap", quote = "USDC" },
+  { provider = "uniswap" },
 ]
 
 # COEN in euros, a cross rate: COEN/978 = COEN/840 ÷ 978/840. The markets
@@ -106,18 +106,18 @@ base = "COEN"
 quote = "978"
 cross = "840"
 markets = [
-  { provider = "chainlink_eur_usd", quote = "840" },
-  { provider = "pyth", quote = "840" },
-  { provider = "redstone", quote = "840" },
+  { provider = "chainlink_eur_usd" },
+  { provider = "pyth" },
+  { provider = "redstone" },
 ]
 
 [[currency_pairs]]
 base = "392"
 quote = "840"
 markets = [
-  { provider = "chainlink_eur_usd", quote = "840" },
-  { provider = "pyth", quote = "840" },
-  { provider = "redstone", quote = "840" },
+  { provider = "chainlink_eur_usd" },
+  { provider = "pyth" },
+  { provider = "redstone" },
 ]
 
 [[deviation_thresholds]]
@@ -157,7 +157,7 @@ contract = "0x4444444444444444444444444444444444444444"   # Chainlink EUR / USD,
 | `currency_pairs[].quote` | yes | On-chain quote asset in the same format |
 | `currency_pairs[].cross` | no | Cross currency (ISO code) for a pair with an ISO quote: the price is `<base>/<cross>` ÷ `<quote>/<cross>`. The markets then price `quote` in `cross`, and a direct `<base>/<cross>` pair must exist |
 | `currency_pairs[].markets[].provider` | yes | Built-in provider name or an `onchain_providers` entry name |
-| `currency_pairs[].markets[].quote` | yes | Quote symbol the provider prices the pair base in. For an ISO pair quote it must name that currency: `USDT` and `USDC` are `840`, and an ISO code (`USD`, `840`, `EUR`, `978`) is that currency |
+| `currency_pairs[].markets[].quote` | exchanges only | Quote symbol the provider prices the pair base in. Omitted takes `cross` if set, else the pair's quote. An exchange needs its own symbol (`USDT`, `USDC`, `USD`). For an ISO pair quote it must name that currency: `USDT` and `USDC` are `840`, and an ISO code (`USD`, `840`, `EUR`, `978`) is that currency |
 | `currency_pairs[].markets[].base` | no | The provider's name for the pair base, when it differs (default: the pair's `base`) |
 | `api_providers[].name` | only to change a default or set a key | Built-in provider name |
 | `api_providers[].rest` | no | Provider REST base URL; for `redstone` the gateway URL. Omitted uses the provider default |
