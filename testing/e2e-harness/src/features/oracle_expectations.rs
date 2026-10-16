@@ -2,9 +2,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use alloy_primitives::B256;
 use alloy_primitives::{Address, U256};
-use outbe_nod::openings::{entry_price_day, entry_price_slots, pair_index_slots};
+use outbe_nod::openings::entry_price_day;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use serde::Serialize;
 
@@ -134,24 +133,18 @@ fn previous_day_entry_price(quotes: &[Quote], requested_at: u64) -> U256 {
     price
 }
 
-fn oracle_word_at(world: &World, port: u16, slot: B256, height: u64) -> U256 {
-    // Share only the storage slot layout, never the production price evaluator.
-    let raw = eth::raw_json_with_params(
-        &world.rpc.url(port),
-        "eth_getStorageAt",
-        serde_json::json!([ORACLE_ADDRESS, slot, format!("0x{height:x}")]),
-    )
-    .expect("historical Oracle word");
-    serde_json::from_value::<U256>(raw).expect("canonical Oracle word")
-}
-
 fn oracle_usd_price_at(world: &World, port: u16, day: u32, height: u64) -> U256 {
-    let index_slot = pair_index_slots(&[840]).expect("USD pair index slot")[0];
-    let index = oracle_word_at(world, port, index_slot, height);
-    let index = u32::try_from(index).expect("registered USD pair index");
-    assert_ne!(index, 0, "COEN/USD is registered");
-    let slots = entry_price_slots(day, &[840], &[index]).expect("USD day VWAP slot");
-    oracle_word_at(world, port, slots[1], height)
+    eth::read_call_at_result(
+        &world.rpc.url(port),
+        ORACLE_ADDRESS,
+        &eth::IOracle::getUtcDayVwapCall {
+            base: Address::ZERO,
+            quote: outbe_primitives::asset_type::currency_address(840),
+            utcDay: day,
+        },
+        height,
+    )
+    .expect("historical USD day VWAP")
 }
 
 pub(super) fn assert_native_entry_price(

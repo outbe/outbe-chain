@@ -30,9 +30,6 @@ pub enum NodError {
     #[error("reference currency must be a nonzero ISO 4217 numeric code")]
     ZeroReferenceCurrency,
 
-    #[error("invalid nod entry-price opening")]
-    InvalidEntryPriceOpening,
-
     #[error("nod is non-transferable")]
     NonTransferable,
 

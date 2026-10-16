@@ -8725,7 +8725,6 @@ dependencies = [
  "outbe-common",
  "outbe-macros",
  "outbe-nod",
- "outbe-oracle",
  "outbe-primitives",
  "outbe-tee",
  "outbe-tee-enclave",
