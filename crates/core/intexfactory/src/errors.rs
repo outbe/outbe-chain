@@ -19,8 +19,8 @@ pub enum IntexFactoryError {
     SeriesNotFound,
     #[error("series not settleable in state {0}")]
     NotSettleable(u8),
-    #[error("settlement deadline expired")]
-    DeadlineExpired,
+    #[error("settlement deadline has passed")]
+    SettlementDeadlinePassed,
     #[error("zero balance")]
     ZeroBalance,
     #[error("units exceed balance")]

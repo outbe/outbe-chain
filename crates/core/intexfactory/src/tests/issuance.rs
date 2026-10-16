@@ -642,7 +642,7 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
     assert_eq!(
         settle(&mut storage, required),
         outbe_primitives::error::PrecompileError::from(
-            crate::errors::IntexFactoryError::DeadlineExpired
+            crate::errors::IntexFactoryError::SettlementDeadlinePassed
         )
         .to_string()
     );

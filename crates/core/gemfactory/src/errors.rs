@@ -15,8 +15,8 @@ pub enum GemFactoryError {
     #[error("invalid state for action")]
     InvalidState,
 
-    #[error("call notice period expired")]
-    DeadlineExpired,
+    #[error("settlement deadline has passed")]
+    SettlementDeadlinePassed,
 
     #[error("unsupported gem type")]
     UnsupportedGemType,

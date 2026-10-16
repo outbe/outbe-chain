@@ -479,7 +479,7 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
             format!(
                 "{:?}",
                 outbe_primitives::error::PrecompileError::from(
-                    crate::errors::GemFactoryError::DeadlineExpired
+                    crate::errors::GemFactoryError::SettlementDeadlinePassed
                 )
             )
         );

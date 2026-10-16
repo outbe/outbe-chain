@@ -73,7 +73,7 @@ fn settlement_is_rejected_once_the_deadline_has_passed() {
     let error = world.settle(nod_id, input.owner).unwrap_err();
     assert!(
         matches!(error, PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::CallDeadlineExpired.to_string()),
+            if reason == &NodFactoryError::SettlementDeadlinePassed.to_string()),
         "unexpected error: {error:?}"
     );
     // The Nod survives for the sweep to burn. The gate only refuses to mine it.
@@ -409,7 +409,7 @@ fn erc20_settlement_uses_the_existing_inclusive_deadline() {
     for (timestamp, expected) in [
         (
             deadline + 1,
-            PrecompileError::from(NodFactoryError::CallDeadlineExpired),
+            PrecompileError::from(NodFactoryError::SettlementDeadlinePassed),
         ),
         (
             deadline,

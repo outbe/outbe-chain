@@ -129,7 +129,7 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
     let late = settle_erc20(&mut world, nod_id, input.owner, EUR_ASSET, required);
     assert_eq!(
         late.unwrap_err().to_string(),
-        PrecompileError::from(NodFactoryError::CallDeadlineExpired).to_string()
+        PrecompileError::from(NodFactoryError::SettlementDeadlinePassed).to_string()
     );
     assert!(!is_settled(&mut world, nod_id));
 }

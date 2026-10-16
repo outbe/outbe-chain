@@ -391,7 +391,7 @@ pub(crate) fn require_settleable(storage: &StorageHandle<'_>, gem: &GemView) -> 
     }
     if gem.bucket_called_at != 0 {
         if storage.timestamp()?.to::<u64>() > gem.settlement_deadline() {
-            return Err(GemFactoryError::DeadlineExpired.into());
+            return Err(GemFactoryError::SettlementDeadlinePassed.into());
         }
     } else if !gem_api::is_qualified(storage, &gem.item)? {
         return Err(GemFactoryError::InvalidState.into());

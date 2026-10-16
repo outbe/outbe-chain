@@ -58,8 +58,8 @@ pub enum NodFactoryError {
     #[error("certified Nod generation is not fully materialized")]
     NodGenerationNotMaterialized,
 
-    #[error("nod call settlement deadline has expired")]
-    CallDeadlineExpired,
+    #[error("settlement deadline has passed")]
+    SettlementDeadlinePassed,
 
     #[error("certified Nod generation overflow")]
     CertifiedGenerationOverflow,

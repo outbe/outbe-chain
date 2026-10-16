@@ -147,7 +147,7 @@ pub fn settle_nod(
         }
         0 => {}
         deadline if storage.timestamp()?.to::<u64>() > deadline => {
-            return Err(NodFactoryError::CallDeadlineExpired.into());
+            return Err(NodFactoryError::SettlementDeadlinePassed.into());
         }
         _ => {}
     }
