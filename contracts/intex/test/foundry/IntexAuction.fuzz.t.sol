@@ -52,7 +52,7 @@ contract IntexAuctionFuzzTest is Test {
 
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), bridger);
-        auction.wire(address(escrow));
+        auction.wire(address(escrow), makeAddr("intex"));
         vm.stopPrank();
     }
 

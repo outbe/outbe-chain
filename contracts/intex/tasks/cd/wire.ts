@@ -47,6 +47,7 @@ async function sendAndWait(
 interface AuctionWireArgs {
   intexAuctionContract: string;
   escrowContract: string;
+  intexContract: string;
 }
 
 interface EscrowWireArgs {
@@ -78,11 +79,14 @@ const lazy = (fn: (args: any, hre: any) => Promise<void>) =>
 // ============================================================================
 
 const auctionWireAction = async (args: AuctionWireArgs, hre: unknown) => {
+  const intexAddress = (args.intexContract ?? "").trim();
+  if (!intexAddress) throw new Error("auction-wire requires --intex-contract");
   const viem = await getViemForWire(hre);
-  
+
   console.log(`Wiring Auction...`);
   console.log(`  Auction: ${args.intexAuctionContract}`);
   console.log(`  Escrow: ${args.escrowContract}`);
+  console.log(`  Intex: ${intexAddress}`);
 
   const auction = (await viem.getContractAt(
     "IntexAuction",
@@ -90,29 +94,54 @@ const auctionWireAction = async (args: AuctionWireArgs, hre: unknown) => {
   )) as {
     read: {
       escrowContract: () => Promise<`0x${string}`>;
+      intexContract: () => Promise<`0x${string}`>;
     };
     write: {
-      wire: (args: [`0x${string}`]) => Promise<`0x${string}`>;
+      wire: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
     };
   };
 
-  const currentEscrow = await auction.read.escrowContract();
+  const [currentEscrow, currentIntex] = await Promise.all([
+    auction.read.escrowContract(),
+    auction.read.intexContract(),
+  ]);
 
-  if (currentEscrow !== "0x0000000000000000000000000000000000000000") {
-    if (currentEscrow.toLowerCase() === args.escrowContract.toLowerCase()) {
-      console.log(`[OK] Auction already wired to this Escrow`);
-      return;
+  if (
+    currentEscrow.toLowerCase() === args.escrowContract.toLowerCase() &&
+    currentIntex.toLowerCase() === intexAddress.toLowerCase()
+  ) {
+    console.log(`[OK] Auction already wired to this Escrow and Intex`);
+  } else {
+    if (currentEscrow !== "0x0000000000000000000000000000000000000000") {
+      console.log(`[sync] Rewiring Auction (current: ${currentEscrow}, ${currentIntex})`);
     }
-    console.log(`[sync] Rewiring Auction (current: ${currentEscrow})`);
+    const txHash = await sendAndWait(viem, () =>
+      auction.write.wire([args.escrowContract as `0x${string}`, intexAddress as `0x${string}`]),
+    );
+    console.log(`[OK] Auction wired. Tx: ${txHash}`);
   }
 
-  const txHash = await sendAndWait(viem, () =>
-    auction.write.wire([args.escrowContract as `0x${string}`]),
-  );
-  console.log(`[OK] Auction wired. Tx: ${txHash}`);
+  // Winners issue their own units through the auction, so it holds the issue role.
+  const intex = (await viem.getContractAt("IntexNFT1155", intexAddress as `0x${string}`)) as {
+    read: {
+      AUCTION_ROLE: () => Promise<`0x${string}`>;
+      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
+    };
+    write: {
+      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
+    };
+  };
+  const role = await intex.read.AUCTION_ROLE();
+  const holder = args.intexAuctionContract as `0x${string}`;
+  if (await intex.read.hasRole([role, holder])) {
+    console.log(`[OK] AUCTION_ROLE already granted`);
+    return;
+  }
+  const grantHash = await sendAndWait(viem, () => intex.write.grantRole([role, holder]));
+  console.log(`[OK] AUCTION_ROLE granted. Tx: ${grantHash}`);
 };
 
-const auctionWire = task("auction-wire", "Wire Auction to EscrowAdapter")
+const auctionWire = task("auction-wire", "Wire Auction to EscrowAdapter and IntexNFT1155")
   .addOption({
     name: "intexAuctionContract",
     description: "Auction contract address",
@@ -121,6 +150,11 @@ const auctionWire = task("auction-wire", "Wire Auction to EscrowAdapter")
   .addOption({
     name: "escrowContract",
     description: "EscrowAdapter contract address",
+    defaultValue: "",
+  })
+  .addOption({
+    name: "intexContract",
+    description: "IntexNFT1155 contract address",
     defaultValue: "",
   })
   .setAction(lazy(auctionWireAction));

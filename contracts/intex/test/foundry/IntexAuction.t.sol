@@ -55,7 +55,7 @@ contract AuctionTest is Test {
 
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), bridger);
-        auction.wire(address(escrow));
+        auction.wire(address(escrow), makeAddr("intex"));
         vm.stopPrank();
     }
 
@@ -460,11 +460,11 @@ contract AuctionTest is Test {
     function test_AccessControl_Wire() public {
         vm.expectRevert();
         vm.prank(iba1);
-        auction.wire(address(0xBEEF));
+        auction.wire(address(0xBEEF), makeAddr("intex"));
 
         vm.expectRevert();
         vm.prank(bridger);
-        auction.wire(address(0xBEEF));
+        auction.wire(address(0xBEEF), makeAddr("intex"));
     }
 
     /// @dev Bidders claim their own locks, so an escrow still holding them is the steady state and
@@ -481,7 +481,7 @@ contract AuctionTest is Test {
 
         MockAuctionEscrow escrow2 = new MockAuctionEscrow();
         vm.prank(admin);
-        auction.wire(address(escrow2));
+        auction.wire(address(escrow2), makeAddr("intex"));
 
         assertEq(address(auction.escrowContract()), address(escrow2));
         assertTrue(escrow.hasOutstandingLocks(), "the old escrow keeps the lock it took");
@@ -498,7 +498,7 @@ contract AuctionTest is Test {
         escrow.releaseAllLocks();
         MockAuctionEscrow escrow2 = new MockAuctionEscrow();
         vm.prank(admin);
-        auction.wire(address(escrow2));
+        auction.wire(address(escrow2), makeAddr("intex"));
         assertEq(address(auction.escrowContract()), address(escrow2));
     }
 
@@ -801,7 +801,7 @@ contract AuctionTest is Test {
 
         // Zero escrow address
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "escrowContract"));
-        newAuction.wire(address(0));
+        newAuction.wire(address(0), makeAddr("intex"));
 
         vm.stopPrank();
     }

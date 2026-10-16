@@ -26,7 +26,7 @@ contract IntexAuctionScheduleSnapTest is Test {
         escrow = new MockAuctionEscrow();
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), bridger);
-        auction.wire(address(escrow));
+        auction.wire(address(escrow), makeAddr("intex"));
         vm.stopPrank();
     }
 

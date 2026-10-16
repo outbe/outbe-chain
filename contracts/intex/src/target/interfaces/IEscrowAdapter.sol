@@ -13,9 +13,9 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 interface IEscrowAdapter {
     // --- Types ---
 
-    /// @notice Lock status for a bid. `Won`: the payment left with the day's proceeds and the rest
-    ///         waits for `claimRefund`. `claimRefund` deletes a claimed lock, which then reads as
-    ///         `None`.
+    /// @notice Lock status for a bid. `Won`: the payment left with the day's proceeds. The lock keeps
+    ///         the change for `claimRefund` and the units won for `closeWin`. A closed or refunded
+    ///         lock is deleted and reads as `None`.
     enum LockStatus {
         None,
         Locked,
@@ -26,7 +26,7 @@ interface IEscrowAdapter {
     /// @dev Slot-packed: `lockedAmount` (16B) + `lockedAt` (4B) + `status` (1B) + `bidRate` (4B) + `quantity` (2B)
     ///      = 27B, one slot.
     struct BidLock {
-        /// @notice Amount of payment-token locked.
+        /// @notice Amount of payment-token the lock still holds. For a winner, the change.
         uint128 lockedAmount;
         /// @notice Timestamp when the lock was created (UNIX seconds).
         uint32 lockedAt;
@@ -34,7 +34,7 @@ interface IEscrowAdapter {
         LockStatus status;
         /// @notice Bid rate the lock was taken at (`1e6` fixed-point, share of the escrow basis).
         uint32 bidRate;
-        /// @notice Intex units the bid asked for.
+        /// @notice Intex units the bid asked for. For a winner, the units won.
         uint16 quantity;
     }
 
@@ -169,6 +169,12 @@ interface IEscrowAdapter {
         bytes32 indexed receiveId, uint32 indexed worldwideDay, address indexed bidder, bytes reason
     );
 
+    /// @notice Emitted when the auction closes a win: the lock is gone and its units go to the bidder.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param bidder Winner whose lock was closed.
+    /// @param units Units the winner won.
+    event WinClosed(uint32 indexed worldwideDay, address indexed bidder, uint16 units);
+
     /// @notice Emitted when a refund chunk carried winners and settled none of them.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidsProcessed Winners the chunk carried, all skipped.
@@ -228,6 +234,8 @@ interface IEscrowAdapter {
     error DayAssetRetired(uint32 worldwideDay, uint8 assetVersion);
     /// @notice Finalization produced proceeds but no recipient is configured.
     error ProceedsRecipientNotSet();
+    /// @notice A winner's lock holds no change to refund.
+    error NothingToRefund();
     /// @notice `claimRefund` was called before the safety window elapsed.
     /// @param claimableAt Earliest unix-seconds timestamp the refund can be claimed at.
     /// @param now_ Current block timestamp.
@@ -276,6 +284,13 @@ interface IEscrowAdapter {
     /// @param bidder Bidder whose bond is returned.
     function releaseCommitBond(uint32 worldwideDay, address bidder) external;
 
+    /// @notice Close a winner's lock: pay the change it still holds and return the units won.
+    ///         Callable only by the IntexAuction contract, which issues the units.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param bidder Winner whose lock is closed.
+    /// @return units Units the winner won.
+    function closeWin(uint32 worldwideDay, address bidder) external returns (uint16 units);
+
     /// @notice Active payment token used for bid escrow (WCOEN).
     function paymentToken() external view returns (IERC20);
 
@@ -317,9 +332,8 @@ interface IEscrowAdapter {
 
     // --- Recovery ---
 
-    /// @notice Permissionless refund. It always pays the stored `bidder` rather than `msg.sender`,
-    ///         and deletes the lock.
-    ///         - A winner collects the rest of its lock at once.
+    /// @notice Permissionless refund. It always pays the stored `bidder` rather than `msg.sender`.
+    ///         - A winner collects its change at once. The lock keeps the units won for `closeWin`.
     ///         - A bidder that the finalized day never named collects its full principal at once.
     ///         - A bidder whose day never finalized collects its full principal after
     ///           `UNFINALIZED_REFUND_DELAY`.

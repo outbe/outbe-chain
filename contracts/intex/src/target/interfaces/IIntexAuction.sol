@@ -169,6 +169,25 @@ interface IIntexAuction {
     /// @param current Escrow contract address after the update.
     event EscrowWired(address previous, address current);
 
+    /// @notice Emitted on `wire` after the Intex collection address is set.
+    /// @param previous Collection address before the update.
+    /// @param current Collection address after the update.
+    event IntexWired(address previous, address current);
+
+    /// @notice Emitted when a winner's units are issued.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param bidder Winner the units were issued to.
+    /// @param seriesId Series the units belong to.
+    /// @param units Units issued.
+    event WinIssued(uint32 indexed worldwideDay, address indexed bidder, bytes14 indexed seriesId, uint16 units);
+
+    /// @notice Emitted when a win is closed after its series expired. No units are issued.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param bidder Winner whose win was closed.
+    /// @param seriesId Series that expired.
+    /// @param units Units the winner won.
+    event WinExpired(uint32 indexed worldwideDay, address indexed bidder, bytes14 indexed seriesId, uint16 units);
+
     // --- Errors ---
 
     /// @notice Zero address provided.
@@ -219,6 +238,8 @@ interface IIntexAuction {
     error InvalidCommitHash();
     /// @notice Chain id mismatch between the caller-supplied value and `block.chainid`.
     error WrongChain(uint256 expected, uint256 got);
+    /// @notice The collection holds no series for the bid's day and currency pair yet.
+    error SeriesNotCreated(uint32 worldwideDay, uint16 issuanceCurrency, uint16 referenceCurrency);
     /// @notice `claimCommitBond` was called before the no-reveal penalty window elapsed.
     /// @param claimableAt Earliest unix-seconds timestamp the bond can be claimed at.
     /// @param nowTs Current block timestamp.
@@ -231,7 +252,8 @@ interface IIntexAuction {
     ///      days costs nothing. Rotating while a day is still taking reveals splits that day's locks over two
     ///      escrows. That day's refunds only reach the one the target router points at.
     /// @param _escrow Escrow contract address.
-    function wire(address _escrow) external;
+    /// @param _intex Intex collection the auction issues winners' units on.
+    function wire(address _escrow, address _intex) external;
 
     // --- Lifecycle ---
 
@@ -316,6 +338,13 @@ interface IIntexAuction {
         uint64 chainId,
         bytes memory signature
     ) external;
+
+    /// @notice Permissionless issue of a winner's units. The units always go to `bidder`.
+    ///         The escrow closes the win and pays any change still in it. Past its series'
+    ///         deadline the win closes without issuing.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param bidder Winner whose units are issued.
+    function issueIntex(uint32 worldwideDay, address bidder) external;
 
     /// @notice Permissionless commit-bond claim for a bidder who committed but never revealed.
     ///         A cancelled (red-day) auction releases immediately. Otherwise the bond is claimable

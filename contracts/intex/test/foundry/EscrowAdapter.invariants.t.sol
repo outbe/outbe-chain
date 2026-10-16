@@ -54,12 +54,8 @@ contract EscrowAdapterInvariantsTest is Test {
     function _assertSeriesInvariant(uint32 worldwideDay, address[3] memory bidders) internal view {
         uint128 sum = 0;
         for (uint256 i = 0; i < bidders.length; i++) {
-            IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay, bidders[i]);
-            if (lock.status == IEscrowAdapter.LockStatus.Locked) {
-                sum += lock.lockedAmount;
-            } else if (lock.status == IEscrowAdapter.LockStatus.Won) {
-                sum += lock.lockedAmount - uint128(BridgeMsgCodec.escrowAmount(lock.quantity, BASIS, CLEARING_RATE));
-            }
+            // A winner's lock holds only its change.
+            sum += escrow.getBidLock(worldwideDay, bidders[i]).lockedAmount;
         }
         (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay);
         assertEq(sum, totalLocked, "per-series totalLocked drift");

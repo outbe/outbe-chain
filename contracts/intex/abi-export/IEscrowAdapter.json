@@ -39,6 +39,30 @@
     },
     {
       "type": "function",
+      "name": "closeWin",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "units",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "currentAssetVersion",
       "inputs": [],
       "outputs": [
@@ -678,6 +702,31 @@
     },
     {
       "type": "event",
+      "name": "WinClosed",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "units",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "Wired",
       "inputs": [
         {
@@ -810,6 +859,11 @@
     {
       "type": "error",
       "name": "NoDeposits",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NothingToRefund",
       "inputs": []
     },
     {

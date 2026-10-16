@@ -207,7 +207,8 @@ contract LocalLoopbackTest is Test {
         target.wire(address(auction), address(intex), address(escrow));
         target.setProceedsRoute(address(tokenBridge), address(origin));
 
-        auction.wire(address(escrow));
+        auction.wire(address(escrow), address(intex));
+        intex.grantRole(intex.AUCTION_ROLE(), address(auction));
         auction.grantRole(auction.RELAYER_ROLE(), address(target));
         intex.grantRole(intex.RELAYER_ROLE(), address(target));
         escrow.grantRole(escrow.RELAYER_ROLE(), address(target));
@@ -340,6 +341,13 @@ contract LocalLoopbackTest is Test {
         vm.prank(address(factory));
         origin.sendIssuanceInstructions(local, DAY, 0, 1, issuance);
         assertTrue(intex.seriesExists(CreateSeriesLib.seriesId(DAY)), "series created");
+
+        // Each winner issues its own units through the auction.
+        auction.issueIntex(DAY, iba1);
+        auction.issueIntex(DAY, iba2);
+        uint256 tokenId = intex.issuedTokenId(CreateSeriesLib.seriesId(DAY));
+        assertEq(intex.balanceOf(iba1, tokenId), 30, "iba1 issued");
+        assertEq(intex.balanceOf(iba2, tokenId), 20, "iba2 issued");
 
         // 8. Every leg executed within its IntexGas budget: nothing parked anywhere.
         (,, bool bidsRelayed) = target.bidsRelay(DAY);

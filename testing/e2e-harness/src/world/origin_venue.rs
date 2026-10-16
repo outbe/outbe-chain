@@ -344,6 +344,7 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
         &[
             ("--intex-auction-contract", auction.clone()),
             ("--escrow-contract", escrow.clone()),
+            ("--intex-contract", nft.clone()),
         ],
         url,
         chain_id,

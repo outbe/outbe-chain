@@ -789,6 +789,37 @@
     },
     {
       "type": "function",
+      "name": "intexContract",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IIntexNFT1155"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "issueIntex",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "proxiableUUID",
       "inputs": [],
       "outputs": [
@@ -1059,6 +1090,11 @@
           "name": "_escrow",
           "type": "address",
           "internalType": "address"
+        },
+        {
+          "name": "_intex",
+          "type": "address",
+          "internalType": "address"
         }
       ],
       "outputs": [],
@@ -1266,6 +1302,25 @@
     },
     {
       "type": "event",
+      "name": "IntexWired",
+      "inputs": [
+        {
+          "name": "previous",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "current",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "RoleAdminChanged",
       "inputs": [
         {
@@ -1348,6 +1403,68 @@
           "type": "address",
           "indexed": true,
           "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "WinExpired",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "indexed": true,
+          "internalType": "bytes14"
+        },
+        {
+          "name": "units",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "WinIssued",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "indexed": true,
+          "internalType": "bytes14"
+        },
+        {
+          "name": "units",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
         }
       ],
       "anonymous": false
@@ -1603,6 +1720,27 @@
       "type": "error",
       "name": "RevealHashMismatch",
       "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "SeriesNotCreated",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "issuanceCurrency",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "referenceCurrency",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ]
     },
     {
       "type": "error",

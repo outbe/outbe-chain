@@ -47,7 +47,7 @@ contract IntexAuctionLockTermsTest is Test {
         escrow = new RecordingLockEscrow();
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), relayer);
-        auction.wire(address(escrow));
+        auction.wire(address(escrow), makeAddr("intex"));
         vm.stopPrank();
     }
 

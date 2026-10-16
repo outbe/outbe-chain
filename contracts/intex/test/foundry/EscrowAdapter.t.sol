@@ -334,7 +334,9 @@ contract EscrowAdapterTest is Test {
         assertEq(paymentToken.balanceOf(bridger), 0);
 
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
-        assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.None), "nothing left to claim");
+        assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Won), "the units wait for the winner");
+        assertEq(lock.lockedAmount, 0, "no change left");
+        assertEq(lock.quantity, 3, "the units won");
         (, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
         assertTrue(isFinalized);
         assertEq(totalLocked, 0);
