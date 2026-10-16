@@ -302,6 +302,19 @@ fn signing_state() -> FinalizedPatchSigningState {
 }
 
 fn signing_state_with_members(count: u64) -> FinalizedPatchSigningState {
+    signing_fixture(count).0
+}
+
+fn signing_fixture(
+    count: u64,
+) -> (
+    FinalizedPatchSigningState,
+    commonware_cryptography::bls12381::dkg::feldman_desmedt::Output<
+        commonware_cryptography::bls12381::primitives::variant::MinSig,
+        commonware_cryptography::bls12381::PublicKey,
+    >,
+    Vec<commonware_cryptography::bls12381::PrivateKey>,
+) {
     use crate::manager::{FinalizedPatchApproval, FinalizedRepositoryAuthority};
     use alloy_primitives::Address;
     use commonware_codec::Encode as _;
@@ -360,7 +373,7 @@ fn signing_state_with_members(count: u64) -> FinalizedPatchSigningState {
     )
     .encode()
     .unwrap();
-    FinalizedPatchSigningState {
+    let mut state = FinalizedPatchSigningState {
         authority: FinalizedRepositoryAuthority {
             block: receipt.block,
             chain_id: chain().chain_id,
@@ -384,7 +397,17 @@ fn signing_state_with_members(count: u64) -> FinalizedPatchSigningState {
             number: 10,
             hash: B256::repeat_byte(10),
         },
+    };
+    let owner =
+        radicle::crypto::BlsPublicKey::from_bytes(state.material.receipt.body.owner_bls_public.0)
+            .unwrap();
+    let material =
+        RepositorySigningMaterial::new(state.authority.clone(), dkg.output.clone(), owner).unwrap();
+    for receipt in [&mut state.checkpoint.receipt, &mut state.material.receipt] {
+        receipt.body.material_hash = material.material_hash().into();
+        receipt.receipt_hash = receipt.body.receipt_hash();
     }
+    (state, dkg.output, keys)
 }
 
 struct AuthorityReader {
@@ -536,7 +559,7 @@ fn signing_state_wire_supports_the_protocol_maximum_committee() {
     let current = signing_state_with_members(u64::from(outbe_consensus::bls::MAX_VALIDATORS));
     let proposal = current.approval.approval.proposal_id;
     let bytes = state::encode(&current).unwrap();
-    assert!(bytes.len() <= MAX_FRAME);
+    assert!(bytes.len() <= state::MAX_FRAME);
     assert_eq!(state::decode(&bytes, proposal, chain()).unwrap(), current);
     let mut oversized = current.clone();
     oversized
@@ -550,4 +573,212 @@ fn signing_state_wire_supports_the_protocol_maximum_committee() {
     let count_offset = 5 + 40 + 8 + 32 + 8 + 8 + 32 + 96;
     oversized_count[count_offset..count_offset + 2].copy_from_slice(&257_u16.to_be_bytes());
     assert!(state::decode(&oversized_count, proposal, chain()).is_err());
+}
+
+struct ContextReader {
+    state: std::sync::Mutex<Option<FinalizedPatchSigningState>>,
+    authority: std::sync::Mutex<Option<crate::manager::FinalizedRepositoryAuthority>>,
+}
+
+impl RepositoryAuthorityReader for ContextReader {
+    fn read_current_repository_authority(
+        &self,
+    ) -> Result<crate::manager::FinalizedRepositoryAuthority, ManagerError> {
+        self.authority
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| ManagerError::Finality("authority unavailable".into()))
+    }
+
+    fn read_current_patch_signing_state(
+        &self,
+        proposal_id: U256,
+    ) -> Result<FinalizedPatchSigningState, ManagerError> {
+        self.state
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|state| state.approval.approval.proposal_id == proposal_id)
+            .cloned()
+            .ok_or_else(|| ManagerError::Finality("signing state unavailable".into()))
+    }
+}
+
+#[tokio::test]
+async fn public_output_crosses_the_socket_only_with_the_same_current_patch_context() {
+    use crate::endpoint::EndpointAddress;
+    use crate::integration::{
+        network::shutdown_tests::{NoSend, TestReceiver},
+        EndpointNetwork, EndpointSigningIdentity, EndpointTransport, LocalEndpointIdentity,
+        LocalEndpointIdentityChannel, RadicleStatusChannel,
+    };
+    use commonware_codec::Encode as _;
+    let directory = private_directory();
+    let control = directory.path().join("control");
+    let (original, output, keys) = signing_fixture(4);
+    let proposal = original.approval.approval.proposal_id;
+    let validator = original.authority.committee.committee[0].address;
+    let reader = Arc::new(ContextReader {
+        state: std::sync::Mutex::new(Some(original.clone())),
+        authority: std::sync::Mutex::new(Some(original.authority.clone())),
+    });
+    let (_, status) = RadicleStatusChannel::enabled(validator, [1; 32]);
+    let (service, resolver, _) = EndpointNetwork::build(chain(), status);
+    let mut service = service.with_repository_authority_reader(reader.clone());
+    let publisher = service.take_repository_material_publisher().unwrap();
+    let (_, local) = LocalEndpointIdentityChannel::create(LocalEndpointIdentity {
+        validator,
+        node_id: [1; 32],
+        addresses: vec![EndpointAddress::dns("local.example", 8776).unwrap()],
+    });
+    let (_incoming, receiver) = mpsc::unbounded_channel();
+    let actor = tokio::spawn(service.run(
+        EndpointTransport {
+            sender: NoSend,
+            receiver: TestReceiver(receiver),
+        },
+        EndpointSigningIdentity {
+            signer: keys[0].clone(),
+            local,
+        },
+    ));
+    let server = LocalReceiptServer::bind(&control, Arc::new(Reader::default()))
+        .unwrap()
+        .with_authority_reader(reader.clone())
+        .with_material_resolver(resolver.clone());
+    let (stop, stopping) = oneshot::channel();
+    let task = tokio::spawn(server.run(async {
+        let _ = stopping.await;
+    }));
+    let client = LocalReceiptClient::new(&control, chain());
+    assert!(matches!(
+        client.read_patch_signing_context(proposal).await,
+        Err(Error::Unavailable)
+    ));
+    // No signing provider/share is installed: the channel returns public Output only.
+    publisher.publish(5, 6, Some(&output));
+    let (state, material) = client.read_patch_signing_context(proposal).await.unwrap();
+    assert_eq!(state, original);
+    assert_eq!(material.canonical_output(), output.encode().as_ref());
+    assert_eq!(
+        material.material_hash(),
+        original.material.receipt.body.material_hash.0
+    );
+    assert!(matches!(
+        client
+            .read_patch_signing_context(proposal + U256::from(1))
+            .await,
+        Err(Error::Unavailable)
+    ));
+    let mut next = original.clone();
+    next.authority.block.number += 1;
+    next.authority.block.hash = B256::repeat_byte(13);
+    next.approval.block = next.authority.block;
+    next.checkpoint.block = next.authority.block;
+    next.material.block = next.authority.block;
+    // Actor observes a new finalized head between the state and Output reads.
+    *reader.authority.lock().unwrap() = Some(next.authority.clone());
+    assert!(matches!(
+        client.read_patch_signing_context(proposal).await,
+        Err(Error::Unavailable)
+    ));
+    *reader.state.lock().unwrap() = Some(next.clone());
+    assert_eq!(
+        client.read_patch_signing_context(proposal).await.unwrap().0,
+        next
+    );
+    // Same group key/output with a different material generation cannot pass old checkpoint binding.
+    next.authority.epoch += 1;
+    next.authority.committee.vrf_material_version += 1;
+    *reader.authority.lock().unwrap() = Some(next.authority.clone());
+    *reader.state.lock().unwrap() = Some(next.clone());
+    publisher.publish(6, 7, Some(&output));
+    assert!(matches!(
+        client.read_patch_signing_context(proposal).await,
+        Err(Error::Unavailable)
+    ));
+    *reader.authority.lock().unwrap() = Some(original.authority.clone());
+    *reader.state.lock().unwrap() = Some(original.clone());
+    publisher.publish(5, 6, None);
+    assert!(matches!(
+        client.read_patch_signing_context(proposal).await,
+        Err(Error::Unavailable)
+    ));
+    publisher.publish(5, 6, Some(&output));
+    assert!(client.read_patch_signing_context(proposal).await.is_ok());
+    *reader.state.lock().unwrap() = None;
+    assert!(matches!(
+        client.read_patch_signing_context(proposal).await,
+        Err(Error::Unavailable)
+    ));
+    *reader.state.lock().unwrap() = Some(original);
+    drop(publisher);
+    assert!(matches!(
+        client.read_patch_signing_context(proposal).await,
+        Err(Error::Unavailable)
+    ));
+    resolver.shutdown().await.unwrap();
+    actor.await.unwrap().unwrap();
+    assert!(matches!(
+        client.read_patch_signing_context(proposal).await,
+        Err(Error::Unavailable)
+    ));
+    stop.send(()).unwrap();
+    task.await.unwrap().unwrap();
+}
+
+#[test]
+fn public_output_codec_binds_exact_material_and_rejects_corruption_and_lengths() {
+    let (state, output, _) = signing_fixture(4);
+    let proposal = state.approval.approval.proposal_id;
+    let owner =
+        radicle::crypto::BlsPublicKey::from_bytes(state.material.receipt.body.owner_bls_public.0)
+            .unwrap();
+    let material = RepositorySigningMaterial::new(state.authority.clone(), output, owner).unwrap();
+    let bytes = material::encode(&state, &material).unwrap();
+    let (decoded, decoded_material) = material::decode(&bytes, proposal, chain()).unwrap();
+    assert_eq!(decoded, state);
+    assert_eq!(
+        decoded_material.canonical_output(),
+        material.canonical_output()
+    );
+    assert!(material::decode(&bytes, proposal + U256::from(1), chain()).is_err());
+    let mut wrong = chain();
+    wrong.genesis_hash = B256::repeat_byte(99);
+    assert!(material::decode(&bytes, proposal, wrong).is_err());
+    for length in [0, 4, 5, 8, 9, bytes.len() - 1] {
+        assert!(material::decode(&bytes[..length], proposal, chain()).is_err());
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(material::decode(&trailing, proposal, chain()).is_err());
+    let state_length = state::encode(&state).unwrap().len();
+    let output_offset = 5 + 4 + state_length;
+    for (offset, length) in [
+        (5, state::MAX_FRAME + 1),
+        (
+            output_offset,
+            crate::integration::signing::MAX_PUBLIC_OUTPUT_BYTES + 1,
+        ),
+    ] {
+        let mut invalid = bytes.clone();
+        invalid[offset..offset + 4].copy_from_slice(&(length as u32).to_be_bytes());
+        assert!(material::decode(&invalid, proposal, chain()).is_err());
+    }
+    let mut corrupt_output = bytes.clone();
+    let last = corrupt_output.len() - 1;
+    corrupt_output[last] ^= 0xff;
+    assert!(material::decode(&corrupt_output, proposal, chain()).is_err());
+    let mut different = state.clone();
+    different.material.receipt.body.material_hash = B256::repeat_byte(99);
+    different.material.receipt.receipt_hash = different.material.receipt.body.receipt_hash();
+    assert!(material::encode(&different, &material).is_err());
+    // Keep the codec internally consistent but substitute a material hash not committed by Output.
+    different.checkpoint = different.material.clone();
+    let encoded = state::encode(&different).unwrap();
+    assert_eq!(encoded.len(), state_length);
+    let mut mixed = bytes;
+    mixed[9..9 + state_length].copy_from_slice(&encoded);
+    assert!(material::decode(&mixed, proposal, chain()).is_err());
 }

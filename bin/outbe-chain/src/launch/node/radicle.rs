@@ -139,7 +139,8 @@ pub(super) fn start(
                     repository_snapshots.clone(),
                 )
                 .wrap_err("bind protected Radicle receipt socket")?
-                .with_authority_reader(repository_snapshots),
+                .with_authority_reader(repository_snapshots)
+                .with_material_resolver(resolver.clone()),
             )
         } else {
             None

@@ -1,6 +1,9 @@
 //! Trusted local finalized context. No secret material or signing messages cross this socket.
 
+mod material;
 mod state;
+
+use super::{network::EndpointNetworkResolver, signing::RepositorySigningMaterial};
 
 use crate::{
     endpoint::ChainIdentity,
@@ -30,7 +33,8 @@ use tokio::{
 
 const MAGIC: &[u8; 4] = b"ORL1";
 const RECEIPT_FRAME_LEN: usize = 5 + 8 + 32 + 8 + 32 + PUBLICATION_BODY_LEN;
-const MAX_FRAME: usize = state::MAX_FRAME;
+const MAX_FRAME: usize = material::MAX_FRAME;
+const MAX_REQUEST: usize = 4 + 32;
 const MAX_CONNECTIONS: usize = 32;
 const MAX_READERS: usize = 4;
 const DEADLINE: Duration = Duration::from_secs(5);
@@ -108,6 +112,7 @@ pub struct LocalReceiptServer {
     listener: UnixListener,
     reader: Arc<dyn RepositoryReceiptReader>,
     authority: Option<Arc<dyn RepositoryAuthorityReader>>,
+    material: Option<EndpointNetworkResolver>,
     _lease: SocketLease,
 }
 
@@ -166,12 +171,18 @@ impl LocalReceiptServer {
             listener: UnixListener::from_std(listener)?,
             reader,
             authority: None,
+            material: None,
             _lease: lease,
         })
     }
 
     pub fn with_authority_reader(mut self, reader: Arc<dyn RepositoryAuthorityReader>) -> Self {
         self.authority = Some(reader);
+        self
+    }
+
+    pub fn with_material_resolver(mut self, resolver: EndpointNetworkResolver) -> Self {
+        self.material = Some(resolver);
         self
     }
 
@@ -191,9 +202,10 @@ impl LocalReceiptServer {
                     }
                     let reader = self.reader.clone();
                     let authority = self.authority.clone();
+                    let material = self.material.clone();
                     let readers = readers.clone();
                     clients.spawn(async move {
-                        let _ = tokio::time::timeout(DEADLINE, serve(stream, reader, authority, readers)).await;
+                        let _ = tokio::time::timeout(DEADLINE, serve(stream, reader, authority, material, readers)).await;
                     });
                 }
             }
@@ -229,7 +241,11 @@ impl LocalReceiptClient {
 
     pub async fn read(&self, sequence: u64) -> Result<Option<FinalizedPublicationReceipt>, Error> {
         let request = [MAGIC.as_slice(), &sequence.to_be_bytes()].concat();
-        decode_response(&self.exchange(&request).await?, sequence, self.chain)
+        decode_response(
+            &self.exchange(&request, RECEIPT_FRAME_LEN).await?,
+            sequence,
+            self.chain,
+        )
     }
 
     /// A fresh local finalized snapshot for this exact approved proposal, never a cached fallback.
@@ -238,16 +254,33 @@ impl LocalReceiptClient {
         proposal_id: U256,
     ) -> Result<FinalizedPatchSigningState, Error> {
         let request = [state::MAGIC.as_slice(), &proposal_id.to_be_bytes::<32>()].concat();
-        state::decode(&self.exchange(&request).await?, proposal_id, self.chain)
+        state::decode(
+            &self.exchange(&request, state::MAX_FRAME).await?,
+            proposal_id,
+            self.chain,
+        )
     }
 
-    async fn exchange(&self, request: &[u8]) -> Result<Vec<u8>, Error> {
+    /// Public Output and patch state must describe the same current finalized authority.
+    pub async fn read_patch_signing_context(
+        &self,
+        proposal_id: U256,
+    ) -> Result<(FinalizedPatchSigningState, RepositorySigningMaterial), Error> {
+        let request = [material::MAGIC.as_slice(), &proposal_id.to_be_bytes::<32>()].concat();
+        material::decode(
+            &self.exchange(&request, material::MAX_FRAME).await?,
+            proposal_id,
+            self.chain,
+        )
+    }
+
+    async fn exchange(&self, request: &[u8], maximum: usize) -> Result<Vec<u8>, Error> {
         tokio::time::timeout(DEADLINE, async {
             private_socket(&self.socket)?;
             let mut stream = UnixStream::connect(&self.socket).await?;
             peer(&stream)?;
             write_frame(&mut stream, request).await?;
-            read_frame(&mut stream).await
+            read_frame(&mut stream, maximum).await
         })
         .await
         .map_err(|_| Error::Deadline)?
@@ -258,18 +291,31 @@ async fn serve(
     mut stream: UnixStream,
     reader: Arc<dyn RepositoryReceiptReader>,
     authority: Option<Arc<dyn RepositoryAuthorityReader>>,
+    material: Option<EndpointNetworkResolver>,
     readers: Arc<Semaphore>,
 ) -> Result<(), Error> {
-    let request = read_frame(&mut stream).await?;
+    let request = read_frame(&mut stream, MAX_REQUEST).await?;
     let magic = match (request.get(..4), request.len()) {
         (Some(magic), 12) if magic == MAGIC => MAGIC,
         (Some(magic), 36) if magic == state::MAGIC => state::MAGIC,
+        (Some(magic), 36) if magic == material::MAGIC => material::MAGIC,
         _ => return Err(Error::Protocol),
     };
     let permit = match readers.try_acquire_owned() {
         Ok(permit) => permit,
         Err(_) => return write_frame(&mut stream, &[magic.as_slice(), &[0]].concat()).await,
     };
+    if magic == material::MAGIC {
+        let result = material::read(
+            authority,
+            material,
+            permit,
+            U256::from_be_slice(&request[4..]),
+        )
+        .await;
+        let response = result.unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
+        return write_frame(&mut stream, &response).await;
+    }
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         if magic == state::MAGIC {
@@ -352,9 +398,12 @@ fn decode_response(
     }
 }
 
-async fn read_frame(stream: &mut (impl AsyncRead + Unpin)) -> Result<Vec<u8>, Error> {
+async fn read_frame(
+    stream: &mut (impl AsyncRead + Unpin),
+    maximum: usize,
+) -> Result<Vec<u8>, Error> {
     let length = stream.read_u32().await? as usize;
-    if length > MAX_FRAME {
+    if length > maximum {
         return Err(Error::Protocol);
     }
     let mut frame = vec![0; length];

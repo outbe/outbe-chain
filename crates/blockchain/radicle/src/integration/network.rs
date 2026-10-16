@@ -705,7 +705,7 @@ fn now_millis() -> u64 {
 }
 
 #[cfg(test)]
-mod shutdown_tests {
+pub(crate) mod shutdown_tests {
     use super::*;
     use crate::{endpoint::HandleError, integration::RadicleStatusChannel};
     use alloy_primitives::B256;
@@ -714,7 +714,7 @@ mod shutdown_tests {
     use commonware_runtime::IoBufs;
 
     #[derive(Clone)]
-    pub(super) struct NoSend;
+    pub(crate) struct NoSend;
 
     impl LimitedSender for NoSend {
         type PublicKey = bls12381::PublicKey;
@@ -741,8 +741,8 @@ mod shutdown_tests {
     }
 
     #[derive(Debug)]
-    pub(super) struct TestReceiver(
-        pub(super) mpsc::UnboundedReceiver<(bls12381::PublicKey, IoBuf)>,
+    pub(crate) struct TestReceiver(
+        pub(crate) mpsc::UnboundedReceiver<(bls12381::PublicKey, IoBuf)>,
     );
 
     impl Receiver for TestReceiver {

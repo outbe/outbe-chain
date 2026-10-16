@@ -27,7 +27,7 @@ use crate::manager::FinalizedPatchSigningState;
 use crate::manager::FinalizedRepositoryAuthority;
 
 const PARTIAL_NAMESPACE: &[u8] = b"outbe.radicle.partial.v1";
-const MAX_PUBLIC_OUTPUT_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_PUBLIC_OUTPUT_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
