@@ -1,4 +1,4 @@
-@tee @min-validators-4 @hyperlane-controller
+@tee @min-validators-4 @hyperlane-controller @ocomp
 Feature: Hyperlane controller signer and liveness recovery
   Scenario: A silent bridge signer is jailed and the local ISM follows the live committee
     Given a live committee with a controller-owned Hyperlane ISM fixture

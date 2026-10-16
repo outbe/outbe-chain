@@ -1,9 +1,15 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { type Address, type Hex, getAddress } from "viem";
+import { FIELD, openGratis, openPromis, plain, signerAmounts } from "../confidential/balances.js";
+import { signer } from "../confidential/authorize.js";
+import { fidelityQueryAuth } from "../confidential/fidelity.js";
+import { type EncryptedNod, signerNodAmount } from "../confidential/nod.js";
+import { contextNetwork } from "../net/resolver.js";
 import { address } from "./schemas.js";
 import { listProposals } from "../governance.js";
 import { pairTable } from "../oracle/pairs.js";
-import type { Ctx } from "../chain.js";
+import { type Ctx, readView } from "../chain.js";
 import { CONTRACTS, OFFERING_STATUS, PROPOSAL_STATUS } from "../registry.js";
 import { ownedTokenIds } from "../read.js";
 import { handler, ok, view } from "./util.js";
@@ -69,14 +75,16 @@ function registerEntityViews(server: McpServer, ctx: Ctx): void {
   // --- Nod -------------------------------------------------------------------
   server.tool(
     "nod_get",
-    "Nod NFT data by token id (decoded) plus parsed tokenURI metadata.",
+    "Nod NFT data by token id (decoded) plus parsed tokenURI metadata; for the signer's own Nod also its " +
+      "Gratis amount, opened with the creator key.",
     { id: z.string().describe("Nod token id as a uint256 (decimal or 0x hex)") },
     handler(async ({ id }) => {
-      const [data, metadata] = await Promise.all([
+      const [data, metadata, gratisAmount] = await Promise.all([
         view(ctx, "nod", "getNod", [id]),
         view(ctx, "nod", "tokenURI", [id]),
+        signerNodGratis(ctx, BigInt(id)),
       ]);
-      return ok({ nodId: id, data, metadata });
+      return ok({ nodId: id, data, metadata, ...(gratisAmount && { gratisAmount }) });
     }),
   );
 
@@ -91,6 +99,18 @@ function registerEntityViews(server: McpServer, ctx: Ctx): void {
     }),
   );
 
+}
+
+const FIDELITY_AUTH_SECONDS = 300;
+
+/** The Gratis amount of the signer's own Nod; undefined for another owner or a non-Outbe network. */
+async function signerNodGratis(ctx: Ctx, nodId: bigint): Promise<Record<string, unknown> | undefined> {
+  const network = contextNetwork(ctx);
+  if (!ctx.account || !network.isOutbe) return undefined;
+  const { result } = await readView(ctx, CONTRACTS.nod, "getNod", [nodId]);
+  const nod = result as EncryptedNod;
+  if (getAddress(nod.owner) !== ctx.account.address) return undefined;
+  return signerNodAmount(ctx, network, nod).then(plain, (error: Error) => ({ decryptError: error.message }));
 }
 
 function registerPositionViews(server: McpServer, ctx: Ctx): void {
@@ -162,29 +182,67 @@ function registerPositionViews(server: McpServer, ctx: Ctx): void {
     }),
   );
 
+  server.tool(
+    "credis_by_owner",
+    "Credis an address owns, decoded like credis_get without metadata.",
+    { owner: address },
+    handler(async ({ owner }) => {
+      const ids = await ownedTokenIds(ctx, "credis", owner);
+      const credis = await Promise.all(ids.map((id) => view(ctx, "credis", "getCredis", [id])));
+      return ok({ owner, count: credis.length, credis });
+    }),
+  );
+
+}
+
+function registerAccountViews(server: McpServer, ctx: Ctx): void {
   // --- Balances --------------------------------------------------------------
   server.tool(
     "gratis_balance",
-    "Encrypted Gratis liquid and pledged balances; decrypt both locally with the account view key.",
+    "Encrypted Gratis liquid and pledged balances. For the signer's own account both are also shown " +
+      "decrypted with its Gratis view key.",
     { account: address },
     handler(async ({ account }) => {
       const balance = await view(ctx, "gratis", "balanceOf", [account]);
       const pledged = await view(ctx, "gratis", "pledgedOf", [account]);
-      return ok({ account, balance, pledged });
+      const decrypted = await signerAmounts(ctx, contextNetwork(ctx), "Gratis", account as Address, (key) => ({
+        balance: openGratis(key, account as Address, FIELD.balance, balance as Hex),
+        pledged: openGratis(key, account as Address, FIELD.pledged, pledged as Hex),
+      }));
+      return ok({ account, balance, pledged, ...(decrypted && { decrypted }) });
     }),
   );
 
   server.tool(
     "promis_balance",
-    "Encrypted Promis balance; decrypt it locally with the account's Promis view key.",
+    "Encrypted Promis balance. For the signer's own account it is also shown decrypted with its Promis view key.",
     { account: address },
-    handler(async ({ account }) => ok({ account, balance: await view(ctx, "promis", "balanceOf", [account]) })),
+    handler(async ({ account }) => {
+      const balance = await view(ctx, "promis", "balanceOf", [account]);
+      const decrypted = await signerAmounts(ctx, contextNetwork(ctx), "Promis", account as Address, (key) => ({
+        balance: openPromis(key, account as Address, balance as Hex),
+      }));
+      return ok({ account, balance, ...(decrypted && { decrypted }) });
+    }),
   );
 
-  // Per-account fidelity index is now encrypted and owner-signature-gated, so a
-  // read-only MCP tool cannot fetch it. Expose the public synthetic-max ceiling
-  // (`maxFidelityIndexAt`) instead - the upper bound on any account's RCFI at a
-  // given time, in decayed days.
+  server.tool(
+    "fidelity_index",
+    "The signer's own Fidelity Index, now or at a Unix `timestamp`. The cohort ledger is encrypted, so the read " +
+      "carries an owner authorization signed here that expires in five minutes. Requires OUTBE_PRIVATE_KEY.",
+    { timestamp: z.number().int().optional().describe("Unix timestamp (seconds); default now") },
+    handler(async ({ timestamp }) => {
+      const account = signer(ctx);
+      const expiry = BigInt(Math.floor(Date.now() / 1000) + FIDELITY_AUTH_SECONDS);
+      const auth = await fidelityQueryAuth(account, contextNetwork(ctx).chainId, expiry);
+      const index =
+        timestamp === undefined
+          ? await view(ctx, "fidelity", "getFidelityIndex", [account.address, expiry, auth])
+          : await view(ctx, "fidelity", "getFidelityIndexAt", [account.address, timestamp, expiry, auth]);
+      return ok({ account: account.address, ...(timestamp !== undefined && { timestamp }), index });
+    }),
+  );
+
   server.tool(
     "fidelity_max_index",
     "Public synthetic-maximum Fidelity Index (saturating RCFI ceiling) at a Unix timestamp, in decayed days.",
@@ -392,6 +450,7 @@ function registerGovernanceViews(server: McpServer, ctx: Ctx): void {
 export function registerViewTools(server: McpServer, ctx: Ctx): void {
   registerEntityViews(server, ctx);
   registerPositionViews(server, ctx);
+  registerAccountViews(server, ctx);
   registerMarketViews(server, ctx);
   registerValidatorViews(server, ctx);
   registerGovernanceViews(server, ctx);

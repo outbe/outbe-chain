@@ -30,6 +30,7 @@ import {
 } from "../intex/registry.js";
 import { CONTRACTS } from "../registry.js";
 import { type FakeChain, sample } from "./fake-chain.js";
+import { fakeEnclave } from "./fake-enclave.js";
 import { SIGNER, startHarness } from "./harness.js";
 
 const GOLDEN = new URL("./tools.golden.json", import.meta.url);
@@ -252,6 +253,24 @@ const SCENARIOS: Case[] = [
   ["intent_order_track", { order_id: HASH, chain: "bsc-testnet" }, (chain) => {
     chain.reply("destinationOrderStatus", stringToHex("FILLED", { size: 32 }));
   }],
+  ["gratis_pledge", { reservation_id: "1" }],
+  ["gem_position_issue", { series: SERIES, units: "2" }],
+  ["gem_issue", { position_id: "3", owner: OTHER, promis_load: "1000000" }],
+  ["gem_settle", { gem_id: "3", asset: OTHER }],
+  ["gem_promis_mine", { gem_id: "3" }],
+  ["gem_positions_by_owner", { owner: OTHER }],
+  ["nod_settle_quote", { nod_id: "3", asset: OTHER }],
+  ["nod_settle", { nod_id: "3", asset: OTHER }],
+  ["promis_coen_mine", { amount: "1" }],
+  ["promis_gratis_mine", { amount: "1" }],
+  ["gratis_coen_mine", { amount: "1" }],
+  ["nod_gratis_mine", { nod_id: "3", gratis_amount: "1" }],
+  ["cca_bond", { name: "Desk", amount: "1" }],
+  ["cca_unbond", {}],
+  ["cca_unbonded_claim", {}],
+  ["credis_reservation_return", { reservation_id: "5" }],
+  ["fidelity_index", {}],
+  ["credis_by_owner", { owner: OTHER }],
 ];
 
 /** Replaces both randomness sources the offer encryption draws from with a counter. */
@@ -274,6 +293,7 @@ function lineJson(golden: { tools: unknown[]; calls: unknown[] }): string {
 
 /** Every contract the tools address, answering with fixed values. */
 function fixedChain(chain: FakeChain): void {
+  fakeEnclave(chain);
   for (const entry of Object.values(CONTRACTS)) chain.register(entry.abi, entry.address);
   for (const network of [
     { name: "outbe-testnet", isOutbe: true },

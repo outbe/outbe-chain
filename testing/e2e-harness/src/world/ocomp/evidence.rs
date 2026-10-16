@@ -410,16 +410,27 @@ impl OcompTopology {
         })
     }
 
+    /// The launch identity fork evidence binds to, once the evidence itself is
+    /// valid for this committee.
+    fn fork_evidence_identity(
+        &self,
+        validator_index: u8,
+        validate: impl FnOnce(usize) -> Result<()>,
+    ) -> Result<&OcompLaunchIdentityEvidenceV1> {
+        self.domain(validator_index)?;
+        validate(self.domains.len())?;
+        self.launch_identity_evidence.as_ref().ok_or_else(|| {
+            eyre::eyre!("OCOMP fork evidence requires the exact OCOMP launch identity")
+        })
+    }
+
     /// Retains one validated H-1/H/H+1 restart observation for scenario evidence.
     pub fn record_fork_restart_evidence(
         &mut self,
         evidence: OcompForkRestartEvidenceV1,
     ) -> Result<()> {
-        self.domain(evidence.validator_index)?;
-        evidence.validate(self.domains.len())?;
-        let identity = self.launch_identity_evidence.as_ref().ok_or_else(|| {
-            eyre::eyre!("OCOMP fork evidence requires the exact OCOMP launch identity")
-        })?;
+        let identity = self
+            .fork_evidence_identity(evidence.validator_index, |count| evidence.validate(count))?;
         evidence.validate_launch_identity(identity)?;
         if self.fork_restart_evidence.is_some() {
             eyre::bail!("OCOMP fork restart evidence was already recorded");
@@ -432,11 +443,8 @@ impl OcompTopology {
         &mut self,
         evidence: OcompForkMismatchEvidenceV1,
     ) -> Result<()> {
-        self.domain(evidence.validator_index)?;
-        evidence.validate(self.domains.len())?;
-        let identity = self.launch_identity_evidence.as_ref().ok_or_else(|| {
-            eyre::eyre!("OCOMP fork evidence requires the exact OCOMP launch identity")
-        })?;
+        let identity = self
+            .fork_evidence_identity(evidence.validator_index, |count| evidence.validate(count))?;
         evidence.validate_launch_identity(identity)?;
         if self.fork_mismatch_evidence.is_some() {
             eyre::bail!("OCOMP fork mismatch evidence was already recorded");
@@ -523,16 +531,16 @@ impl OcompForkRestartEvidenceV1 {
         if usize::from(self.validator_index) >= validator_count {
             eyre::bail!("OCOMP fork restart validator index is outside the committee");
         }
-        if self.activation_height == 0
-            || self.pre_fork_restart_from_height >= self.activation_height
-            || self.pre_fork_rejoined_height >= self.activation_height
-            || self.pre_fork_rejoined_height < self.pre_fork_restart_from_height
-            || self.down_across_fork_from_height >= self.activation_height
-            || self.finalized_while_down_height < self.activation_height
-            || self.replayed_through_height < self.finalized_while_down_height
-            || self.post_fork_restart_from_height < self.activation_height
-            || self.post_fork_rejoined_height < self.post_fork_restart_from_height
-        {
+        let activation = self.activation_height;
+        let pre_fork = self.pre_fork_restart_from_height < activation
+            && self.pre_fork_rejoined_height < activation
+            && self.pre_fork_rejoined_height >= self.pre_fork_restart_from_height;
+        let down_across_fork = self.down_across_fork_from_height < activation
+            && self.finalized_while_down_height >= activation
+            && self.replayed_through_height >= self.finalized_while_down_height;
+        let post_fork = self.post_fork_restart_from_height >= activation
+            && self.post_fork_rejoined_height >= self.post_fork_restart_from_height;
+        if activation == 0 || !pre_fork || !down_across_fork || !post_fork {
             eyre::bail!("OCOMP fork restart evidence does not span H-1/H/H+1 safely");
         }
         Ok(())
@@ -566,12 +574,12 @@ impl OcompForkMismatchEvidenceV1 {
         if usize::from(self.validator_index) >= validator_count {
             eyre::bail!("OCOMP fork mismatch validator index is outside the committee");
         }
-        if self.canonical_install_hash.is_empty()
-            || self.mismatched_install_hash.is_empty()
-            || self.canonical_install_hash == self.mismatched_install_hash
-            || self.canonical_activation_height == 0
-            || self.mismatched_activation_height != self.canonical_activation_height
-        {
+        let distinct_installs = !self.canonical_install_hash.is_empty()
+            && !self.mismatched_install_hash.is_empty()
+            && self.canonical_install_hash != self.mismatched_install_hash;
+        let same_activation = self.canonical_activation_height != 0
+            && self.mismatched_activation_height == self.canonical_activation_height;
+        if !distinct_installs || !same_activation {
             eyre::bail!("OCOMP fork mismatch evidence has no distinct valid install");
         }
         if self.canonical_head_before_restart >= self.canonical_activation_height

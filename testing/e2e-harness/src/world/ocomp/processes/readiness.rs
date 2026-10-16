@@ -86,26 +86,7 @@ impl OcompTopology {
         );
         let deadline = Instant::now() + OCOMP_RUNTIME_READY_TIMEOUT;
         loop {
-            let mut ready = true;
-            let mut indices = self.validator_indices()?;
-            if let Some((index, _)) = &self.keyless_full_node_domain {
-                indices.push(*index);
-                self.ensure_keyless_full_node_roles_alive(*index)?;
-            }
-            for validator_index in indices {
-                self.ensure_worker_alive(validator_index, 1)?;
-                let base = self.cfg.ocomp_endpoint_port(usize::from(validator_index));
-                let successor_port = base
-                    .checked_add(6)
-                    .ok_or_else(|| eyre::eyre!("OCOMP successor lane endpoint port overflow"))?;
-                match fetch_supervisor_status(SocketAddr::from(([127, 0, 0, 1], successor_port)))
-                    .and_then(|status| ensure_supervisor_status_ready(validator_index, &status, 1))
-                {
-                    Ok(()) => {}
-                    Err(_) => ready = false,
-                }
-            }
-            if ready {
+            if self.successor_lanes_registered()? {
                 // Do not accept registration observed just before an owned exit.
                 for index in self.validator_indices()? {
                     self.ensure_worker_alive(index, 1)?;
@@ -121,6 +102,28 @@ impl OcompTopology {
             );
             sleep(Duration::from_millis(250));
         }
+    }
+
+    /// Whether every compute domain's successor lane has registered its Worker.
+    #[cfg(feature = "ocomp-integration")]
+    fn successor_lanes_registered(&mut self) -> Result<bool> {
+        let mut ready = true;
+        let mut indices = self.validator_indices()?;
+        if let Some((index, _)) = &self.keyless_full_node_domain {
+            indices.push(*index);
+            self.ensure_keyless_full_node_roles_alive(*index)?;
+        }
+        for validator_index in indices {
+            self.ensure_worker_alive(validator_index, 1)?;
+            let base = self.cfg.ocomp_endpoint_port(usize::from(validator_index));
+            let successor_port = base
+                .checked_add(6)
+                .ok_or_else(|| eyre::eyre!("OCOMP successor lane endpoint port overflow"))?;
+            ready &= fetch_supervisor_status(SocketAddr::from(([127, 0, 0, 1], successor_port)))
+                .and_then(|status| ensure_supervisor_status_ready(validator_index, &status, 1))
+                .is_ok();
+        }
+        Ok(ready)
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -203,50 +206,42 @@ impl OcompTopology {
     #[cfg(feature = "ocomp-integration")]
     pub fn ensure_validator_roles_alive(&mut self) -> Result<()> {
         for validator_index in self.validator_indices()? {
-            for role in [OcompProcessRole::SnapshotExporter] {
-                let intentionally_stopped = self.faults.iter().any(|record| {
-                    matches!(
-                        (role, record.fault),
-                        (
-                            OcompProcessRole::SnapshotExporter,
-                            OcompProcessFault::StopSnapshotExporter {
-                                validator_index: stopped
-                            }
-                        ) if stopped == validator_index
-                    )
-                });
-                let (record_index, exited) = {
-                    let domain = self.domain_mut(validator_index)?;
-                    let process = match role {
-                        OcompProcessRole::SnapshotExporter => domain.snapshot_exporter.as_mut(),
-                        _ => unreachable!("fixed exporter iteration above"),
-                    };
-                    let Some(process) = process else {
-                        if intentionally_stopped {
-                            continue;
-                        }
-                        eyre::bail!(
-                            "validator-{validator_index} OCOMP {role:?} is missing without a typed fault"
-                        );
-                    };
-                    (process.record_index, process.guard.exited())
-                };
-                if exited {
-                    self.records[record_index].stopped_at_millis = Some(unix_time_millis());
-                    let role_name = match role {
-                        OcompProcessRole::SnapshotExporter => "snapshot-exporter",
-                        _ => unreachable!("fixed exporter iteration above"),
-                    };
-                    let log_path = self
-                        .domain(validator_index)?
-                        .root
-                        .join(format!("{role_name}.log"));
-                    eyre::bail!(
-                        "validator-{validator_index} OCOMP {role_name} exited during startup:\n{}",
-                        tail_file(&log_path, 20)
-                    );
-                }
+            self.ensure_snapshot_exporter_alive(validator_index)?;
+        }
+        Ok(())
+    }
+
+    /// A validator's SnapshotExporter is live, or absent only by a typed fault.
+    #[cfg(feature = "ocomp-integration")]
+    fn ensure_snapshot_exporter_alive(&mut self, validator_index: u8) -> Result<()> {
+        let role = OcompProcessRole::SnapshotExporter;
+        let intentionally_stopped = self.faults.iter().any(|record| {
+            matches!(
+                record.fault,
+                OcompProcessFault::StopSnapshotExporter {
+                    validator_index: stopped
+                } if stopped == validator_index
+            )
+        });
+        let Some(process) = self.domain_mut(validator_index)?.snapshot_exporter.as_mut() else {
+            if intentionally_stopped {
+                return Ok(());
             }
+            eyre::bail!(
+                "validator-{validator_index} OCOMP {role:?} is missing without a typed fault"
+            );
+        };
+        let (record_index, exited) = (process.record_index, process.guard.exited());
+        if exited {
+            self.records[record_index].stopped_at_millis = Some(unix_time_millis());
+            let log_path = self
+                .domain(validator_index)?
+                .root
+                .join("snapshot-exporter.log");
+            eyre::bail!(
+                "validator-{validator_index} OCOMP snapshot-exporter exited during startup:\n{}",
+                tail_file(&log_path, 20)
+            );
         }
         Ok(())
     }
@@ -272,125 +267,6 @@ impl OcompTopology {
             );
         }
         Ok(())
-    }
-
-    /// Validate the exact stopped incarnations, not merely an empty worker map.
-    /// Call through expiry/retention and immediately before the intended restart.
-    #[cfg(any(test, feature = "ocomp-integration"))]
-    pub(crate) fn ensure_worker_cohort_stopped(
-        &self,
-        evidence: &crate::internal::ocomp_worker_outage::WorkerOutageEvidence,
-    ) -> Result<()> {
-        let inventory = self
-            .domains
-            .iter()
-            .map(|domain| domain.workers.len())
-            .collect::<Vec<_>>();
-        crate::internal::ocomp_worker_outage::require_stopped_cohort(&evidence.stops, &inventory)?;
-        for stopped in &evidence.stops {
-            let latest = self
-                .records
-                .iter()
-                .rev()
-                .find(|record| {
-                    record.validator_index == Some(stopped.validator_index)
-                        && record.role == OcompProcessRole::Worker
-                })
-                .ok_or_else(|| eyre::eyre!("stopped worker lacks owned process history"))?;
-            eyre::ensure!(
-                latest.pid == stopped.pid
-                    && latest.worker_ordinal == Some(stopped.worker_ordinal)
-                    && latest.stopped_at_millis == stopped.reaped_at_millis,
-                "validator-{} worker incarnation changed after cohort fault",
-                stopped.validator_index
-            );
-            eyre::ensure!(
-                self.faults.iter().any(|record| {
-                    record.fault
-                        == (OcompProcessFault::StopWorker {
-                            validator_index: stopped.validator_index,
-                            worker_ordinal: stopped.worker_ordinal,
-                        })
-                        && record.applied_at_millis == stopped.signal_at_millis
-                }),
-                "stopped worker lacks its owned cohort fault record"
-            );
-        }
-        Ok(())
-    }
-
-    /// Observe real exports only after the owned cohort has been fully reaped.
-    /// Workers stay absent; nodes and exporters continue the ordinary public path.
-    #[cfg(feature = "ocomp-integration")]
-    pub(crate) fn wait_for_exports_while_workers_stopped(
-        &mut self,
-        record: &outbe_ocomp_protocol::state::OcompJobRecordV1,
-        checkpoint: crate::world::rpc::FinalizedCheckpoint,
-        bundle: &ProtocolBundleV1,
-        evidence: &mut crate::internal::ocomp_worker_outage::WorkerOutageEvidence,
-        timeout: Duration,
-        mut ensure_network_alive: impl FnMut() -> Result<()>,
-    ) -> Result<()> {
-        use crate::internal::ocomp_worker_outage::{observe_export, require_pre_open_cut};
-        self.ensure_worker_cohort_stopped(evidence)?;
-        eyre::ensure!(
-            evidence.exports.is_empty(),
-            "export observation cannot be replayed"
-        );
-        let finalized = record
-            .finalized
-            .as_ref()
-            .ok_or_else(|| eyre::eyre!("worker outage job lacks canonical finality binding"))?;
-        require_pre_open_cut(&evidence.cut_heads, finalized.open_height)?;
-        let deadline = Instant::now() + timeout;
-        loop {
-            eyre::ensure!(
-                Instant::now() < deadline,
-                "four exact exports did not become available while workers were stopped"
-            );
-            ensure_network_alive()?;
-            self.ensure_worker_cohort_stopped(evidence)?;
-            self.ensure_validator_roles_alive()?;
-            for validator_index in self.validator_indices()? {
-                if !evidence
-                    .exports
-                    .iter()
-                    .any(|item| item.validator_index == validator_index)
-                {
-                    if let Some(export) = observe_export(
-                        self.domain_root(validator_index)?,
-                        validator_index,
-                        record,
-                        checkpoint,
-                        bundle,
-                    )? {
-                        evidence.exports.push(export);
-                    }
-                }
-            }
-            // Recheck ownership and typed exporter liveness after filesystem reads,
-            // including on the successful iteration. An intentional exporter fault
-            // from another scenario must not make missing exporters acceptable here.
-            self.ensure_worker_cohort_stopped(evidence)?;
-            for domain in &mut self.domains {
-                let exporter = domain.snapshot_exporter.as_mut().ok_or_else(|| {
-                    eyre::eyre!("worker outage requires every live snapshot exporter")
-                })?;
-                eyre::ensure!(
-                    exporter.guard.exit_status()?.is_none(),
-                    "snapshot exporter exited during worker outage"
-                );
-            }
-            ensure_network_alive()?;
-            eyre::ensure!(
-                Instant::now() < deadline,
-                "worker outage export observation exceeded its budget"
-            );
-            if evidence.exports.len() == 4 {
-                return Ok(());
-            }
-            sleep(Duration::from_millis(100));
-        }
     }
 }
 

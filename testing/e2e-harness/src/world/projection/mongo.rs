@@ -8,7 +8,7 @@ use std::{
     collections::BTreeMap,
     fs,
     net::TcpListener,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
@@ -59,16 +59,24 @@ fn ensure_service(cfg: &Config) -> Result<()> {
         return Ok(());
     }
     fs::create_dir_all(directory.join("data"))?;
+    let port = service_port(cfg, &directory)?;
+    let mut service = OwnedMongo(spawn_mongod(&directory, port)?);
+    wait_writable_primary(&mut service, port)?;
+    owned.insert(directory, service);
+    Ok(())
+}
+fn service_port(cfg: &Config, directory: &Path) -> Result<u16> {
     let port_file = directory.join("port");
-    let port = if port_file.exists() {
-        port(cfg)?
-    } else {
-        let listener = TcpListener::bind(("127.0.0.1", 0))?;
-        let allocated = listener.local_addr()?.port();
-        fs::write(&port_file, allocated.to_string())?;
-        allocated
-    };
-    let process = Command::new("mongod")
+    if port_file.exists() {
+        return port(cfg);
+    }
+    let listener = TcpListener::bind(("127.0.0.1", 0))?;
+    let allocated = listener.local_addr()?.port();
+    fs::write(&port_file, allocated.to_string())?;
+    Ok(allocated)
+}
+fn spawn_mongod(directory: &Path, port: u16) -> Result<Child> {
+    Ok(Command::new("mongod")
         .args([
             "--bind_ip",
             "127.0.0.1",
@@ -85,8 +93,9 @@ fn ensure_service(cfg: &Config) -> Result<()> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()?;
-    let mut service = OwnedMongo(process);
+        .spawn()?)
+}
+fn wait_writable_primary(service: &mut OwnedMongo, port: u16) -> Result<()> {
     let client = Client::with_uri_str(format!(
         "mongodb://127.0.0.1:{port}/?directConnection=true&serverSelectionTimeoutMS=500"
     ))?;
@@ -102,28 +111,24 @@ fn ensure_service(cfg: &Config) -> Result<()> {
             .run()
         {
             if hello.get_bool("isWritablePrimary").unwrap_or(false) {
-                break;
+                return Ok(());
             }
-            if !initialized {
-                // A restart preserves the exact replica set and its data.
-                let result = client.database("admin").run_command(doc! { "replSetInitiate": { "_id": "outbe_e2e", "members": [{ "_id": 0, "host": format!("127.0.0.1:{port}") }] } }).run();
-                if result.is_ok()
-                    || result
-                        .as_ref()
-                        .err()
-                        .is_some_and(|e| e.to_string().contains("already initialized"))
-                {
-                    initialized = true;
-                }
-            }
+            initialized = initialized || initiate_replica_set(&client, port);
         }
         if Instant::now() >= deadline {
             bail!("scenario MongoDB replica set did not become writable");
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    owned.insert(directory, service);
-    Ok(())
+}
+/// A restart preserves the exact replica set and its data.
+fn initiate_replica_set(client: &Client, port: u16) -> bool {
+    let result = client.database("admin").run_command(doc! { "replSetInitiate": { "_id": "outbe_e2e", "members": [{ "_id": 0, "host": format!("127.0.0.1:{port}") }] } }).run();
+    result.is_ok()
+        || result
+            .as_ref()
+            .err()
+            .is_some_and(|e| e.to_string().contains("already initialized"))
 }
 pub(super) fn reset(cfg: &Config, config: &MongoStorageConfig) -> Result<()> {
     let cfg = cfg.clone();

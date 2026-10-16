@@ -2,12 +2,12 @@ use super::restart_activation;
 use super::restart_capture_incarnations;
 use super::restart_check_logs;
 use super::restart_inflight_round;
-use super::restart_install_replacement;
 use super::restart_pin_before;
 use super::restart_prove_signing;
 use super::restart_retain_frozen_target;
 use super::restart_sealed_node_evidence;
 use super::wait_for_dkg_retry_snapshot;
+use super::{restart_install_replacement, ReplacementLogs};
 
 use crate::internal::launch_log::LaunchLog;
 
@@ -119,7 +119,11 @@ fn restart_active_validator_during_reshare(world: &mut World) {
     )
     .expect("historical pre-fault frozen commitment on all survivors");
     let (node_log, enclave_log) = logs.expect("replacement intervals armed after reaping");
-    restart_install_replacement(world, 3, previous, node_log, enclave_log, true)
+    let logs = ReplacementLogs {
+        node: node_log,
+        enclave: enclave_log,
+    };
+    restart_install_replacement(world, 3, previous, logs, true)
         .expect("same incumbent public identity; other four owners unchanged");
 }
 

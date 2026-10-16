@@ -9,7 +9,10 @@ import { ensureAllowance } from "../../net/erc20.js";
 import { handler, ok } from "../util.js";
 import { ERC20_ABI, FACTORY_ABI, INTEX_ABI } from "../../intex/registry.js";
 import { grindNonce } from "../../intex/pow.js";
-import { INTEX_EXERCISED_EVENT, addr, quoteSettlement, settlementTokens } from "../../intex/reads.js";
+import { addr, exerciseCount, quoteSettlement, settlementTokens } from "../../intex/reads.js";
+import { withAuthorization } from "../../confidential/authorize.js";
+import { OP } from "../../confidential/mac.js";
+import { openPromis, signerAmounts } from "../../confidential/balances.js";
 import { accountArg, seriesArg, unitsArg } from "./args.js";
 import type { IntexDeps } from "./deps.js";
 
@@ -113,53 +116,65 @@ export function registerSettlementTools(server: McpServer, deps: IntexDeps): voi
     }),
   );
 
+}
+
+/** Promis mined from Settled Intex, and the signer's Promis balance. */
+export function registerPromisTools(server: McpServer, deps: IntexDeps): void {
+  const { ctx, resolveNetwork, whoever, submit } = deps;
   server.tool(
     "intex_promis_mine",
     "Settlement step 2: burn your Settled Intexes and mine Promis to your own wallet (run intex_settle " +
-      "first). The proof-of-work nonce is computed locally; you give only series and units. Requires OUTBE_PRIVATE_KEY.",
-    { series: seriesArg, units: unitsArg, network: networkName.optional(), wait: waitFlag },
-    handler(async ({ series, units, network, wait }) => {
+      "first). The proof of work and the Promis modify authorization are computed here; you give only " +
+      "series and units. Waits for the receipt. Requires OUTBE_PRIVATE_KEY.",
+    { series: seriesArg, units: unitsArg, network: networkName.optional() },
+    handler(async ({ series, units, network }) => {
       const n = await resolveNetwork(network ?? OUTBE_NETWORK);
-      const account = requireAccount(ctx);
-      const owner = account.address;
-      const amt = BigInt(units);
+      const owner = requireAccount(ctx).address;
+      const amount = BigInt(units);
       const sd = await n.client.readContract({
         address: addr(n, "intex"),
         abi: INTEX_ABI,
         functionName: "getIntexSeries",
         args: [series],
       });
-      const promisMinor = sd.promisLoadMinor * amt;
-      // seq = this owner's prior mines for the series (feeds the PoW preimage).
-      const logs = await n.client.getLogs({
-        address: addr(n, "factory"),
-        event: INTEX_EXERCISED_EVENT,
-        args: { seriesId: series, owner },
-        fromBlock: 0n,
-        toBlock: "latest",
-      });
-      const seq = logs.length;
+      const promisMinor = sd.promisLoadMinor * amount;
       const difficulty = await n.client.readContract({
         address: addr(n, "factory"),
         abi: FACTORY_ABI,
         functionName: "powDifficulty",
       });
-      const pow = grindNonce(owner, promisMinor, series, seq, difficulty);
-      throw new Error(
-        "minePromis also requires a Promis modify-auth mac and opNonce, which this server cannot produce: " +
-          "the modify key is sealed to an ephemeral X25519 key by outbe_deriveKeys(Promis, ...) and no unsealing " +
-          "or mac derivation is implemented here. " +
-          `Proof of work is done - nonce ${pow.nonce} (seq ${seq}, difficulty ${difficulty}, ` +
-          `${pow.iterations} iterations, hash ${pow.hash}) ` +
-          `for ${promisMinor} Promis on series ${series}. Submit minePromis(${series}, ${owner}, ${amt}, ${pow.nonce}, mac, opNonce) ` +
-          "with a client that holds the modify key.",
+      // The mining sequence moves with every Promis mint, so it is read under the same lock.
+      const { pow, seq, sent } = await withAuthorization(
+        ctx,
+        n,
+        [{ ledger: "Promis", op: OP.Promis.Mint, amount: promisMinor }],
+        async ([auth]) => {
+          const seq = await exerciseCount(n, series, owner);
+          const pow = grindNonce(owner, promisMinor, series, seq, difficulty);
+          const data = encodeFunctionData({
+            abi: FACTORY_ABI,
+            functionName: "minePromis",
+            args: [series, owner, amount, pow.nonce, auth.mac, auth.opNonce],
+          });
+          return { pow, seq, sent: await submit(n, addr(n, "factory"), data, 0n) };
+        },
       );
+      return ok({
+        network: n.name,
+        series,
+        owner,
+        units: amount.toString(),
+        promisMinor: promisMinor.toString(),
+        pow: { nonce: pow.nonce.toString(), seq, difficulty },
+        ...sent,
+      });
     }),
   );
 
   server.tool(
     "intex_promis_balance",
-    "Encrypted Promis balance for an address on outbe; decrypt it locally with the account's Promis view key.",
+    "Encrypted Promis balance for an address on outbe. For the signer's own account it is also shown " +
+      "decrypted with its Promis view key.",
     { account: accountArg, network: networkName.optional() },
     handler(async ({ account, network }) => {
       const n = await resolveNetwork(network ?? OUTBE_NETWORK);
@@ -170,7 +185,8 @@ export function registerSettlementTools(server: McpServer, deps: IntexDeps): voi
         functionName: "balanceOf",
         args: [who],
       });
-      return ok({ network: n.name, account: who, balance });
+      const decrypted = await signerAmounts(ctx, n, "Promis", who, (key) => ({ balance: openPromis(key, who, balance) }));
+      return ok({ network: n.name, account: who, balance, ...(decrypted && { decrypted }) });
     }),
   );
 }

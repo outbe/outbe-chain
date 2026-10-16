@@ -20,9 +20,8 @@ use crate::constants::{
     CLEARING_CHUNK_GAS, CLEARING_FIXED_GAS, CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS,
     COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN, DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND,
     IGNORED_OBSOLETE, MAX_BIDS_PER_BATCH, MAX_BID_BATCHES, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS,
-    MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_ANCHOR_ISO,
-    PROMIS_LOAD_DEADBAND_BPS, PROMIS_LOAD_LAUNCH_EXPONENT, PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN,
-    REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
+    MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_LAUNCH_EXPONENT,
+    PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -74,14 +73,14 @@ pub(crate) fn record_preflighted_brief(
     Ok(())
 }
 
-/// Table bound, not a policy: a priced day carries at least one digit, so the rung
-/// the ladder can actually reach is `anchor_digits - 1`. Sized past any launch rate
-/// the six-decimal scale can carry, so it never truncates that.
+/// Table bound, not a policy: the widest rung the load can climb to.
 const PROMIS_LOAD_MAX_EXPONENT: u32 = 21;
 
-/// One entry past the widest rung: the deadband brackets against the decade above.
-const POW10: [u128; PROMIS_LOAD_MAX_EXPONENT as usize + 2] = {
-    let mut table = [1u128; PROMIS_LOAD_MAX_EXPONENT as usize + 2];
+/// A stored zero reads as "never set", so the load never steps onto it.
+const PROMIS_LOAD_MIN_EXPONENT: u32 = 1;
+
+const POW10: [u128; PROMIS_LOAD_MAX_EXPONENT as usize + 1] = {
+    let mut table = [1u128; PROMIS_LOAD_MAX_EXPONENT as usize + 1];
     let mut i = 1;
     while i < table.len() {
         table[i] = table[i - 1] * 10;
@@ -92,61 +91,102 @@ const POW10: [u128; PROMIS_LOAD_MAX_EXPONENT as usize + 2] = {
 
 const _: () = assert!(
     POW10[PROMIS_LOAD_LAUNCH_EXPONENT as usize]
-        == 100_000 * 10u128.pow(PROTOCOL_AMOUNT_DECIMALS as u32),
-    "the launch rung must carry 100 000 PROMIS"
+        == 1_000_000 * 10u128.pow(PROTOCOL_AMOUNT_DECIMALS as u32),
+    "the launch rung must carry 1 000 000 PROMIS"
 );
 
 pub(crate) fn promis_load_minor(exponent: u32) -> u128 {
     POW10[exponent.min(PROMIS_LOAD_MAX_EXPONENT) as usize]
 }
 
-fn decimal_digits(rate: U256) -> u32 {
-    if rate.is_zero() {
-        return 0;
-    }
-    let mut digits = 1u32;
-    while (digits as usize) < POW10.len() && rate >= U256::from(POW10[digits as usize]) {
-        digits += 1;
-    }
-    digits
-}
-
-/// Digits of the launch pair, captured once and never moved again.
-pub(crate) fn launch_anchor_digits(rate: U256) -> u32 {
-    PROMIS_LOAD_LAUNCH_EXPONENT + decimal_digits(rate)
-}
-
-fn anchor_exponent(anchor_digits: u32, rate: U256) -> u32 {
-    anchor_digits
-        .saturating_sub(decimal_digits(rate))
-        .min(PROMIS_LOAD_MAX_EXPONENT)
-}
-
-/// The decade a day quoted at `rate` runs on, holding `current` while the rate stays
-/// inside it widened by the deadband. Edges are compared scaled up rather than divided
-/// down, so the band survives integer division in the narrow decades.
-pub(crate) fn promis_load_exponent(anchor_digits: u32, current: Option<u32>, rate: U256) -> u32 {
-    let Some(exponent) = current else {
-        return anchor_exponent(anchor_digits, rate);
-    };
-    let exponent = exponent.min(PROMIS_LOAD_MAX_EXPONENT);
-    // Independent cells: their difference is not trusted to stay inside the table.
-    let decade = anchor_digits
-        .saturating_sub(exponent)
-        .clamp(1, POW10.len() as u32 - 1) as usize;
-    let scaled = rate * U256::from(10_000u32);
-    let lo = U256::from(POW10[decade - 1]) * U256::from(10_000 - PROMIS_LOAD_DEADBAND_BPS);
-    let hi = U256::from(POW10[decade]) * U256::from(10_000 + PROMIS_LOAD_DEADBAND_BPS);
-    if scaled >= lo && scaled < hi {
-        exponent
+/// Whole decades `rate` has moved from `reference`: positive up, negative down.
+pub(crate) fn decades_moved(rate: U256, reference: U256) -> i32 {
+    let (high, low, sign) = if rate >= reference {
+        (rate, reference, 1)
     } else {
-        anchor_exponent(anchor_digits, rate)
+        (reference, rate, -1)
+    };
+    let ten = U256::from(10u8);
+    let mut decades = 0;
+    let mut next = low.saturating_mul(ten);
+    while next <= high && decades < PROMIS_LOAD_MAX_EXPONENT as i32 {
+        decades += 1;
+        next = next.saturating_mul(ten);
+    }
+    sign * decades
+}
+
+/// One checked currency: today's rate against the price it was captured at.
+struct LoadMove {
+    iso_code: u16,
+    rate: U256,
+    reference: U256,
+    decades: i32,
+}
+
+/// The currency that moved furthest, the lowest ISO on a tie. Moves both ways hold.
+fn load_trigger(moves: &[LoadMove]) -> Option<&LoadMove> {
+    if moves.iter().any(|m| m.decades > 0) && moves.iter().any(|m| m.decades < 0) {
+        return None;
+    }
+    moves
+        .iter()
+        .filter(|m| m.decades != 0)
+        .fold(None, |best: Option<&LoadMove>, m| match best {
+            Some(b) if b.decades.abs() >= m.decades.abs() => Some(b),
+            _ => Some(m),
+        })
+}
+
+/// COEN dearer by a decade means ten times fewer PROMIS per Intex.
+pub(crate) fn stepped_exponent(current: u32, decades: i32) -> u32 {
+    let shift = decades.unsigned_abs();
+    if decades > 0 {
+        current.saturating_sub(shift).max(PROMIS_LOAD_MIN_EXPONENT)
+    } else {
+        current.saturating_add(shift).min(PROMIS_LOAD_MAX_EXPONENT)
     }
 }
 
-/// Read at auction start, before `choose_reference_prices` trims the table: either
-/// of its rules would drop the anchor currency and the ladder with it.
-fn step_promis_load(
+/// The row's move against its capture, or `None` when the capture is missing or stale.
+fn captured_move(
+    contract: &DesisContract<'_>,
+    row: &ReferenceCurrencyPrice,
+    current: u32,
+) -> Result<Option<LoadMove>> {
+    let reference = contract.promis_load_reference_minor.read(&row.iso_code)?;
+    if reference.is_zero()
+        || contract
+            .promis_load_reference_exponent
+            .read(&row.iso_code)?
+            != current
+    {
+        return Ok(None);
+    }
+    Ok(Some(LoadMove {
+        iso_code: row.iso_code,
+        rate: row.entry_price_minor,
+        reference,
+        decades: decades_moved(row.entry_price_minor, reference),
+    }))
+}
+
+fn capture_reference(
+    contract: &mut DesisContract<'_>,
+    row: &ReferenceCurrencyPrice,
+    exponent: u32,
+) -> Result<()> {
+    contract
+        .promis_load_reference_minor
+        .write(&row.iso_code, row.entry_price_minor)?;
+    contract
+        .promis_load_reference_exponent
+        .write(&row.iso_code, exponent)
+}
+
+/// Read before `choose_reference_prices` trims the table, so every priced currency is
+/// checked. A currency without a valid capture takes one and sits the day out.
+pub(crate) fn step_promis_load(
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
     reference_prices: &[ReferenceCurrencyPrice],
@@ -154,45 +194,49 @@ fn step_promis_load(
     if let Some(fixed) = PROMIS_LOAD_OVERRIDE {
         return Ok(fixed);
     }
-    // A stored zero is "never set": no rate reaches the rung it would stand for.
     let stored = contract.promis_load_exponent.read()?;
-    let current = (stored != 0).then_some(stored);
-    // Without the anchor currency, the ladder holds. Nothing is captured, since the
-    // launch pair needs a rate to be a pair.
-    let Some(rate) = reference_prices
-        .iter()
-        .find(|row| row.iso_code == PROMIS_LOAD_ANCHOR_ISO)
-        .map(|row| row.entry_price_minor)
-    else {
-        return Ok(promis_load_minor(
-            current.unwrap_or(PROMIS_LOAD_LAUNCH_EXPONENT),
-        ));
+    let current = match stored {
+        0 => PROMIS_LOAD_LAUNCH_EXPONENT,
+        k => k.min(PROMIS_LOAD_MAX_EXPONENT),
     };
-    let anchor_digits = match contract.promis_load_anchor_digits.read()? {
-        0 => {
-            let digits = launch_anchor_digits(rate);
-            contract.promis_load_anchor_digits.write(digits)?;
-            digits
-        }
-        digits => digits,
-    };
-    let exponent = promis_load_exponent(anchor_digits, current, rate);
-    let load = promis_load_minor(exponent);
-    match current {
-        Some(previous) if previous == exponent => {}
-        Some(previous) => {
-            contract.emit(IDesis::PromisLoadStepped {
-                worldwideDay: worldwide_day.into(),
-                previousLoadMinor: promis_load_minor(previous),
-                newLoadMinor: load,
-                coenUsdRateMinor: rate,
-            })?;
-            contract.promis_load_exponent.write(exponent)?;
-        }
-        // Taking the first position is not a step. The config and START message carry it.
-        None => contract.promis_load_exponent.write(exponent)?,
+    // A day nobody priced captures nothing: the chain has not taken a position yet.
+    if reference_prices.is_empty() {
+        return Ok(promis_load_minor(current));
     }
-    Ok(load)
+    // Taking the first position is not a step. The config and START message carry it.
+    if stored == 0 {
+        contract.promis_load_exponent.write(current)?;
+    }
+    let mut moves = Vec::with_capacity(reference_prices.len());
+    let mut uncaptured = Vec::new();
+    for row in reference_prices {
+        match captured_move(contract, row, current)? {
+            Some(m) => moves.push(m),
+            None => uncaptured.push(row),
+        }
+    }
+    let stepped = load_trigger(&moves)
+        .map(|t| (t, stepped_exponent(current, t.decades)))
+        .filter(|(_, exponent)| *exponent != current);
+    let Some((trigger, exponent)) = stepped else {
+        for row in uncaptured {
+            capture_reference(contract, row, current)?;
+        }
+        return Ok(promis_load_minor(current));
+    };
+    contract.emit(IDesis::PromisLoadStepped {
+        worldwideDay: worldwide_day.into(),
+        previousLoadMinor: promis_load_minor(current),
+        newLoadMinor: promis_load_minor(exponent),
+        isoCode: trigger.iso_code,
+        rateMinor: trigger.rate,
+        referenceMinor: trigger.reference,
+    })?;
+    contract.promis_load_exponent.write(exponent)?;
+    for row in reference_prices {
+        capture_reference(contract, row, exponent)?;
+    }
+    Ok(promis_load_minor(exponent))
 }
 
 /// The currencies a day will actually price: one per series-id letter, at most

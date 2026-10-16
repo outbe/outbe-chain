@@ -6,6 +6,7 @@ import { buildPayload, canonicalAmountBase, canonicalAmountMicro, encryptOffer }
 import { contextNetwork } from "../net/resolver.js";
 import { receiptSummary, waitForReceipt } from "../net/tx.js";
 import { resolveContract } from "../registry.js";
+import { creatorKey } from "../tribute/creator-key.js";
 import { offerPublicKey, offerTributeArgs, offeringDay } from "../tribute/offer.js";
 import { HEX32, waitFlag } from "./schemas.js";
 import { handler, ok, view } from "./util.js";
@@ -85,7 +86,10 @@ export function registerTributeTools(server: McpServer, ctx: Ctx): void {
       "combined proof, its Merkle root and the L2 BLS signature over it, the circuit chain/version the " +
       "proof verifies under, plus the tribute_draft_id / su_hashes / amount the proof binds (the enclave " +
       "folds them into the nft_hash checked against the proof). No proof is generated here - produce it " +
-      "on the L2. Note: token id is derived from (caller, worldwide_day), so one tribute per account per day.",
+      "on the L2. The enclave encrypts the Tribute and Nod amounts to the creator key, which this server " +
+      "derives from the signer's signature, so the same wallet can always re-derive it; pass " +
+      "creator_public_key to use another key. Note: token id is derived from (caller, worldwide_day), so " +
+      "one tribute per account per day.",
     {
       worldwide_day: z.number().int().optional().describe("YYYYMMDD; default = first OFFERING day"),
       amount: tributeBase.optional().describe('whole amount_base matching the proof (default "100")'),
@@ -98,6 +102,11 @@ export function registerTributeTools(server: McpServer, ctx: Ctx): void {
       circuit_version: circuitVersion,
       tribute_draft_id: tributeDraftId,
       su_hashes: z.array(suHash).min(1).describe("SpendingUnit hashes bound by the proof"),
+      creator_public_key: z
+        .string()
+        .regex(HEX32, "creator_public_key must be exactly 32 bytes of 0x-hex")
+        .optional()
+        .describe("X25519 public key for the encrypted amounts (default: derived from the signer)"),
       wait: waitFlag,
     },
     handler(async (a) => {
@@ -106,12 +115,14 @@ export function registerTributeTools(server: McpServer, ctx: Ctx): void {
       const amount = a.amount ?? "100";
       const offerPub = await offerPublicKey(ctx);
       const worldwideDay = a.worldwide_day ?? (await offeringDay(ctx));
+      const creatorPublicKey = a.creator_public_key ?? (await creatorKey(ctx.account, ctx.chain.id)).publicKey;
       const payload = buildPayload({
         creator: ctx.account.address,
         amount_base: amount,
         amount_micro: a.amount_micro,
         tribute_draft_id: a.tribute_draft_id,
         su_hashes: a.su_hashes,
+        creator_public_key: creatorPublicKey,
       });
       const args = offerTributeArgs(encryptOffer(offerPub, payload), {
         worldwideDay,
@@ -132,6 +143,7 @@ export function registerTributeTools(server: McpServer, ctx: Ctx): void {
         amount_base: amount,
         amount_micro: a.amount_micro ?? "0",
         creator: ctx.account.address,
+        creatorPublicKey,
         l2_chain_id: a.l2_chain_id,
         circuit_version: a.circuit_version,
         tribute_draft_id: a.tribute_draft_id,

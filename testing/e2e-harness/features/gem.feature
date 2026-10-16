@@ -1,4 +1,4 @@
-@tee @min-validators-4
+@tee @min-validators-4 @ocomp
 Feature: Gem from a parked Intex to Promis and COEN
   # The merchant half of the Gem lifecycle, which nothing else covers: the
   # protocol's own reward gems are born Qualified and settled, so `Issued`,

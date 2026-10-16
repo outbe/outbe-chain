@@ -37,11 +37,11 @@ fn wait_for_live_follower_log(
 fn require_live_validator_progress(
     world: &mut World,
     index: usize,
-    port: u16,
-    primary: u16,
     baseline: u64,
     phase: &str,
 ) -> u64 {
+    let port = world.validators.http_port(index);
+    let primary = world.validators.primary_port();
     assert!(
         world.localnet.validator_running(index),
         "{phase} validator process exited immediately after launch"
@@ -133,8 +133,7 @@ fn validator_joins_and_restarts(world: &mut World) {
         .localnet
         .launch_joiner(index, &[])
         .expect("launch joined production validator");
-    let checkpoint =
-        require_live_validator_progress(world, index, port, primary, catchup_finalized, "joined");
+    let checkpoint = require_live_validator_progress(world, index, catchup_finalized, "joined");
     world.state.joiner_offer_public_before_restart = Some(
         world
             .localnet
@@ -156,7 +155,7 @@ fn validator_joins_and_restarts(world: &mut World) {
         .localnet
         .launch_joiner(index, &[])
         .expect("restart joined production validator");
-    require_live_validator_progress(world, index, port, primary, restart_baseline, "restarted");
+    require_live_validator_progress(world, index, restart_baseline, "restarted");
 }
 
 #[then("the validator reopens the exact permanent key without re-registration")]

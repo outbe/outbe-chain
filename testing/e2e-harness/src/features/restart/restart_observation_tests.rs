@@ -18,6 +18,8 @@ use super::RestartFrozenRound;
 use super::RestartFrozenTarget;
 #[cfg(test)]
 use super::RestartPublicState;
+#[cfg(test)]
+use super::{BoundaryEpochs, SigningSample};
 
 use crate::internal::launch_log::LaunchLog;
 
@@ -25,46 +27,63 @@ use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
 
 use std::io::Write as _;
 
+fn window(height: u64, epoch: u64, misses: u64) -> SigningSample {
+    SigningSample {
+        height,
+        epoch,
+        misses,
+    }
+}
+
+fn epochs(previous: u64, next: u64, boundary: Option<u64>) -> BoundaryEpochs {
+    BoundaryEpochs {
+        previous,
+        next,
+        boundary,
+    }
+}
+
 #[test]
 fn signing_requires_five_eligible_blocks_and_their_delayed_accounting() {
     let start = 100;
     let closed = start + 5 + LATE_FINALIZE_WINDOW_K;
-    assert!(restart_signing_comparison(start, closed - 1, 1, 1, 1, 1).is_err());
-    assert!(restart_signing_comparison(start, closed, 1, 1, 1, 1).unwrap());
-    assert!(restart_signing_comparison(start, closed, 1, 1, 1, 2).is_err());
-    assert!(restart_signing_comparison(start, closed, 1, 1, 1, 0).is_err());
-    assert!(restart_signing_comparison(u64::MAX, u64::MAX, 1, 1, 0, 0).is_err());
+    assert!(restart_signing_comparison(window(start, 1, 1), window(closed - 1, 1, 1)).is_err());
+    assert!(restart_signing_comparison(window(start, 1, 1), window(closed, 1, 1)).unwrap());
+    assert!(restart_signing_comparison(window(start, 1, 1), window(closed, 1, 2)).is_err());
+    assert!(restart_signing_comparison(window(start, 1, 1), window(closed, 1, 0)).is_err());
+    assert!(restart_signing_comparison(window(u64::MAX, 1, 0), window(u64::MAX, 1, 0)).is_err());
 }
 
 #[test]
 fn later_rotation_requires_a_new_closed_window_not_a_false_failure() {
     let end = 100 + 5 + LATE_FINALIZE_WINDOW_K;
-    assert!(!restart_signing_comparison(100, end, 1, 2, 0, 1).unwrap());
+    assert!(!restart_signing_comparison(window(100, 1, 0), window(end, 2, 1)).unwrap());
     let drained = end + LATE_FINALIZE_WINDOW_K;
-    assert!(
-        restart_signing_comparison(drained, drained + 5 + LATE_FINALIZE_WINDOW_K, 2, 2, 1, 1)
-            .unwrap()
-    );
-    assert!(restart_signing_comparison(100, end, 2, 1, 1, 1).is_err());
+    assert!(restart_signing_comparison(
+        window(drained, 2, 1),
+        window(drained + 5 + LATE_FINALIZE_WINDOW_K, 2, 1)
+    )
+    .unwrap());
+    assert!(restart_signing_comparison(window(100, 2, 1), window(end, 1, 1)).is_err());
     assert!(restart_remaining_tries(std::time::Instant::now()).is_err());
 }
 
 #[test]
 fn admission_requires_one_canonical_boundary_without_partial_activation() {
-    assert!(!restart_boundary_transition(0, 0, None, false, false, true).unwrap());
-    assert!(restart_boundary_transition(0, 0, None, false, true, true).is_err());
-    assert!(restart_boundary_transition(0, 1, Some(1), false, true, true).unwrap());
-    assert!(restart_boundary_transition(1, 1, Some(1), true, true, true).is_err());
-    assert!(restart_boundary_transition(1, 2, Some(2), true, false, true).is_err());
-    assert!(restart_boundary_transition(0, 2, Some(2), false, true, true).is_err());
-    assert!(!restart_boundary_transition(1, 2, Some(2), true, true, true).unwrap());
+    assert!(!restart_boundary_transition(epochs(0, 0, None), false, false, true).unwrap());
+    assert!(restart_boundary_transition(epochs(0, 0, None), false, true, true).is_err());
+    assert!(restart_boundary_transition(epochs(0, 1, Some(1)), false, true, true).unwrap());
+    assert!(restart_boundary_transition(epochs(1, 1, Some(1)), true, true, true).is_err());
+    assert!(restart_boundary_transition(epochs(1, 2, Some(2)), true, false, true).is_err());
+    assert!(restart_boundary_transition(epochs(0, 2, Some(2)), false, true, true).is_err());
+    assert!(!restart_boundary_transition(epochs(1, 2, Some(2)), true, true, true).unwrap());
 }
 
 #[test]
 fn registered_admission_allows_an_intervening_rotation_but_frozen_target_does_not() {
-    assert!(!restart_boundary_transition(0, 1, Some(1), false, false, false).unwrap());
-    assert!(restart_boundary_transition(1, 2, Some(2), false, true, false).unwrap());
-    assert!(restart_boundary_transition(0, 1, Some(1), false, false, true).is_err());
+    assert!(!restart_boundary_transition(epochs(0, 1, Some(1)), false, false, false).unwrap());
+    assert!(restart_boundary_transition(epochs(1, 2, Some(2)), false, true, false).unwrap());
+    assert!(restart_boundary_transition(epochs(0, 1, Some(1)), false, false, true).is_err());
 }
 
 #[test]
