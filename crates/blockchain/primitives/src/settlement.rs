@@ -1,4 +1,4 @@
-//! Settlement cost rule shared by every right and by Lysis. The cost is computed at
+//! Settlement cost rule shared by Nod, Gem, Intex and Lysis. The cost is computed at
 //! full precision, any FX leg included, and then floored once into the settlement
 //! asset's minor units.
 

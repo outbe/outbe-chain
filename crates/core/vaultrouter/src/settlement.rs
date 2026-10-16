@@ -1,6 +1,7 @@
-//! Settlement pricing and payment that Nod, Gem and Intex share. The asset must have a
-//! vault and carry one of the right's two currencies. The cost is floored once into
-//! the asset's minor units. The payment lands in the reserve vault through the router.
+//! Settlement pricing that Nod, Gem and Intex share, and the payment Credis collects too.
+//! The asset must have a vault and carry one of the right's two currencies. The cost is
+//! floored once into the asset's minor units. The payment lands in the reserve vault
+//! through the router.
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
