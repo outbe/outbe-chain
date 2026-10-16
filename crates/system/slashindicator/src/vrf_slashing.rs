@@ -9,8 +9,9 @@ use outbe_consensus::proof::{
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
-use outbe_primitives::slashing_journal::{iso8601_now, record as journal_record, JournalRecord};
+use outbe_primitives::slashing_journal::{record as journal_record, JournalRecord};
 use outbe_primitives::system_tx::{recover_phase1_proposer, SystemTxInputV2};
+use outbe_primitives::time::iso8601_now;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::state::{committee_snapshot_key, read_committee_snapshot};
 use tracing::warn;

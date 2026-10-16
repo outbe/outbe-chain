@@ -284,52 +284,10 @@ pub fn record(record: JournalRecord) {
     }
 }
 
-/// Returns an ISO-8601 UTC timestamp string for `wall_clock` fields.
-///
-/// Uses raw `std::time::SystemTime` rather than `chrono` to avoid pulling
-/// a new dependency. Format: `YYYY-MM-DDTHH:MM:SS.mmmZ`.
-pub fn iso8601_now() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let total_secs = now.as_secs() as i64;
-    let millis = now.subsec_millis();
-    let (year, month, day, hour, minute, second) = unix_to_civil(total_secs);
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millis:03}Z")
-}
-
-/// Decompose Unix seconds into (Y, M, D, h, m, s) UTC. Pure integer arithmetic.
-fn unix_to_civil(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
-    let days = secs.div_euclid(86_400);
-    let rem = secs.rem_euclid(86_400);
-    let hour = (rem / 3600) as u32;
-    let minute = ((rem % 3600) / 60) as u32;
-    let second = (rem % 60) as u32;
-    let (year, month, day) = days_to_civil(days);
-    (year, month, day, hour, minute, second)
-}
-
-/// Howard Hinnant's days-from-epoch -> civil-date algorithm. `crate::time`
-/// already uses the same algorithm. This module keeps its own copy to avoid
-/// coupling timestamps.
-fn days_to_civil(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u32;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = (yoe as i64) + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::time::iso8601_now;
     use std::io::Read;
 
     #[test]
@@ -357,16 +315,6 @@ mod tests {
         assert!(json.contains("\"event\":\"proposer_felony\""));
         assert!(json.contains("\"felony_count\":1"));
         assert!(json.contains("\"validator\":\"0x2cf6fbd0\""));
-    }
-
-    #[test]
-    fn iso8601_format_shape() {
-        let s = iso8601_now();
-        // YYYY-MM-DDTHH:MM:SS.mmmZ - 24 chars including separators
-        assert_eq!(s.len(), 24);
-        assert!(s.ends_with('Z'));
-        assert!(s.chars().nth(4) == Some('-'));
-        assert!(s.chars().nth(10) == Some('T'));
     }
 
     #[test]
