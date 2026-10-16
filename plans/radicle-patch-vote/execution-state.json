@@ -110,9 +110,10 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "b827c090c",
-    "checks": "74 full adapter tests/0ignored;7 consumers all-target check;adapter+node Clippy-Dwarnings;5 touched-file fmt PASS.",
-    "acceptance": "Intermediate P3/P4. Fixture chain/DKG; actual native Git persistence/actor/public signatures,not live admission/collector/E2E."
+    "source_sha": "af1b58024",
+    "production_source_sha": "b827c090c",
+    "checks": "74 adapter tests/0ignored;adapter all-target Clippy-Dwarnings;touched-test fmt PASS. Production seven-consumer build from b827c090c remains valid: only test changed.",
+    "scenarios": "Actual SDK native/q package -> actor identity attestations -> actual ValidatorSet/RadicleRegistry q2 pending/q3 accepted checkpoint and RID -> native historical proof/policy. DKG/finality/chain provider fixture remains; no complete runtime E2E."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
@@ -162,5 +163,6 @@
   "bootstrap_native_evidence": "evidence/outbe-chain-pjz.5/native-bootstrap",
   "bootstrap_signing_evidence": "evidence/outbe-chain-pjz.4/bootstrap-signing",
   "local_bootstrap_context_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-context",
-  "bootstrap_attestation_evidence": "evidence/outbe-chain-pjz.5/bootstrap-attestation"
+  "bootstrap_attestation_evidence": "evidence/outbe-chain-pjz.5/bootstrap-attestation",
+  "bootstrap_registry_evidence": "evidence/outbe-chain-pjz.5/bootstrap-registry"
 }
