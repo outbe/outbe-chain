@@ -80,11 +80,22 @@ pub fn is_soft_materialization_revert_data(data: &[u8]) -> bool {
     .any(|rejection| data == materialization_revert_data(rejection).as_ref())
 }
 
-/// Maps the public handler's stable string errors onto typed ABI reverts.
+/// Maps the public handler's errors onto typed ABI reverts. Any other deterministic
+/// rejection becomes `InvalidProof`, a status-zero receipt rather than a failed block.
 pub(crate) fn typed_materialization_error(error: PrecompileError) -> PrecompileError {
-    let Some(reason) = NodFactoryError::revert_reason(&error) else {
-        return error;
-    };
+    let rejection = match &error {
+        PrecompileError::Revert(reason) => known_rejection(reason),
+        PrecompileError::BodyReadCorruption(_) => None,
+        _ => return error,
+    }
+    .unwrap_or_else(|| {
+        tracing::warn!(target: "outbe::nodfactory", %error, "materialization carrier rejected");
+        NodMaterializationRejectionV1::InvalidProof
+    });
+    PrecompileError::RevertBytes(materialization_revert_data(rejection))
+}
+
+fn known_rejection(reason: &str) -> Option<NodMaterializationRejectionV1> {
     let rejection = if reason == NodFactoryError::UnauthorizedMaterializer.to_string() {
         NodMaterializationRejectionV1::UnauthorizedSigner
     } else if reason == NodFactoryError::MaterializationAttemptLimit.to_string() {
@@ -100,9 +111,9 @@ pub(crate) fn typed_materialization_error(error: PrecompileError) -> PrecompileE
     } else if reason == NodFactoryError::DuplicateMaterializedNod.to_string() {
         NodMaterializationRejectionV1::DuplicateNod
     } else {
-        return error;
+        return None;
     };
-    PrecompileError::RevertBytes(materialization_revert_data(rejection))
+    Some(rejection)
 }
 
 /// Repeats current ACTIVE OCOMP-role authorization at the execution owner.

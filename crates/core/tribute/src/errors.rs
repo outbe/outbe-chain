@@ -59,6 +59,21 @@ pub enum TributeError {
     #[error("invalid certified Tribute protocol value: {0}")]
     InvalidCertifiedProtocolValue(String),
 
+    #[error("retained Tribute source is missing")]
+    RetainedSourceMissing,
+
+    #[error("retained Tribute source is not encrypted")]
+    RetainedSourceNotEncrypted,
+
+    #[error("retained Tribute source position mismatch")]
+    RetainedSourcePositionMismatch,
+
+    #[error("retained Tribute source does not match its index")]
+    RetainedSourceIndexMismatch,
+
+    #[error("invalid retained Tribute source: {0}")]
+    InvalidRetainedSource(String),
+
     #[error("invalid encrypted Tribute day identity")]
     InvalidEncryptedDayIdentity,
 

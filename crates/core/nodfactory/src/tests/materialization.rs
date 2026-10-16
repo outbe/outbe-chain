@@ -925,3 +925,74 @@ fn state_authority_uses_retained_ciphertext_and_the_installed_request_checkpoint
         })
         .unwrap();
 }
+
+#[test]
+fn a_retained_tribute_that_no_longer_matches_its_index_is_a_soft_rejection() {
+    let mut world = World::new();
+    let population = population(8);
+    seed_generation(&mut world, &population);
+    let fixture =
+        crate::test_support::MaterializationFixtureBuilder::new(&population.actions, CHAIN_ID)
+            .build()
+            .unwrap();
+    world
+        .enter(|storage| fixture.seed_sources(&storage))
+        .unwrap();
+    let authority = protected_authority(&mut world, fixture.subject);
+    let carrier = fixture
+        .protect(&authority, &batch(&population, 0, 8))
+        .unwrap();
+    let id = outbe_primitives::wwd_entity_id::WwdEntityId::from(population.actions[3].tribute_id);
+    world
+        .enter(|storage| {
+            outbe_tribute::TributeContract::new(storage)
+                .day_id_position
+                .write(&id, 99)
+        })
+        .unwrap();
+    let before = world.provider.storage.clone();
+
+    let error = apply_protected(&mut world, &carrier).unwrap_err();
+
+    assert!(matches!(
+        &error,
+        PrecompileError::Revert(reason)
+            if reason == &outbe_tribute::errors::TributeError::RetainedSourcePositionMismatch.to_string()
+    ));
+    let PrecompileError::RevertBytes(data) =
+        crate::materialization::typed_materialization_error(error)
+    else {
+        panic!("a deterministic rejection must map to typed revert data");
+    };
+    assert!(crate::materialization::is_soft_materialization_revert_data(
+        &data
+    ));
+    assert_eq!(world.provider.storage, before);
+    assert!(head(&mut world).is_some());
+}
+
+#[test]
+fn only_node_local_materialization_failures_stay_hard() {
+    use crate::materialization::{
+        is_soft_materialization_revert_data, typed_materialization_error,
+    };
+    let soft = |error| {
+        matches!(typed_materialization_error(error), PrecompileError::RevertBytes(data)
+            if is_soft_materialization_revert_data(&data))
+    };
+    assert!(soft(PrecompileError::Revert("bucket overflow".into())));
+    assert!(soft(PrecompileError::BodyReadCorruption("bad body".into())));
+    assert!(soft(NodFactoryError::DuplicateMaterializedNod.into()));
+    assert!(!soft(NodFactoryError::UnauthorizedMaterializer.into()));
+    for hard in [
+        PrecompileError::Storage("read failed".into()),
+        PrecompileError::EnclaveUnavailable("down".into()),
+        PrecompileError::Fatal("corrupt".into()),
+    ] {
+        let kind = std::mem::discriminant(&hard);
+        assert_eq!(
+            std::mem::discriminant(&typed_materialization_error(hard)),
+            kind
+        );
+    }
+}

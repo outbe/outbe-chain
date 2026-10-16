@@ -16,7 +16,7 @@ use outbe_primitives::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{storage_records::StoredTributeEntryExt, TributeContract};
+use crate::{errors::TributeError, storage_records::StoredTributeEntryExt, TributeContract};
 
 pub fn retained_source_binding(
     storage: &StorageHandle<'_>,
@@ -25,23 +25,24 @@ pub fn retained_source_binding(
 ) -> Result<B256> {
     let contract = TributeContract::new(storage.clone());
     let source = crate::state_api::get_retained_record(storage, id)?
-        .ok_or_else(|| invalid("retained Tribute source is missing"))?;
+        .ok_or(TributeError::RetainedSourceMissing)?;
     let tribute = source
         .encrypted()
-        .ok_or_else(|| invalid("Tribute source is not encrypted"))?;
+        .ok_or(TributeError::RetainedSourceNotEncrypted)?;
     let position = contract.day_id_position.read(&id)?;
     if position == 0 || position > subject.tribute_count {
-        return Err(invalid("retained Tribute source position mismatch"));
+        return Err(TributeError::RetainedSourcePositionMismatch.into());
     }
     let index = position - 1;
-    let words = expected_record_words(&contract, subject, index, tribute)?;
+    let words = expected_record_words(&contract, subject, index, tribute)
+        .map_err(|error| TributeError::InvalidRetainedSource(error.to_string()))?;
     for (slot, expected) in &words {
         if storage.sload(TRIBUTE_ADDRESS, U256::from_be_bytes(slot.0))? != *expected {
-            return Err(invalid("retained Tribute source does not match its index"));
+            return Err(TributeError::RetainedSourceIndexMismatch.into());
         }
     }
     outbe_tee::tribute_source::source_binding(tribute, index, &words)
-        .map_err(|error| invalid(error.to_string()))
+        .map_err(|error| TributeError::InvalidRetainedSource(error.to_string()).into())
 }
 
 /// The caller obtains this checkpoint from verified request finality.
