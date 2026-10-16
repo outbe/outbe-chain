@@ -1812,6 +1812,59 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
         .recover_review(&providers[0], &again, &contributions[..3])
         .is_err());
     signature.verify(&again.subject, owner).unwrap();
+    for (name, oid) in accepted_predecessor.owner_refs().iter() {
+        let name = git::fmt::Qualified::from_refstr(name)
+            .unwrap()
+            .with_namespace((&owner).into());
+        receiver
+            .raw()
+            .reference(name.as_str(), (*oid).into(), false, "Accepted predecessor")
+            .unwrap();
+    }
+    let sigrefs_name = git::refs::storage::sigrefs(&owner);
+    receiver
+        .raw()
+        .reference(
+            sigrefs_name.as_str(),
+            previous_sigrefs.into(),
+            false,
+            "Accepted predecessor",
+        )
+        .unwrap();
+    receiver
+        .raw()
+        .reference_symbolic(
+            git::refs::storage::id(&owner).as_str(),
+            git::refs::storage::cob(&owner, &identity::TYPENAME, &identity.into()).as_str(),
+            true,
+            "Preserve native identity reference",
+        )
+        .unwrap();
+    for reference in repo
+        .raw()
+        .references_glob(&format!("refs/namespaces/{}/refs/*", author.public_key()))
+        .unwrap()
+    {
+        let reference = reference.unwrap();
+        receiver
+            .raw()
+            .reference(
+                reference.name().unwrap(),
+                reference.resolve().unwrap().target().unwrap(),
+                false,
+                "Ordinary author refs",
+            )
+            .unwrap();
+    }
+    receiver.set_identity_head_to(identity).unwrap();
+    receiver
+        .set_canonical_symbolic_refs("Accepted predecessor")
+        .unwrap();
+    receiver.set_default_branch_to_canonical_head().unwrap();
+    let main_name = git::fmt::qualified!("refs/heads/main")
+        .with_namespace((&owner).into())
+        .to_string();
+    let review_name = git::refs::storage::cob(&owner, &patch::TYPENAME, &patch_id);
     for encoded in &bundles {
         let witness = RepositoryWitnessBundle::from_bytes(encoded).unwrap();
         witness
@@ -1828,6 +1881,117 @@ fn exact_vote_revision_preparation_ignores_later_author_updates_and_threshold_ac
             .unwrap();
         assert_eq!(historical.manifest(), &review_manifest);
         assert_eq!(historical.receipt(), accepted_verifier.receipt());
+        receiver
+            .raw()
+            .reference(&main_name, head.into(), true, "Conflicting local target")
+            .unwrap();
+        let before = receiver.references_of(&owner).unwrap();
+        assert!(matches!(
+            historical.install(&receiver),
+            Err(crate::integration::publication::Error::RefConflict)
+        ));
+        assert_eq!(receiver.references_of(&owner).unwrap(), before);
+        receiver
+            .raw()
+            .reference(&main_name, base.into(), true, "Restore accepted target")
+            .unwrap();
+        let extra = git::fmt::qualified!("refs/heads/unaccepted")
+            .with_namespace((&owner).into())
+            .to_string();
+        receiver
+            .raw()
+            .reference(&extra, head.into(), false, "Unaccepted owner ref")
+            .unwrap();
+        let before = receiver.references_of(&owner).unwrap();
+        assert!(matches!(
+            historical.install(&receiver),
+            Err(crate::integration::publication::Error::RefConflict)
+        ));
+        assert_eq!(receiver.references_of(&owner).unwrap(), before);
+        receiver
+            .raw()
+            .find_reference(&extra)
+            .unwrap()
+            .delete()
+            .unwrap();
+        for name in [review_name.as_str(), sigrefs_name.as_str()] {
+            let original = receiver.raw().refname_to_id(name).ok();
+            receiver
+                .raw()
+                .reference(name, base.into(), true, "Conflicting publication ref")
+                .unwrap();
+            let before = receiver.references_of(&owner).unwrap();
+            assert!(matches!(
+                historical.install(&receiver),
+                Err(crate::integration::publication::Error::RefConflict)
+            ));
+            assert_eq!(receiver.references_of(&owner).unwrap(), before);
+            match original {
+                Some(oid) => {
+                    receiver
+                        .raw()
+                        .reference(name, oid, true, "Restore ref")
+                        .unwrap();
+                }
+                None => receiver
+                    .raw()
+                    .find_reference(name)
+                    .unwrap()
+                    .delete()
+                    .unwrap(),
+            }
+        }
+        historical.install(&receiver).unwrap();
+        historical.install(&receiver).unwrap();
+        // A crash can leave the COB promoted before sigrefs; retry must finish that state.
+        receiver
+            .raw()
+            .reference(
+                sigrefs_name.as_str(),
+                previous_sigrefs.into(),
+                true,
+                "Interrupted install",
+            )
+            .unwrap();
+        historical.install(&receiver).unwrap();
+        assert_eq!(
+            receiver.raw().refname_to_id(review_name.as_str()).unwrap(),
+            review.id.into()
+        );
+        assert_eq!(
+            receiver.raw().refname_to_id(sigrefs_name.as_str()).unwrap(),
+            signed_refs.into()
+        );
+        assert_eq!(
+            receiver.raw().refname_to_id(&main_name).unwrap(),
+            base.into()
+        );
+        assert!(receiver
+            .raw()
+            .find_reference(git::refs::storage::id(&owner).as_str())
+            .unwrap()
+            .symbolic_target()
+            .unwrap()
+            .is_some());
+        let accepted = cob::get::<Patch, _>(&receiver, &patch::TYPENAME, &patch_id)
+            .unwrap()
+            .unwrap()
+            .object;
+        assert_eq!(
+            accepted
+                .revision(&revision)
+                .unwrap()
+                .review_by(&owner)
+                .unwrap()
+                .verdict(),
+            Some(patch::Verdict::Accept)
+        );
+        assert!(accepted
+            .revision(&later_revision)
+            .unwrap()
+            .review_by(&owner)
+            .is_none());
+        assert!(accepted.is_open());
         assert!(
             crate::integration::publication::review::verify_accepted_review_publication(
                 &receiver,

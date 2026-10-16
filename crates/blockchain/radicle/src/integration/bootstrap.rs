@@ -523,42 +523,13 @@ impl AcceptedBootstrapPublication {
         if repo.id().into_sha1() != Some(body.repo_id.0) {
             return Err(Error::Descriptor);
         }
-        let owner: RepositoryKey = BlsPublicKey::from_bytes(body.owner_bls_public.0)?.into();
-        let mut updates = Vec::new();
-        for update in self.manifest.refs() {
-            let name = git::fmt::RefString::try_from(update.name.clone())
-                .map_err(|_| Error::Descriptor)?;
-            let name = git::fmt::Qualified::from_refstr(&name)
-                .ok_or(Error::Descriptor)?
-                .with_namespace((&owner).into())
-                .to_string();
-            let old: git::Oid = update.old.parse().map_err(|_| Error::Descriptor)?;
-            let new: git::Oid = update.new.parse().map_err(|_| Error::Descriptor)?;
-            if new.is_zero() {
-                return Err(Error::Descriptor);
+        super::publication::install_owner_refs(repo, body, &self.manifest).map_err(|error| {
+            match error {
+                super::publication::Error::RefConflict => Error::RefConflict,
+                super::publication::Error::Git(error) => Error::Git(error),
+                error => Error::Manifest(error),
             }
-            updates.push((name, old, new));
-        }
-        updates.sort_by(|a, b| a.0.cmp(&b.0));
-        let mut transaction = repo.raw().transaction()?;
-        for (name, _, _) in &updates {
-            transaction.lock_ref(name)?;
-        }
-        for (name, old, new) in &updates {
-            let current = match repo.raw().find_reference(name) {
-                Ok(reference) => Some(reference.target().ok_or(Error::RefConflict)?.into()),
-                Err(error) if error.code() == git::raw::ErrorCode::NotFound => None,
-                Err(error) => return Err(error.into()),
-            };
-            if current == Some(*new) {
-                continue;
-            }
-            if current != (!old.is_zero()).then_some(*old) {
-                return Err(Error::RefConflict);
-            }
-            transaction.set_target(name, (*new).into(), None, "Outbe accepted bootstrap")?;
-        }
-        transaction.commit()?;
+        })?;
         let identity = self
             .manifest
             .owner_refs()?

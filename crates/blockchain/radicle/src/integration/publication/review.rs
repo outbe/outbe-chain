@@ -281,6 +281,10 @@ pub struct AcceptedReviewPublication {
 }
 
 impl AcceptedReviewPublication {
+    /// Promote only this accepted Review; the target branch remains at its signed snapshot.
+    pub fn install(&self, repo: &Repository) -> Result<(), super::Error> {
+        super::install_owner_refs(repo, &self.receipt.receipt().body, &self.manifest)
+    }
     pub fn receipt(&self) -> &FinalizedPublicationReceipt {
         &self.receipt
     }
