@@ -7,7 +7,7 @@
 use alloy_primitives::U256;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use core::fmt::Write;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
 
 const DECIMALS: u32 = 6;
 
@@ -193,20 +193,15 @@ fn split(minor: U256, precision: u32) -> (U256, String) {
     (minor / scale, fraction)
 }
 
-/// `DD.MM.YYYY HH:MM UTC`, via Howard Hinnant's `civil_from_days`.
+/// `DD.MM.YYYY HH:MM UTC`.
 pub fn timestamp_utc(timestamp: u64) -> String {
-    let z = timestamp / SECONDS_PER_DAY + 719_468;
-    let era = z / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + u64::from(month <= 2);
+    let date = timestamp_to_date_key(timestamp);
     let seconds = timestamp % SECONDS_PER_DAY;
     format!(
-        "{day:02}.{month:02}.{year} {:02}:{:02} UTC",
+        "{:02}.{:02}.{} {:02}:{:02} UTC",
+        date % 100,
+        date / 100 % 100,
+        date / 10_000,
         seconds / 3_600,
         seconds % 3_600 / 60
     )
