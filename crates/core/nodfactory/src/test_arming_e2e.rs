@@ -65,7 +65,7 @@ fn issue(storage: &StorageHandle<'_>, call: INodFactoryTestArming::issueForTestC
         call.creatorPublicKey.0,
         call.gratisLoadMinor,
     )
-    .map_err(crate::errors::NodFactoryError::revert_message)?;
+    .map_err(crate::errors::NodFactoryError::CreateNodForTest)?;
     runtime::issue_nod(storage, &encrypted)?;
     if call.issuedAt != 0 {
         let bucket_key =

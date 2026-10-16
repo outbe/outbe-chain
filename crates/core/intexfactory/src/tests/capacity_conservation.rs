@@ -72,7 +72,6 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     p.set_timestamp(U256::from(at));
     StorageHandle::enter(p, |s| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, at, 1), s);
-        crate::hooks::sweep_proceeds(&ctx)?;
         crate::hooks::sweep_forfeits(&ctx)?;
         crate::called::run_call_slice(&ctx)?;
         crate::notify::send_notices(&ctx)

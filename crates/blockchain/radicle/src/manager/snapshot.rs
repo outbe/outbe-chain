@@ -79,10 +79,12 @@ fn read_snapshot_from_storage(
                     .validator_by_radicle_node_id(binding)
                     .map_err(snapshot_error)?;
                 if reverse != record.validator_address {
-                    return Err(ManagerError::Snapshot(format!(
-                        "Radicle reverse binding mismatch for {}",
-                        record.validator_address
-                    )));
+                    return Err(
+                        crate::errors::SnapshotInconsistencyReason::ReverseBindingMismatch(
+                            record.validator_address,
+                        )
+                        .into(),
+                    );
                 }
                 Some(binding.0)
             };
@@ -130,9 +132,8 @@ impl StorageReader for RethStateReader<'_> {
             .storage(address, key)
             .map(|value| value.unwrap_or(U256::ZERO))
             .map_err(|error| {
-                outbe_primitives::error::PrecompileError::Storage(format!(
-                    "finalized state read failed: {error}"
-                ))
+                crate::errors::SnapshotStateReadError::FinalizedStateReadFailed(error.to_string())
+                    .into()
             })
     }
 }
@@ -180,9 +181,11 @@ where
     fn subscribe(&self) -> Result<mpsc::UnboundedReceiver<FinalizedBlock>, ManagerError> {
         self.subscription
             .lock()
-            .map_err(|_| ManagerError::Finality("finality subscription lock poisoned".into()))?
+            .map_err(|_| {
+                ManagerError::from(crate::errors::FinalityFeedReason::SubscriptionLockPoisoned)
+            })?
             .take()
-            .ok_or_else(|| ManagerError::Finality("finality feed already subscribed".into()))
+            .ok_or_else(|| crate::errors::FinalityFeedReason::AlreadySubscribed.into())
     }
 
     fn sample(&self) -> BoxFuture<'_, Result<Option<FinalizedBlock>, ManagerError>> {

@@ -227,6 +227,119 @@ pub enum DkgError {
 
     #[error("failed to replay durable DKG ACK: {0}")]
     ReplayDurableAck(String),
+
+    #[error("zero validator cap")]
+    ZeroValidatorCap,
+}
+
+/// Wire-level invalid message reasons for `DkgMessage`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum DkgWireInvalidReason {
+    #[error("unsupported wire version")]
+    UnsupportedWireVersion,
+    #[error("unknown tag")]
+    UnknownTag,
+    #[error("wrong ceremony id")]
+    WrongCeremonyId,
+}
+
+impl From<DkgWireInvalidReason> for commonware_codec::Error {
+    fn from(reason: DkgWireInvalidReason) -> Self {
+        let message = match reason {
+            DkgWireInvalidReason::UnsupportedWireVersion => "unsupported wire version",
+            DkgWireInvalidReason::UnknownTag => "unknown tag",
+            DkgWireInvalidReason::WrongCeremonyId => "wrong ceremony id",
+        };
+        Self::Invalid("DkgMessage", message)
+    }
+}
+
+impl From<DkgWireInvalidReason> for crate::dkg_actor::wire::DkgMessageReadError {
+    fn from(reason: DkgWireInvalidReason) -> Self {
+        Self::Codec(reason.into())
+    }
+}
+
+/// Typed rejection reasons for consensus header artifacts during admission.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum HeaderArtifactRejectError {
+    #[error("block BoundaryOutcome does not match pending DKG boundary")]
+    BoundaryOutcomeMismatch,
+    #[error("block omitted pending DKG BoundaryOutcome")]
+    OmittedPendingBoundaryOutcome,
+    #[error("duplicate DKG BoundaryOutcome after parent ancestry already committed it")]
+    DuplicateBoundaryOutcomeAfterAncestryCommitted,
+    #[error("block carried DKG BoundaryOutcome without pending boundary")]
+    CarriedBoundaryOutcomeWithoutPending,
+    #[error("committee pre-announce has no successor for the round epoch")]
+    PreAnnounceNoSuccessorForRoundEpoch,
+    #[error(
+        "committee pre-announce epoch {announced_epoch} is not the successor of round epoch {round_epoch}"
+    )]
+    PreAnnounceEpochNotSuccessor {
+        announced_epoch: u64,
+        round_epoch: u64,
+    },
+    #[error("no pending DKG boundary artifact to validate committee pre-announce")]
+    NoPendingBoundaryForPreAnnounce,
+    #[error(
+        "committee pre-announce outcome does not match local DKG output for epoch {announced_epoch}"
+    )]
+    PreAnnounceOutcomeMismatch { announced_epoch: u64 },
+}
+
+impl From<HeaderArtifactRejectError> for crate::dkg_manager::ArtifactAdmissionError {
+    fn from(error: HeaderArtifactRejectError) -> Self {
+        Self::Rejected(error.to_string())
+    }
+}
+
+/// Typed reasons why DKG boundary ancestry resolution is unavailable or conflicts.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum BoundaryResolutionError {
+    #[error("boundary requirement requested emission without pending artifact")]
+    EmissionWithoutPendingArtifact,
+    #[error("cached DKG BoundaryOutcome conflicts with pending boundary")]
+    CachedOutcomeConflictsWithPending,
+    #[error("cached parent ancestry carries conflicting DKG BoundaryOutcome")]
+    CachedAncestryCarriesConflictingOutcome,
+    #[error("parent ancestry carries conflicting DKG BoundaryOutcome")]
+    AncestryCarriesConflictingOutcome,
+    #[error(
+        "DKG boundary ancestry unavailable before seeing pending boundary: missing parent {expected_hash} at height {expected_height}"
+    )]
+    MissingParentBeforePendingBoundary {
+        expected_hash: B256,
+        expected_height: u64,
+    },
+    #[error(
+        "DKG boundary ancestry unavailable: parent {expected_hash} resolved at height {actual_height}, expected {expected_height}"
+    )]
+    ParentHeightMismatch {
+        expected_hash: B256,
+        actual_height: u64,
+        expected_height: u64,
+    },
+    #[error("DKG boundary ancestry unavailable: marshal ancestry reader is not ready")]
+    MarshalAncestryReaderNotReady,
+}
+
+impl From<BoundaryResolutionError> for crate::dkg_manager::BoundaryRequirementError {
+    fn from(error: BoundaryResolutionError) -> Self {
+        match error {
+            BoundaryResolutionError::CachedOutcomeConflictsWithPending
+            | BoundaryResolutionError::CachedAncestryCarriesConflictingOutcome
+            | BoundaryResolutionError::AncestryCarriesConflictingOutcome => {
+                Self::Conflict(error.to_string())
+            }
+            BoundaryResolutionError::EmissionWithoutPendingArtifact
+            | BoundaryResolutionError::MissingParentBeforePendingBoundary { .. }
+            | BoundaryResolutionError::ParentHeightMismatch { .. }
+            | BoundaryResolutionError::MarshalAncestryReaderNotReady => {
+                Self::Unavailable(error.to_string())
+            }
+        }
+    }
 }
 
 impl DkgError {

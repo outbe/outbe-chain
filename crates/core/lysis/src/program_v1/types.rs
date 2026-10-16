@@ -5,7 +5,7 @@ use outbe_primitives::entity_codec::TributeBodyV1;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
-pub use crate::errors::ProgramErrorV1;
+pub use crate::errors::{LysisArithmeticErrorV1, ProgramErrorV1};
 
 /// One canonical Tribute body required by Lysis V1.
 #[derive(Clone, Debug, Eq, PartialEq)]

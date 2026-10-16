@@ -10,7 +10,7 @@ use alloy_primitives::{keccak256, B256};
 use outbe_primitives::error::Result;
 use outbe_primitives::time::WorldwideDay;
 
-use crate::{errors::storage_corruption_message, schema::MetadosisContract};
+use crate::{errors::MetadosisStorageCorruptionError, schema::MetadosisContract};
 
 /// Domain separator for terminal-index entry keys. Versioned so a future
 /// layout change cannot collide with V1 keys.
@@ -52,20 +52,19 @@ impl MetadosisContract<'_> {
     pub(crate) fn terminal_intents_for(&self, wwd: WorldwideDay) -> Result<Vec<B256>> {
         let count = self.terminal_intent_count(wwd)?;
         if count > 1 {
-            return Err(storage_corruption_message(
-                "OCOMP terminal index violates the single-attempt model",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompTerminalIndexViolatesSingleAttemptModel
+                    .into(),
+            );
         }
         let mut intents = Vec::new();
         intents
             .try_reserve_exact(usize::from(count))
-            .map_err(|_| storage_corruption_message("allocate bounded OCOMP terminal index"))?;
+            .map_err(|_| MetadosisStorageCorruptionError::AllocateBoundedOcompTerminalIndex)?;
         for index in 0..count {
-            let intent_id = self.terminal_intent_at(wwd, index)?.ok_or_else(|| {
-                storage_corruption_message(
-                    "OCOMP terminal index is sparse below its recorded count",
-                )
-            })?;
+            let intent_id = self.terminal_intent_at(wwd, index)?.ok_or(
+                MetadosisStorageCorruptionError::OcompTerminalIndexSparseBelowRecordedCount,
+            )?;
             intents.push(intent_id);
         }
         Ok(intents)
@@ -81,25 +80,23 @@ impl MetadosisContract<'_> {
         intent_id: B256,
     ) -> Result<()> {
         if intent_id.is_zero() {
-            return Err(storage_corruption_message(
-                "OCOMP terminal index rejects a zero IntentId",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompTerminalIndexRejectsZeroIntentId.into(),
+            );
         }
         let count = self.terminal_intent_count(wwd)?;
         if count != 0 {
-            return Err(storage_corruption_message(
-                "OCOMP WorldwideDay already has a terminal job",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompWorldwideDayAlreadyHasTerminalJob.into(),
+            );
         }
         let key = terminal_entry_key(wwd, count);
         if !self.ocomp_terminal_intents.read(&key)?.is_zero() {
-            return Err(storage_corruption_message(
-                "OCOMP terminal index entry is immutable",
-            ));
+            return Err(MetadosisStorageCorruptionError::OcompTerminalIndexEntryImmutable.into());
         }
         let next = count
             .checked_add(1)
-            .ok_or_else(|| storage_corruption_message("OCOMP terminal index count overflow"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompTerminalIndexCountOverflow)?;
         self.ocomp_terminal_intents.write(&key, intent_id)?;
         self.ocomp_terminal_counts.write(&wwd, next)?;
         Ok(())

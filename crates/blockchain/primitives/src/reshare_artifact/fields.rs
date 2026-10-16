@@ -1,6 +1,6 @@
 //! Fixed-size record payloads that execution produces. Validation is structural only.
 use super::{
-    ExecutionSummaryArtifact, PrecompileError, Result, EXECUTION_SUMMARY_LEN,
+    ExecutionSummaryArtifact, ReshareArtifactError, Result, EXECUTION_SUMMARY_LEN,
     TIMESTAMP_MILLIS_PART_LEN, U256,
 };
 
@@ -20,10 +20,9 @@ pub(super) fn encode_timestamp(timestamp_millis_part: u64) -> Vec<u8> {
 
 pub(super) fn decode_execution_summary(payload: &[u8]) -> Result<ExecutionSummaryArtifact> {
     if payload.len() != EXECUTION_SUMMARY_LEN {
-        return Err(PrecompileError::revert(format!(
-            "invalid execution summary artifact length: {}",
-            payload.len()
-        )));
+        return Err(
+            ReshareArtifactError::InvalidExecutionSummaryLength { len: payload.len() }.into(),
+        );
     }
 
     Ok(ExecutionSummaryArtifact {
@@ -33,11 +32,11 @@ pub(super) fn decode_execution_summary(payload: &[u8]) -> Result<ExecutionSummar
 
 pub(super) fn decode_timestamp(payload: &[u8]) -> Result<u64> {
     if payload.len() != TIMESTAMP_MILLIS_PART_LEN {
-        return Err(PrecompileError::revert(format!(
-            "timestamp_millis_part payload length: {} (expected {})",
-            payload.len(),
-            TIMESTAMP_MILLIS_PART_LEN
-        )));
+        return Err(ReshareArtifactError::InvalidTimestampMillisPartLength {
+            len: payload.len(),
+            expected: TIMESTAMP_MILLIS_PART_LEN,
+        }
+        .into());
     }
     let mut buf = [0u8; TIMESTAMP_MILLIS_PART_LEN];
     buf.copy_from_slice(payload);

@@ -44,6 +44,9 @@ outbe-gratis = { workspace = true, features = ["test-enclave"] }
 outbe-tee-enclave.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
 revm.workspace = true
+outbe-evm = { workspace = true, features = ["test-utils"] }
+outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
+outbe-oracle = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = []

@@ -338,6 +338,7 @@ fn prepared_request(
             head: head.encode_canonical(&limits).unwrap(),
             subtree_height: 1,
             source_bindings,
+            nod_gratis_load_max: U256::from(100_000_000),
         },
         batch: NodMaterializationBatchV1 {
             queue_sequence: 1,

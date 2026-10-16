@@ -70,10 +70,9 @@ fn external_live_job_view_exposes_public_protocol_types() {
 use std::collections::BTreeMap;
 
 use alloy_consensus::Sealable;
-use outbe_intex::schema::{IntexContract, SeriesId, SeriesRecord};
 use outbe_nod::schema::{NodCertifiedGenerationProjection, NodContract};
 use outbe_primitives::{
-    storage::{hashmap::HashMapStorageProvider, types::Storable, StorageHandle},
+    storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::WorldwideDay,
 };
 use reth_ethereum::{
@@ -217,6 +216,7 @@ fn seed_nod_generation(
         bucket_count: 1,
         nod_amount_total: U256::from(99),
         lysis_allocation_minor: U256::from(77),
+        nod_gratis_load_max: U256::from(33),
         issued_at: 1_000,
         next_nod_ordinal: 1,
         last_progress_height: 90,
@@ -252,6 +252,9 @@ fn seed_nod_generation(
     nod.ocomp_lysis_allocation_minor
         .write(&day, generation.lysis_allocation_minor)
         .unwrap();
+    nod.ocomp_nod_gratis_load_max
+        .write(&day, generation.nod_gratis_load_max)
+        .unwrap();
     nod.ocomp_materialization_job_id
         .write(&day, generation.job_id)
         .unwrap();
@@ -273,50 +276,19 @@ fn seed_nod_generation(
     generation
 }
 
-fn series(day: WorldwideDay, currency: [u8; 3]) -> SeriesRecord {
-    SeriesRecord {
-        series_id: SeriesId::pack(day, currency, b'U').unwrap(),
-        issuance_currency: 840,
-        reference_currency: 840,
-        issued_units: 3,
-        promis_load_minor: U256::from(10),
-        entry_price_minor: U256::from(11),
-        floor_price_minor: U256::from(12),
-        call_price_minor: U256::from(13),
-        call_window_seconds: 14,
-        call_threshold_seconds: 15,
-        call_notice_period_seconds: 16,
-        issued_at: 1_000,
-        called_at: 0,
-        state: 0,
-        worldwide_day: day,
-    }
-}
-
 #[test]
-fn typed_owner_reads_enumerate_all_nod_sequences_and_intex_words_at_e() {
+fn typed_owner_reads_enumerate_all_nod_sequences_at_e() {
     for version in [1, 2] {
         let mut owner = HashMapStorageProvider::new(1);
         let days = [DAY, WorldwideDay::new(DAY.value() + 1)];
-        let records = [series(days[0], *b"USD"), series(days[1], *b"EUR")];
         let generations = StorageHandle::enter(&mut owner, |storage| {
             let nod = NodContract::new(storage.clone());
             nod.ocomp_materialization_head_sequence.write(7).unwrap();
             nod.ocomp_materialization_tail_sequence.write(9).unwrap();
-            let generations = [
+            [
                 seed_nod_generation(storage.clone(), days[0], 7),
                 seed_nod_generation(storage.clone(), days[1], 8),
-            ];
-            let intex = IntexContract::new(storage);
-            intex.total_series.write(2).unwrap();
-            for (index, record) in records.iter().enumerate() {
-                intex.series.create(record).unwrap();
-                intex
-                    .series_id_at_index
-                    .write(&(index as u64), record.series_id.to_word())
-                    .unwrap();
-            }
-            generations
+            ]
         });
         with_owner_storage(version, owner, |state, _| {
             assert_eq!(state.nod_materialization_bounds().unwrap(), (7, 9));
@@ -325,7 +297,6 @@ fn typed_owner_reads_enumerate_all_nod_sequences_and_intex_words_at_e() {
                 (head.queue_sequence, head.worldwide_day),
                 (7, days[0].value())
             );
-            assert_eq!(state.intex_total_series().unwrap(), 2);
             for (index, day) in days.into_iter().enumerate() {
                 assert_eq!(
                     state.nod_materialization_day(7 + index as u64).unwrap(),
@@ -334,14 +305,6 @@ fn typed_owner_reads_enumerate_all_nod_sequences_and_intex_words_at_e() {
                 assert_eq!(
                     state.nod_certified_generation(day).unwrap(),
                     Some(generations[index])
-                );
-                assert_eq!(
-                    state.intex_series_id_at(index as u64).unwrap(),
-                    records[index].series_id
-                );
-                assert_eq!(
-                    state.intex_read_series(records[index].series_id).unwrap(),
-                    records[index]
                 );
             }
         });
@@ -381,27 +344,6 @@ fn malformed_nod_head_keeps_owner_errors() {
     });
     with_owner_storage(2, owner, |state, _| {
         assert!(state.nod_materialization_head().is_err());
-    });
-}
-
-#[test]
-fn intex_series_index_rejects_nonzero_padding_lost_by_native_decode() {
-    let mut owner = HashMapStorageProvider::new(1);
-    let id = series(DAY, *b"USD").series_id;
-    StorageHandle::enter(&mut owner, |storage| {
-        let intex = IntexContract::new(storage);
-        intex.total_series.write(1).unwrap();
-        intex
-            .series_id_at_index
-            .write(&0, id.to_word() | U256::ONE)
-            .unwrap();
-        assert_eq!(
-            outbe_intex::api::series_id_at(&intex.storage, 0).unwrap(),
-            id
-        );
-    });
-    with_owner_storage(2, owner, |state, _| {
-        assert!(state.intex_series_id_at(0).is_err());
     });
 }
 

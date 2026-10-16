@@ -5,6 +5,8 @@
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 
+use crate::errors::{MalformedAbiReason, NonCanonicalError};
+
 const CANONICAL_ABI_OFFSET: u64 = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -25,10 +27,18 @@ pub enum ProofMarshalingError {
     WrongCombinedProofLength { expected: usize, actual: usize },
 }
 
+impl From<MalformedAbiReason> for ProofMarshalingError {
+    fn from(reason: MalformedAbiReason) -> Self {
+        Self::MalformedAbi(reason.as_str())
+    }
+}
+
 impl From<ProofMarshalingError> for crate::error::Error {
     fn from(error: ProofMarshalingError) -> Self {
         match error {
-            ProofMarshalingError::NonCanonicalPublicInput(_) => Self::NonCanonical("public input"),
+            ProofMarshalingError::NonCanonicalPublicInput(_) => {
+                NonCanonicalError::PublicInput.into()
+            }
             other => Self::Proof(other.to_string()),
         }
     }
@@ -49,42 +59,37 @@ pub fn decode_verify_call(input: &[u8]) -> Result<VerifyCall<'_>, ProofMarshalin
     let mut circuit_hash = [0u8; 32];
     circuit_hash.copy_from_slice(&input[..32]);
 
-    let offset = read_u64_be_padded(&input[32..64])
-        .ok_or(ProofMarshalingError::MalformedAbi("offset too large"))?;
+    let offset = read_u64_be_padded(&input[32..64]).ok_or(MalformedAbiReason::OffsetTooLarge)?;
     if offset != CANONICAL_ABI_OFFSET {
-        Err(ProofMarshalingError::MalformedAbi("non-canonical offset"))?;
+        return Err(MalformedAbiReason::NonCanonicalOffset.into());
     }
-    let offset = usize::try_from(offset)
-        .map_err(|_| ProofMarshalingError::MalformedAbi("offset too large"))?;
+    let offset = usize::try_from(offset).map_err(|_| MalformedAbiReason::OffsetTooLarge)?;
     let header_end = offset
         .checked_add(32)
-        .ok_or(ProofMarshalingError::MalformedAbi("offset overflow"))?;
+        .ok_or(MalformedAbiReason::OffsetOverflow)?;
     if input.len() < header_end {
-        Err(ProofMarshalingError::MalformedAbi("offset past end"))?;
+        return Err(MalformedAbiReason::OffsetPastEnd.into());
     }
 
-    let length = read_u64_be_padded(&input[offset..header_end])
-        .ok_or(ProofMarshalingError::MalformedAbi("length too large"))?;
-    let length = usize::try_from(length)
-        .map_err(|_| ProofMarshalingError::MalformedAbi("length too large"))?;
+    let length =
+        read_u64_be_padded(&input[offset..header_end]).ok_or(MalformedAbiReason::LengthTooLarge)?;
+    let length = usize::try_from(length).map_err(|_| MalformedAbiReason::LengthTooLarge)?;
     let data_end = header_end
         .checked_add(length)
-        .ok_or(ProofMarshalingError::MalformedAbi("length overflow"))?;
+        .ok_or(MalformedAbiReason::LengthOverflow)?;
     if input.len() < data_end {
-        Err(ProofMarshalingError::MalformedAbi("payload truncated"))?;
+        return Err(MalformedAbiReason::PayloadTruncated.into());
     }
 
     let padding = (32 - length % 32) % 32;
     let encoded_end = data_end
         .checked_add(padding)
-        .ok_or(ProofMarshalingError::MalformedAbi("padding overflow"))?;
+        .ok_or(MalformedAbiReason::PaddingOverflow)?;
     if input.len() != encoded_end {
-        Err(ProofMarshalingError::MalformedAbi(
-            "non-canonical total length",
-        ))?;
+        return Err(MalformedAbiReason::NonCanonicalTotalLength.into());
     }
     if input[data_end..encoded_end].iter().any(|byte| *byte != 0) {
-        Err(ProofMarshalingError::MalformedAbi("non-zero padding"))?;
+        return Err(MalformedAbiReason::NonZeroPadding.into());
     }
 
     Ok(VerifyCall {

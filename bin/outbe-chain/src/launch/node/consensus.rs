@@ -180,7 +180,7 @@ pub(super) fn run(
                             tracing::error!(%error, "consensus stack failed during shutdown");
                         }
                         let stack_result = match (stack_result, follower_result) {
-                            (Err(error), Err(drain)) => Err(error.wrap_err(format!("follower drain also failed: {drain:#}"))),
+                            (Err(error), Err(drain)) => Err(error.wrap_err(crate::errors::LaunchError::follower_drain_also_failed(&drain))),
                             (Err(error), _) | (_, Err(error)) => Err(error),
                             (Ok(()), Ok(())) => Ok(()),
                         };

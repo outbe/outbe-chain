@@ -14,8 +14,10 @@ where
     pub(in crate::executor) fn apply_outbe_pre_execution(
         &mut self,
     ) -> Result<(), BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         validate_outbe_withdrawals(self.inner.ctx.withdrawals.as_deref())
-            .map_err(|err| BlockExecutionError::from(BlockValidationError::msg(err)))?;
+            .map_err(ExecutorValidationError::invalid_withdrawals)?;
 
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let beneficiary = self.inner.evm.block().beneficiary();
@@ -34,17 +36,14 @@ where
             self.ocomp_lifecycle_active,
         );
         if block_number > 0 && beneficiary != outbe_primitives::addresses::REWARDS_ADDRESS {
-            return Err(BlockValidationError::msg(format!(
-                "non-genesis block beneficiary must be REWARDS_ADDRESS {}: got {}",
-                outbe_primitives::addresses::REWARDS_ADDRESS,
-                beneficiary
-            ))
+            return Err(ExecutorValidationError::InvalidNonGenesisBeneficiary {
+                expected: outbe_primitives::addresses::REWARDS_ADDRESS,
+                actual: beneficiary,
+            }
             .into());
         }
         if let Some(error) = &self.system_layout_error {
-            return Err(
-                BlockValidationError::msg(format!("invalid system tx layout: {error}")).into(),
-            );
+            return Err(ExecutorValidationError::invalid_system_tx_layout(error).into());
         }
 
         // 1. Standard Ethereum pre-execution (blockhashes, beacon root, state clear flag).
@@ -65,7 +64,7 @@ where
         let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
         let chain_id = self.inner.evm.chain_id();
         let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
-            .map_err(|err| BlockExecutionError::from(BlockValidationError::msg(err)))?;
+            .map_err(ExecutorValidationError::block_artifacts)?;
         let proposer = self
             .begin_zone_proposer(block_number)?
             .unwrap_or_else(|| self.inner.evm.block().beneficiary());
@@ -173,9 +172,9 @@ where
             let info = db
                 .basic(addr)
                 .map_err(|e| {
-                    BlockExecutionError::other(PrecompileError::storage(format!(
-                        "load precompile account {addr}: {e}"
-                    )))
+                    BlockExecutionError::other(
+                        crate::errors::ExecutorStorageError::load_precompile_account(addr, e),
+                    )
                 })?
                 .unwrap_or_default();
             if info.is_empty_code_hash() {

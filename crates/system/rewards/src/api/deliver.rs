@@ -8,6 +8,7 @@ use super::batch::{
 };
 use super::RewardGemDeliveryOutcome;
 use crate::constants::REWARD_GEM_CURRENCY;
+use crate::errors::RewardGemRetryableReason;
 use crate::schema::Rewards;
 
 struct RewardGemFifoHead {
@@ -62,9 +63,11 @@ fn deliver_oldest_reward_gem_batch_inner(
         .get(delivered as usize)
         .copied()
         .ok_or_else(|| {
-            reward_gem_retryable_error(format!(
-                "validator reward Gem UTC day {reward_utc_day} delivered {delivered} of {recipient_count} recipients"
-            ))
+            reward_gem_retryable_error(RewardGemRetryableReason::DeliveredRecipientOutOfBounds {
+                reward_utc_day,
+                delivered,
+                recipient_count,
+            })
         })?;
     outbe_gemfactory::api::issue_gem(
         &ctx.storage,
@@ -78,7 +81,7 @@ fn deliver_oldest_reward_gem_batch_inner(
         },
     )?;
     let delivered_recipients = delivered.checked_add(1).ok_or_else(|| {
-        reward_gem_retryable_error("validator reward Gem delivered count overflow")
+        reward_gem_retryable_error(RewardGemRetryableReason::DeliveredCountOverflow)
     })?;
     let batch_complete = delivered_recipients == recipient_count;
     if batch_complete {
@@ -109,13 +112,13 @@ fn read_reward_gem_fifo_head(rewards: &Rewards<'_>) -> Result<Option<RewardGemFi
 
     let reward_utc_day = rewards.reward_gem_utc_day_by_sequence.read(&head)?;
     if reward_utc_day == 0 {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem FIFO head {head} has no reward UTC day"
-        )));
+        return Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::FifoHeadMissingUtcDay { head },
+        ));
     }
-    let next_sequence = head
-        .checked_add(1)
-        .ok_or_else(|| reward_gem_retryable_error("validator reward Gem FIFO sequence overflow"))?;
+    let next_sequence = head.checked_add(1).ok_or_else(|| {
+        reward_gem_retryable_error(RewardGemRetryableReason::FifoSequenceOverflow)
+    })?;
     require_reward_gem_fifo_head_state(rewards, reward_utc_day, next_sequence)?;
     Ok(Some(RewardGemFifoHead {
         sequence: head,
@@ -127,9 +130,9 @@ fn read_reward_gem_fifo_head(rewards: &Rewards<'_>) -> Result<Option<RewardGemFi
 
 fn require_empty_reward_gem_fifo(rewards: &Rewards<'_>, head: u64) -> Result<()> {
     if rewards.reward_gem_utc_day_by_sequence.read(&head)? != 0 {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem empty FIFO has a live UTC day at sequence {head}"
-        )));
+        return Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::EmptyFifoHasLiveUtcDay { head },
+        ));
     }
     Ok(())
 }
@@ -144,16 +147,16 @@ fn require_reward_gem_fifo_head_state(
         .read(&reward_utc_day)?
         != next_sequence
     {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem FIFO reverse index disagrees for UTC day {reward_utc_day}"
-        )));
+        return Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::FifoReverseIndexDisagrees { reward_utc_day },
+        ));
     }
     if !rewards.daily_topup_prepared.read(&reward_utc_day)?
         || rewards.daily_topup_settled.read(&reward_utc_day)?
     {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem FIFO UTC day {reward_utc_day} has an illegal state"
-        )));
+        return Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::FifoUtcDayIllegalState { reward_utc_day },
+        ));
     }
     Ok(())
 }
@@ -161,9 +164,12 @@ fn require_reward_gem_fifo_head_state(
 fn read_reward_gem_recipient_count(rewards: &Rewards<'_>, reward_utc_day: u32) -> Result<u32> {
     let recipient_count = rewards.reward_gem_recipient_count.read(&reward_utc_day)?;
     if recipient_count == 0 || recipient_count > outbe_consensus::bls::MAX_VALIDATORS {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem UTC day {reward_utc_day} has invalid recipient count {recipient_count}"
-        )));
+        return Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::InvalidRecipientCount {
+                reward_utc_day,
+                recipient_count,
+            },
+        ));
     }
     Ok(recipient_count)
 }
@@ -184,9 +190,9 @@ fn read_queued_reward_gem_batch(
             .reward_gem_planned_load_amount
             .read(&reward_utc_day)?
     {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem UTC day {reward_utc_day} total disagrees with its preparation"
-        )));
+        return Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::TotalDisagreesWithPreparation { reward_utc_day },
+        ));
     }
     let digest = reward_gem_batch_digest(&RewardGemBatchTerms {
         reward_utc_day,
@@ -197,9 +203,9 @@ fn read_queued_reward_gem_batch(
         recipients: &recipients,
     });
     if digest != rewards.reward_gem_batch_digest.read(&reward_utc_day)? {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem UTC day {reward_utc_day} digest disagrees with its preparation"
-        )));
+        return Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::DigestDisagreesWithPreparation { reward_utc_day },
+        ));
     }
     Ok(QueuedRewardGemBatch {
         gem_type,
@@ -213,9 +219,12 @@ fn reward_gem_type_from_raw(reward_utc_day: u32, gem_type_raw: u8) -> Result<Gem
     match gem_type_raw {
         value if value == GemTypes::Genesis as u8 => Ok(GemTypes::Genesis),
         value if value == GemTypes::Validator as u8 => Ok(GemTypes::Validator),
-        _ => Err(reward_gem_retryable_error(format!(
-            "validator reward Gem UTC day {reward_utc_day} has unsupported type {gem_type_raw}"
-        ))),
+        _ => Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::UnsupportedGemType {
+                reward_utc_day,
+                gem_type_raw,
+            },
+        )),
     }
 }
 
@@ -225,9 +234,13 @@ fn read_reward_gem_currencies(rewards: &Rewards<'_>, reward_utc_day: u32) -> Res
         .reward_gem_reference_currency
         .read(&reward_utc_day)?;
     if issuance_currency != REWARD_GEM_CURRENCY || reference_currency != REWARD_GEM_CURRENCY {
-        return Err(reward_gem_retryable_error(format!(
-            "validator reward Gem UTC day {reward_utc_day} has invalid currencies {issuance_currency}/{reference_currency}"
-        )));
+        return Err(reward_gem_retryable_error(
+            RewardGemRetryableReason::InvalidCurrencies {
+                reward_utc_day,
+                issuance_currency,
+                reference_currency,
+            },
+        ));
     }
     Ok((issuance_currency, reference_currency))
 }
@@ -245,12 +258,15 @@ fn read_reward_gem_recipients(
         let owner = owners.read(&index)?;
         let load = loads.read(&index)?;
         if owner.is_zero() || load.is_zero() {
-            return Err(reward_gem_retryable_error(format!(
-                "validator reward Gem UTC day {reward_utc_day} has an empty recipient at index {index}"
-            )));
+            return Err(reward_gem_retryable_error(
+                RewardGemRetryableReason::EmptyRecipientAtIndex {
+                    reward_utc_day,
+                    index,
+                },
+            ));
         }
         promis_load_amount = promis_load_amount.checked_add(load).ok_or_else(|| {
-            reward_gem_retryable_error("validator reward Gem delivery total overflow")
+            reward_gem_retryable_error(RewardGemRetryableReason::DeliveryTotalOverflow)
         })?;
         recipients.push((owner, load));
     }
@@ -295,7 +311,7 @@ fn retire_reward_gem_fifo_head(
     rewards.reward_gem_queue_head.write(head.next_sequence)?;
     rewards.reward_gem_pending_batch_count.write(
         head.pending_batch_count.checked_sub(1).ok_or_else(|| {
-            reward_gem_retryable_error("validator reward Gem pending batch count underflow")
+            reward_gem_retryable_error(RewardGemRetryableReason::PendingBatchCountUnderflow)
         })?,
     )
 }

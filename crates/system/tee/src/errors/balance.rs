@@ -42,8 +42,8 @@ pub enum BalanceClientError {
     },
 
     /// Enclave returned a response variant that does not match the request.
-    #[error("unexpected enclave response: {0}")]
-    UnexpectedResponse(String),
+    #[error("unexpected enclave response: {0:?}")]
+    UnexpectedResponse(Box<EnclaveResponse>),
 
     /// Enclave echoed a canonical input hash that differs from the request hash.
     #[error("tee_enclave_nondeterminism")]
@@ -81,7 +81,7 @@ impl BalanceClientError {
 
     /// Convert an unexpected enclave response into a fatal precompile error.
     pub fn unexpected_response(response: &EnclaveResponse) -> PrecompileError {
-        Self::UnexpectedResponse(format!("{response:?}")).into()
+        Self::UnexpectedResponse(Box::new(response.clone())).into()
     }
 }
 

@@ -143,9 +143,7 @@ pub(super) async fn prepare_built_candidate(
         .await
         .map_err(BuiltCandidatePreparationError::from_execution_error)?;
     if !status.is_valid() {
-        return Err(BuiltCandidatePreparationError::Execution(format!(
-            "{status:?}"
-        )));
+        return Err(BuiltCandidatePreparationError::from_invalid_status(&status));
     }
     Ok(())
 }

@@ -54,12 +54,12 @@ pub(crate) fn verify_pin_authority(
     // The canonical getter validates finalized B bindings. Awaiting pins also
     // need the retained request header even before canonical finality exists.
     let number = candidate.block_number;
-    let header = view
-        .header(number)?
-        .ok_or_else(|| Incomplete(format!("missing retained pin request header B={number}")))?;
-    let canonical_hash = view
-        .canonical_hash(number)?
-        .ok_or_else(|| Incomplete(format!("missing canonical pin request hash B={number}")))?;
+    let header = view.header(number)?.ok_or_else(|| {
+        SnapshotIncompleteError::MissingRetainedPinRequestHeader { number }.into_incomplete()
+    })?;
+    let canonical_hash = view.canonical_hash(number)?.ok_or_else(|| {
+        SnapshotIncompleteError::MissingCanonicalPinRequestHash { number }.into_incomplete()
+    })?;
     if header.inner.number != number
         || header.hash_slow() != canonical_hash
         || canonical_hash != candidate.block_hash

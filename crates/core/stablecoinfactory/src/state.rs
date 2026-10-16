@@ -73,12 +73,10 @@ impl StablecoinFactoryContract<'_> {
         let end = offset.saturating_add(limit).min(count);
         let mut tokens = Vec::with_capacity((end - offset) as usize);
         for index in offset..end {
-            let token =
-                self.tokens
-                    .at(index)?
-                    .ok_or_else(|| StablecoinFactoryError::Invariant {
-                        reason: "token set length/data mismatch".into(),
-                    })?;
+            let token = self
+                .tokens
+                .at(index)?
+                .ok_or(StablecoinFactoryError::TokenSetLengthDataMismatch)?;
             tokens.push(token);
         }
         Ok(tokens)
@@ -139,10 +137,7 @@ impl StablecoinFactoryContract<'_> {
     pub(crate) fn reserve(&mut self, reservation: &FactoryReservation) -> Result<()> {
         self.ensure_compatible_schema()?;
         if reservation.proposal_id.is_zero() {
-            return Err(StablecoinFactoryError::Invariant {
-                reason: "proposal id zero cannot own a reservation".into(),
-            }
-            .into());
+            return Err(StablecoinFactoryError::ZeroProposalReservation.into());
         }
         let ticker_hash = ticker_hash(&reservation.ticker)?;
         self.ensure_identity_available(
@@ -151,11 +146,8 @@ impl StablecoinFactoryContract<'_> {
             reservation.token,
         )?;
         if self.reservations.exists(reservation.proposal_id)? {
-            return Err(StablecoinFactoryError::Invariant {
-                reason: format!(
-                    "proposal {} already owns a reservation",
-                    reservation.proposal_id
-                ),
+            return Err(StablecoinFactoryError::ProposalAlreadyOwnsReservation {
+                proposal_id: reservation.proposal_id,
             }
             .into());
         }
@@ -251,12 +243,7 @@ impl StablecoinFactoryContract<'_> {
             || reservation.ticker_hash != ticker_hash
             || reservation.token != token
         {
-            return Err(StablecoinFactoryError::Invariant {
-                reason: format!(
-                    "proposal {proposal_id} payload does not match its Factory reservation"
-                ),
-            }
-            .into());
+            return Err(StablecoinFactoryError::ReservationPayloadMismatch { proposal_id }.into());
         }
         self.require_permanent_indexes_empty(&reservation)?;
         Ok(ValidatedStablecoinCreate {
@@ -274,12 +261,7 @@ impl StablecoinFactoryContract<'_> {
                 .is_some_and(|code| !code.original_bytes().is_empty());
             let code_hash_is_empty = info.code_hash.is_zero() || info.code_hash == keccak256([]);
             if info.nonce != 0 || has_code || !code_hash_is_empty {
-                return Err(StablecoinFactoryError::Invariant {
-                    reason: format!(
-                        "reserved stablecoin address {token} has pre-existing nonce or code"
-                    ),
-                }
-                .into());
+                return Err(StablecoinFactoryError::NonPristineTokenAccount { token }.into());
             }
             Ok(())
         })
@@ -382,10 +364,7 @@ impl StablecoinFactoryContract<'_> {
         self.require_permanent_indexes_empty(&reservation)?;
 
         if !self.tokens.insert(reservation.token)? {
-            return Err(StablecoinFactoryError::Invariant {
-                reason: "reserved token address is already in the permanent token set".into(),
-            }
-            .into());
+            return Err(StablecoinFactoryError::ReservedTokenAlreadyInPermanentSet.into());
         }
         self.token_by_id_index
             .write(&reservation.token_id, reservation.token)?;
@@ -416,12 +395,9 @@ impl StablecoinFactoryContract<'_> {
     }
 
     fn required_reservation(&self, proposal_id: U256) -> Result<ReservationRecord> {
-        self.reservations.get(proposal_id)?.ok_or_else(|| {
-            StablecoinFactoryError::Invariant {
-                reason: format!("proposal {proposal_id} has no Factory reservation"),
-            }
-            .into()
-        })
+        self.reservations
+            .get(proposal_id)?
+            .ok_or_else(|| StablecoinFactoryError::MissingReservation { proposal_id }.into())
     }
 
     fn require_pending_triple(&self, reservation: &ReservationRecord) -> Result<()> {
@@ -432,11 +408,8 @@ impl StablecoinFactoryContract<'_> {
             || by_ticker != reservation.proposal_id
             || by_address != reservation.proposal_id
         {
-            return Err(StablecoinFactoryError::Invariant {
-                reason: format!(
-                    "proposal {} reservation triple does not match its record",
-                    reservation.proposal_id
-                ),
+            return Err(StablecoinFactoryError::ReservationTripleMismatch {
+                proposal_id: reservation.proposal_id,
             }
             .into());
         }
@@ -448,13 +421,12 @@ impl StablecoinFactoryContract<'_> {
         let by_ticker = self.token_by_ticker_index.read(&reservation.ticker_hash)?;
         let by_address = self.registered_token_id(reservation.token)?;
         if !by_id.is_zero() || !by_ticker.is_zero() || by_address.is_some() {
-            return Err(StablecoinFactoryError::Invariant {
-                reason: format!(
-                    "proposal {} reservation collides with permanent Factory state",
-                    reservation.proposal_id
-                ),
-            }
-            .into());
+            return Err(
+                StablecoinFactoryError::ReservationCollidesWithPermanentState {
+                    proposal_id: reservation.proposal_id,
+                }
+                .into(),
+            );
         }
         Ok(())
     }

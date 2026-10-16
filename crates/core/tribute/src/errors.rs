@@ -160,6 +160,15 @@ pub enum TributeError {
 
     #[error("sealed Tribute pre-admission differs from authenticated aggregate")]
     SealedPreAdmissionDiffersFromAuthenticatedAggregate,
+
+    #[error(transparent)]
+    CanonicalBody(#[from] outbe_primitives::entity_codec::CanonicalBodyError),
+
+    #[error(transparent)]
+    DayAmountCodec(#[from] postcard::Error),
+
+    #[error("Tribute day enclave: {0}")]
+    DayEnclave(#[source] outbe_tee::TransportError),
 }
 
 impl TributeError {
@@ -190,6 +199,7 @@ impl From<TributeError> for PrecompileError {
     fn from(value: TributeError) -> Self {
         let message = value.to_string();
         match value {
+            TributeError::DayEnclave(_) => PrecompileError::EnclaveUnavailable(message),
             TributeError::InvalidEncryptedDayIdentity
             | TributeError::InvalidEncryptedEncoding
             | TributeError::ChainIdentityMismatch
@@ -214,22 +224,12 @@ impl From<TributeError> for PrecompileError {
             | TributeError::CapacityForfeitureRequiresFreshSealedPartition
             | TributeError::PopulatedAggregateMissingAuthenticatedParent
             | TributeError::CapacityForfeitureRequiresUnretiredGenerationZero
-            | TributeError::SealedPreAdmissionDiffersFromAuthenticatedAggregate => {
-                PrecompileError::BodyReadCorruption(message)
-            }
+            | TributeError::SealedPreAdmissionDiffersFromAuthenticatedAggregate
+            | TributeError::CanonicalBody(_)
+            | TributeError::DayAmountCodec(_) => PrecompileError::BodyReadCorruption(message),
             _ => PrecompileError::Revert(message),
         }
     }
-}
-
-/// Converts a body-read corruption failure into a precompile error.
-pub(crate) fn body_read_corruption(error: impl std::fmt::Display) -> PrecompileError {
-    PrecompileError::BodyReadCorruption(error.to_string())
-}
-
-/// Converts a Tribute day enclave failure into a precompile error.
-pub(crate) fn day_enclave_error(error: impl std::fmt::Display) -> PrecompileError {
-    PrecompileError::EnclaveUnavailable(format!("Tribute day enclave: {error}"))
 }
 
 /// Wraps a test-enclave decryption error in an enclave transport error.
@@ -239,3 +239,8 @@ pub(crate) fn enclave_transport_error(error: impl std::fmt::Display) -> outbe_te
 }
 
 pub type TributeResult<T> = std::result::Result<T, TributeError>;
+
+#[cfg(any(test, feature = "test-enclave"))]
+pub(crate) fn body_read_corruption(error: impl std::fmt::Display) -> PrecompileError {
+    PrecompileError::BodyReadCorruption(error.to_string())
+}

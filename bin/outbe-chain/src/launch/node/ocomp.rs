@@ -173,11 +173,16 @@ where
             }
         })?,
     };
-    let openings =
-        outbe_node::ocomp::build_lysis_openings(provider, &limits, candidate, request.subjects)
-            .map_err(|error| LysisOpeningsError::BuildOpenings {
-                details: crate::errors::display_error(error),
-            })?;
+    let openings = outbe_node::ocomp::build_lysis_openings(
+        provider,
+        &limits,
+        candidate,
+        record.intent.logical_evaluation_time,
+        request.subjects,
+    )
+    .map_err(|error| LysisOpeningsError::BuildOpenings {
+        details: crate::errors::display_error(error),
+    })?;
     if openings.job_id != finalized.job_id {
         return Err(LysisOpeningsError::OpeningsJobIdMismatch);
     }
@@ -220,8 +225,7 @@ pub(super) fn validate_startup_authority_and_pruning(
         }
     })?;
     let initial_tee_policy = tee_activation
-        .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
-        .map_err(eyre::Report::msg)?;
+        .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)?;
     let extra = &config.chain.genesis.config.extra_fields;
     let dkg_prepare_window_blocks = extra
         .get_deserialized::<u64>("dkgPrepareWindowBlocks")

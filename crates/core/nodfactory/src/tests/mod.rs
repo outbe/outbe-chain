@@ -101,7 +101,7 @@ fn cost_of(input: &NodIssueParams) -> u128 {
 }
 
 fn find_valid_nonce(nod_id: WwdEntityId, owner: Address) -> u64 {
-    (0_u64..100_000)
+    (0_u64..1_000_000)
         .find(|nonce| runtime::validate_pow(nod_id, owner, *nonce).is_ok())
         .expect("test identity has a nonce in the bounded search")
 }

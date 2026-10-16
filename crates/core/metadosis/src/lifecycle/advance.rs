@@ -99,9 +99,12 @@ impl<'storage> AdvanceTick<'_, 'storage> {
                 )?;
                 Ok(true)
             }
-            unexpected => Err(crate::errors::storage_corruption(format!(
-                "AdvanceDue produced non-Cycle transition {unexpected:?}"
-            ))),
+            unexpected => Err(
+                crate::errors::MetadosisStorageCorruptionError::UnexpectedAdvanceDueTransition {
+                    unexpected: unexpected.clone(),
+                }
+                .into(),
+            ),
         }
     }
 
@@ -114,7 +117,7 @@ impl<'storage> AdvanceTick<'_, 'storage> {
             metadosis,
             step.current.worldwide_day,
             step.edges,
-            "missed offering resolved one WWD rate more than once",
+            crate::errors::MetadosisStorageCorruptionError::MissedOfferingResolvedRateMoreThanOnce,
         )?;
         apply_missed_offering(metadosis, self.effect(step.current, step.transition, rate))
     }
@@ -124,7 +127,7 @@ impl<'storage> AdvanceTick<'_, 'storage> {
             metadosis,
             step.current.worldwide_day,
             step.edges,
-            "outer advance resolved one WWD rate more than once",
+            crate::errors::MetadosisStorageCorruptionError::OuterAdvanceResolvedRateMoreThanOnce,
         )?;
         commit_outer_transition_with_rate(
             metadosis,
@@ -145,7 +148,7 @@ impl<'storage> AdvanceTick<'_, 'storage> {
             metadosis,
             step.current.worldwide_day,
             step.edges,
-            "capacity forfeiture resolved one WWD rate more than once",
+            crate::errors::MetadosisStorageCorruptionError::CapacityForfeitureResolvedRateMoreThanOnce,
         )?;
         apply_capacity_forfeiture(
             metadosis,

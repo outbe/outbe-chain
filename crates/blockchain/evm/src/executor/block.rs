@@ -54,7 +54,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// OSR2. Active OCOMP blocks must not call the inner executor's `finish`
     /// afterward because that would create semantic writes after OSR2.
     pub(super) ethereum_post_execution_requests: Option<Requests>,
-    pub(super) system_layout_error: Option<String>,
+    pub(super) system_layout_error: Option<crate::errors::SystemTxExpectationError>,
     pub(super) parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
     pub(super) proposer_evm_address: Option<Address>,
     pub(super) execute_outbe_block_hooks: bool,
@@ -259,10 +259,9 @@ where
     ) -> Result<Self::Result, BlockExecutionError> {
         let (tx_env, recovered) = tx.into_parts();
         if is_reserved_system_tx(recovered.tx()) {
-            return Err(BlockValidationError::msg(
-                "reserved system transaction cannot execute without commit",
-            )
-            .into());
+            return Err(
+                crate::errors::ExecutorValidationError::ReservedSystemTxWithoutCommit.into(),
+            );
         }
         self.inner
             .execute_transaction_without_commit(WithTxEnv {
@@ -279,10 +278,10 @@ where
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
         let (tx_env, recovered) = tx.into_parts();
         if self.ocomp_terminal_request_consumed {
-            return Err(BlockValidationError::msg(
-                "transaction follows the terminal OCOMP system transaction",
-            )
-            .into());
+            return Err(
+                crate::errors::ExecutorValidationError::TransactionFollowsTerminalOcompSystemTx
+                    .into(),
+            );
         }
         let is_ocomp_terminal_request = is_reserved_system_tx(recovered.tx())
             && matches!(
@@ -329,10 +328,10 @@ where
     fn finish(mut self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
         if self.ocomp_lifecycle_active {
             if !self.ocomp_terminal_request_consumed {
-                return Err(BlockValidationError::msg(
-                    "active OCOMP block is missing its terminal system transaction",
-                )
-                .into());
+                return Err(
+                    crate::errors::ExecutorValidationError::MissingActiveOcompTerminalSystemTx
+                        .into(),
+                );
             }
         }
         let current_summary = self.current_execution_summary();
@@ -347,11 +346,10 @@ where
         if !self.ocomp_lifecycle_active {
             self.apply_outbe_ethereum_post_execution()?;
         }
-        let requests = self.ethereum_post_execution_requests.take().ok_or_else(
-            || -> BlockExecutionError {
-                BlockValidationError::msg("missing Outbe post-execution output").into()
-            },
-        )?;
+        let requests = self
+            .ethereum_post_execution_requests
+            .take()
+            .ok_or(crate::errors::ExecutorValidationError::MissingPostExecutionOutput)?;
         let gas_used = if self.inner.evm.cfg_env().enable_amsterdam_eip8037 {
             self.inner.max_block_gas_used()
         } else {

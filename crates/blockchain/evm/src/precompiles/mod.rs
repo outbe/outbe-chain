@@ -153,6 +153,7 @@ pub fn extend_outbe_precompiles<DB>(
                     ocomp_fork_install: ocomp_fork_install.clone(),
                 },
             )
+            .map_err(String::from)
         },
     );
 }

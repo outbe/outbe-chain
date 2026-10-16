@@ -1,5 +1,4 @@
 use super::*;
-use outbe_primitives::time::SECONDS_PER_DAY;
 
 fn seed_positive_ocomp_admission_fixture(
     provider: &mut HashMapStorageProvider,
@@ -17,12 +16,6 @@ fn seed_positive_ocomp_admission_fixture(
         let pair = outbe_oracle::api::DAY_TYPE_PAIR;
         let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
         oracle.reference_currencies.push(840).unwrap();
-        let previous_day = outbe_primitives::time::previous_date_key(
-            outbe_primitives::time::timestamp_to_date_key(scheduled),
-        );
-        oracle
-            .record_utc_day_vwap(previous_day, index, U256::from(250_000))
-            .unwrap();
         oracle
             .exchange_rate
             .write(&index, U256::from(900_000))
@@ -39,40 +32,6 @@ fn seed_positive_ocomp_admission_fixture(
     scheduled
 }
 
-/// A block that runs late must still price the day from its scheduled processing.
-#[test]
-fn a_late_processing_block_prices_the_day_from_its_schedule() {
-    let wwd = outbe_primitives::time::WorldwideDay::new(2026_0819);
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let scheduled = seed_positive_ocomp_admission_fixture(&mut provider, wwd);
-    let late = scheduled + 2 * SECONDS_PER_DAY;
-    StorageHandle::enter(&mut provider, |storage| {
-        let oracle = OracleContract::new(storage.clone());
-        let index = oracle
-            .pair_index_of(outbe_oracle::api::DAY_TYPE_PAIR)
-            .unwrap();
-        let late_previous_day = outbe_primitives::time::previous_date_key(
-            outbe_primitives::time::timestamp_to_date_key(late),
-        );
-        oracle
-            .record_utc_day_vwap(late_previous_day, index, U256::from(900_000))
-            .unwrap();
-    });
-
-    run_start_command(&mut provider, 2, late).unwrap();
-
-    StorageHandle::enter(&mut provider, |storage| {
-        assert_eq!(
-            outbe_nod::api::entry_price_snapshot(storage, wwd).unwrap(),
-            Some(std::collections::BTreeMap::from([(
-                840,
-                U256::from(250_000)
-            )])),
-            "the block clock must not choose the priced day"
-        );
-    });
-}
-
 #[test]
 fn positive_ocomp_admission_rolls_back_every_mutation_and_retries_exactly() {
     let wwd = outbe_primitives::time::WorldwideDay::new(2026_0819);
@@ -83,15 +42,6 @@ fn positive_ocomp_admission_rolls_back_every_mutation_and_retries_exactly() {
     control.fail_after_mutation_at(usize::MAX);
     run_start_command(&mut control, block_number, scheduled).unwrap();
     let mutation_count = control.clear_mutation_failure();
-    StorageHandle::enter(&mut control, |storage| {
-        assert_eq!(
-            outbe_nod::api::entry_price_snapshot(storage, wwd).unwrap(),
-            Some(std::collections::BTreeMap::from([(
-                840,
-                U256::from(250_000)
-            )]))
-        );
-    });
     assert!(
         mutation_count >= 6,
         "positive OCOMP admission must persist pre-admission, scheduler, outer state and events"

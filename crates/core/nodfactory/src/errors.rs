@@ -85,8 +85,8 @@ pub enum NodFactoryError {
     #[error("certified Nod generation count mismatch")]
     CertifiedGenerationCountMismatch,
 
-    #[error("{0}")]
-    RevertMessage(String),
+    #[error(transparent)]
+    CreateNodForTest(#[from] outbe_tee::TransportError),
 
     #[error("Nod materialization FIFO bounds are malformed")]
     MaterializationFifoBoundsMalformed,
@@ -159,10 +159,6 @@ pub enum NodFactoryError {
 }
 
 impl NodFactoryError {
-    pub fn revert_message(err: impl Display) -> Self {
-        Self::RevertMessage(err.to_string())
-    }
-
     pub fn materialization_enclave(err: impl Display) -> Self {
         Self::MaterializationEnclave(err.to_string())
     }

@@ -45,9 +45,7 @@ impl MetadosisContract<'_> {
                     .checked_mul(rate)
                     .and_then(|tail| scaled.checked_add(tail / denominator))
             })
-            .ok_or_else(|| {
-                crate::errors::storage_corruption("Metadosis full-precision demand overflow")
-            })?;
+            .ok_or(crate::errors::MetadosisStorageCorruptionError::FullPrecisionDemandOverflow)?;
         let mut day_gratis_limit_minor = wwd_metadosis_limit;
         match wwd_type {
             WwdDayType::Green => {}
@@ -156,11 +154,6 @@ pub(crate) fn process_ocomp_ready_candidate(
     // 1. Snapshot while CE is active.
     // 2. Enqueue the OCOMP FSM.
     // 3. Commit the outer transition.
-    outbe_lysis::api::freeze_entry_price_snapshot(
-        ctx.storage.clone(),
-        wwd,
-        current.scheduled_process_time,
-    )?;
     metadosis.build_fidelity_league_snapshot(wwd, ctx.block.timestamp)?;
     metadosis.enqueue_ocomp_ready(wwd, ctx.block.block_number)?;
     commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)
@@ -227,7 +220,7 @@ fn settle_empty_day(
     // A day with no tributes allocates nothing, so its whole limit stays on the warehouse.
     let returned = to_promis
         .checked_add(day_limit)
-        .ok_or_else(|| crate::errors::storage_corruption("Metadosis day limit return overflow"))?;
+        .ok_or(crate::errors::MetadosisStorageCorruptionError::DayLimitReturnOverflow)?;
     commit_outer_transition(metadosis, wwd, transition, ctx.block.block_number)?;
     TributeContract::new(metadosis.storage.clone()).retire_completed_partition(wwd)?;
     metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
@@ -272,9 +265,7 @@ fn settle_zero_allocation(
         U256::ZERO,
         day_type == WwdDayType::Green,
     )
-    .ok_or_else(|| {
-        crate::errors::storage_corruption("Metadosis Lysis Limit exceeds the day's nominal")
-    })?;
+    .ok_or(crate::errors::MetadosisStorageCorruptionError::LysisLimitExceedsDayNominal)?;
     let to_promis = dispatch_brief(ctx, day_type, wwd, desis_limit_minor)?;
     // Nobody issues the limit headroom above the day's own nominal, so it stays on the
     // warehouse together with whatever the brief did not take.
@@ -283,9 +274,7 @@ fn settle_zero_allocation(
         .checked_sub(calculation.lysis_limit_minor)
         .and_then(|rest| rest.checked_sub(desis_limit_minor))
         .and_then(|headroom| headroom.checked_add(to_promis))
-        .ok_or_else(|| {
-            crate::errors::storage_corruption("Metadosis split exceeds the day limit")
-        })?;
+        .ok_or(crate::errors::MetadosisStorageCorruptionError::SplitExceedsDayLimit)?;
     promis_limit.add_to_total_unallocated(returned)?;
     commit_outer_transition(metadosis, wwd, transition, ctx.block.block_number)?;
     // No Lysis allocation consumes these tributes, so this path forfeits the sealed partition.
@@ -332,9 +321,8 @@ fn dispatch_brief(
         outbe_desis::api::AuctionBriefReceipt::Accepted => desis_limit_minor
             .checked_sub(briefed_desis_limit_minor)
             .ok_or_else(|| {
-                crate::errors::storage_corruption(
-                    "accepted Desis brief exceeds the Metadosis routing limit",
-                )
+                crate::errors::MetadosisStorageCorruptionError::AcceptedDesisBriefExceedsRoutingLimit
+                    .into()
             }),
         outbe_desis::api::AuctionBriefReceipt::RejectedToCarryOver {
             reason: outbe_desis::api::AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain,
@@ -344,9 +332,10 @@ fn dispatch_brief(
             if rejected_desis_limit_minor != briefed_desis_limit_minor
                 || rejected_desis_limit_minor <= max_accepted
             {
-                return Err(crate::errors::storage_corruption(
-                    "Desis rejection receipt does not match the dispatched limit",
-                ));
+                return Err(
+                    crate::errors::MetadosisStorageCorruptionError::DesisRejectionReceiptMismatchDispatchedLimit
+                        .into(),
+                );
             }
             Ok(rejected_desis_limit_minor)
         }

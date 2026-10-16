@@ -67,7 +67,7 @@ fn validate_response(
         return Err(TributeFactoryError::EncryptedOfferInputOrCountMismatch.into());
     }
     let preimage = tribute_v2::encrypted_offer_attestation_preimage(expected, &results)
-        .map_err(TributeFactoryError::fatal)?;
+        .map_err(TributeFactoryError::attestation_preimage_encode)?;
     tribute_v2::verify_attestation(key, &preimage, &tag)
         .map_err(TributeFactoryError::offer_attestation_invalid)?;
     for (offer, result) in offers.iter().zip(&results) {

@@ -59,7 +59,6 @@ impl BlockLifecycle for CycleLifecycle {
         // that forms the day.
         outbe_nodfactory::hooks::sweep_forfeits(&ctx.runtime)?;
         outbe_gemfactory::hooks::sweep_forfeits(&ctx.runtime)?;
-        outbe_intexfactory::hooks::sweep_proceeds(&ctx.runtime)?;
         outbe_intexfactory::hooks::sweep_forfeits(&ctx.runtime)?;
         outbe_credisfactory::hooks::sweep_forfeits(&ctx.runtime)?;
         crate::runtime::dispatch_triggers(&ctx.runtime)?;

@@ -143,7 +143,7 @@ pub(super) fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionErro
         4 => payload::decode_terminal(&mut reader, candidate, authority::TerminalKind::Terminal)?,
         5 => payload::decode_released(&mut reader, candidate)?,
         6 => payload::decode_terminal(&mut reader, candidate, authority::TerminalKind::GcPending)?,
-        _ => return Err(RetentionError::MalformedJournal("unknown state tag")),
+        _ => return Err(crate::errors::RetentionMalformedJournalError::UnknownStateTag.into()),
     };
     reader.finish()?;
     Ok(PinRecordV1 { generation, state })

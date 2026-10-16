@@ -25,6 +25,49 @@ impl From<LysisError> for PrecompileError {
     }
 }
 
+/// Typed arithmetic and derivation failure reasons in Lysis V1.
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+pub enum LysisArithmeticErrorV1 {
+    #[error("Fidelity league population overflow")]
+    FidelityLeaguePopulationOverflow,
+
+    #[error("Fidelity reducer population overflow")]
+    FidelityReducerPopulationOverflow,
+
+    #[error("Gratis total overflow at {ordinal}")]
+    GratisTotalOverflow { ordinal: u32 },
+
+    #[error("nominal total overflow at {ordinal}")]
+    NominalTotalOverflow { ordinal: u32 },
+
+    #[error("settlement cost total overflow at {ordinal}")]
+    SettlementCostTotalOverflow { ordinal: u32 },
+
+    #[error("Nod entry price out of bounds at {ordinal}")]
+    NodEntryPriceOutOfBounds { ordinal: usize },
+
+    #[error("Gratis reducer total overflow at {ordinal}")]
+    GratisReducerTotalOverflow { ordinal: u32 },
+
+    #[error("Fidelity share sum overflow")]
+    FidelityShareSumOverflow,
+
+    #[error("Fidelity share remainder overflow")]
+    FidelityShareRemainderOverflow,
+
+    #[error("maximum Gratis fraction overflow")]
+    MaximumGratisFractionOverflow,
+
+    #[error("projected Gratis allocation overflow")]
+    ProjectedGratisAllocationOverflow,
+
+    #[error("{0}")]
+    EntityIdDerivation(String),
+
+    #[error("{0}")]
+    Math(String),
+}
+
 /// Deterministic errors that the Lysis V1 semantic program returns.
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum ProgramErrorV1 {
@@ -65,8 +108,8 @@ pub enum ProgramErrorV1 {
     #[error("Lysis V1 Oracle {currency} unavailable at {ordinal}")]
     EntryPriceUnavailable { ordinal: usize, currency: u16 },
 
-    #[error("Lysis V1 arithmetic: {message}")]
-    Arithmetic { message: String },
+    #[error("Lysis V1 arithmetic: {reason}")]
+    Arithmetic { reason: LysisArithmeticErrorV1 },
 
     #[error("Lysis V1 zero Gratis load at {ordinal}")]
     ZeroGratisLoad { ordinal: usize },
@@ -91,11 +134,26 @@ pub enum ProgramErrorV1 {
     OutputCountMismatch,
 }
 
+impl From<LysisArithmeticErrorV1> for ProgramErrorV1 {
+    fn from(reason: LysisArithmeticErrorV1) -> Self {
+        Self::Arithmetic { reason }
+    }
+}
+
 impl ProgramErrorV1 {
-    /// Creates an arithmetic error from a display value.
-    pub fn arithmetic(err: impl core::fmt::Display) -> Self {
+    /// Creates an entity-ID derivation arithmetic error.
+    pub fn entity_id_derivation(
+        err: outbe_primitives::wwd_entity_id::EntityIdDerivationError,
+    ) -> Self {
         Self::Arithmetic {
-            message: err.to_string(),
+            reason: LysisArithmeticErrorV1::EntityIdDerivation(err.to_string()),
+        }
+    }
+
+    /// Creates a math error from a precompile math failure.
+    pub fn math(err: PrecompileError) -> Self {
+        Self::Arithmetic {
+            reason: LysisArithmeticErrorV1::Math(err.to_string()),
         }
     }
 }

@@ -27,27 +27,31 @@ use std::time::Duration;
 
 // A rotation invalidates a counter comparison, not the recovery. The caller may
 // choose a new fully eligible window within the ORIGINAL remaining allowance.
+#[derive(Clone, Copy)]
+pub(super) struct SigningSample {
+    pub height: u64,
+    pub epoch: u64,
+    pub misses: u64,
+}
+
 pub(super) fn restart_signing_comparison(
-    before_height: u64,
-    after_height: u64,
-    before_epoch: u64,
-    after_epoch: u64,
-    before_misses: u64,
-    after_misses: u64,
+    before: SigningSample,
+    after: SigningSample,
 ) -> Result<bool> {
-    let target = before_height
+    let target = before
+        .height
         .checked_add(5)
         .and_then(|h| h.checked_add(LATE_FINALIZE_WINDOW_K))
         .ok_or_else(|| eyre!("signing target overflow"))?;
     ensure!(
-        after_height >= target && after_epoch >= before_epoch,
+        after.height >= target && after.epoch >= before.epoch,
         "incomplete or regressed signing window"
     );
-    if after_epoch != before_epoch {
+    if after.epoch != before.epoch {
         return Ok(false);
     }
     ensure!(
-        after_misses == before_misses,
+        after.misses == before.misses,
         "recovered eligible validator accumulated voter misses"
     );
     Ok(true)
@@ -105,12 +109,16 @@ pub(super) fn restart_prove_signing(
         let state = restart_snapshot(world, after, address, "restart_signing_closed")?;
         restart_require_membership(world, &state, 2)?;
         if restart_signing_comparison(
-            before.height,
-            after.height,
-            baseline.epoch,
-            state.epoch,
-            baseline.voter_misses,
-            state.voter_misses,
+            SigningSample {
+                height: before.height,
+                epoch: baseline.epoch,
+                misses: baseline.voter_misses,
+            },
+            SigningSample {
+                height: after.height,
+                epoch: state.epoch,
+                misses: state.voter_misses,
+            },
         )? {
             restart_assert_live(world)?;
             return Ok(after);
@@ -131,14 +139,24 @@ pub(super) fn restart_prove_signing(
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct BoundaryEpochs {
+    pub previous: u64,
+    pub next: u64,
+    pub boundary: Option<u64>,
+}
+
 pub(super) fn restart_boundary_transition(
-    previous_epoch: u64,
-    next_epoch: u64,
-    boundary_epoch: Option<u64>,
+    epochs: BoundaryEpochs,
     was_active: bool,
     now_active: bool,
     frozen: bool,
 ) -> Result<bool> {
+    let BoundaryEpochs {
+        previous: previous_epoch,
+        next: next_epoch,
+        boundary: boundary_epoch,
+    } = epochs;
     ensure!(!was_active || now_active, "restart admission was reversed");
     if let Some(epoch) = boundary_epoch {
         ensure!(
@@ -156,6 +174,36 @@ pub(super) fn restart_boundary_transition(
         );
     }
     Ok(!was_active && now_active)
+}
+
+fn validate_frozen_boundary(
+    target: &RestartFrozenTarget,
+    artifact: &outbe_primitives::consensus::DkgBoundaryArtifact,
+    admitted: bool,
+    height: u64,
+) -> Result<()> {
+    ensure!(
+        artifact.dkg_cycle != target.round.cycle || admitted,
+        "interrupted frozen target activated more than once or without admission"
+    );
+    if !admitted {
+        return Ok(());
+    }
+    ensure!(
+        artifact.is_validator_set_change && !artifact.is_full_dkg,
+        "interrupted reshare was replaced by a different ceremony mode"
+    );
+    restart_validate_frozen_target(
+        target,
+        &RestartFrozenRound {
+            cycle: artifact.dkg_cycle,
+            freeze: artifact.freeze_height,
+            planned: artifact.planned_activation_height,
+        },
+        artifact.target_set_hash,
+        &artifact.reshare.new_active_set,
+        height,
+    )
 }
 
 pub(super) fn restart_activation(world: &mut World, frozen: bool) -> Result<FinalizedCheckpoint> {
@@ -205,9 +253,11 @@ pub(super) fn restart_activation(world: &mut World, frozen: bool) -> Result<Fina
         let now_active = state.status == 2;
         restart_require_membership(world, &state, if now_active { 2 } else { 1 })?;
         let admitted = restart_boundary_transition(
-            previous_epoch,
-            state.epoch,
-            artifact.as_ref().map(|a| a.epoch),
+            BoundaryEpochs {
+                previous: previous_epoch,
+                next: state.epoch,
+                boundary: artifact.as_ref().map(|a| a.epoch),
+            },
             activated.is_some(),
             now_active,
             frozen,
@@ -225,27 +275,7 @@ pub(super) fn restart_activation(world: &mut World, frozen: bool) -> Result<Fina
                 "outcome_hash": alloy_primitives::keccak256(&artifact.outcome),
             }));
             if let Some(target) = &target {
-                ensure!(
-                    artifact.dkg_cycle != target.round.cycle || admitted,
-                    "interrupted frozen target activated more than once or without admission"
-                );
-                if admitted {
-                    ensure!(
-                        artifact.is_validator_set_change && !artifact.is_full_dkg,
-                        "interrupted reshare was replaced by a different ceremony mode"
-                    );
-                    restart_validate_frozen_target(
-                        target,
-                        &RestartFrozenRound {
-                            cycle: artifact.dkg_cycle,
-                            freeze: artifact.freeze_height,
-                            planned: artifact.planned_activation_height,
-                        },
-                        artifact.target_set_hash,
-                        &artifact.reshare.new_active_set,
-                        height,
-                    )?;
-                }
+                validate_frozen_boundary(target, &artifact, admitted, height)?;
             }
             if admitted {
                 activated = Some(checkpoint);

@@ -2,7 +2,7 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 
 use crate::{
     consensus::{DkgBoundaryArtifact, OUTBE_MAX_EXTRA_DATA_SIZE},
-    error::{PrecompileError, Result},
+    error::{ReshareArtifactError, Result},
     validators::MAX_TEE_EXPIRED_TARGET_EXCLUSIONS,
 };
 
@@ -220,19 +220,23 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
     }
 
     if records.len() > u8::MAX as usize {
-        return Err(PrecompileError::revert("too many block artifact records"));
+        return Err(ReshareArtifactError::TooManyRecords.into());
     }
 
-    let payload_len = records.iter().try_fold(0usize, |acc, (_, payload)| {
-        ensure_payload_fits_u16("block artifact record", payload.len())?;
-        acc.checked_add(1 + 2 + payload.len())
-            .ok_or_else(|| PrecompileError::revert("block artifact length overflow"))
-    })?;
+    let payload_len = records
+        .iter()
+        .try_fold(0usize, |acc, (_, payload)| -> Result<usize> {
+            ensure_payload_fits_u16("block artifact record", payload.len())?;
+            acc.checked_add(1 + 2 + payload.len())
+                .ok_or_else(|| ReshareArtifactError::LengthOverflow.into())
+        })?;
     let total_len = 4 + 1 + 1 + payload_len;
     if total_len > OUTBE_MAX_EXTRA_DATA_SIZE {
-        return Err(PrecompileError::revert(format!(
-            "block artifacts exceed extra_data budget: {total_len} > {OUTBE_MAX_EXTRA_DATA_SIZE}"
-        )));
+        return Err(ReshareArtifactError::ExceedsExtraDataBudget {
+            total_len,
+            max_len: OUTBE_MAX_EXTRA_DATA_SIZE,
+        }
+        .into());
     }
 
     let mut buf = Vec::with_capacity(total_len);
@@ -259,9 +263,7 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
 
     for _ in 0..record_count {
         if offset + 3 > extra_data.len() {
-            return Err(PrecompileError::revert(
-                "truncated block artifact record header",
-            ));
+            return Err(ReshareArtifactError::TruncatedRecordHeader.into());
         }
         let tag = extra_data[offset];
         offset += 1;
@@ -269,11 +271,9 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
         offset += 2;
         let end = offset
             .checked_add(payload_len)
-            .ok_or_else(|| PrecompileError::revert("block artifact record overflow"))?;
+            .ok_or(ReshareArtifactError::RecordOverflow)?;
         let Some(payload) = extra_data.get(offset..end) else {
-            return Err(PrecompileError::revert(
-                "truncated block artifact record payload",
-            ));
+            return Err(ReshareArtifactError::TruncatedRecordPayload.into());
         };
         offset = end;
 
@@ -281,7 +281,7 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
     }
 
     if offset != extra_data.len() {
-        return Err(PrecompileError::revert("trailing bytes in block artifacts"));
+        return Err(ReshareArtifactError::TrailingBytes.into());
     }
 
     Ok(artifacts)
@@ -349,23 +349,19 @@ pub fn tee_expired_target_exclusions_hash(addresses: &[Address]) -> Result<B256>
 
 fn validate_tee_expired_target_exclusions(addresses: &[Address]) -> Result<()> {
     if addresses.len() > MAX_TEE_EXPIRED_TARGET_EXCLUSIONS {
-        return Err(PrecompileError::revert(format!(
-            "TEE expiry exclusions exceed protocol cap: {} > {}",
-            addresses.len(),
-            MAX_TEE_EXPIRED_TARGET_EXCLUSIONS
-        )));
+        return Err(ReshareArtifactError::TeeExpiryExclusionsExceedCap {
+            count: addresses.len(),
+            max_count: MAX_TEE_EXPIRED_TARGET_EXCLUSIONS,
+        }
+        .into());
     }
     let mut unique = std::collections::BTreeSet::new();
     for address in addresses {
         if address.is_zero() {
-            return Err(PrecompileError::revert(
-                "TEE expiry exclusions contain zero validator address",
-            ));
+            return Err(ReshareArtifactError::TeeExpiryExclusionsZeroValidator.into());
         }
         if !unique.insert(*address) {
-            return Err(PrecompileError::revert(
-                "TEE expiry exclusions contain duplicate validator address",
-            ));
+            return Err(ReshareArtifactError::TeeExpiryExclusionsDuplicateValidator.into());
         }
     }
     Ok(())
@@ -392,49 +388,41 @@ pub fn decode_late_finalize_credits_artifact(
     Ok(decode_outbe_block_artifacts(extra_data)?.late_finalize_credits)
 }
 
-fn ensure_count_fits_u16(name: &str, count: usize) -> Result<()> {
+fn ensure_count_fits_u16(name: &'static str, count: usize) -> Result<()> {
     if count > u16::MAX as usize {
-        return Err(PrecompileError::revert(format!(
-            "{name} list exceeds u16 count limit: {count}"
-        )));
+        return Err(ReshareArtifactError::ListExceedsU16Limit { name, count }.into());
     }
     Ok(())
 }
 
-fn ensure_len_fits_u32(name: &str, len: usize) -> Result<()> {
+fn ensure_len_fits_u32(name: &'static str, len: usize) -> Result<()> {
     if len > u32::MAX as usize {
-        return Err(PrecompileError::revert(format!(
-            "{name} exceeds u32 length limit: {len}"
-        )));
+        return Err(ReshareArtifactError::ExceedsU32LengthLimit { name, len }.into());
     }
     Ok(())
 }
 
-fn ensure_payload_fits_u16(name: &str, len: usize) -> Result<()> {
+fn ensure_payload_fits_u16(name: &'static str, len: usize) -> Result<()> {
     if len > u16::MAX as usize {
-        return Err(PrecompileError::revert(format!(
-            "{name} payload exceeds u16 length limit: {len}"
-        )));
+        return Err(ReshareArtifactError::PayloadExceedsU16LengthLimit { name, len }.into());
     }
     Ok(())
 }
 
 fn decode_block_artifact_record_count(extra_data: &[u8]) -> Result<usize> {
     if extra_data.len() < 4 + 1 + 1 {
-        return Err(PrecompileError::revert("block artifacts too short"));
+        return Err(ReshareArtifactError::TooShort.into());
     }
 
     if &extra_data[..4] != MAGIC {
-        return Err(PrecompileError::revert(
-            "unknown non-empty extra_data block artifact",
-        ));
+        return Err(ReshareArtifactError::UnknownExtraDataArtifact.into());
     }
 
     if extra_data[4] != VERSION {
-        return Err(PrecompileError::revert(format!(
-            "unsupported block artifact version: {}",
-            extra_data[4]
-        )));
+        return Err(ReshareArtifactError::UnsupportedVersion {
+            version: extra_data[4],
+        }
+        .into());
     }
 
     Ok(extra_data[5] as usize)

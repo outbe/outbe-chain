@@ -140,3 +140,16 @@ pub(crate) enum OcompExExError {
     #[error("unexpected embedded OCOMP vote action")]
     UnexpectedVoteAction,
 }
+
+/// Errors that occur when reading finalized state into precompile storage in OCOMP ExEx.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum OcompExExStateReadError {
+    #[error("OCOMP ExEx finalized state read failed: {0}")]
+    FinalizedStateReadFailed(String),
+}
+
+impl From<OcompExExStateReadError> for outbe_primitives::error::PrecompileError {
+    fn from(error: OcompExExStateReadError) -> Self {
+        Self::Storage(error.to_string())
+    }
+}

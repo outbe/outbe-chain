@@ -19,7 +19,7 @@ pub(crate) struct BlockExecutionIdentity {
 pub(crate) struct BlockSystemPlan {
     pub(crate) expected_begin_system_txs: Vec<Recovered<TransactionSigned>>,
     pub(crate) expected_end_system_txs: Vec<Recovered<TransactionSigned>>,
-    pub(crate) system_layout_error: Option<String>,
+    pub(crate) system_layout_error: Option<crate::errors::SystemTxExpectationError>,
     pub(crate) proposer_evm_address: Option<Address>,
     pub(crate) execute_outbe_block_hooks: bool,
     pub(crate) prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,

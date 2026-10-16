@@ -287,13 +287,16 @@ pub struct DesisContract {
 
     // --- PROMIS load ladder ---
     /// Exponent `k` of the current load, `promis_load_minor = 10^k`. Zero until the
-    /// chain has briefed a day it could price, which the deadband has nothing to hold.
+    /// chain has briefed a day it could price.
     #[attribute(order = 38)]
     pub promis_load_exponent: outbe_primitives::storage::dsl::Value<u32>,
-    /// Digits of the launch pair the ladder re-anchors against, captured on the first
-    /// day the chain could price the anchor currency. Zero until captured.
+    /// iso_code -> price the currency was captured at. Zero until captured.
     #[attribute(order = 39)]
-    pub promis_load_anchor_digits: outbe_primitives::storage::dsl::Value<u32>,
+    pub promis_load_reference_minor: outbe_primitives::storage::dsl::Map<u16, U256>,
+    /// iso_code -> exponent the price was captured at. A capture under another
+    /// exponent is stale.
+    #[attribute(order = 40)]
+    pub promis_load_reference_exponent: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl DesisContract<'_> {

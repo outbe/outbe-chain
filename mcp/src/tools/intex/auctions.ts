@@ -42,7 +42,7 @@ export function registerAuctionTools(server: McpServer, deps: IntexDeps): void {
   server.tool(
     "auction_info",
     "One auction's stage, schedule (commit/reveal/issuance ends in UTC), and params (promis-load strike, " +
-      "min bid rate/units, and one entry/floor/call row per currency the day prices - bid in one of those). " +
+      "min bid rate/quantity, and one entry/floor/call row per currency the day prices - bid in one of those). " +
       "Bids are sealed: the bid counts and clearing result stay 0 until clearing runs after reveal, so 0 here " +
       "does NOT mean there are no participants.",
     { worldwideDay: worldwideDayArg, network: networkName.optional() },

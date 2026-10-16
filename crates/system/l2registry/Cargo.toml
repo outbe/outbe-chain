@@ -26,6 +26,11 @@ commonware-math.workspace = true
 rand_core.workspace = true
 rand-commonware.workspace = true
 rand-core-commonware.workspace = true
+outbe-evm = { workspace = true, features = ["test-utils"] }
+outbe-tributefactory.workspace = true
+alloy-evm.workspace = true
+reth-ethereum.workspace = true
+revm.workspace = true
 
 [lints]
 workspace = true

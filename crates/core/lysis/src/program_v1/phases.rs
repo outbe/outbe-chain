@@ -218,9 +218,7 @@ pub fn fidelity_map(
         group.0 = group
             .0
             .checked_add(1)
-            .ok_or_else(|| ProgramErrorV1::Arithmetic {
-                message: "Fidelity league population overflow".to_owned(),
-            })?;
+            .ok_or(crate::errors::LysisArithmeticErrorV1::FidelityLeaguePopulationOverflow)?;
         group.1 = group
             .1
             .checked_add(item.tribute.nominal_amount_minor)
@@ -286,9 +284,7 @@ pub fn fidelity_reduce(
         group.0 = group
             .0
             .checked_add(partial.count)
-            .ok_or_else(|| ProgramErrorV1::Arithmetic {
-                message: "Fidelity reducer population overflow".to_owned(),
-            })?;
+            .ok_or(crate::errors::LysisArithmeticErrorV1::FidelityReducerPopulationOverflow)?;
         group.1 = group.1.checked_add(partial.nominal_amount_minor).ok_or(
             ProgramErrorV1::TotalNominalOverflow {
                 ordinal: right.start_ordinal as usize,
@@ -369,6 +365,7 @@ pub fn amount_map(
     observed: &[ObservedTributeV1],
     fidelity_observations: &[FidelityObservationV1],
     fractions: &[LeagueFractionV1],
+    nod_gratis_load_max: U256,
 ) -> Result<AmountRunV1, ProgramErrorV1> {
     if observed.is_empty()
         || observed.len() != fidelity_observations.len()
@@ -391,25 +388,32 @@ pub fn amount_map(
                 u32::try_from(local_ordinal).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
             )
             .ok_or(ProgramErrorV1::OutputCountMismatch)?;
-        let math = amount_record(raw_ordinal, item, fidelity, &fraction_by_league)?;
-        checked_segment_gratis_total = checked_add_amount(
-            checked_segment_gratis_total,
-            math.gratis_load_minor,
+        let math = amount_record(
             raw_ordinal,
-            "Gratis total overflow",
+            item,
+            fidelity,
+            &fraction_by_league,
+            nod_gratis_load_max,
         )?;
-        checked_segment_nominal_total = checked_add_amount(
-            checked_segment_nominal_total,
-            math.nominal_amount_minor,
-            raw_ordinal,
-            "nominal total overflow",
-        )?;
-        checked_segment_settlement_cost_total = checked_add_amount(
-            checked_segment_settlement_cost_total,
-            math.settlement_cost_minor,
-            raw_ordinal,
-            "settlement cost total overflow",
-        )?;
+        checked_segment_gratis_total = checked_segment_gratis_total
+            .checked_add(math.gratis_load_minor)
+            .ok_or(crate::errors::LysisArithmeticErrorV1::GratisTotalOverflow {
+                ordinal: raw_ordinal,
+            })?;
+        checked_segment_nominal_total = checked_segment_nominal_total
+            .checked_add(math.nominal_amount_minor)
+            .ok_or(
+                crate::errors::LysisArithmeticErrorV1::NominalTotalOverflow {
+                    ordinal: raw_ordinal,
+                },
+            )?;
+        checked_segment_settlement_cost_total = checked_segment_settlement_cost_total
+            .checked_add(math.settlement_cost_minor)
+            .ok_or(
+                crate::errors::LysisArithmeticErrorV1::SettlementCostTotalOverflow {
+                    ordinal: raw_ordinal,
+                },
+            )?;
         ordered_records.push(math.record);
     }
     let count =
@@ -424,19 +428,6 @@ pub fn amount_map(
         checked_segment_nominal_total,
         checked_segment_settlement_cost_total,
     })
-}
-
-fn checked_add_amount(
-    total: U256,
-    amount: U256,
-    raw_ordinal: u32,
-    message: &str,
-) -> Result<U256, ProgramErrorV1> {
-    total
-        .checked_add(amount)
-        .ok_or_else(|| ProgramErrorV1::Arithmetic {
-            message: format!("{message} at {raw_ordinal}"),
-        })
 }
 
 fn fractions_by_league(
@@ -459,6 +450,7 @@ fn amount_record(
     item: &ObservedTributeV1,
     fidelity: &FidelityObservationV1,
     fraction_by_league: &BTreeMap<u16, U256>,
+    nod_gratis_load_max: U256,
 ) -> Result<AmountMathV1, ProgramErrorV1> {
     if fidelity.raw_ordinal != raw_ordinal
         || fidelity.tribute_id != item.tribute.tribute_id
@@ -498,6 +490,7 @@ fn amount_record(
     let gratis_load_minor = calculate_gratis_load(
         item.tribute.nominal_amount_minor,
         fraction,
+        nod_gratis_load_max,
         raw_ordinal as usize,
     )?;
     let entry_price_minor =
@@ -513,9 +506,12 @@ fn amount_record(
         });
     }
     if !outbe_nod::pricing::is_issuable_entry(entry_price_minor) {
-        return Err(ProgramErrorV1::Arithmetic {
-            message: format!("Nod entry price out of bounds at {raw_ordinal}"),
-        });
+        return Err(
+            crate::errors::LysisArithmeticErrorV1::NodEntryPriceOutOfBounds {
+                ordinal: raw_ordinal as usize,
+            }
+            .into(),
+        );
     }
     let settlement_cost_minor =
         calculate_cost(entry_price_minor, gratis_load_minor, raw_ordinal as usize)?;
@@ -585,9 +581,11 @@ pub fn gratis_summary_reduce_pair(
             let total = left
                 .checked_segment_gratis_total
                 .checked_add(right.checked_segment_gratis_total)
-                .ok_or_else(|| ProgramErrorV1::Arithmetic {
-                    message: format!("Gratis reducer total overflow at {}", right.start_ordinal),
-                })?;
+                .ok_or(
+                    crate::errors::LysisArithmeticErrorV1::GratisReducerTotalOverflow {
+                        ordinal: right.start_ordinal,
+                    },
+                )?;
             Ok(GratisSummaryValueV1::Summary(GratisSegmentSummaryV1 {
                 start_ordinal: left.start_ordinal,
                 end_ordinal: right.end_ordinal,
@@ -694,7 +692,7 @@ pub fn output_finalize(
             return Err(ProgramErrorV1::OutputCountMismatch);
         }
         let nod_id = derive_poseidon_entity_id(amount.owner, amount.worldwide_day)
-            .map_err(ProgramErrorV1::arithmetic)?;
+            .map_err(ProgramErrorV1::entity_id_derivation)?;
         ordered_records.push(FinalizedOutputRecordV1 {
             raw_ordinal: amount.raw_ordinal,
             nod_action: NodActionV1 {

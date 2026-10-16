@@ -27,21 +27,23 @@ pub(super) fn scopes(names: Vec<String>, domain: &str) -> Result<Vec<StorageScop
         let Some(partition) = parts.next() else {
             continue;
         };
-        let logical = parts.next().ok_or_else(|| {
-            StorageError::Corruption("missing scoped collection namespace".into())
-        })?;
+        let logical = parts
+            .next()
+            .ok_or(crate::errors::StorageCorruptionError::MissingScopedCollectionNamespace)?;
         let logical = Namespace::new(logical)?;
         let scope = if partition == "shared" {
             StorageScope::shared(domain)?
         } else {
             let (family, index) = partition
                 .rsplit_once('_')
-                .ok_or_else(|| StorageError::Corruption("invalid numbered collection".into()))?;
+                .ok_or(crate::errors::StorageCorruptionError::InvalidNumberedCollection)?;
             StorageScope::numbered(
                 domain,
                 &family.replace('_', "-"),
                 index.parse().map_err(|_| {
-                    StorageError::Corruption("invalid collection partition number".into())
+                    StorageError::from(
+                        crate::errors::StorageCorruptionError::InvalidCollectionPartitionNumber,
+                    )
                 })?,
             )?
         };

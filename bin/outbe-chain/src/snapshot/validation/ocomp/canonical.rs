@@ -170,14 +170,12 @@ impl CanonicalObligationVerifier<'_> {
     ) -> eyre::Result<()> {
         use alloy_consensus::Sealable;
         let b = job.intent_height;
-        let header = self
-            .view
-            .header(b)?
-            .ok_or_else(|| Incomplete(format!("missing active request header B={b}")))?;
-        let hash = self
-            .view
-            .canonical_hash(b)?
-            .ok_or_else(|| Incomplete(format!("missing active request canonical hash B={b}")))?;
+        let header = self.view.header(b)?.ok_or_else(|| {
+            SnapshotIncompleteError::MissingActiveRequestHeader { b }.into_incomplete()
+        })?;
+        let hash = self.view.canonical_hash(b)?.ok_or_else(|| {
+            SnapshotIncompleteError::MissingActiveRequestCanonicalHash { b }.into_incomplete()
+        })?;
         if header.inner.number != b
             || header.hash_slow() != hash
             || job.intent.logical_evaluation_height != b

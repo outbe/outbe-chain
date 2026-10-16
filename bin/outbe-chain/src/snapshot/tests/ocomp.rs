@@ -1,31 +1,7 @@
 use alloy_primitives::U256;
-use outbe_intex::schema::SeriesId;
 use outbe_primitives::time::WorldwideDay;
 
-use super::super::validation::{ocomp::verify_series_day, Incomplete};
-
-#[test]
-fn canonical_series_identity_is_checked_before_decoding_its_day() {
-    for currency in [*b"USD", *b"949"] {
-        let day = WorldwideDay::new(20_240_229);
-        assert_eq!(
-            verify_series_day(SeriesId::pack(day, currency, b'U').unwrap()).unwrap(),
-            day
-        );
-    }
-    for malformed in [
-        *b"00000000-USD-U",
-        *b"20260230-USD-U",
-        *b"20260101_USD-U",
-        *b"20260101-USD_U",
-        *b"20260101-usd-U",
-        *b"20260101-USD-!",
-        *b"X0260101-USD-U",
-        [255; 14],
-    ] {
-        assert!(verify_series_day(SeriesId::from_bytes(malformed)).is_err());
-    }
-}
+use super::super::validation::Incomplete;
 
 use super::super::{
     native::RethReadOnlyView,
@@ -37,9 +13,8 @@ use super::super::{
 use crate::OutbeHeader;
 use alloy_consensus::Sealable;
 use alloy_primitives::B256;
-use outbe_intex::schema::{IntexContract, SeriesRecord};
 use outbe_nod::schema::{NodCertifiedGenerationProjection, NodContract};
-use outbe_primitives::storage::{hashmap::HashMapStorageProvider, types::Storable, StorageHandle};
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use reth_ethereum::provider::db::{
     database::Database,
     init_db,
@@ -173,6 +148,7 @@ fn seed_nod_generation(
         bucket_count: 1,
         nod_amount_total: U256::from(99),
         lysis_allocation_minor: U256::from(77),
+        nod_gratis_load_max: U256::from(33),
         issued_at: 1_000,
         next_nod_ordinal: 1,
         last_progress_height: 90,
@@ -208,6 +184,9 @@ fn seed_nod_generation(
     nod.ocomp_lysis_allocation_minor
         .write(&day, generation.lysis_allocation_minor)
         .unwrap();
+    nod.ocomp_nod_gratis_load_max
+        .write(&day, generation.nod_gratis_load_max)
+        .unwrap();
     nod.ocomp_materialization_job_id
         .write(&day, generation.job_id)
         .unwrap();
@@ -227,26 +206,6 @@ fn seed_nod_generation(
         .write(&sequence, day)
         .unwrap();
     generation
-}
-
-fn series(day: WorldwideDay, currency: [u8; 3]) -> SeriesRecord {
-    SeriesRecord {
-        series_id: SeriesId::pack(day, currency, b'U').unwrap(),
-        issuance_currency: 840,
-        reference_currency: 840,
-        issued_units: 3,
-        promis_load_minor: U256::from(10),
-        entry_price_minor: U256::from(11),
-        floor_price_minor: U256::from(12),
-        call_price_minor: U256::from(13),
-        call_window_seconds: 14,
-        call_threshold_seconds: 15,
-        call_notice_period_seconds: 16,
-        issued_at: 1_000,
-        called_at: 0,
-        state: 0,
-        worldwide_day: day,
-    }
 }
 
 fn queued_owner(count: u64) -> HashMapStorageProvider {
@@ -282,7 +241,6 @@ fn canonical_inventory_discovers_later_nod_jobs_without_any_local_job_files() {
             ),
             (1, 3, 2)
         );
-        assert_eq!(inventory.bounds.series, 0);
         let mut jobs = vec![];
         inventory
             .visit_nod(&mut |sequence, projection| {
@@ -340,76 +298,6 @@ fn canonical_fifo_rejects_later_holes_duplicates_complete_entries_and_bad_bounds
     }
 }
 
-fn series_owner() -> HashMapStorageProvider {
-    let mut owner = queued_owner(0);
-    StorageHandle::enter(&mut owner, |storage| {
-        let intex = IntexContract::new(storage);
-        let records = [
-            series(DAY, *b"USD"),
-            series(DAY, *b"EUR"),
-            series(WorldwideDay::new(DAY.value() + 1), *b"USD"),
-        ];
-        intex.total_series.write(3).unwrap();
-        for (index, record) in records.iter().enumerate() {
-            intex.series.create(record).unwrap();
-            intex
-                .series_id_at_index
-                .write(&(index as u64), record.series_id.to_word())
-                .unwrap();
-        }
-    });
-    owner
-}
-
-#[test]
-fn permanent_series_index_deduplicates_days() {
-    with_owner_storage(2, series_owner(), |state, source| {
-        let scratch = tempfile::tempdir().unwrap();
-        let inventory =
-            CanonicalInventory::scan(state, scratch.path(), &source.protected, None).unwrap();
-        assert_eq!((inventory.bounds.series, inventory.bounds.days), (3, 2));
-    });
-}
-
-#[test]
-fn canonical_series_index_duplicates_cannot_hide_required_data() {
-    for damage in [
-        "duplicate-series",
-        "series-record-day",
-        "index-hole",
-        "missing-series-record",
-    ] {
-        let mut owner = series_owner();
-        StorageHandle::enter(&mut owner, |storage| {
-            let intex = IntexContract::new(storage);
-            match damage {
-                "index-hole" => intex.series_id_at_index.write(&1, U256::ZERO).unwrap(),
-                "missing-series-record" => intex
-                    .series_id_at_index
-                    .write(&1, SeriesId::pack(DAY, *b"GBP", b'U').unwrap().to_word())
-                    .unwrap(),
-                "duplicate-series" => intex
-                    .series_id_at_index
-                    .write(&1, series(DAY, *b"USD").series_id.to_word())
-                    .unwrap(),
-                "series-record-day" => {
-                    let mut record = series(DAY, *b"USD");
-                    record.worldwide_day = WorldwideDay::new(DAY.value() + 1);
-                    intex.series.update(&record).unwrap();
-                }
-                _ => unreachable!(),
-            }
-        });
-        with_owner_storage(2, owner, |state, source| {
-            let scratch = tempfile::tempdir().unwrap();
-            assert!(
-                CanonicalInventory::scan(state, scratch.path(), &source.protected, None).is_err(),
-                "{damage}"
-            );
-        });
-    }
-}
-
 #[test]
 fn canonical_scan_budget_and_scratch_overlap_fail_without_source_changes() {
     with_owner_storage(2, queued_owner(2), |state, source| {
@@ -421,17 +309,6 @@ fn canonical_scan_budget_and_scratch_overlap_fail_without_source_changes() {
         assert!(error.to_string().contains("1/2"));
         let protected = outbe_snapshot::layout::ProtectedPaths(vec![scratch.path().to_path_buf()]);
         assert!(CanonicalInventory::scan(state, scratch.path(), &protected, None).is_err());
-        assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
-    });
-    with_owner_storage(1, series_owner(), |state, source| {
-        let scratch = tempfile::tempdir().unwrap();
-        let error = CanonicalInventory::scan(state, scratch.path(), &source.protected, Some(1))
-            .err()
-            .unwrap();
-        assert!(error.downcast_ref::<Incomplete>().is_some());
-        assert!(error
-            .to_string()
-            .contains("Intex series scan stopped at 1/3"));
         assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
     });
 }

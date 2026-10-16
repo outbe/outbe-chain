@@ -73,6 +73,7 @@ impl Fixture {
             bucket_count: self.nod_count,
             nod_amount_total: U256::from(self.nod_count) * U256::from(2),
             lysis_allocation_minor: U256::from(self.nod_count),
+            nod_gratis_load_max: U256::from(2),
             issued_at: 1_000,
             next_nod_ordinal: 256,
             last_progress_height: 100,
@@ -109,6 +110,9 @@ impl Fixture {
             .unwrap();
         nod.ocomp_lysis_allocation_minor
             .write(&self.day, p.lysis_allocation_minor)
+            .unwrap();
+        nod.ocomp_nod_gratis_load_max
+            .write(&self.day, p.nod_gratis_load_max)
             .unwrap();
         nod.ocomp_materialization_job_id
             .write(&self.day, p.job_id)
@@ -251,6 +255,7 @@ fn protected_batch(
                 head: head.encode_canonical(&poc_schema_limits()).unwrap(),
                 subtree_height: 3,
                 source_bindings: vec![],
+                nod_gratis_load_max: U256::from(2),
             },
             batch,
         )

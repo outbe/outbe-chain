@@ -82,12 +82,13 @@ impl Key {
     pub fn new(bytes: impl Into<Vec<u8>>) -> Result<Self, StorageError> {
         let bytes = bytes.into();
         if bytes.is_empty() {
-            return Err(StorageError::invalid_argument("key must not be empty"));
+            return Err(crate::errors::StorageValidationError::EmptyKey.into());
         }
         if bytes.len() > MAX_KEY_BYTES {
-            return Err(StorageError::invalid_argument(format!(
-                "key exceeds {MAX_KEY_BYTES} bytes"
-            )));
+            return Err(crate::errors::StorageValidationError::KeyExceedsMaxBytes {
+                max: MAX_KEY_BYTES,
+            }
+            .into());
         }
         Ok(Self(bytes))
     }
@@ -124,9 +125,12 @@ impl Value {
     pub fn new(bytes: impl Into<Vec<u8>>) -> Result<Self, StorageError> {
         let bytes = bytes.into();
         if bytes.len() > MAX_VALUE_BYTES {
-            return Err(StorageError::invalid_argument(format!(
-                "value exceeds {MAX_VALUE_BYTES} bytes"
-            )));
+            return Err(
+                crate::errors::StorageValidationError::ValueExceedsMaxBytes {
+                    max: MAX_VALUE_BYTES,
+                }
+                .into(),
+            );
         }
         Ok(Self(bytes))
     }
@@ -167,9 +171,12 @@ impl StorageMetadata {
             ));
         }
         if entries.len() > MAX_METADATA_ENTRIES {
-            return Err(StorageError::invalid_argument(format!(
-                "metadata exceeds {MAX_METADATA_ENTRIES} entries"
-            )));
+            return Err(
+                crate::errors::StorageValidationError::MetadataExceedsMaxEntries {
+                    max: MAX_METADATA_ENTRIES,
+                }
+                .into(),
+            );
         }
         for (key, value) in &entries {
             validate_metadata_key(key)?;
@@ -357,9 +364,12 @@ impl AtomicWriteBatch {
             .saturating_add(self.retired_scopes.len())
             > MAX_ATOMIC_BATCH_OPERATIONS
         {
-            return Err(StorageError::invalid_argument(format!(
-                "atomic batch exceeds {MAX_ATOMIC_BATCH_OPERATIONS} operations"
-            )));
+            return Err(
+                crate::errors::StorageValidationError::AtomicBatchExceedsMaxOperations {
+                    max: MAX_ATOMIC_BATCH_OPERATIONS,
+                }
+                .into(),
+            );
         }
         let mut bytes = 0usize;
         for operation in &self.operations {
@@ -370,9 +380,12 @@ impl AtomicWriteBatch {
                         .as_ref()
                         .map_or(0, StorageMetadata::encoded_len);
                 if record_bytes > MAX_SCAN_PAGE_VALUE_BYTES {
-                    return Err(StorageError::invalid_argument(format!(
-                        "stored record exceeds {MAX_SCAN_PAGE_VALUE_BYTES} value and metadata bytes"
-                    )));
+                    return Err(
+                        crate::errors::StorageValidationError::StoredRecordExceedsMaxBytes {
+                            max: MAX_SCAN_PAGE_VALUE_BYTES,
+                        }
+                        .into(),
+                    );
                 }
                 bytes = bytes
                     .checked_add(record.value.as_bytes().len())
@@ -381,11 +394,14 @@ impl AtomicWriteBatch {
                             total.checked_add(metadata.encoded_len())
                         })
                     })
-                    .ok_or_else(|| StorageError::invalid_argument("atomic batch size overflow"))?;
+                    .ok_or(crate::errors::StorageValidationError::AtomicBatchSizeOverflow)?;
                 if bytes > MAX_ATOMIC_BATCH_BYTES {
-                    return Err(StorageError::invalid_argument(format!(
-                        "atomic batch exceeds {MAX_ATOMIC_BATCH_BYTES} value and metadata bytes"
-                    )));
+                    return Err(
+                        crate::errors::StorageValidationError::AtomicBatchExceedsMaxBytes {
+                            max: MAX_ATOMIC_BATCH_BYTES,
+                        }
+                        .into(),
+                    );
                 }
             }
         }
@@ -419,14 +435,20 @@ impl<'a> ScanRequest<'a> {
 
     pub(crate) fn validate(self) -> Result<(), StorageError> {
         if self.prefix.len() > MAX_KEY_BYTES {
-            return Err(StorageError::invalid_argument(format!(
-                "scan prefix exceeds {MAX_KEY_BYTES} bytes"
-            )));
+            return Err(
+                crate::errors::StorageValidationError::ScanPrefixExceedsMaxBytes {
+                    max: MAX_KEY_BYTES,
+                }
+                .into(),
+            );
         }
         if self.limit == 0 || self.limit > MAX_SCAN_ENTRIES {
-            return Err(StorageError::invalid_argument(format!(
-                "scan limit must be between 1 and {MAX_SCAN_ENTRIES}"
-            )));
+            return Err(
+                crate::errors::StorageValidationError::ScanLimitOutOfBounds {
+                    max: MAX_SCAN_ENTRIES,
+                }
+                .into(),
+            );
         }
         if let Some(after) = self.after {
             if !after.as_bytes().starts_with(self.prefix) {
@@ -557,9 +579,12 @@ fn validate_namespace(value: &str) -> Result<(), StorageError> {
         ));
     }
     if value.len() > MAX_NAMESPACE_BYTES {
-        return Err(StorageError::invalid_argument(format!(
-            "namespace exceeds {MAX_NAMESPACE_BYTES} bytes"
-        )));
+        return Err(
+            crate::errors::StorageValidationError::NamespaceExceedsMaxBytes {
+                max: MAX_NAMESPACE_BYTES,
+            }
+            .into(),
+        );
     }
     let mut bytes = value.bytes();
     let Some(first) = bytes.next() else {
@@ -578,7 +603,7 @@ fn validate_namespace(value: &str) -> Result<(), StorageError> {
         ));
     }
     if value.starts_with("system.") {
-        Err(StorageError::invalid_argument("reserved storage namespace"))
+        Err(crate::errors::StorageValidationError::ReservedMongoNamespace.into())
     } else {
         Ok(())
     }
@@ -586,9 +611,12 @@ fn validate_namespace(value: &str) -> Result<(), StorageError> {
 
 fn validate_metadata_key(value: &str) -> Result<(), StorageError> {
     if value.is_empty() || value.len() > MAX_METADATA_KEY_BYTES {
-        return Err(StorageError::invalid_argument(format!(
-            "metadata key length must be between 1 and {MAX_METADATA_KEY_BYTES} bytes"
-        )));
+        return Err(
+            crate::errors::StorageValidationError::MetadataKeyLengthOutOfBounds {
+                max: MAX_METADATA_KEY_BYTES,
+            }
+            .into(),
+        );
     }
     let mut bytes = value.bytes();
     let Some(first) = bytes.next() else {
@@ -608,9 +636,12 @@ fn validate_metadata_key(value: &str) -> Result<(), StorageError> {
 
 fn validate_metadata_value(value: &str) -> Result<(), StorageError> {
     if value.is_empty() || value.len() > MAX_METADATA_VALUE_BYTES {
-        return Err(StorageError::invalid_argument(format!(
-            "metadata value length must be between 1 and {MAX_METADATA_VALUE_BYTES} bytes"
-        )));
+        return Err(
+            crate::errors::StorageValidationError::MetadataValueLengthOutOfBounds {
+                max: MAX_METADATA_VALUE_BYTES,
+            }
+            .into(),
+        );
     }
     if !value.bytes().all(|byte| byte.is_ascii_graphic()) {
         return Err(StorageError::invalid_argument(

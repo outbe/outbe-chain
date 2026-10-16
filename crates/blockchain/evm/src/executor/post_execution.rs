@@ -24,15 +24,14 @@ where
     pub(in crate::executor) fn apply_outbe_ethereum_post_execution(
         &mut self,
     ) -> Result<(), BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         if self.ethereum_post_execution_requests.is_some() {
-            return Err(BlockValidationError::msg(
-                "standard Ethereum post-execution changes already applied",
-            )
-            .into());
+            return Err(ExecutorValidationError::PostExecutionAlreadyApplied.into());
         }
 
         validate_outbe_withdrawals(self.inner.ctx.withdrawals.as_deref())
-            .map_err(|err| BlockExecutionError::from(BlockValidationError::msg(err)))?;
+            .map_err(ExecutorValidationError::invalid_withdrawals)?;
 
         let requests = if self
             .inner

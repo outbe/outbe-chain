@@ -212,7 +212,7 @@ impl TributeContract<'_> {
 
         let body_bytes = tribute
             .stored_body()
-            .map_err(crate::errors::body_read_corruption)?
+            .map_err(TributeError::from)?
             .payload()
             .len();
         let body_bytes =

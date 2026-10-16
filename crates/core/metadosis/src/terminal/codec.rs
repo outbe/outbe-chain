@@ -2,7 +2,7 @@ use super::{
     decode_retirement, encode_retirement,
     model::{CapacityForfeitureDetail, TerminalReceiptCommon, WwdTerminalReceipt},
 };
-use crate::{errors::storage_corruption_message, schema::terminal_outcome};
+use crate::{errors::MetadosisStorageCorruptionError, schema::terminal_outcome};
 use alloy_primitives::U256;
 use outbe_primitives::{error::Result, time::WorldwideDay};
 
@@ -37,16 +37,12 @@ pub(crate) fn encode(receipt: &WwdTerminalReceipt) -> Vec<u8> {
 pub(crate) fn decode(bytes: &[u8], worldwide_day: WorldwideDay) -> Result<WwdTerminalReceipt> {
     let mut reader = Reader { bytes, offset: 0 };
     if reader.take::<4>()? != *MAGIC || u16::from_be_bytes(reader.take()?) != VERSION {
-        return Err(storage_corruption_message(
-            "terminal receipt magic/version mismatch",
-        ));
+        return Err(MetadosisStorageCorruptionError::TerminalReceiptMagicVersionMismatch.into());
     }
     let outcome = reader.take::<1>()?[0];
     let stored_day = WorldwideDay::new(u32::from_be_bytes(reader.take()?));
     if stored_day != worldwide_day {
-        return Err(storage_corruption_message(
-            "terminal receipt WorldwideDay/key mismatch",
-        ));
+        return Err(MetadosisStorageCorruptionError::TerminalReceiptWorldwideDayKeyMismatch.into());
     }
     let common = TerminalReceiptCommon {
         worldwide_day,
@@ -70,16 +66,10 @@ pub(crate) fn decode(bytes: &[u8], worldwide_day: WorldwideDay) -> Result<WwdTer
                 retired_generation: u64::from_be_bytes(reader.take()?),
             },
         },
-        _ => {
-            return Err(storage_corruption_message(
-                "Metadosis WWD has an unknown terminal receipt outcome",
-            ))
-        }
+        _ => return Err(MetadosisStorageCorruptionError::UnknownTerminalReceiptOutcome.into()),
     };
     if reader.offset != bytes.len() {
-        return Err(storage_corruption_message(
-            "terminal receipt has trailing bytes",
-        ));
+        return Err(MetadosisStorageCorruptionError::TerminalReceiptHasTrailingBytes.into());
     }
     Ok(receipt)
 }
@@ -94,11 +84,11 @@ impl Reader<'_> {
         let field = self
             .bytes
             .get(self.offset..end)
-            .ok_or_else(|| storage_corruption_message("truncated terminal receipt"))?;
+            .ok_or(MetadosisStorageCorruptionError::TruncatedTerminalReceipt)?;
         self.offset = end;
         field
             .try_into()
-            .map_err(|_| storage_corruption_message("invalid terminal receipt field width"))
+            .map_err(|_| MetadosisStorageCorruptionError::InvalidTerminalReceiptFieldWidth.into())
     }
 }
 

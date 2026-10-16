@@ -6,6 +6,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::errors::LayoutError;
+
 /// One named native source. Names are labels, never filesystem authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedDomain {
@@ -32,7 +34,7 @@ pub fn validate_layout(
     let mut roots = Vec::with_capacity(domains.len());
     for domain in domains {
         if domain.name.is_empty() || !names.insert(&domain.name) {
-            return Err(invalid("native domain labels must be nonempty and unique"));
+            return Err(LayoutError::InvalidDomainLabels.into());
         }
         roots.push(fs::canonicalize(&domain.root)?);
     }
@@ -51,12 +53,10 @@ pub fn validate_layout(
     }
     for (index, output) in outputs.iter().enumerate() {
         if protected.iter().any(|path| overlap(output, path)) {
-            return Err(invalid(
-                "snapshot output or scratch overlaps a protected path",
-            ));
+            return Err(LayoutError::OutputOverlapsProtectedPath.into());
         }
         if outputs[..index].iter().any(|other| overlap(output, other)) {
-            return Err(invalid("snapshot output and scratch paths overlap"));
+            return Err(LayoutError::OutputAndScratchOverlap.into());
         }
     }
     Ok(())
@@ -69,17 +69,13 @@ fn validate_source_separation(
     outputs: &[PathBuf],
 ) -> io::Result<()> {
     if previous_roots.iter().any(|other| overlap(root, other)) {
-        return Err(invalid("native source domains overlap"));
+        return Err(LayoutError::SourceDomainsOverlap.into());
     }
     if protected.iter().any(|path| overlap(root, path)) {
-        return Err(invalid(
-            "native source overlaps protected identity or configuration",
-        ));
+        return Err(LayoutError::SourceOverlapsProtectedPath.into());
     }
     if outputs.iter().any(|path| overlap(root, path)) {
-        return Err(invalid(
-            "snapshot output or scratch overlaps a native source",
-        ));
+        return Err(LayoutError::OutputOverlapsNativeSource.into());
     }
     Ok(())
 }
@@ -88,13 +84,9 @@ fn overlap(left: &Path, right: &Path) -> bool {
     left.starts_with(right) || right.starts_with(left)
 }
 
-fn invalid(message: &'static str) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidInput, message)
-}
-
 fn resolve_existing_ancestor(path: &Path) -> io::Result<PathBuf> {
     if path.as_os_str().is_empty() {
-        return Err(invalid("filesystem path must not be empty"));
+        return Err(LayoutError::EmptyFilesystemPath.into());
     }
     let absolute = if path.is_absolute() {
         path.to_path_buf()
@@ -119,11 +111,9 @@ fn resolve_existing_ancestor(path: &Path) -> io::Result<PathBuf> {
                 suffix.push(
                     ancestor
                         .file_name()
-                        .ok_or_else(|| invalid("unresolvable filesystem path"))?,
+                        .ok_or(LayoutError::UnresolvableFilesystemPath)?,
                 );
-                ancestor = ancestor
-                    .parent()
-                    .ok_or_else(|| invalid("filesystem path has no existing ancestor"))?;
+                ancestor = ancestor.parent().ok_or(LayoutError::NoExistingAncestor)?;
             }
             Err(error) => return Err(error),
         }

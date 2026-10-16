@@ -193,8 +193,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                             proof_chain_id,
                             genesis_hash,
                         )
-                    }))
-                    .map_err(eyre::Report::msg)?;
+                    }))?;
                     let outbe_api = create_outbe_rpc_handler(
                         Arc::clone(&provider),
                         bridge,

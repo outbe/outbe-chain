@@ -57,7 +57,7 @@ use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::METADOSIS_ADDRESS,
-    error::{PrecompileError, Result as PrecompileResult},
+    error::Result as PrecompileResult,
     storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
 };
 use outbe_tribute::{DayPreAdmission, DayTotals, TributeContract};

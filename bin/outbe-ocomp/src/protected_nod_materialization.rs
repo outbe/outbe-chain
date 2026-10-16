@@ -486,6 +486,7 @@ mod tests {
             head: head.encode_canonical(&poc_schema_limits()).unwrap(),
             subtree_height: 3,
             source_bindings: vec![],
+            nod_gratis_load_max: alloy_primitives::U256::ONE,
         };
         let mut reader = Reader {
             subject: source,

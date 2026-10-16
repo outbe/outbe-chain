@@ -33,9 +33,7 @@ impl MetadosisContract<'_> {
         };
         let record = self
             .ocomp_job_record(key.intent_id, limits)?
-            .ok_or_else(|| {
-                storage_corruption_message("OCOMP response index points to a missing job")
-            })?;
+            .ok_or(MetadosisStorageCorruptionError::OcompResponseIndexMissingJob)?;
         let accountability = self.close_accountability(&input, &record)?;
         let metrics = self.penalize_missing_votes(&input, &record, &accountability)?;
         self.write_result_vote_accountability(&accountability, limits)?;
@@ -50,31 +48,30 @@ impl MetadosisContract<'_> {
         input: &CloseInput<'_>,
         record: &OcompJobRecordV1,
     ) -> Result<OcompVoteAccountabilityV1> {
-        let finalized = record.finalized.as_ref().ok_or_else(|| {
-            storage_corruption_message("OCOMP response-window job is not finalized")
-        })?;
+        let finalized = record
+            .finalized
+            .as_ref()
+            .ok_or(MetadosisStorageCorruptionError::OcompResponseWindowJobNotFinalized)?;
         if finalized.job_id != input.key.job_id
             || finalized.deadline_height != input.key.deadline_height
         {
-            return Err(storage_corruption_message(
-                "OCOMP response deadline/job binding mismatch",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompResponseDeadlineJobBindingMismatch.into(),
+            );
         }
         let mut accountability = self
             .result_vote_accountability(input.key.job_id, input.limits)?
-            .ok_or_else(|| {
-                storage_corruption_message("OCOMP response-window vote slots are missing")
-            })?;
+            .ok_or(MetadosisStorageCorruptionError::OcompResponseWindowVoteSlotsMissing)?;
         if accountability.quorum != finalized.quorum {
-            return Err(storage_corruption_message(
-                "OCOMP job/accountability quorum mismatch at close",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompJobAccountabilityQuorumMismatchAtClose.into(),
+            );
         }
         accountability
             .close(input.at_height, input.limits)
-            .map_err(|error| {
-                crate::errors::storage_corruption_context("close OCOMP vote accountability", error)
-            })?;
+            .map_err(
+                |error| MetadosisStorageCorruptionError::CloseOcompVoteAccountability { error },
+            )?;
         Ok(accountability)
     }
 
@@ -91,9 +88,7 @@ impl MetadosisContract<'_> {
             record.intent.result_ocomp_binding_hash,
         )?
         .filter(|snapshot| snapshot.member_count == accountability.member_count)
-        .ok_or_else(|| {
-            storage_corruption_message("OCOMP deadline historical snapshot is missing")
-        })?;
+        .ok_or(MetadosisStorageCorruptionError::OcompDeadlineHistoricalSnapshotMissing)?;
         let snapshot_key =
             outbe_validatorset::committee_snapshot_key(snapshot.epoch, snapshot.committee_set_hash);
 
@@ -103,7 +98,7 @@ impl MetadosisContract<'_> {
                 continue;
             }
             let index = u16::try_from(index).map_err(|_| {
-                storage_corruption_message("OCOMP missing participant index exceeds u16")
+                MetadosisStorageCorruptionError::OcompMissingParticipantIndexExceedsU16
             })?;
             self.penalize_missing_participant(
                 &MissingParticipant {
@@ -129,7 +124,7 @@ impl MetadosisContract<'_> {
             snapshot_key,
             participant_index,
         )?
-        .ok_or_else(|| storage_corruption_message("OCOMP deadline snapshot member is missing"))?;
+        .ok_or(MetadosisStorageCorruptionError::OcompDeadlineSnapshotMemberMissing)?;
 
         let mut staking = outbe_staking::contract::Staking::new(self.storage.clone());
         resolve_recovery_before_miss(
@@ -157,7 +152,10 @@ impl MetadosisContract<'_> {
             let penalty = staking
                 .record_ocomp_miss(validator_address)
                 .map_err(|error| {
-                    crate::errors::record_active_miss_error(participant_index, error)
+                    MetadosisStorageCorruptionError::map_record_active_miss(
+                        participant_index,
+                        error,
+                    )
                 })?;
             self.emit(IMetadosis::OcompVoteMissed {
                 validator: validator_address,
@@ -187,7 +185,10 @@ fn resolve_recovery_before_miss(
     let resolution = staking
         .resolve_due_ocomp_recovery_window(validator_address)
         .map_err(|error| {
-            crate::errors::resolve_due_ocomp_recovery_error(participant_index, error)
+            MetadosisStorageCorruptionError::map_resolve_due_ocomp_recovery(
+                participant_index,
+                error,
+            )
         })?;
     let outcome = match resolution {
         outbe_staking::logic::OcompRecoveryResolution::Restored { .. } => Some("restored"),
@@ -215,7 +216,7 @@ fn response_close_outcome(
     let finalized = record
         .finalized
         .as_ref()
-        .ok_or_else(|| storage_corruption_message("OCOMP response-window job is not finalized"))?;
+        .ok_or(MetadosisStorageCorruptionError::OcompResponseWindowJobNotFinalized)?;
     let close = match record.status {
         OcompJobStatus::VotingOpen if finalized.quorum.is_none() => {
             ResponseWindowCloseV1::NoQuorum {
@@ -228,9 +229,7 @@ fn response_close_outcome(
             }
         }
         _ => {
-            return Err(storage_corruption_message(
-                "OCOMP response close found an invalid job status",
-            ))
+            return Err(MetadosisStorageCorruptionError::OcompResponseCloseInvalidJobStatus.into())
         }
     };
 

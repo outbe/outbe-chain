@@ -1,6 +1,6 @@
 //! Host-mediated Tribute reads initiated by the enclave during preparation.
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     nod_materialization::ProtectedNodMaterializationV2, profile::poc_schema_limits,
 };
@@ -20,6 +20,7 @@ pub struct StateNodAuthority {
     pub head: Vec<u8>,
     pub subtree_height: u8,
     pub source_bindings: Vec<B256>,
+    pub nod_gratis_load_max: U256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -241,6 +242,7 @@ mod tests {
                     head: vec![1],
                     subtree_height: 0,
                     source_bindings: vec![],
+                    nod_gratis_load_max: U256::ONE,
                 },
                 batch: vec![2],
                 league_fractions: vec![],

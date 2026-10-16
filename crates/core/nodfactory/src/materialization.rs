@@ -338,6 +338,7 @@ pub fn state_materialization_authority(
         head: head.encode_canonical(limits).map_err(|_| invalid())?,
         subtree_height,
         source_bindings,
+        nod_gratis_load_max: generation.nod_gratis_load_max,
     })
 }
 

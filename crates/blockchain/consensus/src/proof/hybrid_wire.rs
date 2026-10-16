@@ -56,7 +56,7 @@ impl<V: Variant> Read for VrfProof<V> {
 
     fn read_cfg(reader: &mut impl Buf, _: &()) -> Result<Self, Error> {
         if reader.remaining() < 8 {
-            return Err(Error::Invalid("VrfProof", "missing material version"));
+            return Err(crate::errors::VrfProofCodecError::MissingMaterialVersion.into());
         }
         let material_version = reader.get_u64();
         let threshold_signature = V::Signature::read(reader)?;

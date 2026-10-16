@@ -294,10 +294,8 @@ pub mod test_enclave {
     pub(super) fn try_query(req: &FidelityQueryRequest) -> Option<Result<FidelityQueryResult>> {
         STATE_KEY.with(|k| {
             k.borrow().map(|key| {
-                outbe_tee_enclave::fidelity::query_index(&key, dev_chain(), req).map_err(|e| {
-                    FidelityError::QueryFailed(format!("enclave QueryFidelityIndex error: {e}"))
-                        .into()
-                })
+                outbe_tee_enclave::fidelity::query_index(&key, dev_chain(), req)
+                    .map_err(|e| FidelityError::enclave_query_error(e).into())
             })
         })
     }

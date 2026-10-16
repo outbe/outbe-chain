@@ -404,5 +404,9 @@ pub(in crate::ocomp::retention) fn candidate_job_id(
         candidate.block_hash,
         candidate.state_root,
     )
-    .map_err(|error| RetentionError::Source(format!("derive finalized request JobId: {error}")))
+    .map_err(|error| {
+        RetentionError::from(
+            crate::errors::RetentionSourceError::derive_finalized_request_job_id(error),
+        )
+    })
 }

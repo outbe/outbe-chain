@@ -155,6 +155,8 @@ impl MaterializationJob {
                     .map_err(|error| stage("encode NOD generation authority", error))?,
                 subtree_height: batch_subtree_height,
                 source_bindings: Vec::new(),
+                nod_gratis_load_max: audit.plan().lysis_limit_minor
+                    / alloy_primitives::U256::from(1024),
             },
             (head, &built),
             league_fractions,

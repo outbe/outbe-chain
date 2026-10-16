@@ -41,7 +41,7 @@ fn subcall_reaches_outbe_policy_precompile() {
 
     let result = sub_call::run(
         &mut ctx,
-        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
+        outbe_evm::test_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: STABLECOIN_POLICY_REGISTRY_ADDRESS,
             value: U256::ZERO,
@@ -81,7 +81,7 @@ fn subcall_reaches_stablecoin_policy_registry_with_canonical_view_output() {
 
     let result = sub_call::run(
         &mut ctx,
-        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
+        outbe_evm::test_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: STABLECOIN_POLICY_REGISTRY_ADDRESS,
             value: U256::ZERO,
@@ -149,7 +149,7 @@ fn contract_originated_policy_call_receives_its_calldata() {
 
     let result = sub_call::run(
         &mut ctx,
-        sub_call_support::fresh_environment(CALLER, SpecId::PRAGUE),
+        outbe_evm::test_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: POLICY_CALLER,
             value: U256::ZERO,

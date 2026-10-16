@@ -1009,7 +1009,7 @@ pub(crate) fn find_mining_pow_nonce(
     id: U256,
     owner: Address,
 ) -> u64 {
-    (0_u64..100_000)
+    (0_u64..1_000_000)
         .find(|nonce| {
             outbe_common::pow::validate_mining_pow(
                 domain,

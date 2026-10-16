@@ -12,7 +12,7 @@ use finality_fixture::{finalized_intent_proof_fixture, fixture_league};
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
 };
-use outbe_nod::openings::entry_price_slots;
+use outbe_nod::openings::{entry_price_day, entry_price_slots};
 use outbe_ocomp::{
     admission_catalog::{AdmissionCatalogError, AdmissionOutcome, VerifiedAdmissionCatalog},
     bundle::PinnedProtocolBundle,
@@ -53,12 +53,13 @@ use outbe_ocomp_protocol::{
     FinalizedJobSpecV1, FinalizedJobSummaryV1, RunUnitV1, SchemaLimits, UnitFinishedStatus,
     UnitFinishedV1,
 };
-use outbe_primitives::addresses::{METADOSIS_ADDRESS, NOD_ADDRESS};
+use outbe_primitives::addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS};
 use outbe_primitives::entity_codec::{encode_tribute_v1, TributeBodyV1};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 use support::tempdir;
 
+const LOGICAL_EVALUATION_TIME: u64 = 1_784_765_900;
 const CHILD_MODE: &str = "OUTBE_OCOMP_DET_WORKER_CHILD";
 const CHILD_CHAIN_ID: &str = "OUTBE_OCOMP_DET_CHAIN_ID";
 const CHILD_GENESIS: &str = "OUTBE_OCOMP_DET_GENESIS";
@@ -172,7 +173,7 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
         .into_iter()
         .collect::<Vec<_>>();
     let reference_isos = [840, 978];
-    let oracle_raw = raw_oracle_opening(day, proof_fixture.state_root);
+    let oracle_raw = raw_oracle_opening(proof_fixture.state_root);
 
     let mut fidelity_openings = Vec::new();
     let mut oracle_opening = None;
@@ -679,18 +680,24 @@ fn raw_fidelity_opening(
     }
 }
 
-fn raw_oracle_opening(day: WorldwideDay, finalized_state_root: B256) -> RawContractOpeningProofV1 {
-    let plan = entry_price_slots(day, &[840, 978]).expect("deterministic Oracle slot plan");
+fn raw_oracle_opening(finalized_state_root: B256) -> RawContractOpeningProofV1 {
+    let plan = entry_price_slots(
+        entry_price_day(LOGICAL_EVALUATION_TIME),
+        &[840, 978],
+        &[1, 2],
+    )
+    .expect("deterministic Oracle slot plan");
     let coen840_price = U256::from(1_000_000_u64);
     let generic_price_scale = U256::from(1_000_000_000_000_000_000_u64);
     let values = [
         U256::from(1),
+        U256::from(2),
         coen840_price,
         generic_price_scale * U256::from(2),
     ];
     assert_eq!(plan.len(), values.len());
     RawContractOpeningProofV1 {
-        contract_address: NOD_ADDRESS,
+        contract_address: ORACLE_ADDRESS,
         state_root: finalized_state_root,
         ordered_slots: plan
             .into_iter()
@@ -727,7 +734,7 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
             request_limit_split_receipt_hash: B256::repeat_byte(0x55),
         },
         logical_evaluation_height: 1,
-        logical_evaluation_time: 1_784_765_900,
+        logical_evaluation_time: LOGICAL_EVALUATION_TIME,
         activation_preconditions: ActivationPreconditionsV1 {
             tribute: TributeInputBindingV1 {
                 wwd: day.value(),

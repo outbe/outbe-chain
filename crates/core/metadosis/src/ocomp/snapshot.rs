@@ -33,9 +33,10 @@ impl MetadosisContract<'_> {
         let mut owners: Vec<Address> = tributes.iter().map(|t| t.owner).collect();
         owners.sort_unstable();
         if owners.windows(2).any(|pair| pair[0] >= pair[1]) {
-            return Err(crate::errors::storage_corruption(
-                "OCOMP day owner set is not strictly ordered and unique",
-            ));
+            return Err(
+                crate::errors::MetadosisStorageCorruptionError::OcompDayOwnerSetNotStrictlyOrderedAndUnique
+                    .into(),
+            );
         }
         // Snapshot the whole day's leagues in ONE enclave round-trip (was one
         // per owner). Results come back in `owners` (sorted) order.

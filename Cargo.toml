@@ -64,7 +64,6 @@ members = [
     "crates/core/stablecoinpolicy",
     "crates/core/stablecoin",
     "crates/core/stablecoinfactory",
-    "testing/e2e",
     "crates/core/common",
     # binaries
     "bin/outbe-chain",

@@ -412,6 +412,9 @@ pub(crate) enum SnapshotError {
         #[source]
         source: std::io::Error,
     },
+    /// Retained body count calculation overflowed.
+    #[error("retained body count overflow")]
+    RetainedBodyCountOverflow,
 }
 
 /// Precompile storage errors raised while reading canonical snapshot state.
@@ -431,9 +434,6 @@ pub(crate) enum CanonicalStatePrecompileError {
         /// Error details.
         details: String,
     },
-    /// An Intex series index slot has noncanonical padding.
-    #[error("Intex series index has noncanonical padding")]
-    IntexSeriesIndexNoncanonicalPadding,
     /// Decoding an active generation record failed.
     #[error("{0}")]
     ActiveGenerationDecode(#[from] outbe_ocomp_protocol::ProtocolError),

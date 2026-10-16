@@ -148,7 +148,11 @@ impl TrustedNetworkDescriptorV1 {
             let chain_id = u64::try_from(alloy_primitives::U256::from_be_bytes(
                 self.network_binding.chain_id,
             ))
-            .map_err(|_| CodecError::NonCanonical("descriptor chain id exceeds u64"))?;
+            .map_err(|_| {
+                CodecError::from(
+                    crate::error::TeeCodecNonCanonicalError::DescriptorChainIdExceedsU64,
+                )
+            })?;
             if !crate::tee_genesis_v1::is_attestation_mode_allowed_for_chain_id(
                 chain_id,
                 self.network_binding.attestation_mode,
@@ -183,7 +187,7 @@ impl TrustedNetworkDescriptorV1 {
 /// produced or accepted.
 pub fn dkg_participant_set_hash_v1(participant_bls: &[Vec<u8>]) -> Result<B256, CodecError> {
     if participant_bls.is_empty() {
-        return Err(CodecError::NonCanonical("empty DKG participant set"));
+        return Err(crate::error::TeeCodecNonCanonicalError::EmptyDkgParticipantSet.into());
     }
     let mut ordered = participant_bls.to_vec();
     ordered.sort();
@@ -218,7 +222,7 @@ pub fn dkg_ceremony_id_v1(
     participant_set_hash: B256,
 ) -> Result<B256, CodecError> {
     if participant_set_hash.is_zero() {
-        return Err(CodecError::NonCanonical("zero DKG participant set hash"));
+        return Err(crate::error::TeeCodecNonCanonicalError::ZeroDkgParticipantSetHash.into());
     }
     let mut encoded = network_binding.encode_canonical()?;
     encoded.extend_from_slice(&round.to_be_bytes());
@@ -237,7 +241,7 @@ pub fn dkg_participant_announce_hash_v1(
 ) -> Result<B256, CodecError> {
     let expected_ceremony = dkg_ceremony_id_v1(network_binding, round, participant_set_hash)?;
     if ceremony_id != expected_ceremony {
-        return Err(CodecError::NonCanonical("non-canonical DKG ceremony id"));
+        return Err(crate::error::TeeCodecNonCanonicalError::NonCanonicalDkgCeremonyId.into());
     }
     let mut encoded = network_binding.encode_canonical()?;
     encoded.extend_from_slice(ceremony_id.as_slice());

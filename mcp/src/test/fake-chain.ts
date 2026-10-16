@@ -96,6 +96,7 @@ export class FakeChain {
   private readonly receipts = new Map<Hex, Record<string, unknown>>();
   private readonly transactions = new Map<Hex, Record<string, unknown>>();
   private readonly nonces = new Map<number, number>();
+  private readonly methods = new Map<string, (params: unknown[]) => unknown>();
 
   constructor(
     private readonly chainIds: Record<string, number>,
@@ -113,6 +114,11 @@ export class FakeChain {
 
   revert(fn: string, address?: string): void {
     this.reverting.add(this.key(fn, address));
+  }
+
+  /** Answers a node-specific RPC `method`, such as `outbe_deriveKeys`. */
+  rpc(method: string, answer: (params: unknown[]) => unknown): void {
+    this.methods.set(method, answer);
   }
 
   /** Makes every read of `fn` fail the way an unreachable node does, without a revert. */
@@ -138,7 +144,7 @@ export class FakeChain {
       if (chainId === undefined) throw new Error(`unexpected RPC ${url}`);
       const body = JSON.parse(String(init?.body)) as RpcRequest | RpcRequest[];
       const answer = (request: RpcRequest) => this.answer(chainId, request);
-      const reply = Array.isArray(body) ? body.map(answer) : answer(body);
+      const reply = Array.isArray(body) ? await Promise.all(body.map(answer)) : await answer(body);
       return new Response(JSON.stringify(reply), { headers: { "content-type": "application/json" } });
     }) as typeof fetch;
     return () => {
@@ -160,9 +166,9 @@ export class FakeChain {
     return address ? `${getAddress(address)}:${fn}` : fn;
   }
 
-  private answer(chainId: number, request: RpcRequest) {
+  private async answer(chainId: number, request: RpcRequest) {
     try {
-      return { jsonrpc: "2.0", id: request.id, result: this.handle(chainId, request.method, request.params ?? []) };
+      return { jsonrpc: "2.0", id: request.id, result: await this.handle(chainId, request.method, request.params ?? []) };
     } catch (error) {
       const code = error instanceof RpcError ? error.code : -32603;
       return { jsonrpc: "2.0", id: request.id, error: { code, message: (error as Error).message, data: "0x" } };
@@ -200,8 +206,11 @@ export class FakeChain {
         return this.receipts.get(params[0] as Hex) ?? null;
       case "eth_getTransactionByHash":
         return this.transactions.get(params[0] as Hex) ?? null;
-      default:
-        throw new RpcError(-32601, `method ${method} is not faked`);
+      default: {
+        const answer = this.methods.get(method);
+        if (!answer) throw new RpcError(-32601, `method ${method} is not faked`);
+        return answer(params);
+      }
     }
   }
 

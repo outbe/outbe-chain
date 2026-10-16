@@ -41,8 +41,6 @@ use outbe_ocomp_protocol::result::ResultChunkV1;
 
 use outbe_ocomp_protocol::shuffle::ShuffleBucketRecordV1;
 
-use outbe_ocomp_protocol::shuffle::ShuffleRunKindV1;
-
 use outbe_ocomp_protocol::unit::InputPurpose;
 
 use outbe_ocomp_protocol::unit::PlanCommitmentV1;
@@ -312,13 +310,8 @@ fn validate_root_reduce_leaf_producers(
         finalized_artifact,
         limits,
     )?;
-    let bucket_root = decode_shuffle_producer_root(
-        spec,
-        bucket_artifact,
-        ShuffleRunKindV1::Bucket,
-        *bucket_position,
-        limits,
-    )?;
+    let bucket_root =
+        decode_shuffle_producer_root(spec, bucket_artifact, *bucket_position, limits)?;
     require_root_reduce_shuffle_population(
         bucket_root.source_coverage_count,
         bucket_root.record_count,

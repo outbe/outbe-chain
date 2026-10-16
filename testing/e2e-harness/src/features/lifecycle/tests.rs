@@ -1,3 +1,6 @@
+use alloy_sol_types::SolCall;
+use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
+
 use super::{
     boundary::{signing_counts, signing_heights},
     rejection::{verify_deactivation_rejection, DeactivationRejection, RejectionEvidence},

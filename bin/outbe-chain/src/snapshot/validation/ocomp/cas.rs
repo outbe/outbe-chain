@@ -38,11 +38,12 @@ fn verify_cas_object_entry(
         .checked_add(length)
         .ok_or(SnapshotOcompError::CasTotalByteCountOverflow)?;
     if total > limits.max_total_bytes {
-        return Err(Incomplete(format!(
-            "CAS scan exceeds {} byte budget after {} objects and {} bytes",
-            limits.max_total_bytes, result.objects, result.bytes
-        ))
-        .into());
+        return Err(SnapshotIncompleteError::CasScanByteBudgetExceeded {
+            max_total_bytes: limits.max_total_bytes,
+            objects: result.objects,
+            bytes: result.bytes,
+        }
+        .into_report());
     }
     let reference = outbe_ocomp_protocol::CasObjectRefV1 {
         transport_digest: B256::from(digest),

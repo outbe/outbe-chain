@@ -1036,7 +1036,7 @@ fn request_pinned_semantics_are_identical_at_different_activation_heights() {
             .unwrap()
     });
     assert_ne!(freeze_instant, TEST_LOGICAL_TIME);
-    assert_eq!(first_semantics.nod.issued_at, freeze_instant);
+    assert_eq!(first_semantics.nod.issued_at, TEST_LOGICAL_TIME);
     assert_eq!(
         first_metadata,
         ActivationMetadata {

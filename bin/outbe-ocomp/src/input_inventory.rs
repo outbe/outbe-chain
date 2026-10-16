@@ -24,7 +24,6 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_tee::tribute_source::{TributeSourceCheckpoint, TributeSourceSubject};
 use sha3::{Digest, Keccak256};
-use thiserror::Error;
 
 mod filesystem;
 mod header;
@@ -476,7 +475,7 @@ impl TributeBodySpoolReader {
         let mut file = open_regular_readonly(&path)?;
         let (remaining, exact_body_bytes) = read_body_header(&mut file, &path)?;
         if remaining != expected_count || exact_body_bytes != expected_body_bytes {
-            return Err(TributeInventoryError::Corrupt("Tribute body spool header"));
+            return Err(TributeInventoryError::CorruptTributeBodySpoolHeader);
         }
         Ok(Self {
             file,
@@ -613,7 +612,7 @@ fn read_run_header(file: &mut File, path: &Path) -> Result<u64, TributeInventory
     file.read_exact(&mut header)
         .map_err(|source| io_error("read owner run header", path, source))?;
     if header[..8] != RUN_MAGIC {
-        return Err(TributeInventoryError::Corrupt("owner run magic"));
+        return Err(TributeInventoryError::CorruptOwnerRunMagic);
     }
     let count = u64::from_be_bytes(header[8..].try_into().expect("fixed run header"));
     let expected_len = RUN_HEADER_BYTES
@@ -628,7 +627,7 @@ fn read_run_header(file: &mut File, path: &Path) -> Result<u64, TributeInventory
         .map_err(|source| io_error("stat owner run", path, source))?
         .len();
     if actual_len != expected_len {
-        return Err(TributeInventoryError::Corrupt("owner run length"));
+        return Err(TributeInventoryError::CorruptOwnerRunLength);
     }
     Ok(count)
 }
@@ -638,7 +637,7 @@ fn read_body_header(file: &mut File, path: &Path) -> Result<(u32, u64), TributeI
     file.read_exact(&mut header)
         .map_err(|source| io_error("read Tribute body spool header", path, source))?;
     if header[..8] != BODY_MAGIC {
-        return Err(TributeInventoryError::Corrupt("Tribute body spool magic"));
+        return Err(TributeInventoryError::CorruptTributeBodySpoolMagic);
     }
     let count = u32::from_be_bytes(header[8..12].try_into().expect("fixed body header"));
     let exact_body_bytes =
@@ -655,7 +654,7 @@ fn verify_body_spool(
     let mut file = open_regular_readonly(path)?;
     let (count, exact_body_bytes) = read_body_header(&mut file, path)?;
     if count != expected_count || exact_body_bytes != expected_body_bytes {
-        return Err(TributeInventoryError::Corrupt("Tribute body spool header"));
+        return Err(TributeInventoryError::CorruptTributeBodySpoolHeader);
     }
     let mut observed_body_bytes = 0_u64;
     for index in 0..count {
@@ -664,7 +663,7 @@ fn verify_body_spool(
             .map_err(|source| io_error("read Tribute body length", path, source))?;
         let length = u32::from_be_bytes(length);
         if length == 0 {
-            return Err(TributeInventoryError::Corrupt("empty Tribute body"));
+            return Err(TributeInventoryError::CorruptEmptyTributeBody);
         }
         observed_body_bytes = observed_body_bytes
             .checked_add(u64::from(length))
@@ -683,7 +682,7 @@ fn verify_body_spool(
         .map_err(|source| io_error("stat Tribute body spool", path, source))?
         .len();
     if observed_body_bytes != expected_body_bytes || position != length {
-        return Err(TributeInventoryError::Corrupt("Tribute body spool closure"));
+        return Err(TributeInventoryError::CorruptTributeBodySpoolClosure);
     }
     Ok(())
 }
@@ -695,42 +694,7 @@ fn read_owner(file: &mut File) -> Result<Address, TributeInventoryError> {
     Ok(Address::from(bytes))
 }
 
-#[derive(Debug, Error)]
-pub enum TributeInventoryError {
-    #[error("private Tribute amount read failed: {0}")]
-    PrivateTribute(#[from] outbe_tee::TransportError),
-    #[error("invalid Tribute inventory work configuration")]
-    InvalidWorkConfig,
-    #[error("Tribute inventory is already sealed")]
-    AlreadySealed,
-    #[error("Tribute inventory is locked by another writer")]
-    Locked,
-    #[error("unsafe Tribute inventory path: {0}")]
-    UnsafePath(PathBuf),
-    #[error("Tribute inventory authority mismatch: {0}")]
-    Authority(&'static str),
-    #[error("corrupt Tribute inventory: {0}")]
-    Corrupt(&'static str),
-    #[error("Tribute count mismatch: expected {expected}, got {actual}")]
-    CountMismatch { expected: u32, actual: u32 },
-    #[error("Tribute nominal total mismatch: expected {expected}, got {actual}")]
-    NominalTotalMismatch { expected: U256, actual: U256 },
-    #[error("Tribute inventory nominal total overflow")]
-    NominalTotalOverflow,
-    #[error("reference ISO count {actual} exceeds existing OCOMP protocol bound {limit}")]
-    ReferenceIsoCountOutsideProtocol { limit: usize, actual: usize },
-    #[error("canonical Tribute body has {actual} bytes outside per-body bound {limit}")]
-    BodyOutsideBound { limit: usize, actual: usize },
-    #[error("Tribute inventory integer overflow")]
-    IntegerOverflow,
-    #[error("Tribute inventory I/O failed during {operation} at {path}: {source}")]
-    Io {
-        operation: &'static str,
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-}
+pub use crate::errors::TributeInventoryError;
 
 fn io_error(operation: &'static str, path: &Path, source: std::io::Error) -> TributeInventoryError {
     TributeInventoryError::Io {

@@ -11,7 +11,7 @@
 
 use alloy_primitives::U256;
 
-use crate::error::{PrecompileError, Result};
+use crate::error::{PrimitivesMathError, Result};
 
 // --- 512-bit multiplication / division ---------------------------------------
 
@@ -82,12 +82,12 @@ fn get_end_of_div_round_down(
 ) -> Result<U256> {
     if prod1.is_zero() {
         if denom.is_zero() {
-            return Err(PrecompileError::revert("lb_math: mul_div by zero"));
+            return Err(PrimitivesMathError::LbMathMulDivByZero.into());
         }
         return Ok(prod0_in / denom);
     }
     if prod1 >= denom {
-        return Err(PrecompileError::revert("lb_math: mul_div overflow"));
+        return Err(PrimitivesMathError::LbMathMulDivOverflow.into());
     }
 
     // Make division exact by subtracting remainder from [prod1, prod0].
@@ -145,7 +145,7 @@ pub fn mul_shift_round_down(x: U256, y: U256, offset: u8) -> Result<U256> {
     if !prod1.is_zero() {
         // Result must fit in 256 bits.
         if prod1 >= (U256::ONE << off) {
-            return Err(PrecompileError::revert("lb_math: mul_shift overflow"));
+            return Err(PrimitivesMathError::LbMathMulShiftOverflow.into());
         }
         // (256 - offset) is in (0, 256]. Guard offset == 0.
         if off > 0 {

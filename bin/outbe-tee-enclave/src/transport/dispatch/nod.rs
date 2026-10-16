@@ -338,6 +338,7 @@ mod tests {
             head: vec![],
             subtree_height: 3,
             source_bindings: vec![],
+            nod_gratis_load_max: alloy_primitives::U256::ONE,
         };
         let chain = B256::from(alloy_primitives::U256::ONE);
         assert!(matches!(

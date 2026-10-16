@@ -5,7 +5,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 
-use crate::error::{PrecompileError, Result};
+use crate::error::{DispatchInputError, PrecompileError, Result};
 use crate::storage::StorageHandle;
 
 /// Check frame authority before any command validation, reads or child calls.
@@ -40,12 +40,11 @@ pub fn dispatch_call<T, E: core::fmt::Display>(
     handler: impl FnOnce(T) -> Result<Bytes>,
 ) -> Result<Bytes> {
     if calldata.len() < 4 {
-        return Err(PrecompileError::revert(
-            "invalid input: missing function selector",
-        ));
+        return Err(DispatchInputError::MissingFunctionSelector.into());
     }
-    let call =
-        decode(calldata).map_err(|e| PrecompileError::revert(format!("decode error: {e}")))?;
+    let call = decode(calldata).map_err(|e| DispatchInputError::DecodeError {
+        reason: e.to_string(),
+    })?;
     handler(call)
 }
 
@@ -68,41 +67,38 @@ pub fn preflight_dynamic_bytes_len(
 
     let args = calldata
         .get(4..)
-        .ok_or_else(|| PrecompileError::revert("invalid ABI bytes argument"))?;
+        .ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
     let head_len = head_words
         .checked_mul(32)
-        .ok_or_else(|| PrecompileError::revert("invalid ABI bytes argument"))?;
+        .ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
     let offset_start = argument_index
         .checked_mul(32)
-        .ok_or_else(|| PrecompileError::revert("invalid ABI bytes argument"))?;
+        .ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
     let offset_word = args
         .get(offset_start..offset_start.saturating_add(32))
-        .ok_or_else(|| PrecompileError::revert("invalid ABI bytes argument"))?;
-    let offset = abi_usize(offset_word)
-        .ok_or_else(|| PrecompileError::revert("invalid ABI bytes argument"))?;
+        .ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
+    let offset = abi_usize(offset_word).ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
     if offset < head_len || offset % 32 != 0 {
-        return Err(PrecompileError::revert("invalid ABI bytes argument"));
+        return Err(DispatchInputError::InvalidAbiBytesArgument.into());
     }
 
     let length_word = args
         .get(offset..offset.saturating_add(32))
-        .ok_or_else(|| PrecompileError::revert("invalid ABI bytes argument"))?;
+        .ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
     if abi_usize(length_word) != Some(expected_len) {
-        return Err(PrecompileError::revert(format!(
-            "invalid bytes length: expected {expected_len}"
-        )));
+        return Err(DispatchInputError::InvalidBytesLength { expected_len }.into());
     }
 
     let padded_len = expected_len
         .checked_add(31)
         .map(|len| len / 32 * 32)
-        .ok_or_else(|| PrecompileError::revert("invalid ABI bytes argument"))?;
+        .ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
     let end = offset
         .checked_add(32)
         .and_then(|start| start.checked_add(padded_len))
-        .ok_or_else(|| PrecompileError::revert("invalid ABI bytes argument"))?;
+        .ok_or(DispatchInputError::InvalidAbiBytesArgument)?;
     if end > args.len() {
-        return Err(PrecompileError::revert("invalid ABI bytes argument"));
+        return Err(DispatchInputError::InvalidAbiBytesArgument.into());
     }
     Ok(())
 }
@@ -204,9 +200,7 @@ where
 {
     typed::mutate(storage, call, context.sender, |sender, call| {
         if !context.value.is_zero() && !context.selectors.contains(&T::SELECTOR) {
-            return Err(PrecompileError::revert(
-                "payable selector is not declared in PAYABLE_SELECTORS",
-            ));
+            return Err(DispatchInputError::UndeclaredPayableSelector.into());
         }
         f(sender, call, context.value)
     })
@@ -227,9 +221,7 @@ pub fn mutate_payable<T: SolCall>(
 ) -> Result<Bytes> {
     typed::mutate(storage, call, context.sender, |sender, call| {
         if !context.value.is_zero() && !context.selectors.contains(&T::SELECTOR) {
-            return Err(PrecompileError::revert(
-                "payable selector is not declared in PAYABLE_SELECTORS",
-            ));
+            return Err(DispatchInputError::UndeclaredPayableSelector.into());
         }
         f(sender, call, context.value)
     })
@@ -266,9 +258,7 @@ pub fn reject_value_unless_payable(
 #[inline]
 pub fn reject_value(value: &U256) -> Result<()> {
     if !value.is_zero() {
-        return Err(PrecompileError::revert(
-            "non-payable function called with value",
-        ));
+        return Err(DispatchInputError::NonPayableCalledWithValue.into());
     }
     Ok(())
 }

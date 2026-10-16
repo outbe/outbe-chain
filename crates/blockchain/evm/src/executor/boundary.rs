@@ -303,9 +303,7 @@ where
                     .map(|tx| Address::from(*tx.signer()))
             })
             .ok_or_else(|| {
-                BlockExecutionError::from(BlockValidationError::msg(
-                    "missing proposer EVM address for begin-zone system txs",
-                ))
+                crate::errors::ExecutorValidationError::MissingBeginZoneProposerAddress.into()
             })
             .map(Some)
     }
@@ -315,6 +313,8 @@ where
         proposer: Address,
         allow_boundary_proposer: bool,
     ) -> Result<(), BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
         let chain_id = self.inner.evm.chain_id();
@@ -334,7 +334,7 @@ where
             if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
                 BlockExecutionError::other(error)
             } else {
-                BlockValidationError::msg(format!("validate proposer identity: {error}")).into()
+                ExecutorValidationError::validate_proposer_identity(error).into()
             }
         })? {
             return Ok(());
@@ -344,16 +344,13 @@ where
                 if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
                     BlockExecutionError::other(error)
                 } else {
-                    BlockValidationError::msg(format!("validate proposer identity: {error}")).into()
+                    ExecutorValidationError::validate_proposer_identity(error).into()
                 }
             })?
         {
             return Ok(());
         }
-        Err(BlockValidationError::msg(format!(
-            "proposer EVM address is not an active consensus participant: {proposer}"
-        ))
-        .into())
+        Err(ExecutorValidationError::ProposerNotActiveConsensusParticipant { proposer }.into())
     }
 
     pub(in crate::executor) fn boundary_allows_proposer(

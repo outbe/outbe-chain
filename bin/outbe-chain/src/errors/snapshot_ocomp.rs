@@ -162,15 +162,6 @@ pub(crate) enum SnapshotOcompError {
     /// Discovery spool count calculation overflowed.
     #[error("discovery spool count overflow")]
     DiscoverySpoolCountOverflow,
-    /// A series identifier has noncanonical format.
-    #[error("noncanonical series identity")]
-    NoncanonicalSeriesIdentity,
-    /// A series worldwide day is invalid.
-    #[error("invalid series worldwide day")]
-    InvalidSeriesWorldwideDay,
-    /// A series identifier has noncanonical codes.
-    #[error("noncanonical series codes")]
-    NoncanonicalSeriesCodes,
     /// A closure checkpoint differs from the canonical header.
     #[error("closure {name} differs from canonical header at {number}")]
     ClosureHeaderMismatch {
@@ -272,12 +263,6 @@ pub(crate) enum SnapshotOcompError {
     /// A duplicate NOD FIFO day or job was found.
     #[error("duplicate NOD FIFO day/job")]
     DuplicateNodFifoDayOrJob,
-    /// An Intex series record differs from the permanent index.
-    #[error("Intex series record identity/day differs from permanent index")]
-    IntexSeriesRecordMismatch,
-    /// A duplicate Intex series identity was found.
-    #[error("duplicate Intex series identity")]
-    DuplicateIntexSeriesIdentity,
     /// Canonical NOD program semantics differ from the protocol bundle.
     #[error("canonical NOD program semantics differ from protocol bundle")]
     NodProgramSemanticsMismatch,
@@ -434,4 +419,123 @@ pub(crate) enum SnapshotOcompError {
     /// A surviving local result differs from the plan.
     #[error("surviving local result differs from plan")]
     SurvivingLocalResultPlanMismatch,
+    /// Validating NOD inputs for a job failed.
+    #[error("NOD inputs for job {job}")]
+    NodInputsForJob {
+        /// Job identifier.
+        job: B256,
+    },
+    /// Validating Tribute inputs for a lease and day failed.
+    #[error("Tribute inputs for lease {input_lease_id}, day {wwd}")]
+    TributeInputsForLease {
+        /// Input lease identifier.
+        input_lease_id: B256,
+        /// Worldwide day.
+        wwd: u32,
+    },
+}
+
+/// Typed incomplete-observation reasons for offline snapshot validation.
+#[derive(Debug, Error)]
+pub(crate) enum SnapshotIncompleteError {
+    #[error(
+        "live body equality requires the same CE and projection identity: Q={q_height} ({q_hash}) P={p_height} ({p_hash})"
+    )]
+    LiveBodyEqualityFrontierMismatch {
+        q_height: u64,
+        q_hash: B256,
+        p_height: u64,
+        p_hash: B256,
+    },
+    #[error("local result inventory stopped after {results} records")]
+    LocalResultInventoryStopped { results: u64 },
+    #[error("local result disappeared for job {job_id}")]
+    LocalResultDisappeared { job_id: B256 },
+    #[error("missing required NOD input for job {job}")]
+    MissingRequiredNodInput { job: B256 },
+    #[error("missing active request header B={b}")]
+    MissingActiveRequestHeader { b: u64 },
+    #[error("missing active request canonical hash B={b}")]
+    MissingActiveRequestCanonicalHash { b: u64 },
+    #[error(
+        "CAS scan exceeds {max_total_bytes} byte budget after {objects} objects and {bytes} bytes"
+    )]
+    CasScanByteBudgetExceeded {
+        max_total_bytes: u64,
+        objects: u64,
+        bytes: u64,
+    },
+    #[error("missing native closure checkpoint at {root}")]
+    MissingNativeClosureCheckpoint { root: String },
+    #[error("missing closure {name} header at {number}")]
+    MissingClosureHeader { name: &'static str, number: u64 },
+    #[error("missing closure {name} canonical hash at {number}")]
+    MissingClosureCanonicalHash { name: &'static str, number: u64 },
+    #[error("missing replay header at {height}")]
+    MissingReplayHeader { height: u64 },
+    #[error("missing replay canonical hash at {height}")]
+    MissingReplayCanonicalHash { height: u64 },
+    #[error("missing replay body indices at {height}")]
+    MissingReplayBodyIndices { height: u64 },
+    #[error(
+        "replay frame scan stopped at block {height}/{end_number}, transaction {number}/{tx_end}; {blocks} blocks, {transactions} transactions visited"
+    )]
+    ReplayFrameScanStopped {
+        height: u64,
+        end_number: u64,
+        number: u64,
+        tx_end: u64,
+        blocks: u64,
+        transactions: u64,
+    },
+    #[error("missing replay transaction {number} at block {height}")]
+    MissingReplayTransaction { number: u64, height: u64 },
+    #[error("missing replay receipt {number} at block {height}")]
+    MissingReplayReceipt { number: u64, height: u64 },
+    #[error("missing OCOMP request header B={request_height}")]
+    MissingOcompRequestHeader { request_height: u64 },
+    #[error("missing retained CAS object {transport_digest} for job {job}")]
+    MissingRetainedCasObject { transport_digest: B256, job: B256 },
+    #[error("missing retained pin request header B={number}")]
+    MissingRetainedPinRequestHeader { number: u64 },
+    #[error("missing canonical pin request hash B={number}")]
+    MissingCanonicalPinRequestHash { number: u64 },
+    #[error("missing required Tribute inputs for lease {input_lease_id}, day {wwd}")]
+    MissingRequiredTributeInputs { input_lease_id: B256, wwd: u32 },
+    #[error("Tribute lease {input_lease_id} scan stopped at {visited}/{authenticated_day_count} records")]
+    TributeLeaseScanStopped {
+        input_lease_id: B256,
+        visited: u64,
+        authenticated_day_count: u32,
+    },
+    #[error("job {id}: prepared receipt observed; complete receipt comparison unavailable")]
+    PreparedReceiptObserved { id: B256 },
+    #[error("job {id}: input catalog has no sealed header; exact comparison unavailable")]
+    InputCatalogLacksSealedHeader { id: B256 },
+    #[error("job {id}: active acknowledged export lacks its required complete receipt")]
+    ActiveAckExportLacksReceipt { id: B256 },
+    #[error("job {id}: present binding comparison lacks complete input catalog")]
+    PresentBindingLacksInputCatalog { id: B256 },
+    #[error("job {id}: canonical comparison lacks retained job locator evidence")]
+    CanonicalComparisonLacksJobLocator { id: B256 },
+    #[error("job {id}: materialization reference lacks available plan membership evidence")]
+    MaterializationRefLacksPlanMembership { id: B256 },
+    #[error("job {id}: retained reference membership is partial; certified output-root comparison unavailable")]
+    RetainedRefMembershipPartial { id: B256 },
+}
+
+impl From<SnapshotIncompleteError> for crate::snapshot::validation::Incomplete {
+    fn from(error: SnapshotIncompleteError) -> Self {
+        Self(error.to_string())
+    }
+}
+
+impl SnapshotIncompleteError {
+    pub(crate) fn into_incomplete(self) -> crate::snapshot::validation::Incomplete {
+        self.into()
+    }
+
+    pub(crate) fn into_report(self) -> eyre::Report {
+        crate::snapshot::validation::Incomplete::from(self).into()
+    }
 }

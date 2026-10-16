@@ -4,7 +4,7 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::{
     aggregate::ValidatedWwdAggregate,
-    errors::storage_corruption_message,
+    errors::MetadosisStorageCorruptionError,
     precompile::IMetadosis,
     reducer::{reduce_outer_wwd, OuterWwdEvent, OuterWwdTransition},
     schema::MetadosisContract,
@@ -36,26 +36,26 @@ pub fn record_certified_parent_finality(
         let intent_id = state
             .projection()
             .live_intent_id
-            .ok_or_else(|| storage_corruption_message("OCOMP live scheduler has no IntentId"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompLiveSchedulerHasNoIntentId)?;
         let record = metadosis
             .ocomp_job_record(intent_id, &schema_limits)?
-            .ok_or_else(|| storage_corruption_message("OCOMP live scheduler job is missing"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompLiveSchedulerJobMissing)?;
         if record.intent_height == finalized_request_block_number
             && record.status == OcompJobStatus::AwaitingFinality
             && matched.replace(intent_id).is_some()
         {
-            return Err(storage_corruption_message(
-                "multiple live OCOMP jobs claim the same request block",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::MultipleLiveOcompJobsClaimSameRequestBlock.into(),
+            );
         }
     }
     let Some(intent_id) = matched else {
         return Ok(false);
     };
     if finalized_request_state_root.is_zero() {
-        return Err(storage_corruption_message(
-            "OCOMP certified request parent has no authenticated state root",
-        ));
+        return Err(
+            MetadosisStorageCorruptionError::OcompCertifiedRequestParentMissingStateRoot.into(),
+        );
     }
 
     metadosis.record_ocomp_finality(
@@ -78,9 +78,9 @@ pub fn run_lifecycle_begin_with_scope(
 ) -> Result<OcompPenaltyMetrics> {
     if let Some(before) = missed_lifecycle_boundary(ctx)? {
         let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
-        let current = aggregate.record(before.worldwide_day).ok_or_else(|| {
-            storage_corruption_message("overdue OCOMP expiry has no persisted outer WorldwideDay")
-        })?;
+        let current = aggregate
+            .record(before.worldwide_day)
+            .ok_or(MetadosisStorageCorruptionError::OverdueOcompExpiryMissingPersistedOuterWwd)?;
         let outer_transition = reduce_outer_wwd(Some(current), OuterWwdEvent::OcompExpired)?;
         expire_exact(
             &mut MetadosisContract::new(ctx.storage.clone()),
@@ -108,9 +108,9 @@ fn run_lifecycle_begin_exact(ctx: &BlockRuntimeContext<'_>) -> Result<OcompPenal
     let Some(before) = due_unfinalized_attempt(&metadosis, ctx.block.block_number)? else {
         return Ok(metrics);
     };
-    let current = aggregate.record(before.worldwide_day).ok_or_else(|| {
-        storage_corruption_message("awaiting-finality expiry has no persisted outer WorldwideDay")
-    })?;
+    let current = aggregate
+        .record(before.worldwide_day)
+        .ok_or(MetadosisStorageCorruptionError::AwaitingFinalityExpiryMissingPersistedOuterWwd)?;
     let outer_transition = reduce_outer_wwd(Some(current), OuterWwdEvent::OcompExpired)?;
     expire_exact(&mut metadosis, ctx, before, &outer_transition)?;
     Ok(metrics)
@@ -128,9 +128,7 @@ fn close_response_attempt(
         ResponseWindowCloseV1::NoQuorum { intent_id } => {
             let state = metadosis
                 .live_ocomp_fsm_state_by_intent(intent_id, &schema_limits)?
-                .ok_or_else(|| {
-                    storage_corruption_message("no-quorum OCOMP close has no live job")
-                })?;
+                .ok_or(MetadosisStorageCorruptionError::NoQuorumOcompCloseMissingLiveJob)?;
             let before = state.projection();
             if before.phase != DayPhase::OffchainPending
                 || before.live_intent_id != Some(intent_id)
@@ -138,15 +136,13 @@ fn close_response_attempt(
                     .deadline_height
                     .is_none_or(|deadline| deadline > ctx.block.block_number)
             {
-                return Err(storage_corruption_message(
-                    "no-quorum OCOMP close/live state mismatch",
-                ));
+                return Err(
+                    MetadosisStorageCorruptionError::NoQuorumOcompCloseLiveStateMismatch.into(),
+                );
             }
-            let current = aggregate.record(before.worldwide_day).ok_or_else(|| {
-                storage_corruption_message(
-                    "no-quorum OCOMP close has no persisted outer WorldwideDay",
-                )
-            })?;
+            let current = aggregate.record(before.worldwide_day).ok_or(
+                MetadosisStorageCorruptionError::NoQuorumOcompCloseMissingPersistedOuterWwd,
+            )?;
             let outer_transition = reduce_outer_wwd(Some(current), OuterWwdEvent::OcompExpired)?;
             expire_exact(metadosis, ctx, before, &outer_transition)
         }
@@ -163,28 +159,30 @@ fn due_unfinalized_attempt(
         let before = state.projection();
         let intent_id = before
             .live_intent_id
-            .ok_or_else(|| storage_corruption_message("OCOMP live scheduler has no IntentId"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompLiveSchedulerHasNoIntentId)?;
         let record = metadosis
             .ocomp_job_record(intent_id, &schema_limits)?
-            .ok_or_else(|| storage_corruption_message("OCOMP live scheduler job is missing"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompLiveSchedulerJobMissing)?;
         if record.status != OcompJobStatus::AwaitingFinality || record.finalized.is_some() {
             continue;
         }
-        let deadline = before.deadline_height.ok_or_else(|| {
-            storage_corruption_message("OCOMP awaiting-finality job has no deadline")
-        })?;
+        let deadline = before
+            .deadline_height
+            .ok_or(MetadosisStorageCorruptionError::OcompAwaitingFinalityJobMissingDeadline)?;
         if deadline > at_height {
             continue;
         }
         if deadline < at_height {
-            return Err(storage_corruption_message(
-                "OCOMP consensus skipped the exact awaiting-finality expiry height",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::OcompConsensusSkippedAwaitingFinalityExpiryHeight
+                    .into(),
+            );
         }
         if due.replace(before).is_some() {
-            return Err(storage_corruption_message(
-                "multiple OCOMP awaiting-finality jobs are due at one height",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::MultipleOcompAwaitingFinalityJobsDueAtOneHeight
+                    .into(),
+            );
         }
     }
     Ok(due)
@@ -200,10 +198,10 @@ fn missed_lifecycle_boundary(ctx: &BlockRuntimeContext<'_>) -> Result<Option<Job
         let projection = state.projection();
         let intent_id = projection
             .live_intent_id
-            .ok_or_else(|| storage_corruption_message("OCOMP live scheduler has no IntentId"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompLiveSchedulerHasNoIntentId)?;
         let record = metadosis
             .ocomp_job_record(intent_id, &schema_limits)?
-            .ok_or_else(|| storage_corruption_message("OCOMP live scheduler job is missing"))?;
+            .ok_or(MetadosisStorageCorruptionError::OcompLiveSchedulerJobMissing)?;
         if record.status != OcompJobStatus::AwaitingFinality {
             continue;
         }
@@ -228,7 +226,7 @@ fn expire_exact(
 ) -> Result<()> {
     let intent_id = before
         .live_intent_id
-        .ok_or_else(|| storage_corruption_message("pending OCOMP state has no live IntentId"))?;
+        .ok_or(MetadosisStorageCorruptionError::PendingOcompStateMissingLiveIntentId)?;
     let retained_lysis_limit_minor = metadosis.expire_ocomp_job(
         outer_transition,
         intent_id,
@@ -238,15 +236,19 @@ fn expire_exact(
     )?;
     let expected_retained_limit_minor = before
         .retained_lysis_limit_minor
-        .ok_or_else(|| storage_corruption_message("terminal OCOMP expiry has no retained limit"))?;
+        .ok_or(MetadosisStorageCorruptionError::TerminalOcompExpiryMissingRetainedLimit)?;
     if retained_lysis_limit_minor != expected_retained_limit_minor {
-        return Err(storage_corruption_message(
-            "terminal OCOMP expiry returned a different retained limit",
-        ));
+        return Err(
+            MetadosisStorageCorruptionError::TerminalOcompExpiryRetainedLimitMismatch.into(),
+        );
     }
     let value_routed = metadosis
         .request_limit_receipt(before.worldwide_day, &poc_schema_limits())?
-        .ok_or_else(|| storage_corruption_message("expired OCOMP day has no request receipt"))
+        .ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::from(
+                MetadosisStorageCorruptionError::ExpiredOcompDayMissingRequestReceipt,
+            )
+        })
         .and_then(|receipt| crate::ocomp_limits::retained_request_limit(&receipt))?;
     crate::terminal::fail_expired_ocomp_day(
         ctx.storage.clone(),
@@ -274,7 +276,9 @@ fn validate_expired_post_state(
     intent_id: B256,
     value_routed: alloy_primitives::U256,
 ) -> Result<()> {
-    let inconsistent = || storage_corruption_message("OCOMP expiry post-state is inconsistent");
+    let inconsistent = || -> outbe_primitives::error::PrecompileError {
+        MetadosisStorageCorruptionError::OcompExpiryPostStateInconsistent.into()
+    };
     if metadosis.get_wwd_status(before.worldwide_day)? != crate::aggregate::WwdStatus::Failed {
         return Err(inconsistent());
     }

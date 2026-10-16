@@ -9,11 +9,13 @@ use outbe_primitives::{reshare_artifact::OutbeBlockArtifacts, system_tx::SystemT
 
 pub(super) fn validate_beneficiary(header: &OutbeHeader) -> Result<(), ConsensusError> {
     if header.number() > 0 && header.beneficiary() != REWARDS_ADDRESS {
-        return Err(consensus_other(format!(
-            "non-genesis block beneficiary must be REWARDS_ADDRESS {}: got {}",
-            REWARDS_ADDRESS,
-            header.beneficiary()
-        )));
+        return Err(
+            crate::errors::ConsensusPolicyError::NonGenesisBeneficiaryMismatch {
+                expected: REWARDS_ADDRESS,
+                actual: header.beneficiary(),
+            }
+            .into(),
+        );
     }
 
     Ok(())
@@ -88,7 +90,7 @@ fn decode_system_input(
     tx: &reth_ethereum::TransactionSigned,
 ) -> Result<outbe_evm::system_tx::SystemTxInputV2, ConsensusError> {
     outbe_evm::system_tx::SystemTxInputV2::decode(tx.input().as_ref())
-        .map_err(|error| consensus_other(format!("decode system tx input: {error}")))
+        .map_err(|error| crate::errors::ConsensusPolicyError::decode_system_tx_input(error).into())
 }
 
 fn system_inputs<'a>(

@@ -25,7 +25,9 @@
 use alloy_primitives::{Address, Bytes};
 
 use crate::consensus::{ParticipationData, OUTBE_MAX_EXTRA_DATA_SIZE};
-use crate::error::{PrecompileError, Result};
+#[cfg(test)]
+use crate::error::PrecompileError;
+use crate::error::{ParticipationError, Result};
 
 /// Magic bytes identifying Outbe participation data.
 const MAGIC: &[u8; 4] = b"OUTB";
@@ -64,32 +66,32 @@ pub fn encode_participation_extended_with_limit(
 ) -> Result<Bytes> {
     // Return structured error instead of panicking on length mismatch.
     if validators.len() != signers.len() {
-        return Err(PrecompileError::revert(format!(
-            "validators/signers length mismatch: {} vs {}",
-            validators.len(),
-            signers.len()
-        )));
+        return Err(ParticipationError::ValidatorsSignersLengthMismatch {
+            validators_len: validators.len(),
+            signers_len: signers.len(),
+        }
+        .into());
     }
 
     if validators.len() > u16::MAX as usize {
-        return Err(PrecompileError::revert(format!(
-            "validator set too large for participation encoding: {}",
-            validators.len()
-        )));
+        return Err(ParticipationError::ValidatorSetTooLarge {
+            len: validators.len(),
+        }
+        .into());
     }
 
     if missed_proposers.len() > u8::MAX as usize {
-        return Err(PrecompileError::revert(format!(
-            "missed proposer list too large for participation encoding: {}",
-            missed_proposers.len()
-        )));
+        return Err(ParticipationError::MissedProposerListTooLarge {
+            len: missed_proposers.len(),
+        }
+        .into());
     }
 
     if byzantine_validators.len() > u8::MAX as usize {
-        return Err(PrecompileError::revert(format!(
-            "byzantine validator list too large for participation encoding: {}",
-            byzantine_validators.len()
-        )));
+        return Err(ParticipationError::ByzantineValidatorListTooLarge {
+            len: byzantine_validators.len(),
+        }
+        .into());
     }
 
     let count = validators.len() as u16;
@@ -98,9 +100,11 @@ pub fn encode_participation_extended_with_limit(
     let total_len = header_len + (missed_proposers.len() * 20) + (byzantine_validators.len() * 20);
 
     if total_len > max_extra_data_size {
-        return Err(PrecompileError::revert(format!(
-            "participation metadata exceeds extra_data budget: {total_len} > {max_extra_data_size}"
-        )));
+        return Err(ParticipationError::ExceedsExtraDataBudget {
+            total_len,
+            max_extra_data_size,
+        }
+        .into());
     }
 
     let mut buf = Vec::with_capacity(total_len);

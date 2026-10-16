@@ -36,10 +36,10 @@ where
         static GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
         let permit = GATE
             .try_acquire()
-            .map_err(|_| internal_err("upgrade key source is busy; retry"))?;
+            .map_err(|_| internal_err(crate::errors::RpcInternalError::UpgradeKeySourceBusy))?;
         proof.validate().map_err(internal_err)?;
         let context = outbe_tee::dcap_protocol::DcapOnboardingContextV1::decode_canonical(&context)
-            .map_err(|_| internal_err("invalid upgrade context"))?;
+            .map_err(|_| internal_err(crate::errors::RpcInternalError::InvalidUpgradeContext))?;
         self.check_upgrade_candidate(&context, legacy_direct_dev_source)?;
         let result = tokio::task::spawn_blocking(move || {
             let _permit = permit;
@@ -50,7 +50,11 @@ where
             )
         })
         .await
-        .map_err(|e| internal_err(format!("upgrade export task: {e}")))?
+        .map_err(|e| {
+            internal_err(crate::errors::RpcInternalError::upgrade_export_task_failed(
+                e,
+            ))
+        })?
         .map_err(internal_err)?;
         Ok(result.into())
     }
@@ -63,14 +67,20 @@ where
             .provider
             .finalized_block_num_hash()
             .map_err(internal_err)?
-            .ok_or_else(|| internal_err("finalized state unavailable"))?;
+            .ok_or_else(|| {
+                internal_err(crate::errors::RpcInternalError::FinalizedStateUnavailable)
+            })?;
         let header = self
             .provider
             .sealed_header(finalized.number)
             .map_err(internal_err)?
-            .ok_or_else(|| internal_err("finalized header unavailable"))?;
+            .ok_or_else(|| {
+                internal_err(crate::errors::RpcInternalError::FinalizedHeaderUnavailable)
+            })?;
         if header.hash() != finalized.hash {
-            return Err(internal_err("finalized header mismatch"));
+            return Err(internal_err(
+                crate::errors::RpcInternalError::FinalizedHeaderMismatch,
+            ));
         }
         {
             let state = self
@@ -81,7 +91,11 @@ where
             let (chain_id, genesis_hash) = self
                 .chain_identity
                 .filter(|(id, hash)| *id != 0 && !hash.is_zero())
-                .ok_or_else(|| internal_err("immutable chain identity is not configured"))?;
+                .ok_or_else(|| {
+                    internal_err(
+                        crate::errors::RpcInternalError::ImmutableChainIdentityNotConfigured,
+                    )
+                })?;
             let mut provider = ReadOnlyStorageProvider::new_with_block_context(
                 reader,
                 ReadOnlyBlockContext {
@@ -101,7 +115,7 @@ where
             .map_err(internal_err)?;
             if !check {
                 return Err(internal_err(
-                    "recipient is not a live finalized upgrade candidate",
+                    crate::errors::RpcInternalError::RecipientNotLiveFinalizedUpgradeCandidate,
                 ));
             }
         }
@@ -111,11 +125,12 @@ where
         &self,
         config: Option<TeeRenewalScheduleConfigV1>,
     ) -> RpcResult<TeeRenewalScheduleV1> {
-        let config =
-            config.ok_or_else(|| internal_err("TEE renewal schedule is not configured"))?;
+        let config = config.ok_or_else(|| {
+            internal_err(crate::errors::RpcInternalError::TeeRenewalScheduleNotConfigured)
+        })?;
         if config.minimum_block_time_millis == 0 {
             return Err(internal_err(
-                "TEE renewal schedule has zero minimum block time",
+                crate::errors::RpcInternalError::TeeRenewalScheduleZeroMinBlockTime,
             ));
         }
         self.read_renewal_epoch()?.schedule(config)
@@ -124,27 +139,37 @@ where
         let finalized = self
             .provider
             .finalized_block_num_hash()
-            .map_err(|error| internal_err(format!("failed to read finalized block: {error}")))?
-            .ok_or_else(|| internal_err("finalized block is unavailable"))?;
+            .map_err(|error| {
+                internal_err(crate::errors::RpcInternalError::finalized_block_read_failed(error))
+            })?
+            .ok_or_else(|| {
+                internal_err(crate::errors::RpcInternalError::FinalizedBlockIsUnavailable)
+            })?;
         let header = self
             .provider
             .sealed_header(finalized.number)
             .map_err(|error| {
-                internal_err(format!(
-                    "failed to read finalized header {}: {error}",
-                    finalized.number
-                ))
+                internal_err(
+                    crate::errors::RpcInternalError::finalized_header_read_failed(
+                        finalized.number,
+                        error,
+                    ),
+                )
             })?
-            .ok_or_else(|| internal_err("finalized header is unavailable"))?;
+            .ok_or_else(|| {
+                internal_err(crate::errors::RpcInternalError::FinalizedHeaderIsUnavailable)
+            })?;
         if header.hash() != finalized.hash {
             return Err(internal_err(
-                "finalized block marker and canonical header disagree",
+                crate::errors::RpcInternalError::FinalizedBlockMarkerHeaderDisagree,
             ));
         }
         let state = self
             .provider
             .state_by_block_hash(finalized.hash)
-            .map_err(|error| internal_err(format!("failed to read finalized state: {error}")))?;
+            .map_err(|error| {
+                internal_err(crate::errors::RpcInternalError::finalized_state_read_failed(error))
+            })?;
         let reader = RethStateReader { state: &state };
         let mut provider = ReadOnlyStorageProvider::new(reader);
         let storage = StorageHandle::new(&mut provider);
@@ -175,17 +200,21 @@ impl RenewalEpoch {
         let epoch_number = epoch.number;
         if epoch_number > U256::from(u64::MAX) {
             return Err(internal_err(
-                "finalized epoch number exceeds u64".to_owned(),
+                crate::errors::RpcInternalError::FinalizedEpochNumberExceedsU64,
+            ));
+        }
+        let epoch_length_blocks = epoch.length_blocks;
+        if epoch_length_blocks == 0 {
+            return Err(internal_err(
+                crate::errors::RpcInternalError::FinalizedEpochLengthZero,
             ));
         }
         let epoch_start_height = epoch.start_block;
-        let epoch_length_blocks = epoch.length_blocks;
-        if epoch_length_blocks == 0 {
-            return Err(internal_err("finalized epoch length is zero".to_owned()));
-        }
         let planned_activation_height = epoch_start_height
             .checked_add(u64::from(epoch_length_blocks))
-            .ok_or_else(|| internal_err("planned activation height overflow".to_owned()))?;
+            .ok_or_else(|| {
+                internal_err(crate::errors::RpcInternalError::PlannedActivationHeightOverflow)
+            })?;
         let prepare = config
             .dkg_prepare_window_blocks
             .min(u64::from(epoch_length_blocks));

@@ -7,8 +7,8 @@ mod stack_follower;
 mod tee_bootstrap;
 
 pub use core::{
-    validator_has_no_node_host_enclave_binding_error, ApplicationShutdownError, ArgsError,
-    FollowTransportError, FollowerShutdownError, PeerManagerError, ValidatorsError,
+    ApplicationShutdownError, ArgsError, FollowTransportError, FollowerShutdownError,
+    PeerManagerError, ValidatorsError, ValidatorsPrecompileError,
 };
 pub use stack_dkg::StackDkgError;
 pub use stack_epoch::StackEpochError;

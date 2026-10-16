@@ -58,7 +58,7 @@ pub(super) async fn refresh_call_context(
         block_timestamp: timestamp,
         protocol_version: version.to(),
     })
-    .map_err(eyre::Report::msg)
+    .map_err(Into::into)
 }
 
 impl<R: Rpc + Sync> TransactionReceiptRpc for CliFinalityRpc<'_, R> {

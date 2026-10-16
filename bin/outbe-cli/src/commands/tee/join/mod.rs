@@ -28,12 +28,11 @@ use std::time::Duration;
 
 mod policy;
 pub(super) use policy::{
-    classify_join_offer_key_state, classify_join_offer_key_state_transport,
-    committed_manifest_matches_binding, ensure_durable_join_registration_caller,
-    ensure_joinable_binding, finalized_binding_matches_intent, plan_join_completion,
-    plan_missing_committed_relay, registration_counters, select_join_transport,
-    DurableJoinSubmissionV1, ExactJoinRelayV1, JoinOfferKeyState, JoinTransport,
-    MissingCommittedRelayPlan,
+    classify_join_offer_key_state, committed_manifest_matches_binding,
+    ensure_durable_join_registration_caller, ensure_joinable_binding,
+    finalized_binding_matches_intent, plan_join_completion, plan_missing_committed_relay,
+    registration_counters, select_join_transport, DurableJoinSubmissionV1, ExactJoinRelayV1,
+    JoinOfferKeyState, JoinTransport, MissingCommittedRelayPlan,
 };
 
 #[cfg(test)]

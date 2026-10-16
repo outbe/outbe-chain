@@ -191,14 +191,22 @@ pub(super) fn restart_validate_frozen_target(
     Ok(())
 }
 
+pub(super) struct ReplacementLogs {
+    pub node: LaunchLog,
+    pub enclave: LaunchLog,
+}
+
 pub(super) fn restart_install_replacement(
     world: &mut World,
     index: usize,
     previous: (u32, u32),
-    node_log: LaunchLog,
-    enclave_log: LaunchLog,
+    logs: ReplacementLogs,
     enclave_replaced: bool,
 ) -> Result<()> {
+    let ReplacementLogs {
+        node: node_log,
+        enclave: enclave_log,
+    } = logs;
     let (node_pid, enclave_pid) = world.localnet.live_validator_and_enclave_pids(index)?;
     ensure!(
         restart_replacement_matches(previous, (node_pid, enclave_pid), enclave_replaced),
@@ -296,8 +304,10 @@ pub(super) fn restart_joiner_pair(world: &mut World, index: usize, in_flight: bo
         world,
         index,
         previous,
-        node_log,
-        enclave_log.ok_or_else(|| eyre!("enclave restart interval was not armed"))?,
+        ReplacementLogs {
+            node: node_log,
+            enclave: enclave_log.ok_or_else(|| eyre!("enclave restart interval was not armed"))?,
+        },
         true,
     )
 }

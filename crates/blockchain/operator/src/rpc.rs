@@ -254,7 +254,7 @@ impl RegistryRpc for HttpRenewalRpc {
                 .await?,
         )
         .wrap_err("decode outbe_teeRenewalScheduleV1 result")
-        .and_then(|schedule: TeeRenewalScheduleV1| schedule.validate().map_err(eyre::Report::msg))
+        .and_then(|schedule: TeeRenewalScheduleV1| schedule.validate().map_err(Into::into))
     }
 }
 

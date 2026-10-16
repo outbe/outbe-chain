@@ -184,7 +184,7 @@ pub fn try_account_query(
 pub fn canary_request(request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
     ENCLAVE_SESSION
         .get()
-        .ok_or_else(|| TransportError::EnclaveError("enclave session is not configured".into()))?
+        .ok_or(crate::errors::TeeClientVerificationError::EnclaveSessionNotConfigured)?
         .canary_request(request)
 }
 

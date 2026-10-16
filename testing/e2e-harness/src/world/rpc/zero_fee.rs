@@ -31,11 +31,10 @@ impl Rpc {
         eth::send_value(&self.cfg.rpc0, address, &funder_key, U256::from(1))?;
         let bootstrap_balance_before = eth::balance(&self.cfg.rpc0, address)
             .ok_or_else(|| eyre!("read pre-bootstrap balance"))?;
-        if bootstrap_balance_before != U256::from(1) {
-            return Err(eyre!(
-                "bootstrap fixture balance must be exactly one atomic unit, got {bootstrap_balance_before}"
-            ));
-        }
+        eyre::ensure!(
+            bootstrap_balance_before == U256::from(1),
+            "bootstrap fixture balance must be exactly one atomic unit, got {bootstrap_balance_before}"
+        );
         let bootstrap_nonce_before =
             eth::nonce(&self.cfg.rpc0, address).ok_or_else(|| eyre!("read bootstrap nonce"))?;
 
@@ -45,15 +44,14 @@ impl Rpc {
             &IZeroFee::authorizeSponsorshipCall { signer: address },
         )
         .ok_or_else(|| eyre!("read authorizeSponsorship"))?;
-        if !auth {
-            return Err(eyre!("fresh funded signer is not eligible for sponsorship"));
-        }
+        eyre::ensure!(auth, "fresh funded signer is not eligible for sponsorship");
         let counter = self
             .zerofee_counter(address)
             .ok_or_else(|| eyre!("read ZeroFee counter"))?;
-        if counter.1 != 0 || counter.0 == 0 {
-            return Err(eyre!("fresh counter must be (today, 0), got {counter:?}"));
-        }
+        eyre::ensure!(
+            counter.1 == 0 && counter.0 != 0,
+            "fresh counter must be (today, 0), got {counter:?}"
+        );
 
         let bootstrap_hash = self
             .sh()
@@ -67,11 +65,10 @@ impl Rpc {
             ])?
             .trim()
             .to_owned();
-        if !self.wait_successful_receipt(&bootstrap_hash, 20) {
-            return Err(eyre!(
-                "product CLI ZeroFee bootstrap was not mined successfully: {bootstrap_hash}"
-            ));
-        }
+        eyre::ensure!(
+            self.wait_successful_receipt(&bootstrap_hash, 20),
+            "product CLI ZeroFee bootstrap was not mined successfully: {bootstrap_hash}"
+        );
         state.zerofee_delegation_receipt = Some(
             eth::receipt_json(&self.cfg.rpc0, &bootstrap_hash)
                 .ok_or_else(|| eyre!("read product CLI bootstrap receipt"))?,
@@ -80,34 +77,32 @@ impl Rpc {
             .zerofee_delegation_receipt
             .as_ref()
             .expect("bootstrap receipt was just stored");
-        if !receipt_status(bootstrap_receipt) {
-            return Err(eyre!("one-unit ZeroFee bootstrap receipt failed"));
-        }
+        eyre::ensure!(
+            receipt_status(bootstrap_receipt),
+            "one-unit ZeroFee bootstrap receipt failed"
+        );
         let bootstrap_balance_after = eth::balance(&self.cfg.rpc0, address)
             .ok_or_else(|| eyre!("read post-bootstrap balance"))?;
-        if bootstrap_balance_after != bootstrap_balance_before {
-            return Err(eyre!(
-                "bootstrap changed native balance: before={bootstrap_balance_before}, after={bootstrap_balance_after}"
-            ));
-        }
+        eyre::ensure!(
+            bootstrap_balance_after == bootstrap_balance_before,
+            "bootstrap changed native balance: before={bootstrap_balance_before}, after={bootstrap_balance_after}"
+        );
         let bootstrap_nonce_after = eth::nonce(&self.cfg.rpc0, address)
             .ok_or_else(|| eyre!("read post-bootstrap nonce"))?;
         let expected_bootstrap_nonce = bootstrap_nonce_before
             .checked_add(2)
             .ok_or_else(|| eyre!("bootstrap nonce overflow"))?;
-        if bootstrap_nonce_after != expected_bootstrap_nonce {
-            return Err(eyre!(
-                "bootstrap nonce must advance by two: before={bootstrap_nonce_before}, after={bootstrap_nonce_after}"
-            ));
-        }
+        eyre::ensure!(
+            bootstrap_nonce_after == expected_bootstrap_nonce,
+            "bootstrap nonce must advance by two: before={bootstrap_nonce_before}, after={bootstrap_nonce_after}"
+        );
         let counter_after_bootstrap = self
             .zerofee_counter(address)
             .ok_or_else(|| eyre!("read post-bootstrap ZeroFee counter"))?;
-        if counter_after_bootstrap.1 != 0 {
-            return Err(eyre!(
-                "bootstrap must not consume quota, got {counter_after_bootstrap:?}"
-            ));
-        }
+        eyre::ensure!(
+            counter_after_bootstrap.1 == 0,
+            "bootstrap must not consume quota, got {counter_after_bootstrap:?}"
+        );
 
         // Top up only after bootstrap evidence is captured; the main scenario
         // later needs enough COEN for its deliberately paid fallback call.
@@ -128,11 +123,10 @@ impl Rpc {
             )
             .and_then(|value| value.as_str().map(ToOwned::to_owned))
         });
-        if state.zerofee_delegation_raw.is_none() {
-            return Err(eyre!(
-                "public RPC did not return the exact signed EIP-7702 transaction"
-            ));
-        }
+        eyre::ensure!(
+            state.zerofee_delegation_raw.is_some(),
+            "public RPC did not return the exact signed EIP-7702 transaction"
+        );
         state.zerofee_key = Some(key.to_string());
         state.zerofee_address = Some(format!("{address:#x}"));
         state.zerofee_balance_before = Some(

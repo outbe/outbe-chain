@@ -45,10 +45,12 @@ pub fn recover_phase1_proposer(
     let tx =
         TransactionSigned::decode_2718(&mut tx_slice).map_err(SystemTxError::phase1_tx_decode)?;
     if !tx_slice.is_empty() {
-        return Err(SystemTxError::Phase1TxDecode(format!(
-            "phase1 tx has {} trailing bytes after EIP-2718 envelope",
-            tx_slice.len()
-        )));
+        return Err(
+            crate::error::Phase1TxDecodeError::TrailingBytesAfterEnvelope {
+                trailing_bytes: tx_slice.len(),
+            }
+            .into(),
+        );
     }
     let calldata = tx.input().clone();
     validate_phase1_envelope_shape(&tx, calldata.as_ref(), chain_id, block_number)?;

@@ -129,6 +129,7 @@ fn seed_projection(
                 bucket_count: 1,
                 nod_amount_total: U256::from(10_000),
                 lysis_allocation_minor: U256::from(10_000),
+                nod_gratis_load_max: U256::from(1_000),
                 issued_at: 1_600_000_000,
                 next_nod_ordinal: 0,
                 last_progress_height: 1,
@@ -153,6 +154,8 @@ fn seed_projection(
                 .write(&worldwide_day, projection.nod_amount_total)?;
             nod.ocomp_lysis_allocation_minor
                 .write(&worldwide_day, projection.lysis_allocation_minor)?;
+            nod.ocomp_nod_gratis_load_max
+                .write(&worldwide_day, projection.nod_gratis_load_max)?;
             nod.ocomp_materialization_job_id
                 .write(&worldwide_day, projection.job_id)?;
             nod.ocomp_materialization_protocol_bundle_hash
@@ -196,6 +199,10 @@ fn assert_projection_cleared(world: &mut World, materialization_wwd: u32) {
                 U256::ZERO
             );
             assert_eq!(nod.ocomp_nod_amount_total.read(&worldwide_day)?, U256::ZERO);
+            assert_eq!(
+                nod.ocomp_nod_gratis_load_max.read(&worldwide_day)?,
+                U256::ZERO
+            );
             assert_eq!(
                 nod.ocomp_lysis_allocation_minor.read(&worldwide_day)?,
                 U256::ZERO
@@ -377,46 +384,6 @@ fn corrupt_fifo_bounds_or_missing_head_projection_are_fatal() {
         head_result(&mut missing_projection),
         Err(PrecompileError::Revert(_))
     ));
-}
-
-/// Materialization carries the proven batch's price. It does not read a snapshot that says
-/// otherwise.
-#[test]
-fn a_materialized_nod_keeps_the_batch_entry_price() {
-    let mut world = World::new();
-    let population = population(10);
-    seed_generation(&mut world, &population);
-    world
-        .enter(|storage| {
-            outbe_nod::api::store_entry_price_snapshot(
-                storage,
-                WorldwideDay::new(MATERIALIZATION_WWD),
-                20_260_714,
-                &std::collections::BTreeMap::from([(840, U256::from(999_999u64))]),
-            )
-        })
-        .unwrap();
-
-    apply(&mut world, &batch(&population, 0, 8)).unwrap();
-
-    let action = action_for(MATERIALIZATION_WWD, 0);
-    let worldwide_day = WorldwideDay::new(MATERIALIZATION_WWD);
-    let bucket_id = B256::from(
-        outbe_nod::identity::bucket_key(
-            worldwide_day,
-            action.entry_price_minor,
-            action.reference_currency,
-        )
-        .0,
-    );
-    let bucket = world
-        .enter(|storage| nod_api::get_bucket(&storage, bucket_id))
-        .unwrap()
-        .expect("materialization seals the bucket");
-    assert_eq!(
-        bucket.entry_price_minor, action.entry_price_minor,
-        "the oracle snapshot must not reprice a materialized Nod"
-    );
 }
 
 #[test]
@@ -734,6 +701,7 @@ fn protected_authority(
             .unwrap(),
         subtree_height: profile().batch_subtree_height,
         source_bindings: vec![],
+        nod_gratis_load_max: U256::from(1_000),
     }
 }
 

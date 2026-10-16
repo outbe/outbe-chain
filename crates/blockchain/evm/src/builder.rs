@@ -12,7 +12,7 @@ use reth_ethereum::{
 };
 use reth_evm::execute::{
     BlockAssembler, BlockAssemblerInput, BlockBuilder, BlockBuilderOutcome, BlockExecutionError,
-    BlockValidationError, ExecutorTx,
+    ExecutorTx,
 };
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 use reth_provider::StateProvider;
@@ -30,10 +30,11 @@ pub(crate) fn encode_final_header_artifacts(
     timestamp_millis_part: u64,
 ) -> Result<alloy_primitives::Bytes, BlockExecutionError> {
     let mut artifacts = decode_outbe_block_artifacts(prefinal_extra_data)
-        .map_err(|err| -> BlockExecutionError { BlockValidationError::msg(err).into() })?;
+        .map_err(crate::errors::ExecutorValidationError::block_artifacts)?;
     artifacts.execution_summary = Some(execution_summary);
     artifacts.timestamp_millis_part = timestamp_millis_part;
-    encode_outbe_block_artifacts(&artifacts).map_err(|err| BlockValidationError::msg(err).into())
+    encode_outbe_block_artifacts(&artifacts)
+        .map_err(|err| crate::errors::ExecutorValidationError::block_artifacts(err).into())
 }
 
 pub struct OutbeBlockBuilder<'a, EVM>

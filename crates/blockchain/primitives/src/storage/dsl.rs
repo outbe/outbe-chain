@@ -285,11 +285,17 @@ where
 }
 
 pub fn missing_record_err(name: &str) -> PrecompileError {
-    PrecompileError::revert(format!("{name} not found"))
+    crate::error::PrimitivesStorageError::RecordNotFound {
+        name: name.to_owned(),
+    }
+    .into()
 }
 
 pub fn existing_record_err(name: &str) -> PrecompileError {
-    PrecompileError::revert(format!("{name} already exists"))
+    crate::error::PrimitivesStorageError::RecordAlreadyExists {
+        name: name.to_owned(),
+    }
+    .into()
 }
 
 #[cfg(test)]

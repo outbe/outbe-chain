@@ -194,7 +194,7 @@ impl Rpc {
             return Err(eyre!("post-completion settleNod transaction failed"));
         }
         let entity = outbe_primitives::wwd_entity_id::WwdEntityId::try_from(nod_id.as_slice())?;
-        let nonce = (0_u64..100_000)
+        let nonce = (0_u64..1_000_000)
             .find(|nonce| outbe_nodfactory::runtime::validate_pow(entity, owner, *nonce).is_ok())
             .ok_or_else(|| eyre!("find bounded mineGratis nonce"))?;
         let op_nonce = eth::read_call(

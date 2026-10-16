@@ -13,55 +13,9 @@ use crate::{
 };
 
 use super::{
-    ShuffleBucketRecordV1, ShufflePageSlice, ShufflePageSpanV1, ShuffleRunArtifactV1,
-    ShuffleRunChildV1, ShuffleRunContextV1, ShuffleRunKindV1, ShuffleRunPayloadV1,
-    MAX_SHUFFLE_LEAF_RECORDS,
+    ShuffleBucketRecordV1, ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunChildV1,
+    ShuffleRunContextV1, ShuffleRunPayloadV1, MAX_SHUFFLE_LEAF_RECORDS,
 };
-
-pub(super) fn exact_shuffle_page_count(record_count: u32) -> Result<u32, ProtocolError> {
-    if record_count == 0 {
-        return Err(ProtocolError::InvalidInvariant(
-            "non-empty bucket shuffle run",
-        ));
-    }
-    Ok(record_count.div_ceil(MAX_SHUFFLE_LEAF_RECORDS as u32))
-}
-
-pub(super) fn require_shuffle_page_leaf(
-    context: &ShuffleRunContextV1,
-    slice: &ShufflePageSlice<'_>,
-) -> Result<(), ProtocolError> {
-    let page_ordinal = slice.page_ordinal;
-    let page_end = page_ordinal
-        .checked_add(1)
-        .ok_or(ProtocolError::IntegerOverflow {
-            what: "shuffle requested page end",
-        })?;
-    let expected_first = page_ordinal
-        .checked_mul(MAX_SHUFFLE_LEAF_RECORDS as u32)
-        .ok_or(ProtocolError::IntegerOverflow {
-            what: "shuffle requested first record",
-        })?;
-    let expected_end = if page_end == context.root_page_end {
-        context.root_record_count
-    } else {
-        page_end
-            .checked_mul(MAX_SHUFFLE_LEAF_RECORDS as u32)
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "shuffle requested record end",
-            })?
-    };
-    require(
-        slice.page_span.start_page == page_ordinal
-            && slice.page_span.end_page == page_end
-            && slice.first_record_ordinal == expected_first
-            && slice
-                .first_record_ordinal
-                .checked_add(slice.record_count)
-                .is_some_and(|actual| actual == expected_end),
-        "shuffle exact page slice",
-    )
-}
 
 pub(super) fn resolve_shuffle_child<R>(
     context: &ShuffleRunContextV1,
@@ -103,11 +57,10 @@ pub(super) fn require_shuffle_context(
         && artifact.job_id == context.job_id
         && artifact.attempt == context.attempt
         && artifact.unit_id == context.unit_id;
-    let run_identity = artifact.kind == context.kind && artifact.run_span == context.run_span;
     let source_coverage = artifact.source_coverage_root == context.source_coverage_root
         && artifact.source_coverage_count == context.source_coverage_count;
     require(
-        job_identity && run_identity && source_coverage,
+        job_identity && artifact.run_span == context.run_span && source_coverage,
         "shuffle descendant context",
     )
 }
@@ -181,10 +134,6 @@ fn validate_artifact_payload(artifact: &ShuffleRunArtifactV1) -> Result<(), Prot
         })?;
     match &artifact.payload {
         ShuffleRunPayloadV1::BucketLeaf(records) => {
-            require(
-                artifact.kind == ShuffleRunKindV1::Bucket,
-                "shuffle payload kind binding",
-            )?;
             require(!records.is_empty(), "non-empty bucket shuffle leaf")?;
             validate_leaf_shape(artifact, page_width, records.len())
         }
@@ -202,12 +151,10 @@ fn validate_node_shape(
 ) -> Result<(), ProtocolError> {
     require(page_width > 1, "shuffle node page width")?;
     require(artifact.record_count > 0, "non-empty shuffle node")?;
-    if artifact.kind == ShuffleRunKindV1::Bucket {
-        require(
-            artifact.record_count > 0 && left.record_count > 0 && right.record_count > 0,
-            "non-empty bucket shuffle node",
-        )?;
-    }
+    require(
+        left.record_count > 0 && right.record_count > 0,
+        "non-empty bucket shuffle node",
+    )?;
     require(
         left.artifact_ref.transport_digest != right.artifact_ref.transport_digest,
         "shuffle node distinct child objects",
@@ -276,7 +223,7 @@ pub(super) fn validate_bucket_records(
     }
     for pair in records.windows(2) {
         require(
-            (pair[0].bucket_key, pair[0].raw_ordinal) < (pair[1].bucket_key, pair[1].raw_ordinal),
+            super::shuffle_record_key(&pair[0]) < super::shuffle_record_key(&pair[1]),
             "bucket shuffle records strictly ordered",
         )?;
     }

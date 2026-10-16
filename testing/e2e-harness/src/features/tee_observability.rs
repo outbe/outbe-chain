@@ -273,13 +273,12 @@ fn assert_incarnation(world: &mut World, observation: &TeeObservation) {
 // Leave a full second of margin for the separate RPC and monotonic-clock reads.
 // A cached success is older than the observation and cannot pass this predicate.
 fn fresh_success(status: &Value, elapsed: Duration) -> bool {
-    status["state"] == "ready"
-        && status["offerKeyReady"] == true
-        && status["consecutiveFailures"] == 0
-        && status["lastFailureClass"].is_null()
-        && status["lastOkAgoMillis"]
-            .as_u64()
-            .is_some_and(|age| u128::from(age).saturating_add(1_000) < elapsed.as_millis())
+    let ready = status["state"] == "ready" && status["offerKeyReady"] == true;
+    let healthy = status["consecutiveFailures"] == 0 && status["lastFailureClass"].is_null();
+    let recent = status["lastOkAgoMillis"]
+        .as_u64()
+        .is_some_and(|age| u128::from(age).saturating_add(1_000) < elapsed.as_millis());
+    ready && healthy && recent
 }
 
 fn successful_request(log: &str, request: &str) -> bool {

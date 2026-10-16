@@ -141,3 +141,129 @@ impl ProcessError {
         Self::DeriveBindingHashFailed(err.to_string())
     }
 }
+
+/// Business or cryptographic rejection reasons for Promis balance transitions.
+#[derive(Debug, thiserror::Error)]
+pub enum PromisRejectReason {
+    #[error("amount must be positive")]
+    AmountMustBePositive,
+    #[error("invalid address")]
+    InvalidAddress,
+    #[error("invalid modify authorization")]
+    InvalidModifyAuthorization,
+    #[error("promis balance overflow")]
+    BalanceOverflow,
+    #[error("insufficient balance")]
+    InsufficientBalance,
+    #[error(transparent)]
+    Tee(#[from] crate::errors::TeeError),
+}
+
+/// Business or cryptographic rejection reasons for Gratis balance transitions.
+#[derive(Debug, thiserror::Error)]
+pub enum GratisRejectReason {
+    #[error("invalid modify authorization")]
+    InvalidModifyAuthorization,
+    #[error("modify nonce exhausted")]
+    ModifyNonceExhausted,
+    #[error("amount and account must be nonzero")]
+    AmountAndAccountMustBeNonzero,
+    #[error("collateral must not change Fidelity")]
+    CollateralMustNotChangeFidelity,
+    #[error("insufficient balance or balance overflow")]
+    InsufficientBalanceOrOverflow,
+    #[error(transparent)]
+    Tee(#[from] crate::errors::TeeError),
+}
+
+/// Errors from enclave Fidelity cohort decoding, evaluation, and query authorization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum FidelityEnclaveError {
+    #[error("cohort interior shorter than header")]
+    CohortInteriorShorterThanHeader,
+    #[error("cohort counts overflow")]
+    CohortCountsOverflow,
+    #[error("cohort interior truncated")]
+    CohortInteriorTruncated,
+    #[error("active cohort count overflow")]
+    ActiveCohortCountOverflow,
+    #[error("sold cohort count overflow")]
+    SoldCohortCountOverflow,
+    #[error("rcfi arithmetic overflow")]
+    RcfiArithmeticOverflow,
+    #[error("league arithmetic overflow")]
+    LeagueArithmeticOverflow,
+    #[error("query authorization is for a different chain")]
+    QueryAuthDifferentChain,
+    #[error("query authorization expired")]
+    QueryAuthExpired,
+    #[error("owner signature must be 65 bytes")]
+    OwnerSignatureLength,
+    #[error("owner signature does not control account")]
+    OwnerSignatureAccountMismatch,
+}
+
+impl From<FidelityEnclaveError> for crate::errors::TeeError {
+    fn from(err: FidelityEnclaveError) -> Self {
+        Self::Fidelity(err.to_string())
+    }
+}
+
+/// Rejection reasons for protected NOD materialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum NodMaterializationRejectReason {
+    #[error("stale materialization authority")]
+    StaleAuthority,
+    #[error("materialization ciphertext mismatch")]
+    CiphertextMismatch,
+    #[error("NOD source count mismatch")]
+    SourceCountMismatch,
+    #[error("NOD league fraction")]
+    LeagueFraction,
+    #[error("NOD Tribute identity mismatch")]
+    TributeIdentityMismatch,
+    #[error("invalid Tribute proof encoding")]
+    InvalidTributeProofEncoding,
+    #[error("NOD gratis load")]
+    GratisLoad,
+}
+
+impl From<NodMaterializationRejectReason> for crate::errors::TeeError {
+    fn from(err: NodMaterializationRejectReason) -> Self {
+        Self::TributeOfferReject(err.to_string())
+    }
+}
+
+/// Rejection reasons for encrypted Tribute day operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum TributeDayRejectReason {
+    #[error("invalid day predecessor")]
+    InvalidDayPredecessor,
+    #[error("Tribute belongs to another day or chain")]
+    TributeWrongDayOrChain,
+    #[error("Tribute issuance amount must be positive")]
+    IssuanceAmountMustBePositive,
+    #[error("day retirement amount mismatch")]
+    DayRetirementAmountMismatch,
+    #[error("day nominal amount overflow or underflow")]
+    DayNominalAmountOverflowOrUnderflow,
+}
+
+impl From<TributeDayRejectReason> for crate::errors::TeeError {
+    fn from(err: TributeDayRejectReason) -> Self {
+        Self::TributeOfferReject(err.to_string())
+    }
+}
+
+/// Rejection reasons for encrypted NOD exercise (`nod_mine`).
+#[derive(Debug, thiserror::Error)]
+pub enum NodMineRejectReason {
+    #[error("fidelity section failed: {0}")]
+    FidelitySectionFailed(crate::errors::TeeError),
+}
+
+impl From<NodMineRejectReason> for crate::errors::TeeError {
+    fn from(err: NodMineRejectReason) -> Self {
+        Self::TributeOfferReject(err.to_string())
+    }
+}

@@ -294,45 +294,6 @@ pub struct IntexContract {
     #[attribute(order = 2)]
     pub series_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 
-    // --- Multi-chain proceeds fan-in. A ready pot is burned. ---
-    /// worldwide_day -> proceeds accumulated but not yet burned.
-    #[attribute(order = 11)]
-    pub proceeds_pot: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
-
-    /// worldwide_day -> fan-in deadline. 0 means never armed. `u64::MAX` means finalized.
-    #[attribute(order = 12)]
-    pub proceeds_deadline: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
-
-    /// worldwide_day -> number of winning chains expected to route proceeds.
-    #[attribute(order = 13)]
-    pub proceeds_expected_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-
-    /// worldwide_day -> number of expected chains whose proceeds have arrived.
-    #[attribute(order = 14)]
-    pub proceeds_arrived_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-
-    /// keccak256(worldwide_day_be32 ++ chain_be32) -> 1 if a winning (expected) chain.
-    #[attribute(order = 15)]
-    pub proceeds_expected: outbe_primitives::storage::dsl::Map<B256, u8>,
-
-    /// keccak256(worldwide_day_be32 ++ chain_be32) -> 1 once that chain's proceeds arrived.
-    #[attribute(order = 16)]
-    pub proceeds_arrived: outbe_primitives::storage::dsl::Map<B256, u8>,
-
-    // Awaiting-proceeds set (dense) for the begin-block deadline sweep.
-    #[attribute(order = 18)]
-    pub awaiting_proceeds_count: outbe_primitives::storage::dsl::Value<u32>,
-    /// dense index -> worldwide_day.
-    #[attribute(order = 19)]
-    pub awaiting_proceeds_at: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// worldwide_day -> (awaiting index + 1). 0 = not awaiting.
-    #[attribute(order = 20)]
-    pub awaiting_proceeds_slot: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-
-    /// worldwide_day -> number of series created for that day.
-    #[attribute(order = 24)]
-    pub day_series_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-
     // Disjoint classes: a series forfeits `issued_units - settled - exercised -
     // gem_factory` at its deadline. Not on `SeriesRecord` because a record write
     // rewrites every field.
@@ -466,15 +427,6 @@ impl IntexContract<'_> {
         let mut buf = [0u8; SERIES_ID_LEN + 20];
         buf[..SERIES_ID_LEN].copy_from_slice(series_id.as_bytes());
         buf[SERIES_ID_LEN..].copy_from_slice(owner.as_slice());
-        keccak256(buf)
-    }
-
-    /// Composite key for per-(day, chain) proceeds flags:
-    /// `keccak256(worldwide_day_be32 ++ chain_be32)`.
-    pub fn proceeds_chain_key(worldwide_day: WorldwideDay, chain_id: u32) -> B256 {
-        let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&worldwide_day.value().to_be_bytes());
-        buf[4..8].copy_from_slice(&chain_id.to_be_bytes());
         keccak256(buf)
     }
 }

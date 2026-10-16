@@ -98,8 +98,9 @@ impl OdkoOutcome {
         if declared != actual {
             return Err(OdkoDecodeError::LengthMismatch { declared, actual });
         }
-        let max = NonZeroU32::new(crate::bls::MAX_VALIDATORS)
-            .ok_or_else(|| OdkoDecodeError::InvalidOutput("zero validator cap".into()))?;
+        let max = NonZeroU32::new(crate::bls::MAX_VALIDATORS).ok_or_else(|| {
+            OdkoDecodeError::invalid_output(crate::errors::DkgError::ZeroValidatorCap)
+        })?;
         let output =
             Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut reader, &(max, ModeVersion::v0()))
                 .map_err(OdkoDecodeError::invalid_output)?;

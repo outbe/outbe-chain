@@ -37,6 +37,7 @@ pub struct CertifiedNodGenerationV1 {
     pub counts: ExactCountsV1,
     pub nod_amount_total: U256,
     pub lysis_allocation_minor: U256,
+    pub nod_gratis_load_max: U256,
     pub issued_at: u64,
 }
 
@@ -137,6 +138,7 @@ pub fn install_certified_generation(
         bucket_count: input.counts.bucket_count,
         nod_amount_total: input.nod_amount_total,
         lysis_allocation_minor: input.lysis_allocation_minor,
+        nod_gratis_load_max: input.nod_gratis_load_max,
         issued_at: input.issued_at,
         next_nod_ordinal: 0,
         last_progress_height: activation_height,
@@ -161,6 +163,8 @@ pub fn install_certified_generation(
             .write(&worldwide_day, installed.nod_amount_total)?;
         nod.ocomp_lysis_allocation_minor
             .write(&worldwide_day, installed.lysis_allocation_minor)?;
+        nod.ocomp_nod_gratis_load_max
+            .write(&worldwide_day, installed.nod_gratis_load_max)?;
         nod.ocomp_materialization_job_id
             .write(&worldwide_day, installed.job_id)?;
         nod.ocomp_materialization_protocol_bundle_hash
@@ -242,8 +246,15 @@ fn totals_match(
     input: &CertifiedNodGenerationV1,
 ) -> bool {
     counts_match(existing, input)
-        && existing.nod_amount_total == input.nod_amount_total
-        && existing.lysis_allocation_minor == input.lysis_allocation_minor
+        && (
+            existing.nod_amount_total,
+            existing.lysis_allocation_minor,
+            existing.nod_gratis_load_max,
+        ) == (
+            input.nod_amount_total,
+            input.lysis_allocation_minor,
+            input.nod_gratis_load_max,
+        )
         && existing.issued_at == input.issued_at
 }
 

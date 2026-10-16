@@ -11,16 +11,13 @@ use outbe_ocomp_protocol::{
     },
     ordered_list_root,
     profile::ProtocolBundleV1,
-    ListKind, ObjectKind, OrderedListLimits, ProtocolError, SchemaLimits, StreamingOrderedListRoot,
+    ListKind, ObjectKind, OrderedListLimits, SchemaLimits, StreamingOrderedListRoot,
 };
-use outbe_primitives::entity_codec::CanonicalBodyError;
-use thiserror::Error;
 
 use crate::{
-    cas::{CasError, FilesystemCas, FilesystemCasReader, VerifiedCasObject},
+    cas::{FilesystemCas, FilesystemCasReader, VerifiedCasObject},
     input_ref_catalog::{
-        InputRefCatalogError, InputRefCatalogPublisher, InputRefCatalogSubjectV1,
-        VerifiedInputChunkRefCatalog,
+        InputRefCatalogPublisher, InputRefCatalogSubjectV1, VerifiedInputChunkRefCatalog,
     },
 };
 
@@ -127,33 +124,7 @@ pub struct DurableInputArtifactPublisher<'a> {
     oracle_published: bool,
 }
 
-#[derive(Debug, Error)]
-pub enum InputArtifactError {
-    #[error("private Tribute amount read failed: {0}")]
-    PrivateTribute(#[from] outbe_tee::TransportError),
-    #[error(transparent)]
-    Cas(#[from] CasError),
-    #[error("canonical OCOMP protocol object rejected: {0}")]
-    Protocol(#[from] ProtocolError),
-    #[error("canonical Tribute body rejected: {0}")]
-    Tribute(#[from] CanonicalBodyError),
-    #[error("input artifact invariant failed: {0}")]
-    Invariant(&'static str),
-    #[error("input artifact count does not fit the protocol")]
-    CountOverflow,
-    #[error("input artifact byte count overflow")]
-    ByteCountOverflow,
-    #[error("Tribute nominal total overflow")]
-    NominalTotalOverflow,
-    #[error("streamed Tribute count mismatch: expected {expected}, got {actual}")]
-    TributeCountMismatch { expected: u32, actual: u32 },
-    #[error("streamed Tribute source failed: {0}")]
-    TributeSource(String),
-    #[error("streamed opening source failed: {0}")]
-    OpeningSource(String),
-    #[error(transparent)]
-    InputRefCatalog(#[from] InputRefCatalogError),
-}
+pub use crate::errors::InputArtifactError;
 
 struct DerivedChunk {
     public: DerivedInputChunk,
@@ -787,7 +758,7 @@ fn derive_input_chunk(
 
     let mut keys = Vec::new();
     keys.try_reserve_exact(chunk.canonical_records_or_openings.len())
-        .map_err(|_| InputArtifactError::Invariant("input chunk key allocation"))?;
+        .map_err(|_| InputArtifactError::KeyAllocationFailed)?;
     let mut tribute_count = 0_usize;
     let mut tribute_owners = Vec::new();
     let mut tribute_isos = Vec::new();
@@ -836,11 +807,11 @@ fn derive_input_chunk(
     let first_key = keys
         .first()
         .cloned()
-        .ok_or(InputArtifactError::Invariant("input chunk first key"))?;
+        .ok_or(InputArtifactError::MissingFirstKey)?;
     let last_key = keys
         .last()
         .cloned()
-        .ok_or(InputArtifactError::Invariant("input chunk last key"))?;
+        .ok_or(InputArtifactError::MissingLastKey)?;
     let object_reference = object.reference();
     let reference = InputChunkRefV1 {
         kind: chunk.kind,
@@ -882,9 +853,9 @@ fn require_expected_kind(
 pub fn decode_fidelity_subject_key(encoded: &[u8]) -> Result<Vec<Address>, InputArtifactError> {
     let count_bytes: [u8; 4] = encoded
         .get(..4)
-        .ok_or(InputArtifactError::Invariant("Fidelity subject count"))?
+        .ok_or(InputArtifactError::FidelitySubjectCount)?
         .try_into()
-        .map_err(|_| InputArtifactError::Invariant("Fidelity subject count"))?;
+        .map_err(|_| InputArtifactError::FidelitySubjectCount)?;
     let count = usize::try_from(u32::from_be_bytes(count_bytes))
         .map_err(|_| InputArtifactError::CountOverflow)?;
     require(
@@ -920,16 +891,16 @@ pub fn decode_oracle_subject_key(encoded: &[u8]) -> Result<(u32, Vec<u16>), Inpu
     let wwd = u32::from_be_bytes(
         encoded
             .get(..4)
-            .ok_or(InputArtifactError::Invariant("Oracle subject WWD"))?
+            .ok_or(InputArtifactError::OracleSubjectWwd)?
             .try_into()
-            .map_err(|_| InputArtifactError::Invariant("Oracle subject WWD"))?,
+            .map_err(|_| InputArtifactError::OracleSubjectWwd)?,
     );
     let count = usize::from(u16::from_be_bytes(
         encoded
             .get(4..6)
-            .ok_or(InputArtifactError::Invariant("Oracle subject ISO count"))?
+            .ok_or(InputArtifactError::OracleSubjectIsoCount)?
             .try_into()
-            .map_err(|_| InputArtifactError::Invariant("Oracle subject ISO count"))?,
+            .map_err(|_| InputArtifactError::OracleSubjectIsoCount)?,
     ));
     require((1..=256).contains(&count), "Oracle subject ISO bound")?;
     let expected_len = 6_usize

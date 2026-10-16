@@ -414,7 +414,7 @@ fn genesis_seeds_epoch0_committee_snapshot() {
     // Genesis V2 carries no VRF material in `genesis.json`.
     // The same `expected_begin_block_kinds(1, false, false)` must reject the
     // layout via the V2-specific block-1 missing-BoundaryOutcome error,
-    // proven separately in `system_tx_layout.rs`.
+    // proven separately in `crates/blockchain/primitives/tests/system_tx_layout.rs`.
 }
 
 /// T-5 / block 1's `BoundaryOutcome` runs before any block 2

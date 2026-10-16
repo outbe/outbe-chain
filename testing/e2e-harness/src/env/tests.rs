@@ -621,3 +621,87 @@ fn consensus_resilience_scenarios_have_registered_steps() {
         assert_registered_steps(&feature, scenario);
     }
 }
+
+#[test]
+fn every_feature_step_resolves_to_one_definition() {
+    use cucumber::World as _;
+
+    let steps = crate::world::World::collection();
+    let unresolved = parse_features("features")
+        .iter()
+        .flat_map(|feature| {
+            unresolved_steps(&steps, feature, |scenario| {
+                !cfg!(feature = "ocomp-integration") && has_tag(feature, scenario, "ocomp")
+            })
+        })
+        .collect::<Vec<_>>();
+    assert!(unresolved.is_empty(), "{}", unresolved.join("\n"));
+}
+
+#[test]
+fn every_release_feature_step_resolves_to_one_definition() {
+    use cucumber::World as _;
+
+    let steps = crate::release_sgx::ReleaseSgxWorld::collection();
+    let unresolved = parse_features("release-features")
+        .iter()
+        .flat_map(|feature| unresolved_steps(&steps, feature, |_| false))
+        .collect::<Vec<_>>();
+    assert!(unresolved.is_empty(), "{}", unresolved.join("\n"));
+}
+
+fn parse_features(dir: &str) -> Vec<Feature> {
+    let mut paths = walkdir::WalkDir::new(Path::new(env!("CARGO_MANIFEST_DIR")).join(dir))
+        .into_iter()
+        .map(|entry| entry.expect("walk feature directory").into_path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "feature"))
+        .collect::<Vec<_>>();
+    paths.sort();
+    assert!(!paths.is_empty(), "no feature files under {dir}");
+    paths
+        .iter()
+        .map(|path| {
+            Feature::parse_path(path, cucumber::gherkin::GherkinEnv::default())
+                .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
+        })
+        .collect()
+}
+
+fn unresolved_steps<W>(
+    steps: &cucumber::step::Collection<W>,
+    feature: &Feature,
+    skip: impl Fn(&Scenario) -> bool,
+) -> Vec<String> {
+    let feature_background = feature.background.iter().flat_map(|b| &b.steps);
+    let top_level = feature
+        .scenarios
+        .iter()
+        .map(|scenario| (feature_background.clone().collect::<Vec<_>>(), scenario));
+    let in_rules = feature.rules.iter().flat_map(|rule| {
+        let background = feature_background
+            .clone()
+            .chain(rule.background.iter().flat_map(|b| &b.steps))
+            .collect::<Vec<_>>();
+        rule.scenarios
+            .iter()
+            .map(move |scenario| (background.clone(), scenario))
+    });
+    top_level
+        .chain(in_rules)
+        .filter(|(_, scenario)| !skip(scenario))
+        .flat_map(|(background, scenario)| {
+            background
+                .into_iter()
+                .chain(&scenario.steps)
+                .filter_map(|step| match steps.find(step) {
+                    Ok(Some(_)) => None,
+                    Ok(None) => Some(format!(
+                        "{}: unregistered {:?} step: {}",
+                        scenario.name, step.ty, step.value
+                    )),
+                    Err(error) => Some(format!("{}: {error}", scenario.name)),
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}

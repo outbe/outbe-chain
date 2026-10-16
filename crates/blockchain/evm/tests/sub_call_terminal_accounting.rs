@@ -1,6 +1,4 @@
 //! The borrowed child frame must expose a settled, typed VM outcome.
-mod sub_call_support;
-
 use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
@@ -163,7 +161,7 @@ fn invalid_opcode_spends_the_child_allowance_and_retains_its_vm_reason() {
     let mut ctx = Context::mainnet().with_db(db);
     let result = sub_call::run(
         &mut ctx,
-        sub_call_support::fresh_environment(Address::repeat_byte(0xc0), SpecId::PRAGUE),
+        outbe_evm::test_support::fresh_environment(Address::repeat_byte(0xc0), SpecId::PRAGUE),
         SubCallInput {
             target,
             value: U256::ZERO,

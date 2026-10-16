@@ -70,6 +70,10 @@ fn a_green_activation_preserves_the_day_limit_and_returns_unused_lysis() {
             .unwrap()
     });
     assert_eq!(snapshot.nod.lysis_allocation_minor, U256::from(45));
+    assert_eq!(
+        snapshot.nod.nod_gratis_load_max,
+        fixture.request_receipt.lysis_limit_minor / U256::from(1024)
+    );
     assert_eq!(snapshot.carry_over, U256::from(15));
     assert_eq!(reserved, U256::from(40));
     assert_eq!(fixture.request_receipt.day_limit, U256::from(100));
@@ -79,6 +83,35 @@ fn a_green_activation_preserves_the_day_limit_and_returns_unused_lysis() {
     );
     assert_eq!(snapshot.tribute_count, 0);
     assert_eq!(snapshot.tribute_nominal, U256::ZERO);
+}
+
+#[test]
+fn unused_lysis_credits_the_live_pool_once_and_failed_activation_rolls_back() {
+    let mut fixture = crate::fixture_kernel::ActivationScenario::build(20, 1_010, true);
+    let existing_credit = U256::from(37);
+    StorageHandle::enter(&mut fixture.provider, |storage| {
+        outbe_promislimit::PromisLimitContract::new(storage)
+            .checked_add_carry_over(existing_credit)
+            .unwrap();
+    });
+    let before = fixture.rollback_snapshot();
+    assert!(fixture
+        .apply_with_receipt_fault(crate::fixture_kernel::ActivationReceiptFault::CarryOver)
+        .is_err());
+    assert_eq!(fixture.rollback_snapshot(), before);
+
+    fixture.apply().unwrap();
+    let snapshot = fixture.semantic_snapshot();
+    let unused = fixture.request_receipt.lysis_limit_minor
+        - fixture.result.conservation.lysis_allocation_minor;
+    assert_eq!(snapshot.carry_over, existing_credit + unused);
+    let after = fixture.rollback_snapshot();
+    fixture.apply().unwrap();
+    assert_eq!(fixture.rollback_snapshot(), after);
+    assert_eq!(
+        fixture.semantic_snapshot().carry_over,
+        existing_credit + unused
+    );
 }
 
 #[test]

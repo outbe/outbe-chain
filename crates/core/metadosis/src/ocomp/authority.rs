@@ -1,7 +1,7 @@
 use alloy_primitives::B256;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
-use crate::{errors::storage_corruption_message, schema::MetadosisContract};
+use crate::{errors::MetadosisStorageCorruptionError, schema::MetadosisContract};
 
 use super::{
     activation::validate_activation_authority,
@@ -24,20 +24,16 @@ pub(crate) fn current_ocomp_attempt_snapshot(
     let validator_set_epoch = validators.current_epoch_u64()?;
     let (_, extension) =
         outbe_validatorset::read_ocomp_snapshot_extension_at_epoch(storage, validator_set_epoch)?
-            .ok_or_else(|| {
-            storage_corruption_message(
-                "current ValidatorSet OCOMP snapshot is missing or inconsistent",
-            )
-        })?;
+            .ok_or(
+            MetadosisStorageCorruptionError::CurrentValidatorSetOcompSnapshotMissingOrInconsistent,
+        )?;
     if extension.member_count == 0 {
-        return Err(storage_corruption_message(
-            "current ValidatorSet OCOMP snapshot is empty",
-        ));
+        return Err(MetadosisStorageCorruptionError::CurrentValidatorSetOcompSnapshotEmpty.into());
     }
     let quorum_threshold =
         outbe_consensus::proof::simplex_n3f1_quorum(usize::from(extension.member_count))
             .try_into()
-            .map_err(|_| storage_corruption_message("current ValidatorSet quorum exceeds u16"))?;
+            .map_err(|_| MetadosisStorageCorruptionError::CurrentValidatorSetQuorumExceedsU16)?;
     Ok(OcompAttemptSnapshotBinding {
         validator_set_epoch,
         committee_set_hash: extension.committee_set_hash,
@@ -60,9 +56,10 @@ pub(crate) fn require_current_ocomp_attempt_snapshot(
         quorum_threshold: intent.result_quorum_threshold,
     };
     if actual != expected {
-        return Err(storage_corruption_message(
-            "OCOMP intent membership differs from the current ValidatorSet snapshot",
-        ));
+        return Err(
+            MetadosisStorageCorruptionError::OcompIntentMembershipDiffersFromCurrentValidatorSetSnapshot
+                .into(),
+        );
     }
     Ok(())
 }
@@ -73,18 +70,10 @@ pub(crate) fn require_active_ocomp_profile(
     let limits = poc_schema_limits();
     let profile = metadosis
         .read_ocomp_request_profile(&limits)?
-        .ok_or_else(|| {
-            storage_corruption_message(
-                "fresh-devnet Metadosis requires a genesis-active OCOMP profile",
-            )
-        })?;
-    let authority = metadosis
-        .read_ocomp_activation_authority(&limits)?
-        .ok_or_else(|| {
-            storage_corruption_message(
-                "fresh-devnet Metadosis requires complete OCOMP activation authority",
-            )
-        })?;
+        .ok_or(MetadosisStorageCorruptionError::FreshDevnetRequiresGenesisActiveOcompProfile)?;
+    let authority = metadosis.read_ocomp_activation_authority(&limits)?.ok_or(
+        MetadosisStorageCorruptionError::FreshDevnetRequiresCompleteOcompActivationAuthority,
+    )?;
     validate_activation_authority(&profile, &authority.bundle, &limits)?;
     Ok(profile)
 }

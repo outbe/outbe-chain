@@ -10,9 +10,19 @@ pub enum ApplicationShutdownError {
     /// Indicates that the shutdown drain failed.
     #[error("{0}")]
     DrainFailed(String),
+    /// Indicates that the application drain also failed after a primary error.
+    #[error("application drain also failed: {0}")]
+    DrainAlsoFailed(String),
     /// Indicates that the consensus stack panicked.
     #[error("consensus stack panicked: {0}")]
     ConsensusStackPanicked(String),
+}
+
+impl ApplicationShutdownError {
+    /// Formats an additional application drain failure with its full cause chain.
+    pub fn drain_also_failed(cleanup: &eyre::Report) -> Self {
+        Self::DrainAlsoFailed(format!("{cleanup:#}"))
+    }
 }
 
 /// Represents CLI argument validation errors.
@@ -187,9 +197,26 @@ pub enum ValidatorsError {
     ReadLocalValidatorTeeBinding(String),
 }
 
-/// Builds a precompile revert error when a validator lacks a NodeHost enclave binding.
-pub fn validator_has_no_node_host_enclave_binding_error() -> PrecompileError {
-    PrecompileError::Revert("validator has no NodeHost enclave binding".into())
+/// Represents precompile storage and binding errors raised by validator state queries.
+#[derive(Debug, Error)]
+pub enum ValidatorsPrecompileError {
+    /// Indicates that reading Reth state storage failed.
+    #[error("state read failed: {0}")]
+    StateReadFailed(String),
+    /// Indicates that a validator lacks a NodeHost enclave binding.
+    #[error("validator has no NodeHost enclave binding")]
+    ValidatorMissingNodeHostEnclaveBinding,
+}
+
+impl From<ValidatorsPrecompileError> for PrecompileError {
+    fn from(error: ValidatorsPrecompileError) -> Self {
+        match error {
+            ValidatorsPrecompileError::StateReadFailed(_) => Self::Storage(error.to_string()),
+            ValidatorsPrecompileError::ValidatorMissingNodeHostEnclaveBinding => {
+                Self::Revert(error.to_string())
+            }
+        }
+    }
 }
 
 /// Represents errors from peer manager actor, admission, and ingress operations.

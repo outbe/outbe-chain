@@ -129,8 +129,8 @@ pub enum DcapFixtureError {
     TimestampExceedsI64,
 
     /// Native QVL quote verification preflight failed.
-    #[error("native QVL preflight failed: {0}")]
-    NativeQvlPreflightFailed(String),
+    #[error("native QVL preflight failed: {0:?}")]
+    NativeQvlPreflightFailed(crate::native_qvl::NativeQvlError),
 
     /// Canonical `AttestationEvidenceV1` encoding failed for the valid fixture.
     #[error("encode valid AttestationEvidenceV1: {0}")]
@@ -281,8 +281,8 @@ impl DcapFixtureError {
     }
 
     /// Construct [`Self::NativeQvlPreflightFailed`].
-    pub fn native_qvl_preflight_failed(error: impl fmt::Debug) -> Self {
-        Self::NativeQvlPreflightFailed(format!("{error:?}"))
+    pub const fn native_qvl_preflight_failed(error: crate::native_qvl::NativeQvlError) -> Self {
+        Self::NativeQvlPreflightFailed(error)
     }
 
     /// Construct [`Self::EncodeValidEvidence`].

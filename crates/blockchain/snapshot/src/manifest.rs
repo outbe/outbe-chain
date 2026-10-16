@@ -2,7 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, fmt};
+use std::collections::BTreeSet;
+use thiserror::Error;
 
 pub const MANIFEST_VERSION: u32 = 1;
 
@@ -133,13 +134,16 @@ impl SnapshotManifestV1 {
     pub fn validate(&self) -> Result<(), ManifestError> {
         require(
             self.version == MANIFEST_VERSION,
-            "unsupported manifest version",
+            ManifestError::UnsupportedManifestVersion,
         )?;
         require(
             matches!(self.progress.storage_version, 1 | 2),
-            "unsupported native storage version",
+            ManifestError::UnsupportedNativeStorageVersion,
         )?;
-        require(is_hash(&self.genesis_hash), "invalid genesis hash")?;
+        require(
+            is_hash(&self.genesis_hash),
+            ManifestError::InvalidGenesisHash,
+        )?;
         for block in [
             &self.progress.finalized,
             &self.progress.execution,
@@ -147,79 +151,88 @@ impl SnapshotManifestV1 {
             &self.progress.ocomp_previous,
             &self.progress.ocomp_current,
         ] {
-            require(is_hash(&block.hash), "invalid native checkpoint hash")?;
+            require(
+                is_hash(&block.hash),
+                ManifestError::InvalidNativeCheckpointHash,
+            )?;
         }
         let mut domain_ids = BTreeSet::new();
         let mut count = 0_u64;
         let mut bytes = 0_u64;
         for domain in &self.domains {
-            require(!domain.id.is_empty(), "empty domain identifier")?;
+            require(!domain.id.is_empty(), ManifestError::EmptyDomainIdentifier)?;
             require(
                 domain_ids.insert(domain.id.as_str()),
-                "duplicate domain identifier",
+                ManifestError::DuplicateDomainIdentifier,
             )?;
             let mut member_paths = BTreeSet::new();
             for entry in &domain.entries {
                 require(
                     member_paths.insert(entry.path.as_str()),
-                    "duplicate member entry",
+                    ManifestError::DuplicateMemberEntry,
                 )?;
                 match entry.kind {
                     EntryKind::File => {
                         require(
                             entry.sha256.as_deref().is_some_and(is_hash),
-                            "invalid file digest",
+                            ManifestError::InvalidFileDigest,
                         )?;
                         count = count
                             .checked_add(1)
-                            .ok_or(ManifestError::Invalid("file count overflow"))?;
+                            .ok_or(ManifestError::FileCountOverflow)?;
                         bytes = bytes
                             .checked_add(entry.size)
-                            .ok_or(ManifestError::Invalid("byte count overflow"))?;
+                            .ok_or(ManifestError::ByteCountOverflow)?;
                     }
                     EntryKind::Directory => require(
                         entry.size == 0 && entry.sha256.is_none(),
-                        "directory must not declare file contents",
+                        ManifestError::DirectoryDeclaresFileContents,
                     )?,
                 }
             }
         }
         require(
             count == self.file_count && bytes == self.total_bytes,
-            "inventory totals disagree",
+            ManifestError::InventoryTotalsDisagree,
         )
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum ManifestError {
-    Json(serde_json::Error),
-    Invalid(&'static str),
+    #[error("invalid manifest JSON: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("invalid manifest: unsupported manifest version")]
+    UnsupportedManifestVersion,
+    #[error("invalid manifest: unsupported native storage version")]
+    UnsupportedNativeStorageVersion,
+    #[error("invalid manifest: invalid genesis hash")]
+    InvalidGenesisHash,
+    #[error("invalid manifest: invalid native checkpoint hash")]
+    InvalidNativeCheckpointHash,
+    #[error("invalid manifest: empty domain identifier")]
+    EmptyDomainIdentifier,
+    #[error("invalid manifest: duplicate domain identifier")]
+    DuplicateDomainIdentifier,
+    #[error("invalid manifest: duplicate member entry")]
+    DuplicateMemberEntry,
+    #[error("invalid manifest: invalid file digest")]
+    InvalidFileDigest,
+    #[error("invalid manifest: file count overflow")]
+    FileCountOverflow,
+    #[error("invalid manifest: byte count overflow")]
+    ByteCountOverflow,
+    #[error("invalid manifest: directory must not declare file contents")]
+    DirectoryDeclaresFileContents,
+    #[error("invalid manifest: inventory totals disagree")]
+    InventoryTotalsDisagree,
 }
 
-impl fmt::Display for ManifestError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Json(error) => write!(f, "invalid manifest JSON: {error}"),
-            Self::Invalid(reason) => write!(f, "invalid manifest: {reason}"),
-        }
-    }
-}
-
-impl std::error::Error for ManifestError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Json(error) => Some(error),
-            Self::Invalid(_) => None,
-        }
-    }
-}
-
-fn require(condition: bool, reason: &'static str) -> Result<(), ManifestError> {
+fn require(condition: bool, error: ManifestError) -> Result<(), ManifestError> {
     if condition {
         Ok(())
     } else {
-        Err(ManifestError::Invalid(reason))
+        Err(error)
     }
 }
 

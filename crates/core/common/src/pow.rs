@@ -13,7 +13,7 @@ use ring::digest::{digest, SHA256};
 
 /// PoW difficulty: number of leading zero bytes required in the SHA256 hash.
 /// Identical across all entity factories.
-pub const POW_DIFFICULTY: u8 = 1;
+pub const POW_DIFFICULTY: u8 = 2;
 
 /// Mining sequence for a right that is exercised once (Nod and Gem).
 pub const SINGLE_EXERCISE_SEQUENCE: u64 = 0;
@@ -97,16 +97,16 @@ mod tests {
     use super::*;
 
     /// Brute-force the lowest nonce that satisfies the mining scheme for the
-    /// current `POW_DIFFICULTY`. With difficulty=1 the expected loop length is
-    /// ~256 iterations.
+    /// current `POW_DIFFICULTY`. With difficulty=2 the expected loop length is
+    /// ~65536 iterations.
     fn find_valid_mining_nonce(domain: MiningDomain, right_id: U256, owner: Address) -> u64 {
-        for nonce in 0u64..100_000 {
+        for nonce in 0u64..1_000_000 {
             if validate_mining_pow(domain, right_id, owner, SINGLE_EXERCISE_SEQUENCE, nonce).is_ok()
             {
                 return nonce;
             }
         }
-        panic!("no valid mining nonce found in 100k attempts")
+        panic!("no valid mining nonce found in 1_000_000 attempts")
     }
 
     #[test]
@@ -153,7 +153,7 @@ mod tests {
 
         assert_eq!(MiningDomain::Nod.tag(), b"OUTBE_NOD_MINING_V1");
         assert_eq!(MiningDomain::Gem.tag(), b"OUTBE_GEM_MINING_V1");
-        assert_eq!(POW_DIFFICULTY, 1);
+        assert_eq!(POW_DIFFICULTY, 2);
         let wide_id = b256!("0xffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100");
         for (domain, right_id, owner, nonce, hash, first_valid, first_valid_hash) in [
             (
@@ -162,8 +162,8 @@ mod tests {
                 Address::repeat_byte(0x11),
                 42,
                 b256!("0x600ce7d86d05c5587e7c77055f0942e499e7b2a4a0ae9a2252d14c31dd7750f4"),
-                556,
-                b256!("0x004a9bab5e835bb0a7ec4d52cc0e94be2dd91406769538b4204677c737ef136d"),
+                41413,
+                b256!("0x0000a3fe617d52c64d048584576e39129c579c638029bf6eaa9baf3a8ddef98b"),
             ),
             (
                 MiningDomain::Gem,
@@ -171,8 +171,8 @@ mod tests {
                 Address::repeat_byte(0x11),
                 42,
                 b256!("0xd260e69b7940b333aa6a5beb27cf8ea3c6a760cfc6d7e5c1a1a281de65278979"),
-                314,
-                b256!("0x006f6f7c0bf0e706ec50554404806df0810f7230d85fc65c5e55403778b0741a"),
+                56188,
+                b256!("0x0000f8dbffb946c5cffecede1da35941c60fc9fee3f602f2ea0c95674768cf4b"),
             ),
             (
                 MiningDomain::Nod,
@@ -180,8 +180,8 @@ mod tests {
                 address!("0xabcdef0123456789abcdef0123456789abcdef01"),
                 0x0102_0304_0506_0708,
                 b256!("0x8cf7cc1ac26dd020c313013c98bb08ab8253fe31045e253e2a357ac461ac3330"),
-                248,
-                b256!("0x007c65e12dd39ec397504f1c92b9949733a8a4921cddf5820e802e1c16a4e3c2"),
+                12559,
+                b256!("0x0000ad4c558b3125dbfef6b0ef5a2ead457fb955343a43a5df622ffe11e640ed"),
             ),
             (
                 MiningDomain::Gem,
@@ -189,8 +189,8 @@ mod tests {
                 Address::repeat_byte(0x7a),
                 0,
                 b256!("0x934e259014c8059c60179c9306e8a9aa73a846cd059fca8f23b2bb898ae10fb8"),
-                299,
-                b256!("0x00693450a64179eecb12473fc4f8006bf2373718e7d0de26a1eb59de7c2c4c5c"),
+                73841,
+                b256!("0x0000c335baf9e3e1a75a92101c3c46efca4c5c0471ec54780e4bac231c1669a8"),
             ),
         ] {
             let validate = |nonce| {
@@ -285,6 +285,12 @@ mod tests {
         let mut hash = [0u8; 32];
         hash[31] = 0xFF;
         assert!(meets_difficulty(&hash).is_ok());
+        hash[1] = 1;
+        assert_eq!(
+            meets_difficulty(&hash),
+            Err(PowError::InsufficientProofOfWork)
+        );
+        hash[1] = 0;
         hash[0] = 1;
         assert_eq!(
             meets_difficulty(&hash),
@@ -296,7 +302,7 @@ mod tests {
     fn insufficient_pow_is_rejected() {
         let right_id = U256::from(7u64);
         let owner = Address::repeat_byte(0x55);
-        // Find a nonce whose first byte is non-zero (fails difficulty=1).
+        // Find a nonce whose first byte is non-zero (fails difficulty=2).
         for nonce in 0u64..100_000 {
             if compute_mining_pow_hash(
                 MiningDomain::Nod,

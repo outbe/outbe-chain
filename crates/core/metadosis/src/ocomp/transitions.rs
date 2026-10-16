@@ -8,7 +8,7 @@ pub(crate) use completion::CompletionInput;
 pub(crate) use finality::FinalityAnchor;
 
 use super::index::{remove_ready_key, ReadyIndexKey};
-use crate::{errors::storage_corruption_message, schema::MetadosisContract};
+use crate::{errors::MetadosisStorageCorruptionError, schema::MetadosisContract};
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::SchemaLimits;
 use outbe_primitives::{error::Result, time::WorldwideDay};
@@ -31,9 +31,10 @@ impl MetadosisContract<'_> {
         let state = self.ocomp_fsm_state(wwd, schema_limits)?;
         let projection = state.projection();
         if projection.live_intent_id.is_some() {
-            return Err(storage_corruption_message(
-                "Metadosis failure cannot replace a live canonical OCOMP job",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::MetadosisFailureCannotReplaceLiveCanonicalOcompJob
+                    .into(),
+            );
         }
         let ready_key = ReadyIndexKey::from_projection(projection)?;
         let mut ready_index = self.read_ready_index()?;
@@ -50,15 +51,16 @@ impl MetadosisContract<'_> {
     ) -> Result<()> {
         let mut registry = outbe_ocompregistry::OcompRegistry::new(self.storage.clone());
         if registry.active_authority(schema_limits)?.is_none() {
-            return Err(storage_corruption_message(
-                "terminal OCOMP WWD has no active Registry authority",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::TerminalOcompWwdMissingActiveRegistryAuthority
+                    .into(),
+            );
         }
         let released = registry.release_lineage(lineage, at_height, schema_limits)?;
         if !released {
-            return Err(storage_corruption_message(
-                "terminal OCOMP WWD has no Registry lineage pin",
-            ));
+            return Err(
+                MetadosisStorageCorruptionError::TerminalOcompWwdMissingRegistryLineagePin.into(),
+            );
         }
         Ok(())
     }

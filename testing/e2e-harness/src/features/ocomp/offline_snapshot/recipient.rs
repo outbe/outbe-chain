@@ -64,7 +64,6 @@ pub(super) fn recipient_identity(
         "supervisor-v1/sign-once",
         "supervisor-v1/vote-submissions",
         "supervisor-v1/materialization-submissions",
-        "supervisor-v1/payout-submissions",
     ] {
         ensure!(
             !node.join("ocomp/domain-v1").join(relative).exists(),

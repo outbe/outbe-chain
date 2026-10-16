@@ -139,6 +139,7 @@ pub struct NodCertifiedGenerationProjection {
     pub bucket_count: u32,
     pub nod_amount_total: U256,
     pub lysis_allocation_minor: U256,
+    pub nod_gratis_load_max: U256,
     pub issued_at: u64,
     pub next_nod_ordinal: u32,
     pub last_progress_height: u64,
@@ -166,10 +167,10 @@ impl NodCertifiedGenerationProjection {
 ///
 /// Uncalled buckets wait in a per-currency bitmap trie by call price, see `state::CallBins`.
 ///
-/// Field offsets are dense in `order` sequence, so this struct occupies slots 0..=49.
+/// Field offsets are dense in `order` sequence, so this struct occupies slots 0..=63.
 /// Genesis seeds the materialization FIFO counters at slots 13 and 14.
-/// `adr006_tests::nod_contract_slot_layout_is_pinned` checks slots through 48.
-/// The profile selector occupies slot 49.
+/// `adr006_tests::nod_contract_slot_layout_is_pinned` checks the base layout.
+/// The profile selector occupies slot 44.
 #[storage_schema]
 #[contract(addr = NOD_ADDRESS)]
 pub struct NodContract {
@@ -312,17 +313,6 @@ pub struct NodContract {
     #[attribute(order = 49)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    /// Complete entry-price snapshot captured before issuance, once per day.
-    #[attribute(order = 50)]
-    pub entry_prices_frozen: Map<WorldwideDay, bool>,
-    #[attribute(order = 51)]
-    pub entry_price_currency_count: Map<WorldwideDay, u32>,
-    #[attribute(order = 52)]
-    pub entry_price_currency: Map<WorldwideDay, Map<u32, u16>>,
-    /// Six-decimal entry price by reference ISO, independent of Oracle indices.
-    #[attribute(order = 53)]
-    pub entry_price_minor: Map<WorldwideDay, Map<u16, U256>>,
-
     /// First member's `issued_at`, sealed at bucket creation. VWAP history counts from its
     /// `first_full_day`. Later members inherit it, like the call terms.
     #[attribute(order = 54)]
@@ -364,11 +354,6 @@ pub struct NodContract {
     /// `(bin << 32) | entries left`. 0 left walks the bin from the top.
     #[attribute(order = 71)]
     pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
-
-    /// UTC day the entry-price snapshot was read from. Appended here, not beside the
-    /// snapshot slots, because the OCOMP opening plan pins their dense indices.
-    #[attribute(order = 72)]
-    pub entry_price_source_day: Map<WorldwideDay, u32>,
 
     /// Call-term profile selector seeded from genesis. See `crate::config`.
     #[attribute(order = 73)]
@@ -422,6 +407,10 @@ pub struct NodContract {
     pub ocomp_source_block_hash: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
     #[attribute(order = 91)]
     pub ocomp_source_state_root: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
+
+    /// Per-Nod Gratis cap derived from the certified request's frozen Lysis Limit.
+    #[attribute(order = 92)]
+    pub ocomp_nod_gratis_load_max: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 }
 
 impl<'storage> NodContract<'storage> {
@@ -457,6 +446,7 @@ impl<'storage> NodContract<'storage> {
         let metadata = self.ocomp_generation_metadata.read(&worldwide_day)?;
         let nod_amount_total = self.ocomp_nod_amount_total.read(&worldwide_day)?;
         let lysis_allocation_minor = self.ocomp_lysis_allocation_minor.read(&worldwide_day)?;
+        let nod_gratis_load_max = self.ocomp_nod_gratis_load_max.read(&worldwide_day)?;
         let job_id = self.ocomp_materialization_job_id.read(&worldwide_day)?;
         let protocol_bundle_hash = self
             .ocomp_materialization_protocol_bundle_hash
@@ -488,9 +478,14 @@ impl<'storage> NodContract<'storage> {
         ];
         if generation == 0 {
             let words_clear = roots_and_binding.iter().all(B256::is_zero)
-                && [metadata, nod_amount_total, lysis_allocation_minor]
-                    .iter()
-                    .all(U256::is_zero);
+                && [
+                    metadata,
+                    nod_amount_total,
+                    lysis_allocation_minor,
+                    nod_gratis_load_max,
+                ]
+                .iter()
+                .all(U256::is_zero);
             if !words_clear
                 || next_nod_ordinal != 0
                 || last_progress_height != 0
@@ -535,6 +530,7 @@ impl<'storage> NodContract<'storage> {
             bucket_count,
             nod_amount_total,
             lysis_allocation_minor,
+            nod_gratis_load_max,
             issued_at,
             next_nod_ordinal,
             last_progress_height,
@@ -558,6 +554,8 @@ impl<'storage> NodContract<'storage> {
         self.ocomp_nod_amount_total
             .write(&worldwide_day, U256::ZERO)?;
         self.ocomp_lysis_allocation_minor
+            .write(&worldwide_day, U256::ZERO)?;
+        self.ocomp_nod_gratis_load_max
             .write(&worldwide_day, U256::ZERO)?;
         self.ocomp_materialization_job_id
             .write(&worldwide_day, B256::ZERO)?;

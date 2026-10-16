@@ -88,9 +88,10 @@ impl<'storage> StorageHandle<'storage> {
         &self,
         f: impl FnOnce(&mut dyn PrecompileStorageProvider) -> Result<R>,
     ) -> Result<R> {
-        let mut provider = self.inner.try_borrow_mut().map_err(|_| {
-            crate::error::PrecompileError::revert("storage provider is already mutably borrowed")
-        })?;
+        let mut provider = self
+            .inner
+            .try_borrow_mut()
+            .map_err(|_| crate::error::PrimitivesStorageError::ProviderAlreadyMutablyBorrowed)?;
         f(&mut **provider)
     }
 
@@ -283,9 +284,9 @@ impl<'storage> StorageHandle<'storage> {
         frame.close(completed)?;
         match outcome {
             Ok(value) if completed => Ok(value),
-            Ok(_) => Err(PrecompileError::revert(
-                "certified Lysis activation frame returned before terminal completion",
-            )),
+            Ok(_) => {
+                Err(crate::error::PrimitivesStorageError::CertifiedLysisActivationIncomplete.into())
+            }
             Err(error) => Err(error),
         }
     }

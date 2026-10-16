@@ -663,7 +663,7 @@ contract OriginRouter is
 
     /// @inheritdoc IERC7786TokenReceiver
     /// @dev The token bridge credits WCOEN before this call. We unwrap it and hand the native to
-    ///      the factory precompile, which burns a ready pot. A distribution failure parks
+    ///      the factory precompile, which burns it. A distribution failure parks
     ///      the native for retry, so the transfer still settles (returning the magic value) instead
     ///      of bricking on redelivery.
     function onCrosschainTokensReceived(
@@ -698,7 +698,6 @@ contract OriginRouter is
     }
 
     /// @dev Hand native proceeds to the factory precompile. On failure, park them for retry.
-    ///      `srcChainId` lets the factory track fan-in across the day's paying chains.
     function _distributeOrPark(uint32 worldwideDay, uint32 srcChainId, uint128 amount) private {
         // The sole caller (onCrosschainTokensReceived) is nonReentrant, so the catch-branch park
         // write is safe.

@@ -51,14 +51,14 @@ fn checked_body<'a>(
     }
     let (body, checksum) = encoded.split_at(encoded.len() - 32);
     if keccak256(body).as_slice() != checksum {
-        return Err(RetentionError::MalformedJournal("checksum mismatch"));
+        return Err(crate::errors::RetentionMalformedJournalError::ChecksumMismatch.into());
     }
     Ok(body)
 }
 
 fn read_version(reader: &mut JournalReader<'_>, expected: u16) -> Result<(), RetentionError> {
     if reader.take::<8>()? != JOURNAL_MAGIC {
-        return Err(RetentionError::MalformedJournal("wrong magic"));
+        return Err(crate::errors::RetentionMalformedJournalError::WrongMagic.into());
     }
     let actual = u16::from_be_bytes(reader.take::<2>()?);
     if actual != expected {

@@ -13,7 +13,7 @@ pub(super) fn relative_path(scope: &StorageScope) -> PathBuf {
 pub(super) fn reject_legacy(root: &Path) -> Result<(), StorageError> {
     for name in ["CURRENT", "shared", "tribute-days", "nod-days"] {
         if root.join(name).exists() {
-            return Err(StorageError::Corruption("legacy entity layout: schema 3 requires a fresh root; automatic migration is disabled".into()));
+            return Err(crate::errors::StorageCorruptionError::LegacyEntityLayout.into());
         }
     }
     Ok(())
@@ -34,12 +34,9 @@ fn directories(path: &Path) -> Result<Vec<String>, StorageError> {
             ));
         }
         if kind.is_dir() {
-            names.push(
-                entry
-                    .file_name()
-                    .into_string()
-                    .map_err(|_| StorageError::Corruption("non-UTF8 partition directory".into()))?,
-            );
+            names.push(entry.file_name().into_string().map_err(|_| {
+                StorageError::from(crate::errors::StorageCorruptionError::NonUtf8PartitionDirectory)
+            })?);
         }
     }
     Ok(names)
@@ -85,9 +82,9 @@ fn enumerate_family(
     Ok(())
 }
 fn canonical_partition_index(index: &str) -> Result<u32, StorageError> {
-    let number = index
-        .parse::<u32>()
-        .map_err(|_| StorageError::Corruption("non-numeric entity partition".into()))?;
+    let number = index.parse::<u32>().map_err(|_| {
+        StorageError::from(crate::errors::StorageCorruptionError::NonNumericEntityPartition)
+    })?;
     if index != number.to_string() {
         return Err(StorageError::Corruption(
             "non-canonical entity partition".into(),

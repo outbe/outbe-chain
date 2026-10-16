@@ -7,6 +7,7 @@ use super::super::UnitExecutionAuthority;
 use super::super::WorkerError;
 
 use crate::input_artifacts::decode_oracle_subject_key;
+use alloy_primitives::U256;
 
 use outbe_lysis::program_v1::artifacts::decode_enumerated_run;
 use outbe_lysis::program_v1::artifacts::decode_fidelity_map_output;
@@ -43,19 +44,15 @@ use outbe_ocomp_protocol::unit::UnitPhase;
 use outbe_ocomp_protocol::unit::UnitSpecV1;
 use outbe_ocomp_protocol::unit::WorkOutputHeaderV1;
 
-use outbe_nod::openings::evaluate_entry_prices;
-
-use outbe_primitives::time::WorldwideDay;
+use outbe_nod::openings::{entry_price_day, evaluate_entry_prices};
 
 pub(in super::super) fn execute_amount_map_unit(
     spec: &UnitSpecV1,
     authority: UnitExecutionAuthority<'_>,
 ) -> Result<UnitArtifactV1, WorkerError> {
     let UnitExecutionAuthority {
-        manifest,
         input_chunks,
         producer_artifacts,
-        bundle,
         limits,
         cancelled,
         ..
@@ -74,7 +71,7 @@ pub(in super::super) fn execute_amount_map_unit(
         ),
         producer_artifacts,
     )?;
-    let entry_prices = evaluate_oracle_entry_prices(spec, manifest, input_chunks, bundle, limits)?;
+    let entry_prices = evaluate_oracle_entry_prices(spec, &authority)?;
     let observed = collect_observed_tributes(
         (input_chunks, shard_ordinal),
         &enumerated,
@@ -87,6 +84,7 @@ pub(in super::super) fn execute_amount_map_unit(
         &observed,
         &fidelity.observations,
         &root_output.ordered_fractions,
+        authority.plan.lysis_limit_minor / U256::from(1024),
     )
     .map_err(LysisArtifactErrorV1::from)?;
     let output_coverage_root = amount.coverage_root()?;
@@ -301,14 +299,16 @@ fn validate_fraction_root_producer(
 
 fn evaluate_oracle_entry_prices(
     spec: &UnitSpecV1,
-    manifest: &outbe_ocomp_protocol::input::InputManifestV1,
-    input_chunks: &[(
-        outbe_ocomp_protocol::input::InputChunkRefV1,
-        outbe_ocomp_protocol::input::AuthenticatedInputChunkV1,
-    )],
-    bundle: &outbe_ocomp_protocol::profile::ProtocolBundleV1,
-    limits: &outbe_ocomp_protocol::SchemaLimits,
+    authority: &UnitExecutionAuthority<'_>,
 ) -> Result<std::collections::BTreeMap<u16, alloy_primitives::U256>, WorkerError> {
+    let UnitExecutionAuthority {
+        plan,
+        manifest,
+        input_chunks,
+        bundle,
+        limits,
+        ..
+    } = authority;
     let mut oracle_chunks = input_chunks
         .iter()
         .filter(|(_, chunk)| chunk.kind == InputChunkKind::Oracle);
@@ -336,7 +336,7 @@ fn evaluate_oracle_entry_prices(
         .decode_and_validate_raw_opening(manifest.checkpoint.finalized_state_root, limits)?;
     if opening.source_kind != OpeningSourceKind::Oracle
         || oracle_wwd != manifest.wwd
-        || raw.contract_address != outbe_primitives::addresses::NOD_ADDRESS
+        || raw.contract_address != outbe_primitives::addresses::ORACLE_ADDRESS
     {
         return Err(WorkerError::UnitBindingMismatch);
     }
@@ -345,8 +345,12 @@ fn evaluate_oracle_entry_prices(
         .iter()
         .map(|slot| (slot.slot, slot.value))
         .collect::<Vec<_>>();
-    evaluate_entry_prices(WorldwideDay::new(manifest.wwd), &reference_isos, &raw_slots)
-        .map_err(|_| WorkerError::UnitBindingMismatch)
+    evaluate_entry_prices(
+        entry_price_day(plan.logical_evaluation_time),
+        &reference_isos,
+        &raw_slots,
+    )
+    .map_err(|_| WorkerError::UnitBindingMismatch)
 }
 
 fn collect_observed_tributes(

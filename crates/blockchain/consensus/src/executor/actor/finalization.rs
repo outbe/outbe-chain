@@ -146,11 +146,7 @@ where
                 "forkchoice update returned invalid status"
             );
             maybe_build.send_error(
-                crate::errors::ExecutorError::FcuInvalid(format!(
-                    "{:?}",
-                    fcu_response.payload_status
-                ))
-                .into(),
+                crate::errors::ExecutorError::fcu_invalid(&fcu_response.payload_status).into(),
             );
             return;
         }

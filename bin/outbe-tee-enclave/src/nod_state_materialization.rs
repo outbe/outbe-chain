@@ -192,7 +192,8 @@ fn verify_and_encrypt(
                 .ok_or_else(|| rejected("state NOD league fraction missing"))?;
             let load =
                 checked_mul_div_floor(amounts.nominal_amount_minor, fraction, SCALE_1E6_U256)
-                    .map_err(rejected)?;
+                    .map_err(rejected)?
+                    .min(request.authority.nod_gratis_load_max);
             if load.is_zero() {
                 return Err(rejected("state NOD gratis load is zero"));
             }

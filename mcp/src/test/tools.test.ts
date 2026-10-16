@@ -30,6 +30,7 @@ import {
 } from "../intex/registry.js";
 import { CONTRACTS } from "../registry.js";
 import { type FakeChain, sample } from "./fake-chain.js";
+import { fakeEnclave } from "./fake-enclave.js";
 import { SIGNER, startHarness } from "./harness.js";
 
 const GOLDEN = new URL("./tools.golden.json", import.meta.url);
@@ -217,9 +218,9 @@ const TOOLS: Case[] = [
   ["auction_chains", { worldwideDay: 20261009 }],
   ["auction_bids_by_owner", { worldwideDay: 20261009 }],
   ["auction_bids_by_owner", { account: OTHER }],
-  ["auction_bid_commit", { worldwideDay: 20261009, units: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 }],
-  ["auction_bid_reveal", { worldwideDay: 20261009, units: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 }],
-  ["auction_bid_reveal", { worldwideDay: 20261009, units: 2, rate: "1.5", issuanceCurrency: 949, referenceCurrency: 840 }],
+  ["auction_bid_commit", { worldwideDay: 20261009, quantity: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 }],
+  ["auction_bid_reveal", { worldwideDay: 20261009, quantity: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 }],
+  ["auction_bid_reveal", { worldwideDay: 20261009, quantity: 2, rate: "1.5", issuanceCurrency: 949, referenceCurrency: 840 }],
   ["auction_bid_cancel", { worldwideDay: 20261009 }],
   ["intex_claim_commit_bond", { worldwideDay: 20261009, bidder: OTHER }],
   ["auction_claim_refund", { worldwideDay: 20261009, wait: false }],
@@ -243,7 +244,7 @@ const SCENARIOS: Case[] = [
     chain.logs.push(TRANSFER_TO_OTHER);
     chain.reply("statusOf", 0);
   }],
-  ["auction_bid_commit", { worldwideDay: 20261009, units: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 }, (chain) => {
+  ["auction_bid_commit", { worldwideDay: 20261009, quantity: 2, rate: "0.8", issuanceCurrency: 949, referenceCurrency: 840 }, (chain) => {
     chain.logs.length = 0;
     chain.reply("allowance", 0n);
   }],
@@ -252,6 +253,24 @@ const SCENARIOS: Case[] = [
   ["intent_order_track", { order_id: HASH, chain: "bsc-testnet" }, (chain) => {
     chain.reply("destinationOrderStatus", stringToHex("FILLED", { size: 32 }));
   }],
+  ["gratis_pledge", { reservation_id: "1" }],
+  ["gem_position_issue", { series: SERIES, units: "2" }],
+  ["gem_issue", { position_id: "3", owner: OTHER, promis_load: "1000000" }],
+  ["gem_settle", { gem_id: "3", asset: OTHER }],
+  ["gem_promis_mine", { gem_id: "3" }],
+  ["gem_positions_by_owner", { owner: OTHER }],
+  ["nod_settle_quote", { nod_id: "3", asset: OTHER }],
+  ["nod_settle", { nod_id: "3", asset: OTHER }],
+  ["promis_coen_mine", { amount: "1" }],
+  ["promis_gratis_mine", { amount: "1" }],
+  ["gratis_coen_mine", { amount: "1" }],
+  ["nod_gratis_mine", { nod_id: "3", gratis_amount: "1" }],
+  ["cca_bond", { name: "Desk", amount: "1" }],
+  ["cca_unbond", {}],
+  ["cca_unbonded_claim", {}],
+  ["credis_reservation_return", { reservation_id: "5" }],
+  ["fidelity_index", {}],
+  ["credis_by_owner", { owner: OTHER }],
 ];
 
 /** Replaces both randomness sources the offer encryption draws from with a counter. */
@@ -274,6 +293,7 @@ function lineJson(golden: { tools: unknown[]; calls: unknown[] }): string {
 
 /** Every contract the tools address, answering with fixed values. */
 function fixedChain(chain: FakeChain): void {
+  fakeEnclave(chain);
   for (const entry of Object.values(CONTRACTS)) chain.register(entry.abi, entry.address);
   for (const network of [
     { name: "outbe-testnet", isOutbe: true },
@@ -291,7 +311,7 @@ function fixedChain(chain: FakeChain): void {
   chain.register(ERC20_ABI);
   for (const name of ["tokenURI", "contractURI", "uri"]) chain.reply(name, DATA_URI);
   chain.reply("tributeOfferPublicKey", 9n);
-  chain.reply("powDifficulty", 1);
+  chain.reply("powDifficulty", 2);
   chain.seed(HASH, 54_322_345, OTHER, "0x1234");
   chain.reply("openOrders", ORDER);
   chain.reply("targets", [97, 54_322_345]);

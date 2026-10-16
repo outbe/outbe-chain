@@ -178,9 +178,9 @@ where
         | PrecompileError::Halt(_)
         | PrecompileError::OutOfGas
         | PrecompileError::WriteProtection
-        | PrecompileError::BodyReadCorruption(_) => {
-            BlockExecutionError::from(BlockValidationError::msg(error.to_string()))
-        }
+        | PrecompileError::BodyReadCorruption(_) => BlockExecutionError::from(
+            crate::errors::ExecutorValidationError::hook_precompile(error),
+        ),
         error
             if error.is_node_local()
                 || matches!(
@@ -192,11 +192,13 @@ where
         {
             BlockExecutionError::other(error)
         }
-        error => BlockExecutionError::from(BlockValidationError::msg(error.to_string())),
+        error => BlockExecutionError::from(
+            crate::errors::ExecutorValidationError::hook_precompile(error),
+        ),
     })?;
 
     provider.flush().map_err(|e| {
-        BlockExecutionError::other(PrecompileError::storage(format!("outbe hook flush: {e}")))
+        BlockExecutionError::other(crate::errors::ExecutorStorageError::hook_flush(e))
     })?;
 
     let changes = provider.take_committed_changes();
