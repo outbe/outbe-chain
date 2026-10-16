@@ -21,14 +21,14 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum MetadosisError {
-    #[error("worldwide day type is UNKNOWN")]
+    #[error("Metadosis business failure: worldwide day type is UNKNOWN")]
     UnknownWorldwideDayType,
 
-    #[error("VWAP must be non-zero")]
+    #[error("Metadosis business failure: VWAP must be non-zero")]
     VwapMustBeNonZero,
 
     #[error(
-        "invalid OCOMP limit split: lysis limit {lysis_limit_minor} exceeds day limit {day_limit}"
+        "Metadosis business failure: invalid OCOMP limit split: lysis limit {lysis_limit_minor} exceeds day limit {day_limit}"
     )]
     InvalidOcompLimitSplit {
         day_limit: U256,
@@ -38,13 +38,15 @@ pub enum MetadosisError {
     #[error("existing OCOMP request limit receipt does not match the immutable day split")]
     OcompLimitReceiptMismatch,
 
-    #[error("Desis Limit {desis_limit_minor} exceeds the {available} the Promis Limit holds")]
+    #[error(
+        "Metadosis business failure: Desis Limit {desis_limit_minor} exceeds the {available} the Promis Limit holds"
+    )]
     DesisLimitUnavailable {
         desis_limit_minor: U256,
         available: U256,
     },
 
-    #[error("Desis returned a different OCOMP request brief hash")]
+    #[error("Metadosis business failure: Desis returned a different OCOMP request brief hash")]
     OcompDesisBriefHashMismatch,
 
     #[error("OCOMP pre-admission state is not initialized for WWD {wwd}")]
@@ -93,27 +95,7 @@ impl MetadosisError {
 
 impl From<MetadosisError> for PrecompileError {
     fn from(value: MetadosisError) -> Self {
-        match value {
-            MetadosisError::UnknownWorldwideDayType
-            | MetadosisError::VwapMustBeNonZero
-            | MetadosisError::InvalidOcompLimitSplit { .. }
-            | MetadosisError::DesisLimitUnavailable { .. }
-            | MetadosisError::OcompDesisBriefHashMismatch => {
-                PrecompileError::Revert(format!("Metadosis business failure: {value}"))
-            }
-            MetadosisError::OcompLimitReceiptMismatch
-            | MetadosisError::OcompPreAdmissionNotInitialized { .. }
-            | MetadosisError::OcompPreAdmissionAlreadySealed { .. }
-            | MetadosisError::OcompPreAdmissionWwdMismatch { .. }
-            | MetadosisError::InvalidOcompPreAdmissionEnvelope { .. }
-            | MetadosisError::InvalidOcompPreAdmissionEnvelopeHash
-            | MetadosisError::OcompStateVersionOverflow { .. }
-            | MetadosisError::CorruptOcompPreAdmissionState { .. }
-            | MetadosisError::InvalidTransitionToCompleted { .. }
-            | MetadosisError::InvalidTransitionToFailed { .. } => {
-                PrecompileError::Revert(value.to_string())
-            }
-        }
+        PrecompileError::Revert(value.to_string())
     }
 }
 
