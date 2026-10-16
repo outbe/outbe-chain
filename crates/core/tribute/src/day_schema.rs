@@ -1,6 +1,5 @@
 //! Persisted day metadata. Amounts live only in the encrypted byte mappings.
 
-use alloy_primitives::B256;
 use outbe_macros::storage_record;
 use outbe_primitives::time::WorldwideDay;
 
@@ -24,8 +23,6 @@ pub struct StoredDayPreAdmission {
     pub initialized: bool,
     #[attribute(order = 1, default = false)]
     pub is_sealed: bool,
-    #[attribute(order = 2, default = B256::ZERO)]
-    pub sealed_collection_root: B256,
     #[attribute(order = 3, default = 0)]
     pub sealed_tribute_count: u32,
     #[attribute(order = 5, default = 0)]

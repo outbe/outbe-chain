@@ -347,44 +347,6 @@ fn real_rocks_partitions_preserve_buffered_pagination() {
     exercise_real_partitions(&fixture);
 }
 
-#[test]
-#[ignore = "requires OUTBE_TEST_MONGODB_URI"]
-fn real_mongo_collections_preserve_buffered_pagination() {
-    use outbe_offchain_storage::partitioned::adapters::MongoPartitionDataSource;
-    use outbe_offchain_storage::{MongoStorage, MongoStorageConfig};
-    let uri = std::env::var("OUTBE_TEST_MONGODB_URI").unwrap();
-    let database = format!(
-        "outbe_scan_{}_{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
-    let client = mongodb::sync::Client::with_uri_str(&uri).unwrap();
-    let raw = Arc::new(
-        MongoStorage::connect(MongoStorageConfig {
-            uri,
-            database: database.clone(),
-        })
-        .unwrap(),
-    );
-    raw.verify_transaction_support().unwrap();
-    let lease = raw.acquire_writer_lease().unwrap();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let fixture = Fixture::with_source(Arc::new(
-            MongoPartitionDataSource::open(raw.clone()).unwrap(),
-        ));
-        exercise_real_partitions(&fixture);
-    }));
-    drop(lease);
-    drop(raw);
-    client.database(&database).drop().run().unwrap();
-    if let Err(panic) = result {
-        std::panic::resume_unwind(panic);
-    }
-}
-
 fn exercise_real_partitions(fixture: &Fixture) {
     let batch = AtomicWriteBatch::from_operations(
         (1..=193)

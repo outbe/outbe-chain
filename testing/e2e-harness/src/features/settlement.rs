@@ -6,8 +6,6 @@ mod sponsored_gem;
 #[path = "settlement_nod.rs"]
 mod erc20_nod;
 
-pub(crate) use erc20_nod::compressed_body;
-
 pub(crate) fn exercise_encrypted_nod(world: &mut crate::world::World, day: u32) {
     erc20_nod::run_relayed_mining(world, 0, day, true);
 }

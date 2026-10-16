@@ -14,8 +14,8 @@ use crate::schema::{GemContract, GemState};
 
 #[test]
 fn precompile_transfer_paths_revert() {
-    with_storage(|storage, world| {
-        let gem_id = add(storage, world, sample_params(ALICE));
+    with_storage(|storage| {
+        let gem_id = add(storage, sample_params(ALICE));
 
         let calls: Vec<Vec<u8>> = vec![
             IGem::transferFromCall {
@@ -50,8 +50,7 @@ fn precompile_transfer_paths_revert() {
         ];
 
         for data in calls {
-            let err =
-                dispatch(storage.clone(), world.readers(), &data, ALICE, U256::ZERO).unwrap_err();
+            let err = dispatch(storage.clone(), &data, ALICE, U256::ZERO).unwrap_err();
             assert!(
                 format!("{err:?}").contains("non-transferable"),
                 "expected NonTransferable revert, got {err:?}",
@@ -62,11 +61,11 @@ fn precompile_transfer_paths_revert() {
 
 #[test]
 fn gem_status_reports_call_terms_and_settlement_deadline() {
-    with_storage(|storage, world| {
-        let gem_id = add(storage, world, sample_params(ALICE));
-        let terms = view(storage, world, gem_id).terms;
+    with_storage(|storage| {
+        let gem_id = add(storage, sample_params(ALICE));
+        let terms = view(storage, gem_id).terms;
 
-        let open = status(storage, world, gem_id);
+        let open = status(storage, gem_id);
         assert_eq!(open.callWindow, terms.call_window_seconds);
         assert_eq!(open.callThreshold, terms.call_threshold_seconds);
         assert_eq!(open.callPriceMinor, terms.call_price_minor);
@@ -74,8 +73,8 @@ fn gem_status_reports_call_terms_and_settlement_deadline() {
         assert_eq!(open.settlementDeadline, 0);
         assert_eq!(open.state, GemState::Issued as u8);
 
-        call_gem(storage, world, gem_id, T_NOW + 10);
-        let called = status(storage, world, gem_id);
+        call_gem(storage, gem_id, T_NOW + 10);
+        let called = status(storage, gem_id);
         assert_eq!(called.calledAt, T_NOW + 10);
         assert_eq!(called.state, GemState::Called as u8);
         assert_eq!(
@@ -87,31 +86,20 @@ fn gem_status_reports_call_terms_and_settlement_deadline() {
 
 #[test]
 fn precompile_balance_and_owner_views() {
-    with_storage(|storage, world| {
-        let gem_id = add(storage, world, sample_params(ALICE));
+    with_storage(|storage| {
+        let gem_id = add(storage, sample_params(ALICE));
 
-        let out = call(
-            storage,
-            world,
-            IGem::balanceOfCall { owner: ALICE }.abi_encode(),
-        )
-        .unwrap();
+        let out = call(storage, IGem::balanceOfCall { owner: ALICE }.abi_encode()).unwrap();
         assert_eq!(
             IGem::balanceOfCall::abi_decode_returns(&out).unwrap(),
             U256::from(1u64)
         );
 
-        let out = call(
-            storage,
-            world,
-            IGem::ownerOfCall { gemId: gem_id }.abi_encode(),
-        )
-        .unwrap();
+        let out = call(storage, IGem::ownerOfCall { gemId: gem_id }.abi_encode()).unwrap();
         assert_eq!(IGem::ownerOfCall::abi_decode_returns(&out).unwrap(), ALICE);
 
         let out = call(
             storage,
-            world,
             IGem::tokenOfOwnerByIndexCall {
                 owner: ALICE,
                 index: U256::ZERO,
@@ -125,7 +113,6 @@ fn precompile_balance_and_owner_views() {
         );
         let err = call(
             storage,
-            world,
             IGem::tokenOfOwnerByIndexCall {
                 owner: ALICE,
                 index: U256::from(1u64),
@@ -138,7 +125,7 @@ fn precompile_balance_and_owner_views() {
             "{err:?}"
         );
 
-        let out = call(storage, world, IGem::totalSupplyCall {}.abi_encode()).unwrap();
+        let out = call(storage, IGem::totalSupplyCall {}.abi_encode()).unwrap();
         assert_eq!(
             IGem::totalSupplyCall::abi_decode_returns(&out).unwrap(),
             U256::from(1u64)
@@ -149,23 +136,23 @@ fn precompile_balance_and_owner_views() {
 /// Global enumeration is gone: the selector is unknown to the ABI.
 #[test]
 fn token_by_index_is_not_a_selector() {
-    with_storage(|storage, world| {
-        add(storage, world, sample_params(ALICE));
+    with_storage(|storage| {
+        add(storage, sample_params(ALICE));
         // keccak256("tokenByIndex(uint256)")[..4]
         let mut data = vec![0x4f, 0x6c, 0xcc, 0xe7];
         data.extend_from_slice(&U256::ZERO.to_be_bytes::<32>());
-        assert!(call(storage, world, data).is_err());
+        assert!(call(storage, data).is_err());
     });
 }
 
 #[test]
 fn metadata_update_marks_each_lifecycle_transition() {
-    let (mut provider, world) = provider_at(T_NOW);
+    let mut provider = provider_at(T_NOW);
     let gem_id = StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = add(&storage, &world, sample_params(ALICE));
-        call_gem(&storage, &world, gem_id, T_NOW);
-        settle(&storage, &world, gem_id);
-        burn_settled(&storage, &world, gem_id);
+        let gem_id = add(&storage, sample_params(ALICE));
+        call_gem(&storage, gem_id, T_NOW);
+        settle(&storage, gem_id);
+        burn_settled(&storage, gem_id);
         gem_id
     });
 
@@ -180,11 +167,11 @@ fn metadata_update_marks_each_lifecycle_transition() {
 
 #[test]
 fn transfer_logs_announce_mint_and_burn() {
-    let (mut provider, world) = provider_at(T_NOW);
+    let mut provider = provider_at(T_NOW);
     let gem_id = StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = add(&storage, &world, sample_params(ALICE));
-        settle(&storage, &world, gem_id);
-        burn_settled(&storage, &world, gem_id);
+        let gem_id = add(&storage, sample_params(ALICE));
+        settle(&storage, gem_id);
+        burn_settled(&storage, gem_id);
         gem_id
     });
 
@@ -243,11 +230,10 @@ fn supported_interfaces_match_the_implemented_selectors() {
         "BatchMetadataUpdate(uint256,uint256)"
     );
 
-    with_storage(|storage, world| {
+    with_storage(|storage| {
         let supports = |id: [u8; 4]| {
             let out = call(
                 storage,
-                world,
                 IGem::supportsInterfaceCall {
                     interfaceId: id.into(),
                 }
@@ -273,20 +259,11 @@ fn supported_interfaces_match_the_implemented_selectors() {
     });
 }
 
-fn token_uri_parts(
-    storage: &StorageHandle,
-    world: &World,
-    gem_id: U256,
-) -> (serde_json::Value, String) {
+fn token_uri_parts(storage: &StorageHandle, gem_id: U256) -> (serde_json::Value, String) {
     use base64::Engine;
 
     let engine = base64::engine::general_purpose::STANDARD;
-    let out = call(
-        storage,
-        world,
-        IGem::tokenURICall { gemId: gem_id }.abi_encode(),
-    )
-    .unwrap();
+    let out = call(storage, IGem::tokenURICall { gemId: gem_id }.abi_encode()).unwrap();
     let uri = IGem::tokenURICall::abi_decode_returns(&out).unwrap();
     let json = engine
         .decode(uri.strip_prefix("data:application/json;base64,").unwrap())
@@ -315,10 +292,10 @@ fn trait_value(json: &serde_json::Value, name: &str) -> Option<serde_json::Value
 
 #[test]
 fn token_uri_renders_the_gem_card() {
-    with_storage(|storage, world| {
+    with_storage(|storage| {
         set_profile(storage, crate::config::PROFILE_PROD);
-        let gem_id = add(storage, world, sample_params(ALICE));
-        let (json, svg) = token_uri_parts(storage, world, gem_id);
+        let gem_id = add(storage, sample_params(ALICE));
+        let (json, svg) = token_uri_parts(storage, gem_id);
 
         let id = outbe_common::nft_card::short_id(gem_id);
         assert_eq!(json["name"], format!("Gem {id}"));
@@ -344,9 +321,9 @@ fn token_uri_renders_the_gem_card() {
 
 #[test]
 fn an_issued_card_leads_with_the_load() {
-    with_storage(|storage, world| {
-        let gem_id = add(storage, world, sample_params(ALICE));
-        let (_, svg) = token_uri_parts(storage, world, gem_id);
+    with_storage(|storage| {
+        let gem_id = add(storage, sample_params(ALICE));
+        let (_, svg) = token_uri_parts(storage, gem_id);
 
         let row = |label: &str| svg.find(&format!(">{label}</text>")).unwrap();
         assert!(row("Promis Load") < row("Entry Price"));
@@ -356,42 +333,34 @@ fn an_issued_card_leads_with_the_load() {
 
 #[test]
 fn a_gem_reads_forfeited_past_the_call_deadline() {
-    let (mut provider, world) = provider_at(T_NOW);
+    let mut provider = provider_at(T_NOW);
     let (gem_id, deadline) = StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = add(&storage, &world, sample_params(ALICE));
-        call_gem(&storage, &world, gem_id, T_NOW);
-        let notice = view(&storage, &world, gem_id)
-            .terms
-            .call_notice_period_seconds;
+        let gem_id = add(&storage, sample_params(ALICE));
+        call_gem(&storage, gem_id, T_NOW);
+        let notice = view(&storage, gem_id).terms.call_notice_period_seconds;
         (gem_id, T_NOW + u64::from(notice))
     });
 
     provider.set_timestamp(U256::from(deadline));
     StorageHandle::enter(&mut provider, |storage| {
-        let (json, svg) = token_uri_parts(&storage, &world, gem_id);
+        let (json, svg) = token_uri_parts(&storage, gem_id);
         assert_eq!(trait_value(&json, "State").unwrap(), "Called");
         assert_eq!(trait_value(&json, "Called At").unwrap(), T_NOW);
         assert_eq!(trait_value(&json, "Call Deadline").unwrap(), deadline);
         assert!(svg.contains(">CALLED</text>"));
         assert!(svg.contains(&outbe_common::nft_card::timestamp_utc(deadline)));
-        assert_eq!(
-            status(&storage, &world, gem_id).state,
-            GemState::Called as u8
-        );
+        assert_eq!(status(&storage, gem_id).state, GemState::Called as u8);
     });
 
     provider.set_timestamp(U256::from(deadline + 1));
     StorageHandle::enter(&mut provider, |storage| {
-        let (json, svg) = token_uri_parts(&storage, &world, gem_id);
+        let (json, svg) = token_uri_parts(&storage, gem_id);
         assert_eq!(trait_value(&json, "State").unwrap(), "Forfeited");
         assert_eq!(trait_value(&json, "Call Deadline").unwrap(), deadline);
         assert!(svg.contains(">FORFEITED</text>"));
+        assert_eq!(status(&storage, gem_id).state, GemState::Forfeited as u8);
         assert_eq!(
-            status(&storage, &world, gem_id).state,
-            GemState::Forfeited as u8
-        );
-        assert_eq!(
-            item(&storage, &world, gem_id).unwrap().state,
+            item(&storage, gem_id).unwrap().state,
             GemState::Issued as u8,
             "the body itself only knows Issued and Settled"
         );
@@ -401,19 +370,17 @@ fn a_gem_reads_forfeited_past_the_call_deadline() {
 /// A settled gem keeps the call stamp it was paid under, even after its deadline.
 #[test]
 fn a_settled_gem_keeps_its_call_stamp_in_the_view() {
-    let (mut provider, world) = provider_at(T_NOW);
+    let mut provider = provider_at(T_NOW);
     let (gem_id, deadline) = StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = add(&storage, &world, sample_params(ALICE));
-        call_gem(&storage, &world, gem_id, T_NOW);
-        settle(&storage, &world, gem_id);
-        let notice = view(&storage, &world, gem_id)
-            .terms
-            .call_notice_period_seconds;
+        let gem_id = add(&storage, sample_params(ALICE));
+        call_gem(&storage, gem_id, T_NOW);
+        settle(&storage, gem_id);
+        let notice = view(&storage, gem_id).terms.call_notice_period_seconds;
         (gem_id, T_NOW + u64::from(notice))
     });
     provider.set_timestamp(U256::from(deadline + 1));
     StorageHandle::enter(&mut provider, |storage| {
-        let data = status(&storage, &world, gem_id);
+        let data = status(&storage, gem_id);
         assert_eq!(data.state, GemState::Settled as u8);
         assert_eq!(data.calledAt, T_NOW);
         assert_eq!(data.settlementDeadline, deadline);
@@ -422,7 +389,7 @@ fn a_settled_gem_keeps_its_call_stamp_in_the_view() {
 
 #[test]
 fn config_unset_resolves_by_chain_id() {
-    with_storage(|storage, _| {
+    with_storage(|storage| {
         // No genesis profile selected -> resolved by network. The test chain is not mainnet.
         assert_eq!(crate::config::read(storage).unwrap(), GemParams::DEV);
         // An explicit selector still wins over the network default.
@@ -455,7 +422,7 @@ fn config_auto_profile_follows_the_network() {
 
 #[test]
 fn config_unknown_selector_errors() {
-    with_storage(|storage, _| {
+    with_storage(|storage| {
         set_profile(storage, 99u8);
         assert!(crate::config::read(storage).is_err());
     });
@@ -465,7 +432,7 @@ fn config_unknown_selector_errors() {
 /// compact layout around it. Bodies live off-chain, so one field is one slot.
 #[test]
 fn gem_contract_slot_layout_is_pinned() {
-    with_storage(|storage, _| {
+    with_storage(|storage| {
         let gem = GemContract::new(storage.clone());
         assert_eq!(gem.total_supply.slot(), U256::from(0u64));
         assert_eq!(gem.bucket_gem_count.base_slot(), U256::from(1u64));

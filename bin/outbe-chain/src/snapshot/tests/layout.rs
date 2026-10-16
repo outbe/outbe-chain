@@ -52,20 +52,17 @@ pub(super) fn native_arguments(root: &Path) -> Vec<OsString> {
     ])
     .unwrap();
     fs::create_dir(root.join("configuration")).unwrap();
-    let storage = root.join("configuration/offchain.toml");
-    fs::write(&storage, "version = 1\nbackend = 'rocksdb'\nstart_block = 17\n[rocksdb]\npath = '../projection'\nsecondary_path = '../secondary'\n").unwrap();
+
     vec![
         "--chain".into(),
         genesis.into_os_string(),
         "--datadir".into(),
         root.join("chain").into_os_string(),
-        "--projection.storage-config".into(),
-        storage.into_os_string(),
     ]
 }
 
 #[test]
-fn native_defaults_and_toml_relative_primary_resolve_without_creating_stores() {
+fn native_defaults_resolve_without_creating_stores() {
     let root = tempfile::tempdir().unwrap();
     let arguments = native_arguments(root.path());
     let inputs = parse_node_inputs(arguments).unwrap();
@@ -74,10 +71,8 @@ fn native_defaults_and_toml_relative_primary_resolve_without_creating_stores() {
     assert_eq!(layout.chain_root, d);
     assert_eq!(layout.consensus_root, d.join("consensus"));
     assert_eq!(layout.ocomp_root, root.path().join("ocomp/domain-v1"));
-    assert_eq!(layout.offchain_root, root.path().join("projection"));
     assert_eq!(layout.static_files_root, d.join("static_files"));
     assert_eq!(layout.execution_rocksdb_root, d.join("rocksdb"));
-    assert_eq!(layout.projection_start_block, 17);
     assert_eq!(layout.chain.chain().id(), 54322345);
     for protected in [
         root.path().join("genesis.json"),
@@ -86,7 +81,6 @@ fn native_defaults_and_toml_relative_primary_resolve_without_creating_stores() {
         d.join("discovery-secret"),
         d.join("jwt.hex"),
         d.join("reth.toml"),
-        root.path().join("configuration/offchain.toml"),
     ] {
         assert!(
             layout.protected.0.contains(&protected),
@@ -96,7 +90,6 @@ fn native_defaults_and_toml_relative_primary_resolve_without_creating_stores() {
     }
     assert!(!d.exists());
     assert!(!layout.ocomp_root.exists());
-    assert!(!layout.offchain_root.exists());
     assert!(!root.path().join("secondary").exists());
 }
 
@@ -149,19 +142,6 @@ fn native_overrides_and_effective_validator_key_are_preserved() {
 }
 
 #[test]
-fn mongo_is_reported_as_unsupported_without_connecting() {
-    let root = tempfile::tempdir().unwrap();
-    let arguments = native_arguments(root.path());
-    fs::write(root.path().join("configuration/offchain.toml"), "version = 1\nbackend = 'mongodb'\n[mongodb]\nuri = 'mongodb://127.0.0.1:1'\ndatabase = 'snapshot'\n").unwrap();
-    let inputs = parse_node_inputs(arguments).unwrap();
-    assert!(resolve_layout(&inputs)
-        .unwrap_err()
-        .to_string()
-        .contains("RocksDB"));
-    assert!(!root.path().join("chain").exists());
-}
-
-#[test]
 fn inline_genesis_is_configuration_data_not_a_protected_file_path() {
     let root = tempfile::tempdir().unwrap();
     let mut arguments = native_arguments(root.path());
@@ -189,10 +169,8 @@ fn inventory_selects_native_public_domains_and_excludes_signing_authority() {
     let mut expected = Vec::new();
     let samples = [
         (NativeRoot::Chain, DomainKind::ExecutionDb, layout.chain_root.clone(), "db/mdbx.dat".to_owned()),
-        (NativeRoot::Chain, DomainKind::Ce, layout.chain_root.clone(), "compressed_entities/smt/mdbx.dat".to_owned()),
         (NativeRoot::StaticFiles, DomainKind::StaticFiles, layout.static_files_root.clone(), "header.data".to_owned()),
         (NativeRoot::ExecutionRocksDb, DomainKind::ExecutionRocksDb, layout.execution_rocksdb_root.clone(), "CURRENT".to_owned()),
-        (NativeRoot::Offchain, DomainKind::OffchainProjection, layout.offchain_root.clone(), "CURRENT".to_owned()),
         (NativeRoot::Consensus, DomainKind::MarshalBlocks, layout.consensus_root.clone(), "outbe-marshal-blocks-metadata/0".to_owned()),
         (NativeRoot::Consensus, DomainKind::MarshalFinalizations, layout.consensus_root.clone(), "outbe-marshal-finalizations-ordinal/0".to_owned()),
         (NativeRoot::Consensus, DomainKind::MarshalCache, layout.consensus_root.clone(), "outbe-marshal-cache-0/0".to_owned()),
@@ -243,7 +221,7 @@ fn inventory_selects_native_public_domains_and_excludes_signing_authority() {
         fs::write(path, "private sentinel").unwrap();
     }
     let inventory = enumerate_native_files(&layout).unwrap();
-    assert_eq!(inventory.domains.len(), 23);
+    assert_eq!(inventory.domains.len(), 21);
     for (native_root, kind, path) in expected {
         assert!(
             inventory.domains.iter().any(|domain| domain.kind == kind
@@ -288,7 +266,7 @@ fn inventory_selects_native_public_domains_and_excludes_signing_authority() {
     assert!(!fatal.exists());
 
     let mut simplex_layout = resolve_layout(&inputs).unwrap();
-    simplex_layout.offchain_root = simplex_layout.consensus_root.join("outbe-simplex-1");
+    simplex_layout.execution_rocksdb_root = simplex_layout.consensus_root.join("outbe-simplex-1");
     let error = enumerate_native_files(&simplex_layout).unwrap_err();
     assert!(error.to_string().contains("protected"), "{error:#}");
 
@@ -296,13 +274,13 @@ fn inventory_selects_native_public_domains_and_excludes_signing_authority() {
     protected_layout
         .protected
         .0
-        .push(protected_layout.offchain_root.join("CURRENT"));
+        .push(protected_layout.execution_rocksdb_root.join("CURRENT"));
     assert!(enumerate_native_files(&protected_layout)
         .unwrap_err()
         .to_string()
         .contains("protected"));
     assert_eq!(
-        fs::read_to_string(protected_layout.offchain_root.join("CURRENT")).unwrap(),
+        fs::read_to_string(protected_layout.execution_rocksdb_root.join("CURRENT")).unwrap(),
         "CURRENT"
     );
 }
@@ -340,7 +318,6 @@ fn node_host_identity_is_protected_from_execution_root_overrides() {
         for required in [
             layout.chain_root.join("db"),
             layout.chain_root.join("compressed_entities/smt"),
-            layout.offchain_root.clone(),
             layout
                 .ocomp_root
                 .join("exporter-v1/discovery/closure-checkpoint-v1"),

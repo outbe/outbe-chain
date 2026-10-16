@@ -179,8 +179,8 @@ use topology::OcompDomain;
 #[cfg(feature = "ocomp-integration")]
 #[cfg(test)]
 use processes::launch::{
-    configure_release_layout, configure_snapshot_exporter_command,
-    configure_snapshot_exporter_projection, OCOMP_BASE_PATH_ENV, OCOMP_VALIDATOR_INDEX_ENV,
+    configure_release_layout, configure_snapshot_exporter_command, OCOMP_BASE_PATH_ENV,
+    OCOMP_VALIDATOR_INDEX_ENV,
 };
 
 #[cfg(feature = "ocomp-integration")]

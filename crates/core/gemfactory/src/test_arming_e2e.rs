@@ -6,7 +6,6 @@
 
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
-use outbe_compressed_entities::{ExecutionReaders, ExecutionScope, ParentBodySource};
 use outbe_gem::{api as gem_api, GemAddParams, GemContract};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -23,27 +22,22 @@ alloy_sol_types::sol! {
 }
 
 /// Answers a test hook, or `None` when `data` is no test hook.
-pub(crate) fn dispatch(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    data: &[u8],
-) -> Option<Result<Bytes>> {
+pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Result<Bytes>> {
     use IGemFactoryTestArming::*;
     if let Ok(call) = issueSettledGemForTestCall::abi_decode(data) {
         return Some(guarded(storage, || {
-            let gem_id = issue_settled(storage, scope, parent, call)?;
+            let gem_id = issue_settled(storage, call)?;
             Ok(issueSettledGemForTestCall::abi_encode_returns(&gem_id).into())
         }));
     }
     if let Ok(call) = backdateGemForTestCall::abi_decode(data) {
         return Some(guarded(storage, || {
-            backdate(storage, scope, parent, call.gemId, call.issuedAt).map(|()| Bytes::new())
+            backdate(storage, call.gemId, call.issuedAt).map(|()| Bytes::new())
         }));
     }
     if let Ok(call) = closeCallNoticeForTestCall::abi_decode(data) {
         return Some(guarded(storage, || {
-            requeue_called(storage, scope, parent, call.gemId, call.deadline).map(|()| Bytes::new())
+            requeue_called(storage, call.gemId, call.deadline).map(|()| Bytes::new())
         }));
     }
     None
@@ -57,16 +51,12 @@ fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<Bytes>) ->
 /// Issues a gem and settles it at once, skipping the payment.
 fn issue_settled(
     storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
     call: IGemFactoryTestArming::issueSettledGemForTestCall,
 ) -> Result<U256> {
     // One six-decimal unit: a positive entry price.
     let unit = U256::from(1_000_000u64);
     let gem_id = crate::runtime::add_gem(
         storage,
-        scope,
-        parent,
         GemAddParams {
             owner: call.owner,
             gem_type: crate::schema::GemTypes::Wallet as u8,
@@ -79,22 +69,16 @@ fn issue_settled(
         },
     )?;
     let (item, bucket) =
-        gem_api::load_pair(storage, scope, parent, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
-    gem_api::record_settled(storage, scope, item, bucket)?;
+        gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
+    gem_api::record_settled(storage, item, bucket)?;
     Ok(gem_id)
 }
 
 /// Re-issues the gem on `issued_at`: it leaves its bucket and joins the bucket of the
 /// new day, which may open a new bucket body on the live terms.
-fn backdate(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    gem_id: U256,
-    issued_at: u64,
-) -> Result<()> {
+fn backdate(storage: &StorageHandle<'_>, gem_id: U256, issued_at: u64) -> Result<()> {
     let (item, bucket) =
-        gem_api::load_pair(storage, scope, parent, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
+        gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     if item.body().is_settled() {
         return Err(GemFactoryError::InvalidState.into());
     }
@@ -112,27 +96,14 @@ fn backdate(
         outbe_gem::config::read(storage)?,
     )?;
     storage.clone().with_checkpoint(|| {
-        gem_api::remove_gem(storage, scope, item, bucket)?;
-        gem_api::record_issued(
-            storage,
-            ExecutionReaders { scope, parent },
-            &reissued,
-            entry_price_minor,
-            terms,
-        )
+        gem_api::remove_gem(storage, item, bucket)?;
+        gem_api::record_issued(storage, &reissued, entry_price_minor, terms)
     })
 }
 
 /// Moves the queue entry of a called gem's bucket onto `deadline`.
-fn requeue_called(
-    storage: &StorageHandle<'_>,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-    gem_id: U256,
-    deadline: u64,
-) -> Result<()> {
-    let item =
-        gem_api::get_item(storage, scope, parent, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
+fn requeue_called(storage: &StorageHandle<'_>, gem_id: U256, deadline: u64) -> Result<()> {
+    let item = gem_api::get_item(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     let mut gem = GemContract::new(storage.clone());
     let bucket = item.bucket_key;
     if gem.called_deadline.read(&bucket)? == 0 {

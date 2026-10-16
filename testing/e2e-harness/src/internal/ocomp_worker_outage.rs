@@ -119,10 +119,6 @@ mod observation {
             finalized_block_number: checkpoint.height,
             finalized_block_hash: checkpoint.block_hash,
             finalized_state_root: checkpoint.state_root,
-            finalized_ce_root: intent.ce_sealed_root,
-            ce_schema_version: u16::try_from(
-                outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
-            )?,
         };
         ensure!(
             record.intent_height == checkpoint.height,
@@ -138,8 +134,6 @@ mod observation {
                 && bundle.protocol_bundle_hash(&limits)? == intent.protocol_bundle_hash
                 && manifest.attempt == intent.attempt
                 && manifest.wwd == intent.wwd
-                && manifest.sealed_tribute_collection_key == intent.sealed_tribute_collection_key
-                && manifest.sealed_tribute_collection_root == intent.sealed_tribute_collection_root
                 && manifest.tribute_count == intent.authenticated_day_count
                 && manifest.tribute_nominal_total == intent.authenticated_day_nominal
                 && manifest.body_codec_id == bundle.tribute_body_codec_id
@@ -488,12 +482,8 @@ mod tests {
                 finalized_block_number: 91,
                 finalized_block_hash: B256::repeat_byte(3),
                 finalized_state_root: B256::repeat_byte(4),
-                finalized_ce_root: B256::repeat_byte(5),
-                ce_schema_version: 1,
             },
             wwd: 20260905,
-            sealed_tribute_collection_key: B256::repeat_byte(6),
-            sealed_tribute_collection_root: B256::repeat_byte(7),
             tribute_count: 2,
             tribute_nominal_total: alloy_primitives::U256::from(46),
             input_chunk_count: 1,

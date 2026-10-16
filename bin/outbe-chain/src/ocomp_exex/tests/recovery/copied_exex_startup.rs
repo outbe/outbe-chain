@@ -5,10 +5,6 @@ use alloy_primitives::U256;
 use eyre::ensure;
 use futures::FutureExt;
 use outbe_evm::OutbeEvmConfig;
-use outbe_node::projection::{
-    prepare_offchain_data_projection, validate_offchain_data_checkpoint,
-    OffchainDataProjectionConfig,
-};
 use outbe_node::{OutbeBeaconConsensus, OutbeNode, OutbePoolBuilder};
 use outbe_ocomp::control::poc_schema_limits;
 use outbe_ocomp::embedded_runtime::{EmbeddedOcompBundleConfigV1, EmbeddedOcompDomainConfigV1};
@@ -133,22 +129,6 @@ fn open_native(root: &Path, runtime: Runtime) -> NativeProvider {
     reth_provider::providers::BlockchainProvider::new(factory).unwrap()
 }
 
-fn projection_config(root: &Path) -> OffchainDataProjectionConfig {
-    OffchainDataProjectionConfig {
-        chain_id: chain().chain().id(),
-        genesis_hash: chain().genesis_hash(),
-        storage: outbe_offchain_storage::StorageConfig {
-            start_block: 1,
-            backend: outbe_offchain_storage::StorageBackend::RocksDb(
-                outbe_offchain_storage::RocksDbConfig {
-                    path: root.join("projection"),
-                    secondary_path: root.join("projection-readers"),
-                },
-            ),
-        },
-    }
-}
-
 fn exex_config(root: &Path) -> OcompExExConfigV1 {
     let bundle = bundle();
     OcompExExConfigV1 {
@@ -188,24 +168,6 @@ fn closed(root: &Path) -> ProjectionCheckpoint {
     .unwrap()
     .current()
     .unwrap()
-}
-
-fn projected(root: &Path) -> Option<ProjectionCheckpoint> {
-    let storage = Arc::new(
-        outbe_offchain_storage::RocksDbStorage::open(root.join("projection/system/shared"))
-            .unwrap(),
-    );
-    outbe_offchain_data::read_projection_state(
-        outbe_offchain_data::ProjectionConfig {
-            chain_id: chain().chain().id(),
-            genesis_hash: chain().genesis_hash(),
-            start_block: 1,
-        },
-        storage,
-    )
-    .unwrap()
-    .unwrap()
-    .checkpoint
 }
 
 fn assert_no_submissions(root: &Path) {
@@ -454,7 +416,7 @@ async fn observe_startup(
         if error.message.contains(FATAL_DETAIL)),
             "missing persisted-fatal readiness"
         );
-        // The guard is before first FinishedHeight and frame/projection work.
+        // The guard is before first FinishedHeight and finalized-frame work.
         ensure!(
             event_rx.try_recv().is_err(),
             "fatal startup published FinishedHeight"
@@ -545,16 +507,6 @@ fn native_executor() -> std::io::Result<tokio::runtime::Runtime> {
         .build()
 }
 
-fn wait_native_storage(
-    storage_completion: Option<outbe_offchain_storage::StorageCompletion>,
-) -> eyre::Result<()> {
-    storage_completion.map_or(Ok(()), |completion| {
-        completion
-            .wait_timeout(Duration::from_secs(10))
-            .wrap_err("fixture native projection storage did not close")
-    })
-}
-
 async fn assert_owned_task_pending<T: 'static>(
     tasks: &mut tokio::task::JoinSet<T>,
 ) -> eyre::Result<()> {
@@ -575,22 +527,12 @@ fn run_owned(
     expect_fatal: bool,
 ) -> eyre::Result<Vec<BlockNumHash>> {
     let executor = native_executor()?;
-    let mut storage_completion = None;
-    let outcome = executor.block_on(run_owned_components(
-        root,
-        target,
-        expect_fatal,
-        &mut storage_completion,
-    ));
+    let outcome = executor.block_on(run_owned_components(root, target, expect_fatal));
     drop(executor);
-    // Session Drop closes native storage on a separate thread. Its completion
-    // acknowledges actual RocksDB lock release before the fixture reopens it.
-    let storage_shutdown = wait_native_storage(storage_completion);
     match outcome {
         (Err(panic), _) => std::panic::resume_unwind(panic),
         (Ok(result), shutdown) => {
             shutdown?;
-            storage_shutdown?;
             result
         }
     }
@@ -605,7 +547,6 @@ async fn run_owned_components(
     root: &Path,
     target: ProjectionCheckpoint,
     expect_fatal: bool,
-    storage_completion: &mut Option<outbe_offchain_storage::StorageCompletion>,
 ) -> OwnedRunOutcome {
     let runtime = Runtime::test();
     let manager = runtime.take_task_manager_handle().expect("fixture manager");
@@ -622,9 +563,6 @@ async fn run_owned_components(
         let (adapter, evm, network_owner, shutdown) =
             prepare_owned_components(&builder, chain, provider.clone(), runtime.clone()).await?;
         payload_shutdown = Some(shutdown);
-        let prepared = prepare_offchain_data_projection(projection_config(root))?;
-        *storage_completion = Some(prepared.storage_completion());
-        let ready = validate_offchain_data_checkpoint(prepared, &provider)?;
         let current = closed(root);
         let (publisher, readiness) = outbe_primitives::projection::projection_readiness(
             current,
@@ -652,13 +590,7 @@ async fn run_owned_components(
             notifications,
             components: adapter,
         };
-        exex_tasks.spawn(run_ocomp_exex(
-            ctx,
-            ready,
-            exex_config(root),
-            publisher,
-            exit,
-        ));
+        exex_tasks.spawn(run_ocomp_exex(ctx, exex_config(root), publisher, exit));
         let finished = observe_startup(
             target,
             expect_fatal,
@@ -725,7 +657,6 @@ fn copied_fatal_enters_actual_exex_fatal_handoff_before_any_finished_height() {
     let target = points[H as usize];
     run_owned(donor.path(), target, false).unwrap();
     assert_eq!(closed(donor.path()), target);
-    assert_eq!(projected(donor.path()), Some(target));
     seed_fatal(donor.path());
     copied_native::copy_tree(donor.path(), recipient.path());
     donor.close().unwrap();
@@ -737,7 +668,6 @@ fn copied_fatal_enters_actual_exex_fatal_handoff_before_any_finished_height() {
     let later = write_frames(&recipient.path().join("chain"), K, K)[0];
     run_owned(recipient.path(), later, true).unwrap();
     assert_eq!(closed(recipient.path()), target);
-    assert_eq!(projected(recipient.path()), Some(target));
     assert_eq!(
         load_persisted_fatal_evidence(&fatal_root).unwrap().unwrap(),
         before
@@ -756,10 +686,9 @@ fn copied_fullnode_quiet_h_and_next_frame_reach_k_without_validator_submission()
     let recipient = tempfile::tempdir().unwrap();
     let points = write_frames(&donor.path().join("chain"), 0, H);
     let h = points[H as usize];
-    // C and projection are advanced by the real ExEx, not stamped into files.
+    // The real ExEx advances closure. The fixture does not stamp its checkpoint.
     run_owned(donor.path(), h, false).unwrap();
     assert_eq!(closed(donor.path()), h);
-    assert_eq!(projected(donor.path()), Some(h));
     copied_native::copy_tree(donor.path(), recipient.path());
     donor.close().unwrap();
     let quiet = run_owned(recipient.path(), h, false).unwrap();
@@ -778,7 +707,6 @@ fn copied_fullnode_quiet_h_and_next_frame_reach_k_without_validator_submission()
         .iter()
         .any(|point| point.number == K && point.hash == k.block_hash));
     assert_eq!(closed(recipient.path()), k);
-    assert_eq!(projected(recipient.path()), Some(k));
     assert_no_submissions(recipient.path());
     let current = run_owned(recipient.path(), k, false).unwrap();
     assert!(current

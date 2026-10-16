@@ -20,12 +20,10 @@ pub(super) fn test_priority_fee_tx() -> reth_ethereum::TransactionSigned {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct CapacityVictim<'a> {
+pub(super) struct CapacityVictim {
     pub(super) proposer: Address,
     pub(super) victim: WorldwideDay,
     pub(super) day_limit: U256,
-    pub(super) scope: &'a ExecutionScope,
-    pub(super) parent: &'a TributeRepositoryReader,
 }
 pub(super) fn seed_expiring_tee_nodes(
     storage: StorageHandle<'_>,
@@ -92,8 +90,6 @@ pub(super) fn seed_waiting_capacity_victim(
         proposer,
         victim,
         day_limit,
-        scope: seed_scope,
-        parent: tribute_parent,
     } = *fixture;
     let mut tribute = TributeContract::new(storage.clone());
     let victim_ctx = BlockRuntimeContext::new(
@@ -110,20 +106,16 @@ pub(super) fn seed_waiting_capacity_victim(
     let victim_projection = outbe_metadosis::api::worldwide_day(storage.clone(), victim)?
         .ok_or_else(|| eyre::eyre!("missing fixture value"))?;
     tribute.unseal_day(victim)?;
-    tribute.issue(
-        seed_scope,
-        tribute_parent,
-        &TributeData {
-            tribute_id: outbe_compressed_entities::derive_poseidon_entity_id(proposer, victim)?,
-            owner: proposer,
-            worldwide_day: victim,
-            issuance_amount_minor: U256::from(1),
-            issuance_currency: 840,
-            nominal_amount_minor: U256::from(1),
-            reference_currency: 840,
-            tribute_price_minor: U256::from(1),
-        },
-    )?;
+    tribute.issue(&TributeData {
+        tribute_id: outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(proposer, victim)?,
+        owner: proposer,
+        worldwide_day: victim,
+        issuance_amount_minor: U256::from(1),
+        issuance_currency: 840,
+        nominal_amount_minor: U256::from(1),
+        reference_currency: 840,
+        tribute_price_minor: U256::from(1),
+    })?;
     for boundary in [
         victim_projection.forming_end,
         victim_projection.lookback_end,
@@ -133,7 +125,7 @@ pub(super) fn seed_waiting_capacity_victim(
             BlockContext::new(1, boundary, CHAIN_ID, proposer, vec![proposer]),
             storage.clone(),
         );
-        outbe_metadosis::commands::advance_active_worldwide_days(&ctx, seed_scope)?;
+        outbe_metadosis::commands::advance_active_worldwide_days(&ctx)?;
     }
     assert_eq!(
         outbe_metadosis::api::worldwide_day(storage.clone(), victim)
@@ -317,31 +309,14 @@ pub(super) fn assert_approved_factory_state(
 
 pub(super) struct CapacityParent {
     pub(super) state: State<CacheDB<EmptyDBTyped<ProviderError>>>,
-    pub(super) tree_directory: tempfile::TempDir,
-    pub(super) tree_service: Arc<CompressedTreeService>,
+
     pub(super) seed_hash: B256,
-    pub(super) seed_root: B256,
-    pub(super) body_reader: StorageReaderHandle,
+
     pub(super) fire_at: u64,
 }
 pub(super) fn prepare_capacity_parent(proposer: Address) -> eyre::Result<CapacityParent> {
     let victim = WorldwideDay::new(2023_1101);
     let day_limit = U256::from(100);
-    let (tree_directory, tree_service) = persistent_test_tree(B256::ZERO);
-    let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO)?;
-    let parent_tree = tree_service.open_parent(ExactParentIdentity {
-        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-        block_number: 0,
-        block_hash: B256::ZERO,
-        root: empty_root,
-    })?;
-    let seed_scope = outbe_compressed_entities::execution_scope::with_parent_tree(
-        parent_tree,
-        CeWorkConfig::new(0, 0, u64::MAX),
-    );
-    let body_storage = Arc::new(MemoryStorage::new());
-    let body_reader: StorageReaderHandle = body_storage;
-    let tribute_parent = TributeRepositoryReader::new(body_reader.clone());
     let mut seeded = None;
     let state = state_with_active_validators_seeded_at_block_with_cycle_frames(
         &[(proposer, dummy_pubkey(0xA3))],
@@ -354,41 +329,31 @@ pub(super) fn prepare_capacity_parent(proposer: Address) -> eyre::Result<Capacit
                     proposer,
                     victim,
                     day_limit,
-                    scope: &seed_scope,
-                    parent: &tribute_parent,
                 },
             ));
         },
     );
-    let (fire_at, staged_tree_batch) =
-        seeded.ok_or_else(|| eyre::eyre!("capacity storage must be seeded"))??;
+    let fire_at = seeded.ok_or_else(|| eyre::eyre!("capacity storage must be seeded"))??;
     let seed_hash = B256::repeat_byte(0xA5);
-    let seed_root = staged_tree_batch.new_root();
-    tree_service.publish_candidate(seed_hash, staged_tree_batch)?;
-    tree_service.apply_finalized(1, seed_hash, seed_root)?;
 
     Ok(CapacityParent {
         state,
-        tree_directory,
-        tree_service,
+
         seed_hash,
-        seed_root,
-        body_reader,
+
         fire_at,
     })
 }
 pub(super) fn seed_capacity_storage(
     storage: StorageHandle<'_>,
-    fixture: &CapacityVictim<'_>,
-) -> eyre::Result<(u64, outbe_compressed_entities::ProvisionalTreeBatch)> {
+    fixture: &CapacityVictim,
+) -> eyre::Result<u64> {
     let CapacityVictim {
         proposer,
         victim,
         day_limit,
-        scope: seed_scope,
-        parent: tribute_parent,
     } = *fixture;
-    outbe_compressed_entities::begin_block(storage.clone(), seed_scope)?;
+
     seed_retained_capacity_days(storage.clone(), proposer, victim)?;
     let scheduled = seed_waiting_capacity_victim(
         storage.clone(),
@@ -396,8 +361,6 @@ pub(super) fn seed_capacity_storage(
             proposer,
             victim,
             day_limit,
-            scope: seed_scope,
-            parent: tribute_parent,
         },
     )?;
     let mut tribute = TributeContract::new(storage.clone());
@@ -415,7 +378,5 @@ pub(super) fn seed_capacity_storage(
     let protocol_cycle_period = 3_600;
     let fire_at = scheduled.div_ceil(protocol_cycle_period) * protocol_cycle_period;
     arm_capacity_cycle(storage.clone(), fire_at, protocol_cycle_period)?;
-    let staged_tree_batch =
-        outbe_compressed_entities::end_block(storage, seed_scope)?.staged_tree_batch;
-    Ok((fire_at, staged_tree_batch))
+    Ok(fire_at)
 }

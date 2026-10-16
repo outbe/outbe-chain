@@ -2,7 +2,7 @@
 //! and returns their load to the Promis Reserve.
 
 use alloy_primitives::B256;
-use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result, SweepFailure},
@@ -17,26 +17,18 @@ use crate::runtime::emit_event;
 use outbe_nod::state::ExpiryHours;
 use outbe_nod::{api, precompile::INod, schema::NodContract};
 
-/// The storage, scope and parent bodies a forfeit loads and removes Nods through.
-pub(crate) struct Bodies<'a, 's, P> {
+/// The EVM state used to load and remove Nods during forfeiture.
+pub(crate) struct Bodies<'a, 's> {
     pub(crate) storage: &'a StorageHandle<'s>,
-    pub(crate) scope: &'a ExecutionScope,
-    pub(crate) parent: &'a P,
 }
 
 /// Forfeit-burns the unpaid Nods of the called buckets whose notice period lapsed.
 /// Returns the Nods burned.
-pub(crate) fn sweep_expired(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-) -> Result<u32> {
+pub(crate) fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
     let mut expiry = NodExpiry {
         bodies: Bodies {
             storage: &ctx.storage,
-            scope,
-            parent,
         },
         nod: NodContract::new(ctx.storage.clone()),
         forfeited: 0,
@@ -53,14 +45,14 @@ pub(crate) fn sweep_expired(
 }
 
 /// One block's burns across the due hours.
-struct NodExpiry<'a, 's, P> {
-    bodies: Bodies<'a, 's, P>,
+struct NodExpiry<'a, 's> {
+    bodies: Bodies<'a, 's>,
     nod: NodContract<'s>,
     forfeited: u32,
 }
 
 /// A bucket's members are its unpaid Nods. Paid ones keep its terms but never burn.
-impl<P: ParentBodySource> ExpiryHandler<B256> for NodExpiry<'_, '_, P> {
+impl ExpiryHandler<B256> for NodExpiry<'_, '_> {
     type Member = WwdEntityId;
 
     /// A bucket whose Nods are still landing waits for the next hour.
@@ -117,24 +109,19 @@ impl<P: ParentBodySource> ExpiryHandler<B256> for NodExpiry<'_, '_, P> {
 /// The bucket body remains while settled members exist. Removal requires both
 /// unpaid and settled member counts to reach zero.
 pub(crate) fn forfeit_member(
-    bodies: &Bodies<'_, '_, impl ParentBodySource>,
+    bodies: &Bodies<'_, '_>,
     nod: &mut NodContract<'_>,
     bucket_key: B256,
     nod_id: WwdEntityId,
 ) -> Result<()> {
-    let Bodies {
-        storage,
-        scope,
-        parent,
-    } = *bodies;
+    let Bodies { storage } = *bodies;
     if nod_id.is_zero() {
         return Err(
             crate::errors::NodFactoryError::EmptyBucketMemberSlotDuringForfeit { bucket_key }
                 .into(),
         );
     }
-    let worldwide_day = nod.bucket_worldwide_day.read(&bucket_key)?;
-    let item = api::load_item(storage, scope, parent, nod_id)?.ok_or(
+    let item = api::load_item(storage, nod_id)?.ok_or(
         crate::errors::NodFactoryError::MissingBucketMemberBodyDuringForfeit { bucket_key, nod_id },
     )?;
     if item.body().is_settled || item.body().bucket_key != bucket_key {
@@ -145,10 +132,9 @@ pub(crate) fn forfeit_member(
     let owner = item.body().owner;
     let gratis_load_minor = api::calculation_amount(item.body())?;
     let encrypted_gratis_amount = item.body().encrypted.encrypted_gratis_amount.clone();
-    let bucket_id = WwdEntityId::from_day_and_digest(worldwide_day, bucket_key.0);
-    let bucket = api::load_bucket(storage, scope, parent, bucket_id)?
+    let bucket = api::load_bucket(storage, bucket_key)?
         .ok_or(crate::errors::NodFactoryError::MissingBucketBodyDuringForfeit { bucket_key })?;
-    api::remove_nod(storage, scope, item, bucket)?;
+    api::remove_nod(storage, item, bucket)?;
     nod.emit(INod::NodForfeited {
         owner,
         nodId: nod_id.to_u256(),

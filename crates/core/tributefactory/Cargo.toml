@@ -10,7 +10,6 @@ bench-utils = ["outbe-tribute/test-enclave"]
 
 [dependencies]
 outbe-macros.workspace = true
-outbe-compressed-entities.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-tribute.workspace = true
 outbe-metadosis.workspace = true

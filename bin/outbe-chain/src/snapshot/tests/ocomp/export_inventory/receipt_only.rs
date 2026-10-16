@@ -48,11 +48,8 @@ fn canonical_manifest_fields_and_request_checkpoint_cannot_be_substituted() {
         "bundle",
         "attempt",
         "day",
-        "collection_key",
-        "collection_root",
         "count",
         "nominal",
-        "ce_root",
         "height",
         "block_hash",
         "state_root",
@@ -64,11 +61,8 @@ fn canonical_manifest_fields_and_request_checkpoint_cannot_be_substituted() {
             "bundle" => job.intent.protocol_bundle_hash = hash(0xee),
             "attempt" => job.intent.attempt += 1,
             "day" => job.intent.wwd += 1,
-            "collection_key" => job.intent.sealed_tribute_collection_key = hash(0xee),
-            "collection_root" => job.intent.sealed_tribute_collection_root = hash(0xee),
             "count" => job.intent.authenticated_day_count += 1,
             "nominal" => job.intent.authenticated_day_nominal += U256::from(1),
-            "ce_root" => job.intent.ce_sealed_root = hash(0xee),
             "height" => job.intent_height += 1,
             "block_hash" => {
                 job.finalized.as_mut().unwrap().finalized_request_block_hash = hash(0xee)
@@ -87,8 +81,8 @@ fn canonical_manifest_fields_and_request_checkpoint_cannot_be_substituted() {
 }
 
 #[test]
-fn native_consistent_receipt_must_match_canonical_checkpoint_height_and_ce_schema() {
-    for damage in ["checkpoint_height", "checkpoint_schema"] {
+fn native_consistent_receipt_must_match_canonical_checkpoint_height() {
+    for damage in ["checkpoint_height"] {
         let f = fixture(20, Some(damage));
         remove_historical_siblings(&f);
         let error = check(&f, &f.job, None).unwrap_err();

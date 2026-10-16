@@ -15,7 +15,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall as _};
 use eyre::{ensure, eyre, Result, WrapErr as _};
-use outbe_compressed_entities::{PointReadRequestV1, PointReadResultV1, SelectedHeaderV1};
 #[cfg(feature = "ocomp-integration")]
 use outbe_nod::NodCertifiedGenerationProjection;
 #[cfg(feature = "ocomp-integration")]
@@ -29,7 +28,6 @@ use outbe_ocomp_protocol::{
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_ocompregistry::precompile::IOcompRegistry;
-use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 #[cfg(feature = "ocomp-integration")]
 use outbe_primitives::time::WorldwideDay;
 use serde::{Deserialize, Serialize};
@@ -47,12 +45,10 @@ use crate::internal::{
     parse::{self, ScheduledUpdate, VoteStatus},
     shell::Sh,
 };
-use crate::ocomp_evidence::sha256_hex;
 use crate::world::state::FixtureState;
 use crate::world::validators::{Operator, Validator};
 
 mod client;
-mod compressed_entities;
 #[cfg(feature = "ocomp-integration")]
 mod desis;
 mod finality;
@@ -65,6 +61,7 @@ mod oracle;
 #[cfg(feature = "ocomp-integration")]
 mod promis;
 mod radicle;
+mod state_entities;
 mod tribute;
 mod validators;
 mod zero_fee;
@@ -76,7 +73,6 @@ mod ocomp_observation_tests;
 mod tests;
 
 pub use client::{IOracle, ITributeFactory, Rpc, TxOutcome};
-pub use compressed_entities::CompressedEntityAtHeader;
 pub use finality::{BlockCommitmentV1, FinalizedCheckpoint};
 pub use governance::StablecoinProposal;
 pub use materialization::NodMaterializationObservationV1;

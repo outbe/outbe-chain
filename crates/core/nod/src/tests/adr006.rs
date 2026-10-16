@@ -1,14 +1,9 @@
-use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
-use std::sync::Arc;
-
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_compressed_entities::WwdEntityId;
-use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope};
-use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::time::{
     date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key, WorldwideDay,
 };
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     math::constants::REAL_ID_SHIFT,
@@ -53,32 +48,22 @@ fn coen_iso_one_maps_to_the_center_price_bin_at_six_decimals() {
 
 #[test]
 fn reverted_issuance_rolls_back_overlay_compact_state_and_events() {
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let body = item(Address::repeat_byte(0x66));
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
-        begin_block(storage.clone(), &scope).unwrap();
         let outcome: Result<()> = storage.with_checkpoint(|| {
             api::add_nod(
                 &storage,
-                outbe_compressed_entities::ExecutionReaders {
-                    scope: &scope,
-                    parent: &parent,
-                },
                 &body,
                 U256::from(5),
                 crate::test_support::sealed_terms(&storage, &body, U256::from(5)),
             )?;
-            assert!(api::get_item(&storage, &scope, &parent, body.nod_id)?.is_some());
+            assert!(api::get_item(&storage, body.nod_id)?.is_some());
             Err(PrecompileError::Revert("nested caller reverted".into()))
         });
         assert!(outcome.is_err());
         assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
-        assert!(api::get_item(&storage, &scope, &parent, body.nod_id)
-            .unwrap()
-            .is_none());
+        assert!(api::get_item(&storage, body.nod_id).unwrap().is_none());
     });
 }
 
@@ -102,50 +87,40 @@ fn nod_identity_and_abi_boundary_preserve_exact_32_bytes() {
 
 #[test]
 fn membership_changes_preserve_bucket_body_and_commitment_until_last_removal() {
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let first = item(Address::repeat_byte(0x71));
     let second = item(Address::repeat_byte(0x72));
-    let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, first.bucket_key);
+    let bucket_id = first.bucket_key;
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
-        begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &first,
             U256::from(5),
             crate::test_support::sealed_terms(&storage, &first, U256::from(5)),
         )
         .unwrap();
         let original = NodContract::new(storage.clone())
-            .get_bucket_verified(&scope, &parent, bucket_id)
+            .buckets
+            .get(bucket_id)
             .unwrap()
             .unwrap();
         api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &second,
             U256::from(5),
             crate::test_support::sealed_terms(&storage, &second, U256::from(5)),
         )
         .unwrap();
         let after_issue = NodContract::new(storage.clone())
-            .get_bucket_verified(&scope, &parent, bucket_id)
+            .buckets
+            .get(bucket_id)
             .unwrap()
             .unwrap();
         assert_eq!(
             original, after_issue,
             "adding another NOD must not rewrite the shared bucket commitment"
         );
-        assert_eq!(original.stored_body(), after_issue.stored_body());
+
         assert_eq!(
             NodContract::new(storage.clone())
                 .bucket_nod_count
@@ -154,19 +129,16 @@ fn membership_changes_preserve_bucket_body_and_commitment_until_last_removal() {
             2
         );
 
-        let loaded_item = api::load_item(&storage, &scope, &parent, first.nod_id)
-            .unwrap()
-            .unwrap();
-        let bucket = api::load_bucket(&storage, &scope, &parent, bucket_id)
-            .unwrap()
-            .unwrap();
-        api::remove_nod(&storage, &scope, loaded_item, bucket).unwrap();
+        let loaded_item = api::load_item(&storage, first.nod_id).unwrap().unwrap();
+        let bucket = api::load_bucket(&storage, bucket_id).unwrap().unwrap();
+        api::remove_nod(&storage, loaded_item, bucket).unwrap();
         let after_removal = NodContract::new(storage.clone())
-            .get_bucket_verified(&scope, &parent, bucket_id)
+            .buckets
+            .get(bucket_id)
             .unwrap()
             .unwrap();
         assert_eq!(original, after_removal);
-        assert_eq!(original.stored_body(), after_removal.stored_body());
+
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.bucket_nod_count.read(&first.bucket_key).unwrap(), 1);
         assert_eq!(
@@ -177,19 +149,13 @@ fn membership_changes_preserve_bucket_body_and_commitment_until_last_removal() {
         );
         assert_eq!(nod.bucket_nod_index.read(&second.nod_id).unwrap(), 0);
 
-        let loaded_item = api::load_item(&storage, &scope, &parent, second.nod_id)
-            .unwrap()
-            .unwrap();
-        let bucket = api::load_bucket(&storage, &scope, &parent, bucket_id)
-            .unwrap()
-            .unwrap();
-        api::remove_nod(&storage, &scope, loaded_item, bucket).unwrap();
+        let loaded_item = api::load_item(&storage, second.nod_id).unwrap().unwrap();
+        let bucket = api::load_bucket(&storage, bucket_id).unwrap().unwrap();
+        api::remove_nod(&storage, loaded_item, bucket).unwrap();
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.bucket_nod_count.read(&first.bucket_key).unwrap(), 0);
         assert_eq!(nod.total_supply().unwrap(), 0);
-        assert!(api::get_bucket(&storage, &scope, &parent, bucket_id)
-            .unwrap()
-            .is_none());
+        assert!(api::get_bucket(&storage, bucket_id).unwrap().is_none());
     });
 }
 
@@ -289,40 +255,25 @@ fn entry_price_day_is_the_last_closed_utc_day() {
 
 #[test]
 fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let first = item(Address::repeat_byte(0x73));
     let second = item(Address::repeat_byte(0x74));
-    let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, first.bucket_key);
+    let bucket_id = first.bucket_key;
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
-        begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &first,
             U256::from(5),
             crate::test_support::sealed_terms(&storage, &first, U256::from(5)),
         )
         .unwrap();
         let nod = NodContract::new(storage.clone());
-        let original = nod
-            .get_bucket_verified(&scope, &parent, bucket_id)
-            .unwrap()
-            .unwrap();
+        let original = nod.buckets.get(bucket_id).unwrap().unwrap();
         nod.bucket_nod_count
             .write(&first.bucket_key, u32::MAX)
             .unwrap();
         let error = api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &second,
             U256::from(5),
             crate::test_support::sealed_terms(&storage, &second, U256::from(5)),
@@ -336,37 +287,24 @@ fn member_count_overflow_and_underflow_roll_back_nod_mutations() {
             nod.bucket_nod_count.read(&first.bucket_key).unwrap(),
             u32::MAX
         );
-        assert!(api::get_item(&storage, &scope, &parent, second.nod_id)
-            .unwrap()
-            .is_none());
+        assert!(api::get_item(&storage, second.nod_id).unwrap().is_none());
 
         nod.bucket_nod_count.write(&first.bucket_key, 0).unwrap();
-        let loaded = api::load_item(&storage, &scope, &parent, first.nod_id)
-            .unwrap()
-            .unwrap();
-        let bucket = api::load_bucket(&storage, &scope, &parent, bucket_id)
-            .unwrap()
-            .unwrap();
-        let error = api::remove_nod(&storage, &scope, loaded, bucket).unwrap_err();
+        let loaded = api::load_item(&storage, first.nod_id).unwrap().unwrap();
+        let bucket = api::load_bucket(&storage, bucket_id).unwrap().unwrap();
+        let error = api::remove_nod(&storage, loaded, bucket).unwrap_err();
         assert!(
             matches!(error, PrecompileError::Revert(message) if message.contains("member count underflow"))
         );
         assert_eq!(nod.total_supply().unwrap(), 1);
-        assert!(api::get_item(&storage, &scope, &parent, first.nod_id)
-            .unwrap()
-            .is_some());
-        assert_eq!(
-            nod.get_bucket_verified(&scope, &parent, bucket_id)
-                .unwrap()
-                .unwrap(),
-            original
-        );
+        assert!(api::get_item(&storage, first.nod_id).unwrap().is_some());
+        assert_eq!(nod.buckets.get(bucket_id).unwrap().unwrap(), original);
     });
 }
 
 #[test]
 fn nod_error_and_calculation_amount_never_return_fatal() {
-    let domain_error: PrecompileError = crate::errors::NodError::NonNodItemPayload.into();
+    let domain_error: PrecompileError = crate::errors::NodError::NodNotFound.into();
     assert!(matches!(domain_error, PrecompileError::Revert(_)));
 
     let mut corrupted = item(Address::repeat_byte(0x75));
@@ -443,6 +381,11 @@ fn nod_contract_slot_layout_is_pinned() {
 fn certified_generation_is_available_through_the_public_nod_abi() {
     let worldwide_day = WorldwideDay::new(20_260_726);
     let generation = NodCertifiedGenerationProjection {
+        source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
+            block_number: 1,
+            block_hash: B256::repeat_byte(0x71),
+            state_root: B256::repeat_byte(0x72),
+        },
         worldwide_day,
         generation: 9,
         job_id: B256::repeat_byte(0x44),
@@ -461,8 +404,6 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
         next_nod_ordinal: 129,
         last_progress_height: 4_096,
     };
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
-    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -478,6 +419,15 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
             .unwrap();
         nod.ocomp_output_manifest_root
             .write(&worldwide_day, generation.output_manifest_root)
+            .unwrap();
+        nod.ocomp_source_block_number
+            .write(&worldwide_day, generation.source_checkpoint.block_number)
+            .unwrap();
+        nod.ocomp_source_block_hash
+            .write(&worldwide_day, generation.source_checkpoint.block_hash)
+            .unwrap();
+        nod.ocomp_source_state_root
+            .write(&worldwide_day, generation.source_checkpoint.state_root)
             .unwrap();
         nod.ocomp_generation_metadata
             .write(&worldwide_day, generation.metadata_word())
@@ -511,17 +461,8 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
             worldwideDay: worldwide_day.into(),
         }
         .abi_encode();
-        let output = crate::precompile::dispatch(
-            storage.clone(),
-            ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
-            &call,
-            Address::ZERO,
-            U256::ZERO,
-        )
-        .unwrap();
+        let output =
+            crate::precompile::dispatch(storage.clone(), &call, Address::ZERO, U256::ZERO).unwrap();
         let actual =
             crate::precompile::INod::certifiedGenerationCall::abi_decode_returns(&output).unwrap();
 
@@ -546,8 +487,6 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
 #[test]
 fn absent_certified_generation_has_an_explicit_public_abi_result() {
     let worldwide_day = WorldwideDay::new(20_260_727);
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
-    let scope = ExecutionScope::default();
     let mut provider = HashMapStorageProvider::new(1);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -555,17 +494,8 @@ fn absent_certified_generation_has_an_explicit_public_abi_result() {
             worldwideDay: worldwide_day.into(),
         }
         .abi_encode();
-        let output = crate::precompile::dispatch(
-            storage,
-            ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
-            &call,
-            Address::ZERO,
-            U256::ZERO,
-        )
-        .unwrap();
+        let output =
+            crate::precompile::dispatch(storage, &call, Address::ZERO, U256::ZERO).unwrap();
         let actual =
             crate::precompile::INod::certifiedGenerationCall::abi_decode_returns(&output).unwrap();
 
@@ -614,6 +544,11 @@ fn the_certified_bundle_survives_a_read_and_leaves_nothing_behind_when_cleared()
             .write(&worldwide_day, B256::repeat_byte(0x33))
             .unwrap();
         let shape = NodCertifiedGenerationProjection {
+            source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
+                block_number: 1,
+                block_hash: B256::repeat_byte(0x71),
+                state_root: B256::repeat_byte(0x72),
+            },
             worldwide_day,
             generation: 9,
             job_id: B256::repeat_byte(0x44),
@@ -632,6 +567,15 @@ fn the_certified_bundle_survives_a_read_and_leaves_nothing_behind_when_cleared()
             next_nod_ordinal: 0,
             last_progress_height: 4_096,
         };
+        nod.ocomp_source_block_number
+            .write(&worldwide_day, shape.source_checkpoint.block_number)
+            .unwrap();
+        nod.ocomp_source_block_hash
+            .write(&worldwide_day, shape.source_checkpoint.block_hash)
+            .unwrap();
+        nod.ocomp_source_state_root
+            .write(&worldwide_day, shape.source_checkpoint.state_root)
+            .unwrap();
         nod.ocomp_generation_metadata
             .write(&worldwide_day, shape.metadata_word())
             .unwrap();
@@ -652,6 +596,7 @@ fn the_certified_bundle_survives_a_read_and_leaves_nothing_behind_when_cleared()
             .ocomp_certified_generation(worldwide_day)
             .unwrap()
             .expect("a generation with a non-zero number is present");
+        assert_eq!(read.source_checkpoint, shape.source_checkpoint);
         assert_eq!(
             read.protocol_bundle_hash, bundle,
             "materialization reads the bundle from the chain, so it has to come back"
@@ -666,4 +611,29 @@ fn the_certified_bundle_survives_a_read_and_leaves_nothing_behind_when_cleared()
             "clearing has to wipe the bundle too, or the day reads as residual state"
         );
     });
+}
+
+#[test]
+fn absent_generation_rejects_residual_source_checkpoint_words() {
+    let day = WorldwideDay::new(20_260_726);
+    for component in 0..3 {
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let nod = NodContract::new(storage);
+            match component {
+                0 => nod.ocomp_source_block_number.write(&day, 42).unwrap(),
+                1 => nod
+                    .ocomp_source_block_hash
+                    .write(&day, B256::repeat_byte(0x71))
+                    .unwrap(),
+                _ => nod
+                    .ocomp_source_state_root
+                    .write(&day, B256::repeat_byte(0x72))
+                    .unwrap(),
+            }
+            assert!(nod.ocomp_certified_generation(day).is_err());
+            nod.clear_ocomp_certified_generation(day).unwrap();
+            assert!(nod.ocomp_certified_generation(day).unwrap().is_none());
+        });
+    }
 }

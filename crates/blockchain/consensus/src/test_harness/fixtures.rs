@@ -27,9 +27,7 @@ use commonware_utils::{
 };
 use outbe_primitives::{
     consensus::DkgBoundaryArtifact,
-    reshare_artifact::{
-        encode_outbe_block_artifacts, CompressedEntitiesRootArtifact, OutbeBlockArtifacts,
-    },
+    reshare_artifact::{encode_outbe_block_artifacts, OutbeBlockArtifacts},
     OutbeHeader,
 };
 
@@ -191,22 +189,13 @@ pub fn boundary_artifact(
     .unwrap()
 }
 
-pub fn linked_headers(
-    genesis: OutbeHeader,
-    last_height: u64,
-    commitment_scheme_version: u32,
-    mut root: impl FnMut() -> B256,
-) -> Vec<OutbeHeader> {
+pub fn linked_headers(genesis: OutbeHeader, last_height: u64) -> Vec<OutbeHeader> {
     let mut headers = vec![genesis];
     for height in 1..=last_height {
         headers.push(OutbeHeader::new(Header {
             number: height,
             parent_hash: headers.last().unwrap().hash_slow(),
             extra_data: encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-                compressed_entities_root: Some(CompressedEntitiesRootArtifact {
-                    commitment_scheme_version,
-                    r_sealed: root(),
-                }),
                 ..Default::default()
             })
             .unwrap(),

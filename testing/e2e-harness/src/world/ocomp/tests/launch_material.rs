@@ -42,38 +42,6 @@ fn release_ocomp_layout_uses_the_scenario_base_and_never_the_debug_override() {
 
 #[cfg(feature = "ocomp-integration")]
 #[test]
-fn snapshot_exporter_uses_the_exact_node_projection_identity() {
-    let topology = topology_with_validators(4);
-    let validator_index = 2;
-    let mut command = Command::new("outbe-ocomp");
-
-    crate::world::projection::ensure_node_config(&topology.cfg, validator_index).unwrap();
-    configure_snapshot_exporter_projection(&mut command, &topology.cfg, validator_index).unwrap();
-
-    let environment = command
-        .get_envs()
-        .map(|(name, value)| {
-            (
-                name.to_string_lossy().into_owned(),
-                value.map(|value| value.to_string_lossy().into_owned()),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    assert_eq!(
-        environment.get("OUTBE_OCOMP_STORAGE_CONFIG"),
-        Some(&Some(
-            topology
-                .cfg
-                .projection_storage_config(validator_index)
-                .display()
-                .to_string()
-        ))
-    );
-    assert_eq!(environment.len(), 1);
-}
-
-#[cfg(feature = "ocomp-integration")]
-#[test]
 fn staged_joiner_domain_uses_its_registration_key_and_the_pinned_bundle() {
     let topology = topology_with_validators(4);
     let founder_bundle = topology

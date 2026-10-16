@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::{B256, U256};
 use commonware_codec::Encode as _;
-use outbe_compressed_entities::TributeBodyV1;
 use outbe_node::ocomp::finality::{PublicAccountProofV1, PublicBlockViewV1, PublicStorageProofV1};
 use outbe_ocomp_protocol::{
     intent::{intent_storage_key, JobIntentV1},
@@ -10,6 +9,7 @@ use outbe_ocomp_protocol::{
     SchemaLimits,
 };
 use outbe_primitives::addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS, VALIDATOR_SET_ADDRESS};
+use outbe_primitives::entity_codec::TributeBodyV1;
 use outbe_primitives::time::WorldwideDay;
 use reth_primitives_traits::Account;
 use reth_trie::{AccountProof, StorageProof};

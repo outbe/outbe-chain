@@ -1,4 +1,3 @@
-use outbe_compressed_entities::CollectionError;
 use outbe_ocomp_protocol::ProtocolError;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::time::WorldwideDay;
@@ -597,9 +596,6 @@ pub enum MetadosisStorageCorruptionError {
 
     #[error("OCOMP pending nonce exceeds u32")]
     OcompPendingNonceExceedsU32,
-
-    #[error(transparent)]
-    Collection(#[from] CollectionError),
 
     #[error("hash OCOMP intent: {error}")]
     HashOcompIntent { error: ProtocolError },

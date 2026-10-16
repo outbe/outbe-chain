@@ -1,17 +1,12 @@
-use outbe_compressed_entities::test_support::seed_compressed_entities_genesis;
-use std::sync::Arc;
-
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_compressed_entities::{begin_block, ExecutionReaders, ExecutionScope, WwdEntityId};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::api::ModifyAuth;
 use outbe_nod::{
     api as nod_api, constants::CALL_NOTICE_PERIOD, precompile::INod, NodContract, NodIssueParams,
-    NodRepositoryReader,
 };
-use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     error::PrecompileError,
@@ -70,7 +65,6 @@ fn gratis_balance(storage: &StorageHandle<'_>, owner: Address) -> U256 {
 }
 
 fn seed_production_nod_genesis(storage: &StorageHandle<'_>) {
-    seed_compressed_entities_genesis(storage).expect("CE genesis fixture");
     // These tests exercise the production call terms.
     NodContract::new(storage.clone())
         .config_profile
@@ -129,8 +123,6 @@ fn seed_window_vwap(storage: &StorageHandle<'_>, iso_code: u16, rate: U256) {
 
 struct World {
     provider: HashMapStorageProvider,
-    scope: ExecutionScope,
-    parent: NodRepositoryReader,
 }
 
 impl World {
@@ -138,7 +130,7 @@ impl World {
         let mut provider = HashMapStorageProvider::new(1);
         provider.set_block_number(1);
         provider.set_timestamp(U256::from(1_700_000_000));
-        let scope = ExecutionScope::default();
+
         provider.stub_sub_call_at_selector(
             outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
             IVaultRouter::assetVaultsCountCall::SELECTOR,
@@ -153,30 +145,18 @@ impl World {
         );
         StorageHandle::enter(&mut provider, |storage| {
             seed_production_nod_genesis(&storage);
-            begin_block(storage, &scope).unwrap();
         });
-        Self {
-            provider,
-            scope,
-            parent: outbe_nod::nod_reader(Arc::new(MemoryStorage::new())),
-        }
+        Self { provider }
     }
 
-    fn enter<R>(
-        &mut self,
-        call: impl FnOnce(StorageHandle<'_>, &ExecutionScope, &NodRepositoryReader) -> R,
-    ) -> R {
-        let scope = &self.scope;
-        let parent = self.parent.clone();
-        StorageHandle::enter(&mut self.provider, |storage| call(storage, scope, &parent))
+    fn enter<R>(&mut self, call: impl FnOnce(StorageHandle<'_>) -> R) -> R {
+        StorageHandle::enter(&mut self.provider, |storage| call(storage))
     }
 
     fn issue(&mut self, input: &NodIssueParams) -> WwdEntityId {
-        self.enter(|storage, scope, parent| {
+        self.enter(|storage| {
             api::issue_nod(
                 &storage,
-                scope,
-                parent,
                 &outbe_nod::test_support::encrypted_fixture(input, CHAIN_ID),
             )
         })
@@ -184,12 +164,12 @@ impl World {
     }
 
     fn mine_gratis(&mut self, request: api::MineGratisRequest) -> Result<U256, PrecompileError> {
-        self.enter(|storage, scope, parent| {
-            let owner = nod_api::get_item(&storage, scope, parent, request.nod_id)?
+        self.enter(|storage| {
+            let owner = nod_api::get_item(&storage, request.nod_id)?
                 .expect("issued Nod")
                 .owner;
             let before = gratis_balance(&storage, owner);
-            let encrypted = api::mine_gratis(&storage, scope, parent, request)?;
+            let encrypted = api::mine_gratis(&storage, request)?;
             assert_eq!(
                 encrypted,
                 outbe_gratis::api::balance_ct(storage.clone(), owner)?
@@ -199,8 +179,8 @@ impl World {
     }
 
     fn pow_nonce(&mut self, nod_id: WwdEntityId) -> u64 {
-        let owner = self.enter(|storage, scope, parent| {
-            nod_api::get_item(&storage, scope, parent, nod_id)
+        let owner = self.enter(|storage| {
+            nod_api::get_item(&storage, nod_id)
                 .unwrap()
                 .expect("issued Nod")
                 .owner
@@ -211,11 +191,9 @@ impl World {
     /// Settles by ERC20 in the reference currency; a free Nod moves no tokens.
     fn settle(&mut self, nod_id: WwdEntityId, caller: Address) -> Result<(), PrecompileError> {
         self.register_reference_currency_asset(PAYMENT_ASSET);
-        self.enter(|storage, scope, parent| {
+        self.enter(|storage| {
             api::settle_nod(
                 &storage,
-                scope,
-                parent,
                 api::SettleNodRequest {
                     caller,
                     nod_id,
@@ -250,7 +228,7 @@ impl World {
 
     /// Registers `COEN/<iso>` and prices it live only.
     fn publish_coen_spot(&mut self, iso_code: u16, rate: U256) {
-        self.enter(|storage, _, _| {
+        self.enter(|storage| {
             let pair = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
             let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             if oracle.pair_index_of(pair).unwrap() == 0 {
@@ -274,7 +252,7 @@ impl World {
     /// the trailing VWAP window settlement converts at.
     fn publish_coen_rate(&mut self, iso_code: u16, rate: U256) {
         self.publish_coen_spot(iso_code, rate);
-        self.enter(|storage, _, _| {
+        self.enter(|storage| {
             use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
             let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso_code)
                 .unwrap()
@@ -301,10 +279,8 @@ impl World {
     /// scan that decides *when* to stamp. What matters here is the gate
     /// `settle_nod` applies once it is stamped.
     fn mark_called(&mut self, nod_id: WwdEntityId, at: u64) {
-        self.enter(|storage, scope, parent| {
-            let item = nod_api::get_item(&storage, scope, parent, nod_id)
-                .unwrap()
-                .unwrap();
+        self.enter(|storage| {
+            let item = nod_api::get_item(&storage, nod_id).unwrap().unwrap();
             let nod = NodContract::new(storage);
             nod.bucket_called_at.write(&item.bucket_key, at).unwrap();
             // A free Nod's bucket seals no call terms; give it the notice a priced one seals.
@@ -328,10 +304,9 @@ const EUR_ASSET: Address = Address::new([0x72; 20]);
 mod materialization;
 
 fn public_nod_data(world: &mut World, nod_id: WwdEntityId) -> INod::NodData {
-    world.enter(|storage, scope, parent| {
+    world.enter(|storage| {
         let bytes = outbe_nod::precompile::dispatch(
             storage,
-            ExecutionReaders { scope, parent },
             &INod::getNodCall {
                 nodId: nod_id.to_u256(),
             }
@@ -364,7 +339,7 @@ fn paid_event(world: &World) -> INodFactory::NodSettled {
 
 fn is_settled(world: &mut World, nod_id: WwdEntityId) -> bool {
     world
-        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .enter(|storage| nod_api::get_item(&storage, nod_id))
         .unwrap()
         .unwrap()
         .is_settled
@@ -397,11 +372,9 @@ fn settle_erc20(
             .provider
             .stub_sub_call_at_selector(asset, selector, Bytes::from(ret));
     }
-    world.enter(|storage, scope, parent| {
+    world.enter(|storage| {
         api::settle_nod(
             &storage,
-            scope,
-            parent,
             api::SettleNodRequest {
                 caller: owner,
                 nod_id,

@@ -78,9 +78,6 @@ pub(crate) enum SnapshotOcompError {
     /// The protocol bundle changed size during reading.
     #[error("protocol bundle changed size")]
     ProtocolBundleChangedSize,
-    /// The OCOMP projection checkpoint differs from the retained header.
-    #[error("OCOMP projection checkpoint differs from retained canonical header")]
-    ProjectionCheckpointHeaderMismatch,
     /// Multiple retained pins bind the same canonical intent.
     #[error("multiple retained pins bind the same canonical intent")]
     MultipleRetainedPinsForIntent,
@@ -175,10 +172,7 @@ pub(crate) enum SnapshotOcompError {
     },
     /// The closure checkpoint conflicts with durable projection.
     #[error("closure checkpoint is ahead of or conflicts with durable projection")]
-    ClosureAheadOrConflictsWithProjection,
-    /// A nonzero closure checkpoint exists without durable projection.
-    #[error("nonzero closure checkpoint exists without durable projection")]
-    NonzeroClosureWithoutProjection,
+    ClosureAheadOrConflictsWithExecution,
     /// A replay header differs from canonical identity.
     #[error("replay header differs from canonical identity at {height}")]
     ReplayHeaderIdentityMismatch {
@@ -311,9 +305,6 @@ pub(crate) enum SnapshotOcompError {
     /// A retained pin finality window differs from canonical finality.
     #[error("retained pin finality window differs from canonical finality")]
     RetainedPinFinalityWindowMismatch,
-    /// Tribute visit count calculation overflowed.
-    #[error("Tribute visit count overflow")]
-    TributeVisitCountOverflow,
     /// A surviving discovery ACK differs from receipt commitment.
     #[error("surviving discovery ACK differs from receipt commitment")]
     SurvivingAckReceiptCommitmentMismatch,
@@ -434,28 +425,11 @@ pub(crate) enum SnapshotOcompError {
         /// Job identifier.
         job: B256,
     },
-    /// Validating Tribute inputs for a lease and day failed.
-    #[error("Tribute inputs for lease {input_lease_id}, day {wwd}")]
-    TributeInputsForLease {
-        /// Input lease identifier.
-        input_lease_id: B256,
-        /// Worldwide day.
-        wwd: u32,
-    },
 }
 
 /// Typed incomplete-observation reasons for offline snapshot validation.
 #[derive(Debug, Error)]
 pub(crate) enum SnapshotIncompleteError {
-    #[error(
-        "live body equality requires the same CE and projection identity: Q={q_height} ({q_hash}) P={p_height} ({p_hash})"
-    )]
-    LiveBodyEqualityFrontierMismatch {
-        q_height: u64,
-        q_hash: B256,
-        p_height: u64,
-        p_hash: B256,
-    },
     #[error("local result inventory stopped after {results} records")]
     LocalResultInventoryStopped { results: u64 },
     #[error("local result disappeared for job {job_id}")]
@@ -509,14 +483,6 @@ pub(crate) enum SnapshotIncompleteError {
     MissingRetainedPinRequestHeader { number: u64 },
     #[error("missing canonical pin request hash B={number}")]
     MissingCanonicalPinRequestHash { number: u64 },
-    #[error("missing required Tribute inputs for lease {input_lease_id}, day {wwd}")]
-    MissingRequiredTributeInputs { input_lease_id: B256, wwd: u32 },
-    #[error("Tribute lease {input_lease_id} scan stopped at {visited}/{authenticated_day_count} records")]
-    TributeLeaseScanStopped {
-        input_lease_id: B256,
-        visited: u64,
-        authenticated_day_count: u32,
-    },
     #[error("job {id}: prepared receipt observed; complete receipt comparison unavailable")]
     PreparedReceiptObserved { id: B256 },
     #[error("job {id}: input catalog has no sealed header; exact comparison unavailable")]

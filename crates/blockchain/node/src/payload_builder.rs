@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use alloy_primitives::B256;
 use outbe_evm::OutbeEvmConfig;
 use outbe_primitives::{
     error::PrecompileError,
@@ -153,7 +152,6 @@ where
             .evm_config
             .builder_for_next_block(&mut db, &parent_header, env)
             .map_err(PayloadBuilderError::other)?;
-        let compressed_tree_service = self.evm_config.compressed_tree_service();
         debug!(
             target: "payload_builder",
             id = %payload_id,
@@ -241,15 +239,7 @@ where
             return Ok(BuildOutcome::Cancelled);
         }
         let outcome = if let Some(mut handle) = state_root_handle {
-            // CE end-block cleanup is consensus state. Deliver its zeroing
-            // changes to the parallel trie task before detaching the hook and
-            // freezing the precomputed root.
-            if !self.evm_config.ocomp_lifecycle_active_at(block_number) {
-                builder
-                    .executor_mut()
-                    .finalize_compressed_entities()
-                    .map_err(PayloadBuilderError::evm)?;
-            }
+            // Deliver all EVM state changes before the parallel root is frozen.
             builder
                 .executor_mut()
                 .prepare_final_header_artifacts(attributes.timestamp_millis_part())
@@ -272,13 +262,7 @@ where
             builder.finish(state_provider.as_ref(), None)?
         };
 
-        let payload = finalization::into_payload(
-            outcome,
-            &mut db,
-            state,
-            &context,
-            compressed_tree_service.as_ref(),
-        )?;
+        let payload = finalization::into_payload(outcome, &mut db, state, &context)?;
         Ok(BuildOutcome::Better {
             payload,
             cached_reads,
@@ -286,39 +270,19 @@ where
     }
 }
 
-fn discard_failed_payload_candidate(
-    service: Option<&Arc<outbe_compressed_entities::CompressedTreeService>>,
-    block_number: u64,
-    block_hash: B256,
-) -> Result<(), PayloadBuilderError> {
-    if let Some(service) = service {
-        service
-            .discard_candidate(block_number, block_hash)
-            .map_err(PayloadBuilderError::other)?;
-    }
-    Ok(())
-}
-
-fn ce_work_admission_error(error: &BlockExecutionError) -> Option<&PrecompileError> {
+fn precompile_execution_error(error: &BlockExecutionError) -> Option<&PrecompileError> {
     error.as_internal()?.downcast_other::<PrecompileError>()
 }
 
 fn payload_execution_failure_kind(error: &BlockExecutionError) -> &'static str {
     if matches!(
-        ce_work_admission_error(error),
+        precompile_execution_error(error),
         Some(PrecompileError::BodyReadRequestDeadline)
     ) {
         BODY_READ_REQUEST_DEADLINE
     } else {
         OTHER_PAYLOAD_EXECUTION_FAILURE
     }
-}
-
-fn ce_local_readiness_error(error: &BlockExecutionError) -> bool {
-    matches!(
-        ce_work_admission_error(error),
-        Some(PrecompileError::TreeUnavailable(_))
-    )
 }
 
 #[cfg(test)]

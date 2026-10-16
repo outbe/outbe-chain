@@ -1,162 +1,5 @@
 use super::*;
 
-#[derive(Debug)]
-pub(super) struct FailOncePartitionLookup {
-    pub(super) parent_root: B256,
-    pub(super) calls: AtomicUsize,
-}
-
-impl outbe_compressed_entities::AuthenticatedParentTree for FailOncePartitionLookup {
-    fn parent_block_hash(&self) -> B256 {
-        B256::ZERO
-    }
-
-    fn parent_root(&self) -> B256 {
-        self.parent_root
-    }
-
-    fn read_leaf_verified(
-        &self,
-        _entity: outbe_compressed_entities::EntityRef,
-        expected_parent_root: B256,
-    ) -> outbe_primitives::error::Result<Option<outbe_compressed_entities::Commitment>> {
-        if expected_parent_root != self.parent_root {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "injected parent root mismatch".into(),
-            ));
-        }
-        Ok(None)
-    }
-
-    fn partition_present_verified(
-        &self,
-        _partition: outbe_compressed_entities::PartitionRef,
-        expected_parent_root: B256,
-    ) -> outbe_primitives::error::Result<bool> {
-        if expected_parent_root != self.parent_root {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "injected parent root mismatch".into(),
-            ));
-        }
-        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
-            return Err(outbe_primitives::error::PrecompileError::TreeUnavailable(
-                "injected partition lookup failure after Promis credit".into(),
-            ));
-        }
-        Ok(false)
-    }
-
-    fn partition_root_verified(
-        &self,
-        _partition: outbe_compressed_entities::PartitionRef,
-        expected_parent_root: B256,
-    ) -> outbe_primitives::error::Result<Option<B256>> {
-        if expected_parent_root != self.parent_root {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "injected parent root mismatch".into(),
-            ));
-        }
-        Ok(None)
-    }
-
-    fn prepare_seal(
-        &self,
-        block_number: u64,
-        mutations: &[outbe_compressed_entities::FinalLeafMutation],
-        retirements: &[outbe_compressed_entities::PartitionRef],
-    ) -> outbe_primitives::error::Result<outbe_compressed_entities::ProvisionalTreeBatch> {
-        if !mutations.is_empty() || !retirements.is_empty() {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "empty injected parent received unexpected CE changes".into(),
-            ));
-        }
-        outbe_compressed_entities::ProvisionalTreeBatch::new_identity(
-            block_number,
-            B256::ZERO,
-            B256::ZERO,
-        )
-        .map_err(|error| {
-            outbe_primitives::error::PrecompileError::Fatal(format!(
-                "build injected identity batch: {error}"
-            ))
-        })
-    }
-}
-
-#[derive(Debug)]
-pub(super) struct FailSecondPartitionLookup {
-    pub(super) parent_root: B256,
-    pub(super) partition_root: B256,
-    pub(super) calls: AtomicUsize,
-}
-
-impl outbe_compressed_entities::AuthenticatedParentTree for FailSecondPartitionLookup {
-    fn parent_block_hash(&self) -> B256 {
-        B256::ZERO
-    }
-
-    fn parent_root(&self) -> B256 {
-        self.parent_root
-    }
-
-    fn read_leaf_verified(
-        &self,
-        _entity: outbe_compressed_entities::EntityRef,
-        expected_parent_root: B256,
-    ) -> outbe_primitives::error::Result<Option<outbe_compressed_entities::Commitment>> {
-        if expected_parent_root != self.parent_root {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "injected parent root mismatch".into(),
-            ));
-        }
-        Ok(None)
-    }
-
-    fn partition_present_verified(
-        &self,
-        partition: outbe_compressed_entities::PartitionRef,
-        expected_parent_root: B256,
-    ) -> outbe_primitives::error::Result<bool> {
-        Ok(self
-            .partition_root_verified(partition, expected_parent_root)?
-            .is_some())
-    }
-
-    fn partition_root_verified(
-        &self,
-        partition: outbe_compressed_entities::PartitionRef,
-        expected_parent_root: B256,
-    ) -> outbe_primitives::error::Result<Option<B256>> {
-        if expected_parent_root != self.parent_root
-            || !matches!(
-                partition,
-                outbe_compressed_entities::PartitionRef::TributeWwd(_)
-            )
-        {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "injected partition authentication mismatch".into(),
-            ));
-        }
-        if self.calls.fetch_add(1, Ordering::SeqCst) == 1 {
-            return Err(outbe_primitives::error::PrecompileError::TreeUnavailable(
-                "injected second partition lookup failure".into(),
-            ));
-        }
-        Ok(Some(self.partition_root))
-    }
-
-    fn prepare_seal(
-        &self,
-        _block_number: u64,
-        _mutations: &[outbe_compressed_entities::FinalLeafMutation],
-        _retirements: &[outbe_compressed_entities::PartitionRef],
-    ) -> outbe_primitives::error::Result<outbe_compressed_entities::ProvisionalTreeBatch> {
-        Err(outbe_primitives::error::PrecompileError::Fatal(
-            "multi-WWD rollback test does not seal its synthetic parent tree".into(),
-        ))
-    }
-}
-
 pub(super) fn create_waiting_day(
     storage: &StorageHandle,
     wwd: outbe_primitives::time::WorldwideDay,
@@ -194,12 +37,7 @@ pub(super) struct FixtureTribute {
     pub(super) nominal: U256,
 }
 
-pub(super) fn issue_one_tribute_in_scope(
-    storage: &StorageHandle,
-    scope: &ExecutionScope,
-    parent: &TestParent,
-    input: FixtureTribute,
-) {
+pub(super) fn issue_one_tribute(storage: &StorageHandle, input: FixtureTribute) {
     let FixtureTribute {
         owner,
         wwd,
@@ -208,8 +46,6 @@ pub(super) fn issue_one_tribute_in_scope(
     let mut tribute = TributeContract::new(storage.clone());
     crate::tests::tribute_fixture::issue_sealed_tribute(
         &mut tribute,
-        scope,
-        parent,
         crate::tests::tribute_fixture::FixtureTribute {
             owner,
             wwd,
@@ -278,30 +114,8 @@ pub(super) fn seed_missed_offering_day(
     })
 }
 
-pub(super) fn begin_persistent_active_scope(
-    provider: &mut HashMapStorageProvider,
-) -> (ExecutionScope, TestParent) {
-    let scope = ExecutionScope::default();
-    let parent = TestParent::empty();
-    begin_scope_with_persisted_parent(
-        provider,
-        &scope,
-        outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
-    );
-    (scope, parent)
-}
-
-pub(super) fn end_persistent_active_scope(
-    provider: &mut HashMapStorageProvider,
-    scope: &ExecutionScope,
-) {
-    StorageHandle::enter(provider, |storage| end_block(storage, scope).unwrap());
-}
-
 pub(super) fn run_start_command(
     provider: &mut HashMapStorageProvider,
-    scope: &ExecutionScope,
-    parent: &TestParent,
     block_number: u64,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<()> {
@@ -314,17 +128,6 @@ pub(super) fn run_start_command(
             BlockContext::empty_for_tests(block_number, timestamp, CHAIN_ID),
             storage,
         );
-        crate::commands::start_metadosis(&ctx, scope, parent)
+        crate::commands::start_metadosis(&ctx)
     })
-}
-
-pub(super) fn begin_scope_with_persisted_parent(
-    provider: &mut HashMapStorageProvider,
-    scope: &ExecutionScope,
-    parent_root: B256,
-) {
-    StorageHandle::enter(provider, |storage| {
-        crate::fixture_kernel::seed_ce_parent(&storage, parent_root).unwrap();
-        begin_block(storage, scope).unwrap();
-    });
 }

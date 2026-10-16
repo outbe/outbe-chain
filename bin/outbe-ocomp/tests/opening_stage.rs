@@ -3,21 +3,13 @@ mod support;
 use std::fs;
 
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_compressed_entities::{
-    body_commitment, derive_poseidon_entity_id, encode_tribute_v1,
-    tribute_partition_root_from_leaves, TributeBodyV1, TributePartitionWorkConfig,
-    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
-};
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
     control::poc_schema_limits,
     input_artifacts::{
         poc_input_list_limits, DurableInputArtifactPublisher, InputArtifactIdentity,
     },
-    input_inventory::{
-        TributeInventoryBuilder, TributeInventoryRecordV1, TributeInventorySubjectV1,
-        TributeInventoryWorkConfig,
-    },
+    input_inventory::{TributeInventoryBuilder, TributeInventoryWorkConfig},
     input_ref_catalog::VerifiedInputChunkRefCatalog,
     opening_stage::{
         DurableOpeningStage, OpeningResolutionV1, OpeningStageError, OpeningStageSubjectV1,
@@ -38,8 +30,6 @@ fn checkpoint() -> CheckpointIdentityV1 {
         finalized_block_number: 100,
         finalized_block_hash: B256::repeat_byte(4),
         finalized_state_root: B256::repeat_byte(5),
-        finalized_ce_root: B256::repeat_byte(10),
-        ce_schema_version: 1,
     }
 }
 
@@ -58,72 +48,20 @@ fn inventory(
     outbe_ocomp::input_inventory::SealedTributeInventory,
     WorldwideDay,
 ) {
-    let day = WorldwideDay::new(20_260_901);
-    let mut records = (0..257_u32)
-        .map(|index| {
-            let mut owner = [0_u8; 20];
-            owner[16..].copy_from_slice(&(index + 1).to_be_bytes());
-            let owner = Address::from(owner);
-            let tribute_id = derive_poseidon_entity_id(owner, day).unwrap();
-            let body = TributeBodyV1 {
-                tribute_id,
-                owner,
-                worldwide_day: day,
-                issuance_amount_minor: U256::from(1),
-                issuance_currency: 840,
-                nominal_amount_minor: U256::from(1),
-                reference_currency: 978,
-                tribute_price_minor: U256::from(1),
-            };
-            let canonical_body = encode_tribute_v1(&body).unwrap();
-            let commitment = body_commitment(
-                ACTIVE_COMMITMENT_SCHEME,
-                BODY_SCHEMA_V1,
-                tribute_id,
-                &canonical_body,
-            )
-            .unwrap();
-            TributeInventoryRecordV1 {
-                tribute_id,
-                commitment,
-                owner,
-                reference_iso: 978,
-                nominal_amount_minor: U256::from(1),
-                canonical_body,
-            }
-        })
-        .collect::<Vec<_>>();
-    records.sort_by_key(|record| record.tribute_id);
-    let root = tribute_partition_root_from_leaves(
-        day,
-        records
-            .iter()
-            .map(|record| (record.tribute_id, record.commitment)),
-    )
-    .unwrap();
+    let root = directory.path().join("inventory");
+    let fixture = support::state_tributes::state_tributes(&root, 257, Some(978));
+    let day = fixture.subject.worldwide_day;
     let mut builder = TributeInventoryBuilder::create(
-        directory.path().join("inventory"),
-        TributeInventorySubjectV1 {
-            protocol_bundle_hash: B256::repeat_byte(1),
-            job_id: B256::repeat_byte(2),
-            attempt: 0,
-            checkpoint: checkpoint(),
-            worldwide_day: day,
-            sealed_tribute_collection_root: root,
-            expected_tribute_count: 257,
-            expected_nominal_total: U256::from(257),
-        },
+        &root,
+        fixture.subject,
         TributeInventoryWorkConfig {
             owners_per_run: 17,
             merge_fan_in: 3,
-            root_verifier: TributePartitionWorkConfig {
-                records_per_run: 19,
-                merge_fan_in: 2,
-            },
         },
+        &fixture.sources,
     )
     .unwrap();
-    for record in records {
+    for record in fixture.records {
         builder.push(record).unwrap();
     }
     (builder.finish().unwrap(), day)
@@ -392,8 +330,6 @@ fn durable_publication_failure_replays_the_persisted_opening_without_rpc() {
         attempt: subject.attempt,
         checkpoint: subject.checkpoint.clone(),
         wwd: subject.worldwide_day,
-        sealed_tribute_collection_key: B256::repeat_byte(12),
-        sealed_tribute_collection_root: B256::repeat_byte(13),
     };
     let mut publisher = DurableInputArtifactPublisher::open(
         outbe_ocomp::input_artifacts::InputArtifactContext {

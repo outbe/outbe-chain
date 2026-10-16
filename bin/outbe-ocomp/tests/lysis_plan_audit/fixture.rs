@@ -95,12 +95,8 @@ impl PublishedPlan {
                         finalized_block_number: 90,
                         finalized_block_hash: hash(0x31),
                         finalized_state_root,
-                        finalized_ce_root: hash(0x33),
-                        ce_schema_version: 1,
                     },
                     wwd: day.value(),
-                    sealed_tribute_collection_key: hash(0x34),
-                    sealed_tribute_collection_root: hash(0x35),
                 },
                 canonical_tributes: tributes
                     .iter()

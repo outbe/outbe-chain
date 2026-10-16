@@ -1,9 +1,6 @@
 mod support;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{
-    derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1, WwdEntityId,
-};
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
     control::poc_schema_limits,
@@ -25,7 +22,9 @@ use outbe_ocomp_protocol::{
         RawStorageSlotV1,
     },
 };
+use outbe_primitives::entity_codec::{encode_tribute_v1, TributeBodyV1};
 use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId};
 
 #[test]
 fn input_reference_commitment_streams_past_the_old_4096_list_limit() {
@@ -82,12 +81,8 @@ fn production_publisher_streams_one_million_records_with_a_256_record_peak() {
             finalized_block_number: 100,
             finalized_block_hash,
             finalized_state_root,
-            finalized_ce_root: B256::repeat_byte(0x24),
-            ce_schema_version: 1,
         },
         wwd: day.value(),
-        sealed_tribute_collection_key: B256::repeat_byte(0x25),
-        sealed_tribute_collection_root: B256::repeat_byte(0x26),
     };
     let subjects =
         partition_lysis_opening_subjects(&[Address::with_last_byte(1)], &[840, 978], &limits)
@@ -208,12 +203,8 @@ fn durable_publisher_matches_existing_chunk_root_catalog_and_manifest_bytes() {
             finalized_block_number: 100,
             finalized_block_hash,
             finalized_state_root,
-            finalized_ce_root: B256::repeat_byte(0x34),
-            ce_schema_version: 1,
         },
         wwd: day.value(),
-        sealed_tribute_collection_key: B256::repeat_byte(0x35),
-        sealed_tribute_collection_root: B256::repeat_byte(0x36),
     };
     let canonical = (0..COUNT)
         .map(|index| {
@@ -452,12 +443,8 @@ fn durable_publisher_replays_10000_tributes_without_population_sized_results() {
             finalized_block_number: 100,
             finalized_block_hash,
             finalized_state_root,
-            finalized_ce_root: B256::repeat_byte(0x44),
-            ce_schema_version: 1,
         },
         wwd: day.value(),
-        sealed_tribute_collection_key: B256::repeat_byte(0x45),
-        sealed_tribute_collection_root: B256::repeat_byte(0x46),
     };
     let subjects =
         partition_lysis_opening_subjects(&[Address::with_last_byte(1)], &[840, 978], &limits)
@@ -664,12 +651,8 @@ fn population_above_the_old_4096_ceiling_streams_into_existing_256_record_chunks
                 finalized_block_number: 100,
                 finalized_block_hash,
                 finalized_state_root,
-                finalized_ce_root: B256::repeat_byte(0x78),
-                ce_schema_version: 1,
             },
             wwd: day.value(),
-            sealed_tribute_collection_key: B256::repeat_byte(0x79),
-            sealed_tribute_collection_root: B256::repeat_byte(0x7a),
         },
         outbe_ocomp::input_artifacts::TributeInputStream {
             expected_count: 4_097,

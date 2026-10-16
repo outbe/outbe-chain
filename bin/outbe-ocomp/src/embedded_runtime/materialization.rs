@@ -110,10 +110,23 @@ impl MaterializationJob {
             .join(".work")
             .join(&job_component)
             .join("inventory");
-        let (sources, source_references) =
-            materialization_sources(&audit, &input_refs, &built, &inventory_root)
-                .map_err(|error| stage("authenticate NOD encryption sources", error))?;
-        built.dependencies.extend(source_references);
+        let checkpoint = &audit.manifest().checkpoint;
+        let source = outbe_tee::tribute_source::TributeSourceSubject {
+            checkpoint: outbe_tee::tribute_source::TributeSourceCheckpoint {
+                block_number: checkpoint.finalized_block_number,
+                block_hash: checkpoint.finalized_block_hash,
+                state_root: checkpoint.finalized_state_root,
+            },
+            chain_id,
+            worldwide_day: outbe_primitives::time::WorldwideDay::new(head.worldwide_day),
+            tribute_count: audit.manifest().tribute_count,
+        };
+        let mut sources = crate::input_inventory::StateTributeProofArchive::open(
+            inventory_root.join(crate::input_inventory::SOURCE_PROOF_ARCHIVE_DIRECTORY),
+            source,
+            &|| {},
+        )
+        .map_err(|error| stage("open NOD state source witnesses", error))?;
         crate::nod_materialization::normalize_dependencies(&mut built.dependencies)
             .map_err(|error| stage("normalize NOD materialization references", error))?;
         let references = MaterializationReferenceStoreV1::open(reference_root)
@@ -134,20 +147,20 @@ impl MaterializationJob {
                 },
             )
             .collect();
-        let protected = prepare_protected_materialization(
-            outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {
-                chain_id,
+        let protected = prepare_state_protected_materialization(
+            outbe_tee::nod_state_materialization::StateNodAuthority {
+                source,
                 head: head
                     .encode_canonical(&limits)
                     .map_err(|error| stage("encode NOD generation authority", error))?,
                 subtree_height: batch_subtree_height,
-                sealed_tribute_root: audit.manifest().sealed_tribute_collection_root,
+                source_bindings: Vec::new(),
                 nod_gratis_load_max: audit.plan().lysis_limit_minor
                     / alloy_primitives::U256::from(1024),
             },
             (head, &built),
-            sources,
             league_fractions,
+            &mut sources,
             &preparation,
         )
         .map_err(|error| stage("prepare encrypted NOD materialization", error))?;

@@ -83,7 +83,6 @@ fn admission_envelope(
         genesis_hash: context.genesis_hash,
         fork_id: context.fork_id,
         wwd: tribute.worldwide_day.value(),
-        sealed_tribute_collection_root: tribute.sealed_collection_root,
         sealed_tribute_count: tribute.tribute_count,
         sealed_tribute_canonical_body_bytes: tribute.canonical_body_bytes,
         distinct_owner_count: tribute.distinct_owner_count,
@@ -112,7 +111,7 @@ fn validate_tribute_admission(
     if !tribute.profile_ready {
         return Err(PreAdmissionDeferredReason::TributeProfileNotReady);
     }
-    if !tribute.is_sealed || tribute.sealed_collection_root.is_zero() {
+    if !tribute.is_sealed {
         return Err(PreAdmissionDeferredReason::TributeNotSealed);
     }
     if tribute.tribute_count == 0 {

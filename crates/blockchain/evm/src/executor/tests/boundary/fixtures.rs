@@ -17,7 +17,6 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
     let active_key = dummy_pubkey(0xA2);
     let install = test_ocomp_fork_install(&chain_spec, &[(active, active_key)]);
     StorageHandle::enter(&mut seed_storage, |storage| {
-        seed_compressed_entities_genesis(&storage).expect("CE genesis fixture");
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
@@ -70,14 +69,6 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
     );
     db.insert_account_info(
         outbe_primitives::addresses::ORACLE_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code.clone()),
-            ..Default::default()
-        },
-    );
-    db.insert_account_info(
-        outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code.clone()),

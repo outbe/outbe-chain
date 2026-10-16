@@ -29,6 +29,7 @@ use crate::precompile::INodFactory;
 /// the runtime-only [`CertifiedLysisActivation`] capability.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CertifiedNodGenerationV1 {
+    pub source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1,
     pub binding: EffectBindingV1,
     pub program_semantics_hash: alloy_primitives::B256,
     pub precondition: NodTargetPreconditionV1,
@@ -123,6 +124,7 @@ pub fn install_certified_generation(
     let activation_height = storage.block_number()?;
 
     let installed = NodCertifiedGenerationProjection {
+        source_checkpoint: input.source_checkpoint,
         worldwide_day,
         generation: next_generation,
         job_id: input.binding.job_id,
@@ -143,6 +145,12 @@ pub fn install_certified_generation(
     };
 
     storage.with_checkpoint(|| {
+        nod.ocomp_source_block_number
+            .write(&worldwide_day, installed.source_checkpoint.block_number)?;
+        nod.ocomp_source_block_hash
+            .write(&worldwide_day, installed.source_checkpoint.block_hash)?;
+        nod.ocomp_source_state_root
+            .write(&worldwide_day, installed.source_checkpoint.state_root)?;
         nod.ocomp_namespace_root
             .write(&worldwide_day, installed.nod_root)?;
         nod.ocomp_bucket_root
@@ -219,7 +227,8 @@ fn binding_matches(
     existing: &NodCertifiedGenerationProjection,
     input: &CertifiedNodGenerationV1,
 ) -> bool {
-    existing.job_id == input.binding.job_id
+    existing.source_checkpoint == input.source_checkpoint
+        && existing.job_id == input.binding.job_id
         && existing.program_semantics_hash == input.program_semantics_hash
 }
 
@@ -268,7 +277,10 @@ fn validate_input(
     if input.issued_at == 0 {
         return Err(NodFactoryError::CertifiedLogicalIssuanceTimeZero.into());
     }
-    if input.binding.job_id.is_zero()
+    if input.source_checkpoint.block_number == 0
+        || input.source_checkpoint.block_hash.is_zero()
+        || input.source_checkpoint.state_root.is_zero()
+        || input.binding.job_id.is_zero()
         || input.binding.protocol_bundle_hash.is_zero()
         || input.program_semantics_hash.is_zero()
     {

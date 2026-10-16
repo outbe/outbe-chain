@@ -3,27 +3,27 @@
   "kind": "outbe-ocomp-semantic-artifacts-v1",
   "source_sets": {
     "generator": "0x995266e89066e49f09f3c75b3d9bffd0290df53002b847343b5196c67bea174c",
-    "registry": "0xdd4dba4f8a8be6597020bc254d7d7fec0b5592f9edd74e386f7a8ffcf6e178d2"
+    "registry": "0x391a230efb8a6163e58c1754cfe28632265a47862d0e2debcc452599dbb10cad"
   },
   "artifacts": {
-    "intent_codec_id": "0xa050e5f92c459cdb0fc99b7b96807887fa66c6ed140364d374a7dad637434baa",
-    "finalized_intent_proof_codec_id": "0xa00d638cca99bd46fcfb17bcc47e9639934c61b1ceb05335a76152760e813360",
-    "result_codec_id": "0x98faa9b8f84c6c41b977d53d80e815085c3f369735726ef12e8543ade6705656",
-    "action_codec_id": "0x3ac5202d9b93c226ca8037a45ffdf14a333055bb4b3eb6202fff13e905e4c0c7",
-    "activation_codec_id": "0x9602d423013e293ce43df1cb50a66abc60f4ff4af5df31c7b0fb64d6ea467640",
-    "evidence_codec_id": "0x89a932c478e993d6d8b189015c2e8026bcaf740a6504322e7ec899ee23f9fd93",
-    "arithmetic_profile_id": "0xd5c863b120c4f06ca45cacd669e50aba740c0e2c47f3fc78ff0b7219f67894e4",
+    "intent_codec_id": "0xfe0ae92a3e6baa52db97fe8e7ccd8b243aecb03778d55f0c7e84b9c8f35bdc82",
+    "finalized_intent_proof_codec_id": "0x039147e747d98d5fe0271ff75f134cb9974811f0dadb43203c663f24cfec2a86",
+    "result_codec_id": "0xfdf8fddc380915cc460a7b5244ba402ec3b6da1d09bbed26c8d3ece9b1c27275",
+    "action_codec_id": "0xd010f4d5c7a8454ca6e35354df14b7126e0336887dd190d9316e6506493371d2",
+    "activation_codec_id": "0xa501e2760dd659a04e6d5955cf132be3932a0998be7eaae4172e480ff464c7ef",
+    "evidence_codec_id": "0x50591f83b1e363a10a16dd4accf84497c723ebecb6c2d884871f732771f24f12",
+    "arithmetic_profile_id": "0x3642f46c7efd5500f26f29bda4762a27df350c624f7fe69954141e0e0bf2e2d2",
     "lysis_program_semantics_hash": "0x1eb66aec26c241677c0a60d215b83493bf7dc00ed125e8e3757bbd98750a6d5a",
-    "activation_apply_semantics_hash": "0x95bcb8c6d8a16eae8a65fa7ba76935592a24719032a212ef91d05a9322a36b7c",
-    "effect_contract_registry_hash": "0x1d400257ff14cce59497c25920ad356aee0904554f1b6b48bd8b52ed0f8afb67",
-    "object_codec_registry_hash": "0xc5bd9237d9b4ee4b6966a1cfb1f512bcae81a7cc3f61477a20f2f816b2985f55",
-    "list_root_scheme_id": "0xf5292cf5d9bbd05365a17ddbcf95950c60461b79dd87f2b0cbf418221d6e274c",
-    "result_signature_profile_id": "0xfe99f156b9570ee141a0a727404a1888ac63245f732fcb8c2cb3edf447c966e1",
-    "finality_verifier_and_vote_domain_id": "0x892322b6c86b58a53d616f83927996f45ec8d6902c8de74add45b92c1292289e",
-    "anti_equivocation_journal_schema_hash": "0x6eddbc202750a0e01824bc2ebfa12365d0894c493617c37cf2973ea8b64f9332",
-    "mode_pause_revocation_semantics_hash": "0xec17b9ddaedfb96ddf43571dc48daef6269cee5230b505237f8533ae8eece807",
-    "upgrade_fsm_semantics_hash": "0x714d02102de664089797494d5891a7cd26ce01b9e8ce0e2f6b4e3c9df91e5ab3",
-    "release_placeholder_hash": "0x1308e12961c01ea02b8d558839e51e07ab40e1351b34186047dab2a510133304",
-    "source_availability_policy_id": "0x8a15a77279dbd90a28653a2c506a8c430d9e308c1199aa6ea75f09af2a481ff9"
+    "activation_apply_semantics_hash": "0xb2a7ff6c2d3f09fef38aea972cec3e08f68413e341a8a3213a81fce9be6653a8",
+    "effect_contract_registry_hash": "0x6377d401ce842e167d34c42faf6d533a33bb1f6e3b536d932200f438d53d09aa",
+    "object_codec_registry_hash": "0x19dd262a146e81e72999c5b1c5f4cdf712ba542b0431ff9f417e5574f925cb31",
+    "list_root_scheme_id": "0xab0c96afc834a23b91a7e2a792798635280194089862e674b8c293114432b10d",
+    "result_signature_profile_id": "0x1b2de543bb794d0d85d33c74ef391016f45a269e31699f61e7512882806ef424",
+    "finality_verifier_and_vote_domain_id": "0xcfbe11e433ac4dd6be90eb57d2b4d2dff468192328f8c945de43cc11617e3b73",
+    "anti_equivocation_journal_schema_hash": "0xde72427ae94ab622f20c06e5233a2bd4b24e43a2a65cbe80ac682a3688014488",
+    "mode_pause_revocation_semantics_hash": "0xe6d32dc3a5c119767c8f3ea15711339349df1e490023f7f90e670d5108b20691",
+    "upgrade_fsm_semantics_hash": "0x79dc509ed180ba894dc41bfdcaaa5ab3a3e34d815feaadb7a44c2adda41311c4",
+    "release_placeholder_hash": "0x60347713c99e57a58bdb66d0e7b974ff3a324514ceda406ab598b1b69aaf9f58",
+    "source_availability_policy_id": "0xed8e1cb60e4a2101de57d467b0259947e81ac59af7af23a3d258dab774444f20"
   }
 }

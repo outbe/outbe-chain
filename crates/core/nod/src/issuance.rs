@@ -1,8 +1,8 @@
 //! Static issuance invariants checked before compressed state is changed.
 use crate::{errors::NodError, NodItemState};
 use alloy_primitives::U256;
-use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_primitives::error::Result;
+use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
 pub(crate) fn validate_item(item: &NodItemState, entry_price_minor: U256) -> Result<()> {
     let canonical_id = derive_poseidon_entity_id(item.owner, item.worldwide_day)
         .map_err(NodError::entity_id_derivation)?;

@@ -369,7 +369,7 @@ impl OcompTopology {
         command.env("OCOMP_REGISTRY_GENERATION", "1");
         let validator_index = usize::from(validator_index);
         command.env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index));
-        configure_snapshot_exporter_projection(&mut command, &self.cfg, validator_index)?;
+
         if self.cfg.debug {
             eprintln!(
                 "[ocomp] launch validator-{validator_index} {role_name}: {}",
@@ -411,7 +411,7 @@ impl OcompTopology {
             &domain_root,
         )?;
         command.env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(index));
-        configure_snapshot_exporter_projection(&mut command, &self.cfg, index)?;
+
         command.stdout(Stdio::from(log)).stderr(Stdio::from(stderr));
         ChildGuard::spawn(
             format!("full-node-{validator_index} OCOMP {role_name}"),
@@ -550,20 +550,6 @@ pub(in crate::world::ocomp) fn configure_snapshot_exporter_command(
         .arg("snapshot-exporter")
         .arg("--supervisor-address")
         .arg(supervisor_address.to_string());
-}
-
-#[cfg(feature = "ocomp-integration")]
-pub(in crate::world::ocomp) fn configure_snapshot_exporter_projection(
-    command: &mut Command,
-    cfg: &Config,
-    validator_index: usize,
-) -> Result<()> {
-    crate::world::projection::storage_config(cfg, validator_index)?;
-    command.env(
-        "OUTBE_OCOMP_STORAGE_CONFIG",
-        cfg.projection_storage_config(validator_index),
-    );
-    Ok(())
 }
 
 #[cfg(feature = "ocomp-integration")]

@@ -47,16 +47,3 @@ impl From<AgentRewardError> for PrecompileError {
         PrecompileError::Revert(err.to_string())
     }
 }
-
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum AgentRewardFatalError {
-    #[error("claimReward requires the compressed-entity readers route")]
-    ClaimRewardRequiresReaders,
-}
-
-impl From<AgentRewardFatalError> for PrecompileError {
-    fn from(err: AgentRewardFatalError) -> Self {
-        PrecompileError::Revert(err.to_string())
-    }
-}

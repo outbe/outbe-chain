@@ -86,11 +86,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "sealedCollectionRoot",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
         "name": "forfeitedTributeCount",
         "type": "uint32",
         "internalType": "uint32"
@@ -723,12 +718,6 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      },
-      {
-        "name": "sealedCollectionRoot",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
       },
       {
         "name": "forfeitedTributeCount",

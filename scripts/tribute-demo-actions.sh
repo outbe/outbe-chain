@@ -6,20 +6,9 @@ cd "$ROOT_DIR"
 
 ACTION=${1:-}
 STACK_DIR=$(realpath -m "${LOCALNET_STACK_DIR:-/tmp/outbe-localnet-stack}")
-MONGO_NAME=${LOCALNET_STACK_MONGO_NAME:-outbe-localnet-stack-mongodb}
-MONGO_PORT=${LOCALNET_STACK_MONGO_PORT:-27027}
 PORT_OFFSET=${LOCALNET_STACK_PORT_OFFSET:-1000}
-DATABASE_PREFIX=${LOCALNET_STACK_DATABASE_PREFIX:-outbe_localnet_stack}
 RPC_URL="http://127.0.0.1:$((18545 + PORT_OFFSET))"
 LAST_TX_FILE="$STACK_DIR/last-tribute-tx"
-
-docker_cmd() {
-  if docker info >/dev/null 2>&1; then
-    docker "$@"
-  else
-    sudo docker "$@"
-  fi
-}
 
 require_stack() {
   [[ -f "$STACK_DIR/validator-0/evm-key.hex" ]] || {
@@ -91,49 +80,8 @@ case "$ACTION" in
     echo "tx_hash:     $tx_hash"
     echo "totalSupply: $before -> $after"
     ;;
-  show-mongo)
-    require_stack
-    [[ -s "$LAST_TX_FILE" ]] || {
-      echo "No recorded Tribute transaction. Run: mise run tribute-offer" >&2
-      exit 1
-    }
-    tx_hash=$(tr -d '[:space:]' < "$LAST_TX_FILE")
-
-    projection_ready=0
-    for _ in $(seq 1 60); do
-      if docker_cmd exec "$MONGO_NAME" mongosh --quiet --port "$MONGO_PORT" --eval "
-        const tx = '$tx_hash';
-        for (let i = 0; i < 4; i++) {
-          const d = db.getSiblingDB('${DATABASE_PREFIX}_validator_' + i);
-          if (d.tributes.countDocuments({'_projection.tx_hash': tx}) !== 1) quit(1);
-          if (d.tributes_by_owner.countDocuments({}) < 1) quit(1);
-          if (d.tributes_by_day.countDocuments({}) < 1) quit(1);
-        }
-      " >/dev/null 2>&1; then
-        projection_ready=1
-        break
-      fi
-      sleep 0.5
-    done
-    [[ $projection_ready -eq 1 ]] || {
-      echo "Tribute projection did not appear on all four validators: $tx_hash" >&2
-      exit 1
-    }
-
-    docker_cmd exec "$MONGO_NAME" mongosh --quiet --port "$MONGO_PORT" --eval "
-      const tx = '$tx_hash';
-      for (let i = 0; i < 4; i++) {
-        const d = db.getSiblingDB('${DATABASE_PREFIX}_validator_' + i);
-        print('DB=' + d.getName());
-        print('tributes=' + d.tributes.countDocuments({})
-          + ' owner_index=' + d.tributes_by_owner.countDocuments({})
-          + ' day_index=' + d.tributes_by_day.countDocuments({}));
-        print(EJSON.stringify(d.tributes.findOne({'_projection.tx_hash': tx}), {relaxed:false}));
-      }
-    "
-    ;;
   *)
-    echo "usage: $0 {offer WORLDWIDE_DAY [tribute CLI arguments]|show-mongo}" >&2
+    echo "usage: $0 offer WORLDWIDE_DAY [tribute CLI arguments]" >&2
     exit 2
     ;;
 esac

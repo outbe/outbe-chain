@@ -39,8 +39,6 @@ pub struct InputArtifactIdentity {
     pub attempt: u32,
     pub checkpoint: CheckpointIdentityV1,
     pub wwd: u32,
-    pub sealed_tribute_collection_key: B256,
-    pub sealed_tribute_collection_root: B256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -532,8 +530,6 @@ impl<'a> DurableInputArtifactPublisher<'a> {
             attempt: self.identity.attempt,
             checkpoint: self.identity.checkpoint,
             wwd: self.identity.wwd,
-            sealed_tribute_collection_key: self.identity.sealed_tribute_collection_key,
-            sealed_tribute_collection_root: self.identity.sealed_tribute_collection_root,
             tribute_count: self.tribute_count,
             tribute_nominal_total: expected_tribute_nominal_total,
             input_chunk_count: summary.input_chunk_count,

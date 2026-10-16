@@ -334,8 +334,7 @@ def _seed_economic_state(seed, alloc):
             f"{len(tribute_storage.entries)} storage entries"
         )
 
-    # Initialize the canonical materialization FIFO. NOD bodies live in
-    # compressed-entity storage, and the seeder does not write them into EVM slots.
+    # Initialize the canonical materialization FIFO for the empty native Nod state.
     nod_storage = StorageBuilder()
     seed_nod_materialization_fifo(nod_storage)
     entry = alloc[NOD_ADDRESS]

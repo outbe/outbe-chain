@@ -21,7 +21,7 @@ use tokio::sync::watch;
 ///
 /// Commonware owns the actual proposal/verification deadline. The application
 /// cancels this token when Commonware drops the corresponding response channel.
-/// Synchronous Mongo reads thus inherit the already-running request lifetime.
+/// Synchronous storage reads thus inherit the already-running request lifetime.
 /// They do not invent or reset a wall-clock deadline.
 #[derive(Clone, Debug, Default)]
 pub struct ExecutionReadBudget {
@@ -71,7 +71,7 @@ impl ExecutionReadCancelled {
 
 /// Positive evidence that execution stopped on a node-local dependency failure
 /// (such as local TEE sidecar unavailability, off-chain body reader unavailability,
-/// or compressed-entity tree unavailability). This is a local abort, never a
+/// or native storage unavailability). This is a local abort, never a
 /// consensus block-validity verdict or a reason to crash the node process.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("execution stopped on a node-local dependency failure: {reason}")]
@@ -94,7 +94,7 @@ impl NodeLocalExecutionAbort {
 /// Exact block identity through which one projection view has applied all events.
 ///
 /// The owner defines durability: consensus readiness uses the logical overlay boundary, while
-/// MongoDB persists the same identity as its durable replay cursor.
+/// durable storage persists the same identity as its durable replay cursor.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProjectionCheckpoint {
     pub block_number: u64,
@@ -114,7 +114,7 @@ pub enum ProjectionFailureClass {
     DanglingIndex,
     ProjectorExited,
     ReadinessChannelClosed,
-    MongoReconnectDeadline,
+    StorageReconnectDeadline,
     WriterLeaseLost,
     StorageInvalidArgument,
     StorageUnavailable,
@@ -150,7 +150,7 @@ pub enum ProjectionStatus {
     Ready {
         checkpoint: ProjectionCheckpoint,
     },
-    MongoUnavailable {
+    StorageUnavailable {
         checkpoint: Option<ProjectionCheckpoint>,
         since: Instant,
     },
@@ -259,11 +259,11 @@ fn evaluate(
 ) -> Option<WaitOutcome> {
     match status {
         ProjectionStatus::Fatal { error, .. } => Some(WaitOutcome::Fatal(error.clone())),
-        ProjectionStatus::MongoUnavailable {
+        ProjectionStatus::StorageUnavailable {
             checkpoint: Some(checkpoint),
             ..
         } => compare_unavailable_checkpoint(*checkpoint, required),
-        ProjectionStatus::MongoUnavailable {
+        ProjectionStatus::StorageUnavailable {
             checkpoint: None, ..
         } => None,
         ProjectionStatus::Starting => compare_baseline(baseline, required),

@@ -46,16 +46,9 @@ fn zk_tribute_creation_runs_through_the_unified_interface() {
         .component_latency_ns
         .contains_key("chain.bn254_pair_reference"));
 
-    // One issuance: the body projection and the ERC-721 issue event, both
-    // emitted by the Tribute contract.
-    assert_eq!(
-        emitted(
-            &report,
-            TRIBUTE_ADDRESS,
-            ITribute::TributeBodyStored::SIGNATURE_HASH
-        ),
-        1
-    );
+    // Issuance writes the native record and both lifecycle indexes.
+    assert_eq!(report.postconditions["tribute.native_record"], "true");
+    assert_eq!(report.postconditions["tribute.native_indexes"], "true");
     assert_eq!(
         emitted(
             &report,

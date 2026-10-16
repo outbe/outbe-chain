@@ -136,7 +136,7 @@ fn snapshot_ordinary_restart_preserves_actual_final_options_environment_and_data
                 .iter()
                 .filter(|a| *a == "--projection.storage-config")
                 .count(),
-            1
+            0
         );
         assert!(before
             .argv

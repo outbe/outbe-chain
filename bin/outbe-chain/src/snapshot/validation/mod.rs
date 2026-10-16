@@ -1,9 +1,7 @@
 //! Operator-selected offline checks. No node startup or recovery integration.
 
 pub(crate) mod artifact;
-pub(crate) mod bodies;
 pub(crate) mod canonical_state;
-pub(crate) mod ce;
 pub(crate) mod evm;
 pub(crate) mod headers;
 pub(crate) mod native_checks;

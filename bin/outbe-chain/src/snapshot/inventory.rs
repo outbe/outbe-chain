@@ -44,18 +44,6 @@ pub(crate) fn enumerate_native_files(layout: &NativeLayout) -> eyre::Result<Nati
             "",
         ),
         (
-            Ce,
-            NativeRoot::Chain,
-            &layout.chain_root,
-            "compressed_entities/smt",
-        ),
-        (
-            OffchainProjection,
-            NativeRoot::Offchain,
-            &layout.offchain_root,
-            "",
-        ),
-        (
             MarshalFinalizations,
             NativeRoot::Consensus,
             &layout.consensus_root,
@@ -213,10 +201,7 @@ pub(crate) fn enumerate_native_files(layout: &NativeLayout) -> eyre::Result<Nati
                     walk(root, &path, &mut members)?;
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    if matches!(
-                        kind,
-                        ExecutionDb | Ce | OffchainProjection | ClosureCheckpoint
-                    ) {
+                    if matches!(kind, ExecutionDb | ClosureCheckpoint) {
                         return Err(crate::errors::SnapshotError::MissingRequiredDomain {
                             path: source.display().to_string(),
                         }

@@ -4,7 +4,7 @@ use outbe_ocomp_protocol::vote::{HistoricalVoteMember, VoteWindow};
 struct VoteInput<'vote> {
     vote: &'vote ResultVoteV1,
     inclusion_height: u64,
-    scope: &'vote ExecutionScope,
+
     limits: &'vote SchemaLimits,
 }
 
@@ -20,13 +20,11 @@ impl MetadosisContract<'_> {
         &mut self,
         vote: &ResultVoteV1,
         inclusion_height: u64,
-        scope: &ExecutionScope,
         limits: &SchemaLimits,
     ) -> Result<RecordedResultVoteV1> {
         let input = VoteInput {
             vote,
             inclusion_height,
-            scope,
             limits,
         };
         let verified = self.verify_open_vote(&input)?;
@@ -204,7 +202,6 @@ impl MetadosisContract<'_> {
         let storage = self.storage.clone();
         let apply_context = super::super::activation::QuorumApplyContext::new(
             &storage,
-            input.scope,
             &completed_transition,
             super::super::activation::QuorumExecution {
                 current_height: input.inclusion_height,

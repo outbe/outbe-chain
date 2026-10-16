@@ -89,7 +89,7 @@ fn batch_for_sequence(
 fn seed_generation(world: &mut World, population: &Population) {
     seed_projection(world, MATERIALIZATION_WWD, 1, population);
     world
-        .enter(|storage, _, _| {
+        .enter(|storage| {
             let nod = NodContract::new(storage);
             nod.ocomp_materialization_head_sequence.write(1)?;
             nod.ocomp_materialization_tail_sequence.write(2)?;
@@ -107,10 +107,15 @@ fn seed_projection(
     population: &Population,
 ) {
     world
-        .enter(|storage, _, _| {
+        .enter(|storage| {
             let worldwide_day = WorldwideDay::new(materialization_wwd);
             let nod = NodContract::new(storage);
             let projection = outbe_nod::NodCertifiedGenerationProjection {
+                source_checkpoint: outbe_ocomp_protocol::intent::FinalizedRequestBindingV1 {
+                    block_number: 1,
+                    block_hash: B256::repeat_byte(0x71),
+                    state_root: B256::repeat_byte(0x72),
+                },
                 worldwide_day,
                 generation,
                 job_id: B256::repeat_byte(0x11),
@@ -129,6 +134,12 @@ fn seed_projection(
                 next_nod_ordinal: 0,
                 last_progress_height: 1,
             };
+            nod.ocomp_source_block_number
+                .write(&worldwide_day, projection.source_checkpoint.block_number)?;
+            nod.ocomp_source_block_hash
+                .write(&worldwide_day, projection.source_checkpoint.block_hash)?;
+            nod.ocomp_source_state_root
+                .write(&worldwide_day, projection.source_checkpoint.state_root)?;
             nod.ocomp_target_generation
                 .write(&worldwide_day, projection.generation)?;
             nod.ocomp_namespace_root
@@ -162,7 +173,7 @@ fn seed_projection(
 
 fn assert_projection_present(world: &mut World, materialization_wwd: u32) {
     world
-        .enter(|storage, _, _| {
+        .enter(|storage| {
             assert!(NodContract::new(storage)
                 .ocomp_certified_generation(WorldwideDay::new(materialization_wwd))?
                 .is_some());
@@ -173,7 +184,7 @@ fn assert_projection_present(world: &mut World, materialization_wwd: u32) {
 
 fn assert_projection_cleared(world: &mut World, materialization_wwd: u32) {
     world
-        .enter(|storage, _, _| {
+        .enter(|storage| {
             let worldwide_day = WorldwideDay::new(materialization_wwd);
             let nod = NodContract::new(storage);
             assert_eq!(nod.ocomp_target_generation.read(&worldwide_day)?, 0);
@@ -225,10 +236,9 @@ fn apply(
     world: &mut World,
     batch: &NodMaterializationBatchV1,
 ) -> Result<crate::materialization::NodMaterializationOutcomeV1, PrecompileError> {
-    world.enter(|storage, scope, parent| {
+    world.enter(|storage| {
         crate::materialization::materialize_certified_nods_authorized(
             &storage,
-            ExecutionReaders { scope, parent },
             crate::materialization::CertifiedMaterializationRequest {
                 batch,
                 loads: &vec![U256::from(1_000); batch.actions.len()],
@@ -244,7 +254,7 @@ fn head(world: &mut World) -> Option<NodMaterializationHeadV1> {
 }
 
 fn head_result(world: &mut World) -> Result<Option<NodMaterializationHeadV1>, PrecompileError> {
-    world.enter(|storage, _, _| NodContract::new(storage).ocomp_materialization_head())
+    world.enter(|storage| NodContract::new(storage).ocomp_materialization_head())
 }
 
 #[test]
@@ -253,10 +263,9 @@ fn the_public_selector_rejects_a_caller_without_the_active_ocomp_role() {
     let population = population(8);
     seed_generation(&mut world, &population);
     let error = world
-        .enter(|storage, scope, parent| {
+        .enter(|storage| {
             api::materialize_certified_nods(
                 &storage,
-                ExecutionReaders { scope, parent },
                 Address::repeat_byte(0xee),
                 api::CertifiedMaterializationRequest {
                     batch: &batch(&population, 0, 8),
@@ -281,7 +290,7 @@ fn the_public_selector_accepts_only_the_delegate_of_an_active_validator() {
     let validator = Address::repeat_byte(0x41);
     let delegate = Address::repeat_byte(0x42);
     world
-        .enter(|storage, _, _| {
+        .enter(|storage| {
             let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage);
             let config_owner = Address::repeat_byte(0x40);
             validators.config_owner.write(config_owner)?;
@@ -300,10 +309,9 @@ fn the_public_selector_accepts_only_the_delegate_of_an_active_validator() {
         .unwrap();
 
     let outcome = world
-        .enter(|storage, scope, parent| {
+        .enter(|storage| {
             api::materialize_certified_nods(
                 &storage,
-                ExecutionReaders { scope, parent },
                 delegate,
                 api::CertifiedMaterializationRequest {
                     batch: &batch(&population, 0, 8),
@@ -324,7 +332,7 @@ fn corrupt_fifo_bounds_or_missing_head_projection_are_fatal() {
     let mut zero_head = World::new();
     seed_generation(&mut zero_head, &population);
     zero_head
-        .enter(|storage, _, _| {
+        .enter(|storage| {
             NodContract::new(storage)
                 .ocomp_materialization_head_sequence
                 .write(0)
@@ -338,7 +346,7 @@ fn corrupt_fifo_bounds_or_missing_head_projection_are_fatal() {
     let mut reversed = World::new();
     seed_generation(&mut reversed, &population);
     reversed
-        .enter(|storage, _, _| {
+        .enter(|storage| {
             let nod = NodContract::new(storage);
             nod.ocomp_materialization_head_sequence.write(3)?;
             nod.ocomp_materialization_tail_sequence.write(2)
@@ -352,7 +360,7 @@ fn corrupt_fifo_bounds_or_missing_head_projection_are_fatal() {
     let mut missing_entry = World::new();
     seed_generation(&mut missing_entry, &population);
     missing_entry
-        .enter(|storage, _, _| {
+        .enter(|storage| {
             NodContract::new(storage)
                 .ocomp_materialization_queue_wwd
                 .write(&1, WorldwideDay::new(0))
@@ -366,7 +374,7 @@ fn corrupt_fifo_bounds_or_missing_head_projection_are_fatal() {
     let mut missing_projection = World::new();
     seed_generation(&mut missing_projection, &population);
     missing_projection
-        .enter(|storage, _, _| {
+        .enter(|storage| {
             NodContract::new(storage)
                 .ocomp_materialization_queue_wwd
                 .write(&1, WorldwideDay::new(MATERIALIZATION_WWD + 1))
@@ -389,7 +397,7 @@ fn multiple_batches_create_ordinary_nods_and_advance_fifo_atomically() {
     assert!(!first.completed);
     assert_eq!(
         world
-            .enter(|storage, scope, parent| nod_api::list_all(&storage, scope, parent))
+            .enter(|storage| nod_api::list_all(&storage))
             .unwrap()
             .len(),
         8
@@ -405,38 +413,24 @@ fn multiple_batches_create_ordinary_nods_and_advance_fifo_atomically() {
     assert_projection_cleared(&mut world, MATERIALIZATION_WWD);
     assert_eq!(
         world
-            .enter(|storage, scope, parent| nod_api::list_all(&storage, scope, parent))
+            .enter(|storage| nod_api::list_all(&storage))
             .unwrap()
             .len(),
         10
     );
 
     let first_item = world
-        .enter(|storage, scope, parent| {
-            nod_api::get_item(
-                &storage,
-                scope,
-                parent,
-                ledger_entity(population.actions[0].nod_id),
-            )
-        })
+        .enter(|storage| nod_api::get_item(&storage, ledger_entity(population.actions[0].nod_id)))
         .unwrap()
         .unwrap();
     assert_eq!(first_item.issued_at, 1_600_000_000, "the generation's time");
     let last_item = world
-        .enter(|storage, scope, parent| {
-            nod_api::get_item(
-                &storage,
-                scope,
-                parent,
-                ledger_entity(population.actions[9].nod_id),
-            )
-        })
+        .enter(|storage| nod_api::get_item(&storage, ledger_entity(population.actions[9].nod_id)))
         .unwrap()
         .unwrap();
     assert_eq!(last_item.issued_at, 1_600_000_000);
     let bucket_issued_at = world
-        .enter(|storage, _, _| {
+        .enter(|storage| {
             NodContract::new(storage)
                 .bucket_issued_at
                 .read(&first_item.bucket_key)
@@ -445,9 +439,7 @@ fn multiple_batches_create_ordinary_nods_and_advance_fifo_atomically() {
     assert_eq!(bucket_issued_at, 1_600_000_000, "call windows start there");
     assert_eq!(
         world
-            .enter(|storage, scope, parent| {
-                nod_api::list_by_owner(&storage, scope, parent, population.actions[0].owner)
-            })
+            .enter(|storage| { nod_api::list_by_owner(&storage, population.actions[0].owner) })
             .unwrap()
             .len(),
         1
@@ -560,7 +552,7 @@ fn completing_one_queued_generation_clears_only_its_projection() {
     seed_generation(&mut world, &first);
     seed_projection(&mut world, second_wwd, 2, &second);
     world
-        .enter(|storage, _, _| {
+        .enter(|storage| {
             let nod = NodContract::new(storage);
             nod.ocomp_materialization_tail_sequence.write(3)?;
             nod.ocomp_materialization_queue_wwd
@@ -651,11 +643,9 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
     apply(&mut world, &batch(&population, 0, 8)).unwrap();
     let nod_id = ledger_entity(population.actions[0].nod_id);
     let error = world
-        .enter(|storage, scope, parent| {
+        .enter(|storage| {
             api::mine_gratis(
                 &storage,
-                scope,
-                parent,
                 api::MineGratisRequest {
                     caller: population.actions[0].owner,
                     nod_id,
@@ -680,11 +670,9 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
     world.settle(nod_id, population.actions[0].owner).unwrap();
     let nonce = world.pow_nonce(nod_id);
     let encrypted = world
-        .enter(|storage, scope, parent| {
+        .enter(|storage| {
             api::mine_gratis(
                 &storage,
-                scope,
-                parent,
                 api::MineGratisRequest {
                     caller: population.actions[0].owner,
                     nod_id,
@@ -702,16 +690,16 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
 
 fn protected_authority(
     world: &mut World,
-    source_root: B256,
-) -> outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {
-    outbe_tee::nod_materialization::NodMaterializationAuthorityV2 {
-        chain_id: CHAIN_ID,
+    source: outbe_tee::tribute_source::TributeSourceSubject,
+) -> outbe_tee::nod_state_materialization::StateNodAuthority {
+    outbe_tee::nod_state_materialization::StateNodAuthority {
+        source,
         head: head(world)
             .unwrap()
             .encode_canonical(&poc_schema_limits())
             .unwrap(),
         subtree_height: profile().batch_subtree_height,
-        sealed_tribute_root: source_root,
+        source_bindings: vec![],
         nod_gratis_load_max: U256::from(1_000),
     }
 }
@@ -722,13 +710,11 @@ fn apply_protected(
 ) -> Result<crate::materialization::NodMaterializationOutcomeV1, PrecompileError> {
     let _enclave = crate::test_support::enclave_scope();
     outbe_nod::test_support::install();
-    world.enter(|storage, scope, parent| {
+    world.enter(|storage| {
         storage.clone().with_checkpoint(|| {
             crate::materialization::consume_materialization_attempt(&storage, profile())?;
             crate::materialization::materialize_protected_after_attempt(
                 &storage,
-                scope,
-                parent,
                 carrier,
                 crate::materialization::MaterializationRules {
                     profile: profile(),
@@ -740,7 +726,7 @@ fn apply_protected(
 }
 
 #[test]
-fn encrypted_materialization_uses_current_frozen_authority_without_source_body_storage() {
+fn encrypted_materialization_pulls_proven_tributes_and_uses_retained_state_authority() {
     let mut world = World::new();
     let population = population(10);
     seed_generation(&mut world, &population);
@@ -749,9 +735,9 @@ fn encrypted_materialization_uses_current_frozen_authority_without_source_body_s
             .build()
             .unwrap();
     world
-        .enter(|storage, _, _| fixture.seed_source_root(&storage))
+        .enter(|storage| fixture.seed_sources(&storage))
         .unwrap();
-    let authority = protected_authority(&mut world, fixture.source_root());
+    let authority = protected_authority(&mut world, fixture.subject);
     let first = fixture
         .protect(&authority, &batch(&population, 0, 8))
         .unwrap();
@@ -762,40 +748,36 @@ fn encrypted_materialization_uses_current_frozen_authority_without_source_body_s
         8
     );
     world.provider.set_block_number(2);
-    let authority = protected_authority(&mut world, fixture.source_root());
+    let authority = protected_authority(&mut world, fixture.subject);
     let last = fixture
         .protect(&authority, &batch(&population, 8, 2))
         .unwrap();
     assert!(apply_protected(&mut world, &last).unwrap().completed);
     let id = ledger_entity(population.actions[0].nod_id);
-    world.enter(|storage, scope, parent| {
-        let item = nod_api::get_item(&storage, scope, parent, id)
-            .unwrap()
-            .unwrap();
+    world.enter(|storage| {
+        let item = nod_api::get_item(&storage, id).unwrap().unwrap();
         assert_eq!(
             nod_api::calculation_amount(&item).unwrap(),
             U256::from(1_000)
         );
-        let body = outbe_compressed_entities::encode_nod_item_v2(&outbe_nod::canonical_item(&item))
-            .unwrap();
+        let body =
+            outbe_primitives::entity_codec::encode_nod_item_v2(&outbe_nod::canonical_item(&item))
+                .unwrap();
         assert_eq!(
-            outbe_compressed_entities::decode_nod_item_v2(&body)
+            outbe_primitives::entity_codec::decode_nod_item_v2(&body)
                 .unwrap()
                 .encrypted,
             item.encrypted
         );
-        assert!(
-            outbe_tribute::TributeContract::new(storage)
-                .pre_admission_projection(item.worldwide_day)
-                .unwrap()
-                .is_sealed
-        );
+        let tribute = outbe_tribute::TributeContract::new(storage);
+        assert!(tribute.retired_days.read(&item.worldwide_day).unwrap());
+        assert!(tribute.records.exists(id).unwrap());
     });
     assert!(head(&mut world).is_none());
 }
 
 #[test]
-fn tampered_encrypted_batch_and_changed_frozen_root_preserve_every_prestate() {
+fn tampered_encrypted_batch_and_changed_request_checkpoint_preserve_every_prestate() {
     let mut world = World::new();
     let population = population(8);
     seed_generation(&mut world, &population);
@@ -804,9 +786,9 @@ fn tampered_encrypted_batch_and_changed_frozen_root_preserve_every_prestate() {
             .build()
             .unwrap();
     world
-        .enter(|storage, _, _| fixture.seed_source_root(&storage))
+        .enter(|storage| fixture.seed_sources(&storage))
         .unwrap();
-    let authority = protected_authority(&mut world, fixture.source_root());
+    let authority = protected_authority(&mut world, fixture.subject);
     let carrier = fixture
         .protect(&authority, &batch(&population, 0, 8))
         .unwrap();
@@ -825,14 +807,120 @@ fn tampered_encrypted_batch_and_changed_frozen_root_preserve_every_prestate() {
         .build()
         .unwrap();
     world
-        .enter(|storage, _, _| different.seed_source_root(&storage))
+        .enter(|storage| different.seed_sources(&storage))
         .unwrap();
     let before = world.provider.storage.clone();
     assert!(apply_protected(&mut world, &carrier).is_err());
     assert_eq!(world.provider.storage, before);
     assert_eq!(world.provider.get_ordered_events(), events);
     assert!(world
-        .enter(|storage, scope, parent| nod_api::list_all(&storage, scope, parent))
+        .enter(|storage| nod_api::list_all(&storage))
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn state_authority_uses_retained_ciphertext_and_the_installed_request_checkpoint() {
+    use outbe_ocomp_protocol::{
+        common::BoundedBytes, nod_materialization::ProtectedNodMaterializationV2,
+    };
+    use outbe_primitives::tribute_encryption::{TributeAmountsV2, TributeContextV2};
+    let mut world = World::new();
+    let population = population(1);
+    seed_generation(&mut world, &population);
+    world
+        .enter(|storage| {
+            let day = WorldwideDay::new(MATERIALIZATION_WWD);
+            let action = &population.actions[0];
+            let id = outbe_primitives::wwd_entity_id::WwdEntityId::from(action.tribute_id);
+            let tribute = outbe_tee_enclave::tribute_encryption::encrypt_tribute(
+                &crate::test_support::NETWORK_SECRET,
+                &[0x6b; 32],
+                TributeContextV2 {
+                    chain_id: storage.chain_id()?,
+                    tribute_id: id,
+                    owner: action.owner,
+                    worldwide_day: day,
+                    issuance_currency: action.issuance_currency,
+                    reference_currency: action.reference_currency,
+                    tribute_price_minor: U256::from(500_000),
+                    offer_input_hash: B256::repeat_byte(0x91),
+                },
+                &TributeAmountsV2 {
+                    issuance_amount_minor: U256::from(100),
+                    nominal_amount_minor: U256::from(100),
+                },
+            )
+            .unwrap();
+            let contract = outbe_tribute::TributeContract::new(storage.clone());
+            contract.insert_state_record(&outbe_tribute::storage_records::StoredTribute::from(
+                &tribute,
+            ))?;
+            let body = outbe_nod::test_support::encrypted_fixture(
+                &outbe_nod::NodIssueParams {
+                    owner: action.owner,
+                    worldwide_day: day,
+                    league_id: action.league_id,
+                    gratis_load_minor: U256::from(100),
+                    entry_price_minor: action.entry_price_minor,
+                    issuance_currency: action.issuance_currency,
+                    reference_currency: action.reference_currency,
+                },
+                storage.chain_id()?,
+            );
+            let mut carrier = ProtectedNodMaterializationV2 {
+                queue_sequence: 1,
+                first_nod_ordinal: 0,
+                encryption_binding: B256::repeat_byte(0x92),
+                encrypted_witness: BoundedBytes(vec![0; 32]),
+                encrypted_nods: vec![BoundedBytes(serde_json::to_vec(&body).unwrap())],
+            };
+            let nod = NodContract::new(storage.clone());
+            let head = nod.ocomp_materialization_head()?.unwrap();
+            let authority = crate::materialization::state_materialization_authority(
+                &storage,
+                &head,
+                &carrier,
+                profile().batch_subtree_height,
+                &poc_schema_limits(),
+            )?;
+            assert_eq!(authority.source.checkpoint.block_number, 1);
+            assert_eq!(
+                authority.source.checkpoint.state_root,
+                B256::repeat_byte(0x72)
+            );
+            assert_eq!(authority.source.tribute_count, 1);
+            let subject =
+                outbe_tribute::state_proof::TributeStateProofSubject::from(authority.source);
+            assert_eq!(
+                authority.source_bindings,
+                vec![outbe_tribute::state_proof::retained_source_binding(
+                    &storage, &subject, id
+                )?]
+            );
+            contract.retired_days.write(&day, true)?;
+            assert_eq!(
+                crate::materialization::state_materialization_authority(
+                    &storage,
+                    &head,
+                    &carrier,
+                    profile().batch_subtree_height,
+                    &poc_schema_limits(),
+                )?,
+                authority
+            );
+            let mut wrong = body;
+            wrong.terms.owner = Address::repeat_byte(0xee);
+            carrier.encrypted_nods[0] = BoundedBytes(serde_json::to_vec(&wrong).unwrap());
+            assert!(crate::materialization::state_materialization_authority(
+                &storage,
+                &head,
+                &carrier,
+                profile().batch_subtree_height,
+                &poc_schema_limits(),
+            )
+            .is_err());
+            Ok::<_, PrecompileError>(())
+        })
+        .unwrap();
 }

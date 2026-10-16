@@ -22,7 +22,6 @@
 use alloy_evm::{eth::EthEvmContext, EvmInternals};
 use alloy_primitives::{Address, Log, LogData, B256, U256};
 use core::fmt::Debug;
-use outbe_compressed_entities::ExecutionScope;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::{
@@ -44,7 +43,6 @@ use std::{cell::RefCell, sync::Arc};
 
 use crate::{gas::SubcallGasMeter, precompiles::OcompActivationBlockMeter, sub_call};
 use outbe_metadosis::api::OcompFinalizedIntentAuthority;
-use outbe_offchain_data::RuntimeBodyReaders;
 
 #[cfg(test)]
 #[path = "subcall_tests.rs"]
@@ -140,10 +138,9 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     /// Immutable genesis hash sourced from the canonical ChainSpec.
     pub genesis_hash: B256,
     /// Least-authority off-chain body readers propagated to nested precompiles.
-    pub runtime_body_readers: Option<RuntimeBodyReaders>,
     pub(crate) abort_bridge: crate::precompiles::ExecutionAbortBridge,
     /// The same block-scoped lifecycle capability used by the outer EVM.
-    pub execution_scope: Arc<ExecutionScope>,
+
     /// Production finalized-Intent authority propagated to nested precompile calls.
     pub ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
     /// The same block-scoped activation meter used by the outer dispatcher.
@@ -160,9 +157,9 @@ pub(crate) struct CtxStorageProviderConfig {
     pub(crate) reentrancy_stack: ReentrancyStack,
     pub(crate) spec: SpecId,
     pub(crate) genesis_hash: B256,
-    pub(crate) runtime_body_readers: Option<RuntimeBodyReaders>,
+
     pub(crate) abort_bridge: crate::precompiles::ExecutionAbortBridge,
-    pub(crate) execution_scope: Arc<ExecutionScope>,
+
     pub(crate) ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
     pub(crate) ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
     pub(crate) ocomp_lifecycle_active: bool,
@@ -284,9 +281,9 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
             reentrancy_stack: config.reentrancy_stack,
             spec: config.spec,
             genesis_hash: config.genesis_hash,
-            runtime_body_readers: config.runtime_body_readers,
+
             abort_bridge: config.abort_bridge,
-            execution_scope: config.execution_scope,
+
             ocomp_finality_authority: config.ocomp_finality_authority,
             ocomp_activation_block_meter: config.ocomp_activation_block_meter,
             ocomp_lifecycle_active: config.ocomp_lifecycle_active,
@@ -623,8 +620,6 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
                     self.genesis_hash,
                 ),
                 runtime: crate::precompiles::OutbePrecompileRuntime::new(
-                    self.runtime_body_readers.clone(),
-                    self.execution_scope.clone(),
                     self.ocomp_finality_authority.clone(),
                     self.ocomp_lifecycle_active,
                 )

@@ -57,23 +57,16 @@ fn currency_scoped_bin_keys_do_not_alias() {
 /// in two independent bin tries.
 #[test]
 fn same_day_and_entry_in_two_currencies_are_two_buckets_in_two_bins() {
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let entry = U256::from(5);
     let usd = item(Address::repeat_byte(0x11), entry, USD);
     let eur = item(Address::repeat_byte(0x22), entry, EUR);
     assert_ne!(usd.bucket_key, eur.bucket_key);
 
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &usd,
             entry,
             crate::test_support::sealed_terms(&storage, &usd, entry),
@@ -81,10 +74,6 @@ fn same_day_and_entry_in_two_currencies_are_two_buckets_in_two_bins() {
         .unwrap();
         api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &eur,
             entry,
             crate::test_support::sealed_terms(&storage, &eur, entry),
@@ -112,7 +101,6 @@ fn same_day_and_entry_in_two_currencies_are_two_buckets_in_two_bins() {
 
 #[test]
 fn same_day_and_currency_at_two_entries_are_two_buckets_with_their_own_terms() {
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let low_entry = U256::from(2_000_000u64);
     let high_entry = U256::from(3_000_000u64);
     let low = item(Address::repeat_byte(0x11), low_entry, USD);
@@ -121,16 +109,10 @@ fn same_day_and_currency_at_two_entries_are_two_buckets_with_their_own_terms() {
     assert_ne!(low.bucket_key, high.bucket_key);
 
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &low,
             low_entry,
             crate::test_support::sealed_terms(&storage, &low, low_entry),
@@ -138,10 +120,6 @@ fn same_day_and_currency_at_two_entries_are_two_buckets_with_their_own_terms() {
         .unwrap();
         api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &high,
             high_entry,
             crate::test_support::sealed_terms(&storage, &high, high_entry),
@@ -153,7 +131,7 @@ fn same_day_and_currency_at_two_entries_are_two_buckets_with_their_own_terms() {
             (&low, low_entry, 7_120_000u64),
             (&high, high_entry, 10_680_000),
         ] {
-            let bucket = bucket_of(&storage, &scope, &parent, body);
+            let bucket = bucket_of(&storage, body);
             assert_eq!(bucket.entry_price_minor, entry);
             assert_eq!(nod.bucket_nod_count.read(&body.bucket_key).unwrap(), 1);
             assert_eq!(
@@ -168,19 +146,12 @@ fn same_day_and_currency_at_two_entries_are_two_buckets_with_their_own_terms() {
 /// funnel rejects it before any write.
 #[test]
 fn zero_reference_currency_is_rejected_at_issuance() {
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let body = item(Address::repeat_byte(0x66), U256::from(5), 0);
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
         let error = api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &body,
             U256::from(5),
             crate::test_support::sealed_terms(&storage, &body, U256::from(5)),
@@ -202,20 +173,13 @@ fn zero_reference_currency_is_rejected_at_issuance() {
 /// cannot drift apart silently.
 #[test]
 fn a_bucket_key_that_does_not_match_its_inputs_is_rejected() {
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let mut body = item(Address::repeat_byte(0x66), U256::from(5), EUR);
     body.bucket_key = crate::identity::bucket_key(body.worldwide_day, U256::from(5), USD);
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
         let error = api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &body,
             U256::from(5),
             crate::test_support::sealed_terms(&storage, &body, U256::from(5)),

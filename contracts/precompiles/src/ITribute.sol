@@ -2,17 +2,6 @@
 pragma solidity ^0.8.30;
 
 interface ITribute {
-    event TributeBodyStored(
-        uint256 tributeId,
-        uint32 commitmentSchemeVersion,
-        uint32 schemaVersion,
-        bytes32 previousCommitment,
-        bytes32 newCommitment,
-        bytes canonicalPayload
-    );
-
-    event TributeBodyDeleted(uint256 tributeId, bytes32 previousCommitment);
-
     event TributeIssued(
         address indexed owner,
         uint256 tributeId,
@@ -35,7 +24,6 @@ interface ITribute {
         bytes32 indexed activationCallId,
         uint32 indexed worldwideDay,
         uint64 sourceGeneration,
-        bytes32 sealedCollectionRoot,
         uint32 consumedCount,
         bytes consumedNominalTotalMinor,
         uint64 retiredGeneration,

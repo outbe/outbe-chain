@@ -6,88 +6,13 @@ use super::current_preloaded_system_tx_context;
 
 pub(super) fn run_cycle_tick_at_activation(
     ctx: &BlockRuntimeContext,
-    _metadosis_genesis_activation_height: u64,
-) -> Result<()> {
-    validate_and_record_cycle_proposer(ctx)?;
-    enforce_tee_lease_deadlines(ctx)?;
-
-    #[cfg(test)]
-    {
-        use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
-        use std::sync::Arc;
-
-        let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
-        let parent = outbe_offchain_data::runtime_body_readers(storage);
-        let scope = outbe_compressed_entities::ExecutionScope::default();
-        let compressed =
-            outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(ctx.clone(), &scope);
-        <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(
-            &compressed,
-        )?;
-        let lifecycle =
-            outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), &scope, &parent)
-                .with_metadosis_genesis_activation_height(_metadosis_genesis_activation_height);
-        <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)?;
-        <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
-            &compressed,
-        )
-        .map(|_| ())?;
-        run_ocomp_recovery_sweep(ctx)
-    }
-
-    #[cfg(not(test))]
-    Err(crate::errors::BeginBlockPrecompileError::MissingCycleBodyReadAuthority.into())
-}
-
-/// Offline/component execution without installed body readers. Tests get an
-/// in-memory parent and a block-local compressed-entity lifecycle, the same way the
-/// CycleTick fallback does; production fails closed.
-pub(super) fn run_reward_gem_delivery_without_readers(ctx: &BlockRuntimeContext) -> Result<()> {
-    #[cfg(test)]
-    {
-        use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
-        use std::sync::Arc;
-
-        let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
-        let parent = outbe_offchain_data::runtime_body_readers(storage);
-        let scope = outbe_compressed_entities::ExecutionScope::default();
-        let compressed =
-            outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(ctx.clone(), &scope);
-        <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(
-            &compressed,
-        )?;
-        outbe_rewards::api::deliver_oldest_reward_gem_batch(ctx, &scope, &parent)?;
-        <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
-            &compressed,
-        )
-        .map(|_| ())
-    }
-
-    #[cfg(not(test))]
-    {
-        let _ = ctx;
-        Err(
-            crate::errors::BeginBlockPrecompileError::MissingRewardsGemDeliveryBodyReadAuthority
-                .into(),
-        )
-    }
-}
-
-pub(super) fn run_cycle_tick_with_readers_at_activation(
-    ctx: &BlockRuntimeContext,
-    scope: &outbe_compressed_entities::ExecutionScope,
-    parent: &outbe_offchain_data::RuntimeBodyReaders,
     metadosis_genesis_activation_height: u64,
 ) -> Result<()> {
     validate_and_record_cycle_proposer(ctx)?;
     enforce_tee_lease_deadlines(ctx)?;
-    let cycle_lifecycle =
-        outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), scope, parent)
-            .with_metadosis_genesis_activation_height(metadosis_genesis_activation_height);
-    <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&cycle_lifecycle)?;
-    // Keep non-transactional punishment observability behind every other
-    // fallible CycleTick lifecycle. Once this succeeds, the precompile returns
-    // immediately and the critical system transaction can commit as one unit.
+    let lifecycle = outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone())
+        .with_metadosis_genesis_activation_height(metadosis_genesis_activation_height);
+    <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)?;
     run_ocomp_recovery_sweep(ctx)
 }
 
@@ -176,7 +101,6 @@ pub(crate) fn run_hook_events(_ctx: &BlockRuntimeContext) -> Result<()> {
 /// lifecycle handler into this already receipt-visible phase.
 pub(crate) fn run_ocomp_lifecycle_begin(
     ctx: &BlockRuntimeContext,
-    scope: &outbe_compressed_entities::ExecutionScope,
     fork_install: Option<&outbe_metadosis::config::OcompForkInstallV1>,
 ) -> Result<()> {
     if let Some(install) = fork_install {
@@ -184,14 +108,10 @@ pub(crate) fn run_ocomp_lifecycle_begin(
             outbe_metadosis::commands::install_fork_profile(ctx, install)?;
         }
     }
-    outbe_metadosis::commands::run_ocomp_lifecycle_begin_with_scope(ctx, scope)
+    outbe_metadosis::commands::run_ocomp_lifecycle_begin_with_scope(ctx)
 }
 
-/// Reserved terminal request slot. It consumes executor-owned provisional CE
-/// roots while the scope remains active for terminal failure retirement.
-pub(crate) fn run_ocomp_terminal_request(
-    ctx: &BlockRuntimeContext,
-    scope: &outbe_compressed_entities::ExecutionScope,
-) -> Result<()> {
-    outbe_metadosis::commands::run_ocomp_terminal_request(ctx, scope)
+/// Freezes day inputs in EVM state for the finalized terminal request.
+pub(crate) fn run_ocomp_terminal_request(ctx: &BlockRuntimeContext) -> Result<()> {
+    outbe_metadosis::commands::run_ocomp_terminal_request(ctx)
 }

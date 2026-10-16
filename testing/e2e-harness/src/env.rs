@@ -119,10 +119,6 @@ impl TeeMode {
 /// `--repo`.
 #[derive(clap::Args, Clone, Debug)]
 pub struct EnvCli {
-    /// Projection datasource. MongoDB starts a scenario-owned local replica set.
-    #[arg(long, value_enum, default_value_t = ProjectionBackend::Rocksdb)]
-    pub projection_backend: ProjectionBackend,
-
     /// Number of committee validators to bootstrap.
     #[arg(long, default_value_t = 4)]
     pub validators: usize,
@@ -245,7 +241,6 @@ pub struct EnvCli {
 /// entirely from the CLI.
 #[derive(Clone, Debug)]
 pub struct Environment {
-    pub projection_backend: ProjectionBackend,
     pub validators: usize,
     /// Per-node port blocks, shared by every scenario's `World`. Each scenario
     /// calls [`Ports::start_scenario`], which re-seeds the committee above the
@@ -291,7 +286,6 @@ impl Environment {
             })
         });
         Self {
-            projection_backend: cli.projection_backend,
             validators: cli.validators,
             ports: Ports::new(!cli.no_resolve_ports),
             no_cleanup: cli.no_cleanup,
@@ -354,7 +348,6 @@ impl Environment {
 impl Default for Environment {
     fn default() -> Self {
         Self::from_cli(&EnvCli {
-            projection_backend: ProjectionBackend::Rocksdb,
             validators: 4,
             // Unlike the CLI defaults, don't scan and never delete: a `Default`
             // environment must be deterministic, must not bind sockets, and must
@@ -607,11 +600,3 @@ fn has_tag(feature: &Feature, scenario: &Scenario, tag: &str) -> bool {
 
 #[cfg(test)]
 mod tests;
-
-/// Backend selection belongs to harness composition, independent of entity rules.
-#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum ProjectionBackend {
-    #[default]
-    Rocksdb,
-    Mongodb,
-}

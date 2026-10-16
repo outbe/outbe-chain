@@ -154,7 +154,7 @@ fn observe_consensus_startup(
             .follower_launch_observation(FOLLOWER, launch.index)?;
         std::thread::sleep(Duration::from_millis(100));
     };
-    let (processed, checkpoint, ce, execution) = parse_recovery_record(&log)?;
+    let (processed, checkpoint, execution) = parse_recovery_record(&log)?;
     assert_local_committee_anchor(&log, checkpoint.number)?;
     ensure!(
         checkpoint.number >= minimum_height,
@@ -169,7 +169,7 @@ fn observe_consensus_startup(
         "recovery outside processed frontier"
     );
     ensure!(
-        ce >= checkpoint.number && execution >= checkpoint.number,
+        execution >= checkpoint.number,
         "durable execution did not recover the consensus checkpoint"
     );
     let anchor = observed_anchor(&log)?;

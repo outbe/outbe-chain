@@ -837,13 +837,6 @@ pub enum EnclaveRequest {
         creator_public: [u8; 32],
         amount: U256,
     },
-    PrepareEncryptedNodsV2 {
-        request: Box<crate::nod_materialization::PrepareEncryptedNodsRequestV2>,
-    },
-    OpenEncryptedNodsV2 {
-        authority: crate::nod_materialization::NodMaterializationAuthorityV2,
-        carrier: Vec<u8>,
-    },
     MineEncryptedNodV2 {
         request: Box<crate::nod_mine::MineEncryptedNodRequestV2>,
     },
@@ -880,6 +873,13 @@ pub enum EnclaveRequest {
     ReadTributeDayAmountV2 {
         record: outbe_primitives::tribute_day_encryption::EncryptedTributeDayAmountV2,
     },
+    PrepareStateNods {
+        request: Box<crate::nod_state_materialization::PrepareStateNodsRequest>,
+    },
+    OpenStateNods {
+        authority: crate::nod_state_materialization::StateNodAuthority,
+        carrier: Vec<u8>,
+    },
 }
 
 impl EnclaveRequest {
@@ -888,8 +888,8 @@ impl EnclaveRequest {
     pub const fn label(&self) -> &'static str {
         match self {
             Self::CreateNodForTestV2 { .. } => "create_nod_for_test_v2",
-            Self::PrepareEncryptedNodsV2 { .. } => "prepare_encrypted_nods_v2",
-            Self::OpenEncryptedNodsV2 { .. } => "open_encrypted_nods_v2",
+            Self::PrepareStateNods { .. } => "prepare_state_nods",
+            Self::OpenStateNods { .. } => "open_state_nods",
             Self::MineEncryptedNodV2 { .. } => "mine_encrypted_nod_v2",
             Self::ReadNodAmountV2 { .. } => "read_nod_amount_v2",
             Self::NodTransferChunkV2 { .. } => "nod_transfer_chunk_v2",
@@ -969,8 +969,8 @@ impl EnclaveRequest {
         match self {
             Self::CreateNodForTestV2 { .. } => true,
             Self::GetQuote { .. }
-            | Self::PrepareEncryptedNodsV2 { .. }
-            | Self::OpenEncryptedNodsV2 { .. }
+            | Self::PrepareStateNods { .. }
+            | Self::OpenStateNods { .. }
             | Self::MineEncryptedNodV2 { .. }
             | Self::ReadNodAmountV2 { .. }
             | Self::NodTransferChunkV2 { .. }
@@ -1496,6 +1496,11 @@ pub enum EnclaveResponse {
     /// or an expired session. Unlike `Error`, it reports this enclave's state, not the request's content.
     NotReady {
         message: String,
+    },
+    TributeSourcesRequested {
+        lookup: crate::nod_state_materialization::TributeSourceLookup,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
     },
 }
 

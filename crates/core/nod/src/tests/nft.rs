@@ -11,21 +11,8 @@ fn transfer_surface_is_soulbound() {
     let other = Address::repeat_byte(0x42);
     let token = U256::from(7);
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::default();
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     StorageHandle::enter(&mut provider, |storage| {
-        let call = |data: Vec<u8>| {
-            dispatch(
-                storage.clone(),
-                ExecutionReaders {
-                    scope: &scope,
-                    parent: &parent,
-                },
-                &data,
-                owner,
-                U256::ZERO,
-            )
-        };
+        let call = |data: Vec<u8>| dispatch(storage.clone(), &data, owner, U256::ZERO);
         for data in [
             INod::transferFromCall {
                 from: owner,
@@ -82,35 +69,23 @@ fn transfer_logs_announce_issuance_and_removal() {
     use crate::precompile::INod;
     use alloy_sol_types::SolEvent;
 
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     let owner = Address::repeat_byte(0x61);
     let body = item(owner, U256::from(5), USD);
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::default();
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
         api::add_nod(
             &storage,
-            outbe_compressed_entities::ExecutionReaders {
-                scope: &scope,
-                parent: &parent,
-            },
             &body,
             U256::from(5),
             crate::test_support::sealed_terms(&storage, &body, U256::from(5)),
         )
         .unwrap();
-        let bucket_id = WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key);
+        let bucket_id = body.bucket_key;
         api::remove_nod(
             &storage,
-            &scope,
-            api::load_item(&storage, &scope, &parent, body.nod_id)
-                .unwrap()
-                .unwrap(),
-            api::load_bucket(&storage, &scope, &parent, bucket_id)
-                .unwrap()
-                .unwrap(),
+            api::load_item(&storage, body.nod_id).unwrap().unwrap(),
+            api::load_bucket(&storage, bucket_id).unwrap().unwrap(),
         )
         .unwrap();
     });
@@ -177,25 +152,13 @@ fn supported_interfaces_match_the_implemented_selectors() {
     );
 
     let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::default();
-    let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
     StorageHandle::enter(&mut provider, |storage| {
         let supports = |id: [u8; 4]| {
             let data = INod::supportsInterfaceCall {
                 interfaceId: id.into(),
             }
             .abi_encode();
-            let out = dispatch(
-                storage.clone(),
-                ExecutionReaders {
-                    scope: &scope,
-                    parent: &parent,
-                },
-                &data,
-                Address::ZERO,
-                U256::ZERO,
-            )
-            .unwrap();
+            let out = dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO).unwrap();
             INod::supportsInterfaceCall::abi_decode_returns(&out).unwrap()
         };
         for id in [

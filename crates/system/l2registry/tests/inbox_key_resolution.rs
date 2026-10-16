@@ -8,9 +8,6 @@
 //! `DirectStorageProvider`, and reads go through `OutbeEvmFactory`. Provider-level
 //! coverage of the same resolution lives with the registry.
 
-use outbe_offchain_data::runtime_body_readers;
-use std::sync::Arc;
-
 use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolError};
@@ -23,7 +20,6 @@ use outbe_l2registry::{
     api::ZK_MERKLE_ROOT_NAMESPACE, errors::L2RegistryError, precompile::IL2Registry, public_key,
     schema::L2RegistryContract,
 };
-use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::{
     addresses::{L2_REGISTRY_ADDRESS, TRIBUTE_FACTORY_ADDRESS},
     block::BlockContext,
@@ -225,8 +221,8 @@ fn call(db: &mut CacheDB<EmptyDB>, to: Address, calldata: Bytes) -> ExecutionRes
             ..Default::default()
         },
     };
-    let reader: StorageReaderHandle = Arc::new(MemoryStorage::new());
-    let factory = outbe_evm::factory::evm_factory_with_body_readers(runtime_body_readers(reader));
+
+    let factory = outbe_evm::factory::OutbeEvmFactory::default();
     let mut evm = factory.create_evm(&mut *db, env);
     let ResultAndState { result, state } = evm
         .transact_raw(

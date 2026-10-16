@@ -46,7 +46,6 @@ pub(crate) fn verify_pin_authority(
         expected_job,
     )?;
     if job.intent_height != candidate.block_number
-        || job.intent.ce_sealed_root != candidate.ce_sealed_root
         || job.intent.protocol_bundle_hash != candidate.protocol_bundle_hash
         || job.intent.input_lease_id()? != candidate.input_lease_id
     {
@@ -124,86 +123,134 @@ pub(crate) fn verify_pin_authority(
     })
 }
 
-/// Close a required lease's live/retained body union to its canonical JobIntent.
-/// Callers decide which leases remain required. Historical GC alone does not
-/// create a requirement to reproduce a released population.
+/// Verify complete Tribute coverage at the job's exact native request checkpoint.
+/// This also supports awaiting-finality pins without asserting their finality.
 pub(crate) fn verify_lease_inputs(
-    reader: outbe_offchain_storage::StorageReaderHandle,
-    intent: &outbe_ocomp_protocol::intent::JobIntentV1,
-    scratch_parent: &Path,
-    protected: &ProtectedPaths,
+    history: &crate::snapshot::native::HistoricalStateReader,
+    view: &crate::snapshot::native::RethReadOnlyView,
+    job: &OcompJobRecordV1,
     maximum_records: Option<u64>,
 ) -> eyre::Result<()> {
-    use outbe_compressed_entities::{
-        BoundedTributePartitionVerifier, Commitment, TributePartitionExpectationV1,
-        TributePartitionWorkConfig, ACTIVE_COMMITMENT_SCHEME,
-    };
-    use outbe_ocomp::exporter::{FinalizedTributeError, FinalizedTributeSource};
-    use outbe_tribute::RetainedTributePin;
-
-    validate_layout(&[], protected, &[scratch_parent.to_path_buf()])?;
-    let pin = RetainedTributePin {
-        input_lease_id: intent.input_lease_id()?,
-        worldwide_day: WorldwideDay::new(intent.wwd),
-    };
-    let classify = |error: FinalizedTributeError| {
-        if matches!(error, FinalizedTributeError::MissingBody(_))
-            || matches!(error, FinalizedTributeError::CountMismatch { expected, actual } if actual < expected)
-            || missing_native_input(&error)
-        {
-            eyre::Report::new(error).wrap_err(
-                SnapshotIncompleteError::MissingRequiredTributeInputs {
-                    input_lease_id: pin.input_lease_id,
-                    wwd: intent.wwd,
-                }
-                .into_incomplete(),
-            )
-        } else {
-            eyre::Report::new(error).wrap_err(SnapshotOcompError::TributeInputsForLease {
-                input_lease_id: pin.input_lease_id,
-                wwd: intent.wwd,
-            })
-        }
-    };
-    let source = FinalizedTributeSource::new(reader, outbe_offchain_storage::MAX_SCAN_ENTRIES)
-        .map_err(&classify)?;
-    let mut stream = source
-        .commitment_reconstruction_stream(pin, intent.authenticated_day_count)
-        .map_err(&classify)?;
-    let directory = tempfile::Builder::new()
-        .prefix("outbe-lease-audit-")
-        .tempdir_in(scratch_parent)?;
-    let mut partition = BoundedTributePartitionVerifier::create(
-        directory.path().join("partition"),
-        TributePartitionExpectationV1 {
-            day: pin.worldwide_day,
-            exact_leaf_count: intent.authenticated_day_count,
-            expected_collection_root: intent.sealed_tribute_collection_root,
-            commitment_scheme: ACTIVE_COMMITMENT_SCHEME,
+    use alloy_consensus::Sealable;
+    use outbe_primitives::{
+        addresses::TRIBUTE_ADDRESS,
+        error::{PrecompileError, Result as StorageResult},
+        storage::{
+            proof::AccountStorageProof,
+            readonly::{ReadOnlyStorageProvider, StorageReader},
+            StorageHandle,
         },
-        TributePartitionWorkConfig::default(),
-    )?;
-    let mut visited = 0_u64;
-    while let Some(record) = stream.next_commitment().map_err(&classify)? {
-        if maximum_records.is_some_and(|maximum| visited >= maximum) {
-            return Err(SnapshotIncompleteError::TributeLeaseScanStopped {
-                input_lease_id: pin.input_lease_id,
-                visited,
-                authenticated_day_count: intent.authenticated_day_count,
-            }
-            .into_report());
+    };
+    use outbe_tee::tribute_source::{TributeSourceCheckpoint, TributeSourceSubject};
+    use outbe_tribute::state_proof::{
+        expected_record_words, TributeDayProofVerifier, TributeRecordStateProof,
+    };
+    use reth_ethereum::trie::TrieInput;
+    use reth_provider::StateProvider;
+
+    struct NativeReader<'a>(&'a dyn StateProvider);
+    impl StorageReader for NativeReader<'_> {
+        fn read_storage(
+            &self,
+            address: alloy_primitives::Address,
+            key: B256,
+        ) -> StorageResult<U256> {
+            self.0
+                .storage(address, key)
+                .map(|v| v.unwrap_or_default())
+                .map_err(|error| PrecompileError::storage(error.to_string()))
         }
-        partition.push(
-            record.tribute_id,
-            Commitment::try_from(record.commitment.0)?,
-        )?;
-        visited = visited
-            .checked_add(1)
-            .ok_or(SnapshotOcompError::TributeVisitCountOverflow)?;
     }
-    // Count underflow is unavailable input. A different complete population
-    // fails the finalized collection root check.
-    stream.finish().map_err(classify)?;
-    partition.finish()?;
-    Ok(())
+    let number = job.intent_height;
+    let header = view
+        .header(number)?
+        .ok_or_else(|| Incomplete(format!("missing Tribute request header B={number}")))?;
+    let hash = view
+        .canonical_hash(number)?
+        .ok_or_else(|| Incomplete(format!("missing Tribute request hash B={number}")))?;
+    if header.inner.number != number || header.hash_slow() != hash {
+        return Err(SnapshotOcompError::SourceConflictingRequestIdentity.into());
+    }
+    if job.finalized.as_ref().is_some_and(|f| {
+        f.finalized_request_block_hash != hash
+            || f.finalized_request_state_root != header.inner.state_root
+    }) {
+        return Err(SnapshotOcompError::SourceConflictingRequestIdentity.into());
+    }
+    let subject = TributeSourceSubject {
+        checkpoint: TributeSourceCheckpoint {
+            block_number: number,
+            block_hash: hash,
+            state_root: header.inner.state_root,
+        },
+        chain_id: view.chain.chain().id(),
+        worldwide_day: WorldwideDay::new(job.intent.wwd),
+        tribute_count: job.intent.authenticated_day_count,
+    };
+    let node_subject = subject.into();
+    let limits = outbe_tee::tribute_source::proof_limits();
+    history.with_state(hash, |state| {
+        let mut readonly = ReadOnlyStorageProvider::new_with_chain_identity(
+            NativeReader(state),
+            subject.chain_id,
+            view.chain.genesis_hash(),
+        );
+        let length_slot = StorageHandle::enter(&mut readonly, |storage| -> StorageResult<_> {
+            let contract = outbe_tribute::TributeContract::new(storage);
+            let ids = contract.day_ids.list(&subject.worldwide_day);
+            if ids.len()? != subject.tribute_count {
+                return Err(PrecompileError::storage(
+                    "native Tribute day count mismatch",
+                ));
+            }
+            Ok(B256::from(ids.base_slot().to_be_bytes::<32>()))
+        })
+        .map_err(eyre::Report::new)?;
+        let length_proof = state.proof(TrieInput::default(), TRIBUTE_ADDRESS, &[length_slot])?;
+        let length_proof = AccountStorageProof::try_from(&length_proof)?;
+        let mut verifier = TributeDayProofVerifier::new(node_subject, &length_proof, limits)?;
+        for index in 0..subject.tribute_count {
+            if maximum_records.is_some_and(|limit| u64::from(index) >= limit) {
+                return Err(Incomplete(format!(
+                    "Tribute source scan stopped at {index}/{} records",
+                    subject.tribute_count
+                ))
+                .into());
+            }
+            let (tribute, words) =
+                StorageHandle::enter(&mut readonly, |storage| -> StorageResult<_> {
+                    let contract = outbe_tribute::TributeContract::new(storage.clone());
+                    let id = contract
+                        .day_ids
+                        .list(&subject.worldwide_day)
+                        .get(index)?
+                        .ok_or_else(|| {
+                            PrecompileError::storage("native Tribute day index is missing")
+                        })?;
+                    let record = outbe_tribute::state_api::get_retained_record(&storage, id)?
+                        .ok_or_else(|| {
+                            PrecompileError::storage("native Tribute record is missing")
+                        })?;
+                    let tribute = record
+                        .encrypted()
+                        .ok_or_else(|| PrecompileError::storage("native Tribute is not encrypted"))?
+                        .clone();
+                    let words = expected_record_words(&contract, &node_subject, index, &tribute)?;
+                    Ok((tribute, words))
+                })
+                .map_err(eyre::Report::new)?;
+            let slots = words.iter().map(|(slot, _)| *slot).collect::<Vec<_>>();
+            let proof = state.proof(TrieInput::default(), TRIBUTE_ADDRESS, &slots)?;
+            verifier.verify_next(
+                &TributeRecordStateProof {
+                    day_index: index,
+                    tribute,
+                    account: AccountStorageProof::try_from(&proof)?,
+                },
+                limits,
+            )?;
+        }
+        verifier.finish()?;
+        Ok(())
+    })
 }

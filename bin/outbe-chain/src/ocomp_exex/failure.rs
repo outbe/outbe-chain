@@ -10,14 +10,6 @@ use futures::{FutureExt as _, StreamExt as _};
 
 use metrics::gauge;
 
-use outbe_node::projection::projection_frame_failure_class;
-
-use outbe_node::projection::ProjectionRuntimeRecoveryHandle;
-use outbe_node::projection::ProjectionRuntimeRecoveryV1;
-
-use outbe_node::projection::RuntimeBodyFailure;
-use outbe_node::projection::PROJECTION_RECOVERY_DEADLINE;
-
 use outbe_primitives::projection::ProjectionCheckpoint;
 use outbe_primitives::projection::ProjectionFailure;
 use outbe_primitives::projection::ProjectionFailureClass;
@@ -47,90 +39,6 @@ use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 
 use tracing::error;
-
-pub(super) async fn projection_runtime_failure(
-    receiver: &tokio::sync::watch::Receiver<Option<RuntimeBodyFailure>>,
-    unavailable_since: &mut Option<(u64, tokio::time::Instant)>,
-    recovery: &ProjectionRuntimeRecoveryHandle,
-    recovery_task: &mut Option<tokio::task::JoinHandle<ProjectionRuntimeRecoveryV1>>,
-) -> Option<ProjectionFailure> {
-    if recovery_task
-        .as_ref()
-        .is_some_and(tokio::task::JoinHandle::is_finished)
-    {
-        match recovery_task.take().expect("finished task exists").await {
-            Ok(
-                ProjectionRuntimeRecoveryV1::Recovered | ProjectionRuntimeRecoveryV1::Unavailable,
-            ) => {}
-            Ok(ProjectionRuntimeRecoveryV1::Fatal(failure)) => return Some(failure),
-            Err(error) => {
-                return Some(ProjectionFailure::new(
-                    ProjectionFailureClass::Other,
-                    format!("offchain runtime-body recovery worker failed: {error}"),
-                ));
-            }
-        }
-    }
-    match receiver.borrow().clone() {
-        None => {
-            *unavailable_since = None;
-            None
-        }
-        Some(RuntimeBodyFailure::Fatal(failure)) => Some(failure),
-        Some(RuntimeBodyFailure::Unavailable { generation, since }) => {
-            let since = tokio::time::Instant::from_std(since);
-            *unavailable_since = Some((generation, since));
-            if tokio::time::Instant::now() >= since + PROJECTION_RECOVERY_DEADLINE {
-                return Some(projection_runtime_deadline_failure());
-            }
-            if recovery_task.is_none() {
-                let recovery = recovery.clone();
-                *recovery_task = Some(tokio::task::spawn_blocking(move || {
-                    recovery.reconcile(generation)
-                }));
-            }
-            None
-        }
-    }
-}
-
-fn projection_runtime_deadline_failure() -> ProjectionFailure {
-    ProjectionFailure::new(
-        ProjectionFailureClass::MongoReconnectDeadline,
-        "offchain runtime-body storage remained unavailable past the recovery deadline",
-    )
-}
-
-pub(super) fn consume_projection_runtime_deadline(
-    receiver: &tokio::sync::watch::Receiver<Option<RuntimeBodyFailure>>,
-    state: &mut Option<(u64, tokio::time::Instant)>,
-) -> Option<ProjectionFailure> {
-    let (expected_generation, since) = state.take()?;
-    if tokio::time::Instant::now() < since + PROJECTION_RECOVERY_DEADLINE {
-        return None;
-    }
-    matches!(
-        receiver.borrow().clone(),
-        Some(RuntimeBodyFailure::Unavailable { generation, .. })
-            if generation == expected_generation
-    )
-    .then(projection_runtime_deadline_failure)
-}
-
-pub(super) fn projection_runtime_watch_closed_failure() -> ProjectionFailure {
-    ProjectionFailure::new(
-        ProjectionFailureClass::ReadinessChannelClosed,
-        "offchain runtime-body failure channel closed",
-    )
-}
-
-pub(super) fn projection_task_failure(error: eyre::Report) -> ProjectionFailure {
-    let class = projection_frame_failure_class(&error);
-    ProjectionFailure::new(
-        class,
-        format!("unified durable projection failed: {error:#}"),
-    )
-}
 
 pub(super) fn without_execution_backfill<N, S>(mut notifications: S) -> S
 where

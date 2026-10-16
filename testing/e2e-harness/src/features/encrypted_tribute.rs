@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use cucumber::{then, when};
-use outbe_compressed_entities::decode_stored_tribute_v2;
+use outbe_primitives::entity_codec::decode_stored_tribute_v2;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 

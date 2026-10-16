@@ -2,8 +2,8 @@ use std::fmt::Display;
 
 use alloy_primitives::B256;
 use outbe_common::pow::PowError;
-use outbe_compressed_entities::WwdEntityId;
 use outbe_primitives::error::PrecompileError;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use thiserror::Error;
 
 /// Errors that the Nod factory precompile returns.

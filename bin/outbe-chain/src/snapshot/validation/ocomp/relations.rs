@@ -6,10 +6,6 @@ fn seed_canonical_work_union(
     work: &PresentJobUnion,
     report: &mut super::super::report::ValidationReport,
 ) -> eyre::Result<()> {
-    report.observed.p = Some(outbe_snapshot::manifest::BlockIdentity {
-        number: canonical.projection.block_number,
-        hash: hex::encode(canonical.projection.block_hash),
-    });
     for (name, count) in [
         ("verified_active_intents", canonical.bounds.active_intents),
         ("verified_closure_frames", canonical.closure.replay.blocks),
@@ -198,9 +194,6 @@ pub(crate) fn verify_ocomp_relations(
         layout.static_files_root.clone(),
         layout.execution_rocksdb_root.clone(),
     ]);
-    protected
-        .0
-        .extend(layout.projection.as_ref().map(|p| p.root.clone()));
     let work = PresentJobUnion::create(scratch_parent, &protected)?;
     if let Some(canonical) = &canonical {
         seed_canonical_work_union(canonical, &work, report)?;
@@ -227,12 +220,6 @@ pub(crate) fn verify_ocomp_relations(
         cas_limits: limits,
     };
     audit_present_job_union(&context, canonical.as_ref(), &work, &mut errors, report)?;
-    if let Some((live, retained)) =
-        errors.observe(verify_present_projection_structure(layout, scratch_parent))
-    {
-        present_count(report, "ocomp_live_body_records", live);
-        present_count(report, "ocomp_retained_body_records", retained);
-    }
     errors.finish()
 }
 
@@ -298,8 +285,6 @@ pub(super) fn validate_present_manifest(
             manifest.protocol_bundle_hash,
             manifest.attempt,
             manifest.wwd,
-            manifest.sealed_tribute_collection_key,
-            manifest.sealed_tribute_collection_root,
             manifest.tribute_count,
             manifest.tribute_nominal_total,
         ) == (
@@ -307,8 +292,6 @@ pub(super) fn validate_present_manifest(
             job.intent.protocol_bundle_hash,
             job.intent.attempt,
             job.intent.wwd,
-            job.intent.sealed_tribute_collection_key,
-            job.intent.sealed_tribute_collection_root,
             job.intent.authenticated_day_count,
             job.intent.authenticated_day_nominal,
         ),
@@ -320,14 +303,10 @@ pub(super) fn validate_present_manifest(
             checkpoint.finalized_block_number,
             checkpoint.finalized_block_hash,
             checkpoint.finalized_state_root,
-            checkpoint.finalized_ce_root,
-            checkpoint.ce_schema_version,
         ) == (
             job.intent_height,
             finalized.finalized_request_block_hash,
             finalized.finalized_request_state_root,
-            job.intent.ce_sealed_root,
-            u16::try_from(outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION)?,
         ),
         SnapshotOcompError::PresentManifestCheckpointMismatch,
     )?;

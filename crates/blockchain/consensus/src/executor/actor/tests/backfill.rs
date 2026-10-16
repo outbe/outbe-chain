@@ -243,14 +243,6 @@ fn run_backfill_fails_fast_when_marshal_missing_finalized_block() {
             let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
             let engine = ConsensusEngineHandle::new(engine_tx);
 
-            let (_projection_publisher, projection_readiness) = ready_projection(
-                genesis,
-                ProjectionCheckpoint {
-                    block_number: 0,
-                    block_hash: genesis,
-                },
-            );
-
             // Executor at finalized height 0 (fresh bootstrap from genesis).
             let (actor, _mailbox) = super::ExecutorActor::new(
                 context.child("exec"),
@@ -260,7 +252,6 @@ fn run_backfill_fails_fast_when_marshal_missing_finalized_block() {
                     last_finalized_height: 0,
                     last_finalized_hash: genesis,
                 },
-                projection_readiness,
                 None,
             );
 

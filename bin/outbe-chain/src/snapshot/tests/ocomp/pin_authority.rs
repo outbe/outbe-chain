@@ -49,9 +49,6 @@ fn canonical_job(request: &OutbeHeader, completed: bool) -> OcompJobRecordV1 {
         pending_nonce: 0,
         attempt: 0,
         protocol_bundle_hash: hash,
-        ce_sealed_root: hash,
-        sealed_tribute_collection_key: hash,
-        sealed_tribute_collection_root: hash,
         authenticated_day_count: 1,
         authenticated_day_nominal: U256::from(10),
         pre_admission_envelope_hash: hash,
@@ -73,8 +70,7 @@ fn canonical_job(request: &OutbeHeader, completed: bool) -> OcompJobRecordV1 {
             tribute: TributeInputBindingV1 {
                 wwd: DAY.value(),
                 source_generation: 0,
-                collection_key: hash,
-                sealed_collection_root: hash,
+
                 exact_count: 1,
                 exact_nominal_total: U256::from(10),
             },
@@ -252,7 +248,6 @@ fn candidate(view: &RethReadOnlyView, job: &OcompJobRecordV1) -> CandidatePinV1 
         state_root: request.inner.state_root,
         intent_id: job.intent.intent_id(&poc_schema_limits()).unwrap(),
         wwd: job.intent.wwd,
-        ce_sealed_root: job.intent.ce_sealed_root,
         protocol_bundle_hash: job.intent.protocol_bundle_hash,
         input_lease_id: job.intent.input_lease_id().unwrap(),
     }
@@ -439,10 +434,6 @@ fn every_candidate_identity_component_and_registry_key_bind_exactly() {
                 },
                 CandidatePinV1 {
                     wwd: valid.wwd + 1,
-                    ..valid
-                },
-                CandidatePinV1 {
-                    ce_sealed_root: bad_hash,
                     ..valid
                 },
                 CandidatePinV1 {

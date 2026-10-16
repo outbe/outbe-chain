@@ -304,8 +304,8 @@ struct RootPageInputs<'a> {
     bundle_hash: B256,
     job_id: B256,
     plan_hash: B256,
-    tributes: &'a [outbe_compressed_entities::TributeBodyV1],
-    nod_action_tributes: &'a [outbe_compressed_entities::TributeBodyV1],
+    tributes: &'a [outbe_primitives::entity_codec::TributeBodyV1],
+    nod_action_tributes: &'a [outbe_primitives::entity_codec::TributeBodyV1],
     limits: &'a outbe_ocomp_protocol::SchemaLimits,
 }
 fn root_page_artifact(

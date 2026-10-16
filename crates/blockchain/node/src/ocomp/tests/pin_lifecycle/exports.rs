@@ -81,65 +81,33 @@ fn unverified_proof(candidate: CandidatePinV1, intent: &JobIntentV1) -> Finalize
 }
 
 #[test]
-fn shared_retention_selector_fails_closed_then_delegates_without_rebinding() {
+fn shared_retention_handle_fails_closed_and_never_rebinds() {
     let selector = SharedOcompRetentionSelector::new();
-    let day = WorldwideDay::new(17);
-    assert_eq!(
-        TributeRetentionSelector::active_pin_for(&selector, day),
-        Err(outbe_offchain_data::RetentionSelectorError::RetentionCoordinatorNotInstalled)
-    );
-
     let request = block(100, B256::repeat_byte(0x31), 0x32);
     let candidate = candidate(&request);
-    let job_id = job_id_from_intent_id(
-        candidate.intent_id,
-        candidate.block_hash,
-        candidate.state_root,
-    )
-    .expect("fixture JobId");
-    let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
-    let root = tempfile::tempdir().expect("first journal root");
-    let storage = Arc::new(MemoryStorage::default());
-    let coordinator = Arc::new(OcompRetentionCoordinator::open_with_retained_tributes(
-        root.path(),
-        source.clone(),
-        Arc::new(RetainedTributeWriter::new(storage.clone(), storage)),
+    let job_id = fixture_job_id(candidate);
+    assert!(matches!(
+        selector.discovery_job_records(job_id),
+        Err(RetentionError::RetentionCoordinatorNotInstalled)
     ));
-    selector
-        .install(coordinator.clone())
-        .expect("first coordinator installs");
-
-    assert!(FinalizedFrameDriver::admit(source.as_ref(), coordinator.as_ref(), &request).is_ok());
-    let selected_day = WorldwideDay::new(candidate.wwd);
-    assert_eq!(
-        TributeRetentionSelector::active_pin_for(&selector, selected_day).unwrap(),
-        Some(RetainedTributePin {
-            input_lease_id: candidate.input_lease_id,
-            worldwide_day: selected_day,
-        })
-    );
-
-    let replacement_root = tempfile::tempdir().expect("replacement journal root");
-    let replacement_storage = Arc::new(MemoryStorage::default());
-    let replacement = Arc::new(OcompRetentionCoordinator::open_with_retained_tributes(
+    let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
+    let root = tempfile::tempdir().unwrap();
+    let coordinator = Arc::new(OcompRetentionCoordinator::open(root.path(), source.clone()));
+    selector.install(coordinator.clone()).unwrap();
+    FinalizedFrameDriver::admit(source.as_ref(), coordinator.as_ref(), &request).unwrap();
+    FinalizedFrameDriver::bind(source.as_ref(), coordinator.as_ref(), &request);
+    let before = selector.discovery_job_records(job_id).unwrap();
+    assert_eq!(before.len(), 1);
+    let replacement_root = tempfile::tempdir().unwrap();
+    let replacement = Arc::new(OcompRetentionCoordinator::open(
         replacement_root.path(),
-        Arc::new(DeterministicProofSource::default()),
-        Arc::new(RetainedTributeWriter::new(
-            replacement_storage.clone(),
-            replacement_storage,
-        )),
+        source,
     ));
     assert!(matches!(
         selector.install(replacement),
         Err(RetentionError::RetentionCoordinatorAlreadyInstalled)
     ));
-    assert_eq!(
-        TributeRetentionSelector::active_pin_for(&selector, selected_day).unwrap(),
-        Some(RetainedTributePin {
-            input_lease_id: candidate.input_lease_id,
-            worldwide_day: selected_day,
-        })
-    );
+    assert_eq!(selector.discovery_job_records(job_id).unwrap(), before);
 }
 
 #[test]
@@ -318,56 +286,10 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
     let job_id = fixture_job_id(candidate);
     let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
     let root = tempfile::tempdir().expect("journal root");
-    let storage = Arc::new(MemoryStorage::default());
-    let day = WorldwideDay::new(candidate.wwd);
-    let tribute_id = WwdEntityId::from_day_and_digest(day, [0x57; 32]);
-    let tribute = TributeData {
-        tribute_id,
-        owner: alloy_primitives::Address::repeat_byte(0x58),
-        worldwide_day: day,
-        issuance_amount_minor: U256::from(10),
-        issuance_currency: 840,
-        nominal_amount_minor: U256::from(11),
-        reference_currency: 978,
-        tribute_price_minor: U256::from(12),
-    };
-    let repository = TributeRepositoryWriter::new(storage.clone(), storage.clone());
-    repository.put(&tribute).expect("fixture current Tribute");
-    let pin = RetainedTributePin {
-        input_lease_id: candidate.input_lease_id,
-        worldwide_day: day,
-    };
-    let retained_reader = RetainedTributeReader::new(storage.clone());
-    let retain = retained_reader
-        .plan_retain_current(pin, tribute_id)
-        .expect("fixture retained copy");
-    storage
-        .apply_atomic(&retain)
-        .expect("fixture retained transaction");
-    repository
-        .delete(tribute_id)
-        .expect("fixture current retirement");
-    let retained_writer = Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone()));
-    let coordinator = OcompRetentionCoordinator::open_with_retained_tributes(
-        root.path(),
-        source.clone(),
-        retained_writer,
-    );
+    let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
 
     assert!(FinalizedFrameDriver::admit(source.as_ref(), &coordinator, &request).is_ok());
     FinalizedFrameDriver::bind(source.as_ref(), &coordinator, &request);
-    assert_eq!(
-        TributeRetentionSelector::active_pin_for(&coordinator, day).unwrap(),
-        Some(pin)
-    );
-    assert_eq!(
-        retained_reader
-            .list_by_day(pin, None, 10)
-            .expect("retained source before release")
-            .records
-            .len(),
-        1
-    );
     let finalized = ready_record(&coordinator);
     assert!(!coordinator.is_signable(job_id));
     assert!(coordinator.is_exportable(job_id));
@@ -381,11 +303,7 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
     assert!(coordinator.is_signable(job_id));
     drop(coordinator);
 
-    let coordinator = OcompRetentionCoordinator::open_with_retained_tributes(
-        root.path(),
-        source.clone(),
-        Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone())),
-    );
+    let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
     let replayed = coordinator
         .record_exported(job_id, finalized.generation, 9, B256::repeat_byte(0x65))
         .expect("lost export response replays after restart");
@@ -412,12 +330,7 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
         .release_due(184)
         .expect("release transition")
         .expect("release is due");
-    assert_eq!(released.generation, terminal.generation + 2);
-    assert!(retained_reader
-        .list_by_day(pin, None, 10)
-        .expect("exact job retained source after release")
-        .records
-        .is_empty());
+    assert_eq!(released.generation, terminal.generation + 1);
     drop(coordinator);
 
     let restarted = OcompRetentionCoordinator::open(root.path(), source);
@@ -494,7 +407,6 @@ fn ocm_pin_001_exported_record_reloads_every_live_export_by_job_id() {
             state_root: request.header().inner.state_root,
             intent_id,
             wwd: intent.wwd,
-            ce_sealed_root: intent.ce_sealed_root,
             protocol_bundle_hash: intent.protocol_bundle_hash,
             input_lease_id: intent.input_lease_id().expect("fixture input lease"),
         }

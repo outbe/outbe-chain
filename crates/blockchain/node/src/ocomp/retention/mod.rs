@@ -5,7 +5,7 @@
 //! typed Metadosis record before this coordinator persists anything.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::BTreeMap,
     fs::{self, File, OpenOptions},
     io::{Read as _, Write as _},
     path::{Path, PathBuf},
@@ -29,9 +29,6 @@ use outbe_ocomp_protocol::{
     state::{OcompJobRecordV1, OcompJobStatus},
     SchemaLimits,
 };
-use outbe_offchain_data::TributeRetentionSelector;
-use outbe_offchain_storage::StorageErrorKind;
-use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::METADOSIS_ADDRESS,
     error::PrecompileError,
@@ -42,13 +39,11 @@ use outbe_primitives::{
     },
     OutbeHeader, OutbeReceipt,
 };
-pub use outbe_tribute::RetainedTributeWriter;
-use outbe_tribute::{RetainedTributePin, TributeRepositoryError};
 use reth_provider::{HeaderProvider, StateProviderFactory};
 use reth_storage_api::StateProvider;
 
 use super::finality::RethFinalizedIntentProofBuilder;
-use crate::{finalized_frame::FinalizedFrame, projection::ProjectionRetentionFence};
+use crate::finalized_frame::FinalizedFrame;
 
 mod coordinator;
 mod gc;
@@ -61,8 +56,6 @@ mod release;
 mod source;
 #[cfg(test)]
 mod test_support;
-#[cfg(test)]
-mod tests;
 mod types;
 
 pub use coordinator::OcompRetentionCoordinator;
@@ -91,7 +84,6 @@ pub(crate) use journal::JournalDurability;
 #[cfg(test)]
 pub(crate) use test_support::{
     retention_pressure_watermark_for_test, seed_retention_journal_for_test,
-    RetainedGcCycleTestReport,
 };
 
 pub(super) use types::retention_terminal_height_for_status;
@@ -103,9 +95,9 @@ use coordinator::{
 use gc::{record_journal_failure, spawn_retained_gc_worker, RetainedGcSignal};
 
 use gc::retry::{
-    classify_retained_gc_failure, RetainedGcAttemptFailure, RetainedGcAttemptOutcome,
-    RetainedGcCycleFailure, RetainedGcCycleReport, RetainedGcFailureClass,
-    RetainedGcScheduledCycle, RETAINED_GC_RETRY_BACKOFF,
+    RetainedGcAttemptFailure, RetainedGcAttemptOutcome, RetainedGcCycleFailure,
+    RetainedGcCycleReport, RetainedGcFailureClass, RetainedGcScheduledCycle,
+    RETAINED_GC_RETRY_BACKOFF,
 };
 
 use journal::{journal_successor_is_exact, JournalStore, OsJournalDurability, JOURNAL_FILENAME};

@@ -9,20 +9,19 @@ use crate::{
     schema::MetadosisContract,
 };
 use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::ExecutionScope;
 use outbe_primitives::{error::Result, storage::StorageHandle, time::WorldwideDay};
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 
-pub(crate) struct FailureSettlement<'scope> {
+pub(crate) struct FailureSettlement {
     pub(crate) block_number: u64,
-    pub(crate) scope: &'scope ExecutionScope,
+
     pub(crate) worldwide_day: WorldwideDay,
     pub(crate) unused_limit: U256,
 }
 
 pub(crate) struct ExpiredFailure<'attempt> {
-    pub(crate) settlement: FailureSettlement<'attempt>,
+    pub(crate) settlement: FailureSettlement,
     pub(crate) intent_id: B256,
     pub(crate) outer_transition: &'attempt OuterWwdTransition,
 }
@@ -47,7 +46,6 @@ impl MetadosisContract<'_> {
 pub(crate) fn fail_worldwide_day(
     storage: StorageHandle<'_>,
     block_number: u64,
-    scope: &ExecutionScope,
     worldwide_day: WorldwideDay,
 ) -> Result<()> {
     let aggregate = ValidatedWwdAggregate::load_and_validate(storage.clone())?;
@@ -75,7 +73,6 @@ pub(crate) fn fail_worldwide_day(
     metadosis.clear_ready_ocomp_for_failed_day(worldwide_day, &limits)?;
     let settlement = FailureSettlement {
         block_number,
-        scope,
         worldwide_day,
         unused_limit,
     };
@@ -159,11 +156,10 @@ fn expired_evidence(record: &outbe_ocomp_protocol::state::OcompJobRecordV1) -> b
 
 fn route_failure(
     metadosis: &mut MetadosisContract<'_>,
-    settlement: &FailureSettlement<'_>,
+    settlement: &FailureSettlement,
 ) -> Result<U256> {
     let FailureSettlement {
         block_number,
-        scope,
         worldwide_day,
         unused_limit,
     } = *settlement;
@@ -173,7 +169,7 @@ fn route_failure(
     // The failure receipt, outer transition, and event follow retirement.
     // The enclosing checkpoint makes these effects atomic if retirement or the final block seal
     // fails.
-    let tribute = TributeContract::new(storage).forfeit_sealed_partition(scope, worldwide_day)?;
+    let tribute = TributeContract::new(storage).forfeit_sealed_partition(worldwide_day)?;
     metadosis.write_metadosis_failure_receipt(MetadosisFailureReceipt {
         worldwide_day,
         value_routed: credit.credited,
@@ -186,7 +182,7 @@ fn route_failure(
 }
 
 fn failed_day_event(
-    settlement: &FailureSettlement<'_>,
+    settlement: &FailureSettlement,
     forfeited_nominal: U256,
 ) -> IMetadosis::MetadosisExecuted {
     let FailureSettlement {

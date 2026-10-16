@@ -1,4 +1,3 @@
-use outbe_compressed_entities::CollectionError;
 use outbe_ocomp_protocol::ProtocolError;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::time::WorldwideDay;
@@ -12,9 +11,6 @@ pub enum MetadosisTestSupportError {
 
     #[error("capacity fixture contains an invalid WorldwideDay")]
     CapacityFixtureInvalidWorldwideDay,
-
-    #[error("fixture CE genesis root: {error}")]
-    FixtureCeGenesisRoot { error: CollectionError },
 
     #[error("{error}")]
     Protocol {

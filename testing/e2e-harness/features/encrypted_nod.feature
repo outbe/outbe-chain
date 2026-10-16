@@ -5,7 +5,7 @@ Feature: Encrypted NOD entitlement and private Gratis exercise
     Then the controlled COEN USD quote is finalized through the real price feeder
     When an operator offers a Tribute for a different validator as the encrypted NOD owner
     Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
+    And every validator stores the same Tribute and indexes in EVM state
     When the committee logical clock reaches the public capacity processing time
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent

@@ -48,10 +48,6 @@ pub(crate) fn verify_export_inputs(
             finalized_block_number: job.intent_height,
             finalized_block_hash: finalized.finalized_request_block_hash,
             finalized_state_root: finalized.finalized_request_state_root,
-            finalized_ce_root: job.intent.ce_sealed_root,
-            ce_schema_version: u16::try_from(
-                outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
-            )?,
         };
         if receipt.checkpoint() != &checkpoint || binding.manifest().checkpoint != checkpoint {
             return Err(SnapshotOcompError::ExportCheckpointMismatch.into());
@@ -66,6 +62,27 @@ pub(crate) fn verify_export_inputs(
                 || expected.manifest_hash != receipt.manifest_hash()
         }) {
             return Err(SnapshotOcompError::SavedPinExportDiffersFromReceipt.into());
+        }
+        let source_archive = ocomp_root
+            .join("exporter-v1/input-refs/.work")
+            .join(&job_hex)
+            .join("inventory")
+            .join(outbe_ocomp::input_inventory::SOURCE_PROOF_ARCHIVE_DIRECTORY);
+        if source_archive.try_exists()? {
+            outbe_ocomp::input_inventory::StateTributeProofArchive::inspect_readonly(
+                source_archive,
+                outbe_tee::tribute_source::TributeSourceSubject {
+                    checkpoint: outbe_tee::tribute_source::TributeSourceCheckpoint {
+                        block_number: job.intent_height,
+                        block_hash: finalized.finalized_request_block_hash,
+                        state_root: finalized.finalized_request_state_root,
+                    },
+                    chain_id: job.intent.chain_id,
+                    worldwide_day: WorldwideDay::new(job.intent.wwd),
+                    tribute_count: job.intent.authenticated_day_count,
+                },
+                &|| {},
+            )?;
         }
         // load_exact already consumes the native exact verified input cursor.
         let input_chunks = u64::from(binding.manifest().input_chunk_count);

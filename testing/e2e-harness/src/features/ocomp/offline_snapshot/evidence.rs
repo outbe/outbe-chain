@@ -29,8 +29,6 @@ fn assert_created_manifest(
         "partial_state_trie",
         "unwind",
         "storage_version",
-        "ce",
-        "projection",
         "ocomp_baseline",
         "ocomp_previous",
         "ocomp_current",
@@ -145,8 +143,6 @@ fn assert_first_start(
         for (observed, actual) in [
             (&report.observed.h, &manifest.progress.finalized),
             (&report.observed.e, &manifest.progress.execution),
-            (&report.observed.q, &manifest.progress.ce),
-            (&report.observed.p, &manifest.progress.projection),
             (
                 &report.observed.c_baseline,
                 &manifest.progress.ocomp_baseline,

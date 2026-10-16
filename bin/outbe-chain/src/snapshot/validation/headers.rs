@@ -4,12 +4,7 @@ use std::{ops::RangeInclusive, path::PathBuf};
 
 use alloy_consensus::Sealable;
 use alloy_primitives::B256;
-use eyre::WrapErr;
-use outbe_compressed_entities::{sealed_root, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME};
-use outbe_primitives::{
-    reshare_artifact::{decode_outbe_block_artifacts, CompressedEntitiesRootArtifact},
-    OutbeHeader,
-};
+use outbe_primitives::OutbeHeader;
 use reth_ethereum::provider::db::{cursor::DbCursorRO, tables, transaction::DbTx};
 use reth_provider::{BlockHashReader, HeaderProvider, StaticFileSegment};
 
@@ -294,55 +289,4 @@ pub(crate) fn verify_retained_headers(
     }
     audit.required_missing = missing_required_headers(&audit.intervals, required);
     Ok(audit)
-}
-
-/// Decode the chain-native envelope. Structural absence remains distinguishable
-/// from a malformed artifact and from the legitimate genesis empty-catalog seal.
-pub(crate) fn read_header_ce_commitment(
-    header: &OutbeHeader,
-) -> eyre::Result<Option<CompressedEntitiesRootArtifact>> {
-    let artifacts = decode_outbe_block_artifacts(&header.inner.extra_data)
-        .wrap_err("decode header compressed-entity commitment")?;
-    if let Some(commitment) = artifacts.compressed_entities_root {
-        require(
-            commitment.commitment_scheme_version == ACTIVE_COMMITMENT_SCHEME,
-            SnapshotError::UnsupportedHeaderCeScheme,
-        )?;
-    }
-    Ok(artifacts.compressed_entities_root)
-}
-
-/// Bind the reconstructed CE marker to its exact retained header, not merely to
-/// another header with the same root. Genesis uses the native empty catalog root.
-pub(crate) fn verify_header_ce_marker(
-    header: &OutbeHeader,
-    marker: &FinalizedMarker,
-) -> eyre::Result<()> {
-    require(
-        marker.commitment_scheme_version == ACTIVE_COMMITMENT_SCHEME,
-        SnapshotError::UnsupportedCeMarkerScheme,
-    )?;
-    require(
-        header.inner.number == marker.height,
-        SnapshotError::CeMarkerHeightMismatch,
-    )?;
-    require(
-        header.hash_slow() == marker.block_hash,
-        SnapshotError::CeMarkerBlockHashMismatch,
-    )?;
-    require(
-        header.inner.parent_hash == marker.parent_block_hash,
-        SnapshotError::CeMarkerParentHashMismatch,
-    )?;
-    let root = if marker.height == 0 {
-        sealed_root(B256::ZERO)?
-    } else {
-        read_header_ce_commitment(header)?
-            .ok_or(SnapshotError::MissingHeaderCeCommitment {
-                height: marker.height,
-            })?
-            .r_sealed
-    };
-    require(root == marker.new_root, SnapshotError::CeMarkerRootMismatch)?;
-    Ok(())
 }

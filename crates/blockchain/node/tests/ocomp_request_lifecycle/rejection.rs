@@ -46,7 +46,7 @@ fn run_call(target: Address, rejected_gas_limit: u64, rejected_input: Bytes) {
             ..
         },
     ) = super::request::open_voting().into_successor_parts();
-    let fixture = environment.fixture(&prepared.tree_service);
+    let fixture = environment.fixture();
     let rejected = pooled_user_call(
         saturated_user_secret(),
         0,

@@ -31,6 +31,7 @@ pub mod native_qvl;
 pub mod nod_decrypt;
 pub mod nod_materialization;
 pub mod nod_mine;
+pub mod nod_state_materialization;
 pub mod nod_transport;
 pub mod node_host;
 pub mod offer_encrypt;
@@ -50,6 +51,7 @@ pub mod tribute_client;
 pub mod tribute_day;
 pub mod tribute_day_client;
 pub mod tribute_decrypt;
+pub mod tribute_source;
 pub mod tribute_v2;
 pub mod upgrade_transfer;
 

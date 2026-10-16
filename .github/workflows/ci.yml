@@ -48,8 +48,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-mise
-      - name: Verify vendored CKB SMT provenance and panic safety
-        run: bash scripts/check-vendored-smt.sh
       - run: mise run fmt-check
 
   # Stable checks share one target directory, persisted on each runner host.

@@ -2,90 +2,125 @@ use crate::features::ocomp::*;
 
 const OCOMP_TRACE_FOLLOWER_SLOT: usize = 14;
 
-#[then("validator 0 reconstructs that certified generation from canonical history")]
-fn validator_zero_reconstructs_certified_generation(world: &mut World) {
+#[then("validator 0 preserves that certified generation and native state across restart")]
+fn validator_zero_preserves_native_generation(world: &mut World) {
     let capacity = world
         .state
         .ocomp_capacity_observation
         .clone()
-        .expect("capacity public-path observation");
+        .expect("capacity observation");
     let request = world
         .state
         .ocomp_job_request
         .clone()
-        .expect("capacity finalized JobIntent");
+        .expect("finalized JobIntent");
     let activation = world
         .state
         .ocomp_activation
         .clone()
-        .expect("capacity finalized activation");
+        .expect("finalized activation");
     let generation = world
         .state
         .ocomp_certified_generation
         .clone()
-        .expect("capacity certified generation");
-    let recovery = world
-        .localnet
-        .reconstruct_validator_ce_from_canonical_history(0)
-        .unwrap_or_else(|error| {
-            panic!("reconstruct validator-0 CE from canonical history: {error:#}")
-        });
-    assert!(
-        recovery.first_missing_block_number <= capacity.q_forming_block_number
-            && recovery.target_block_number >= capacity.finalized_block_number,
-        "historical CE replay span does not cover the q-forming/finalized capacity blocks: \
-         recovery={recovery:?}, capacity={capacity:?}"
-    );
-    assert_eq!(
-        recovery.replayed_block_count,
-        recovery.target_block_number - recovery.first_missing_block_number + 1
-    );
-
+        .expect("certified generation");
     let primary = world.validators.primary_port();
-    let canonical_target_hash = world
+    let height = world
         .rpc
-        .block_hash(primary, recovery.target_block_number)
-        .and_then(|value| value.parse::<B256>().ok())
-        .expect("restarted validator exposes replay target block");
-    assert_eq!(
-        canonical_target_hash, recovery.target_block_hash,
-        "startup replay target is not the restarted validator's canonical block"
-    );
-
+        .finalized(primary)
+        .expect("native finality before restart");
+    assert!(height >= capacity.finalized_block_number);
+    let anchor = world
+        .rpc
+        .checkpoint_at(primary, height)
+        .expect("exact pre-restart native anchor");
+    let source = world
+        .rpc
+        .checkpoint_at(primary, request.request_height)
+        .expect("request checkpoint");
+    let quorum = world
+        .rpc
+        .checkpoint_at(primary, capacity.q_forming_block_number)
+        .expect("quorum checkpoint");
+    assert_eq!(quorum.block_hash, capacity.q_forming_block_hash);
+    assert_eq!(quorum.state_root, capacity.q_forming_state_root);
+    let receipt_hash = format!("{:#x}", activation.transaction_hash);
+    let receipt = world
+        .rpc
+        .transaction_receipt(&receipt_hash, primary)
+        .expect("pre-restart activation receipt");
+    let (previous_pid, status) = world
+        .localnet
+        .owned_validator_process(0)
+        .expect("owned validator before restart");
+    assert!(status.is_none());
+    let started = Instant::now();
+    world
+        .localnet
+        .restart_validator_preserving_enclave(0)
+        .expect("native validator restart");
+    let (restarted_pid, status) = world
+        .localnet
+        .owned_validator_process(0)
+        .expect("owned validator after restart");
+    assert!(status.is_none());
+    assert_ne!(previous_pid, restarted_pid);
     let deadline = Instant::now() + Duration::from_secs(120);
-    let (recovered_activation, recovered_generation) = loop {
-        let recovered_activation = world.rpc.finalized_ocomp_activation_on(
-            primary,
-            request.request_height,
-            request.intent_id,
-        );
-        let recovered_generation = recovered_activation.as_ref().and_then(|observed| {
-            world
-                .rpc
-                .finalized_ocomp_certified_generation_on(primary, observed)
-        });
-        if let (Some(recovered_activation), Some(recovered_generation)) =
-            (recovered_activation, recovered_generation)
-        {
-            break (recovered_activation, recovered_generation);
+    let (recovered_activation, recovered_generation, finalized_after_restart) = loop {
+        if let Some(finalized) = world.rpc.finalized(primary).filter(|value| *value > height) {
+            if let Some(recovered) = world.rpc.finalized_ocomp_activation_on(
+                primary,
+                request.request_height,
+                request.intent_id,
+            ) {
+                if let Some(recovered_generation) = world
+                    .rpc
+                    .finalized_ocomp_certified_generation_on(primary, &recovered)
+                {
+                    break (recovered, recovered_generation, finalized);
+                }
+            }
         }
         assert!(
+            !world.localnet.validator_exited(0),
+            "restarted validator exited"
+        );
+        assert!(
             Instant::now() < deadline,
-            "restarted validator did not expose the recovered certified generation"
+            "native restart did not recover the generation and advance finality"
         );
         sleep(Duration::from_millis(250));
     };
+    for expected in [anchor, source, quorum] {
+        assert_eq!(
+            world
+                .rpc
+                .checkpoint_at(primary, expected.height)
+                .expect("recovered checkpoint"),
+            expected
+        );
+    }
     assert_eq!(
-        recovered_activation, activation,
-        "historical CE replay changed the finalized activation"
+        world
+            .rpc
+            .transaction_receipt(&receipt_hash, primary)
+            .expect("recovered receipt"),
+        receipt
     );
-    assert_eq!(
-        recovered_generation, generation,
-        "historical CE replay changed the certified generation"
-    );
-    world.state.ocomp_historical_replay_observation =
-        Some(crate::world::state::OcompHistoricalReplayObservationV1 {
-            recovery,
+    assert_eq!(recovered_activation, activation);
+    assert_eq!(recovered_generation, generation);
+    super::capacity::completed_materialization_survives_restart(world);
+    world.state.ocomp_native_restart_observation =
+        Some(crate::world::state::OcompNativeRestartObservationV1 {
+            validator_index: 0,
+            previous_pid,
+            restarted_pid,
+            anchor_height: anchor.height,
+            anchor_hash: anchor.block_hash,
+            anchor_state_root: anchor.state_root,
+            finalized_after_restart,
+            elapsed_micros: u64::try_from(started.elapsed().as_micros())
+                .expect("restart duration fits u64"),
             recovered_result_digest: recovered_activation.result_digest,
             recovered_generation,
         });
@@ -193,7 +228,7 @@ fn restart_completed_network_and_ocomp_processes(world: &mut World) {
         .expect("finality before restart");
     let price_publication = crate::features::price_oracle::stop_before_clock_restart(world);
 
-    // External clients depend on node RPC and projection storage. Stop the
+    // External clients depend on node RPC and native state. Stop the
     // complete cohort before stopping any validator, exactly as the initial
     // production-shaped launch starts them only after committee readiness.
     let ocomp_resume = stop_ocomp_roles_before_committee_time_change(world);

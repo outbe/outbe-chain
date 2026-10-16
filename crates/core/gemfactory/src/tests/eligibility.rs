@@ -2,29 +2,26 @@ use super::*;
 
 #[test]
 fn a_position_reports_its_full_terms() {
-    with_storage(
-        Some(U256::from(2u64) * six_decimal_unit()),
-        |storage, _world| {
-            let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
-            let data = runtime::position_data(storage, id).unwrap();
-            assert_eq!(data.merchant, ALICE);
-            assert_eq!(data.sourceEntryPriceMinor, six_decimal_unit());
-            assert_eq!(data.issuanceCurrency, 840);
-            assert_eq!(data.referenceCurrency, 840);
-            assert_eq!(data.issuedAt, T_NOW);
-            assert_eq!(data.expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
-            assert_eq!(
-                data.remainingCapacityMinor,
-                sent_capacity(six_decimal_u128())
-            );
-        },
-    );
+    with_storage(Some(U256::from(2u64) * six_decimal_unit()), |storage| {
+        let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
+        let data = runtime::position_data(storage, id).unwrap();
+        assert_eq!(data.merchant, ALICE);
+        assert_eq!(data.sourceEntryPriceMinor, six_decimal_unit());
+        assert_eq!(data.issuanceCurrency, 840);
+        assert_eq!(data.referenceCurrency, 840);
+        assert_eq!(data.issuedAt, T_NOW);
+        assert_eq!(data.expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
+        assert_eq!(
+            data.remainingCapacityMinor,
+            sent_capacity(six_decimal_u128())
+        );
+    });
 }
 
 #[test]
 fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage, world| {
+    with_storage(Some(rate), |storage| {
         // EUR trades live, but the window it converts at holds no euro price.
         let eur_pair = outbe_oracle::api::AddressPair::new_coen_to(978);
         outbe_oracle::api::register_pair(storage.clone(), eur_pair).unwrap();
@@ -46,7 +43,6 @@ fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
         seed_day_vwap(storage, 840, rate);
         let gem_id = issue_at_live_rate(
             storage,
-            world,
             ALICE,
             GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
@@ -57,8 +53,6 @@ fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
 
         let error = runtime::settle_gem(
             storage,
-            &world.scope,
-            &world.parent,
             crate::schema::GemSettlementParams {
                 caller: ALICE,
                 gem_id,
@@ -72,20 +66,16 @@ fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
             error.to_string().contains("oracle nominal unavailable"),
             "{error}"
         );
-        assert_eq!(
-            gem_view(storage, world, gem_id).item.state,
-            GemState::Issued as u8
-        );
+        assert_eq!(gem_view(storage, gem_id).item.state, GemState::Issued as u8);
     });
 }
 
 #[test]
 fn settle_rejects_wrong_settlement_currency() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage, world| {
+    with_storage(Some(rate), |storage| {
         let gem_id = issue_at_live_rate(
             storage,
-            world,
             ALICE,
             GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
@@ -97,8 +87,6 @@ fn settle_rejects_wrong_settlement_currency() {
         // currencies, so it reverts before any vault interaction.
         let res = runtime::settle_gem(
             storage,
-            &world.scope,
-            &world.parent,
             crate::schema::GemSettlementParams {
                 caller: ALICE,
                 gem_id,

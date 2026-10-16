@@ -1,8 +1,8 @@
 //! Pure NOD identities shared by issuance and offchain calculation.
 use crate::errors::NodError;
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_primitives::storage::types::StorageKey;
+use outbe_primitives::wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_primitives::{error::Result, time::WorldwideDay};
 
 /// Computes the bucket key from

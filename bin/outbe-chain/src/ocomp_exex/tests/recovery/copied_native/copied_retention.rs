@@ -1,7 +1,6 @@
 use super::*;
-use alloy_primitives::{Address, Log};
+use alloy_primitives::Log;
 use alloy_sol_types::SolEvent as _;
-use outbe_compressed_entities::WwdEntityId;
 use outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore;
 use outbe_metadosis::{precompile::IMetadosis, proof_layout::OCOMP_JOB_RECORDS_BASE_SLOT};
 use outbe_node::{
@@ -12,12 +11,8 @@ use outbe_node::{
     },
 };
 use outbe_ocomp_protocol::{
-    generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     intent::intent_storage_key,
     state::{LysisTerminalV1, OcompFinalizedJobV1, OcompJobRecordV1, OcompTerminalOutcome},
-};
-use outbe_offchain_storage::{
-    AtomicWriteBatch, RocksDbStorage, StorageError, StorageWriter, StorageWriterHandle,
 };
 use outbe_primitives::{
     addresses::METADOSIS_ADDRESS,
@@ -26,14 +21,8 @@ use outbe_primitives::{
         types::{StorageBytes, StorageKey},
         StorageHandle,
     },
-    time::WorldwideDay,
-};
-use outbe_tribute::{
-    RetainedTributePin, RetainedTributeReader, RetainedTributeWriter, TributeData,
-    TributeRepositoryWriter,
 };
 use reth_primitives_traits::StorageEntry;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 const H: u64 = 170;
 
@@ -41,37 +30,7 @@ fn journal(root: &Path) -> std::path::PathBuf {
     root.join("ocomp_retention")
 }
 
-fn body_store(root: &Path) -> Arc<RocksDbStorage> {
-    Arc::new(RocksDbStorage::open(root.join("retained-projection")).unwrap())
-}
-
-// The only fault seam forwards the real RocksDB atomic delete, then reports
-// an unavailable result once, simulating an ambiguous committed write.
-// The coordinator has already durably published GcPending at this point.
-struct FailAfterCommittedDelete {
-    storage: Arc<RocksDbStorage>,
-    armed: AtomicBool,
-}
-
-impl StorageWriter for FailAfterCommittedDelete {
-    fn apply_atomic(&self, batch: &AtomicWriteBatch) -> Result<(), StorageError> {
-        self.storage.apply_atomic(batch)?;
-        if self.armed.swap(false, Ordering::SeqCst) {
-            return Err(StorageError::Unavailable {
-                source: Box::new(std::io::Error::other("injected after committed GC page")),
-            });
-        }
-        Ok(())
-    }
-}
-
-fn owner(
-    root: &Path,
-    storage: Arc<RocksDbStorage>,
-    writer: StorageWriterHandle,
-) -> OcompRetentionCoordinator {
-    // Construct the concrete public factory here: the helper's opaque return
-    // type does not expose HeaderProvider<Header = OutbeHeader> to this caller.
+fn owner(root: &Path) -> OcompRetentionCoordinator {
     let factory = ProviderFactoryBuilder::<outbe_node::OutbeNode>::default()
         .open_read_only(
             chain(),
@@ -84,11 +43,7 @@ fn owner(
         reth_provider::providers::BlockchainProvider::new(factory).unwrap(),
         FinalizedParentCertStore::new(),
     );
-    OcompRetentionCoordinator::open_with_retained_tributes(
-        journal(root),
-        Arc::new(source),
-        Arc::new(RetainedTributeWriter::new(storage, writer)),
-    )
+    OcompRetentionCoordinator::open(journal(root), Arc::new(source))
 }
 
 fn frame(root: &Path, height: u64) -> FinalizedFrame {
@@ -269,8 +224,7 @@ fn register(root: &Path, records: &mut Vec<OcompJobRecordV1>, intent: JobIntentV
         .unwrap()
         .expect("native receipt request");
     {
-        let storage = body_store(root);
-        let coordinator = owner(root, storage.clone(), storage);
+        let coordinator = owner(root);
         coordinator
             .reconcile_finalized_frame(&request, Some(observation))
             .unwrap();
@@ -292,8 +246,8 @@ fn register(root: &Path, records: &mut Vec<OcompJobRecordV1>, intent: JobIntentV
     });
     write_records(root, records);
     let record = current_record(root, records.last().unwrap(), height);
-    let storage = body_store(root);
-    let coordinator = owner(root, storage.clone(), storage);
+
+    let coordinator = owner(root);
     coordinator
         .bind_canonical_finalized_job(point.block_hash, &record)
         .unwrap();
@@ -311,57 +265,11 @@ fn expire(record: &mut OcompJobRecordV1) {
 
 fn reconcile_tip(root: &Path, height: u64) {
     let finalized = frame(root, height);
-    let storage = body_store(root);
-    let coordinator = owner(root, storage.clone(), storage);
+
+    let coordinator = owner(root);
     coordinator
         .reconcile_finalized_frame(&finalized, None)
         .unwrap();
-}
-
-fn pin(record: &OcompJobRecordV1) -> RetainedTributePin {
-    RetainedTributePin {
-        input_lease_id: record.intent.input_lease_id().unwrap(),
-        worldwide_day: WorldwideDay::new(record.intent.wwd),
-    }
-}
-
-fn retain(root: &Path, record: &OcompJobRecordV1, count: usize) {
-    let storage = body_store(root);
-    let repository = TributeRepositoryWriter::new(storage.clone(), storage.clone());
-    let retained = RetainedTributeReader::new(storage.clone());
-    for ordinal in 0..count {
-        let mut digest = [0u8; 32];
-        digest[..8].copy_from_slice(&(ordinal as u64).to_be_bytes());
-        let tribute_id = WwdEntityId::from_day_and_digest(pin(record).worldwide_day, digest);
-        repository
-            .put(&TributeData {
-                tribute_id,
-                owner: Address::repeat_byte(0x52),
-                worldwide_day: pin(record).worldwide_day,
-                issuance_amount_minor: U256::ONE,
-                issuance_currency: 840,
-                nominal_amount_minor: U256::ONE,
-                reference_currency: 978,
-                tribute_price_minor: U256::ONE,
-            })
-            .unwrap();
-        storage
-            .apply_atomic(
-                &retained
-                    .plan_retain_current(pin(record), tribute_id)
-                    .unwrap(),
-            )
-            .unwrap();
-        repository.delete(tribute_id).unwrap();
-    }
-}
-
-fn remaining(root: &Path, record: &OcompJobRecordV1) -> usize {
-    RetainedTributeReader::new(body_store(root))
-        .list_by_day(pin(record), None, 1_024)
-        .unwrap()
-        .records
-        .len()
 }
 
 fn durable_record(root: &Path, record: &OcompJobRecordV1) -> PinRecordV1 {
@@ -398,109 +306,13 @@ fn assert_c(root: &Path, expected: ProjectionCheckpoint) {
 }
 
 #[test]
-fn copied_rocksdb_partial_and_empty_gc_pending_resume_without_reconstructing_bodies() {
-    for empty_after_committed_write in [false, true] {
-        let donor = tempfile::tempdir().unwrap();
-        let receiver = tempfile::tempdir().unwrap();
-        let page = OCOMP_POC_CANDIDATE_LIMITS_V1.max_tributes_per_work_shard as usize;
-        let count = if empty_after_committed_write {
-            1
-        } else {
-            page + 1
-        };
-        let mut records = Vec::new();
-        register(donor.path(), &mut records, intent(count), 1);
-        retain(donor.path(), &records[0], count);
-        assert_eq!(remaining(donor.path(), &records[0]), count);
-        write_frames(donor.path(), 2, 100);
-        expire(&mut records[0]);
-        write_records(donor.path(), &records);
-        reconcile_tip(donor.path(), 100);
-        close_through(donor.path(), 100);
-        // Actual terminal observation at100 makes release due at164.
-        assert!(matches!(
-            durable_record(donor.path(), &records[0]).state,
-            PinStateV1::Terminal {
-                terminal_height: 100,
-                release_height: 164,
-                ..
-            }
-        ));
-        write_frames(donor.path(), 101, H);
-        let closed = close_through(donor.path(), H);
-        {
-            let storage = body_store(donor.path());
-            let writer: StorageWriterHandle = if empty_after_committed_write {
-                Arc::new(FailAfterCommittedDelete {
-                    storage: storage.clone(),
-                    armed: AtomicBool::new(true),
-                })
-            } else {
-                storage.clone()
-            };
-            let coordinator = owner(donor.path(), storage, writer);
-            let result = coordinator.release_due(closed.block_number);
-            if empty_after_committed_write {
-                assert!(result.is_err());
-            } else {
-                assert!(result.unwrap().is_none());
-            }
-        }
-        assert!(matches!(
-            durable_record(donor.path(), &records[0]).state,
-            PinStateV1::GcPending { .. }
-        ));
-        let expected_remaining = usize::from(!empty_after_committed_write);
-        assert_eq!(remaining(donor.path(), &records[0]), expected_remaining);
-        copy_tree(donor.path(), receiver.path());
-        donor.close().unwrap();
-        assert!(receiver
-            .path()
-            .join("retained-projection/CURRENT")
-            .is_file());
-        assert_c(receiver.path(), closed);
-        assert_eq!(remaining(receiver.path(), &records[0]), expected_remaining);
-        assert!(matches!(
-            durable_record(receiver.path(), &records[0]).state,
-            PinStateV1::GcPending { .. }
-        ));
-        {
-            let storage = body_store(receiver.path());
-            let coordinator = owner(receiver.path(), storage.clone(), storage);
-            assert!(coordinator
-                .release_due(closed.block_number)
-                .unwrap()
-                .is_some());
-        }
-        assert_eq!(remaining(receiver.path(), &records[0]), 0);
-        assert!(matches!(
-            durable_record(receiver.path(), &records[0]).state,
-            PinStateV1::Released { .. }
-        ));
-        write_frames(receiver.path(), H + 1, H + 2);
-        let k = close_through(receiver.path(), H + 2);
-        assert_c(receiver.path(), k);
-        {
-            let storage = body_store(receiver.path());
-            let coordinator = owner(receiver.path(), storage.clone(), storage);
-            assert!(coordinator.release_due(k.block_number).unwrap().is_none());
-        }
-        assert_eq!(remaining(receiver.path(), &records[0]), 0);
-        assert!(matches!(
-            durable_record(receiver.path(), &records[0]).state,
-            PinStateV1::Released { .. }
-        ));
-    }
+fn copied_native_journal_releases_shared_source_jobs_independently() {
+    exercise_shared_pin_copy(false);
 }
 
 #[test]
-fn copied_rocksdb_shared_live_lease_survives_first_release_and_collects_after_last_job_at_k() {
-    exercise_shared_lease_copy(false);
-}
-
-#[test]
-fn copied_pruned_released_pin_stays_absent_while_shared_lease_remains_live() {
-    exercise_shared_lease_copy(true);
+fn copied_compacted_journal_keeps_the_other_job_live() {
+    exercise_shared_pin_copy(true);
 }
 
 // Construct an already-compacted native image, not a pressure-compaction
@@ -545,7 +357,7 @@ fn remove_old_released_frame(root: &Path, key: B256) {
     assert_eq!(inspect_retention_journal(journal(root)).unwrap(), expected);
 }
 
-fn exercise_shared_lease_copy(pruned: bool) {
+fn exercise_shared_pin_copy(pruned: bool) {
     let donor = tempfile::tempdir().unwrap();
     let receiver = tempfile::tempdir().unwrap();
     let first = intent(1);
@@ -564,7 +376,7 @@ fn exercise_shared_lease_copy(pruned: bool) {
     let mut records = Vec::new();
     register(donor.path(), &mut records, first, 1);
     register(donor.path(), &mut records, second, 2);
-    retain(donor.path(), &records[0], 1);
+
     write_frames(donor.path(), 3, 100);
     expire(&mut records[0]);
     write_records(donor.path(), &records);
@@ -573,8 +385,7 @@ fn exercise_shared_lease_copy(pruned: bool) {
     write_frames(donor.path(), 101, H);
     let closed = close_through(donor.path(), H);
     {
-        let storage = body_store(donor.path());
-        let coordinator = owner(donor.path(), storage.clone(), storage);
+        let coordinator = owner(donor.path());
         assert!(coordinator
             .release_due(closed.block_number)
             .unwrap()
@@ -588,7 +399,7 @@ fn exercise_shared_lease_copy(pruned: bool) {
         durable_record(donor.path(), &records[1]).state,
         PinStateV1::Finalized { .. }
     ));
-    assert_eq!(remaining(donor.path(), &records[1]), 1);
+
     let retired_key = records[0]
         .finalized
         .as_ref()
@@ -610,16 +421,15 @@ fn exercise_shared_lease_copy(pruned: bool) {
     copy_tree(donor.path(), receiver.path());
     donor.close().unwrap();
     assert_c(receiver.path(), closed);
-    assert_eq!(remaining(receiver.path(), &records[1]), 1);
+
     {
-        let storage = body_store(receiver.path());
-        let coordinator = owner(receiver.path(), storage.clone(), storage);
+        let coordinator = owner(receiver.path());
         assert!(coordinator
             .release_due(closed.block_number)
             .unwrap()
             .is_none());
     }
-    assert_eq!(remaining(receiver.path(), &records[1]), 1);
+
     if !pruned {
         write_frames(receiver.path(), H + 1, 180);
         expire(&mut records[1]);
@@ -644,15 +454,13 @@ fn exercise_shared_lease_copy(pruned: bool) {
     write_frames(receiver.path(), 181, 250);
     let k = close_through(receiver.path(), 250);
     {
-        let storage = body_store(receiver.path());
-        let coordinator = owner(receiver.path(), storage.clone(), storage);
+        let coordinator = owner(receiver.path());
         assert!(coordinator.release_due(k.block_number).unwrap().is_some());
     }
-    assert_eq!(remaining(receiver.path(), &records[1]), 0);
+
     assert_c(receiver.path(), k);
     {
-        let storage = body_store(receiver.path());
-        let coordinator = owner(receiver.path(), storage.clone(), storage);
+        let coordinator = owner(receiver.path());
         assert!(coordinator.release_due(k.block_number).unwrap().is_none());
     }
     for record in &records[usize::from(pruned)..] {
@@ -668,5 +476,4 @@ fn exercise_shared_lease_copy(pruned: bool) {
             .iter()
             .all(|(key, _)| *key != retired_key));
     }
-    assert_eq!(remaining(receiver.path(), &records[1]), 0);
 }

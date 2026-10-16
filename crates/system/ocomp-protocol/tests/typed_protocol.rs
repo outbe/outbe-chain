@@ -113,15 +113,14 @@ fn single_attempt_identity_rejects_nonzero_attempt_or_nonce() {
     assert!(invalid.input_lease_id().is_err());
 
     let mut changed_input = first.clone();
-    changed_input.sealed_tribute_collection_root = hash(0xa1);
     changed_input
         .activation_preconditions
         .tribute
-        .sealed_collection_root = hash(0xa1);
+        .source_generation += 1;
     assert_ne!(
         first.input_lease_id().unwrap(),
         changed_input.input_lease_id().unwrap(),
-        "a changed authenticated source root must create a different lease"
+        "a changed sealed source generation must create a different lease"
     );
 }
 
@@ -792,7 +791,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         genesis_hash: hash(40),
         fork_id: hash(1),
         wwd: 7,
-        sealed_tribute_collection_root: hash(31),
         sealed_tribute_count: 0,
         sealed_tribute_canonical_body_bytes: 0,
         distinct_owner_count: 0,
@@ -819,12 +817,8 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
             finalized_block_number: 90,
             finalized_block_hash: hash(46),
             finalized_state_root: hash(98),
-            finalized_ce_root: hash(99),
-            ce_schema_version: 1,
         },
         wwd: 7,
-        sealed_tribute_collection_key: hash(30),
-        sealed_tribute_collection_root: hash(31),
         tribute_count: 1,
         tribute_nominal_total: U256::ZERO,
         input_chunk_count: 1,
@@ -914,7 +908,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     let tribute_receipt = TributeReceiptV1 {
         binding: binding(),
         tribute_input_binding: preconditions().tribute,
-        sealed_collection_root: hash(31),
         consumed_count: 0,
         consumed_nominal_total: U256::ZERO,
         retired_generation: 3,
@@ -1987,8 +1980,6 @@ fn snapshot_export_control_pages_job_scoped_leases_and_manifests() {
         finalized_block_number: 100,
         finalized_block_hash: hash(0xa2),
         finalized_state_root: hash(0xa3),
-        finalized_ce_root: hash(0xa4),
-        ce_schema_version: 1,
     };
     let lease = BoundedBytes(vec![0xa5; SNAPSHOT_LEASE_WIRE_BYTES]);
 

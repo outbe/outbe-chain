@@ -1,38 +1,25 @@
 pub mod certified;
-mod day_mark;
+pub mod codec;
 pub mod day_schema;
 mod day_state;
 pub mod enclave_client;
 pub mod errors;
 mod issuance;
-pub mod partitioning;
 pub mod precompile;
-pub mod projection;
 pub mod record;
-mod repository;
-mod retention;
 pub mod runtime;
 pub mod schema;
 pub mod state;
+pub mod state_api;
+pub mod state_proof;
+pub mod storage_records;
 
-pub use day_mark::{
-    list_tribute_day_marks, read_tribute_day_mark, tribute_day_mark_operation,
-    write_tribute_day_mark, TributeDayMark, TRIBUTE_DAY_MARK_NAMESPACE,
-};
 pub use record::{TributeMetadata, TributeRecord};
-pub use repository::{
-    canonical_body, from_canonical_body, TributeMutationView, TributePage, TributePageRequest,
-    TributeReadView, TributeRepositoryError, TributeRepositoryReader, TributeRepositoryWriter,
-};
-pub use retention::{
-    RetainedTributeAuditEntry, RetainedTributeAuditVisitor, RetainedTributeCursor,
-    RetainedTributePage, RetainedTributePin, RetainedTributeReader, RetainedTributeRef,
-    RetainedTributeView, RetainedTributeWriter, OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE,
-    OCOMP_RETAINED_TRIBUTES_NAMESPACE,
-};
 pub use runtime::LoadedTribute;
 pub use schema::{DayPreAdmission, DayTotals, TributeContract, TributeData};
 pub use state::TributePreAdmissionProjection;
 
 #[cfg(test)]
 mod tests;
+
+pub use codec::{canonical_body, from_canonical_body};

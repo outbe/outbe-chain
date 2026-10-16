@@ -2,7 +2,7 @@
 pub use crate::enclave_client::test_enclave::{install, scope, uninstall, Guard, NETWORK_SECRET};
 use crate::{NodIssueParams, NodItemState};
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::WwdEntityId;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     nod_encryption::{EncryptedNodV2, NodTermsV2},
     time::WorldwideDay,

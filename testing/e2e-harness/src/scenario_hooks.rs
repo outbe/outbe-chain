@@ -97,20 +97,15 @@ pub(crate) fn finish_scenario(
         &expected_failed_slots(world),
         &world.state.expected_dkg_expiry_exits,
     );
-    let projection_cleanup = world.projection.teardown_fault_mount();
     let mut audit = match audit_scenario_logs(world) {
         Ok(audit) => audit,
         Err(error) => {
             panic!("E2E log-safety audit could not run: {error:#}");
         }
     };
-    for error in [
-        ocomp_cleanup.err(),
-        node_cleanup.err(),
-        projection_cleanup.err(),
-    ]
-    .into_iter()
-    .flatten()
+    for error in [ocomp_cleanup.err(), node_cleanup.err()]
+        .into_iter()
+        .flatten()
     {
         audit.record_cleanup_failure(error);
     }

@@ -2,17 +2,15 @@
 //! replaces the executor factory so that every block goes through
 //! [`crate::executor::OutbeBlockExecutor`] instead of [`EthBlockExecutor`] directly.
 
-use alloy_primitives::{Bytes, B256};
+use alloy_primitives::Bytes;
 use reth_ethereum::chainspec::ChainSpec;
 use reth_ethereum::chainspec::EthChainSpec;
 use reth_ethereum::evm::EthEvmConfig;
 
 use std::sync::Arc;
 
-use outbe_compressed_entities::{CompressedTreeService, ExecutionScope, ACTIVE_COMMITMENT_SCHEME};
 use outbe_metadosis::api::OcompFinalizedIntentAuthority;
 use outbe_metadosis::config::OcompForkInstallV1;
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge, reshare_artifact::sanitize_prefinal_outbe_block_artifacts,
     OutbeHeader,
@@ -62,8 +60,7 @@ pub struct OutbeEvmConfig {
     accounted_parent_artifact_provider: Option<Arc<dyn AccountedParentArtifactProvider>>,
     /// Validator-mode EVM signer used to authenticate system-tx artifacts.
     evm_signer: Option<SharedOutbeEvmSigner>,
-    runtime_body_readers: Option<RuntimeBodyReaders>,
-    compressed_tree_service: Option<Arc<CompressedTreeService>>,
+
     ocomp_lifecycle_activation: OcompLifecycleActivation,
     ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
 }
@@ -83,11 +80,6 @@ impl std::fmt::Debug for OutbeEvmConfig {
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
             )
-            .field("runtime_body_readers", &self.runtime_body_readers.is_some())
-            .field(
-                "compressed_tree_service",
-                &self.compressed_tree_service.is_some(),
-            )
             .field(
                 "ocomp_lifecycle_activation",
                 &self.ocomp_lifecycle_activation,
@@ -106,7 +98,7 @@ impl OutbeEvmConfig {
     /// live no matter which constructor the running node uses. The offline reth
     /// subcommands use `new_with_bridge`. The live validator and full node use
     /// `new_with_bridge_and_summary_provider` /
-    /// `new_with_provider_and_runtime_body_readers` via
+    /// `new_with_provider_only` via
     /// [`OutbeExecutorBuilder::build_evm`]. Previously only `::new` installed it,
     /// but production never builds via `::new`. As a result, `consensus_chain_id()`
     /// stayed at its default `0`, and the signing namespace collapsed to
@@ -152,38 +144,7 @@ impl OutbeEvmConfig {
             bridge: None,
             accounted_parent_artifact_provider: None,
             evm_signer: None,
-            runtime_body_readers: None,
-            compressed_tree_service: None,
-            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-            ocomp_fork_install: None,
-        }
-    }
 
-    /// Creates a config whose EVM factory installs typed, read-only Tribute and
-    /// Nod body readers into the precompile dispatch seam.
-    pub fn new_with_runtime_body_readers(
-        chain_spec: Arc<ChainSpec<OutbeHeader>>,
-        runtime_body_readers: RuntimeBodyReaders,
-    ) -> Self {
-        Self::install_consensus_chain_id(&chain_spec);
-        let tee_attestation_v1 =
-            crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
-                &chain_spec,
-            );
-        Self {
-            inner: EthEvmConfig::new_with_evm_factory(
-                chain_spec.clone(),
-                crate::factory::evm_factory_with_body_readers(runtime_body_readers.clone())
-                    .with_genesis_hash(chain_spec.genesis_hash())
-                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
-            ),
-            block_assembler: OutbeBlockAssembler::new(chain_spec),
-            tee_attestation_v1,
-            bridge: None,
-            accounted_parent_artifact_provider: None,
-            evm_signer: None,
-            runtime_body_readers: Some(runtime_body_readers),
-            compressed_tree_service: None,
             ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
             ocomp_fork_install: None,
         }
@@ -214,34 +175,16 @@ impl OutbeEvmConfig {
                 BridgeAccountedParentArtifactProvider::new(summary_cache),
             )),
             evm_signer: None,
-            runtime_body_readers: None,
-            compressed_tree_service: None,
+
             ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
             ocomp_fork_install: None,
         }
-    }
-
-    /// Creates a config with both the consensus bootstrap bridge and the
-    /// mandatory runtime body readers used by receipt-visible system phases.
-    pub fn new_with_bridge_and_runtime_body_readers(
-        chain_spec: Arc<ChainSpec<OutbeHeader>>,
-        bridge: ConsensusExecutionBridge,
-        runtime_body_readers: RuntimeBodyReaders,
-    ) -> Self {
-        let summary_cache = bridge.clone();
-        Self::new_with_bridge_and_summary_provider(
-            chain_spec,
-            bridge,
-            Arc::new(BridgeAccountedParentArtifactProvider::new(summary_cache)),
-            runtime_body_readers,
-        )
     }
 
     fn new_with_bridge_and_summary_provider(
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         bridge: ConsensusExecutionBridge,
         accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
-        runtime_body_readers: RuntimeBodyReaders,
     ) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
         let tee_attestation_v1 =
@@ -251,7 +194,7 @@ impl OutbeEvmConfig {
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                crate::factory::evm_factory_with_body_readers(runtime_body_readers.clone())
+                OutbeEvmFactory::default()
                     .with_genesis_hash(chain_spec.genesis_hash())
                     .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
@@ -260,8 +203,7 @@ impl OutbeEvmConfig {
             bridge: Some(bridge),
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
-            runtime_body_readers: Some(runtime_body_readers),
-            compressed_tree_service: None,
+
             ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
             ocomp_fork_install: None,
         }
@@ -272,7 +214,7 @@ impl OutbeEvmConfig {
     /// [`reth_provider::HeaderProvider`] (no consensus bridge / proof cache).
     /// It installs no runtime body readers. `OutbeExecutorBuilder` does not use
     /// it. The no-bridge production path uses
-    /// `new_with_provider_and_runtime_body_readers`. Without a provider, the
+    /// `new_with_provider_only`. Without a provider, the
     /// executor's Phase 1 lookup would fail with "missing provider" on every
     /// block.
     pub fn new_with_provider_only(
@@ -296,53 +238,10 @@ impl OutbeEvmConfig {
             bridge: None,
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
-            runtime_body_readers: None,
-            compressed_tree_service: None,
+
             ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
             ocomp_fork_install: None,
         }
-    }
-
-    /// Creates the provider-backed full-node configuration with the typed
-    /// runtime body readers required by production precompile execution.
-    ///
-    /// This is the no-bridge counterpart of the live node configuration. The
-    /// exact accounted-parent artifact comes from the header provider. Tribute
-    /// and Nod bodies remain available through their read-only runtime
-    /// capabilities.
-    pub fn new_with_provider_and_runtime_body_readers(
-        chain_spec: Arc<ChainSpec<OutbeHeader>>,
-        accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
-        runtime_body_readers: RuntimeBodyReaders,
-    ) -> Self {
-        Self::install_consensus_chain_id(&chain_spec);
-        let tee_attestation_v1 =
-            crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
-                &chain_spec,
-            );
-        Self {
-            inner: EthEvmConfig::new_with_evm_factory(
-                chain_spec.clone(),
-                crate::factory::evm_factory_with_body_readers(runtime_body_readers.clone())
-                    .with_genesis_hash(chain_spec.genesis_hash())
-                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
-            ),
-            block_assembler: OutbeBlockAssembler::new(chain_spec),
-            tee_attestation_v1,
-            bridge: None,
-            accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
-            evm_signer: None,
-            runtime_body_readers: Some(runtime_body_readers),
-            compressed_tree_service: None,
-            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
-            ocomp_fork_install: None,
-        }
-    }
-
-    /// Returns the typed runtime body readers installed for block execution.
-    #[must_use]
-    pub const fn runtime_body_readers(&self) -> Option<&RuntimeBodyReaders> {
-        self.runtime_body_readers.as_ref()
     }
 
     pub fn with_evm_signer(mut self, signer: SharedOutbeEvmSigner) -> Self {
@@ -382,19 +281,6 @@ impl OutbeEvmConfig {
         self.ocomp_lifecycle_activation.is_active_at(block_number)
     }
 
-    /// Installs the explicitly owned CE tree service used by every block scope
-    /// and by candidate publication. ADR-008's unsharded stage is not activated
-    /// before ADR-009/010 benchmarking. Work accounting therefore stays in the
-    /// named prebenchmark mode below rather than inventing network limits here.
-    pub fn with_compressed_tree_service(mut self, service: Arc<CompressedTreeService>) -> Self {
-        self.inner
-            .executor_factory
-            .evm_factory()
-            .install_compressed_tree_service(service.clone());
-        self.compressed_tree_service = Some(service);
-        self
-    }
-
     fn with_ocomp_finality_authority(
         self,
         authority: Arc<dyn OcompFinalizedIntentAuthority>,
@@ -404,33 +290,6 @@ impl OutbeEvmConfig {
             .evm_factory()
             .install_ocomp_finality_authority(authority);
         self
-    }
-
-    /// Returns the CE tree service shared by execution and payload cleanup.
-    #[must_use]
-    pub fn compressed_tree_service(&self) -> Option<Arc<CompressedTreeService>> {
-        self.compressed_tree_service.clone()
-    }
-
-    fn configure_compressed_entities_scope(
-        &self,
-        scope: &Arc<ExecutionScope>,
-        block_number: u64,
-        parent_hash: B256,
-    ) -> Result<(), crate::errors::CompressedEntitiesScopeConfigError> {
-        if let Some(service) = &self.compressed_tree_service {
-            if block_number > 0 {
-                scope
-                    .configure_parent_tree_factory(
-                        service.clone(),
-                        ACTIVE_COMMITMENT_SCHEME,
-                        block_number - 1,
-                        parent_hash,
-                    )
-                    .map_err(crate::errors::CompressedEntitiesScopeConfigError::from_display)?;
-            }
-        }
-        Ok(())
     }
 
     pub fn evm_signer(&self) -> Option<&SharedOutbeEvmSigner> {

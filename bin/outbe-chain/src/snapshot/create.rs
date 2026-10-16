@@ -38,7 +38,6 @@ pub(crate) fn create(
         layout.chain_root.clone(),
         layout.consensus_root.clone(),
         layout.ocomp_root.clone(),
-        layout.offchain_root.clone(),
         layout.static_files_root.clone(),
         layout.execution_rocksdb_root.clone(),
     ]);

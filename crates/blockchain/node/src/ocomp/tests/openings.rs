@@ -230,7 +230,6 @@ fn lysis_opening_builder_returns_league_snapshot_and_oracle_proofs() {
         state_root,
         intent_id: B256::repeat_byte(0x62),
         wwd: day.value(),
-        ce_sealed_root: B256::repeat_byte(0x63),
         protocol_bundle_hash: B256::repeat_byte(0x64),
         input_lease_id: B256::repeat_byte(0x65),
     };

@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn a_direct_settlement_through_a_leg_the_window_never_priced_is_refused_without_writes() {
     let rate = U256::from(2u64) * six_decimal_unit();
-    let (mut provider, world) = test_storage(Some(rate));
+    let mut provider = test_storage(Some(rate));
     let (gem_id, required) = StorageHandle::enter(&mut provider, |storage| {
         let eur_pair = outbe_oracle::api::AddressPair::new_coen_to(978);
         outbe_oracle::api::register_pair(storage.clone(), eur_pair).unwrap();
@@ -31,7 +31,6 @@ fn a_direct_settlement_through_a_leg_the_window_never_priced_is_refused_without_
         seed_day_vwap(&storage, 840, rate);
         let gem_id = issue_at_live_rate(
             &storage,
-            &world,
             ALICE,
             GemTypes::Wallet,
             U256::from(10u64) * six_decimal_unit(),
@@ -51,8 +50,6 @@ fn a_direct_settlement_through_a_leg_the_window_never_priced_is_refused_without_
     let result = StorageHandle::enter(&mut provider, |storage| {
         runtime::settle_gem(
             &storage,
-            &world.scope,
-            &world.parent,
             crate::schema::GemSettlementParams {
                 caller: ALICE,
                 gem_id,
@@ -73,7 +70,7 @@ fn a_direct_settlement_through_a_leg_the_window_never_priced_is_refused_without_
     assert_eq!(provider.get_ordered_events(), events);
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
-            gem_view(&storage, &world, gem_id).item.state,
+            gem_view(&storage, gem_id).item.state,
             GemState::Issued as u8
         );
     });

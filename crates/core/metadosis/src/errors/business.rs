@@ -10,9 +10,7 @@ pub enum MetadosisBusinessError {
     #[error("Metadosis business failure: day allocation overflow")]
     DayAllocationOverflow,
 
-    #[error(
-        "Metadosis business failure: day allocation exceeds the nominal its tributes retired"
-    )]
+    #[error("Metadosis business failure: day allocation exceeds the nominal its tributes retired")]
     DayAllocationExceedsTributeNominal,
 
     #[error("Metadosis business failure: Lysis owner receipt mismatch")]

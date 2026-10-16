@@ -7,7 +7,6 @@ use alloy_eips::eip7594::BlobTransactionSidecarVariant;
 use alloy_rlp::Encodable as _;
 use alloy_rpc_types_engine::PayloadId;
 use outbe_primitives::{
-    error::PrecompileError,
     runtime_audit_v1::{process_instance_id, PAYLOAD_EXECUTION_FAILED, SCHEMA_VERSION},
     OutbePrimitives, OutbeTxEnvelope,
 };
@@ -30,7 +29,6 @@ use super::{
     carrier_admission::{
         self, CarrierBlock, CarrierDecision, DeferredResultVoteCarrier, InvalidResultVoteCarrier,
     },
-    ce_work_admission_error,
     execution::{PayloadBuildState, StageOutcome},
     payload_execution_failure_kind,
     size_budget::SizeRejection,
@@ -287,24 +285,6 @@ where
         let tx_hash = *tx.tx_hash();
         match builder.execute_transaction(tx) {
             Ok(gas_used) => Ok(Some(gas_used.tx_gas_used())),
-            Err(err)
-                if matches!(
-                    ce_work_admission_error(&err),
-                    Some(PrecompileError::BlockCeWorkCapacityExhausted)
-                ) =>
-            {
-                trace!(target: "payload_builder", ?tx_hash, "deferring transaction because the payload CE work budget is exhausted");
-                Ok(None)
-            }
-            Err(err)
-                if matches!(
-                    ce_work_admission_error(&err),
-                    Some(PrecompileError::TransactionCeWorkLimitExceeded)
-                ) =>
-            {
-                trace!(target: "payload_builder", ?tx_hash, "skipping transaction that cannot fit the full CE work limit");
-                Ok(None)
-            }
             Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                 error, ..
             })) => {

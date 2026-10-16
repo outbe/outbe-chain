@@ -159,7 +159,7 @@ pub enum TributeFactoryError {
     ZkVerifierUnavailable(String),
 
     #[error(transparent)]
-    EntityIdDerivation(#[from] outbe_compressed_entities::CommitmentError),
+    EntityIdDerivation(#[from] outbe_primitives::wwd_entity_id::EntityIdDerivationError),
 
     #[error(transparent)]
     CalculationView(#[from] outbe_tee::TransportError),

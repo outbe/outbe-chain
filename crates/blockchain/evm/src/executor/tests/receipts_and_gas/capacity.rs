@@ -1,5 +1,4 @@
 use super::*;
-use outbe_offchain_data::runtime_body_readers;
 
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const REQUIRED_HEADROOM_BPS: u64 = 2_000;
@@ -39,7 +38,7 @@ fn assert_capacity_headroom(receipt: &Receipt, visible_gas: u64) {
 
 fn assert_capacity_events(receipt: &Receipt) {
     let capacity_event = keccak256(
-        "WorldwideDayCapacityForfeited(uint32,uint32,uint32,uint256,uint256,uint256,bytes32,uint32,uint256,uint64,uint64,uint8,uint64)",
+        "WorldwideDayCapacityForfeited(uint32,uint32,uint32,uint256,uint256,uint256,uint32,uint256,uint64,uint64,uint8,uint64)",
     );
     assert!(receipt.logs.iter().any(|log| {
         log.address == outbe_primitives::addresses::METADOSIS_ADDRESS
@@ -60,30 +59,27 @@ fn assert_capacity_events(receipt: &Receipt) {
         .expect("typed capacity-forfeiture event");
     assert_eq!(capacity_log.forfeitedTributeCount, u32::MAX);
     assert_eq!(capacity_log.forfeitedTributeNominalMinor, U256::MAX);
-    assert_eq!(capacity_log.retirementOutcome, 2);
+    assert_eq!(
+        capacity_log.retirementOutcome, 2,
+        "the first logical retirement must report Requested in the ABI event"
+    );
 }
 
-fn run_capacity_cycle() -> (u64, Receipt, B256, B256, tempfile::TempDir) {
+fn run_capacity_cycle() -> (u64, Receipt, B256, B256) {
     let signer = test_evm_signer();
     let proposer = signer.address();
     let CapacityParent {
         mut state,
-        tree_directory,
-        tree_service,
+
         seed_hash,
-        seed_root,
-        body_reader,
+
         fire_at,
     } = prepare_capacity_parent(proposer).expect("prepare populated capacity parent");
 
+    let seed_root = post_state_root(&state.bundle_state);
     let mut evm_env = test_evm_env(2, REWARDS_ADDRESS);
     evm_env.block_env.timestamp = U256::from(fire_at);
-    let config = OutbeEvmConfig::new_with_runtime_body_readers(
-        test_chain_spec(),
-        runtime_body_readers(body_reader),
-    )
-    .with_evm_signer(signer.clone())
-    .with_compressed_tree_service(tree_service);
+    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
     let mut parent_metadata = metadata_with(vec![proposer], vec![1], Vec::new());
     parent_metadata.finalized_block_number = 1;
     parent_metadata.finalized_block_hash = seed_hash;
@@ -132,7 +128,6 @@ fn run_capacity_cycle() -> (u64, Receipt, B256, B256, tempfile::TempDir) {
         receipt,
         post_state_root(&state.bundle_state),
         seed_root,
-        tree_directory,
     )
 }
 

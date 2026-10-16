@@ -1,6 +1,7 @@
-use super::{wait_for_finalized_parent, wait_for_optional_ocomp_parent};
+use super::readiness::wait_for_finalized_parent;
+use super::wait_for_optional_ocomp_parent;
 use super::{ExecutorActor, RecoveredForkchoiceAttempt};
-use super::{FinalizedCeBlock, FinalizedCeCommitter, LastCanonicalized};
+use super::{FinalizedExecutionBarrier, FinalizedExecutionBlock, LastCanonicalized};
 use crate::ancestry_readiness::AncestryReadiness;
 use crate::block::ConsensusBlock;
 use crate::digest::Digest;
@@ -17,7 +18,7 @@ use commonware_utils::acknowledgement::Exact;
 use outbe_primitives::{
     projection::{
         projection_readiness, ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass,
-        ProjectionReadinessHandle, ProjectionReadinessPublisher, ProjectionStatus,
+        ProjectionStatus,
     },
     OutbeHeader,
 };
@@ -33,7 +34,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 mod fixtures;
-use fixtures::{executor_test_block, ready_projection, ready_projection_for_block};
+use fixtures::executor_test_block;
 
 mod forkchoice;
 

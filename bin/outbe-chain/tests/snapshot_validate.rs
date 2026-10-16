@@ -2,7 +2,7 @@
 //!
 //! The shared task01 fixture intentionally contains incomplete EVM progress and opaque
 //! unfinished OCOMP bytes. Only prepare_evm_authority below establishes a valid current-E
-//! fixture. These tests do not claim CE/body/OCOMP all-check acceptance or node startup.
+//! fixture. These tests do not claim OCOMP all-check acceptance or node startup.
 
 use std::{
     fs,
@@ -58,9 +58,7 @@ fn native_arguments(command: &mut Command, fixture: &StoppedFixture) {
         .args(["--", "--chain"])
         .arg(&fixture.genesis)
         .arg("--datadir")
-        .arg(&fixture.chain)
-        .arg("--projection.storage-config")
-        .arg(&fixture.projection_config);
+        .arg(&fixture.chain);
 }
 
 fn create_archive(fixture: &StoppedFixture, archive: &Path) {
@@ -220,8 +218,7 @@ fn missing_artifact_reports_on_stdout_when_report_roots_cannot_be_resolved() {
 }
 
 #[test]
-fn report_output_preserves_existing_files_and_rejects_native_roots_even_with_bad_projection_config()
-{
+fn report_output_preserves_existing_files_and_rejects_native_roots() {
     let root = snapshot::physical_tempdir();
     let fixture = stopped_fixture(&root.path().join("donor"));
     let existing = root.path().join("existing-report.json");
@@ -235,8 +232,6 @@ fn report_output_preserves_existing_files_and_rejects_native_roots_even_with_bad
         b"operator-owned existing bytes"
     );
 
-    // The base ordinary layout remains knowable even when projection TOML fails.
-    fs::write(&fixture.projection_config, b"not valid TOML = [").unwrap();
     let alias = root.path().join("chain-alias");
     symlink(&fixture.chain, &alias).unwrap();
     let before = fingerprint(&fixture.donor);
@@ -245,35 +240,33 @@ fn report_output_preserves_existing_files_and_rejects_native_roots_even_with_bad
         fixture.chain.join("keys/audit.json"),
         alias.join("aliased-audit.json"),
         fixture.signing_key.clone(),
-        fixture.projection_config.clone(),
     ] {
         let mut command = binary();
         command
-            .args(["snapshot", "validate", "--checks", "bodies", "--report"])
+            .args(["snapshot", "validate", "--checks", "headers", "--report"])
             .arg(&target);
         native_arguments(&mut command, &fixture);
         let output = run(&mut command);
         assert!(!output.status.success(), "{}", transcript(&output));
         assert_eq!(fingerprint(&fixture.donor), before);
     }
-    let target = root.path().join("bad-projection.json");
+    let target = root.path().join("external-report.json");
     let mut command = binary();
     command
-        .args(["snapshot", "validate", "--checks", "bodies", "--report"])
+        .args(["snapshot", "validate", "--checks", "provenance", "--report"])
         .arg(&target);
     native_arguments(&mut command, &fixture);
     let output = run(&mut command);
     assert!(!output.status.success(), "{}", transcript(&output));
-    assert!(!target.exists());
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_ne!(status(&report, "bodies"), "passed");
+    assert!(target.is_file());
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(&target).unwrap()).unwrap();
+    assert_eq!(status(&report, "provenance"), "incomplete");
     assert_eq!(fingerprint(&fixture.donor), before);
 }
 
 struct Placed {
     base: PathBuf,
     genesis: PathBuf,
-    projection_config: PathBuf,
 }
 
 impl Placed {
@@ -282,7 +275,6 @@ impl Placed {
             NativeRoot::Chain => self.base.join("chain"),
             NativeRoot::Consensus => self.base.join("chain/consensus"),
             NativeRoot::Ocomp => self.base.join("ocomp/domain-v1"),
-            NativeRoot::Offchain => self.base.join("projection"),
             NativeRoot::StaticFiles => self.base.join("chain/static_files"),
             NativeRoot::ExecutionRocksDb => self.base.join("chain/rocksdb"),
         }
@@ -292,9 +284,7 @@ impl Placed {
             .args(["--", "--chain"])
             .arg(&self.genesis)
             .arg("--datadir")
-            .arg(self.root(NativeRoot::Chain))
-            .arg("--projection.storage-config")
-            .arg(&self.projection_config);
+            .arg(self.root(NativeRoot::Chain));
     }
 }
 
@@ -338,11 +328,9 @@ fn signed_transfer_and_conventional_placement_do_not_mask_semantic_state_corrupt
         let placed = Placed {
             base: receiver.path().join("placed"),
             genesis: receiver.path().join("placed/configuration/genesis.json"),
-            projection_config: receiver.path().join("placed/configuration/offchain.toml"),
         };
         fs::create_dir_all(placed.genesis.parent().unwrap()).unwrap();
         fs::copy(&fixture.genesis, &placed.genesis).unwrap();
-        fs::write(&placed.projection_config, "version = 1\nbackend = 'rocksdb'\nstart_block = 17\n[rocksdb]\npath = '../projection'\nsecondary_path = '../secondary'\n").unwrap();
         for domain in &index.manifest.domains {
             if domain.entries.is_empty() {
                 continue;

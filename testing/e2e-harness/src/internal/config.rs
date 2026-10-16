@@ -42,7 +42,6 @@ pub(crate) fn validate_node_ipc_path(node_dir: &Path) -> Result<()> {
 
 #[derive(Clone, Debug)]
 pub(crate) struct Config {
-    pub projection_backend: crate::env::ProjectionBackend,
     /// Repo root (`--repo`). It is the working dir for every script/binary we invoke.
     pub repo: PathBuf,
     /// Localnet data dir (`--data-dir`).
@@ -117,7 +116,6 @@ impl Config {
         let run_tag = dir_tag(&env.data_dir);
         let radicle_runtime_root = short_radicle_runtime_root(&env.data_dir);
         Self {
-            projection_backend: env.projection_backend,
             repo: env.repo.clone(),
             dir: env.data_dir.clone(),
             bin_chain: env.chain_bin.clone(),
@@ -270,11 +268,6 @@ impl Config {
     /// Stable, bounded control socket path for the independent source node.
     pub fn user_radicle_control_socket(&self) -> PathBuf {
         self.radicle_scenario_runtime_dir().join("user.sock")
-    }
-
-    /// Shared by this node and its OCOMP exporter, independent of process role.
-    pub fn projection_storage_config(&self, i: usize) -> PathBuf {
-        self.validator_dir(i).join("offchain-storage.toml")
     }
 }
 

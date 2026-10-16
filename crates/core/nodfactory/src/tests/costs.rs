@@ -13,9 +13,7 @@ fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
         U256::ONE
     );
     let quote = world
-        .enter(|storage, scope, parent| {
-            api::quote_settlement(&storage, scope, parent, nod_id, PAYMENT_ASSET)
-        })
+        .enter(|storage| api::quote_settlement(&storage, nod_id, PAYMENT_ASSET))
         .unwrap();
     assert_eq!(quote, (840, U256::ONE, U256::ZERO));
 
@@ -31,11 +29,9 @@ fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
     );
     // A transfer with no received funds must fail, even for a dust obligation.
     let error = world
-        .enter(|storage, scope, parent| {
+        .enter(|storage| {
             api::settle_nod(
                 &storage,
-                scope,
-                parent,
                 api::SettleNodRequest {
                     caller: input.owner,
                     nod_id,
@@ -69,9 +65,7 @@ fn a_cost_that_does_not_divide_evenly_is_floored_in_the_quote() {
         U256::from(500)
     );
     let quote = world
-        .enter(|storage, scope, parent| {
-            api::quote_settlement(&storage, scope, parent, nod_id, PAYMENT_ASSET)
-        })
+        .enter(|storage| api::quote_settlement(&storage, nod_id, PAYMENT_ASSET))
         .unwrap();
     assert_eq!(quote, (840, U256::from(500), U256::ZERO));
 }
@@ -85,9 +79,7 @@ fn a_wider_asset_quotes_the_cost_scaled_to_its_decimals() {
     world.set_asset_decimals(PAYMENT_ASSET, 18);
     let cost = U256::from(cost_of(&input)) * U256::from(1_000_000_000_000u64);
     let quote = world
-        .enter(|storage, scope, parent| {
-            api::quote_settlement(&storage, scope, parent, nod_id, PAYMENT_ASSET)
-        })
+        .enter(|storage| api::quote_settlement(&storage, nod_id, PAYMENT_ASSET))
         .unwrap();
     assert_eq!(quote, (840, cost, U256::ZERO));
 }
@@ -105,9 +97,7 @@ fn a_nod_cost_above_u128_is_quoted_in_full() {
     let nod_id = world.issue(&input);
     world.register_reference_currency_asset(PAYMENT_ASSET);
     let quote = world
-        .enter(|storage, scope, parent| {
-            api::quote_settlement(&storage, scope, parent, nod_id, PAYMENT_ASSET)
-        })
+        .enter(|storage| api::quote_settlement(&storage, nod_id, PAYMENT_ASSET))
         .unwrap();
     assert_eq!(quote, (840, cost, U256::ZERO));
 }

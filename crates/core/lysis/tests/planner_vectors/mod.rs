@@ -1,7 +1,6 @@
 // OCOMP-TEST-ID: OCM-SEM-002
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_lysis::program_v1::artifacts::{
     decode_amount_run, decode_enumerated_run, decode_fidelity_map_output,
     decode_finalized_output_run, decode_fixed_reduce_output, decode_gratis_prefix_down_output,
@@ -46,6 +45,7 @@ use outbe_ocomp_protocol::{
 };
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::units::SCALE_1E6_U256;
+use outbe_primitives::wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId};
 use std::collections::BTreeMap;
 
 fn tribute(seed: u32, day: WorldwideDay, nominal: u64) -> TributeInputV1 {

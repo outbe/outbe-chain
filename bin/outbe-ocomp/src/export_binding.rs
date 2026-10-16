@@ -53,11 +53,11 @@ const CONFLICT_FILE: &str = "binding.abstained";
 const LOCK_FILE: &str = "binding.lock";
 const KNOWN_ENTRIES: &[&str] = &[LOCATOR_FILE, LOCATOR_TEMP_FILE, CONFLICT_FILE, LOCK_FILE];
 const BINDING_CHECKPOINT_OFFSET: usize = 142;
-const BINDING_MANIFEST_REF_OFFSET: usize = 248;
-const BINDING_MANIFEST_HASH_OFFSET: usize = 290;
-const BINDING_EXPORTED_GENERATION_OFFSET: usize = 322;
-const BINDING_EXPORT_RECORD_HASH_OFFSET: usize = 330;
-const BINDING_CHECKSUM_OFFSET: usize = 362;
+const BINDING_MANIFEST_REF_OFFSET: usize = 214;
+const BINDING_MANIFEST_HASH_OFFSET: usize = 256;
+const BINDING_EXPORTED_GENERATION_OFFSET: usize = 288;
+const BINDING_EXPORT_RECORD_HASH_OFFSET: usize = 296;
+const BINDING_CHECKSUM_OFFSET: usize = 328;
 const BINDING_FIXED_BYTES: usize = BINDING_CHECKSUM_OFFSET + 32;
 
 pub struct ExportBindingCandidate<'a> {
@@ -622,14 +622,7 @@ fn validate_manifest_job_fields(
     )?;
     require(manifest.attempt == intent.attempt, "manifest attempt")?;
     require(manifest.wwd == intent.wwd, "manifest WWD")?;
-    require(
-        manifest.sealed_tribute_collection_key == intent.sealed_tribute_collection_key,
-        "manifest Tribute collection key",
-    )?;
-    require(
-        manifest.sealed_tribute_collection_root == intent.sealed_tribute_collection_root,
-        "manifest Tribute collection root",
-    )?;
+
     require(
         manifest.tribute_count == intent.authenticated_day_count,
         "manifest Tribute count",
@@ -646,10 +639,8 @@ fn validate_manifest_job_fields(
         manifest.checkpoint.finalized_state_root == summary.finalized_state_root,
         "manifest finalized state root",
     )?;
-    require(
-        manifest.checkpoint.finalized_ce_root == intent.ce_sealed_root,
-        "manifest finalized CE root",
-    )
+
+    Ok(())
 }
 
 struct InputManifestAuthority<'a> {
@@ -826,8 +817,6 @@ mod tests {
                 finalized_block_number: 101,
                 finalized_block_hash: B256::repeat_byte(0x14),
                 finalized_state_root: B256::repeat_byte(0x15),
-                finalized_ce_root: B256::repeat_byte(0x16),
-                ce_schema_version: 2,
             },
             manifest_ref: CasObjectRefV1 {
                 transport_digest: B256::repeat_byte(0x17),

@@ -13,14 +13,7 @@ use std::{
 
 use alloy_consensus::{Header, Sealable};
 use alloy_primitives::B256;
-use outbe_compressed_entities::{
-    CeMdbx, EnvironmentIdentity, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
-};
 use outbe_ocomp::discovery_spool::ContiguousCheckpointStoreV1;
-use outbe_offchain_storage::{
-    partitioned::adapters::RocksPartitionDataSource, Key, Namespace, PartitionedStorage,
-    StorageWriter, Value,
-};
 use outbe_primitives::{projection::ProjectionCheckpoint, OutbeHeader};
 use reth_ethereum::provider::db::{
     database::Database,
@@ -40,8 +33,7 @@ pub(crate) fn binary() -> Command {
 }
 
 pub(crate) fn run(command: &mut Command) -> Output {
-    // These real MDBX fixtures contain a 4 GiB CE file. Debug hashing may exceed
-    // the small CLI fixture timeout. This watchdog is test-only. It is not a node limit.
+    // This watchdog limits the offline CLI fixture process.
     // File-backed output avoids blocking a child while waiting for a large report.
     let mut stdout = tempfile::tempfile().unwrap();
     let mut stderr = tempfile::tempfile().unwrap();
@@ -100,7 +92,6 @@ pub(crate) struct StoppedFixture {
     pub(crate) donor: PathBuf,
     pub(crate) chain: PathBuf,
     pub(crate) genesis: PathBuf,
-    pub(crate) projection_config: PathBuf,
     pub(crate) signing_key: PathBuf,
     pub(crate) public_key: [u8; 33],
     pub(crate) finalized_hash: B256,
@@ -173,72 +164,6 @@ pub(crate) fn stopped_fixture(donor: &Path) -> StoppedFixture {
     tx.commit().unwrap();
     drop(db);
 
-    let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
-    let genesis_marker = FinalizedMarker {
-        commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-        height: 0,
-        block_hash: genesis_hash,
-        parent_block_hash: B256::ZERO,
-        parent_root: B256::ZERO,
-        new_root: empty_root,
-    };
-    // Small test geometry. The normal CE owner still initializes its native schema.
-    drop(
-        reth_ethereum::provider::db::create_db(
-            chain.join("compressed_entities/smt"),
-            DatabaseArguments::test(),
-        )
-        .unwrap(),
-    );
-    let ce = CeMdbx::open(
-        &chain,
-        EnvironmentIdentity {
-            local_storage_schema_version: outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
-            chain_id: chain_spec.chain().id(),
-            genesis_hash,
-            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
-            topology: outbe_compressed_entities::CeTopologyV1.encode(),
-            tree_format: "ckb-smt-v0.6.1-poseidon2-catalog-v3".to_owned(),
-            vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
-        },
-        genesis_marker,
-    )
-    .unwrap();
-    ce.test_seed_finalized_marker(FinalizedMarker {
-        height: 100,
-        block_hash: h.hash_slow(),
-        parent_root: empty_root,
-        ..genesis_marker
-    })
-    .unwrap();
-    drop(ce);
-
-    let projection_config = donor.join("configuration/offchain.toml");
-    fs::write(&projection_config, "version = 1\nbackend = 'rocksdb'\nstart_block = 17\n[rocksdb]\npath = '../projection'\nsecondary_path = '../secondary'\n").unwrap();
-    // Use the same entity-owned schema-3 layout as the stopped-store reader.
-    let projection = PartitionedStorage::new(
-        std::sync::Arc::new(RocksPartitionDataSource::open(&donor.join("projection")).unwrap()),
-        outbe_offchain_data::entity_partition_routing().unwrap(),
-    );
-    let state = outbe_offchain_data::ProjectionState {
-        chain_id: chain_spec.chain().id(),
-        genesis_hash,
-        storage_schema_version: outbe_offchain_data::STORAGE_SCHEMA_VERSION,
-        start_block: 17,
-        checkpoint: Some(ProjectionCheckpoint {
-            block_number: 98,
-            block_hash: B256::repeat_byte(98),
-        }),
-    };
-    projection
-        .put(
-            Namespace::new("projection_state").unwrap(),
-            &Key::new(b"offchain_data".to_vec()).unwrap(),
-            &Value::new(postcard::to_stdvec(&state).unwrap()).unwrap(),
-        )
-        .unwrap();
-    drop(projection);
-
     let ocomp = donor.join("ocomp/domain-v1");
     let baseline = ProjectionCheckpoint {
         block_number: 0,
@@ -289,7 +214,6 @@ pub(crate) fn stopped_fixture(donor: &Path) -> StoppedFixture {
         donor: donor.to_path_buf(),
         chain,
         genesis: genesis_path,
-        projection_config,
         signing_key,
         public_key,
         finalized_hash: h.hash_slow(),

@@ -52,9 +52,6 @@ from genesis_seed_codec import (
     AGENT_REWARD_ADDRESS,
     ALL_PRECOMPILE_ADDRESSES,
     CCA_REGISTRY_ADDRESS,
-    COMPRESSED_ENTITIES_ADDRESS,
-    COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT,
-    COMPRESSED_ENTITIES_SCHEMA_VERSION,
     CREDIS_ADDRESS,
     CREDIS_PROFILE_SLOT,
     CREDIS_FACTORY_ADDRESS,
@@ -177,7 +174,6 @@ from genesis_seed_validators import (
 )
 from genesis_seed_system import (
     seed_accounting_progress,
-    seed_compressed_entities,
     seed_governance,
     seed_tee_policy,
     seed_zerofee,

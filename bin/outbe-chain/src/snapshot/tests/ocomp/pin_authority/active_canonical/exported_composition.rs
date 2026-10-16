@@ -7,7 +7,6 @@ use crate::snapshot::validation::{
     Incomplete,
 };
 use alloy_primitives::{keccak256, B256};
-use outbe_compressed_entities::encode_tribute_v1;
 use outbe_node::ocomp::retention::{
     inspect_retention_journal, CandidatePinV1, ExportAuthorityV1, PinRecordV1, PinStateV1,
 };
@@ -28,6 +27,7 @@ use outbe_ocomp_protocol::{
     },
     ListKind, ObjectKind, OrderedListLimits, SnapshotExportCommittedV1,
 };
+use outbe_primitives::entity_codec::encode_tribute_v2;
 use std::{fs, path::Path};
 const CAS_LIMITS: CasLimits = CasLimits {
     max_object_bytes: 1_048_576,
@@ -74,13 +74,13 @@ fn write_export(root: &Path, prepared: &ActiveFixture) -> ExportAuthorityV1 {
     let cas_limits = CAS_LIMITS;
     let cas = FilesystemCas::open(&cas_root, CasWriterRole::SnapshotExporter, cas_limits).unwrap();
     let reader = FilesystemCasReader::open(&cas_root, cas_limits).unwrap();
-    let tribute = outbe_tribute::canonical_body(&super::source_body());
+    let tribute = super::encrypted_source(intent.chain_id);
     let chunk = AuthenticatedInputChunkV1 {
         protocol_bundle_hash: spec.summary.protocol_bundle_hash,
         job_id: spec.summary.job_id,
         kind: InputChunkKind::Tribute,
         ordinal: 0,
-        canonical_records_or_openings: vec![BoundedBytes(encode_tribute_v1(&tribute).unwrap())],
+        canonical_records_or_openings: vec![BoundedBytes(encode_tribute_v2(&tribute).unwrap())],
     };
     let mut chunk_ref = cas
         .publish_bytes(&chunk.encode_canonical(&limits).unwrap())
@@ -98,15 +98,8 @@ fn write_export(root: &Path, prepared: &ActiveFixture) -> ExportAuthorityV1 {
             finalized_block_number: spec.summary.cursor,
             finalized_block_hash: spec.summary.finalized_block_hash,
             finalized_state_root: spec.summary.finalized_state_root,
-            finalized_ce_root: intent.ce_sealed_root,
-            ce_schema_version: u16::try_from(
-                outbe_compressed_entities::LOCAL_STORAGE_SCHEMA_VERSION,
-            )
-            .unwrap(),
         },
         wwd: intent.wwd,
-        sealed_tribute_collection_key: intent.sealed_tribute_collection_key,
-        sealed_tribute_collection_root: intent.sealed_tribute_collection_root,
         tribute_count: intent.authenticated_day_count,
         tribute_nominal_total: intent.authenticated_day_nominal,
         input_chunk_count: 1,
@@ -220,7 +213,6 @@ fn write_exported_pin(
         state_root: request.inner.state_root,
         intent_id: job.intent.intent_id(&poc_schema_limits()).unwrap(),
         wwd: job.intent.wwd,
-        ce_sealed_root: job.intent.ce_sealed_root,
         protocol_bundle_hash: job.intent.protocol_bundle_hash,
         input_lease_id: job.intent.input_lease_id().unwrap(),
     };
@@ -245,7 +237,6 @@ fn write_exported_pin(
     bytes.extend_from_slice(candidate.state_root.as_slice());
     bytes.extend_from_slice(candidate.intent_id.as_slice());
     bytes.extend_from_slice(&candidate.wwd.to_be_bytes());
-    bytes.extend_from_slice(candidate.ce_sealed_root.as_slice());
     bytes.extend_from_slice(candidate.protocol_bundle_hash.as_slice());
     bytes.extend_from_slice(candidate.input_lease_id.as_slice());
     bytes.extend_from_slice(finalized.job_id.as_slice());
@@ -345,7 +336,6 @@ fn recorded_exported_requires_complete_native_export_even_when_entire_job_direct
                         assert_eq!(audit.active[0].pin_stage, CanonicalLocalPinStage::Exported);
                         assert!(audit.active[0].source_verified);
                         assert!(audit.active[0].export_verified);
-                        assert!(!audit.active[0].projection_before_request);
                         assert_eq!(
                             audit.source_leases, 1,
                             "pin and active authority share one source lease"

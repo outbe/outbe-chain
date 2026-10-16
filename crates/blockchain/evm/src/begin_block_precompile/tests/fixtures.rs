@@ -85,21 +85,6 @@ pub(super) fn configured_storage(block_number: u64, timestamp: u64) -> HashMapSt
     .unwrap()
     .into_install();
     provider.enter(|storage| {
-        let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::ZERO,
-                U256::from(4),
-            )
-            .unwrap();
-        storage
-            .sstore(
-                outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
-                U256::from(1),
-                U256::from_be_slice(root.as_slice()),
-            )
-            .unwrap();
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();

@@ -21,8 +21,6 @@ fn manifest_json() -> serde_json::Value {
             "partial_state_trie": 1000,
             "unwind": null,
             "storage_version": 2,
-            "ce": block(1001),
-            "projection": block(1000),
             "ocomp_baseline": block(0),
             "ocomp_previous": block(995),
             "ocomp_current": block(999)
@@ -53,8 +51,6 @@ fn manifest_preserves_distinct_native_frontiers_and_digests_original_bytes() {
     let manifest = SnapshotManifestV1::from_bytes(&raw).unwrap();
     assert_eq!(manifest.progress.finalized.number, 1000);
     assert_eq!(manifest.progress.execution.number, 1001);
-    assert_eq!(manifest.progress.ce.number, 1001);
-    assert_eq!(manifest.progress.projection.number, 1000);
     assert_eq!(manifest.progress.ocomp_current.number, 999);
     assert_eq!(manifest.progress.partial_state_trie, Some(1000));
     assert_eq!(serde_json::to_value(&manifest).unwrap(), manifest_json());

@@ -12,10 +12,9 @@ test-support = []
 [dependencies]
 # Internal
 outbe-primitives.workspace = true
-outbe-compressed-entities.workspace = true
-outbe-offchain-data.workspace = true
 outbe-radicle.workspace = true
 outbe-tee.workspace = true
+outbe-tribute.workspace = true
 outbe-teeregistry.workspace = true
 outbe-validatorset.workspace = true
 outbe-staking.workspace = true
@@ -25,6 +24,7 @@ outbe-slashindicator.workspace = true
 # Reth
 reth-ethereum = { workspace = true, features = ["storage-api"] }
 reth-provider.workspace = true
+reth-trie.workspace = true
 
 # Alloy
 alloy-primitives.workspace = true

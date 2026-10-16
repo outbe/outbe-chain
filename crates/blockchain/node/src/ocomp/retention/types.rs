@@ -8,7 +8,6 @@ pub struct CandidatePinV1 {
     pub state_root: B256,
     pub intent_id: B256,
     pub wwd: u32,
-    pub ce_sealed_root: B256,
     pub protocol_bundle_hash: B256,
     pub input_lease_id: B256,
 }

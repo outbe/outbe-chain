@@ -83,9 +83,7 @@ pub(super) fn snapshot_rejects_damaged_artifact(
         .arg("--datadir")
         .arg(node.join("data"))
         .arg("--consensus.storage-dir")
-        .arg(node.join("data/consensus"))
-        .arg("--projection.storage-config")
-        .arg(node.join("offchain-storage.toml"));
+        .arg(node.join("data/consensus"));
     let rejected = run_snapshot_command(
         command,
         evidence_dir,
@@ -148,9 +146,7 @@ pub(super) fn snapshot_rejects_damaged_artifact(
         .arg("--datadir")
         .arg(node.join("data"))
         .arg("--consensus.storage-dir")
-        .arg(node.join("data/consensus"))
-        .arg("--projection.storage-config")
-        .arg(node.join("offchain-storage.toml"));
+        .arg(node.join("data/consensus"));
     let rejected = run_snapshot_command(
         command,
         evidence_dir,

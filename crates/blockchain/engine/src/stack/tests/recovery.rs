@@ -448,7 +448,6 @@ fn recovered_fcu_releases_projection_wait_without_running_executor_heartbeat() {
                 last_finalized_height: anchor.block_number,
                 last_finalized_hash: anchor.block_hash,
             },
-            readiness,
             None,
         );
         let updated_provider = Arc::clone(&provider);
@@ -889,8 +888,7 @@ mod copied_store_controls {
         open_native, recover_native, remove_native_header, DiskFixture, H,
     };
     use super::*;
-    use crate::ce_finalizer::RethDurableCeState;
-    use crate::ce_recovery::{CanonicalCeReplaySource, CeStartupRecoveryCoordinator};
+    use crate::finalization::{DurableExecutionState, RethDurableExecutionState};
     use alloy_consensus::Sealable;
     use reth_ethereum::provider::db::{
         database::Database,
@@ -926,7 +924,7 @@ mod copied_store_controls {
         assert!(error
             .to_string()
             .contains("marshal finalization digest mismatch"));
-        // Delete copied public consensus history, leaving real Reth/CE at H.
+        // Delete copied public consensus history, leaving real Reth state at H.
         // No manifest or independently stamped floor may replace those archives.
         std::fs::remove_dir_all(recipient.path().join("marshal")).unwrap();
         let error = fixture.missing_archive_error(recipient.path());
@@ -944,97 +942,68 @@ mod copied_store_controls {
             })
             .is_err()
         );
-        let (_, tree) = open_native(recipient.path());
-        assert_eq!(tree.finalized_marker().unwrap().height, H);
+        let provider = open_native(recipient.path());
+        assert_eq!(
+            RethDurableExecutionState::new(provider)
+                .block_and_root(H)
+                .unwrap()
+                .unwrap()
+                .block_hash,
+            fixture.headers[H as usize].hash_slow(),
+        );
     }
 
     #[test]
-    fn copied_equal_ce_marker_still_requires_real_parent_header_and_historical_root() {
-        for missing_root in [false, true] {
+    fn copied_native_anchor_requires_parent_header_and_durable_state_progress() {
+        for missing_state in [false, true] {
             let fixture = DiskFixture::new(H - 1);
             let recipient = tempfile::tempdir().unwrap();
             fixture.copy_to(recipient.path());
             assert_eq!(
-                recover_native(recipient.path(), H - 1, H).unwrap().height,
+                recover_native(recipient.path(), H - 1, H)
+                    .unwrap()
+                    .block_number,
                 H
             );
-            let db = init_db(recipient.path().join("db"), DatabaseArguments::test()).unwrap();
-            let tx = db.tx_mut().unwrap();
-            if missing_root {
-                tx.clear::<tables::PlainStorageState>().unwrap();
-            }
-            tx.commit().unwrap();
-            drop(db);
-            if !missing_root {
+            if missing_state {
+                let db = init_db(recipient.path().join("db"), DatabaseArguments::test()).unwrap();
+                let tx = db.tx_mut().unwrap();
+                let checkpoint = <tables::StageCheckpoints as reth_ethereum::provider::db::table::Table>::Value::new(H - 1);
+                tx.put::<tables::StageCheckpoints>("Finish".into(), checkpoint)
+                    .unwrap();
+                tx.commit().unwrap();
+            } else {
                 remove_native_header(recipient.path(), H - 1);
             }
-            let (provider, tree) = open_native(recipient.path());
-            let before = tree.finalized_marker().unwrap();
-            let recovery = CeStartupRecoveryCoordinator::new(
-                std::sync::Arc::new(RethDurableCeState::new(provider)),
-                tree.clone(),
-            );
-            let error = recovery.recover_before_participation(H).unwrap_err();
+            let error = recover_native(recipient.path(), H - 1, H).unwrap_err();
             assert!(!error.to_string().is_empty());
-            assert_eq!(
-                tree.finalized_marker().unwrap(),
-                before,
-                "failed history check advanced CE"
-            );
+            // A failed verification must not repair or advance the copied state.
+            let provider = open_native(recipient.path());
+            assert!(RethDurableExecutionState::new(provider)
+                .block_and_root(H)
+                .unwrap()
+                .is_none());
+            assert!(recover_native(recipient.path(), H - 1, H).is_err());
         }
     }
 
-    #[test]
-    fn copied_lagging_ce_uses_native_receipts_and_keeps_its_marker_when_required_frame_is_missing()
-    {
-        for missing_frame in [false, true] {
-            let fixture = DiskFixture::with_ce_height(H - 1, H - 1);
-            let recipient = tempfile::tempdir().unwrap();
-            fixture.copy_to(recipient.path());
-            if missing_frame {
-                let db = init_db(recipient.path().join("db"), DatabaseArguments::test()).unwrap();
-                let tx = db.tx_mut().unwrap();
-                tx.delete::<tables::BlockBodyIndices>(H, None).unwrap();
-                tx.commit().unwrap();
-            }
-            let (provider, tree) = open_native(recipient.path());
-            assert_eq!(tree.finalized_marker().unwrap().height, H - 1);
-            let source = std::sync::Arc::new(RethDurableCeState::new(provider));
-            let checkpoint = source.durable_checkpoint(H).unwrap().unwrap();
-            assert_eq!(checkpoint.height, H);
-            let recovery = CeStartupRecoveryCoordinator::new(source, tree.clone());
-            let result = recovery.recover_before_participation(H);
-            if missing_frame {
-                assert!(result.is_err());
-                assert_eq!(tree.finalized_marker().unwrap().height, H - 1);
-            } else {
-                let recovered = result.unwrap();
-                assert_eq!(recovered.height, H);
-                assert_eq!(
-                    recovered.block_hash,
-                    fixture.headers[H as usize].hash_slow()
-                );
-            }
-        }
-    }
     #[test]
     fn copied_current_tip_does_not_replace_missing_native_genesis_checkpoint() {
         let fixture = DiskFixture::new(H);
         let recipient = tempfile::tempdir().unwrap();
         fixture.copy_to(recipient.path());
         {
-            let (provider, _) = open_native(recipient.path());
-            let genesis = RethDurableCeState::new(provider)
-                .durable_checkpoint(0)
+            let provider = open_native(recipient.path());
+            let genesis = RethDurableExecutionState::new(provider)
+                .block_and_root(0)
                 .unwrap()
                 .unwrap();
             assert_eq!(genesis.block_hash, fixture.headers[0].hash_slow());
         }
         remove_native_header(recipient.path(), 0);
-        let (provider, tree) = open_native(recipient.path());
-        assert_eq!(tree.finalized_marker().unwrap().height, H);
-        assert!(RethDurableCeState::new(provider)
-            .durable_checkpoint(0)
+        let provider = open_native(recipient.path());
+        assert!(RethDurableExecutionState::new(provider)
+            .block_and_root(0)
             .unwrap()
             .is_none());
     }
@@ -1114,8 +1083,8 @@ mod copied_genesis_validator_history {
     }
 
     fn assert_genesis_and_current(root: &Path, genesis_hash: B256, current_hash: B256) {
-        let (provider, tree) = open_native(root);
-        assert_eq!(tree.finalized_marker().unwrap().height, H);
+        let provider = open_native(root);
+
         let genesis = read_consensus_validators_at_block(&provider, genesis_hash).unwrap();
         assert_eq!(genesis.addresses, vec![FOUNDER]);
         assert_eq!(genesis.public_keys, vec![consensus_key(11)]);
@@ -1155,7 +1124,7 @@ mod copied_genesis_validator_history {
         {
             let db = init_db(recipient.path().join("db"), DatabaseArguments::test()).unwrap();
             let tx = db.tx_mut().unwrap();
-            // Leave the history index, headers, latest state and CE at H intact.
+            // Leave the history index, headers, latest state at H intact.
             // It now references missing native before-values for the block-1 change.
             for &address in &addresses {
                 assert!(tx
@@ -1165,8 +1134,8 @@ mod copied_genesis_validator_history {
             tx.commit().unwrap();
         }
         {
-            let (provider, tree) = open_native(recipient.path());
-            assert_eq!(tree.finalized_marker().unwrap().height, H);
+            let provider = open_native(recipient.path());
+
             let current = read_consensus_validators_at_block(&provider, current_hash).unwrap();
             assert_eq!(current.addresses, vec![FOUNDER, JOINER]);
             assert_eq!(
@@ -1177,7 +1146,6 @@ mod copied_genesis_validator_history {
             let message = format!("{error:#}");
             assert!(message.contains("storage change set"), "{message}");
             assert!(message.contains("at block #1 does not exist"), "{message}");
-            assert_eq!(tree.finalized_marker().unwrap().height, H);
         }
         // The damaged copy did not repair its history or alter the donor.
         {
@@ -1345,11 +1313,7 @@ mod copied_native_dkg_prerequisites {
                 .expect("fixture task manager");
             let mut payload_shutdown = None;
             let result = AssertUnwindSafe(async {
-                let (provider, tree) = open_native(root);
-                ensure!(
-                    tree.finalized_marker()?.height == H,
-                    "copied CE height changed"
-                );
+                let provider = open_native(root);
                 let chain = provider.chain_spec();
                 let header = provider
                     .sealed_header(H)?
@@ -1495,7 +1459,7 @@ mod copied_native_dkg_prerequisites {
             let (keys, participants, output, share, polynomial) = run_test_dkg_complete();
             let changed_addresses = seed_freeze_history(disk.root.path(), &keys);
             let validator_set = {
-                let (provider, _tree) = open_native(disk.root.path());
+                let provider = open_native(disk.root.path());
                 let state = provider
                     .state_by_block_hash(disk.headers[FREEZE as usize].hash_slow())
                     .unwrap();
@@ -1737,8 +1701,8 @@ mod copied_native_dkg_prerequisites {
         root: &Path,
         missing: MissingPrerequisite,
     ) {
-        let (provider, tree) = open_native(root);
-        assert_eq!(tree.finalized_marker().unwrap().height, H);
+        let provider = open_native(root);
+
         assert_eq!(
             provider.block_hash(H).unwrap(),
             Some(fixture.disk.headers[H as usize].hash_slow())
@@ -1759,7 +1723,6 @@ mod copied_native_dkg_prerequisites {
             }
             MissingPrerequisite::StorageChangeset => {
                 drop(provider);
-                drop(tree);
                 let db = init_db(root.join("db"), DatabaseArguments::test()).unwrap();
                 let tx = db.tx().unwrap();
                 for &address in &fixture.changed_addresses {

@@ -2,15 +2,12 @@
 #[path = "../../../../testing/support/factory_erc20_settlement.rs"]
 mod settlement;
 
-use std::sync::Arc;
-
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_compressed_entities::{ExecutionScope, WwdEntityId};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_nod::{precompile::INod, NodIssueParams};
 use outbe_nodfactory::precompile::INodFactory;
-use outbe_offchain_storage::MemoryStorage;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     chain::CHAIN_ID,
@@ -37,13 +34,7 @@ impl Rail for Nod {
     const FACTORY: Address = NOD_FACTORY_ADDRESS;
     const SOURCE: StablesSource = StablesSource::NodCostAmount;
 
-    fn seed(
-        self,
-        storage: &StorageHandle<'_>,
-        scope: &ExecutionScope,
-        store: &Arc<MemoryStorage>,
-        issuance_currency: u16,
-    ) -> (U256, u64) {
+    fn seed(self, storage: &StorageHandle<'_>, issuance_currency: u16) -> (U256, u64) {
         test_enclave::install();
         let params = NodIssueParams {
             owner: OWNER,
@@ -56,8 +47,6 @@ impl Rail for Nod {
         };
         let nod = outbe_nodfactory::api::issue_nod(
             storage,
-            scope,
-            &outbe_nod::nod_reader(store.clone()),
             &outbe_nod::test_support::encrypted_fixture(&params, CHAIN_ID),
         )
         .unwrap();

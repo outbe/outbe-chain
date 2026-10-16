@@ -35,8 +35,6 @@ fn native(h: u64) -> SnapshotNativeProgress {
         partial_state_trie: Some(h),
         unwind: None,
         storage_version: 2,
-        ce: block(h),
-        projection: block(h - 1),
         ocomp_baseline: block(1),
         ocomp_previous: block(h - 1),
         ocomp_current: block(h),
@@ -275,7 +273,7 @@ fn fixture() -> OfflineSnapshotEvidence {
     )]);
     let launch = |at, pid, progress: SnapshotNativeProgress| {
         let anchor = block(progress.finalized.number + 1);
-        let record = format!("certified follower startup recovery barrier completed marshal_processed={} recovery_height={} recovery_hash=0x{} ce_marker_height={} last_execution_height={}\n", anchor.number - 1, anchor.number, anchor.hash, anchor.number, anchor.number + 1).into_bytes();
+        let record = format!("certified follower startup recovery barrier completed marshal_processed={} recovery_height={} recovery_hash=0x{} last_execution_height={}\n", anchor.number - 1, anchor.number, anchor.hash, anchor.number + 1).into_bytes();
         SnapshotLaunchObservation {
             slot: 4,
             started: at,
@@ -304,7 +302,6 @@ fn fixture() -> OfflineSnapshotEvidence {
                     bytes: record,
                 },
                 marshal_processed: anchor.number - 1,
-                ce_marker_height: anchor.number,
                 last_execution_height: anchor.number + 1,
                 canonical: anchor.clone(),
                 anchor,
@@ -392,7 +389,7 @@ fn accepts_distinct_native_frontiers_and_unvalidated_start_records() {
     let decoded: SnapshotManifestObservation =
         serde_json::from_slice(&evidence.manifest_bytes).unwrap();
     assert_ne!(decoded.progress.execution, decoded.progress.finalized);
-    assert_ne!(decoded.progress.ce, decoded.progress.projection);
+    assert_ne!(decoded.progress.execution, decoded.progress.ocomp_current);
     assert_eq!(decoded.progress.partial_state_trie, Some(10));
 }
 #[test]
@@ -472,88 +469,61 @@ fn rejects_missing_restart_reap_or_old_h_resume() {
     e.second_start.as_mut().unwrap().before_launch.progress = native(10);
     assert!(assert_snapshot_workflow(&e).is_err());
 }
-fn report(q: SnapshotBlock, p: SnapshotBlock, bodies: &str) -> Vec<u8> {
+fn report(status: &str) -> Vec<u8> {
     let mut checks = serde_json::Map::new();
-    for name in [
-        "files",
-        "provenance",
-        "headers",
-        "evm",
-        "ce",
-        "bodies",
-        "ocomp",
-    ] {
+    for name in ["files", "provenance", "headers", "evm", "ocomp"] {
         checks.insert(name.into(), serde_json::json!({
-            "selected":true,
-            "status":if name == "bodies" { bodies } else { "passed" },
-            "diagnostic":if name == "bodies" && bodies == "incomplete" {
-                Some("live body equality requires the same CE and projection identity: Q/P differ")
-            } else { None },
+            "selected":true, "status":if name == "ocomp" { status } else { "passed" },
+            "diagnostic":if name == "ocomp" && status == "incomplete" { Some("missing native input") } else { None },
         }));
     }
-    serde_json::to_vec(&serde_json::json!({"checks":checks,"observed":{"q":q,"p":p},"provenance":{},"required_missing":[],"retained_ranges":[],"inventory_bounds":[],"active_ocomp":[]})).unwrap()
+    serde_json::to_vec(&serde_json::json!({"checks":checks,"observed":{},"provenance":{},"required_missing":[],"retained_ranges":[],"inventory_bounds":[],"active_ocomp":[]})).unwrap()
 }
 #[test]
-fn preserves_actual_incomplete_report_and_rejects_false_body_equality() {
-    assert!(parse_snapshot_validation_report(&report(block(9), block(10), "incomplete")).is_ok());
-    assert!(parse_snapshot_validation_report(&report(block(9), block(10), "passed")).is_err());
-    let mut fork = block(10);
-    fork.hash = "ef".repeat(32);
-    assert!(parse_snapshot_validation_report(&report(block(10), fork, "passed")).is_err());
-    assert!(parse_snapshot_validation_report(&report(block(10), block(10), "passed")).is_ok());
+fn incomplete_native_report_is_preserved_but_cannot_pass_full_validation() {
+    let parsed = parse_snapshot_validation_report(&report("incomplete")).unwrap();
+    assert!(snapshot_full_validation_complete(&parsed).is_err());
+    let parsed = parse_snapshot_validation_report(&report("passed")).unwrap();
+    assert!(snapshot_full_validation_complete(&parsed).unwrap());
 }
 #[test]
-fn rejects_unknown_status_and_missing_check_in_actual_json_shape() {
-    assert!(parse_snapshot_validation_report(&report(block(10), block(10), "success")).is_err());
-    let mut json: serde_json::Value =
-        serde_json::from_slice(&report(block(10), block(10), "passed")).unwrap();
-    json["checks"].as_object_mut().unwrap().remove("ce");
+fn rejects_unknown_status_and_missing_native_check() {
+    assert!(parse_snapshot_validation_report(&report("success")).is_err());
+    let mut json: serde_json::Value = serde_json::from_slice(&report("passed")).unwrap();
+    json["checks"].as_object_mut().unwrap().remove("evm");
     assert!(parse_snapshot_validation_report(&serde_json::to_vec(&json).unwrap()).is_err());
 }
 #[test]
-fn optional_audit_keeps_incomplete_exit_and_cannot_be_backfilled_after_start() {
+fn optional_successful_audit_requires_matching_exit_and_prelaunch_observation() {
     let mut e = fixture();
     let mut validation = command("validate", 6);
-    validation.stdout = report(block(10), block(9), "incomplete");
-    validation.exit_code = Some(1);
+    validation.stdout = report("passed");
     e.validation = SnapshotValidationObservation::Run(validation.clone());
     assert!(assert_snapshot_workflow(&e).is_ok());
-    validation.exit_code = Some(0);
+    validation.exit_code = Some(1);
     e.validation = SnapshotValidationObservation::Run(validation.clone());
     assert!(assert_snapshot_workflow(&e).is_err());
-    validation.exit_code = Some(1);
+    validation.exit_code = Some(0);
     validation.started = 9;
     validation.ended = 10;
     e.validation = SnapshotValidationObservation::Run(validation);
     assert!(assert_snapshot_workflow(&e).is_err());
 }
-
 #[test]
-fn full_validation_only_accepts_one_block_projection_lag_for_incomplete_bodies() {
-    let check = |q, p, status| {
-        let bytes = report(block(q), block(p), status);
-        snapshot_full_validation_complete(&parse_snapshot_validation_report(&bytes).unwrap())
-    };
-    assert!(matches!(check(10, 10, "passed"), Ok(true)));
-    assert!(matches!(check(10, 9, "incomplete"), Ok(false)));
-    assert!(check(10, 8, "incomplete").is_err());
-    assert!(check(9, 10, "incomplete").is_err());
-
-    let mut wrong_reason: serde_json::Value =
-        serde_json::from_slice(&report(block(10), block(9), "incomplete")).unwrap();
-    wrong_reason["checks"]["bodies"]["diagnostic"] =
-        serde_json::json!("missing projection database");
-    let parsed =
-        parse_snapshot_validation_report(&serde_json::to_vec(&wrong_reason).unwrap()).unwrap();
-    assert!(snapshot_full_validation_complete(&parsed).is_err());
-
-    let mut another_incomplete: serde_json::Value =
-        serde_json::from_slice(&report(block(10), block(9), "incomplete")).unwrap();
-    another_incomplete["checks"]["ocomp"]["status"] = serde_json::json!("incomplete");
-    let parsed =
-        parse_snapshot_validation_report(&serde_json::to_vec(&another_incomplete).unwrap())
-            .unwrap();
-    assert!(snapshot_full_validation_complete(&parsed).is_err());
+fn full_validation_requires_all_five_native_checks() {
+    for name in ["files", "provenance", "headers", "evm", "ocomp"] {
+        for status in ["failed", "incomplete", "not_requested"] {
+            let mut json: serde_json::Value = serde_json::from_slice(&report("passed")).unwrap();
+            json["checks"][name]["status"] = serde_json::json!(status);
+            json["checks"][name]["selected"] = serde_json::json!(status != "not_requested");
+            let parsed =
+                parse_snapshot_validation_report(&serde_json::to_vec(&json).unwrap()).unwrap();
+            assert!(
+                snapshot_full_validation_complete(&parsed).is_err(),
+                "{name}: {status}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -704,7 +674,12 @@ fn job_must_follow_barrier_observation_and_second_native_read_is_independent() {
     e.new_job.as_mut().unwrap().requested = 9;
     assert!(assert_snapshot_workflow(&e).is_err());
     let mut e = fixture();
-    e.second_start.as_mut().unwrap().before_launch.progress.ce = block(1);
+    e.second_start
+        .as_mut()
+        .unwrap()
+        .before_launch
+        .progress
+        .ocomp_current = block(1);
     assert!(assert_snapshot_workflow(&e).is_err());
 }
 #[test]

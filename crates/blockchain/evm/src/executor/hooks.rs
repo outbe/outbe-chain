@@ -78,23 +78,12 @@ pub fn run_outbe_pre_execution_hooks(
     hook_ctx: &BlockRuntimeContext,
     genesis_validators: Option<&GenesisValidators>,
 ) -> outbe_primitives::error::Result<()> {
-    run_outbe_pre_execution_hooks_inner(hook_ctx, genesis_validators, None)
-}
-
-/// Runs pre-execution hooks with explicit off-chain body read authority.
-pub fn run_outbe_pre_execution_hooks_with_readers(
-    hook_ctx: &BlockRuntimeContext,
-    genesis_validators: Option<&GenesisValidators>,
-    readers: &RuntimeBodyReaders,
-    scope: &ExecutionScope,
-) -> outbe_primitives::error::Result<()> {
-    run_outbe_pre_execution_hooks_inner(hook_ctx, genesis_validators, Some((readers, scope)))
+    run_outbe_pre_execution_hooks_inner(hook_ctx, genesis_validators)
 }
 
 fn run_outbe_pre_execution_hooks_inner(
     hook_ctx: &BlockRuntimeContext,
     genesis_validators: Option<&GenesisValidators>,
-    readers: Option<(&RuntimeBodyReaders, &ExecutionScope)>,
 ) -> outbe_primitives::error::Result<()> {
     let block_number = hook_ctx.block.block_number;
     let timestamp = hook_ctx.block.timestamp;
@@ -147,8 +136,6 @@ fn run_outbe_pre_execution_hooks_inner(
     // marks underperformers EXITING.
     <outbe_oracle::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    let _ = readers;
-
     Ok(())
 }
 
@@ -199,8 +186,6 @@ where
                 || matches!(
                     error,
                     PrecompileError::Fatal(_)
-                        | PrecompileError::TransactionCeWorkLimitExceeded
-                        | PrecompileError::BlockCeWorkCapacityExhausted
                         | PrecompileError::SubCall(_)
                         | PrecompileError::Unsupported
                 ) =>

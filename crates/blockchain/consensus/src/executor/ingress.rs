@@ -29,15 +29,6 @@ pub struct Mailbox {
 }
 
 impl Mailbox {
-    pub(crate) fn projection_failed(
-        &self,
-        failure: outbe_primitives::projection::ProjectionFailure,
-    ) -> eyre::Result<()> {
-        self.inner
-            .unbounded_send(Message::ProjectionFailed(failure))
-            .map_err(|_| crate::errors::ExecutorError::MailboxClosed.into())
-    }
-
     pub(crate) fn report_pending_parent(&self, parent: PendingParent) -> eyre::Result<()> {
         self.inner
             .unbounded_send(Message::PendingParent(parent))
@@ -162,7 +153,6 @@ impl commonware_consensus::Reporter for Mailbox {
 /// Messages handled by the executor actor.
 #[allow(clippy::large_enum_variant)]
 pub enum Message {
-    ProjectionFailed(outbe_primitives::projection::ProjectionFailure),
     PendingParent(PendingParent),
     VerifyBlock(VerifyBlock),
     /// Request to make a block the canonical head.

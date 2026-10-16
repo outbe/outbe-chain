@@ -292,3 +292,16 @@ fn overlap_fixture_is_a_ab_ab_b_and_uses_two_stablecoin_sources_for_coen() {
     assert_eq!(pairs[2][1].sources[0].volume, "20");
     assert_eq!(pairs[3][0].sources[0].volume, "30");
 }
+
+#[test]
+fn feeder_signers_are_distinct_from_owners_and_stable_across_restarts() {
+    let owners = [Address::repeat_byte(1), Address::repeat_byte(2)];
+    let signers = owners.map(|owner| {
+        let key = feeder_private_key(owner);
+        assert_eq!(key, feeder_private_key(owner));
+        let signer = eth::address_of(&key).expect("valid dedicated feeder key");
+        assert_ne!(signer, owner);
+        signer
+    });
+    assert_ne!(signers[0], signers[1]);
+}

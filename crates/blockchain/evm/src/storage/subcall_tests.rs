@@ -45,9 +45,9 @@ fn provider<DB: Database + Debug>(
             reentrancy_stack: ReentrancyStack,
             spec: SpecId::PRAGUE,
             genesis_hash: B256::ZERO,
-            runtime_body_readers: None,
+
             abort_bridge: Default::default(),
-            execution_scope: Arc::new(ExecutionScope::default()),
+
             ocomp_finality_authority: None,
             ocomp_activation_block_meter: Arc::new(OcompActivationBlockMeter),
             ocomp_lifecycle_active: false,
@@ -222,8 +222,6 @@ fn zero_value_accounting_matches_native_call_after_wrapper_instructions() {
                 self_address: CALLER,
                 outer_is_static: false,
                 spec: SpecId::PRAGUE,
-                runtime_body_readers: None,
-                execution_scope: Arc::new(ExecutionScope::default()),
             },
             SubCallInput {
                 target: address,

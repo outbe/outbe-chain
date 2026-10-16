@@ -1,14 +1,11 @@
 //! Issued Intex units change hands on the real `IntexNFT1155` bytecode (`fixtures/*.hex`: forge
 //! `deployedBytecode`, `IntexMetadata` linked at [`METADATA_LIB`]) and settle for their holder.
-use outbe_offchain_data::runtime_body_readers;
-use std::sync::Arc;
 
 use alloy_primitives::{keccak256, Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
-use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::{INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS},
     storage::{SubCallOutput, SubCallStatus},
@@ -116,9 +113,7 @@ impl World {
             .unwrap();
         });
         let mut world = Self {
-            evm: EvmWorld::new(db)
-                .at(TIMESTAMP)
-                .with_readers(runtime_body_readers(Arc::new(MemoryStorage::new()))),
+            evm: EvmWorld::new(db).at(TIMESTAMP),
             cost: U256::ZERO,
         };
         world.install_nft();

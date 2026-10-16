@@ -1,12 +1,8 @@
 //! In-memory EVM that drives calls through [`sub_call::run`], for integration tests.
 
-use std::sync::Arc;
-
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, Bytes, Log, U256};
 use alloy_sol_types::SolCall;
-use outbe_compressed_entities::ExecutionScope;
-use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
     block::BlockContext,
     chain::CHAIN_ID,
@@ -36,8 +32,6 @@ pub fn fresh_environment(self_address: Address, spec: SpecId) -> SubCallEnvironm
         self_address,
         outer_is_static: false,
         spec,
-        runtime_body_readers: None,
-        execution_scope: Arc::new(ExecutionScope::default()),
     }
 }
 
@@ -75,8 +69,6 @@ pub fn seed_storage<R>(
 
 pub struct EvmWorld {
     pub ctx: EvmCtx,
-    pub scope: Arc<ExecutionScope>,
-    pub readers: Option<RuntimeBodyReaders>,
 }
 
 impl EvmWorld {
@@ -85,23 +77,11 @@ impl EvmWorld {
             ctx: Context::mainnet()
                 .with_db(db)
                 .modify_cfg_chained(|cfg| cfg.chain_id = CHAIN_ID),
-            scope: Arc::new(ExecutionScope::default()),
-            readers: None,
         }
     }
 
     pub fn at(mut self, timestamp: u64) -> Self {
         self.ctx.block.timestamp = U256::from(timestamp);
-        self
-    }
-
-    pub fn with_scope(mut self, scope: Arc<ExecutionScope>) -> Self {
-        self.scope = scope;
-        self
-    }
-
-    pub fn with_readers(mut self, readers: RuntimeBodyReaders) -> Self {
-        self.readers = Some(readers);
         self
     }
 
@@ -114,8 +94,6 @@ impl EvmWorld {
             self_address: caller,
             outer_is_static: false,
             spec: SpecId::PRAGUE,
-            runtime_body_readers: self.readers.clone(),
-            execution_scope: self.scope.clone(),
         };
         sub_call::run(&mut self.ctx, environment, input)
     }

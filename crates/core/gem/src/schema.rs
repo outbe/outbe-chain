@@ -1,8 +1,8 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_compressed_entities::WwdEntityId;
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::GEM_ADDRESS;
 use outbe_primitives::time::{timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,9 +162,8 @@ pub struct GemContract {
     #[attribute(order = 0)]
     pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
 
-    // --- Bucket membership: the unpaid gems of a bucket, for the forfeit sweep. The
-    // compressed store answers "give me this gem" but never "give me this bucket's
-    // gems". Count plus a positional map, with a reverse map for swap-remove.
+    // --- Bucket membership: unpaid gems for the forfeit sweep, with a count,
+    // positional map and reverse map for swap removal.
     #[attribute(order = 1)]
     pub bucket_gem_count: outbe_primitives::storage::dsl::Map<B256, u32>,
     /// `bucket_member_key(bucket, index)` -> gem id.
@@ -268,6 +267,22 @@ pub struct GemContract {
     /// With the widest window it bounds the call prices the scan visits.
     #[attribute(order = 35)]
     pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
+    #[attribute(order = 37)]
+    pub records:
+        outbe_primitives::storage::dsl::Map<WwdEntityId, crate::storage_records::StoredGem>,
+    #[attribute(order = 38)]
+    pub buckets: outbe_primitives::storage::dsl::Map<B256, crate::storage_records::StoredGemBucket>,
+    #[attribute(order = 39)]
+    pub all_ids: outbe_primitives::storage::dsl::List<WwdEntityId>,
+    #[attribute(order = 40)]
+    pub owner_ids: outbe_primitives::storage::dsl::Map<
+        Address,
+        outbe_primitives::storage::dsl::List<WwdEntityId>,
+    >,
+    #[attribute(order = 41)]
+    pub global_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
+    #[attribute(order = 42)]
+    pub owner_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
 }
 
 impl GemContract<'_> {

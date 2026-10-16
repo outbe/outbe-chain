@@ -11,7 +11,6 @@ outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { path = "../validatorset" }
 outbe-consensus.workspace = true
 outbe-gemfactory.workspace = true
-outbe-compressed-entities.workspace = true
 outbe-metadosis.workspace = true
 outbe-oracle.workspace = true
 # settle_window routes escrow residue to terminal Metadosis via
@@ -34,8 +33,6 @@ outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-ocomp-protocol.workspace = true
 outbe-promislimit.workspace = true
 outbe-gem = { workspace = true, features = ["test-utils"] }
-outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
-outbe-offchain-data.workspace = true
 outbe-offchain-storage.workspace = true
 tempfile.workspace = true
 outbe-oracle = { workspace = true, features = ["test-utils"] }

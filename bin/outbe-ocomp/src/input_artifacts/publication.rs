@@ -198,8 +198,6 @@ pub(super) fn publication_manifest(
         attempt: identity.attempt,
         checkpoint: identity.checkpoint.clone(),
         wwd: identity.wwd,
-        sealed_tribute_collection_key: identity.sealed_tribute_collection_key,
-        sealed_tribute_collection_root: identity.sealed_tribute_collection_root,
         tribute_count: publication.tribute_count,
         tribute_nominal_total: publication.tribute_nominal_total,
         input_chunk_count,

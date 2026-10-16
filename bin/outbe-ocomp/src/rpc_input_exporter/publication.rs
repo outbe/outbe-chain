@@ -90,7 +90,7 @@ impl RpcInputExporterV1 {
         &self,
         work: &ExportWork<'_>,
         on_progress: &impl Fn(),
-    ) -> Result<(SealedTributeInventory, RetainedTributePin), RpcInputExporterErrorV1> {
+    ) -> Result<(SealedTributeInventory, B256), RpcInputExporterErrorV1> {
         let ExportWork {
             finalized,
             expected: expected_input,
@@ -98,30 +98,10 @@ impl RpcInputExporterV1 {
             work_root,
             ..
         } = *work;
-        let projection_config = ProjectionConfig {
-            chain_id: self.config.chain_id,
-            genesis_hash: self.config.genesis_hash,
-            start_block: self.config.storage.start_block,
-        };
-        // Keep one caught-up secondary view for the checkpoint and the entire
-        // inventory. No read can refresh this session while it is being consumed.
-        let storage = self
-            .storage_source
-            .open_session()
-            .map_err(source_open_error)?;
-        let tribute_source = FinalizedTributeSource::new(storage, self.config.tribute_page_limit)
-            .map_err(|error| stage("open finalized Tribute source", error))?;
-        let projection_state = tribute_source
-            .projection_state(projection_config)
-            .map_err(|error| stage("read finalized projection checkpoint", error))?;
-        require_projection_checkpoint(projection_state.as_ref(), &finalized.request)?;
-        let pin = RetainedTributePin {
-            input_lease_id: finalized
-                .intent
-                .input_lease_id()
-                .map_err(|error| stage("derive Tribute retention pin", error))?,
-            worldwide_day: WorldwideDay::new(finalized.intent.wwd),
-        };
+        let input_lease_id = finalized
+            .intent
+            .input_lease_id()
+            .map_err(|error| stage("derive input lease identity", error))?;
 
         let checkpoint = expected_input.checkpoint.clone();
         let inventory_subject = TributeInventorySubjectV1 {
@@ -129,8 +109,8 @@ impl RpcInputExporterV1 {
             job_id,
             attempt: finalized.intent.attempt,
             checkpoint: checkpoint.clone(),
+            chain_id: finalized.intent.chain_id,
             worldwide_day: WorldwideDay::new(finalized.intent.wwd),
-            sealed_tribute_collection_root: finalized.intent.sealed_tribute_collection_root,
             expected_tribute_count: finalized.intent.authenticated_day_count,
             expected_nominal_total: finalized.intent.authenticated_day_nominal,
         };
@@ -144,19 +124,18 @@ impl RpcInputExporterV1 {
             Err(TributeInventoryError::Io { source, .. })
                 if source.kind() == std::io::ErrorKind::NotFound =>
             {
-                build_inventory(
-                    &tribute_source,
-                    pin,
-                    &inventory_root,
-                    inventory_subject,
+                let sources = archive_state_tribute_day(
+                    &self.rpc,
+                    &inventory_root.join(crate::input_inventory::SOURCE_PROOF_ARCHIVE_DIRECTORY),
+                    inventory_subject.state_source(),
                     on_progress,
-                )?
+                )?;
+                build_inventory(&sources, &inventory_root, inventory_subject, on_progress)?
             }
             Err(error) => return Err(stage("reopen Tribute inventory", error)),
         };
-        drop(tribute_source);
         on_progress();
-        Ok((inventory, pin))
+        Ok((inventory, input_lease_id))
     }
     pub(super) fn publish_inventory(
         &self,
@@ -187,8 +166,6 @@ impl RpcInputExporterV1 {
                 attempt: finalized.intent.attempt,
                 checkpoint: checkpoint.clone(),
                 wwd: finalized.intent.wwd,
-                sealed_tribute_collection_key: finalized.intent.sealed_tribute_collection_key,
-                sealed_tribute_collection_root: finalized.intent.sealed_tribute_collection_root,
             },
         )
         .map_err(|error| stage("open durable input publisher", error))?;
@@ -338,7 +315,7 @@ impl RpcInputExporterV1 {
     pub(super) fn commit_publication(
         &self,
         work: &ExportWork<'_>,
-        pin: RetainedTributePin,
+        input_lease_id: B256,
         published: PublishedStreamingInputArtifacts,
         on_progress: &impl Fn(),
     ) -> Result<VerifiedExportReceipt, RpcInputExporterErrorV1> {
@@ -353,7 +330,7 @@ impl RpcInputExporterV1 {
         // The legacy envelope remains versioned for crash-safe compatibility.
         let handoff = SnapshotHandoffV1 {
             job_id,
-            input_lease_id: pin.input_lease_id,
+            input_lease_id,
             pin_generation: discovery.generation,
             lease_generation: 1,
             checkpoint,
@@ -401,48 +378,37 @@ impl RpcInputExporterV1 {
 }
 
 fn build_inventory(
-    tribute_source: &FinalizedTributeSource,
-    pin: RetainedTributePin,
+    sources: &crate::input_inventory::StateTributeProofArchive,
     inventory_root: &std::path::Path,
     inventory_subject: TributeInventorySubjectV1,
     on_progress: &impl Fn(),
 ) -> Result<SealedTributeInventory, RpcInputExporterErrorV1> {
-    let expected_count = inventory_subject.expected_tribute_count;
-    let expected_nominal = inventory_subject.expected_nominal_total;
     let mut builder = TributeInventoryBuilder::create(
         inventory_root,
         inventory_subject,
         TributeInventoryWorkConfig::default(),
+        sources,
     )
     .map_err(|error| stage("create Tribute inventory", error))?;
-    let mut stream = tribute_source
-        .reconstruction_stream(pin, expected_count, expected_nominal)
-        .map_err(|error| stage("open sealed Tribute stream", error))?;
-    let mut records_since_progress = 0_u64;
-    while let Some(record) = stream
-        .next_record()
-        .map_err(|error| stage("read sealed Tribute stream", error))?
-    {
-        builder
-            .push(TributeInventoryRecordV1 {
-                tribute_id: record.tribute_id,
-                commitment: Commitment::try_from(record.commitment.0)
-                    .map_err(|error| stage("decode Tribute commitment", error))?,
-                owner: record.body.owner,
-                reference_iso: record.body.reference_currency,
-                nominal_amount_minor: record.body.nominal_amount_minor,
-                canonical_body: record.canonical_body,
-            })
-            .map_err(|error| stage("spool Tribute inventory", error))?;
-        records_since_progress = records_since_progress.saturating_add(1);
-        if records_since_progress == EXPORT_PROGRESS_RECORD_HEARTBEAT {
-            on_progress();
-            records_since_progress = 0;
-        }
-    }
-    stream
-        .finish()
-        .map_err(|error| stage("close sealed Tribute stream", error))?;
+    sources
+        .for_each_canonical(
+            |source| {
+                let record = outbe_tribute::record::from_encrypted(source.tribute);
+                let canonical_body = record
+                    .stored_body()
+                    .map_err(|_| TributeInventoryError::Authority("canonical encrypted Tribute"))?
+                    .payload()
+                    .to_vec();
+                builder.push(TributeInventoryRecordV1 {
+                    tribute_id: record.tribute_id,
+                    owner: record.owner,
+                    reference_iso: record.reference_currency,
+                    canonical_body,
+                })
+            },
+            on_progress,
+        )
+        .map_err(|error| stage("spool proven Tribute inventory", error))?;
     builder
         .finish_observing(on_progress)
         .map_err(|error| stage("seal Tribute inventory", error))

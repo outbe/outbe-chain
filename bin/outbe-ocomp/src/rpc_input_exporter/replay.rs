@@ -15,6 +15,7 @@ pub(super) fn verify_replayed_finalized_inputs(
     on_progress: &impl Fn(),
 ) -> Result<(), RpcInputExporterErrorV1> {
     let inventory = replay_inventory(&authority, on_progress)?;
+    verify_replayed_tributes(&authority, &inventory, on_progress)?;
     let (oracle, reference_isos) = replay_oracle(&authority, &inventory, on_progress)?;
     replay_fidelity(
         &authority,
@@ -23,6 +24,53 @@ pub(super) fn verify_replayed_finalized_inputs(
         &reference_isos,
         on_progress,
     )
+}
+
+fn verify_replayed_tributes(
+    authority: &ReplayAuthority<'_>,
+    inventory: &SealedTributeInventory,
+    on_progress: &impl Fn(),
+) -> Result<(), RpcInputExporterErrorV1> {
+    let sources = inventory
+        .source_proofs()
+        .map_err(|error| stage("open replay Tribute state witnesses", error))?;
+    let mut previous = None;
+    let mut count = 0_u32;
+    for verified in authority
+        .catalog
+        .exact_verified_cursor_observing(authority.reader, authority.bundle, on_progress)
+        .map_err(|error| stage("open replay Tribute catalog", error))?
+    {
+        let verified = verified.map_err(|error| stage("read replay Tribute catalog", error))?;
+        if verified.reference.kind != InputChunkKind::Tribute {
+            continue;
+        }
+        for canonical in verified.chunk.canonical_records_or_openings {
+            let record = outbe_tribute::record::decode_canonical(&canonical.0)
+                .map_err(|error| stage("decode replay Tribute source", error))?;
+            let source = sources
+                .record(record.tribute_id)
+                .map_err(|error| stage("verify replay Tribute source", error))?;
+            if previous.is_some_and(|id| id >= record.tribute_id)
+                || record.encrypted() != Some(&source.tribute)
+            {
+                return Err(RpcInputExporterErrorV1::Authority(
+                    "replayed Tribute state coverage",
+                ));
+            }
+            count = count
+                .checked_add(1)
+                .ok_or(RpcInputExporterErrorV1::Authority(
+                    "replayed Tribute count overflow",
+                ))?;
+            previous = Some(record.tribute_id);
+            on_progress();
+        }
+    }
+    if count != authority.expected.tribute_count {
+        return Err(RpcInputExporterErrorV1::Authority("replayed Tribute count"));
+    }
+    Ok(())
 }
 
 fn replay_inventory(
@@ -42,8 +90,8 @@ fn replay_inventory(
         job_id: expected.job_id,
         attempt: expected.attempt,
         checkpoint: expected.checkpoint.clone(),
+        chain_id: authority.finalized.intent.chain_id,
         worldwide_day: WorldwideDay::new(expected.wwd),
-        sealed_tribute_collection_root: expected.sealed_tribute_collection_root,
         expected_tribute_count: expected.tribute_count,
         expected_nominal_total: expected.tribute_nominal_total,
     };
@@ -57,10 +105,17 @@ fn replay_inventory(
         Err(TributeInventoryError::Io { source, .. })
             if source.kind() == std::io::ErrorKind::NotFound =>
         {
+            let sources = crate::input_inventory::StateTributeProofArchive::open(
+                inventory_root.join(crate::input_inventory::SOURCE_PROOF_ARCHIVE_DIRECTORY),
+                subject.state_source(),
+                on_progress,
+            )
+            .map_err(|error| stage("reopen finalized state sources", error))?;
             let mut builder = TributeInventoryBuilder::create(
                 &inventory_root,
                 subject,
                 TributeInventoryWorkConfig::default(),
+                &sources,
             )
             .map_err(|error| stage("create replay Tribute inventory", error))?;
             for verified in catalog
@@ -95,21 +150,10 @@ fn replay_inventory_record(
 ) -> Result<TributeInventoryRecordV1, RpcInputExporterErrorV1> {
     let body = outbe_tribute::record::decode_canonical(&canonical)
         .map_err(|error| stage("decode replay Tribute", error))?;
-    let commitment = body_commitment(
-        ACTIVE_COMMITMENT_SCHEME,
-        body.stored_body()
-            .map_err(|error| stage("encode replay Tribute", error))?
-            .schema_version(),
-        body.tribute_id,
-        &canonical,
-    )
-    .map_err(|error| stage("commit replay Tribute", error))?;
     Ok(TributeInventoryRecordV1 {
         tribute_id: body.tribute_id,
-        commitment,
         owner: body.owner,
         reference_iso: body.reference_currency,
-        nominal_amount_minor: alloy_primitives::U256::ZERO,
         canonical_body: canonical,
     })
 }
