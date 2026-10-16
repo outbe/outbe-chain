@@ -1,0 +1,21 @@
+{
+  "base_sha": "9d3373feb206f848023397e2203e747bbd0bc8cb",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "-p",
+    "outbe-radicle",
+    "--lib",
+    "integration::local::tests",
+    "--",
+    "--nocapture"
+  ],
+  "result": "3 fixture setup failures: tempfile parent is not0700; client deadline test blocked on accept after client rejected parent. Confirmed own PID37652 stopped with SIGINT. Not a passing transport probe.",
+  "time_recorded_utc": "2026-10-15T23:52:55.974672+00:00",
+  "exit_code": 101,
+  "source_snapshot_basis": "Post-failure diagnostic snapshot, not a frozen acceptance candidate; includes a reader test added while the targeted test process was running. local.rs and local-tests.rs preserve the failing private-parent fixture. Not exact whole-build provenance.",
+  "timing": "Actual command start/end timestamps were not recorded; time_recorded_utc is the later diagnostic capture."
+}
