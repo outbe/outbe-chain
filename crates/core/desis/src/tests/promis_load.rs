@@ -26,9 +26,17 @@ struct Run {
 
 /// One auction start per day, rows in ascending ISO as the oracle hands them over.
 fn run(days: &[Day<'_>]) -> Run {
+    run_from(0, days)
+}
+
+fn run_from(stored_exponent: u32, days: &[Day<'_>]) -> Run {
     let mut provider = HashMapStorageProvider::new(1);
     let (exponents, references) = StorageHandle::enter(&mut provider, |s| {
         let mut contract = s.contract::<DesisContract>();
+        contract
+            .promis_load_exponent
+            .write(stored_exponent)
+            .unwrap();
         let exponents = days
             .iter()
             .zip(FIRST_DAY..)
@@ -213,4 +221,11 @@ fn a_step_clamped_to_nothing_holds() {
     assert_eq!(r.exponents, [LAUNCH, 1, 1]);
     assert_eq!(r.steps.len(), 1);
     assert_eq!(r.references[0], (USD, U256::from(1_000_000_000_000u128), 1));
+}
+
+#[test]
+fn a_corrupt_stored_exponent_runs_on_the_widest_rung() {
+    let r = run_from(u32::MAX, &[&[(USD, 100)], &[(USD, 1_000)]]);
+    assert_eq!(r.exponents, [21, 20]);
+    assert_eq!(r.steps.len(), 1);
 }
