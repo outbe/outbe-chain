@@ -377,11 +377,10 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
             register_and_activate_with_ocomp_registration(&mut vs, *validator, pk, registration);
         }
         seed_test_committee_snapshot(storage.clone(), validators);
-        // Seed the COEN/840 oracle pair + a 1.0 rate so begin-block
-        // NOD/GEM/INTEX floor-price promotion resolves a live rate instead
-        // of soft-skipping the scan. Also push 840 onto the reference currency
-        // list to match genesis. The Nod qualifier reads its ISO from there, not
-        // from a hard-coded constant.
+        // Seed the COEN/840 oracle pair + a 1.0 rate so the begin-block
+        // NOD/GEM/INTEX call scans resolve a live rate instead of soft-skipping.
+        // Also push 840 onto the reference currency list to match genesis. The
+        // scans read their ISO from there, not from a hard-coded constant.
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
         outbe_oracle::schema::OracleContract::new(storage.clone())
@@ -786,10 +785,10 @@ pub(super) fn seed_registered_active_validator(
     vs.activate_validator_via_boundary_for_test(validator)
         .unwrap();
     seed_test_committee_snapshot(storage.clone(), &[(validator, *pk)]);
-    // Seed COEN/840 pair + 1.0 rate so begin-block NOD/GEM/INTEX promotion
-    // reads a registered pair instead of reverting "pair not registered".
+    // Seed COEN/840 pair + 1.0 rate so the begin-block NOD/GEM/INTEX call scans
+    // read a registered pair instead of reverting "pair not registered".
     // 840 also goes on the reference currency list, matching genesis: the
-    // Nod qualifier reads its ISO from there.
+    // scans read their ISO from there.
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
     outbe_oracle::schema::OracleContract::new(storage.clone())
         .reference_currencies

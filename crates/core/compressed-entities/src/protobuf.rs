@@ -253,7 +253,7 @@ pub fn encode_nod_bucket_v1(body: &NodBucketBodyV1) -> Result<Vec<u8>, Canonical
     let mut output = Vec::with_capacity(128);
     encode_bytes_field(1, body.bucket_key.as_slice(), &mut output);
     encode_optional_varint_field(2, u64::from(body.worldwide_day.value()), &mut output);
-    // Fields 3 to 5 are reserved: the floor and qualification are derived and membership is
+    // Fields 3 to 5 are reserved: the retired floor and qualification, and membership, which is
     // not part of the shared body commitment.
     encode_bytes_field(6, &body.entry_price_minor.to_be_bytes::<32>(), &mut output);
     encode_optional_varint_field(7, u64::from(body.reference_currency), &mut output);

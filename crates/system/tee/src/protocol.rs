@@ -78,7 +78,7 @@ pub struct EncryptedTributeOffer {
     /// ABI `tributeCurrency`: ISO 4217 code the tribute amount is denominated in.
     pub tribute_currency: u16,
     /// ABI `referenceCurrency`. A separate axis from `tribute_currency`. It
-    /// drives gem/intex qualification, not pricing.
+    /// denominates the rights' entry and call prices, not pricing.
     pub reference_currency: u16,
     /// Exact WorldwideDay VWAP for `COEN/<tribute_currency>`, scale 1e6.
     pub issuance_wwd_vwap_minor: U256,

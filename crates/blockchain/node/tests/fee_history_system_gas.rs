@@ -82,7 +82,7 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
         ),
     )?;
     // Seed the COEN/840 oracle pair + a 1.0 rate (scale 1e6). The begin-block
-    // NOD/GEM/INTEX floor-price promotion then reads a registered pair instead of
+    // NOD/GEM/INTEX call scans then read a registered pair instead of
     // reverting "pair not registered". That revert would abort pre-execution and
     // leave every payload empty. Production genesis always seeds oracle pairs.
     // The oracle itself is left uninitialized so its own begin-block

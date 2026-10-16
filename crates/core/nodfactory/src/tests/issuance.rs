@@ -304,29 +304,6 @@ fn mining_deletes_item_and_last_bucket_then_emits_burn() {
 }
 
 #[test]
-fn a_nod_qualifying_after_issuance_still_mines() {
-    let mut world = World::new();
-    let input = free(Address::repeat_byte(0x5a));
-    let nod_id = world.issue(&input);
-
-    world.settle(nod_id, input.owner).unwrap();
-    let nonce = world.pow_nonce(nod_id);
-    let minted = world
-        .mine_gratis(api::MineGratisRequest {
-            caller: input.owner,
-            nod_id,
-            nonce,
-            auth: mine_auth(input.owner, input.gratis_load_minor),
-        })
-        .unwrap();
-    assert_eq!(minted, input.gratis_load_minor);
-    assert!(world
-        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
-        .unwrap()
-        .is_none());
-}
-
-#[test]
 fn a_hundred_dollars_converts_to_ninety_euros_at_every_asset_scale() {
     // 100 USD = entry 2.00 x load 50; R = 2.00 USD/COEN, I = 1.80 EUR/COEN.
     let rate = Some((U256::from(1_800_000), U256::from(2_000_000)));

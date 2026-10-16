@@ -217,8 +217,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Burn `units` of `owner`'s Issued Intex and mint the same `units` of Settled Intex to
     ///         `owner`.
-    /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. The caller checks qualification.
-    ///      A Called series settles only until its deadline.
+    /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. A Called series settles only
+    ///      until its deadline.
     /// @param seriesId Series identifier.
     /// @param owner Owner whose Issued tokens are burned and who receives the Settled tokens.
     /// @param units Issued units burned and Settled units minted.

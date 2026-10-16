@@ -19,8 +19,8 @@ use outbe_oracle::api::AddressPair;
 
 use crate::{api, NodCertifiedGenerationProjection, NodContract, NodItemState};
 
-/// Default block timestamp for qualification tests. Not UTC midnight, so its
-/// last closed day is the previous calendar day.
+/// Default block timestamp. Not UTC midnight, so its last closed day is the
+/// previous calendar day.
 const NOW: u64 = 1_752_534_000;
 
 fn item(owner: Address) -> NodItemState {
@@ -36,8 +36,7 @@ fn item(owner: Address) -> NodItemState {
             bucket_key: crate::identity::bucket_key(worldwide_day, U256::from(5), 978),
             issuance_currency: 840,
             reference_currency: 978,
-            // Midnight of the last UTC day closed at `NOW`, so a bucket issued in
-            // these fixtures can qualify on that day's VWAP.
+            // Midnight of the last UTC day closed at `NOW`.
             issued_at: date_key_to_utc_timestamp(previous_date_key(timestamp_to_date_key(NOW))),
         },
         U256::from(5),

@@ -224,7 +224,7 @@ fn a_nod_item_carrying_the_retired_cost_field_is_rejected() {
     ));
 }
 
-/// The floor derives from the bucket's entry price, so a body carrying a floor field is refused.
+/// A body carrying the retired floor field is refused.
 #[test]
 fn a_nod_body_carrying_the_retired_floor_field_is_rejected() {
     let item_with_floor = hex::decode(concat!(

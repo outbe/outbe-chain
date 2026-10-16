@@ -54,7 +54,7 @@ fn currency_scoped_bin_keys_do_not_alias() {
 
 /// The headline regression: two Nods share a worldwide day and an identical
 /// `entry_price_minor`, but are denominated differently. Such Nods are two buckets
-/// in two independent bin tries. A day price only qualifies its own currency.
+/// in two independent bin tries.
 #[test]
 fn same_day_and_entry_in_two_currencies_are_two_buckets_in_two_bins() {
     let parent = crate::nod_reader(Arc::new(MemoryStorage::new()));
