@@ -106,11 +106,12 @@ async fn main() -> Result<()> {
         SourcesMode::Chain => {
             let head = client.head().await?;
             let period = head.period(bootstrap.oracle.vote_period.max(1));
-            let text = client
+            let (version, text) = client
                 .sources(period * bootstrap.oracle.vote_period.max(1))
                 .await?;
             Some(ChainSources {
                 local,
+                version,
                 text,
                 period,
             })
@@ -121,6 +122,9 @@ async fn main() -> Result<()> {
         None => bootstrap,
     };
     config.validate()?;
+    if let Some(chain) = &chain_sources {
+        chain.log("feeder sources loaded", &config);
+    }
 
     // ORC-AUD-039: Warn about plaintext key usage.
     // Production deployments should use an encrypted keystore or OS keyring.
@@ -144,11 +148,24 @@ async fn main() -> Result<()> {
 /// The local config table and the node's sources it was last built from.
 struct ChainSources {
     local: toml::Table,
+    /// The active protocol version when `text` was read.
+    version: u32,
     text: String,
     period: u64,
 }
 
 impl ChainSources {
+    /// Logs the protocol version and the hash of the sources text. Feeders
+    /// with the same hash use the same file.
+    fn log(&self, message: &str, config: &FeederConfig) {
+        info!(
+            version = %format!("v{}.{}", self.version >> 24, self.version & 0x00ff_ffff),
+            hash = %keccak256(self.text.as_bytes()),
+            pairs = config.currency_pairs.len(),
+            "{message}"
+        );
+    }
+
     /// Once per vote period, reads the node's sources at the period's first
     /// block, so every feeder reads the same file in one period. Returns a new
     /// config when the sources changed.
@@ -161,14 +178,16 @@ impl ChainSources {
         if period == self.period {
             return Ok(None);
         }
-        let text = client.sources(period * vote_period).await?;
+        let (version, text) = client.sources(period * vote_period).await?;
         self.period = period;
+        self.version = version;
         if text == self.text {
             return Ok(None);
         }
         let config = FeederConfig::build(self.local.clone(), Some(&text))?;
         config.validate()?;
         self.text = text;
+        self.log("feeder sources changed", &config);
         Ok(Some(config))
     }
 }
@@ -226,10 +245,6 @@ async fn run_feeder(
             };
             match reloaded.await {
                 Ok(Some((next, next_providers))) => {
-                    info!(
-                        pairs = next.currency_pairs.len(),
-                        "node feeder sources changed"
-                    );
                     config = next;
                     providers = next_providers;
                     health.expect_pairs(&pair_names(&config));
