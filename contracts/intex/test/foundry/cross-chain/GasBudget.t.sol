@@ -13,7 +13,6 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {VwapRegistry} from "@contracts/target/VwapRegistry.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
-import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
@@ -145,64 +144,13 @@ contract GasBudgetTest is CrossChainTest {
         assertLt(_measure(one), IntexGas.markCalled(1), "a single mark must fit the quote");
     }
 
-    function test_TheQuoteCoversIssuanceAtItsWidest() public {
-        uint256 recipients = BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE;
-        address[] memory to = new address[](recipients);
-        uint256[] memory qty = new uint256[](recipients);
-        for (uint256 i = 0; i < recipients; ++i) {
-            to[i] = address(uint160(0x2000 + i));
-            qty[i] = 1;
-        }
-
-        bytes memory packet = BridgeMsgCodec.encodeIssuanceInstructions(
-            WORLDWIDE_DAY,
-            0,
-            1,
-            IssuanceBatchLib.one(
-                BridgeMsgCodec.IssuanceInstructionsPayload({
-                    seriesId: SERIES_PREFIX,
-                    worldwideDay: WORLDWIDE_DAY,
-                    issuedAt: uint32(block.timestamp),
-                    issuedUnits: 10_000,
-                    promisLoadMinor: 1e6,
-                    entryPriceMinor: 100e6,
-                    floorPriceMinor: 40e6,
-                    callNoticePeriod: 0,
-                    issuanceCurrency: 840,
-                    referenceCurrency: 840,
-                    callWindow: 0,
-                    callThreshold: 0,
-                    callPriceMinor: 200e6,
-                    recipients: to,
-                    units: qty
-                })
-            )
-        );
-
-        uint256 before = gasleft();
-        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
-        uint256 spent = before - gasleft();
-
-        emit log_named_uint("issuance_one_series_full_recipients", spent);
-        assertLt(spent, IntexGas.issuance(1, recipients), "the widest issuance must fit the quote");
-    }
-
-    /// @dev The costliest chunk the batcher can emit: every series slot filled and the recipient cap
-    ///      spread across them, so both terms of the quote are exercised at once.
+    /// @dev The costliest chunk the batcher can emit: every series slot filled.
     function test_TheQuoteCoversTheWidestIssuanceChunk() public {
         uint256 seriesCount = BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE;
-        uint256 recipients = BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE;
-        uint256 perSeries = recipients / seriesCount;
 
         BridgeMsgCodec.IssuanceInstructionsPayload[] memory batch =
             new BridgeMsgCodec.IssuanceInstructionsPayload[](seriesCount);
         for (uint256 s = 0; s < seriesCount; ++s) {
-            address[] memory to = new address[](perSeries);
-            uint256[] memory qty = new uint256[](perSeries);
-            for (uint256 i = 0; i < perSeries; ++i) {
-                to[i] = address(uint160(0x3000 + s * 0x100 + i));
-                qty[i] = 1;
-            }
             batch[s] = BridgeMsgCodec.IssuanceInstructionsPayload({
                 seriesId: bytes14(uint112(uint112(SERIES_PREFIX) + s + 1)),
                 worldwideDay: WORLDWIDE_DAY,
@@ -216,9 +164,7 @@ contract GasBudgetTest is CrossChainTest {
                 referenceCurrency: 840,
                 callWindow: 0,
                 callThreshold: 0,
-                callPriceMinor: 200e6,
-                recipients: to,
-                units: qty
+                callPriceMinor: 200e6
             });
         }
 
@@ -227,9 +173,9 @@ contract GasBudgetTest is CrossChainTest {
         _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
         uint256 spent = before - gasleft();
 
-        emit log_named_uint("issuance_full_series_full_recipients", spent);
-        assertLt(spent, IntexGas.issuance(seriesCount, recipients), "the widest chunk must fit the quote");
-        assertLt(IntexGas.issuance(seriesCount, recipients), 10_000_000, "no message may outgrow a block");
+        emit log_named_uint("issuance_full_series", spent);
+        assertLt(spent, IntexGas.issuance(seriesCount), "the widest chunk must fit the quote");
+        assertLt(IntexGas.issuance(seriesCount), 10_000_000, "no message may outgrow a block");
     }
 
     function test_TheQuoteCoversABridgeMintAtItsWidest() public {
@@ -779,22 +725,15 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
         intex.setVwapSource(address(registry));
 
         vm.warp(ISSUED_AT);
-        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), _chunk(0, 0x3000));
+        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), _chunk(0));
         vm.warp(ISSUED_AT + 62 days);
     }
 
-    function _chunk(uint16 index, uint256 recipientBase) internal view returns (bytes memory) {
+    function _chunk(uint16 index) internal view returns (bytes memory) {
         uint256 seriesCount = BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE;
-        uint256 perSeries = BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE / seriesCount;
         BridgeMsgCodec.IssuanceInstructionsPayload[] memory batch =
             new BridgeMsgCodec.IssuanceInstructionsPayload[](seriesCount);
         for (uint256 s = 0; s < seriesCount; ++s) {
-            address[] memory to = new address[](perSeries);
-            uint256[] memory qty = new uint256[](perSeries);
-            for (uint256 i = 0; i < perSeries; ++i) {
-                to[i] = address(uint160(recipientBase + s * 0x100 + i));
-                qty[i] = 1;
-            }
             batch[s] = BridgeMsgCodec.IssuanceInstructionsPayload({
                 seriesId: bytes14(uint112(uint112(SERIES_PREFIX) + s + 1)),
                 worldwideDay: WORLDWIDE_DAY,
@@ -808,9 +747,7 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
                 referenceCurrency: 840,
                 callWindow: 0,
                 callThreshold: 0,
-                callPriceMinor: 200e6,
-                recipients: to,
-                units: qty
+                callPriceMinor: 200e6
             });
         }
         return BridgeMsgCodec.encodeIssuanceInstructions(WORLDWIDE_DAY, index, 2, batch);
@@ -818,14 +755,13 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
 
     function test_TheQuoteCoversALateChunkOfKnownSeries() public {
         uint256 seriesCount = BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE;
-        uint256 recipients = BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE;
-        bytes memory packet = _chunk(1, 0x9000);
+        bytes memory packet = _chunk(1);
         uint256 before = gasleft();
         _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
         uint256 spent = before - gasleft();
 
-        emit log_named_uint("issuance_late_known_series_full_recipients", spent);
-        assertEq(intex.balanceOf(address(uint160(0x9000)), intex.issuedTokenId(bytes14(uint112(SERIES_PREFIX) + 1))), 1);
-        assertLt(spent, IntexGas.issuance(seriesCount, recipients), "a late chunk must fit the quote");
+        emit log_named_uint("issuance_late_known_series", spent);
+        assertTrue(router.issuanceChunkApplied(WORLDWIDE_DAY, 1), "the late chunk applies");
+        assertLt(spent, IntexGas.issuance(seriesCount), "a late chunk must fit the quote");
     }
 }

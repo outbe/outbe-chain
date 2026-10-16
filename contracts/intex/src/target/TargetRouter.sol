@@ -21,7 +21,6 @@ import {TargetInbound} from "./libs/TargetInbound.sol";
 import {
     ChunkProgress,
     BidsRelayProgress,
-    ParkedIssuance,
     ParkedProceeds,
     RefundProgress,
     TargetRouterStorage
@@ -132,27 +131,6 @@ contract TargetRouter is
     function bidsRelay(uint32 worldwideDay) external view returns (uint16 nextBatch, uint16 totalBatches, bool done) {
         BidsRelayProgress storage p = _ts().bidsRelay[worldwideDay];
         return (p.nextBatch, p.totalBatches, p.done);
-    }
-
-    /// @notice Parked issuance at `idx`.
-    function parkedIssuance(uint256 idx)
-        external
-        view
-        returns (bytes14 seriesId, address recipient, uint256 units, bool exists, bool done)
-    {
-        ParkedIssuance storage p = _ts().parkedIssuance[idx];
-        return (p.seriesId, p.recipient, p.units, p.exists, p.done);
-    }
-
-    /// @notice How many issuances have ever parked here. `done` in the view tells which are
-    ///         resolved.
-    function parkedIssuanceCount() external view returns (uint256) {
-        return _ts().nextParkedIssuanceIdx;
-    }
-
-    /// @notice Whether `recipient` has already been issued its allocation of `seriesId` here.
-    function issued(bytes14 seriesId, address recipient) external view returns (bool) {
-        return _ts().issued[seriesId][recipient];
     }
 
     /// @notice Issuance chunk progress of `worldwideDay` on this chain: applied so far and the
@@ -400,22 +378,6 @@ contract TargetRouter is
         );
         sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.bidsBatch(bidderAddresses.length));
         emit BidsBatchSent(sendId, worldwideDay, bidderAddresses.length);
-    }
-
-    /// @notice Self-call shim around a single issuance. It isolates a reverting recipient hook.
-    function issueOne(bytes14 seriesId, address to, uint256 units) external {
-        if (msg.sender != address(this)) revert NotSelf();
-        _ts().intex.issueIntex(to, units, seriesId);
-    }
-
-    /// @notice Permissionless retry of a previously deferred issuance.
-    function applyParkedIssuance(uint256 idx) external nonReentrant {
-        ParkedIssuance storage p = _ts().parkedIssuance[idx];
-        if (!p.exists) revert NoSuchParkedIssuance(idx);
-        if (p.done) revert AlreadyResolved(idx);
-        p.done = true;
-        _ts().intex.issueIntex(p.recipient, p.units, p.seriesId);
-        emit ParkedIssuanceApplied(idx, p.seriesId);
     }
 
     /// @notice Self-call shim around one Called mark. It isolates a series that will not take it.

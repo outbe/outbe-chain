@@ -191,14 +191,12 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function test_EncodeIssuance_OverCap_Reverts() public {
-        uint16 n = BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE + 1;
-        // The cap is now on the recipients a whole message carries, however many series they are
-        // spread over, so it reports the message's total rather than one array's length.
+        uint16 n = BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE + 1;
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.IssuanceBatchTooLarge.selector,
+                BridgeMsgCodec.IssuanceSeriesBatchTooLarge.selector,
                 uint256(n),
-                uint256(BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE)
+                uint256(BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE)
             )
         );
         this.exposedEncodeIssuance(n);
@@ -265,11 +263,21 @@ contract BridgeMsgCodecValidationTest is Test {
             this.exposedEncodeRefund(1).length,
             this.exposedEncodeRefund(2).length
         );
-        _deriveCeilingAndAssertHeadroom(
-            "issuance",
-            this.exposedEncodeIssuance(0).length,
-            this.exposedEncodeIssuance(1).length,
-            this.exposedEncodeIssuance(2).length
+        // A message carries at least one series, and its cap is the series cap.
+        uint256 one = this.exposedEncodeIssuance(1).length;
+        uint256 perSeries = this.exposedEncodeIssuance(2).length - one;
+        assertEq(
+            this.exposedEncodeIssuance(3).length - this.exposedEncodeIssuance(2).length,
+            perSeries,
+            "issuance: per-series byte cost is not linear"
+        );
+        uint256 maxSeries = 1 + (MAX_MESSAGE_BYTES - one) / perSeries;
+        emit log_named_uint("issuance bytes/series", perSeries);
+        emit log_named_uint("issuance real max series @ 10000B", maxSeries);
+        assertGe(
+            maxSeries,
+            BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE,
+            "issuance: MAX_SERIES_PER_ISSUANCE exceeds the real byte ceiling"
         );
     }
 
@@ -302,8 +310,6 @@ contract BridgeMsgCodecValidationTest is Test {
         uint16 tooMany = BridgeMsgCodec.MAX_CHUNKS + 1;
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
-        payload.recipients = new address[](1);
-        payload.units = new uint256[](1);
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
@@ -338,8 +344,6 @@ contract BridgeMsgCodecValidationTest is Test {
     function exposedEncodeIssuanceChunk(uint16 chunkIndex, uint16 totalChunks) external pure returns (bytes memory) {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
-        payload.recipients = new address[](1);
-        payload.units = new uint256[](1);
         return BridgeMsgCodec.encodeIssuanceInstructions(0, chunkIndex, totalChunks, IssuanceBatchLib.one(payload));
     }
 
@@ -348,10 +352,10 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function exposedEncodeIssuance(uint16 n) external pure returns (bytes memory) {
-        BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
-        payload.seriesId = "20260212-TRY-U";
-        payload.recipients = new address[](n);
-        payload.units = new uint256[](n);
-        return BridgeMsgCodec.encodeIssuanceInstructions(0, 0, 1, IssuanceBatchLib.one(payload));
+        BridgeMsgCodec.IssuanceInstructionsPayload[] memory series = new BridgeMsgCodec.IssuanceInstructionsPayload[](n);
+        for (uint256 i = 0; i < n; i++) {
+            series[i].seriesId = "20260212-TRY-U";
+        }
+        return BridgeMsgCodec.encodeIssuanceInstructions(0, 0, 1, series);
     }
 }

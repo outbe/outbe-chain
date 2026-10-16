@@ -77,8 +77,8 @@ interface IOriginRouter {
     /// @notice Emitted when issuance instructions are sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param seriesId Series identifier.
-    /// @param recipientsCount Number of recipients.
-    event IssuanceInstructionsSent(bytes32 indexed sendId, bytes14 indexed seriesId, uint256 recipientsCount);
+    /// @param seriesCount Number of series the chunk carries.
+    event IssuanceInstructionsSent(bytes32 indexed sendId, bytes14 indexed seriesId, uint256 seriesCount);
 
     /// @notice Emitted when refund instructions are sent to a target chain.
     /// @param sendId Bridge send identifier.
@@ -206,8 +206,6 @@ interface IOriginRouter {
         uint32 callWindow;
         uint32 callThreshold;
         uint64 callPriceMinor;
-        address[] recipients;
-        uint256[] units;
     }
 
     // --- Errors ---
@@ -228,8 +226,6 @@ interface IOriginRouter {
     error OnlySelf();
     /// @notice No live parked send at `idx`.
     error NoParkedMessage(uint256 idx);
-    /// @notice Array lengths do not match.
-    error ArrayLengthMismatch();
     /// @notice Empty array provided.
     error EmptyArray();
 
@@ -295,8 +291,7 @@ interface IOriginRouter {
         uint32 wonBidsCount
     ) external payable returns (bytes32 sendId);
     /// @notice Send one chain one chunk (`chunkIndex` of `totalChunks`) of the series of `worldwideDay` it must
-    ///         create and the winners to mint to. Empty `recipients` creates the series only. Restricted to
-    ///         `INTEX_FACTORY_ROLE`.
+    ///         create. Restricted to `INTEX_FACTORY_ROLE`.
     function sendIssuanceInstructions(
         uint32 dstChainId,
         uint32 worldwideDay,

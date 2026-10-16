@@ -22,9 +22,6 @@ sol! {
             uint128 promisLoadMinor,
             uint256 entryPriceMinor,
             uint16 referenceCurrency,
-            address[] recipients,
-            uint256[] units,
-            uint32[] recipientChains,
             uint32[] snapshotChains
         ) external;
         function closeCallNoticeForTest(uint16 isoCode, uint32 worldwideDay, uint64 deadline) external;
@@ -127,9 +124,6 @@ fn issue_for_test(
                 entry_price_minor: call.entryPriceMinor,
                 issuance_currency,
                 reference_currency: call.referenceCurrency,
-                recipients: call.recipients.clone(),
-                units: call.units.clone(),
-                recipient_chains: call.recipientChains.clone(),
                 snapshot_chains: call.snapshotChains.clone(),
             },
         )?);

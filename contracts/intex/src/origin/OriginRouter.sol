@@ -329,31 +329,16 @@ contract OriginRouter is
         uint16 totalChunks,
         IssuanceInstructionsParams[] calldata series
     ) external payable onlyRole(INTEX_FACTORY_ROLE) returns (bytes32 sendId) {
-        // Empty `recipients` is valid: a snapshot chain with no local winners still needs the
-        // series created.
-        uint256 recipients = _requireIssuanceBatch(dstChainId, worldwideDay, series);
+        // The day must be one this chain is a target of. The codec owns the wire format (chunk
+        // header, per-series day and counts).
+        if (series.length == 0) revert EmptyArray();
+        _requireSeriesTarget(worldwideDay, dstChainId);
         sendId = _sendOrPark(
             dstChainId,
             BridgeMsgCodec.encodeIssuanceInstructions(worldwideDay, chunkIndex, totalChunks, _toCodecPayloads(series)),
-            IntexGas.issuance(series.length, recipients)
+            IntexGas.issuance(series.length)
         );
-        emit IssuanceInstructionsSent(sendId, series[0].seriesId, recipients);
-    }
-
-    /// @dev Validates a batch and returns its total recipient count. The day must be one this chain
-    ///      is a target of. The codec owns the wire format (chunk header, per-series day and
-    ///      counts).
-    function _requireIssuanceBatch(uint32 dstChainId, uint32 worldwideDay, IssuanceInstructionsParams[] calldata series)
-        private
-        view
-        returns (uint256 recipients)
-    {
-        if (series.length == 0) revert EmptyArray();
-        _requireSeriesTarget(worldwideDay, dstChainId);
-        for (uint256 i = 0; i < series.length; i++) {
-            if (series[i].recipients.length != series[i].units.length) revert ArrayLengthMismatch();
-            recipients += series[i].recipients.length;
-        }
+        emit IssuanceInstructionsSent(sendId, series[0].seriesId, series.length);
     }
 
     /// @inheritdoc IOriginRouter
@@ -607,8 +592,6 @@ contract OriginRouter is
         payload.callWindow = p.callWindow;
         payload.callThreshold = p.callThreshold;
         payload.callPriceMinor = p.callPriceMinor;
-        payload.recipients = p.recipients;
-        payload.units = p.units;
     }
 
     /// @notice ERC-165 support check, resolving the AccessControl interface ids.

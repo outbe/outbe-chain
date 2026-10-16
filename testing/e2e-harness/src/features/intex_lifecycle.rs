@@ -141,8 +141,7 @@ fn issue_four_series(world: &mut World) {
         REFERENCE_BYTE,
         U256::from(ENTRY_PRICE_MINOR),
         PROMIS_LOAD_MINOR,
-        owner,
-        &[COMMITTEE_UNITS, TARGET_UNITS],
+        UNITS,
         &[
             u32::try_from(chain_id).expect("committee chain id fits a uint32"),
             u32::try_from(world.target_chain.chain_id()).expect("target chain id fits a uint32"),
@@ -190,6 +189,32 @@ fn issue_four_series(world: &mut World) {
             >= issued_through,
         "target clock remains behind the issuing committee block"
     );
+
+    // Every series puts units in the owner's hands on both chains, which is what makes
+    // bringing them home a real step later.
+    let timeout = Duration::from_secs(DELIVERY_TIMEOUT_SECS);
+    test_issuance::issue_to_owner(
+        &url,
+        intex_nft(world),
+        DEPLOYER_KEY,
+        owner,
+        COMMITTEE_UNITS,
+        &series,
+        || {},
+        timeout,
+    )
+    .expect("issue the committee units to the owner");
+    test_issuance::issue_to_owner(
+        &target_url,
+        target_intex_nft(world),
+        DEPLOYER_KEY,
+        owner,
+        TARGET_UNITS,
+        &series,
+        || carry_target_clock(world),
+        timeout,
+    )
+    .expect("issue the target units to the owner");
 
     let mut series = series;
     let untouched = series.pop().expect("the untouched series was issued last");

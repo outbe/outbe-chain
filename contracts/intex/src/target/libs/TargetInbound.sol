@@ -12,7 +12,6 @@ import {InboundReason} from "../../shared/libs/InboundReason.sol";
 import {
     BidsRelayProgress,
     ChunkProgress,
-    ParkedIssuance,
     ParkedProceeds,
     RefundProgress,
     TargetRouterStorage
@@ -24,7 +23,6 @@ import {
 interface ITargetRouterShims {
     function relayBidsToOutbe(uint32 worldwideDay) external;
     function reportBidsRemaining(uint32 worldwideDay) external;
-    function issueOne(bytes14 seriesId, address to, uint256 units) external;
     function applyMarkOne(bytes14 seriesId, uint32 calledAt) external;
     function routeProceedsExt(uint32 worldwideDay, uint128 amount) external;
 }
@@ -229,8 +227,7 @@ library TargetInbound {
         }
     }
 
-    /// @notice Decode one ISSUANCE_INSTRUCTIONS chunk, create the series it names, and issue to each
-    ///         winner once.
+    /// @notice Decode one ISSUANCE_INSTRUCTIONS chunk and create the series it names.
     /// @dev The handler acknowledges these cases without effect (`InboundMessageIgnored`):
     ///      - a repeated chunk
     ///      - a chunk whose header disagrees with the day's run
@@ -293,7 +290,7 @@ library TargetInbound {
         if (seen == totalChunks) emit ITargetRouter.IssuanceCompleted(worldwideDay, totalChunks);
     }
 
-    /// @dev Create the series if this chain has not seen it and issue to its winners, each at most once.
+    /// @dev Create the series if this chain has not seen it.
     function _applyIssuance(
         TargetRouterStorage storage $,
         uint32 srcChainId,
@@ -325,54 +322,10 @@ library TargetInbound {
             _applySlottedMark($, payload.seriesId);
         }
 
-        // Past its deadline the series takes no units. Parking each winner could never be applied.
-        if ($.intex.readData(payload.seriesId).state == IIntexNFT1155.IntexState.Expired) {
-            _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, payload.seriesId, InboundReason.LATE);
-            return;
-        }
-
-        uint256 recipientsLen = payload.recipients.length;
-        for (uint256 i = 0; i < recipientsLen; i++) {
-            uint256 units = payload.units[i];
-            if (units == 0) continue;
-            address recipient = payload.recipients[i];
-            // Units the NFT can never issue would park an unflushable entry. Acknowledge it and leave
-            // the winner unissued, so the day's other chunks can still carry a corrected allocation.
-            if (units > type(uint16).max) {
-                _ignore(
-                    srcChainId,
-                    BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
-                    keccak256(abi.encodePacked(payload.seriesId, recipient)),
-                    InboundReason.INVALID
-                );
-                continue;
-            }
-            if ($.issued[payload.seriesId][recipient]) {
-                _ignore(
-                    srcChainId,
-                    BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
-                    keccak256(abi.encodePacked(payload.seriesId, recipient)),
-                    InboundReason.DUPLICATE
-                );
-                continue;
-            }
-            // Marked before the issue: a parked issuance is still this winner's one allocation.
-            $.issued[payload.seriesId][recipient] = true;
-            // Per-recipient self-call: a reverting receiver hook parks only that issuance, not the whole batch.
-            try ITargetRouterShims(address(this)).issueOne(payload.seriesId, recipient, units) {}
-            catch (bytes memory reason) {
-                uint256 idx = $.nextParkedIssuanceIdx++;
-                $.parkedIssuance[idx] = ParkedIssuance({
-                    seriesId: payload.seriesId, recipient: recipient, units: units, exists: true, done: false
-                });
-                emit ITargetRouter.IssuanceParked(idx, payload.seriesId, recipient, reason);
-            }
-        }
-
-        emit ITargetRouter.IssuanceInstructionsReceived(srcChainId, payload.seriesId, recipientsLen);
+        emit ITargetRouter.IssuanceInstructionsReceived(srcChainId, payload.seriesId);
     }
 
-    /// @dev Whether two payloads of one chunk name a series under the same terms (their winners may differ).
+    /// @dev Whether two payloads of one chunk name a series under the same terms.
     function _samePayloadParams(
         BridgeMsgCodec.IssuanceInstructionsPayload memory a,
         BridgeMsgCodec.IssuanceInstructionsPayload memory b

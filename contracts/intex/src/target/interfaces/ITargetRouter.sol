@@ -42,8 +42,7 @@ interface ITargetRouter {
     /// @notice Emitted when issuance instructions are received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param seriesId Series identifier.
-    /// @param recipientsCount Number of recipients.
-    event IssuanceInstructionsReceived(uint32 indexed srcChainId, bytes14 indexed seriesId, uint256 recipientsCount);
+    event IssuanceInstructionsReceived(uint32 indexed srcChainId, bytes14 indexed seriesId);
 
     /// @notice An authenticated inbound message, or one item of it, was acknowledged without effect.
     /// @param srcChainId Source chainId the message was authenticated against.
@@ -107,11 +106,6 @@ interface ITargetRouter {
     /// @notice Emitted when the proceeds route (token bridge + OriginRouter) is set.
     event ProceedsRouteSet(address tokenBridge, address originRouter);
 
-    /// @notice Emitted when an issuance is parked after a recipient's ERC-1155 hook reverts.
-    event IssuanceParked(uint256 indexed idx, bytes14 indexed seriesId, address indexed recipient, bytes reason);
-    /// @notice Emitted when `applyParkedIssuance` successfully retries a parked issuance.
-    event ParkedIssuanceApplied(uint256 indexed idx, bytes14 indexed seriesId);
-
     /// @notice Emitted when a Called mark waits in its series' slot because the series has not landed here yet.
     /// @param seriesId Series the mark is for.
     event MarkParked(bytes14 indexed seriesId);
@@ -149,8 +143,6 @@ interface ITargetRouter {
     error NoBidsToRelay(uint32 worldwideDay);
     /// @notice No parked proceeds route at `idx`.
     error NoSuchParkedProceeds(uint256 idx);
-    /// @notice `applyParkedIssuance` called for an index that was never enqueued.
-    error NoSuchParkedIssuance(uint256 idx);
     /// @notice `applyParkedMark` called for a series with nothing waiting in its slot.
     error NoParkedMark(bytes14 seriesId);
     /// @notice The parked entry at `idx` was already resolved. Another retry would repeat its effect.

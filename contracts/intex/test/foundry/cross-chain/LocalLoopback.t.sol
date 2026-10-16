@@ -320,13 +320,7 @@ contract LocalLoopbackTest is Test {
         assertEq(factory.lastDay(), DAY, "proceeds day");
         assertEq(address(origin).balance, 0, "native stranded on origin");
 
-        // 7. ISSUANCE_INSTRUCTIONS: winners minted on the canonical NFT via the loopback leg.
-        address[] memory winners = new address[](2);
-        winners[0] = iba1;
-        winners[1] = iba2;
-        uint256[] memory amounts = new uint256[](2);
-        amounts[0] = 30;
-        amounts[1] = 20;
+        // 7. ISSUANCE_INSTRUCTIONS: the series lands on the canonical NFT via the loopback leg.
         IOriginRouter.IssuanceInstructionsParams[] memory issuance = new IOriginRouter.IssuanceInstructionsParams[](1);
         issuance[0] = IOriginRouter.IssuanceInstructionsParams({
             seriesId: CreateSeriesLib.seriesId(DAY),
@@ -341,22 +335,17 @@ contract LocalLoopbackTest is Test {
             referenceCurrency: 840,
             callWindow: 30,
             callThreshold: 21,
-            callPriceMinor: 200,
-            recipients: winners,
-            units: amounts
+            callPriceMinor: 200
         });
         vm.prank(address(factory));
         origin.sendIssuanceInstructions(local, DAY, 0, 1, issuance);
-        uint256 tokenId = intex.issuedTokenId(CreateSeriesLib.seriesId(DAY));
-        assertEq(intex.balanceOf(iba1, tokenId), 30, "iba1 mint");
-        assertEq(intex.balanceOf(iba2, tokenId), 20, "iba2 mint");
+        assertTrue(intex.seriesExists(CreateSeriesLib.seriesId(DAY)), "series created");
 
         // 8. Every leg executed within its IntexGas budget: nothing parked anywhere.
         (,, bool bidsRelayed) = target.bidsRelay(DAY);
         assertTrue(bidsRelayed, "bids relay finished");
         (,, bool proceedsParked,) = target.parkedProceeds(0);
         assertFalse(proceedsParked, "proceeds route parked");
-        assertEq(target.parkedIssuanceCount(), 0, "issuance mint parked");
         assertEq(origin.parkedMessage(0).payload.length, 0, "origin leg parked");
     }
 }

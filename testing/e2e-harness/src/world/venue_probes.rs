@@ -608,9 +608,8 @@ pub(crate) fn issued_series(
     url: &str,
     venue_router: Address,
 ) -> Option<alloy_primitives::FixedBytes<14>> {
-    let topic0 = alloy_primitives::keccak256(
-        b"IssuanceInstructionsReceived(uint32,bytes14,uint256)".as_slice(),
-    );
+    let topic0 =
+        alloy_primitives::keccak256(b"IssuanceInstructionsReceived(uint32,bytes14)".as_slice());
     let logs = logs_of(
         url,
         venue_router,

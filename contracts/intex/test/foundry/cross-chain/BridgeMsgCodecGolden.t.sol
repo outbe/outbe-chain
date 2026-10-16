@@ -221,13 +221,6 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function test_RoundTrip_IssuanceInstructions_AllFields() public view {
-        address[] memory recipients = new address[](2);
-        recipients[0] = address(0xA11CE);
-        recipients[1] = address(0xB0B);
-        uint256[] memory quantities = new uint256[](2);
-        quantities[0] = 0xDEAD;
-        quantities[1] = 0xBEEF;
-
         BridgeMsgCodec.IssuanceInstructionsPayload memory p;
         p.seriesId = "20260212-TRY-U";
         p.worldwideDay = 0x55555555; // distinct from seriesId so a field swap can't pass
@@ -242,8 +235,6 @@ contract BridgeMsgCodecGoldenTest is Test {
         p.callWindow = 0x5678;
         p.callThreshold = 0x9ABC;
         p.callPriceMinor = 0xA1B2C3D4E5F60718;
-        p.recipients = recipients;
-        p.units = quantities;
 
         BridgeMsgCodec.IssuanceInstructionsPayload memory d = this.exposedDecodeIssuanceInstructions(
             BridgeMsgCodec.encodeIssuanceInstructions(p.worldwideDay, 0, 1, IssuanceBatchLib.one(p))
@@ -262,10 +253,6 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(d.callWindow, 0x5678, "callWindow");
         assertEq(d.callThreshold, 0x9ABC, "callThreshold");
         assertEq(d.callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");
-        assertEq(d.recipients[0], address(0xA11CE), "recipients[0]");
-        assertEq(d.recipients[1], address(0xB0B), "recipients[1]");
-        assertEq(d.units[0], 0xDEAD, "units[0]");
-        assertEq(d.units[1], 0xBEEF, "units[1]");
     }
 
     function test_RoundTrip_SingleField_SeriesId() public view {

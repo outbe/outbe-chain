@@ -375,43 +375,6 @@
           "type": "bytes14",
           "indexed": true,
           "internalType": "bytes14"
-        },
-        {
-          "name": "recipientsCount",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "IssuanceParked",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
-        },
-        {
-          "name": "recipient",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "reason",
-          "type": "bytes",
-          "indexed": false,
-          "internalType": "bytes"
         }
       ],
       "anonymous": false
@@ -463,25 +426,6 @@
           "type": "uint256",
           "indexed": false,
           "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "ParkedIssuanceApplied",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
         }
       ],
       "anonymous": false
@@ -676,17 +620,6 @@
           "name": "seriesId",
           "type": "bytes14",
           "internalType": "bytes14"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "NoSuchParkedIssuance",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
         }
       ]
     },

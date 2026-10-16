@@ -2,7 +2,8 @@
 //!
 //! The node exposes `issueForTest` only under its `e2e-test` feature. The entry
 //! makes the two calls the clearing engine makes, so the series is indexed for
-//! the qualify sweep and its mints travel as real issuance instructions.
+//! the qualify sweep and travels to every chain as real issuance instructions.
+//! Units reach an owner the way a winner's own `issueIntex` puts them there.
 
 use alloy_primitives::{Address, FixedBytes, U256};
 use alloy_sol_types::sol;
@@ -58,11 +59,16 @@ sol! {
             uint128 promisLoadMinor,
             uint256 entryPriceMinor,
             uint16 referenceCurrency,
-            address[] recipients,
-            uint256[] units,
-            uint32[] recipientChains,
             uint32[] snapshotChains
         ) external;
+    }
+
+    interface IIntexIssuer {
+        function AUCTION_ROLE() external view returns (bytes32);
+        function hasRole(bytes32 role, address account) external view returns (bool);
+        function grantRole(bytes32 role, address account) external;
+        function seriesExists(bytes14 seriesId) external view returns (bool);
+        function issueIntex(address to, uint256 units, bytes14 seriesId) external;
     }
 
     struct ReferenceCurrencyPrice {
@@ -143,10 +149,8 @@ fn series_id(worldwide_day: u32, issuance: [u8; 3], reference: u8) -> FixedBytes
 }
 
 /// Issue every spec into the same worldwide day and reference currency, so the
-/// sweeps see one group rather than a group per series.
-///
-/// `units_per_chain` is parallel to `chains`: the owner ends up with that many
-/// units of every series on each chain named there.
+/// sweeps see one group rather than a group per series. Each series is created on
+/// every chain named in `chains`.
 #[allow(clippy::too_many_arguments)]
 pub fn issue_series(
     url: &str,
@@ -157,12 +161,10 @@ pub fn issue_series(
     reference_byte: u8,
     entry_price_minor: U256,
     promis_load_minor: u128,
-    owner: Address,
-    units_per_chain: &[u32],
+    issued_units: u32,
     chains: &[u32],
     specs: &[SeriesSpec],
 ) -> Result<Vec<FixedBytes<14>>> {
-    let units: u32 = units_per_chain.iter().sum();
     let ids: Vec<FixedBytes<14>> = specs
         .iter()
         .map(|spec| series_id(worldwide_day, spec.issuance, reference_byte))
@@ -179,20 +181,90 @@ pub fn issue_series(
             issuanceCurrencies: specs.iter().map(|spec| spec.issuance_currency).collect(),
             worldwideDay: worldwide_day,
             issuedAt: issued_at,
-            issuedUnits: units,
+            issuedUnits: issued_units,
             promisLoadMinor: promis_load_minor,
             entryPriceMinor: entry_price_minor,
             referenceCurrency: reference_currency,
-            // One recipient leg per chain: the owner ends up with units on each,
-            // which is what makes bringing them home a real step later.
-            recipients: vec![owner; chains.len()],
-            units: units_per_chain.iter().copied().map(U256::from).collect(),
-            recipientChains: chains.to_vec(),
             snapshotChains: chains.to_vec(),
         },
         "issueForTest",
     )?;
     Ok(ids)
+}
+
+/// Put `units` of every series into `owner`'s hands on one chain's collection, as the
+/// owner's own `issueIntex` would after winning. The admin takes the issue role for that.
+/// A series reaches the chain as a message, so this waits for it and calls `tick` while
+/// waiting: a target refuses a stamp from its own future until its clock is carried over.
+#[allow(clippy::too_many_arguments)]
+pub fn issue_to_owner(
+    url: &str,
+    nft: Address,
+    admin_key: &str,
+    owner: Address,
+    units: u32,
+    series: &[FixedBytes<14>],
+    mut tick: impl FnMut(),
+    timeout: std::time::Duration,
+) -> Result<()> {
+    let admin = alloy_signer::Signer::address(
+        &admin_key
+            .parse::<alloy_signer_local::PrivateKeySigner>()
+            .map_err(|error| eyre!("invalid admin key: {error}"))?,
+    );
+    let role = eth::read_call(url, nft, &IIntexIssuer::AUCTION_ROLECall {})
+        .ok_or_else(|| eyre!("read the issue role from {nft}"))?;
+    let held = eth::read_call(
+        url,
+        nft,
+        &IIntexIssuer::hasRoleCall {
+            role,
+            account: admin,
+        },
+    )
+    .unwrap_or_default();
+    if !held {
+        send_checked(
+            url,
+            nft,
+            admin_key,
+            &IIntexIssuer::grantRoleCall {
+                role,
+                account: admin,
+            },
+            "grant the issue role",
+        )?;
+    }
+    let deadline = std::time::Instant::now() + timeout;
+    for &series_id in series {
+        while !eth::read_call(
+            url,
+            nft,
+            &IIntexIssuer::seriesExistsCall {
+                seriesId: series_id,
+            },
+        )
+        .unwrap_or_default()
+        {
+            if std::time::Instant::now() >= deadline {
+                return Err(eyre!("series {series_id} never reached {url}"));
+            }
+            tick();
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+        send_checked(
+            url,
+            nft,
+            admin_key,
+            &IIntexIssuer::issueIntexCall {
+                to: owner,
+                units: U256::from(units),
+                seriesId: series_id,
+            },
+            "issueIntex",
+        )?;
+    }
+    Ok(())
 }
 
 /// A nonce that passes IntexFactory's proof-of-work check.

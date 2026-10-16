@@ -69,10 +69,9 @@ library IntexGas {
     uint256 internal constant BIDS_BASE = 250_000;
     uint256 internal constant BIDS_PER_ITEM = 17_700;
 
-    /// @dev 2.64M for the widest chunk, 1.73M for one series at the recipient cap.
+    /// @dev A chunk creates the series it carries. Winners issue their own units.
     uint256 internal constant ISSUANCE_BASE = 250_000;
     uint256 internal constant ISSUANCE_PER_SERIES = 195_000;
-    uint256 internal constant ISSUANCE_PER_ITEM = 90_000;
 
     /// @dev A refund chunk costs three separable things. Each is measured against the canonical
     ///      Compact, with the proceeds leg wired to our own token bridge and ERC-7786 hub:
@@ -101,8 +100,8 @@ library IntexGas {
         return AUCTION_STAGE_START_BASE + priceCount * AUCTION_STAGE_START_PER_PRICE;
     }
 
-    function issuance(uint256 seriesCount, uint256 recipientCount) internal pure returns (uint256) {
-        return ISSUANCE_BASE + seriesCount * ISSUANCE_PER_SERIES + recipientCount * ISSUANCE_PER_ITEM;
+    function issuance(uint256 seriesCount) internal pure returns (uint256) {
+        return ISSUANCE_BASE + seriesCount * ISSUANCE_PER_SERIES;
     }
 
     function markCalled(uint256 seriesCount) internal pure returns (uint256) {

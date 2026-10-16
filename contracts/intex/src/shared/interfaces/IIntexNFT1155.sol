@@ -102,7 +102,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Events ---
 
     /// @notice Emitted when a new Intex series is issued.
-    /// @param operator Caller that minted the Issued tokens (`RELAYER_ROLE`).
+    /// @param operator Caller that minted the Issued tokens (`AUCTION_ROLE`).
     /// @param tokenId Issued token id (= `uint256(seriesId)`).
     /// @param to Recipient of the minted Issued tokens.
     /// @param units Issued units minted to `to`.
