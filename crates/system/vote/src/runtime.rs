@@ -17,8 +17,7 @@ use crate::handlers::{
 use crate::notify::ProposalFinalization;
 use crate::schema::{BondSettlement, Vote};
 use crate::state::{
-    active_validator_addresses, calculate_vote_tally, ProposalBond, ProposalStatus,
-    ProposalSubmission, VoteKind,
+    calculate_vote_tally, ProposalBond, ProposalStatus, ProposalSubmission, VoteKind,
 };
 
 /// Returns `Ok(())` when `caller` is a registered validator with `status == ACTIVE`.
@@ -233,6 +232,8 @@ impl Vote<'_> {
         storage.with_checkpoint(|| {
             let proposal_id =
                 self.write_proposal(&submission, voting_deadline, ProposalStatus::Pending)?;
+            self.proposal_electorate
+                .write(&proposal_id, target.electorate() as u8)?;
             target.reserve(
                 storage.clone(),
                 proposal_id,
@@ -322,6 +323,12 @@ impl Vote<'_> {
         if self.read_vote(proposal_id, voter)?.is_some() {
             return Err(VoteError::AlreadyVoted.into());
         }
+        if !self
+            .eligible_validator_addresses(proposal_id)?
+            .contains(&voter)
+        {
+            return Err(VoteError::NotValidator.into());
+        }
 
         self.write_vote(
             proposal_id,
@@ -398,10 +405,9 @@ impl Vote<'_> {
             return Ok(());
         }
 
-        let active = active_validator_addresses(self.storage.clone())?;
+        let active = self.eligible_validator_addresses(proposal_id)?;
         let tally = calculate_vote_tally(self, &proposal, &active)?;
-        let vs = ValidatorSet::new(self.storage.clone());
-        let active_count = vs.active_validator_count()?;
+        let active_count = u32::try_from(active.len()).map_err(|_| VoteError::InvalidElectorate)?;
         let status = if quorum_reached(tally.yes, active_count) {
             ProposalStatus::Approved
         } else {

@@ -25,6 +25,13 @@ pub const MAX_PENDING_EVENTS: usize = 8192;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum Event {
+    /// A peer cannot receive an announcement containing native repository keys.
+    UnsupportedRepositoryKey {
+        /// Connected transport peer.
+        nid: NodeId,
+        /// Repository whose announcement could not be sent.
+        rid: RepoId,
+    },
     /// The node has received changes to Git references in a
     /// repository stored on the node, from another node.
     RefsFetched {

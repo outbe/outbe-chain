@@ -243,6 +243,8 @@ fn finish_uses_final_extra_data_setter_for_summary_validation() {
         fixtures::executor_inputs_from_ctx(&ctx, None, true),
     );
     let final_extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
         execution_summary: Some(ExecutionSummaryArtifact {
             validator_fee_sum: U256::ZERO,
         }),

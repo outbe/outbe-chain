@@ -146,6 +146,7 @@ outbe-ocomp = { path = "bin/outbe-ocomp" }
 outbe-radicle-runtime = { path = "crates/system/radicle" }
 radicle = { path = "vendor/heartwood/crates/radicle" }
 radicle-crypto = { path = "vendor/heartwood/crates/radicle-crypto" }
+radicle-git-metadata = { path = "vendor/heartwood/crates/radicle-git-metadata" }
 radicle-log = { path = "vendor/heartwood/crates/radicle-log" }
 radicle-node = { path = "vendor/heartwood/crates/radicle-node", default-features = false, features = ["socket2"] }
 radicle-signals = { path = "vendor/heartwood/crates/radicle-signals" }

@@ -324,7 +324,7 @@ mod tests {
                 "{}",
                 json::to_string(&Command::AnnounceRefsFor {
                     rid: rid.to_owned(),
-                    namespaces: [nid].into(),
+                    namespaces: [nid.into()].into(),
                 })
                 .unwrap()
             )
@@ -344,7 +344,7 @@ mod tests {
         }
 
         for rid in &rids {
-            assert!(handle.updates.lock().unwrap().contains(&(*rid, nid)));
+            assert!(handle.updates.lock().unwrap().contains(&(*rid, nid.into())));
         }
     }
 

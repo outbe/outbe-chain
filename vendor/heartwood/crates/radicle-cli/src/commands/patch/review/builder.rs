@@ -570,7 +570,7 @@ impl<'a> Brain<'a> {
 
     /// Get the brain's refname given the patch and remote.
     fn refname(patch: &PatchId, remote: &NodeId) -> git::fmt::Namespaced<'a> {
-        git::refs::storage::draft::review(remote, patch)
+        git::refs::storage::draft::review(&(*remote).into(), patch)
     }
 }
 
@@ -642,7 +642,7 @@ impl<'a> ReviewBuilder<'a> {
             Brain::new(self.patch_id, signer.public_key(), base, repo)?
         };
         let diff = self.diff(&brain.accepted, &tree, repo, opts)?;
-        let drafts = DraftStore::new(self.repo, *signer.public_key());
+        let drafts = DraftStore::new(self.repo, signer.public_key().into());
         let mut patches = cob::patch::Cache::no_cache(&drafts, signer)?;
         let mut patch = patches.get_mut(&patch_id)?;
         let mut queue = ReviewQueue::from(diff);
@@ -652,7 +652,7 @@ impl<'a> ReviewBuilder<'a> {
             return Ok(());
         }
 
-        let review = if let Some(r) = revision.review_by(signer.public_key()) {
+        let review = if let Some(r) = revision.review_by(&signer.public_key().into()) {
             r.id()
         } else {
             patch.review(

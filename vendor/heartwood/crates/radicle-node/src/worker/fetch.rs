@@ -9,7 +9,6 @@ use protocol::worker::fetch::{FetchResult, UpdatedCanonicalRefs};
 use radicle::cob::TypedId;
 use radicle::cob::store::access::ReadOnly;
 use radicle::crypto::PublicKey;
-use radicle::prelude::NodeId;
 use radicle::prelude::RepoId;
 use radicle::storage::git::Repository;
 use radicle::storage::git::TempRepository;
@@ -41,18 +40,20 @@ impl Handle {
         channels: ChannelsFlush,
         notifications: node::notifications::StoreWriter,
     ) -> Result<Self, error::Handle> {
-        let exists = storage.contains(&rid)?;
-        if exists {
-            let repo = storage.repository(rid)?;
-            let handle = fetch::Handle::new(local, repo, follow, blocked, channels)?;
-            Ok(Handle::Pull {
-                handle,
-                notifications,
-            })
-        } else {
-            let repo = storage.temporary_repository(rid)?;
-            let handle = fetch::Handle::new(local, repo, follow, blocked, channels)?;
-            Ok(Handle::Clone { handle })
+        match storage.repository(rid) {
+            Ok(repo) => {
+                let handle = fetch::Handle::new(local, repo, follow, blocked, channels)?;
+                Ok(Handle::Pull {
+                    handle,
+                    notifications,
+                })
+            }
+            Err(error) if error.is_not_found() => {
+                let repo = storage.temporary_repository(rid)?;
+                let handle = fetch::Handle::new(local, repo, follow, blocked, channels)?;
+                Ok(Handle::Clone { handle })
+            }
+            Err(error) => Err(error.into()),
         }
     }
 
@@ -139,7 +140,7 @@ impl Handle {
                     // Only create notifications for repos that we have
                     // contributed to in some way; otherwise, our inbox will
                     // be flooded by all the repos we are seeding.
-                    if repo.remote(&storage.info().key).is_ok() {
+                    if repo.remote(&storage.info().key.into()).is_ok() {
                         notify(&rid, &applied, &mut store)?;
                     }
                 }
@@ -151,7 +152,7 @@ impl Handle {
                     updated: applied.updated,
                     canonical,
                     namespaces: remotes.into_iter().collect(),
-                    doc: repo.identity_doc()?,
+                    doc: Box::new(repo.identity_doc()?),
                     clone,
                 })
             }
@@ -252,7 +253,7 @@ fn cache_cobs<S, C>(
     cache: &mut C,
 ) -> Result<(), error::Cache>
 where
-    S: ReadRepository + cob::Store<Namespace = NodeId>,
+    S: ReadRepository + cob::Store<Namespace = radicle::crypto::RepositoryKey>,
     C: cob::cache::Update<cob::issue::Issue> + cob::cache::Update<cob::patch::Patch>,
     C: cob::cache::Remove<cob::issue::Issue> + cob::cache::Remove<cob::patch::Patch>,
 {
@@ -295,7 +296,7 @@ fn update_or_remove<T, Repo, C>(
 ) -> Result<(), error::Cache>
 where
     T: cob::Evaluate<Repo> + cob::store::Cob + cob::store::CobWithType,
-    Repo: cob::Store<Namespace = NodeId> + ReadRepository,
+    Repo: cob::Store<Namespace = radicle::crypto::RepositoryKey> + ReadRepository,
     C: cob::cache::Update<T> + cob::cache::Remove<T>,
 {
     match store.get(&tid.id) {

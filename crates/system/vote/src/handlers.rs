@@ -18,6 +18,25 @@ pub enum TargetAdmission {
     PublicBonded { amount: U256 },
 }
 
+/// Electorate selected by the target and persisted with proposal admission.
+/// Zero preserves the ACTIVE-only policy of existing proposals and targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TargetElectorate {
+    Active = 0,
+    ActiveConsensus = 1,
+}
+
+impl TargetElectorate {
+    pub(crate) fn from_stored(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(Self::Active),
+            1 => Ok(Self::ActiveConsensus),
+            _ => Err(VoteError::InvalidElectorate.into()),
+        }
+    }
+}
+
 /// Consensus context passed explicitly to target validation and execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VoteTargetContext {
@@ -57,6 +76,11 @@ pub trait VoteTarget: Send + Sync {
     /// Compile-time admission class. V1 targets default to validator-only, zero value.
     fn admission(&self) -> TargetAdmission {
         TargetAdmission::ActiveValidatorOnly
+    }
+
+    /// Controls both cast eligibility and the exact tally denominator.
+    fn electorate(&self) -> TargetElectorate {
+        TargetElectorate::Active
     }
 
     /// Fail-fast validation used during proposal creation.

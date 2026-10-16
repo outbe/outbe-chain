@@ -9,9 +9,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::num::NonZeroUsize;
 use std::path::Path;
 
-use crypto::{PublicKey, VerifyingKey, signature};
+use crypto::RepositoryKey;
+use crypto::{RepositoryKey as PublicKey, VerifyingKey, signature};
 use nonempty::NonEmpty;
-use radicle_core::{NodeId, RepoId};
+use radicle_core::RepoId;
 use radicle_git_metadata::commit::CommitData;
 use radicle_oid::Oid;
 
@@ -22,6 +23,103 @@ use crate::storage::refs::{
     FeatureLevel, IDENTITY_ROOT, REFS_BLOB_PATH, Refs, SIGNATURE_BLOB_PATH, SIGREFS_BRANCH,
     SignedRefs,
 };
+
+/// Verify against actual repository, commit, parent and canonical refs.
+pub trait Verify {
+    fn verify(
+        &self,
+        repository: RepoId,
+        commit: Oid,
+        parent: Option<Oid>,
+        refs: &[u8],
+        signature: &crypto::RepositorySignature,
+    ) -> Result<(), error::Verify>;
+}
+
+impl<V: signature::Verifier<crypto::Signature>> Verify for V {
+    fn verify(
+        &self,
+        _: RepoId,
+        _: Oid,
+        _: Option<Oid>,
+        refs: &[u8],
+        signature: &crypto::RepositorySignature,
+    ) -> Result<(), error::Verify> {
+        match signature {
+            crypto::RepositorySignature::Ed25519(signature) => {
+                signature::Verifier::verify(self, refs, signature).map_err(error::Verify::Signature)
+            }
+            crypto::RepositorySignature::Bls12381G2(_) => {
+                Err(error::Verify::Signature(signature::Error::new()))
+            }
+        }
+    }
+}
+
+/// Local admission supplies the context for managed entries; ordinary readers use signed context.
+pub struct RepositoryVerifier<F> {
+    authority: RepositoryKey,
+    context: F,
+}
+
+impl<F> RepositoryVerifier<F>
+where
+    F: Fn(
+        Oid,
+        &crypto::RepositorySignature,
+    ) -> Result<[u8; 32], crate::storage::publication::Error>,
+{
+    pub fn new(authority: RepositoryKey, context: F) -> Self {
+        Self { authority, context }
+    }
+}
+
+impl<
+    F: Fn(Oid, &crypto::RepositorySignature) -> Result<[u8; 32], crate::storage::publication::Error>,
+> Verify for RepositoryVerifier<F>
+{
+    fn verify(
+        &self,
+        repository: RepoId,
+        commit: Oid,
+        parent: Option<Oid>,
+        refs: &[u8],
+        signature: &crypto::RepositorySignature,
+    ) -> Result<(), error::Verify> {
+        if let crypto::RepositorySignature::Ed25519(signature) = signature {
+            let verifier =
+                VerifyingKey::try_from(&self.authority).map_err(error::Verify::Signature)?;
+            return signature::Verifier::verify(&verifier, refs, signature)
+                .map_err(error::Verify::Signature);
+        }
+        if parent.is_some_and(|oid| oid.is_zero()) {
+            return Err(error::Verify::NativeSignature(
+                crypto::repository::Error::InvalidSubject,
+            ));
+        }
+        let context = (self.context)(commit, signature).map_err(error::Verify::Publication)?;
+        signature
+            .verify_signed_refs(
+                self.authority,
+                repository
+                    .into_sha1()
+                    .ok_or(error::Verify::NativeSignature(
+                        crypto::repository::Error::InvalidSubject,
+                    ))?,
+                context,
+                parent
+                    .map(|p| {
+                        p.into_sha1().ok_or(error::Verify::NativeSignature(
+                            crypto::repository::Error::InvalidSubject,
+                        ))
+                    })
+                    .transpose()?
+                    .unwrap_or([0; 20]),
+                refs,
+            )
+            .map_err(error::Verify::NativeSignature)
+    }
+}
 
 /// A `rad/sigrefs` that has passed the following verification checks:
 ///
@@ -39,6 +137,11 @@ pub struct VerifiedCommit {
 }
 
 impl VerifiedCommit {
+    /// Object to include in an externally prepared publication package.
+    pub fn oid(&self) -> Oid {
+        self.commit.oid
+    }
+
     /// Borrow the [`Commit`] that was verified.
     pub(super) fn commit(&self) -> &Commit {
         &self.commit
@@ -81,9 +184,9 @@ pub struct SignedRefsReader<'a, Repository, Verifier = VerifyingKey> {
 
 /// Describe where to start a [`SignedRefsReader`]'s commit chain.
 pub enum Tip {
-    /// Use the namespace of the given [`NodeId`], resolving their `rad/sigrefs`
+    /// Use the namespace of the given [`RepositoryKey`], resolving their `rad/sigrefs`
     /// to its commit [`Oid`].
-    Reference(NodeId),
+    Reference(RepositoryKey),
     /// Use the supplied commit [`Oid`].
     Commit(Oid),
 }
@@ -129,7 +232,7 @@ impl std::fmt::Display for FeatureLevels {
 impl<'a, Repository, Verifier> SignedRefsReader<'a, Repository, Verifier>
 where
     Repository: object::Reader + reference::Reader,
-    Verifier: signature::Verifier<crypto::Signature>,
+    Verifier: Verify,
 {
     /// Construct a new [`SignedRefsReader`].
     pub fn new(rid: RepoId, tip: Tip, repository: &'a Repository, verifier: &'a Verifier) -> Self {
@@ -191,19 +294,6 @@ where
             return Ok(head);
         }
 
-        /// A wrapper around a [`crypto::Signature`] that implements
-        /// [`std::hash::Hash`] so that we can use it as a key in a [`HashMap`].
-        #[derive(PartialEq, Eq)]
-        #[repr(transparent)]
-        struct HashSignature(crypto::Signature);
-
-        impl std::hash::Hash for HashSignature {
-            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-                state.write(self.0.r_bytes());
-                state.write(self.0.s_bytes());
-            }
-        }
-
         // `seen` maps from signatures to the `NonEmpty` of commits they were
         // seen in. Note that for all sets of commits which share the same
         // signature, the `NonEmpty` in `seen` will be in reverse order of the
@@ -214,13 +304,13 @@ where
         // the maximum feature level over all commits in the history.
         let (seen, levels) = iter::Walk::new(head.commit.oid, self.repository).try_fold(
             (
-                HashMap::<HashSignature, NonEmpty<Oid>>::new(),
+                HashMap::<Vec<u8>, NonEmpty<Oid>>::new(),
                 FeatureLevels::new(),
             ),
             |(mut seen, mut levels), commit| {
                 let commit = commit.map_err(error::Read::Commit)?;
 
-                seen.entry(HashSignature(commit.signature))
+                seen.entry(commit.signature.to_bytes())
                     .and_modify(|value| value.push(commit.oid))
                     .or_insert_with(|| NonEmpty::new(commit.oid));
 
@@ -255,7 +345,7 @@ where
         }
 
         if seen
-            .get(&HashSignature(head.commit.signature))
+            .get(&head.commit.signature.to_bytes())
             .expect(SIGNATURES_COLLECTED)
             .len_nonzero()
             == ONE
@@ -286,7 +376,7 @@ where
             let commit = verified.commit();
 
             let commits = seen
-                .get(&HashSignature(commit.signature))
+                .get(&commit.signature.to_bytes())
                 .expect(SIGNATURES_COLLECTED);
             if commits.len_nonzero() == ONE {
                 return Ok(verified);
@@ -333,7 +423,7 @@ pub(super) struct Commit {
     oid: Oid,
     parent: Option<Oid>,
     refs: Refs,
-    signature: crypto::Signature,
+    signature: crypto::RepositorySignature,
     identity_root: Option<IdentityRoot>,
 }
 
@@ -356,7 +446,7 @@ impl Commit {
 
     /// The [`crypto::Signature`] found in blob at `/signature` in the tree of the commit.
     #[cfg(test)]
-    pub(super) fn signature(&self) -> &crypto::Signature {
+    pub(super) fn signature(&self) -> &crypto::RepositorySignature {
         &self.signature
     }
 
@@ -366,11 +456,15 @@ impl Commit {
         verifier: &Verifier,
     ) -> Result<VerifiedCommit, error::Verify>
     where
-        Verifier: signature::Verifier<crypto::Signature>,
+        Verifier: Verify,
     {
-        verifier
-            .verify(&self.refs.canonical(), &self.signature)
-            .map_err(error::Verify::Signature)?;
+        verifier.verify(
+            expected,
+            self.oid,
+            self.parent,
+            &self.refs.canonical(),
+            &self.signature,
+        )?;
 
         let level = if let Some(IdentityRoot {
             commit: identity_commit,
@@ -511,7 +605,7 @@ impl<'a, Repo: object::Reader> CommitReader<'a, Repo> {
 
 struct Tree {
     refs: Refs,
-    signature: crypto::Signature,
+    signature: crypto::RepositorySignature,
 }
 
 struct TreeReader<'a, Repo: object::Reader> {
@@ -527,7 +621,7 @@ impl<'a, Repo: object::Reader> TreeReader<'a, Repo> {
     fn read(self) -> Result<Tree, error::Tree> {
         let (refs, signature) = self.try_handle_blobs()?;
         let refs = Refs::from_canonical(&refs.bytes).map_err(error::Tree::ParseRefs)?;
-        let signature = crypto::Signature::try_from(signature.bytes.as_slice())
+        let signature = crypto::RepositorySignature::from_bytes(signature.bytes.as_slice())
             .map_err(error::Tree::ParseSignature)?;
         Ok(Tree { refs, signature })
     }

@@ -69,8 +69,8 @@ where
     Storage: change::Storage<
             ObjectId = Oid,
             Parent = Oid,
-            PublicKey = crypto::PublicKey,
-            Signature = crypto::Signature,
+            PublicKey = crypto::RepositoryKey,
+            Signature = crate::change::EntrySignature,
         >,
 {
     let Update {

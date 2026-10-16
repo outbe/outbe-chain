@@ -5,17 +5,18 @@ use std::path::Path;
 use cob::object::Objects;
 use radicle_cob as cob;
 use radicle_cob::change;
+use radicle_cob::change::Storage as _;
 use storage::RemoteRepository;
 use storage::RepositoryError;
 use storage::SignRepository;
 use storage::ValidateRepository;
 
+use crate::crypto::RepositoryKey;
 use crate::git;
 use crate::git::fmt::*;
 use crate::git::*;
 use crate::identity;
 use crate::identity::doc::DocError;
-use crate::node::NodeId;
 use crate::storage;
 use crate::storage::Error;
 use crate::storage::{
@@ -26,6 +27,79 @@ use crate::storage::{
 use super::{RemoteId, Repository};
 
 pub use crate::cob::{ObjectId, Store, store};
+
+type NativeLoadError = cob::GitLoadError;
+
+#[derive(Error, Debug)]
+pub enum LoadError {
+    #[error(transparent)]
+    Native(#[from] NativeLoadError),
+    #[error(transparent)]
+    Publication(#[from] storage::publication::Error),
+}
+
+#[derive(Error, Debug)]
+pub enum UpdateError {
+    #[error(transparent)]
+    Git(#[from] git::raw::Error),
+    #[error(transparent)]
+    Entry(#[from] LoadError),
+    #[error(transparent)]
+    Identity(#[from] DocError),
+}
+
+fn verify_update<R: ReadRepository>(
+    repo: &R,
+    raw: &git::raw::Repository,
+    id: Oid,
+) -> Result<(), UpdateError> {
+    let entry = load_entry(repo, raw, id)?;
+    if entry.manifest.type_name == *crate::cob::identity::TYPENAME {
+        let op = crate::cob::identity::Op::try_from(&entry).map_err(DocError::from)?;
+        if op
+            .actions
+            .iter()
+            .any(|action| matches!(action, crate::cob::identity::Action::Revision { .. }))
+        {
+            crate::identity::Doc::load_at(id, repo)?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn load_entry<R: ReadRepository>(
+    repo: &R,
+    raw: &git::raw::Repository,
+    id: Oid,
+) -> Result<cob::Entry, LoadError> {
+    match raw.load(id) {
+        Ok(entry) => Ok(entry),
+        Err(NativeLoadError::NativeContextRequired) => {
+            let odb = raw.odb().map_err(NativeLoadError::from)?;
+            let object = odb.read(id.into()).map_err(NativeLoadError::from)?;
+            let signed = radicle_git_metadata::commit::bls::SignedCommit::parse(object.data())
+                .map_err(NativeLoadError::from)?;
+            let envelope =
+                crypto::BlsEnvelope::from_hex(signed.envelope()).map_err(NativeLoadError::from)?;
+            let authorization =
+                repo.authorize_entry(envelope.key().into(), id, crypto::SubjectKind::Cob)?;
+            let repository = repo
+                .id()
+                .into_sha1()
+                .ok_or(NativeLoadError::NativeSignature(
+                    crypto::repository::Error::InvalidSubject,
+                ))?;
+            cob::load_native(
+                raw,
+                id,
+                repository,
+                authorization.signature_context(&envelope.into()),
+            )
+            .map_err(Into::into)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
 
 #[derive(Error, Debug)]
 pub enum ObjectsError {
@@ -51,7 +125,7 @@ impl cob::Store for Repository {}
 
 impl change::Storage for Repository {
     type StoreError = <git::raw::Repository as change::Storage>::StoreError;
-    type LoadError = <git::raw::Repository as change::Storage>::LoadError;
+    type LoadError = LoadError;
 
     type ObjectId = <git::raw::Repository as change::Storage>::ObjectId;
     type Parent = <git::raw::Repository as change::Storage>::Parent;
@@ -70,25 +144,25 @@ impl change::Storage for Repository {
     }
 
     fn load(&self, id: Self::ObjectId) -> Result<cob::Entry, Self::LoadError> {
-        self.backend.load(id)
+        load_entry(self, &self.backend, id)
     }
 
     fn parents_of(&self, id: &Oid) -> Result<Vec<Oid>, Self::LoadError> {
-        self.backend.parents_of(id)
+        self.backend.parents_of(id).map_err(Into::into)
     }
 
     fn manifest_of(&self, id: &Oid) -> Result<cob::Manifest, Self::LoadError> {
-        self.backend.manifest_of(id)
+        self.backend.manifest_of(id).map_err(Into::into)
     }
 }
 
 impl cob::object::Storage for Repository {
     type ObjectsError = ObjectsError;
     type TypesError = TypesError;
-    type UpdateError = git::raw::Error;
+    type UpdateError = UpdateError;
     type RemoveError = git::raw::Error;
 
-    type Namespace = NodeId;
+    type Namespace = RepositoryKey;
 
     fn objects(
         &self,
@@ -149,6 +223,7 @@ impl cob::object::Storage for Repository {
         object_id: &cob::ObjectId,
         entry: &cob::EntryId,
     ) -> Result<(), Self::UpdateError> {
+        verify_update(self, &self.backend, *entry)?;
         self.backend.reference(
             git::refs::storage::cob(namespace, typename, object_id).as_str(),
             (*entry).into(),
@@ -195,7 +270,7 @@ impl<R: storage::WriteRepository> cob::Store for DraftStore<'_, R> {}
 
 impl<R: storage::WriteRepository> change::Storage for DraftStore<'_, R> {
     type StoreError = <git::raw::Repository as change::Storage>::StoreError;
-    type LoadError = <git::raw::Repository as change::Storage>::LoadError;
+    type LoadError = LoadError;
 
     type ObjectId = <git::raw::Repository as change::Storage>::ObjectId;
     type Parent = <git::raw::Repository as change::Storage>::Parent;
@@ -214,15 +289,15 @@ impl<R: storage::WriteRepository> change::Storage for DraftStore<'_, R> {
     }
 
     fn load(&self, id: Self::ObjectId) -> Result<cob::Entry, Self::LoadError> {
-        self.repo.raw().load(id)
+        load_entry(self.repo, self.repo.raw(), id)
     }
 
     fn parents_of(&self, id: &Oid) -> Result<Vec<Oid>, Self::LoadError> {
-        self.repo.raw().parents_of(id)
+        self.repo.raw().parents_of(id).map_err(Into::into)
     }
 
     fn manifest_of(&self, id: &Oid) -> Result<cob::Manifest, Self::LoadError> {
-        self.repo.raw().manifest_of(id)
+        self.repo.raw().manifest_of(id).map_err(Into::into)
     }
 }
 
@@ -236,7 +311,7 @@ where
     ) -> Result<storage::refs::SignedRefs, RepositoryError> {
         // Since this is a draft store, we do not actually want to sign the refs.
         // Instead, we just return the existing signed refs.
-        let remote = self.repo.remote(signer.public_key())?;
+        let remote = self.repo.remote(&signer.public_key().into())?;
 
         Ok(remote.refs)
     }
@@ -270,6 +345,14 @@ impl<R: storage::ValidateRepository> ValidateRepository for DraftStore<'_, R> {
 }
 
 impl<R: storage::ReadRepository> ReadRepository for DraftStore<'_, R> {
+    fn authorize_entry(
+        &self,
+        authority: crypto::RepositoryKey,
+        entry: Oid,
+        kind: crypto::SubjectKind,
+    ) -> Result<storage::publication::EntryAuthorization, storage::publication::Error> {
+        self.repo.authorize_entry(authority, entry, kind)
+    }
     fn id(&self) -> identity::RepoId {
         self.repo.id()
     }
@@ -365,10 +448,6 @@ impl<R: storage::ReadRepository> ReadRepository for DraftStore<'_, R> {
         self.repo.identity_root()
     }
 
-    fn identity_root_of(&self, remote: &RemoteId) -> Result<Oid, RepositoryError> {
-        self.repo.identity_root_of(remote)
-    }
-
     fn canonical_identity_head(&self) -> Result<Oid, RepositoryError> {
         self.repo.canonical_identity_head()
     }
@@ -381,10 +460,10 @@ impl<R: storage::ReadRepository> ReadRepository for DraftStore<'_, R> {
 impl<R: storage::WriteRepository> cob::object::Storage for DraftStore<'_, R> {
     type ObjectsError = ObjectsError;
     type TypesError = git::raw::Error;
-    type UpdateError = git::raw::Error;
+    type UpdateError = UpdateError;
     type RemoveError = git::raw::Error;
 
-    type Namespace = NodeId;
+    type Namespace = RepositoryKey;
 
     fn objects(
         &self,
@@ -435,6 +514,7 @@ impl<R: storage::WriteRepository> cob::object::Storage for DraftStore<'_, R> {
         object_id: &cob::ObjectId,
         entry: &cob::history::EntryId,
     ) -> Result<(), Self::UpdateError> {
+        verify_update(self, self.repo.raw(), *entry)?;
         self.repo.raw().reference(
             git::refs::storage::draft::cob(namespace, typename, object_id).as_str(),
             (*entry).into(),

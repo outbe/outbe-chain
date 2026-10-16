@@ -367,7 +367,7 @@ where
     A: for<'de> serde::Deserialize<'de>,
 {
     let history = cob::stream::CobRange::new(typename, &oid);
-    let stream = cob::stream::Stream::<A>::new(&repo.backend, history, typename.clone());
+    let stream = cob::stream::Stream::<A>::new(repo, history, typename.clone());
     let iter = match (from, until) {
         (None, None) => stream.all()?,
         (None, Some(until)) => stream.until(until)?,

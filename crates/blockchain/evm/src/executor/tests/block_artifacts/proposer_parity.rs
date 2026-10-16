@@ -468,6 +468,8 @@ fn signed_late_credit_artifact(
     } = *binding;
     let (aggregate_signature, signer_bitmap) = late_credit_signature(keys, binding)?;
     let artifact = OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
         execution_summary: None,
         consensus_header_artifact: None,
         timestamp_millis_part: 0,

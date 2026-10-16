@@ -14,6 +14,9 @@ impl Features {
     /// `SEED` is the base feature set all seed nodes must support.
     pub const SEED: Features = Features(0b00000001);
 
+    /// Native repository authority keys and negotiated V2 namespace fields.
+    pub const REPOSITORY_KEYS: Features = Features(1 << 63);
+
     /// Returns [`Features`] with the other features added.
     #[must_use]
     pub fn with(self, other: Features) -> Features {

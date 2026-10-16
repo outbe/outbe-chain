@@ -1,0 +1,145 @@
+{
+  "snapshot_sha256": "22783b25124ef5bfb6dffa29d667ba748c0da5c06aa216b55a96494c16c5bb75",
+  "base_head": "0c1c8773baa8424444744bccede6eadeb022e3eb",
+  "checks": {
+    "sources": {
+      "vendor/heartwood/crates/radicle-cob/src/lib.rs": {
+        "expected": "026610f73e917760fb26eabf61b68834443b687f5d14e281b751981d1b6379e4",
+        "actual": "026610f73e917760fb26eabf61b68834443b687f5d14e281b751981d1b6379e4",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle/src/cob/identity.rs": {
+        "expected": "ce5757d52894018db86e3725b78f6380803ffd04887df23ce5d450fe047e6e18",
+        "actual": "ce5757d52894018db86e3725b78f6380803ffd04887df23ce5d450fe047e6e18",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle/src/identity/doc.rs": {
+        "expected": "28a98c33a12426064d10b6e7474b02ea82f6726fe74be3a3090c8f59af6b9038",
+        "actual": "28a98c33a12426064d10b6e7474b02ea82f6726fe74be3a3090c8f59af6b9038",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle/src/storage.rs": {
+        "expected": "2f9ac93c3625ef68f73fb6928a001b64b06e7afc6548d6c6b617fc9a8948449d",
+        "actual": "2f9ac93c3625ef68f73fb6928a001b64b06e7afc6548d6c6b617fc9a8948449d",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle/src/storage/git.rs": {
+        "expected": "7686a9ec218a37ac0ebb78fd05e1b0b62cd64139ec0199422cd76e645aa2b9de",
+        "actual": "7686a9ec218a37ac0ebb78fd05e1b0b62cd64139ec0199422cd76e645aa2b9de",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle/src/storage/git/cob.rs": {
+        "expected": "eb05254c86f395cc9d0c02317f96c41064a27738cb4145ac24b5c7b3291b7308",
+        "actual": "eb05254c86f395cc9d0c02317f96c41064a27738cb4145ac24b5c7b3291b7308",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle/src/storage/git/temp.rs": {
+        "expected": "88cb792b103680e4091959a813784cb8d7e946d8bba3369f72062e74f0fa7a08",
+        "actual": "88cb792b103680e4091959a813784cb8d7e946d8bba3369f72062e74f0fa7a08",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle/src/storage/refs.rs": {
+        "expected": "95deacc0fd96a4e5e914d2a56a3a7e881aa54d056167ea24981bc9bbe4bf4fd2",
+        "actual": "95deacc0fd96a4e5e914d2a56a3a7e881aa54d056167ea24981bc9bbe4bf4fd2",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle/src/storage/refs/sigrefs/read.rs": {
+        "expected": "3d8017a68b4f61fcd8486c6f595406370b0726e1e0943c154c67e29d84b5d628",
+        "actual": "3d8017a68b4f61fcd8486c6f595406370b0726e1e0943c154c67e29d84b5d628",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle/src/storage/refs/sigrefs/read/error.rs": {
+        "expected": "a386a1602842d832a263ed9eb03f62e52c1cae096d8b27dfa54645c499197fe4",
+        "actual": "a386a1602842d832a263ed9eb03f62e52c1cae096d8b27dfa54645c499197fe4",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle/src/storage/refs/sigrefs/write/test/native.rs": {
+        "expected": "4271763da7b83193b15c9f53e79491d3f35a3639ebe732bb0f2d4dab91a4ca30",
+        "actual": "4271763da7b83193b15c9f53e79491d3f35a3639ebe732bb0f2d4dab91a4ca30",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle/src/storage/publication.rs": {
+        "expected": "1c43fb288f04eb312f3509ee8c8a084c09d7ffc55ec9d59b45ae88f5901070ba",
+        "actual": "1c43fb288f04eb312f3509ee8c8a084c09d7ffc55ec9d59b45ae88f5901070ba",
+        "match": true
+      },
+      "plans/radicle-patch-vote/design.md": {
+        "expected": "dc9fd94ad85704057e284b374e0da27d7e0398546790ab1a202b2a9270e86df8",
+        "actual": "dc9fd94ad85704057e284b374e0da27d7e0398546790ab1a202b2a9270e86df8",
+        "match": true
+      },
+      "plans/radicle-patch-vote/plan.md": {
+        "expected": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b",
+        "actual": "e077e1f2b577ab5ad7fe1943d32559fdc6ca383bc327c8f38848e7773cbaa10b",
+        "match": true
+      },
+      "plans/radicle-patch-vote/task-specs.json": {
+        "expected": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+        "actual": "5d26f9ef602867a7ed86ed9954d32f4379ec5fb867fa925208db9aa36a9b0412",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle-cob/src/change_graph.rs": {
+        "expected": "76518ba703a362e7791dbfe808747a594b29f26d4fc82f0ffafecc1990c1f342",
+        "actual": "76518ba703a362e7791dbfe808747a594b29f26d4fc82f0ffafecc1990c1f342",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle-cob/src/backend/git/change.rs": {
+        "expected": "8d94a9ae876efffb33958fa21e0cd360a239f5700b7c7b59c063f7074cedece7",
+        "actual": "8d94a9ae876efffb33958fa21e0cd360a239f5700b7c7b59c063f7074cedece7",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle/src/cob/patch/cache.rs": {
+        "expected": "85eae6c5d40db48966dba5c25fe8ae98f8861c80dfd8720e8179f96301680d79",
+        "actual": "85eae6c5d40db48966dba5c25fe8ae98f8861c80dfd8720e8179f96301680d79",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle/src/cob/issue/cache.rs": {
+        "expected": "9f4d31a8cd31b572eeded3d0ac2784be4103a72250558bb7430ffc7ee8c61fcc",
+        "actual": "9f4d31a8cd31b572eeded3d0ac2784be4103a72250558bb7430ffc7ee8c61fcc",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle/src/cob/store.rs": {
+        "expected": "45a3bc01ee960a82e884fa2ef5c41bd6e507204f6ddb50df97e2298c8a6842c1",
+        "actual": "45a3bc01ee960a82e884fa2ef5c41bd6e507204f6ddb50df97e2298c8a6842c1",
+        "match": true
+      },
+      "vendor/heartwood/crates/radicle/src/cob/stream/iter.rs": {
+        "expected": "af460570c7aaa3be7754337395babbff0ca448e94b66fb3fc05e901138d041c6",
+        "actual": "af460570c7aaa3be7754337395babbff0ca448e94b66fb3fc05e901138d041c6",
+        "match": true
+      }
+    },
+    "artifacts": {
+      "plans/radicle-patch-vote/decisions/D1/proposal.md": {
+        "expected": "93cd6568d64e396a4d22993b9b727cc8be452b1985d71e4ead621f74ecfda188",
+        "actual": "93cd6568d64e396a4d22993b9b727cc8be452b1985d71e4ead621f74ecfda188",
+        "match": true
+      },
+      "plans/radicle-patch-vote/decisions/D1/baseline-repro.log": {
+        "expected": "05f0665e25d71f6f67c9cf3b8f7fdeb08f760e75f7c0c79ecbd46bbf146e9900",
+        "actual": "05f0665e25d71f6f67c9cf3b8f7fdeb08f760e75f7c0c79ecbd46bbf146e9900",
+        "match": true
+      },
+      "plans/radicle-patch-vote/decisions/D1/baseline-compile.log": {
+        "expected": "e9a3dc328422a2eb007b3a330f7e4cc1f422f79e1d3e14052135a00bd4250c13",
+        "actual": "e9a3dc328422a2eb007b3a330f7e4cc1f422f79e1d3e14052135a00bd4250c13",
+        "match": true
+      },
+      "plans/radicle-patch-vote/decisions/D1/repro/Cargo.toml": {
+        "expected": "c6bc25696688566dd4229cad483d615cacc5e8a116d6b9e476f5d67b9b5d1d9d",
+        "actual": "c6bc25696688566dd4229cad483d615cacc5e8a116d6b9e476f5d67b9b5d1d9d",
+        "match": true
+      },
+      "plans/radicle-patch-vote/decisions/D1/repro/Cargo.lock": {
+        "expected": "4c996bd152ce98d7c2f2eab363b3d42c7c11c466a6b25fa7a7ace16465b29a4c",
+        "actual": "4c996bd152ce98d7c2f2eab363b3d42c7c11c466a6b25fa7a7ace16465b29a4c",
+        "match": true
+      },
+      "plans/radicle-patch-vote/decisions/D1/repro/src/main.rs": {
+        "expected": "09546968e87862f2f79c7590ffa5747dcc611438d378f2507f0448b2aaa2ff00",
+        "actual": "09546968e87862f2f79c7590ffa5747dcc611438d378f2507f0448b2aaa2ff00",
+        "match": true
+      }
+    }
+  }
+}

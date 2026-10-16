@@ -1,0 +1,18 @@
+{
+  "reviewed_sha": "eb834f31ccd027d7af604ba1393498491cc133e6",
+  "base_sha": "0a322cf3ceafcc4bb8a23cae26fe22c7626409f4",
+  "timestamp_utc": "2026-10-15T11:27:57.401509+00:00",
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "architecture": "arm64",
+  "tools": {
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "git": "git version 2.54.0 (Apple Git-157)",
+    "python3": "Python 3.15.0"
+  },
+  "chain_toolchain_unchanged": true,
+  "upstream_msrv": "1.88.0",
+  "upstream_developer_toolchain": "1.98.0; retained, not installed or needed for chain-root --manifest-path validation",
+  "spec_hash": "2e495135b803ae4054d2a236e80aa8d3f75a3d712a13bb1998a2b9aa3fa3f30d"
+}

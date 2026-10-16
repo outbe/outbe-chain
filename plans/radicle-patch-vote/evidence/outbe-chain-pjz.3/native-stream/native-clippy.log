@@ -1,0 +1,46 @@
+   Compiling radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+   Compiling radicle-cli v0.23.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-cli)
+   Compiling radicle-node v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-node)
+   Compiling radicle-remote-helper v0.18.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-remote-helper)
+    Checking radicle-fetch v0.21.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-fetch)
+    Checking radicle-schemars v0.9.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-schemars)
+    Checking radicle-protocol v0.9.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle-protocol)
+error: indexing may panic
+   --> crates/radicle-cli/tests/commands/cob.rs:166:24
+    |
+166 |             assert_eq!(op["author"], owner.to_string());
+    |                        ^^^^^^^^^^^^
+    |
+    = help: consider using `.get(n)` or `.get_mut(n)` instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#indexing_slicing
+    = note: requested on the command line with `-D clippy::indexing-slicing`
+
+error: indexing may panic
+   --> crates/radicle-cli/tests/commands/cob.rs:167:24
+    |
+167 |             assert_eq!(op["actions"][0]["verdict"], "accept");
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider using `.get(n)` or `.get_mut(n)` instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#indexing_slicing
+
+error: indexing may panic
+   --> crates/radicle-cli/tests/commands/cob.rs:167:24
+    |
+167 |             assert_eq!(op["actions"][0]["verdict"], "accept");
+    |                        ^^^^^^^^^^^^^^^^
+    |
+    = help: consider using `.get(n)` or `.get_mut(n)` instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#indexing_slicing
+
+error: indexing may panic
+   --> crates/radicle-cli/tests/commands/cob.rs:167:24
+    |
+167 |             assert_eq!(op["actions"][0]["verdict"], "accept");
+    |                        ^^^^^^^^^^^^^
+    |
+    = help: consider using `.get(n)` or `.get_mut(n)` instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#indexing_slicing
+
+error: could not compile `radicle-cli` (test "commands") due to 4 previous errors
+warning: build failed, waiting for other jobs to finish...

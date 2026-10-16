@@ -425,6 +425,24 @@ impl Localnet {
         if let Some((user, cca)) = profile.credis_accounts {
             prepare_credis_seed(root, user, cca)?;
         }
+        if profile.governments {
+            use sha2::{Digest as _, Sha256};
+            let registry = root
+                .entry("radicle_registry")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .ok_or_else(|| eyre!("genesis seed radicle_registry is not an object"))?;
+            let tree =
+                radicle::git::raw::Oid::hash_object(radicle::git::raw::ObjectType::Tree, b"")?;
+            registry.insert(
+                "governments".into(),
+                json!({
+                    "description": "Network governance",
+                    "initial_tree_oid": format!("0x{tree}"),
+                    "initial_content_manifest_sha256": format!("0x{:x}", Sha256::digest(b"[]")),
+                }),
+            );
+        }
         // The Hyperlane feature calls `initialize` with the forge deployer key.
         root.entry("hyperlane_controller")
             .or_insert_with(|| json!({ "admin": crate::world::forge::DEPLOYER_ADDRESS }));
@@ -1133,6 +1151,91 @@ mod tests {
                 "0".into(),
             )
         );
+    }
+
+    #[test]
+    fn governments_profile_seeds_the_real_genesis_descriptor_without_editing_the_input() {
+        use outbe_primitives::radicle_genesis::GovernmentsDescriptor;
+        let directory = tempfile::tempdir().unwrap();
+        let env = crate::env::Environment {
+            data_dir: directory.path().to_path_buf(),
+            ..crate::env::Environment::default()
+        };
+        env.ports.start_scenario(env.validators).unwrap();
+        let mut cfg = crate::internal::config::Config::for_scenario(&env, 1);
+        cfg.seed = directory.path().join("input-seed.json");
+        fs::create_dir_all(&cfg.dir).unwrap();
+        let original = json!({"radicle_registry": {"max_repositories": 8}});
+        fs::write(&cfg.seed, serde_json::to_vec(&original).unwrap()).unwrap();
+        let localnet = Localnet::new(cfg);
+        let profile = BootstrapProfile::default().with_governments().unwrap();
+        let seed = localnet.prepare_scenario_seed(&profile).unwrap();
+        let genesis = localnet.cfg.dir.join("governments-genesis.json");
+        fs::write(
+            &genesis,
+            serde_json::to_vec(&json!({
+                "config": {"chainId": 2026, "epochLengthBlocks": 300, "dkgPrepareWindowBlocks": 30},
+                "timestamp": "0x6553f100",
+                "alloc": {},
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let output = Command::new("python3")
+            .arg(localnet.cfg.repo.join("scripts/seed_genesis.py"))
+            .arg("--genesis")
+            .arg(&genesis)
+            .arg("--seed")
+            .arg(&seed)
+            .arg("--contracts-dir")
+            .arg(localnet.cfg.repo.join("scripts/contracts"))
+            .arg("--output")
+            .arg(&genesis)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "production genesis seeder failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let genesis: serde_json::Value =
+            serde_json::from_slice(&fs::read(genesis).unwrap()).unwrap();
+        let descriptor = GovernmentsDescriptor::from_bytes(
+            &::hex::decode(
+                genesis["config"]["radicleGovernments"]
+                    .as_str()
+                    .unwrap()
+                    .strip_prefix("0x")
+                    .unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(descriptor.chain_id, 2026);
+        assert_eq!(descriptor.genesis_timestamp, 1_700_000_000);
+        assert_eq!(
+            descriptor.initial_tree_oid.to_string(),
+            "0x4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        );
+        assert_eq!(
+            format!("{:#x}", descriptor.initial_content_manifest_sha256),
+            "0x4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&fs::read(&localnet.cfg.seed).unwrap())
+                .unwrap(),
+            original
+        );
+        let legacy = localnet
+            .prepare_scenario_seed(&BootstrapProfile::default())
+            .unwrap();
+        let legacy: serde_json::Value = serde_json::from_slice(&fs::read(legacy).unwrap()).unwrap();
+        assert!(legacy["radicle_registry"].get("governments").is_none());
+        assert!(profile
+            .with_dkg_timing(60, 15, 20)
+            .unwrap()
+            .validate_for_committee(4)
+            .is_err());
     }
 
     #[test]

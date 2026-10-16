@@ -1,0 +1,5 @@
+# Intermediate local publication attempt: FAIL
+
+Source `3c9637afaaa66a87578396184fe3aaa485d94c04`. Native verification failed to compile the new draft regression test: its `storage` alias already means storage::git, so the added DraftStore path had an extra git component. Full native suites, Clippy and fmt are NOT PASS for this source. The runner stops at the native failure; subsequent native checks did not execute. This failure is preserved; the correction and rerun will have a separate source and bundle. Root commands are independently recorded and cannot override the native failure.
+
+Before production changes, a real signed managed identity without either receipt was published by the existing object::Storage::update path; the new assertion failed (`diagnostic-before.log`). This is a current-entry local write test. It is not evidence of an old-share attack, a complete unauthorized patch acceptance, full dependency closure, or a distributed finality scenario. No D1/D2 architecture is selected by this correction.

@@ -1,0 +1,100 @@
+[
+  {
+    "path": "UPSTREAM.md",
+    "mode": "100644",
+    "blob_oid": "68862895cf2c34ac4e0643b4d3a39973483d97b4",
+    "sha256": "80b3affa67357d8e277f0ac99a0caef077bfdfc6d4d9eacb30def3e038b62b5b",
+    "upstream_blob_oid": null
+  },
+  {
+    "path": "build.rs",
+    "mode": "100644",
+    "blob_oid": "a19727c10a3853283b9b3c4bf5f220ed866699d2",
+    "sha256": "c3f7116bcd78d2c6c82f5f1e18145bcf8315bfc65ffeb48310f7babd94720648",
+    "upstream_blob_oid": "4cdd62b44e3953d53780e963629a5e32db4ac25e"
+  },
+  {
+    "path": "crates/radicle-cli/Cargo.toml",
+    "mode": "100644",
+    "blob_oid": "4acba245b14ff7eba67e74054f24a6ac1e16e92a",
+    "sha256": "6cc1812438d4f09bee5f155a96f9cf8353a4d396024f0d498dac8f6c4b7bb536",
+    "upstream_blob_oid": "29110db93a9588facaa268add99d2570db6c9dfc"
+  },
+  {
+    "path": "crates/radicle-cli/examples/git/git-push-canonical-symbolic-ref.md",
+    "mode": "100644",
+    "blob_oid": "cd8512aab63fbee12c77b64464b5cdbd5e743c5b",
+    "sha256": "f1a54a5538843fc9a28fc0b91d970304061121ebefb51ccf88296a53c027c193",
+    "upstream_blob_oid": "49fa4e623f152483acb05e063b2e0e7f15157a3c"
+  },
+  {
+    "path": "crates/radicle-node/src/control.rs",
+    "mode": "100644",
+    "blob_oid": "5132a3f7129852cba4c64e380704eaf843ba7d8e",
+    "sha256": "261962c90075f88fb0fcadccfc62fafcb7c8ec23aaa0b12aa235b1faeec06dee",
+    "upstream_blob_oid": "bdd7b53a098579d5e2d781ae43bb75e2e06ca33f"
+  },
+  {
+    "path": "crates/radicle-node/src/runtime/handle.rs",
+    "mode": "100644",
+    "blob_oid": "11fa87d53845174349a50ea18fe4ff83946f294a",
+    "sha256": "b35a4ba46ffa8e23bb74246fe3b39fd07cab0b32fcf8da584982597ab7702331",
+    "upstream_blob_oid": "3868d7c99483f30cd24ba9b8a245361d7852cd47"
+  },
+  {
+    "path": "crates/radicle-node/src/test/handle.rs",
+    "mode": "100644",
+    "blob_oid": "0db56e3957a9711290afe508886eb159feb5710b",
+    "sha256": "d7ba8c4a802c8b84883478f3638d2475f5354042b05f52517fcae4384906af30",
+    "upstream_blob_oid": "d4cfc58e09b6f787b6aa9a11f1c8be9d7607e1d2"
+  },
+  {
+    "path": "crates/radicle-node/src/tests.rs",
+    "mode": "100644",
+    "blob_oid": "31cfe8c186780841c8ebd4017cda7d40aaa9f193",
+    "sha256": "a912819dd98601ef77a9b2282f35f50a2305f1b48c61c3ae7ead33d768ff408c",
+    "upstream_blob_oid": "d6253acca71b2cf9c8139a3cc693dbe9657f00ed"
+  },
+  {
+    "path": "crates/radicle-protocol/src/service.rs",
+    "mode": "100644",
+    "blob_oid": "ebd9a8a4da26548c97e3598f81855dc6064867c1",
+    "sha256": "18ef41e52395bdd2dae9b9d42482a9d04a867eeab2e921d3f8466741cd067bb9",
+    "upstream_blob_oid": "be4954b5e4d188680a6637f43d8c81c97390c073"
+  },
+  {
+    "path": "crates/radicle-protocol/src/service/command.rs",
+    "mode": "100644",
+    "blob_oid": "422fc9c4a91c206f8a7e84398e09800d4b6bd31c",
+    "sha256": "702da45f485d8bc8247c1b87801db51c63169c4c5a14518d6454399c5d6ba1e6",
+    "upstream_blob_oid": "f48a6c15f64e3bb28ce8da7b34770fcef47fd8e8"
+  },
+  {
+    "path": "crates/radicle-surf/Cargo.toml",
+    "mode": "100644",
+    "blob_oid": "d3a6786a63e4a5768d323f43cf436bb92c1455c8",
+    "sha256": "76b6bdb51f4fee5daa51541c21fbe452365d503f15dde4a87e8a141a21973a65",
+    "upstream_blob_oid": "e13f04cb2f5b60b230ac9a9106adfb8fd1b8b51f"
+  },
+  {
+    "path": "crates/radicle/src/node.rs",
+    "mode": "100644",
+    "blob_oid": "4d91def9ed60b5bc7359bf25a40b86b5da53fbe4",
+    "sha256": "0ff198b950976a81fb259d9ac37091619ad373e679f19b4c52306c5575676aaf",
+    "upstream_blob_oid": "01eba76bc4895aa3303692fdb6eaf6cf04b164b5"
+  },
+  {
+    "path": "crates/radicle/src/node/command.rs",
+    "mode": "100644",
+    "blob_oid": "c555386e8daa37473245a4bd31178853deac5dfb",
+    "sha256": "564ef85d0b2024fd576702224b0a8afa1d9f0cb9e524c7ec76e79bf523a86593",
+    "upstream_blob_oid": "aa5dbbf452e960dbe916d615057f8f239f9daf31"
+  },
+  {
+    "path": "crates/radicle/src/node/config.rs",
+    "mode": "100644",
+    "blob_oid": "d63b12fda74e24967a264db2130ddd82369eff92",
+    "sha256": "445821dac3fdd0034ad144a2c60110638f302db92505c43af34af62451cffff1",
+    "upstream_blob_oid": "a544959538d959353b81b087b8c1633a0fa11e91"
+  }
+]

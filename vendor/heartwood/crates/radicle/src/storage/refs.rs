@@ -10,9 +10,9 @@ use std::io::{BufRead, BufReader};
 use std::ops::Deref;
 use std::str::FromStr;
 
-use crypto::PublicKey;
-use crypto::Signature;
-use radicle_core::NodeId;
+use crypto::RepositoryKey as PublicKey;
+use crypto::RepositoryKey;
+use crypto::RepositorySignature;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -72,7 +72,7 @@ impl Refs {
     /// This creates a new commit on the signed refs branch, and updates the branch pointer.
     pub fn save<Repo>(
         self,
-        namespace: NodeId,
+        namespace: RepositoryKey,
         committer: sigrefs::git::Committer,
         repo: &Repo,
         signer: &impl crypto::Signer,
@@ -88,7 +88,7 @@ impl Refs {
     /// Save the signed refs to disk, even if the refs are unchanged.
     pub fn force_save<Repo>(
         self,
-        namespace: NodeId,
+        namespace: RepositoryKey,
         committer: sigrefs::git::Committer,
         repo: &Repo,
         signer: &impl crypto::Signer,
@@ -103,7 +103,7 @@ impl Refs {
 
     fn save_with<Repo>(
         self,
-        namespace: NodeId,
+        namespace: RepositoryKey,
         committer: sigrefs::git::Committer,
         repo: &Repo,
         signer: &impl crypto::Signer,
@@ -145,7 +145,7 @@ impl Refs {
     }
 
     /// Create refs from a canonical representation.
-    fn from_canonical(bytes: &[u8]) -> Result<Self, canonical::Error> {
+    pub fn from_canonical(bytes: &[u8]) -> Result<Self, canonical::Error> {
         let reader = BufReader::new(bytes);
         let mut refs = BTreeMap::new();
 
@@ -167,7 +167,8 @@ impl Refs {
         Ok(Self(refs))
     }
 
-    fn canonical(&self) -> Vec<u8> {
+    /// Return the deterministic wire encoding of these references.
+    pub fn canonical(&self) -> Vec<u8> {
         let mut buf = String::new();
 
         for (name, oid) in self.0.iter() {
@@ -376,7 +377,7 @@ pub struct SignedRefs {
     refs: Refs,
     /// The signature of the signer over the refs.
     #[serde(skip)]
-    signature: Signature,
+    signature: RepositorySignature,
     /// This is the remote under which these refs exist, and the public key of the signer.
     id: PublicKey,
 
@@ -391,8 +392,8 @@ pub struct SignedRefs {
 }
 
 impl SignedRefs {
-    /// Returns the [`NodeId`] of the [`SignedRefs`].
-    pub fn id(&self) -> NodeId {
+    /// Returns the [`RepositoryKey`] of the [`SignedRefs`].
+    pub fn id(&self) -> RepositoryKey {
         self.id
     }
 
@@ -447,9 +448,10 @@ impl SignedRefs {
     {
         let root = repo.rid();
 
-        let verifier = crypto::VerifyingKey::try_from(&remote).map_err(|source| {
-            sigrefs::read::error::Read::Verify(sigrefs::read::error::Verify::Signature(source))
-        })?;
+        let verifier = sigrefs::read::RepositoryVerifier::new(remote, |commit, signature| {
+            repo.authorize_entry(remote, commit, crypto::SubjectKind::SignedRefs)
+                .map(|authorization| authorization.signature_context(signature))
+        });
 
         match sigrefs::SignedRefsReader::new(root, tip, repo, &verifier).read() {
             Ok(latest) => Ok(Some(latest.into_sigrefs_at(remote))),
@@ -591,7 +593,7 @@ mod tests {
         let (bob_paris_sigrefs, bob_head) = {
             let bob_working = rad::checkout(
                 paris.id,
-                bob.public_key(),
+                &bob.public_key().into(),
                 tmp.path().join("working"),
                 &storage,
                 false,
@@ -629,7 +631,7 @@ mod tests {
 
         {
             // Sanity check: make sure the default branches don't already match between Alice and Bob.
-            let alice_paris_sigrefs = SignedRefs::load(*alice.public_key(), &paris)
+            let alice_paris_sigrefs = SignedRefs::load(alice.public_key().into(), &paris)
                 .unwrap()
                 .unwrap();
             assert_ne!(
@@ -675,7 +677,8 @@ mod tests {
         london
             .raw()
             .reference(
-                git::refs::storage::branch_of(bob.public_key(), &git::fmt::refname!("master"))
+                git::fmt::Qualified::from(git::fmt::lit::refs_heads(&git::fmt::refname!("master")))
+                    .with_namespace(bob.public_key().into())
                     .as_str(),
                 bob_head,
                 false,
@@ -686,7 +689,7 @@ mod tests {
         // Due to the verification, we get a validation error when trying to load Bob's remote.
         // The graft is not allowed.
         assert_matches!(
-            london.remote(bob.public_key()),
+            london.remote(&bob.public_key().into()),
             Err(Error::Read(sigrefs::read::error::Read::Verify(sigrefs::read::error::Verify::MismatchedIdentity {
                 expected,
                 found,

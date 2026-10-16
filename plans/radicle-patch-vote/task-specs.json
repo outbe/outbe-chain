@@ -1,0 +1,351 @@
+[
+  {
+    "key": "P0",
+    "title": "Зафиксировать проверенный контракт BLS authority и patch acceptance",
+    "deps": [],
+    "context": "Сейчас поддерживается Ed25519, общего BLS repository authority и patch VoteTarget нет. Публичный Signer связан с конкретными типами; NodeId, DID, namespaces, COB signatures и sigrefs используют общие ключи. Existing DKG threshold MinSig служит VRF, individual MinPk — consensus identity; их совместимость и право повторного использования не доказаны. Этот этап снимает blockers до изменения протокола.",
+    "changes": [
+      "Составить точную карту crypto, identity, COB, refs, wire/fetch, genesis, Vote и signer callers с действующими контрактами и форматом signing bytes.",
+      "Зафиксировать threshold BLS ciphersuite, domain separation и кодирование; отделить transport identity от repository authority; определить native BLS signature envelope и backwards compatibility. Никакого fallback с BLS authority на Ed25519.",
+      "Доказать безопасный источник текущего eligible signing set, threshold и participant index mapping из exact finalized состояния; решить ACTIVE lifecycle vs effective consensus/DKG membership и семантику голосования patch без переписывания всех Vote targets.",
+      "Решить initial DKG -> genesis descriptor -> stable RID/initial identity, authenticated key rotation, historical verification vs новые действия старых shares. Если существующий DKG непригоден, спроектировать отдельное material lifecycle для repository authority, не выдавая VRF shares за готовый произвольный signer.",
+      "Зафиксировать deterministic operation preparation, Review Accept отдельно от Merge, target branch movement/conflict, durable publish ordering и точки restart. Генеральный Radicle не разбирает Vote."
+    ],
+    "files": [
+      "plans/radicle-patch-vote/design.md (новый контракт и source matrix)",
+      "vendor/heartwood/crates/radicle-crypto/src/{lib.rs,ssh.rs}; vendor/heartwood/crates/radicle/src/{identity,cob,storage,node}; vendor/heartwood/crates/radicle-cob/src/backend/git/change.rs (исследование)",
+      "crates/blockchain/consensus/src/{hybrid.rs,hybrid/vrf_material.rs,dkg_manager.rs}; crates/blockchain/engine/src/stack/dkg/ (исследование)",
+      "crates/system/vote/src/{runtime.rs,state.rs,handlers.rs}; crates/system/radicleregistry/src/; scripts/genesis_seed_alloc.py; crates/blockchain/radicle/src/manager/snapshot.rs (исследование)",
+      "plans/radicle-patch-vote/p0-check/{src/main.rs,src/publication.rs,src/native.rs,vectors/,audit_sources.py,verify_vectors.py}; plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/ (finite design proofs, not production source)",
+      "plans/radicle-patch-vote/p0-check/descriptor_check.py и plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/descriptor-check.log (OGD1/OPB1 finite framing proof)",
+      "plans/radicle-patch-vote/p0-check/schedule_check.py и plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/schedule-check.log; engine stack DKG/epoch cadence sources (design evidence)"
+    ],
+    "tests": [
+      "Проверка каждого design claim по live source с path:line и существующими тестами; таблица всех blockers с выбранным решением и обоснованием.",
+      "Минимальный executable crypto/serialization self-check только если источник/документация не закрывают конкретную осуществимость; результат не является production implementation.",
+      "Threat scenarios для old shares, wrong epoch/domain/network, race committee transition и self-asserted group key; доказать, какое правило их отклоняет.",
+      "Native byte vectors: actual Git doc blob/COB tree/commit OIDs; all three RDB1 messages and Commonware framing, OPJ1 contexts, 269-byte envelope/header/key wire roundtrip, metadata/cross-kind/length/tamper negatives. Reduced convergence model: different valid q-subsets, staggered 2+2 delivery and different local finalized tips yield one checkpoint without all n.",
+      "Cycle-free DescriptorV1 exact OGD1 bytes/hash: only known pre-genesis inputs (chain_id/timestamp/name/branch/description/tree/content/policy/key-source), excludes genesis_hash/RID/group key/self hash. Roundtrip/negative vector plus later full OPB1 chain/genesis/RID/key binding; no production genesis/DKG claim.",
+      "Periodic same-membership reshare capacity at n256/q171: batch≤32 gives6 slots/checkpoint and18 for BindMaterial/Review/Merge. Effective epochLengthBlocks-min(dkgPrepareWindowBlocks,epochLengthBlocks)≥64; test default300/30,300/200, shortest65/1 and unsupported short windows. Readiness/delivery/budget assumptions explicit; not a production timing claim."
+    ],
+    "ac": [
+      "На все перечисленные design blockers есть конкретное реализуемое решение и source evidence; нет TBD, отложенного решения или скрытой смены требований.",
+      "Подписывается нужный native operation subject: COB tree OID, identity doc blob OID и refs context согласно типу объекта, а не произвольный code commit; установлены точные bytes и verification path.",
+      "Текущий состав/threshold и RID bootstrap определены без круговой зависимости и без полного operator private key; доверие к новому ключу аутентифицировано.",
+      "Защита от исключённых участников включает проверку новых действий старым material, не только фильтр collector; ограничения гарантии и необходимая trusted freshness явно доказаны.",
+      "Обновлена карта файлов и тестов P1–P8 по выбранному контракту; непротиворечивость и осуществимость подтверждены source evidence. Процесс трёх reviews проверяется отдельно перед закрытием, не как предпосылка первого reviewer PASS."
+    ],
+    "proof": "Source matrix, design decision по каждому blocker, проверяемые signing/wire vectors и threat traces. Любой нерешённый blocker оставляет P0 открытой и последующие задачи заблокированными."
+  },
+  {
+    "key": "P1",
+    "title": "Обновить vendored Heartwood до 1.10.3 с сохранением Outbe integration",
+    "deps": [
+      "P0"
+    ],
+    "context": "Vendored fork b76a1780 содержит Outbe sidecar delta поверх 16de8f19; runtime уже перенесён в crates/system/radicle. Нужна исправленная stable база перед BLS. Target — releases/1.10.3, peeled SHA 7e1cb406bb935c3de008d2171e8961f57b4336ea; master развивается как Radicle 2.",
+    "changes": [
+      "Сделать трёхсторонний перенос по реальному upstream ancestor и сохранить bounded disconnect, runtime limits, выключенный raw control по умолчанию и нужные config/Handle методы.",
+      "Сохранить извлечённый runtime и единственный bin entrypoint; обновить dependency paths/lockfiles, сборочную metadata и UPSTREAM provenance с отдельным перечнем Outbe delta.",
+      "Проверить MSRV/toolchain, API и storage/wire compatibility; не обновлять несвязанные зависимости или всю chain toolchain без доказанной необходимости.",
+      "Воспроизвести и разрешить/обосновать по acceptance baseline concurrent-connection test. Проверить лимиты реальным socket сценарием в нужной среде; known baseline failure не является PASS.",
+      "Сохранить invariants design.md; stable update предшествует BLS/policy changes."
+    ],
+    "files": [
+      "vendor/heartwood/**; vendor/heartwood/UPSTREAM.md; vendor/heartwood/{Cargo.toml,Cargo.lock,build.rs}",
+      "Cargo.toml; Cargo.lock; crates/system/radicle/{Cargo.toml,src/lib.rs,tests/sidecar.rs}; bin/outbe-radicle/",
+      "bin/outbe-keygen/Cargo.toml; crates/blockchain/radicle/src/manager/adapters.rs; testing/e2e-harness/{Cargo.toml,src/artifacts.rs,src/world/localnet/radicle.rs}",
+      "vendor/heartwood/UPSTREAM.md; root/standalone Cargo manifests и lockfiles"
+    ],
+    "tests": [
+      "Root и standalone cargo metadata --locked; cargo fmt --all -- --check; изменённые места проходят lint.",
+      "cargo check --locked -p outbe-radicle-sidecar -p outbe-radicle-runtime -p outbe-keygen -p outbe-e2e-harness --features outbe-e2e-harness/ocomp-integration --all-targets",
+      "cargo check --locked --manifest-path vendor/heartwood/Cargo.toml -p radicle-cli -p radicle-remote-helper --bins; cargo test --locked -p outbe-radicle-runtime --test sidecar",
+      "Affected Heartwood protocol/node tests, E2E vendored install/version tests и реальный запуск sidecar/peer replication с bounded disconnect и resource limits.",
+      "Сверить весь retained Outbe delta и проверить actual build/sidecar/native replication после update."
+    ],
+    "ac": [
+      "Stable source SHA и полный retained Outbe delta проверяемы; ни одного утраченого контракта интеграции.",
+      "Оба lockfile согласованы с локальными путями; повторная сборка не скачивает прежний Heartwood Git fork.",
+      "Sidecar, CLI и remote helper работают совместно; metadata соответствует текущему checkout.",
+      "Реальные tests подтверждают сохранение control/connection limits и replication; все обязательные checks зелёные либо нерешённое требование оставляет задачу открытой."
+    ],
+    "proof": "До/после upstream ancestry/diff manifest, source hashes, exact toolchain/platform, build/test logs и peer transcript. Отдельный результат по ранее падавшему status_server_enforces_connection_and_request_deadline_bounds."
+  },
+  {
+    "key": "P2",
+    "title": "Добавить нативный BLS-owned repository с проверкой на втором узле",
+    "deps": [
+      "P1"
+    ],
+    "context": "Radicle должен понимать BLS как алгоритм repository keys/signatures без знания Vote. Ed25519 нужен existing пользователям и Noise; один общий PublicKey сейчас связывает transport, actors и namespaces. Требуется полный проверяемый путь операции, а не неиспользуемый crypto helper.",
+    "changes": [
+      "Реализовать выбранное P0 разделение transport key и repository actor/authority; поддержать tagged BLS public key/signature и стабильную serialization, сохранив existing Ed25519 encodings.",
+      "Провести BLS через DID/delegate identity, COB signing/verification и signed refs, namespaces, fetch/validation и cache paths; определить версию format/feature negotiation и явный отказ неподдерживающего reader.",
+      "Сохранить native signing semantics и exact signed bytes; сделать prepare/signature-attachment/apply interface, пригодный для асинхронного threshold signing без блокировки node reactor.",
+      "Дать integration tests возможность создать BLS-owned repo, подписать identity/Review/refs и передать их второму узлу; обычный Ed25519 patch author работает в таком repo.",
+      "Добавить generic PublicationPolicy gate перед local/fetch/cache canonical promotion; static BLS/Ed25519 остаются native. Outbe policy реализуется вне Heartwood; защищённый repo не может fallback в permissive mode.",
+      "PublicationPolicy distinguishes managed-owner entries/refs from ordinary author activity inside governments. Ed25519 patch/revision and own sigrefs replicate before Vote under native authorization. Every reachable owner entry needs receipt even through author namespace; apply same predicate at local/fetch/evaluator/direct lookup/cache reopen/rebuild. Exact RDB1/metadata/header/key namespace and rad1/rad2 negotiation follow design.md §2.1."
+    ],
+    "files": [
+      "vendor/heartwood/crates/radicle-crypto/src/{lib.rs,ssh.rs}; новый BLS module/encoding по P0",
+      "vendor/heartwood/crates/radicle/src/identity/{did.rs,doc.rs}; vendor/heartwood/crates/radicle/src/cob/{patch.rs,store.rs}",
+      "vendor/heartwood/crates/radicle-cob/src/{signatures.rs,backend/git/change.rs,change/store.rs}; vendor/heartwood/crates/radicle/src/storage/refs/; vendor/heartwood/crates/radicle/src/storage/refs.rs",
+      "vendor/heartwood/crates/radicle-{protocol,fetch,node,remote-helper}/src/ (затронутые wire/fetch/namespace consumers); их tests/fixtures; Cargo.toml/Cargo.lock обоих workspaces",
+      "vendor/heartwood/crates/radicle/src/storage/ и cob/store.rs; новый generic publication interface; radicle-git-metadata custom BLS header; radicle-protocol repository key frames"
+    ],
+    "tests": [
+      "Известные BLS vectors и roundtrip Ed25519/BLS; неверный алгоритм, длина, encoding, subgroup/identity point и неподходящая signature отклоняются выбранной библиотекой/validation.",
+      "Identity/COB/sigrefs tampering, key/signature mismatch и cross-domain replay; BLS-only authority нельзя заменить Ed25519 transport signature.",
+      "Реальный двухузловой fetch/reopen BLS repo с Ed25519 patch author, BLS Review и signed refs; existing Ed25519 repo workflow и Noise connection regression.",
+      "Unsupported format/version явно отклоняется, а не интерпретируется как Ed25519; affected Heartwood package suites и root consumers build/test.",
+      "Fresh receiver: crypto-valid object без policy ticket не становится canonical; legacy Ed25519 workflow и static BLS fetch проходят.",
+      "Unapproved ordinary Ed25519 patch/revision reaches second node and exact lookup/cache before Vote. Forged owner Review/Merge embedded in that author graph is rejected across local/fetch/cache/direct lookup without blocking pure author entries. Native vectors match P0; V1 legacy and negotiated V2 preserve Ed transport and reject unsupported BLS/downgrade."
+    ],
+    "ac": [
+      "Второй узел независимо принимает валидные BLS identity/COB/refs и отвергает подменённые объекты через production verifier.",
+      "Ed25519 совместимость и network handshake сохраняются; repository authority не зависит от доставившего peer.",
+      "Нет Vote/Outbe-specific policy в generic Heartwood crypto/evaluator; BLS не спрятан за единоличным Ed25519 signer.",
+      "Все storage/wire/cache/CLI callers нового authority format охвачены картой изменений и проверками."
+    ],
+    "proof": "Canonical encoding/signing vectors; artifact IDs и wire/fetch transcript двух узлов; source-to-criterion matrix и результаты regression suites на одном SHA."
+  },
+  {
+    "key": "P3",
+    "title": "Реализовать threshold signer и authority generations текущего validator set",
+    "deps": [
+      "P2"
+    ],
+    "context": "Partial signatures могут учитываться только от текущего полномочного набора, установленного finalized state и DKG material. В consensus есть MinSig threshold VRF material и MinPk identity keys; автоматическое повторное использование для arbitrary repo signing не доказано. Stable group key с resharing сам по себе не отзывает старые shares.",
+    "changes": [
+      "Реализовать принятое P0 material lifecycle и узкий signer interface для native signing jobs; не раскрывать share sidecar/peer и не восстанавливать полный secret key.",
+      "Ввести authenticated signing context: chain/genesis, epoch/material generation, effective membership commitment, participant indices, threshold и доверенный group key. Exact signing domain/context должен быть связан с проверяемым объектом выбранным P0 способом.",
+      "Согласовать transitions finalized membership/DKG promotion и authority rotation: old material не разрешает новые действия; исторические объекты продолжают проверяться.",
+      "На admission, signing, recovery и перед публикацией повторно проверять freshness. При смене набора снять незавершённые jobs и подготовить их заново под новой authority без подмены patch approval.",
+      "Generic Heartwood проверяет BLS/identity; Vote/finality policy и authenticated material provisioning остаются в Outbe. Несовпадающие current-set/material snapshots fail closed.",
+      "Реализовать narrow fixed-domain repository signer поверх authenticated existing DKG material с доказанной namespace isolation; secret share не экспортировать. Current identity attestation/checkpoint — дополнительный publication guard, не замена native threshold signatures. Добавить ancillary Radicle artifact, bounded batch до32 current identity attestations одного body за block и совместимый с DKG/root/late-finalize budget.",
+      "Carrier tag09/V0x0C: one body[477]+count:u8(1..32)+sorted(index:u32be,MinPk sig96), maximum3678 payload/3681 framed bytes. Verify all entries/current context before atomic state effects, one tally even if q crossed within batch; cap32 independent of n, no q-sized per-block verification. Preserve64KiB/root/late-finalize/DKG rules."
+    ],
+    "files": [
+      "crates/blockchain/radicle/src/integration/ (новый signing/authority module по P0); crates/blockchain/radicle/src/manager/{types.rs,snapshot.rs}",
+      "crates/blockchain/consensus/src/{hybrid.rs,hybrid/vrf_material.rs,dkg_manager.rs,committee_provider.rs}; crates/blockchain/engine/src/stack/dkg/ (только доказанно нужный interface)",
+      "bin/outbe-chain/src/launch/node/radicle.rs; crates/system/radicle/src/; vendor/heartwood/crates/radicle/src/identity/ (wiring rotation по P0)",
+      "crates/blockchain/radicle/tests/; crates/blockchain/engine/src/stack/tests/ и crypto vectors",
+      "crates/blockchain/primitives/src/reshare_artifact.rs и codec modules; crates/blockchain/node/src/payload_builder/ и artifact size budget; crates/blockchain/primitives/src/system_tx/{kind.rs,input.rs,layout.rs,phase.rs,binding.rs,gas.rs,tests/}; crates/blockchain/evm/src/{config/system_txs.rs,begin_block_precompile/,executor/}; crates/system/radicleregistry/src/ (checkpoint schema/runtime append-only)",
+      "crates/blockchain/engine/src/stack/dkg/handoff.rs; crates/blockchain/engine/src/stack/epoch/{ceremony/freeze.rs,activation.rs}; typed startup validation/errors for feature-enabled effective publication window"
+    ],
+    "tests": [
+      "Реальные 4 participant threshold fixtures: достаточный t и разные subsets дают одну валидную signature; t-1, bad partial, wrong index, duplicate и outsider не дают результата.",
+      "Wrong network/repo/domain/material, ACTIVE-but-not-effective и effective/material mismatch не подписывают; excluded validator не участвует после finalized transition.",
+      "Committee сменяется до sign, между partials и перед publish; старые shares и смешанные generations отвергаются на production verification path, а историческая valid signature читается.",
+      "Signer key access не экспортирует secret; consensus/VRF regression если затронуты shared material interfaces.",
+      "Проверить namespace/VRF isolation, current DKG mapping, guarded receipt authorization и maximum n=256 per-block crypto/state budget; old group signature без current checkpoint отвергается receiver policy.",
+      "Ancillary carrier V0x0C activation/begin layout/phase/binding/gas tests in primitives/src/system_tx/tests plus EVM wiring; tag4 retired, mandatory artifacts preserved. One-slot attestations converge for deterministic body with separate verified witnesses and pinned job anchor; wrong body cannot consume honest slot.",
+      "Max32 all-valid/last-invalid/duplicate/out-of-range/truncated/trailing batch and q crossed mid-batch: actual state atomicity. n256 same-set periodic material resets and first64 pre-freeze blocks: max mandatory non-DKG artifacts + full32 batch fit existing64KiB with actual codec/assembly; bounded32-signature gas/work measured. No consensus waiting for sidecar; unsupported cadence rejected before startup when feature enabled."
+    ],
+    "ac": [
+      "Membership, индекс, threshold и group public key получены из одного аутентифицированного finalized context, не из peer-supplied claims.",
+      "Смена набора не позволяет завершить/опубликовать новый job старым material; fresh verifier воспроизводит отказ.",
+      "Threshold signing пригоден для native Radicle signing bytes и независимо проверяется; no aggregate-signature substitution.",
+      "VRF/consensus не изменили security domain/поведение; полные shares и secret не выходят через новый interface."
+    ],
+    "proof": "Authenticated context snapshots и transition trace, реальные partial/recovered signature vectors с public verification, результаты attack/race scenarios и interface/source matrix."
+  },
+  {
+    "key": "P4",
+    "title": "Создавать сетевой governments из genesis descriptor без ручных ключей",
+    "deps": [
+      "P3"
+    ],
+    "context": "Genesis/DKG порядок не позволяет предполагать готовый BLS group key в момент генерации genesis. Native RID зависит от выбранного initial identity/object формата. Сеть должна однозначно создать и зарегистрировать repository без rad init и owner private key.",
+    "changes": [
+      "Добавить versioned genesis descriptor governments с canonical initial content/policy commitments и цепочной привязкой authority; использовать согласованный P0 порядок initial DKG и материализации RID.",
+      "Реализовать автоматический bootstrap после готовности material, детерминированные initial objects/metadata и одинаковый RID/head на узлах.",
+      "Если RID появляется после genesis, закрепить его через предусмотренный P0 проверяемый chain transition/registration с проверкой descriptor/material; не менять chain state из sidecar и не доверять первому произвольному register.",
+      "Обеспечить restart/replay, join нового узла и обнаружение несовпадающих descriptor/RID/authority. Текущий repository manager видит repo штатно.",
+      "Bootstrap descriptor -> canonical BLS doc -> RID после initial DKG -> current quorum checkpoint -> registry managed binding. Резервировать capacity; ранняя ordinary регистрация того же RID не даёт полномочий и не блокирует authenticated bootstrap; до binding repo не входит в pre-consensus availability barrier.",
+      "Implement exact OGD1 DescriptorV1 preimage from design.md §5. Seeded descriptor/hash excludes future genesis_hash/RID/DKG group key; after actual genesis hashing and DKG, authenticated OPB1 binds full genesis identity + descriptor + key + RID without rewriting descriptor.",
+      "Feature-enabled genesis validates effective epochLengthBlocks-min(dkgPrepareWindowBlocks,epochLengthBlocks)≥64 for pre-freeze publication capacity; feature-disabled existing valid short cadences remain unchanged. No implicit disabling periodic resharing."
+    ],
+    "files": [
+      "scripts/{seed_genesis.py,genesis_inputs.py,genesis_network.py,genesis_seed_codec.py,genesis_seed_system.py,genesis_seed_alloc.py}; scripts/{test_create_genesis.py,test_seed_genesis_protocol_constants.py} и новые descriptor fixture tests",
+      "crates/system/radicleregistry/src/{schema.rs,runtime.rs,precompile.rs,tests.rs}; при необходимости новый descriptor/bootstrap module и ABI по P0",
+      "crates/blockchain/radicle/src/{manager/snapshot.rs,integration/}; crates/system/radicle/src/; bin/outbe-chain/src/launch/node/radicle.rs",
+      "crates/blockchain/evm/tests/genesis.rs; crates/blockchain/evm/src/executor/tests/boundary/genesis_validation.rs; testing/e2e-harness/src/world/localnet/radicle.rs; Cargo/ABI fixtures при изменении schema",
+      "crates/system/radicleregistry/src/{schema.rs,runtime.rs}; genesis seeding и node bootstrap wiring",
+      "scripts/genesis_stages.py and effective DKG timing/genesis descriptor validation fixtures (actual epochLengthBlocks/dkgPrepareWindowBlocks inputs)"
+    ],
+    "tests": [
+      "Два независимых bootstrap на одинаковом genesis/DKG дают одинаковые RID, identity и initial head без rad init.",
+      "Replay/restart после каждого durable bootstrap шага; повторная регистрация идемпотентна; новый узел проверяет и загружает исходное repo.",
+      "DKG ещё не готов, mismatch genesis/descriptor/content/group key/RID и посторонняя регистрация отвергаются или остаются в явном ожидающем состоянии.",
+      "Genesis seeding tests, registry storage-layout/replay tests и existing ordinary repo registration compatibility.",
+      "Проверить empty genesis/DKG startup без циклической зависимости на доступность ещё не созданного repo; раннюю ordinary регистрацию; capacity reserve; identical two-node RID и replay.",
+      "Use fixed OGD1 vector from P0; compare pre-genesis descriptor hash with seeded storage. Same chain_id/descriptor with different actual genesis_hash cannot replay OPJ1/OPB1 bootstrap; changed DKG key/RID requires current quorum binding. No self-referential genesis/hash input.",
+      "Enabled/disabled descriptor cadence boundaries64/63 gap, default300/30,300/200 and min65/1; script and node startup use identical effective values. Actual bootstrap fits supported first window with current material and preserved mandatory artifacts."
+    ],
+    "ac": [
+      "Полный автоматический production bootstrap с initial DKG доказан, без вручную подготовленного operator signing key.",
+      "Единственная authenticated descriptor -> RID -> current authority связь установлена и доступна manager/registry.",
+      "Данные registry/schema остаются согласованными при рестарте/дубликате; обновление существующей сети version-gated если применимо."
+    ],
+    "proof": "Genesis input/descriptor hashes, DKG public context, initial object/RID hashes на двух узлах, authenticated registration transaction/state и restart/join logs."
+  },
+  {
+    "key": "P5",
+    "title": "Добавить VoteTarget принятия конкретной Radicle patch revision",
+    "deps": [
+      "P0",
+      "P1"
+    ],
+    "context": "Generic Vote есть; Governance target материализует kind/text OIP/GIP, RadicleRegistry только хранит repositories. Patch VoteTarget отсутствует. Нельзя делать Git/Radicle I/O внутри consensus и нельзя голосовать за незакреплённый latest patch.",
+    "changes": [
+      "Ввести canonical versioned payload repoId/patchId/revisionId/action=accept и явно зафиксированную target policy по P0. Из proposal нельзя получить одобрение другой revision или произвольного merge commit.",
+      "В owning chain module (по P0 — расширение radicleregistry, без добавления второго несвязанного registry) реализовать validate/reserve/handle_approved и immutable approval record; включить handler в actual EVM registry.",
+      "Обеспечить правило eligibility electorate, согласованное P0 с active/effective set; existing unrelated Vote targets сохраняют поведение. Повторное исполнение одной approval не создаёт вторую выдачу полномочий.",
+      "Handler работает только с bounded chain data/commitments, без Git fetch и blocking signer. Existence/integrity patch проверяется signer integration до выпуска подписи.",
+      "Добавить чтение approval exact finalized snapshot для consumer и различать Approved decision, offchain execution progress и Merge outcome.",
+      "Patch-specific Vote electorate = ACTIVE ∩ effective consensus set; default других targets неизменен. Immutable approval связывает repo/patch/revision/branch/precondition. Данные checkpoints в owning registry, без Git/network I/O в handler."
+    ],
+    "files": [
+      "crates/system/radicleregistry/src/{lib.rs,schema.rs,runtime.rs,precompile.rs,tests.rs}; новый vote_target.rs/payload.rs по P0",
+      "crates/system/vote/src/{handlers.rs,runtime.rs,state.rs} (только необходимые extension seams); crates/blockchain/evm/src/handlers.rs",
+      "crates/blockchain/radicle/src/manager/{snapshot.rs,types.rs}; contracts/precompiles/src/IRadicleRegistry.sol; contracts/precompiles/abi-export/IRadicleRegistry.json; integration fixtures уточнить в P0",
+      "crates/system/vote/tests/; crates/blockchain/evm/tests/; affected registry tests и genesis layout fixtures",
+      "crates/system/vote/src/{handlers.rs,runtime.rs,state.rs}; crates/system/radicleregistry/src/{vote_target.rs,payload.rs,schema.rs,runtime.rs} (новые явно где отсутствуют); contracts/precompiles/src/IRadicleRegistry.sol и abi-export"
+    ],
+    "tests": [
+      "Реальный EVM proposal -> votes -> deadline -> terminal target execution: Active/eligible, outsider/inactive/pending, quorum boundary и validator-set change при pending proposal.",
+      "Malformed/oversized/noncanonical payload, unknown repo/unsupported action и revision substitution; provider failure и target error/rollback проверяются согласно existing Vote semantics.",
+      "Approval immutable, replay/idempotence, no-approval для Expired/Error и non-finalized state; другие targets regression.",
+      "Bounded execution/gas и exact finalized read, без offchain side effects из handle_approved.",
+      "Cast/tally используют один target-specific electorate; pending epoch transition и default targets regression; нет checkpoint для не Approved subject."
+    ],
+    "ac": [
+      "Выполненный через production Vote lifecycle proposal создаёт единственное разрешение ровно указанного patch/revision после принятия решения.",
+      "Только выбранный electorate влияет на решение; eligibility semantics проверены в transition scenarios.",
+      "Payload/ABI/schema/handler wiring и getters согласованы; consensus execution не зависит от доступности Radicle.",
+      "Неполный/неуспешный proposal не даёт signing authorization."
+    ],
+    "proof": "Encoded payload/ABI vectors, proposal/voter/terminal state trace, approval storage read на exact finalized block, rollback/gas/negative results и source wiring matrix."
+  },
+  {
+    "key": "P6",
+    "title": "Собирать threshold BLS в outbe-radicle и публиковать native Review Accept",
+    "deps": [
+      "P3",
+      "P4",
+      "P5"
+    ],
+    "context": "Нет designated proposer/coordinator: каждый outbe-radicle может собрать части и опубликовать один и тот же authorized result. Подпись выпускается только после finalized Approved за точную patch revision. Native Review Accept не выполняет merge.",
+    "changes": [
+      "Соединить finalized approval reader, exact patch/revision verification и подготовку native operation signing bytes с P3 signer. До sign проверить existence, author signatures, content, target и сохранность утверждённого subject.",
+      "В outbe-radicle реализовать bounded collector и durable journal: receive -> validate -> persist -> threshold recover -> verify -> publish Review/refs. Shares остаются у signer, передаются только authenticated partials.",
+      "Wire partial delivery между sidecars с явной Outbe integration policy и bounded queues/frame sizes/deadlines/rate limits; не делать node без validating chain authority доверенным источником eligibility.",
+      "Любой collector может собрать один результат; duplicate/out-of-order/replayed frames не увеличивают threshold. Отделить job identity от content-addressed signing bytes; повторная подготовка после restart детерминирована.",
+      "При membership/material change прекратить старый job; проверить fresh authority и approval перед publish. Консенсус после bootstrap продолжает работу при отказе collector.",
+      "Собирать реальные native BLS partials, затем manifest с contribution proofs и current identity attestations. Публиковать только после finalized checkpoint; generic fetch/local gate получает authenticated ticket от validating node по защищённому local interface.",
+      "Manifest commits deterministic native objects/envelopes and owner refs, excludes interchangeable DKG/partial witness bundles. q witnesses are still fully validated. Anchor is job-derived, not local tip; COB tips/resource/related/metadata derive only from pinned revision + accepted receipts, never latest local graph. Two honest collectors reconstruct identical body independent of q-subset/local author updates.",
+      "Batch up to32 ready attestations of the same body from bounded mailbox, greatest fitting prefix; FIFO resumes oldest approval after per-generation BindMaterial and resumes Merge if Review already checkpointed. Window misses retain approval/WaitingForWindow, reprepare only unsealed old-generation jobs; no epoch extension or stale-key permission."
+    ],
+    "files": [
+      "crates/system/radicle/src/ (новые collector, journal и publication modules; lib.rs wiring); crates/system/radicle/tests/",
+      "crates/blockchain/radicle/src/integration/{network.rs,lifecycle.rs,sidecar.rs}; новый approval/signing job bridge по P0",
+      "bin/outbe-chain/src/launch/node/radicle.rs; bin/outbe-radicle/src/main.rs; bounded local signer/control protocol по P0",
+      "vendor/heartwood/crates/radicle/src/cob/store.rs и новый prepare/attach interface из P2; testing/e2e-harness/features/radicle.feature",
+      "crates/system/radicle/src/ (collector/journal/checkpoint bridge); crates/blockchain/radicle/src/integration/; node/engine mailbox carrier; protected UDS policy-ticket wiring"
+    ],
+    "tests": [
+      "Два независимых collector получают разные subsets и публикуют одинаковый valid network Review Accept; второй узел fetch/verify review и sigrefs.",
+      "Автор patch публикует новую revision после Vote; старая approval не разрешает новую. Wrong repo/patch/tree/refs, nonfinal/Expired/Error approval не подписываются.",
+      "Crash/restart до и после journal write/recover/Review publish/sigrefs publish; duplicate delivery; bounded queues и malicious sender flood.",
+      "Committee changes на receive/recover/publish, collector offline, proposer offline, threshold-1 и задержки; chain finality не ожидает collector.",
+      "Проверить пустой receiver, raw old owner forgery, altered package, stale context, race до/после checkpoint, изоляцию policy cache и отказ при missing/untrusted ticket.",
+      "Two collectors with different valid subsets 012/123, staggered 2+2 deliveries, different finality tips and extra unapproved author tips converge to identical native bytes/body/checkpoint with q online (not all n). Invalid witness rejected despite unchanged manifest; author pre-Vote admission plus owner-entry laundering negative via each fetch/cache/direct path.",
+      "Real two collectors across periodic unchanged-membership material transitions, current batch32 and first64 pre-freeze capacity; q-ready jobs fit timely window without n participants. Budget pressure/deferred prefix, missed-window restart/resume, old slots rejected, consensus unaffected by sidecar outage."
+    ],
+    "ac": [
+      "Review появляется только из finalized Approved точной revision, подписан native BLS authority и проверяется независимым узлом.",
+      "Порог собирают любые sidecars без единственного proposer; bad/duplicate/stale partials не учитываются.",
+      "Restart и partial publication восстанавливаются безопасно; resources bounded; нет secret share transport.",
+      "Review не маскируется под Merge; состояние ожидающего исполнения наблюдаемо."
+    ],
+    "proof": "Сквозная связка finalized proposal -> job subject hashes -> authenticated partials -> recovered BLS -> Review entry/signature -> sigrefs -> second-node verification плюс crash/race logs."
+  },
+  {
+    "key": "P7",
+    "title": "Исполнять merge одобренной revision с безопасным конфликтом и восстановлением",
+    "deps": [
+      "P6"
+    ],
+    "context": "Пользователь хочет принятия patch в сетевом repository. Review Accept сам по себе не меняет target branch и не устанавливает State::Merged. Native merge требует соответствующего branch/author namespace, Merge action и signed refs. Конфликт не разрешает менять одобренное содержимое.",
+    "changes": [
+      "Реализовать зафиксированную P0 deterministic merge policy для утверждённой revision, с проверкой актуальной target branch/preconditions и native Merge action.",
+      "Подготовить и threshold-подписать необходимые branch/COB/refs операции через тот же current authority pipeline. Не путать подписываемый COB tree OID с code merge commit.",
+      "При conflict/precondition failure оставить approval и опубликованный Review видимыми, branch неизменной; не делать автоматический rebase/squash/conflict resolution с новым кодом.",
+      "Durable FSM обеспечивает recovery/idempotence между изменением branch, Merge action и sigrefs. Проверить ancestry/namespace и публикацию, чтобы patch действительно стал Merged на другом узле.",
+      "Конкурирующие approvals к одной ветке сериализованы по утверждённой policy; новый execution attempt не переносит разрешение на другой patch/revision.",
+      "Review и Merge — отдельные finalized publication checkpoints. TargetMoved требует нового Vote с новой precondition; clean deterministic merge либо explicit conflict. Historical replay возможен только exact accepted package."
+    ],
+    "files": [
+      "crates/system/radicle/src/ (execution/FSM/journal/publication); crates/system/radicle/tests/",
+      "vendor/heartwood/crates/radicle/src/cob/patch.rs; vendor/heartwood/crates/radicle/src/storage/refs/; vendor/heartwood/crates/radicle-remote-helper/src/push.rs (native behavior reuse)",
+      "crates/blockchain/radicle/src/integration/status.rs и read-only status wiring при необходимости; testing/e2e-harness/src/world/localnet/radicle.rs",
+      "crates/system/radicle/src/ (execution/journal/manifest); native refs/CAS/patch Merge paths; second-node verifier"
+    ],
+    "tests": [
+      "Vote Approved -> BLS Review -> реальный merge -> native State::Merged с утверждённой revision -> second-node fetch/branch/ancestry verification.",
+      "Merge conflict, moved target head, два одобренных patch к одной ветке и новая patch revision не подменяют содержимое; точно наблюдаем approved-but-unmerged.",
+      "Crash/restart на каждой durable границе, повторный publish, missing objects и committee transition перед каждым подписанием/публикацией.",
+      "Existing Ed25519 merge workflow и native threshold/delegate authorization regression.",
+      "Crash после каждого durable шага и между object install/refs CAS; conflicting refs quarantined; current quorum не нужен для повторной доставки уже committed exact historical package.",
+      "Extra author COB tips/local Git clock/config do not alter pinned Review/Merge preparation; exact resource/parents/trailers and owner refs match across collectors. BindMaterial no-op preserves previous complete owner snapshot."
+    ],
+    "ac": [
+      "Целевая ветка содержит ровно разрешённый результат; native patch Merged относится к одобренной revision и валидному commit/namespace.",
+      "Conflict и target movement обрабатываются выбранным правилом явно, без изменения approved code; новое содержимое требует нового Vote.",
+      "Рестарт/повторы завершают тот же результат или оставляют объяснимое ожидание без противоречащих refs/COB.",
+      "Второй узел независимо подтверждает branch, Merge action и BLS sigrefs."
+    ],
+    "proof": "Proposal/patch/revision mapping, prepared operation hashes, branch before/after, Merge entry, sigrefs, ancestry и second-node State::Merged; conflict/parallel/crash/race transcripts."
+  },
+  {
+    "key": "P8",
+    "title": "Доказать всю фичу многовалидаторным E2E и подготовить эксплуатацию",
+    "deps": [
+      "P7"
+    ],
+    "context": "Зелёные package tests и локальные mock fixtures не доказывают, что genesis, Vote, DKG, signer, collector и Heartwood работают вместе. Нужен один реальный сценарий плюс негативные переходы текущего validator set и восстановления.",
+    "changes": [
+      "Добавить воспроизводимый multi-validator Gherkin scenario: genesis/initial DKG -> automatic governments -> Ed25519 patch -> Vote -> finalized approval -> distributed BLS -> Review -> Merge -> independent fetch.",
+      "Покрыть membership transition, old shares, nonfinal/invalid approval, revision replacement, merge conflict, proposer/collector outage, restart/duplicate и продолжение consensus при RuntimeDegraded.",
+      "Собрать machine-readable evidence manifest связывающий все cryptographic/chain/Radicle artifacts на exact reviewed SHA; verifier проверяет содержимое, не только наличие файлов.",
+      "Описать build/bootstrap/status/recovery/key rotation и совместимость BLS fork; восстановление не использует ручной owner private key. Выполнить affected workspace checks и required CI без подмены не запустившихся jobs успехом.",
+      "Включить весь design.md контракт, ancillary artifact carrier и authenticated current publication policy в production multi-validator E2E; отдельные native signatures и current publication certificate должны проверяться независимо."
+    ],
+    "files": [
+      "testing/e2e-harness/features/radicle.feature; testing/e2e-harness/src/{features/radicle.rs,world/localnet/radicle.rs,world/rpc/radicle.rs,artifacts.rs}",
+      "crates/system/radicle/tests/; crates/blockchain/radicle/tests/; P3/P5 regression tests",
+      "plans/radicle-patch-vote/evidence/ и runbook.md; existing evidence artifact/verification modules только если действительно подходят",
+      ".github/workflows/ci.yml и relevant test lane wiring только при отсутствии execution lane; Cargo/fixture config по сценарию",
+      "testing/e2e-harness/src/features/radicle.rs; world/localnet/radicle.rs; current authority/checkpoint/receiver evidence manifests и runbook"
+    ],
+    "tests": [
+      "Полный сценарий на реальных BLS shares и минимум двух независимых Radicle storage instances; exact committee/threshold из P0, например four-validator fixture.",
+      "Все негативные сценарии плана со ссылками на реальные наблюдаемые rejection/state invariants; историческая signature valid, новый stale-authority write invalid.",
+      "cargo fmt --all -- --check; affected workspace build/clippy/tests и Heartwood standalone suites в требуемой pinned среде; full relevant CI jobs должны реально завершиться.",
+      "Независимо проверить evidence chain и отсутствие незавершённых требований на одном финальном SHA; три task reviews проверяют P8, отдельные feature reviews запускаются после закрытия P0–P8 и не являются prerequisite закрытия P8.",
+      "Реальный current-set transition + late historical exact replay + fresh receiver rejecting uncheckpointed old-key object; доказать consensus liveness без sidecar и без ожидания collector в proposer.",
+      "Real pre-Vote Ed25519 author patch replication and receiver lookup, owner-entry laundering rejection, two collectors with different valid q-subsets and latest tips, stable committee progress without fourth validator; V0x0C carrier/begin-zone activation and bounded budget evidence.",
+      "Cadence E2E: repeated unchanged-membership reshares with BindMaterial→Review→Merge, actual supported short/default windows, maxcommittee codec/gas evidence from P3, real q-sidecar readiness/finality/delivery within tested window. Runbook states exact liveness assumptions and WaitingForWindow; no arbitrary-delay guarantee or waiving unsupported epoch configs."
+    ],
+    "ac": [
+      "End-to-end scenario реализован и выполнен без ручного rad init, operator owner secret или fake BLS verification.",
+      "Полная цепочка артефактов проверяема другим участником; wrong/missing artifacts вызывают verifier failure.",
+      "Ротация/current set, конфликт и recovery доказаны в production paths; no consensus liveness regression.",
+      "Все обязательные checks/CI выполнены и PASS; unavailable environment, missing test или открытый finding оставляют задачу и feature открытыми.",
+      "Runbook соответствует проверенным командам/состояниям; backward compatibility boundary явно указана."
+    ],
+    "proof": "Финальный E2E manifest с task IDs, exact SHA/toolchains, genesis/committee/Vote/patch/operation/BLS/refs hashes, logs и independently verified state второго узла; CI URLs и отдельные три task reviews, затем три feature reviews."
+  }
+]

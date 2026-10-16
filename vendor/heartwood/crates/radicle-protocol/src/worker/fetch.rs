@@ -2,7 +2,7 @@ pub mod error;
 
 use std::collections::{BTreeMap, HashSet};
 
-use radicle::crypto::PublicKey;
+use radicle::crypto::RepositoryKey as PublicKey;
 use radicle::git;
 use radicle::{identity::DocAt, storage::RefUpdate};
 
@@ -17,7 +17,7 @@ pub struct FetchResult {
     /// The fetch was a full clone.
     pub clone: bool,
     /// Identity doc of fetched repo.
-    pub doc: DocAt,
+    pub doc: Box<DocAt>,
 }
 
 impl FetchResult {
@@ -27,7 +27,7 @@ impl FetchResult {
             canonical: UpdatedCanonicalRefs::default(),
             namespaces: HashSet::new(),
             clone: false,
-            doc,
+            doc: Box::new(doc),
         }
     }
 }
@@ -69,7 +69,7 @@ impl qcheck::Arbitrary for FetchResult {
             canonical: UpdatedCanonicalRefs::default(),
             namespaces: HashSet::arbitrary(g),
             clone: bool::arbitrary(g),
-            doc: DocAt::arbitrary(g),
+            doc: Box::new(DocAt::arbitrary(g)),
         }
     }
 }

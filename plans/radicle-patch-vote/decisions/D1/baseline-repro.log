@@ -1,0 +1,7 @@
+   Compiling radicle-managed-admission-repro v0.0.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/plans/radicle-patch-vote/decisions/D1/repro)
+    Finished `dev` profile [unoptimized] target(s) in 0.58s
+     Running `/private/tmp/outbe-radicle-p1-standalone/debug/radicle-managed-admission-repro /Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote`
+kind=pure owner_parent_denied=false repository_load_admitted=true direct_Op_load_admitted=true
+kind=related owner_parent_denied=true repository_load_admitted=true direct_Op_load_admitted=true
+kind=resource owner_parent_denied=true repository_load_admitted=true direct_Op_load_admitted=true
+OBSERVED: crypto-valid denied owner is rejected directly; its Ed resource/related descendants are still admitted. This reproduces an unfinished P2 admission gap, not a PASS of the required security contract.

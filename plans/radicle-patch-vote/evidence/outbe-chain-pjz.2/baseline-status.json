@@ -1,0 +1,21 @@
+{
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "sha": "65e2a7429f9b3c18ac7aa870629e0b16caedc483",
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "-p",
+    "outbe-radicle-runtime",
+    "--test",
+    "sidecar",
+    "status_server_enforces_connection_and_request_deadline_bounds",
+    "--",
+    "--exact",
+    "--nocapture"
+  ],
+  "exit_code": 101,
+  "time_utc": "2026-10-15T10:31:06.871477+00:00",
+  "log": "/private/tmp/outbe-radicle-p1-baseline-status.log"
+}

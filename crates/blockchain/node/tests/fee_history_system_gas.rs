@@ -190,6 +190,8 @@ fn boundary_for_single_validator(proposer: Address) -> DkgBoundaryArtifact {
 
 fn payload_attributes(timestamp: u64, proposer: Address) -> OutbePayloadAttributes {
     let extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
         execution_summary: None,
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(
             boundary_for_single_validator(proposer),

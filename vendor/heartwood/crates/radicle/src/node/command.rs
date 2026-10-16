@@ -13,7 +13,7 @@ use std::time;
 use serde::{Deserialize, Serialize};
 use serde_json as json;
 
-use crate::crypto::PublicKey;
+use crate::crypto::RepositoryKey as PublicKey;
 use crate::identity::RepoId;
 use crate::storage::refs;
 

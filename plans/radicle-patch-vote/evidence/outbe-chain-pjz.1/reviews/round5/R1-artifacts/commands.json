@@ -1,0 +1,192 @@
+[
+  {
+    "name": "source-verify",
+    "argv": [
+      "python3",
+      "plans/radicle-patch-vote/p0-check/audit_sources.py"
+    ],
+    "environment": {},
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "source_sha": "4139bd9ef23c3320b6ac599c65e6123824131e07",
+    "evidence_sha": "6dcea234af6d9018f1661232490a115f5d0cf77f",
+    "start": "2026-10-15T13:47:56.000660+00:00",
+    "end": "2026-10-15T13:47:56.110608+00:00",
+    "exit_code": 0,
+    "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/reviews/round5/R1-artifacts/source-verify.log",
+    "log_sha256": "06e3d7168d20df627a927cba9a05de4e91e0d23301f9c559446637c783abfbd2"
+  },
+  {
+    "name": "design-check",
+    "argv": [
+      "cargo",
+      "run",
+      "--offline",
+      "--locked",
+      "--quiet",
+      "--manifest-path",
+      "plans/radicle-patch-vote/p0-check/Cargo.toml"
+    ],
+    "environment": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p0-r1-round5",
+      "CARGO_BUILD_JOBS": "4"
+    },
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "source_sha": "4139bd9ef23c3320b6ac599c65e6123824131e07",
+    "evidence_sha": "6dcea234af6d9018f1661232490a115f5d0cf77f",
+    "start": "2026-10-15T13:47:56.110932+00:00",
+    "end": "2026-10-15T13:48:20.691492+00:00",
+    "exit_code": 0,
+    "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/reviews/round5/R1-artifacts/design-check.log",
+    "log_sha256": "493fa160f280d0662f4bf6cdc6fbb18834d23ab40d860930d2a5c28d78dd044b"
+  },
+  {
+    "name": "verify-vectors",
+    "argv": [
+      "python3",
+      "plans/radicle-patch-vote/p0-check/verify_vectors.py"
+    ],
+    "environment": {},
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "source_sha": "4139bd9ef23c3320b6ac599c65e6123824131e07",
+    "evidence_sha": "6dcea234af6d9018f1661232490a115f5d0cf77f",
+    "start": "2026-10-15T13:48:20.692171+00:00",
+    "end": "2026-10-15T13:48:20.718694+00:00",
+    "exit_code": 0,
+    "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/reviews/round5/R1-artifacts/verify-vectors.log",
+    "log_sha256": "b80f0f9757af8e7663d302463f50477ce12288b0e522eeb8f8c63a3f48af236b"
+  },
+  {
+    "name": "descriptor-check",
+    "argv": [
+      "python3",
+      "plans/radicle-patch-vote/p0-check/descriptor_check.py"
+    ],
+    "environment": {},
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "source_sha": "4139bd9ef23c3320b6ac599c65e6123824131e07",
+    "evidence_sha": "6dcea234af6d9018f1661232490a115f5d0cf77f",
+    "start": "2026-10-15T13:48:20.719076+00:00",
+    "end": "2026-10-15T13:48:20.742228+00:00",
+    "exit_code": 0,
+    "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/reviews/round5/R1-artifacts/descriptor-check.log",
+    "log_sha256": "7868d0e940c62a46ffad8bacdb33edafe65d6357819d50aa43dfbf0947a0ce0b"
+  },
+  {
+    "name": "schedule-check",
+    "argv": [
+      "python3",
+      "plans/radicle-patch-vote/p0-check/schedule_check.py"
+    ],
+    "environment": {},
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "source_sha": "4139bd9ef23c3320b6ac599c65e6123824131e07",
+    "evidence_sha": "6dcea234af6d9018f1661232490a115f5d0cf77f",
+    "start": "2026-10-15T13:48:20.742572+00:00",
+    "end": "2026-10-15T13:48:20.761568+00:00",
+    "exit_code": 0,
+    "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/reviews/round5/R1-artifacts/schedule-check.log",
+    "log_sha256": "66a22e6c06664edf7e936bbb18bcf3dd92f98acc273cf579162fbf0f7954e069"
+  },
+  {
+    "name": "format",
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2021",
+      "--check",
+      "plans/radicle-patch-vote/p0-check/src/main.rs",
+      "plans/radicle-patch-vote/p0-check/src/publication.rs",
+      "plans/radicle-patch-vote/p0-check/src/native.rs"
+    ],
+    "environment": {},
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "source_sha": "4139bd9ef23c3320b6ac599c65e6123824131e07",
+    "evidence_sha": "6dcea234af6d9018f1661232490a115f5d0cf77f",
+    "start": "2026-10-15T13:48:20.761852+00:00",
+    "end": "2026-10-15T13:48:20.789824+00:00",
+    "exit_code": 0,
+    "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/reviews/round5/R1-artifacts/format.log",
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "name": "cycles",
+    "argv": [
+      "bd",
+      "--readonly",
+      "dep",
+      "cycles",
+      "--json"
+    ],
+    "environment": {},
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "source_sha": "4139bd9ef23c3320b6ac599c65e6123824131e07",
+    "evidence_sha": "6dcea234af6d9018f1661232490a115f5d0cf77f",
+    "start": "2026-10-15T13:48:20.790243+00:00",
+    "end": "2026-10-15T13:48:21.015603+00:00",
+    "exit_code": 0,
+    "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/reviews/round5/R1-artifacts/cycles.log",
+    "log_sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+  },
+  {
+    "name": "production-wire",
+    "argv": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "-p",
+      "radicle-protocol",
+      "--lib",
+      "wire::frame::test::native_namespace_frames_preserve_signed_encoding_and_transport_identity",
+      "--",
+      "--exact",
+      "--nocapture"
+    ],
+    "environment": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4"
+    },
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "source_sha": "4139bd9ef23c3320b6ac599c65e6123824131e07",
+    "evidence_sha": "6dcea234af6d9018f1661232490a115f5d0cf77f",
+    "start": "2026-10-15T13:48:21.016032+00:00",
+    "end": "2026-10-15T13:48:21.175182+00:00",
+    "exit_code": 0,
+    "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/reviews/round5/R1-artifacts/production-wire.log",
+    "log_sha256": "2dc82f9fee0241c48a97cb9298b154884ee0d5c51d96513179cc25a9e914b01b"
+  },
+  {
+    "name": "protocol-regression",
+    "argv": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "-p",
+      "radicle-protocol",
+      "--lib"
+    ],
+    "environment": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4"
+    },
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "source_sha": "4139bd9ef23c3320b6ac599c65e6123824131e07",
+    "evidence_sha": "6dcea234af6d9018f1661232490a115f5d0cf77f",
+    "start": "2026-10-15T13:48:21.175590+00:00",
+    "end": "2026-10-15T13:48:21.550709+00:00",
+    "exit_code": 0,
+    "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/reviews/round5/R1-artifacts/protocol-regression.log",
+    "log_sha256": "89df249f237644f43d323e6ea8a8129b590028f44dbef9801a5a184ee916dfee"
+  }
+]

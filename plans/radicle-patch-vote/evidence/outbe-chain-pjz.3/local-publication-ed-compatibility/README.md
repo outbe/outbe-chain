@@ -1,0 +1,3 @@
+# P2 Ed peer compatibility after local publication guard
+
+Source `0dbd83c40ace71773a0e358809bd2f1876c18f37`. Actual current-to-current and retained b76a178 legacy-to-current peer scenarios both PASS. Rebuilt actual CLI/remote-helper/sidecar on this source offline/locked. Existing unchanged P1 driver validates source/binary versions/hashes, CLI init/clone, exact content/commit/identity/signed refs, helper ls-remote and bounded disconnect; all temporary users/processes cleaned by driver. Exact argv/cwd/env/platform/UTC/exits/log hashes and both sidecars' transcripts recorded. This verifies Ed/Noise compatibility after the local COB writer change. It does not prove managed permission, current ValidatorSet, full P2 or full feature completion.

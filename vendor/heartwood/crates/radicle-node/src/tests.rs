@@ -994,7 +994,7 @@ fn refs_announcement_followed() {
     let root = repo.identity_root().unwrap();
     let sigrefs_at = bob.signed_refs_at(root);
 
-    repo.remotes.insert(node_id, sigrefs_at);
+    repo.remotes.insert(node_id.into(), sigrefs_at);
 
     // Generate some refs for Bob under their own node_id.
     let sigrefs_at = bob.signed_refs_at(root);
@@ -1002,7 +1002,7 @@ fn refs_announcement_followed() {
     bob.storage_mut()
         .repo_mut(&rid)
         .remotes
-        .insert(node_id, sigrefs_at);
+        .insert(node_id.into(), sigrefs_at);
 
     // Amy uses Scope::Followed, and did not track Bob yet.
     amy.connect_to(&bob);
@@ -1088,7 +1088,7 @@ fn refs_announcement_offline() {
 
     // Create an issue without telling the node.
     let repo = amy.storage().repository(rid).unwrap();
-    let old_refs = RefsAt::new(&repo, *amy.nid()).unwrap();
+    let old_refs = RefsAt::new(&repo, (*amy.nid()).into()).unwrap();
     let mut issues = radicle::issue::Cache::no_cache(&repo, amy.secret_key()).unwrap();
     issues
         .create(
@@ -1099,7 +1099,7 @@ fn refs_announcement_offline() {
             [],
         )
         .unwrap();
-    let new_refs = RefsAt::new(&repo, *amy.nid()).unwrap();
+    let new_refs = RefsAt::new(&repo, (*amy.nid()).into()).unwrap();
     assert_ne!(old_refs, new_refs);
 
     // Now we restart Amy's node. It should pick up that something's changed in storage.
@@ -1672,16 +1672,16 @@ fn queued_fetch_from_ann_same_rid() {
     let dan = Peer::dan();
 
     let oid = arbitrary::oid();
-    let ann = RefsAnnouncement {
+    let ann = RefsAnnouncement::new(
         rid,
-        refs: vec![RefsAt {
-            remote: *cid.nid(),
+        vec![RefsAt {
+            remote: (*cid.nid()).into(),
             at: oid,
         }]
         .try_into()
         .unwrap(),
-        timestamp: Timestamp::from(*bob.clock()),
-    };
+        Timestamp::from(*bob.clock()),
+    );
 
     amy.seed(&rid, policy::Scope::All).unwrap();
     amy.connect_to(&bob);
@@ -1712,10 +1712,16 @@ fn queued_fetch_from_ann_same_rid() {
     // Ensure the ref is in the storage and cache.
     let repo = amy.storage_mut().repo_mut(&rid);
     let sigrefs_at = cid.signed_refs_at(repo.identity_root().unwrap());
-    repo.remotes.insert(*cid.nid(), sigrefs_at);
+    repo.remotes.insert((*cid.nid()).into(), sigrefs_at);
     amy.database_mut()
         .refs_mut()
-        .set(&rid, cid.nid(), &SIGREFS_BRANCH, oid, LocalTime::now())
+        .set(
+            &rid,
+            &(*cid.nid()).into(),
+            &SIGREFS_BRANCH,
+            oid,
+            LocalTime::now(),
+        )
         .unwrap();
     amy.fetched(
         rid,
@@ -1726,9 +1732,9 @@ fn queued_fetch_from_ann_same_rid() {
                 oid,
             }],
             canonical: protocol::worker::fetch::UpdatedCanonicalRefs::default(),
-            namespaces: [*cid.nid()].into_iter().collect(),
+            namespaces: [(*cid.nid()).into()].into_iter().collect(),
             clone: false,
-            doc: arbitrary::r#gen(1),
+            doc: Box::new(arbitrary::r#gen(1)),
         }),
     );
     // Now the 1st fetch is done, but the 2nd and 3rd fetches are redundant.
@@ -1807,13 +1813,19 @@ fn refs_synced_event() {
 
     let acme = amy.project("acme", "");
     let events = amy.events();
-    let ann = AnnouncementMessage::from(RefsAnnouncement {
-        rid: acme,
-        refs: vec![RefsAt::new(&amy.storage().repository(acme).unwrap(), *amy.nid()).unwrap()]
-            .try_into()
+    let ann = AnnouncementMessage::from(RefsAnnouncement::new(
+        acme,
+        vec![
+            RefsAt::new(
+                &amy.storage().repository(acme).unwrap(),
+                (*amy.nid()).into(),
+            )
             .unwrap(),
-        timestamp: Timestamp::from(*bob.clock()),
-    });
+        ]
+        .try_into()
+        .unwrap(),
+        Timestamp::from(*bob.clock()),
+    ));
     let msg = ann.signed(bob.secret_key());
 
     amy.seed(&acme, policy::Scope::All).unwrap();

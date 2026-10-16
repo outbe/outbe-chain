@@ -1,0 +1,49 @@
+{
+  "decision": "D3-description-bound",
+  "approval": "not received",
+  "proposal": "user-proposal.md",
+  "proposal_sha256": "e875e2b093d879dfdc0abe80f4f8c2df70d708e44243f010f6a90225f9574390",
+  "reviews": "R1/R2/R3 already complete;not acceptance or authorization",
+  "audits": [
+    {
+      "number": 1,
+      "utc": "2026-10-16T01:10:54Z",
+      "goal_status": "active",
+      "classification": "no implementation progress;missing explicit decision",
+      "sources_checked": [
+        "plans/radicle-patch-vote/design.md:423",
+        "crates/blockchain/primitives/src/radicle_genesis.rs:11",
+        "scripts/genesis_seed_alloc.py:129",
+        "vendor/heartwood/crates/radicle/src/identity/doc.rs:40",
+        "vendor/heartwood/crates/radicle/src/identity/project.rs:198",
+        "crates/blockchain/radicle/src/integration/review.rs:345",
+        "crates/blockchain/radicle/src/integration/publication/policy.rs:82"
+      ],
+      "remaining_dependency": "Canonical bootstrap/root owner proof before production exact Review signing;P6 dependsP3/P4/P5,P7 dependsP6,P8 dependscomplete flow.",
+      "independent_work": "Protected state/public Output/preparation/archive and interactive signing proof completed;full current native/generic managed positive source/log proof accounted. No duplicate tests or forbidden D2 work performed.",
+      "sessions": "Previously observed test handles33014/57031 and earlier component runners terminated successfully;no live handle to wait on."
+    },
+    {
+      "number": 2,
+      "utc": "2026-10-16T01:12:41.367904+00:00",
+      "goal_status": "active",
+      "classification": "no progress; same missing D3 explicit approval",
+      "source_spec_diff_since_audit1": [],
+      "dependent_work": "Stopped; no changes to255/1024 bounds,spec,bootstrap,canonical root authorization or task statuses.",
+      "waiting": "Human decision pending,not a verified running process wait.",
+      "next": "Explicit user answer required; if same impasse recurs third consecutive turn,use blocked goal status per goal rules."
+    },
+    {
+      "number": 3,
+      "utc": "2026-10-16T01:13:21.937915+00:00",
+      "goal_status_before_update": "active",
+      "classification": "no progress;same missing explicit D3 approval",
+      "source_spec_diff_since_audit1": [],
+      "dependent_work": "Stopped;no bound/spec/bootstrap/root authorization bypass or task closures.",
+      "decision_request": "1024->255 UTF-8 description maximum;existing3 reviews and concrete proposal,explicit user answer required.",
+      "threshold": "Three consecutive impasse audits met;update_goal blocked required,no completion claim."
+    }
+  ],
+  "actual_goal_status": "blocked",
+  "status_confirmed_utc": "2026-10-16T01:13:21Z"
+}

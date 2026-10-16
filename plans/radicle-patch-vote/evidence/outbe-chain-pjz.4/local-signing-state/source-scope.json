@@ -1,0 +1,12 @@
+{
+  "source_sha": "d64b9ca9275a77ac02ed863517855342ddacf817",
+  "base_sha": "f88a7f9c7a1f0822cf5ad247de16bbd759d28662",
+  "changed_files_sha256": {
+    "bin/outbe-chain/src/launch/node/radicle.rs": "1a851649ddada501fa000d95a485551cc6df9d20a9813b4cb76b5a435131cc55",
+    "crates/blockchain/radicle/src/integration/local.rs": "ba437aa88f165c2e5e86c7c7b03382b38c570aeb3573de899da5d2fbf65ecb93",
+    "crates/blockchain/radicle/src/integration/local/state.rs": "163054bf546fd21e79a973b3209ec3d246a29ae6a0518c909e3ec5f164a7426c",
+    "crates/blockchain/radicle/src/integration/local/tests.rs": "5fa6b95dc44056c5af75c0fc66b7f1baf0abec842750a94835154821ac481f97"
+  },
+  "scope": "Only approved P3 trusted local finalized signing context + node wiring + tests. Existing same-UID socket isolation/lifecycle and receipt protocol retained. No consensus/native Heartwood/genesis bound/spec changes.",
+  "closed_task_relevance": "No P0/P1/P5 source or spec changes; existing native bytes, genesis bounds, stable migration and terminal Vote semantics unchanged. Historical acceptance evidence remains historical; no new task closure claimed."
+}

@@ -1,0 +1,17 @@
+{
+  "task_id": "outbe-chain-pjz.2",
+  "status": "evidence_ready_awaiting_independent_reviews",
+  "reviewed_sha": "eb834f31ccd027d7af604ba1393498491cc133e6",
+  "spec_hash": "2e495135b803ae4054d2a236e80aa8d3f75a3d712a13bb1998a2b9aa3fa3f30d",
+  "timestamp_utc": "2026-10-15T11:33:01.645702+00:00",
+  "current_required_checks": "all passed",
+  "final_record_count": 18,
+  "final_successful_commands": 17,
+  "historical_interrupted_final_attempt": "harness artifact Docker probe, rerun with explicit unavailable endpoint passed all11 tests",
+  "independent_reviews": {
+    "R1": "pending",
+    "R2": "pending",
+    "R3": "pending"
+  },
+  "P2_P8_implementation": "not_started"
+}

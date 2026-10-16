@@ -6,7 +6,7 @@ use super::{
     CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR,
     LATE_FINALIZE_CREDITS_SELECTOR, OCOMP_LIFECYCLE_BEGIN_SELECTOR,
     OCOMP_TERMINAL_REQUEST_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR, OUTBE_SYSTEM_TX_ADDRESS,
-    REWARDS_GEM_DELIVERY_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
+    RADICLE_PUBLICATION_SELECTOR, REWARDS_GEM_DELIVERY_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
 };
 
 /// Body-zone position of a system tx.
@@ -66,6 +66,7 @@ pub enum SystemTxKind {
     OracleSlashWindow,
     /// Receipt container for whitelisted pre-exec hook events (`Vote`, `Update`, ...).
     HookEvents,
+    RadiclePublication,
     /// Sole end-zone system transaction. The executor seals compressed
     /// entities before dispatching this terminal request slot.
     OcompTerminalRequest,
@@ -83,6 +84,7 @@ impl SystemTxKind {
             Self::TeeBootstrap => TEE_BOOTSTRAP_SELECTOR,
             Self::OracleSlashWindow => ORACLE_SLASH_WINDOW_SELECTOR,
             Self::HookEvents => HOOK_EVENTS_SELECTOR,
+            Self::RadiclePublication => RADICLE_PUBLICATION_SELECTOR,
             Self::OcompTerminalRequest => OCOMP_TERMINAL_REQUEST_SELECTOR,
         }
     }
@@ -98,7 +100,8 @@ impl SystemTxKind {
             | Self::BoundaryOutcome
             | Self::TeeBootstrap
             | Self::OracleSlashWindow
-            | Self::HookEvents => BodyZone::BeginBlock,
+            | Self::HookEvents
+            | Self::RadiclePublication => BodyZone::BeginBlock,
         }
     }
 
@@ -136,6 +139,7 @@ impl SystemTxKind {
             | Self::CycleTick
             | Self::BoundaryOutcome
             | Self::TeeBootstrap
+            | Self::RadiclePublication
             | Self::OcompTerminalRequest => true,
             Self::RewardsGemDelivery | Self::OracleSlashWindow | Self::HookEvents => false,
         }
@@ -152,6 +156,7 @@ impl SystemTxKind {
             Self::TeeBootstrap => Some(6),
             Self::OracleSlashWindow => Some(7),
             Self::HookEvents => Some(8),
+            Self::RadiclePublication => Some(9),
             Self::OcompTerminalRequest => None,
         }
     }
@@ -167,7 +172,8 @@ impl SystemTxKind {
             | Self::BoundaryOutcome
             | Self::TeeBootstrap
             | Self::OracleSlashWindow
-            | Self::HookEvents => None,
+            | Self::HookEvents
+            | Self::RadiclePublication => None,
         }
     }
 
@@ -190,6 +196,7 @@ pub fn system_tx_kind_from_selector(selector: [u8; 4]) -> Result<SystemTxKind, S
         TEE_BOOTSTRAP_SELECTOR => Ok(SystemTxKind::TeeBootstrap),
         ORACLE_SLASH_WINDOW_SELECTOR => Ok(SystemTxKind::OracleSlashWindow),
         HOOK_EVENTS_SELECTOR => Ok(SystemTxKind::HookEvents),
+        RADICLE_PUBLICATION_SELECTOR => Ok(SystemTxKind::RadiclePublication),
         OCOMP_TERMINAL_REQUEST_SELECTOR => Ok(SystemTxKind::OcompTerminalRequest),
         other => Err(SystemTxError::UnknownSelector(other)),
     }

@@ -8,12 +8,13 @@ pub use temp::TempRepository;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::LazyLock;
 use std::{fs, io};
 
 use crate::git::canonical::Quorum;
 use crate::git::raw::ErrorExt as _;
-use crate::identity::doc::DocError;
+use crate::identity::doc::{DocError, GetPayload as _};
 use crate::identity::{Doc, DocAt, RepoId};
 use crate::identity::{Identity, Project};
 use crate::storage::refs::{FeatureLevel, Refs, SignedRefs};
@@ -80,6 +81,7 @@ impl TryFrom<git::raw::Reference<'_>> for Ref {
 pub struct Storage {
     path: PathBuf,
     info: UserInfo,
+    publication: Arc<super::publication::Registry>,
 }
 
 impl ReadStorage for Storage {
@@ -106,7 +108,9 @@ impl ReadStorage for Storage {
     }
 
     fn repository(&self, rid: RepoId) -> Result<Self::Repository, RepositoryError> {
-        Repository::open(paths::repository(self, &rid), rid)
+        let mut repo = Repository::open(paths::repository(self, &rid), rid)?;
+        repo.publication = Arc::clone(&self.publication);
+        Ok(repo)
     }
 
     fn repositories(&self) -> Result<Vec<RepositoryInfo>, Error> {
@@ -159,14 +163,14 @@ impl ReadStorage for Storage {
 
             // For performance reasons, we don't do a full repository check here.
             let head = match repo.head() {
-                Ok((_, head)) => head,
+                Ok((_, head)) => Some(head),
                 Err(e) => {
-                    log::warn!(target: "storage", "Repository {rid} is invalid: looking up head: {e}");
-                    continue;
+                    log::debug!(target: "storage", "Repository {rid} is invalid: looking up head: {e}");
+                    None
                 }
             };
             // Nb. This will be `None` if they were not found.
-            let refs = SignedRefsInfo::new(refs::SignedRefs::load(self.info.key, &repo))
+            let refs = SignedRefsInfo::new(refs::SignedRefs::load(self.info.key.into(), &repo))
                 .map_err(|err| Error::Refs(refs::Error::Read(err)))?;
 
             let synced_at = match &refs {
@@ -190,22 +194,24 @@ impl WriteStorage for Storage {
     type RepositoryMut = Repository;
 
     fn repository_mut(&self, rid: RepoId) -> Result<Self::RepositoryMut, RepositoryError> {
-        Repository::open(paths::repository(self, &rid), rid)
+        self.repository(rid)
     }
 
     fn create(&self, rid: RepoId) -> Result<Self::RepositoryMut, Error> {
-        Repository::create(paths::repository(self, &rid), rid, &self.info)
+        let mut repo = Repository::create(paths::repository(self, &rid), rid, &self.info)?;
+        repo.publication = Arc::clone(&self.publication);
+        Ok(repo)
     }
 
     fn clean(&self, rid: RepoId) -> Result<Vec<RemoteId>, RepositoryError> {
         let repo = self.repository(rid)?;
         // N.b. we remove the repository if the `local` peer has no
         // `rad/sigrefs`. There's no risk of them corrupting data.
-        let has_sigrefs = SignedRefs::load(self.info.key, &repo)
+        let has_sigrefs = SignedRefs::load(self.info.key.into(), &repo)
             .map_err(|err| RepositoryError::from(refs::Error::Read(err)))?
             .is_some();
         if has_sigrefs {
-            repo.clean(&self.info.key)
+            repo.clean(&self.info.key.into())
         } else {
             let remotes = repo.remote_ids()?.collect::<Result<_, _>>()?;
             repo.remove()?;
@@ -224,7 +230,24 @@ impl Storage {
             Err(err) => return Err(Error::Io(err)),
             Ok(()) => {}
         }
-        Ok(Self { path, info })
+        let publication = Arc::new(super::publication::Registry::new(&path));
+        Ok(Self {
+            path,
+            info,
+            publication,
+        })
+    }
+
+    /// Install a trusted managed-owner requirement before creating or fetching its repository.
+    pub fn manage_repository(
+        &self,
+        repository: RepoId,
+        owner: crypto::RepositoryKey,
+        policy: Arc<dyn super::publication::PublicationPolicy>,
+    ) -> Result<(), Error> {
+        self.publication
+            .manage(repository, owner, policy)
+            .map_err(Into::into)
     }
 
     /// Create a [`Repository`] in a temporary directory.
@@ -240,7 +263,7 @@ impl Storage {
             ))
             .into());
         }
-        TempRepository::new(self.path(), rid, &self.info)
+        TempRepository::new(self.path(), rid, &self.info, Arc::clone(&self.publication))
     }
 
     pub fn path(&self) -> &Path {
@@ -256,9 +279,9 @@ impl Storage {
     {
         rids.map(|rid| {
             let repo = self.repository(*rid)?;
-            let (_, head) = repo.head()?;
+            let head = repo.head().ok().map(|(_, head)| head);
 
-            let refs = SignedRefsInfo::new(refs::SignedRefs::load(self.info.key, &repo))
+            let refs = SignedRefsInfo::new(refs::SignedRefs::load(self.info.key.into(), &repo))
                 .map_err(|err| Error::Refs(refs::Error::Read(err)))?;
 
             let synced_at = match &refs {
@@ -299,6 +322,7 @@ pub struct Repository {
     pub id: RepoId,
     /// The backing Git repository.
     pub backend: git::raw::Repository,
+    pub(crate) publication: Arc<super::publication::Registry>,
 }
 
 impl AsRef<Repository> for Repository {
@@ -423,7 +447,17 @@ impl Repository {
             &[] as &[&std::ffi::OsStr],
         )?;
 
-        Ok(Self { id, backend })
+        let publication = Arc::new(super::publication::Registry::new(
+            backend
+                .path()
+                .parent()
+                .ok_or_else(|| git::raw::Error::from_str("repository has no storage root"))?,
+        ));
+        Ok(Self {
+            id,
+            backend,
+            publication,
+        })
     }
 
     /// Create a new repository.
@@ -456,7 +490,17 @@ impl Repository {
         config.set_str("user.name", &info.name())?;
         config.set_str("user.email", &info.email())?;
 
-        Ok(Self { id, backend })
+        let publication = Arc::new(super::publication::Registry::new(
+            backend
+                .path()
+                .parent()
+                .ok_or_else(|| git::raw::Error::from_str("repository has no storage root"))?,
+        ));
+        Ok(Self {
+            id,
+            backend,
+            publication,
+        })
     }
 
     /// Remove an existing repository
@@ -570,12 +614,14 @@ impl Repository {
     }
 
     /// Get the canonical project information.
-    pub fn project(&self) -> Result<Project, RepositoryError> {
-        let head = self.identity_head()?;
-        let doc = self.identity_doc_at(head)?;
-        let proj = doc.project()?;
-
-        Ok(proj)
+    #[deprecated(note = "Use `Doc::project()` on `Self::identity_doc()`.")]
+    pub fn project(&self) -> Result<Option<Project>, RepositoryError> {
+        self.identity_doc().and_then(|identity| {
+            identity
+                .project()
+                .transpose()
+                .map_err(RepositoryError::Payload)
+        })
     }
 
     pub fn identity_doc_of(&self, remote: &RemoteId) -> Result<Doc, DocError> {
@@ -698,6 +744,20 @@ impl ValidateRepository for Repository {
 }
 
 impl ReadRepository for Repository {
+    fn authorize_entry(
+        &self,
+        authority: crypto::RepositoryKey,
+        entry: Oid,
+        kind: crypto::SubjectKind,
+    ) -> Result<super::publication::EntryAuthorization, super::publication::Error> {
+        self.publication
+            .authorize(super::publication::EntryRequest {
+                repository: self.id,
+                authority,
+                entry,
+                kind,
+            })
+    }
     fn id(&self) -> RepoId {
         self.id
     }
@@ -891,39 +951,58 @@ impl ReadRepository for Repository {
         Ok(root.into())
     }
 
-    fn identity_root_of(&self, remote: &RemoteId) -> Result<Oid, RepositoryError> {
-        // Remotes that run newer clients will have this reference set. For older clients,
-        // compute the root OID based on the identity head.
-        if let Ok(root) = self.reference_oid(remote, &git::refs::storage::IDENTITY_ROOT) {
-            return Ok(root);
-        }
-        let oid = self.identity_head_of(remote)?;
-        let root = self
-            .revwalk(oid)?
-            .last()
-            .ok_or(RepositoryError::Doc(DocError::Missing))??;
-
-        Ok(root.into())
-    }
-
     fn canonical_identity_head(&self) -> Result<Oid, RepositoryError> {
-        for remote in self.remote_ids()? {
-            let remote = remote?;
-            // Nb. A remote may not have an identity document if the user has not contributed
-            // any changes to the identity COB.
-            let Ok(root) = self.identity_root_of(&remote) else {
-                continue;
-            };
-            let blob = Doc::blob_at(root, self)?;
+        let blob = match self.backend.find_blob(self.id.deref().into()) {
+            Ok(blob) => blob,
+            Err(err) if err.is_not_found() => return Err(RepositoryError::Doc(DocError::Missing)),
+            Err(err) => return Err(err.into()),
+        };
 
-            // We've got an identity that goes back to the correct root.
-            if *self.id == blob.id() {
-                let identity = Identity::get(&root.into(), self)?;
+        let doc = Doc::from_blob(&blob)?;
+        let delegates = doc.delegates();
 
-                return Ok(identity.head());
-            }
+        if delegates.len() != 1 {
+            log::debug!(target: "storage", "Root identity document (blob '{}') has {} delegates, expected exactly 1.", self.id, delegates.len());
+            return Err(RepositoryError::Doc(DocError::Missing));
         }
-        Err(DocError::Missing.into())
+
+        let founder = delegates.first();
+
+        let root = match self.reference_oid(founder, &git::refs::storage::IDENTITY_ROOT) {
+            Ok(root) => {
+                log::debug!(target: "storage", "Obtained identity COB root commit '{root}' via reference '{}' in namespace of founder '{founder}' of identity document '{}'.", git::refs::storage::IDENTITY_ROOT.as_str(), self.id);
+                root
+            }
+            Err(err) if err.is_not_found() => {
+                // In case the namespace of the founder does not exist,
+                // or does not have `rad/root`, attempt to find the root
+                // by walking backwards from `rad/id`, which tracks the
+                // head of the identity COB.
+                let root = self.identity_root().map_err(|err| {
+                    if err.is_not_found() {
+                        RepositoryError::Doc(DocError::Missing)
+                    } else {
+                        err
+                    }
+                })?;
+
+                log::debug!(target: "storage", "Obtained identity COB root commit '{root}' via identity root of the repository.");
+                root
+            }
+            Err(err) => {
+                log::debug!(target: "storage", "Failed to find identity root for founder '{founder}' of identity document '{}': {err}", self.id);
+                return Err(RepositoryError::Doc(DocError::Missing));
+            }
+        };
+
+        let doc_at_root = Doc::load_at(root, self)?;
+
+        if doc_at_root.blob != *self.id {
+            log::debug!(target: "storage", "Root identity document (blob '{}') resolved via '{}' does not match the expected identity document (blob '{}').", doc_at_root.blob, CANONICAL_IDENTITY.as_str(), self.id);
+            return Err(RepositoryError::Doc(DocError::Missing));
+        }
+
+        Ok(Identity::get(&root.into(), self)?.head())
     }
 
     fn merge_base(&self, left: &Oid, right: &Oid) -> Result<Oid, crate::git::raw::Error> {
@@ -1042,7 +1121,7 @@ impl Repository {
         signer: &impl crypto::Signer,
         force: bool,
     ) -> Result<SignedRefs, RepositoryError> {
-        let remote = signer.public_key();
+        let remote = &crypto::RepositoryKey::from(signer.public_key());
         // Ensure the root reference is set, which is checked during sigref verification.
         if self
             .reference_oid(remote, &git::refs::storage::IDENTITY_ROOT)
@@ -1154,7 +1233,7 @@ mod tests {
         let cob = format!("refs/cobs/xyz.radicle.id/{id}");
 
         let mut refs = repo
-            .references_of(signer.public_key())
+            .references_of(&signer.public_key().into())
             .unwrap()
             .keys()
             .map(|r| r.to_string())
@@ -1197,8 +1276,8 @@ mod tests {
         .unwrap();
 
         let signed = stored.sign_refs(&signer).unwrap();
-        let remote = stored.remote(alice).unwrap();
-        let mut unsigned = stored.references_of(alice).unwrap();
+        let remote = stored.remote(&alice.into()).unwrap();
+        let mut unsigned = stored.references_of(&alice.into()).unwrap();
 
         // The signed refs doesn't contain the signature ref itself.
         unsigned.remove_sigrefs().unwrap();

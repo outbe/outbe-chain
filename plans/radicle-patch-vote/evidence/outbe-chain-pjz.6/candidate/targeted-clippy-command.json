@@ -1,0 +1,35 @@
+{
+  "argv": [
+    "cargo",
+    "clippy",
+    "--offline",
+    "--locked",
+    "--no-deps",
+    "-p",
+    "outbe-vote",
+    "-p",
+    "outbe-radicleregistry",
+    "-p",
+    "outbe-radicle",
+    "-p",
+    "outbe-evm",
+    "--all-targets",
+    "--",
+    "-D",
+    "warnings"
+  ],
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "environment": {
+    "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "4"
+  },
+  "source_sha": "91644eb78148e7b81cd8e46478dfb0466d321e27",
+  "started_at_utc": "2026-10-15T15:42:48.978595+00:00",
+  "exit_code": 0,
+  "ended_at_utc": "2026-10-15T15:43:06.678133+00:00",
+  "log": "targeted-clippy.log",
+  "log_sha256": "0d15fc60ffffb9c9e44f7652caf046676500c3c7f1633f6b252abb24ab7e4710"
+}

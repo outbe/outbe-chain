@@ -1,0 +1,87 @@
+{
+  "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+  "platform": "macOS-26.7.2-arm64-arm-64bit-Mach-O",
+  "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p0-r3-round3",
+  "checks": [
+    {
+      "argv": [
+        "cargo",
+        "run",
+        "--offline",
+        "--locked",
+        "--quiet",
+        "--manifest-path",
+        "plans/radicle-patch-vote/p0-check/Cargo.toml"
+      ],
+      "exit_code": 0,
+      "artifact": "primitive-model-vectors.log",
+      "sha256": "493fa160f280d0662f4bf6cdc6fbb18834d23ab40d860930d2a5c28d78dd044b"
+    },
+    {
+      "argv": [
+        "python3",
+        "plans/radicle-patch-vote/p0-check/audit_sources.py"
+      ],
+      "exit_code": 0,
+      "artifact": "source-audit.log",
+      "sha256": "95cbd42af6caf1adda7f03940e701219f7885d84338f5281b96d11c4b5a2fd7f"
+    },
+    {
+      "argv": [
+        "python3",
+        "plans/radicle-patch-vote/p0-check/verify_vectors.py"
+      ],
+      "exit_code": 0,
+      "artifact": "verify-vectors.log",
+      "sha256": "b80f0f9757af8e7663d302463f50477ce12288b0e522eeb8f8c63a3f48af236b"
+    },
+    {
+      "argv": [
+        "python3",
+        "plans/radicle-patch-vote/p0-check/descriptor_check.py"
+      ],
+      "exit_code": 0,
+      "artifact": "descriptor-check.log",
+      "sha256": "7868d0e940c62a46ffad8bacdb33edafe65d6357819d50aa43dfbf0947a0ce0b"
+    },
+    {
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2021",
+        "--check",
+        "plans/radicle-patch-vote/p0-check/src/main.rs",
+        "plans/radicle-patch-vote/p0-check/src/publication.rs",
+        "plans/radicle-patch-vote/p0-check/src/native.rs"
+      ],
+      "exit_code": 0,
+      "artifact": "rustfmt.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "argv": [
+        "bd",
+        "--readonly",
+        "dep",
+        "cycles",
+        "--json"
+      ],
+      "exit_code": 0,
+      "artifact": "dependency-cycles.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "argv": [
+        "python3",
+        "plans/radicle-patch-vote/evidence/outbe-chain-pjz.1/reviews/round3/R3-artifacts/epoch-window-check.py"
+      ],
+      "exit_code": 0,
+      "artifact": "epoch-window-check.log",
+      "sha256": "2eaffb1d7e6805aa595484f13400cda56199e1d9acf6ba795f2769883944740d"
+    }
+  ],
+  "both_reproduced_logs_identical_candidate": true,
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+  "git": "git version 2.54.0 (Apple Git-157)"
+}

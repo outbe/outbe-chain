@@ -1,0 +1,4 @@
+    Checking radicle v0.25.1 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/vendor/heartwood/crates/radicle)
+    Checking outbe-radicle v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/radicle)
+    Checking outbe-engine v0.1.0 (/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote/crates/blockchain/engine)
+    Finished `dev` profile [unoptimized] target(s) in 12.71s

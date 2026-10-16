@@ -1,0 +1,20 @@
+{
+  "result": "PASS",
+  "chain_revision": "b7ee1e16536e80ab4295ca3017303179b8371d47",
+  "repo": "rad:z4wwJNGXoTENtEnMZA2Zs5hgGLqZ",
+  "commit": "56cb2cc8bf1b9b66ea0a560a6882f81d876a4805",
+  "binaries": {
+    "rad": {
+      "path": "/private/tmp/outbe-radicle-p1-standalone/debug/rad",
+      "sha256": "8d4cfec3854149d9dd5da369a66befd24847088241f5ef1f994beb6c8dcfdbcd"
+    },
+    "helper": {
+      "path": "/private/tmp/outbe-radicle-p1-standalone/debug/git-remote-rad",
+      "sha256": "860c2e0e34e9a8b8a27a07ce99644e83f9183a054f912cb5dcb94e6cf5443e18"
+    },
+    "sidecar": {
+      "path": "/private/tmp/outbe-radicle-p1-target/debug/outbe-radicle",
+      "sha256": "d5a30a3996ee1d3f45ca8ca1777b6af579979baa87efb46933cb9b35d44688c6"
+    }
+  }
+}

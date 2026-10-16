@@ -6,9 +6,6 @@ use super::{
     rejection::{verify_deactivation_rejection, DeactivationRejection, RejectionEvidence},
     *,
 };
-use alloy_sol_types::SolCall;
-use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
-
 #[derive(Clone)]
 struct RejectionFixture {
     outcome: TxOutcome,

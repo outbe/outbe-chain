@@ -1,0 +1,17 @@
+{
+  "crates/system/radicle/src/collector.rs": "0f31d25334d0faf894cd85930871b83186a0cc611fb2defd9521a4688b6d19ac",
+  "crates/system/radicle/src/collector/review.rs": "5d105711d763ed787fca3615eb5deaae03f46b56c6f9f5e6bd7eb52f6c52d6eb",
+  "crates/blockchain/radicle/src/integration/publication/store.rs": "b99eb1af7a3b5d0d5aac51c2c7e46e1a5ea88b3ce62bee942f488a3afbf04752",
+  "crates/blockchain/radicle/src/integration/review.rs": "1d51450d806d3bb3a6656e4a7ad2223abbafd1850000e473df650338d2142b11",
+  "crates/blockchain/radicle/src/integration/network/gossip.rs": "800eddbf43366e707393d12ed49e9972b206090f266b82d09042eb21d77d5435",
+  "crates/blockchain/radicle/src/integration/network/receive.rs": "a4e38ba1c149d097ead3f8489cfd0447cb3c26a91873973431d2d0600f6b0246",
+  "crates/blockchain/radicle/src/integration/network.rs": "90ccb6182771b6c54c44214cf5f037cd3e29321e9df13e5a7eaec048bfd29985",
+  "crates/blockchain/engine/src/stack/epoch/transport.rs": "9c9615af10c67537852ad215584143ffca195bfbb16c6f6b66eb31259c1f182b",
+  "crates/blockchain/radicle/src/integration/local.rs": "3c03487d57467924d82e83ed8dff5e95c20bd8732ca625b00852560eafa0b251",
+  "crates/blockchain/radicle/src/integration/local/preparation.rs": "45cf3b51bf4c0b080d95468671a807791fcd32a1fd41fdadf56213846aef91c4",
+  "crates/system/radicle/src/collector/journal.rs": "b8a0f4ac08e2204112c76effcd432e290911853e8ca11d14cc2b60421d1ab94c",
+  "vendor/heartwood/crates/radicle-node/src/worker/fetch.rs": "5a43d4392d2b3449a6fdf516eb5641a0a4f4e8f72e36fbfae0fa650f047f8721",
+  "vendor/heartwood/crates/radicle-fetch/src/state.rs": "f2c33634f668e0c9c6b17f5a6ce13113a930ab3efabb9d846d9a1661d2c98478",
+  "crates/system/radicle/tests/governments.rs": "2a7d310864081fe95cdc7dcd7231819058d953d96635e47d5eb2967c78a4cdc6",
+  "plans/radicle-patch-vote/design.md": "93be4a659ee70b9ac6fdf12d0447ff948b7aa0f6160e9ccf6428ca493dd20025"
+}

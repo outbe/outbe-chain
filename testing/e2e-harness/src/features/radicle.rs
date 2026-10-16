@@ -1,5 +1,7 @@
 //! Release Radicle integration scenario.
 
+mod governments;
+
 use std::{collections::BTreeSet, thread::sleep, time::Duration};
 
 use cucumber::{given, then, when};
@@ -14,6 +16,151 @@ const USER_KEY: &str = "0x000000000000000000000000000000000000000000000000000000
 const RADICLE_DKG_EPOCH_BLOCKS: u64 = 60;
 const RADICLE_DKG_PREPARE_BLOCKS: u64 = 15;
 const RADICLE_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 20;
+
+#[given("a fresh four-validator governments localnet")]
+fn governments_fresh(world: &mut World) {
+    assert_eq!(world.validators.size(), 4);
+    let profile = BootstrapProfile::default()
+        .with_governments()
+        .expect("supported governments DKG window");
+    world.state.voting_window = 6;
+    world.state.wwd = Some(worldwide_day());
+    world
+        .localnet
+        .bootstrap_with_profile(world.validators.size(), &profile)
+        .expect("seed governments through the production genesis pipeline");
+    start_bootstrapped_localnet(world, &StartOpts::with_voting_window(6));
+}
+
+#[then("every validator has the same finalized governments bootstrap and native owner refs")]
+fn governments_bootstrapped(world: &mut World) {
+    use commonware_codec::Encode as _;
+    use outbe_primitives::radicle_genesis::GovernmentsDescriptor;
+    use outbe_radicle::integration::local::LocalReceiptClient;
+    use radicle::{crypto::RepositoryKey, git, identity::doc::Doc};
+    use std::fs;
+
+    let mut receipts = Vec::new();
+    wait_until("four accepted governments bootstrap receipts", 120, || {
+        receipts = (0..4)
+            .filter_map(|index| {
+                let control = world.localnet.radicle_control_socket(index);
+                crate::internal::eth::block_on(async move {
+                    LocalReceiptClient::connect(&control).await?.read(1).await
+                })
+                .ok()
+                .flatten()
+            })
+            .collect();
+        receipts.len() == 4
+    });
+    let root = receipts[0].receipt();
+    assert_eq!(
+        root.body.action,
+        outbe_primitives::radicle_publication::PublicationAction::Bootstrap
+    );
+    assert_eq!(root.body.sequence, 1);
+    assert!(root.body.previous_receipt_hash.is_zero());
+    assert!(root.accepted_height > 0);
+    assert_eq!(root.receipt_hash, root.body.receipt_hash());
+
+    let genesis: serde_json::Value = serde_json::from_slice(
+        &fs::read(world.localnet.scenario_dir().join("genesis.json")).unwrap(),
+    )
+    .unwrap();
+    let descriptor = GovernmentsDescriptor::from_bytes(
+        &hex::decode(
+            genesis["config"]["radicleGovernments"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("0x")
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(descriptor.hash().unwrap(), root.body.descriptor_hash);
+    assert_eq!(descriptor.chain_id, root.body.chain_id);
+    let polynomial = outbe_consensus::bls::load_public_polynomial(
+        &world.localnet.scenario_dir().join("polynomial.hex"),
+        &outbe_consensus::bls::KeyBackend::Plaintext,
+    )
+    .expect("public genesis polynomial");
+    assert_eq!(
+        polynomial.public().encode().as_ref(),
+        root.body.owner_bls_public.as_slice()
+    );
+    let rid: radicle::identity::RepoId = git::Oid::from_sha1(root.body.repo_id.0).into();
+    let owner = RepositoryKey::from(
+        radicle::crypto::BlsPublicKey::from_bytes(root.body.owner_bls_public.0).unwrap(),
+    );
+    let mut native_refs = Vec::new();
+    for (index, receipt) in receipts.iter().enumerate() {
+        assert_eq!(receipt.receipt(), root);
+        let port = world.validators.http_port(index);
+        assert_eq!(
+            world.rpc.block_hash(port, 0).unwrap(),
+            format!("{:#x}", root.body.genesis_hash)
+        );
+        assert_eq!(
+            world.rpc.block_hash(port, receipt.block().number).unwrap(),
+            format!("{:#x}", receipt.block().hash)
+        );
+        assert!(world.rpc.finalized(port).unwrap() >= root.accepted_height);
+        let directory = world.localnet.scenario_dir().join(format!(
+            "validator-{index}/radicle/storage/{}",
+            rid.canonical()
+        ));
+        let mut observed = None;
+        wait_until("accepted native owner refs installed", 120, || {
+            let Ok(repo) = git::raw::Repository::open_bare(&directory) else {
+                return false;
+            };
+            let Ok(identity) = repo.refname_to_id("refs/rad/id") else {
+                return false;
+            };
+            let Ok(main) = repo.refname_to_id(&format!("refs/namespaces/{owner}/refs/heads/main"))
+            else {
+                return false;
+            };
+            let Ok(sigrefs) =
+                repo.refname_to_id(&format!("refs/namespaces/{owner}/refs/rad/sigrefs"))
+            else {
+                return false;
+            };
+            let doc = Doc::from_blob(&repo.find_blob((*rid).into()).unwrap()).unwrap();
+            assert_eq!(doc.delegates().len(), 1);
+            assert_eq!(*doc.delegates().first().as_key(), owner);
+            assert_eq!(doc.threshold(), 1);
+            assert_eq!(repo.head().unwrap().target(), Some(main));
+            observed = Some((identity.to_string(), main.to_string(), sigrefs.to_string()));
+            true
+        });
+        let refs = observed.unwrap();
+        native_refs.push(refs.clone());
+        world
+            .state
+            .radicle
+            .governments_bootstrap
+            .push(serde_json::json!({
+                "validator": index,
+                "finalizedBlockNumber": receipt.block().number,
+                "finalizedBlockHash": receipt.block().hash,
+                "acceptedHeight": root.accepted_height,
+                "receiptHash": root.receipt_hash,
+                "bodyHex": hex::encode(root.body.to_bytes()),
+                "identity": refs.0,
+                "main": refs.1,
+                "sigrefs": refs.2,
+            }));
+    }
+    assert!(native_refs.iter().all(|refs| refs == &native_refs[0]));
+    wait_repositories(world, &hex::encode(root.body.repo_id), "available");
+    assert_eq!(world.rpc.radicle_registry_state(), Some((1, 1, u32::MAX)));
+    world.state.radicle.genesis_hash = Some(format!("{:#x}", root.body.genesis_hash));
+    world.state.radicle.repo_id = Some(rid.to_string());
+    world.state.radicle.repo_id_hex = Some(hex::encode(root.body.repo_id));
+}
 
 #[given("a fresh four-validator Radicle localnet")]
 fn fresh(world: &mut World) {
@@ -41,6 +188,10 @@ fn fresh(world: &mut World) {
 #[then("Radicle genesis and the signed validator mesh are ready")]
 fn mesh_ready(world: &mut World) {
     assert_eq!(world.rpc.radicle_registry_state(), Some((0, 0, u32::MAX)));
+    observe_mesh(world);
+}
+
+fn observe_mesh(world: &mut World) {
     wait_until("four Ready Radicle validators", 120, || {
         (0..4).all(|index| {
             world
@@ -554,6 +705,51 @@ fn promote(world: &mut World) {
 
 #[then("it publishes no endpoint before activation and joins the signed mesh after activation")]
 fn joiner_endpoint(world: &mut World) {
+    activate_joiner(world);
+    let index = world.validators.joiner_index();
+    let port = world.validators.http_port(index);
+    let mut native_node_ids = world.state.radicle.validator_native_node_ids.clone();
+    let joiner_native_id = world
+        .localnet
+        .validator_radicle_addresses(index)
+        .expect("joiner native Radicle address")[0]
+        .split_once('@')
+        .map(|(node_id, _)| node_id.to_owned())
+        .expect("joiner advertised NodeId");
+    native_node_ids.push(joiner_native_id);
+    let repo = world.state.radicle.repo_id_hex.clone().expect("repo ID");
+    wait_repositories_count(world, &repo, "available", 5);
+    wait_until("five-node native Heartwood full mesh", 180, || {
+        native_mesh_snapshot(world, &native_node_ids).is_some()
+    });
+    assert!(
+        world
+            .localnet
+            .radicle_seed_scope_all(index, &world.state.radicle.repo_id.clone().expect("repo"))
+            .expect("observe activated joiner Seed Scope::All"),
+        "activated joiner did not restore Seed Scope::All"
+    );
+    wait_until("repository data on activated joiner", 180, || {
+        world
+            .localnet
+            .radicle_repo_visible(index, &fixture(world))
+            .expect("observe repository data on activated joiner")
+    });
+    world.state.radicle.joiner_activation_finalized_height = world.rpc.finalized(port);
+    world.state.radicle.final_native_session_sets =
+        native_mesh_snapshot(world, &native_node_ids).expect("five-node native session sets");
+    world.state.radicle.final_seed_scope_all_validators = seed_scope_all(
+        world,
+        &world.state.radicle.repo_id.clone().expect("repo"),
+        5,
+    );
+    assert_eq!(
+        world.state.radicle.final_seed_scope_all_validators,
+        vec![0, 1, 2, 3, 4]
+    );
+}
+
+fn activate_joiner(world: &mut World) {
     let index = world.validators.joiner_index();
     let port = world.validators.http_port(index);
     wait_until("joiner local NodeId", 60, || {
@@ -638,45 +834,6 @@ fn joiner_endpoint(world: &mut World) {
             .is_some_and(|status| status["phase"] == "ready")
             && committee_has_peer(world, &node_id)
     });
-    let mut native_node_ids = world.state.radicle.validator_native_node_ids.clone();
-    let joiner_native_id = world
-        .localnet
-        .validator_radicle_addresses(index)
-        .expect("joiner native Radicle address")[0]
-        .split_once('@')
-        .map(|(node_id, _)| node_id.to_owned())
-        .expect("joiner advertised NodeId");
-    native_node_ids.push(joiner_native_id);
-    let repo = world.state.radicle.repo_id_hex.clone().expect("repo ID");
-    wait_repositories_count(world, &repo, "available", 5);
-    wait_until("five-node native Heartwood full mesh", 180, || {
-        native_mesh_snapshot(world, &native_node_ids).is_some()
-    });
-    assert!(
-        world
-            .localnet
-            .radicle_seed_scope_all(index, &world.state.radicle.repo_id.clone().expect("repo"))
-            .expect("observe activated joiner Seed Scope::All"),
-        "activated joiner did not restore Seed Scope::All"
-    );
-    wait_until("repository data on activated joiner", 180, || {
-        world
-            .localnet
-            .radicle_repo_visible(index, &fixture(world))
-            .expect("observe repository data on activated joiner")
-    });
-    world.state.radicle.joiner_activation_finalized_height = world.rpc.finalized(port);
-    world.state.radicle.final_native_session_sets =
-        native_mesh_snapshot(world, &native_node_ids).expect("five-node native session sets");
-    world.state.radicle.final_seed_scope_all_validators = seed_scope_all(
-        world,
-        &world.state.radicle.repo_id.clone().expect("repo"),
-        5,
-    );
-    assert_eq!(
-        world.state.radicle.final_seed_scope_all_validators,
-        vec![0, 1, 2, 3, 4]
-    );
 }
 
 #[then("no validator has a public Radicle seed session")]

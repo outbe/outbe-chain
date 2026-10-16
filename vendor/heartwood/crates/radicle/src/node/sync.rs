@@ -30,7 +30,7 @@ impl PrivateNetwork {
                     .delegates()
                     .iter()
                     .chain(allow.iter())
-                    .map(|did| *did.as_key())
+                    .filter_map(|did| did.as_node_id().copied())
                     .collect();
                 Some(Self { allowed })
             }

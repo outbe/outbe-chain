@@ -1,0 +1,188 @@
+[
+  {
+    "name": "metadata-heartwood",
+    "argv": [
+      "cargo",
+      "metadata",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "--format-version",
+      "1"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4",
+      "DOCKER_HOST": "unix:///tmp/outbe-p1-no-daemon.sock"
+    },
+    "DOCKER_CONTEXT": "unset",
+    "exit_code": 0,
+    "elapsed_s": 0.29198694229125977,
+    "reviewed_sha": "eb834f31ccd027d7af604ba1393498491cc133e6",
+    "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R3-artifacts/metadata-heartwood.log",
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "name": "fmt-heartwood",
+    "argv": [
+      "cargo",
+      "fmt",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4",
+      "DOCKER_HOST": "unix:///tmp/outbe-p1-no-daemon.sock"
+    },
+    "DOCKER_CONTEXT": "unset",
+    "exit_code": 0,
+    "elapsed_s": 0.5780520439147949,
+    "reviewed_sha": "eb834f31ccd027d7af604ba1393498491cc133e6",
+    "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R3-artifacts/fmt-heartwood.log",
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "name": "standalone-check",
+    "argv": [
+      "cargo",
+      "check",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "-p",
+      "radicle-cli",
+      "-p",
+      "radicle-remote-helper",
+      "--bins"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4",
+      "DOCKER_HOST": "unix:///tmp/outbe-p1-no-daemon.sock"
+    },
+    "DOCKER_CONTEXT": "unset",
+    "exit_code": 0,
+    "elapsed_s": 0.3258061408996582,
+    "reviewed_sha": "eb834f31ccd027d7af604ba1393498491cc133e6",
+    "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R3-artifacts/standalone-check.log",
+    "log_sha256": "7e8397b3c3d5ef73830e57f61ffa6f2cfd565f338d3d371aefe79dbf3b020764"
+  },
+  {
+    "name": "heartwood-clippy",
+    "argv": [
+      "cargo",
+      "clippy",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "-p",
+      "radicle",
+      "-p",
+      "radicle-node",
+      "-p",
+      "radicle-protocol",
+      "-p",
+      "radicle-cli",
+      "-p",
+      "radicle-remote-helper",
+      "--all-targets",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4",
+      "DOCKER_HOST": "unix:///tmp/outbe-p1-no-daemon.sock"
+    },
+    "DOCKER_CONTEXT": "unset",
+    "exit_code": 0,
+    "elapsed_s": 0.3759431838989258,
+    "reviewed_sha": "eb834f31ccd027d7af604ba1393498491cc133e6",
+    "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R3-artifacts/heartwood-clippy.log",
+    "log_sha256": "0c640d3e6056e973186018eb9b5813373e71f3ed6be436183c1506ae0042300e"
+  },
+  {
+    "name": "heartwood-tests",
+    "argv": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "-p",
+      "radicle-protocol",
+      "-p",
+      "radicle-node",
+      "--lib"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4",
+      "DOCKER_HOST": "unix:///tmp/outbe-p1-no-daemon.sock"
+    },
+    "DOCKER_CONTEXT": "unset",
+    "exit_code": 0,
+    "elapsed_s": 11.12166714668274,
+    "reviewed_sha": "eb834f31ccd027d7af604ba1393498491cc133e6",
+    "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R3-artifacts/heartwood-tests.log",
+    "log_sha256": "18498a2374b8bff94ee692c8412bed3a0e49451813d7e50d6f9e275775ee857b"
+  },
+  {
+    "name": "radicle-tests",
+    "argv": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "vendor/heartwood/Cargo.toml",
+      "-p",
+      "radicle",
+      "--lib"
+    ],
+    "cwd": "/Users/sakor/outbe-io/outbe-chain/.worktrees/radicle-patch-vote",
+    "env": {
+      "CARGO_TARGET_DIR": "/private/tmp/outbe-radicle-p1-standalone",
+      "CARGO_PROFILE_TEST_DEBUG": "0",
+      "CARGO_PROFILE_DEV_DEBUG": "0",
+      "CARGO_INCREMENTAL": "0",
+      "CARGO_BUILD_JOBS": "4",
+      "DOCKER_HOST": "unix:///tmp/outbe-p1-no-daemon.sock"
+    },
+    "DOCKER_CONTEXT": "unset",
+    "exit_code": 0,
+    "elapsed_s": 17.981242895126343,
+    "reviewed_sha": "eb834f31ccd027d7af604ba1393498491cc133e6",
+    "log": "plans/radicle-patch-vote/evidence/outbe-chain-pjz.2/reviews/R3-artifacts/radicle-tests.log",
+    "log_sha256": "06fddbba043ad6c68dc0d16ce820245b67b174cd1aad041061afc225462be8bd"
+  }
+]
