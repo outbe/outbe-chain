@@ -1,6 +1,7 @@
 //! Trusted local finalized context and fixed native jobs. Secret shares never cross this socket.
 
 mod bootstrap;
+mod gossip;
 mod material;
 mod preparation;
 mod publication;
@@ -529,6 +530,8 @@ async fn serve(
 ) -> Result<(), Error> {
     let request = read_frame(&mut stream, MAX_REQUEST).await?;
     let magic = match (request.get(..4), request.len()) {
+        (Some(magic), 4) if magic == gossip::TAKE => gossip::TAKE,
+        (Some(magic), length) if magic == gossip::SEND && length > 4 => gossip::SEND,
         (Some(magic), 12) if magic == MAGIC => MAGIC,
         (Some(magic), length) if magic == publication::ATTEST && length > 4 => publication::ATTEST,
         (Some(magic), length) if magic == publication::QUEUE && length > 4 => publication::QUEUE,
@@ -550,6 +553,12 @@ async fn serve(
         Ok(permit) => permit,
         Err(_) => return write_frame(&mut stream, &[magic.as_slice(), &[0]].concat()).await,
     };
+    if magic == gossip::SEND || magic == gossip::TAKE {
+        let response = gossip::relay(material, &request)
+            .await
+            .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
+        return write_frame(&mut stream, &response).await;
+    }
     if magic == publication::ATTEST || magic == publication::QUEUE {
         let response =
             publication::publish(authority, material, publications, readers, permit, request)
@@ -711,4 +720,4 @@ async fn write_frame(stream: &mut (impl AsyncWrite + Unpin), frame: &[u8]) -> Re
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

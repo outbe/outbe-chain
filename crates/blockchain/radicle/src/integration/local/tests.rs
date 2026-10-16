@@ -305,7 +305,7 @@ fn signing_state_with_members(count: u64) -> FinalizedPatchSigningState {
     signing_fixture(count).0
 }
 
-fn signing_fixture(
+pub(crate) fn signing_fixture(
     count: u64,
 ) -> (
     FinalizedPatchSigningState,
@@ -576,7 +576,7 @@ fn signing_state_wire_supports_the_protocol_maximum_committee() {
     assert!(state::decode(&oversized_count, proposal, chain()).is_err());
 }
 
-fn bootstrap_state(
+pub(crate) fn bootstrap_state(
     state: &FinalizedPatchSigningState,
 ) -> crate::manager::FinalizedBootstrapSigningState {
     crate::manager::FinalizedBootstrapSigningState {
@@ -640,9 +640,9 @@ impl RepositoryAuthorityReader for ContextReader {
 async fn public_output_crosses_the_socket_only_with_the_same_current_patch_context() {
     use crate::endpoint::EndpointAddress;
     use crate::integration::{
-        network::shutdown_tests::{NoSend, TestReceiver},
-        EndpointNetwork, EndpointSigningIdentity, EndpointTransport, LocalEndpointIdentity,
-        LocalEndpointIdentityChannel, RadicleStatusChannel,
+        network::shutdown_tests::TestReceiver, EndpointNetwork, EndpointSigningIdentity,
+        EndpointTransport, LocalEndpointIdentity, LocalEndpointIdentityChannel,
+        RadicleStatusChannel,
     };
     use commonware_codec::Encode as _;
     let directory = private_directory();
@@ -666,10 +666,14 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
         node_id: [1; 32],
         addresses: vec![EndpointAddress::dns("local.example", 8776).unwrap()],
     });
-    let (_incoming, receiver) = mpsc::unbounded_channel();
+    let (incoming, receiver) = mpsc::unbounded_channel();
+    let sent = Arc::new(std::sync::Mutex::new(Vec::new()));
     let actor = tokio::spawn(service.run(
         EndpointTransport {
-            sender: NoSend,
+            sender: RecordingSender {
+                peer: None,
+                sent: sent.clone(),
+            },
             receiver: TestReceiver(receiver),
         },
         EndpointSigningIdentity {
@@ -712,6 +716,39 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     ));
     let partial = client.sign_bootstrap_document(&bootstrap).await.unwrap();
     assert_eq!(partial.participant_index(), 0);
+    use crate::integration::RepositoryGossipMessage;
+    let own_message = RepositoryGossipMessage::Partial {
+        ordinal: 0,
+        frame: partial.clone(),
+    };
+    let wire = own_message.to_bytes().unwrap();
+    assert_eq!(
+        RepositoryGossipMessage::from_bytes(&wire)
+            .unwrap()
+            .to_bytes()
+            .unwrap(),
+        wire
+    );
+    for malformed in [
+        wire[..5].to_vec(),
+        wire[..wire.len() - 1].to_vec(),
+        [wire.clone(), vec![0]].concat(),
+    ] {
+        assert!(RepositoryGossipMessage::from_bytes(&malformed).is_err());
+    }
+    assert_eq!(
+        client
+            .gossip_repository_message(&bootstrap.material, &own_message)
+            .await
+            .unwrap(),
+        3
+    );
+    let deliveries = sent.lock().unwrap().clone();
+    assert_eq!(deliveries.len(), 3);
+    for ((peer, bytes), key) in deliveries.iter().zip(&keys[1..]) {
+        assert_eq!(peer, &key.public_key());
+        assert_eq!(bytes, &wire);
+    }
     let mut foreign = chain();
     foreign.genesis_hash = B256::repeat_byte(99);
     assert!(LocalReceiptClient::new(&control, foreign)
@@ -774,6 +811,54 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
         .material
         .recover_bootstrap_document(&verifier, &document, &bootstrap.state, &contributions)
         .unwrap();
+    let peer_message = RepositoryGossipMessage::Partial {
+        ordinal: 0,
+        frame: document_frames[1].clone(),
+    };
+    assert!(client
+        .gossip_repository_message(&bootstrap.material, &peer_message)
+        .await
+        .is_err());
+    let peer_wire = peer_message.to_bytes().unwrap();
+    incoming
+        .send((keys[2].public_key(), peer_wire.clone().into()))
+        .unwrap();
+    incoming
+        .send((
+            commonware_cryptography::bls12381::PrivateKey::from_seed(999).public_key(),
+            peer_wire.clone().into(),
+        ))
+        .unwrap();
+    let mut corrupted = peer_wire.clone();
+    *corrupted.last_mut().unwrap() ^= 1;
+    incoming
+        .send((keys[1].public_key(), corrupted.into()))
+        .unwrap();
+    incoming
+        .send((keys[1].public_key(), peer_wire.clone().into()))
+        .unwrap();
+    let messages = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let messages = client
+                .take_repository_messages(&bootstrap.material)
+                .await
+                .unwrap();
+            if !messages.is_empty() {
+                break messages;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].sender, keys[1].public_key());
+    assert_eq!(messages[0].message.to_bytes().unwrap(), peer_wire);
+    assert!(client
+        .take_repository_messages(&bootstrap.material)
+        .await
+        .unwrap()
+        .is_empty());
     let identity = document.attach(&repo, &signature, b"[]").unwrap();
     assert!(client
         .sign_bootstrap_identity(&bootstrap, &identity, &repo, wrong_manifest)
@@ -1030,6 +1115,18 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
         .await
         .unwrap();
     assert_eq!(repeated, attestation);
+    let attestation_message = RepositoryGossipMessage::Attestation {
+        body: body.clone(),
+        attestation: attestation.clone(),
+    };
+    assert_eq!(
+        client
+            .gossip_repository_message(&bootstrap.material, &attestation_message)
+            .await
+            .unwrap(),
+        3
+    );
+
     client
         .queue_bootstrap_publication(&repo, manifest, &package, &witness, &batch)
         .await
@@ -1572,4 +1669,47 @@ fn bootstrap_context_codec_binds_public_material_descriptor_and_exact_chain() {
     changed.authority.block.number += 1;
     assert!(bootstrap::encode(&changed, &material).is_err());
     assert!(bootstrap::decode(&vec![0; bootstrap::MAX_FRAME + 1], chain()).is_err());
+}
+
+#[derive(Clone)]
+struct RecordingSender {
+    peer: Option<commonware_cryptography::bls12381::PublicKey>,
+    sent: Arc<std::sync::Mutex<Vec<RecordedDelivery>>>,
+}
+
+type RecordedDelivery = (commonware_cryptography::bls12381::PublicKey, Vec<u8>);
+
+impl commonware_p2p::LimitedSender for RecordingSender {
+    type PublicKey = commonware_cryptography::bls12381::PublicKey;
+    type Checked<'a> = Self;
+    fn check(
+        &mut self,
+        recipients: commonware_p2p::Recipients<Self::PublicKey>,
+    ) -> Result<Self, std::time::SystemTime> {
+        let commonware_p2p::Recipients::One(peer) = recipients else {
+            return Err(std::time::SystemTime::now());
+        };
+        Ok(Self {
+            peer: Some(peer),
+            sent: self.sent.clone(),
+        })
+    }
+}
+
+impl commonware_p2p::CheckedSender for RecordingSender {
+    type PublicKey = commonware_cryptography::bls12381::PublicKey;
+    fn recipients(&self) -> Vec<Self::PublicKey> {
+        self.peer.iter().cloned().collect()
+    }
+    fn send(
+        self,
+        message: impl Into<commonware_runtime::IoBufs> + Send,
+        _: bool,
+    ) -> commonware_actor::Unreliable<commonware_actor::Feedback> {
+        use bytes::Buf as _;
+        let mut bytes = message.into();
+        let bytes = bytes.copy_to_bytes(bytes.remaining()).to_vec();
+        self.sent.lock().unwrap().push((self.peer.unwrap(), bytes));
+        commonware_actor::Unreliable::Outcome(commonware_actor::Feedback::Ok)
+    }
 }

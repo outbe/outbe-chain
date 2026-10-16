@@ -169,6 +169,14 @@ impl RepositorySigningMaterial {
         Ok(())
     }
 
+    pub(crate) fn verify_relay_partial(
+        &self,
+        sender: &bls12381::PublicKey,
+        frame: &RepositoryPartial,
+    ) -> Result<(), Error> {
+        verify_partial_identity(&self.review_context([0; 32]), &self.output, sender, frame)
+    }
+
     pub fn sign_bootstrap_document(
         &self,
         provider: &VrfMaterialProvider<MinSig>,
@@ -680,12 +688,30 @@ fn verify_native_partial(
     sender: &bls12381::PublicKey,
     frame: &RepositoryPartial,
 ) -> Result<PartialSignature<MinSig>, Error> {
+    if frame.body.message_hash != Sha256::hash(&[subject.as_bytes()]).0 {
+        return Err(Error::Context);
+    }
+    verify_partial_identity(context, output, sender, frame)?;
+    provider.verify_repository_partial(
+        context.material_version,
+        output.public(),
+        subject,
+        &frame.body.partial,
+    )?;
+    Ok(frame.body.partial.clone())
+}
+
+fn verify_partial_identity(
+    context: &ReviewSigningContext,
+    output: &Output<MinSig, bls12381::PublicKey>,
+    sender: &bls12381::PublicKey,
+    frame: &RepositoryPartial,
+) -> Result<(), Error> {
     if frame.body.chain_id != context.chain_id
         || frame.body.genesis_hash != context.genesis_hash
         || frame.body.epoch != context.epoch
         || frame.body.material_version != context.material_version
         || frame.body.material_hash != context.material_hash
-        || frame.body.message_hash != Sha256::hash(&[subject.as_bytes()]).0
     {
         return Err(Error::Context);
     }
@@ -695,13 +721,7 @@ fn verify_native_partial(
     if !sender.verify(PARTIAL_NAMESPACE, &frame.body.to_bytes(), &frame.signature) {
         return Err(Error::Partial);
     }
-    provider.verify_repository_partial(
-        context.material_version,
-        output.public(),
-        subject,
-        &frame.body.partial,
-    )?;
-    Ok(frame.body.partial.clone())
+    Ok(())
 }
 
 fn recover_native_subject(

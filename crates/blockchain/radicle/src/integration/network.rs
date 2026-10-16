@@ -1,9 +1,11 @@
 mod evidence;
+pub(crate) mod gossip;
 #[cfg(test)]
 pub(crate) mod material_tests;
 mod receive;
 
 pub use evidence::{EndpointEvidenceHandle, SignedEndpointEvidence};
+pub use gossip::{ReceivedRepositoryMessage, RepositoryGossipMessage};
 
 use super::publication::{review::Error as PublicationError, store::SelectedReviewPublication};
 use super::review::{CheckpointPreparedReview, CheckpointPreparedReviewRefs};
@@ -139,6 +141,8 @@ struct EndpointNetworkState {
     repository_authority: Option<Arc<dyn RepositoryAuthorityReader>>,
     repository_publication: outbe_primitives::radicle_publication::RepositoryPublicationMailbox,
     queued_bootstrap: Option<Arc<super::publication::store::SelectedBootstrapPublication>>,
+    repository_inbox: BTreeMap<(PeerId, u8), RepositoryGossipMessage>,
+    repository_inbox_material: Option<[u8; 32]>,
 }
 
 #[derive(Clone)]
@@ -153,6 +157,13 @@ struct EndpointRefresh<'a> {
 }
 
 enum NetworkCommand {
+    Gossip {
+        message: Box<RepositoryGossipMessage>,
+        result: oneshot::Sender<Result<usize, signing::Error>>,
+    },
+    DrainGossip {
+        result: oneshot::Sender<Result<Vec<ReceivedRepositoryMessage>, signing::Error>>,
+    },
     QueueBootstrapPublication {
         publication: Arc<super::publication::store::SelectedBootstrapPublication>,
         batch: Box<outbe_primitives::radicle_publication::PublicationBatch>,
@@ -227,6 +238,8 @@ impl EndpointNetwork {
                     repository_authority: None,
                     repository_publication: Default::default(),
                     queued_bootstrap: None,
+                    repository_inbox: BTreeMap::new(),
+                    repository_inbox_material: None,
                 },
             },
             EndpointNetworkResolver { commands },
@@ -236,6 +249,34 @@ impl EndpointNetwork {
 }
 
 impl EndpointNetworkResolver {
+    pub async fn gossip_repository_message(
+        &self,
+        message: RepositoryGossipMessage,
+    ) -> Result<usize, signing::Error> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::Gossip {
+                message: Box::new(message),
+                result,
+            })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
+    pub async fn take_repository_messages(
+        &self,
+    ) -> Result<Vec<ReceivedRepositoryMessage>, signing::Error> {
+        let (result, response) = oneshot::channel();
+        self.commands
+            .try_send(NetworkCommand::DrainGossip { result })
+            .map_err(|_| signing::Error::Unavailable)?;
+        tokio::time::timeout(HANDLE_DEADLINE, response)
+            .await
+            .map_err(|_| signing::Error::Unavailable)?
+            .map_err(|_| signing::Error::Unavailable)?
+    }
     pub async fn queue_bootstrap_publication(
         &self,
         publication: Arc<super::publication::store::SelectedBootstrapPublication>,
@@ -673,6 +714,12 @@ impl EndpointNetworkState {
                 }
                 command = self.commands.recv() => {
                     match command {
+                        Some(NetworkCommand::Gossip {message,result})=>{
+                            let _ = result.send(self.gossip(&mut sender,&signer,&message));
+                        }
+                        Some(NetworkCommand::DrainGossip {result})=>{
+                            let _ = result.send(self.drain_gossip());
+                        }
                         Some(NetworkCommand::QueueBootstrapPublication {publication,batch,result})=>{
                             let _ = result.send(self.queue_bootstrap_publication(publication,*batch));
                         }

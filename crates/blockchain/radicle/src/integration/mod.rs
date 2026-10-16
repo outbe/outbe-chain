@@ -20,7 +20,7 @@ pub use network::{
     shutdown_bounded, EndpointEvidenceHandle, EndpointNetwork, EndpointNetworkService,
     EndpointSigningIdentity, EndpointTransport, LocalEndpointIdentity,
     LocalEndpointIdentityChannel, LocalEndpointIdentityHandle, LocalEndpointIdentityPublisher,
-    SignedEndpointEvidence,
+    ReceivedRepositoryMessage, RepositoryGossipMessage, SignedEndpointEvidence,
 };
 pub use sidecar::{query_sidecar, SidecarError, SidecarInfo};
 pub use status::{
