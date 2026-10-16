@@ -526,7 +526,14 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
     assert!(workflow.contains("[.tag, .object.sha] | @tsv"));
     assert!(workflow.contains("test \"${signed_tag_name}\" = \"${RELEASE_TAG}\""));
     assert!(workflow.contains("runs-on: testnet-release-sgx"));
-    assert_eq!(workflow.matches("--network testnet").count(), 10);
+    assert!(workflow.contains(
+        "runs-on: [self-hosted, testnet-release-sgx, \"${{ matrix.runner_label }}\"]"
+    ));
+    assert!(workflow.contains("runner_label: release-fr"));
+    assert!(workflow.contains("runner_label: release-mum"));
+    assert!(workflow.contains("name: reproducible-builder-fr"));
+    assert!(workflow.contains("name: reproducible-builder-mum"));
+    assert_eq!(workflow.matches("--network testnet").count(), 9);
     assert!(workflow.contains("--genesis \"${TESTNET_SEEDED_GENESIS}\""));
     assert!(workflow.contains("--expected-pck-ca processor"));
     assert!(workflow.contains("--processor-dcap-archive"));
@@ -540,8 +547,8 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
         workflow
             .matches("--genesis \"${TESTNET_SEEDED_GENESIS}\"")
             .count(),
-        2,
-        "both reproducible bundle builds must consume the immutable seeded Testnet genesis"
+        1,
+        "the FR/MUM matrix must feed the same immutable seeded Testnet genesis to each build"
     );
     assert!(workflow.contains(
         "--seeded-genesis \"${RUNNER_TEMP}/release-inputs/testnet-seeded-genesis.json\""
@@ -704,22 +711,31 @@ fn mainnet_release_workflow_requires_a_pinned_genesis_and_closed_profile() {
         "test \"$(jq -er '.config.chainId' \\\n",
         "            \"${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json\")\" = '676'"
     )));
-    // The unsigned build uses the shared SGX runner. Keep the exception scoped
-    // to that job. Testnet settings elsewhere in the mainnet workflow still fail.
-    let unsigned_build_runner = concat!(
+    // The regional builders and comparison use the existing shared release
+    // runner pool. Testnet settings elsewhere in the mainnet workflow still fail.
+    let regional_build_runner = concat!(
+        "    runs-on: [self-hosted, testnet-release-sgx, ",
+        "\"${{ matrix.runner_label }}\"]\n",
+    );
+    let comparison_runner = concat!(
         "  build-and-compare:\n",
-        "    name: two independent ELF and unsigned SGX builds\n",
+        "    name: compare FR and MUM release candidates\n",
+        "    needs: [release-identity, build]\n",
         "    runs-on: testnet-release-sgx\n",
     );
-    assert!(workflow.contains(unsigned_build_runner));
+    assert!(workflow.contains(regional_build_runner));
+    assert!(workflow.contains(comparison_runner));
+    assert!(workflow.contains("runner_label: release-fr"));
+    assert!(workflow.contains("runner_label: release-mum"));
     assert!(!workflow
-        .replacen(unsigned_build_runner, "", 1)
+        .replacen(regional_build_runner, "", 1)
+        .replacen(comparison_runner, "", 1)
         .contains("testnet"));
     assert!(!workflow.contains("--clobber"));
     assert!(!workflow.contains("gh release upload"));
     assert!(workflow.contains("--draft --prerelease"));
     assert!(workflow.contains("cmp --silent"));
-    assert_eq!(workflow.matches("--network mainnet").count(), 10);
+    assert_eq!(workflow.matches("--network mainnet").count(), 9);
 
     let release_assets = workflow
         .split_once("          assets=(")
