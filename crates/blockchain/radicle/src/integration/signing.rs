@@ -190,6 +190,40 @@ impl RepositorySigningMaterial {
             .map(|_| ())
     }
 
+    pub fn verify_bootstrap_identity_partial(
+        &self,
+        job: &super::bootstrap::PreparedBootstrapIdentity,
+        state: &crate::manager::FinalizedBootstrapSigningState,
+        sender: &bls12381::PublicKey,
+        frame: &RepositoryPartial,
+    ) -> Result<(), Error> {
+        self.authorize_bootstrap(state, job.body())?;
+        let verifier = VrfMaterialProvider::new(
+            self.authority.committee().vrf_material_version,
+            self.output.public().clone(),
+            None,
+        );
+        self.verify_subject_partial(&verifier, job.subject(), sender, frame)
+            .map(|_| ())
+    }
+
+    pub fn verify_bootstrap_refs_partial(
+        &self,
+        job: &super::bootstrap::PreparedBootstrapRefs,
+        state: &crate::manager::FinalizedBootstrapSigningState,
+        sender: &bls12381::PublicKey,
+        frame: &RepositoryPartial,
+    ) -> Result<(), Error> {
+        self.authorize_bootstrap(state, job.body())?;
+        let verifier = VrfMaterialProvider::new(
+            self.authority.committee().vrf_material_version,
+            self.output.public().clone(),
+            None,
+        );
+        self.verify_subject_partial(&verifier, job.subject(), sender, frame)
+            .map(|_| ())
+    }
+
     pub fn recover_bootstrap_document(
         &self,
         provider: &VrfMaterialProvider<MinSig>,

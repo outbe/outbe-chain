@@ -723,9 +723,157 @@ async fn public_output_crosses_the_socket_only_with_the_same_current_patch_conte
     changed.state.descriptor.description = "Other".into();
     assert!(client.sign_bootstrap_document(&changed).await.is_err());
 
+    use commonware_cryptography::Signer as _;
+    use outbe_consensus::hybrid::VrfMaterialProvider;
+    use radicle::storage::WriteRepository as _;
+    let providers: Vec<_> = shares
+        .iter()
+        .map(|share| VrfMaterialProvider::new(6, output.public().clone(), Some(share.clone())))
+        .collect();
+    let verifier = VrfMaterialProvider::new(6, output.public().clone(), None);
+    let document = crate::integration::bootstrap::prepare_bootstrap_document(
+        bootstrap.state.descriptor(),
+        &bootstrap.material,
+    )
+    .unwrap();
+    let raw =
+        radicle::git::raw::Repository::init_bare(directory.path().join("bootstrap.git")).unwrap();
+    raw.treebuilder(None).unwrap().write().unwrap();
+    let manifest = raw.blob(b"[]").unwrap().into();
+    let wrong_manifest = raw.blob(b"wrong genesis content").unwrap().into();
+    let repo =
+        radicle::storage::git::Repository::open(raw.path(), document.repository_id()).unwrap();
+    let mut contributions = vec![(keys[0].public_key(), partial)];
+    for i in 1..3 {
+        contributions.push((
+            keys[i].public_key(),
+            bootstrap
+                .material
+                .sign_bootstrap_document(
+                    &providers[i],
+                    &document,
+                    &bootstrap.state,
+                    original.authority.committee.committee[i].address,
+                    &keys[i],
+                )
+                .unwrap(),
+        ));
+    }
+    let signature = bootstrap
+        .material
+        .recover_bootstrap_document(&verifier, &document, &bootstrap.state, &contributions)
+        .unwrap();
+    let identity = document.attach(&repo, &signature, b"[]").unwrap();
+    assert!(client
+        .sign_bootstrap_identity(&bootstrap, &identity, &repo, wrong_manifest)
+        .await
+        .is_err());
+    let request = bootstrap::native_request(
+        bootstrap::SIGN_IDENTITY,
+        identity.body(),
+        &repo,
+        manifest,
+        &[identity.document_signature()],
+    )
+    .unwrap();
+    for malformed in [
+        request[..request.len() - 1].to_vec(),
+        [request.clone(), vec![0]].concat(),
+    ] {
+        assert_eq!(
+            client
+                .exchange(&malformed, bootstrap::SIGN_FRAME)
+                .await
+                .unwrap(),
+            [bootstrap::SIGN_IDENTITY.as_slice(), &[0]].concat()
+        );
+    }
+    let mut corrupt = request;
+    *corrupt.last_mut().unwrap() ^= 1;
+    assert_eq!(
+        client
+            .exchange(&corrupt, bootstrap::SIGN_FRAME)
+            .await
+            .unwrap(),
+        [bootstrap::SIGN_IDENTITY.as_slice(), &[0]].concat()
+    );
+    let partial = client
+        .sign_bootstrap_identity(&bootstrap, &identity, &repo, manifest)
+        .await
+        .unwrap();
+    assert_eq!(partial.participant_index(), 0);
+    assert!(bootstrap
+        .material
+        .verify_bootstrap_document_partial(
+            &crate::integration::bootstrap::prepare_bootstrap_document(
+                bootstrap.state.descriptor(),
+                &bootstrap.material,
+            )
+            .unwrap(),
+            &bootstrap.state,
+            &keys[0].public_key(),
+            &partial,
+        )
+        .is_err());
+    let mut contributions = vec![(keys[0].public_key(), partial)];
+    for i in 1..3 {
+        contributions.push((
+            keys[i].public_key(),
+            bootstrap
+                .material
+                .sign_bootstrap_identity(
+                    &providers[i],
+                    &identity,
+                    &bootstrap.state,
+                    original.authority.committee.committee[i].address,
+                    &keys[i],
+                )
+                .unwrap(),
+        ));
+    }
+    let signature = bootstrap
+        .material
+        .recover_bootstrap_identity(&verifier, &identity, &bootstrap.state, &contributions)
+        .unwrap();
+    let refs = identity.attach(&repo, &signature).unwrap();
+    let partial = client
+        .sign_bootstrap_refs(&bootstrap, &refs, &repo, manifest)
+        .await
+        .unwrap();
+    assert_eq!(partial.participant_index(), 0);
+    let mut contributions = vec![(keys[0].public_key(), partial)];
+    for i in 1..3 {
+        contributions.push((
+            keys[i].public_key(),
+            bootstrap
+                .material
+                .sign_bootstrap_refs(
+                    &providers[i],
+                    &refs,
+                    &bootstrap.state,
+                    original.authority.committee.committee[i].address,
+                    &keys[i],
+                )
+                .unwrap(),
+        ));
+    }
+    let signature = bootstrap
+        .material
+        .recover_bootstrap_refs(&verifier, &refs, &bootstrap.state, &contributions)
+        .unwrap();
+    assert!(client
+        .sign_bootstrap_refs(&changed, &refs, &repo, manifest)
+        .await
+        .is_err());
     *reader.state.lock().unwrap() = None;
     assert!(client.read_bootstrap_signing_context().await.is_err());
     assert!(client.sign_bootstrap_document(&bootstrap).await.is_err());
+    assert!(client
+        .sign_bootstrap_refs(&bootstrap, &refs, &repo, manifest)
+        .await
+        .is_err());
+    refs.attach(&repo, &signature).unwrap();
+    assert_eq!(repo.raw().references().unwrap().count(), 0);
     *reader.state.lock().unwrap() = Some(original.clone());
 
     let (state, material) = client.read_patch_signing_context(proposal).await.unwrap();

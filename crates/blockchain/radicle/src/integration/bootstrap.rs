@@ -242,6 +242,9 @@ impl PreparedBootstrapDocument {
 }
 
 impl PreparedBootstrapIdentity {
+    pub(crate) fn document_signature(&self) -> &BlsEnvelope {
+        &self.document_signature
+    }
     pub fn subject(&self) -> &RepositorySubject {
         &self.subject
     }
@@ -304,6 +307,9 @@ impl PreparedBootstrapIdentity {
 }
 
 impl PreparedBootstrapRefs {
+    pub(crate) fn signatures(&self) -> [&BlsEnvelope; 2] {
+        [&self.signatures[0], &self.signatures[1]]
+    }
     pub fn subject(&self) -> &RepositorySubject {
         &self.subject
     }

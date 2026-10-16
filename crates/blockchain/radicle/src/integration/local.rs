@@ -262,13 +262,11 @@ impl LocalReceiptClient {
         )
     }
 
-    /// A fresh local finalized snapshot for this exact approved proposal, never a cached fallback.
     /// Ask the node to reconstruct and sign its own current genesis document, never caller bytes.
     pub async fn sign_bootstrap_document(
         &self,
         context: &BootstrapSigningContext,
     ) -> Result<super::signing::RepositoryPartial, Error> {
-        use commonware_codec::DecodeExt as _;
         if context.state.authority().chain_id() != self.chain.chain_id
             || context.state.authority().genesis_hash() != self.chain.genesis_hash
         {
@@ -285,35 +283,69 @@ impl LocalReceiptClient {
         ]
         .concat();
         let response = self.exchange(&request, bootstrap::SIGN_FRAME).await?;
-        if response == [bootstrap::SIGN_DOCUMENT.as_slice(), &[0]].concat() {
-            return Err(Error::Unavailable);
-        }
-        if response.len() != bootstrap::SIGN_FRAME
-            || response.get(..5)
-                != Some(
-                    [bootstrap::SIGN_DOCUMENT.as_slice(), &[2]]
-                        .concat()
-                        .as_slice(),
-                )
-        {
-            return Err(Error::Protocol);
-        }
-        let partial = super::signing::RepositoryPartial::from_bytes(&response[5..])
-            .map_err(|_| Error::Protocol)?;
-        let member = context
-            .state
-            .authority()
-            .committee()
-            .committee
-            .get(partial.participant_index() as usize)
-            .ok_or(Error::Protocol)?;
-        let sender = commonware_cryptography::bls12381::PublicKey::decode(
-            member.consensus_pubkey.as_slice(),
-        )
-        .map_err(|_| Error::Protocol)?;
+        let (partial, sender) =
+            bootstrap::decode_partial(&response, bootstrap::SIGN_DOCUMENT, context)?;
         context
             .material
             .verify_bootstrap_document_partial(&job, &context.state, &sender, &partial)
+            .map_err(|_| Error::Protocol)?;
+        Ok(partial)
+    }
+
+    pub async fn sign_bootstrap_identity(
+        &self,
+        context: &BootstrapSigningContext,
+        job: &super::bootstrap::PreparedBootstrapIdentity,
+        repo: &radicle::storage::git::Repository,
+        content_manifest: radicle::git::Oid,
+    ) -> Result<super::signing::RepositoryPartial, Error> {
+        if context.state.authority().chain_id() != self.chain.chain_id
+            || context.state.authority().genesis_hash() != self.chain.genesis_hash
+        {
+            return Err(Error::Protocol);
+        }
+        let request = bootstrap::native_request(
+            bootstrap::SIGN_IDENTITY,
+            job.body(),
+            repo,
+            content_manifest,
+            &[job.document_signature()],
+        )?;
+        let response = self.exchange(&request, bootstrap::SIGN_FRAME).await?;
+        let (partial, sender) =
+            bootstrap::decode_partial(&response, bootstrap::SIGN_IDENTITY, context)?;
+        context
+            .material
+            .verify_bootstrap_identity_partial(job, &context.state, &sender, &partial)
+            .map_err(|_| Error::Protocol)?;
+        Ok(partial)
+    }
+
+    pub async fn sign_bootstrap_refs(
+        &self,
+        context: &BootstrapSigningContext,
+        job: &super::bootstrap::PreparedBootstrapRefs,
+        repo: &radicle::storage::git::Repository,
+        content_manifest: radicle::git::Oid,
+    ) -> Result<super::signing::RepositoryPartial, Error> {
+        if context.state.authority().chain_id() != self.chain.chain_id
+            || context.state.authority().genesis_hash() != self.chain.genesis_hash
+        {
+            return Err(Error::Protocol);
+        }
+        let request = bootstrap::native_request(
+            bootstrap::SIGN_REFS,
+            job.body(),
+            repo,
+            content_manifest,
+            &job.signatures(),
+        )?;
+        let response = self.exchange(&request, bootstrap::SIGN_FRAME).await?;
+        let (partial, sender) =
+            bootstrap::decode_partial(&response, bootstrap::SIGN_REFS, context)?;
+        context
+            .material
+            .verify_bootstrap_refs_partial(job, &context.state, &sender, &partial)
             .map_err(|_| Error::Protocol)?;
         Ok(partial)
     }
@@ -328,6 +360,7 @@ impl LocalReceiptClient {
         )
     }
 
+    /// A fresh local finalized snapshot for this exact approved proposal, never a cached fallback.
     pub async fn read_patch_signing_state(
         &self,
         proposal_id: U256,
@@ -425,6 +458,12 @@ async fn serve(
         (Some(magic), 12) if magic == MAGIC => MAGIC,
         (Some(magic), 4) if magic == bootstrap::MAGIC => bootstrap::MAGIC,
         (Some(magic), 36) if magic == bootstrap::SIGN_DOCUMENT => bootstrap::SIGN_DOCUMENT,
+        (Some(magic), length) if magic == bootstrap::SIGN_IDENTITY && length > 36 => {
+            bootstrap::SIGN_IDENTITY
+        }
+        (Some(magic), length) if magic == bootstrap::SIGN_REFS && length > 36 => {
+            bootstrap::SIGN_REFS
+        }
         (Some(magic), 36) if magic == state::MAGIC => state::MAGIC,
         (Some(magic), 36) if magic == material::MAGIC => material::MAGIC,
         (Some(magic), 36) if magic == preparation::MAGIC => preparation::MAGIC,
@@ -435,6 +474,12 @@ async fn serve(
         Ok(permit) => permit,
         Err(_) => return write_frame(&mut stream, &[magic.as_slice(), &[0]].concat()).await,
     };
+    if magic == bootstrap::SIGN_IDENTITY || magic == bootstrap::SIGN_REFS {
+        let response = bootstrap::sign_native(authority, material, readers, permit, request)
+            .await
+            .unwrap_or_else(|_| [magic.as_slice(), &[0]].concat());
+        return write_frame(&mut stream, &response).await;
+    }
     if magic == bootstrap::SIGN_DOCUMENT {
         let response =
             bootstrap::sign_document(authority, material, permit, B256::from_slice(&request[4..]))
