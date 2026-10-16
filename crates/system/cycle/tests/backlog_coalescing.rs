@@ -115,18 +115,17 @@ fn the_genesis_interval_leaves_the_clearing_poll_alone() {
 }
 
 #[test]
-fn registry_ids_are_unique_and_traversed_in_permanent_id_order() {
+fn registry_ids_are_unique_and_traversed_in_id_order() {
     let ids = ACTIVE_TRIGGERS
         .iter()
         .map(|spec| spec.id)
         .collect::<Vec<_>>();
-    assert_eq!(ids, vec![0, 1, 3, 4, 5, 7, 8, 9, 10]);
+    assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
 
     let mut unique = ids.clone();
     unique.sort_unstable();
     unique.dedup();
     assert_eq!(unique.len(), ids.len());
-    assert!(!ids.contains(&TriggerId::WwdAdvanceNoon.as_u32()));
 }
 
 #[test]

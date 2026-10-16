@@ -9,27 +9,21 @@
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
-/// Stable on-chain identifier for each trigger. The numeric values
-/// must remain byte-equal forever. The module emits them as the indexed
-/// `id` in [`crate::ICycle::CycleTriggerExecuted`] and persists them in
-/// the [`crate::schema::Cycle`] mappings. New triggers append. Never
-/// renumber existing ones.
+/// Stable on-chain identifier for each trigger. The module emits it as
+/// the indexed `id` in [`crate::ICycle::CycleTriggerExecuted`] and
+/// persists it in the [`crate::schema::Cycle`] mappings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum TriggerId {
     ProtocolCycle = 0,
     IntexCallDaily = 1,
-    /// Reserved historical identifier. No active trigger uses it.
-    WwdAdvanceNoon = 2,
-    AuctionAdvance = 3,
-    GemCallDaily = 4,
-    AuctionClearing = 5,
-    /// Reserved historical identifier. Called notices now leave with the call slice.
-    IntexDrainNotices = 6,
-    CredisCallDaily = 7,
-    NodCallDaily = 8,
-    GemPositionDaily = 9,
-    IntexDrainParked = 10,
+    AuctionAdvance = 2,
+    GemCallDaily = 3,
+    AuctionClearing = 4,
+    CredisCallDaily = 5,
+    NodCallDaily = 6,
+    GemPositionDaily = 7,
+    IntexDrainParked = 8,
 }
 
 impl TriggerId {
