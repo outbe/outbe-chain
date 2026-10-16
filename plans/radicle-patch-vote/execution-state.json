@@ -65,7 +65,7 @@
     "user_confirmation": "да все всерно, goal можно снимать с паузы ?",
     "resume_intent": "explicit; API cannot resume a blocked goal"
   },
-  "source_sha": "e66c446fd",
+  "source_sha": "b827c090c",
   "p5_evidence": "evidence/outbe-chain-pjz.6/candidate",
   "p5_reviews": {
     "R1": "outbe-chain-pjz.6.1",
@@ -84,7 +84,7 @@
     "evidence": "evidence/outbe-chain-pjz.3/policy-baseline",
     "acceptance": "intermediate only; P2 incomplete"
   },
-  "current_source_changes": "e66c446fd adds protected OCB1 public bootstrap descriptor/current authority/public Output context using shared unchanged authority wire prefix; no Share or native signing request crosses socket yet.",
+  "current_source_changes": "b827c090c verifies current bootstrap native/q-proof, reuses existing complete-package persistence/slot selection, issues selected bootstrap token, actor rechecks own current bootstrap state before identity publication attestation.",
   "p2_evidence": {
     "native_preparation": "evidence/outbe-chain-pjz.3/native-preparation",
     "stream_corrected": "evidence/outbe-chain-pjz.3/native-stream-r2",
@@ -110,9 +110,9 @@
   "authenticated_material_evidence": "evidence/outbe-chain-pjz.4/authenticated-material",
   "publication_carrier_evidence": "evidence/outbe-chain-pjz.4/publication-carrier",
   "latest_verification": {
-    "source_sha": "e66c446fd",
-    "checks": "74 full adapter tests/0ignored;7 consumers all-target check;adapter+node Clippy-Dwarnings;4 touched Rust-file fmt PASS.",
-    "acceptance": "Intermediate P3/P4 public local context with actual UDS+actor. DKG/trusted reader fixtures; no complete production bootstrap/collector/E2E."
+    "source_sha": "b827c090c",
+    "checks": "74 full adapter tests/0ignored;7 consumers all-target check;adapter+node Clippy-Dwarnings;5 touched-file fmt PASS.",
+    "acceptance": "Intermediate P3/P4. Fixture chain/DKG; actual native Git persistence/actor/public signatures,not live admission/collector/E2E."
   },
   "checkpoint_phase_evidence": "evidence/outbe-chain-pjz.4/checkpoint-phase",
   "finalized_anchor_evidence": "evidence/outbe-chain-pjz.4/finalized-anchor",
@@ -123,7 +123,7 @@
   "public_witness_evidence": "evidence/outbe-chain-pjz.4/public-witness",
   "witness_bundle_evidence": "evidence/outbe-chain-pjz.4/witness-bundle",
   "last_goal_turn_classification": "no progress: third consecutive verified same overall D3 impasse, explicit approval still absent; no production/spec changes or live job to await. Blocked goal status required by threshold.",
-  "next_required_work": "Implement current verified bootstrap package/publication attestation using durable selected-package machinery; connect narrow typed native signing/control and sidecar distributed collector. Continue full approved P0-P8; description resolved, no D2/git.rs redesign.",
+  "next_required_work": "Connect actual bootstrap attestations to registry checkpoint admission and sidecar/native signing bridge/distributed collector; complete automatic runtime/recovery/normal native promotion and full approved P0-P8 acceptance.",
   "review_package_evidence": "evidence/outbe-chain-pjz.4/review-package",
   "review_attestation_evidence": "evidence/outbe-chain-pjz.4/review-attestation",
   "review_store_evidence": "evidence/outbe-chain-pjz.4/review-store-r2",
@@ -161,5 +161,6 @@
   },
   "bootstrap_native_evidence": "evidence/outbe-chain-pjz.5/native-bootstrap",
   "bootstrap_signing_evidence": "evidence/outbe-chain-pjz.4/bootstrap-signing",
-  "local_bootstrap_context_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-context"
+  "local_bootstrap_context_evidence": "evidence/outbe-chain-pjz.4/local-bootstrap-context",
+  "bootstrap_attestation_evidence": "evidence/outbe-chain-pjz.5/bootstrap-attestation"
 }
